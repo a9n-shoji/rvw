@@ -7,5 +7,6 @@
 
 応答や修正時期は保証していません。設計、scope、roadmapの最終判断はmaintainerが行います。
 
-Pull Requestは原則として募集していません。事前合意のないPRは取り込めない場合があります。
-forkして独自に変更・再配布することは、[MIT License](LICENSE)の範囲で自由です。
+Pull Requestも受け取れますが、積極的に募集しているわけではなく、review、返信、取り込みは保証して
+いません。内容や時期によっては反応できないことがあります。forkして独自に変更・再配布することは、
+[MIT License](LICENSE)の範囲で自由です。
