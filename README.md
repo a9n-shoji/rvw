@@ -1,0 +1,270 @@
+# rvw
+
+`rvw`は、AIや人間が実装したGitHub Pull Requestを、差分だけでなく変更後のsoftware全体として
+人間が理解するためのローカルviewerです。PRの意図、Git commit、変更箇所、選択commit時点の
+repository全体を行き来し、PR本文、変更されたコード、変更されていない関連コードへコメントできます。
+Agentが実装やarchitectureの説明を提示した場合は、説明を独立したtabに残したまま、inline link、
+reference一覧、Mermaid図から人間が選んだcodeだけを開けます。文書は最大2ペインへ並べられるため、
+説明と実装、callerとdefinition、Markdown previewとcodeを同時に読めます。
+
+diffは変更を見つける入口であり、レビュー対象の境界ではありません。人間が結果を読み、影響を追い、
+次に直すべきことを判断します。Codex / Claude Codeは、その判断を同梱された共通Skillと`rvw` CLI
+protocolで受け取り、実装へ反映します。`rvw`自身はAIを起動せず、コードを編集しません。
+
+```text
+Agentが実装
+    ↓
+Git commit / GitHub Pull Request
+    ↓
+Agentが任意でcommit固定のWalkthroughを提示
+    ↓
+rvwで意図・説明・変更・repository全体を読む
+    ↓
+人間が理解し、コードへコメントする
+    ↓
+Skill + CLI protocol
+    ↓
+Agentが次の実装へ反映
+```
+
+この考え方とプロダクト境界は[Product principles](docs/product-principles.md)にまとめています。
+
+## 必要なもの
+
+- Node.js 24.15.0以上
+- Git
+- [GitHub CLI](https://cli.github.com/)（`gh auth login`と`gh auth setup-git`を完了済み）
+- PRのbase repository clone、またはそのcloneから作ったGit worktree
+
+head fork側だけのclone、GitHub Enterprise、Closed / merged PRはPhase 1の対象外です。初回登録と同期にはGitHub接続が必要ですが、登録済みPRは保持済みGit objectとSQLite cacheからofflineでも開けます。
+
+## インストール
+
+現在はnpm registryへ公開していないため、sourceからインストールします。registryにある同名の`rvw`
+packageはこのプロジェクトではありません。
+
+```bash
+git clone https://github.com/a9n-shoji/rvw.git
+cd rvw
+pnpm install --frozen-lockfile
+pnpm build
+pnpm link --global
+rvw doctor
+```
+
+`rvw doctor`がGit、GitHub CLI認証、repository、database migrationを確認します。npm packageを公開する
+releaseでは、実際のpackage名を確定したうえでこの節をglobal install手順へ更新します。
+
+レビューしたいrepositoryへ移動して起動します。
+
+```bash
+cd /path/to/base-repository-clone
+rvw open https://github.com/owner/repository/pull/123
+```
+
+現在branchに対応するPRならURLを省略できます。
+
+```bash
+rvw open
+```
+
+serverは`127.0.0.1`の空きportだけへbindします。自動で開いたviewerは、最後のタブを閉じると短い猶予後にserverも停止します。リロード中や別タブが残っている間は停止しません。ブラウザを開かずに検証する場合は`rvw open --no-open`を使い、この場合はCtrl+Cで停止します。
+
+## 変更を理解する
+
+初回openでPRのcommit履歴と最新PR本文を取得します。以後は保持済み状態を先に表示し、viewer起動後または最上部の`...` menuにある`GitHubと同期`で最新状態を取得します。独自の版取り込み操作はありません。
+
+基本の読み方は次のとおりです。
+
+1. `Pull Request.md`で、最後に同期できたPRの意図と説明を読む。
+2. 変更ファイルとcommit rangeで、どこがどの順序で変わったかを把握する。
+3. 全文、全ファイル、repository検索、開いた文書のtabを使い、変更されていないcaller、設定、test、documentまで辿る。
+4. PR全体、PR本文、変更file、変更されていないfile、コード行へコメントする。
+5. comment参照をAgentへ渡し、修正後のcommitを同じ文脈で読み直す。
+
+viewerはこの流れのために次を提供します。
+
+- `Pull Request.md`、変更ファイル、全ファイル
+- 開いた文書を保持するタブ、最大2つの横ペイン、横幅をdrag調整できるsidebar / pane divider
+- タブのdrag & drop、ペインmenu、sidebarからの`Cmd` / `Ctrl`+clickによる右ペイン表示
+- repository内MarkdownのSource / Preview切り替え（見出しlinkと同じcommitの相対画像を含む）
+- 全文、選択した連続commit範囲の差分
+- split / stacked diff、syntax highlight、行・範囲選択
+- `@pierre/vscode-icons`による全画面共通の言語／tooling file icon
+- ファイル名fuzzy検索、Gitによるrealtime全文fixed-string検索（case / whole-word、file grouping、行jump）
+- PR全体、PR本文、ファイル全体、行範囲、Walkthrough全体へのコメント
+- 未解決／解決済み、返信、Outdated追跡
+- Agentへ渡す一件・一覧・複数選択した`rvw://comment/<uuid>`参照のコピー
+- Agentが提示したWalkthrough、exact code reference、選択可能なMermaid node
+- Walkthrough commentをAgentが読むときの、元の説明本文とcode referenceの同時取得
+- 同じ参照を保ったWalkthroughの改善と、確認付きの不要Walkthrough削除
+
+各commitはcommit messageとshort SHAで選択できます。一件はclick、連続範囲は一覧をdragするだけで両端を含めて選べ、`PR全体`と`最新だけ`のshortcutも利用できます。範囲のlatest側がheadならtop barに`最新`を表示します。`Pull Request.md`は選択commitにかかわらず常に最新です。
+
+全文表示と全ファイルtreeが通常のrepository reading surfaceです。変更表示は同じcommit範囲へ
+変更箇所を重ねるlensとして働きます。diff外のfileを開いても比較条件は変わらず、そのcommitの
+全文を表示して`差分なし · 全文表示`と明示します。
+
+## Agentの説明を人間の順序で検証する
+
+外部Agentは`rvw-walkthrough` SkillとCLIを使い、実装説明を一つのcommitへ固定してrvwへ提示できます。
+
+```bash
+rvw walkthrough publish --stdin --json
+```
+
+説明はMarkdown、`rvw-ref:<id>` link、typedな`path + 任意のline range`、任意のMermaid node bindingから
+構成されます。参照は意味のある複数行range、単行、またはfile全体を指せます。rvwは登録時にcommit、
+path、指定された行範囲を検証します。publishしてもbrowserは開かれず、
+active tabやscroll位置も変わりません。人間がviewerのWalkthroughを開き、必要なreferenceを選んだ
+時だけ、exact sourceがdocument tabへ開き、行指定があれば範囲全体が強調されます。`Cmd` / `Ctrl`を押しながら選べば
+操作元と反対のペインへ開きます。説明tabは残るため、
+複数のclaimと実装を任意の順序・任意のタイミングで往復できます。
+
+Mermaidの描画はflowchartだけに限定せず、class、sequence、state、ERなどbundled Mermaidが対応する
+記法を受け付けます。code referenceとの要素bindingはflowchartとclass diagramをE2Eで保証し、
+SVG上の要素構造が異なる他の記法は描画とinteractionを分けて扱います。
+
+これはin-app AI chatではありません。説明と図はAgentのclaimで、commit済みcodeが検証対象の正本です。
+Walkthroughにはローカルな版履歴を持たせません。説明全体へのfeedbackはstableなWalkthrough IDへ残るため、
+Agentは現在内容を読み、同じ`rvw://walkthrough/<uuid>`を更新して分かりやすくできます。更新後もコメントは
+同じ説明へ残り、viewerはpollで本文、参照、titleを再取得します。不要なWalkthroughはviewerの削除action、
+または削除件数を確認したCLIで、紐づくコメントと返信を含めて削除できます。
+
+## Codex / Claude Code Skills
+
+アプリ本体からローカルSkillをインストールします。一度のinstallで、コメント処理用の`rvw`と
+Walkthroughのpublish・改善・削除用の`rvw-walkthrough`が入ります。Skill名と内容はCodex / Claude Codeで共通で、
+platform指定は配置先だけを選びます。
+
+```bash
+rvw skill install codex
+rvw skill install claude
+rvw skill status
+```
+
+既定の配置先は次です。
+
+- Codex: `~/.agents/skills/rvw`、`~/.agents/skills/rvw-walkthrough`
+- Claude Code: `~/.claude/skills/rvw`、`~/.claude/skills/rvw-walkthrough`
+
+既存Skillが同梱版と異なる場合は上書きしません。内容を確認したうえで`--force`を指定してください。package smokeやカスタム配置にはplatformを明示して`rvw skill status codex --target <SKILLS_ROOT>`のように指定します。
+以前の開発版が配置した`rvw-codex` / `rvw-claude` directoryは、local変更を消さないため自動削除しません。
+内容を確認してから手動で取り除いてください。
+
+コメント対応では、Agentへviewerからコピーしたコメント参照を渡すか、対象PRの未解決コメント全体を
+確認するよう依頼します。
+
+```text
+rvw Skillを使って、次のコメントを確認してください。
+
+rvw://comment/00000000-0000-4000-8000-000000000000
+```
+
+```text
+rvw Skillを使って、https://github.com/owner/repository/pull/123 の未解決コメントを確認してください。
+```
+
+Walkthroughを作る場合は、説明したい対象をセッションへ伝えて`rvw-walkthrough` Skillを使います。
+Skillは文書の見出しや説明順序を固定せず、セッションが作った説明をcommit固定のreference付きartifactとして
+検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、現在内容を取得して同じURIを
+更新し、重複した「改訂版」を追加しません。
+
+二つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
+`rvw walkthrough get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`だけを利用します。
+ローカルDBやrepositoryへアクセスできないCloud Agentは対象外です。
+
+## 復旧
+
+まず`rvw doctor --json`でGit、GitHub CLI認証、現在のrepository、DB pathを確認してください。初回登録や
+同期だけが失敗する場合は`gh auth status`とnetworkを確認します。登録済みPRはofflineでも開けます。
+
+force-push前に観測したhead commitはimmutable refで保持するため、旧コメントの参照元として読めます。Git refとSQLiteの不整合は部分修復せず、削除件数を確認後、正式な復旧手段としてresetします。
+
+```bash
+rvw pr reset https://github.com/owner/repository/pull/123 --json
+rvw pr reset https://github.com/owner/repository/pull/123 --yes --json
+```
+
+resetは対象PRのコメント、返信、コメント対象、Walkthrough、code reference、
+`refs/rvw/pr/<number>/...`を削除し、現在のGitHub状態からcacheとhead refを再構築します。
+バックアップや旧コメント移行は行わず、元に戻せません。
+
+## CLI protocol
+
+機械向けコマンドはstdoutへJSONだけを出します。
+
+```bash
+rvw protocol --json
+rvw pr refresh <PR_REF> --json
+rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
+rvw comment get <COMMENT_URI> --json
+rvw comment get <COMMENT_URI> --include-pr-body --json
+rvw comment reply <COMMENT_URI> --stdin --json
+rvw comment resolve <COMMENT_URI> --json
+rvw comment reopen <COMMENT_URI> --json
+rvw walkthrough get <WALKTHROUGH_URI> --json
+rvw walkthrough publish --stdin --json
+rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
+rvw walkthrough delete <WALKTHROUGH_URI> --json
+rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
+rvw pr sync --stdin --json
+```
+
+`comment list`は未解決を既定として`unresolved` / `resolved` / `all`をページング列挙し、各threadの
+root post preview、post件数、最新head時点のOutdated判定を返します。`hasMore`なら`nextOffset`から
+続けて取得し、完全なthreadは`comment get`で読みます。listと通常の`comment get`はPR本文を省略し、
+本文が必要な場合だけ`comment get --include-pr-body`で最新の同期済み本文を取得します。
+`comment get`は最新PRのtitle、base/head、serviceが導出したplacement、対象commitのbounded source
+excerptを返すため、AgentはOID比較でOutdatedを推測しません。
+
+`pr sync`はGitHub上の最新PR状態を取得し、任意の`commentUpdates`を同じSQLite transactionで反映します。`pr sync`と`comment reply`は冪等ではないため、結果が不明な場合はコメントを再取得してから再試行してください。
+
+詳細は[CLI protocol](docs/cli-protocol.md)と[実装仕様](docs/implementation-spec.md)を参照してください。
+
+## 0.x compatibility
+
+CLI command / flag、`rvw://` URI、machine-readable JSON protocol、bundled Skillとのprotocolは、0.xでも
+互換性を意識するsurfaceです。breaking changeが必要な場合はprotocol versionを進め、同梱Skillと文書を
+同じreleaseで更新します。SQLite schema、data directory内layout、`src/` moduleはpublic APIではなく、
+直接操作・importする前提を置きません。詳しくは[0.x compatibility](docs/compatibility.md)を参照してください。
+最初のpublic protocolはversion 1とし、公開後はversion番号を再利用しません。
+
+## Issues and contributions
+
+bug reportとfeature suggestionは[GitHub Issues](https://github.com/a9n-shoji/rvw/issues)で歓迎します。
+個人で保守しているため応答や修正時期は保証せず、Pull Requestは原則として募集していません。詳しくは
+[Contributing](CONTRIBUTING.md)を参照してください。security issueはpublic Issueへ書かず、
+[Security policy](SECURITY.md)の案内に従ってください。
+
+## 開発
+
+```bash
+pnpm install --frozen-lockfile
+pnpm check
+pnpm test
+pnpm test:e2e
+pnpm build
+pnpm test:package
+```
+
+通常テストは実Git binaryとfake GitHub adapterを使い、GitHub認証やnetworkを必要としません。
+`test:package`はclean buildと実tarball作成を行い、一時directoryへinstallしてrepository checkout外から
+CLI、migration、frontend、bundled Skillをsmoke testします。Phase 1のpackageは`private: true`で、npmへ
+公開しません。
+
+## データとセキュリティ
+
+SQLite DBはOSのユーザーデータdirectoryに保存され、`rvw doctor --json`の`databasePath`で実際の場所を
+確認できます。DBにはlocal repository path、同期済みPR metadata/body、コメント、Walkthrough、theme
+設定を保存します。review対象repositoryには旧sourceを保持する`refs/rvw/` Git refを作成します。GitHub
+credentialはGitHub CLIが管理し、rvwのDBへコピーしません。
+
+ローカルHTTP serverは`127.0.0.1`だけへbindしてHost / Originを検証し、write APIは
+`application/json`だけを受理し、CORSを有効にしません。コメントと返信はplain UTF-8 textです。
+CLIとfrontend bundleに含まれる第三者softwareのlicenseはpackage内の
+`dist/cli-THIRD_PARTY_NOTICES.txt`と`dist/web/THIRD_PARTY_NOTICES.txt`へbuild時に収録します。
+
+## License
+
+[MIT](LICENSE)

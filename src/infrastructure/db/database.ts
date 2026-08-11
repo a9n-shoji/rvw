@@ -1,0 +1,1058 @@
+import { randomUUID } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import envPaths from "env-paths";
+import type {
+  CommentPost,
+  CommentTarget,
+  DeletedWalkthrough,
+  GitHubPullRequest,
+  PullRequest,
+  ResetCounts,
+  ReviewComment,
+  Walkthrough,
+  WalkthroughDeleteCounts,
+  WalkthroughReference,
+  WalkthroughSummary,
+} from "../../domain/models.js";
+import { formatCommentUri } from "../../domain/comment-uri.js";
+import { formatWalkthroughUri } from "../../domain/walkthrough-uri.js";
+import { RvwError } from "../../shared/errors.js";
+import { isThemePreference, type ThemePreference } from "../../shared/preferences.js";
+
+type DbRow = Record<string, SQLInputValue>;
+
+export interface CommentPageItem {
+  comment: Omit<ReviewComment, "posts">;
+  rootPost: CommentPost;
+  postCount: number;
+}
+
+export interface CommentPage {
+  comments: CommentPageItem[];
+  total: number;
+}
+
+function stringValue(row: DbRow, key: string): string {
+  const value = row[key];
+  if (typeof value !== "string") throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
+  return value;
+}
+
+function nullableString(row: DbRow, key: string): string | null {
+  const value = row[key];
+  if (value === null) return null;
+  if (typeof value !== "string") throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
+  return value;
+}
+
+function numberValue(row: DbRow, key: string): number {
+  const value = row[key];
+  if (typeof value !== "number" && typeof value !== "bigint") {
+    throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
+  }
+  return Number(value);
+}
+
+function nullableNumber(row: DbRow, key: string): number | null {
+  const value = row[key];
+  if (value === null) return null;
+  if (typeof value !== "number" && typeof value !== "bigint") {
+    throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
+  }
+  return Number(value);
+}
+
+function stringRecordValue(row: DbRow, key: string): Record<string, string> {
+  try {
+    const value: unknown = JSON.parse(stringValue(row, key));
+    if (
+      typeof value !== "object" ||
+      value === null ||
+      Array.isArray(value) ||
+      Object.values(value).some((entry) => typeof entry !== "string")
+    ) {
+      throw new Error("not a string record");
+    }
+    return value as Record<string, string>;
+  } catch (error) {
+    throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`, { cause: error });
+  }
+}
+
+function mapPullRequest(row: DbRow): PullRequest {
+  return {
+    id: stringValue(row, "id"),
+    host: "github.com",
+    owner: stringValue(row, "owner"),
+    repository: stringValue(row, "repository"),
+    number: numberValue(row, "number"),
+    url: stringValue(row, "github_url"),
+    localRepositoryPath: stringValue(row, "local_repository_path"),
+    gitCommonDir: stringValue(row, "git_common_dir"),
+    latestTitle: stringValue(row, "latest_title"),
+    latestBody: stringValue(row, "latest_body"),
+    latestBaseRefName: stringValue(row, "latest_base_ref_name"),
+    latestHeadRefName: stringValue(row, "latest_head_ref_name"),
+    latestBaseOid: stringValue(row, "latest_base_oid"),
+    latestComparisonBaseOid: stringValue(row, "latest_comparison_base_oid"),
+    latestHeadOid: stringValue(row, "latest_head_oid"),
+    githubUpdatedAt: stringValue(row, "github_updated_at"),
+    fetchedAt: stringValue(row, "fetched_at"),
+    createdAt: stringValue(row, "created_at"),
+    updatedAt: stringValue(row, "updated_at"),
+  };
+}
+
+function findMigrationsDirectory(explicit: string | undefined): string {
+  if (explicit) return explicit;
+  const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(moduleDirectory, "../migrations"),
+    path.resolve(moduleDirectory, "../../../migrations"),
+  ];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  if (!found) throw new RvwError("DATABASE_ERROR", "migrations directoryが見つかりません。");
+  return found;
+}
+
+export interface DatabaseOptions {
+  filePath?: string;
+  migrationsDirectory?: string;
+}
+
+export interface NewCommentInput {
+  pullRequestId: string;
+  createdHeadOid: string;
+  target: CommentTarget;
+  body: string;
+  authorLabel?: string | null;
+}
+
+export interface CommentUpdateInput {
+  commentId: string;
+  reply: string;
+  resolve: boolean;
+  authorLabel?: string | null;
+}
+
+export interface NewWalkthroughInput {
+  pullRequestId: string;
+  sourceOid: string;
+  title: string;
+  body: string;
+  authorLabel?: string | null;
+  diagramBindings: Record<string, string>;
+  references: WalkthroughReference[];
+}
+
+export class RvwDatabase {
+  readonly filePath: string;
+  private readonly database: DatabaseSync;
+
+  constructor(options: DatabaseOptions = {}) {
+    const configuredFilePath = options.filePath ?? process.env.RVW_DATABASE_PATH;
+    const defaultDataDirectory = envPaths("rvw").data;
+    const filePath = configuredFilePath ?? path.join(defaultDataDirectory, "rvw.db");
+    this.filePath = filePath;
+    if (filePath !== ":memory:") {
+      mkdirSync(path.dirname(filePath), {
+        recursive: true,
+        ...(configuredFilePath ? {} : { mode: 0o700 }),
+      });
+      if (!configuredFilePath) chmodSync(defaultDataDirectory, 0o700);
+    }
+    this.database = new DatabaseSync(filePath);
+    if (filePath !== ":memory:" && !configuredFilePath) chmodSync(filePath, 0o600);
+    this.database.exec("PRAGMA busy_timeout = 5000;");
+    this.database.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
+    this.migrate(findMigrationsDirectory(options.migrationsDirectory));
+  }
+
+  close(): void {
+    this.database.close();
+  }
+
+  private migrate(directory: string): void {
+    const migrationTableExists = this.database
+      .prepare(
+        "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+      )
+      .get() as DbRow | undefined;
+    const applied = new Set<number>();
+    if (migrationTableExists) {
+      for (const row of this.database
+        .prepare("SELECT version FROM schema_migrations")
+        .all() as DbRow[]) {
+        applied.add(numberValue(row, "version"));
+      }
+    }
+    const migrations = readdirSync(directory)
+      .filter((name) => /^\d+_.*\.sql$/.test(name))
+      .sort();
+    for (const filename of migrations) {
+      const version = Number(filename.split("_")[0]);
+      if (applied.has(version)) continue;
+      const sql = readFileSync(path.join(directory, filename), "utf8");
+      try {
+        this.database.exec("BEGIN IMMEDIATE");
+        // Another rvw process may have applied this migration while this connection waited.
+        const migrationTableExistsAfterLock = this.database
+          .prepare(
+            "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+          )
+          .get() as DbRow | undefined;
+        const alreadyApplied = migrationTableExistsAfterLock
+          ? (this.database
+              .prepare("SELECT 1 AS found FROM schema_migrations WHERE version = ?")
+              .get(version) as DbRow | undefined)
+          : undefined;
+        if (!alreadyApplied) {
+          this.database.exec(sql);
+          this.database
+            .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+            .run(version, new Date().toISOString());
+        }
+        this.database.exec("COMMIT");
+        applied.add(version);
+      } catch (error) {
+        try {
+          this.database.exec("ROLLBACK");
+        } catch {
+          // Preserve the migration error.
+        }
+        throw new RvwError("DATABASE_ERROR", `DB migration ${filename} に失敗しました。`, {
+          cause: error,
+          status: 500,
+        });
+      }
+    }
+  }
+
+  immediateTransaction<T>(callback: () => T): T {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = callback();
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        this.database.exec("ROLLBACK");
+      } catch {
+        // Preserve the callback error.
+      }
+      throw error;
+    }
+  }
+
+  incrementChangeSequence(): number {
+    this.database
+      .prepare(
+        "UPDATE app_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'change_sequence'",
+      )
+      .run();
+    return this.getChangeSequence();
+  }
+
+  getChangeSequence(): number {
+    const row = this.database
+      .prepare("SELECT value FROM app_meta WHERE key = 'change_sequence'")
+      .get() as DbRow;
+    return Number(stringValue(row, "value"));
+  }
+
+  getThemePreference(): ThemePreference {
+    const row = this.database
+      .prepare("SELECT value FROM app_meta WHERE key = 'theme_preference'")
+      .get() as DbRow | undefined;
+    if (!row) {
+      throw new RvwError("DATABASE_ERROR", "テーマ設定がDBにありません。");
+    }
+    const value = stringValue(row, "value");
+    if (!isThemePreference(value)) {
+      throw new RvwError("DATABASE_ERROR", "DBのテーマ設定が不正です。");
+    }
+    return value;
+  }
+
+  setThemePreference(preference: ThemePreference): ThemePreference {
+    const result = this.database
+      .prepare("UPDATE app_meta SET value = ? WHERE key = 'theme_preference'")
+      .run(preference);
+    if (Number(result.changes) !== 1) {
+      throw new RvwError("DATABASE_ERROR", "テーマ設定をDBへ保存できませんでした。");
+    }
+    return this.getThemePreference();
+  }
+
+  findPullRequestByIdentity(owner: string, repository: string, number: number): PullRequest | null {
+    const row = this.database
+      .prepare(
+        "SELECT * FROM pull_requests WHERE host = 'github.com' AND lower(owner) = lower(?) AND lower(repository) = lower(?) AND number = ?",
+      )
+      .get(owner, repository, number) as DbRow | undefined;
+    return row ? mapPullRequest(row) : null;
+  }
+
+  findPullRequestsByGitCommonDir(gitCommonDir: string): PullRequest[] {
+    return (
+      this.database
+        .prepare("SELECT * FROM pull_requests WHERE git_common_dir = ? ORDER BY updated_at DESC")
+        .all(gitCommonDir) as DbRow[]
+    ).map(mapPullRequest);
+  }
+
+  getPullRequest(id: string): PullRequest | null {
+    const row = this.database.prepare("SELECT * FROM pull_requests WHERE id = ?").get(id) as
+      DbRow | undefined;
+    return row ? mapPullRequest(row) : null;
+  }
+
+  listPullRequests(): PullRequest[] {
+    return (
+      this.database.prepare("SELECT * FROM pull_requests ORDER BY updated_at DESC").all() as DbRow[]
+    ).map(mapPullRequest);
+  }
+
+  updateRepositoryLocation(
+    id: string,
+    repository: { localRepositoryPath: string; gitCommonDir: string },
+  ): PullRequest {
+    this.immediateTransaction(() => {
+      const result = this.database
+        .prepare(
+          "UPDATE pull_requests SET local_repository_path = ?, git_common_dir = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(repository.localRepositoryPath, repository.gitCommonDir, new Date().toISOString(), id);
+      if (Number(result.changes) === 0)
+        throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
+      this.incrementChangeSequence();
+    });
+    const pullRequest = this.getPullRequest(id);
+    if (!pullRequest) throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
+    return pullRequest;
+  }
+
+  private writePullRequest(
+    github: GitHubPullRequest,
+    repository: { localRepositoryPath: string; gitCommonDir: string },
+    comparisonBaseOid: string,
+  ): string {
+    const now = new Date().toISOString();
+    const existing = this.findPullRequestByIdentity(github.owner, github.repository, github.number);
+    const id = existing?.id ?? randomUUID();
+    this.database
+      .prepare(
+        `INSERT INTO pull_requests(
+          id, host, owner, repository, number, github_url,
+          local_repository_path, git_common_dir,
+          latest_title, latest_body, latest_base_ref_name, latest_head_ref_name,
+          latest_base_oid, latest_head_oid, github_updated_at, fetched_at,
+          created_at, updated_at, latest_comparison_base_oid
+        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(host, owner, repository, number) DO UPDATE SET
+          github_url = excluded.github_url,
+          local_repository_path = excluded.local_repository_path,
+          git_common_dir = excluded.git_common_dir,
+          latest_title = excluded.latest_title,
+          latest_body = excluded.latest_body,
+          latest_base_ref_name = excluded.latest_base_ref_name,
+          latest_head_ref_name = excluded.latest_head_ref_name,
+          latest_base_oid = excluded.latest_base_oid,
+          latest_comparison_base_oid = excluded.latest_comparison_base_oid,
+          latest_head_oid = excluded.latest_head_oid,
+          github_updated_at = excluded.github_updated_at,
+          fetched_at = excluded.fetched_at,
+          updated_at = excluded.updated_at`,
+      )
+      .run(
+        id,
+        github.owner,
+        github.repository,
+        github.number,
+        github.url,
+        repository.localRepositoryPath,
+        repository.gitCommonDir,
+        github.title,
+        github.body,
+        github.baseRefName,
+        github.headRefName,
+        github.baseOid,
+        github.headOid,
+        github.updatedAt,
+        now,
+        existing?.createdAt ?? now,
+        now,
+        comparisonBaseOid,
+      );
+    return id;
+  }
+
+  upsertPullRequest(
+    github: GitHubPullRequest,
+    repository: { localRepositoryPath: string; gitCommonDir: string },
+    comparisonBaseOid: string,
+  ): PullRequest {
+    const id = this.immediateTransaction(() => {
+      const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
+      this.incrementChangeSequence();
+      return writtenId;
+    });
+    const pullRequest = this.getPullRequest(id);
+    if (!pullRequest)
+      throw new RvwError("DATABASE_ERROR", "保存したPull Requestを読み出せません。");
+    return pullRequest;
+  }
+
+  syncPullRequestAndComments(
+    github: GitHubPullRequest,
+    repository: { localRepositoryPath: string; gitCommonDir: string },
+    comparisonBaseOid: string,
+    updates: CommentUpdateInput[],
+  ): PullRequest {
+    const id = this.immediateTransaction(() => {
+      const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
+      this.applyCommentUpdates(updates, github.headOid);
+      this.incrementChangeSequence();
+      return writtenId;
+    });
+    const pullRequest = this.getPullRequest(id);
+    if (!pullRequest)
+      throw new RvwError("DATABASE_ERROR", "同期したPull Requestを読み出せません。");
+    return pullRequest;
+  }
+
+  resetPullRequest(
+    github: GitHubPullRequest,
+    repository: { localRepositoryPath: string; gitCommonDir: string },
+    comparisonBaseOid: string,
+  ): PullRequest {
+    const id = this.immediateTransaction(() => {
+      const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
+      this.deletePullRequestHistory(writtenId);
+      this.incrementChangeSequence();
+      return writtenId;
+    });
+    const pullRequest = this.getPullRequest(id);
+    if (!pullRequest)
+      throw new RvwError("DATABASE_ERROR", "再構築したPull Requestを読み出せません。");
+    return pullRequest;
+  }
+
+  getResetCounts(pullRequestId: string, gitRefs: number): ResetCounts {
+    const comments = this.database
+      .prepare("SELECT count(*) AS count FROM comments WHERE pull_request_id = ?")
+      .get(pullRequestId) as DbRow;
+    const posts = this.database
+      .prepare(
+        "SELECT count(*) AS count FROM comment_posts WHERE comment_id IN (SELECT id FROM comments WHERE pull_request_id = ?)",
+      )
+      .get(pullRequestId) as DbRow;
+    const targets = this.database
+      .prepare(
+        "SELECT count(*) AS count FROM comment_targets WHERE comment_id IN (SELECT id FROM comments WHERE pull_request_id = ?)",
+      )
+      .get(pullRequestId) as DbRow;
+    const walkthroughs = this.database
+      .prepare("SELECT count(*) AS count FROM walkthroughs WHERE pull_request_id = ?")
+      .get(pullRequestId) as DbRow;
+    const walkthroughReferences = this.database
+      .prepare(
+        "SELECT count(*) AS count FROM walkthrough_references WHERE walkthrough_id IN (SELECT id FROM walkthroughs WHERE pull_request_id = ?)",
+      )
+      .get(pullRequestId) as DbRow;
+    return {
+      comments: numberValue(comments, "count"),
+      posts: numberValue(posts, "count"),
+      targets: numberValue(targets, "count"),
+      walkthroughs: numberValue(walkthroughs, "count"),
+      walkthroughReferences: numberValue(walkthroughReferences, "count"),
+      gitRefs,
+    };
+  }
+
+  deletePullRequestHistory(pullRequestId: string): void {
+    this.database.prepare("DELETE FROM comments WHERE pull_request_id = ?").run(pullRequestId);
+    this.database.prepare("DELETE FROM walkthroughs WHERE pull_request_id = ?").run(pullRequestId);
+  }
+
+  private listWalkthroughReferences(walkthroughId: string): WalkthroughReference[] {
+    return (
+      this.database
+        .prepare(
+          "SELECT * FROM walkthrough_references WHERE walkthrough_id = ? ORDER BY sort_order ASC",
+        )
+        .all(walkthroughId) as DbRow[]
+    ).map((row) => ({
+      id: stringValue(row, "reference_id"),
+      label: stringValue(row, "label"),
+      path: stringValue(row, "file_path"),
+      startLine: nullableNumber(row, "start_line"),
+      endLine: nullableNumber(row, "end_line"),
+      description: nullableString(row, "description"),
+    }));
+  }
+
+  private mapWalkthrough(row: DbRow): Walkthrough {
+    const id = stringValue(row, "id");
+    return {
+      id,
+      ref: formatWalkthroughUri(id),
+      pullRequestId: stringValue(row, "pull_request_id"),
+      sourceOid: stringValue(row, "source_oid"),
+      title: stringValue(row, "title"),
+      body: stringValue(row, "body"),
+      authorLabel: nullableString(row, "author_label"),
+      diagramBindings: stringRecordValue(row, "diagram_bindings_json"),
+      references: this.listWalkthroughReferences(id),
+      createdAt: stringValue(row, "created_at"),
+    };
+  }
+
+  getWalkthrough(id: string): Walkthrough | null {
+    const row = this.database.prepare("SELECT * FROM walkthroughs WHERE id = ?").get(id) as
+      DbRow | undefined;
+    return row ? this.mapWalkthrough(row) : null;
+  }
+
+  listWalkthroughs(pullRequestId: string): WalkthroughSummary[] {
+    return (
+      this.database
+        .prepare(
+          `SELECT walkthroughs.*, COUNT(walkthrough_references.reference_id) AS reference_count
+           FROM walkthroughs
+           LEFT JOIN walkthrough_references
+             ON walkthrough_references.walkthrough_id = walkthroughs.id
+           WHERE walkthroughs.pull_request_id = ?
+           GROUP BY walkthroughs.id
+           ORDER BY walkthroughs.created_at DESC, walkthroughs.id DESC`,
+        )
+        .all(pullRequestId) as DbRow[]
+    ).map((row) => ({
+      id: stringValue(row, "id"),
+      pullRequestId: stringValue(row, "pull_request_id"),
+      sourceOid: stringValue(row, "source_oid"),
+      title: stringValue(row, "title"),
+      authorLabel: nullableString(row, "author_label"),
+      referenceCount: numberValue(row, "reference_count"),
+      createdAt: stringValue(row, "created_at"),
+    }));
+  }
+
+  createWalkthrough(input: NewWalkthroughInput): Walkthrough {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.immediateTransaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO walkthroughs(
+            id, pull_request_id, source_oid, title, body, author_label,
+            diagram_bindings_json, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          input.pullRequestId,
+          input.sourceOid,
+          input.title,
+          input.body,
+          input.authorLabel ?? null,
+          JSON.stringify(input.diagramBindings),
+          now,
+        );
+      this.insertWalkthroughReferences(id, input.references);
+      this.incrementChangeSequence();
+    });
+    const walkthrough = this.getWalkthrough(id);
+    if (!walkthrough) {
+      throw new RvwError("DATABASE_ERROR", "保存したwalkthroughを読み出せません。");
+    }
+    return walkthrough;
+  }
+
+  private insertWalkthroughReferences(
+    walkthroughId: string,
+    references: WalkthroughReference[],
+  ): void {
+    const insertReference = this.database.prepare(
+      `INSERT INTO walkthrough_references(
+        walkthrough_id, reference_id, label, file_path, start_line, end_line,
+        description, sort_order
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    references.forEach((reference, index) => {
+      insertReference.run(
+        walkthroughId,
+        reference.id,
+        reference.label,
+        reference.path,
+        reference.startLine,
+        reference.endLine,
+        reference.description,
+        index,
+      );
+    });
+  }
+
+  updateWalkthrough(id: string, input: Omit<NewWalkthroughInput, "pullRequestId">): Walkthrough {
+    this.immediateTransaction(() => {
+      const result = this.database
+        .prepare(
+          `UPDATE walkthroughs
+           SET source_oid = ?, title = ?, body = ?, author_label = ?, diagram_bindings_json = ?
+           WHERE id = ?`,
+        )
+        .run(
+          input.sourceOid,
+          input.title,
+          input.body,
+          input.authorLabel ?? null,
+          JSON.stringify(input.diagramBindings),
+          id,
+        );
+      if (Number(result.changes) === 0) {
+        throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
+      }
+      this.database.prepare("DELETE FROM walkthrough_references WHERE walkthrough_id = ?").run(id);
+      this.insertWalkthroughReferences(id, input.references);
+      this.incrementChangeSequence();
+    });
+    const walkthrough = this.getWalkthrough(id);
+    if (!walkthrough) {
+      throw new RvwError("DATABASE_ERROR", "更新したwalkthroughを読み出せません。");
+    }
+    return walkthrough;
+  }
+
+  getWalkthroughDeleteCounts(id: string): WalkthroughDeleteCounts {
+    const comments = this.database
+      .prepare("SELECT count(*) AS count FROM comment_targets WHERE walkthrough_id = ?")
+      .get(id) as DbRow;
+    const posts = this.database
+      .prepare(
+        `SELECT count(*) AS count
+         FROM comment_posts
+         WHERE comment_id IN (
+           SELECT comment_id FROM comment_targets WHERE walkthrough_id = ?
+         )`,
+      )
+      .get(id) as DbRow;
+    const references = this.database
+      .prepare("SELECT count(*) AS count FROM walkthrough_references WHERE walkthrough_id = ?")
+      .get(id) as DbRow;
+    return {
+      comments: numberValue(comments, "count"),
+      posts: numberValue(posts, "count"),
+      references: numberValue(references, "count"),
+    };
+  }
+
+  deleteWalkthrough(id: string): DeletedWalkthrough {
+    return this.immediateTransaction(() => {
+      const walkthrough = this.getWalkthrough(id);
+      if (!walkthrough) {
+        throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
+      }
+      const counts = this.getWalkthroughDeleteCounts(id);
+      this.database
+        .prepare(
+          `DELETE FROM comments
+           WHERE id IN (SELECT comment_id FROM comment_targets WHERE walkthrough_id = ?)`,
+        )
+        .run(id);
+      this.database.prepare("DELETE FROM walkthroughs WHERE id = ?").run(id);
+      this.incrementChangeSequence();
+      return {
+        id: walkthrough.id,
+        ref: walkthrough.ref,
+        pullRequestId: walkthrough.pullRequestId,
+        counts,
+      };
+    });
+  }
+
+  createComment(input: NewCommentInput): ReviewComment {
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    const postId = randomUUID();
+    this.immediateTransaction(() => {
+      this.database
+        .prepare(
+          "INSERT INTO comments(id, pull_request_id, created_head_oid, resolved_at, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?)",
+        )
+        .run(id, input.pullRequestId, input.createdHeadOid, now, now);
+      this.insertCommentTarget(id, input.target);
+      this.database
+        .prepare(
+          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, 1, ?, ?)",
+        )
+        .run(postId, id, input.body, input.authorLabel ?? null, now, now);
+      this.incrementChangeSequence();
+    });
+    const comment = this.getComment(id);
+    if (!comment) throw new RvwError("DATABASE_ERROR", "保存したコメントを読み出せません。");
+    return comment;
+  }
+
+  private insertCommentTarget(commentId: string, target: CommentTarget): void {
+    if (target.kind === "pull-request") {
+      this.database
+        .prepare("INSERT INTO comment_targets(comment_id, target_kind) VALUES (?, ?)")
+        .run(commentId, "pull_request");
+      return;
+    }
+    if (target.kind === "walkthrough") {
+      this.database
+        .prepare(
+          `INSERT INTO comment_targets(
+            comment_id, target_kind, walkthrough_id, source_document_hash, quoted_text,
+            start_line, end_line
+          ) VALUES (?, 'walkthrough', ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          commentId,
+          target.walkthroughId,
+          target.sourceDocumentHash,
+          target.quotedText,
+          target.startLine,
+          target.endLine,
+        );
+      return;
+    }
+    if (target.documentKind === "pull-request-markdown") {
+      this.database
+        .prepare(
+          `INSERT INTO comment_targets(
+            comment_id, target_kind, document_kind, source_document_hash, quoted_text,
+            start_line, end_line
+          ) VALUES (?, 'document', 'pull_request_markdown', ?, ?, ?, ?)`,
+        )
+        .run(
+          commentId,
+          target.sourceDocumentHash,
+          target.quotedText,
+          target.startLine,
+          target.endLine,
+        );
+      return;
+    }
+    this.database
+      .prepare(
+        `INSERT INTO comment_targets(
+          comment_id, target_kind, document_kind, source_oid, file_path, start_line, end_line
+        ) VALUES (?, 'document', 'repository_file', ?, ?, ?, ?)`,
+      )
+      .run(commentId, target.sourceOid, target.path, target.startLine, target.endLine);
+  }
+
+  private mapCommentWithoutPosts(row: DbRow): Omit<ReviewComment, "posts"> {
+    const id = stringValue(row, "id");
+    const targetKind = stringValue(row, "target_kind");
+    let target: CommentTarget;
+    if (targetKind === "pull_request") {
+      target = { kind: "pull-request" };
+    } else if (targetKind === "walkthrough") {
+      target = {
+        kind: "walkthrough",
+        walkthroughId: stringValue(row, "walkthrough_id"),
+        walkthroughTitle: stringValue(row, "walkthrough_title"),
+        sourceDocumentHash: nullableString(row, "source_document_hash"),
+        quotedText: nullableString(row, "quoted_text"),
+        startLine: nullableNumber(row, "start_line"),
+        endLine: nullableNumber(row, "end_line"),
+      };
+    } else if (stringValue(row, "document_kind") === "pull_request_markdown") {
+      target = {
+        kind: "document",
+        documentKind: "pull-request-markdown",
+        sourceDocumentHash: stringValue(row, "source_document_hash"),
+        quotedText: nullableString(row, "quoted_text"),
+        startLine: row.start_line === null ? null : numberValue(row, "start_line"),
+        endLine: row.end_line === null ? null : numberValue(row, "end_line"),
+      };
+    } else {
+      target = {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: stringValue(row, "source_oid"),
+        path: stringValue(row, "file_path"),
+        startLine: row.start_line === null ? null : numberValue(row, "start_line"),
+        endLine: row.end_line === null ? null : numberValue(row, "end_line"),
+      };
+    }
+    return {
+      id,
+      ref: formatCommentUri(id),
+      pullRequestId: stringValue(row, "pull_request_id"),
+      createdHeadOid: stringValue(row, "created_head_oid"),
+      resolvedAt: nullableString(row, "resolved_at"),
+      createdAt: stringValue(row, "created_at"),
+      updatedAt: stringValue(row, "updated_at"),
+      target,
+    };
+  }
+
+  private mapComment(row: DbRow): ReviewComment {
+    const comment = this.mapCommentWithoutPosts(row);
+    return { ...comment, posts: this.listCommentPosts(comment.id) };
+  }
+
+  getComment(id: string): ReviewComment | null {
+    const row = this.database
+      .prepare(
+        `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
+          t.source_document_hash, t.quoted_text, t.walkthrough_id, t.start_line, t.end_line,
+          w.title AS walkthrough_title
+        FROM comments c
+        JOIN comment_targets t ON t.comment_id = c.id
+        LEFT JOIN walkthroughs w ON w.id = t.walkthrough_id
+        WHERE c.id = ?`,
+      )
+      .get(id) as DbRow | undefined;
+    return row ? this.mapComment(row) : null;
+  }
+
+  listComments(pullRequestId: string, resolved?: boolean): ReviewComment[] {
+    const where =
+      resolved === undefined
+        ? ""
+        : resolved
+          ? " AND c.resolved_at IS NOT NULL"
+          : " AND c.resolved_at IS NULL";
+    return (
+      this.database
+        .prepare(
+          `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
+            t.source_document_hash, t.quoted_text, t.walkthrough_id, t.start_line, t.end_line,
+            w.title AS walkthrough_title
+          FROM comments c
+          JOIN comment_targets t ON t.comment_id = c.id
+          LEFT JOIN walkthroughs w ON w.id = t.walkthrough_id
+          WHERE c.pull_request_id = ?${where} ORDER BY c.updated_at DESC`,
+        )
+        .all(pullRequestId) as DbRow[]
+    ).map((row) => this.mapComment(row));
+  }
+
+  listCommentPage(
+    pullRequestId: string,
+    resolved: boolean | undefined,
+    limit: number,
+    offset: number,
+  ): CommentPage {
+    const where =
+      resolved === undefined
+        ? ""
+        : resolved
+          ? " AND c.resolved_at IS NOT NULL"
+          : " AND c.resolved_at IS NULL";
+    const totalRow = this.database
+      .prepare(`SELECT COUNT(*) AS total FROM comments c WHERE c.pull_request_id = ?${where}`)
+      .get(pullRequestId) as DbRow;
+    const comments = (
+      this.database
+        .prepare(
+          `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
+            t.source_document_hash, t.quoted_text, t.walkthrough_id, t.start_line, t.end_line,
+            w.title AS walkthrough_title,
+            root.id AS root_id, root.body AS root_body,
+            root.related_commit_oid AS root_related_commit_oid,
+            root.author_label AS root_author_label, root.created_at AS root_created_at,
+            root.updated_at AS root_updated_at,
+            (SELECT COUNT(*) FROM comment_posts p WHERE p.comment_id = c.id) AS post_count
+          FROM comments c
+          JOIN comment_targets t ON t.comment_id = c.id
+          JOIN comment_posts root ON root.comment_id = c.id AND root.is_root = 1
+          LEFT JOIN walkthroughs w ON w.id = t.walkthrough_id
+          WHERE c.pull_request_id = ?${where}
+          ORDER BY c.updated_at DESC, c.id DESC
+          LIMIT ? OFFSET ?`,
+        )
+        .all(pullRequestId, limit, offset) as DbRow[]
+    ).map((row) => {
+      const comment = this.mapCommentWithoutPosts(row);
+      return {
+        comment,
+        rootPost: {
+          id: stringValue(row, "root_id"),
+          commentId: comment.id,
+          body: stringValue(row, "root_body"),
+          relatedCommitOid: nullableString(row, "root_related_commit_oid"),
+          authorLabel: nullableString(row, "root_author_label"),
+          isRoot: true,
+          createdAt: stringValue(row, "root_created_at"),
+          updatedAt: stringValue(row, "root_updated_at"),
+        },
+        postCount: numberValue(row, "post_count"),
+      };
+    });
+    return { comments, total: numberValue(totalRow, "total") };
+  }
+
+  listCommentPosts(commentId: string): CommentPost[] {
+    return (
+      this.database
+        .prepare(
+          "SELECT * FROM comment_posts WHERE comment_id = ? ORDER BY is_root DESC, created_at ASC, id ASC",
+        )
+        .all(commentId) as DbRow[]
+    ).map((row) => ({
+      id: stringValue(row, "id"),
+      commentId: stringValue(row, "comment_id"),
+      body: stringValue(row, "body"),
+      relatedCommitOid: nullableString(row, "related_commit_oid"),
+      authorLabel: nullableString(row, "author_label"),
+      isRoot: numberValue(row, "is_root") === 1,
+      createdAt: stringValue(row, "created_at"),
+      updatedAt: stringValue(row, "updated_at"),
+    }));
+  }
+
+  insertReply(
+    commentId: string,
+    input: { body: string; relatedCommitOid?: string | null; authorLabel?: string | null },
+    incrementSequence = true,
+  ): CommentPost {
+    if (!this.getComment(commentId))
+      throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const write = (): void => {
+      this.database
+        .prepare(
+          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+        )
+        .run(
+          id,
+          commentId,
+          input.body,
+          input.relatedCommitOid ?? null,
+          input.authorLabel ?? null,
+          now,
+          now,
+        );
+      this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
+      if (incrementSequence) this.incrementChangeSequence();
+    };
+    if (incrementSequence) this.immediateTransaction(write);
+    else write();
+    return {
+      id,
+      commentId,
+      body: input.body,
+      relatedCommitOid: input.relatedCommitOid ?? null,
+      authorLabel: input.authorLabel ?? null,
+      isRoot: false,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  updateCommentPost(commentId: string, postId: string, body: string): CommentPost {
+    const now = new Date().toISOString();
+    this.immediateTransaction(() => {
+      const result = this.database
+        .prepare(
+          "UPDATE comment_posts SET body = ?, updated_at = ? WHERE id = ? AND comment_id = ?",
+        )
+        .run(body, now, postId, commentId);
+      if (Number(result.changes) === 0) {
+        throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
+          status: 404,
+        });
+      }
+      this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
+      this.incrementChangeSequence();
+    });
+    const post = this.listCommentPosts(commentId).find((candidate) => candidate.id === postId);
+    if (!post) {
+      throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
+        status: 404,
+      });
+    }
+    return post;
+  }
+
+  deleteReply(commentId: string, postId: string): { commentId: string; postId: string } {
+    const comment = this.getComment(commentId);
+    if (!comment) {
+      throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
+    }
+    const post = comment.posts.find((candidate) => candidate.id === postId);
+    if (!post) {
+      throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
+        status: 404,
+      });
+    }
+    if (post.isRoot) {
+      throw new RvwError(
+        "COMMENT_DELETE_NOT_ALLOWED",
+        "最初のコメントは返信として削除できません。スレッドの削除を使用してください。",
+        { status: 409 },
+      );
+    }
+    const now = new Date().toISOString();
+    this.immediateTransaction(() => {
+      this.database
+        .prepare("DELETE FROM comment_posts WHERE id = ? AND comment_id = ?")
+        .run(postId, commentId);
+      this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
+      this.incrementChangeSequence();
+    });
+    return { commentId, postId };
+  }
+
+  setCommentResolved(
+    commentId: string,
+    resolved: boolean,
+    incrementSequence = true,
+  ): ReviewComment {
+    const now = new Date().toISOString();
+    const write = (): void => {
+      const result = this.database
+        .prepare("UPDATE comments SET resolved_at = ?, updated_at = ? WHERE id = ?")
+        .run(resolved ? now : null, now, commentId);
+      if (Number(result.changes) === 0)
+        throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
+      if (incrementSequence) this.incrementChangeSequence();
+    };
+    if (incrementSequence) this.immediateTransaction(write);
+    else write();
+    const comment = this.getComment(commentId);
+    if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
+    return comment;
+  }
+
+  deleteComment(commentId: string): { id: string; ref: string } {
+    const comment = this.getComment(commentId);
+    if (!comment) {
+      throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
+    }
+    this.immediateTransaction(() => {
+      this.database.prepare("DELETE FROM comments WHERE id = ?").run(commentId);
+      this.incrementChangeSequence();
+    });
+    return { id: comment.id, ref: comment.ref };
+  }
+
+  applyCommentUpdates(updates: CommentUpdateInput[], relatedCommitOid: string): void {
+    for (const update of updates) {
+      if (update.reply.trim().length > 0) {
+        this.insertReply(
+          update.commentId,
+          {
+            body: update.reply,
+            relatedCommitOid,
+            authorLabel: update.authorLabel ?? "Agent",
+          },
+          false,
+        );
+      } else if (!this.getComment(update.commentId)) {
+        throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
+      }
+      if (update.resolve) this.setCommentResolved(update.commentId, true, false);
+    }
+  }
+}

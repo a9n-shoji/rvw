@@ -1,0 +1,1054 @@
+# rvw implementation specification
+
+**基準日:** 2026-08-09
+**対象:** Phase 1のローカル実用品とPhase 2の配布
+**一次仕様:** この文書を実装・テスト・README・Skill契約のsource of truthとする。commitモデルへの
+移行は、それと無関係な既存のViewer、comment、CLI、security、配布要件を破棄しない。
+
+## 1. プロダクトの定義
+
+`rvw`は、AIや人間が実装したGitHub Pull Requestを、差分だけでなく変更後のsoftware全体として
+人間が理解し、次の実装判断をAgentへ返すためのローカルWeb viewerである。
+
+利用者は最新PRタイトル・本文から変更の意図を読み、PRを構成するGit commitから実装の進行を読み、
+変更箇所を入口に選択commit時点のrepository全体へ移動する。コード全文、変更されていないfile、
+検索結果を含む任意の文書へコメントでき、その判断をCodex / Claude Codeへ共通Skill経由で受け渡す。
+Agentが実装やarchitectureを説明する場合は、commit固定のWalkthroughとしてcode referenceと
+Mermaid図を提示できる。どの参照をいつ開くかは人間が選び、rvwの最大二ペインのdocument workspaceで確認する。
+
+diffは変更を見つけるlensであり、レビュー対象の境界ではない。レビュー対象は選択したcommitが作る
+repositoryの状態と、その状態を説明するPull Request全体である。
+
+```text
+Pull Request
+├─ 最新のPull Request.md
+├─ PR commit一覧
+├─ 選択範囲のlatest側commitのrepository全体
+├─ 選択した連続commit範囲のdiff
+├─ Agentが提示したWalkthroughとexact code reference
+└─ コメント
+```
+
+コード履歴の正本はGit commitである。rvw独自の「レビュー版」は持たず、ユーザーへ
+capture、版番号、版説明、版切り替えを要求しない。
+
+人間はsoftwareを理解し、影響を判断し、次の行動を決める。Agentはauthorizedな実装、test、commit、
+push、同期を行う。rvwは両者の間にdurableなreading contextとreview recordを提供するが、Agent
+runtimeにはならない。説明上の原則は`docs/product-principles.md`にまとめ、この一次仕様と矛盾する
+場合は本書を優先する。
+
+## 2. 絶対に守る境界
+
+rvwが担うもの:
+
+- GitHub PRの取得と最新メタデータcache
+- PR commitのfetch、保持、一覧表示、選択
+- 任意の連続commit範囲とPR全体diff
+- 最新PRタイトル・本文を表す`Pull Request.md`
+- 変更ファイル、repository全体、全文、検索
+- PR全体、PR本文、ファイル、コード行へのコメント
+- 返信と未解決／解決済み
+- commit間の保守的なコメントline mappingとOutdated表示
+- `rvw://comment/<uuid>`参照とSkill用CLI
+- commit固定のAgent Walkthrough、typed code reference、Mermaid図
+- platform非依存の`rvw` / `rvw-walkthrough` SkillのCodex / Claude Code向けinstall/status
+
+rvwが担わないもの:
+
+- in-app Ask、AI chat、Agent起動、Agent session管理
+- コード編集、テスト実行、commit、push、PR編集
+- GitHub review commentとの双方向同期
+- Skillなしで通じる巨大prompt fallback
+- PRタイトル・本文のローカル変更履歴
+- PR本文の過去diffやcommitとの時点同期
+- semantic search、LSP、独自agent loop
+- Agentによるbrowser navigation、tab activation、viewer stateの読み書き
+- Electron/Tauri、Docker前提、ORM、monorepo
+
+コメント状態は`unresolved` / `resolved`だけとする。Outdatedは保存状態ではなく、
+コメントsourceと表示文書から導出する。
+
+## 3. ユーザーが認識する世界
+
+主要概念は次だけである。
+
+```text
+Pull Request
+Commit
+Commit range
+Pull Request.md
+Code
+Walkthrough
+Comment
+Unresolved / Resolved
+```
+
+Git ref、full source OID、comment target、SQLite IDは必要なprotocol以外で露出させない。
+
+`Pull Request.md`は実装が満たそうとする意図、CommitとCommit rangeは実装が変化した順序、Codeは
+選択commitが作るsoftware、diffはそのsoftwareで変更された場所を示す。Commentは人間の理解から
+生じた質問、修正要求、確認結果をsoftwareの具体的な位置へ結び、Agentとの次の協業単位になる。
+WalkthroughはAgentが説明として提示する読み物であり、事実の正本ではない。人間はinline reference、
+reference index、diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分で照合する。
+
+### 3.1 Commit選択
+
+- 一件または連続する複数commitを一つの範囲として選ぶ。latest側commitのrepository全体を表示できる。
+- diffは`oldOid -> newOid`の二点で表す。
+- 一件選択では、そのcommitのfirst parentから選択commitまでを表示する。
+- 複数選択では、earliest側commitのfirst parentからlatest側commitまでを両端を含めて表示する。
+- `PR全体`shortcutはcurrent PR commit列をすべて選択し、`comparison_base_oid`からlatest headまでを表示する。
+- UIへ変更前の境界commitを露出せず、利用者は差分へ含めるcommitだけを選ぶ。
+- current PR commit列にないforce-push前のsource OIDは通常selectorへ混ぜない。
+  古いコメントからexact sourceを開くことはできる。
+
+### 3.2 Pull Request.md
+
+`Pull Request.md`はGit tree外のvirtual documentである。
+
+```markdown
+# <latest PR title>
+
+<latest PR body>
+```
+
+- LFへ正規化する。
+- 常に最後に成功したGitHub同期のtitle/bodyだけを表示する。
+- commit selectorを切り替えても内容は変わらない。
+- full viewだけを持ち、PR全体diffやcommit range diffは持たない。
+- 過去本文が必要な場合はGitHubのedit historyへ委ねる。
+- document identityは`pullRequestId`だが、rendererとcomment placementのcacheは本文revisionを区別する。
+  title/bodyだけが変わった同期でも本文、inline comment位置、Outdated表示を同時に更新する。
+
+## 4. Git / GitHubの意味論
+
+### 4.1 GitHub取得
+
+GitHub CLIの既存認証を使用する。独自OAuthを持たない。
+
+```bash
+gh pr view <PR> --json \
+  number,url,title,body,updatedAt,state,isDraft,\
+  baseRefName,baseRefOid,headRefName,headRefOid,\
+  headRepository,headRepositoryOwner
+```
+
+Phase 1の新規登録とsyncは`github.com`のopen/draft PRを対象とする。保存済みPRの
+ローカル表示はPRの現在状態やnetwork接続に依存しない。
+
+### 4.2 Local-first open
+
+`rvw open`は同じGit common directoryに保存済みのPRを解決できる場合、SQLiteと
+保持済みGit objectだけでviewerを起動する。GitHub更新はviewer表示を妨げない別操作とし、
+UIは起動後に更新を試み、失敗時もcacheを表示し続ける。
+
+未登録PR、URLを省略して現在branchから初めてPRを解決する場合はGitHub接続が必要。
+
+### 4.3 Object取得と保持
+
+不足objectはbase repository URLから操作固有の一時refへfetchし、GitHubのOIDと一致を
+検証する。`FETCH_HEAD`を共有状態にしない。一時refは成功・失敗にかかわらず削除する。
+
+各同期でPR headを次のimmutable refへ保持する。
+
+```text
+refs/rvw/pr/<number>/commits/oid-<head-oid>
+```
+
+`oid-` prefixは40桁hexだけのref path componentをGitが拒否するために付ける。ref名のOIDと
+ref valueは一致しなければならない。head refがそのancestorを保持するため、
+comparison base用の別refは作らない。force-push後も旧head refを削除せず、旧コメントの
+source objectを保持する。
+
+### 4.4 Comparison base
+
+同期時に次を計算し、`pull_requests.latest_comparison_base_oid`へ保存する。
+
+```bash
+git merge-base <latest-base-tip-oid> <latest-head-oid>
+```
+
+現在の`PR全体`はこのOIDをold側にする。過去時点のbase tipやcomparison base履歴は持たない。
+
+### 4.5 Commit一覧
+
+current PR commit一覧は`latest_comparison_base_oid..latest_head_oid`から`--ancestry-path`を使って
+Gitのtopological historyを取得する。custom rangeの開始候補はdestinationより前のcurrent PR
+ancestorだけに絞り、既定値は最も近い先行commitとする。
+最低限次を返す。
+
+```typescript
+interface CommitSummary {
+  oid: string;
+  parentOids: string[];
+  subject: string;
+  authorName: string;
+  authoredAt: string;
+}
+```
+
+commit rowをSQLiteへ複製しない。message、author、time、parentはGit objectから読む。
+
+## 5. 文書モデル
+
+```typescript
+type DocumentRef =
+  | { kind: "pull-request-markdown"; pullRequestId: string }
+  | { kind: "repository-file"; pullRequestId: string; sourceOid: string; path: string };
+
+type DiffDocumentRef = {
+  kind: "diff";
+  old: DocumentRef | null;
+  new: DocumentRef | null;
+};
+```
+
+repository documentは`sourceOid + path`がexact snapshotである。PR本文はlatest-onlyなので
+`pullRequestId`がidentityになる。
+
+文書navigationは「変更箇所を確認して終了する」ためではなく、変更から周辺実装へ辿って結果を
+理解するためにある。changed filesは出発点、all filesとsearchは関連contextの発見、full viewは
+結果として存在するsoftwareの読解、changes viewは選択commit範囲の編集箇所を重ねるlensを担う。
+変更されていないrepository fileも同じDocumentRefとcomment対象を持つ。
+
+### 5.1 表示
+
+- full: 選択範囲のlatest側commit OIDの全文
+- changes: 選択した連続commit範囲のearliest側commitのfirst parentからlatest側commit OID
+- changed files: `git diff --name-status -z --find-renames <old> <new>`
+- all files: `git ls-tree`でdestination tree全体
+- code search: `git grep -z -n -I -F`へcase-insensitiveの`-i`とwhole-wordの`-w`を選択的に
+  追加し、destination OIDへ実行
+- PR本文検索: latest `Pull Request.md`だけ
+
+UTF-8 textだけを通常表示し、CRLFはLFへ正規化する。binary、1 MiB超、symlink、submodule、
+empty fileは従来どおり明示的に扱う。
+
+### 5.2 Viewer navigation
+
+- 連続commit range picker、全文／変更、diff styleは最上部top bar内へ置く。range pickerは
+  subjectとshort SHA、選択件数を表示する。PR全commitを選択中なら`PR全体`、それ以外でlatest headが
+  選択範囲のlatest側なら`最新`を明示する。
+- range picker内はclickで一件、pointer dragまたはShift+clickで両端を含む連続範囲を選択する。
+  `PR全体`と`最新だけ`のshortcutも提供し、範囲内のcommitを一件ずつtoggleさせない。
+- 開いた`Pull Request.md`とrepository fileはpath identityで重複しない一時tabとして保持する。
+- `Cmd` / `Ctrl`+`P`は全repository fileと`Pull Request.md`を対象にQuick Openを開く。file名を
+  pathより優先するbrowser内fuzzy search、match highlight、open / active状態、file / change iconを表示し、
+  Arrow keyで選択、Enterで現在activeなpaneへ追加して開き、Escapeで閉じる。
+- Walkthroughも独立した一時tabとして保持し、そこからcodeを開いても説明tabを閉じない。
+  tabは個別に閉じられ、paneの`...` menuからactive以外またはpane内すべてを一括で閉じられる。
+  overflow時は横scrollとopen-tab一覧を提供する。
+- document workspaceは通常一ペイン、必要時に横並びの最大二ペインとする。document identityは一つの
+  paneだけに所属し、tab drag & dropまたはpane headerの`...` menuで左右へ移動できる。
+- sidebarとdocument workspaceの境界、および二ペイン間の境界はpointer dragで横幅を変更できる。
+  sidebarはmain reading surfaceの最低幅を残し、各document paneも最低幅を持つ。dividerのdouble clickは
+  既定幅へ戻し、左右arrow keyでも調整できる。幅はbrowser内だけの一時状態で永続化しない。
+- sidebarのfile、search result、Walkthroughは`Cmd` / `Ctrl`+clickで右ペインへ開ける。document
+  pane内のWalkthrough reference、diagram node、repository Markdown linkは`Cmd` / `Ctrl`+clickで
+  操作元と反対のペインへ開く。通常clickは操作元のペインへ開く。
+- Walkthrough reference、repository Markdownの相対link、comment targetを開いても、repository全体の
+  commit範囲、全文／変更、stacked / split、tree modeを変更しない。Walkthrough referenceは全文では
+  retained exact source、変更では現在選択中のcommit範囲を同じpathへ適用し、stacked / splitを
+  切り替えられる。repository Markdownの相対linkとcomment targetはglobal表示が変更でも、そのpaneだけ
+  retained exact sourceの全文を表示する。参照元と対象commitが異なる場合は両方のshort SHAを控えめに
+  明示する。Walkthrough referenceのexact sourceを取得できない場合はtabやpaneを開かず、操作元の
+  Walkthroughへ一時chipを表示し、リンク切れと一時的な取得失敗を区別する。
+- Markdown内の画像はrepository Markdownから同一commit内の相対pathを参照する場合だけ自動取得する。
+  PR本文、Walkthrough、外部URL、protocol-relative URL、repository pathへ安全に解決できない参照は
+  requestを送らずplaceholderを表示する。SVG asset responseは同一originへの直接navigationも含め、
+  scriptと外部subresourceを禁止するContent Security Policyとsandboxを付ける。
+- Files、Search、Comments、Walkthroughは排他的なmodeにせず、sidebar内の独立して折りたためるstack
+  として同時に置く。Walkthrough stackはsidebarの末尾に置く。
+- tab列は文書navigationだけに使い、review scopeを置かない。review scopeとstacked / splitは
+  tabごとに保存しない。
+- changed-files tree、tabのchange icon、中央viewerはtop barで選択した同じcommit範囲を使用する。
+  sidebar内に別のcomparison selectorを持たない。
+- 選択比較で対象fileに変更がなければglobal controlを変えず、そのfileだけdestination commitの
+  full textへfallbackして`差分なし · 全文表示`を明示する。`Pull Request.md`も常にfullへfallbackする。
+- commit範囲切り替え時はopen pathとglobal表示modeを保ち、latest側commitが変わった場合だけ文書を
+  そのcommitへ結び直す。exact source commentから開いた文書は
+  通常の選択commit文書へ結び直す。current PR commit列外のexact sourceを開く場合はfull viewだけにする。
+- app shellはviewportを上限とし、sidebarの各stack本文と中央viewerを独立してscrollさせる。sidebarは
+  通常の高さではFilesのfile行、Searchの入力と結果、Commentsのcomment概要、Walkthroughの2項目が概ね見える
+  stackごとの最低高を持つ。viewportがその合計に足りない場合は項目別の比率で本文領域だけを縮め、全stack見出しを
+  下端まで常に表示する。browser tabのclose、reload、navigationは`beforeunload`で標準確認を出すが、in-app tab
+  closeは確認しない。
+- top barのPR titleはGitHubのPR pageを別tabで開くlinkとする。その他menuではUI themeを
+  light / dark / systemから選べる。選択はOS user data directoryの共通DBへ保存し、異なるPRや
+  自動割り当てportで新しく起動したviewerにも引き継ぐ。browser storageは初期表示用cacheに限る。
+  systemはOS設定へ追従する。
+
+### 5.3 File tree、検索、diff rendering
+
+- `変更ファイル`と`全ファイル`を切り替えられる。directoryは階層表示し、開閉状態を視覚化し、全directoryを
+  一括で展開／折りたたみできる。`全ファイル`へ切り替えた時は既定で折りたたみ、中央でrepository fileを
+  選択中の場合だけそのfileへ至るdirectoryを展開する。
+- `全ファイル`でも選択比較のchange iconを表示する。destination treeから消えたdeleted pathは
+  deleted icon付きでtreeへ併記する。
+- changed treeとtabにはadded、deleted、modified、renamed、type-changedを可能な範囲で表示する。
+- file tree、search result、document tab、viewer headerのfile iconは`@pierre/vscode-icons`の
+  Complete tier相当を共通resolverで適用する。filenameをextensionより優先し、unknown extension、
+  symlink、submoduleには明示fallbackを持つ。folderも同icon setへ統一する。
+- file名filterはbrowser内のfuzzy searchとし、repository本文検索とは分ける。
+- 本文検索は選択destination OIDのGit objectだけを`git grep -z -n -I -F`で検索し、worktreeや
+  indexの未commit内容を混ぜない。queryは1 KiB、結果は500件、stdoutは8 MiBを上限とする。
+- `Pull Request.md`も最新本文だけをfixed-string検索対象に含める。
+- 本文検索は独立したSearch stackに置き、正規表現は提供しない。case-insensitiveと部分一致を既定にし、
+  case-sensitiveとwhole-wordを明示toggleできる。入力は250 ms debounceで自動反映し、submit buttonを
+  持たない。`Cmd+Shift+F` / `Ctrl+Shift+F`はSearch stackを開いて入力欄へfocusする。
+- 結果はfile単位で折りたたみ、一致した行と全一致箇所のhighlightを表示する。各fileにはfile treeと
+  同じchange iconを表示する。同じ行の複数一致は一行へまとめ、file badgeと全体件数は一致箇所数を
+  数える。全file groupの展開／折りたたみを一つのiconで切り替えられる。
+- 検索結果を開いてもglobalなfull / changesとstacked / splitを変更しない。fullでは対象行へscrollし、
+  changesで未変更contextが閉じていれば対象行まで展開してscrollする。fileに差分がない場合だけ
+  通常の`差分なし · 全文表示`fallbackを使う。開いた対象行は次のnavigationまで強調する。
+- code/diffは`@pierre/diffs`を使い、syntax highlight、stacked/split、追加・削除数、path、
+  file-level comment action、line/range selectionを提供する。コード本文はbrowser標準の文字列選択と
+  copyを維持し、line/range comment selectionはline numberとgutter actionから開始する。
+- diffのline selectionはold/new sideを明示し、両sideをまたぐ一つのcommentを作成しない。
+- UTF-8以外、1 MiB超、symlink、submodule、missing documentは空本文へsilent fallbackせず、
+  理由を明示する。empty UTF-8 fileは有効な文書として扱う。
+- repository内の`.md` / `.markdown`と`Pull Request.md`はSource / Previewを切り替えられる。
+  Previewは同じexact document textをsafe Markdownとしてrenderし、raw HTMLをallowlistでsanitizeして
+  scriptを実行しない。
+  GitHubと同様に安全な`details` / `summary`は折りたたみとしてrenderする。tableはcellごとの読みやすい
+  最大幅で本文を折り返し、列数が多い場合の横scrollは維持する。
+  `Pull Request.md`の本文はGitHubのPull Request本文と同じくsoft line breakを表示上の改行として
+  renderする。repository内の`.md` / `.markdown`はGitHubのfile previewと同じくsoft line breakを
+  hard breakへ変換しない。
+  repository内への相対linkは表示中のfile pathから解決し、同じexact source commitのdocumentとして
+  通常clickは現在pane、`Cmd` / `Ctrl`+clickは右paneへ開く。外部URLだけをbrowserの別tabで開き、
+  fragment-only linkは表示中document内のnavigationとして残す。相対linkを開いてもglobalなcommit範囲、
+  full / changes、stacked / split、tree modeは変更せず、対象paneだけexact sourceの全文を表示する。
+  Previewのrender treeにはMarkdown parserが持つsource positionを付与し、browser標準の文字列選択を
+  inclusiveなMarkdown source line rangeへ変換する。選択後は範囲の近くにcomment actionを表示し、
+  line commentをrender済み本文へinline表示する。DOM path、layout上の行、生成HTMLはtargetへ保存しない。
+  line commentはSourceのgutter/range selectionとPreviewの文字列選択、file commentは両表示から作成できる。
+
+### 5.4 Agent Walkthrough
+
+Walkthroughは、外部AgentがCLIで登録するcommit固定のMarkdown documentである。rvwは説明を生成せず、
+Agentを起動せず、登録時にもbrowserを開いたりactive tabやscroll位置を変更したりしない。
+
+```typescript
+interface WalkthroughReference {
+  id: string;
+  label: string;
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+  description: string | null;
+}
+
+interface Walkthrough {
+  id: string;
+  sourceOid: string;
+  title: string;
+  body: string;
+  authorLabel: string | null;
+  diagramBindings: Record<string, string>; // Mermaid node ID -> reference ID
+  references: WalkthroughReference[];
+}
+```
+
+- `sourceOid`は対象PRで利用可能なcommitであり、全referenceはその一つのsnapshotへ固定する。
+- publish成功前に`refs/rvw/pr/<number>/commits/oid-<sourceOid>`でobjectを保持する。
+- 登録時に各pathがそのcommitで読めるUTF-8 documentであることを検証する。`startLine`と`endLine`は
+  両方指定したinclusiveな単行／複数行range、または両方`null`のfile-level referenceとする。
+  CLI入力で両方を省略した場合は`null`へ正規化する。line rangeがある場合は文書内に収まることも検証する。
+- Markdown内のlink destinationとしてparseされた`rvw-ref:<referenceId>`を登録時に完全一致で検証し、
+  typed reference buttonとして表示する。code blockやinline code内の文字列はlinkとして扱わない。
+- sidebar一覧はtitle、current source OID、author、reference件数だけを返し、現在の本文・参照・diagram
+  bindingは人間がWalkthrough tabを開いた時に取得する。CLI更新をpollで検出した場合は、開いているtabも
+  同じIDの最新内容とtitleへ結び直す。
+- `language-mermaid` code blockはstrict security設定でSVG化する。bundled Mermaidが扱うflowchart、
+  class、sequence、state、ERなどの記法を描画対象とする。binding済み要素だけを人間が選べる。
+  Phase 1のinteractive bindingはflowchart nodeとclass diagram classをE2E保証し、記法固有のSVG構造を
+  持つ他のdiagramは描画対応とbinding対応を分ける。binding済み要素はdiagram種別にかかわらずaccent枠、
+  薄いaccent背景、hover / focus強調を共通のaffordanceとして表示する。
+- 人間がreferenceを選んだ時だけ、そのexact `sourceOid + path`を事前確認してdocument workspaceへ開く。
+  このnavigationはglobalなcommit範囲と表示controlを変更しない。exact sourceのcommitまたはpathが
+  missingならtabを開かず一時chipでリンク切れを示し、通信や一時的な取得失敗はリンク切れと区別する。
+  line rangeがある場合は範囲全体を強調し、file-level referenceでは行を選択しない。
+- 説明本文やdiagramはAgentのclaimであり、code referenceとGit objectが検証可能な根拠である。
+- 人間はstableなWalkthrough IDへ文書全体コメントを作成できるほか、render済みMarkdownの文字列を選択して
+  parser由来のsource line rangeへコメントできる。Mermaidは生成SVG要素ではなく、元のfenced code block
+  全体を一つのsource rangeとして扱い、図全体へのcomment actionを表示する。
+  コメントをAgentがCLIで読む場合は、対象Walkthroughの現在本文・参照一覧も同じ応答へ含める。
+- AgentはCLIでcurrent Walkthroughを読み、title、本文、`sourceOid`、全reference、diagram bindingを同じIDの
+  まま完全置換できる。過去本文、過去reference set、更新revision、version selectorは持たない。
+- 更新後も全コメントと`rvw://walkthrough/<uuid>`は同じIDへ残る。文書全体コメントは常にcurrent本文へ
+  結び付き、行コメントはquoted textを現在本文へ一意に再配置できない場合Outdatedになる。`comment get`は
+  更新後の現在内容とrvwが導出した配置を返す。commit、path、line、Markdown reference、diagram bindingは
+  publishと同じ規則で再検証する。
+- 人間はviewerから、Agentは明示authorizationを受けたCLIから、不要なWalkthroughを削除できる。削除前に
+  reference、対象comment、postの件数を示し、確認後はそれらを一つのtransactionで削除する。共有され得る
+  retained Git commit refは個別削除せずresetまで保持する。
+- raw HTMLやscriptは実行しない。本文は256 KiB、referenceは200件を上限とする。
+- Phase 1は作成、閲覧、同一ID更新、確認付き削除を扱い、更新履歴、AI chat、自動navigationは扱わない。
+
+## 6. コメントモデル
+
+コメント対象:
+
+1. PR全体
+2. 最新Pull Request.md全体
+3. 最新Pull Request.md行範囲
+4. exact commitのコードファイル全体
+5. exact commitのコード行範囲
+6. diffのold/newいずれかのexact document
+7. stable IDを持つWalkthrough全体またはMarkdown source行範囲
+
+```typescript
+type CommentTarget =
+  | { kind: "pull-request" }
+  | {
+      kind: "walkthrough";
+      walkthroughId: string;
+      walkthroughTitle: string;
+      sourceDocumentHash: string | null;
+      quotedText: string | null;
+      startLine: number | null;
+      endLine: number | null;
+    }
+  | {
+      kind: "document";
+      documentKind: "pull-request-markdown";
+      sourceDocumentHash: string;
+      quotedText: string | null;
+      startLine: number | null;
+      endLine: number | null;
+    }
+  | {
+      kind: "document";
+      documentKind: "repository-file";
+      sourceOid: string;
+      path: string;
+      startLine: number | null;
+      endLine: number | null;
+    };
+```
+
+`comments.created_head_oid`は作成時のlatest PR headを記録する。repository targetの正本は
+target自身の`source_oid`である。
+
+Walkthrough targetの正本はstable Walkthrough IDであり、文書全体またはMarkdown sourceのinclusive line
+rangeを持つ。render treeのsource positionは選択をsource rangeへ変換する入力にだけ使い、DOM path、layout、
+生成SVG要素は保存しない。行targetは作成時の本文hashとexact quoted textを保持するが、Walkthroughのfull
+revisionは保存しない。削除時はそのstable IDを持つ全commentとpostも確認件数に含めて削除する。
+
+### 6.1 PR本文コメント
+
+full revisionは保存しない。コメント作成時にserviceが現在の`Pull Request.md`から次を計算する。
+
+- SHA-256 document hash
+- 行選択なら選択範囲のexact text
+- file-levelなら`quoted_text = NULL`
+
+表示時:
+
+1. hashがcurrent documentと一致すれば元行番号を使う。
+2. file-level commentはcurrent `Pull Request.md`へ表示する。
+3. 行commentでhashが違う場合、quoted linesがcurrent文書へ一度だけ出現すればそこへ移す。
+4. 見つからない、複数ある、legacy commentにquoteがない場合はOutdated。
+
+### 6.2 Walkthrough comment mapping
+
+1. 文書全体commentはcurrent Walkthroughへ表示し、Outdatedにならない。
+2. 行commentのhashがcurrent本文と一致すれば元行番号を使う。
+3. hashが違う場合、quoted linesがcurrent本文へ一度だけ出現すればその連続rangeへ移す。
+4. 見つからない、複数ある、quoteがない場合はOutdatedとしてsidebarへ残し、作成時のquoteを表示する。
+5. Mermaidへのcommentは元のfenced code block全体を同じ規則で配置する。生成SVG nodeはanchorにしない。
+
+### 6.3 Code comment mapping
+
+1. source/destination OIDとpathが同じなら元位置。
+2. Git diffからrename/deleteを判定する。
+3. source/destination本文をline diffする。
+4. 対象行が変更されず、一意かつ連続して対応する場合だけinline表示する。
+5. それ以外はOutdatedとしてsidebarに残し、exact sourceを開ける。
+
+PR全体commentとWalkthrough全体commentはOutdatedにならない。
+
+### 6.4 Reply
+
+投稿はplain UTF-8 textで、rootとreplyを編集できる。replyは任意の`related_commit_oid`を持てる。
+Agent batch syncのreplyは同期後のGitHub headへ自動的に関連付ける。
+resolved済みthreadにもreplyできるが、reply単独ではreopenしない。standalone replyとbatch syncの
+replyはいずれも現在stateを維持し、resolve/reopenは明示的な別の状態変更とする。
+誤投稿を取り消すため、reply postは個別に物理削除できる。root postの削除はcomment targetと
+`rvw://comment/<uuid>`のanchorを含むthread全体の削除として扱い、返信があれば同じtransactionで
+すべて削除する。確認画面は返信も削除されることを明示する。編集・削除はchange sequenceを更新する。
+
+### 6.5 Comment navigationとコピー
+
+- sidebarは未解決／解決済みを切り替え、各commentのOutdated状態、全post、常設reply欄を表示する。
+- sidebarの各threadには常にcheckboxを置き、選択が一件以上ある場合だけ一括copy actionを表示する。
+- Diff内のresolved threadは既定で一行に折りたたみ、展開すればpost、reply欄、reopen actionを表示する。
+- 参照copy、post編集、削除は各postの`...` menuへ格納し、resolve/reopenはthread actionとする。
+- commentからexact source documentを開ける。force-push前のrepository sourceも保持refから開く。
+  このnavigationはglobalなreview scopeを変更せず、対象paneだけcomment時点の全文を表示する。参照元commitが
+  対象commitと異なる場合はshort SHAを表示する。
+- 一件、表示中の一覧すべて、複数選択したcommentの`rvw://comment/<uuid>`をコピーできる。
+- copy textはSkill利用を依頼する短い文とURIだけで構成し、comment本文や巨大promptを埋め込まない。
+- どのcomment集合をいつcopyしたかは永続化しない。
+
+## 7. Agent CLI protocol
+
+AgentはSQLiteを直接読まず、必ずJSON CLIを使う。
+
+```bash
+rvw protocol --json
+rvw pr refresh <PR_REF> --json
+rvw pr sync --stdin --json
+rvw walkthrough get <WALKTHROUGH_URI> --json
+rvw walkthrough publish --stdin --json
+rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
+rvw walkthrough delete <WALKTHROUGH_URI> --json
+rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
+rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
+rvw comment get <COMMENT_URI> --json
+rvw comment get <COMMENT_URI> --include-pr-body --json
+rvw comment reply <COMMENT_URI> --stdin --json
+rvw comment resolve <COMMENT_URI> --json
+rvw comment reopen <COMMENT_URI> --json
+```
+
+最初のpublic protocol versionは1とし、公開前に使用した内部version番号は互換性保証の対象外とする。
+public release後は番号を再利用せず、breaking changeのたびに単調増加させる。capabilityは次を含む。
+
+```text
+comment.list
+comment.read
+comment.reply
+comment.resolve
+comment.reopen
+pullRequest.sync
+walkthrough.read
+walkthrough.publish
+walkthrough.update
+walkthrough.delete
+```
+
+### 7.1 pr sync
+
+stdin:
+
+```json
+{
+  "pullRequest": "https://github.com/owner/repo/pull/123",
+  "commentUpdates": [
+    {
+      "commentRef": "rvw://comment/uuid",
+      "reply": "対応内容",
+      "resolve": false
+    }
+  ]
+}
+```
+
+前提:
+
+- authorizedな修正、test、commit、push、必要なPR本文更新が完了済み
+- local worktreeに未commit変更がない
+- local branchがPR head branchならlocal HEADとGitHub headが一致する
+
+処理:
+
+1. GitHub状態取得
+2. object取得、comparison base計算
+3. immutable head ref作成・検証
+4. SQLite transactionでlatest PR cache、reply、resolve、change sequence更新
+5. replyの`related_commit_oid`へcurrent GitHub headを設定
+
+`pr sync`と`comment reply`はPhase 1では非冪等である。結果が不明な場合はcommentを再取得して
+重複を確認する。
+
+### 7.2 Walkthrough lifecycle
+
+既存Walkthroughはstable URIから現在内容と対象PRを取得できる。
+
+```bash
+rvw walkthrough get <WALKTHROUGH_URI> --json
+```
+
+#### Publish
+
+Agentは実装・周辺code・architectureの説明を、人間が後から任意に検証できるartifactとして登録する。
+
+```bash
+rvw walkthrough publish --stdin --json
+```
+
+stdinの最小例:
+
+```json
+{
+  "pullRequest": "https://github.com/owner/repo/pull/123",
+  "sourceOid": "0123456789abcdef0123456789abcdef01234567",
+  "title": "Request flow",
+  "body": "Start at [the handler](rvw-ref:handler), then inspect the [composition root](rvw-ref:composition).",
+  "authorLabel": "Agent name",
+  "diagramBindings": { "Handler": "handler" },
+  "references": [
+    {
+      "id": "handler",
+      "label": "RequestHandler.execute",
+      "path": "src/request-handler.ts",
+      "startLine": 10,
+      "endLine": 24,
+      "description": "Application orchestration boundary"
+    },
+    {
+      "id": "composition",
+      "label": "Application composition root",
+      "path": "src/application.ts",
+      "description": "File-wide dependency wiring"
+    }
+  ]
+}
+```
+
+`pullRequest`と`sourceOid`、title、body、1件以上のreferenceは必須である。CLIはcommit、path、
+任意のline range、Markdown reference、diagram bindingを検証し、一つのSQLite transactionで保存して
+change sequenceを更新する。成功responseは`rvw://walkthrough/<uuid>`を含むWalkthrough全体を返す。
+このcommandはbrowserを開かず、どのviewerのnavigationも変更しない。
+
+#### Update
+
+```bash
+rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
+```
+
+stdinはpublish inputから`pullRequest`を除いた完全置換objectであり、`sourceOid`、title、body、全referenceを
+必須とする。`diagramBindings`省略時は空、`authorLabel`省略時だけ既存値を保つ。publishと同じ検証後、
+同じWalkthrough IDとURI、`createdAt`を保って現在値を一つのSQLite transactionで置き換え、change
+sequenceを更新する。過去値は保存しない。既存の文書全体commentは同じIDへ残る。publishとupdateは
+passiveであり、browserを開かずnavigationも変更しない。
+
+#### Delete
+
+```bash
+rvw walkthrough delete <WALKTHROUGH_URI> --json
+rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
+```
+
+`--yes`なしは`WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED`と対象Walkthrough、reference、comment、postの
+削除件数を返してexit 2とする。明示authorization後の`--yes`だけがWalkthrough、reference、対象comment、
+postを一つのSQLite transactionで物理削除し、change sequenceを更新する。この削除はretained commit refを
+削除しない。
+
+### 7.3 JSON transport contract
+
+- machine consumerは`--json`または`--stdin --json`を必須とし、stdoutへJSON valueを一つだけ返す。
+- progressとdiagnosticはstderrへ出し、errorは`code`、`message`、`suggestions`を持つ。
+- stdinは1 MiB以下の単一JSON objectとする。
+- comment本文とreplyはplain UTF-8 textで64 KiB以下とする。
+- Walkthrough本文は256 KiB以下、referenceは最大200件とする。
+- `walkthrough get`はcurrent WalkthroughとPR identity、local repository pathを返す。
+- `comment list`は登録済みPRをURLまたは番号で受け、`unresolved`を既定に`resolved` / `all`も選べる。
+  `limit`は既定50、最大100、`offset`は既定0とし、`total`、`hasMore`、`nextOffset`を返す。
+  各threadはURI、state、target要約、post件数、root postの先頭512 bytes、latest headに対してserviceが
+  導出したplacementだけを返し、PR本文は含めない。完全なtarget、全post、source excerptは
+  `comment get`だけが返す。
+- `comment get`はPR URL、repository path、最新title、base/head branchとOID、comparison base、comment
+  target、posts、`createdHeadOid`、`latestHeadOid`、各postの`relatedCommitOid`、latest headに対してserviceが
+  導出したplacementを返す。既定ではPR本文を含めず、`--include-pr-body`指定時だけ最新の同期済み本文を
+  `pullRequest.body`として返す。呼び出し側はOID比較でOutdatedを推測しない。
+- repository targetの`comment get`はexact source OID/pathとavailabilityに加え、line/rangeなら前後
+  最大20行、file-levelなら先頭からのsource excerptを返す。excerptは最大200行、64 KiBとし、前後と
+  byte上限による切り詰めを明示する。`availability`の値域は`available`（textとして取得可能。submoduleは
+  OID text）、`binary`（NULを含むかUTF-8ではない）、`too-large`（1 MiB超）、`missing`（exact OIDにpathが
+  存在しない）とする。`available`だけがexcerptを持ち、それ以外は`null`とする。Agentは必要な周辺contextを
+  local repositoryのexact OIDから読む。
+- standalone `comment reply`のstdinは`body`、任意の`authorLabel`、任意の
+  `relatedCommitOid`を持つ。関連OIDを指定した場合は対象PRで利用可能なcommitでなければならない。
+- `pr sync`の`commentUpdates`は最大500件で、各要素は`commentRef`、`reply`、`resolve`を必須とする。
+- protocol schemaを変更する場合はprotocol version、CLI contract test、2つの共通Skill、README、
+  `docs/cli-protocol.md`を同じ変更で更新する。
+
+## 8. SQLite
+
+OS user data directoryに一つのDBを置く。`node:sqlite`、WAL、foreign keys、busy timeoutを使う。
+
+```sql
+CREATE TABLE app_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+-- change_sequenceに加え、globalなtheme_preferenceをlight / dark / systemで保持する。
+
+CREATE TABLE pull_requests (
+  id TEXT PRIMARY KEY,
+  host TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  repository TEXT NOT NULL,
+  number INTEGER NOT NULL,
+  github_url TEXT NOT NULL,
+  local_repository_path TEXT NOT NULL,
+  git_common_dir TEXT NOT NULL,
+  latest_title TEXT NOT NULL,
+  latest_body TEXT NOT NULL,
+  latest_base_ref_name TEXT NOT NULL,
+  latest_head_ref_name TEXT NOT NULL,
+  latest_base_oid TEXT NOT NULL,
+  latest_comparison_base_oid TEXT NOT NULL,
+  latest_head_oid TEXT NOT NULL,
+  github_updated_at TEXT NOT NULL,
+  fetched_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(host, owner, repository, number)
+);
+
+CREATE TABLE comments (
+  id TEXT PRIMARY KEY,
+  pull_request_id TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
+  created_head_oid TEXT NOT NULL,
+  resolved_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE comment_targets (
+  comment_id TEXT PRIMARY KEY REFERENCES comments(id) ON DELETE CASCADE,
+  target_kind TEXT NOT NULL,
+  document_kind TEXT,
+  source_oid TEXT,
+  file_path TEXT,
+  source_document_hash TEXT,
+  quoted_text TEXT,
+  walkthrough_id TEXT REFERENCES walkthroughs(id),
+  start_line INTEGER,
+  end_line INTEGER
+);
+
+CREATE TABLE comment_posts (
+  id TEXT PRIMARY KEY,
+  comment_id TEXT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
+  body TEXT NOT NULL,
+  related_commit_oid TEXT,
+  author_label TEXT,
+  is_root INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE walkthroughs (
+  id TEXT PRIMARY KEY,
+  pull_request_id TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
+  source_oid TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  author_label TEXT,
+  diagram_bindings_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE walkthrough_references (
+  walkthrough_id TEXT NOT NULL REFERENCES walkthroughs(id) ON DELETE CASCADE,
+  reference_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  start_line INTEGER,
+  end_line INTEGER,
+  description TEXT,
+  sort_order INTEGER NOT NULL,
+  CHECK((start_line IS NULL AND end_line IS NULL) OR
+        (start_line IS NOT NULL AND end_line IS NOT NULL AND start_line > 0 AND end_line >= start_line)),
+  PRIMARY KEY(walkthrough_id, reference_id)
+);
+```
+
+commit table、review version table、PR revision tableは持たない。既存Phase 1 DBはmigrationで
+version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元できない場合Outdatedとして残す。
+既存の`refs/rvw/pr/<n>/version/...`は旧comment source objectを失わないようresetまで保持し、
+以後の同期だけがcommit ref形式を使う。
+
+## 9. Application / API
+
+主なHTTP API:
+
+```text
+GET  /api/pull-requests/:id
+POST /api/pull-requests/open
+POST /api/pull-requests/:id/refresh
+POST /api/pull-requests/:id/reset
+
+GET /api/pull-requests/:id/commits
+GET /api/pull-requests/:id/tree?oid=<oid>
+GET /api/pull-requests/:id/changed-files?oldOid=<oid>&newOid=<oid>
+GET /api/pull-requests/:id/document?kind=...&sourceOid=...&path=...
+GET /api/pull-requests/:id/markdown-asset?sourceOid=...&path=...
+GET /api/pull-requests/:id/diff?oldOid=...&newOid=...&oldPath=...&newPath=...
+GET /api/pull-requests/:id/search?oid=<oid>&q=<query>&matchCase=<bool>&wholeWord=<bool>
+GET /api/pull-requests/:id/walkthroughs
+GET /api/pull-requests/:id/walkthroughs/:walkthroughId
+DELETE /api/pull-requests/:id/walkthroughs/:walkthroughId
+
+GET  /api/pull-requests/:id/comments
+POST /api/comments
+POST /api/comments/:id/posts
+PATCH /api/comments/:id/posts/:postId
+DELETE /api/comments/:id/posts/:postId
+POST /api/comments/:id/resolve
+POST /api/comments/:id/reopen
+DELETE /api/comments/:id
+GET  /api/comments/:id/placement?...
+```
+
+HTTP/CLIは同じapplication serviceを使用し、transportへbusiness logicを書かない。
+
+## 10. Viewer UX
+
+Viewerの最優先目的は、選択commitが作るrepositoryの状態を利用者が見失わずに読み進めることである。
+初期表示は全文とし、変更fileとdiffはrepository readingを開始するindexとして扱う。利用者が
+関連file、test、設定、documentへ移動してもcommit範囲とopen documentを維持し、diff外へ出たことを
+理由にreview contextを作り直させない。
+
+最上部のtop barにPR情報と、repository全体へ作用するcommit範囲、表示、diff styleを並べる。
+同期とreset actionは右端の`...` menuへ格納し、通常時の縦幅を増やさない。
+各paneのtab列はPR、repository file、Walkthroughの文書navigationだけに使う。
+
+```text
+top bar
+PR情報  対象commit                                      表示            Diff表示           [...]
+        [ subject A … subject D · 4 commits · PR全体 ▼ ] [ 全文 | 変更 ] [ stacked | split ]
+
+commit range popover
+[ PR全体 ] [ 最新だけ ]
+○ subject D · dddddddd  最新    ┐ clickで一件
+● subject C · cccccccc           ├ dragで連続範囲
+● subject B · bbbbbbbb           ┘
+○ subject A · aaaaaaaa
+
+... menu
+[ GitHubと同期 ]
+[ 状態を再構築 ]
+
+tab row
+[ Pull Request.md ] [ src/example.ts ]
+```
+
+- 初期表示はlatest headまでのPR全体を選択し、全文を表示する。
+- 更新前にlatest headを見ていた場合、refresh成功後はnew latest headへ進む。
+- historical commitを選択中ならrefresh後も選択を維持する。
+- PR本文はselectorと無関係に常にlatest cacheを全文表示し、global controlがdiff modeなら
+  `差分なし · 全文表示`を明示する。
+- 明示capture button、未取り込みbanner、version selectorは存在しない。
+- refreshは取得・ref保持・cache更新を一度に行う。
+
+ファイル、コメント、検索、diff style、line selectionの既存UXは維持する。SearchはFiles、Commentsと
+同じく独立したcollapsible stackとする。Walkthroughはsidebar末尾の独立stackに一覧表示し、選択すると説明tabを
+開く。説明tabはMarkdown本文、diagram、stickyなcode reference indexを持つ。referenceを選んだ時だけ
+exact source tabへ移動し、説明tabと既に開いているcode tabはworking setとして残す。必要なら最大二つの
+横ペインへtabを移動し、Walkthroughとsource、二つのsource、Markdown previewとcodeを並べて読む。
+exact source tabを開く操作は対象commitやglobal表示を変更せず、参照先を取得できない場合はtabを開かず
+Walkthrough上の一時chipで通知する。
+CLIによる同一ID更新はpoll後に開いているtabへ反映する。viewerの削除actionは紐づくcommentとpostの件数、
+参照が無効になること、不可逆性を確認してから実行し、成功後はtabとsidebar itemを閉じる。
+
+## 11. Reset
+
+`rvw pr reset <PR> --yes`は対象PRのlocal comments、posts、targets、Walkthrough、code reference、
+`refs/rvw/pr/<n>/...`
+を削除し、現在のGitHub状態を同期してcurrent head refを作り直す。削除件数を事前表示し、
+CLIは`--yes`必須とする。不可逆であり、明示的な利用者authorizationなしにAgentが実行しない。
+
+## 12. Server / security
+
+- Node 24 LTS、Hono、React/Vite、TypeScript strict、pnpm 11
+- `127.0.0.1`の空きportだけへbind
+- expected Hostを検証
+- write APIは`application/json`だけ
+- same-origin以外のwriteを拒否、CORSを有効にしない
+- browser tab leaseはtransport-onlyで永続化しない
+- 自動open時は最後のviewer tab終了後にserver停止
+- `--no-open`はsignal管理
+- SQLiteはWALでserverとSkill CLIの別process accessを扱う
+
+同一PRを複数viewer/processで開くことは許容する。SQLite writeは`BEGIN IMMEDIATE`を使う。
+Phase 1ではDBとGit refを単一transactionにできないため、失敗時の補償削除と起動・同期時の
+invariant検証を行う。refとSQLiteの不整合を検出した場合は部分的に自動修復せずresetを案内する。
+
+## 13. Error方針
+
+ユーザー修正可能errorはcode、短いmessage、具体的suggestionsを返す。silent fallbackしない。
+
+- gh/git未導入・未認証
+- PR URL不正、未登録、closed/merged sync
+- base repository mismatch
+- object fetch失敗
+- local changes未commit、head未push
+- invalid commit range / object / path
+- invalid Walkthrough reference / Mermaid binding / line range
+- refとOID不整合
+- binary / too large
+- stale protocol
+
+保存済みPRのGitHub更新失敗はcache表示を壊さない。UIへ更新errorを表示する。
+
+## 14. テスト
+
+Unit:
+
+- PR Markdown生成・hash・quoted range mapping
+- rendered Markdownのsource position付与、文字列選択からsource line rangeへの変換
+- commit log parse
+- line mapping、rename、Outdated
+- comment resolve/reopen、URI、CLI/API schema
+- Walkthrough schema、URI、Markdown reference validation、行comment placement
+- DB migration 001→current
+
+Integration（実git + fake GitHub）:
+
+- local-first reopen
+- initial sync、linear update、force-push update
+- immutable head refsとreset
+- commit list、tree、full、range diff、search
+- realtime searchのcase/whole-word、file grouping、全展開／折りたたみ、表示modeを保つline jump
+- PR本文latest-only更新
+- code/PR本文comment placement
+- `pr sync` replyのrelated commitとresolve
+- commit固定Walkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
+- worktree間共有
+
+E2E:
+
+1. PRを開きlatest commitと最新Pull Request.mdを表示
+2. commit subjectで一件選択へ切り替え、open tabを維持
+3. click、drag、PR全体shortcutを使うinclusiveなcommit range diffとlatest表示
+4. 全ファイルから未変更fileを開く
+5. 行comment、URI copy、reply、post edit/delete、resolve時の折りたたみ
+6. refreshでnew commitへ更新し、historical commit選択時は維持
+7. headを変えないPR本文だけのrefreshで、行数が変わった最新本文を末尾まで表示
+8. 既存PR本文commentのinline位置とOutdated表示を同じrefreshで更新
+9. old code commentのtrackingまたはOutdated
+10. Walkthroughを開いてもcode tabを自動で開かず、inline reference、index、Mermaid nodeを人間が
+    選んだ時だけ対象commitを変えずexact source行へ移動し、説明tabを保持。missing時はtabを開かず
+    一時的なリンク切れchip、通信や一時的な取得失敗では区別したstatusを表示
+11. tabをdragまたはpane menuで左右へ移し、`Cmd` / `Ctrl`+clickでreferenceを操作元と反対の
+    ペインへ開く
+12. repository MarkdownをSource / Previewで切り替え、Previewの文字列選択からsource行commentを作成する
+13. flowchartとclass diagramのbinding済み要素からexact sourceを開く
+14. CLI更新したWalkthroughのtitle、本文、referenceを同じopen tabへpoll反映
+15. Walkthroughの文字列選択へ行comment、Mermaid fenced block全体へcommentを作成し、本文置換後に
+    一意なquoteは再配置、一意に置けないquoteはOutdated表示
+16. viewerでWalkthroughと紐づくcomment件数を確認して削除し、tabとcommentを同時に除去
+
+CLI contract:
+
+- stdout JSONのみ、stderr progress/error、exit code、stdin sizeとschema
+- protocol versionとcapability
+- `comment list`の未解決既定filter、resolved/all filter、最大100件のpagination、512 bytesのroot
+  preview、latest placement、全replyを読み込まないbounded query
+- `comment get`の最新PR metadata、PR本文の既定省略と`--include-pr-body` opt-in、service導出placement、
+  bounded exact source excerpt
+- resolved threadへのreplyが自動reopenしない状態契約
+- `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
+- `pr sync`のreply/head関連付けと非冪等時の再取得
+- 2つのSkillの初回install、同一内容の再install、いずれかに差異がある場合の`--force`
+- Skill installerが対象Skill directory外を変更しないこと
+- `skill status --json`のschema
+
+Package smoke:
+
+- tarballへ`dist`、migrations、Skills、README、LICENSEだけを必要範囲で含める
+- CLIはNode built-in以外のruntime依存を`dist/cli.mjs`へbundleし、package manifestにruntime
+  `dependencies`を残さない
+- 空のnpm cacheを使ってtemp prefixへoffline global installし、`rvw --version`と`rvw doctor`を実行
+- temp Skill rootへCodex / Claude Code向けの同じ2つのSkillをinstallし、`skill status --json`で一致を確認
+- static assets、migrations、`rvw` / `rvw-walkthrough` Skill assetがtarballに存在することを確認
+
+必須commands:
+
+```bash
+pnpm check
+pnpm test
+pnpm test:e2e
+pnpm build
+pnpm test:package
+```
+
+## 15. CLI / Skill配布
+
+Phase 1 packageは`name: rvw`, `private: true`でnpm publishしない。Phase 2で
+`@<scope>/rvw`としてCLI、web assets、migrations、Skillsを同梱する。
+
+```bash
+rvw skill install codex
+rvw skill install claude
+rvw skill status
+```
+
+既存Skillが同一なら成功、異なるなら`--force`を要求する。`--target`はpackage smokeと
+明示的custom rootに使い、`skill status`ではplatformも必須とする。Skillはlocal DBとrepositoryへ
+アクセスできるlocal Agentだけを対象とする。
+
+Skill sourceはcwdではなく実行中CLIのpackage rootを基準に解決する。`--force`でも対象Skill
+directory以外を削除しない。一度のinstallでコメント取得・返信・sync用の`rvw`と、Walkthroughの
+検証・publish・current値更新・確認付き削除用の`rvw-walkthrough`を配置する。二つのSkillの名前と内容はCodex / Claude Codeで共通とし、
+platform adapterが変えるのは既定のSkill rootだけとする。Agent名はSkillへhardcodeせず、CLIの任意
+`authorLabel`として実行中Agentが正確に判断できる場合だけ渡す。
+
+`rvw-walkthrough`は一つのcurrent `sourceOid`、exact code reference、Mermaid binding、passiveなpublishと
+同一ID更新、削除の明示authorizationを規定する。説明の見出し、順序、分割、粒度、diagram選択はsessionの
+requestとrepository contextへ委ね、固定の文書templateを要求しない。更新時は既存artifactを読んで完全置換し、
+改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への明示authorizationなしに実行しない。
+
+Phase 2ではnpm account、scope、2FA、LICENSE、README、CHANGELOG、SECURITY、dependency license、
+macOS/Linux/Windows smokeを確認してから公開する。publish workflowは通常CIと分離し、GitHub-hosted
+runner、OIDC trusted publishing、`id-token: write`を使う。Phase 1ではnpm publishしない。
+
+## 16. Phase 1 Definition of Done
+
+Functional:
+
+- URLまたはcurrent branchからopen/draft PRを開き、登録済みPRはofflineでも再表示できる。
+- destination commit選択、PR全体diff、複数commit range、changed/all tree、全文、検索を利用できる。
+- `Pull Request.md`は常に最後に成功した同期の最新内容だけを表示する。
+- Agentがcommit固定WalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の
+  referenceだけを最大二ペインのtabで検証できる。不要なWalkthroughは件数確認後に削除できる。
+- PR全体、PR本文、file、line/range comment、reply、post edit/delete、resolve/reopen、sidebar、Outdatedが機能する。
+- 一件／一覧／選択comment参照をcopyし、Codex / Claude Codeへ同じ`rvw` Skillを配置してCLIで解決・返信できる。
+- Agentは登録済みPRの未解決commentをCLIから発見し、個別取得後に対応できる。
+- sync後のreplyをGitHub head commitへ関連付け、UIのpollで更新を表示する。
+- force-push前のsource commitを保持し、resetが削除件数を示して明示確認後に再構築する。
+- UTF-8、CRLF、binary、large file、symlink、submodule、empty fileを規定どおり扱う。
+
+Quality:
+
+- API/CLI validationとmigrationがあり、Git commandへshell interpolationを使わない。
+- `pnpm install --frozen-lockfile`、check、unit/integration、E2E、build、package smokeが成功する。
+- packageは`name: rvw`かつ`private: true`で、CIからnpm publishしない。
+- README、一次仕様、decisions、CLI protocol、`rvw` / `rvw-walkthrough`が同じ利用者モデルを説明する。
+
+Manual acceptance:
+
+1. 実PRを開き、最新`Pull Request.md`から変更の意図を確認する。
+2. 変更fileを入口に全文、all files、検索を使い、関連するdiff外fileまで辿って結果の実装を理解する。
+3. Agentが実装説明をWalkthroughとしてpublishし、viewerの表示位置が勝手に変わらないことを確認する。
+4. 人間が説明内の一部referenceとdiagram nodeだけを選び、説明tabを残したままexact codeを読む。
+5. diff外fileを含む具体的なsourceへline commentを作り、そのURIをAgentへ渡す。
+6. Agentが対象sourceと周辺contextを調査し、authorizedな修正、test、commit、push、必要なPR本文更新を行う。
+7. Agentが`rvw pr sync --stdin --json`でreplyを追加する。
+8. Viewerでnew commitのrepository、任意のcommit range、最新PR本文、comment trackingを読み直してresolveする。
+
+ここまで手動DB編集、内部ID入力、独自の版取り込み操作なしで完了する。
+
+## 17. 変更してはいけない判断
+
+- review version、manual capture、version summaryを再導入しない
+- Walkthrough revision履歴、version selector、改訂版の自動複製を追加しない
+- PR本文履歴やPR revision selectorを追加しない
+- PR本文をcommitへ擬似的にbindingしない
+- Ask/AI chat/Agent spawnを追加しない
+- Agentにbrowser tabやscroll位置を操作させない
+- unresolved/resolved以外のcomment stateを追加しない
+- Skill-less fallback、GitHub comment syncを追加しない
+- changed filesやdiffだけをrepository readingの境界にしない
+- ORM、monorepo、Electron/Tauri、Dockerを導入しない
+- live browser stateをAgent protocolへ入れない
+
+変更が本当に必要な場合は、問題、代替案、選択、trade-offを`docs/decisions.md`へ記録する。

@@ -1,0 +1,337 @@
+import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+import { describe, expect, it } from "vitest";
+import { RvwDatabase } from "../../src/infrastructure/db/database.js";
+
+function openDatabaseInChildProcess(
+  filePath: string,
+  migrationsDirectory: string,
+  startAt: number,
+): Promise<void> {
+  const databaseModuleUrl = pathToFileURL(path.resolve("src/infrastructure/db/database.ts")).href;
+  const script = `
+    import { RvwDatabase } from ${JSON.stringify(databaseModuleUrl)};
+    const [filePath, migrationsDirectory, rawStartAt] = process.argv.slice(1);
+    const delay = Math.max(0, Number(rawStartAt) - Date.now());
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    const database = new RvwDatabase({ filePath, migrationsDirectory });
+    database.close();
+  `;
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "--eval",
+        script,
+        filePath,
+        migrationsDirectory,
+        String(startAt),
+      ],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`child database open failed (${String(code)}): ${stderr}`));
+    });
+  });
+}
+
+const github = {
+  host: "github.com" as const,
+  owner: "acme",
+  repository: "review-repo",
+  number: 7,
+  url: "https://github.com/acme/review-repo/pull/7",
+  title: "Review me",
+  body: "Body",
+  baseRefName: "main",
+  baseOid: "a".repeat(40),
+  headRefName: "feature",
+  headOid: "b".repeat(40),
+  updatedAt: "2026-08-08T00:00:00.000Z",
+  state: "OPEN" as const,
+  isDraft: false,
+};
+
+describe("RvwDatabase", () => {
+  it("serializes the same pending migration across concurrent processes", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-concurrent-migration-"));
+    const migrationsDirectory = path.join(directory, "migrations");
+    const filePath = path.join(directory, "rvw.db");
+    mkdirSync(migrationsDirectory);
+    writeFileSync(
+      path.join(migrationsDirectory, "001_initial.sql"),
+      `CREATE TABLE schema_migrations (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL
+        );`,
+    );
+    const initial = new RvwDatabase({ filePath, migrationsDirectory });
+    initial.close();
+    writeFileSync(
+      path.join(migrationsDirectory, "002_concurrent.sql"),
+      `CREATE TABLE migration_payload (value INTEGER PRIMARY KEY);
+        WITH RECURSIVE sequence(value) AS (
+          VALUES(1)
+          UNION ALL
+          SELECT value + 1 FROM sequence WHERE value < 100000
+        )
+        INSERT INTO migration_payload(value) SELECT value FROM sequence;`,
+    );
+
+    const startAt = Date.now() + 500;
+    await Promise.all([
+      openDatabaseInChildProcess(filePath, migrationsDirectory, startAt),
+      openDatabaseInChildProcess(filePath, migrationsDirectory, startAt),
+    ]);
+
+    const verified = new DatabaseSync(filePath);
+    expect(
+      verified.prepare("SELECT count(*) AS count FROM schema_migrations WHERE version = 2").get(),
+    ).toEqual({ count: 1 });
+    expect(verified.prepare("SELECT count(*) AS count FROM migration_payload").get()).toEqual({
+      count: 100000,
+    });
+    verified.close();
+  }, 10_000);
+
+  it("persists one theme preference across database instances", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-theme-db-"));
+    const filePath = path.join(directory, "rvw.db");
+    const first = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+
+    expect(first.getThemePreference()).toBe("system");
+    expect(first.setThemePreference("dark")).toBe("dark");
+    first.close();
+
+    const second = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    expect(second.getThemePreference()).toBe("dark");
+    expect(second.getChangeSequence()).toBe(0);
+    second.close();
+  });
+
+  it("migrates existing walkthrough ranges and persists file-level references", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-walkthrough-reference-db-"));
+    const filePath = path.join(directory, "rvw.db");
+    const legacyMigrationsDirectory = path.join(directory, "legacy-migrations");
+    mkdirSync(legacyMigrationsDirectory);
+    for (const migration of [
+      "001_initial.sql",
+      "002_commit_model.sql",
+      "003_editable_comment_posts.sql",
+      "004_walkthroughs.sql",
+      "005_walkthrough_comments.sql",
+      "006_theme_preference.sql",
+    ]) {
+      writeFileSync(
+        path.join(legacyMigrationsDirectory, migration),
+        readFileSync(path.join("migrations", migration)),
+      );
+    }
+
+    const legacy = new RvwDatabase({
+      filePath,
+      migrationsDirectory: legacyMigrationsDirectory,
+    });
+    const pullRequest = legacy.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const ranged = legacy.createWalkthrough({
+      pullRequestId: pullRequest.id,
+      sourceOid: github.headOid,
+      title: "Ranged reference",
+      body: "Open the range.",
+      diagramBindings: {},
+      references: [
+        {
+          id: "handler",
+          label: "Request handler",
+          path: "src/handler.ts",
+          startLine: 10,
+          endLine: 24,
+          description: null,
+        },
+      ],
+    });
+    const wholeComment = legacy.createComment({
+      pullRequestId: pullRequest.id,
+      createdHeadOid: github.headOid,
+      target: {
+        kind: "walkthrough",
+        walkthroughId: ranged.id,
+        walkthroughTitle: ranged.title,
+        sourceDocumentHash: null,
+        quotedText: null,
+        startLine: null,
+        endLine: null,
+      },
+      body: "Keep this whole-Walkthrough comment.",
+    });
+    legacy.close();
+
+    const migrated = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    expect(migrated.getWalkthrough(ranged.id)?.references).toEqual([
+      {
+        id: "handler",
+        label: "Request handler",
+        path: "src/handler.ts",
+        startLine: 10,
+        endLine: 24,
+        description: null,
+      },
+    ]);
+    expect(migrated.getComment(wholeComment.id)).toMatchObject({
+      target: {
+        kind: "walkthrough",
+        walkthroughId: ranged.id,
+        sourceDocumentHash: null,
+        quotedText: null,
+        startLine: null,
+        endLine: null,
+      },
+      posts: [{ body: "Keep this whole-Walkthrough comment." }],
+    });
+    const fileLevel = migrated.createWalkthrough({
+      pullRequestId: pullRequest.id,
+      sourceOid: github.headOid,
+      title: "File reference",
+      body: "Open the file.",
+      diagramBindings: {},
+      references: [
+        {
+          id: "composition",
+          label: "Composition root",
+          path: "src/application.ts",
+          startLine: null,
+          endLine: null,
+          description: "File-wide wiring",
+        },
+      ],
+    });
+    expect(fileLevel.references).toMatchObject([
+      { id: "composition", startLine: null, endLine: null },
+    ]);
+    migrated.close();
+  });
+
+  it("applies migrations and increments change sequence per write transaction", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    expect(database.getChangeSequence()).toBe(0);
+    const pullRequest = database.upsertPullRequest(
+      github,
+      {
+        localRepositoryPath: "/repo",
+        gitCommonDir: "/repo/.git",
+      },
+      "c".repeat(40),
+    );
+    expect(database.getChangeSequence()).toBe(1);
+    expect(database.getPullRequest(pullRequest.id)?.latestHeadOid).toBe(github.headOid);
+    expect(database.getPullRequest(pullRequest.id)?.latestComparisonBaseOid).toBe("c".repeat(40));
+    database.close();
+  });
+
+  it("never loads migrations from the directory being reviewed", () => {
+    const untrustedDirectory = mkdtempSync(path.join(os.tmpdir(), "rvw-untrusted-cwd-"));
+    const migrations = path.join(untrustedDirectory, "migrations");
+    mkdirSync(migrations);
+    writeFileSync(path.join(migrations, "999_untrusted.sql"), "THIS IS NOT VALID SQL;");
+    const originalCwd = process.cwd();
+    let database: RvwDatabase | null = null;
+    try {
+      process.chdir(untrustedDirectory);
+      database = new RvwDatabase({ filePath: ":memory:" });
+      expect(database.getChangeSequence()).toBe(0);
+    } finally {
+      database?.close();
+      process.chdir(originalCwd);
+    }
+  });
+
+  it("migrates existing review-version comments to commit-backed comments", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-legacy-db-"));
+    const filePath = path.join(directory, "rvw.db");
+    const legacy = new DatabaseSync(filePath);
+    legacy.exec("PRAGMA foreign_keys = ON");
+    legacy.exec(readFileSync("migrations/001_initial.sql", "utf8"));
+    legacy
+      .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?)")
+      .run("2026-08-08T00:00:00.000Z");
+    const pullRequestId = "11111111-1111-4111-8111-111111111111";
+    const versionId = "22222222-2222-4222-8222-222222222222";
+    const commentId = "33333333-3333-4333-8333-333333333333";
+    const postId = "44444444-4444-4444-8444-444444444444";
+    const now = "2026-08-08T00:00:00.000Z";
+    legacy
+      .prepare(
+        `INSERT INTO pull_requests(
+          id, host, owner, repository, number, github_url, local_repository_path, git_common_dir,
+          latest_title, latest_body, latest_base_ref_name, latest_head_ref_name, latest_base_oid,
+          latest_head_oid, github_updated_at, fetched_at, created_at, updated_at
+        ) VALUES (?, 'github.com', 'acme', 'review-repo', 7, ?, '/repo', '/repo/.git',
+          'Review me', 'Body', 'main', 'feature', ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(pullRequestId, github.url, github.baseOid, github.headOid, now, now, now, now);
+    legacy
+      .prepare(
+        `INSERT INTO review_versions(
+          id, pull_request_id, sequence, previous_review_version_id, base_tip_oid,
+          comparison_base_oid, head_oid, comparison_base_git_ref, head_git_ref,
+          pr_title, pr_body, pr_markdown, summary, captured_at
+        ) VALUES (?, ?, 1, NULL, ?, ?, ?, 'refs/legacy/base', 'refs/legacy/head',
+          'Review me', 'Body', '# Review me\n\nBody', NULL, ?)`,
+      )
+      .run(versionId, pullRequestId, github.baseOid, "c".repeat(40), github.headOid, now);
+    legacy
+      .prepare(
+        `INSERT INTO comments(
+          id, pull_request_id, created_review_version_id, resolved_at, created_at, updated_at
+        ) VALUES (?, ?, ?, NULL, ?, ?)`,
+      )
+      .run(commentId, pullRequestId, versionId, now, now);
+    legacy
+      .prepare(
+        `INSERT INTO comment_targets(
+          comment_id, target_kind, document_kind, document_review_version_id,
+          source_oid, file_path, start_line, end_line
+        ) VALUES (?, 'document', 'pull_request_markdown', ?, NULL, NULL, 1, 1)`,
+      )
+      .run(commentId, versionId);
+    legacy
+      .prepare(
+        `INSERT INTO comment_posts(
+          id, comment_id, body, related_review_version_id, author_label, created_at
+        ) VALUES (?, ?, 'Legacy comment', ?, 'You', ?)`,
+      )
+      .run(postId, commentId, versionId, now);
+    legacy.close();
+
+    const database = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    expect(database.getPullRequest(pullRequestId)?.latestComparisonBaseOid).toBe("c".repeat(40));
+    expect(database.getComment(commentId)).toMatchObject({
+      createdHeadOid: github.headOid,
+      target: {
+        documentKind: "pull-request-markdown",
+        sourceDocumentHash: `legacy:${versionId}`,
+        quotedText: null,
+      },
+      posts: [{ relatedCommitOid: github.headOid, createdAt: now, updatedAt: now }],
+    });
+    database.close();
+  });
+});
