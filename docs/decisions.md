@@ -1,0 +1,907 @@
+# Architecture decisions
+
+## 2026-08-11: Start public protocol compatibility at version 1
+
+### Problem
+
+The machine protocol advanced through several breaking revisions while rvw had one user and remained
+private and unpublished. Those internal numbers reached version 9, but no npm release, public
+repository consumer, installed bundled Skill, or `rvw` executable on the user's PATH depended on them.
+Carrying the internal number into the first public release would make the compatibility history appear
+older than the public contract it represents.
+
+### Choice
+
+Label the current machine contract as protocol version 1 before creating the public repository or
+publishing a package. This is a compatibility-epoch reset, not a rollback to the schema that happened
+to use version 1 during private development. Treat every pre-public protocol number as an unsupported
+internal draft, and update the executable, bundled Skills, contract tests, and public documentation
+together.
+
+After the first public release, protocol versions increase monotonically for breaking changes and are
+never reset or reused. Capabilities remain independently required so consumers reject a version that
+does not provide the operations they need.
+
+### Trade-offs
+
+- Historical private commits and design notes can mention versions 2 through 9; they are not public
+  compatibility promises.
+- Any forgotten pre-public consumer would reject the new CLI until updated, but the local executable
+  and both supported Skill locations were checked before this reset and contained no installed client.
+- The first public package can use package version 0.1.0 and protocol version 1 without implying that
+  package and protocol versions advance together.
+
+## 2026-08-11: Bundle npm runtime dependencies into the CLI artifact
+
+### Problem
+
+Switching maintainers and CI to pnpm protects the development install, but the published package still
+declared a runtime dependency tree. Every `npm install --global` would independently resolve and fetch
+that tree under npm's lifecycle-script and release-selection behavior, so the distributed CLI did not
+inherit the reviewed pnpm lockfile or its supply-chain policies.
+
+### Choice
+
+Bundle every non-Node runtime module into `dist/cli.mjs`. Fail the build if esbuild leaves any external
+import other than a Node built-in. The web assets were already bundled, so move all direct packages to
+`devDependencies` and publish no runtime `dependencies`. Generate separate CLI and web third-party
+notices from their actual module graphs.
+
+Strengthen package smoke to create the tarball with `pnpm pack`, install that exact local artifact with
+`npm install --global --offline` using an empty cache and temporary prefix, verify that the installed
+package has no nested runtime dependency tree, and run `rvw doctor` from the global binary.
+
+### Trade-offs
+
+- The tarball and source map grow because CLI dependencies are embedded, but installation no longer
+  resolves mutable runtime packages.
+- A dependency security fix requires rebuilding and releasing rvw; consumers cannot receive a patched
+  transitive dependency without an rvw release.
+- Native dependencies would need a separate cross-platform artifact decision. The current runtime graph
+  is JavaScript-only, and the build gate prevents silently externalizing a future package.
+
+## 2026-08-11: Use pnpm with fail-closed dependency installation
+
+### Problem
+
+The development and CI dependency install trusted every dependency lifecycle script by default. A
+compromised direct or transitive package could therefore execute code immediately during install, and
+the repository had no policy for newly published versions, trust-evidence downgrade, exotic transitive
+sources, or a lockfile proposed under weaker settings. Those defaults are too permissive for a CLI that
+will later be distributed through the public npm registry.
+
+### Choice
+
+Use pnpm 11 as the development package manager, pinned with an exact version and registry integrity in
+`package.json`. Commit `pnpm-lock.yaml` and keep the single root package; `pnpm-workspace.yaml` is the
+project security configuration, not a monorepo boundary.
+
+Dependency installation fails for every unreviewed build script. Approvals are version-specific, with
+only the currently required esbuild version approved initially. Resolution rejects versions published
+within the last 72 hours, missing publication time, trust-evidence downgrade, and exotic transitive
+sources. CI re-applies these checks to lockfile entries rather than treating a contributor-edited
+lockfile as trusted. Running a project script with stale dependencies fails instead of silently
+installing. The migration detected that `@pierre/theme@2.0.0`, required by the currently used
+`@pierre/diffs@1.3.5` API, had lost the provenance evidence present on earlier theme releases. The
+1.2.x diffs API does not contain the active-line and reveal methods used by the viewer. Keep both
+versions exact and add a trust-policy exclusion for theme 2.0.0 only. The reviewed npm artifact has
+registry signatures and its manifest matches theme 2.0.0 in upstream's `diffs-v1.3.5` tag; the lockfile
+pins its integrity. A future version remains blocked unless it restores trust evidence or receives its
+own reviewed exception.
+
+Create the release-shaped tarball with `pnpm pack`, then install that exact artifact with
+`npm install --global` into a temporary empty prefix and run `rvw doctor` from the installed binary.
+Keep the npm CLI for that consumer-facing install and the future OIDC trusted-publishing job. Pin every
+GitHub Action to a full commit SHA. The separate distribution decision will determine whether runtime
+dependencies can be bundled so package consumers do not resolve an independent dependency tree during
+install.
+
+### Trade-offs
+
+- A legitimate release can be selected only after the waiting period; an urgent exact-version
+  exception requires an intentional reviewed change.
+- Adding or updating a package with a build script fails until its exact version is reviewed and
+  approved.
+- pnpm's stricter dependency layout can reveal undeclared dependency access that npm hoisting had
+  hidden; the full test and package-smoke suites are the compatibility gate.
+- Contributors need the pinned pnpm major. The committed package-manager metadata and CI bootstrap keep
+  its version deterministic.
+- pnpm secures maintainer and CI installation, but does not by itself secure the dependency tree
+  installed by an npm consumer; bundling and trusted publishing remain separate controls.
+
+## 2026-08-11: Map rendered Markdown selection to source-line comments
+
+### Problem
+
+Repository Markdown and Walkthroughs are primarily read in rendered form, but line comments were only
+available in source/code views and Walkthrough feedback could only target the whole document. Persisting
+browser ranges, DOM paths, or Mermaid SVG elements would make anchors depend on renderer output. Requiring
+stable block IDs in authored Markdown would avoid that dependency, but would also impose a new document
+syntax and would not match the existing PR-body policy for mutable, revisionless text.
+
+### Choice
+
+Use Markdown parser source positions as a one-way mapping from native browser text selection to an
+inclusive source-line range. Decorate rendered leaf text with its source line, keep native selection and
+copy behavior, and show a nearby comment action after selection. Store only the normal document identity
+and source range; never store a DOM path, visual line, browser range, generated HTML, or SVG node.
+
+For immutable repository Markdown, the target remains the exact Git document and source lines. For the
+latest PR body and mutable Walkthrough body, store a normalized document hash and the exact quoted lines.
+When the hash changes, re-anchor only if those quoted lines occur exactly once as a contiguous range in
+the current document; otherwise report Outdated and retain the original quote. Whole-document comments
+continue to target the stable document identity and never become Outdated. A Mermaid comment targets the
+entire original fenced code block, not a node or the generated SVG.
+
+This supersedes the whole-Walkthrough-only and mandatory stable-AST-block-ID parts of the 2026-08-09
+Walkthrough publication decision. Walkthroughs still have one current value and no version selector or
+retained full revision; their stable ID, passive Agent boundary, exact code references, and explicit
+delete authorization remain unchanged. Because Walkthrough comment targets now expose source hash,
+quoted text, and nullable line fields, the strict JSON protocol advances to version 9.
+
+### Trade-offs
+
+- A reviewer can comment where they read without introducing renderer-specific persisted state.
+- Source-line granularity can include Markdown punctuation or adjacent source content represented by one
+  rendered node; the visible affordance labels the resulting source range explicitly.
+- Quote matching conservatively refuses ambiguous or edited text and exposes that loss as Outdated.
+- Mermaid feedback is block-level in Phase 1; node-level feedback would need a separate stable authored ID
+  contract rather than generated SVG identity.
+- Mutable documents retain only a bounded quote and hash, not a hidden revision history.
+
+## 2026-08-10: Keep review scope independent from document navigation
+
+### Problem
+
+Walkthrough references, repository Markdown links, and code-comment targets can identify an exact
+source commit, but opening them previously replaced the global commit range with that single commit.
+A reviewer reading the full Pull Request could therefore lose their review scope merely by following
+evidence or reopening a comment target. Those navigation paths also changed global display and tree
+modes even though the controls describe the repository-wide review context, not one tab.
+
+### Choice
+
+Treat document navigation as passive with respect to review scope. A Walkthrough reference is resolved
+against its retained exact `sourceOid + path` before changing the document workspace; repository
+Markdown links and code-comment targets likewise open their exact-source document identity without
+changing the selected commit range, full/diff mode, diff style, or file-tree mode. A Walkthrough source
+renders its fixed snapshot in global full mode and uses the selected global comparison in diff mode, so
+it remains switchable between stacked and split. Repository Markdown links and code-comment targets
+instead retain exact-source full text within their pane even when the global control remains in diff
+mode. When that source differs from the selected destination commit, the viewer shows both short OIDs.
+
+If the exact document cannot be fetched or is no longer displayable, leave the current tabs and panes
+untouched and show a short-lived status chip in the originating Walkthrough. Missing commits and paths
+are reported as broken links; transport and unexpected failures are reported as load failures. Resolve
+concurrent requests independently per target pane, and discard a delayed result if newer navigation has
+already changed that pane. Publication still validates and retains every reference, so broken links are
+an explicit recovery path for inconsistent or externally damaged local Git state.
+
+### Trade-offs
+
+- Following evidence or reopening a comment target no longer destroys the reviewer’s PR-wide or
+  multi-commit context.
+- Walkthrough diff mode intentionally applies the current review range as a lens over its referenced
+  path; Markdown and comment navigation preserve exact historical content without moving global scope.
+- Reference navigation performs one document availability read before opening the tab; full mode then
+  reuses that cached exact document.
+- Broken and temporarily unavailable references are distinguished in place and do not silently open a
+  different commit or path.
+
+## 2026-08-10: Return complete review context through the Agent comment CLI
+
+### Problem
+
+The copied-comment workflow let an Agent read a known URI, but could not discover unresolved feedback.
+The read response also omitted the cached PR intent, branch metadata, rvw's conservative latest
+placement, and the target source text. Consumers therefore needed extra Git/GitHub calls and could
+incorrectly approximate Outdated by comparing creation and head OIDs. The bundled Skill also left the
+state of a resolved thread after a reply implicit.
+
+### Alternatives
+
+- Keep URI-only handoff and require the user to copy every desired thread.
+- Return complete repository files with every comment.
+- Add discovery plus bounded, exact context while keeping source expansion explicit.
+
+### Choice
+
+Protocol v8 adds `comment.list`. It takes a registered PR reference, defaults to unresolved threads,
+and can explicitly select resolved or all threads. Results are paginated with a default of 50 and a
+maximum of 100. Each item contains a target summary, post count, a 512-byte root-post preview, and
+rvw's service-derived latest placement. The query does not load replies, exact target evidence, or
+source excerpts. Agents call `comment get` for each thread they inspect or address.
+
+`comment get` returns the latest cached PR title, base/head branches and OIDs, comparison base,
+timestamps, local repository path, latest placement, and an exact-source excerpt for repository-file
+targets. The default response and `comment list` omit the PR body; `comment get --include-pr-body`
+adds the latest cached body when the review task needs PR-level intent. Excerpts include the selected
+range with up to 20 surrounding lines, or the beginning of a file-level target, capped at 200 lines
+and 64 KiB with explicit truncation fields. The exact OID/path remains available for reading the
+complete surrounding repository. Outdated remains derived by rvw; consumers never infer it from OID
+inequality.
+
+Replies remain independent of resolution state. Resolved threads accept replies and stay resolved
+until an explicit reopen. The Skill documents that behavior and shows `authorLabel` in its standalone
+reply example.
+
+### Trade-offs
+
+- An Agent can start from a PR-level request without a manually copied URI list.
+- Cached PR intent can be requested together with placement and target evidence without network
+  access, while routine reads avoid attaching the full body.
+- List placement may run Git mapping for up to the requested page size and is intentionally richer
+  than a raw DB query.
+- Pagination keeps discovery complete while bounding one response and its placement work. Concurrent
+  comment updates can reorder an offset-based page, so Agents should re-list before final resolution.
+- Bounded excerpts avoid unbounded JSON/token cost but still require a repository read for truncated
+  files and broader architectural context.
+- Protocol v8 consumers must adopt the new capability and response fields together.
+
+## 2026-08-10: Let Walkthrough references target a file or an inclusive line range
+
+### Problem
+
+Requiring every Walkthrough reference to carry a line range makes file-wide architecture and
+composition claims pretend to have a precise line anchor. At the same time, navigation only emphasized
+the first line of a valid multi-line reference, which made the existing range contract look like a
+single-line locator and encouraged Agents to publish overly narrow references.
+
+### Choice
+
+A Walkthrough reference always identifies an exact `sourceOid + path` and may additionally identify an
+inclusive line range. `startLine` and `endLine` are either both present or both absent. Equal values mean
+one line; different values mean the complete inclusive range; absent values mean the file as a whole.
+The viewer highlights the full supplied range and does not select a line for a file-level reference.
+
+The bundled `rvw-walkthrough` Skill asks Agents to prefer the smallest meaningful multi-line block for
+code-flow claims, reserve single-line ranges for genuinely line-local claims, and use file-level
+references for file-wide structure. Commit and UTF-8 document validation remains mandatory in all cases,
+and supplied line ranges must still exist in the exact snapshot.
+
+This supersedes the mandatory line-range and first-line-only highlighting parts of the 2026-08-09
+Walkthrough publication decision. Its commit fixation, passive publication, and human-controlled
+navigation boundaries remain in force. Because saved Walkthrough references can now return nullable
+line fields, the JSON protocol advances to version 6.
+
+### Trade-offs
+
+- References now express their real evidence granularity instead of inventing a line anchor.
+- Existing range-based publications remain valid and migrate without changes.
+- Consumers must handle nullable line fields and distinguish opening a file from jumping to a range.
+- File-level references verify a document boundary, not a stable symbol or block within that document.
+
+## 2026-08-10: Persist the UI theme outside the viewer origin
+
+### Problem
+
+Each `rvw open` viewer binds to an automatically assigned localhost port. Browser storage is scoped by
+origin, so a theme selected for one Pull Request is not available when another viewer starts on a
+different port.
+
+### Alternatives
+
+- Use only browser storage and require the user to select a theme for every port.
+- Reuse one fixed port and long-running server for every viewer.
+- Store the preference in rvw's existing OS-user-scoped SQLite database.
+
+### Choice
+
+Store one `light`, `dark`, or `system` theme preference in the existing SQLite `app_meta` table and
+expose it through the local same-origin HTTP API. A new viewer reads this setting before rendering the
+React application, regardless of its Pull Request or port. Per-origin browser storage remains a fast
+initial-paint cache and a temporary fallback when the shared setting cannot be read; SQLite is the
+source of truth.
+
+Theme selection applies immediately in the current viewer and then writes the shared preference. A
+write failure is shown through the existing error notice instead of claiming cross-viewer persistence.
+The preference is global presentation state, is not part of a Pull Request, and does not advance the
+review change sequence.
+
+### Trade-offs
+
+- Theme selection follows the OS user across repositories, Pull Requests, and automatically assigned
+  viewer ports.
+- Viewer startup performs one small local request before the application renders.
+- Already-open viewers do not automatically change when another viewer selects a theme; newly opened
+  viewers and reloads use the latest successful setting.
+- If the shared DB is temporarily unavailable, the current origin can still render from its browser
+  cache and reports the API failure after the application loads.
+
+## 2026-08-10: Keep one current Walkthrough per stable ID
+
+### Problem
+
+Immutable Walkthrough publications force an Agent to create a second artifact whenever reviewer
+feedback reveals that an explanation is unclear. The old and revised copies then remain side by side,
+the reviewer must decide which one is current, and whole-document feedback stays attached to the less
+useful copy. This is especially awkward for the intended loop where an Agent reads a reaction and
+improves how it explains the same implementation.
+
+Walkthrough comments do not target Markdown lines, rendered blocks, or Mermaid elements. Their anchor is
+already the Walkthrough as a whole, so preserving every body and reference revision does not protect a
+finer-grained comment location. Unnecessary or duplicate artifacts also need a deliberate removal path.
+
+### Alternatives
+
+- Keep publications immutable and ask Agents to publish a new copy for every revision.
+- Add Walkthrough revisions, history, diffing, and a version selector.
+- Replace the current value in place under a stable ID without storing history.
+- Permit deletion only when no comments exist, leaving cleanup of reviewed duplicates cumbersome.
+- Confirm associated feedback counts and delete the Walkthrough, references, comments, and posts
+  together.
+
+### Choice
+
+A Walkthrough has one current title, body, source commit, reference set, diagram-binding set, and author
+label under one stable `rvw://walkthrough/<uuid>`. The Agent protocol can read that current object and
+replace it completely after applying feedback. The ID, URI, `createdAt`, and whole-document comment
+targets remain stable; rvw stores no previous value, update sequence, or Walkthrough version selector.
+Publish and update validate the same commit, path, line, Markdown-link, and diagram-binding invariants
+and remain passive with respect to browser state.
+
+Deletion requires an explicit confirmation. The preview reports reference, comment, and post counts;
+the confirmed operation deletes them with the Walkthrough in one SQLite transaction. The viewer uses a
+native confirmation, and the Agent CLI requires `--yes` plus explicit user authorization. Retained Git
+commit refs are not removed individually because another Walkthrough or comment may share the commit;
+reset remains their cleanup boundary.
+
+This supersedes the immutability and no-update/delete parts of the 2026-08-09 Walkthrough decisions.
+Their stable whole-document anchor, passive publication, exact source validation, and human-controlled
+navigation choices remain in force.
+
+### Trade-offs
+
+- Feedback can improve the same explanation without cluttering the sidebar with artificial revisions.
+- A Walkthrough comment always resolves with the current explanation, not a historical body that the
+  commenter originally saw.
+- Update is a full replacement, so Agents must read the current artifact and resubmit every reference;
+  CLI validation prevents partial reference drift.
+- With no revision history, a mistaken update cannot be restored by rvw. Git still preserves code, but
+  not prior explanatory prose.
+- Confirmed deletion invalidates copied Walkthrough and attached comment URIs and is intentionally
+  irreversible.
+
+## 2026-08-10: Name bundled Skills by capability, not Agent host
+
+### Problem
+
+The first installer shipped separate `rvw-codex` and `rvw-claude` definitions. Their protocol and
+workflow constraints were almost identical, while Walkthrough publication was embedded beside comment
+handling and synchronization. That made the Agent host look like a product capability, duplicated
+instructions, and loaded publication details into ordinary comment work.
+
+Moving Walkthrough publication into its own Skill creates another risk: prescribing headings,
+explanation order, or diagram choice in the Skill would override the current session's understanding of
+the user's request and repository context.
+
+### Alternatives
+
+- Keep separate Codex and Claude Code Skills and duplicate the Walkthrough section in both.
+- Keep one platform-specific Skill per Agent host but move detailed publication guidance to shared docs.
+- Install the same capability-named Skills on both hosts, separating comment work from Walkthrough
+  publication and constraining only the artifact contract.
+- Put all CLI operations in one shared `rvw` Skill.
+
+### Choice
+
+Ship two platform-independent Skill directories: `rvw` for reading and addressing comments and
+synchronizing pushed state, and `rvw-walkthrough` for publishing commit-fixed explanations. Codex and
+Claude Code use the exact same contents under their respective Skill roots; the install platform selects
+only the destination directory. Optional author labels are supplied accurately by the running Agent
+rather than hardcoded in the Skill.
+
+The Walkthrough Skill defines source-commit, reference, binding, validation, immutability, and passive
+navigation requirements. It deliberately does not define a document template, required sections,
+explanation order, or preferred diagram. Those choices remain with the current session and user request.
+
+### Trade-offs
+
+- One source of Skill instructions prevents platform drift and makes capability triggers clearer.
+- Ordinary comment work does not load the Walkthrough publication contract.
+- Installer status now reports two Skills per selected platform, and an install manages both together.
+- Host-specific guidance cannot be added by casually forking Skill contents; genuine host differences
+  must remain packaging concerns or be documented as an explicit exception.
+- Existing `rvw-codex` or `rvw-claude` directories are not silently deleted because they may contain
+  local changes; users upgrading an earlier development install must remove those legacy directories
+  after reviewing them.
+
+## 2026-08-09: Anchor Walkthrough comments to the immutable document
+
+### Problem
+
+A rendered Walkthrough is useful precisely because Markdown and Mermaid are transformed into a richer
+reading surface. That transformation means a visual row, DOM node, or SVG element is not a stable
+comment anchor. Source line numbers would also make the reviewer reason about Markdown syntax while
+reading Preview.
+
+### Alternatives
+
+- Do not allow comments on Walkthroughs.
+- Store rendered DOM or Mermaid SVG positions.
+- Reuse Markdown source line numbers in Preview.
+- Start with whole-Walkthrough comments, and require explicit stable AST block IDs before adding
+  paragraph-level comments.
+
+### Choice
+
+Phase 1 comments may target an immutable Walkthrough ID as a whole document. The viewer places the
+composer and its threads beside the rendered explanation, without claiming that a rendered paragraph
+maps to a source line. `rvw comment get` includes the complete target Walkthrough so an external Agent
+receives the exact body, source commit, diagram bindings, and code references under discussion.
+
+Rendered positions are never persisted. Paragraph-level comments remain possible only after the
+publication format gains explicit stable block IDs derived from the Markdown AST.
+
+### Trade-offs
+
+- Comments remain stable across theme, width, Mermaid renderer, and browser changes.
+- The first interaction is sufficient for requests about the explanation as a whole.
+- Reviewers cannot yet attach a thread to one rendered paragraph or diagram edge.
+- The comment protocol adds a Walkthrough target and advances to version 4.
+
+## 2026-08-09: Keep one document identity while allowing two reading panes
+
+### Problem
+
+Walkthrough references make cross-file navigation fast, but replacing the explanation with each source
+forces repeated tab switching. The same friction appears when comparing a caller with its definition or
+reading a Markdown design document beside its implementation. Duplicating arbitrary editors or making
+pane layout persistent review state would add a larger workspace model than the reading task needs.
+
+### Alternatives
+
+- Keep one viewer pane and rely on tabs.
+- Allow an unlimited number of editor groups with independently duplicated documents.
+- Always force Walkthrough references into a fixed second pane.
+- Allow at most two panes, keep one tab identity per document, and let the human choose placement.
+
+### Choice
+
+The browser owns an ephemeral workspace with one pane by default and at most two horizontal panes.
+Every open document identity belongs to exactly one pane. A tab can move by drag and drop or the pane
+header's `...` menu; sidebar `Cmd` / `Ctrl`+click targets the right pane, while the same interaction
+within a document targets the opposite pane. A normal click reuses the document's current pane or the
+focused pane for a new document. The second pane disappears when it has no tabs.
+
+Pane assignment, focus, drag state, and Markdown Source / Preview choice are presentation state only.
+They are not stored in SQLite, included in comments, or exposed through the Agent CLI. Repository
+Markdown preview renders the exact fetched Git text without raw HTML, resolves heading links, and loads
+relative images from the same commit through a size-limited endpoint. It does not replace the source view
+needed for line comments.
+
+The sidebar boundary and the divider between two document panes are pointer-resizable with minimum
+reading widths. Divider positions remain ephemeral browser state, support keyboard adjustment, and
+reset to their defaults on double click or reload.
+
+### Trade-offs
+
+- Walkthrough and source, caller and definition, or Markdown and code can remain visible together.
+- One identity prevents confusing duplicate tabs that show the same commit and path in both panes.
+- Two panes preserve usable width for code and diagrams; more complex comparison layouts remain out of
+  scope.
+- Resizable boundaries let the human give a diagram, prose, or wide source file the space it needs
+  without turning layout into durable review state.
+- Reload clears pane placement and preview selection, matching the existing ephemeral tab model.
+- Line comments require Source mode because rendered Markdown no longer has a stable one-to-one visual
+  line surface; file comments remain available in Preview.
+
+## 2026-08-09: Let Agents publish explanations, but let only humans navigate them
+
+### Problem
+
+An Agent can explain an implementation with file paths and line numbers, but plain chat references
+are awkward to verify against a large repository. Automatically opening every cited file would be
+equally disruptive: it would let the Agent control the reviewer's tabs and reading order, turn an
+explanation into live session state, and make it difficult to keep the explanation visible while
+checking only the claims that matter.
+
+Language-server-backed symbol graphs could generate some relationships automatically, but they do not
+capture why an implementation was structured a certain way, require substantial language-specific
+infrastructure, and would expand Phase 1 beyond repository reading.
+
+### Alternatives
+
+- Keep Agent explanations in chat and make humans copy paths into rvw.
+- Let the Agent drive the active rvw browser tab while it explains.
+- Add an in-app Ask/chat surface that opens references from its responses.
+- Generate all explanations and graphs inside rvw through LSP or semantic indexing.
+- Accept a commit-fixed explanation artifact through the existing Skill and CLI boundary, then make
+  every navigation action explicitly human-controlled.
+
+### Choice
+
+An external Agent may publish a Markdown Walkthrough containing typed code references and Mermaid
+node bindings. The artifact is fixed to one available Git commit; rvw validates every path, line range,
+and parsed `rvw-ref:` link against that exact snapshot. The list endpoint returns only display metadata;
+the immutable body and references are loaded when its tab is opened. The viewer renders the explanation
+in an ordinary document tab with an inline-reference treatment, a reference index, and diagrams whose
+bound nodes are selectable.
+
+Publishing is passive. It never opens a browser, activates a tab, changes the selected commit, or
+scrolls a viewer. Only a human click or keyboard action opens an exact source document and highlights
+the referenced line. That source opens in rvw's document workspace, so the Walkthrough and previously
+opened code remain available and the human may place them side by side. The explanation and diagram are Agent claims; committed code is the
+inspectable source of truth.
+
+The protocol is CLI + Skill only (`rvw walkthrough publish --stdin --json`). There is no write HTTP
+endpoint, in-app prompt, Agent launch, or browser-state protocol. Markdown raw HTML is not rendered;
+Mermaid uses strict security settings and only validated node-to-reference bindings become actions.
+
+### Trade-offs
+
+- Humans can sample and verify an Agent explanation without surrendering their reading order.
+- Walkthroughs make cross-file architecture explanations much easier to inspect while remaining
+  independent of an Agent session.
+- Agents must provide exact commit, path, and line data, and stale or malformed references are rejected
+  at publication time.
+- Diagrams describe the Agent's interpretation rather than a mechanically complete call graph.
+- Phase 1 stores immutable publications and does not provide update/delete, semantic indexing, LSP, or
+  automatically generated symbol usage graphs.
+
+## 2026-08-09: Treat the resulting repository as the review surface
+
+### Problem
+
+Code review tools commonly make the changed-file diff the boundary of the review. That is efficient
+for locating edits, but an AI-generated change can be locally plausible while conflicting with an
+unchanged caller, test, configuration file, document, or architectural convention. Showing a better
+diff does not by itself help the human reconstruct the software that exists after the change.
+
+At the other extreme, an Agent IDE can expose the whole repository while coupling code reading to an
+AI chat, editable worktree, and live Agent session. That makes the Agent the center of the workflow and
+turns human review state into session context.
+
+### Alternatives
+
+- Limit rvw to changed files and expandable diff context.
+- Add repository context only to prompts so the Agent can review its own change more accurately.
+- Become an Agent IDE with chat, editing, execution, and session management beside the diff.
+- Treat the selected commit's repository as the primary human reading surface and keep Agent execution
+  behind the Skill and CLI boundary.
+
+### Choice
+
+The review object is the software produced by the selected commit, together with the latest Pull
+Request intent and the commits that produced it. Full files, all files, fixed-string search, document
+tabs, and comments on unchanged code are core review capabilities. Changed files and commit-range diffs
+locate edits inside that repository; they do not restrict where the user may navigate or comment.
+
+The human owns understanding and judgment. An external Agent performs authorized implementation work
+and receives the resulting comments through stable `rvw://comment/<uuid>` references and the JSON CLI
+protocol. rvw does not add AI chat, launch an Agent, edit code, or use the live worktree as its reading
+model.
+
+### Trade-offs
+
+- Reviewers can inspect effects outside the patch and preserve a coherent reading set across Agent
+  iterations.
+- rvw needs a repository tree, full-document loading, search, tabs, and exact commit identity in
+  addition to a diff renderer.
+- Phase 1 asks the human to discover relationships through paths and fixed-string search; it does not
+  add semantic search, LSP, or a code graph.
+- Handoff is less immediate than an embedded chat, but review records remain independent of a model,
+  Agent session, and mutable worktree.
+
+## 2026-08-09: Use one path-aware VS Code icon resolver across document surfaces
+
+### Problem
+
+The file tree, search groups, document tabs, and rendered-file headers each showed a generic file
+glyph. Replacing only one surface would make the same path look unrelated as users move through the
+review workflow, while copying filename rules into each component would let them drift.
+
+### Choice
+
+Use the MIT-licensed `@pierre/vscode-icons` source SVGs and Complete-tier filename/extension
+associations behind one browser-side resolver. Exact filenames take precedence over the longest
+matching extension suffix. File tree rows, search groups, document tabs, and viewer headers all use
+the resolver; folders use the matching closed/open icons. Unknown extensions, symlinks, and
+submodules retain explicit fallbacks. SVG source is bundled locally and checked before trusted inline
+rendering, so the UI does not depend on a CDN.
+
+### Trade-offs
+
+- A path now has the same language or tooling icon throughout the UI, including light and dark themes.
+- The package adds a small pinned runtime dependency and roughly 100 KiB of unpacked source assets.
+- Updating the icon package can change associations and colors, so resolver and representative UI
+  tests guard the intended precedence and placements.
+- Inline SVG preserves the icon set's duo-tone styling, but requires treating the pinned package as a
+  trusted build input and rejecting active SVG content.
+
+## 2026-08-09: Make full-text search a realtime collapsible sidebar tool
+
+### Problem
+
+The existing full-text search was a submit form at the bottom of Files. Results were a flat list,
+opening one forced Full mode, and there was no way to control case, whole-word matching, group large
+result sets, or navigate to the matching line. File-name filtering and repository-content search also
+looked like one tool despite having different scope and semantics.
+
+### Choice
+
+Search becomes a third independent collapsible sidebar stack beside Files and Comments. A 250 ms
+debounce replaces explicit submit. Fixed-string search remains the only search language, with
+case-sensitive and whole-word toggles and VS Code-like case-insensitive substring defaults. The API
+returns every match range on each matched line; the 500-result safety limit continues to count lines,
+while UI totals and file badges count occurrences. Results group by file and support one global
+expand/collapse action.
+
+Opening a result preserves the global Full / Changes and stacked / split state. Full view scrolls to
+the line directly; Changes expands collapsed destination-side context before scrolling. Files with no
+change continue to use the existing local full-text fallback. `Cmd+Shift+F` / `Ctrl+Shift+F` opens the
+Search stack and focuses its input.
+
+### Trade-offs
+
+- Search is clearly separated from file-name filtering and can remain visible with Files and Comments.
+- Live search adds requests while typing, bounded by debounce, query/result/stdout limits, and canceled
+  stale browser requests.
+- Occurrence totals can exceed the 500 matched-line limit; truncated state explicitly says the visible
+  total is incomplete.
+- Whole-word boundaries use Git filtering for repository files and equivalent Unicode-aware matching
+  for returned highlights and `Pull Request.md`; unusual locale-specific case folding may still differ.
+
+## 2026-08-09: Allow post editing and reply deletion while preserving the thread anchor
+
+### Problem
+
+Accidental comments and replies need correction without forcing users to resolve a thread that no
+longer represents a real discussion. At the same time, unrestricted root deletion would orphan
+replies and invalidate copied `rvw://comment/<uuid>` references without a reliable way to know whether
+an Agent still holds them.
+
+### Choice
+
+Root and reply posts may be edited. Reply posts may be physically deleted individually. The root post
+remains the thread and URI anchor while any reply exists, so root deletion is rejected until all replies
+are removed. A thread containing only its root may be physically deleted, with a confirmation that
+copied references will stop resolving. Post identity records `is_root` explicitly so equal timestamps
+cannot change which post anchors the thread. Editing and deletion do not introduce another comment
+state; the only states remain unresolved and resolved.
+
+### Trade-offs
+
+- Users can correct text and remove individual mistaken replies in the same place they review it.
+- Remaining replies always retain a root anchor and stable thread reference.
+- Post history is no longer immutable; an Agent holding previously read content can become stale until
+  it resolves the comment again.
+- A copied reference can become invalid after the final reply is removed and the root thread is then
+  deleted; Phase 1 does not persist clipboard history, so the confirmation is the available safeguard.
+
+## 2026-08-09: Expose inclusive commit ranges in the top bar
+
+### Problem
+
+The destination commit was in the application header while the comparison-boundary selector lived in
+the document-tab row. Both affected every open repository document, and the boundary commit itself was
+not included in the diff, so placement and wording implied a narrower and less intuitive scope than the
+actual behavior. A second full-width row would fix the hierarchy but spend scarce vertical space.
+
+### Alternatives
+
+- Put the raw old- and new-OID selectors next to each other.
+- Remove range selection and always compare the destination with its first parent.
+- Keep multi-commit review, but expose the first included commit instead of the excluded Git boundary.
+
+### Choice
+
+The top bar contains PR identity plus a horizontally compact review-scope group: one inclusive commit
+range picker, Full / Changes, and diff style. GitHub sync and local-state rebuild move into a
+right-aligned `...` overflow menu. The document-tab row contains document navigation only.
+
+The picker treats selected commits as one contiguous set instead of exposing separate destination and
+start selectors. A click selects one commit; dragging across rows or Shift-clicking selects the inclusive
+range in one gesture. PR-wide and latest-only shortcuts cover the common presets. Internally rvw converts
+the earliest selected commit to its first parent and uses the latest selected commit as the destination
+for the existing old-OID/new-OID APIs. The closed picker shows the range summary and count, and gives the
+latest-head selection a high-contrast `最新` badge.
+
+### Trade-offs
+
+- One commit remains one click and any contiguous multi-commit range is one drag gesture.
+- Users select only commits included in the review; the excluded Git boundary is no longer UI vocabulary.
+- Every repository-wide control has one clear home without increasing the header height; at narrow
+  widths the PR heading is hidden before controls.
+- Merge commits continue to use the first-parent boundary, matching the existing range behavior.
+
+## 2026-08-09: Couple changed files to the global commit range and fall back locally
+
+### Problem
+
+A repository-wide review can open files that are absent from the currently selected diff. Returning an
+empty diff makes those files unreadable, while changing the global comparison mode to Full surprises the
+user and also changes the context of other open tabs. A separate changed-tree comparison can answer a
+different question, but duplicates the global range model in a file-local location.
+
+### Alternatives
+
+- Keep the changed-files tree coupled to the global commit range.
+- Change the global comparison mode to Full whenever the active file has no diff.
+- Show an unavailable state for files without a diff.
+- Keep the two comparison selections independent and derive a per-file effective display mode.
+
+### Choice
+
+The changed-files tree, tab change-status icons, and central viewer all use the one global commit range.
+The sidebar has no subordinate comparison selector. Opening a file from the changed-files tree switches
+the viewer to Changes without changing the selected range. When the active document has no content
+change in that range, it fetches and shows the latest selected commit's full text and labels the header
+`差分なし · 全文表示`.
+`Pull Request.md` follows the same rule for every non-full mode because it has no historical base-side PR
+document; opening or returning to that tab never mutates the global display mode.
+
+The app shell is bounded to the viewport and delegates vertical scrolling to the sidebar and central
+viewer. Closing an in-app document tab from its explicit close button does not require confirmation.
+The app does not handle `Cmd+W` / `Ctrl+W` because browsers reserve it for closing their own tab, and it
+does not introduce a less conventional replacement shortcut. A persistent `beforeunload` guard asks for
+browser-native confirmation before the browser tab is actually closed, reloaded, or navigated away.
+
+### Trade-offs
+
+- Review context stays stable while every head-side file remains readable.
+- The file list cannot intentionally show a different range from the viewer, but there is one range model
+  to understand and no file-local control that affects repository-wide state.
+- Closing an in-app document tab requires its visible close button, while `beforeunload` guards the
+  browser tab itself.
+- Browser vendors control the `beforeunload` message and may suppress it without prior user interaction;
+  rvw cannot provide custom alert text.
+- The page itself no longer scrolls vertically; users scroll the two work areas independently.
+
+## 2026-08-09: Manage opened documents as tabs and sidebar tools as collapsible stacks
+
+### Problem
+
+The viewer can browse the whole repository, but replacing the central document on every file,
+search-result, or comment navigation loses the user's working set. The mutually exclusive Files /
+Comments sidebar also forces unnecessary mode switching while reviewing related code and comments.
+
+### Alternatives
+
+- Keep a single replace-in-place document and mutually exclusive sidebar modes.
+- Use a continuous multi-file diff stream for all navigation.
+- Persist a separate comparison mode and viewer state for every open document tab.
+- Keep a browser-local document tab set, while making Files and Comments independently collapsible
+  sidebar stacks and keeping comparison mode global.
+
+### Choice
+
+The browser keeps an ephemeral, de-duplicated tab for each document identity (`Pull Request.md` or
+repository path). File-tree, file-search, full-text-search, and comment-target navigation all open
+or activate the same tab. Tabs can be closed, overflow horizontally, and are also available from a
+compact open-tabs list. Files and Comments are rendered together as independently collapsible
+sidebar stacks. Tabs use compact labels for navigation, while the embedded code/diff header remains
+the source for the exact path, addition/deletion totals, and file-comment action. Global review-scope
+and diff-style controls live in the top bar, leaving the tab row for navigation only.
+
+The selected commit remains above the entire tab set. Switching commits preserves open
+paths but rebinds them to the selected commit. Comparison mode and split / stacked style remain
+shared viewer state; they are intentionally not stored per tab. Tabs and stack expansion are
+browser-only UI state and are not exposed to the Agent CLI or persisted as review data.
+
+### Trade-offs
+
+- Repository-wide review keeps a useful working set without adopting a continuous diff stream.
+- Comments can remain visible while their target document is opened.
+- Commit switching has one clear document world for all tabs.
+- A path absent from another commit can remain open and show the normal unavailable state.
+- Reloading the viewer clears the tab set and stack expansion state.
+- A tab label and file header both identify a document, but intentionally at different levels: the
+  tab may truncate for navigation density, while the file header preserves full context and totals.
+- The tab strip has less horizontal room for documents, so tabs overflow earlier; the existing
+  horizontal scroll and open-tabs menu provide the fallback without consuming more vertical space.
+
+## 2026-08-09: Replace review versions with commits and commit ranges
+
+### Problem
+
+The explicit review-version capture workflow duplicated Git history and required users to decide
+when a GitHub state should become a version. In practice this added an extra action, a second naming
+system, and a second history selector without enough review value. Commit subjects already describe
+the submitted changes, and a contiguous commit range represents the same code comparison more
+directly.
+
+Keeping PR title/body history inside those versions also coupled mutable GitHub text to immutable Git
+objects. Historical PR-body browsing was judged uncommon compared with the cost it imposed on the
+data model and UI.
+
+### Alternatives
+
+- Keep explicit review versions and improve their labels with commit subjects.
+- Generate one review version per commit.
+- Keep review versions internally but hide them from the UI.
+- Use commits for code history, keep only the latest PR title/body, and retain minimal source text on
+  PR-body comments for conservative Outdated placement.
+
+### Choice
+
+Git commits are the sole code-history units exposed by rvw. The viewer selects a destination commit
+and, for custom diffs, the first commit included in the range. Internally the pair remains
+`start.parentOid -> destinationOid`. The UI has no
+review-version selector, capture action, sequence, summary, or previous-version comparison.
+
+PR title and body are a latest-only virtual document. A successful open/refresh/sync replaces the
+cached values. rvw does not provide PR-body history or bind PR text to commits. PR-body line comments
+store the source document hash and selected text, not a full document revision; they are conservatively
+repositioned in the latest text or shown as Outdated. GitHub's own edit history remains the escape hatch
+for historical PR-text investigation.
+
+Every observed PR head is protected by an immutable `refs/rvw/pr/<number>/commits/oid-<oid>` ref. The
+`oid-` prefix keeps the component valid under Git's ref-name rules. This keeps comment source commits
+available across server restarts and force-pushes. Reopening a stored PR
+is local-first; GitHub synchronization is a separate operation so cached review state remains readable
+when the network or PR is unavailable.
+
+The Agent batch command is `rvw pr sync --stdin --json`. It validates GitHub-visible state, protects
+the current head, refreshes current PR metadata, applies replies/resolutions, and relates replies to the
+current head commit. It is not idempotent in Phase 1.
+
+### Trade-offs
+
+- The user model and repository-document references become substantially smaller.
+- Commit messages and ranges are available without duplicated labels or manual capture.
+- PR-body changes are not reviewable as a local history and are not part of code comparisons.
+- A PR-body comment can lose inline placement after an edit, although its selected source text remains
+  visible in the comment target.
+- Exact historical PR-wide comparison bases are not preserved as separate versions; the current
+  synchronized merge base defines `PR全体`.
+- Force-pushed source commits remain readable through rvw refs, but they are not mixed into the current
+  PR commit selector.
+
+## 2026-08-08: Stop an automatically opened server with its last viewer tab
+
+### Problem
+
+The original Phase 1 lifecycle kept every `rvw open` process alive until Ctrl+C, even after its
+browser tab had been closed. This leaves easy-to-forget local processes and SQLite connections.
+
+### Alternatives
+
+- Keep terminal-only Ctrl+C/SIGTERM management.
+- Trust only `beforeunload`/`pagehide` notification from the browser.
+- Add a WebSocket or daemon-level server registry.
+- Track ephemeral tab leases through the existing change-sequence poll, with a best-effort close
+  notification and timeout fallback.
+
+### Choice
+
+Automatically opened viewers use per-document, non-persistent IDs. The existing one-second poll
+renews a server-local lease, and `pagehide` sends a best-effort release. The server stops after the
+last release plus a reload grace period, or after a longer lease timeout if release was lost.
+Multiple tabs are counted independently. Timer lateness consistent with machine suspend renews
+leases instead of causing a false shutdown. `--no-open` remains signal-managed, and auto-shutdown
+does not start until at least one viewer has connected.
+
+This intentionally replaces the original `Ctrl+C`-only step in section 18.1. The source
+specification has been updated to make the new lifecycle normative.
+
+### Trade-offs
+
+- Normal tab close stops the process promptly without a daemon or persistent session model.
+- Reload needs a short grace period, so shutdown is not instantaneous.
+- Browser crashes and lost beacons are detected only after the longer lease timeout.
+- Viewer IDs remain transport-only and do not violate the boundary against live viewer state in
+  the review/Agent core.
+
+## 2026-08-11: Delete a root comment as the whole thread
+
+### Problem
+
+Requiring every reply to be deleted before the root comment made accidental or obsolete threads
+unnecessarily tedious to remove. The database already owns replies beneath the comment through
+foreign-key cascade, so the restriction added UI steps without protecting independent records.
+
+### Choice
+
+Deleting the root comment deletes the complete thread, including every reply, target, and copied
+`rvw://comment/<uuid>` anchor. The confirmation explicitly reports when replies will also be removed.
+Reply posts remain individually deletable, while attempting to delete the root through the reply-post
+endpoint remains invalid. This supersedes the root-preservation restriction in the 2026-08-09 post
+editing and reply deletion decision.
+
+### Trade-offs
+
+- One confirmation removes a complete unwanted discussion and all of its dependent records.
+- Copied comment references stop resolving immediately after deletion.
+- A mistaken root deletion removes useful replies as well, so the action remains destructive and
+  explicitly confirmed.

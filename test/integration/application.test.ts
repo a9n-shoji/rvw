@@ -1,0 +1,769 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { RvwService } from "../../src/application/rvw-service.js";
+import type { GitHubPullRequest } from "../../src/domain/models.js";
+import { RvwDatabase } from "../../src/infrastructure/db/database.js";
+import { GitClient } from "../../src/infrastructure/git/git-client.js";
+import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
+import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
+
+class FakeGitHub implements GitHubPort {
+  constructor(public pullRequest: GitHubPullRequest) {}
+
+  doctor() {
+    return Promise.resolve({ version: "gh fake", authenticated: true });
+  }
+
+  getPullRequest() {
+    return Promise.resolve(this.pullRequest);
+  }
+}
+
+const openPr = (baseOid: string, headOid: string): GitHubPullRequest => ({
+  host: "github.com",
+  owner: "acme",
+  repository: "review-repo",
+  number: 7,
+  url: "https://github.com/acme/review-repo/pull/7",
+  title: "Initial review",
+  body: "Please review.",
+  baseRefName: "main",
+  baseOid,
+  headRefName: "feature",
+  headOid,
+  updatedAt: "2026-08-08T00:00:00.000Z",
+  state: "OPEN",
+  isDraft: false,
+});
+
+describe("RvwService commit workflow", () => {
+  const databases: RvwDatabase[] = [];
+  afterEach(() => {
+    while (databases.length) databases.pop()?.close();
+  });
+
+  function setup(prefix = "rvw-commit-") {
+    const repository = createGitRepository(prefix);
+    const base = git(repository, "rev-parse", "HEAD");
+    git(repository, "switch", "-c", "feature");
+    const firstHead = commitFile(repository, "src.txt", "first\nsecond\n", "first change");
+    const fake = new FakeGitHub(openPr(base, firstHead));
+    const dbFile = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-db-")), "rvw.db");
+    const database = new RvwDatabase({ filePath: dbFile, migrationsDirectory: "./migrations" });
+    databases.push(database);
+    return {
+      repository,
+      base,
+      firstHead,
+      fake,
+      database,
+      service: new RvwService(database, new GitClient(), fake),
+    };
+  }
+
+  it("uses commits as history, keeps PR markdown latest, syncs comment updates, and resets", async () => {
+    const { repository, base, firstHead, fake, service } = setup();
+    const opened = await service.openPullRequest(undefined, repository);
+    expect(opened.fromCache).toBe(false);
+    expect((await service.getPullRequestView(opened.pullRequest.id)).commits).toMatchObject([
+      { oid: firstHead, subject: "first change" },
+    ]);
+
+    const comment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 2,
+        endLine: 2,
+      },
+      body: "Please preserve this line.",
+      authorLabel: "You",
+    });
+
+    const secondHead = commitFile(
+      repository,
+      "src.txt",
+      "inserted\nfirst\nsecond\n",
+      "insert a line",
+    );
+    fake.pullRequest = {
+      ...fake.pullRequest,
+      title: "Updated review",
+      body: "Only the latest body is shown.",
+      headOid: secondHead,
+      updatedAt: "2026-08-08T01:00:00.000Z",
+    };
+    const refreshed = await service.refreshPullRequest(opened.pullRequest.id);
+    expect(refreshed.commits.map(({ oid }) => oid)).toEqual([firstHead, secondHead]);
+    expect(
+      (
+        await service.getDocument({
+          kind: "pull-request-markdown",
+          pullRequestId: opened.pullRequest.id,
+        })
+      ).text,
+    ).toContain("Only the latest body is shown.");
+    const changedFiles = vi.spyOn(service.git, "changedFiles");
+    expect(
+      await service.placeCommentAtCommit(service.getCommentByUri(comment.ref).comment, secondHead),
+    ).toEqual({
+      outdated: false,
+      range: { startLine: 3, endLine: 3 },
+      path: "src.txt",
+    });
+    expect(changedFiles).toHaveBeenCalledOnce();
+
+    const synced = await service.syncPullRequest({
+      pullRequest: fake.pullRequest.url,
+      commentUpdates: [
+        {
+          commentRef: comment.ref,
+          reply: "Preserved in the latest commit.",
+          resolve: true,
+          authorLabel: "Codex",
+        },
+      ],
+    });
+    expect(synced.commentUpdatesApplied).toBe(1);
+    const updatedComment = service.getCommentByUri(comment.ref).comment;
+    expect(updatedComment.resolvedAt).not.toBeNull();
+    expect(updatedComment.posts[1]).toMatchObject({ relatedCommitOid: secondHead });
+
+    const worktree = `${repository}-worktree`;
+    git(repository, "worktree", "add", "--detach", worktree, secondHead);
+    const cached = await service.openPullRequest(undefined, worktree);
+    expect(cached.fromCache).toBe(true);
+    expect(cached.pullRequest.gitCommonDir).toBe(opened.pullRequest.gitCommonDir);
+
+    const preview = await service.getResetPreview(opened.pullRequest.id);
+    expect(preview.counts).toMatchObject({ comments: 1, posts: 2, targets: 1, gitRefs: 2 });
+    const reset = await service.resetPullRequest(opened.pullRequest.id);
+    expect(reset.pullRequest.latestComparisonBaseOid).toBe(base);
+    expect(reset.commits.map(({ oid }) => oid)).toEqual([firstHead, secondHead]);
+    expect(service.listComments(opened.pullRequest.id)).toHaveLength(0);
+    expect((await service.getResetPreview(opened.pullRequest.id)).counts.gitRefs).toBe(1);
+  });
+
+  it("allows file comments on binary and oversized files while rejecting line comments", async () => {
+    const { repository, fake, service } = setup("rvw-unavailable-comments-");
+    writeFileSync(path.join(repository, "binary.bin"), Buffer.from([0, 1, 2, 3]));
+    writeFileSync(path.join(repository, "large.txt"), "x".repeat(1024 * 1024 + 1));
+    git(repository, "add", "--", "binary.bin", "large.txt");
+    git(repository, "commit", "-m", "add unavailable documents");
+    const specialHead = git(repository, "rev-parse", "HEAD");
+    fake.pullRequest = { ...fake.pullRequest, headOid: specialHead };
+    const opened = await service.openPullRequest(undefined, repository);
+
+    for (const [filePath, availability] of [
+      ["binary.bin", "binary"],
+      ["large.txt", "too-large"],
+    ] as const) {
+      const fileComment = await service.createComment({
+        pullRequestId: opened.pullRequest.id,
+        target: {
+          kind: "document",
+          documentKind: "repository-file",
+          sourceOid: specialHead,
+          path: filePath,
+          startLine: null,
+          endLine: null,
+        },
+        body: `${filePath} should be reviewed as a file.`,
+      });
+      await expect(service.placeCommentAtCommit(fileComment, specialHead)).resolves.toEqual({
+        outdated: false,
+        range: null,
+        path: filePath,
+      });
+      await expect(service.getCommentReviewContext(fileComment.ref)).resolves.toMatchObject({
+        exactSource: { availability, excerpt: null },
+      });
+
+      await expect(
+        service.createComment({
+          pullRequestId: opened.pullRequest.id,
+          target: {
+            kind: "document",
+            documentKind: "repository-file",
+            sourceOid: specialHead,
+            path: filePath,
+            startLine: 1,
+            endLine: 1,
+          },
+          body: "A line comment must not be accepted.",
+        }),
+      ).rejects.toMatchObject({
+        code: "INVALID_INPUT",
+        message: "表示できない文書には行コメントを作成できません。",
+      });
+    }
+  });
+
+  it("enforces the shared author label limit at the application boundary", async () => {
+    const { repository, service } = setup("rvw-author-label-");
+    const opened = await service.openPullRequest(undefined, repository);
+
+    await expect(
+      service.createComment({
+        pullRequestId: opened.pullRequest.id,
+        target: { kind: "pull-request" },
+        body: "Review note",
+        authorLabel: "x".repeat(101),
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("returns Agent-ready comment context and keeps resolved replies resolved", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-comment-context-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const codeComment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 2,
+        endLine: 2,
+      },
+      body: "Keep the second line.",
+    });
+    const unresolvedComment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "pull-request" },
+      body: "Explain the overall intent.",
+    });
+
+    const secondHead = commitFile(
+      repository,
+      "src.txt",
+      "inserted\nfirst\nsecond\n",
+      "insert context",
+    );
+    fake.pullRequest = {
+      ...fake.pullRequest,
+      title: "Agent-ready review",
+      body: "The latest intent is available to comment readers.",
+      headOid: secondHead,
+    };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    service.setCommentResolved(codeComment.ref, true);
+    await service.replyToComment(codeComment.ref, {
+      body: "A follow-up on the resolved thread.",
+      authorLabel: "Codex",
+    });
+
+    const context = await service.getCommentReviewContext(codeComment.ref);
+    expect(context.pullRequest).toMatchObject({
+      latestTitle: "Agent-ready review",
+      latestBody: "The latest intent is available to comment readers.",
+      latestBaseRefName: "main",
+      latestHeadRefName: "feature",
+    });
+    expect(context.latestPlacement).toEqual({
+      outdated: false,
+      range: { startLine: 3, endLine: 3 },
+      path: "src.txt",
+    });
+    expect(context.exactSource).toMatchObject({
+      sourceOid: firstHead,
+      path: "src.txt",
+      availability: "available",
+      excerpt: {
+        startLine: 1,
+        endLine: 3,
+        text: "first\nsecond\n",
+        truncatedBefore: false,
+        truncatedAfter: false,
+      },
+    });
+    expect(context.comment.resolvedAt).not.toBeNull();
+    expect(context.comment.posts.at(-1)).toMatchObject({ authorLabel: "Codex" });
+
+    const changedHead = commitFile(
+      repository,
+      "src.txt",
+      "inserted\nfirst\nchanged\n",
+      "change reviewed line",
+    );
+    fake.pullRequest = { ...fake.pullRequest, headOid: changedHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+    await expect(service.getCommentReviewContext(codeComment.ref)).resolves.toMatchObject({
+      latestPlacement: { outdated: true, range: null, path: "src.txt" },
+      exactSource: { sourceOid: firstHead, excerpt: { text: "first\nsecond\n" } },
+    });
+
+    const unresolved = await service.listCommentReviewContexts(opened.pullRequest.url, false, {
+      limit: 1,
+      offset: 0,
+    });
+    expect(unresolved.comments.map(({ comment }) => comment.ref)).toEqual([unresolvedComment.ref]);
+    expect(unresolved.comments[0]?.latestPlacement).toEqual({
+      outdated: false,
+      range: null,
+      path: null,
+    });
+    expect(unresolved.comments[0]).toMatchObject({
+      rootPost: { body: "Explain the overall intent.", isRoot: true },
+      postCount: 1,
+    });
+    expect(unresolved.comments[0]?.comment).not.toHaveProperty("posts");
+    expect(unresolved.page).toEqual({
+      offset: 0,
+      limit: 1,
+      returned: 1,
+      total: 1,
+      hasMore: false,
+      nextOffset: null,
+    });
+    await expect(service.listCommentReviewContexts(opened.pullRequest.url)).resolves.toMatchObject({
+      comments: [
+        { comment: { ref: codeComment.ref } },
+        { comment: { ref: unresolvedComment.ref } },
+      ],
+      page: { offset: 0, limit: 50, returned: 2, total: 2, hasMore: false, nextOffset: null },
+    });
+
+    const firstPage = await service.listCommentReviewContexts(opened.pullRequest.url, undefined, {
+      limit: 1,
+      offset: 0,
+    });
+    expect(firstPage.page).toEqual({
+      offset: 0,
+      limit: 1,
+      returned: 1,
+      total: 2,
+      hasMore: true,
+      nextOffset: 1,
+    });
+    const secondPage = await service.listCommentReviewContexts(opened.pullRequest.url, undefined, {
+      limit: 1,
+      offset: firstPage.page.nextOffset ?? 0,
+    });
+    expect(secondPage.comments.map(({ comment }) => comment.ref)).toEqual([unresolvedComment.ref]);
+    expect(secondPage.page.hasMore).toBe(false);
+  });
+
+  it("publishes and replaces commit-fixed walkthroughs in place while preserving whole-document comments", async () => {
+    const { repository, firstHead, service } = setup("rvw-walkthrough-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const repositoryAsset = await service.getRepositoryAsset(
+      opened.pullRequest.id,
+      firstHead,
+      "src.txt",
+    );
+    expect(repositoryAsset.content.toString("utf8")).toBe("first\nsecond\n");
+
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Source flow",
+      body: "Start at [the source](rvw-ref:source). `rvw-ref:ignored`",
+      authorLabel: "Codex",
+      diagramBindings: { Source: "source" },
+      references: [
+        {
+          id: "source",
+          label: "source entry",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 2,
+          description: "The exact committed implementation",
+        },
+      ],
+    });
+
+    expect(walkthrough).toMatchObject({
+      ref: `rvw://walkthrough/${walkthrough.id}`,
+      pullRequestId: opened.pullRequest.id,
+      sourceOid: firstHead,
+      diagramBindings: { Source: "source" },
+      references: [{ id: "source", startLine: 1, endLine: 2 }],
+    });
+    expect(service.listWalkthroughs(opened.pullRequest.id)).toEqual([
+      {
+        id: walkthrough.id,
+        pullRequestId: opened.pullRequest.id,
+        sourceOid: firstHead,
+        title: "Source flow",
+        authorLabel: "Codex",
+        referenceCount: 1,
+        createdAt: walkthrough.createdAt,
+      },
+    ]);
+    expect(service.getWalkthrough(opened.pullRequest.id, walkthrough.id)).toEqual(walkthrough);
+    const walkthroughComment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "walkthrough", walkthroughId: walkthrough.id },
+      body: "Explain why the outbox belongs here.",
+      authorLabel: "You",
+    });
+    expect(walkthroughComment.target).toEqual({
+      kind: "walkthrough",
+      walkthroughId: walkthrough.id,
+      walkthroughTitle: "Source flow",
+      sourceDocumentHash: null,
+      quotedText: null,
+      startLine: null,
+      endLine: null,
+    });
+    await expect(service.placeCommentAtCommit(walkthroughComment, firstHead)).resolves.toEqual({
+      outdated: false,
+      range: null,
+      path: null,
+    });
+    const lineComment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: {
+        kind: "walkthrough",
+        walkthroughId: walkthrough.id,
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Keep this explanation attached to its line.",
+      authorLabel: "You",
+    });
+    expect(lineComment.target).toMatchObject({
+      kind: "walkthrough",
+      walkthroughId: walkthrough.id,
+      quotedText: "Start at [the source](rvw-ref:source). `rvw-ref:ignored`",
+      startLine: 1,
+      endLine: 1,
+    });
+    await service.updateWalkthrough(walkthrough.ref, {
+      sourceOid: firstHead,
+      title: "Source flow moved",
+      body: "New context\nStart at [the source](rvw-ref:source). `rvw-ref:ignored`",
+      diagramBindings: { Source: "source" },
+      references: walkthrough.references,
+    });
+    await expect(service.placeCommentAtCommit(lineComment, firstHead)).resolves.toEqual({
+      outdated: false,
+      range: { startLine: 2, endLine: 2 },
+      path: null,
+    });
+    const updatedWalkthrough = await service.updateWalkthrough(walkthrough.ref, {
+      sourceOid: firstHead,
+      title: "Source flow explained",
+      body: "The updated explanation covers [the source file](rvw-ref:source_file).",
+      diagramBindings: { Entry: "source_file" },
+      references: [
+        {
+          id: "source_file",
+          label: "source file",
+          path: "src.txt",
+          startLine: null,
+          endLine: null,
+          description: "Updated after reviewer feedback",
+        },
+      ],
+    });
+    expect(updatedWalkthrough).toMatchObject({
+      id: walkthrough.id,
+      ref: walkthrough.ref,
+      title: "Source flow explained",
+      authorLabel: "Codex",
+      createdAt: walkthrough.createdAt,
+      diagramBindings: { Entry: "source_file" },
+      references: [{ id: "source_file", startLine: null, endLine: null }],
+    });
+    expect(service.listWalkthroughs(opened.pullRequest.id)).toHaveLength(1);
+    expect(service.getCommentByUri(walkthroughComment.ref).comment.target).toEqual({
+      kind: "walkthrough",
+      walkthroughId: walkthrough.id,
+      walkthroughTitle: "Source flow explained",
+      sourceDocumentHash: null,
+      quotedText: null,
+      startLine: null,
+      endLine: null,
+    });
+    await expect(service.placeCommentAtCommit(lineComment, firstHead)).resolves.toEqual({
+      outdated: true,
+      range: null,
+      path: null,
+    });
+    expect(service.getWalkthroughByUri(walkthrough.ref).walkthrough.body).toContain(
+      "updated explanation",
+    );
+    expect((await service.getResetPreview(opened.pullRequest.id)).counts).toMatchObject({
+      comments: 2,
+      walkthroughs: 1,
+      walkthroughReferences: 1,
+    });
+
+    await expect(
+      service.publishWalkthrough({
+        pullRequest: opened.pullRequest.url,
+        sourceOid: firstHead,
+        title: "Broken reference",
+        body: "[Missing](rvw-ref:missing)",
+        references: [
+          {
+            id: "source",
+            label: "source entry",
+            path: "src.txt",
+            startLine: 1,
+            endLine: 1,
+            description: null,
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+    for (const body of ["[Bad](rvw-ref:1bad)", "[Suffix](rvw-ref:source.extra)"]) {
+      await expect(
+        service.publishWalkthrough({
+          pullRequest: opened.pullRequest.url,
+          sourceOid: firstHead,
+          title: "Malformed reference",
+          body,
+          references: [
+            {
+              id: "source",
+              label: "source entry",
+              path: "src.txt",
+              startLine: 1,
+              endLine: 1,
+              description: null,
+            },
+          ],
+        }),
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    }
+
+    await service.resetPullRequest(opened.pullRequest.id);
+    expect(service.listWalkthroughs(opened.pullRequest.id)).toEqual([]);
+    expect(service.listComments(opened.pullRequest.id)).toEqual([]);
+  });
+
+  it("deletes a walkthrough and its comments without deleting retained commit refs", async () => {
+    const { repository, firstHead, service } = setup("rvw-walkthrough-delete-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Temporary explanation",
+      body: "Open [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "source entry",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 1,
+          description: null,
+        },
+      ],
+    });
+    const comment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "walkthrough", walkthroughId: walkthrough.id },
+      body: "This is no longer needed.",
+    });
+    await service.replyToComment(comment.ref, { body: "Confirmed." });
+
+    expect(service.getWalkthroughDeletePreview(walkthrough.ref)).toMatchObject({
+      walkthrough: { id: walkthrough.id },
+      counts: { comments: 1, posts: 2, references: 1 },
+      confirmationRequired: true,
+    });
+    expect(service.deleteWalkthroughByUri(walkthrough.ref)).toEqual({
+      id: walkthrough.id,
+      ref: walkthrough.ref,
+      pullRequestId: opened.pullRequest.id,
+      counts: { comments: 1, posts: 2, references: 1 },
+    });
+    expect(service.listWalkthroughs(opened.pullRequest.id)).toEqual([]);
+    expect(service.listComments(opened.pullRequest.id)).toEqual([]);
+    expect(() => service.getWalkthroughByUri(walkthrough.ref)).toThrowError(
+      expect.objectContaining({ code: "NOT_FOUND" }),
+    );
+    await expect(service.git.verifyCommitRef(repository, 7, firstHead)).resolves.toBe(true);
+  });
+
+  it("removes a newly-created commit ref when walkthrough persistence fails", async () => {
+    const { repository, firstHead, database, service } = setup("rvw-walkthrough-rollback-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const secondHead = commitFile(repository, "src.txt", "first\nsecond\nthird\n", "second change");
+    vi.spyOn(database, "createWalkthrough").mockImplementationOnce(() => {
+      throw new Error("database write failed");
+    });
+
+    await expect(
+      service.publishWalkthrough({
+        pullRequest: opened.pullRequest.url,
+        sourceOid: secondHead,
+        title: "Will fail",
+        body: "[Source](rvw-ref:source)",
+        references: [
+          {
+            id: "source",
+            label: "source entry",
+            path: "src.txt",
+            startLine: 1,
+            endLine: 1,
+            description: null,
+          },
+        ],
+      }),
+    ).rejects.toThrow("database write failed");
+    await expect(service.git.verifyCommitRef(repository, 7, secondHead)).resolves.toBe(false);
+    await expect(service.git.verifyCommitRef(repository, 7, firstHead)).resolves.toBe(true);
+  });
+
+  it("accepts a force-pushed head while retaining the old commit ref", async () => {
+    const { repository, base, firstHead, fake, service } = setup("rvw-force-push-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const comment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Old history comment",
+    });
+
+    git(repository, "switch", "-C", "feature", base);
+    const rewrittenHead = commitFile(repository, "src.txt", "rewritten\n", "rewritten change");
+    fake.pullRequest = { ...fake.pullRequest, headOid: rewrittenHead };
+
+    const refreshed = await service.refreshPullRequest(opened.pullRequest.id);
+    expect(refreshed.commits).toMatchObject([{ oid: rewrittenHead, subject: "rewritten change" }]);
+    const client = new GitClient();
+    expect(await client.verifyCommitRef(repository, 7, firstHead)).toBe(true);
+    expect(await client.verifyCommitRef(repository, 7, rewrittenHead)).toBe(true);
+    expect(
+      await service.placeCommentAtCommit(service.getCommentByUri(comment.ref).comment, firstHead),
+    ).toEqual({ outdated: false, range: { startLine: 1, endLine: 1 }, path: "src.txt" });
+  });
+
+  it("searches the destination tree and latest PR markdown with explicit options", async () => {
+    const { repository, firstHead, service } = setup("rvw-search-");
+    const opened = await service.openPullRequest(undefined, repository);
+
+    const insensitive = await service.search(opened.pullRequest.id, firstHead, "REVIEW", {
+      matchCase: false,
+      wholeWord: true,
+    });
+    expect(insensitive.results).toMatchObject([
+      { path: "Pull Request.md", line: 1, matches: [{ start: 10, end: 16 }] },
+      { path: "Pull Request.md", line: 3, matches: [{ start: 7, end: 13 }] },
+    ]);
+    expect(insensitive.matchCount).toBe(2);
+
+    const sensitive = await service.search(opened.pullRequest.id, firstHead, "REVIEW", {
+      matchCase: true,
+      wholeWord: false,
+    });
+    expect(sensitive.results).toEqual([]);
+    expect(sensitive.matchCount).toBe(0);
+  });
+
+  it("edits posts, deletes individual replies, and cascades thread deletion to replies", async () => {
+    const { repository, firstHead, service } = setup("rvw-comment-delete-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const deletable = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "pull-request" },
+      body: "Temporary comment",
+      authorLabel: "You",
+    });
+
+    expect(service.deleteComment(deletable.ref)).toEqual({
+      id: deletable.id,
+      ref: deletable.ref,
+    });
+    expect(service.listComments(opened.pullRequest.id)).toHaveLength(0);
+
+    const replied = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Keep this thread",
+    });
+    const reply = await service.replyToComment(replied.id, { body: "A reply" });
+
+    expect(
+      service.updateCommentPost(replied.id, replied.posts[0]!.id, "Updated root"),
+    ).toMatchObject({ body: "Updated root" });
+    expect(service.updateCommentPost(replied.id, reply.id, "Updated reply")).toMatchObject({
+      body: "Updated reply",
+    });
+    const disposableReply = await service.replyToComment(replied.id, {
+      body: "Disposable reply",
+    });
+
+    expect(() => service.deleteReply(replied.id, replied.posts[0]!.id)).toThrowError(
+      expect.objectContaining({ code: "COMMENT_DELETE_NOT_ALLOWED" }),
+    );
+
+    expect(service.deleteReply(replied.id, disposableReply.id)).toEqual({
+      commentId: replied.id,
+      postId: disposableReply.id,
+    });
+    expect(service.database.listCommentPosts(replied.id)).toHaveLength(2);
+    expect(service.deleteComment(replied.id)).toEqual({
+      id: replied.id,
+      ref: replied.ref,
+    });
+    expect(service.database.listCommentPosts(replied.id)).toHaveLength(0);
+    expect(service.listComments(opened.pullRequest.id)).toHaveLength(0);
+  });
+
+  it("keeps only latest PR markdown and repositions a unique quoted selection", async () => {
+    const { repository, fake, service } = setup("rvw-pr-markdown-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const comment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: {
+        kind: "document",
+        documentKind: "pull-request-markdown",
+        startLine: 3,
+        endLine: 3,
+      },
+      body: "Keep this requirement.",
+    });
+    expect(comment.target).toMatchObject({
+      documentKind: "pull-request-markdown",
+      quotedText: "Please review.",
+    });
+
+    fake.pullRequest = {
+      ...fake.pullRequest,
+      title: "Renamed review",
+      body: "New introduction.\nPlease review.",
+      updatedAt: "2026-08-08T03:00:00.000Z",
+    };
+    await service.refreshPullRequest(opened.pullRequest.id);
+    expect(
+      (
+        await service.getDocument({
+          kind: "pull-request-markdown",
+          pullRequestId: opened.pullRequest.id,
+        })
+      ).text,
+    ).toBe("# Renamed review\n\nNew introduction.\nPlease review.");
+    expect(
+      await service.placeComment(comment, {
+        kind: "pull-request-markdown",
+        pullRequestId: opened.pullRequest.id,
+      }),
+    ).toEqual({ outdated: false, range: { startLine: 4, endLine: 4 }, path: "Pull Request.md" });
+  });
+});

@@ -1,0 +1,13 @@
+minimumReleaseAge: 4320
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+trustPolicy: no-downgrade
+trustPolicyExclude:
+  - "@pierre/theme@2.0.0"
+trustLockfile: false
+blockExoticSubdeps: true
+strictDepBuilds: true
+verifyDepsBeforeRun: error
+
+allowBuilds:
+  esbuild@0.28.1: true

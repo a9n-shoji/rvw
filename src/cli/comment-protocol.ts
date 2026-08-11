@@ -1,0 +1,129 @@
+import type { CommentListContext, CommentReviewContext } from "../application/rvw-service.js";
+import type { CommentTarget, PullRequest } from "../domain/models.js";
+import { MAX_COMMENT_LIST_BODY_PREVIEW_BYTES } from "../shared/constants.js";
+import {
+  commentGetOutputSchema,
+  commentListOutputSchema,
+  type CommentGetOutput,
+  type CommentListOptions,
+  type CommentListOutput,
+} from "./schemas.js";
+
+function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return { value, truncated: false };
+  let bytes = 0;
+  let result = "";
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (bytes + characterBytes > maxBytes) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return { value: result, truncated: true };
+}
+
+function formatPullRequest(
+  pullRequest: PullRequest,
+  options: { includeBody?: boolean } = {},
+): CommentGetOutput["pullRequest"] {
+  return {
+    url: pullRequest.url,
+    owner: pullRequest.owner,
+    repository: pullRequest.repository,
+    number: pullRequest.number,
+    title: pullRequest.latestTitle,
+    ...(options.includeBody ? { body: pullRequest.latestBody } : {}),
+    baseRefName: pullRequest.latestBaseRefName,
+    baseOid: pullRequest.latestBaseOid,
+    comparisonBaseOid: pullRequest.latestComparisonBaseOid,
+    headRefName: pullRequest.latestHeadRefName,
+    headOid: pullRequest.latestHeadOid,
+    githubUpdatedAt: pullRequest.githubUpdatedAt,
+    fetchedAt: pullRequest.fetchedAt,
+    localRepositoryPath: pullRequest.localRepositoryPath,
+  };
+}
+
+function formatListTarget(
+  target: CommentTarget,
+): CommentListOutput["comments"][number]["comment"]["target"] {
+  if (target.kind === "pull-request") return target;
+  if (target.kind === "walkthrough") {
+    return {
+      kind: target.kind,
+      walkthroughId: target.walkthroughId,
+      walkthroughTitle: target.walkthroughTitle,
+      startLine: target.startLine,
+      endLine: target.endLine,
+    };
+  }
+  if (target.documentKind === "pull-request-markdown") {
+    return {
+      kind: target.kind,
+      documentKind: target.documentKind,
+      startLine: target.startLine,
+      endLine: target.endLine,
+    };
+  }
+  return {
+    kind: target.kind,
+    documentKind: target.documentKind,
+    path: target.path,
+    startLine: target.startLine,
+    endLine: target.endLine,
+  };
+}
+
+export function formatCommentGetOutput(
+  result: CommentReviewContext,
+  options: { includePrBody?: boolean } = {},
+): CommentGetOutput {
+  return commentGetOutputSchema.parse({
+    ok: true,
+    pullRequest: formatPullRequest(result.pullRequest, {
+      includeBody: options.includePrBody ?? false,
+    }),
+    comment: {
+      ...result.comment,
+      resolved: result.comment.resolvedAt !== null,
+    },
+    latestHeadOid: result.pullRequest.latestHeadOid,
+    latestPlacement: result.latestPlacement,
+    exactSource: result.exactSource,
+    walkthrough: result.walkthrough,
+  });
+}
+
+export function formatCommentListOutput(
+  result: CommentListContext,
+  state: CommentListOptions["state"],
+): CommentListOutput {
+  return commentListOutputSchema.parse({
+    ok: true,
+    pullRequest: formatPullRequest(result.pullRequest),
+    state,
+    page: result.page,
+    comments: result.comments.map(({ comment, rootPost, postCount, latestPlacement }) => {
+      const preview = truncateUtf8(rootPost.body, MAX_COMMENT_LIST_BODY_PREVIEW_BYTES);
+      return {
+        comment: {
+          ref: comment.ref,
+          resolved: comment.resolvedAt !== null,
+          createdAt: comment.createdAt,
+          updatedAt: comment.updatedAt,
+          target: formatListTarget(comment.target),
+          postCount,
+          rootPost: {
+            body: preview.value,
+            bodyTruncated: preview.truncated,
+            authorLabel: rootPost.authorLabel,
+            relatedCommitOid: rootPost.relatedCommitOid,
+            createdAt: rootPost.createdAt,
+            updatedAt: rootPost.updatedAt,
+          },
+        },
+        latestPlacement,
+      };
+    }),
+  });
+}
