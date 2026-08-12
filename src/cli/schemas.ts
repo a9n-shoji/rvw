@@ -1,17 +1,11 @@
 import { z } from "zod";
-import {
-  DEFAULT_COMMENT_LIST_LIMIT,
-  GIT_OBJECT_ID_PATTERN,
-  MAX_AUTHOR_LABEL_CHARACTERS,
-  MAX_COMMENT_BODY_BYTES,
-  MAX_COMMENT_LIST_LIMIT,
-  MAX_WALKTHROUGH_BODY_BYTES,
-  MAX_WALKTHROUGH_REFERENCE_DESCRIPTION_CHARACTERS,
-  MAX_WALKTHROUGH_REFERENCE_LABEL_CHARACTERS,
-  MAX_WALKTHROUGH_REFERENCE_PATH_CHARACTERS,
-  MAX_WALKTHROUGH_REFERENCES,
-  MAX_WALKTHROUGH_TITLE_CHARACTERS,
-} from "../shared/constants.js";
+import { DEFAULT_COMMENT_LIST_LIMIT, MAX_COMMENT_LIST_LIMIT } from "../shared/constants.js";
+export {
+  commentReplyInputSchema,
+  pullRequestSyncInputSchema,
+  walkthroughPublishInputSchema,
+  walkthroughUpdateInputSchema,
+} from "../application/agent-command-schemas.js";
 
 export const commentListOptionsSchema = z.object({
   state: z.enum(["unresolved", "resolved", "all"]).default("unresolved"),
@@ -215,6 +209,24 @@ export const commentGetOutputSchema = z
     latestPlacement: commentPlacementOutputSchema,
     exactSource: exactSourceOutputSchema.nullable(),
     walkthrough: walkthroughOutputSchema.nullable(),
+    githubState: z
+      .object({
+        liveCheckedAt: z.string().nullable(),
+        staleAgainstGitHub: z.boolean().nullable(),
+        live: z
+          .object({
+            title: z.string(),
+            body: z.string().optional(),
+            baseRefName: z.string(),
+            baseOid: z.string(),
+            headRefName: z.string(),
+            headOid: z.string(),
+            githubUpdatedAt: z.string(),
+          })
+          .strict()
+          .nullable(),
+      })
+      .strict(),
   })
   .strict();
 
@@ -266,75 +278,3 @@ export const commentListOutputSchema = z
 export type CommentListOptions = z.infer<typeof commentListOptionsSchema>;
 export type CommentGetOutput = z.infer<typeof commentGetOutputSchema>;
 export type CommentListOutput = z.infer<typeof commentListOutputSchema>;
-
-export const commentReplyInputSchema = z.object({
-  body: z
-    .string()
-    .min(1)
-    .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
-  authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
-  relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
-});
-
-export const pullRequestSyncInputSchema = z.object({
-  pullRequest: z.string().min(1),
-  commentUpdates: z
-    .array(
-      z.object({
-        commentRef: z.string().regex(/^rvw:\/\/comment\//),
-        reply: z
-          .string()
-          .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
-        resolve: z.boolean(),
-      }),
-    )
-    .max(500)
-    .optional(),
-});
-
-const walkthroughReferenceInputSchema = z
-  .object({
-    id: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
-    label: z.string().min(1).max(MAX_WALKTHROUGH_REFERENCE_LABEL_CHARACTERS),
-    path: z.string().min(1).max(MAX_WALKTHROUGH_REFERENCE_PATH_CHARACTERS),
-    startLine: z.number().int().positive().nullable().optional().default(null),
-    endLine: z.number().int().positive().nullable().optional().default(null),
-    description: z.string().max(MAX_WALKTHROUGH_REFERENCE_DESCRIPTION_CHARACTERS).nullable(),
-  })
-  .superRefine((reference, context) => {
-    if ((reference.startLine === null) !== (reference.endLine === null)) {
-      context.addIssue({
-        code: "custom",
-        message: "startLineとendLineは両方指定するか、両方省略してください。",
-      });
-      return;
-    }
-    if (
-      reference.startLine !== null &&
-      reference.endLine !== null &&
-      reference.endLine < reference.startLine
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "endLineはstartLine以上にしてください。",
-      });
-    }
-  });
-
-const walkthroughContentInputSchema = z.object({
-  sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
-  title: z.string().min(1).max(MAX_WALKTHROUGH_TITLE_CHARACTERS),
-  body: z
-    .string()
-    .min(1)
-    .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_WALKTHROUGH_BODY_BYTES),
-  authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
-  diagramBindings: z.record(z.string(), z.string()).optional(),
-  references: z.array(walkthroughReferenceInputSchema).min(1).max(MAX_WALKTHROUGH_REFERENCES),
-});
-
-export const walkthroughPublishInputSchema = walkthroughContentInputSchema.extend({
-  pullRequest: z.string().min(1),
-});
-
-export const walkthroughUpdateInputSchema = walkthroughContentInputSchema;

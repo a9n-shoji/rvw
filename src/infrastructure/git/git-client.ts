@@ -32,6 +32,12 @@ export interface HeadState {
   branch: string | null;
 }
 
+export interface WorktreeStatus {
+  entries: string[];
+  trackedEntries: string[];
+  untrackedEntries: string[];
+}
+
 export interface EnsuredCommitRef {
   ref: string;
   created: boolean;
@@ -333,11 +339,16 @@ export class GitClient {
     return result.exitCode === 0;
   }
 
-  async isDirty(cwd: string): Promise<boolean> {
-    return (
-      (await runText("git", ["status", "--porcelain=v1", "--untracked-files=normal"], { cwd }))
-        .length > 0
-    );
+  async worktreeStatus(cwd: string): Promise<WorktreeStatus> {
+    const output = await runText("git", ["status", "--porcelain=v1", "--untracked-files=normal"], {
+      cwd,
+    });
+    const entries = output.split("\n").filter(Boolean);
+    return {
+      entries,
+      trackedEntries: entries.filter((entry) => !entry.startsWith("?? ")),
+      untrackedEntries: entries.filter((entry) => entry.startsWith("?? ")),
+    };
   }
 
   async headState(cwd: string): Promise<HeadState> {

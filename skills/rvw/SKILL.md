@@ -5,13 +5,16 @@ description: Inspect, address, reply to, resolve, reopen, and synchronize rvw re
 
 # rvw review comments
 
-Use only the `rvw` CLI protocol to access rvw state. Never read or edit the SQLite database directly. Require a local Agent with access to the saved repository and rvw data directory; do not guess comment contents when either is unavailable.
+Use only the `rvw` CLI protocol to access rvw state. Never read or edit the SQLite database directly. Require a local Agent with access to the saved repository. A running rvw viewer can provide database access through its user-only Unix socket; require direct rvw data-directory access only when that route is unavailable. Do not guess comment contents when required access is unavailable.
 
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
 2. Require `protocolVersion` 1 and every capability needed for the task.
-3. Explain the exact local permission needed if the CLI, repository, or rvw data directory is blocked.
+3. Prefer the CLI's transparent Unix-socket route when a normally launched rvw viewer is running.
+   Explain the exact local permission needed only if both the socket route and direct CLI access are
+   unavailable. `RVW_DATABASE_PATH` selects an explicitly managed database path; the CLI uses a
+   running viewer only when it reports that same database.
 
 ## Read comments
 
@@ -43,6 +46,11 @@ omits `pullRequest.body`. If the comment targets the PR or PR Markdown, or the t
 understood without PR-level intent, rerun `comment get` with `--include-pr-body` and read the latest
 successfully synchronized body. `latestPlacement` is rvw's authoritative derived placement at the
 latest head; never infer Outdated by comparing OIDs.
+
+When the task needs to distinguish the cached snapshot from current GitHub state, use
+`rvw comment get <COMMENT_URI> --live --json`. Read `githubState.staleAgainstGitHub` and live metadata;
+this lookup is read-only and does not make the cached PR current. Without `--live`, null live fields mean
+GitHub was not checked.
 
 - For a repository-file target, inspect its recorded source OID and path even when it is Outdated.
   `exactSource.excerpt` contains the selected lines with bounded context when available, and its
@@ -103,5 +111,12 @@ Pass one JSON object through stdin:
 ```
 
 Run `rvw pr sync --stdin --json`. Prefer this atomic path when the GitHub refresh and comment updates belong to the same operation. Successful replies are linked to the synchronized head commit. The command is not idempotent when it adds replies; re-read affected comments before retrying an uncertain result.
+
+If the saved checkout is dirty but a clean worktree in the same Git common directory exists, pass
+`--repository <PATH>`. Inspect every reported dirty entry before deciding whether untracked files are
+irrelevant; only then may you explicitly pass `--allow-untracked`. Never use that option to ignore
+tracked changes. A clean local PR branch that is merely behind GitHub is acceptable and rvw will not
+move its checkout. To change only the saved worktree path without starting a viewer, use
+`rvw pr attach <PULL_REQUEST> --repository <PATH> --json`.
 
 If rvw reports `LOCAL_STATE_INCONSISTENT`, report its reset guidance and deletion counts. Never run `rvw pr reset ... --yes` without explicit authorization because it permanently removes local comments, Walkthroughs, and retained rvw refs.

@@ -1,5 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -123,6 +132,108 @@ export interface DatabaseOptions {
   migrationsDirectory?: string;
 }
 
+function securityIssue(
+  targetPath: string,
+  expectedMode: number,
+): { mode: string; expectedMode: string; owner: number; expectedOwner: number } | null {
+  if (process.platform === "win32" || process.getuid === undefined) return null;
+  const stat = statSync(targetPath);
+  const mode = stat.mode & 0o777;
+  const owner = stat.uid;
+  const expectedOwner = process.getuid();
+  if (mode === expectedMode && owner === expectedOwner) return null;
+  return {
+    mode: mode.toString(8).padStart(4, "0"),
+    expectedMode: expectedMode.toString(8).padStart(4, "0"),
+    owner,
+    expectedOwner,
+  };
+}
+
+export interface DatabasePathPermissionStatus {
+  path: string;
+  mode: string | null;
+  expectedMode: string;
+  owner: number | null;
+  expectedOwner: number | null;
+  safe: boolean | null;
+}
+
+export interface DatabasePermissionStatus {
+  managedByRvw: boolean;
+  directory: DatabasePathPermissionStatus | null;
+  file: DatabasePathPermissionStatus | null;
+  warning: string | null;
+}
+
+function pathPermissionStatus(
+  targetPath: string,
+  expectedMode: number,
+): DatabasePathPermissionStatus {
+  const expectedModeText = expectedMode.toString(8).padStart(4, "0");
+  if (process.platform === "win32" || process.getuid === undefined) {
+    return {
+      path: targetPath,
+      mode: null,
+      expectedMode: expectedModeText,
+      owner: null,
+      expectedOwner: null,
+      safe: null,
+    };
+  }
+  const stat = statSync(targetPath);
+  const mode = stat.mode & 0o777;
+  const expectedOwner = process.getuid();
+  return {
+    path: targetPath,
+    mode: mode.toString(8).padStart(4, "0"),
+    expectedMode: expectedModeText,
+    owner: stat.uid,
+    expectedOwner,
+    safe: mode === expectedMode && stat.uid === expectedOwner,
+  };
+}
+
+export function assertSecureExistingPath(
+  targetPath: string,
+  expectedMode: number,
+  label: string,
+): void {
+  const issue = securityIssue(targetPath, expectedMode);
+  if (!issue) return;
+  throw new RvwError("DATABASE_ERROR", `${label}の権限またはownerが安全ではありません。`, {
+    details: { path: targetPath, ...issue },
+    suggestions: [
+      `${targetPath} のownerを現在のユーザー、権限を${issue.expectedMode}に修正してください。`,
+      "明示的に管理する別のDBを使う場合はRVW_DATABASE_PATHを設定できます。",
+    ],
+  });
+}
+
+export function secureNewPath(
+  targetPath: string,
+  expectedMode: number,
+  label: string,
+  chmod: (path: string, mode: number) => void = chmodSync,
+): void {
+  try {
+    chmod(targetPath, expectedMode);
+  } catch (error) {
+    // Some managed environments reject chmod even when the created path already has the safe mode.
+    const issue = securityIssue(targetPath, expectedMode);
+    if (!issue) return;
+    throw new RvwError("DATABASE_ERROR", `${label}を安全な権限へ設定できませんでした。`, {
+      cause: error,
+      details: { path: targetPath, ...issue },
+      suggestions: [
+        `${targetPath} のownerを現在のユーザー、権限を${issue.expectedMode}に修正してください。`,
+        "明示的に管理する別のDBを使う場合はRVW_DATABASE_PATHを設定できます。",
+      ],
+    });
+  }
+  assertSecureExistingPath(targetPath, expectedMode, label);
+}
+
 export interface NewCommentInput {
   pullRequestId: string;
   createdHeadOid: string;
@@ -150,6 +261,7 @@ export interface NewWalkthroughInput {
 
 export class RvwDatabase {
   readonly filePath: string;
+  readonly configuredPath: boolean;
   private readonly database: DatabaseSync;
 
   constructor(options: DatabaseOptions = {}) {
@@ -157,15 +269,41 @@ export class RvwDatabase {
     const defaultDataDirectory = envPaths("rvw").data;
     const filePath = configuredFilePath ?? path.join(defaultDataDirectory, "rvw.db");
     this.filePath = filePath;
+    this.configuredPath = configuredFilePath !== undefined;
     if (filePath !== ":memory:") {
-      mkdirSync(path.dirname(filePath), {
+      const dataDirectory = path.dirname(filePath);
+      const directoryExisted = existsSync(dataDirectory);
+      mkdirSync(dataDirectory, {
         recursive: true,
-        ...(configuredFilePath ? {} : { mode: 0o700 }),
+        mode: 0o700,
       });
-      if (!configuredFilePath) chmodSync(defaultDataDirectory, 0o700);
+      if (!configuredFilePath) {
+        if (directoryExisted) assertSecureExistingPath(dataDirectory, 0o700, "DB directory");
+        else secureNewPath(dataDirectory, 0o700, "DB directory");
+      } else if (!directoryExisted) {
+        // Creation mode is not a later chmod; caller-managed existing paths remain untouched.
+        assertSecureExistingPath(dataDirectory, 0o700, "configured DB directory");
+      }
+    }
+    let fileExisted = filePath !== ":memory:" && existsSync(filePath);
+    if (filePath !== ":memory:" && configuredFilePath && !fileExisted) {
+      try {
+        const descriptor = openSync(filePath, "wx", 0o600);
+        closeSync(descriptor);
+        assertSecureExistingPath(filePath, 0o600, "configured DB file");
+        fileExisted = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        fileExisted = true;
+      }
+    }
+    if (filePath !== ":memory:" && !configuredFilePath && fileExisted) {
+      assertSecureExistingPath(filePath, 0o600, "DB file");
     }
     this.database = new DatabaseSync(filePath);
-    if (filePath !== ":memory:" && !configuredFilePath) chmodSync(filePath, 0o600);
+    if (filePath !== ":memory:" && !configuredFilePath && !fileExisted) {
+      secureNewPath(filePath, 0o600, "DB file");
+    }
     this.database.exec("PRAGMA busy_timeout = 5000;");
     this.database.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
     this.migrate(findMigrationsDirectory(options.migrationsDirectory));
@@ -173,6 +311,24 @@ export class RvwDatabase {
 
   close(): void {
     this.database.close();
+  }
+
+  permissionStatus(): DatabasePermissionStatus {
+    if (this.filePath === ":memory:") {
+      return { managedByRvw: false, directory: null, file: null, warning: null };
+    }
+    const directory = pathPermissionStatus(path.dirname(this.filePath), 0o700);
+    const file = pathPermissionStatus(this.filePath, 0o600);
+    const unsafe = directory.safe === false || file.safe === false;
+    return {
+      managedByRvw: !this.configuredPath,
+      directory,
+      file,
+      warning:
+        this.configuredPath && unsafe
+          ? "RVW_DATABASE_PATHは呼び出し側管理です。rvwはchmodしませんが、0700のdirectoryと0600のfileを推奨します。"
+          : null,
+    };
   }
 
   private migrate(directory: string): void {

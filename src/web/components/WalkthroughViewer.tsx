@@ -89,12 +89,6 @@ function codeText(content: ReactNode): string {
     .join("");
 }
 
-function compactReferenceLocation(reference: WalkthroughReference): string {
-  const fileName = reference.path.split("/").at(-1) ?? reference.path;
-  const lineLabel = referenceLineLabel(reference);
-  return lineLabel ? `${fileName}:${lineLabel}` : fileName;
-}
-
 function referenceLineLabel(reference: WalkthroughReference): string | null {
   if (reference.startLine === null || reference.endLine === null) return null;
   return reference.startLine === reference.endLine
@@ -284,6 +278,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   placedComments,
   activeCommentId,
   selectedRange,
+  selectionComposerOpen,
   diagramCommentRange,
   diagramCommentComposer,
   themePreference,
@@ -296,6 +291,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   placedComments: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
   activeCommentId: string | null;
   selectedRange: MarkdownSourceRange | null;
+  selectionComposerOpen: boolean;
   diagramCommentRange: MarkdownSourceRange | null;
   diagramCommentComposer: ReactNode;
   themePreference: ThemePreference;
@@ -346,7 +342,10 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
         rehypePlugins={[
           rehypeRaw,
           [rehypeSanitize, walkthroughMarkdownSanitizeSchema],
-          [rehypeRvwSourceMap, { annotations, activeCommentId, selectedRange }],
+          [
+            rehypeRvwSourceMap,
+            { annotations, activeCommentId, selectedRange, composerOpen: selectionComposerOpen },
+          ],
         ]}
         remarkPlugins={[remarkGfm]}
         urlTransform={(url) => (url.startsWith("rvw-ref:") ? url : defaultUrlTransform(url))}
@@ -774,80 +773,41 @@ export function WalkthroughViewer({
           ))}
         </div>
       )}
-      <div className="walkthrough-viewer-layout">
-        <MarkdownSelectionSurface
-          className="walkthrough-markdown-surface"
-          selectedRange={selectedRange}
-          composerOpen={lineComposerPlacement === "selection"}
-          onSelection={(range) => {
-            if (!range) {
-              setSelectedRange(null);
-              setLineComposerPlacement((placement) =>
-                placement === "selection" ? null : placement,
-              );
-              return;
-            }
-            createComment.reset();
-            setCommentBody("");
-            setComposerOpen(false);
-            setSelectedRange(range);
-            setDiagramRange(null);
-            setLineComposerPlacement(null);
-          }}
-          onOpenComposer={() => setLineComposerPlacement("selection")}
-          composer={lineComposer}
-        >
-          <WalkthroughMarkdown
-            walkthrough={walkthrough}
-            references={references}
-            placedComments={markdownComments}
-            activeCommentId={activeCommentId}
-            selectedRange={activeLineRange}
-            diagramCommentRange={diagramRange}
-            diagramCommentComposer={lineComposerPlacement === "diagram" ? lineComposer : null}
-            themePreference={themePreference}
-            onOpenReference={openReference}
-            onCommentActiveChange={onCommentActiveChange}
-            onCommentRange={openDiagramComposer}
-          />
-        </MarkdownSelectionSurface>
-        <aside className="walkthrough-reference-index" aria-label="コード参照">
-          <div className="walkthrough-reference-index-heading">
-            <strong>Code references</strong>
-            <span>開くまでnavigationは変わりません</span>
-          </div>
-          <div className="walkthrough-reference-index-list">
-            {walkthrough.references.map((reference, index) => (
-              <button
-                key={reference.id}
-                title={fullReferenceLocation(reference)}
-                onPointerDown={(event) => {
-                  if (event.button !== 0) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  openReference(reference, event.metaKey || event.ctrlKey);
-                }}
-                onClick={(event) => {
-                  event.preventDefault();
-                  if (event.detail === 0) openReference(reference, false);
-                }}
-                onContextMenu={(event) => {
-                  if (event.ctrlKey || event.metaKey) event.preventDefault();
-                }}
-              >
-                <span className="walkthrough-reference-number">
-                  {String(index + 1).padStart(2, "0")}
-                </span>
-                <span className="walkthrough-reference-copy">
-                  <strong>{reference.label}</strong>
-                  <code>{compactReferenceLocation(reference)}</code>
-                  {reference.description && <small>{reference.description}</small>}
-                </span>
-              </button>
-            ))}
-          </div>
-        </aside>
-      </div>
+      <MarkdownSelectionSurface
+        className="walkthrough-markdown-surface"
+        selectedRange={selectedRange}
+        composerOpen={lineComposerPlacement === "selection"}
+        onSelection={(range) => {
+          if (!range) {
+            setSelectedRange(null);
+            setLineComposerPlacement((placement) => (placement === "selection" ? null : placement));
+            return;
+          }
+          createComment.reset();
+          setCommentBody("");
+          setComposerOpen(false);
+          setSelectedRange(range);
+          setDiagramRange(null);
+          setLineComposerPlacement(null);
+        }}
+        onOpenComposer={() => setLineComposerPlacement("selection")}
+        composer={lineComposer}
+      >
+        <WalkthroughMarkdown
+          walkthrough={walkthrough}
+          references={references}
+          placedComments={markdownComments}
+          activeCommentId={activeCommentId}
+          selectedRange={lineComposerPlacement === "selection" ? selectedRange : null}
+          selectionComposerOpen={lineComposerPlacement === "selection"}
+          diagramCommentRange={diagramRange}
+          diagramCommentComposer={lineComposerPlacement === "diagram" ? lineComposer : null}
+          themePreference={themePreference}
+          onOpenReference={openReference}
+          onCommentActiveChange={onCommentActiveChange}
+          onCommentRange={openDiagramComposer}
+        />
+      </MarkdownSelectionSurface>
     </div>
   );
 }

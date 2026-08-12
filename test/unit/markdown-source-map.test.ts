@@ -1,7 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { rehypeRvwSourceMap } from "../../src/web/markdown-source-map.js";
+import {
+  markdownRangeFromPointerIntent,
+  rehypeRvwSourceMap,
+} from "../../src/web/markdown-source-map.js";
 
 describe("Markdown preview source mapping", () => {
+  it("uses the pointer target instead of a browser range expanded to earlier blocks", () => {
+    expect(
+      markdownRangeFromPointerIntent(
+        { startLine: 31, endLine: 33 },
+        { startLine: 33, endLine: 33 },
+        { startLine: 33, endLine: 33 },
+      ),
+    ).toEqual({ startLine: 33, endLine: 33 });
+    expect(
+      markdownRangeFromPointerIntent(
+        { startLine: 15, endLine: 21 },
+        { startLine: 21, endLine: 21 },
+        { startLine: 21, endLine: 21 },
+      ),
+    ).toEqual({ startLine: 21, endLine: 21 });
+  });
+
+  it("keeps intentional pointer drags across multiple mapped lines", () => {
+    expect(
+      markdownRangeFromPointerIntent(
+        { startLine: 15, endLine: 21 },
+        { startLine: 15, endLine: 15 },
+        { startLine: 21, endLine: 21 },
+      ),
+    ).toEqual({ startLine: 15, endLine: 21 });
+  });
+
   it("keeps source lines on rendered text and inserts inline comment anchors", () => {
     const tree = {
       type: "root",
@@ -26,9 +56,10 @@ describe("Markdown preview source mapping", () => {
       annotations: [{ id: "comment-1", range: { startLine: 4, endLine: 4 } }],
       activeCommentId: "comment-1",
       selectedRange: { startLine: 3, endLine: 3 },
+      composerOpen: true,
     })(tree);
 
-    expect(tree.children).toHaveLength(2);
+    expect(tree.children).toHaveLength(3);
     expect(tree.children[0]).toMatchObject({
       properties: {
         dataRvwSourceStartLine: 3,
@@ -55,6 +86,10 @@ describe("Markdown preview source mapping", () => {
       ],
     });
     expect(tree.children[1]).toMatchObject({
+      tagName: "div",
+      properties: { dataRvwComposerAnchor: "true" },
+    });
+    expect(tree.children[2]).toMatchObject({
       tagName: "div",
       properties: { dataRvwCommentAnchor: "comment-1" },
     });
@@ -204,5 +239,49 @@ describe("Markdown preview source mapping", () => {
         children: [{ value: " Unit tests" }],
       },
     ]);
+  });
+
+  it("places a declarative composer slot after a list instead of mutating the list DOM", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "ul",
+          properties: {},
+          position: { start: { line: 8 }, end: { line: 10 } },
+          children: [
+            {
+              type: "element",
+              tagName: "li",
+              properties: {},
+              position: { start: { line: 9 }, end: { line: 9 } },
+              children: [{ type: "text", value: "selected" }],
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeRvwSourceMap({
+      selectedRange: { startLine: 9, endLine: 9 },
+      composerOpen: true,
+      annotations: [{ id: "list-comment", range: { startLine: 9, endLine: 9 } }],
+    })(tree);
+
+    expect(tree.children).toHaveLength(3);
+    expect(tree.children[0]?.tagName).toBe("ul");
+    expect(tree.children[0]?.children).toHaveLength(1);
+    expect(tree.children[1]).toMatchObject({
+      tagName: "div",
+      properties: {
+        className: ["markdown-selection-composer-slot"],
+        dataRvwComposerAnchor: "true",
+      },
+    });
+    expect(tree.children[2]).toMatchObject({
+      tagName: "div",
+      properties: { dataRvwCommentAnchor: "list-comment" },
+    });
   });
 });

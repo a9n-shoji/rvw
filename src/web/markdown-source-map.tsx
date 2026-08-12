@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 export interface MarkdownSourceRange {
   startLine: number;
@@ -34,6 +35,7 @@ interface SourceMapOptions {
   annotations?: MarkdownCommentAnnotation[];
   activeCommentId?: string | null;
   selectedRange?: MarkdownSourceRange | null;
+  composerOpen?: boolean;
 }
 
 const blockTags = new Set([
@@ -205,6 +207,7 @@ function highlightRanges(
 
 function findCommentAnchor(root: HastNode, line: number): HastNode | null {
   let best: { node: HastNode; depth: number; span: number } | null = null;
+  let bestList: { node: HastNode; depth: number } | null = null;
   const pending: Array<{ node: HastNode; depth: number }> = [{ node: root, depth: 0 }];
   while (pending.length > 0) {
     const current = pending.pop();
@@ -222,10 +225,16 @@ function findCommentAnchor(root: HastNode, line: number): HastNode | null {
       if (!best || depth > best.depth || (depth === best.depth && span < best.span)) {
         best = { node, depth, span };
       }
+      if (
+        (node.tagName === "ul" || node.tagName === "ol") &&
+        (!bestList || depth > bestList.depth)
+      ) {
+        bestList = { node, depth };
+      }
     }
     node.children?.forEach((child) => pending.push({ node: child, depth: depth + 1 }));
   }
-  return best?.node ?? null;
+  return bestList?.node ?? best?.node ?? null;
 }
 
 function insertCommentAnchors(root: HastNode, annotations: MarkdownCommentAnnotation[]): void {
@@ -275,6 +284,52 @@ function insertCommentAnchors(root: HastNode, annotations: MarkdownCommentAnnota
   }
 }
 
+function insertComposerAnchor(root: HastNode, selectedRange: MarkdownSourceRange | null): void {
+  if (!selectedRange) return;
+  const line = selectedRange.endLine;
+  const insertAfterSelectedBlock = (node: HastNode): boolean => {
+    if (!node.children) return false;
+    for (let index = 0; index < node.children.length; index += 1) {
+      const child = node.children[index]!;
+      const containsLine = Boolean(
+        child.position && child.position.start.line <= line && child.position.end.line >= line,
+      );
+      if (!containsLine) {
+        if (insertAfterSelectedBlock(child)) return true;
+        continue;
+      }
+      const isListOrTable =
+        child.tagName === "ul" || child.tagName === "ol" || child.tagName === "table";
+      if (!isListOrTable && insertAfterSelectedBlock(child)) return true;
+      if (child.type === "element" && child.tagName && blockTags.has(child.tagName)) {
+        node.children.splice(index + 1, 0, {
+          type: "element",
+          tagName: "div",
+          properties: {
+            className: ["markdown-selection-composer-slot"],
+            dataRvwComposerAnchor: "true",
+          },
+          children: [],
+        });
+        return true;
+      }
+    }
+    return false;
+  };
+  if (!insertAfterSelectedBlock(root)) {
+    root.children ??= [];
+    root.children.push({
+      type: "element",
+      tagName: "div",
+      properties: {
+        className: ["markdown-selection-composer-slot"],
+        dataRvwComposerAnchor: "true",
+      },
+      children: [],
+    });
+  }
+}
+
 export function rehypeRvwSourceMap(options: SourceMapOptions = {}) {
   return (tree: HastNode): void => {
     const annotations = options.annotations ?? [];
@@ -283,9 +338,10 @@ export function rehypeRvwSourceMap(options: SourceMapOptions = {}) {
       tree,
       annotations,
       options.activeCommentId ?? null,
-      options.selectedRange ?? null,
+      options.composerOpen ? (options.selectedRange ?? null) : null,
     );
     insertCommentAnchors(tree, annotations);
+    insertComposerAnchor(tree, options.composerOpen ? (options.selectedRange ?? null) : null);
   };
 }
 
@@ -303,6 +359,14 @@ function mappedElementAtBoundary(
   }
   const element = candidate instanceof Element ? candidate : candidate?.parentElement;
   if (!element) return null;
+  const leaf = element.closest<HTMLElement>("[data-rvw-source-leaf='true']");
+  if (leaf && container.contains(leaf)) return leaf;
+  const leafDescendants = element.querySelectorAll<HTMLElement>("[data-rvw-source-leaf='true']");
+  if (leafDescendants.length > 0) {
+    return edge === "start"
+      ? (leafDescendants[0] ?? null)
+      : (leafDescendants[leafDescendants.length - 1] ?? null);
+  }
   const direct = element.closest<HTMLElement>("[data-rvw-source-start-line]");
   if (direct && container.contains(direct)) return direct;
   const descendants = element.querySelectorAll<HTMLElement>("[data-rvw-source-start-line]");
@@ -356,6 +420,54 @@ export function markdownRangeFromSelection(
   };
 }
 
+function markdownRangeFromPointerTarget(
+  container: HTMLElement,
+  target: EventTarget | null,
+  clientX: number,
+  clientY: number,
+): MarkdownSourceRange | null {
+  const caretPosition = document.caretPositionFromPoint?.(clientX, clientY);
+  const caretRange = (
+    document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+  ).caretRangeFromPoint?.(clientX, clientY);
+  const caretNode = caretPosition?.offsetNode ?? caretRange?.startContainer ?? null;
+  const candidates = [caretNode, target];
+  let mapped: HTMLElement | null = null;
+  for (const candidate of candidates) {
+    const element =
+      candidate instanceof Element
+        ? candidate
+        : candidate instanceof Node
+          ? candidate.parentElement
+          : null;
+    if (!element || !container.contains(element)) continue;
+    mapped =
+      element.closest<HTMLElement>("[data-rvw-source-leaf='true']") ??
+      element.closest<HTMLElement>("[data-rvw-source-start-line]");
+    if (mapped && container.contains(mapped)) break;
+  }
+  if (!mapped) return null;
+  const startLine = Number(mapped.dataset.rvwSourceStartLine);
+  const endLine = Number(mapped.dataset.rvwSourceEndLine);
+  if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < 1) {
+    return null;
+  }
+  return { startLine: Math.min(startLine, endLine), endLine: Math.max(startLine, endLine) };
+}
+
+export function markdownRangeFromPointerIntent(
+  selectionRange: MarkdownSourceRange,
+  pointerStartRange: MarkdownSourceRange | null,
+  pointerEndRange: MarkdownSourceRange | null,
+): MarkdownSourceRange {
+  return pointerStartRange && pointerEndRange
+    ? {
+        startLine: Math.min(pointerStartRange.startLine, pointerEndRange.startLine),
+        endLine: Math.max(pointerStartRange.endLine, pointerEndRange.endLine),
+      }
+    : selectionRange;
+}
+
 export function markdownCommentAnchorIds(node: unknown): string[] {
   const properties = (node as { properties?: Record<string, unknown> } | null)?.properties;
   const value = properties?.dataRvwCommentAnchor;
@@ -403,22 +515,44 @@ export function MarkdownSelectionSurface({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const pointerStartRangeRef = useRef<MarkdownSourceRange | null>(null);
+  const pointerSelectingRef = useRef(false);
+  const pendingSelectionClearRef = useRef<number | null>(null);
   const onSelectionRef = useRef(onSelection);
   onSelectionRef.current = onSelection;
+  const [transientRange, setTransientRange] = useState<MarkdownSourceRange | null>(null);
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
   const [popoverLeft, setPopoverLeft] = useState<number | null>(null);
+  const [composerHost, setComposerHost] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     if (composerOpen) return;
     const clearInvalidSelection = (): void => {
+      if (pointerSelectingRef.current) return;
       const container = containerRef.current;
       if (container && markdownRangeFromSelection(container, window.getSelection())) return;
+      setTransientRange(null);
       setAnchor(null);
       setPopoverLeft(null);
-      onSelectionRef.current(null);
     };
     document.addEventListener("selectionchange", clearInvalidSelection);
     return () => document.removeEventListener("selectionchange", clearInvalidSelection);
   }, [composerOpen]);
+  useEffect(() => {
+    if (composerOpen || selectedRange) return;
+    const container = containerRef.current;
+    if (container && markdownRangeFromSelection(container, window.getSelection())) return;
+    setTransientRange(null);
+    setAnchor(null);
+    setPopoverLeft(null);
+  }, [composerOpen, selectedRange]);
+  useEffect(
+    () => () => {
+      if (pendingSelectionClearRef.current !== null) {
+        window.clearTimeout(pendingSelectionClearRef.current);
+      }
+    },
+    [],
+  );
   useLayoutEffect(() => {
     const container = containerRef.current;
     const popover = popoverRef.current;
@@ -449,17 +583,41 @@ export function MarkdownSelectionSurface({
       if (scrollFrame !== null) window.cancelAnimationFrame(scrollFrame);
     };
   }, [anchor, composerOpen]);
-  const updateSelection = (): void => {
+  useLayoutEffect(() => {
+    if (!composerOpen) {
+      setComposerHost(null);
+      return;
+    }
+    const container = containerRef.current;
+    const host = container?.querySelector<HTMLDivElement>("[data-rvw-composer-anchor='true']");
+    if (!host) return;
+    setComposerHost(host);
+    const frame = window.requestAnimationFrame(() => {
+      host.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [composerOpen, selectedRange?.endLine, selectedRange?.startLine]);
+  const updateSelection = (
+    pointerStartRange: MarkdownSourceRange | null = null,
+    pointerEndRange: MarkdownSourceRange | null = null,
+  ): void => {
     const container = containerRef.current;
     if (!container) return;
     const selection = window.getSelection();
-    const sourceRange = markdownRangeFromSelection(container, selection);
-    if (!sourceRange || !selection) {
+    const selectionRange = markdownRangeFromSelection(container, selection);
+    if (!selectionRange || !selection) {
+      setTransientRange(null);
       setAnchor(null);
       setPopoverLeft(null);
-      onSelection(null);
       return;
     }
+    const sourceRange = markdownRangeFromPointerIntent(
+      selectionRange,
+      pointerStartRange,
+      pointerEndRange,
+    );
     const rect = selection.getRangeAt(0).getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
     setPopoverLeft(null);
@@ -467,22 +625,67 @@ export function MarkdownSelectionSurface({
       left: rect.left + rect.width / 2 - containerRect.left,
       top: Math.max(8, rect.bottom - containerRect.top + 8),
     });
-    onSelection(sourceRange);
+    setTransientRange(sourceRange);
   };
+  const displayedRange = composerOpen ? selectedRange : transientRange;
   return (
     <div
-      className={["markdown-comment-surface", className, composerOpen ? "is-composing" : null]
-        .filter(Boolean)
-        .join(" ")}
+      className={["markdown-comment-surface", className].filter(Boolean).join(" ")}
       ref={containerRef}
+      onPointerDown={(event) => {
+        if (pendingSelectionClearRef.current !== null) {
+          window.clearTimeout(pendingSelectionClearRef.current);
+          pendingSelectionClearRef.current = null;
+        }
+        if (event.button !== 0) {
+          pointerSelectingRef.current = false;
+          pointerStartRangeRef.current = null;
+          return;
+        }
+        pointerSelectingRef.current = true;
+        pointerStartRangeRef.current = markdownRangeFromPointerTarget(
+          event.currentTarget,
+          event.target,
+          event.clientX,
+          event.clientY,
+        );
+      }}
       onPointerUp={(event) => {
         if (
           (event.target as Element).closest(
             ".markdown-selection-popover, button, input, textarea, select",
           )
-        )
+        ) {
+          pointerSelectingRef.current = false;
+          pointerStartRangeRef.current = null;
           return;
-        window.requestAnimationFrame(updateSelection);
+        }
+        const pointerStartRange = pointerStartRangeRef.current;
+        const pointerEndRange = markdownRangeFromPointerTarget(
+          event.currentTarget,
+          event.target,
+          event.clientX,
+          event.clientY,
+        );
+        pointerStartRangeRef.current = null;
+        pointerSelectingRef.current = false;
+        const container = containerRef.current;
+        const selectionRange = container
+          ? markdownRangeFromSelection(container, window.getSelection())
+          : null;
+        if (selectionRange) {
+          updateSelection(pointerStartRange, pointerEndRange);
+          return;
+        }
+        // Preserve the browser's two-click sequence before treating a click as a clear.
+        pendingSelectionClearRef.current = window.setTimeout(() => {
+          pendingSelectionClearRef.current = null;
+          updateSelection();
+        }, 250);
+      }}
+      onPointerCancel={() => {
+        pointerSelectingRef.current = false;
+        pointerStartRangeRef.current = null;
       }}
       onKeyUp={(event) => {
         if (
@@ -491,11 +694,11 @@ export function MarkdownSelectionSurface({
           )
         )
           return;
-        window.requestAnimationFrame(updateSelection);
+        window.requestAnimationFrame(() => updateSelection());
       }}
     >
       {children}
-      {selectedRange && anchor && (
+      {displayedRange && anchor && !composerHost && (
         <div
           ref={popoverRef}
           className={`markdown-selection-popover${composerOpen ? " is-composing" : ""}`}
@@ -508,13 +711,17 @@ export function MarkdownSelectionSurface({
             <button
               className="markdown-selection-comment-action"
               onPointerDown={(event) => event.preventDefault()}
-              onClick={onOpenComposer}
+              onClick={() => {
+                onSelectionRef.current(displayedRange);
+                onOpenComposer();
+              }}
             >
-              {rangeLabel(selectedRange)}へコメント
+              {rangeLabel(displayedRange)}へコメント
             </button>
           )}
         </div>
       )}
+      {composerHost && createPortal(composer, composerHost)}
     </div>
   );
 }

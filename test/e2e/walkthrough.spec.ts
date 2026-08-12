@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryWalkthrough = "注文作成フロー：HTTPからtransactional outboxまで";
@@ -18,6 +18,29 @@ async function selectMappedText(locator: Locator, firstCharacterOnly = false): P
     selection?.addRange(range);
     element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
   }, firstCharacterOnly);
+}
+
+async function dragNativeText(page: Page, start: Locator, end: Locator = start): Promise<string> {
+  await start.scrollIntoViewIfNeeded();
+  await end.scrollIntoViewIfNeeded();
+  const textRect = async (locator: Locator) =>
+    await locator.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const rect = range.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    });
+  const [startRect, endRect] = await Promise.all([textRect(start), textRect(end)]);
+  await page.mouse.move(startRect.x + 1, startRect.y + startRect.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    endRect.x + Math.max(2, endRect.width - 1),
+    endRect.y + endRect.height / 2,
+    { steps: 10 },
+  );
+  const duringDrag = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  await page.mouse.up();
+  return duringDrag;
 }
 
 test("keeps agent explanation passive until a human opens an exact code reference", async ({
@@ -42,7 +65,7 @@ test("keeps agent explanation passive until a human opens an exact code referenc
   ).toBeVisible();
   await expect(page.locator('img[src="https://example.invalid/walkthrough.png"]')).toHaveCount(0);
   await expect(page.locator(".walkthrough-viewer-header .walkthrough-meta")).toHaveCount(0);
-  await expect(page.locator(".walkthrough-reference-index-list > button")).toHaveCount(19);
+  await expect(page.getByText("Code references", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("tab")).toHaveCount(2);
   await expect(page.locator(".walkthrough-diagram svg")).toBeVisible();
   await expect(page.locator(".walkthrough-diagram-node--linked")).toHaveCount(9);
@@ -116,16 +139,6 @@ test("keeps agent explanation passive until a human opens an exact code referenc
     page.locator(
       '.document-pane[data-pane="right"] diffs-container [data-line="39"][data-selected-line]',
     ),
-  ).toHaveCount(0);
-  const handlerFileReference = page
-    .locator(".walkthrough-reference-index-list > button")
-    .filter({ hasText: "CreateOrderHandler file" });
-  await handlerFileReference.click({ modifiers: ["Meta"] });
-  await expect(
-    page.locator('.document-pane[data-pane="right"] diffs-container'),
-  ).not.toHaveAttribute("data-search-target-line");
-  await expect(
-    page.locator('.document-pane[data-pane="right"] diffs-container [data-selected-line]'),
   ).toHaveCount(0);
   await expect(
     page.locator('.walkthrough-diagram svg[data-render-instance="initial"]'),
@@ -620,7 +633,7 @@ test("moves document tabs between at most two panes and previews repository Mark
   await expect(page.getByRole("button", { name: "L6へコメント", exact: true })).toHaveCount(0);
   await selectMappedText(previewSourceLine, true);
   await page.getByRole("button", { name: "L6へコメント", exact: true }).click();
-  const previewComposer = page.locator(".markdown-preview .markdown-selection-popover");
+  const previewComposer = page.locator(".markdown-preview .markdown-selection-composer-slot");
   const previewSurface = page.locator(".markdown-preview .markdown-comment-surface");
   const [previewComposerBox, previewSurfaceBox] = await Promise.all([
     previewComposer.boundingBox(),
@@ -628,6 +641,11 @@ test("moves document tabs between at most two panes and previews repository Mark
   ]);
   expect(previewComposerBox).not.toBeNull();
   expect(previewSurfaceBox).not.toBeNull();
+  const previewSourceLineBox = await previewSourceLine.boundingBox();
+  expect(previewSourceLineBox).not.toBeNull();
+  expect(previewComposerBox!.y).toBeGreaterThanOrEqual(
+    previewSourceLineBox!.y + previewSourceLineBox!.height,
+  );
   expect(previewComposerBox!.x).toBeGreaterThanOrEqual(previewSurfaceBox!.x + 11);
   expect(previewComposerBox!.x + previewComposerBox!.width).toBeLessThanOrEqual(
     previewSurfaceBox!.x + previewSurfaceBox!.width - 11,
@@ -642,6 +660,7 @@ test("moves document tabs between at most two panes and previews repository Mark
   await expect(previewComment).toBeVisible();
   await expect(previewComment.getByText("L6", { exact: true })).toBeVisible();
   const readinessTable = page.locator(".markdown-preview").getByRole("table");
+  await expect(readinessTable.getByRole("cell").first()).toHaveCSS("user-select", "text");
   await expect(readinessTable.getByRole("columnheader", { name: "Check" })).toBeVisible();
   await expect(readinessTable.getByRole("cell", { name: "Pending" })).toBeVisible();
   const wrappingTableCell = readinessTable.getByRole("cell", {
@@ -757,7 +776,7 @@ test("moves document tabs between at most two panes and previews repository Mark
     .filter({ hasText: "See" });
   await selectMappedText(lastMarkdownLine);
   await page.getByRole("button", { name: "L52へコメント", exact: true }).click();
-  const lastLineComposer = page.locator(".markdown-preview .markdown-selection-popover");
+  const lastLineComposer = page.locator(".markdown-preview .markdown-selection-composer-slot");
   const [lastLineComposerBox, lastLineSurfaceBox, lastLinePaneBox] = await Promise.all([
     lastLineComposer.boundingBox(),
     page.locator(".markdown-preview .markdown-comment-surface").boundingBox(),
@@ -838,6 +857,96 @@ test("moves document tabs between at most two panes and previews repository Mark
   );
   await expect(commitPicker).toHaveAttribute("aria-label", initialCommitSelection!);
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+});
+
+test("keeps native Markdown pointer selection stable across headings, tables, and code", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.locator(".file-tree").getByRole("button", { name: "README.md", exact: true }).click();
+  await page.getByRole("button", { name: "Preview", exact: true }).click();
+
+  const mappedLeaf = (line: number, text: RegExp) =>
+    page
+      .locator(
+        `.markdown-preview [data-rvw-source-start-line="${line}"][data-rvw-source-leaf="true"]`,
+      )
+      .filter({ hasText: text });
+  const clearSelection = async () => {
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await expect(page.locator(".markdown-selection-comment-action")).toHaveCount(0);
+  };
+
+  const localDevelopment = mappedLeaf(21, /^Local development$/);
+  await localDevelopment.dblclick();
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ""))
+    .toMatch(/^(Local|development)$/);
+  await expect(page.getByRole("button", { name: "L21へコメント", exact: true })).toBeVisible();
+  await clearSelection();
+
+  const ready = mappedLeaf(33, /^Ready$/);
+  await ready.dblclick();
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ""))
+    .toBe("Ready");
+  await expect(page.getByRole("button", { name: "L33へコメント", exact: true })).toBeVisible();
+  await clearSelection();
+
+  const codeLine = mappedLeaf(25, /^npm test$/);
+  expect((await dragNativeText(page, codeLine)).trim()).toBe("npm test");
+  await expect(page.getByRole("button", { name: "L25へコメント", exact: true })).toBeVisible();
+  await clearSelection();
+
+  expect((await dragNativeText(page, ready)).trim()).toBe("Ready");
+  await expect(page.getByRole("button", { name: "L33へコメント", exact: true })).toBeVisible();
+  await clearSelection();
+
+  const firstLifecycleItem = mappedLeaf(15, /^Authenticate the actor/);
+  const multiLineSelection = await dragNativeText(page, firstLifecycleItem, localDevelopment);
+  expect(multiLineSelection).toContain("Authenticate the actor");
+  expect(multiLineSelection).toContain("Local development");
+  expect(multiLineSelection).not.toContain("npm install");
+  await expect(page.getByRole("button", { name: "L15–21へコメント", exact: true })).toBeVisible();
+});
+
+test("keeps walkthrough Markdown selection stable on the first interaction", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page
+    .getByRole("button", { name: "Markdown表現デモ：レビューコメントのショーケース" })
+    .click();
+
+  const mappedLeaf = (line: number, text: RegExp) =>
+    page
+      .locator(
+        `.walkthrough-markdown [data-rvw-source-start-line="${line}"][data-rvw-source-leaf="true"]`,
+      )
+      .filter({ hasText: text });
+  const clearSelection = async () => {
+    await page.evaluate(() => window.getSelection()?.removeAllRanges());
+    await expect(page.locator(".markdown-selection-comment-action")).toHaveCount(0);
+  };
+
+  const summaryHeading = mappedLeaf(7, /^レビューサマリー$/);
+  await summaryHeading.dblclick();
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ""))
+    .toMatch(/^(レビュー|サマリー|レビューサマリー)$/);
+  await expect(page.getByRole("button", { name: "L7へコメント", exact: true })).toBeVisible();
+  await clearSelection();
+
+  const ready = mappedLeaf(11, /Ready/);
+  await ready.dblclick();
+  await expect
+    .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ""))
+    .toBe("Ready");
+  await expect(page.getByRole("button", { name: "L11へコメント", exact: true })).toBeVisible();
+  await clearSelection();
+
+  const codeLine = mappedLeaf(58, /await orders\.insert/);
+  expect((await dragNativeText(page, codeLine)).trim()).toBe("await orders.insert(order, tx);");
+  await expect(page.getByRole("button", { name: "L58へコメント", exact: true })).toBeVisible();
 });
 
 test("renders a class diagram with code-bound classes", async ({ page }) => {
@@ -1213,7 +1322,7 @@ test("refreshes an open walkthrough in place after an agent update", async ({ pa
     page.getByRole("heading", { name: "利用者フィードバックを反映した障害説明" }),
   ).toBeVisible();
   await expect(
-    page.locator(".walkthrough-reference-index-list").getByText(updatedReferenceLabel),
+    page.locator(".walkthrough-inline-reference").filter({ hasText: updatedReferenceLabel }),
   ).toBeVisible();
   await expect(page.getByRole("tab")).toHaveCount(2);
 });

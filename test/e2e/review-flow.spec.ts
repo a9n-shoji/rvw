@@ -50,6 +50,7 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   });
   expect(browserCloseGuard).toEqual({ dispatchAllowed: false, defaultPrevented: true });
   await expect(page.getByText("Pull Request.md", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "Source", exact: true }).click();
   const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
   const displayFullButton = reviewScope.getByRole("button", { name: "全文", exact: true });
   const displayDiffButton = reviewScope.getByRole("button", { name: "変更", exact: true });
@@ -173,6 +174,11 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(page).toHaveTitle("rvw: Fixture review updated");
   await expect(commitPicker).toHaveAccessibleName(/2 commits.*PR全体/);
   await expect(commitDialog.getByRole("option", { selected: true })).toHaveCount(2);
+  await expect(commitDialog.locator(".commit-range-option-meta time")).toHaveCount(2);
+  await expect(commitDialog.locator(".commit-range-option-meta time").first()).toHaveAttribute(
+    "datetime",
+    /^2026-08-08T/,
+  );
   await expect(commitDialog.getByRole("option", { name: /Add fixture function/ })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -1000,7 +1006,9 @@ test("keeps PR body preview comments interactive and stacks collapsed source men
 
 test("restores the shared theme after browser storage is cleared", async ({ page, request }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("heading", { name: /Fixture review/ })).toBeVisible();
+  await expect(
+    page.locator(".topbar").getByRole("heading", { name: /Fixture review/ }),
+  ).toBeVisible();
 
   const actionsMenuButton = page.getByRole("button", { name: "その他の操作", exact: true });
   await actionsMenuButton.click();
@@ -1017,7 +1025,9 @@ test("restores the shared theme after browser storage is cleared", async ({ page
   await page.evaluate(() => window.localStorage.clear());
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.getByRole("heading", { name: /Fixture review/ })).toBeVisible();
+  await expect(
+    page.locator(".topbar").getByRole("heading", { name: /Fixture review/ }),
+  ).toBeVisible();
 
   await actionsMenuButton.click();
   await page.getByRole("menu").getByRole("menuitemradio", { name: "システム" }).click();

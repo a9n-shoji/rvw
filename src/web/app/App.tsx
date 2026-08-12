@@ -169,6 +169,17 @@ function CommitRangePicker({
   const [open, setOpen] = useState(false);
   const [dragAnchorOid, setDragAnchorOid] = useState<string | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
+  const commitDateFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat("ja-JP", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    [],
+  );
   const startIndex = commits.findIndex((commit) => commit.oid === selectedStartOid);
   const endIndex = commits.findIndex((commit) => commit.oid === selectedEndOid);
   const rangeValid = startIndex >= 0 && endIndex >= startIndex;
@@ -318,7 +329,12 @@ function CommitRangePicker({
                   <span className="commit-range-option-indicator" aria-hidden="true" />
                   <span className="commit-range-option-copy">
                     <strong>{commit.subject}</strong>
-                    <code>{shortOid(commit.oid)}</code>
+                    <span className="commit-range-option-meta">
+                      <code>{shortOid(commit.oid)}</code>
+                      <time dateTime={commit.authoredAt}>
+                        {commitDateFormatter.format(new Date(commit.authoredAt))}
+                      </time>
+                    </span>
                   </span>
                   {isLatest && <span className="commit-latest-badge">最新</span>}
                 </button>
@@ -1257,7 +1273,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         data-pane={paneId}
         aria-label={`${paneId === "left" ? "左" : "右"}のコードペイン`}
         onPointerDown={() =>
-          setDocumentWorkspace((current) => ({ ...current, focusedPane: paneId }))
+          setDocumentWorkspace((current) =>
+            current.focusedPane === paneId ? current : { ...current, focusedPane: paneId },
+          )
         }
       >
         <DocumentTabs

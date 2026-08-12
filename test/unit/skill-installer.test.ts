@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -20,13 +20,59 @@ describe("SkillInstaller", () => {
 
     const reviewSkill = first.find((status) => status.name === "rvw")!;
     writeFileSync(path.join(reviewSkill.path, "SKILL.md"), "locally changed");
+    expect(installer.statuses("codex", target)).toMatchObject([
+      {
+        name: "rvw",
+        installed: true,
+        matchesBundled: false,
+        locallyModified: true,
+        updateAvailable: false,
+        updateRequired: false,
+        state: "locally-modified",
+      },
+      {
+        name: "rvw-walkthrough",
+        installed: true,
+        matchesBundled: true,
+        locallyModified: false,
+        updateAvailable: false,
+        updateRequired: false,
+        state: "current",
+      },
+    ]);
     expect(() => installer.install("codex", { targetRoot: target })).toThrow(/--force/);
-    expect(
-      installer
-        .install("codex", { targetRoot: target, force: true })
-        .every((status) => status.matchesBundled),
-    ).toBe(true);
+    expect(installer.install("codex", { targetRoot: target, force: true })).toEqual(first);
     expect(readFileSync(sentinel, "utf8")).toBe("keep");
+  });
+
+  it("distinguishes a managed bundled update from local customization", () => {
+    const packageRoot = mkdtempSync(path.join(os.tmpdir(), "rvw-skill-package-"));
+    cpSync(path.join(process.cwd(), "skills"), path.join(packageRoot, "skills"), {
+      recursive: true,
+    });
+    const target = mkdtempSync(path.join(os.tmpdir(), "rvw-skills-update-"));
+    const installer = new SkillInstaller(packageRoot);
+    const installed = installer.install("codex", { targetRoot: target });
+    const reviewSkill = installed.find((status) => status.name === "rvw")!;
+
+    const bundledSkillPath = path.join(packageRoot, "skills", "rvw", "SKILL.md");
+    writeFileSync(bundledSkillPath, `${readFileSync(bundledSkillPath, "utf8")}\nBundled update.\n`);
+    expect(installer.status("codex", "rvw", target)).toMatchObject({
+      managed: true,
+      locallyModified: false,
+      updateAvailable: true,
+      updateRequired: true,
+      state: "update-available",
+    });
+
+    writeFileSync(path.join(reviewSkill.path, "SKILL.md"), "local customization");
+    expect(installer.status("codex", "rvw", target)).toMatchObject({
+      managed: true,
+      locallyModified: true,
+      updateAvailable: true,
+      updateRequired: false,
+      state: "locally-modified",
+    });
   });
 
   it("uses the same capability names and content for Codex and Claude", () => {

@@ -3,8 +3,8 @@
 `rvw`は、AIや人間が実装したGitHub Pull Requestを、差分だけでなく変更後のsoftware全体として
 人間が理解するためのローカルviewerです。PRの意図、Git commit、変更箇所、選択commit時点の
 repository全体を行き来し、PR本文、変更されたコード、変更されていない関連コードへコメントできます。
-Agentが実装やarchitectureの説明を提示した場合は、説明を独立したtabに残したまま、inline link、
-reference一覧、Mermaid図から人間が選んだcodeだけを開けます。文書は最大2ペインへ並べられるため、
+Agentが実装やarchitectureの説明を提示した場合は、説明を独立したtabに残したまま、inline linkや
+Mermaid図から人間が選んだcodeだけを開けます。文書は最大2ペインへ並べられるため、
 説明と実装、callerとdefinition、Markdown previewとcodeを同時に読めます。
 
 diffは変更を見つける入口であり、レビュー対象の境界ではありません。人間が結果を読み、影響を追い、
@@ -68,7 +68,7 @@ rvw open https://github.com/owner/repository/pull/123
 rvw open
 ```
 
-serverは`127.0.0.1`の空きportだけへbindします。自動で開いたviewerは、最後のタブを閉じると短い猶予後にserverも停止します。リロード中や別タブが残っている間は停止しません。ブラウザを開かずに検証する場合は`rvw open --no-open`を使い、この場合はCtrl+Cで停止します。
+serverは`127.0.0.1`の空きportだけへbindします。自動で開いたviewerは、最後のタブを閉じると短い猶予後にserverも停止します。リロード中や別タブが残っている間は停止しません。ブラウザを開かずに検証する場合は`rvw open --no-open`を使い、この場合はCtrl+Cで停止します。一度登録したPRは、完全URLまたは全登録PRで一意な番号を指定すればrepository外のdirectoryからも開けます。
 
 ## 変更を理解する
 
@@ -87,7 +87,7 @@ viewerはこの流れのために次を提供します。
 - `Pull Request.md`、変更ファイル、全ファイル
 - 開いた文書を保持するタブ、最大2つの横ペイン、横幅をdrag調整できるsidebar / pane divider
 - タブのdrag & drop、ペインmenu、sidebarからの`Cmd` / `Ctrl`+clickによる右ペイン表示
-- repository内MarkdownのSource / Preview切り替え（見出しlinkと同じcommitの相対画像を含む）
+- repository内Markdown全文のPreview既定とSource / Preview切り替え（差分がある変更表示は通常のdiff、見出しlinkと同じcommitの相対画像を含む）
 - 全文、選択した連続commit範囲の差分
 - split / stacked diff、syntax highlight、行・範囲選択
 - `@pierre/vscode-icons`による全画面共通の言語／tooling file icon
@@ -99,7 +99,7 @@ viewerはこの流れのために次を提供します。
 - Walkthrough commentをAgentが読むときの、元の説明本文とcode referenceの同時取得
 - 同じ参照を保ったWalkthroughの改善と、確認付きの不要Walkthrough削除
 
-各commitはcommit messageとshort SHAで選択できます。一件はclick、連続範囲は一覧をdragするだけで両端を含めて選べ、`PR全体`と`最新だけ`のshortcutも利用できます。範囲のlatest側がheadならtop barに`最新`を表示します。`Pull Request.md`は選択commitにかかわらず常に最新です。
+各commitはcommit message、short SHA、commit日時で選択できます。一件はclick、連続範囲は一覧をdragするだけで両端を含めて選べ、`PR全体`と`最新だけ`のshortcutも利用できます。範囲のlatest側がheadならtop barに`最新`を表示します。`Pull Request.md`は選択commitにかかわらず常に最新です。
 
 全文表示と全ファイルtreeが通常のrepository reading surfaceです。変更表示は同じcommit範囲へ
 変更箇所を重ねるlensとして働きます。diff外のfileを開いても比較条件は変わらず、そのcommitの
@@ -120,6 +120,9 @@ active tabやscroll位置も変わりません。人間がviewerのWalkthrough�
 時だけ、exact sourceがdocument tabへ開き、行指定があれば範囲全体が強調されます。`Cmd` / `Ctrl`を押しながら選べば
 操作元と反対のペインへ開きます。説明tabは残るため、
 複数のclaimと実装を任意の順序・任意のタイミングで往復できます。
+
+Walkthrough本文のinline referenceとMermaid node linkは維持しますが、同じ参照を横や下へ列挙する
+`Code references` indexとsidebar上の参照件数は表示しません。
 
 Mermaidの描画はflowchartだけに限定せず、class、sequence、state、ERなどbundled Mermaidが対応する
 記法を受け付けます。code referenceとの要素bindingはflowchartとclass diagramをE2Eで保証し、
@@ -148,7 +151,11 @@ rvw skill status
 - Codex: `~/.agents/skills/rvw`、`~/.agents/skills/rvw-walkthrough`
 - Claude Code: `~/.claude/skills/rvw`、`~/.claude/skills/rvw-walkthrough`
 
-既存Skillが同梱版と異なる場合は上書きしません。内容を確認したうえで`--force`を指定してください。package smokeやカスタム配置にはplatformを明示して`rvw skill status codex --target <SKILLS_ROOT>`のように指定します。
+rvwがインストールしたSkillには同梱版digestを記録します。`skill status --json`と`doctor --json`は、
+管理済みの旧版なら`updateAvailable: true`、ローカル編集なら`locallyModified: true`、記録のない差異なら
+`state: "unmanaged-difference"`として区別します。自動では上書きしないため、内容を確認したうえで
+`--force`を指定してください。package smokeやカスタム配置にはplatformを明示して
+`rvw skill status codex --target <SKILLS_ROOT>`のように指定します。
 以前の開発版が配置した`rvw-codex` / `rvw-claude` directoryは、local変更を消さないため自動削除しません。
 内容を確認してから手動で取り除いてください。
 
@@ -200,6 +207,7 @@ rvw pr refresh <PR_REF> --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
+rvw comment get <COMMENT_URI> --live --json
 rvw comment reply <COMMENT_URI> --stdin --json
 rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
@@ -208,7 +216,8 @@ rvw walkthrough publish --stdin --json
 rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
 rvw walkthrough delete <WALKTHROUGH_URI> --json
 rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
-rvw pr sync --stdin --json
+rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
+rvw pr attach <PR_REF> --repository <PATH> --json
 ```
 
 `comment list`は未解決を既定として`unresolved` / `resolved` / `all`をページング列挙し、各threadの
@@ -218,7 +227,7 @@ root post preview、post件数、最新head時点のOutdated判定を返しま�
 `comment get`は最新PRのtitle、base/head、serviceが導出したplacement、対象commitのbounded source
 excerptを返すため、AgentはOID比較でOutdatedを推測しません。
 
-`pr sync`はGitHub上の最新PR状態を取得し、任意の`commentUpdates`を同じSQLite transactionで反映します。`pr sync`と`comment reply`は冪等ではないため、結果が不明な場合はコメントを再取得してから再試行してください。
+`comment get --live`はGitHubの現在値とcacheの差をread-onlyで確認し、DBを更新しません。`pr sync`はGitHub上の最新PR状態を取得し、任意の`commentUpdates`を同じSQLite transactionで反映します。保存先がdirtyでも同じrepositoryのcleanなworktreeを`--repository`で選べ、確認済みの未追跡fileだけは`--allow-untracked`で許可できます。local branchがGitHub headより単にbehindな場合や最終同期後にforce-pushされた場合はcheckoutを変更せず同期します。`pr sync`と`comment reply`は冪等ではないため、結果が不明な場合はコメントを再取得してから再試行してください。
 
 詳細は[CLI protocol](docs/cli-protocol.md)と[実装仕様](docs/implementation-spec.md)を参照してください。
 
@@ -259,6 +268,13 @@ SQLite DBはOSのユーザーデータdirectoryに保存され、`rvw doctor --j
 確認できます。DBにはlocal repository path、同期済みPR metadata/body、コメント、Walkthrough、theme
 設定を保存します。review対象repositoryには旧sourceを保持する`refs/rvw/` Git refを作成します。GitHub
 credentialはGitHub CLIが管理し、rvwのDBへコピーしません。
+
+既定DBのdirectory/fileは新規作成時だけ`0700` / `0600`へ設定し、既存pathはownerとmodeを検証して
+安全ならchmodしません。明示的に管理する別pathは`RVW_DATABASE_PATH`で指定でき、この場合rvwは既存pathを
+chmodしません。存在しないdirectory/fileは作成時のmodeだけで`0700` / `0600`にし、既存pathが推奨modeで
+なければ`doctor --json`にwarningを表示します。通常起動したviewerは`0700`の一時directory内へ
+`0600`のdatabase別Unix socketを提供し、Agent CLIは可能ならそのprocessへ
+書き込みを依頼するため、AgentへDB directoryの直接write権限を渡す必要がありません。
 
 ローカルHTTP serverは`127.0.0.1`だけへbindしてHost / Originを検証し、write APIは
 `application/json`だけを受理し、CORSを有効にしません。コメントと返信はplain UTF-8 textです。
