@@ -905,3 +905,142 @@ editing and reply deletion decision.
 - Copied comment references stop resolving immediately after deletion.
 - A mistaken root deletion removes useful replies as well, so the action remains destructive and
   explicitly confirmed.
+
+## 2026-08-12: Keep typed Walkthrough links but remove the duplicate Code references index
+
+### Problem
+
+Walkthrough references appeared both where the explanation used them and in a persistent side or
+bottom `Code references` list. The duplicated list consumed a large part of narrow and two-pane
+layouts even when users navigated only through the explanation itself.
+
+### Choice
+
+Keep the reference model, CLI schema, validation, `rvw-ref:` inline buttons, and bound Mermaid-node
+navigation unchanged. Remove only the complete reference index beside/below the Walkthrough and the
+reference-count badge in the sidebar. Walkthrough content uses the full reading width.
+
+### Trade-offs
+
+- Links remain contextual and verifiable without a second navigation surface.
+- File-level references that an Agent declares but never links in the body are no longer directly
+  discoverable in the viewer; Agents should link references that matter to the explanation.
+- Protocol v1 and stored Walkthrough data remain compatible.
+
+## 2026-08-12: Route Agent CLI operations through the running rvw process when available
+
+### Problem
+
+Sandboxed Agents can read an explicitly selected SQLite database yet still be unable to reply,
+resolve, update a Walkthrough, or change a repository path because the OS user-data directory is not
+writable from the sandbox. Requiring broader direct DB access weakens isolation.
+
+### Choice
+
+A normally launched viewer exposes a per-user Unix socket with mode `0600`. CLI commands try this
+transport first and dispatch to the same `RvwService` instance used by HTTP; if no socket exists they
+retain direct local execution. An explicit `RVW_DATABASE_PATH` is included as the expected database
+identity: a matching viewer handles it, while a mismatch is rejected before dispatch and falls back to
+direct access. Fallback is limited to failures before request transmission. After transmission, a
+timeout, disconnect, or malformed response is reported as an uncertain outcome and is never repeated
+automatically. Destructive confirmation and the same Zod command schemas are enforced at socket
+dispatch, not only in the CLI presentation layer. Concurrent viewers use one owner and follower
+takeover for the shared socket. A `0700` per-user parent directory protects the bind-to-chmod window
+before the socket itself reaches `0600`. The socket is a local transport only: it
+does not add an Agent session, browser control, prompt exchange, or in-app AI feature.
+
+The default DB directory and file are chmodded only when newly created. Existing paths are checked by
+`stat` for exact `0700` / `0600` modes and current-user ownership. A failed chmod on a new path is
+accepted only when the resulting stat is already safe; unsafe existing or newly created paths produce
+an explicit error. Existing caller-managed `RVW_DATABASE_PATH` values are never chmodded by rvw;
+missing components use secure creation modes, and doctor reports actual/recommended metadata without
+turning a caller-managed warning into an automatic mutation.
+
+### Trade-offs
+
+- Agent writes can succeed without granting the Agent direct write access to the user-data directory.
+- A viewer (or `rvw open --no-open`) must be running for the socket path; direct CLI behavior remains
+  the fallback.
+- The transport is intentionally local and user-scoped, not a persistent cross-user daemon. A 40 MiB
+  frame cap matches accepted batched CLI input, while connection count and idle time remain bounded.
+
+## 2026-08-12: Make PR synchronization worktree-explicit and accept behind-only branches
+
+### Problem
+
+The saved main checkout could contain unrelated untracked nested worktrees while a PR worktree was
+clean. Sync rejected the saved checkout without identifying its path or entries. It also rejected a
+clean local PR branch that was simply one commit behind an already-updated GitHub head.
+
+### Choice
+
+`pr sync --repository <path>` may select any worktree in the saved Git common directory, and
+`pr attach` changes the saved path without launching a viewer. Dirty errors include the inspected path
+and all porcelain entries. Tracked changes always block; untracked entries block unless the caller
+explicitly passes `--allow-untracked` after inspection. rvw does not special-case directory names.
+
+When the checked-out PR branch differs from GitHub head, rvw fetches the GitHub head into an internal
+ref and accepts the state if local HEAD is an ancestor of either the current GitHub head or the last
+synchronized GitHub head. The latter permits a force-push without misclassifying the previously
+GitHub-visible commit as local-only. It never changes the worktree checkout; commits belonging to
+neither GitHub history still block synchronization.
+
+For reads that must distinguish the cached snapshot from current GitHub state,
+`comment get --live` performs a read-only lookup and reports an explicit stale comparison without
+updating SQLite. The default response reports null live fields rather than implying it contacted
+GitHub.
+
+### Trade-offs
+
+- Unrelated untracked files are never silently ignored, while a clean PR worktree can be selected.
+- Callers receive enough evidence to choose safely between cleanup, another worktree, and the explicit
+  untracked exception.
+- Behind-only synchronization reflects GitHub-visible state without updating the developer's branch.
+
+## 2026-08-12: Anchor Markdown selection to source leaves and place composers in document flow
+
+### Problem
+
+Selections inside table cells and nested Markdown could resolve to a parent spanning several source
+lines. The absolutely positioned composer could also cover a visually wrapped line that represented
+one source line, making the target hard to read while writing a comment.
+
+### Choice
+
+Selection boundaries prefer the nearest parser-decorated source leaf before considering broader
+ancestors. Markdown and table cells explicitly preserve native text selection. The action remains near
+the selection, but the Markdown transform declaratively inserts a React-owned portal slot after the
+selected semantic block and renders the composer in normal flow. Lists and tables receive the slot as
+a valid sibling rather than an imperative child/sibling mutation. Code/diff file headers use the renderer's sticky-header support below the tab
+strip, and the commit picker shows authored date/time beside the short SHA.
+
+### Trade-offs
+
+- A single nested line remains a single-line target even when its parent spans multiple source lines.
+- Opening a composer shifts following content instead of overlaying the selected document.
+- Composer placement follows semantic Markdown blocks rather than exact browser-wrapped visual lines.
+
+## 2026-08-12: Distinguish bundled Skill updates from local customization
+
+### Problem
+
+A plain current-bundle versus installed-directory comparison can detect a difference but cannot tell
+whether rvw shipped a newer Skill or the user intentionally customized the installed copy. Calling
+both cases `updateRequired` encourages an unsafe forced replacement. Recursively hashing an arbitrary
+installed tree also allowed an unreadable or symlinked asset to make all of `doctor` fail.
+
+### Choice
+
+Each successful rvw install writes an ignored `.rvw-install.json` marker containing the bundled
+digest. Status compares the current bundle, installed content, and recorded digest to report a clean
+managed update, local modification, or an unmanaged difference separately. Symlinks are hashed as
+links rather than followed, inspection has entry/byte bounds, and an inspection failure is returned as
+status instead of aborting every doctor check. Replacement still requires explicit `--force` for any
+difference.
+
+### Trade-offs
+
+- Installs made before the marker existed cannot be retroactively classified as updates; they are
+  reported honestly as unmanaged differences until reinstalled.
+- Local edits remain protected even when a newer bundle also exists.
+- The marker is installer metadata, not part of the Skill content digest or Agent instructions.

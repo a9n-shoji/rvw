@@ -55,7 +55,6 @@ export function WalkthroughPanel({
               {walkthrough.authorLabel ?? "Agent"} · {shortOid(walkthrough.sourceOid)}
             </span>
           </span>
-          <span className="walkthrough-panel-reference-count">{walkthrough.referenceCount}</span>
         </button>
       ))}
     </div>

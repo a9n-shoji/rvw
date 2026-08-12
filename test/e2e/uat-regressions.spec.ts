@@ -168,18 +168,31 @@ test("shows a recoverable error when the lazy document viewer cannot load", asyn
   await expect(page.getByRole("button", { name: "ページを再読み込み" })).toBeVisible();
 });
 
-test("preserves Markdown preview mode per document tab", async ({ page }) => {
+test("defaults Markdown to preview and preserves an explicit mode per document tab", async ({
+  page,
+}) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  await reviewScope.getByRole("button", { name: /^対象commit:/ }).click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("button", { name: "最新だけ", exact: true })
+    .click();
+  await reviewScope.getByRole("button", { name: "変更", exact: true }).click();
   await page.getByRole("button", { name: "README.md", exact: true }).click();
-  await page.getByRole("button", { name: "Preview", exact: true }).click();
+  await expect(page.locator("diffs-container")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Preview", exact: true })).toHaveCount(0);
+
+  await reviewScope.getByRole("button", { name: "全文", exact: true }).click();
   await expect(page.getByRole("button", { name: "Preview", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
+  await expect(page.getByRole("heading", { name: "Orders service", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Source", exact: true }).click();
   await page.getByRole("tab", { name: "Pull Request.md" }).click();
   await page.getByRole("tab", { name: "README.md" }).click();
-  await expect(page.getByRole("button", { name: "Preview", exact: true })).toHaveAttribute(
+  await expect(page.getByRole("button", { name: "Source", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );

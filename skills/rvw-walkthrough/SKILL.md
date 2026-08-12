@@ -13,7 +13,10 @@ Use only the `rvw` CLI protocol. Never access the SQLite database directly or co
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
 2. Require `protocolVersion` 1 and the `walkthrough.read` capability plus every publish, update, or delete capability needed for the task.
-3. Require local access to the saved repository and rvw data directory.
+3. Require local access to the saved repository. When a normally launched rvw viewer is running, the
+   CLI can route database reads and writes through its user-only Unix socket; otherwise direct rvw data
+   access is required. `RVW_DATABASE_PATH` selects an explicitly managed database; the CLI uses a
+   running viewer only when it reports that same database.
 
 ## Read the current artifact
 

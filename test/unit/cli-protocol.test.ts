@@ -100,6 +100,11 @@ const commentReviewContext = {
     },
   },
   walkthrough: null,
+  githubState: {
+    liveCheckedAt: null,
+    staleAgainstGitHub: null,
+    live: null,
+  },
 };
 
 function captureStdout(): () => unknown {
@@ -392,7 +397,7 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
 
-    expect(getCommentReviewContext).toHaveBeenCalledWith(commentRef);
+    expect(getCommentReviewContext).toHaveBeenCalledWith(commentRef, { live: false });
     expect(readStdout()).toEqual({
       ok: true,
       pullRequest: formattedPullRequest,
@@ -421,6 +426,11 @@ describe("CLI protocol discovery", () => {
         },
       },
       walkthrough: null,
+      githubState: {
+        liveCheckedAt: null,
+        staleAgainstGitHub: null,
+        live: null,
+      },
     });
   });
 
@@ -439,7 +449,7 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
 
-    expect(getCommentReviewContext).toHaveBeenCalledWith(commentRef);
+    expect(getCommentReviewContext).toHaveBeenCalledWith(commentRef, { live: false });
     expect(readStdout()).toMatchObject({
       ok: true,
       pullRequest: formattedPullRequestWithBody,

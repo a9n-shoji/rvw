@@ -9,6 +9,7 @@ import type {
   DocumentAvailability,
   DocumentContent,
   DocumentRef,
+  GitHubPullRequest,
   PullRequest,
   ResetCounts,
   ReviewComment,
@@ -90,6 +91,11 @@ export interface CommentReviewContext {
   latestPlacement: CommentPlacement;
   exactSource: CommentExactSource | null;
   walkthrough: Walkthrough | null;
+  githubState: {
+    liveCheckedAt: string | null;
+    staleAgainstGitHub: boolean | null;
+    live: GitHubPullRequest | null;
+  };
 }
 
 export interface CommentListItemContext {
@@ -256,9 +262,22 @@ export class RvwService {
     git: Awaited<ReturnType<GitClient["doctor"]>>;
     github: Awaited<ReturnType<GitHubPort["doctor"]>>;
     databasePath: string;
+    databasePathSource: "default" | "configured";
+    databasePathOverrideEnvironmentVariable: "RVW_DATABASE_PATH";
+    databasePermissionsManagedByRvw: boolean;
+    databasePermissions: ReturnType<RvwDatabase["permissionStatus"]>;
   }> {
     const [git, github] = await Promise.all([this.git.doctor(cwd), this.github.doctor()]);
-    return { ok: github.authenticated, git, github, databasePath: this.database.filePath };
+    return {
+      ok: github.authenticated,
+      git,
+      github,
+      databasePath: this.database.filePath,
+      databasePathSource: this.database.configuredPath ? "configured" : "default",
+      databasePathOverrideEnvironmentVariable: "RVW_DATABASE_PATH",
+      databasePermissionsManagedByRvw: !this.database.configuredPath,
+      databasePermissions: this.database.permissionStatus(),
+    };
   }
 
   private localPullRequestForOpen(
@@ -295,8 +314,36 @@ export class RvwService {
   }
 
   async openPullRequest(reference: string | undefined, cwd: string): Promise<OpenResult> {
-    const repository = await this.git.repositoryContext(cwd);
-    const stored = this.localPullRequestForOpen(reference, repository);
+    let cwdRepository: RepositoryContext | null = null;
+    try {
+      cwdRepository = await this.git.repositoryContext(cwd);
+    } catch (error) {
+      if (!(error instanceof RvwError) || error.code !== "NOT_IN_GIT_REPOSITORY") throw error;
+    }
+    let explicitlyStored = cwdRepository
+      ? this.localPullRequestForOpen(reference, cwdRepository)
+      : null;
+    if (reference && !explicitlyStored && !cwdRepository) {
+      try {
+        explicitlyStored = this.resolveStoredPullRequest(reference);
+      } catch (error) {
+        if (!(error instanceof RvwError) || error.code !== "PR_NOT_FOUND") throw error;
+      }
+    }
+    const repository = explicitlyStored
+      ? cwdRepository &&
+        path.resolve(cwdRepository.gitCommonDir) === path.resolve(explicitlyStored.gitCommonDir)
+        ? cwdRepository
+        : await this.repositoryFor(explicitlyStored)
+      : cwdRepository;
+    if (!repository) {
+      throw new RvwError(
+        "NOT_IN_GIT_REPOSITORY",
+        `${cwd} はGit repositoryではなく、指定されたPull Requestもローカルrvwへ登録されていません。`,
+        { suggestions: ["登録済みのPR URLを指定するか、対象repositoryで実行してください。"] },
+      );
+    }
+    const stored = explicitlyStored ?? this.localPullRequestForOpen(reference, repository);
     if (stored) {
       this.assertRepositoryMatch(stored, repository);
       if (await this.git.hasObject(repository.worktreePath, stored.latestHeadOid)) {
@@ -305,11 +352,16 @@ export class RvwService {
           stored.number,
           stored.latestHeadOid,
         );
+        const locationChanged =
+          path.resolve(stored.localRepositoryPath) !== path.resolve(repository.worktreePath) ||
+          path.resolve(stored.gitCommonDir) !== path.resolve(repository.gitCommonDir);
         return {
-          pullRequest: this.database.updateRepositoryLocation(stored.id, {
-            localRepositoryPath: repository.worktreePath,
-            gitCommonDir: repository.gitCommonDir,
-          }),
+          pullRequest: locationChanged
+            ? this.database.updateRepositoryLocation(stored.id, {
+                localRepositoryPath: repository.worktreePath,
+                gitCommonDir: repository.gitCommonDir,
+              })
+            : stored,
           fromCache: true,
         };
       }
@@ -442,27 +494,81 @@ export class RvwService {
   async syncPullRequest(input: {
     pullRequest: string;
     commentUpdates?: CommentUpdateRequest[];
+    repositoryPath?: string;
+    allowUntracked?: boolean;
   }): Promise<SyncResult> {
     const current = this.resolveStoredPullRequest(input.pullRequest);
-    const repository = await this.repositoryFor(current);
-    if (await this.git.isDirty(repository.worktreePath)) {
+    const repository = input.repositoryPath
+      ? await this.git.repositoryContext(input.repositoryPath)
+      : await this.repositoryFor(current);
+    this.assertRepositoryMatch(current, repository);
+    const worktreeStatus = await this.git.worktreeStatus(repository.worktreePath);
+    const blockingEntries = input.allowUntracked
+      ? worktreeStatus.trackedEntries
+      : worktreeStatus.entries;
+    if (blockingEntries.length > 0) {
       throw new RvwError(
         "LOCAL_CHANGES_NOT_PUSHED",
         "ローカルに未commitの変更があります。GitHub上の状態だけを同期できます。",
-        { suggestions: ["変更をcommit・pushしてから再実行してください。"] },
+        {
+          details: {
+            localRepositoryPath: repository.worktreePath,
+            dirtyEntries: worktreeStatus.entries,
+            blockingEntries,
+          },
+          suggestions: [
+            "変更をcommit・pushしてから再実行してください。",
+            ...(worktreeStatus.trackedEntries.length === 0 &&
+            worktreeStatus.untrackedEntries.length > 0
+              ? ["未追跡fileを確認後、必要なら --allow-untracked を明示してください。"]
+              : []),
+            "cleanな同一repository worktreeは --repository <path> で指定できます。",
+          ],
+        },
       );
     }
     const github = await this.github.getPullRequest(current.url, repository.worktreePath);
     const localHead = await this.git.headState(repository.worktreePath);
     if (localHead.branch === github.headRefName && localHead.oid !== github.headOid) {
-      throw new RvwError(
-        "LOCAL_CHANGES_NOT_PUSHED",
-        `ローカルbranch ${localHead.branch} のHEADがGitHub PR headと一致しません。`,
-        {
-          details: { localHeadOid: localHead.oid, githubHeadOid: github.headOid },
-          suggestions: ["変更をpushし、GitHub PR headの更新を確認してから再実行してください。"],
-        },
+      const remoteUrl = await this.git.assertBaseRepository(
+        repository.worktreePath,
+        github.owner,
+        github.repository,
       );
+      await this.git.ensurePullRequestObjects({
+        cwd: repository.worktreePath,
+        remoteUrl,
+        number: github.number,
+        baseRefName: github.baseRefName,
+        baseOid: github.baseOid,
+        headOid: github.headOid,
+      });
+      const simplyBehind = await this.git.isAncestor(
+        repository.worktreePath,
+        localHead.oid,
+        github.headOid,
+      );
+      const belongsToPreviouslySynchronizedHistory = simplyBehind
+        ? false
+        : await this.git.isAncestor(repository.worktreePath, localHead.oid, current.latestHeadOid);
+      if (!simplyBehind && !belongsToPreviouslySynchronizedHistory) {
+        throw new RvwError(
+          "LOCAL_CHANGES_NOT_PUSHED",
+          `ローカルbranch ${localHead.branch} にGitHub PR headへ含まれないcommitがあります。`,
+          {
+            details: {
+              localRepositoryPath: repository.worktreePath,
+              localHeadOid: localHead.oid,
+              githubHeadOid: github.headOid,
+              relationship: "ahead-or-diverged",
+            },
+            suggestions: [
+              "変更をpushし、GitHub PR headの更新を確認してから再実行してください。",
+              "別のcleanなworktreeは --repository <path> で指定できます。",
+            ],
+          },
+        );
+      }
     }
     const updates = this.prepareCommentUpdates(current.id, input.commentUpdates ?? []);
     const pullRequest = await this.synchronizeGithub(github, repository, updates);
@@ -470,6 +576,16 @@ export class RvwService {
       ...(await this.getPullRequestView(pullRequest.id)),
       commentUpdatesApplied: updates.length,
     };
+  }
+
+  async attachPullRequest(reference: string, repositoryPath: string): Promise<PullRequest> {
+    const pullRequest = this.resolveStoredPullRequest(reference);
+    const repository = await this.git.repositoryContext(repositoryPath);
+    this.assertRepositoryMatch(pullRequest, repository);
+    return this.database.updateRepositoryLocation(pullRequest.id, {
+      localRepositoryPath: repository.worktreePath,
+      gitCommonDir: repository.gitCommonDir,
+    });
   }
 
   async getPullRequestView(id: string): Promise<PullRequestView> {
@@ -774,7 +890,10 @@ export class RvwService {
     };
   }
 
-  async getCommentReviewContext(uri: string): Promise<CommentReviewContext> {
+  async getCommentReviewContext(
+    uri: string,
+    options: { live?: boolean } = {},
+  ): Promise<CommentReviewContext> {
     const result = this.getCommentByUri(uri);
     const [latestPlacement, exactSource] = await Promise.all([
       this.placeCommentAtCommit(result.comment, result.pullRequest.latestHeadOid),
@@ -784,7 +903,30 @@ export class RvwService {
       result.comment.target.kind === "walkthrough"
         ? this.database.getWalkthrough(result.comment.target.walkthroughId)
         : null;
-    return { ...result, latestPlacement, exactSource, walkthrough };
+    const live = options.live
+      ? await this.github.getPullRequest(
+          result.pullRequest.url,
+          result.pullRequest.localRepositoryPath,
+        )
+      : null;
+    const staleAgainstGitHub = live
+      ? live.title !== result.pullRequest.latestTitle ||
+        live.body !== result.pullRequest.latestBody ||
+        live.baseOid !== result.pullRequest.latestBaseOid ||
+        live.headOid !== result.pullRequest.latestHeadOid ||
+        live.updatedAt !== result.pullRequest.githubUpdatedAt
+      : null;
+    return {
+      ...result,
+      latestPlacement,
+      exactSource,
+      walkthrough,
+      githubState: {
+        liveCheckedAt: live ? new Date().toISOString() : null,
+        staleAgainstGitHub,
+        live,
+      },
+    };
   }
 
   async listCommentReviewContexts(

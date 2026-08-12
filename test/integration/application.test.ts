@@ -149,6 +149,144 @@ describe("RvwService commit workflow", () => {
     expect((await service.getResetPreview(opened.pullRequest.id)).counts.gitRefs).toBe(1);
   });
 
+  it("reopens an explicitly registered PR outside a repository", async () => {
+    const { repository, fake, service } = setup("rvw-open-outside-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const outsideRepository = mkdtempSync(path.join(os.tmpdir(), "rvw-outside-repository-"));
+
+    const reopened = await service.openPullRequest(fake.pullRequest.url, outsideRepository);
+
+    expect(reopened.fromCache).toBe(true);
+    expect(reopened.pullRequest.id).toBe(opened.pullRequest.id);
+    expect(reopened.pullRequest.localRepositoryPath).toBe(opened.pullRequest.localRepositoryPath);
+  });
+
+  it("keeps a numeric PR reference scoped to the current repository", async () => {
+    const { repository, database, service } = setup("rvw-open-number-scope-first-");
+    const first = await service.openPullRequest(undefined, repository);
+    const otherRepository = createGitRepository("rvw-open-number-scope-second-");
+    git(
+      otherRepository,
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/other-owner/other-repository.git",
+    );
+    const otherBase = git(otherRepository, "rev-parse", "HEAD");
+    git(otherRepository, "switch", "-c", "feature");
+    const otherHead = commitFile(otherRepository, "other.txt", "other\n", "other change");
+    const otherGithub = new FakeGitHub({
+      ...openPr(otherBase, otherHead),
+      owner: "other-owner",
+      repository: "other-repository",
+      url: "https://github.com/other-owner/other-repository/pull/7",
+    });
+    const otherService = new RvwService(database, new GitClient(), otherGithub);
+
+    const second = await otherService.openPullRequest("7", otherRepository);
+
+    expect(second.fromCache).toBe(false);
+    expect(second.pullRequest.id).not.toBe(first.pullRequest.id);
+    expect(second.pullRequest.owner).toBe("other-owner");
+    expect(path.basename(second.pullRequest.localRepositoryPath)).toBe(
+      path.basename(otherRepository),
+    );
+  });
+
+  it("reports dirty entries and can synchronize through an explicitly selected clean worktree", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-sync-worktree-");
+    const opened = await service.openPullRequest(undefined, repository);
+    writeFileSync(path.join(repository, "untracked-agent-worktree.txt"), "unrelated\n");
+
+    await expect(
+      service.syncPullRequest({ pullRequest: fake.pullRequest.url }),
+    ).rejects.toMatchObject({
+      code: "LOCAL_CHANGES_NOT_PUSHED",
+      details: {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        dirtyEntries: ["?? untracked-agent-worktree.txt"],
+      },
+    });
+
+    await expect(
+      service.syncPullRequest({
+        pullRequest: fake.pullRequest.url,
+        allowUntracked: true,
+      }),
+    ).resolves.toMatchObject({ commentUpdatesApplied: 0 });
+
+    const cleanWorktree = `${repository}-clean-worktree`;
+    git(repository, "worktree", "add", "--detach", cleanWorktree, firstHead);
+    const attached = await service.attachPullRequest(fake.pullRequest.url, cleanWorktree);
+    expect(path.basename(attached.localRepositoryPath)).toBe(path.basename(cleanWorktree));
+    await expect(
+      service.syncPullRequest({
+        pullRequest: fake.pullRequest.url,
+        repositoryPath: cleanWorktree,
+      }),
+    ).resolves.toMatchObject({
+      pullRequest: { localRepositoryPath: attached.localRepositoryPath },
+    });
+  });
+
+  it("synchronizes a clean local PR branch that is simply behind GitHub", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-sync-behind-");
+    await service.openPullRequest(undefined, repository);
+    const githubHead = commitFile(repository, "src.txt", "first\nsecond\nthird\n", "remote commit");
+    fake.pullRequest = { ...fake.pullRequest, headOid: githubHead };
+    git(repository, "reset", "--hard", firstHead);
+
+    const synced = await service.syncPullRequest({ pullRequest: fake.pullRequest.url });
+
+    expect(synced.pullRequest.latestHeadOid).toBe(githubHead);
+    expect(git(repository, "rev-parse", "HEAD")).toBe(firstHead);
+  });
+
+  it("synchronizes a force-pushed GitHub head when local HEAD is the last cached GitHub head", async () => {
+    const { repository, base, firstHead, fake, service } = setup("rvw-sync-force-push-");
+    await service.openPullRequest(undefined, repository);
+    git(repository, "switch", "-C", "feature", base);
+    const rewrittenHead = commitFile(repository, "src.txt", "rewritten\n", "rewritten remote head");
+    fake.pullRequest = { ...fake.pullRequest, headOid: rewrittenHead };
+    git(repository, "reset", "--hard", firstHead);
+
+    const synced = await service.syncPullRequest({ pullRequest: fake.pullRequest.url });
+
+    expect(synced.pullRequest.latestHeadOid).toBe(rewrittenHead);
+    expect(git(repository, "rev-parse", "HEAD")).toBe(firstHead);
+  });
+
+  it("reports live GitHub drift without mutating the cached PR snapshot", async () => {
+    const { repository, fake, service } = setup("rvw-comment-live-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const comment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "pull-request" },
+      body: "Check the current PR intent.",
+    });
+    fake.pullRequest = {
+      ...fake.pullRequest,
+      title: "Live title not synchronized yet",
+      body: "Live body not synchronized yet.",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    };
+
+    await expect(service.getCommentReviewContext(comment.ref)).resolves.toMatchObject({
+      pullRequest: { latestTitle: "Initial review" },
+      githubState: { liveCheckedAt: null, staleAgainstGitHub: null, live: null },
+    });
+    const liveContext = await service.getCommentReviewContext(comment.ref, { live: true });
+    expect(liveContext).toMatchObject({
+      pullRequest: { latestTitle: "Initial review" },
+      githubState: {
+        staleAgainstGitHub: true,
+        live: { title: "Live title not synchronized yet" },
+      },
+    });
+    expect(typeof liveContext.githubState.liveCheckedAt).toBe("string");
+    expect(service.getPullRequest(opened.pullRequest.id).latestTitle).toBe("Initial review");
+  });
+
   it("allows file comments on binary and oversized files while rejecting line comments", async () => {
     const { repository, fake, service } = setup("rvw-unavailable-comments-");
     writeFileSync(path.join(repository, "binary.bin"), Buffer.from([0, 1, 2, 3]));

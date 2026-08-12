@@ -31,7 +31,7 @@ The protocol exposes `pullRequest.sync` instead of review-version submission. Th
 command is:
 
 ```bash
-rvw pr sync --stdin --json
+rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
 ```
 
 Its stdin value is:
@@ -61,12 +61,28 @@ base, head OID, commit summaries, and `commentUpdatesApplied`.
 The operation is not idempotent when it contains replies. After an uncertain result, re-read every
 affected comment before retrying.
 
+By default sync inspects the saved `localRepositoryPath`. `--repository <PATH>` selects another
+worktree from the same Git common directory without first changing the saved path. Tracked dirty
+entries always block sync. Untracked entries block it unless the caller has inspected them and
+explicitly passes `--allow-untracked`; the error contains the inspected repository path and complete
+porcelain status entries. A clean PR branch that is simply behind the GitHub head is accepted: rvw
+fetches the PR head into an internal ref without changing the worktree checkout. A head on the last
+synchronized GitHub history is also accepted after a force-push. A local-only commit that belongs to
+neither the current nor last synchronized GitHub history is rejected.
+
+To update only the saved worktree without launching a viewer, use:
+
+```bash
+rvw pr attach <PULL_REQUEST> --repository <PATH> --json
+```
+
 ## Comment commands
 
 ```bash
 rvw comment list <PULL_REQUEST> --state unresolved --limit 50 --offset 0 --json
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
+rvw comment get <COMMENT_URI> --live --json
 rvw comment reply <COMMENT_URI> --stdin --json
 rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
@@ -97,6 +113,11 @@ target and posts, `createdHeadOid`, and the PR's `latestHeadOid`. `latestPlaceme
 authoritative derived placement at the latest head. Consumers must not treat unequal creation/latest
 OIDs as Outdated: rvw accounts for unchanged lines, renames, deletion, and PR-Markdown quoted-text
 placement.
+
+`comment get --live` performs a read-only GitHub lookup without updating the SQLite snapshot. Its
+`githubState` contains `liveCheckedAt`, `staleAgainstGitHub`, and current live metadata. Without
+`--live`, all three values are `null`, making it explicit that the response only reflects the last
+successful synchronization. `--include-pr-body` controls both cached and live body inclusion.
 
 For repository targets, `exactSource` contains the exact source OID, path, availability, and a bounded
 excerpt. A line/range target receives up to 20 context lines on either side; a file target starts at
@@ -207,8 +228,8 @@ The body is limited to 256 KiB, and a publication may contain at most 200 refere
 publication protects `sourceOid` with rvw's immutable commit ref. The response contains the saved
 Walkthrough and its `rvw://walkthrough/<uuid>` reference. Publication is
 not a viewer command: it does not open a browser, activate a document, choose a commit, or change any
-tab or scroll position. The human later chooses which inline reference, reference-index item, or bound
-diagram node to open.
+tab or scroll position. The human later chooses which inline reference or bound diagram node to open;
+the viewer does not duplicate all references in a side or bottom index.
 
 ### Update in place
 
@@ -240,12 +261,39 @@ Walkthrough, its references, and those comments and posts. Copied Walkthrough an
 resolving. Deletion does not remove the retained Git commit ref because other review state may share it;
 `rvw pr reset` remains the ref cleanup boundary.
 
+## Local transport and database path
+
+When a normally launched rvw viewer is running, its process exposes a database-specific Unix socket
+with mode `0600` inside a per-user `0700` temporary directory. Agent CLI commands try that socket
+first, so writes such as reply, resolve, Walkthrough update,
+and repository attachment execute through the already-authorized rvw process instead of requiring the
+Agent sandbox to open SQLite for writing. If no socket is available, commands retain the direct local
+CLI behavior. That fallback is allowed only before a request is sent. If a sent request times out or
+the connection closes without a valid response, the CLI reports an uncertain outcome and does not
+repeat a potentially non-idempotent operation. Re-read state before retrying. Multiple viewer
+processes may coexist; a follower takes over the shared socket if its current owner exits. CLI stdin
+and socket request/response frames are capped at 40 MiB.
+
+The default database directory and file are created with modes `0700` and `0600`. Existing paths are
+checked with `stat`; rvw does not chmod them when owner and mode are already safe. A failed chmod on a
+new path is tolerated only when the resulting owner and mode are safe. Set `RVW_DATABASE_PATH` to use
+an explicitly managed database path; rvw does not chmod existing components of that path. Missing
+directory/file components created by rvw use creation modes `0700` / `0600`. The socket request includes this
+expected path and is dispatched only when the viewer uses the same database, otherwise the CLI safely
+falls back to direct access. `rvw doctor --json` reports the active path, its source, whether rvw
+manages its permissions, actual/expected permission metadata and warnings, and installed Skill status.
+
 ## Bundled Skills
 
 `rvw skill install codex` and `rvw skill install claude` each install the same two capability-named
 Skills: `rvw` for comment handling and synchronization, and `rvw-walkthrough` for publication. The
 platform argument selects only the destination Skill root. Neither Skill hardcodes an Agent identity;
 the current Agent may supply an accurate optional `authorLabel`.
+
+Each rvw-managed installation records the bundled digest. Status distinguishes a clean older bundle
+(`updateAvailable` and `updateRequired`), local customization (`locallyModified`), and a differing
+installation with no trustworthy rvw marker (`unmanaged-difference`). None is overwritten without
+an explicit forced install.
 
 `rvw-walkthrough` constrains commit identity, code references, diagram bindings, CLI validation,
 passive publication and update, and explicit destructive authorization. It deliberately leaves the

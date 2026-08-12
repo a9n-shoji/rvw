@@ -9,6 +9,12 @@ import { SkillInstaller, type SkillPlatform } from "../infrastructure/skills/ski
 import { APP_VERSION, DEFAULT_COMMENT_LIST_LIMIT, PROTOCOL_VERSION } from "../shared/constants.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 import { startServer, type RunningServer } from "../server/start-server.js";
+import {
+  MAX_CLI_STDIN_BYTES,
+  startAgentSocket,
+  tryAgentSocketRequest,
+  type RunningAgentSocket,
+} from "../server/agent-socket.js";
 import { formatCommentGetOutput, formatCommentListOutput } from "./comment-protocol.js";
 import {
   commentListOptionsSchema,
@@ -18,7 +24,7 @@ import {
   walkthroughUpdateInputSchema,
 } from "./schemas.js";
 
-const MAX_STDIN_BYTES = 1024 * 1024;
+const MAX_STDIN_BYTES = MAX_CLI_STDIN_BYTES;
 declare const __RVW_CLI_BUNDLE__: boolean | undefined;
 
 interface OutputOptions {
@@ -103,9 +109,27 @@ function staticDirectory(): string {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
 
-export function createProgram(runtimeFactory: () => Runtime = () => createRuntime()): Command {
+const defaultRuntimeFactory = (): Runtime => createRuntime();
+
+export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFactory): Command {
   let runtime: Runtime | undefined;
   const getRuntime = (): Runtime => (runtime ??= runtimeFactory());
+  const useAgentSocket = runtimeFactory === defaultRuntimeFactory;
+  const callService = async <T>(
+    operation: string,
+    input: unknown,
+    direct: () => T | Promise<T>,
+  ): Promise<T> => {
+    if (useAgentSocket) {
+      const remote = await tryAgentSocketRequest<T>(operation, input, {
+        ...(process.env.RVW_DATABASE_PATH === undefined
+          ? {}
+          : { expectedDatabasePath: process.env.RVW_DATABASE_PATH }),
+      });
+      if (remote.available) return remote.result as T;
+    }
+    return await direct();
+  };
   const program = new Command();
   program
     .name("rvw")
@@ -115,11 +139,30 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
 
   program
     .command("doctor")
-    .description("git、gh認証、repository、DBを確認")
+    .description(
+      "git、gh認証、repository、DBを確認（RVW_DATABASE_PATHはchmodしないcaller-managed DB）",
+    )
     .option("--json", "JSONで出力")
     .action(async (options: OutputOptions) => {
-      const result = await getRuntime().service.doctor(process.cwd());
-      writeOutput(options, result, result.ok ? "rvwを利用できます。" : "gh認証が必要です。");
+      const result = await callService(
+        "doctor",
+        { cwd: process.cwd() },
+        async () => await getRuntime().service.doctor(process.cwd()),
+      );
+      const skills = new SkillInstaller().statuses();
+      const skillUpdates = skills.filter((status) => status.updateAvailable === true);
+      const output = {
+        ...result,
+        skills,
+        skillUpdateAvailable: skillUpdates.length > 0,
+        skillUpdateRequired: skills.some((status) => status.updateRequired),
+      };
+      const message = result.ok
+        ? skillUpdates.length > 0
+          ? `rvwを利用できます。${skillUpdates.length}件のSkill更新があります。rvw skill statusで確認してください。`
+          : "rvwを利用できます。"
+        : "gh認証が必要です。";
+      writeOutput(options, output, message);
       if (!result.ok) process.exitCode = 2;
     });
 
@@ -156,6 +199,7 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .action(async (reference: string | undefined, options: { open: boolean; port: number }) => {
       const activeRuntime = getRuntime();
       let running: RunningServer | undefined;
+      let agentSocket: RunningAgentSocket | undefined;
       try {
         const opened = await activeRuntime.service.openPullRequest(reference, process.cwd());
         running = await startServer(activeRuntime.service, {
@@ -163,6 +207,9 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
           staticDirectory: staticDirectory(),
           autoCloseWhenNoViewers: options.open,
         });
+        if (useAgentSocket) {
+          agentSocket = await startAgentSocket(activeRuntime.service);
+        }
         const url = new URL(running.origin);
         url.searchParams.set("pullRequestId", opened.pullRequest.id);
         process.stdout.write(`rvw: ${url.toString()}\n`);
@@ -173,9 +220,13 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
         }
       } finally {
         try {
-          await running?.close();
+          await agentSocket?.close();
         } finally {
-          activeRuntime.close();
+          try {
+            await running?.close();
+          } finally {
+            activeRuntime.close();
+          }
         }
       }
     });
@@ -185,7 +236,11 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .argument("<pull-request>", "登録済みPR URLまたは番号")
     .option("--json", "JSONで出力")
     .action(async (reference: string, options: OutputOptions) => {
-      const result = await getRuntime().service.refreshByReference(reference);
+      const result = await callService(
+        "pr.refresh",
+        { reference },
+        async () => await getRuntime().service.refreshByReference(reference),
+      );
       writeOutput(
         options,
         { ok: true, ...result },
@@ -196,13 +251,40 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
   pr.command("sync")
     .requiredOption("--stdin", "stdinからJSONを読む")
     .requiredOption("--json", "JSONで出力")
-    .action(async () => {
+    .option("--repository <path>", "同期に使う同一repositoryのworktree")
+    .option("--allow-untracked", "未追跡fileだけをdirty判定から除外")
+    .action(async (options: { repository?: string; allowUntracked?: boolean }) => {
       const input = pullRequestSyncInputSchema.parse(await readStdinJson());
-      const result = await getRuntime().service.syncPullRequest({
+      const request = {
         pullRequest: input.pullRequest,
         commentUpdates: input.commentUpdates ?? [],
-      });
+        ...(options.repository === undefined ? {} : { repositoryPath: options.repository }),
+        allowUntracked: options.allowUntracked ?? false,
+      };
+      const result = await callService(
+        "pr.sync",
+        request,
+        async () => await getRuntime().service.syncPullRequest(request),
+      );
       writeJson({ ok: true, ...result });
+    });
+
+  pr.command("attach")
+    .argument("<pull-request>", "登録済みPR URLまたは番号")
+    .requiredOption("--repository <path>", "保存先にする同一repositoryのworktree")
+    .option("--json", "JSONで出力")
+    .description("viewerを起動せずrepository pathだけを更新")
+    .action(async (reference: string, options: OutputOptions & { repository: string }) => {
+      const pullRequest = await callService(
+        "pr.attach",
+        { reference, repositoryPath: options.repository },
+        async () => await getRuntime().service.attachPullRequest(reference, options.repository),
+      );
+      writeOutput(
+        options,
+        { ok: true, pullRequest },
+        `repository pathを${pullRequest.localRepositoryPath}へ更新しました。`,
+      );
     });
 
   pr.command("reset")
@@ -210,10 +292,12 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .option("--yes", "不可逆な削除を確認")
     .option("--json", "JSONで出力")
     .action(async (reference: string, options: OutputOptions & { yes?: boolean }) => {
-      const service = getRuntime().service;
-      const pullRequest = service.resolveStoredPullRequest(reference);
       if (!options.yes) {
-        const preview = await service.getResetPreview(pullRequest.id);
+        const preview = await callService("pr.reset.preview", { reference }, async () => {
+          const service = getRuntime().service;
+          const pullRequest = service.resolveStoredPullRequest(reference);
+          return await service.getResetPreview(pullRequest.id);
+        });
         const result = {
           ok: false,
           error: {
@@ -231,7 +315,11 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
         process.exitCode = 2;
         return;
       }
-      const result = await service.resetPullRequest(pullRequest.id);
+      const result = await callService("pr.reset", { reference, confirmed: true }, async () => {
+        const service = getRuntime().service;
+        const pullRequest = service.resolveStoredPullRequest(reference);
+        return await service.resetPullRequest(pullRequest.id);
+      });
       writeOutput(
         options,
         { ok: true, ...result },
@@ -249,7 +337,7 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .description("walkthroughを登録（viewerは開かずnavigationも変更しない）")
     .action(async () => {
       const input = walkthroughPublishInputSchema.parse(await readStdinJson());
-      const published = await getRuntime().service.publishWalkthrough({
+      const request = {
         pullRequest: input.pullRequest,
         sourceOid: input.sourceOid,
         title: input.title,
@@ -257,7 +345,12 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
         references: input.references,
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.diagramBindings === undefined ? {} : { diagramBindings: input.diagramBindings }),
-      });
+      };
+      const published = await callService(
+        "walkthrough.publish",
+        request,
+        async () => await getRuntime().service.publishWalkthrough(request),
+      );
       writeJson({ ok: true, walkthrough: published });
     });
 
@@ -266,8 +359,11 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .argument("<walkthrough-uri>")
     .requiredOption("--json", "JSONで出力")
     .description("walkthroughの現在内容を取得")
-    .action((uri: string) => {
-      writeJson({ ok: true, ...getRuntime().service.getWalkthroughByUri(uri) });
+    .action(async (uri: string) => {
+      const result = await callService("walkthrough.get", { uri }, () =>
+        getRuntime().service.getWalkthroughByUri(uri),
+      );
+      writeJson({ ok: true, ...result });
     });
 
   walkthrough
@@ -278,14 +374,19 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .description("walkthroughを同じ参照のまま更新")
     .action(async (uri: string) => {
       const input = walkthroughUpdateInputSchema.parse(await readStdinJson());
-      const updated = await getRuntime().service.updateWalkthrough(uri, {
+      const content = {
         sourceOid: input.sourceOid,
         title: input.title,
         body: input.body,
         references: input.references,
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.diagramBindings === undefined ? {} : { diagramBindings: input.diagramBindings }),
-      });
+      };
+      const updated = await callService(
+        "walkthrough.update",
+        { uri, content },
+        async () => await getRuntime().service.updateWalkthrough(uri, content),
+      );
       writeJson({ ok: true, walkthrough: updated });
     });
 
@@ -295,10 +396,11 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .option("--yes", "不可逆な削除を確認")
     .requiredOption("--json", "JSONで出力")
     .description("walkthroughと紐づくコメントを削除")
-    .action((uri: string, options: OutputOptions & { yes?: boolean }) => {
-      const service = getRuntime().service;
+    .action(async (uri: string, options: OutputOptions & { yes?: boolean }) => {
       if (!options.yes) {
-        const preview = service.getWalkthroughDeletePreview(uri);
+        const preview = await callService("walkthrough.delete.preview", { uri }, () =>
+          getRuntime().service.getWalkthroughDeletePreview(uri),
+        );
         writeJson({
           ok: false,
           error: {
@@ -311,7 +413,10 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
         process.exitCode = 2;
         return;
       }
-      writeJson({ ok: true, deleted: service.deleteWalkthroughByUri(uri) });
+      const deleted = await callService("walkthrough.delete", { uri, confirmed: true }, () =>
+        getRuntime().service.deleteWalkthroughByUri(uri),
+      );
+      writeJson({ ok: true, deleted });
     });
 
   comment
@@ -328,10 +433,15 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .action(async (reference: string, rawOptions: unknown) => {
       const options = commentListOptionsSchema.parse(rawOptions);
       const resolved = options.state === "all" ? undefined : options.state === "resolved";
-      const result = await getRuntime().service.listCommentReviewContexts(reference, resolved, {
-        limit: options.limit,
-        offset: options.offset,
-      });
+      const result = await callService(
+        "comment.list",
+        { reference, resolved, limit: options.limit, offset: options.offset },
+        async () =>
+          await getRuntime().service.listCommentReviewContexts(reference, resolved, {
+            limit: options.limit,
+            offset: options.offset,
+          }),
+      );
       writeJson(formatCommentListOutput(result, options.state));
     });
 
@@ -339,9 +449,17 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .command("get")
     .argument("<comment-uri>")
     .option("--include-pr-body", "最新のPR本文をpullRequest.bodyに含める")
+    .option("--live", "GitHubの現在値をread-onlyで確認し、cacheとの差を表示")
     .requiredOption("--json", "JSONで出力")
-    .action(async (uri: string, options: { includePrBody?: boolean }) => {
-      const result = await getRuntime().service.getCommentReviewContext(uri);
+    .action(async (uri: string, options: { includePrBody?: boolean; live?: boolean }) => {
+      const result = await callService(
+        "comment.get",
+        { uri, live: options.live ?? false },
+        async () =>
+          await getRuntime().service.getCommentReviewContext(uri, {
+            live: options.live ?? false,
+          }),
+      );
       writeJson(formatCommentGetOutput(result, { includePrBody: options.includePrBody ?? false }));
     });
 
@@ -352,13 +470,18 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .requiredOption("--json", "JSONで出力")
     .action(async (uri: string) => {
       const input = commentReplyInputSchema.parse(await readStdinJson());
-      const post = await getRuntime().service.replyToComment(uri, {
+      const reply = {
         body: input.body,
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.relatedCommitOid === undefined
           ? {}
           : { relatedCommitOid: input.relatedCommitOid }),
-      });
+      };
+      const post = await callService(
+        "comment.reply",
+        { uri, reply },
+        async () => await getRuntime().service.replyToComment(uri, reply),
+      );
       writeJson({ ok: true, post });
     });
 
@@ -366,17 +489,23 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
     .command("resolve")
     .argument("<comment-uri>")
     .requiredOption("--json", "JSONで出力")
-    .action((uri: string) =>
-      writeJson({ ok: true, comment: getRuntime().service.setCommentResolved(uri, true) }),
-    );
+    .action(async (uri: string) => {
+      const comment = await callService("comment.resolve", { uri }, () =>
+        getRuntime().service.setCommentResolved(uri, true),
+      );
+      writeJson({ ok: true, comment });
+    });
 
   comment
     .command("reopen")
     .argument("<comment-uri>")
     .requiredOption("--json", "JSONで出力")
-    .action((uri: string) =>
-      writeJson({ ok: true, comment: getRuntime().service.setCommentResolved(uri, false) }),
-    );
+    .action(async (uri: string) => {
+      const comment = await callService("comment.reopen", { uri }, () =>
+        getRuntime().service.setCommentResolved(uri, false),
+      );
+      writeJson({ ok: true, comment });
+    });
 
   const skill = program.command("skill").description("Codex / Claude Code向けrvw Skillを管理");
   skill
@@ -411,12 +540,7 @@ export function createProgram(runtimeFactory: () => Runtime = () => createRuntim
       writeOutput(
         options,
         { ok: true, skills: statuses },
-        statuses
-          .map(
-            (status) =>
-              `${status.name}: ${status.installed ? (status.matchesBundled ? "installed" : "different") : "not installed"} (${status.path})`,
-          )
-          .join("\n"),
+        statuses.map((status) => `${status.name}: ${status.state} (${status.path})`).join("\n"),
       );
     });
 

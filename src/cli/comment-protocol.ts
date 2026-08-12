@@ -91,6 +91,21 @@ export function formatCommentGetOutput(
     latestPlacement: result.latestPlacement,
     exactSource: result.exactSource,
     walkthrough: result.walkthrough,
+    githubState: {
+      liveCheckedAt: result.githubState.liveCheckedAt,
+      staleAgainstGitHub: result.githubState.staleAgainstGitHub,
+      live: result.githubState.live
+        ? {
+            title: result.githubState.live.title,
+            ...(options.includePrBody ? { body: result.githubState.live.body } : {}),
+            baseRefName: result.githubState.live.baseRefName,
+            baseOid: result.githubState.live.baseOid,
+            headRefName: result.githubState.live.headRefName,
+            headOid: result.githubState.live.headOid,
+            githubUpdatedAt: result.githubState.live.updatedAt,
+          }
+        : null,
+    },
   });
 }
 

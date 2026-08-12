@@ -305,6 +305,214 @@ function openMarkdownFragment(anchor: HTMLAnchorElement, href: string): void {
   window.history.replaceState(null, "", href);
 }
 
+function renderRepositoryMarkdown({
+  text,
+  pullRequestMarkdown,
+  annotations,
+  activeCommentId,
+  selectedRange,
+  composerOpen,
+  markdownDiv,
+  sourceRef,
+  selectedOid,
+  pullRequestId,
+  linkPointerStart,
+  onOpenRepositoryLink,
+}: {
+  text: string;
+  pullRequestMarkdown: boolean;
+  annotations: MarkdownCommentAnnotation[];
+  activeCommentId: string | null;
+  selectedRange: MarkdownSourceRange | null;
+  composerOpen: boolean;
+  markdownDiv: NonNullable<Components["div"]>;
+  sourceRef: DocumentRef;
+  selectedOid: string;
+  pullRequestId: string;
+  linkPointerStart: { current: PointerPosition | null };
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
+}): ReactNode {
+  const headingCounts = new Map<string, number>();
+  return (
+    <ReactMarkdown
+      rehypePlugins={[
+        rehypeRaw,
+        rehypeSanitize,
+        [rehypeRvwSourceMap, { annotations, activeCommentId, selectedRange, composerOpen }],
+      ]}
+      remarkPlugins={pullRequestMarkdown ? [remarkGfm, remarkBreaks] : [remarkGfm]}
+      components={{
+        div: markdownDiv,
+        table: ({ children, node: _node, ...props }) => (
+          <div className="markdown-table-scroll">
+            <table {...markdownSourceDataAttributes(_node)} {...props}>
+              {children}
+            </table>
+          </div>
+        ),
+        h1: ({ children, node: _node, ...props }) => (
+          <h1
+            {...markdownSourceDataAttributes(_node)}
+            {...props}
+            id={markdownHeadingId(children, headingCounts)}
+          >
+            {children}
+          </h1>
+        ),
+        h2: ({ children, node: _node, ...props }) => (
+          <h2
+            {...markdownSourceDataAttributes(_node)}
+            {...props}
+            id={markdownHeadingId(children, headingCounts)}
+          >
+            {children}
+          </h2>
+        ),
+        h3: ({ children, node: _node, ...props }) => (
+          <h3
+            {...markdownSourceDataAttributes(_node)}
+            {...props}
+            id={markdownHeadingId(children, headingCounts)}
+          >
+            {children}
+          </h3>
+        ),
+        h4: ({ children, node: _node, ...props }) => (
+          <h4
+            {...markdownSourceDataAttributes(_node)}
+            {...props}
+            id={markdownHeadingId(children, headingCounts)}
+          >
+            {children}
+          </h4>
+        ),
+        h5: ({ children, node: _node, ...props }) => (
+          <h5
+            {...markdownSourceDataAttributes(_node)}
+            {...props}
+            id={markdownHeadingId(children, headingCounts)}
+          >
+            {children}
+          </h5>
+        ),
+        h6: ({ children, node: _node, ...props }) => (
+          <h6
+            {...markdownSourceDataAttributes(_node)}
+            {...props}
+            id={markdownHeadingId(children, headingCounts)}
+          >
+            {children}
+          </h6>
+        ),
+        a: ({ href, children, node: _node, ...props }) => {
+          const sourcePath = sourceRef.kind === "repository-file" ? sourceRef.path : null;
+          const repositoryPath = resolveRepositoryMarkdownPath(href, sourcePath);
+          if (!repositoryPath) {
+            const external = isExternalMarkdownHref(href);
+            return (
+              <a
+                {...markdownSourceDataAttributes(_node)}
+                {...props}
+                href={href}
+                target={external ? "_blank" : undefined}
+                rel={external ? "noopener noreferrer" : undefined}
+                onPointerDown={(event) => {
+                  linkPointerStart.current = { x: event.clientX, y: event.clientY };
+                }}
+                onPointerUp={(event) => {
+                  const dragged = markdownLinkWasDragged(linkPointerStart.current, {
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
+                  linkPointerStart.current = null;
+                  if (dragged) event.currentTarget.dataset.rvwLinkDragged = "true";
+                  if (!dragged && href?.startsWith("#")) {
+                    openMarkdownFragment(event.currentTarget, href);
+                  }
+                }}
+                onClick={(event) => {
+                  if (event.currentTarget.dataset.rvwLinkDragged === "true") {
+                    delete event.currentTarget.dataset.rvwLinkDragged;
+                    event.preventDefault();
+                    return;
+                  }
+                  if (!href?.startsWith("#")) return;
+                  event.preventDefault();
+                  if (event.detail === 0) openMarkdownFragment(event.currentTarget, href);
+                }}
+              >
+                {children}
+              </a>
+            );
+          }
+          const sourceOid =
+            sourceRef.kind === "repository-file" ? sourceRef.sourceOid : selectedOid;
+          return (
+            <a
+              {...markdownSourceDataAttributes(_node)}
+              {...props}
+              href={href}
+              onPointerDown={(event) => {
+                linkPointerStart.current = { x: event.clientX, y: event.clientY };
+              }}
+              onPointerUp={(event) => {
+                const dragged = markdownLinkWasDragged(linkPointerStart.current, {
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+                linkPointerStart.current = null;
+                if (dragged) return;
+                onOpenRepositoryLink(repositoryPath, sourceOid, event.metaKey || event.ctrlKey);
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                if (event.detail === 0) onOpenRepositoryLink(repositoryPath, sourceOid, false);
+              }}
+              onContextMenu={(event) => {
+                if (event.ctrlKey || event.metaKey) event.preventDefault();
+              }}
+            >
+              {children}
+            </a>
+          );
+        },
+        img: ({ src, alt, title, node: _node, ...props }) => {
+          if (sourceRef.kind !== "repository-file") {
+            return (
+              <MarkdownImagePlaceholder
+                alt={alt}
+                title={title}
+                sourceAttributes={markdownSourceDataAttributes(_node)}
+              />
+            );
+          }
+          const repositoryPath = resolveRepositoryMarkdownPath(src, sourceRef.path);
+          if (!repositoryPath) {
+            return (
+              <MarkdownImagePlaceholder
+                alt={alt}
+                title={title}
+                sourceAttributes={markdownSourceDataAttributes(_node)}
+              />
+            );
+          }
+          return (
+            <img
+              {...markdownSourceDataAttributes(_node)}
+              {...props}
+              src={markdownAssetUrl(pullRequestId, sourceRef.sourceOid, repositoryPath)}
+              alt={alt ?? ""}
+              title={title}
+            />
+          );
+        },
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+}
+
 function placementUrl(commentId: string, ref: DocumentRef): string {
   return `/api/comments/${commentId}/placement?${params(ref)}`;
 }
@@ -384,7 +592,7 @@ export function DocumentViewer({
     activeDocument.path.toLowerCase().endsWith(".markdown");
   const activeMarkdownViewKey = markdownViewKey(activeDocument);
   const [markdownView, setMarkdownViewState] = useState<"source" | "preview">(
-    () => markdownViewByDocument.get(activeMarkdownViewKey) ?? "source",
+    () => markdownViewByDocument.get(activeMarkdownViewKey) ?? "preview",
   );
   const setMarkdownView = (view: "source" | "preview"): void => {
     markdownViewByDocument.set(activeMarkdownViewKey, view);
@@ -400,6 +608,13 @@ export function DocumentViewer({
   );
   const loadedOptimisticCommentId = useRef<string | null>(null);
   const markdownLinkPointerStart = useRef<PointerPosition | null>(null);
+  const openRepositoryLinkRef = useRef(onOpenRepositoryLink);
+  openRepositoryLinkRef.current = onOpenRepositoryLink;
+  const openRepositoryLink = useCallback(
+    (path: string, sourceOid: string, openInOtherPane: boolean) =>
+      openRepositoryLinkRef.current(path, sourceOid, openInOtherPane),
+    [],
+  );
   const diffSurfaceRef = useRef<HTMLDivElement>(null);
   const pendingViewportAnchor = useRef<DiffViewportAnchor | null>(null);
   const appliedNavigationRequest = useRef<number | null>(null);
@@ -465,20 +680,28 @@ export function DocumentViewer({
     },
     [navigationTarget],
   );
-  const showingMarkdownPreview = markdownCapable && markdownView === "preview";
   const effectiveDisplayMode =
-    showingMarkdownPreview || activeDocument.kind === "pull-request-markdown"
-      ? "full"
-      : displayMode;
-  const fullRef: DocumentRef =
-    activeDocument.kind === "pull-request-markdown"
-      ? { kind: "pull-request-markdown", pullRequestId }
-      : {
-          kind: "repository-file",
-          pullRequestId,
-          sourceOid: activeDocument.sourceOid ?? selectedOid,
-          path: activeDocument.path,
-        };
+    activeDocument.kind === "pull-request-markdown" ? "full" : displayMode;
+  const showingMarkdownPreview =
+    markdownCapable && effectiveDisplayMode === "full" && markdownView === "preview";
+  const fullRef = useMemo<DocumentRef>(
+    () =>
+      activeDocument.kind === "pull-request-markdown"
+        ? { kind: "pull-request-markdown", pullRequestId }
+        : {
+            kind: "repository-file",
+            pullRequestId,
+            sourceOid: activeDocument.sourceOid ?? selectedOid,
+            path: activeDocument.path,
+          },
+    [
+      activeDocument.kind,
+      activeDocument.kind === "repository-file" ? activeDocument.path : null,
+      activeDocument.kind === "repository-file" ? activeDocument.sourceOid : null,
+      pullRequestId,
+      selectedOid,
+    ],
+  );
   const fullQuery = useQuery({
     queryKey: ["document", fullRef],
     queryFn: async () => (await api<DocumentResponse>(documentUrl(fullRef))).document,
@@ -751,16 +974,18 @@ export function DocumentViewer({
     },
     [resetCreateMutation],
   );
-  const { fileAnnotations, diffAnnotations, markdownComments } = useMemo(() => {
+  const { fileAnnotations, diffAnnotations } = useMemo(() => {
     const fileAnnotations = [...(annotationQuery.data?.fileAnnotations ?? [])];
     const diffAnnotations = [...(annotationQuery.data?.diffAnnotations ?? [])];
-    const markdownComments = [...(annotationQuery.data?.markdownComments ?? [])];
     const optimisticAlreadyLoaded =
       [...fileAnnotations, ...diffAnnotations].some(
         (annotation) =>
           annotation.metadata?.kind === "comment" &&
           annotation.metadata.comment.id === optimisticComment?.comment.id,
-      ) || markdownComments.some(({ comment }) => comment.id === optimisticComment?.comment.id);
+      ) ||
+      annotationQuery.data?.markdownComments.some(
+        ({ comment }) => comment.id === optimisticComment?.comment.id,
+      );
     if (
       optimisticComment &&
       !optimisticAlreadyLoaded &&
@@ -775,10 +1000,6 @@ export function DocumentViewer({
         fileAnnotations.push({
           lineNumber: optimisticComment.location.lineNumber,
           metadata,
-        });
-        markdownComments.push({
-          comment: optimisticComment.comment,
-          placement: optimisticComment.placement,
         });
       } else {
         diffAnnotations.push({
@@ -804,8 +1025,21 @@ export function DocumentViewer({
         });
       }
     }
-    return { fileAnnotations, diffAnnotations, markdownComments };
+    return { fileAnnotations, diffAnnotations };
   }, [annotationQuery.data, effectiveDisplayMode, optimisticComment, selection]);
+  const markdownComments = useMemo(() => {
+    const placed = [...(annotationQuery.data?.markdownComments ?? [])];
+    if (
+      optimisticComment &&
+      !placed.some(({ comment }) => comment.id === optimisticComment.comment.id)
+    ) {
+      placed.push({
+        comment: optimisticComment.comment,
+        placement: optimisticComment.placement,
+      });
+    }
+    return placed;
+  }, [annotationQuery.data?.markdownComments, optimisticComment]);
   const markdownCommentAnnotations = useMemo<MarkdownCommentAnnotation[]>(
     () =>
       markdownComments.map(({ comment, placement }) => ({
@@ -900,6 +1134,54 @@ export function DocumentViewer({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [navigationTarget, showingMarkdownPreview]);
+  const markdownText =
+    fullQuery.data?.availability === "available" ? (fullQuery.data.text ?? "") : null;
+  const markdownSelectedRange: MarkdownSourceRange | null = selection
+    ? {
+        startLine: Math.min(selection.start, selection.end),
+        endLine: Math.max(selection.start, selection.end),
+      }
+    : null;
+  const composerStartLine = markdownComposerOpen
+    ? (markdownSelectedRange?.startLine ?? null)
+    : null;
+  const composerEndLine = markdownComposerOpen ? (markdownSelectedRange?.endLine ?? null) : null;
+  const renderedRepositoryMarkdown = useMemo(
+    () =>
+      markdownText === null
+        ? null
+        : renderRepositoryMarkdown({
+            text: markdownText,
+            pullRequestMarkdown: activeDocument.kind === "pull-request-markdown",
+            annotations: markdownCommentAnnotations,
+            activeCommentId,
+            selectedRange:
+              composerStartLine === null || composerEndLine === null
+                ? null
+                : { startLine: composerStartLine, endLine: composerEndLine },
+            composerOpen: markdownComposerOpen,
+            markdownDiv,
+            sourceRef: fullRef,
+            selectedOid,
+            pullRequestId,
+            linkPointerStart: markdownLinkPointerStart,
+            onOpenRepositoryLink: openRepositoryLink,
+          }),
+    [
+      activeCommentId,
+      activeDocument.kind,
+      composerEndLine,
+      composerStartLine,
+      fullRef,
+      markdownCommentAnnotations,
+      markdownComposerOpen,
+      markdownDiv,
+      markdownText,
+      openRepositoryLink,
+      pullRequestId,
+      selectedOid,
+    ],
+  );
   const activeSelection = fileComposerOpen
     ? null
     : (selectionPreview ?? selection ?? navigationSelection);
@@ -1018,21 +1300,12 @@ export function DocumentViewer({
       />
     );
   };
-  const markdownText =
-    fullQuery.data?.availability === "available" ? (fullQuery.data.text ?? "") : null;
   const markdownPath =
     activeDocument.kind === "repository-file" ? activeDocument.path : "Pull Request.md";
-  const markdownHeadingCounts = new Map<string, number>();
-  const markdownSelectedRange: MarkdownSourceRange | null = selection
-    ? {
-        startLine: Math.min(selection.start, selection.end),
-        endLine: Math.max(selection.start, selection.end),
-      }
-    : null;
   return (
     <div className="document-viewer">
       <ErrorNotice error={annotationQuery.error} />
-      {markdownCapable && (
+      {markdownCapable && effectiveDisplayMode === "full" && (
         <div className="markdown-view-toolbar" aria-label="Markdown表示">
           <span>
             <FileEntryIcon path={markdownPath} kind="file" />
@@ -1105,211 +1378,7 @@ export function DocumentViewer({
                   />
                 }
               >
-                <article>
-                  <ReactMarkdown
-                    rehypePlugins={[
-                      rehypeRaw,
-                      rehypeSanitize,
-                      [
-                        rehypeRvwSourceMap,
-                        {
-                          annotations: markdownCommentAnnotations,
-                          activeCommentId,
-                          selectedRange: markdownSelectedRange,
-                        },
-                      ],
-                    ]}
-                    remarkPlugins={
-                      activeDocument.kind === "pull-request-markdown"
-                        ? [remarkGfm, remarkBreaks]
-                        : [remarkGfm]
-                    }
-                    components={{
-                      div: markdownDiv,
-                      table: ({ children, node: _node, ...props }) => (
-                        <div className="markdown-table-scroll">
-                          <table {...markdownSourceDataAttributes(_node)} {...props}>
-                            {children}
-                          </table>
-                        </div>
-                      ),
-                      h1: ({ children, node: _node, ...props }) => (
-                        <h1
-                          {...markdownSourceDataAttributes(_node)}
-                          {...props}
-                          id={markdownHeadingId(children, markdownHeadingCounts)}
-                        >
-                          {children}
-                        </h1>
-                      ),
-                      h2: ({ children, node: _node, ...props }) => (
-                        <h2
-                          {...markdownSourceDataAttributes(_node)}
-                          {...props}
-                          id={markdownHeadingId(children, markdownHeadingCounts)}
-                        >
-                          {children}
-                        </h2>
-                      ),
-                      h3: ({ children, node: _node, ...props }) => (
-                        <h3
-                          {...markdownSourceDataAttributes(_node)}
-                          {...props}
-                          id={markdownHeadingId(children, markdownHeadingCounts)}
-                        >
-                          {children}
-                        </h3>
-                      ),
-                      h4: ({ children, node: _node, ...props }) => (
-                        <h4
-                          {...markdownSourceDataAttributes(_node)}
-                          {...props}
-                          id={markdownHeadingId(children, markdownHeadingCounts)}
-                        >
-                          {children}
-                        </h4>
-                      ),
-                      h5: ({ children, node: _node, ...props }) => (
-                        <h5
-                          {...markdownSourceDataAttributes(_node)}
-                          {...props}
-                          id={markdownHeadingId(children, markdownHeadingCounts)}
-                        >
-                          {children}
-                        </h5>
-                      ),
-                      h6: ({ children, node: _node, ...props }) => (
-                        <h6
-                          {...markdownSourceDataAttributes(_node)}
-                          {...props}
-                          id={markdownHeadingId(children, markdownHeadingCounts)}
-                        >
-                          {children}
-                        </h6>
-                      ),
-                      a: ({ href, children, node: _node, ...props }) => {
-                        const sourcePath = fullRef.kind === "repository-file" ? fullRef.path : null;
-                        const repositoryPath = resolveRepositoryMarkdownPath(href, sourcePath);
-                        if (!repositoryPath) {
-                          const external = isExternalMarkdownHref(href);
-                          return (
-                            <a
-                              {...markdownSourceDataAttributes(_node)}
-                              {...props}
-                              href={href}
-                              target={external ? "_blank" : undefined}
-                              rel={external ? "noopener noreferrer" : undefined}
-                              onPointerDown={(event) => {
-                                markdownLinkPointerStart.current = {
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                };
-                              }}
-                              onPointerUp={(event) => {
-                                const dragged = markdownLinkWasDragged(
-                                  markdownLinkPointerStart.current,
-                                  { x: event.clientX, y: event.clientY },
-                                );
-                                markdownLinkPointerStart.current = null;
-                                if (dragged) event.currentTarget.dataset.rvwLinkDragged = "true";
-                                if (!dragged && href?.startsWith("#")) {
-                                  openMarkdownFragment(event.currentTarget, href);
-                                }
-                              }}
-                              onClick={(event) => {
-                                if (event.currentTarget.dataset.rvwLinkDragged === "true") {
-                                  delete event.currentTarget.dataset.rvwLinkDragged;
-                                  event.preventDefault();
-                                  return;
-                                }
-                                if (!href?.startsWith("#")) {
-                                  return;
-                                }
-                                event.preventDefault();
-                                if (event.detail === 0) {
-                                  openMarkdownFragment(event.currentTarget, href);
-                                }
-                              }}
-                            >
-                              {children}
-                            </a>
-                          );
-                        }
-                        const sourceOid =
-                          fullRef.kind === "repository-file" ? fullRef.sourceOid : selectedOid;
-                        return (
-                          <a
-                            {...markdownSourceDataAttributes(_node)}
-                            {...props}
-                            href={href}
-                            onPointerDown={(event) => {
-                              markdownLinkPointerStart.current = {
-                                x: event.clientX,
-                                y: event.clientY,
-                              };
-                            }}
-                            onPointerUp={(event) => {
-                              const dragged = markdownLinkWasDragged(
-                                markdownLinkPointerStart.current,
-                                { x: event.clientX, y: event.clientY },
-                              );
-                              markdownLinkPointerStart.current = null;
-                              if (dragged) return;
-                              onOpenRepositoryLink(
-                                repositoryPath,
-                                sourceOid,
-                                event.metaKey || event.ctrlKey,
-                              );
-                            }}
-                            onClick={(event) => {
-                              event.preventDefault();
-                              if (event.detail === 0) {
-                                onOpenRepositoryLink(repositoryPath, sourceOid, false);
-                              }
-                            }}
-                            onContextMenu={(event) => {
-                              if (event.ctrlKey || event.metaKey) event.preventDefault();
-                            }}
-                          >
-                            {children}
-                          </a>
-                        );
-                      },
-                      img: ({ src, alt, title, node: _node, ...props }) => {
-                        if (fullRef.kind !== "repository-file") {
-                          return (
-                            <MarkdownImagePlaceholder
-                              alt={alt}
-                              title={title}
-                              sourceAttributes={markdownSourceDataAttributes(_node)}
-                            />
-                          );
-                        }
-                        const repositoryPath = resolveRepositoryMarkdownPath(src, fullRef.path);
-                        if (!repositoryPath) {
-                          return (
-                            <MarkdownImagePlaceholder
-                              alt={alt}
-                              title={title}
-                              sourceAttributes={markdownSourceDataAttributes(_node)}
-                            />
-                          );
-                        }
-                        return (
-                          <img
-                            {...markdownSourceDataAttributes(_node)}
-                            {...props}
-                            src={markdownAssetUrl(pullRequestId, fullRef.sourceOid, repositoryPath)}
-                            alt={alt ?? ""}
-                            title={title}
-                          />
-                        );
-                      },
-                    }}
-                  >
-                    {markdownText}
-                  </ReactMarkdown>
-                </article>
+                <article>{renderedRepositoryMarkdown}</article>
               </MarkdownSelectionSurface>
             </div>
           ) : (
@@ -1326,6 +1395,7 @@ export function DocumentViewer({
               renderHeaderPrefix={(file) => <FileEntryIcon path={file.name} kind="file" />}
               renderHeaderMetadata={() => headerMetadata}
               options={{
+                stickyHeader: true,
                 enableGutterUtility: true,
                 enableLineSelection: true,
                 lineHoverHighlight: "both",
@@ -1353,6 +1423,7 @@ export function DocumentViewer({
             renderHeaderPrefix={(file) => <FileEntryIcon path={file.name} kind="file" />}
             renderHeaderMetadata={() => headerMetadata}
             options={{
+              stickyHeader: true,
               diffStyle,
               enableGutterUtility: true,
               enableLineSelection: true,

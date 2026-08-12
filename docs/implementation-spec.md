@@ -88,8 +88,9 @@ Git ref、full source OID、comment target、SQLite IDは必要なprotocol以外
 `Pull Request.md`は実装が満たそうとする意図、CommitとCommit rangeは実装が変化した順序、Codeは
 選択commitが作るsoftware、diffはそのsoftwareで変更された場所を示す。Commentは人間の理解から
 生じた質問、修正要求、確認結果をsoftwareの具体的な位置へ結び、Agentとの次の協業単位になる。
-WalkthroughはAgentが説明として提示する読み物であり、事実の正本ではない。人間はinline reference、
-reference index、diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分で照合する。
+WalkthroughはAgentが説明として提示する読み物であり、事実の正本ではない。人間はinline referenceや
+diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分で照合する。同じ参照を横や下へ
+列挙するindexは表示しない。
 
 ### 3.1 Commit選択
 
@@ -141,6 +142,10 @@ Phase 1の新規登録とsyncは`github.com`のopen/draft PRを対象とする�
 `rvw open`は同じGit common directoryに保存済みのPRを解決できる場合、SQLiteと
 保持済みGit objectだけでviewerを起動する。GitHub更新はviewer表示を妨げない別操作とし、
 UIは起動後に更新を試み、失敗時もcacheを表示し続ける。
+
+保存済みPRの完全URL、または全登録PRで一意な番号を明示した場合は、cwdがrepository外でも保存済み
+`local_repository_path`を使ってviewerを起動できる。保存先だけを変える場合は
+`rvw pr attach <PR> --repository <path>`を使い、viewerを起動しない。
 
 未登録PR、URLを省略して現在branchから初めてPRを解決する場合はGitHub接続が必要。
 
@@ -227,7 +232,7 @@ empty fileは従来どおり明示的に扱う。
 ### 5.2 Viewer navigation
 
 - 連続commit range picker、全文／変更、diff styleは最上部top bar内へ置く。range pickerは
-  subjectとshort SHA、選択件数を表示する。PR全commitを選択中なら`PR全体`、それ以外でlatest headが
+  subject、short SHA、commit日時、選択件数を表示する。PR全commitを選択中なら`PR全体`、それ以外でlatest headが
   選択範囲のlatest側なら`最新`を明示する。
 - range picker内はclickで一件、pointer dragまたはShift+clickで両端を含む連続範囲を選択する。
   `PR全体`と`最新だけ`のshortcutも提供し、範囲内のcommitを一件ずつtoggleさせない。
@@ -304,11 +309,14 @@ empty fileは従来どおり明示的に扱う。
   通常の`差分なし · 全文表示`fallbackを使う。開いた対象行は次のnavigationまで強調する。
 - code/diffは`@pierre/diffs`を使い、syntax highlight、stacked/split、追加・削除数、path、
   file-level comment action、line/range selectionを提供する。コード本文はbrowser標準の文字列選択と
-  copyを維持し、line/range comment selectionはline numberとgutter actionから開始する。
+  copyを維持し、line/range comment selectionはline numberとgutter actionから開始する。file headerは
+  paneのscroll中もtab列直下へsticky表示する。
 - diffのline selectionはold/new sideを明示し、両sideをまたぐ一つのcommentを作成しない。
 - UTF-8以外、1 MiB超、symlink、submodule、missing documentは空本文へsilent fallbackせず、
   理由を明示する。empty UTF-8 fileは有効な文書として扱う。
-- repository内の`.md` / `.markdown`と`Pull Request.md`はSource / Previewを切り替えられる。
+- repository内の`.md` / `.markdown`と`Pull Request.md`は全文表示でPreviewを既定とし、Source / Previewを切り替えられる。
+  差分が存在する変更表示ではPreview設定にかかわらず通常のdiffを表示し、Source / Preview切り替えは表示しない。
+  差分のない文書と`Pull Request.md`は、既存の全文fallbackに従う。
   Previewは同じexact document textをsafe Markdownとしてrenderし、raw HTMLをallowlistでsanitizeして
   scriptを実行しない。
   GitHubと同様に安全な`details` / `summary`は折りたたみとしてrenderする。tableはcellごとの読みやすい
@@ -321,8 +329,12 @@ empty fileは従来どおり明示的に扱う。
   fragment-only linkは表示中document内のnavigationとして残す。相対linkを開いてもglobalなcommit範囲、
   full / changes、stacked / split、tree modeは変更せず、対象paneだけexact sourceの全文を表示する。
   Previewのrender treeにはMarkdown parserが持つsource positionを付与し、browser標準の文字列選択を
-  inclusiveなMarkdown source line rangeへ変換する。選択後は範囲の近くにcomment actionを表示し、
-  line commentをrender済み本文へinline表示する。DOM path、layout上の行、生成HTMLはtargetへ保存しない。
+  inclusiveなMarkdown source line rangeへ変換する。選択境界では最小のsource leafを優先し、子要素の
+  単行選択を親blockの複数行へ広げない。table cellとWalkthroughを含むPreview本文はbrowser標準操作で
+  文字選択できる。選択後は範囲の近くにcomment actionを表示し、composerは対象block直後の通常flowへ
+  React-ownedのdeclarative slotへ挿入して折り返された本文へ重ねない。list/tableでは有効なsiblingに置く。
+  line commentをrender済み本文へinline表示する。DOM path、
+  layout上の行、生成HTMLはtargetへ保存しない。
   line commentはSourceのgutter/range selectionとPreviewの文字列選択、file commentは両表示から作成できる。
 
 ### 5.4 Agent Walkthrough
@@ -361,6 +373,8 @@ interface Walkthrough {
 - sidebar一覧はtitle、current source OID、author、reference件数だけを返し、現在の本文・参照・diagram
   bindingは人間がWalkthrough tabを開いた時に取得する。CLI更新をpollで検出した場合は、開いているtabも
   同じIDの最新内容とtitleへ結び直す。
+- Walkthrough tabは本文中のtyped inline referenceとbinding済みMermaid nodeを維持するが、横または下に
+  全referenceを重複表示する`Code references` indexは持たない。sidebar itemにもreference件数を表示しない。
 - `language-mermaid` code blockはstrict security設定でSVG化する。bundled Mermaidが扱うflowchart、
   class、sequence、state、ERなどの記法を描画対象とする。binding済み要素だけを人間が選べる。
   Phase 1のinteractive bindingはflowchart nodeとclass diagram classをE2E保証し、記法固有のSVG構造を
@@ -500,7 +514,8 @@ AgentはSQLiteを直接読まず、必ずJSON CLIを使う。
 ```bash
 rvw protocol --json
 rvw pr refresh <PR_REF> --json
-rvw pr sync --stdin --json
+rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
+rvw pr attach <PR_REF> --repository <PATH> --json
 rvw walkthrough get <WALKTHROUGH_URI> --json
 rvw walkthrough publish --stdin --json
 rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
@@ -509,6 +524,7 @@ rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
+rvw comment get <COMMENT_URI> --live --json
 rvw comment reply <COMMENT_URI> --stdin --json
 rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
@@ -550,8 +566,14 @@ stdin:
 前提:
 
 - authorizedな修正、test、commit、push、必要なPR本文更新が完了済み
-- local worktreeに未commit変更がない
-- local branchがPR head branchならlocal HEADとGitHub headが一致する
+- 選択したlocal worktreeに未commitのtracked変更がない
+- 未追跡fileがある場合は内容を確認して`--allow-untracked`を明示する
+- local branchがPR head branchの場合、local固有commitを持たない。GitHub headより単にbehind、または
+  force-push前の最終同期済みGitHub history上なら許可する
+
+既定は保存済み`localRepositoryPath`を使う。`--repository <PATH>`は同じGit common directoryのcleanな
+worktreeを明示する。dirty errorは判定したpathとstatus entry一覧を返す。同期はGitHub PR headを内部refへ
+fetchするが、behindなworktreeのcheckoutやbranch refは変更しない。
 
 処理:
 
@@ -642,7 +664,8 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
 
 - machine consumerは`--json`または`--stdin --json`を必須とし、stdoutへJSON valueを一つだけ返す。
 - progressとdiagnosticはstderrへ出し、errorは`code`、`message`、`suggestions`を持つ。
-- stdinは1 MiB以下の単一JSON objectとする。
+- stdinは40 MiB以下の単一JSON objectとする。Agent socket frameはこの入力とprotocol envelopeを収める
+  固定上限を持つ。
 - comment本文とreplyはplain UTF-8 textで64 KiB以下とする。
 - Walkthrough本文は256 KiB以下、referenceは最大200件とする。
 - `walkthrough get`はcurrent WalkthroughとPR identity、local repository pathを返す。
@@ -655,6 +678,9 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   target、posts、`createdHeadOid`、`latestHeadOid`、各postの`relatedCommitOid`、latest headに対してserviceが
   導出したplacementを返す。既定ではPR本文を含めず、`--include-pr-body`指定時だけ最新の同期済み本文を
   `pullRequest.body`として返す。呼び出し側はOID比較でOutdatedを推測しない。
+- `comment get --live`はGitHubの現在値をread-onlyで取得し、同期済みcacheを更新せず、`githubState`へ
+  `liveCheckedAt`、`staleAgainstGitHub`、live metadataを返す。指定しない場合の値は`null`であり、GitHubを
+  確認していないことを明示する。
 - repository targetの`comment get`はexact source OID/pathとavailabilityに加え、line/rangeなら前後
   最大20行、file-levelなら先頭からのsource excerptを返す。excerptは最大200行、64 KiBとし、前後と
   byte上限による切り詰めを明示する。`availability`の値域は`available`（textとして取得可能。submoduleは
@@ -670,6 +696,20 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
 ## 8. SQLite
 
 OS user data directoryに一つのDBを置く。`node:sqlite`、WAL、foreign keys、busy timeoutを使う。
+既定DB directory/fileは新規作成時だけ`0700` / `0600`へchmodする。既存pathはstatでmodeとownerを検証し、
+安全ならchmodしない。新規pathへのchmodが`EPERM`でもstat結果が安全なら継続し、安全でない場合だけpath、
+実値、期待値を含む明示errorにする。`RVW_DATABASE_PATH`を設定したDBは呼び出し側管理として既存pathを
+chmodしない。rvwが不足directory/fileを新規作成する場合はchmodではなく作成modeで`0700` / `0600`にし、
+既存pathのmode/ownerと推奨値との差は`doctor --json`へwarningとして出す。
+
+通常権限のviewer processは`0700`のuser専用一時directory内へdatabase別Unix socket（`0600`）を
+提供する。Agent CLIはDBを直接開く前に
+socketへ同じapplication service操作を依頼し、接続できない場合だけ従来のdirect CLIへfallbackする。
+`RVW_DATABASE_PATH`を明示したCLIは期待DB pathをsocket requestへ含め、viewerのDBと一致する場合だけ
+dispatchする。不一致なら操作前に拒否してdirect CLIへfallbackし、別DBへ誤って書き込まない。接続成立後に
+requestを送信した操作はtimeout、切断、不正responseでもdirect実行へfallbackせず、結果不明の明示errorを返す。
+破壊操作の確認はCLIだけでなくsocket dispatchでも検証する。複数viewerでは一processだけがsocketを所有し、
+owner終了後は待機中viewerが引き継ぐ。
 
 ```sql
 CREATE TABLE app_meta (
@@ -841,7 +881,8 @@ tab row
 
 ファイル、コメント、検索、diff style、line selectionの既存UXは維持する。SearchはFiles、Commentsと
 同じく独立したcollapsible stackとする。Walkthroughはsidebar末尾の独立stackに一覧表示し、選択すると説明tabを
-開く。説明tabはMarkdown本文、diagram、stickyなcode reference indexを持つ。referenceを選んだ時だけ
+開く。説明tabはMarkdown本文とdiagramを持ち、重複するcode reference indexは持たない。本文のinline
+referenceまたはbinding済みdiagram nodeを選んだ時だけ
 exact source tabへ移動し、説明tabと既に開いているcode tabはworking setとして残す。必要なら最大二つの
 横ペインへtabを移動し、Walkthroughとsource、二つのsource、Markdown previewとcodeを並べて読む。
 exact source tabを開く操作は対象commitやglobal表示を変更せず、参照先を取得できない場合はtabを開かず
@@ -866,7 +907,7 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - browser tab leaseはtransport-onlyで永続化しない
 - 自動open時は最後のviewer tab終了後にserver停止
 - `--no-open`はsignal管理
-- SQLiteはWALでserverとSkill CLIの別process accessを扱う
+- SQLiteはWALでserver processを扱い、Agent CLIの書き込みは可能ならuser専用Unix socketを経由する
 
 同一PRを複数viewer/processで開くことは許容する。SQLite writeは`BEGIN IMMEDIATE`を使う。
 Phase 1ではDBとGit refを単一transactionにできないため、失敗時の補償削除と起動・同期時の
@@ -881,6 +922,7 @@ invariant検証を行う。refとSQLiteの不整合を検出した場合は部�
 - base repository mismatch
 - object fetch失敗
 - local changes未commit、head未push
+- dirty判定errorには対象repository pathとstatus entry一覧を含める
 - invalid commit range / object / path
 - invalid Walkthrough reference / Mermaid binding / line range
 - refとOID不整合
@@ -911,6 +953,10 @@ Integration（実git + fake GitHub）:
 - PR本文latest-only更新
 - code/PR本文comment placement
 - `pr sync` replyのrelated commitとresolve
+- `pr sync --repository`、`--allow-untracked`、behind-onlyなlocal branch
+- repository外からの保存済みPR openと`pr attach`
+- `comment get --live`のread-only stale判定
+- Agent socket経由のwriteとsocket不在時fallback
 - commit固定Walkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
 - worktree間共有
 
@@ -948,7 +994,7 @@ CLI contract:
 - resolved threadへのreplyが自動reopenしない状態契約
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
 - `pr sync`のreply/head関連付けと非冪等時の再取得
-- 2つのSkillの初回install、同一内容の再install、いずれかに差異がある場合の`--force`
+- 2つのSkillの初回install、同一内容の再install、いずれかに差異がある場合の更新検知と`--force`
 - Skill installerが対象Skill directory外を変更しないこと
 - `skill status --json`のschema
 
@@ -982,7 +1028,9 @@ rvw skill install claude
 rvw skill status
 ```
 
-既存Skillが同一なら成功、異なるなら`--force`を要求する。`--target`はpackage smokeと
+既存Skillが同一なら成功する。rvwによるinstall時に同梱digestをmarkerへ記録し、status/doctorは現在の
+同梱版との差だけでなく、管理済み旧版の`updateAvailable`、`locallyModified`、markerのない
+`unmanaged-difference`を区別する。差異があるinstallは`--force`を要求する。`--target`はpackage smokeと
 明示的custom rootに使い、`skill status`ではplatformも必須とする。Skillはlocal DBとrepositoryへ
 アクセスできるlocal Agentだけを対象とする。
 
