@@ -63,6 +63,17 @@ describe("RvwService commit workflow", () => {
     };
   }
 
+  it("doctor performs a database write probe without changing review state", async () => {
+    const { repository, database, service } = setup("rvw-doctor-write-probe-");
+    const changeSequence = database.getChangeSequence();
+
+    await expect(service.doctor(repository)).resolves.toMatchObject({
+      ok: true,
+      databaseWriteProbe: { ok: true, error: null },
+    });
+    expect(database.getChangeSequence()).toBe(changeSequence);
+  });
+
   it("uses commits as history, keeps PR markdown latest, syncs comment updates, and resets", async () => {
     const { repository, base, firstHead, fake, service } = setup();
     const opened = await service.openPullRequest(undefined, repository);
@@ -502,7 +513,14 @@ describe("RvwService commit workflow", () => {
       pullRequest: opened.pullRequest.url,
       sourceOid: firstHead,
       title: "Source flow",
-      body: "Start at [the source](rvw-ref:source). `rvw-ref:ignored`",
+      body: [
+        "Start at [the source](rvw-ref:source). `rvw-ref:ignored`",
+        "",
+        "```mermaid",
+        "flowchart TD",
+        "  Source[Source]",
+        "```",
+      ].join("\n"),
       authorLabel: "Codex",
       diagramBindings: { Source: "source" },
       references: [
@@ -577,7 +595,15 @@ describe("RvwService commit workflow", () => {
     await service.updateWalkthrough(walkthrough.ref, {
       sourceOid: firstHead,
       title: "Source flow moved",
-      body: "New context\nStart at [the source](rvw-ref:source). `rvw-ref:ignored`",
+      body: [
+        "New context",
+        "Start at [the source](rvw-ref:source). `rvw-ref:ignored`",
+        "",
+        "```mermaid",
+        "flowchart TD",
+        "  Source[Source]",
+        "```",
+      ].join("\n"),
       diagramBindings: { Source: "source" },
       references: walkthrough.references,
     });
@@ -589,7 +615,14 @@ describe("RvwService commit workflow", () => {
     const updatedWalkthrough = await service.updateWalkthrough(walkthrough.ref, {
       sourceOid: firstHead,
       title: "Source flow explained",
-      body: "The updated explanation covers [the source file](rvw-ref:source_file).",
+      body: [
+        "The updated explanation covers [the source file](rvw-ref:source_file).",
+        "",
+        "```mermaid",
+        "flowchart TD",
+        "  Entry[Entry]",
+        "```",
+      ].join("\n"),
       diagramBindings: { Entry: "source_file" },
       references: [
         {
@@ -678,6 +711,144 @@ describe("RvwService commit workflow", () => {
     await service.resetPullRequest(opened.pullRequest.id);
     expect(service.listWalkthroughs(opened.pullRequest.id)).toEqual([]);
     expect(service.listComments(opened.pullRequest.id)).toEqual([]);
+  });
+
+  it("rejects walkthrough references that no Markdown link or Mermaid binding uses", async () => {
+    const { repository, firstHead, service } = setup("rvw-walkthrough-unused-reference-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const body = [
+      "Open [the source](rvw-ref:source).",
+      "",
+      "```mermaid",
+      "flowchart TD",
+      "  Diagram[Diagram]",
+      "```",
+    ].join("\n");
+    const references = [
+      {
+        id: "source",
+        label: "source entry",
+        path: "src.txt",
+        startLine: 1,
+        endLine: 1,
+        description: null,
+      },
+      {
+        id: "diagram",
+        label: "diagram detail",
+        path: "src.txt",
+        startLine: 2,
+        endLine: 2,
+        description: null,
+      },
+    ];
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Reachable references",
+      body,
+      diagramBindings: { Diagram: "diagram" },
+      references,
+    });
+
+    await expect(
+      service.publishWalkthrough({
+        pullRequest: opened.pullRequest.url,
+        sourceOid: firstHead,
+        title: "Phantom diagram binding",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "flowchart TD",
+          "  Actual[Diagram]",
+          "```",
+        ].join("\n"),
+        diagramBindings: { Diagram: "diagram" },
+        references,
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "Mermaid nodeが本文のflowchartまたはclassDiagramに見つかりません: Diagram",
+    });
+
+    await expect(
+      service.publishWalkthrough({
+        pullRequest: opened.pullRequest.url,
+        sourceOid: firstHead,
+        title: "Bare diagram endpoints",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "flowchart TD",
+          "  Left --> Right",
+          "```",
+        ].join("\n"),
+        diagramBindings: { Right: "diagram" },
+        references,
+      }),
+    ).resolves.toMatchObject({ diagramBindings: { Right: "diagram" } });
+
+    await expect(
+      service.publishWalkthrough({
+        pullRequest: opened.pullRequest.url,
+        sourceOid: firstHead,
+        title: "Class diagram binding",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "classDiagram",
+          "  class Actual",
+          "```",
+        ].join("\n"),
+        diagramBindings: { Actual: "diagram" },
+        references,
+      }),
+    ).resolves.toMatchObject({ diagramBindings: { Actual: "diagram" } });
+
+    await expect(
+      service.updateWalkthrough(walkthrough.ref, {
+        sourceOid: firstHead,
+        title: "Missing diagram binding",
+        body,
+        references,
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "walkthrough referenceが本文またはMermaid bindingから参照されていません: diagram",
+    });
+
+    await expect(
+      service.publishWalkthrough({
+        pullRequest: opened.pullRequest.url,
+        sourceOid: firstHead,
+        title: "Unused reference",
+        body: "Open [the source](rvw-ref:source).",
+        references: [
+          {
+            id: "source",
+            label: "source entry",
+            path: "src.txt",
+            startLine: 1,
+            endLine: 1,
+            description: null,
+          },
+          {
+            id: "unused",
+            label: "unused detail",
+            path: "src.txt",
+            startLine: null,
+            endLine: null,
+            description: null,
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "walkthrough referenceが本文またはMermaid bindingから参照されていません: unused",
+    });
   });
 
   it("deletes a walkthrough and its comments without deleting retained commit refs", async () => {

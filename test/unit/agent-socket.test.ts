@@ -1,13 +1,73 @@
-import { chmodSync, mkdtempSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { fork, type ChildProcess } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RvwService } from "../../src/application/rvw-service.js";
 import {
   dispatchAgentSocketRequest,
+  inspectAgentTransport,
   startAgentSocket,
   tryAgentSocketRequest,
 } from "../../src/server/agent-socket.js";
+
+async function waitForChildMessage<T>(
+  child: ChildProcess,
+  predicate: (message: unknown) => message is T,
+): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("Agent socket child response timed out"));
+    }, 2_000);
+    const onMessage = (message: unknown): void => {
+      if (!predicate(message)) return;
+      cleanup();
+      resolve(message);
+    };
+    const onExit = (code: number | null): void => {
+      cleanup();
+      reject(new Error(`Agent socket child exited: ${String(code)}`));
+    };
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      child.off("message", onMessage);
+      child.off("exit", onExit);
+    };
+    child.on("message", onMessage);
+    child.on("exit", onExit);
+  });
+}
+
+interface ChildState {
+  type: "ready" | "status" | "unsupported";
+  requestId?: number;
+  owned: boolean;
+  pid: number;
+}
+
+function childState(message: unknown): message is ChildState {
+  if (!message || typeof message !== "object") return false;
+  const candidate = message as Record<string, unknown>;
+  return (
+    (candidate.type === "ready" ||
+      candidate.type === "status" ||
+      candidate.type === "unsupported") &&
+    (candidate.type === "unsupported" || typeof candidate.owned === "boolean") &&
+    typeof candidate.pid === "number"
+  );
+}
+
+function sendChildMessage(child: ChildProcess, message: Parameters<ChildProcess["send"]>[0]): void {
+  if (!child.connected || child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    child.send(message, () => {
+      // The child may exit between the liveness check and IPC delivery.
+    });
+  } catch {
+    // Cleanup is already complete when the IPC channel has closed.
+  }
+}
 
 describe("Agent socket", () => {
   const originalSocketPath = process.env.RVW_AGENT_SOCKET_PATH;
@@ -119,17 +179,113 @@ describe("Agent socket", () => {
         available: true,
         result: { id: "comment-2", resolved: true },
       });
+      await expect(inspectAgentTransport("/data/default.db")).resolves.toMatchObject({
+        explicitSocketPath: true,
+        connected: true,
+        connectionResult: "connected",
+        socketDatabasePath: "/data/default.db",
+        socketOwnerPid: process.pid,
+        selectedTransport: "agent-socket",
+        selectedDatabasePath: "/data/default.db",
+        fallbackReason: null,
+      });
       await expect(
         tryAgentSocketRequest(
           "comment.resolve",
           { uri: "rvw://comment/10000000-0000-4000-8000-000000000004" },
           { expectedDatabasePath: "/data/other.db" },
         ),
-      ).resolves.toEqual({ available: false });
+      ).rejects.toMatchObject({
+        code: "AGENT_SOCKET_UNAVAILABLE",
+        details: {
+          agentSocketRequired: true,
+          connectionResult: "database-mismatch",
+          selectedTransport: "unavailable",
+          fallbackReason: null,
+        },
+      });
       expect(setCommentResolved).toHaveBeenCalledOnce();
     } finally {
       await running.close();
     }
+  });
+
+  it("fails closed when an explicit Agent socket path is unavailable", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-agent-explicit-missing-"));
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "missing.sock");
+
+    await expect(
+      tryAgentSocketRequest("ping", {}, { expectedDatabasePath: "/data/default.db" }),
+    ).rejects.toMatchObject({
+      code: "AGENT_SOCKET_UNAVAILABLE",
+      details: {
+        agentSocketRequired: true,
+        socketPath: process.env.RVW_AGENT_SOCKET_PATH,
+        connectionResult: "socket-not-found",
+        selectedTransport: "unavailable",
+        fallbackReason: null,
+      },
+    });
+    await expect(inspectAgentTransport("/data/default.db")).resolves.toMatchObject({
+      explicitSocketPath: true,
+      connected: false,
+      connectionResult: "socket-not-found",
+      selectedTransport: "unavailable",
+      selectedDatabasePath: "/data/default.db",
+      fallbackReason: null,
+    });
+  });
+
+  it("reports why an implicit socket falls back to the direct database", async () => {
+    delete process.env.RVW_AGENT_SOCKET_PATH;
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-agent-implicit-missing-"));
+    const databasePath = path.join(directory, "review.db");
+
+    await expect(inspectAgentTransport(databasePath)).resolves.toMatchObject({
+      explicitSocketPath: false,
+      connected: false,
+      connectionResult: "socket-not-found",
+      expectedDatabasePath: databasePath,
+      selectedTransport: "direct-database",
+      selectedDatabasePath: databasePath,
+      fallbackReason: "socket-not-found",
+    });
+  });
+
+  it("keeps structured diagnostics for an unexpected connection error", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-agent-invalid-parent-"));
+    const nonDirectory = path.join(directory, "not-a-directory");
+    writeFileSync(nonDirectory, "fixture");
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(nonDirectory, "agent.sock");
+
+    const status = await inspectAgentTransport("/data/default.db");
+    expect(status).toMatchObject({
+      explicitSocketPath: true,
+      connected: false,
+      connectionResult: "connection-error",
+      selectedTransport: "unavailable",
+      selectedDatabasePath: "/data/default.db",
+      fallbackReason: null,
+    });
+    expect(typeof status.connectionDetails?.code).toBe("string");
+    expect(typeof status.connectionDetails?.message).toBe("string");
+    const connectionError = await tryAgentSocketRequest(
+      "ping",
+      {},
+      {
+        expectedDatabasePath: "/data/default.db",
+      },
+    ).catch((error: unknown) => error);
+    expect(connectionError).toMatchObject({
+      code: "AGENT_SOCKET_UNAVAILABLE",
+      details: {
+        connectionResult: "connection-error",
+      },
+    });
+    const details = connectionError as {
+      details?: { causeDetails?: { code?: unknown } };
+    };
+    expect(typeof details.details?.causeDetails?.code).toBe("string");
   });
 
   it("isolates a database-specific socket inside a private user directory", async () => {
@@ -283,6 +439,7 @@ describe("Agent socket", () => {
     const ownerIndex = running.findIndex((candidate) => candidate.owned);
     expect(ownerIndex).toBeGreaterThanOrEqual(0);
     expect(running.filter((candidate) => candidate.owned)).toHaveLength(1);
+    expect(statSync(`${running[ownerIndex]!.path}.owner`).mode & 0o777).toBe(0o600);
     const followerIndex = ownerIndex === 0 ? 1 : 0;
 
     try {
@@ -302,6 +459,69 @@ describe("Agent socket", () => {
       });
     } finally {
       await Promise.all(running.map(async (candidate) => await candidate.close()));
+      expect(existsSync(`${process.env.RVW_AGENT_SOCKET_PATH}.owner`)).toBe(false);
+    }
+  });
+
+  it("keeps exactly one socket owner across separate Node processes", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-agent-multiprocess-"));
+    const socketPath = path.join(directory, "agent.sock");
+    process.env.RVW_AGENT_SOCKET_PATH = socketPath;
+    const fixture = path.resolve("test/fixtures/agent-socket-process.ts");
+    const children = [
+      fork(fixture, ["/data/default.db"], {
+        execArgv: ["--import", "tsx"],
+        env: { ...process.env, RVW_AGENT_SOCKET_PATH: socketPath },
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      }),
+      fork(fixture, ["/data/default.db"], {
+        execArgv: ["--import", "tsx"],
+        env: { ...process.env, RVW_AGENT_SOCKET_PATH: socketPath },
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      }),
+    ];
+
+    try {
+      const ready = await Promise.all(
+        children.map(async (child) => await waitForChildMessage(child, childState)),
+      );
+      if (ready.some((state) => state.type === "unsupported")) return;
+      expect(ready.filter((state) => state.owned)).toHaveLength(1);
+      const ownerIndex = ready.findIndex((state) => state.owned);
+      const followerIndex = ownerIndex === 0 ? 1 : 0;
+      sendChildMessage(children[ownerIndex]!, { type: "close" });
+      await new Promise<void>((resolve) => {
+        if (children[ownerIndex]!.exitCode !== null) resolve();
+        else children[ownerIndex]!.once("exit", () => resolve());
+      });
+
+      let followerOwned = false;
+      for (let requestId = 1; requestId <= 50 && !followerOwned; requestId += 1) {
+        sendChildMessage(children[followerIndex]!, { type: "status", requestId });
+        const status = await waitForChildMessage(
+          children[followerIndex]!,
+          (message): message is ChildState =>
+            childState(message) && message.type === "status" && message.requestId === requestId,
+        );
+        followerOwned = Boolean(status?.owned);
+        if (!followerOwned) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(followerOwned).toBe(true);
+      expect(existsSync(`${socketPath}.owner`)).toBe(true);
+    } finally {
+      for (const child of children) {
+        sendChildMessage(child, { type: "close" });
+      }
+      await Promise.all(
+        children.map(
+          async (child) =>
+            await new Promise<void>((resolve) => {
+              if (child.exitCode !== null) resolve();
+              else child.once("exit", () => resolve());
+            }),
+        ),
+      );
+      expect(existsSync(`${socketPath}.owner`)).toBe(false);
     }
   });
 });

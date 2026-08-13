@@ -18,8 +18,13 @@ persistent daemon or agent session coupling. While a viewer process is running, 
 user/database-specific Unix socket inside a `0700` temporary directory as an alternate transport for
 the same application service. Agent
 CLI operations prefer that socket and fall back to direct local execution only before a request has
-been sent. A sent operation with an unknown outcome is never automatically repeated. Concurrent
-viewers for one database elect one socket owner and a follower takes over after that owner exits.
+been sent and only when no socket path was explicitly configured. `RVW_AGENT_SOCKET_PATH` is
+fail-closed: an unavailable or database-mismatched configured socket never falls back to SQLite. A
+sent operation with an unknown outcome is never automatically repeated. Concurrent viewers for one
+database acquire an atomic filesystem owner lock before listening, so one socket name is held by one
+Node process; a follower takes over only after that owner exits. Transport diagnostics report the
+socket, connection, database identity, selected transport, and fallback reason. Doctor also executes
+a rollback-only write transaction instead of inferring writeability from Unix modes.
 
 The viewer reads committed Git objects rather than the worktree or index. That keeps the human's
 reading context stable while an external Agent edits, tests, commits, and pushes. Comments bridge the
@@ -61,6 +66,9 @@ concern only and does not fork the Agent protocol or workflow instructions. Inst
 the bundled digest so update availability and local customization are reported separately.
 
 Each automatically opened browser document attaches an ephemeral viewer ID to that poll. The
-owning `rvw open` process uses those IDs only to stop its HTTP listener after the final tab closes;
-they are never persisted and are not part of review state or the agent CLI protocol. `--no-open`
-continues to be terminal-signal managed.
+per-viewer worker uses those IDs only to stop its HTTP listener after the final tab closes; they are
+never persisted and are not part of review state or the agent CLI protocol. By default, the parent
+`rvw open` process starts that worker in the background, opens the browser after the worker reports
+readiness, waits for the first viewer heartbeat, and then returns control to the terminal. This is a
+browser-owned worker rather than a persistent daemon. `--foreground` and `--no-open` remain
+terminal-signal managed.

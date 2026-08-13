@@ -1,6 +1,29 @@
+import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { waitForServerShutdown } from "../../src/cli/main.js";
+import {
+  completeBackgroundOpen,
+  waitForServerShutdown,
+  type BackgroundOpenChild,
+} from "../../src/cli/main.js";
 import { ViewerLifecycle } from "../../src/server/viewer-lifecycle.js";
+
+function backgroundChild(): BackgroundOpenChild & {
+  emit(event: string, ...args: unknown[]): boolean;
+  kill: ReturnType<typeof vi.fn>;
+  disconnect: ReturnType<typeof vi.fn>;
+  unref: ReturnType<typeof vi.fn>;
+} {
+  const emitter = new EventEmitter();
+  const child = Object.assign(emitter, {
+    connected: true,
+    kill: vi.fn(() => true),
+    disconnect: vi.fn(() => {
+      child.connected = false;
+    }),
+    unref: vi.fn(),
+  });
+  return child;
+}
 
 describe("ViewerLifecycle", () => {
   afterEach(() => {
@@ -27,6 +50,20 @@ describe("ViewerLifecycle", () => {
     expect(onAllViewersClosed).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(onAllViewersClosed).toHaveBeenCalledOnce();
+  });
+
+  it("reports the first viewer connection exactly once", () => {
+    const onFirstViewerConnected = vi.fn();
+    const lifecycle = new ViewerLifecycle({
+      onAllViewersClosed: vi.fn(),
+      onFirstViewerConnected,
+    });
+
+    lifecycle.heartbeat("viewer-a");
+    lifecycle.heartbeat("viewer-a");
+    lifecycle.heartbeat("viewer-b");
+
+    expect(onFirstViewerConnected).toHaveBeenCalledOnce();
   });
 
   it("cancels shutdown when a reloaded viewer reconnects during the grace period", async () => {
@@ -131,5 +168,97 @@ describe("waitForServerShutdown", () => {
     await expect(waiting).resolves.toBe("viewers-closed");
     expect(process.listenerCount("SIGINT")).toBe(listenersBefore.sigint);
     expect(process.listenerCount("SIGTERM")).toBe(listenersBefore.sigterm);
+  });
+});
+
+describe("completeBackgroundOpen", () => {
+  it("returns only after the browser opens and its first viewer connects", async () => {
+    const child = backgroundChild();
+    const launchBrowser = vi.fn().mockResolvedValue(undefined);
+    const opening = completeBackgroundOpen(child, launchBrowser, {
+      readyTimeoutMs: 1_000,
+      viewerTimeoutMs: 1_000,
+    });
+
+    child.emit("message", { type: "ready", url: "http://127.0.0.1:4321/?pullRequestId=pr-1" });
+    await vi.waitFor(() => expect(launchBrowser).toHaveBeenCalledOnce());
+    child.emit("message", { type: "viewer-connected" });
+
+    await expect(opening).resolves.toBe("http://127.0.0.1:4321/?pullRequestId=pr-1");
+    expect(child.disconnect.mock.calls).toHaveLength(1);
+    expect(child.unref.mock.calls).toHaveLength(1);
+    expect(child.kill.mock.calls).toHaveLength(0);
+  });
+
+  it("stops the worker when browser launch fails", async () => {
+    const child = backgroundChild();
+    const opening = completeBackgroundOpen(
+      child,
+      vi.fn().mockRejectedValue(new Error("browser launch failed")),
+      { readyTimeoutMs: 1_000, viewerTimeoutMs: 1_000 },
+    );
+
+    child.emit("message", { type: "ready", url: "http://127.0.0.1:4321/" });
+
+    await expect(opening).rejects.toThrow("browser launch failed");
+    expect(child.kill.mock.calls).toEqual([["SIGTERM"]]);
+    expect(child.unref.mock.calls).toHaveLength(0);
+  });
+
+  it("propagates worker startup errors and stops the worker", async () => {
+    const child = backgroundChild();
+    const opening = completeBackgroundOpen(child, vi.fn().mockResolvedValue(undefined), {
+      readyTimeoutMs: 1_000,
+      viewerTimeoutMs: 1_000,
+    });
+
+    child.emit("message", {
+      type: "error",
+      error: {
+        code: "GH_NOT_AUTHENTICATED",
+        message: "GitHub CLIの認証が必要です。",
+        suggestions: ["gh auth login"],
+        status: 400,
+      },
+    });
+
+    await expect(opening).rejects.toMatchObject({
+      code: "GH_NOT_AUTHENTICATED",
+      suggestions: ["gh auth login"],
+      status: 400,
+    });
+    expect(child.kill.mock.calls).toEqual([["SIGTERM"]]);
+  });
+
+  it("times out and stops a worker that never becomes ready", async () => {
+    vi.useFakeTimers();
+    const child = backgroundChild();
+    const opening = completeBackgroundOpen(child, vi.fn().mockResolvedValue(undefined), {
+      readyTimeoutMs: 100,
+      viewerTimeoutMs: 100,
+    });
+
+    const rejection = expect(opening).rejects.toMatchObject({ code: "PROCESS_TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(100);
+    await rejection;
+    expect(child.kill.mock.calls).toEqual([["SIGTERM"]]);
+  });
+
+  it("stops a ready worker when no browser viewer connects", async () => {
+    vi.useFakeTimers();
+    const child = backgroundChild();
+    const launchBrowser = vi.fn().mockResolvedValue(undefined);
+    const opening = completeBackgroundOpen(child, launchBrowser, {
+      readyTimeoutMs: 1_000,
+      viewerTimeoutMs: 100,
+    });
+
+    child.emit("message", { type: "ready", url: "http://127.0.0.1:4321/" });
+    await vi.waitFor(() => expect(launchBrowser).toHaveBeenCalledOnce());
+    const rejection = expect(opening).rejects.toMatchObject({ code: "PROCESS_TIMEOUT" });
+    await vi.advanceTimersByTimeAsync(100);
+
+    await rejection;
+    expect(child.kill.mock.calls).toEqual([["SIGTERM"]]);
   });
 });

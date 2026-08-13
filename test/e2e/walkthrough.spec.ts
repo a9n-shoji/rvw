@@ -1047,6 +1047,31 @@ test("renders the Markdown walkthrough showcase and keeps every expression comme
   const diagramComposer = page.locator(".walkthrough-diagram-comment-composer");
   const diagramDraft = page.locator(".walkthrough-diagram-comment-composer textarea");
   await expect(diagramDraft).toBeVisible();
+  await diagramDraft.evaluate((element) => {
+    (window as unknown as { rvwDiagramDraft?: Element }).rvwDiagramDraft = element;
+  });
+  await diagramDraft.press("a");
+  await expect(diagramDraft).toHaveValue("a");
+  await expect
+    .poll(
+      async () =>
+        await diagramDraft.evaluate(
+          (element) =>
+            (window as unknown as { rvwDiagramDraft?: Element }).rvwDiagramDraft === element,
+        ),
+    )
+    .toBe(true);
+  await expect
+    .poll(
+      async () =>
+        await diagramDraft.evaluate((element) => {
+          const textarea = element as HTMLTextAreaElement;
+          return [textarea.selectionStart, textarea.selectionEnd];
+        }),
+    )
+    .toEqual([1, 1]);
+  await diagramDraft.pressSequentially("iueo");
+  await expect(diagramDraft).toHaveValue("aiueo");
   await expect
     .poll(async () => {
       const [composerBox, paneBox] = await Promise.all([
@@ -1058,6 +1083,23 @@ test("renders the Markdown walkthrough showcase and keeps every expression comme
         : false;
     })
     .toBe(true);
+  const scrollTopBeforeThemeChange = await activeDocumentPane.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "ダークモード", exact: true }).click();
+  await expect
+    .poll(async () => await activeDocumentPane.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(scrollTopBeforeThemeChange - 200);
+  await expect(diagramDraft).toHaveValue("aiueo");
+  expect(
+    await diagramDraft.evaluate(
+      (element) => (window as unknown as { rvwDiagramDraft?: Element }).rvwDiagramDraft === element,
+    ),
+  ).toBe(true);
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "システム", exact: true }).click();
   await diagramDraft.fill("キャンセルするMermaidコメント");
   await page
     .locator(".walkthrough-diagram-comment-composer")

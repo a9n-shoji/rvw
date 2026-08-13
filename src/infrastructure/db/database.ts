@@ -132,6 +132,19 @@ export interface DatabaseOptions {
   migrationsDirectory?: string;
 }
 
+export interface DatabasePathConfiguration {
+  filePath: string;
+  configured: boolean;
+}
+
+export function databasePathConfiguration(filePath?: string): DatabasePathConfiguration {
+  const configuredFilePath = filePath ?? process.env.RVW_DATABASE_PATH;
+  return {
+    filePath: configuredFilePath ?? path.join(envPaths("rvw").data, "rvw.db"),
+    configured: configuredFilePath !== undefined,
+  };
+}
+
 function securityIssue(
   targetPath: string,
   expectedMode: number,
@@ -265,9 +278,9 @@ export class RvwDatabase {
   private readonly database: DatabaseSync;
 
   constructor(options: DatabaseOptions = {}) {
-    const configuredFilePath = options.filePath ?? process.env.RVW_DATABASE_PATH;
-    const defaultDataDirectory = envPaths("rvw").data;
-    const filePath = configuredFilePath ?? path.join(defaultDataDirectory, "rvw.db");
+    const configuration = databasePathConfiguration(options.filePath);
+    const configuredFilePath = configuration.configured ? configuration.filePath : undefined;
+    const filePath = configuration.filePath;
     this.filePath = filePath;
     this.configuredPath = configuredFilePath !== undefined;
     if (filePath !== ":memory:") {
@@ -329,6 +342,28 @@ export class RvwDatabase {
           ? "RVW_DATABASE_PATHは呼び出し側管理です。rvwはchmodしませんが、0700のdirectoryと0600のfileを推奨します。"
           : null,
     };
+  }
+
+  writeProbe(): { ok: true; error: null } | { ok: false; error: ReturnType<RvwError["toJSON"]> } {
+    try {
+      this.database.exec("BEGIN IMMEDIATE");
+      this.database.exec("UPDATE app_meta SET value = value WHERE key = 'change_sequence'");
+      this.database.exec("ROLLBACK");
+      return { ok: true, error: null };
+    } catch (error) {
+      try {
+        this.database.exec("ROLLBACK");
+      } catch {
+        // Preserve the write-probe error.
+      }
+      return {
+        ok: false,
+        error: new RvwError("DATABASE_ERROR", "databaseへの実書き込み試験に失敗しました。", {
+          cause: error,
+          details: { databasePath: this.filePath },
+        }).toJSON(),
+      };
+    }
   }
 
   private migrate(directory: string): void {
