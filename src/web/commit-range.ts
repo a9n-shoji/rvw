@@ -29,6 +29,18 @@ export function pullRequestRangeStartOid(
   return commits[0]?.oid ?? null;
 }
 
+export function commitRangeOldOid(
+  commits: readonly CommitSummary[],
+  comparisonBaseOid: string | null,
+  rangeStartOid: string | null,
+): string | null {
+  if (!rangeStartOid) return null;
+  const rangeStartIndex = commits.findIndex((commit) => commit.oid === rangeStartOid);
+  if (rangeStartIndex < 0) return null;
+  if (rangeStartIndex === 0) return comparisonBaseOid;
+  return commits[rangeStartIndex]?.parentOids[0] ?? null;
+}
+
 export function normalizedCommitRange(
   commits: readonly CommitSummary[],
   firstOid: string,

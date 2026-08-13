@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CommitSummary } from "../../src/domain/models.js";
 import {
+  commitRangeOldOid,
   earliestIncludedCommitOid,
   normalizedCommitRange,
   pullRequestRangeStartOid,
@@ -50,5 +51,25 @@ describe("commit range", () => {
     expect(pullRequestRangeStartOid(commits, "c")).toBe("a");
     expect(pullRequestRangeStartOid(commits, "old-head")).toBeNull();
     expect(pullRequestRangeStartOid(commits, null)).toBeNull();
+  });
+
+  it("uses the PR comparison base when the range starts at the first listed commit", () => {
+    const mergeBack = [commit("merge", ["feature-before-merge", "comparison-base"])];
+
+    expect(commitRangeOldOid(mergeBack, "comparison-base", "merge")).toBe("comparison-base");
+  });
+
+  it("uses the first parent when a range starts after the first listed commit", () => {
+    const mergeInTheMiddle = [
+      commit("feature-before-merge", ["comparison-base"]),
+      commit("merge", ["feature-before-merge", "merged-branch"]),
+      commit("feature-after-merge", ["merge"]),
+    ];
+
+    expect(commitRangeOldOid(mergeInTheMiddle, "comparison-base", "merge")).toBe(
+      "feature-before-merge",
+    );
+    expect(commitRangeOldOid(mergeInTheMiddle, "comparison-base", "missing")).toBeNull();
+    expect(commitRangeOldOid(mergeInTheMiddle, "comparison-base", null)).toBeNull();
   });
 });
