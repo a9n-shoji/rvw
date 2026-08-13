@@ -198,6 +198,49 @@ test("defaults Markdown to preview and preserves an explicit mode per document t
   );
 });
 
+test("keeps full and diff file headers directly below the sticky document tabs", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 240 });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  const documentPane = page.locator('.document-pane[data-pane="left"]');
+  const diff = documentPane.locator("diffs-container");
+
+  const assertStickyHeader = async (): Promise<void> => {
+    await expect(diff.locator("[data-diffs-header][data-sticky]")).toBeVisible();
+    const scrollTop = await documentPane.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(scrollTop).toBeGreaterThan(0);
+    await expect
+      .poll(async () => {
+        return await diff.locator("[data-diffs-header]").evaluate((header) => {
+          const root = header.getRootNode();
+          if (!(root instanceof ShadowRoot)) return null;
+          const tabs = root.host.closest(".document-pane")?.querySelector(".document-tabs-shell");
+          if (!(tabs instanceof HTMLElement)) return null;
+          return Math.round(
+            header.getBoundingClientRect().top - tabs.getBoundingClientRect().bottom,
+          );
+        });
+      })
+      .toBe(0);
+  };
+
+  await reviewScope.getByRole("button", { name: "全文", exact: true }).click();
+  await assertStickyHeader();
+
+  await documentPane.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await reviewScope.getByRole("button", { name: "変更", exact: true }).click();
+  await assertStickyHeader();
+});
+
 test("reopens an inline thread consistently after it changes while unmounted", async ({
   page,
   request,

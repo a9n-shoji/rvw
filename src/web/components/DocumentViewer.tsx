@@ -133,6 +133,9 @@ const viewerUnsafeCss = `
   [data-change-icon="file"] {
     display: none;
   }
+  [data-diffs-header][data-sticky] {
+    top: 40px;
+  }
   [data-line] {
     padding-inline-start: calc(1ch + 8px);
   }

@@ -1540,7 +1540,7 @@ code {
   margin: 16px;
   border: 1px solid var(--line);
   border-radius: 9px;
-  overflow: hidden;
+  overflow: clip;
   background: var(--panel);
   box-shadow: 0 2px 14px var(--shadow-small);
 }
