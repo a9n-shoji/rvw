@@ -370,6 +370,10 @@ interface Walkthrough {
   CLI入力で両方を省略した場合は`null`へ正規化する。line rangeがある場合は文書内に収まることも検証する。
 - Markdown内のlink destinationとしてparseされた`rvw-ref:<referenceId>`を登録時に完全一致で検証し、
   typed reference buttonとして表示する。code blockやinline code内の文字列はlinkとして扱わない。
+- 全reference IDはMarkdown内の`rvw-ref:` linkまたは`diagramBindings`のvalueとして最低一度使う。
+  binding keyは本文中のflowchart nodeまたはclass diagram classとして実在することも検証する。存在しない
+  nodeへのbindingを含め、どちらからも実際に到達できないreferenceは、重複indexのないviewerでは
+  開けないため登録を拒否する。
 - sidebar一覧はtitle、current source OID、author、reference件数だけを返し、現在の本文・参照・diagram
   bindingは人間がWalkthrough tabを開いた時に取得する。CLI更新をpollで検出した場合は、開いているtabも
   同じIDの最新内容とtitleへ結び直す。
@@ -530,8 +534,9 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-最初のpublic protocol versionは1とし、公開前に使用した内部version番号は互換性保証の対象外とする。
-public release後は番号を再利用せず、breaking changeのたびに単調増加させる。capabilityは次を含む。
+current protocol versionは2とし、最初のpublic compatibility contractはversion 1である。公開前に
+使用した内部version番号は互換性保証の対象外とする。public release後は番号を再利用せず、breaking
+changeのたびに単調増加させる。capabilityは次を含む。
 
 ```text
 comment.list
@@ -632,8 +637,9 @@ stdinの最小例:
 ```
 
 `pullRequest`と`sourceOid`、title、body、1件以上のreferenceは必須である。CLIはcommit、path、
-任意のline range、Markdown reference、diagram bindingを検証し、一つのSQLite transactionで保存して
-change sequenceを更新する。成功responseは`rvw://walkthrough/<uuid>`を含むWalkthrough全体を返す。
+任意のline range、Markdown reference、実在するflowchart/classDiagram nodeへのdiagram bindingを検証し、本文linkまたはdiagram bindingから
+一度も参照されないreferenceを拒否してから、一つのSQLite transactionで保存してchange sequenceを
+更新する。成功responseは`rvw://walkthrough/<uuid>`を含むWalkthrough全体を返す。
 このcommandはbrowserを開かず、どのviewerのnavigationも変更しない。
 
 #### Update
@@ -664,8 +670,10 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
 
 - machine consumerは`--json`または`--stdin --json`を必須とし、stdoutへJSON valueを一つだけ返す。
 - progressとdiagnosticはstderrへ出し、errorは`code`、`message`、`suggestions`を持つ。
-- stdinは40 MiB以下の単一JSON objectとする。Agent socket frameはこの入力とprotocol envelopeを収める
-  固定上限を持つ。
+- stdinは40 MiB以下の単一JSON objectとし、EOFを受けてからparseする。改行だけでは入力を終了しない。
+  process callerはJSON送信後にstdinをcloseし、shell callerはpipe、quoted heredoc、input redirectionの
+  いずれかを使って対話PTYでのEOF待ちを避ける。Agent socket frameはこの入力とprotocol envelopeを
+  収める固定上限を持つ。
 - comment本文とreplyはplain UTF-8 textで64 KiB以下とする。
 - Walkthrough本文は256 KiB以下、referenceは最大200件とする。
 - `walkthrough get`はcurrent WalkthroughとPR identity、local repository pathを返す。
@@ -704,12 +712,19 @@ chmodしない。rvwが不足directory/fileを新規作成する場合はchmod�
 
 通常権限のviewer processは`0700`のuser専用一時directory内へdatabase別Unix socket（`0600`）を
 提供する。Agent CLIはDBを直接開く前に
-socketへ同じapplication service操作を依頼し、接続できない場合だけ従来のdirect CLIへfallbackする。
-`RVW_DATABASE_PATH`を明示したCLIは期待DB pathをsocket requestへ含め、viewerのDBと一致する場合だけ
-dispatchする。不一致なら操作前に拒否してdirect CLIへfallbackし、別DBへ誤って書き込まない。接続成立後に
-requestを送信した操作はtimeout、切断、不正responseでもdirect実行へfallbackせず、結果不明の明示errorを返す。
-破壊操作の確認はCLIだけでなくsocket dispatchでも検証する。複数viewerでは一processだけがsocketを所有し、
-owner終了後は待機中viewerが引き継ぐ。
+socketへ同じapplication service操作を依頼する。`RVW_AGENT_SOCKET_PATH`未指定時はrequest送信前の接続失敗
+だけ従来のdirect CLIへfallbackできる。明示時はそのsocketを必須とし、接続失敗またはDB不一致を
+`AGENT_SOCKET_UNAVAILABLE`として返してdirect DBを開かない。全socket requestは期待DB pathを含め、viewerの
+DBと一致する場合だけdispatchする。接続成立後にrequestを送信した操作はtimeout、切断、不正responseでも
+direct実行へfallbackせず、結果不明の明示errorを返す。破壊操作の確認はCLIだけでなくsocket dispatchでも
+検証する。
+
+`rvw agent ping/status --json`はsocket path、接続結果、OS接続error詳細、期待／接続先DB、owner PID、選択
+transport、fallback理由をmachine-readableに返し、人向け出力にも同じ診断項目を表示する。同じsocket
+pathのlisten前にatomicなowner lockを取得し、一つのNode
+processだけがsocket名を保持する。lockのowner PIDが生存中またはlockが安全に読めない間はtakeoverせず、owner
+終了後だけexact inodeを確認してstale lock/socketを除去し、待機中viewerが引き継ぐ。`doctor --json`はDBの
+mode/ownerに加えてrollbackするwrite transactionとAgent疎通を実行・報告する。
 
 ```sql
 CREATE TABLE app_meta (
@@ -905,8 +920,12 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - write APIは`application/json`だけ
 - same-origin以外のwriteを拒否、CORSを有効にしない
 - browser tab leaseはtransport-onlyで永続化しない
-- 自動open時は最後のviewer tab終了後にserver停止
-- `--no-open`はsignal管理
+- 通常の自動openはPRごとのbackground workerを起動し、worker ready後にbrowserを開き、最初のviewer
+  heartbeatを確認してから親CLIを終了する
+- browser起動失敗、worker error、30秒以内に最初のviewer heartbeatがない場合はworkerを停止して明示的な
+  errorを返す
+- background workerはpersistent daemonではなく、最後のviewer tab終了後にserverとともに停止する
+- `--foreground`と`--no-open`はsignal管理
 - SQLiteはWALでserver processを扱い、Agent CLIの書き込みは可能ならuser専用Unix socketを経由する
 
 同一PRを複数viewer/processで開くことは許容する。SQLite writeは`BEGIN IMMEDIATE`を使う。
@@ -956,7 +975,8 @@ Integration（実git + fake GitHub）:
 - `pr sync --repository`、`--allow-untracked`、behind-onlyなlocal branch
 - repository外からの保存済みPR openと`pr attach`
 - `comment get --live`のread-only stale判定
-- Agent socket経由のwriteとsocket不在時fallback
+- Agent socket経由のwrite、implicit fallback、explicit fail-closed、diagnostic、process間単一owner takeover
+- doctorのDB write transactionとAgent疎通
 - commit固定Walkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
 - worktree間共有
 
@@ -971,7 +991,7 @@ E2E:
 7. headを変えないPR本文だけのrefreshで、行数が変わった最新本文を末尾まで表示
 8. 既存PR本文commentのinline位置とOutdated表示を同じrefreshで更新
 9. old code commentのtrackingまたはOutdated
-10. Walkthroughを開いてもcode tabを自動で開かず、inline reference、index、Mermaid nodeを人間が
+10. Walkthroughを開いてもcode tabを自動で開かず、inline referenceまたはMermaid nodeを人間が
     選んだ時だけ対象commitを変えずexact source行へ移動し、説明tabを保持。missing時はtabを開かず
     一時的なリンク切れchip、通信や一時的な取得失敗では区別したstatusを表示
 11. tabをdragまたはpane menuで左右へ移し、`Cmd` / `Ctrl`+clickでreferenceを操作元と反対の
@@ -979,8 +999,9 @@ E2E:
 12. repository MarkdownをSource / Previewで切り替え、Previewの文字列選択からsource行commentを作成する
 13. flowchartとclass diagramのbinding済み要素からexact sourceを開く
 14. CLI更新したWalkthroughのtitle、本文、referenceを同じopen tabへpoll反映
-15. Walkthroughの文字列選択へ行comment、Mermaid fenced block全体へcommentを作成し、本文置換後に
-    一意なquoteは再配置、一意に置けないquoteはOutdated表示
+15. Walkthroughの文字列選択へ行comment、Mermaid fenced block全体へcommentを作成し、Mermaid composerは
+    入力中に同じtextarea DOMとcaretを維持して正順に入力でき、本文置換後に一意なquoteは再配置、
+    一意に置けないquoteはOutdated表示
 16. viewerでWalkthroughと紐づくcomment件数を確認して削除し、tabとcommentを同時に除去
 
 CLI contract:

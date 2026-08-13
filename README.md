@@ -52,8 +52,9 @@ pnpm link --global
 rvw doctor
 ```
 
-`rvw doctor`がGit、GitHub CLI認証、repository、database migrationを確認します。npm packageを公開する
-releaseでは、実際のpackage名を確定したうえでこの節をglobal install手順へ更新します。
+`rvw doctor`がGit、GitHub CLI認証、repository、database migration、databaseの実書き込み、Agent
+transport疎通を確認します。npm packageを公開するreleaseでは、実際のpackage名を確定したうえでこの節を
+global install手順へ更新します。
 
 レビューしたいrepositoryへ移動して起動します。
 
@@ -68,7 +69,9 @@ rvw open https://github.com/owner/repository/pull/123
 rvw open
 ```
 
-serverは`127.0.0.1`の空きportだけへbindします。自動で開いたviewerは、最後のタブを閉じると短い猶予後にserverも停止します。リロード中や別タブが残っている間は停止しません。ブラウザを開かずに検証する場合は`rvw open --no-open`を使い、この場合はCtrl+Cで停止します。一度登録したPRは、完全URLまたは全登録PRで一意な番号を指定すればrepository外のdirectoryからも開けます。
+serverは`127.0.0.1`の空きportだけへbindします。通常の`rvw open`はviewerを開き、最初のtab接続を確認してから端末へ制御を返します。serverはbackgroundで動き、最後のtabを閉じると短い猶予後に停止します。リロード中や別tabが残っている間は停止しません。
+
+serverを端末に接続したままにする場合は`rvw open --foreground`を使います。ブラウザを開かずに検証する場合は`rvw open --no-open`を使います。どちらもCtrl+Cで停止します。一度登録したPRは、完全URLまたは全登録PRで一意な番号を指定すればrepository外のdirectoryからも開けます。
 
 ## 変更を理解する
 
@@ -122,7 +125,9 @@ active tabやscroll位置も変わりません。人間がviewerのWalkthrough�
 複数のclaimと実装を任意の順序・任意のタイミングで往復できます。
 
 Walkthrough本文のinline referenceとMermaid node linkは維持しますが、同じ参照を横や下へ列挙する
-`Code references` indexとsidebar上の参照件数は表示しません。
+`Code references` indexとsidebar上の参照件数は表示しません。そのため、本文linkと、本文中に実在する
+flowchart/classDiagram nodeへのMermaid bindingのどちらからも使われないreferenceはpublish/update時に
+拒否します。存在しないnode名だけをbindingへ宣言しても使用済みにはなりません。
 
 Mermaidの描画はflowchartだけに限定せず、class、sequence、state、ERなどbundled Mermaidが対応する
 記法を受け付けます。code referenceとの要素bindingはflowchartとclass diagramをE2Eで保証し、
@@ -203,6 +208,8 @@ resetは対象PRのコメント、返信、コメント対象、Walkthrough、co
 
 ```bash
 rvw protocol --json
+rvw agent ping --json
+rvw agent status --json
 rvw pr refresh <PR_REF> --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment get <COMMENT_URI> --json
@@ -220,14 +227,25 @@ rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
 rvw pr attach <PR_REF> --repository <PATH> --json
 ```
 
+`--stdin` commandはEOFまでJSONを読みます。改行だけでは終了しないため、processから呼ぶ場合は送信後に
+stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの
+対話commandへJSONと改行だけを送るとEOF待ちになります。
+
 `comment list`は未解決を既定として`unresolved` / `resolved` / `all`をページング列挙し、各threadの
 root post preview、post件数、最新head時点のOutdated判定を返します。`hasMore`なら`nextOffset`から
 続けて取得し、完全なthreadは`comment get`で読みます。listと通常の`comment get`はPR本文を省略し、
-本文が必要な場合だけ`comment get --include-pr-body`で最新の同期済み本文を取得します。
+本文が必要な場合だけ`comment get --include-pr-body`で最新の同期済み本文を取得します。複数threadを
+扱うAgentは同じPR本文を一度だけ取得し、そのPRの全threadで共有します。
 `comment get`は最新PRのtitle、base/head、serviceが導出したplacement、対象commitのbounded source
 excerptを返すため、AgentはOID比較でOutdatedを推測しません。
 
 `comment get --live`はGitHubの現在値とcacheの差をread-onlyで確認し、DBを更新しません。`pr sync`はGitHub上の最新PR状態を取得し、任意の`commentUpdates`を同じSQLite transactionで反映します。保存先がdirtyでも同じrepositoryのcleanなworktreeを`--repository`で選べ、確認済みの未追跡fileだけは`--allow-untracked`で許可できます。local branchがGitHub headより単にbehindな場合や最終同期後にforce-pushされた場合はcheckoutを変更せず同期します。`pr sync`と`comment reply`は冪等ではないため、結果が不明な場合はコメントを再取得してから再試行してください。
+
+`rvw agent ping/status --json`はsocket path、接続結果とOS error詳細、期待／接続先DB、選択transport、
+fallback理由を表示します。人向け出力にも同じ診断項目を表示します。`RVW_AGENT_SOCKET_PATH`を明示した場合は
+そのsocketを必須とし、接続失敗やDB不一致をdirect
+databaseへfallbackせずerrorにします。未指定時だけ、request送信前の接続失敗をdirect databaseへ
+fallbackできます。
 
 詳細は[CLI protocol](docs/cli-protocol.md)と[実装仕様](docs/implementation-spec.md)を参照してください。
 
@@ -274,7 +292,9 @@ credentialはGitHub CLIが管理し、rvwのDBへコピーしません。
 chmodしません。存在しないdirectory/fileは作成時のmodeだけで`0700` / `0600`にし、既存pathが推奨modeで
 なければ`doctor --json`にwarningを表示します。通常起動したviewerは`0700`の一時directory内へ
 `0600`のdatabase別Unix socketを提供し、Agent CLIは可能ならそのprocessへ
-書き込みを依頼するため、AgentへDB directoryの直接write権限を渡す必要がありません。
+書き込みを依頼するため、AgentへDB directoryの直接write権限を渡す必要がありません。同じsocketでは
+atomicなowner lockを取得した一つのNode processだけがlistenし、owner終了後にfollowerが引き継ぎます。
+`rvw doctor --json`はmode/ownerだけでなくwrite transactionとAgent疎通も報告します。
 
 ローカルHTTP serverは`127.0.0.1`だけへbindしてHost / Originを検証し、write APIは
 `application/json`だけを受理し、CORSを有効にしません。コメントと返信はplain UTF-8 textです。

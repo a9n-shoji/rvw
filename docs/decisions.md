@@ -1044,3 +1044,117 @@ difference.
   reported honestly as unmanaged differences until reinstalled.
 - Local edits remain protected even when a newer bundle also exists.
 - The marker is installer metadata, not part of the Skill content digest or Agent instructions.
+
+## 2026-08-13: Require every Walkthrough reference to be reachable
+
+### Problem
+
+After removing the duplicate `Code references` index, a reference declared in a Walkthrough but used
+by neither its Markdown body nor a Mermaid binding has no viewer interaction that can open it. The
+declaration still reaches an Agent through the CLI, which can make an explanation appear grounded even
+though the human cannot discover or verify that reference from the rendered artifact.
+
+### Choice
+
+Require every supplied reference ID to appear in at least one parsed Markdown `rvw-ref:` link or as a
+`diagramBindings` value whose key is an actual flowchart node or classDiagram class in the Markdown
+body. Keep the existing inverse validation that every link and binding names a supplied reference.
+Apply the bidirectional rule to both publish and in-place update before persistence; a phantom binding
+does not make a reference reachable.
+
+This rejects an input shape accepted by public protocol version 1, so advance the machine protocol and
+both bundled Skills to version 2.
+
+### Trade-offs
+
+- Every stored reference is reachable from the Walkthrough surface that gives it explanatory context.
+- Agents must remove speculative declarations or add the intended inline link or diagram binding.
+- Existing stored Walkthroughs remain readable; only a later complete update must satisfy the stronger
+  validation rule.
+
+## 2026-08-13: Return the terminal after the first viewer connects
+
+### Problem
+
+An automatically opened viewer already uses browser-tab leases to decide when its local server should
+stop, but the invoking `rvw open` process still occupied the terminal for the entire session. Closing
+the browser controlled the useful lifetime, so keeping the shell attached added friction without
+providing additional ownership.
+
+### Choice
+
+Make ordinary `rvw open` start a detached, per-viewer worker. The worker reports readiness over a
+private parent-child channel; the parent then opens the browser and waits for the first viewer
+heartbeat before returning control to the terminal. Browser launch failure, worker failure, or a
+30-second initial-heartbeat timeout terminates the worker and remains a foreground error. After the
+handshake, the existing viewer leases own shutdown and the worker stops after the last tab closes.
+
+Keep `--foreground` as the explicit terminal-attached form and keep `--no-open` terminal-attached
+because it has no browser lease that can establish ownership. Do not add a persistent daemon or a
+cross-session process registry.
+
+### Trade-offs
+
+- The normal command frees the shell while browser tabs retain the lifecycle users already observe.
+- Waiting for the first heartbeat prevents a silently orphaned worker when the browser cannot load the
+  viewer.
+- The implementation adds a bounded startup handshake and one short-lived worker process per open
+  viewer.
+- Users who need terminal-coupled diagnostics or Ctrl+C ownership can select `--foreground`.
+
+## 2026-08-13: Keep the Mermaid comment composer mounted while typing
+
+### Problem
+
+The Mermaid fence renderer was created inside the Walkthrough render path and its composer draft lived
+in the parent viewer state. Each character rebuilt the ReactMarkdown custom-renderer subtree, replaced
+the textarea DOM, and returned the caret to the start. Typing `aiueo` could therefore produce `oeuia`.
+
+### Choice
+
+Use a module-stable Mermaid `pre` renderer and keep the diagram draft in a dedicated composer component
+inside the selected diagram subtree. Pass the submitted body explicitly to the mutation instead of
+sharing the selection/header draft. Normal React element identity is sufficient once the renderer type
+and draft-owning component are stable, so do not add JSON signatures or callback-ref layers around the
+Markdown tree. The E2E contract retains the original textarea DOM reference across input and checks
+both the caret position and character order.
+
+### Trade-offs
+
+- Diagram typing no longer redraws Mermaid or loses browser selection state.
+- Opening a different diagram intentionally mounts a fresh empty draft; cancelling or successfully
+  submitting still removes it.
+- The viewer carries a small context boundary for Mermaid rendering, while the Markdown protocol and
+  stored comment model remain unchanged.
+
+## 2026-08-13: Make explicit Agent sockets fail closed and elect one process atomically
+
+### Problem
+
+An explicitly configured Agent socket expressed operator intent but a missing, refused, or
+database-mismatched connection still opened SQLite directly. Diagnostics did not reveal the selected
+transport or fallback reason. Concurrent viewer takeover also relied on probing and unlinking the
+socket alone, leaving a race in which separate Node processes could both believe they should own the
+same name. Unix permission metadata did not prove that the selected database could accept a write.
+
+### Choice
+
+Supersede the fallback part of the 2026-08-12 Agent transport decision for
+`RVW_AGENT_SOCKET_PATH`: explicit configuration is required and returns
+`AGENT_SOCKET_UNAVAILABLE` without direct-database fallback. Keep pre-send fallback only for the
+implicit database-derived socket. Add `rvw agent ping/status` and include socket path, connection
+result, expected and remote database, owner PID, selected transport/database, and fallback reason in
+diagnostics. Doctor reports the same transport inspection and a rollback-only write transaction.
+
+Publish a `0600` owner lock with an atomic hard-link operation before probing, unlinking, or binding the
+socket. A live or unreadable owner lock blocks takeover; after a dead owner, exact inode checks protect
+both stale-lock removal and cleanup. Only the lock holder can listen, and followers retry after release.
+
+### Trade-offs
+
+- A misspelled explicit socket fails visibly instead of silently operating on a database the caller did
+  not authorize as a fallback.
+- Implicit operation remains convenient when no viewer is running and still exposes why it chose direct
+  database access.
+- PID liveness is local-process evidence rather than a durable lease, so exact inode identity remains
+  necessary for safe stale cleanup.

@@ -9,6 +9,7 @@ export interface RunningServer {
   host: "127.0.0.1";
   port: number;
   origin: string;
+  firstViewerConnected: Promise<void> | null;
   allViewersClosed: Promise<void> | null;
   close(): Promise<void>;
 }
@@ -24,13 +25,24 @@ export async function startServer(
   const host = "127.0.0.1" as const;
   const security: ServerSecurityContext = { expectedHost: null, expectedOrigin: null };
   let resolveAllViewersClosed: (() => void) | undefined;
+  let resolveFirstViewerConnected: (() => void) | undefined;
+  const firstViewerConnected = options.autoCloseWhenNoViewers
+    ? new Promise<void>((resolve) => {
+        resolveFirstViewerConnected = resolve;
+      })
+    : null;
   const allViewersClosed = options.autoCloseWhenNoViewers
     ? new Promise<void>((resolve) => {
         resolveAllViewersClosed = resolve;
       })
     : null;
   const viewerLifecycle = resolveAllViewersClosed
-    ? new ViewerLifecycle({ onAllViewersClosed: resolveAllViewersClosed })
+    ? new ViewerLifecycle({
+        onAllViewersClosed: resolveAllViewersClosed,
+        ...(resolveFirstViewerConnected === undefined
+          ? {}
+          : { onFirstViewerConnected: resolveFirstViewerConnected }),
+      })
     : undefined;
   const app = createApp(service, {
     security,
@@ -54,6 +66,7 @@ export async function startServer(
           host,
           port: info.port,
           origin,
+          firstViewerConnected,
           allViewersClosed,
           close: () =>
             (closePromise ??= (async () => {

@@ -1,16 +1,21 @@
-# CLI protocol v1
+# CLI protocol v2
 
 Version 1 is the first public compatibility contract. Pre-public internal version numbers were not
 released or supported; after the first public release, protocol versions only increase for breaking
-changes and are never reused.
+changes and are never reused. Version 2 adds the invariant that every declared Walkthrough reference
+must be reachable from its Markdown body or Mermaid bindings. It also advertises the additive
+`agent.transport` diagnostic capability.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent and lets that Agent publish a commit-fixed explanation back to the human. It is not an
 Agent-session, prompt, or browser-control protocol: the viewer stores durable review artifacts while
 all navigation remains a human action.
 
-Machine consumers always pass `--json` or JSON over stdin. Successful commands emit one JSON
-value to stdout. Progress and diagnostics go to stderr. Errors use:
+Machine consumers always pass `--json` or JSON over stdin. Commands using `--stdin` read the single
+JSON value until EOF; a trailing newline does not terminate input. Process callers must close stdin
+after writing, and shell callers should use a pipe, quoted heredoc, or input redirection instead of
+typing JSON into an already-running interactive command. Successful commands emit one JSON value to
+stdout. Progress and diagnostics go to stderr. Errors use:
 
 ```json
 {
@@ -222,7 +227,10 @@ IDs use `[A-Za-z][A-Za-z0-9_-]{0,63}`. Every repository-relative path must be an
 document at that commit. A reference may omit both `startLine` and `endLine` to target the whole file;
 otherwise both are required and define an existing inclusive single-line or multi-line range. Omitted
 input fields are normalized to `null`, and saved references always return both fields as numbers or `null`. Markdown uses
-`rvw-ref:<referenceId>` links. Every `diagramBindings` value must name a supplied reference.
+`rvw-ref:<referenceId>` links. Every `diagramBindings` value must name a supplied reference, and its
+key must identify a node or class that actually occurs in a flowchart or classDiagram fence. Every
+supplied reference must be used by at least one Markdown link or valid diagram binding. Unused or
+phantom-bound references are rejected because the viewer has no separate reference index.
 
 The body is limited to 256 KiB, and a publication may contain at most 200 references. A successful
 publication protects `sourceOid` with rvw's immutable commit ref. The response contains the saved
@@ -267,21 +275,32 @@ When a normally launched rvw viewer is running, its process exposes a database-s
 with mode `0600` inside a per-user `0700` temporary directory. Agent CLI commands try that socket
 first, so writes such as reply, resolve, Walkthrough update,
 and repository attachment execute through the already-authorized rvw process instead of requiring the
-Agent sandbox to open SQLite for writing. If no socket is available, commands retain the direct local
-CLI behavior. That fallback is allowed only before a request is sent. If a sent request times out or
-the connection closes without a valid response, the CLI reports an uncertain outcome and does not
-repeat a potentially non-idempotent operation. Re-read state before retrying. Multiple viewer
-processes may coexist; a follower takes over the shared socket if its current owner exits. CLI stdin
-and socket request/response frames are capped at 40 MiB.
+Agent sandbox to open SQLite for writing. Without `RVW_AGENT_SOCKET_PATH`, a connection failure before
+request transmission may fall back to the selected direct database. When `RVW_AGENT_SOCKET_PATH` is
+explicit, that socket is required: connection failure or database mismatch returns
+`AGENT_SOCKET_UNAVAILABLE` and never opens SQLite as a fallback. If a sent request times out or the
+connection closes without a valid response, the CLI reports an uncertain outcome and does not repeat
+a potentially non-idempotent operation. Re-read state before retrying.
+
+`rvw agent ping --json` tests socket connectivity and exits 2 unless the socket answers. `rvw agent
+status --json` reports the transport that normal commands would select and exits 2 only when an
+explicit socket makes the transport unavailable. Both expose `socketPath`, `socketPathSource`,
+`connectionResult`, `expectedDatabasePath`, `socketDatabasePath`, `socketOwnerPid`,
+`selectedTransport`, `selectedDatabasePath`, `fallbackReason`, and any OS-level `connectionDetails`.
+The non-JSON output shows the same diagnostic fields. Multiple viewer processes may
+coexist, but an atomic owner lock ensures only one Node process can own a socket path at a time; a
+follower acquires the lock and socket only after the owner exits. CLI stdin and socket
+request/response frames are capped at 40 MiB.
 
 The default database directory and file are created with modes `0700` and `0600`. Existing paths are
 checked with `stat`; rvw does not chmod them when owner and mode are already safe. A failed chmod on a
 new path is tolerated only when the resulting owner and mode are safe. Set `RVW_DATABASE_PATH` to use
 an explicitly managed database path; rvw does not chmod existing components of that path. Missing
 directory/file components created by rvw use creation modes `0700` / `0600`. The socket request includes this
-expected path and is dispatched only when the viewer uses the same database, otherwise the CLI safely
-falls back to direct access. `rvw doctor --json` reports the active path, its source, whether rvw
-manages its permissions, actual/expected permission metadata and warnings, and installed Skill status.
+expected path and is dispatched only when the viewer uses the same database. `rvw doctor --json`
+reports the active path, its source, whether rvw manages its permissions, actual/expected permission
+metadata and warnings, a real write-transaction probe, Agent transport connectivity, and installed
+Skill status.
 
 ## Bundled Skills
 
@@ -306,9 +325,10 @@ current `walkthrough` object. This gives the Agent the explanation body and exac
 discussed without relying on rendered browser positions. If the Walkthrough is updated, the same
 comment URI subsequently returns the updated current object.
 
-`rvw protocol --json` returns `protocolVersion: 1`, the application version, and these capabilities:
+`rvw protocol --json` returns `protocolVersion: 2`, the application version, and these capabilities:
 
 ```text
+agent.transport
 comment.list
 comment.read
 comment.reply

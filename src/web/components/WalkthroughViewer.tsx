@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Children,
+  createContext,
   isValidElement,
   memo,
   useCallback,
+  useContext,
   useEffect,
   useId,
   useLayoutEffect,
@@ -146,8 +148,8 @@ function MermaidDiagram({
   const prefersDarkColorScheme = usePrefersDarkColorScheme();
   const dark =
     themePreference === "dark" || (themePreference === "system" && prefersDarkColorScheme);
-  const composerOpen = Boolean(commentComposer);
 
+  const composerOpen = Boolean(commentComposer);
   useLayoutEffect(() => {
     if (!composerOpen) return;
     const frame = window.requestAnimationFrame(() => {
@@ -272,32 +274,139 @@ function MermaidDiagram({
   );
 }
 
+interface MermaidMarkdownRenderContext {
+  diagramBindings: Record<string, string>;
+  references: ReadonlyMap<string, WalkthroughReference>;
+  placedComments: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+  activeCommentId: string | null;
+  diagramCommentRange: MarkdownSourceRange | null;
+  themePreference: ThemePreference;
+  onOpenReference: (reference: WalkthroughReference, openInOtherPane: boolean) => void;
+  onCommentRange: (range: MarkdownSourceRange) => void;
+  diagramCommentPending: boolean;
+  diagramCommentError: unknown;
+  onCancelDiagramComment: () => void;
+  onSubmitDiagramComment: (range: MarkdownSourceRange, body: string) => void;
+}
+
+const MermaidMarkdownRenderContext = createContext<MermaidMarkdownRenderContext | null>(null);
+
+function WalkthroughDiagramCommentComposer({
+  range,
+  pending,
+  error,
+  onCancel,
+  onSubmit,
+}: {
+  range: MarkdownSourceRange;
+  pending: boolean;
+  error: unknown;
+  onCancel: () => void;
+  onSubmit: (body: string) => void;
+}) {
+  const [body, setBody] = useState("");
+  const label =
+    range.startLine === range.endLine
+      ? `L${range.startLine}へコメント`
+      : `L${range.startLine}–${range.endLine}へコメント`;
+  return (
+    <InlineCommentComposer
+      body={body}
+      label={label}
+      pending={pending}
+      error={error}
+      validationError={undefined}
+      placement="line"
+      onBodyChange={setBody}
+      onCancel={onCancel}
+      onSubmit={() => onSubmit(body)}
+    />
+  );
+}
+
+const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node, ...props }) => {
+  const context = useContext(MermaidMarkdownRenderContext);
+  const child =
+    Children.count(children) === 1
+      ? (Children.only(children) as ReactElement<{
+          className?: string;
+          children?: ReactNode;
+        }>)
+      : null;
+  if (!context || !isValidElement(child) || child.props.className !== "language-mermaid") {
+    return <pre {...props}>{children}</pre>;
+  }
+  const sourceRange = markdownNodeSourceRange(node);
+  return (
+    <MermaidDiagram
+      source={codeText(child.props.children).trim()}
+      sourceRange={sourceRange}
+      commented={Boolean(
+        sourceRange &&
+        context.activeCommentId &&
+        context.placedComments.some(
+          ({ comment, placement }) =>
+            comment.id === context.activeCommentId &&
+            placement.range &&
+            placement.range.startLine <= sourceRange.endLine &&
+            placement.range.endLine >= sourceRange.startLine,
+        ),
+      )}
+      bindings={context.diagramBindings}
+      references={context.references}
+      themePreference={context.themePreference}
+      onOpenReference={context.onOpenReference}
+      onCommentRange={context.onCommentRange}
+      commentComposer={
+        sourceRange && sameRange(sourceRange, context.diagramCommentRange) ? (
+          <WalkthroughDiagramCommentComposer
+            key={`${sourceRange.startLine}:${sourceRange.endLine}`}
+            range={sourceRange}
+            pending={context.diagramCommentPending}
+            error={context.diagramCommentError}
+            onCancel={context.onCancelDiagramComment}
+            onSubmit={(body) => context.onSubmitDiagramComment(sourceRange, body)}
+          />
+        ) : null
+      }
+    />
+  );
+};
+
 const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
-  walkthrough,
+  body,
+  diagramBindings,
   references,
   placedComments,
   activeCommentId,
   selectedRange,
   selectionComposerOpen,
   diagramCommentRange,
-  diagramCommentComposer,
   themePreference,
   onOpenReference,
   onCommentActiveChange,
   onCommentRange,
+  diagramCommentPending,
+  diagramCommentError,
+  onCancelDiagramComment,
+  onSubmitDiagramComment,
 }: {
-  walkthrough: Walkthrough;
+  body: string;
+  diagramBindings: Record<string, string>;
   references: ReadonlyMap<string, WalkthroughReference>;
   placedComments: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
   activeCommentId: string | null;
   selectedRange: MarkdownSourceRange | null;
   selectionComposerOpen: boolean;
   diagramCommentRange: MarkdownSourceRange | null;
-  diagramCommentComposer: ReactNode;
   themePreference: ThemePreference;
   onOpenReference: (reference: WalkthroughReference, openInOtherPane: boolean) => void;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
+  diagramCommentPending: boolean;
+  diagramCommentError: unknown;
+  onCancelDiagramComment: () => void;
+  onSubmitDiagramComment: (range: MarkdownSourceRange, body: string) => void;
 }) {
   const inlineReferencePointerStart = useRef<{ x: number; y: number } | null>(null);
   const annotations = useMemo<MarkdownCommentAnnotation[]>(
@@ -337,123 +446,103 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
     [commentsById, onCommentActiveChange],
   );
   return (
-    <article className="walkthrough-markdown">
-      <ReactMarkdown
-        rehypePlugins={[
-          rehypeRaw,
-          [rehypeSanitize, walkthroughMarkdownSanitizeSchema],
-          [
-            rehypeRvwSourceMap,
-            { annotations, activeCommentId, selectedRange, composerOpen: selectionComposerOpen },
-          ],
-        ]}
-        remarkPlugins={[remarkGfm]}
-        urlTransform={(url) => (url.startsWith("rvw-ref:") ? url : defaultUrlTransform(url))}
-        components={{
-          div: markdownDiv,
-          table: ({ children, node: _node, ...props }) => (
-            <div className="markdown-table-scroll">
-              <table {...markdownSourceDataAttributes(_node)} {...props}>
-                {children}
-              </table>
-            </div>
-          ),
-          a: ({ href, children, node: _node, ...props }) => {
-            const referenceId = referenceHrefId(href);
-            const reference = referenceId ? references.get(referenceId) : undefined;
-            return reference ? (
-              <button
-                className="walkthrough-inline-reference"
-                title={fullReferenceLocation(reference)}
-                onPointerDown={(event) => {
-                  if (event.button !== 0) return;
-                  inlineReferencePointerStart.current = {
-                    x: event.clientX,
-                    y: event.clientY,
-                  };
-                }}
-                onPointerUp={(event) => {
-                  const start = inlineReferencePointerStart.current;
-                  inlineReferencePointerStart.current = null;
-                  if (!start) return;
-                  if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) {
-                    return;
-                  }
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onOpenReference(reference, event.metaKey || event.ctrlKey);
-                }}
-                onPointerCancel={() => {
-                  inlineReferencePointerStart.current = null;
-                }}
-                onClick={(event) => {
-                  event.preventDefault();
-                  if (event.detail === 0) onOpenReference(reference, false);
-                }}
-                onContextMenu={(event) => {
-                  if (event.ctrlKey || event.metaKey) event.preventDefault();
-                }}
-              >
-                <FileEntryIcon path={reference.path} kind="file" />
-                <span>{children}</span>
-                <small>{referenceLineLabel(reference) ?? "File"}</small>
-              </button>
-            ) : (
-              <a {...markdownSourceDataAttributes(_node)} {...props} href={href}>
-                {children}
-              </a>
-            );
-          },
-          img: ({ alt, title, node }) => (
-            <MarkdownImagePlaceholder
-              alt={alt}
-              title={title}
-              sourceAttributes={markdownSourceDataAttributes(node)}
-            />
-          ),
-          pre: ({ children, node, ...props }) => {
-            const child =
-              Children.count(children) === 1
-                ? (Children.only(children) as ReactElement<{
-                    className?: string;
-                    children?: ReactNode;
-                  }>)
-                : null;
-            if (isValidElement(child) && child.props.className === "language-mermaid") {
-              const sourceRange = markdownNodeSourceRange(node);
-              return (
-                <MermaidDiagram
-                  source={codeText(child.props.children).trim()}
-                  sourceRange={sourceRange}
-                  commented={Boolean(
-                    sourceRange &&
-                    activeCommentId &&
-                    placedComments.some(
-                      ({ comment, placement }) =>
-                        comment.id === activeCommentId &&
-                        placement.range &&
-                        placement.range.startLine <= sourceRange.endLine &&
-                        placement.range.endLine >= sourceRange.startLine,
-                    ),
-                  )}
-                  bindings={walkthrough.diagramBindings}
-                  references={references}
-                  themePreference={themePreference}
-                  onOpenReference={onOpenReference}
-                  onCommentRange={onCommentRange}
-                  commentComposer={
-                    sameRange(sourceRange, diagramCommentRange) ? diagramCommentComposer : null
-                  }
-                />
+    <MermaidMarkdownRenderContext.Provider
+      value={{
+        diagramBindings,
+        references,
+        placedComments,
+        activeCommentId,
+        diagramCommentRange,
+        themePreference,
+        onOpenReference,
+        onCommentRange,
+        diagramCommentPending,
+        diagramCommentError,
+        onCancelDiagramComment,
+        onSubmitDiagramComment,
+      }}
+    >
+      <article className="walkthrough-markdown">
+        <ReactMarkdown
+          rehypePlugins={[
+            rehypeRaw,
+            [rehypeSanitize, walkthroughMarkdownSanitizeSchema],
+            [
+              rehypeRvwSourceMap,
+              { annotations, activeCommentId, selectedRange, composerOpen: selectionComposerOpen },
+            ],
+          ]}
+          remarkPlugins={[remarkGfm]}
+          urlTransform={(url) => (url.startsWith("rvw-ref:") ? url : defaultUrlTransform(url))}
+          components={{
+            div: markdownDiv,
+            table: ({ children, node: _node, ...props }) => (
+              <div className="markdown-table-scroll">
+                <table {...markdownSourceDataAttributes(_node)} {...props}>
+                  {children}
+                </table>
+              </div>
+            ),
+            a: ({ href, children, node: _node, ...props }) => {
+              const referenceId = referenceHrefId(href);
+              const reference = referenceId ? references.get(referenceId) : undefined;
+              return reference ? (
+                <button
+                  className="walkthrough-inline-reference"
+                  title={fullReferenceLocation(reference)}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return;
+                    inlineReferencePointerStart.current = {
+                      x: event.clientX,
+                      y: event.clientY,
+                    };
+                  }}
+                  onPointerUp={(event) => {
+                    const start = inlineReferencePointerStart.current;
+                    inlineReferencePointerStart.current = null;
+                    if (!start) return;
+                    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) {
+                      return;
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onOpenReference(reference, event.metaKey || event.ctrlKey);
+                  }}
+                  onPointerCancel={() => {
+                    inlineReferencePointerStart.current = null;
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    if (event.detail === 0) onOpenReference(reference, false);
+                  }}
+                  onContextMenu={(event) => {
+                    if (event.ctrlKey || event.metaKey) event.preventDefault();
+                  }}
+                >
+                  <FileEntryIcon path={reference.path} kind="file" />
+                  <span>{children}</span>
+                  <small>{referenceLineLabel(reference) ?? "File"}</small>
+                </button>
+              ) : (
+                <a {...markdownSourceDataAttributes(_node)} {...props} href={href}>
+                  {children}
+                </a>
               );
-            }
-            return <pre {...props}>{children}</pre>;
-          },
-        }}
-      >
-        {walkthrough.body}
-      </ReactMarkdown>
-    </article>
+            },
+            img: ({ alt, title, node }) => (
+              <MarkdownImagePlaceholder
+                alt={alt}
+                title={title}
+                sourceAttributes={markdownSourceDataAttributes(node)}
+              />
+            ),
+            pre: WalkthroughMarkdownPre,
+          }}
+        >
+          {body}
+        </ReactMarkdown>
+      </article>
+    </MermaidMarkdownRenderContext.Provider>
   );
 });
 
@@ -597,7 +686,7 @@ export function WalkthroughViewer({
     [placedComments],
   );
   const createComment = useMutation({
-    mutationFn: async (range: MarkdownSourceRange | null) =>
+    mutationFn: async ({ range, body }: { range: MarkdownSourceRange | null; body: string }) =>
       await api(
         "/api/comments",
         jsonRequest({
@@ -608,7 +697,7 @@ export function WalkthroughViewer({
             startLine: range?.startLine ?? null,
             endLine: range?.endLine ?? null,
           },
-          body: commentBody,
+          body,
           authorLabel: "You",
         }),
       ),
@@ -655,11 +744,10 @@ export function WalkthroughViewer({
     );
     if (confirmed) deleteWalkthrough.mutate();
   };
-  const activeLineRange = lineComposerPlacement === "diagram" ? diagramRange : selectedRange;
-  const selectedRangeLabel = activeLineRange
-    ? activeLineRange.startLine === activeLineRange.endLine
-      ? `L${activeLineRange.startLine}`
-      : `L${activeLineRange.startLine}–${activeLineRange.endLine}`
+  const selectedRangeLabel = selectedRange
+    ? selectedRange.startLine === selectedRange.endLine
+      ? `L${selectedRange.startLine}`
+      : `L${selectedRange.startLine}–${selectedRange.endLine}`
     : null;
   const closeLineComposer = (): void => {
     window.getSelection()?.removeAllRanges();
@@ -669,19 +757,15 @@ export function WalkthroughViewer({
     setDiagramRange(null);
     setLineComposerPlacement(null);
   };
-  const resetCreateComment = createComment.reset;
-  const openDiagramComposer = useCallback(
-    (range: MarkdownSourceRange): void => {
-      resetCreateComment();
-      setCommentBody("");
-      setComposerOpen(false);
-      setSelectedRange(null);
-      setDiagramRange(range);
-      setLineComposerPlacement("diagram");
-    },
-    [resetCreateComment],
-  );
-  const lineComposer = activeLineRange ? (
+  const openDiagramComposer = (range: MarkdownSourceRange): void => {
+    createComment.reset();
+    setCommentBody("");
+    setComposerOpen(false);
+    setSelectedRange(null);
+    setDiagramRange(range);
+    setLineComposerPlacement("diagram");
+  };
+  const selectionComposer = selectedRange ? (
     <InlineCommentComposer
       body={commentBody}
       label={`${selectedRangeLabel ?? "選択範囲"}へコメント`}
@@ -691,9 +775,29 @@ export function WalkthroughViewer({
       placement="line"
       onBodyChange={setCommentBody}
       onCancel={closeLineComposer}
-      onSubmit={() => createComment.mutate(activeLineRange)}
+      onSubmit={() => createComment.mutate({ range: selectedRange, body: commentBody })}
     />
   ) : null;
+  const walkthroughMarkdown = (
+    <WalkthroughMarkdown
+      body={walkthrough.body}
+      diagramBindings={walkthrough.diagramBindings}
+      references={references}
+      placedComments={markdownComments}
+      activeCommentId={activeCommentId}
+      selectedRange={lineComposerPlacement === "selection" ? selectedRange : null}
+      selectionComposerOpen={lineComposerPlacement === "selection"}
+      diagramCommentRange={diagramRange}
+      themePreference={themePreference}
+      onOpenReference={openReference}
+      onCommentActiveChange={onCommentActiveChange}
+      onCommentRange={openDiagramComposer}
+      diagramCommentPending={createComment.isPending}
+      diagramCommentError={createComment.error}
+      onCancelDiagramComment={closeLineComposer}
+      onSubmitDiagramComment={(range, body) => createComment.mutate({ range, body })}
+    />
+  );
 
   return (
     <div className="walkthrough-viewer" ref={viewerRef}>
@@ -759,7 +863,7 @@ export function WalkthroughViewer({
                 setCommentBody("");
                 setComposerOpen(false);
               }}
-              onSubmit={() => createComment.mutate(null)}
+              onSubmit={() => createComment.mutate({ range: null, body: commentBody })}
             />
           )}
           {headerComments.map(({ comment, placement }) => (
@@ -791,22 +895,9 @@ export function WalkthroughViewer({
           setLineComposerPlacement(null);
         }}
         onOpenComposer={() => setLineComposerPlacement("selection")}
-        composer={lineComposer}
+        composer={selectionComposer}
       >
-        <WalkthroughMarkdown
-          walkthrough={walkthrough}
-          references={references}
-          placedComments={markdownComments}
-          activeCommentId={activeCommentId}
-          selectedRange={lineComposerPlacement === "selection" ? selectedRange : null}
-          selectionComposerOpen={lineComposerPlacement === "selection"}
-          diagramCommentRange={diagramRange}
-          diagramCommentComposer={lineComposerPlacement === "diagram" ? lineComposer : null}
-          themePreference={themePreference}
-          onOpenReference={openReference}
-          onCommentActiveChange={onCommentActiveChange}
-          onCommentRange={openDiagramComposer}
-        />
+        {walkthroughMarkdown}
       </MarkdownSelectionSurface>
     </div>
   );

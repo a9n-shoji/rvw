@@ -148,9 +148,10 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 1,
+      protocolVersion: 2,
       appVersion: "0.1.0",
       capabilities: [
+        "agent.transport",
         "comment.list",
         "comment.read",
         "comment.reply",
@@ -173,6 +174,22 @@ describe("CLI protocol discovery", () => {
         .find((command) => command.name() === "walkthrough")
         ?.commands.map((command) => command.name()),
     ).toEqual(["publish", "get", "update", "delete"]);
+    expect(
+      program.commands
+        .find((command) => command.name() === "agent")
+        ?.commands.map((command) => command.name()),
+    ).toEqual(["ping", "status"]);
+    expect(
+      program.commands
+        .find((command) => command.name() === "open")
+        ?.options.map((option) => option.long),
+    ).toEqual(["--no-open", "--foreground", "--port"]);
+    expect(
+      program
+        .createHelp()
+        .visibleCommands(program)
+        .map((command) => command.name()),
+    ).not.toContain("__open-worker");
   });
 
   it("lists unresolved comments by default with latest placement", async () => {

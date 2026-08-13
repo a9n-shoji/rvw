@@ -1,9 +1,11 @@
 export const DEFAULT_VIEWER_LEASE_TIMEOUT_MS = 120_000;
 export const DEFAULT_VIEWER_CLOSE_GRACE_MS = 5_000;
 export const DEFAULT_TIMER_LATENESS_TOLERANCE_MS = 2_000;
+export const DEFAULT_VIEWER_STARTUP_TIMEOUT_MS = 30_000;
 
 export interface ViewerLifecycleOptions {
   onAllViewersClosed(): void;
+  onFirstViewerConnected?(): void;
   leaseTimeoutMs?: number;
   closeGraceMs?: number;
   timerLatenessToleranceMs?: number;
@@ -20,6 +22,7 @@ export class ViewerLifecycle {
   private readonly timerLatenessToleranceMs: number;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
+  private viewerHasConnected = false;
 
   constructor(private readonly options: ViewerLifecycleOptions) {
     this.leaseTimeoutMs = options.leaseTimeoutMs ?? DEFAULT_VIEWER_LEASE_TIMEOUT_MS;
@@ -34,6 +37,10 @@ export class ViewerLifecycle {
 
   heartbeat(viewerId: string): void {
     if (this.stopped || this.releasedViewers.has(viewerId)) return;
+    if (!this.viewerHasConnected) {
+      this.viewerHasConnected = true;
+      this.options.onFirstViewerConnected?.();
+    }
     this.viewers.set(viewerId, Date.now());
     this.scheduleLeaseCheck();
   }

@@ -205,10 +205,124 @@ interface MarkdownNode {
   type: string;
   url?: unknown;
   identifier?: unknown;
+  lang?: unknown;
+  value?: unknown;
   children?: MarkdownNode[];
 }
 
-function walkthroughReferenceIdsInMarkdown(body: string): string[] {
+interface WalkthroughMarkdownAnalysis {
+  referenceIds: string[];
+  mermaidNodeIds: Set<string>;
+}
+
+const mermaidIdentifierPattern = /[A-Za-z][A-Za-z0-9_-]{0,63}/g;
+const mermaidEdgePattern = /[<|o*x]*[-.=~]{2,}[|o*x>]*/g;
+const mermaidKeywords = new Set([
+  "class",
+  "classDef",
+  "classDiagram",
+  "direction",
+  "end",
+  "flowchart",
+  "graph",
+  "linkStyle",
+  "style",
+  "subgraph",
+]);
+
+function mermaidIdentifiers(value: string): string[] {
+  return [...value.matchAll(mermaidIdentifierPattern)]
+    .map(([identifier]) => identifier)
+    .filter((identifier) => !mermaidKeywords.has(identifier));
+}
+
+function mermaidLineWithoutLabels(value: string): string {
+  const commentIndex = value.indexOf("%%");
+  const uncommented = commentIndex === -1 ? value : value.slice(0, commentIndex);
+  const withoutQuotedLabels = uncommented
+    .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, " ")
+    .replace(/\|[^|]*\|/g, " ")
+    .replace(/--\s+[^-\n]+\s+-->/g, " -->")
+    .replace(/-\.\s+[^.\n]+\s+\.->/g, " -.->")
+    .replace(/==\s+[^=\n]+\s+==>/g, " ==>");
+  let result = "";
+  const closingDelimiters: string[] = [];
+  const closingFor: Record<string, string> = { "[": "]", "(": ")", "{": "}" };
+  for (const character of withoutQuotedLabels) {
+    const expectedClosing = closingDelimiters.at(-1);
+    if (expectedClosing) {
+      if (Object.hasOwn(closingFor, character)) {
+        closingDelimiters.push(closingFor[character]!);
+      } else if (character === expectedClosing) {
+        closingDelimiters.pop();
+      }
+      continue;
+    }
+    const closing = closingFor[character];
+    if (closing) {
+      closingDelimiters.push(closing);
+      result += " ";
+      continue;
+    }
+    result += character;
+  }
+  return result;
+}
+
+function addMermaidEdgeEndpoints(line: string, nodeIds: Set<string>): void {
+  const edges = [...line.matchAll(mermaidEdgePattern)];
+  for (let index = 0; index < edges.length; index += 1) {
+    const edge = edges[index]!;
+    const edgeStart = edge.index;
+    const edgeEnd = edgeStart + edge[0].length;
+    const leftStart = index === 0 ? 0 : edges[index - 1]!.index + edges[index - 1]![0].length;
+    const rightEnd = index + 1 === edges.length ? line.length : edges[index + 1]!.index;
+    const left = line.slice(leftStart, edgeStart);
+    const right = line.slice(edgeEnd, rightEnd);
+    const leftIdentifiers = mermaidIdentifiers(left);
+    const rightIdentifiers = mermaidIdentifiers(right);
+    const leftEndpoints = left.includes("&") ? leftIdentifiers : leftIdentifiers.slice(-1);
+    const rightEndpoints = right.includes("&") ? rightIdentifiers : rightIdentifiers.slice(0, 1);
+    for (const identifier of [...leftEndpoints, ...rightEndpoints]) nodeIds.add(identifier);
+  }
+}
+
+function addMermaidDiagramNodes(source: string, nodeIds: Set<string>): void {
+  const lines = source.split("\n");
+  const header = lines
+    .map((line) => mermaidLineWithoutLabels(line).trim())
+    .find((line) => line.length > 0);
+  const diagramType = header?.match(/^(flowchart|graph|classDiagram)\b/)?.[1];
+  if (!diagramType) return;
+
+  for (const rawLine of lines) {
+    for (const statement of mermaidLineWithoutLabels(rawLine).split(";")) {
+      const line = statement.trim();
+      if (!line || /^(flowchart|graph|classDiagram)\b/.test(line)) continue;
+      addMermaidEdgeEndpoints(line, nodeIds);
+      if (diagramType === "classDiagram") {
+        const declaration = line.match(/^class\s+([A-Za-z][A-Za-z0-9_-]{0,63})\b/)?.[1];
+        const memberOwner = line.match(/^([A-Za-z][A-Za-z0-9_-]{0,63})\s*:/)?.[1];
+        const annotationTarget = line.match(/^<<[^>]+>>\s+([A-Za-z][A-Za-z0-9_-]{0,63})\b/)?.[1];
+        for (const identifier of [declaration, memberOwner, annotationTarget]) {
+          if (identifier) nodeIds.add(identifier);
+        }
+        continue;
+      }
+      if (mermaidEdgePattern.test(line)) {
+        mermaidEdgePattern.lastIndex = 0;
+        continue;
+      }
+      mermaidEdgePattern.lastIndex = 0;
+      const standalone = line.match(
+        /^([A-Za-z][A-Za-z0-9_-]{0,63})(?:\s*(?:::[A-Za-z][A-Za-z0-9_-]*)?\s*|\s*@\s*)$/,
+      )?.[1];
+      if (standalone) nodeIds.add(standalone);
+    }
+  }
+}
+
+function analyzeWalkthroughMarkdown(body: string): WalkthroughMarkdownAnalysis {
   const root = fromMarkdown(body) as MarkdownNode;
   const definitions = new Map<string, string>();
   const visit = (node: MarkdownNode, callback: (candidate: MarkdownNode) => void): void => {
@@ -225,16 +339,23 @@ function walkthroughReferenceIdsInMarkdown(body: string): string[] {
     }
   });
   const urls: string[] = [];
+  const mermaidNodeIds = new Set<string>();
   visit(root, (node) => {
     if (node.type === "link" && typeof node.url === "string") urls.push(node.url);
     if (node.type === "linkReference" && typeof node.identifier === "string") {
       const url = definitions.get(node.identifier);
       if (url) urls.push(url);
     }
+    if (node.type === "code" && node.lang === "mermaid" && typeof node.value === "string") {
+      addMermaidDiagramNodes(node.value, mermaidNodeIds);
+    }
   });
-  return urls
-    .filter((url) => url.startsWith("rvw-ref:"))
-    .map((url) => url.slice("rvw-ref:".length));
+  return {
+    referenceIds: urls
+      .filter((url) => url.startsWith("rvw-ref:"))
+      .map((url) => url.slice("rvw-ref:".length)),
+    mermaidNodeIds,
+  };
 }
 
 function assertWalkthroughPath(filePath: string): void {
@@ -266,10 +387,12 @@ export class RvwService {
     databasePathOverrideEnvironmentVariable: "RVW_DATABASE_PATH";
     databasePermissionsManagedByRvw: boolean;
     databasePermissions: ReturnType<RvwDatabase["permissionStatus"]>;
+    databaseWriteProbe: ReturnType<RvwDatabase["writeProbe"]>;
   }> {
     const [git, github] = await Promise.all([this.git.doctor(cwd), this.github.doctor()]);
+    const databaseWriteProbe = this.database.writeProbe();
     return {
-      ok: github.authenticated,
+      ok: github.authenticated && databaseWriteProbe.ok,
       git,
       github,
       databasePath: this.database.filePath,
@@ -277,6 +400,7 @@ export class RvwService {
       databasePathOverrideEnvironmentVariable: "RVW_DATABASE_PATH",
       databasePermissionsManagedByRvw: !this.database.configuredPath,
       databasePermissions: this.database.permissionStatus(),
+      databaseWriteProbe,
     };
   }
 
@@ -1073,6 +1197,7 @@ export class RvwService {
         `walkthrough reference ${reference.id}`,
       );
     }
+    const markdown = analyzeWalkthroughMarkdown(input.body);
     const diagramBindings = input.diagramBindings ?? {};
     for (const [nodeId, referenceId] of Object.entries(diagramBindings)) {
       if (!walkthroughDiagramNodePattern.test(nodeId)) {
@@ -1084,8 +1209,14 @@ export class RvwService {
           `Mermaid node ${nodeId} のreferenceが見つかりません: ${referenceId}`,
         );
       }
+      if (!markdown.mermaidNodeIds.has(nodeId)) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `Mermaid nodeが本文のflowchartまたはclassDiagramに見つかりません: ${nodeId}`,
+        );
+      }
     }
-    const markdownReferenceIds = walkthroughReferenceIdsInMarkdown(input.body);
+    const markdownReferenceIds = markdown.referenceIds;
     const malformedReference = markdownReferenceIds.find(
       (referenceId) => !walkthroughReferenceIdPattern.test(referenceId),
     );
@@ -1102,6 +1233,16 @@ export class RvwService {
       throw new RvwError(
         "INVALID_INPUT",
         `Markdown referenceが見つかりません: ${missingReference}`,
+      );
+    }
+    const usedReferenceIds = new Set([...markdownReferenceIds, ...Object.values(diagramBindings)]);
+    const unusedReference = input.references.find(
+      (reference) => !usedReferenceIds.has(reference.id),
+    );
+    if (unusedReference) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `walkthrough referenceが本文またはMermaid bindingから参照されていません: ${unusedReference.id}`,
       );
     }
     return {

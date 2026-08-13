@@ -1,3 +1,4 @@
+import { fork } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -5,14 +6,23 @@ import { Command, InvalidArgumentError } from "commander";
 import openBrowser from "open";
 import { z } from "zod";
 import { createRuntime, type Runtime } from "../application/runtime.js";
+import { databasePathConfiguration } from "../infrastructure/db/database.js";
 import { SkillInstaller, type SkillPlatform } from "../infrastructure/skills/skill-installer.js";
 import { APP_VERSION, DEFAULT_COMMENT_LIST_LIMIT, PROTOCOL_VERSION } from "../shared/constants.js";
-import { asRvwError, RvwError } from "../shared/errors.js";
-import { startServer, type RunningServer } from "../server/start-server.js";
 import {
+  asRvwError,
+  RvwError,
+  type RvwErrorCode,
+  type SerializedRvwError,
+} from "../shared/errors.js";
+import { startServer, type RunningServer } from "../server/start-server.js";
+import { DEFAULT_VIEWER_STARTUP_TIMEOUT_MS } from "../server/viewer-lifecycle.js";
+import {
+  inspectAgentTransport,
   MAX_CLI_STDIN_BYTES,
   startAgentSocket,
   tryAgentSocketRequest,
+  type AgentTransportStatus,
   type RunningAgentSocket,
 } from "../server/agent-socket.js";
 import { formatCommentGetOutput, formatCommentListOutput } from "./comment-protocol.js";
@@ -25,6 +35,8 @@ import {
 } from "./schemas.js";
 
 const MAX_STDIN_BYTES = MAX_CLI_STDIN_BYTES;
+const OPEN_WORKER_READY_TIMEOUT_MS = 120_000;
+const OPEN_WORKER_PARENT_TIMEOUT_PADDING_MS = 5_000;
 declare const __RVW_CLI_BUNDLE__: boolean | undefined;
 
 interface OutputOptions {
@@ -38,6 +50,20 @@ function writeJson(value: unknown): void {
 function writeOutput(options: OutputOptions, value: unknown, human: string): void {
   if (options.json) writeJson(value);
   else process.stdout.write(`${human}\n`);
+}
+
+function formatAgentTransportStatus(status: AgentTransportStatus): string {
+  const lines = [
+    `socket: ${status.socketPath} (${status.socketPathSource})`,
+    `connection: ${status.connectionResult}`,
+    `database: expected=${status.expectedDatabasePath}, socket=${status.socketDatabasePath ?? "none"}, selected=${status.selectedDatabasePath}`,
+    `transport: ${status.selectedTransport}`,
+    `fallback: ${status.fallbackReason ?? "none"}`,
+  ];
+  if (status.connectionDetails !== null) {
+    lines.push(`connection details: ${JSON.stringify(status.connectionDetails)}`);
+  }
+  return lines.join("\n");
 }
 
 async function readStdinJson(): Promise<unknown> {
@@ -76,6 +102,168 @@ function parsePlatform(value: string): SkillPlatform {
 
 export type ServerShutdownReason = "signal" | "viewers-closed";
 
+interface OpenWorkerError extends SerializedRvwError {
+  status: number;
+}
+
+type OpenWorkerMessage =
+  | { type: "ready"; url: string }
+  | { type: "viewer-connected" }
+  | { type: "error"; error: OpenWorkerError };
+
+export interface BackgroundOpenChild {
+  connected: boolean;
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+  off(event: string, listener: (...args: unknown[]) => void): unknown;
+  kill(signal?: NodeJS.Signals): boolean;
+  disconnect(): void;
+  unref(): void;
+}
+
+interface BackgroundOpenOptions {
+  readyTimeoutMs?: number;
+  viewerTimeoutMs?: number;
+}
+
+interface BackgroundOpenDependencies {
+  forkWorker?: (reference: string | undefined, port: number) => BackgroundOpenChild;
+  launchBrowser?: (url: string) => Promise<unknown>;
+}
+
+function isRvwErrorCode(value: unknown): value is RvwErrorCode {
+  return typeof value === "string";
+}
+
+function openWorkerMessage(value: unknown): OpenWorkerMessage | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.type === "ready" && typeof candidate.url === "string") {
+    return { type: "ready", url: candidate.url };
+  }
+  if (candidate.type === "viewer-connected") return { type: "viewer-connected" };
+  if (candidate.type !== "error" || !candidate.error || typeof candidate.error !== "object") {
+    return null;
+  }
+  const error = candidate.error as Record<string, unknown>;
+  if (
+    !isRvwErrorCode(error.code) ||
+    typeof error.message !== "string" ||
+    !Array.isArray(error.suggestions) ||
+    !error.suggestions.every((suggestion) => typeof suggestion === "string") ||
+    typeof error.status !== "number"
+  ) {
+    return null;
+  }
+  return {
+    type: "error",
+    error: {
+      code: error.code,
+      message: error.message,
+      suggestions: error.suggestions,
+      status: error.status,
+      ...(error.details === undefined ? {} : { details: error.details }),
+    },
+  };
+}
+
+function errorFromOpenWorker(error: OpenWorkerError): RvwError {
+  return new RvwError(error.code, error.message, {
+    status: error.status,
+    suggestions: error.suggestions,
+    ...(error.details === undefined ? {} : { details: error.details }),
+  });
+}
+
+export async function completeBackgroundOpen(
+  child: BackgroundOpenChild,
+  launchBrowser: (url: string) => Promise<unknown>,
+  options: BackgroundOpenOptions = {},
+): Promise<string> {
+  const readyTimeoutMs = options.readyTimeoutMs ?? OPEN_WORKER_READY_TIMEOUT_MS;
+  const viewerTimeoutMs =
+    options.viewerTimeoutMs ??
+    DEFAULT_VIEWER_STARTUP_TIMEOUT_MS + OPEN_WORKER_PARENT_TIMEOUT_PADDING_MS;
+  return await new Promise<string>((resolve, reject) => {
+    let settled = false;
+    let exited = false;
+    let readyUrl: string | null = null;
+    let browserOpened = false;
+    let viewerConnected = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const cleanup = (): void => {
+      clearTimeout(timer);
+      child.off("message", onMessage);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    const fail = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (!exited) child.kill("SIGTERM");
+      reject(asRvwError(error));
+    };
+    const finishIfReady = (): void => {
+      if (settled || !readyUrl || !browserOpened || !viewerConnected) return;
+      settled = true;
+      cleanup();
+      if (child.connected) child.disconnect();
+      child.unref();
+      resolve(readyUrl);
+    };
+    const scheduleTimeout = (timeoutMs: number, message: string): void => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        fail(
+          new RvwError("PROCESS_TIMEOUT", message, {
+            details: { timeoutMs },
+          }),
+        );
+      }, timeoutMs);
+    };
+    const onMessage = (...args: unknown[]): void => {
+      const message = openWorkerMessage(args[0]);
+      if (!message || settled) return;
+      if (message.type === "error") {
+        fail(errorFromOpenWorker(message.error));
+        return;
+      }
+      if (message.type === "viewer-connected") {
+        viewerConnected = true;
+        finishIfReady();
+        return;
+      }
+      if (readyUrl !== null) return;
+      readyUrl = message.url;
+      scheduleTimeout(viewerTimeoutMs, "ブラウザviewerの起動確認がタイムアウトしました。");
+      void launchBrowser(readyUrl)
+        .then(() => {
+          browserOpened = true;
+          finishIfReady();
+        })
+        .catch(fail);
+    };
+    const onError = (...args: unknown[]): void => {
+      fail(args[0]);
+    };
+    const onExit = (...args: unknown[]): void => {
+      exited = true;
+      const code = args[0];
+      fail(
+        new RvwError("PROCESS_FAILED", "バックグラウンドviewerが起動前に終了しました。", {
+          details: { exitCode: typeof code === "number" ? code : null },
+        }),
+      );
+    };
+
+    child.on("message", onMessage);
+    child.on("error", onError);
+    child.on("exit", onExit);
+    scheduleTimeout(readyTimeoutMs, "バックグラウンドviewerの準備がタイムアウトしました。");
+  });
+}
+
 export function waitForServerShutdown(
   allViewersClosed: Promise<void> | null,
 ): Promise<ServerShutdownReason> {
@@ -109,6 +297,157 @@ function staticDirectory(): string {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
 
+function forkOpenWorker(reference: string | undefined, port: number): BackgroundOpenChild {
+  const modulePath = process.argv[1];
+  if (!modulePath) {
+    throw new RvwError("PROCESS_FAILED", "rvw CLIの実行pathを解決できませんでした。");
+  }
+  const args = ["__open-worker", "--port", String(port)];
+  if (reference !== undefined) args.push("--reference", reference);
+  return fork(path.resolve(modulePath), args, {
+    cwd: process.cwd(),
+    env: process.env,
+    detached: true,
+    stdio: ["ignore", "ignore", "ignore", "ipc"],
+  });
+}
+
+export async function startBackgroundOpen(
+  reference: string | undefined,
+  port: number,
+  dependencies: BackgroundOpenDependencies = {},
+): Promise<string> {
+  const child = (dependencies.forkWorker ?? forkOpenWorker)(reference, port);
+  return await completeBackgroundOpen(
+    child,
+    dependencies.launchBrowser ?? (async (url) => await openBrowser(url)),
+  );
+}
+
+async function sendOpenWorkerMessage(message: OpenWorkerMessage): Promise<boolean> {
+  if (!process.send || !process.connected) return false;
+  return await new Promise<boolean>((resolve) => {
+    try {
+      process.send?.(message, (error) => resolve(error === null));
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+type InitialViewerResult = "connected" | "aborted" | "timeout";
+
+async function waitForInitialViewer(
+  firstViewerConnected: Promise<void>,
+  timeoutMs = DEFAULT_VIEWER_STARTUP_TIMEOUT_MS,
+): Promise<InitialViewerResult> {
+  return await new Promise<InitialViewerResult>((resolve) => {
+    let settled = false;
+    const finish = (result: InitialViewerResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.removeListener("SIGINT", onAbort);
+      process.removeListener("SIGTERM", onAbort);
+      process.removeListener("disconnect", onAbort);
+      resolve(result);
+    };
+    const onAbort = (): void => finish("aborted");
+    const timer = setTimeout(() => finish("timeout"), timeoutMs);
+    process.once("SIGINT", onAbort);
+    process.once("SIGTERM", onAbort);
+    process.once("disconnect", onAbort);
+    void firstViewerConnected.then(() => finish("connected"));
+  });
+}
+
+async function runOpenServer(
+  activeRuntime: Runtime,
+  reference: string | undefined,
+  port: number,
+  openAutomatically: boolean,
+  useAgentSocket: boolean,
+): Promise<void> {
+  let running: RunningServer | undefined;
+  let agentSocket: RunningAgentSocket | undefined;
+  try {
+    const opened = await activeRuntime.service.openPullRequest(reference, process.cwd());
+    running = await startServer(activeRuntime.service, {
+      port,
+      staticDirectory: staticDirectory(),
+      autoCloseWhenNoViewers: openAutomatically,
+    });
+    if (useAgentSocket) agentSocket = await startAgentSocket(activeRuntime.service);
+    const url = new URL(running.origin);
+    url.searchParams.set("pullRequestId", opened.pullRequest.id);
+    process.stdout.write(`rvw: ${url.toString()}\n`);
+    if (openAutomatically) await openBrowser(url.toString());
+    const reason = await waitForServerShutdown(running.allViewersClosed);
+    if (reason === "viewers-closed") {
+      process.stdout.write("rvw: viewerを閉じたためserverを停止します。\n");
+    }
+  } finally {
+    try {
+      await agentSocket?.close();
+    } finally {
+      try {
+        await running?.close();
+      } finally {
+        activeRuntime.close();
+      }
+    }
+  }
+}
+
+async function runOpenWorker(
+  activeRuntime: Runtime,
+  reference: string | undefined,
+  port: number,
+): Promise<void> {
+  let running: RunningServer | undefined;
+  let agentSocket: RunningAgentSocket | undefined;
+  try {
+    if (!process.send || !process.connected) {
+      throw new RvwError("INVALID_INPUT", "内部viewer workerは親CLIから起動してください。");
+    }
+    const opened = await activeRuntime.service.openPullRequest(reference, process.cwd());
+    running = await startServer(activeRuntime.service, {
+      port,
+      staticDirectory: staticDirectory(),
+      autoCloseWhenNoViewers: true,
+    });
+    agentSocket = await startAgentSocket(activeRuntime.service);
+    const url = new URL(running.origin);
+    url.searchParams.set("pullRequestId", opened.pullRequest.id);
+    if (!(await sendOpenWorkerMessage({ type: "ready", url: url.toString() }))) return;
+    const firstViewerConnected = running.firstViewerConnected;
+    if (!firstViewerConnected) {
+      throw new RvwError("INTERNAL_ERROR", "viewer lifecycleを初期化できませんでした。", {
+        status: 500,
+      });
+    }
+    const initialViewer = await waitForInitialViewer(firstViewerConnected);
+    if (initialViewer === "aborted") return;
+    if (initialViewer === "timeout") {
+      throw new RvwError("PROCESS_TIMEOUT", "ブラウザviewerの起動確認がタイムアウトしました。", {
+        details: { timeoutMs: DEFAULT_VIEWER_STARTUP_TIMEOUT_MS },
+      });
+    }
+    await sendOpenWorkerMessage({ type: "viewer-connected" });
+    await waitForServerShutdown(running.allViewersClosed);
+  } finally {
+    try {
+      await agentSocket?.close();
+    } finally {
+      try {
+        await running?.close();
+      } finally {
+        activeRuntime.close();
+      }
+    }
+  }
+}
+
 const defaultRuntimeFactory = (): Runtime => createRuntime();
 
 export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFactory): Command {
@@ -121,12 +460,11 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     direct: () => T | Promise<T>,
   ): Promise<T> => {
     if (useAgentSocket) {
+      const expectedDatabasePath = databasePathConfiguration().filePath;
       const remote = await tryAgentSocketRequest<T>(operation, input, {
-        ...(process.env.RVW_DATABASE_PATH === undefined
-          ? {}
-          : { expectedDatabasePath: process.env.RVW_DATABASE_PATH }),
+        expectedDatabasePath,
       });
-      if (remote.available) return remote.result as T;
+      if (remote.available) return remote.result;
     }
     return await direct();
   };
@@ -144,15 +482,31 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     )
     .option("--json", "JSONで出力")
     .action(async (options: OutputOptions) => {
-      const result = await callService(
-        "doctor",
-        { cwd: process.cwd() },
-        async () => await getRuntime().service.doctor(process.cwd()),
-      );
+      const agentTransport = useAgentSocket
+        ? await inspectAgentTransport()
+        : await inspectAgentTransport(getRuntime().database.filePath);
+      if (agentTransport.selectedTransport === "unavailable") {
+        throw new RvwError(
+          "AGENT_SOCKET_UNAVAILABLE",
+          "明示されたAgent socketへ接続できないため、doctorをdatabaseへfallbackしません。",
+          {
+            details: agentTransport,
+            suggestions: [
+              "rvw agent ping --json または rvw agent status --json で接続先を確認してください。",
+            ],
+          },
+        );
+      }
+      const directDoctor = async () => await getRuntime().service.doctor(process.cwd());
+      const result =
+        agentTransport.selectedTransport === "direct-database"
+          ? await directDoctor()
+          : await callService("doctor", { cwd: process.cwd() }, directDoctor);
       const skills = new SkillInstaller().statuses();
       const skillUpdates = skills.filter((status) => status.updateAvailable === true);
       const output = {
         ...result,
+        agentTransport,
         skills,
         skillUpdateAvailable: skillUpdates.length > 0,
         skillUpdateRequired: skills.some((status) => status.updateRequired),
@@ -161,7 +515,9 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         ? skillUpdates.length > 0
           ? `rvwを利用できます。${skillUpdates.length}件のSkill更新があります。rvw skill statusで確認してください。`
           : "rvwを利用できます。"
-        : "gh認証が必要です。";
+        : !result.databaseWriteProbe.ok
+          ? "databaseへの書き込み試験に失敗しました。"
+          : "gh認証が必要です。";
       writeOutput(options, output, message);
       if (!result.ok) process.exitCode = 2;
     });
@@ -175,6 +531,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         protocolVersion: PROTOCOL_VERSION,
         appVersion: APP_VERSION,
         capabilities: [
+          "agent.transport",
           "comment.list",
           "comment.read",
           "comment.reply",
@@ -190,44 +547,68 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       writeOutput(options, result, `rvw protocol ${PROTOCOL_VERSION}`);
     });
 
+  const agent = program.command("agent").description("Agent socket transportを診断");
+  agent
+    .command("ping")
+    .description("Agent socketへの接続とdatabase identityを確認")
+    .option("--json", "JSONで出力")
+    .action(async (options: OutputOptions) => {
+      const status = await inspectAgentTransport(
+        useAgentSocket ? undefined : getRuntime().database.filePath,
+      );
+      const output = { ok: status.connected, ...status };
+      writeOutput(options, output, formatAgentTransportStatus(status));
+      if (!status.connected) process.exitCode = 2;
+    });
+  agent
+    .command("status")
+    .description("選択されるAgent transportとfallback理由を表示")
+    .option("--json", "JSONで出力")
+    .action(async (options: OutputOptions) => {
+      const status = await inspectAgentTransport(
+        useAgentSocket ? undefined : getRuntime().database.filePath,
+      );
+      const ok = status.selectedTransport !== "unavailable";
+      writeOutput(options, { ok, ...status }, formatAgentTransportStatus(status));
+      if (!ok) process.exitCode = 2;
+    });
+
   program
     .command("open")
     .argument("[pull-request]", "PR URLまたは番号")
     .option("--no-open", "ブラウザを開かない")
+    .option("--foreground", "terminalに接続したままviewerを実行")
     .option("--port <port>", "listen port（0は自動）", parsePort, 0)
     .description("Pull Requestを開いてローカルviewerを起動")
-    .action(async (reference: string | undefined, options: { open: boolean; port: number }) => {
-      const activeRuntime = getRuntime();
-      let running: RunningServer | undefined;
-      let agentSocket: RunningAgentSocket | undefined;
+    .action(
+      async (
+        reference: string | undefined,
+        options: { open: boolean; foreground?: boolean; port: number },
+      ) => {
+        if (options.open && !options.foreground && useAgentSocket) {
+          const url = await startBackgroundOpen(reference, options.port);
+          process.stdout.write(`rvw: ${url}\n`);
+          return;
+        }
+        await runOpenServer(getRuntime(), reference, options.port, options.open, useAgentSocket);
+      },
+    );
+
+  program
+    .command("__open-worker", { hidden: true })
+    .option("--reference <pull-request>")
+    .requiredOption("--port <port>", "listen port", parsePort)
+    .action(async (options: { reference?: string; port: number }) => {
       try {
-        const opened = await activeRuntime.service.openPullRequest(reference, process.cwd());
-        running = await startServer(activeRuntime.service, {
-          port: options.port,
-          staticDirectory: staticDirectory(),
-          autoCloseWhenNoViewers: options.open,
+        await runOpenWorker(getRuntime(), options.reference, options.port);
+      } catch (error) {
+        const rvwError = asRvwError(error);
+        const sent = await sendOpenWorkerMessage({
+          type: "error",
+          error: { ...rvwError.toJSON(), status: rvwError.status },
         });
-        if (useAgentSocket) {
-          agentSocket = await startAgentSocket(activeRuntime.service);
-        }
-        const url = new URL(running.origin);
-        url.searchParams.set("pullRequestId", opened.pullRequest.id);
-        process.stdout.write(`rvw: ${url.toString()}\n`);
-        if (options.open) await openBrowser(url.toString());
-        const reason = await waitForServerShutdown(running.allViewersClosed);
-        if (reason === "viewers-closed") {
-          process.stdout.write("rvw: viewerを閉じたためserverを停止します。\n");
-        }
-      } finally {
-        try {
-          await agentSocket?.close();
-        } finally {
-          try {
-            await running?.close();
-          } finally {
-            activeRuntime.close();
-          }
-        }
+        if (!sent) throw error;
+        process.exitCode = rvwError.status >= 500 ? 1 : 2;
       }
     });
 
@@ -545,7 +926,9 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     });
 
   program.hook("postAction", (_command, actionCommand) => {
-    if (actionCommand.name() !== "open") runtime?.close();
+    if (actionCommand.name() !== "open" && actionCommand.name() !== "__open-worker") {
+      runtime?.close();
+    }
   });
   return program;
 }

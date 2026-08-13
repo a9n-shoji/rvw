@@ -232,6 +232,8 @@ describe("RvwDatabase", () => {
   it("applies migrations and increments change sequence per write transaction", () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     expect(database.getChangeSequence()).toBe(0);
+    expect(database.writeProbe()).toEqual({ ok: true, error: null });
+    expect(database.getChangeSequence()).toBe(0);
     const pullRequest = database.upsertPullRequest(
       github,
       {
