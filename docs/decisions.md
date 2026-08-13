@@ -1,5 +1,54 @@
 # Architecture decisions
 
+## 2026-08-13: Anchor ranges beginning at the first PR commit to the comparison base
+
+### Problem
+
+The Web viewer received the synchronized comparison-base OID but discarded it when deriving the old
+side of a commit range. It always used the first parent of the earliest selected commit. After a feature
+branch merges the current base branch, `git merge-base` advances to the merged base tip and
+`comparisonBase..head` starts with the merge commit. The merge commit's first parent is still the older
+feature tip, so using it makes a PR-wide diff show the base-branch changes while omitting feature changes
+that predate the merge. The result can be much larger than GitHub's PR diff and answer a different
+question.
+
+An intermediate merge commit initially appears to have the same problem. However, a merge of history
+reachable from the current base necessarily advances the comparison base to at least that merged base
+commit, placing the merge at the beginning of the current PR commit list or before it. A merge that
+remains in the middle therefore brings in history absent from the current synchronized base; hiding that
+side would incorrectly remove changes that are part of the PR.
+
+### Alternatives
+
+- Continue using the earliest selected commit's first parent for every range.
+- Use the second parent of every merge commit as the old side.
+- Use the synchronized comparison base when selection starts at the first current PR commit, and retain
+  first-parent semantics for later range starts.
+
+### Choice
+
+When the earliest selected commit is `commits[0]`, the viewer uses `comparisonBaseOid` as the old OID.
+This applies both to the PR-wide shortcut and to a shorter range that begins at the first listed commit.
+For a range beginning later in the list, the viewer continues to use the earliest selected commit's
+first parent, including for an intermediate merge.
+
+Cover the boundary with a browser regression and real-Git integration histories. One history merges the
+current base into the feature and verifies that base-only changes do not enter the PR-wide diff. A
+diverged-current-base history leaves the old merge in the middle and verifies that its first-parent
+delta remains visible.
+
+This supersedes the unconditional first-parent conversion in the 2026-08-09 inclusive commit-range
+decision; the picker and its inclusive selection model otherwise remain unchanged.
+
+### Trade-offs
+
+- PR-wide changed files and document diffs now match the synchronized GitHub comparison even when the
+  first listed commit is a merge-back commit.
+- A custom selection starting at the first listed commit uses a boundary that may not be that commit's
+  first parent, but it consistently represents the beginning of the current PR history.
+- Intermediate merges can still produce a large delta when they contain history absent from the current
+  base. That size is intentional because those changes are part of the selected commit and current PR.
+
 ## 2026-08-11: Start public protocol compatibility at version 1
 
 ### Problem

@@ -1,10 +1,44 @@
 import { createHash } from "node:crypto";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const unknownPullRequestId = "22222222-2222-4222-8222-222222222222";
+const comparisonBase = "a".repeat(40);
 const firstHead = "b".repeat(40);
 const secondHead = "c".repeat(40);
+const featureParentBeforeMergeBack = "d".repeat(40);
+
+test("uses the comparison base for a PR range starting with a merge-back commit", async ({
+  page,
+}) => {
+  const rewriteFirstCommitAsMergeBack = async (route: Route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      comparisonBaseOid: string;
+      commits: { parentOids: string[] }[];
+    };
+    body.comparisonBaseOid = comparisonBase;
+    if (body.commits[0]) {
+      body.commits[0].parentOids = [featureParentBeforeMergeBack, comparisonBase];
+    }
+    await route.fulfill({ response, json: body });
+  };
+  await page.route(`**/api/pull-requests/${pullRequestId}`, rewriteFirstCommitAsMergeBack);
+
+  const requestedOldOids: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.endsWith("/changed-files")) {
+      const oldOid = url.searchParams.get("oldOid");
+      if (oldOid) requestedOldOids.push(oldOid);
+    }
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await expect(page.getByRole("button", { name: /^対象commit:/ })).toBeVisible();
+  await expect.poll(() => requestedOldOids.at(-1)).toBe(comparisonBase);
+  expect(requestedOldOids).not.toContain(featureParentBeforeMergeBack);
+});
 
 test("uses path-specific fixture documents and a complete search index", async ({ request }) => {
   const readmeDiff = await request.get(

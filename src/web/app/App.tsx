@@ -55,6 +55,7 @@ import { applyThemePreference, storeThemePreference, type ThemePreference } from
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { WalkthroughIcon, WalkthroughPanel } from "../components/WalkthroughPanel.js";
 import {
+  commitRangeOldOid,
   earliestIncludedCommitOid,
   normalizedCommitRange,
   pullRequestRangeStartOid,
@@ -592,6 +593,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     enabled: Boolean(pullRequestId),
   });
   const commits = pullRequestQuery.data?.commits ?? [];
+  const comparisonBaseOid = pullRequestQuery.data?.comparisonBaseOid ?? null;
   const latestHeadOid = pullRequestQuery.data?.headOid ?? null;
   const latestPullRequestTitle = pullRequestQuery.data?.pullRequest.latestTitle;
 
@@ -604,8 +606,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const rangeStartIndex = commits.findIndex((commit) => commit.oid === rangeStartOid);
   const defaultRangeStartOid = selectedOid ? earliestIncludedCommitOid(commits, selectedOid) : null;
   const rangeStartValid = rangeStartIndex >= 0 && rangeStartIndex <= selectedIndex;
-  const rangeStartCommit = commits.find((commit) => commit.oid === rangeStartOid);
-  const effectiveOldOid = rangeStartCommit?.parentOids[0] ?? null;
+  const effectiveOldOid = commitRangeOldOid(commits, comparisonBaseOid, rangeStartOid);
   useEffect(() => {
     const previousLatest = observedLatestHead.current;
     if (latestHeadOid && (!selectedOid || selectedOid === previousLatest)) {

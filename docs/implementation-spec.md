@@ -96,9 +96,13 @@ diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分�
 
 - 一件または連続する複数commitを一つの範囲として選ぶ。latest側commitのrepository全体を表示できる。
 - diffは`oldOid -> newOid`の二点で表す。
-- 一件選択では、そのcommitのfirst parentから選択commitまでを表示する。
-- 複数選択では、earliest側commitのfirst parentからlatest側commitまでを両端を含めて表示する。
+- 一件または複数選択のearliest側がcurrent PR commit列の先頭なら、
+  `comparison_base_oid`からlatest側commitまでを表示する。それ以外はearliest側commitのfirst parentを
+  old側にし、選択commitを両端を含めて表示する。
 - `PR全体`shortcutはcurrent PR commit列をすべて選択し、`comparison_base_oid`からlatest headまでを表示する。
+- current baseを取り込んだmerge-back commitはmerge base更新後のcurrent PR commit列で先頭になるため、
+  first parentではなく`comparison_base_oid`をold側にする。列の中間に残るmerge commitはcurrent baseに
+  含まれない変更を取り込んでいるため、通常どおりfirst parentをold側にする。
 - UIへ変更前の境界commitを露出せず、利用者は差分へ含めるcommitだけを選ぶ。
 - current PR commit列にないforce-push前のsource OIDは通常selectorへ混ぜない。
   古いコメントからexact sourceを開くことはできる。
@@ -219,7 +223,8 @@ repository documentは`sourceOid + path`がexact snapshotである。PR本文は
 ### 5.1 表示
 
 - full: 選択範囲のlatest側commit OIDの全文
-- changes: 選択した連続commit範囲のearliest側commitのfirst parentからlatest側commit OID
+- changes: 選択した連続commit範囲がcurrent PR commit列の先頭から始まる場合は
+  `comparison_base_oid`、それ以外はearliest側commitのfirst parentからlatest側commit OID
 - changed files: `git diff --name-status -z --find-renames <old> <new>`
 - all files: `git ls-tree`でdestination tree全体
 - code search: `git grep -z -n -I -F`へcase-insensitiveの`-i`とwhole-wordの`-w`を選択的に
@@ -968,6 +973,8 @@ Integration（実git + fake GitHub）:
 - initial sync、linear update、force-push update
 - immutable head refsとreset
 - commit list、tree、full、range diff、search
+- current baseのmerge-backを含む履歴で、PR先頭からのdiffがfirst parentではなくcomparison baseを使い、
+  current baseに含まれない中間mergeからのrangeはfirst parentを維持すること
 - realtime searchのcase/whole-word、file grouping、全展開／折りたたみ、表示modeを保つline jump
 - PR本文latest-only更新
 - code/PR本文comment placement
