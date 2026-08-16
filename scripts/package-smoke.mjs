@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   chmodSync,
   existsSync,
@@ -18,6 +19,10 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
+const require = createRequire(import.meta.url);
+const npmCli = path.join(path.dirname(require.resolve("npm/package.json")), "bin", "npm-cli.js");
+const pnpmCli = process.env.npm_execpath;
+assert.ok(pnpmCli, "package smoke must run through a pnpm lifecycle script");
 const packageJsonSchema = z.object({
   name: z.string(),
   version: z.string(),
@@ -98,7 +103,7 @@ function run(executable, args, options = {}) {
  */
 function runNpm(args, options = {}) {
   // Exercise npm's consumer-facing global install behavior.
-  return run(process.platform === "win32" ? "npm.cmd" : "npm", args, options);
+  return run(process.execPath, [npmCli, ...args], options);
 }
 
 /**
@@ -106,7 +111,7 @@ function runNpm(args, options = {}) {
  * @param {import("node:child_process").SpawnSyncOptionsWithStringEncoding} [options]
  */
 function runPnpm(args, options = {}) {
-  return run(process.platform === "win32" ? "pnpm.cmd" : "pnpm", args, options);
+  return run(process.execPath, [pnpmCli, ...args], options);
 }
 
 /**
