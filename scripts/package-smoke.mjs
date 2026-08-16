@@ -42,6 +42,7 @@ const doctorSchema = z.object({
   ok: z.boolean(),
   databasePath: z.string(),
   git: z.object({ repository: z.unknown().nullable() }),
+  github: z.object({ version: z.string(), authenticated: z.boolean() }),
 });
 const skillInstallSchema = z.object({
   skills: z.array(
@@ -76,13 +77,14 @@ function requestedPackDirectory() {
  * @param {string} executable
  * @param {string[]} args
  * @param {import("node:child_process").SpawnSyncOptionsWithStringEncoding} [options]
+ * @param {number[]} [allowedExitCodes]
  */
-function run(executable, args, options = {}) {
+function run(executable, args, options = {}, allowedExitCodes = []) {
   const result = spawnSync(executable, args, {
     encoding: "utf8",
     ...options,
   });
-  if (result.error || result.status !== 0) {
+  if (result.error || (result.status !== 0 && !allowedExitCodes.includes(result.status ?? -1))) {
     throw new Error(
       [
         `Command failed: ${executable} ${args.join(" ")}`,
@@ -324,26 +326,35 @@ try {
   assert.ok(Number.isInteger(protocol.protocolVersion));
 
   const fakeBin = path.join(temporaryRoot, "fake-bin");
-  createFakeGitHubCli(fakeBin);
+  if (process.platform !== "win32") createFakeGitHubCli(fakeBin);
   const repository = path.join(temporaryRoot, "review-repository");
   mkdirSync(repository);
   run("git", ["init", "--quiet"], { cwd: repository });
   const databasePath = path.join(temporaryRoot, "data", "rvw.db");
   const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const doctorEnvironment = {
+    ...process.env,
+    RVW_DATABASE_PATH: databasePath,
+  };
+  if (process.platform !== "win32") {
+    doctorEnvironment[pathKey] = `${fakeBin}${path.delimiter}${process.env[pathKey] ?? ""}`;
+  }
   const doctor = parseJson(
-    run(bin, ["doctor", "--json"], {
-      cwd: repository,
-      env: {
-        ...process.env,
-        [pathKey]: `${fakeBin}${path.delimiter}${process.env[pathKey] ?? ""}`,
-        RVW_DATABASE_PATH: databasePath,
+    run(
+      bin,
+      ["doctor", "--json"],
+      {
+        cwd: repository,
+        env: doctorEnvironment,
+        ...(process.platform === "win32" ? { shell: true } : {}),
       },
-      ...(process.platform === "win32" ? { shell: true } : {}),
-    }),
+      process.platform === "win32" ? [1] : [],
+    ),
     doctorSchema,
     "rvw doctor",
   );
-  assert.equal(doctor.ok, true);
+  assert.equal(doctor.ok, doctor.github.authenticated);
+  assert.match(doctor.github.version, /^gh version /);
   assert.equal(doctor.databasePath, databasePath);
   assert.ok(doctor.git.repository);
   const database = new DatabaseSync(databasePath, { readOnly: true });
