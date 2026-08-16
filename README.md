@@ -40,21 +40,17 @@ head fork側だけのclone、GitHub Enterprise、Closed / merged PRはPhase 1の
 
 ## インストール
 
-現在はnpm registryへ公開していないため、sourceからインストールします。registryにある同名の`rvw`
-packageはこのプロジェクトではありません。
+npm registryからglobal installします。非scopedの`rvw` packageは別のプロジェクトなので、必ずscopeを
+含めます。
 
 ```bash
-git clone https://github.com/a9n-shoji/rvw.git
-cd rvw
-pnpm install --frozen-lockfile
-pnpm build
-pnpm link --global
+npm install --global @a9n-shoji/rvw
 rvw doctor
 ```
 
 `rvw doctor`がGit、GitHub CLI認証、repository、database migration、databaseの実書き込み、Agent
-transport疎通を確認します。npm packageを公開するreleaseでは、実際のpackage名を確定したうえでこの節を
-global install手順へ更新します。
+transport疎通を確認します。registryへまだ存在しない開発checkoutを試す場合は、sourceで
+`pnpm install --frozen-lockfile && pnpm build && pnpm link --global`を実行します。
 
 レビューしたいrepositoryへ移動して起動します。
 
@@ -264,6 +260,9 @@ bug reportとfeature suggestionは[GitHub Issues](https://github.com/a9n-shoji/r
 [Contributing](CONTRIBUTING.md)を参照してください。security issueはpublic Issueへ書かず、
 [Security policy](SECURITY.md)の案内に従ってください。
 
+maintainer向けのversion、tag、npm staged publishing、障害対応手順は
+[npm release runbook](docs/releasing.md)にまとめています。
+
 ## 開発
 
 ```bash
@@ -277,8 +276,8 @@ pnpm test:package
 
 通常テストは実Git binaryとfake GitHub adapterを使い、GitHub認証やnetworkを必要としません。
 `test:package`はclean buildと実tarball作成を行い、一時directoryへinstallしてrepository checkout外から
-CLI、migration、frontend、bundled Skillをsmoke testします。Phase 1のpackageは`private: true`で、npmへ
-公開しません。
+CLI、migration、frontend、bundled Skillをsmoke testします。CIはmacOS、Linux、Windowsでpackage smokeを
+実行しますが、通常CIからnpmへ公開しません。
 
 ## データとセキュリティ
 

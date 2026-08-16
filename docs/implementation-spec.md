@@ -1030,7 +1030,7 @@ CLI contract:
 
 Package smoke:
 
-- tarballへ`dist`、migrations、Skills、README、LICENSEだけを必要範囲で含める
+- tarballへ`dist`、migrations、Skills、CHANGELOG、README、SECURITY、LICENSEだけを必要範囲で含める
 - CLIはNode built-in以外のruntime依存を`dist/cli.mjs`へbundleし、package manifestにruntime
   `dependencies`を残さない
 - 空のnpm cacheを使ってtemp prefixへoffline global installし、`rvw --version`と`rvw doctor`を実行
@@ -1049,8 +1049,9 @@ pnpm test:package
 
 ## 15. CLI / Skill配布
 
-Phase 1 packageは`name: rvw`, `private: true`でnpm publishしない。Phase 2で
-`@<scope>/rvw`としてCLI、web assets、migrations、Skillsを同梱する。
+Phase 1 packageは`name: rvw`, `private: true`でnpm publishしなかった。Phase 2 packageは
+`@a9n-shoji/rvw`としてCLI、web assets、migrations、Skillsを同梱する。npm accountまたはorganizationが
+`a9n-shoji` scopeを管理できることを初回publish前のexternal gateとする。
 
 ```bash
 rvw skill install codex
@@ -1076,8 +1077,16 @@ requestとrepository contextへ委ね、固定の文書templateを要求しな�
 改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への明示authorizationなしに実行しない。
 
 Phase 2ではnpm account、scope、2FA、LICENSE、README、CHANGELOG、SECURITY、dependency license、
-macOS/Linux/Windows smokeを確認してから公開する。publish workflowは通常CIと分離し、GitHub-hosted
-runner、OIDC trusted publishing、`id-token: write`を使う。Phase 1ではnpm publishしない。
+macOS/Linux/Windows smokeを確認してから公開する。通常CIはregistryへ書き込まない。release workflowは
+手動dispatch、`npm-production` Environment、GitHub-hosted runner、`id-token: write`を使い、OIDC
+Trusted Publisherには`npm stage publish`だけを許可する。version、APP_VERSION、stable tag、CHANGELOGを
+検証し、package smokeがinstallした同一tarballをstageする。人間が内容を確認し、2FAでapproveするまで
+publicにはしない。
+
+npmは未作成packageへTrusted Publisherを設定できずstaged publishingも受け付けないため、最初の`0.1.0`
+だけはcleanなtag checkoutで検証した同一tarballを2FA付きdirect publishする。長期publish tokenは作らず、
+初回公開直後にstage-only Trusted Publisherを設定して従来tokenを禁止する。詳細は`docs/releasing.md`を
+source of truthとする。
 
 ## 16. Phase 1 Definition of Done
 
@@ -1099,7 +1108,7 @@ Quality:
 
 - API/CLI validationとmigrationがあり、Git commandへshell interpolationを使わない。
 - `pnpm install --frozen-lockfile`、check、unit/integration、E2E、build、package smokeが成功する。
-- packageは`name: rvw`かつ`private: true`で、CIからnpm publishしない。
+- Phase 1完了時点のpackageは`name: rvw`かつ`private: true`で、CIからnpm publishしない。
 - README、一次仕様、decisions、CLI protocol、`rvw` / `rvw-walkthrough`が同じ利用者モデルを説明する。
 
 Manual acceptance:

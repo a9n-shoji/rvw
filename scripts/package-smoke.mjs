@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import {
   chmodSync,
   existsSync,
@@ -18,6 +19,10 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
+const require = createRequire(import.meta.url);
+const npmCli = path.join(path.dirname(require.resolve("npm/package.json")), "bin", "npm-cli.js");
+const pnpmCli = process.env.npm_execpath;
+assert.ok(pnpmCli, "package smoke must run through a pnpm lifecycle script");
 const packageJsonSchema = z.object({
   name: z.string(),
   version: z.string(),
@@ -37,6 +42,7 @@ const doctorSchema = z.object({
   ok: z.boolean(),
   databasePath: z.string(),
   git: z.object({ repository: z.unknown().nullable() }),
+  github: z.object({ version: z.string(), authenticated: z.boolean() }),
 });
 const skillInstallSchema = z.object({
   skills: z.array(
@@ -52,17 +58,33 @@ const packageJson = packageJsonSchema.parse(
 const maxTarballBytes = 6 * 1024 * 1024;
 const maxUnpackedBytes = 25 * 1024 * 1024;
 
+function requestedPackDirectory() {
+  const args = process.argv.slice(2);
+  if (args[0] === "--") args.shift();
+  if (args.length === 0) return undefined;
+  if (args.length !== 2 || args[0] !== "--pack-destination") {
+    throw new Error("Usage: pnpm test:package -- --pack-destination <empty-directory>");
+  }
+  const value = args[1];
+  if (!value) throw new Error("--pack-destination requires a directory");
+  const directory = path.resolve(value);
+  mkdirSync(directory, { recursive: true });
+  assert.deepEqual(readdirSync(directory), [], `pack destination must be empty: ${directory}`);
+  return directory;
+}
+
 /**
  * @param {string} executable
  * @param {string[]} args
  * @param {import("node:child_process").SpawnSyncOptionsWithStringEncoding} [options]
+ * @param {number[]} [allowedExitCodes]
  */
-function run(executable, args, options = {}) {
+function run(executable, args, options = {}, allowedExitCodes = []) {
   const result = spawnSync(executable, args, {
     encoding: "utf8",
     ...options,
   });
-  if (result.error || result.status !== 0) {
+  if (result.error || (result.status !== 0 && !allowedExitCodes.includes(result.status ?? -1))) {
     throw new Error(
       [
         `Command failed: ${executable} ${args.join(" ")}`,
@@ -83,7 +105,7 @@ function run(executable, args, options = {}) {
  */
 function runNpm(args, options = {}) {
   // Exercise npm's consumer-facing global install behavior.
-  return run(process.platform === "win32" ? "npm.cmd" : "npm", args, options);
+  return run(process.execPath, [npmCli, ...args], options);
 }
 
 /**
@@ -91,7 +113,7 @@ function runNpm(args, options = {}) {
  * @param {import("node:child_process").SpawnSyncOptionsWithStringEncoding} [options]
  */
 function runPnpm(args, options = {}) {
-  return run(process.platform === "win32" ? "pnpm.cmd" : "pnpm", args, options);
+  return run(process.execPath, [pnpmCli, ...args], options);
 }
 
 /**
@@ -179,11 +201,12 @@ function unpackedTarBytes(tarball) {
 
 const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "rvw-package-smoke-"));
 try {
-  const packDirectory = path.join(temporaryRoot, "pack");
+  const retainedPackDirectory = requestedPackDirectory();
+  const packDirectory = retainedPackDirectory ?? path.join(temporaryRoot, "pack");
   const installPrefix = path.join(temporaryRoot, "global");
   const workingDirectory = path.join(temporaryRoot, "working");
   const npmCache = path.join(temporaryRoot, "npm-cache");
-  mkdirSync(packDirectory);
+  if (!retainedPackDirectory) mkdirSync(packDirectory);
   mkdirSync(installPrefix);
   mkdirSync(workingDirectory);
 
@@ -209,7 +232,9 @@ try {
   const packedFiles = new Set(pack.files.map((file) => file.path));
   const requiredFiles = [
     "LICENSE",
+    "CHANGELOG.md",
     "README.md",
+    "SECURITY.md",
     "package.json",
     "dist/cli.mjs",
     "dist/cli.mjs.map",
@@ -231,7 +256,7 @@ try {
     [...packedFiles].some((name) => name.startsWith("dist/web/assets/")),
     "package is missing bundled web assets",
   );
-  const allowed = ["LICENSE", "README.md", "package.json"];
+  const allowed = ["CHANGELOG.md", "LICENSE", "README.md", "SECURITY.md", "package.json"];
   for (const file of packedFiles) {
     assert.ok(
       allowed.includes(file) ||
@@ -301,26 +326,35 @@ try {
   assert.ok(Number.isInteger(protocol.protocolVersion));
 
   const fakeBin = path.join(temporaryRoot, "fake-bin");
-  createFakeGitHubCli(fakeBin);
+  if (process.platform !== "win32") createFakeGitHubCli(fakeBin);
   const repository = path.join(temporaryRoot, "review-repository");
   mkdirSync(repository);
   run("git", ["init", "--quiet"], { cwd: repository });
   const databasePath = path.join(temporaryRoot, "data", "rvw.db");
   const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const doctorEnvironment = {
+    ...process.env,
+    RVW_DATABASE_PATH: databasePath,
+  };
+  if (process.platform !== "win32") {
+    doctorEnvironment[pathKey] = `${fakeBin}${path.delimiter}${process.env[pathKey] ?? ""}`;
+  }
   const doctor = parseJson(
-    run(bin, ["doctor", "--json"], {
-      cwd: repository,
-      env: {
-        ...process.env,
-        [pathKey]: `${fakeBin}${path.delimiter}${process.env[pathKey] ?? ""}`,
-        RVW_DATABASE_PATH: databasePath,
+    run(
+      bin,
+      ["doctor", "--json"],
+      {
+        cwd: repository,
+        env: doctorEnvironment,
+        ...(process.platform === "win32" ? { shell: true } : {}),
       },
-      ...(process.platform === "win32" ? { shell: true } : {}),
-    }),
+      process.platform === "win32" ? [2] : [],
+    ),
     doctorSchema,
     "rvw doctor",
   );
-  assert.equal(doctor.ok, true);
+  assert.equal(doctor.ok, doctor.github.authenticated);
+  assert.match(doctor.github.version, /^gh version /);
   assert.equal(doctor.databasePath, databasePath);
   assert.ok(doctor.git.repository);
   const database = new DatabaseSync(databasePath, { readOnly: true });

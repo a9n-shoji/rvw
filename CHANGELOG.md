@@ -1,0 +1,22 @@
+# Changelog
+
+公開releaseごとの利用者向け変更を記録します。package versionとAgent向けprotocol versionは独立して
+管理し、machine contractのbreaking changeはprotocol versionにも明記します。
+
+## [Unreleased]
+
+## [0.1.0] - 2026-08-17
+
+### Added
+
+- GitHub Pull Requestのcommit履歴、変更箇所、repository全体を読むローカルWeb viewer
+- PR本文、file、code line、Walkthroughへのローカルcommentと未解決／解決済みthread
+- Git commitへ固定したMarkdown、code reference、Mermaid bindingのWalkthrough
+- Codex / Claude Codeで共通利用する`rvw`と`rvw-walkthrough` Skill installer
+- `rvw://`参照を扱うversioned JSON CLI protocol
+- CLI、Web assets、database migrations、bundled Skillsを含むglobal-install package
+
+### Security
+
+- localhost限定server、Host / Origin検証、sanitized Markdown / Mermaid rendering
+- runtime依存をCLIへbundleし、install時に追加のruntime dependency treeを解決しない配布形式
