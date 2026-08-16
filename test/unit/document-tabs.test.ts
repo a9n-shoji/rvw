@@ -10,6 +10,7 @@ import {
   withDocumentNavigationRevision,
   type ActiveDocument,
 } from "../../src/web/document-workspace.js";
+import { documentTabPresentation } from "../../src/web/document-tab-presentation.js";
 
 describe("document tabs", () => {
   it("uses one stable tab identity for each document path", () => {
@@ -32,6 +33,79 @@ describe("document tabs", () => {
     expect(documentTabKey(document)).toBe("pull-request-markdown");
     expect(documentTabLabel(document)).toBe("Pull Request.md");
     expect(documentTabPath(document)).toBe("Pull Request.md");
+  });
+
+  it("uses the shortest unique parent suffix for duplicate basenames", () => {
+    const documents: ActiveDocument[] = [
+      { kind: "repository-file", path: "src/application/orders/create-order.ts" },
+      { kind: "repository-file", path: "src/http/controllers/create-order.ts" },
+      { kind: "repository-file", path: "src/http/schemas/create-order.ts" },
+    ];
+
+    expect(documents.map((document) => documentTabPresentation(document, documents))).toEqual([
+      {
+        displayLabel: "create-order.ts · orders",
+        accessibleLabel: "src/application/orders/create-order.ts",
+      },
+      {
+        displayLabel: "create-order.ts · controllers",
+        accessibleLabel: "src/http/controllers/create-order.ts",
+      },
+      {
+        displayLabel: "create-order.ts · schemas",
+        accessibleLabel: "src/http/schemas/create-order.ts",
+      },
+    ]);
+  });
+
+  it("distinguishes virtual and repository documents with the same display path", () => {
+    const pullRequestDocument: ActiveDocument = { kind: "pull-request-markdown" };
+    const repositoryDocument: ActiveDocument = {
+      kind: "repository-file",
+      path: "Pull Request.md",
+    };
+    const documents = [pullRequestDocument, repositoryDocument];
+
+    expect(documentTabPresentation(pullRequestDocument, documents)).toEqual({
+      displayLabel: "Pull Request.md · PR本文",
+      accessibleLabel: "Pull Request.md（PR本文）",
+      identityQualifier: "PR本文",
+    });
+    expect(documentTabPresentation(repositoryDocument, documents)).toEqual({
+      displayLabel: "Pull Request.md · repository",
+      accessibleLabel: "Pull Request.md（repository）",
+      identityQualifier: "repository",
+    });
+  });
+
+  it("distinguishes walkthroughs with identical titles", () => {
+    const documents: ActiveDocument[] = [
+      {
+        kind: "walkthrough",
+        id: "11111111-aaaa-4111-8111-111111111111",
+        title: "同じ説明",
+        sourceOid: "a".repeat(40),
+      },
+      {
+        kind: "walkthrough",
+        id: "22222222-bbbb-4222-8222-222222222222",
+        title: "同じ説明",
+        sourceOid: "a".repeat(40),
+      },
+    ];
+
+    expect(documents.map((document) => documentTabPresentation(document, documents))).toEqual([
+      {
+        displayLabel: "同じ説明 · Walkthrough 11111111",
+        accessibleLabel: "同じ説明（Walkthrough 11111111）",
+        identityQualifier: "Walkthrough 11111111",
+      },
+      {
+        displayLabel: "同じ説明 · Walkthrough 22222222",
+        accessibleLabel: "同じ説明（Walkthrough 22222222）",
+        identityQualifier: "Walkthrough 22222222",
+      },
+    ]);
   });
 
   it("moves a document between panes and keeps both panes usable", () => {

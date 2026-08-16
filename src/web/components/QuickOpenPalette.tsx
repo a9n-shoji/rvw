@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import type { ChangeKind, TreeEntryKind } from "../../domain/models.js";
+import { documentTabPresentation } from "../document-tab-presentation.js";
 import { documentTabKey, type ActiveDocument, type DocumentPaneId } from "../document-workspace.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { ChangeIcon } from "./FileTree.js";
@@ -24,6 +25,7 @@ export interface QuickOpenCandidate extends QuickOpenFile {
   document: ActiveDocument;
   name: string;
   directory: string;
+  identityQualifier?: string;
   isActive: boolean;
   isOpen: boolean;
 }
@@ -181,6 +183,10 @@ export function QuickOpenPalette({
   );
   const candidates = useMemo(() => {
     const pullRequestDocument: ActiveDocument = { kind: "pull-request-markdown" };
+    const documents: ActiveDocument[] = [
+      pullRequestDocument,
+      ...files.map((file) => ({ kind: "repository-file" as const, path: file.path })),
+    ];
     return [
       candidateForDocument(
         pullRequestDocument,
@@ -196,7 +202,13 @@ export function QuickOpenPalette({
           openKeys,
         ),
       ),
-    ];
+    ].map((candidate) => {
+      const identityQualifier = documentTabPresentation(
+        candidate.document,
+        documents,
+      ).identityQualifier;
+      return identityQualifier ? { ...candidate, identityQualifier } : candidate;
+    });
   }, [activeKey, files, openKeys]);
   const results = useMemo(() => rankQuickOpenCandidates(candidates, query), [candidates, query]);
   const selectedResult = results[activeIndex] ?? null;
@@ -331,7 +343,7 @@ export function QuickOpenPalette({
                   className={`quick-open-result${isSelected ? " selected" : ""}`}
                   role="option"
                   aria-selected={isSelected}
-                  aria-label={`${candidate.path}${candidate.isOpen ? "、開いています" : ""}`}
+                  aria-label={`${candidate.path}${candidate.identityQualifier ? `（${candidate.identityQualifier}）` : ""}${candidate.isOpen ? "、開いています" : ""}`}
                   tabIndex={-1}
                   onMouseEnter={() => setActiveIndex(index)}
                   onMouseDown={(event) => event.preventDefault()}
@@ -349,7 +361,7 @@ export function QuickOpenPalette({
                         offset={nameMatch ? 0 : candidate.path.length - candidate.name.length}
                       />
                     </strong>
-                    {candidate.directory && (
+                    {candidate.directory ? (
                       <span>
                         <HighlightedText
                           value={candidate.directory}
@@ -357,7 +369,9 @@ export function QuickOpenPalette({
                           offset={directoryOffset}
                         />
                       </span>
-                    )}
+                    ) : candidate.identityQualifier ? (
+                      <span>{candidate.identityQualifier}</span>
+                    ) : null}
                   </span>
                   {candidate.isActive ? (
                     <span className="quick-open-badge">選択中</span>
