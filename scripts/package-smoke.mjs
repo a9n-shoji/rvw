@@ -348,7 +348,7 @@ try {
         env: doctorEnvironment,
         ...(process.platform === "win32" ? { shell: true } : {}),
       },
-      process.platform === "win32" ? [1] : [],
+      process.platform === "win32" ? [2] : [],
     ),
     doctorSchema,
     "rvw doctor",
