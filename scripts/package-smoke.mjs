@@ -52,6 +52,21 @@ const packageJson = packageJsonSchema.parse(
 const maxTarballBytes = 6 * 1024 * 1024;
 const maxUnpackedBytes = 25 * 1024 * 1024;
 
+function requestedPackDirectory() {
+  const args = process.argv.slice(2);
+  if (args[0] === "--") args.shift();
+  if (args.length === 0) return undefined;
+  if (args.length !== 2 || args[0] !== "--pack-destination") {
+    throw new Error("Usage: pnpm test:package -- --pack-destination <empty-directory>");
+  }
+  const value = args[1];
+  if (!value) throw new Error("--pack-destination requires a directory");
+  const directory = path.resolve(value);
+  mkdirSync(directory, { recursive: true });
+  assert.deepEqual(readdirSync(directory), [], `pack destination must be empty: ${directory}`);
+  return directory;
+}
+
 /**
  * @param {string} executable
  * @param {string[]} args
@@ -179,11 +194,12 @@ function unpackedTarBytes(tarball) {
 
 const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "rvw-package-smoke-"));
 try {
-  const packDirectory = path.join(temporaryRoot, "pack");
+  const retainedPackDirectory = requestedPackDirectory();
+  const packDirectory = retainedPackDirectory ?? path.join(temporaryRoot, "pack");
   const installPrefix = path.join(temporaryRoot, "global");
   const workingDirectory = path.join(temporaryRoot, "working");
   const npmCache = path.join(temporaryRoot, "npm-cache");
-  mkdirSync(packDirectory);
+  if (!retainedPackDirectory) mkdirSync(packDirectory);
   mkdirSync(installPrefix);
   mkdirSync(workingDirectory);
 
@@ -209,7 +225,9 @@ try {
   const packedFiles = new Set(pack.files.map((file) => file.path));
   const requiredFiles = [
     "LICENSE",
+    "CHANGELOG.md",
     "README.md",
+    "SECURITY.md",
     "package.json",
     "dist/cli.mjs",
     "dist/cli.mjs.map",
@@ -231,7 +249,7 @@ try {
     [...packedFiles].some((name) => name.startsWith("dist/web/assets/")),
     "package is missing bundled web assets",
   );
-  const allowed = ["LICENSE", "README.md", "package.json"];
+  const allowed = ["CHANGELOG.md", "LICENSE", "README.md", "SECURITY.md", "package.json"];
   for (const file of packedFiles) {
     assert.ok(
       allowed.includes(file) ||

@@ -4,6 +4,7 @@ coverage/
 playwright-report/
 test-results/
 artifacts/
+.release/
 .DS_Store
 *.db
 *.db-shm

@@ -1,5 +1,44 @@
 # Architecture decisions
 
+## 2026-08-17: Publish a scoped package through reviewed staged releases
+
+### Problem
+
+Phase 1 intentionally kept `rvw` private while package smoke established the distribution boundary.
+Moving to Phase 2 needs a package name that cannot collide with the unrelated unscoped `rvw` package,
+cross-platform evidence for the installed CLI, and a release path that does not place a reusable npm
+write credential in GitHub. The registry also requires a package to exist before either a Trusted
+Publisher relationship or staged publishing can be configured, so an OIDC-only first publication is
+not possible.
+
+### Choice
+
+Use the available `@a9n-shoji/rvw` package name, with control of the matching npm user or organization
+scope as an external gate before the first publish. Include CHANGELOG and SECURITY alongside the
+existing release contents, and run package smoke on macOS, Linux, and Windows.
+
+Pin npm 11.19.0 as a development release tool. Keep ordinary CI read-only. A separate, manually
+dispatched `publish.yml` checks out an explicit stable version tag, requires approval through the
+`npm-production` GitHub Environment, verifies the package name/version/tag/CHANGELOG contract, runs all
+gates, retains the exact package-smoke tarball, and sends that tarball through OIDC to `npm stage
+publish`. Configure the npm trust relationship with stage-only permission; a maintainer inspects and
+approves the staged artifact with 2FA.
+
+Bootstrap only `0.1.0` by publishing the same smoke-tested tarball interactively with 2FA from a clean
+tag checkout. Do not create a long-lived automation token. Immediately configure the stage-only
+Trusted Publisher and disallow traditional publish tokens. Document the exact operator sequence and
+forward-fix policy in `docs/releasing.md`.
+
+### Trade-offs
+
+- The first release lacks OIDC provenance because npm cannot trust a package before it exists. A
+  temporary CI publish token would add provenance but would weaken the no-reusable-write-secret
+  boundary during the most sensitive release.
+- Manual workflow dispatch and staged approval add two deliberate human actions to each release.
+- Stable releases are supported by the initial workflow; prereleases need an explicit future decision
+  about their dist-tag instead of silently moving `latest`.
+- The scoped package installs as `@a9n-shoji/rvw`, while its executable remains the short `rvw` command.
+
 ## 2026-08-13: Anchor ranges beginning at the first PR commit to the comparison base
 
 ### Problem

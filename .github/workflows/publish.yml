@@ -1,0 +1,46 @@
+name: Stage npm package
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Stable release tag to stage (for example v0.1.1)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.15.0
+          registry-url: https://registry.npmjs.org/
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm release:verify
+        env:
+          RVW_RELEASE_TAG: ${{ inputs.release_tag }}
+      - run: pnpm check
+      - run: pnpm test
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - run: pnpm test:package -- --pack-destination .release
+      - run: pnpm exec npm stage publish .release/*.tgz
