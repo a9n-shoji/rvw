@@ -5,10 +5,12 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { changedFilePath } from "../../domain/changed-file.js";
@@ -69,6 +71,7 @@ import {
   type ActiveDocument,
   type DocumentPaneId,
 } from "../document-workspace.js";
+import { clearCommentDraftsForPullRequest } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
 const DocumentViewer = lazy(async () => {
@@ -500,6 +503,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [searchMatchCase, setSearchMatchCase] = useState(false);
   const [searchWholeWord, setSearchWholeWord] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [reviewStateRevision, setReviewStateRevision] = useState(0);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const [themePreference, setThemePreference] = useState<ThemePreference>(initialThemePreference);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
@@ -522,6 +526,28 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const openDocuments = documentWorkspace.documents;
   const activePane = documentWorkspace.focusedPane;
   const activeDocument = documentWorkspace.active[activePane];
+  const paneElements = useRef<Record<DocumentPaneId, HTMLElement | null>>({
+    left: null,
+    right: null,
+  });
+  const documentScrollPositions = useRef(new Map<string, number>());
+  const leftActiveDocumentKey = documentWorkspace.active.left
+    ? documentTabKey(documentWorkspace.active.left)
+    : null;
+  const rightActiveDocumentKey = documentWorkspace.active.right
+    ? documentTabKey(documentWorkspace.active.right)
+    : null;
+
+  useLayoutEffect(() => {
+    const pane = paneElements.current.left;
+    if (!pane || !leftActiveDocumentKey) return;
+    pane.scrollTop = documentScrollPositions.current.get(leftActiveDocumentKey) ?? 0;
+  }, [leftActiveDocumentKey, reviewStateRevision]);
+  useLayoutEffect(() => {
+    const pane = paneElements.current.right;
+    if (!pane || !rightActiveDocumentKey) return;
+    pane.scrollTop = documentScrollPositions.current.get(rightActiveDocumentKey) ?? 0;
+  }, [reviewStateRevision, rightActiveDocumentKey]);
 
   useEffect(() => {
     if (!syncFeedback) return;
@@ -677,6 +703,12 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     document.addEventListener("keydown", focusFullTextSearch);
     return () => document.removeEventListener("keydown", focusFullTextSearch);
   }, []);
+  useLayoutEffect(() => {
+    if (!actionsMenuOpen) return;
+    actionsMenuRef.current
+      ?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')
+      ?.focus();
+  }, [actionsMenuOpen]);
   useEffect(() => {
     if (!actionsMenuOpen) return;
     const closeOnOutsidePointer = (event: PointerEvent): void => {
@@ -685,7 +717,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       }
     };
     const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") setActionsMenuOpen(false);
+      if (event.key !== "Escape") return;
+      setActionsMenuOpen(false);
+      actionsMenuButtonRef.current?.focus();
     };
     document.addEventListener("pointerdown", closeOnOutsidePointer);
     document.addEventListener("keydown", closeOnEscape);
@@ -694,6 +728,23 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [actionsMenuOpen]);
+  const handleActionsMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const items = [
+      ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+        '[role^="menuitem"]:not(:disabled)',
+      ),
+    ];
+    if (items.length === 0) return;
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % items.length;
+    if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + items.length) % items.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = items.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    items[nextIndex]?.focus();
+  };
   const selectCommitRange = (startOid: string, endOid: string): void => {
     const range = normalizedCommitRange(commits, startOid, endOid);
     if (!range) return;
@@ -983,6 +1034,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     },
     onSuccess: async (result) => {
       if (!result) return;
+      clearCommentDraftsForPullRequest(result.pullRequest.id);
+      documentScrollPositions.current.clear();
+      setReviewStateRevision((revision) => revision + 1);
       setDocumentWorkspace(initialDocumentWorkspace());
       setViewerNavigationTarget(null);
       commitRangeTouched.current = false;
@@ -1270,6 +1324,17 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     const paneViewerDocument = paneViewerState.viewerDocument;
     return (
       <section
+        ref={(element) => {
+          paneElements.current[paneId] = element;
+        }}
+        onScroll={(event) => {
+          if (paneViewerDocument) {
+            documentScrollPositions.current.set(
+              documentTabKey(paneViewerDocument),
+              event.currentTarget.scrollTop,
+            );
+          }
+        }}
         className={`document-pane${activePane === paneId ? " active" : ""}${paneDocuments.length === 0 ? " empty" : ""}`}
         data-pane={paneId}
         aria-label={`${paneId === "left" ? "左" : "右"}のコードペイン`}
@@ -1333,7 +1398,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           <LazyLoadBoundary label="文書ビューアー">
             <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
               <DocumentViewer
-                key={`${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`}
+                key={`${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`}
                 pullRequestId={pullRequest.id}
                 selectedOid={selectedOid}
                 oldOid={effectiveOldOid}
@@ -1375,6 +1440,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
 
   return (
     <main className="app-shell">
+      <a className="skip-link" href="#review-main-content">
+        レビュー本文へ移動
+      </a>
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">r</span>
@@ -1419,7 +1487,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
             <MoreActionsIcon />
           </button>
           {actionsMenuOpen && (
-            <div className="topbar-menu-popover" role="menu">
+            <div className="topbar-menu-popover" role="menu" onKeyDown={handleActionsMenuKeyDown}>
               <button
                 role="menuitem"
                 className="topbar-menu-command"
@@ -1472,7 +1540,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 }}
                 disabled={resetMutation.isPending}
               >
-                状態を再構築
+                ローカル状態を削除して再構築
               </button>
             </div>
           )}
@@ -1500,7 +1568,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         className={`workspace${resizingSurface ? " is-resizing" : ""}`}
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
-        <aside className="sidebar">
+        <aside className="sidebar" aria-label="レビューサイドバー">
           <section
             className={`sidebar-stack sidebar-stack--files${filesExpanded ? " is-expanded" : ""}`}
           >
@@ -1695,6 +1763,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           }}
         />
         <section
+          id="review-main-content"
+          tabIndex={-1}
           className={`main-view${rightPaneVisible ? " two-pane" : ""}${resizingSurface === "panes" ? " is-resizing" : ""}`}
           style={
             rightPaneVisible

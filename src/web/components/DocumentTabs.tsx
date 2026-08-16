@@ -1,8 +1,15 @@
-import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import type { ChangeKind } from "../../domain/models.js";
+import { documentTabPresentation } from "../document-tab-presentation.js";
 import {
   documentTabKey,
-  documentTabLabel,
   documentTabPath,
   type ActiveDocument,
   type DocumentPaneId,
@@ -60,6 +67,8 @@ export function DocumentTabs({
   onDragEndDocument: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuHostRef = useRef<HTMLDivElement>(null);
+  const menuToggleRef = useRef<HTMLButtonElement>(null);
   const tabButtons = useRef(new Map<string, HTMLButtonElement>());
   const activeKey = activeDocument ? documentTabKey(activeDocument) : null;
   const targetPane: DocumentPaneId = paneId === "left" ? "right" : "left";
@@ -76,7 +85,7 @@ export function DocumentTabs({
     onActivate(document);
     window.requestAnimationFrame(() => tabButtons.current.get(key)?.focus());
   };
-  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
+  const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number): void => {
     if (documents.length === 0) return;
     let nextIndex: number | null = null;
     if (event.key === "ArrowRight") nextIndex = (index + 1) % documents.length;
@@ -87,11 +96,51 @@ export function DocumentTabs({
     event.preventDefault();
     activateAt(nextIndex);
   };
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const items = [
+      ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
+        '[role^="menuitem"]:not(:disabled)',
+      ),
+    ];
+    if (items.length === 0) return;
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % items.length;
+    if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + items.length) % items.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = items.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    items[nextIndex]?.focus();
+  };
 
   useEffect(() => {
     if (!activeKey) return;
     tabButtons.current.get(activeKey)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [activeKey, documents.length]);
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    menuHostRef.current
+      ?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')
+      ?.focus();
+  }, [menuOpen]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (!menuHostRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      setMenuOpen(false);
+      menuToggleRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [menuOpen]);
 
   return (
     <div
@@ -107,6 +156,7 @@ export function DocumentTabs({
         {documents.map((document, index) => {
           const key = documentTabKey(document);
           const path = documentTabPath(document);
+          const presentation = documentTabPresentation(document, documents);
           const changeKind =
             document.kind === "repository-file" ? changeKindsByPath.get(document.path) : undefined;
           return (
@@ -129,7 +179,7 @@ export function DocumentTabs({
                 className="document-tab-activate"
                 role="tab"
                 aria-selected={key === activeKey}
-                aria-label={path}
+                aria-label={presentation.accessibleLabel}
                 tabIndex={key === activeKey ? 0 : -1}
                 onClick={() => onActivate(document)}
                 onKeyDown={(event) => handleTabKeyDown(event, index)}
@@ -142,11 +192,13 @@ export function DocumentTabs({
                   )}
                   {changeKind && <ChangeIcon kind={changeKind} />}
                 </span>
-                <span className="document-tab-label">{documentTabLabel(document)}</span>
+                <span className="document-tab-label" title={path}>
+                  {presentation.displayLabel}
+                </span>
               </button>
               <button
                 className="document-tab-close"
-                aria-label={`${path}を閉じる`}
+                aria-label={`${presentation.accessibleLabel}を閉じる`}
                 onClick={() => onClose(document)}
               >
                 <CloseIcon />
@@ -155,17 +207,19 @@ export function DocumentTabs({
           );
         })}
       </nav>
-      <div className="document-tabs-menu">
+      <div className="document-tabs-menu" ref={menuHostRef}>
         <button
+          ref={menuToggleRef}
           className="document-tabs-menu-toggle"
           aria-label={`${paneId === "left" ? "左" : "右"}ペインの操作`}
+          aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((open) => !open)}
         >
           <MoreIcon />
         </button>
         {menuOpen && (
-          <div className="document-tabs-menu-popover" role="menu">
+          <div className="document-tabs-menu-popover" role="menu" onKeyDown={handleMenuKeyDown}>
             <button
               role="menuitem"
               disabled={!activeDocument}
@@ -203,6 +257,7 @@ export function DocumentTabs({
             ) : (
               documents.map((document) => {
                 const key = documentTabKey(document);
+                const presentation = documentTabPresentation(document, documents);
                 const changeKind =
                   document.kind === "repository-file"
                     ? changeKindsByPath.get(document.path)
@@ -211,6 +266,7 @@ export function DocumentTabs({
                   <button
                     key={key}
                     role="menuitem"
+                    aria-label={presentation.accessibleLabel}
                     className={key === activeKey ? "active" : ""}
                     onClick={() => {
                       onActivate(document);
@@ -225,7 +281,7 @@ export function DocumentTabs({
                       )}
                       {changeKind && <ChangeIcon kind={changeKind} />}
                     </span>
-                    <span className="document-tabs-menu-label">{documentTabPath(document)}</span>
+                    <span className="document-tabs-menu-label">{presentation.accessibleLabel}</span>
                   </button>
                 );
               })

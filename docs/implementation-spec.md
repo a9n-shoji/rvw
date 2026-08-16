@@ -885,7 +885,7 @@ commit range popover
 
 ... menu
 [ GitHubと同期 ]
-[ 状態を再構築 ]
+[ ローカル状態を削除して再構築 ]
 
 tab row
 [ Pull Request.md ] [ src/example.ts ]
@@ -896,6 +896,8 @@ tab row
 - historical commitを選択中ならrefresh後も選択を維持する。
 - PR本文はselectorと無関係に常にlatest cacheを全文表示し、global controlがdiff modeなら
   `差分なし · 全文表示`を明示する。
+- 未送信comment draftはPR、文書、exact source、commit範囲、表示modeごとに分離し、tab切替や
+  tabの閉じ直しでは保持する。送信、明示cancel、comment targetへのnavigation、reset成功時に破棄する。
 - 明示capture button、未取り込みbanner、version selectorは存在しない。
 - refreshは取得・ref保持・cache更新を一度に行う。
 

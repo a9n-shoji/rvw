@@ -170,6 +170,22 @@ code {
   display: flex;
   flex-direction: column;
 }
+.skip-link {
+  position: fixed;
+  z-index: 1000;
+  inset: 8px auto auto 8px;
+  transform: translateY(calc(-100% - 16px));
+  padding: 8px 12px;
+  border: 2px solid var(--focus);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 700;
+  text-decoration: none;
+}
+.skip-link:focus {
+  transform: none;
+}
 .topbar {
   height: 68px;
   flex: 0 0 68px;

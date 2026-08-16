@@ -18,11 +18,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/a9n-shoji/rvw.git"
+    "url": "git+https://github.com/a9n-shoji/rvw.git"
   },
   "type": "module",
   "bin": {
-    "rvw": "./dist/cli.mjs"
+    "rvw": "dist/cli.mjs"
   },
   "files": [
     "dist",

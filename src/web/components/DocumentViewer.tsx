@@ -34,6 +34,13 @@ import type {
   DocumentRef,
   ReviewComment,
 } from "../../domain/models.js";
+import {
+  commentDraftContextKey,
+  currentCommentDraftRevision,
+  deleteCommentDraft,
+  readCommentDraft,
+  writeCommentDraft,
+} from "../comment-draft-store.js";
 import type { ActiveDocument } from "../document-workspace.js";
 import {
   api,
@@ -601,14 +608,52 @@ export function DocumentViewer({
     markdownViewByDocument.set(activeMarkdownViewKey, view);
     setMarkdownViewState(view);
   };
-  const [selection, setSelection] = useState<SelectedLineRange | null>(null);
+  const commentDraftKey = commentDraftContextKey({
+    activeDocument,
+    selectedOid,
+    oldOid,
+    displayMode,
+  });
+  const commentDraftRevision = useRef(currentCommentDraftRevision(pullRequestId)).current;
+  const initialCommentDraft = readCommentDraft(pullRequestId, commentDraftKey);
+  const [selection, setSelection] = useState<SelectedLineRange | null>(
+    initialCommentDraft?.selection ?? null,
+  );
   const [selectionPreview, setSelectionPreview] = useState<SelectedLineRange | null>(null);
-  const [markdownComposerOpen, setMarkdownComposerOpen] = useState(false);
-  const [fileComposerOpen, setFileComposerOpen] = useState(false);
-  const [body, setBody] = useState("");
+  const [markdownComposerOpen, setMarkdownComposerOpen] = useState(
+    initialCommentDraft?.markdownComposerOpen ?? false,
+  );
+  const [fileComposerOpen, setFileComposerOpen] = useState(
+    initialCommentDraft?.fileComposerOpen ?? false,
+  );
+  const [body, setBody] = useState(initialCommentDraft?.body ?? "");
   const [optimisticComment, setOptimisticComment] = useState<OptimisticCommentAnnotation | null>(
     null,
   );
+  useLayoutEffect(() => {
+    const persistDraft = (): void => {
+      if (fileComposerOpen || markdownComposerOpen || selection) {
+        writeCommentDraft(pullRequestId, commentDraftKey, commentDraftRevision, {
+          body,
+          selection,
+          markdownComposerOpen,
+          fileComposerOpen,
+        });
+        return;
+      }
+      deleteCommentDraft(pullRequestId, commentDraftKey, commentDraftRevision);
+    };
+    persistDraft();
+    return persistDraft;
+  }, [
+    body,
+    commentDraftKey,
+    commentDraftRevision,
+    fileComposerOpen,
+    markdownComposerOpen,
+    pullRequestId,
+    selection,
+  ]);
   const loadedOptimisticCommentId = useRef<string | null>(null);
   const markdownLinkPointerStart = useRef<PointerPosition | null>(null);
   const openRepositoryLinkRef = useRef(onOpenRepositoryLink);

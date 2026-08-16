@@ -122,6 +122,481 @@ test("restores focus to the actions button after Quick Open is closed from its m
   await expect(actionsButton).toBeFocused();
 });
 
+test("supports standard keyboard navigation in the actions menu", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const actionsButton = page.getByRole("button", { name: "その他の操作", exact: true });
+  await actionsButton.click();
+
+  const menu = page.getByRole("menu");
+  const quickOpen = menu.getByRole("menuitem", { name: /ファイルを開く/ });
+  const sync = menu.getByRole("menuitem", { name: "GitHubと同期" });
+  const rebuild = menu.getByRole("menuitem", { name: "ローカル状態を削除して再構築" });
+  await expect(quickOpen).toBeFocused();
+
+  await quickOpen.press("ArrowDown");
+  await expect(sync).toBeFocused();
+  await sync.press("End");
+  await expect(rebuild).toBeFocused();
+  await rebuild.press("ArrowDown");
+  await expect(quickOpen).toBeFocused();
+  await quickOpen.press("ArrowUp");
+  await expect(rebuild).toBeFocused();
+  await rebuild.press("Home");
+  await expect(quickOpen).toBeFocused();
+
+  await quickOpen.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(actionsButton).toBeFocused();
+});
+
+test("supports keyboard navigation and dismissal in a document pane menu", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  const pane = page.getByRole("region", { name: "左のコードペイン" });
+  const toggle = pane.getByRole("button", { name: "左ペインの操作" });
+  await toggle.click();
+  const menu = pane.getByRole("menu");
+  const move = menu.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" });
+  const closeOthers = menu.getByRole("menuitem", { name: "他のタブをすべて閉じる" });
+  await expect(move).toBeFocused();
+
+  await move.press("ArrowDown");
+  await expect(closeOthers).toBeFocused();
+  await closeOthers.press("Home");
+  await expect(move).toBeFocused();
+  await move.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(toggle).toBeFocused();
+
+  await toggle.click();
+  await expect(menu).toBeVisible();
+  await page.locator(".pr-heading").click();
+  await expect(menu).toBeHidden();
+});
+
+test("offers a keyboard skip link and names the review sidebar landmark", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const skipLink = page.getByRole("link", { name: "レビュー本文へ移動" });
+  await expect(
+    page.locator('a[href], button:not([disabled]), input, textarea, [tabindex="0"]').first(),
+  ).toHaveClass("skip-link");
+  await skipLink.focus();
+  await expect(skipLink).toBeFocused();
+  await expect(skipLink).toBeVisible();
+  await skipLink.press("Enter");
+  await expect(page.locator("#review-main-content")).toBeFocused();
+  await expect(page.getByRole("complementary", { name: "レビューサイドバー" })).toBeVisible();
+});
+
+test("keeps overlays and primary controls reachable at high-zoom equivalent widths", async ({
+  page,
+}) => {
+  const expectInsideViewport = async (locator: ReturnType<typeof page.locator>) => {
+    const box = await locator.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  };
+
+  await page.setViewportSize({ width: 640, height: 720 });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const actionsButton = page.getByRole("button", { name: "その他の操作", exact: true });
+  await expectInsideViewport(actionsButton);
+  await actionsButton.click();
+  await expectInsideViewport(page.getByRole("menu"));
+  await page.keyboard.press("Escape");
+
+  const commitButton = page.getByRole("button", { name: /^対象commit:/ });
+  await commitButton.click();
+  await expectInsideViewport(page.getByRole("dialog", { name: "対象commitを選択" }));
+  await page.keyboard.press("Escape");
+
+  await page.setViewportSize({ width: 400, height: 720 });
+  await expectInsideViewport(actionsButton);
+  const workspace = page.locator(".workspace");
+  const overflow = await workspace.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(overflow.scrollWidth).toBeGreaterThan(overflow.clientWidth);
+  const scrolled = await workspace.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+    return element.scrollLeft;
+  });
+  expect(scrolled).toBeGreaterThan(0);
+});
+
+test("makes reset destructive intent explicit and honors confirmation cancellation", async ({
+  page,
+}) => {
+  let previewRequests = 0;
+  let confirmedRequests = 0;
+  await page.route(`**/api/pull-requests/${pullRequestId}/reset`, async (route) => {
+    const body = route.request().postDataJSON() as { yes: boolean };
+    if (body.yes) {
+      confirmedRequests += 1;
+      await route.fulfill({ status: 500, json: { ok: false } });
+      return;
+    }
+    previewRequests += 1;
+    await route.fulfill({
+      status: 409,
+      json: {
+        ok: false,
+        error: {
+          code: "RESET_CONFIRMATION_REQUIRED",
+          message: "resetには明示的な確認が必要です。",
+        },
+        counts: {
+          comments: 3,
+          posts: 5,
+          targets: 3,
+          walkthroughs: 2,
+          walkthroughReferences: 7,
+          gitRefs: 4,
+        },
+      },
+    });
+  });
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("ローカルレビュー状態を削除して再構築します。");
+    expect(dialog.message()).toContain("コメント 3");
+    expect(dialog.message()).toContain("返信 5");
+    expect(dialog.message()).toContain("この操作は元に戻せません。");
+    await dialog.dismiss();
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "ローカル状態を削除して再構築", exact: true }).click();
+
+  await expect.poll(() => previewRequests).toBe(1);
+  expect(confirmedRequests).toBe(0);
+  await expect(
+    page.locator(".pr-heading").getByRole("heading", { name: /Fixture review/ }),
+  ).toBeVisible();
+});
+
+test("discards in-memory comment drafts after a confirmed reset", async ({ page, request }) => {
+  const viewResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  expect(viewResponse.ok()).toBe(true);
+  const resetView = (await viewResponse.json()) as {
+    pullRequest: { latestHeadOid: string };
+    commits: Array<{
+      oid: string;
+      parentOids: string[];
+      subject: string;
+      authorName: string;
+      authoredAt: string;
+    }>;
+  };
+  let confirmedRequests = 0;
+  await page.route(`**/api/pull-requests/${pullRequestId}/reset`, async (route) => {
+    const body = route.request().postDataJSON() as { yes: boolean };
+    if (!body.yes) {
+      await route.fulfill({
+        status: 409,
+        json: {
+          ok: false,
+          error: {
+            code: "RESET_CONFIRMATION_REQUIRED",
+            message: "resetには明示的な確認が必要です。",
+          },
+          counts: {
+            comments: 0,
+            posts: 0,
+            targets: 0,
+            walkthroughs: 0,
+            walkthroughReferences: 0,
+            gitRefs: 1,
+          },
+        },
+      });
+      return;
+    }
+    confirmedRequests += 1;
+    await route.fulfill({ json: { ok: true, ...resetView } });
+  });
+  page.once("dialog", (dialog) => dialog.accept());
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "ファイル全体へコメント" }).click();
+  const draft = page.getByRole("textbox", { name: "ファイル全体へコメント" });
+  await draft.fill("reset後に復元してはいけない未送信ドラフト");
+
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "ローカル状態を削除して再構築", exact: true }).click();
+
+  await expect.poll(() => confirmedRequests).toBe(1);
+  await expect(draft).toBeHidden();
+  await page.getByRole("button", { name: "ファイル全体へコメント" }).click();
+  await expect(page.getByRole("textbox", { name: "ファイル全体へコメント" })).toHaveValue("");
+});
+
+test("preserves an unsent file comment draft while switching document tabs", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await page.getByRole("button", { name: "ファイル全体へコメント" }).click();
+  const draft = page.getByRole("textbox", { name: "ファイル全体へコメント" });
+  await draft.fill("中断される未送信ドラフト\n二行目");
+
+  await page.getByRole("button", { name: "src/new.ts", exact: true }).click();
+  await page.getByRole("tab", { name: "src/fixture.ts", exact: true }).click();
+
+  await expect(draft).toBeVisible();
+  await expect(draft).toHaveValue("中断される未送信ドラフト\n二行目");
+  await draft.press("Escape");
+  await expect(draft).toBeHidden();
+
+  await page.getByRole("tab", { name: "src/new.ts", exact: true }).click();
+  await page.getByRole("tab", { name: "src/fixture.ts", exact: true }).click();
+  await expect(draft).toBeHidden();
+});
+
+test("visually disambiguates open tabs that share the same basename", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const paths = [
+    "src/application/orders/create-order.ts",
+    "src/http/controllers/create-order.ts",
+    "src/http/schemas/create-order.ts",
+  ];
+  for (const path of paths) {
+    await page.keyboard.press("Control+P");
+    const palette = page.getByRole("dialog", { name: "ファイルを開く" });
+    const input = palette.getByRole("combobox", { name: "ファイル名で検索" });
+    await input.fill(path);
+    await palette.getByRole("option", { name: path }).click();
+  }
+
+  const tablist = page.getByRole("tablist", { name: "開いている文書" });
+  const uniqueDirectoryByPath = new Map([
+    [paths[0], "orders"],
+    [paths[1], "controllers"],
+    [paths[2], "schemas"],
+  ]);
+  for (const path of paths) {
+    const tab = tablist.getByRole("tab", { name: path });
+    await expect(tab).toContainText(`create-order.ts · ${uniqueDirectoryByPath.get(path)}`);
+    await expect(tab.locator(".document-tab-label")).toHaveAttribute("title", path);
+  }
+});
+
+test("distinguishes virtual and repository documents with the same path", async ({ page }) => {
+  const duplicatePath = "Pull Request.md";
+  await page.route(`**/api/pull-requests/${pullRequestId}/tree?*`, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { entries: Record<string, unknown>[] };
+    body.entries.push({
+      mode: "100644",
+      type: "blob",
+      oid: "f".repeat(40),
+      size: 31,
+      path: duplicatePath,
+      kind: "file",
+    });
+    await route.fulfill({ response, json: body });
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/document?*`, async (route) => {
+    const url = new URL(route.request().url());
+    if (
+      url.searchParams.get("kind") !== "repository-file" ||
+      url.searchParams.get("path") !== duplicatePath
+    ) {
+      await route.continue();
+      return;
+    }
+    const sourceOid = url.searchParams.get("sourceOid") ?? secondHead;
+    await route.fulfill({
+      json: {
+        ok: true,
+        document: {
+          ref: { kind: "repository-file", pullRequestId, sourceOid, path: duplicatePath },
+          availability: "available",
+          text: "# Repository Pull Request file\n",
+          byteLength: 31,
+          entryKind: "file",
+          normalizedLineEndings: false,
+          oid: "f".repeat(40),
+        },
+      },
+    });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.keyboard.press("Control+P");
+  const palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  await palette.getByRole("combobox", { name: "ファイル名で検索" }).fill(duplicatePath);
+  await expect(palette.getByRole("option", { name: /Pull Request\.md（PR本文）/ })).toBeVisible();
+  await palette.getByRole("option", { name: "Pull Request.md（repository）", exact: true }).click();
+
+  const pane = page.getByRole("region", { name: "左のコードペイン" });
+  const tablist = pane.getByRole("tablist", { name: "開いている文書" });
+  await expect(
+    tablist.getByRole("tab", { name: "Pull Request.md（PR本文）", exact: true }),
+  ).toContainText("Pull Request.md · PR本文");
+  await expect(
+    tablist.getByRole("tab", { name: "Pull Request.md（repository）", exact: true }),
+  ).toContainText("Pull Request.md · repository");
+  await expect(
+    pane.getByRole("button", { name: "Pull Request.md（PR本文）を閉じる", exact: true }),
+  ).toBeVisible();
+  await expect(
+    pane.getByRole("button", { name: "Pull Request.md（repository）を閉じる", exact: true }),
+  ).toBeVisible();
+
+  await pane.getByRole("button", { name: "左ペインの操作" }).click();
+  const menu = pane.getByRole("menu");
+  await expect(
+    menu.getByRole("menuitem", { name: "Pull Request.md（PR本文）", exact: true }),
+  ).toBeVisible();
+  await expect(
+    menu.getByRole("menuitem", { name: "Pull Request.md（repository）", exact: true }),
+  ).toBeVisible();
+});
+
+test("handles Unicode empty symlink submodule and very long repository paths", async ({ page }) => {
+  const emptyPath = "docs/空 ファイル.txt";
+  const emojiPath = "docs/emoji 🚀/レビュー.md";
+  const decomposedPath = "docs/Cafe\u0301.md";
+  const composedPath = "docs/Café.md";
+  const symlinkPath = "links/current";
+  const submodulePath = "vendor/example-module";
+  const longPath = `packages/${"deep-segment/".repeat(12)}feature/review-target.ts`;
+  const submoduleOid = "e".repeat(40);
+  const documents = new Map([
+    [emptyPath, { text: "", entryKind: "file" }],
+    [emojiPath, { text: "# 注文レビュー 🚀\n\n多言語の本文です。\n", entryKind: "file" }],
+    [decomposedPath, { text: "decomposed accent\n", entryKind: "file" }],
+    [composedPath, { text: "composed accent\n", entryKind: "file" }],
+    [symlinkPath, { text: "../releases/current", entryKind: "symlink" }],
+    [submodulePath, { text: submoduleOid, entryKind: "submodule" }],
+    [longPath, { text: "export const deeplyNested = true;\n", entryKind: "file" }],
+  ]);
+
+  await page.route(`**/api/pull-requests/${pullRequestId}/tree?*`, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { entries: Record<string, unknown>[] };
+    body.entries.push(
+      ...[...documents].map(([path, value], index) => ({
+        mode:
+          value.entryKind === "symlink"
+            ? "120000"
+            : value.entryKind === "submodule"
+              ? "160000"
+              : "100644",
+        type: value.entryKind === "submodule" ? "commit" : "blob",
+        oid: (index + 10).toString(16).padStart(40, "0"),
+        size: Buffer.byteLength(value.text),
+        path,
+        kind: value.entryKind,
+      })),
+    );
+    await route.fulfill({ response, json: body });
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/document?*`, async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.searchParams.get("path") ?? "";
+    const value = documents.get(path);
+    if (!value) {
+      await route.continue();
+      return;
+    }
+    const sourceOid = url.searchParams.get("sourceOid") ?? secondHead;
+    await route.fulfill({
+      json: {
+        ok: true,
+        document: {
+          ref: { kind: "repository-file", pullRequestId, sourceOid, path },
+          availability: "available",
+          text: value.text,
+          byteLength: Buffer.byteLength(value.text),
+          entryKind: value.entryKind,
+          normalizedLineEndings: false,
+          oid: value.entryKind === "submodule" ? submoduleOid : "f".repeat(40),
+        },
+      },
+    });
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/search?*`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("q") !== "注文") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      json: {
+        ok: true,
+        query: "注文",
+        matchCount: 1,
+        truncated: false,
+        results: [
+          {
+            document: {
+              kind: "repository-file",
+              pullRequestId,
+              sourceOid: secondHead,
+              path: emojiPath,
+            },
+            path: emojiPath,
+            line: 1,
+            text: "# 注文レビュー 🚀",
+            matches: [{ start: 2, end: 4 }],
+          },
+        ],
+      },
+    });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const openFromQuickOpen = async (path: string, query = path) => {
+    await page.keyboard.press("Control+P");
+    const palette = page.getByRole("dialog", { name: "ファイルを開く" });
+    const input = palette.getByRole("combobox", { name: "ファイル名で検索" });
+    await input.fill(query);
+    await palette.getByRole("option", { name: path }).click();
+    await expect(page.getByRole("tab", { name: path })).toHaveAttribute("aria-selected", "true");
+  };
+
+  await openFromQuickOpen(emptyPath);
+  await expect(page.locator("diffs-container")).toBeVisible();
+  await expect(page.getByText(/本文を表示できません/)).toHaveCount(0);
+
+  await page.keyboard.press("Control+P");
+  let palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  let input = palette.getByRole("combobox", { name: "ファイル名で検索" });
+  await input.fill("Caf");
+  await expect(palette.getByRole("option", { name: decomposedPath })).toBeVisible();
+  await expect(palette.getByRole("option", { name: composedPath })).toBeVisible();
+  await input.press("Escape");
+
+  await page.keyboard.press("Control+P");
+  palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  input = palette.getByRole("combobox", { name: "ファイル名で検索" });
+  await input.fill("current");
+  const symlinkOption = palette.getByRole("option", { name: symlinkPath });
+  await expect(symlinkOption.locator('[data-file-icon="file-symlink-duo"]')).toBeVisible();
+  await symlinkOption.click();
+  await expect(page.getByText("../releases/current", { exact: true })).toBeVisible();
+
+  await page.keyboard.press("Control+P");
+  palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  input = palette.getByRole("combobox", { name: "ファイル名で検索" });
+  await input.fill("example-module");
+  const submoduleOption = palette.getByRole("option", { name: submodulePath });
+  await expect(submoduleOption.locator('[data-file-icon="submodule"]')).toBeVisible();
+  await submoduleOption.click();
+  await expect(page.getByText(submoduleOid, { exact: true })).toBeVisible();
+
+  await openFromQuickOpen(longPath, "review-target");
+  await openFromQuickOpen(emojiPath, "🚀");
+  const searchInput = page.getByRole("textbox", { name: "全文検索" });
+  await searchInput.fill("注文");
+  await expect(page.getByRole("button", { name: `${emojiPath}、1件` })).toBeVisible();
+  await expect(page.getByRole("button", { name: `${emojiPath} 1行` })).toBeVisible();
+});
+
 test("keeps cached review content and explains how to recover from server loss", async ({
   page,
 }) => {
@@ -273,6 +748,43 @@ test("keeps full and diff file headers directly below the sticky document tabs",
   });
   await reviewScope.getByRole("button", { name: "変更", exact: true }).click();
   await assertStickyHeader();
+});
+
+test("starts a newly activated document at the top of its pane", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("button", { name: "ファイルツリーをすべて展開" }).click();
+  await page
+    .getByRole("button", { name: "src/application/orders/create-order.ts", exact: true })
+    .click();
+
+  const documentPane = page.locator('.document-pane[data-pane="left"]');
+  const longDocument = documentPane.locator("diffs-container");
+  await expect(longDocument.locator('[data-line="42"]')).toBeVisible();
+  const inheritedScrollTop = await documentPane.evaluate((element) => {
+    element.scrollTop = 160;
+    return element.scrollTop;
+  });
+  expect(inheritedScrollTop).toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  const shortDocument = documentPane.locator("diffs-container");
+  await expect(shortDocument.locator('[data-line="1"]')).toBeVisible();
+  await expect.poll(() => documentPane.evaluate((element) => element.scrollTop)).toBe(0);
+  const positions = await shortDocument.evaluate((element) => {
+    const header = element.shadowRoot!.querySelector<HTMLElement>("[data-diffs-header]")!;
+    const firstLine = element.shadowRoot!.querySelector<HTMLElement>('[data-line="1"]')!;
+    return {
+      headerBottom: header.getBoundingClientRect().bottom,
+      firstLineTop: firstLine.getBoundingClientRect().top,
+    };
+  });
+  expect(positions.firstLineTop).toBeGreaterThanOrEqual(positions.headerBottom - 1);
+
+  await page
+    .getByRole("tab", { name: "src/application/orders/create-order.ts", exact: true })
+    .click();
+  await expect.poll(() => documentPane.evaluate((element) => element.scrollTop)).toBe(160);
 });
 
 test("reopens an inline thread consistently after it changes while unmounted", async ({

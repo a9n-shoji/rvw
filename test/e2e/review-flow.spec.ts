@@ -613,7 +613,9 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await actionsMenuButton.click();
   actionsMenu = page.getByRole("menu");
   await expect(actionsMenu.getByRole("menuitem", { name: "GitHubと同期" })).toBeVisible();
-  await expect(actionsMenu.getByRole("menuitem", { name: "状態を再構築" })).toBeVisible();
+  await expect(
+    actionsMenu.getByRole("menuitem", { name: "ローカル状態を削除して再構築" }),
+  ).toBeVisible();
   await actionsMenu.getByRole("menuitem", { name: "GitHubと同期" }).click();
   await expect(page.getByRole("status")).toContainText("GitHubと同期しました");
   await expect(page.getByRole("status")).toHaveCount(0, { timeout: 5_000 });
