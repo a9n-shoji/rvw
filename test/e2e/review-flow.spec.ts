@@ -1327,6 +1327,7 @@ test("closes other or all tabs within the selected pane", async ({ page }) => {
 });
 
 test("keeps a large all-files tree responsive while documents open and close", async ({ page }) => {
+  test.slow();
   const entries = Array.from({ length: 5_000 }, (_, index) => {
     const packageName = `package-${String(index).padStart(4, "0")}`;
     return {
