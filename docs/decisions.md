@@ -1,5 +1,31 @@
 # Architecture decisions
 
+## 2026-08-17: Use an annotated initial release tag without fabricating a signing identity
+
+### Problem
+
+The first npm release needs an immutable Git tag on the reviewed `main` commit, but the maintainer
+machine has no configured GPG or SSH signing identity. npm does not require a signed Git tag, and
+creating an automation-only signing key during release would not prove the maintainer identity that a
+signature is meant to establish.
+
+### Choice
+
+Create `v0.1.0` as an annotated tag on the exact remote `main` commit. Keep the existing fail-closed
+release check that requires the tag to point at `HEAD`, requires `HEAD` to be reachable from
+`origin/main`, and rejects a dirty checkout. Do not generate or store an ad hoc signing key. A future
+maintainer signing setup may switch release tags from `git tag -a` to `git tag -s` without changing the
+npm package contract.
+
+### Trade-offs
+
+- The initial Git tag records the release message and tagger but does not cryptographically attest the
+  maintainer identity.
+- Reviewed GitHub history, the exact-tag release checks, npm account 2FA, and the one-time interactive
+  publish remain the independent controls for `0.1.0`.
+- Future staged releases gain npm OIDC provenance; Git tag signing remains an optional, separately
+  managed maintainer control.
+
 ## 2026-08-17: Publish a scoped package through reviewed staged releases
 
 ### Problem
