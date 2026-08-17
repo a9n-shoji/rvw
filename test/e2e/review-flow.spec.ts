@@ -1356,11 +1356,27 @@ test("keeps a large all-files tree responsive while documents open and close", a
     .toBeGreaterThan(15_000);
   expect(await virtualTree.locator(".file-tree-row").count()).toBeLessThan(100);
 
+  const quickOpenStartedAt = Date.now();
+  await page.keyboard.press("Control+P");
+  const palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  const input = palette.getByRole("combobox", { name: "ファイル名で検索" });
+  await expect(input).toBeFocused({ timeout: 3_000 });
+  expect(Date.now() - quickOpenStartedAt).toBeLessThan(3_000);
+  await input.press("Escape");
+
   const firstFile = page.getByRole("button", {
     name: "packages/package-0000/src/index.ts",
     exact: true,
   });
-  await firstFile.click();
+  const renderDelayMs = await firstFile.evaluate(async (element) => {
+    const startedAt = performance.now();
+    (element as HTMLElement).click();
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    return performance.now() - startedAt;
+  });
+  expect(renderDelayMs).toBeLessThan(2_000);
   await expect(
     page.getByRole("tab", { name: "packages/package-0000/src/index.ts" }),
   ).toHaveAttribute("aria-selected", "true");
