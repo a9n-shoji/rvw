@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildQuickOpenCandidates,
   rankQuickOpenCandidates,
   type QuickOpenCandidate,
 } from "../../src/web/components/QuickOpenPalette.js";
@@ -50,6 +51,35 @@ describe("quick open", () => {
       "src/a.ts",
       "src/b.ts",
       "src/c.ts",
+    ]);
+  });
+
+  it("builds large candidate lists without comparing every document pair", () => {
+    const files = Array.from({ length: 5_000 }, (_, index) => ({
+      path: `packages/package-${String(index).padStart(4, "0")}/src/index.ts`,
+      entryKind: "file" as const,
+    }));
+
+    const candidates = buildQuickOpenCandidates(files, [], null);
+
+    expect(candidates).toHaveLength(5_001);
+    expect(candidates.at(-1)?.path).toBe("packages/package-4999/src/index.ts");
+  });
+
+  it("qualifies virtual and repository documents only when their paths collide", () => {
+    const candidates = buildQuickOpenCandidates(
+      [
+        { path: "Pull Request.md", entryKind: "file" },
+        { path: "README.md", entryKind: "file" },
+      ],
+      [],
+      null,
+    );
+
+    expect(candidates.map(({ path, identityQualifier }) => ({ path, identityQualifier }))).toEqual([
+      { path: "Pull Request.md", identityQualifier: "PR本文" },
+      { path: "Pull Request.md", identityQualifier: "repository" },
+      { path: "README.md", identityQualifier: undefined },
     ]);
   });
 });

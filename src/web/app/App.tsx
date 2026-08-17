@@ -1546,18 +1546,20 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           )}
         </div>
       </header>
-      <QuickOpenPalette
-        open={quickOpenVisible}
-        returnFocusElement={quickOpenReturnFocus}
-        files={allFiles}
-        openDocuments={openDocuments}
-        activeDocument={activeDocument}
-        activePane={activePane}
-        loading={treeQuery.isPending}
-        error={treeQuery.error}
-        onClose={() => setQuickOpenVisible(false)}
-        onOpen={(document) => openDocument(document, activePane)}
-      />
+      {quickOpenVisible && (
+        <QuickOpenPalette
+          open
+          returnFocusElement={quickOpenReturnFocus}
+          files={allFiles}
+          openDocuments={openDocuments}
+          activeDocument={activeDocument}
+          activePane={activePane}
+          loading={treeQuery.isPending}
+          error={treeQuery.error}
+          onClose={() => setQuickOpenVisible(false)}
+          onOpen={(document) => openDocument(document, activePane)}
+        />
+      )}
       <ErrorNotice error={actionError} />
       {syncFeedback && (
         <div className="sync-feedback" role="status">

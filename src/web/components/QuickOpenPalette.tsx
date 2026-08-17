@@ -9,8 +9,13 @@ import {
   type ReactNode,
 } from "react";
 import type { ChangeKind, TreeEntryKind } from "../../domain/models.js";
-import { documentTabPresentation } from "../document-tab-presentation.js";
-import { documentTabKey, type ActiveDocument, type DocumentPaneId } from "../document-workspace.js";
+import { documentIdentityQualifier } from "../document-tab-presentation.js";
+import {
+  documentTabKey,
+  documentTabPath,
+  type ActiveDocument,
+  type DocumentPaneId,
+} from "../document-workspace.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { ChangeIcon } from "./FileTree.js";
 
@@ -135,6 +140,7 @@ function candidateForDocument(
   file: QuickOpenFile,
   activeKey: string | null,
   openKeys: ReadonlySet<string>,
+  identityQualifier?: string,
 ): QuickOpenCandidate {
   const key = documentTabKey(document);
   const parts = pathParts(file.path);
@@ -143,9 +149,42 @@ function candidateForDocument(
     ...parts,
     key,
     document,
+    ...(identityQualifier ? { identityQualifier } : {}),
     isActive: key === activeKey,
     isOpen: openKeys.has(key),
   };
+}
+
+export function buildQuickOpenCandidates(
+  files: QuickOpenFile[],
+  openDocuments: ActiveDocument[],
+  activeDocument: ActiveDocument | null,
+): QuickOpenCandidate[] {
+  const pullRequestDocument: ActiveDocument = { kind: "pull-request-markdown" };
+  const sources: Array<{ document: ActiveDocument; file: QuickOpenFile }> = [
+    {
+      document: pullRequestDocument,
+      file: { path: "Pull Request.md", entryKind: "file" },
+    },
+    ...files.map((file) => ({
+      document: { kind: "repository-file" as const, path: file.path },
+      file,
+    })),
+  ];
+  const pathCounts = new Map<string, number>();
+  for (const { document } of sources) {
+    const path = documentTabPath(document);
+    pathCounts.set(path, (pathCounts.get(path) ?? 0) + 1);
+  }
+
+  const activeKey = activeDocument ? documentTabKey(activeDocument) : null;
+  const openKeys = new Set(openDocuments.map((document) => documentTabKey(document)));
+  return sources.map(({ document, file }) => {
+    const path = documentTabPath(document);
+    const identityQualifier =
+      (pathCounts.get(path) ?? 0) > 1 ? documentIdentityQualifier(document) : undefined;
+    return candidateForDocument(document, file, activeKey, openKeys, identityQualifier);
+  });
 }
 
 export function QuickOpenPalette({
@@ -176,40 +215,10 @@ export function QuickOpenPalette({
   const inputRef = useRef<HTMLInputElement>(null);
   const selectedResultRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
-  const activeKey = activeDocument ? documentTabKey(activeDocument) : null;
-  const openKeys = useMemo(
-    () => new Set(openDocuments.map((document) => documentTabKey(document))),
-    [openDocuments],
+  const candidates = useMemo(
+    () => buildQuickOpenCandidates(files, openDocuments, activeDocument),
+    [activeDocument, files, openDocuments],
   );
-  const candidates = useMemo(() => {
-    const pullRequestDocument: ActiveDocument = { kind: "pull-request-markdown" };
-    const documents: ActiveDocument[] = [
-      pullRequestDocument,
-      ...files.map((file) => ({ kind: "repository-file" as const, path: file.path })),
-    ];
-    return [
-      candidateForDocument(
-        pullRequestDocument,
-        { path: "Pull Request.md", entryKind: "file" },
-        activeKey,
-        openKeys,
-      ),
-      ...files.map((file) =>
-        candidateForDocument(
-          { kind: "repository-file", path: file.path },
-          file,
-          activeKey,
-          openKeys,
-        ),
-      ),
-    ].map((candidate) => {
-      const identityQualifier = documentTabPresentation(
-        candidate.document,
-        documents,
-      ).identityQualifier;
-      return identityQualifier ? { ...candidate, identityQualifier } : candidate;
-    });
-  }, [activeKey, files, openKeys]);
   const results = useMemo(() => rankQuickOpenCandidates(candidates, query), [candidates, query]);
   const selectedResult = results[activeIndex] ?? null;
   const paneLabel = activePane === "left" ? "左ペイン" : "右ペイン";
