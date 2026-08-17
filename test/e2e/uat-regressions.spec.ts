@@ -132,6 +132,7 @@ test("supports standard keyboard navigation in the actions menu", async ({ page 
   const sync = menu.getByRole("menuitem", { name: "GitHubと同期" });
   const rebuild = menu.getByRole("menuitem", { name: "ローカル状態を削除して再構築" });
   await expect(quickOpen).toBeFocused();
+  await expect(sync).toBeEnabled();
 
   await quickOpen.press("ArrowDown");
   await expect(sync).toBeFocused();
@@ -362,12 +363,15 @@ test("visually disambiguates open tabs that share the same basename", async ({ p
     "src/http/controllers/create-order.ts",
     "src/http/schemas/create-order.ts",
   ];
+  await expect(page.getByRole("button", { name: "その他の操作", exact: true })).toBeVisible();
   for (const path of paths) {
     await page.keyboard.press("Control+P");
     const palette = page.getByRole("dialog", { name: "ファイルを開く" });
     const input = palette.getByRole("combobox", { name: "ファイル名で検索" });
+    await expect(input).toBeFocused();
     await input.fill(path);
     await palette.getByRole("option", { name: path }).click();
+    await expect(page.getByRole("tab", { name: path })).toHaveAttribute("aria-selected", "true");
   }
 
   const tablist = page.getByRole("tablist", { name: "開いている文書" });

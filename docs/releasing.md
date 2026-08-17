@@ -49,10 +49,11 @@ pnpm build
 pnpm test:package
 ```
 
-PRをmerge後、merge commitへ署名付きtagを作成してpushする。
+PRをmerge後、remote `main`の確定commitへ説明付きtagを作成してpushする。maintainerの署名鍵を
+別途設定した場合は`-a`を`-s`へ置き換えてよいが、release automationが一時鍵を生成してはならない。
 
 ```bash
-git tag -s v0.1.0
+git tag -a v0.1.0 -m "rvw v0.1.0"
 git push origin v0.1.0
 ```
 
