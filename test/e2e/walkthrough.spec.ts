@@ -5,6 +5,8 @@ const primaryWalkthrough = "注文作成フロー：HTTPからtransactional outb
 const markdownShowcase = "Markdown表現デモ：レビューコメントのショーケース";
 
 async function selectMappedText(locator: Locator, firstCharacterOnly = false): Promise<void> {
+  await locator.scrollIntoViewIfNeeded();
+  await expect(locator).toBeVisible();
   await locator.evaluate((element, selectFirstCharacter) => {
     const text = element.firstChild;
     if (!(text instanceof Text) || text.data.length === 0) {
