@@ -166,11 +166,18 @@ function scrollNavigationLine(
   line: number,
   preferAdditions: boolean,
   resetHorizontal: boolean,
+  onApplied: () => void,
 ): void {
-  window.requestAnimationFrame(() => {
+  const maximumAttempts = 4;
+  let attempts = 0;
+  const scroll = (): void => {
     window.requestAnimationFrame(() => {
+      attempts += 1;
       const root = container.shadowRoot;
-      if (!root) return;
+      if (!root) {
+        if (attempts < maximumAttempts) scroll();
+        return;
+      }
       const candidates = [...root.querySelectorAll<HTMLElement>(`[data-line="${line}"]`)];
       const activeCandidate = candidates.find((candidate) =>
         candidate.hasAttribute("data-editor-active-line"),
@@ -183,7 +190,11 @@ function scrollNavigationLine(
           )
         : undefined;
       const target = activeCandidate ?? additionCandidate ?? candidates[0];
-      if (!target) return;
+      const pane = container.closest<HTMLElement>(".document-pane");
+      if (!target || !pane || !container.isConnected || pane.clientHeight === 0) {
+        if (attempts < maximumAttempts) scroll();
+        return;
+      }
       const horizontalScroller = target.closest<HTMLElement>("code");
       const previousScrollLeft = horizontalScroller?.scrollLeft ?? 0;
       target.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
@@ -194,8 +205,21 @@ function scrollNavigationLine(
           horizontalScroller.scrollLeft = nextScrollLeft;
         });
       }
+      const paneRect = pane.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const viewportTop = diffViewportTop(pane);
+      const viewportCenter = (viewportTop + paneRect.bottom) / 2;
+      const targetCenter = (targetRect.top + targetRect.bottom) / 2;
+      const centered =
+        Math.abs(targetCenter - viewportCenter) <= Math.max(targetRect.height * 2, 24);
+      if (!centered && attempts < maximumAttempts) {
+        scroll();
+        return;
+      }
+      onApplied();
     });
-  });
+  };
+  window.requestAnimationFrame(scroll);
 }
 
 function diffViewportTop(pane: HTMLElement): number {
@@ -295,20 +319,20 @@ function markdownHeadingId(children: ReactNode, counts: Map<string, number>): st
   return count === 0 ? base : `${base}-${count}`;
 }
 
-function openMarkdownFragment(anchor: HTMLAnchorElement, href: string): void {
+function markdownFragmentLine(anchor: HTMLAnchorElement, href: string): number | null {
   let id: string;
   try {
     id = decodeURIComponent(href.slice(1));
   } catch {
-    return;
+    return null;
   }
   const pane = anchor.closest(".document-pane");
   const target = [...(pane?.querySelectorAll<HTMLElement>("[id]") ?? [])].find(
     (element) => element.id === id,
   );
-  if (!target) return;
-  target.scrollIntoView({ block: "start" });
-  window.history.replaceState(null, "", href);
+  if (!target) return null;
+  const line = Number(target.dataset.rvwSourceStartLine);
+  return Number.isInteger(line) && line > 0 ? line : null;
 }
 
 function renderRepositoryMarkdown({
@@ -324,6 +348,7 @@ function renderRepositoryMarkdown({
   pullRequestId,
   linkPointerStart,
   onOpenRepositoryLink,
+  onOpenMarkdownFragment,
 }: {
   text: string;
   pullRequestMarkdown: boolean;
@@ -337,6 +362,7 @@ function renderRepositoryMarkdown({
   pullRequestId: string;
   linkPointerStart: { current: PointerPosition | null };
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
+  onOpenMarkdownFragment: (line: number, hash: string) => void;
 }): ReactNode {
   const headingCounts = new Map<string, number>();
   return (
@@ -433,7 +459,8 @@ function renderRepositoryMarkdown({
                   linkPointerStart.current = null;
                   if (dragged) event.currentTarget.dataset.rvwLinkDragged = "true";
                   if (!dragged && href?.startsWith("#")) {
-                    openMarkdownFragment(event.currentTarget, href);
+                    const line = markdownFragmentLine(event.currentTarget, href);
+                    if (line !== null) onOpenMarkdownFragment(line, href);
                   }
                 }}
                 onClick={(event) => {
@@ -444,7 +471,10 @@ function renderRepositoryMarkdown({
                   }
                   if (!href?.startsWith("#")) return;
                   event.preventDefault();
-                  if (event.detail === 0) openMarkdownFragment(event.currentTarget, href);
+                  if (event.detail === 0) {
+                    const line = markdownFragmentLine(event.currentTarget, href);
+                    if (line !== null) onOpenMarkdownFragment(line, href);
+                  }
                 }}
               >
                 {children}
@@ -571,6 +601,8 @@ export function DocumentViewer({
   themePreference,
   onCommentActiveChange,
   navigationTarget = null,
+  onNavigationApplied,
+  onOpenMarkdownFragment,
   onOpenRepositoryLink,
 }: {
   pullRequestId: string;
@@ -586,6 +618,8 @@ export function DocumentViewer({
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   navigationTarget?: ViewerNavigationTarget | null;
+  onNavigationApplied: (requestId: number) => void;
+  onOpenMarkdownFragment: (line: number, hash: string) => void;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
 }) {
   if (activeDocument.kind === "walkthrough") {
@@ -652,8 +686,16 @@ export function DocumentViewer({
   ]);
   const loadedOptimisticCommentId = useRef<string | null>(null);
   const markdownLinkPointerStart = useRef<PointerPosition | null>(null);
+  const navigationAppliedRef = useRef(onNavigationApplied);
+  const openMarkdownFragmentRef = useRef(onOpenMarkdownFragment);
   const openRepositoryLinkRef = useRef(onOpenRepositoryLink);
+  navigationAppliedRef.current = onNavigationApplied;
+  openMarkdownFragmentRef.current = onOpenMarkdownFragment;
   openRepositoryLinkRef.current = onOpenRepositoryLink;
+  const openMarkdownFragment = useCallback(
+    (line: number, hash: string) => openMarkdownFragmentRef.current(line, hash),
+    [],
+  );
   const openRepositoryLink = useCallback(
     (path: string, sourceOid: string, openInOtherPane: boolean) =>
       openRepositoryLinkRef.current(path, sourceOid, openInOtherPane),
@@ -686,6 +728,7 @@ export function DocumentViewer({
         navigationTarget.line,
         false,
         navigationTarget.resetHorizontal,
+        () => navigationAppliedRef.current(navigationTarget.requestId),
       );
     },
     [navigationTarget],
@@ -720,6 +763,7 @@ export function DocumentViewer({
         navigationTarget.line,
         true,
         navigationTarget.resetHorizontal,
+        () => navigationAppliedRef.current(navigationTarget.requestId),
       );
     },
     [navigationTarget],
@@ -921,12 +965,14 @@ export function DocumentViewer({
   }, [navigationRequestId]);
   useLayoutEffect(() => {
     if (!navigationTarget || navigationTarget.line !== null) return;
+    const requestId = navigationTarget.requestId;
     const frame = window.requestAnimationFrame(() => {
       diffSurfaceRef.current?.scrollIntoView({
         behavior: "auto",
         block: "start",
         inline: "nearest",
       });
+      navigationAppliedRef.current(requestId);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [navigationTarget]);
@@ -1168,24 +1214,6 @@ export function DocumentViewer({
             : { side: "additions" as const, endSide: "additions" as const }),
         }
       : null;
-  useLayoutEffect(() => {
-    if (
-      !showingMarkdownPreview ||
-      !navigationTarget ||
-      navigationTarget.line === null ||
-      appliedNavigationRequest.current === navigationTarget.requestId
-    ) {
-      return;
-    }
-    appliedNavigationRequest.current = navigationTarget.requestId;
-    const frame = window.requestAnimationFrame(() => {
-      const target = diffSurfaceRef.current?.querySelector<HTMLElement>(
-        `[data-rvw-source-start-line="${navigationTarget.line}"]`,
-      );
-      target?.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [navigationTarget, showingMarkdownPreview]);
   const markdownText =
     fullQuery.data?.availability === "available" ? (fullQuery.data.text ?? "") : null;
   const markdownSelectedRange: MarkdownSourceRange | null = selection
@@ -1218,6 +1246,7 @@ export function DocumentViewer({
             pullRequestId,
             linkPointerStart: markdownLinkPointerStart,
             onOpenRepositoryLink: openRepositoryLink,
+            onOpenMarkdownFragment: openMarkdownFragment,
           }),
     [
       activeCommentId,
@@ -1229,11 +1258,34 @@ export function DocumentViewer({
       markdownComposerOpen,
       markdownDiv,
       markdownText,
+      openMarkdownFragment,
       openRepositoryLink,
       pullRequestId,
       selectedOid,
     ],
   );
+  useLayoutEffect(() => {
+    if (
+      !showingMarkdownPreview ||
+      !navigationTarget ||
+      navigationTarget.line === null ||
+      appliedNavigationRequest.current === navigationTarget.requestId ||
+      renderedRepositoryMarkdown === null
+    ) {
+      return;
+    }
+    const requestId = navigationTarget.requestId;
+    const frame = window.requestAnimationFrame(() => {
+      const target = diffSurfaceRef.current?.querySelector<HTMLElement>(
+        `[data-rvw-source-start-line="${navigationTarget.line}"]`,
+      );
+      if (!target) return;
+      target.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+      appliedNavigationRequest.current = requestId;
+      navigationAppliedRef.current(requestId);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [navigationTarget, renderedRepositoryMarkdown, showingMarkdownPreview]);
   const activeSelection = fileComposerOpen
     ? null
     : (selectionPreview ?? selection ?? navigationSelection);

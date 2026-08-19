@@ -799,6 +799,245 @@ test("starts a newly activated document at the top of its pane", async ({ page }
   await expect.poll(() => documentPane.evaluate((element) => element.scrollTop)).toBe(160);
 });
 
+test("browser back and forward restore the focused reading pane without rolling back review scope", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await expect(page.getByRole("button", { name: "src/fixture.ts", exact: true })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const state = window.history.state as {
+          rvwReading?: { version?: unknown };
+        } | null;
+        return state?.rvwReading?.version ?? null;
+      }),
+    )
+    .toBe(1);
+
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await expect(
+    page
+      .locator('.document-pane[data-pane="left"]')
+      .getByRole("tab", { name: "src/fixture.ts", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+
+  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("button", { name: "全文", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Pull Request.md", exact: true })
+    .click({ modifiers: ["Meta"] });
+
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  const pullRequestTab = rightPane.getByRole("tab", { name: "Pull Request.md", exact: true });
+  await expect(pullRequestTab).toHaveAttribute("aria-selected", "true");
+  await expect(rightPane).toHaveClass(/active/);
+
+  await page.goBack();
+  await expect(leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(leftPane).toHaveClass(/active/);
+  await expect(pullRequestTab).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "全ファイル", exact: true })).toHaveClass(/active/);
+  await expect(page.getByRole("button", { name: "全文", exact: true })).toHaveClass(/active/);
+
+  await page.goForward();
+  await expect(pullRequestTab).toHaveAttribute("aria-selected", "true");
+  await expect(rightPane).toHaveClass(/active/);
+});
+
+test("browser back restores the reading position after scrolling away from a line jump", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("textbox", { name: "全文検索", exact: true }).fill("dispatcher");
+  await page.getByRole("button", { name: "README.md 50行", exact: true }).click();
+
+  const pane = page.locator('.document-pane[data-pane="left"]');
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(800);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window.history.state as {
+              rvwReading?: { locator?: { kind?: unknown } };
+            } | null
+          )?.rvwReading?.locator?.kind ?? null,
+      ),
+    )
+    .toBe("line");
+
+  await pane.evaluate((element) => {
+    element.scrollTop = 200;
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const locator = (
+          window.history.state as {
+            rvwReading?: { locator?: { kind?: unknown; top?: unknown } };
+          } | null
+        )?.rvwReading?.locator;
+        return locator?.kind === "scroll" ? locator.top : null;
+      }),
+    )
+    .toBe(200);
+
+  await page.getByRole("button", { name: "src/new.ts", exact: true }).click();
+  await page.goBack();
+  await expect(pane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBe(200);
+
+  await page.goForward();
+  await expect(pane.getByRole("tab", { name: "src/new.ts", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.goBack();
+  await expect(pane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBe(200);
+});
+
+test("browser back returns from a Markdown heading to the prior position in the same document", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("button", { name: "README.md", exact: true }).click();
+
+  const pane = page.locator('.document-pane[data-pane="left"]');
+  const readmeTab = pane.getByRole("tab", { name: "README.md", exact: true });
+  await pane.getByRole("link", { name: "the request lifecycle", exact: true }).click();
+  await expect(page).toHaveURL(/#request-lifecycle$/);
+
+  await page.goBack();
+  await expect(readmeTab).toHaveAttribute("aria-selected", "true");
+  await expect(page).not.toHaveURL(/#request-lifecycle$/);
+});
+
+test("reload starts a fresh ephemeral document workspace", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Pull Request.md", exact: true })
+    .click({ modifiers: ["Meta"] });
+  await expect(page.locator('.document-pane[data-pane="right"]')).toBeVisible();
+
+  await page.reload();
+
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  await expect(leftPane.getByRole("tab", { name: "Pull Request.md", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(leftPane.getByRole("tab")).toHaveCount(1);
+  await expect(page.locator('.document-pane[data-pane="right"]')).toHaveCount(0);
+});
+
+test("focuses a deep Walkthrough range when command-click creates the right pane", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page
+    .getByRole("button", { name: "注文作成フロー：HTTPからtransactional outboxまで", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "recordPaymentAuthorization L26–34", exact: true })
+    .click({ modifiers: ["Meta"] });
+
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  const diff = rightPane.locator("diffs-container");
+  await expect(diff).toHaveAttribute("data-search-target-line", "26");
+  await expect(diff.locator('[data-line="26"][data-editor-active-line]')).toBeVisible();
+  await expect
+    .poll(async () => {
+      const paneBox = await rightPane.boundingBox();
+      const lineBox = await diff.locator('[data-line="26"][data-editor-active-line]').boundingBox();
+      if (!paneBox || !lineBox) return Number.POSITIVE_INFINITY;
+      const paneCenter = paneBox.y + paneBox.height / 2;
+      const lineCenter = lineBox.y + lineBox.height / 2;
+      return Math.abs(paneCenter - lineCenter);
+    })
+    .toBeLessThan(80);
+
+  await page.goBack();
+  await expect(
+    page
+      .locator('.document-pane[data-pane="left"]')
+      .getByRole("tab", { name: "注文作成フロー：HTTPからtransactional outboxまで" }),
+  ).toHaveAttribute("aria-selected", "true");
+});
+
+test("comment targets participate in reading history without persisting transient comment focus", async ({
+  page,
+  request,
+}) => {
+  const created = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: secondHead,
+        path: "src/fixture.ts",
+        sourceDocumentHash: "reading-history-comment",
+        quotedText: 'export const fixtureSearchTarget = "fixture";',
+        startLine: 13,
+        endLine: 13,
+      },
+      body: "Reading history comment target.",
+      authorLabel: "You",
+    },
+  });
+  expect(created.ok()).toBe(true);
+  const commentId = ((await created.json()) as { comment: { id: string } }).comment.id;
+
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await page.getByRole("button", { name: "src/new.ts", exact: true }).click();
+    const comment = page.locator(`.comment-thread--sidebar[data-comment-id="${commentId}"]`);
+    await comment.getByRole("button", { name: "コメント対象を開く", exact: true }).click();
+
+    const leftPane = page.locator('.document-pane[data-pane="left"]');
+    const fixtureTab = leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true });
+    await expect(fixtureTab).toHaveAttribute("aria-selected", "true");
+    await expect(leftPane.locator("diffs-container")).toHaveAttribute(
+      "data-search-target-line",
+      "13",
+    );
+    expect(
+      await page.evaluate(
+        () =>
+          (
+            window.history.state as {
+              rvwReading?: { commentId?: unknown };
+            } | null
+          )?.rvwReading?.commentId,
+      ),
+    ).toBeUndefined();
+
+    await page.goBack();
+    await expect(leftPane.getByRole("tab", { name: "src/new.ts", exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await page.goForward();
+    await expect(fixtureTab).toHaveAttribute("aria-selected", "true");
+  } finally {
+    await request.delete(`/api/comments/${commentId}`, { data: {} });
+  }
+});
+
 test("reopens an inline thread consistently after it changes while unmounted", async ({
   page,
   request,

@@ -515,6 +515,7 @@ export function WalkthroughViewer({
   comments,
   activeCommentId,
   navigationTarget,
+  onNavigationApplied,
   themePreference,
   onCommentActiveChange,
   onOpenReference,
@@ -525,6 +526,7 @@ export function WalkthroughViewer({
   comments: ReviewComment[];
   activeCommentId: string | null;
   navigationTarget?: ViewerNavigationTarget | null;
+  onNavigationApplied: (requestId: number) => void;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onOpenReference: (
@@ -538,6 +540,8 @@ export function WalkthroughViewer({
   const queryClient = useQueryClient();
   const viewerRef = useRef<HTMLDivElement>(null);
   const appliedNavigationRequest = useRef<number | null>(null);
+  const navigationAppliedRef = useRef(onNavigationApplied);
+  navigationAppliedRef.current = onNavigationApplied;
   const [composerOpen, setComposerOpen] = useState(false);
   const [selectedRange, setSelectedRange] = useState<MarkdownSourceRange | null>(null);
   const [diagramRange, setDiagramRange] = useState<MarkdownSourceRange | null>(null);
@@ -556,12 +560,14 @@ export function WalkthroughViewer({
     if (!navigationTarget || appliedNavigationRequest.current === navigationTarget.requestId) {
       return;
     }
-    appliedNavigationRequest.current = navigationTarget.requestId;
+    const requestId = navigationTarget.requestId;
     const frame = window.requestAnimationFrame(() => {
       const root = viewerRef.current;
       if (!root) return;
       if (navigationTarget.line === null) {
         root.scrollIntoView({ behavior: "auto", block: "start", inline: "nearest" });
+        appliedNavigationRequest.current = requestId;
+        navigationAppliedRef.current(requestId);
         return;
       }
       const line = String(navigationTarget.line);
@@ -570,7 +576,10 @@ export function WalkthroughViewer({
         root.querySelector<HTMLElement>(`[data-rvw-source-start-line="${line}"]`);
       const collapsedDetails = target?.closest<HTMLDetailsElement>("details:not([open])");
       if (collapsedDetails) collapsedDetails.open = true;
-      target?.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+      if (!target) return;
+      target.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+      appliedNavigationRequest.current = requestId;
+      navigationAppliedRef.current(requestId);
     });
     return () => window.cancelAnimationFrame(frame);
   }, [navigationTarget]);

@@ -248,6 +248,17 @@ empty fileは従来どおり明示的に扱う。
 - Walkthroughも独立した一時tabとして保持し、そこからcodeを開いても説明tabを閉じない。
   tabは個別に閉じられ、paneの`...` menuからactive以外またはpane内すべてを一括で閉じられる。
   overflow時は横scrollとopen-tab一覧を提供する。
+- browser Back / Forwardは、操作順にfocused paneのactive文書と行またはpane内scroll位置を辿るreading
+  historyとして扱う。file tree、Quick Open、tab、Search result、comment target、Walkthrough reference、
+  repository Markdown linkと同一Markdown内の見出しlinkによる文書または行への移動だけを新しいentryにし、
+  単なるpane focus、tab close／move、pane幅、sidebar、検索入力、自動syncをentryにしない。commit範囲、
+  全文／変更、stacked / split、
+  tree modeはhistoryから復元せず、Back / Forward後も現在のglobal review scopeを維持する。
+- history復元では対象文書が現在属するpaneを優先し、閉じている場合だけ記録したpaneへ再度開く。対象paneを
+  focusして文書と位置を復元するが、もう一方のpane、open tab集合、pane配置を巻き戻さず、移動元のtabも
+  閉じない。line navigationは適用位置に留まる間だけline anchorを保持し、利用者がそこからscrollした後は
+  実際のpane内scroll位置へ切り替える。pane内scrollはbrowserのwindow scroll restorationへ委ねず、文書
+  ごとの位置として復元する。reloadは既存の一時workspace境界を保ち、保持された現在entryを初期文書で置換する。
 - document workspaceは通常一ペイン、必要時に横並びの最大二ペインとする。document identityは一つの
   paneだけに所属し、tab drag & dropまたはpane headerの`...` menuで左右へ移動できる。
 - sidebarとdocument workspaceの境界、および二ペイン間の境界はpointer dragで横幅を変更できる。
@@ -255,7 +266,8 @@ empty fileは従来どおり明示的に扱う。
   既定幅へ戻し、左右arrow keyでも調整できる。幅はbrowser内だけの一時状態で永続化しない。
 - sidebarのfile、search result、Walkthroughは`Cmd` / `Ctrl`+clickで右ペインへ開ける。document
   pane内のWalkthrough reference、diagram node、repository Markdown linkは`Cmd` / `Ctrl`+clickで
-  操作元と反対のペインへ開く。通常clickは操作元のペインへ開く。
+  操作元と反対のペインへ開く。通常clickは操作元のペインへ開く。新しい反対paneを初めて作る場合も、code
+  referenceの選択範囲を描画完了後にviewport中央へfocusする。
 - Walkthrough reference、repository Markdownの相対link、comment targetを開いても、repository全体の
   commit範囲、全文／変更、stacked / split、tree modeを変更しない。Walkthrough referenceは全文では
   retained exact source、変更では現在選択中のcommit範囲を同じpathへ適用し、stacked / splitを
@@ -1070,6 +1082,9 @@ E2E:
 16. viewerでWalkthroughと紐づくcomment件数を確認して削除し、tabとcommentを同時に除去
 17. root commentとreplyのGFM、soft line break、sanitize、repository内link、同一commit相対画像、
     表示専用Mermaidをsidebarとinline threadでrenderし、編集時は元Markdown sourceを表示する
+18. file、tab、Search result、comment、Walkthrough reference、Markdown相対／見出しlinkを辿ったbrowser
+    Back / Forwardがfocused paneの文書と位置を復元し、行jump後に手動で読み進めた位置、反対paneのtab、
+    現在のcommit範囲、表示mode、tree modeを維持。reloadは初期一時workspaceへ戻る
 
 CLI contract:
 
