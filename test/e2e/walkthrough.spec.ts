@@ -675,7 +675,7 @@ test("moves document tabs between at most two panes and previews repository Mark
   const tableSourceLine = page
     .locator('.markdown-preview [data-rvw-source-start-line="34"][data-rvw-source-leaf="true"]')
     .filter({ hasText: "Deployment review" });
-  await selectMappedText(tableSourceLine);
+  expect((await dragNativeText(page, tableSourceLine)).trim()).toBe("Deployment review");
   await page.getByRole("button", { name: "L34へコメント", exact: true }).click();
   await page
     .getByRole("textbox", { name: "README.md · L34へコメント" })
