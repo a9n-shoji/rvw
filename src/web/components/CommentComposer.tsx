@@ -71,7 +71,7 @@ export function InlineCommentComposer({
           }
           handleCommentSubmitShortcut(event, canSubmit, onSubmit);
         }}
-        placeholder="コメントを入力（plain text）"
+        placeholder="コメントを入力（Markdown対応）"
         aria-label={label}
       />
       {validationError && <p className="form-error">{validationError}</p>}

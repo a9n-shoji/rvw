@@ -259,6 +259,12 @@ export async function dispatchAgentSocketRequest(
         offset: input.offset,
       });
     }
+    case "comment.create": {
+      const input = parseOperationInput("comment.create", request.input);
+      return await service.createCommentForReference(
+        input as Parameters<RvwService["createCommentForReference"]>[0],
+      );
+    }
     case "comment.get": {
       const input = parseOperationInput("comment.get", request.input);
       return await service.getCommentReviewContext(input.uri, { live: input.live });

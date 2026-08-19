@@ -353,6 +353,46 @@ describe("RvwService commit workflow", () => {
     }
   });
 
+  it("creates an Agent comment through a registered Pull Request reference", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-agent-comment-create-");
+    await service.openPullRequest(undefined, repository);
+
+    const comment = await service.createCommentForReference({
+      pullRequest: fake.pullRequest.url,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 2,
+        endLine: 2,
+      },
+      body: "Keep the second line observable to callers.",
+      authorLabel: "Codex",
+    });
+
+    expect(comment.ref).toMatch(/^rvw:\/\/comment\//);
+    expect(comment).toMatchObject({
+      createdHeadOid: firstHead,
+      resolvedAt: null,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 2,
+        endLine: 2,
+      },
+      posts: [
+        {
+          body: "Keep the second line observable to callers.",
+          authorLabel: "Codex",
+          isRoot: true,
+        },
+      ],
+    });
+  });
+
   it("enforces the shared author label limit at the application boundary", async () => {
     const { repository, service } = setup("rvw-author-label-");
     const opened = await service.openPullRequest(undefined, repository);

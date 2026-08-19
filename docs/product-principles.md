@@ -31,8 +31,8 @@ Skill + CLI protocol
 Agentが次の実装へ反映
 ```
 
-人間は理解と判断を担い、Agentはauthorizedな実装作業を担う。`rvw`はAgent runtimeになることなく、
-両者の間のreview contextを保持する。
+人間は最終的な理解と判断を担い、Agentはauthorizedな実装作業に加え、明示的に依頼されたreviewで見つけた
+指摘を通常のcommentとして記録できる。`rvw`はAgent runtimeになることなく、両者の間のreview contextを保持する。
 
 ## 原則
 
@@ -56,8 +56,9 @@ exact commit objectを保持し、current PR historyが変わった後も古いc
 ### 人間の判断をdurableかつAgent非依存に保つ
 
 Commentは特定modelやsessionへ結び付いたchat messageではなくreview recordである。stableなcomment
-参照、platform非依存の同じSkill、JSON CLI protocolにより、CodexとClaude Codeは同じfeedbackを読み、
-返信し、解決できる。
+参照、platform非依存の同じSkill、JSON CLI protocolにより、CodexとClaude Codeは同じfeedbackを作成し、
+読み、返信し、解決できる。Agent作成commentも人間のcommentと同じ未解決／解決済みthreadであり、
+別のAI session stateを作らない。
 viewerはAgentを起動せず、codeを編集せず、testを実行せず、actionをautonomous loopへ隠さない。
 
 ### Agentの説明はnavigation命令ではなく、検証可能なindexにする

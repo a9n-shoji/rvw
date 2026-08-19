@@ -1586,3 +1586,202 @@ test("deletes an unnecessary walkthrough and its whole-document feedback after c
   await expect(page.getByRole("button", { name: "ウォークスルー 4", exact: true })).toBeVisible();
   await expect(page.getByText(feedback)).toHaveCount(0);
 });
+
+test("renders safe context-bound Markdown in sidebar and inline comment posts", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(60_000);
+  const viewResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  expect(viewResponse.ok()).toBe(true);
+  const view = (await viewResponse.json()) as { headOid: string };
+  const alternateSourceOid = view.headOid === "c".repeat(40) ? "b".repeat(40) : "c".repeat(40);
+  const primaryWalkthroughId = "70000000-0000-4000-8000-000000000001";
+  const body = [
+    "## Agent Markdown finding",
+    "first line",
+    "second line",
+    "",
+    "- [x] Repository evidence checked",
+    "",
+    "| Evidence | Result |",
+    "| --- | --- |",
+    "| Fixture | Needs attention |",
+    "",
+    "Open [the fixture source](src/fixture.ts).",
+    "[Walkthrough-only reference](rvw-ref:comment-reference)",
+    "",
+    "![Order lifecycle](docs/order-lifecycle.svg)",
+    "![External evidence](https://example.invalid/comment.png)",
+    "",
+    "<script>window.__rvwUnsafeCommentExecuted = true;</script>",
+    "",
+    "```mermaid",
+    "flowchart LR",
+    "  Request --> Review",
+    "```",
+  ].join("\n");
+  const createResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: view.headOid,
+        path: "README.md",
+        startLine: 5,
+        endLine: 5,
+      },
+      body,
+      authorLabel: "Codex · Markdown",
+    },
+  });
+  expect(createResponse.ok()).toBe(true);
+  const created = (await createResponse.json()) as { comment: { id: string } };
+
+  const replyResponse = await request.post(`/api/comments/${created.comment.id}/posts`, {
+    data: {
+      body: "Reply context\n\n![Reply related commit](docs/order-lifecycle.svg)",
+      relatedCommitOid: alternateSourceOid,
+      authorLabel: "Codex · Related commit",
+    },
+  });
+  expect(replyResponse.ok()).toBe(true);
+
+  const pullRequestContextResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: { kind: "pull-request" },
+      body: "![Creation head context](docs/order-lifecycle.svg)",
+      authorLabel: "Codex · Creation head",
+    },
+  });
+  expect(pullRequestContextResponse.ok()).toBe(true);
+  const pullRequestContext = (await pullRequestContextResponse.json()) as {
+    comment: { id: string };
+  };
+
+  const walkthroughContextResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: { kind: "walkthrough", walkthroughId: primaryWalkthroughId },
+      body: "![Walkthrough source context](docs/order-lifecycle.svg)",
+      authorLabel: "Codex · Walkthrough source",
+    },
+  });
+  expect(walkthroughContextResponse.ok()).toBe(true);
+  const walkthroughContext = (await walkthroughContextResponse.json()) as {
+    comment: { id: string };
+  };
+
+  await page.route(`**/api/pull-requests/${pullRequestId}/walkthroughs`, async (route) => {
+    const response = await route.fetch();
+    const responseBody = (await response.json()) as {
+      walkthroughs: Array<{ id: string; sourceOid: string }>;
+    };
+    responseBody.walkthroughs = responseBody.walkthroughs.map((walkthrough) =>
+      walkthrough.id === primaryWalkthroughId
+        ? { ...walkthrough, sourceOid: alternateSourceOid }
+        : walkthrough,
+    );
+    await route.fulfill({ response, json: responseBody });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const sidebarThread = page.locator(`.comment-sidebar [data-comment-id="${created.comment.id}"]`);
+  await sidebarThread.scrollIntoViewIfNeeded();
+  const sidebarMarkdown = sidebarThread.locator(".comment-markdown");
+  await expect(
+    sidebarMarkdown.getByRole("heading", { name: "Agent Markdown finding" }),
+  ).toBeVisible();
+  await expect(sidebarMarkdown.getByRole("checkbox")).toBeChecked();
+  await expect(sidebarMarkdown.getByRole("table")).toBeVisible();
+  await expect(
+    sidebarMarkdown.getByText("Walkthrough-only reference", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    sidebarMarkdown.getByRole("link", { name: "Walkthrough-only reference" }),
+  ).toHaveCount(0);
+  await expect(sidebarMarkdown.locator("[data-rvw-source-start-line]")).toHaveCount(0);
+  await expect(sidebarMarkdown.locator("[data-rvw-composer-anchor]")).toHaveCount(0);
+  await expect(
+    sidebarMarkdown.locator("p").filter({ hasText: "first line" }).locator("br"),
+  ).toHaveCount(1);
+  await expect(sidebarMarkdown.locator('img[alt="Order lifecycle"]')).toHaveAttribute(
+    "src",
+    new RegExp(
+      `/api/pull-requests/${pullRequestId}/markdown-asset\\?sourceOid=${view.headOid}&path=docs%2Forder-lifecycle.svg`,
+    ),
+  );
+  await expect(sidebarThread.locator('img[alt="Reply related commit"]')).toHaveAttribute(
+    "src",
+    new RegExp(
+      `/api/pull-requests/${pullRequestId}/markdown-asset\\?sourceOid=${alternateSourceOid}&path=docs%2Forder-lifecycle.svg`,
+    ),
+  );
+  await expect(
+    page.locator(
+      `.comment-sidebar [data-comment-id="${pullRequestContext.comment.id}"] img[alt="Creation head context"]`,
+    ),
+  ).toHaveAttribute(
+    "src",
+    new RegExp(
+      `/api/pull-requests/${pullRequestId}/markdown-asset\\?sourceOid=${view.headOid}&path=docs%2Forder-lifecycle.svg`,
+    ),
+  );
+  await expect(
+    page.locator(
+      `.comment-sidebar [data-comment-id="${walkthroughContext.comment.id}"] img[alt="Walkthrough source context"]`,
+    ),
+  ).toHaveAttribute(
+    "src",
+    new RegExp(
+      `/api/pull-requests/${pullRequestId}/markdown-asset\\?sourceOid=${alternateSourceOid}&path=docs%2Forder-lifecycle.svg`,
+    ),
+  );
+  await expect(
+    sidebarMarkdown.getByRole("img", {
+      name: "画像: External evidence（自動読み込み停止）",
+    }),
+  ).toBeVisible();
+  await expect(sidebarMarkdown.locator("script")).toHaveCount(0);
+  expect(await page.evaluate(() => "__rvwUnsafeCommentExecuted" in window)).toBe(false);
+  const sidebarDiagram = sidebarMarkdown.locator(".comment-mermaid-shell");
+  await sidebarDiagram.scrollIntoViewIfNeeded();
+  await expect(sidebarDiagram.locator("svg")).toBeVisible();
+  await expect(sidebarDiagram.locator("[data-walkthrough-reference-id]")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.locator(".file-tree").getByRole("button", { name: "README.md", exact: true }).click();
+  const inlineThread = page.locator(
+    `.markdown-inline-comments [data-comment-id="${created.comment.id}"]`,
+  );
+  await expect(inlineThread).toBeVisible();
+  await expect(inlineThread.getByRole("heading", { name: "Agent Markdown finding" })).toBeVisible();
+
+  const sourceRequest = page.waitForRequest((candidate) => {
+    const url = new URL(candidate.url());
+    return (
+      url.pathname === `/api/pull-requests/${pullRequestId}/document` &&
+      url.searchParams.get("sourceOid") === view.headOid &&
+      url.searchParams.get("path") === "src/fixture.ts"
+    );
+  });
+  await sidebarThread.getByRole("link", { name: "the fixture source" }).click();
+  await sourceRequest;
+  await expect(page.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  await sidebarThread
+    .locator(".comment-thread-header")
+    .getByRole("button", { name: "コメントのその他の操作" })
+    .click();
+  await page
+    .getByRole("menu", { name: "コメントのその他の操作" })
+    .getByRole("menuitem", { name: "編集" })
+    .click();
+  await expect(sidebarThread.getByRole("textbox", { name: "コメントを編集" })).toHaveValue(body);
+  await sidebarThread.getByRole("button", { name: "キャンセル" }).click();
+});

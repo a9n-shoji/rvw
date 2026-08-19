@@ -95,6 +95,48 @@ describe("Agent socket", () => {
     );
   });
 
+  it("routes strict comment creation through the running rvw service", async () => {
+    const createCommentForReference = vi
+      .fn()
+      .mockResolvedValue({ ref: "rvw://comment/10000000-0000-4000-8000-000000000008" });
+    const input = {
+      pullRequest: "https://github.com/acme/review-repo/pull/7",
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: "a".repeat(40),
+        path: "src/example.ts",
+        startLine: 2,
+        endLine: 3,
+      },
+      body: "The caller cannot observe this failure.",
+      authorLabel: "Codex",
+    };
+
+    await expect(
+      dispatchAgentSocketRequest({ createCommentForReference } as unknown as RvwService, {
+        protocolVersion: 1,
+        operation: "comment.create",
+        input,
+      }),
+    ).resolves.toEqual({
+      ref: "rvw://comment/10000000-0000-4000-8000-000000000008",
+    });
+    expect(createCommentForReference).toHaveBeenCalledWith(input);
+
+    await expect(
+      dispatchAgentSocketRequest({ createCommentForReference } as unknown as RvwService, {
+        protocolVersion: 1,
+        operation: "comment.create",
+        input: {
+          ...input,
+          target: { ...input.target, endLine: null },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(createCommentForReference).toHaveBeenCalledOnce();
+  });
+
   it("rejects a different explicit database before dispatching the operation", async () => {
     const setCommentResolved = vi.fn();
 

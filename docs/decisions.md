@@ -65,6 +65,40 @@ forward-fix policy in `docs/releasing.md`.
   about their dist-tag instead of silently moving `latest`.
 - The scoped package installs as `@a9n-shoji/rvw`, while its executable remains the short `rvw` command.
 
+## 2026-08-18: Let an authorized Agent create ordinary rvw comment threads
+
+### Problem
+
+The Agent comment protocol could discover, read, reply to, resolve, and reopen existing feedback, but
+only the browser could create a root thread. An Agent explicitly asked to review a committed snapshot
+therefore had no durable way to record a newly discovered concern in the same rvw reading context. A
+Walkthrough was not an appropriate substitute: it is an implementation explanation, not review
+feedback, and publishing one would give the finding the wrong lifecycle and presentation.
+
+### Choice
+
+Add the single-item `rvw comment create --stdin --json` command and advertise the additive
+`comment.create` capability without advancing protocol version 2. The command resolves a registered
+Pull Request, accepts the existing PR, PR-Markdown, exact repository document, or Walkthrough target
+shapes, and delegates to the same application-level validation used by browser comment creation.
+
+An Agent-created comment is an ordinary unresolved thread with an optional accurate `authorLabel`.
+It has no Agent-only state, priority, category, automatic resolution, or hidden session link. Creation
+is passive with respect to the viewer and is not batched. The bundled Skill permits it only when the
+user explicitly asks the Agent to record review findings. Because creation is not idempotent, an
+uncertain outcome must be checked through `comment list` before retrying.
+
+### Trade-offs
+
+- Findings from an authorized Agent can enter the same durable review loop as human findings without
+  adding an in-app Agent runtime or chat surface.
+- The display label communicates authorship but is not an authenticated identity; rvw continues to
+  rely on the local caller's authorization boundary.
+- Single-item creation is more verbose for large reviews, but it avoids a partial-success batch
+  contract and makes every durable thread intentional.
+- A poor review request can still produce noisy comments. Skill instructions constrain when to
+  create them, while the data model deliberately does not classify or suppress Agent feedback.
+
 ## 2026-08-13: Anchor ranges beginning at the first PR commit to the comparison base
 
 ### Problem
@@ -1272,3 +1306,48 @@ both stale-lock removal and cleanup. Only the lock holder can listen, and follow
   database access.
 - PID liveness is local-process evidence rather than a durable lease, so exact inode identity remains
   necessary for safe stale cleanup.
+
+## 2026-08-18: Render comment posts as context-bound Markdown without structured references
+
+### Problem
+
+Agent-created comments benefit from lists, code, tables, diagrams, and links to the evidence behind a
+finding. Rendering post bodies as pre-wrapped plain text discards that structure. Reusing the complete
+repository or Walkthrough renderer would also import semantics that comments do not have: Markdown
+source-range targets, `rvw-ref:` declarations, interactive Mermaid bindings, and an independent
+document identity.
+
+Adding a `plain` / `markdown` format column would preserve the exact appearance of every existing post,
+but it would add a migration and permanent dual rendering behavior before public release. Disabling
+all context-bound features would keep rendering small but make Agent comments harder to verify against
+the committed repository.
+
+### Choice
+
+Treat every existing and new post body as UTF-8 GFM Markdown source without changing the database or
+CLI schema. Convert soft line breaks to visible breaks so ordinary historical text retains its current
+line structure, sanitize allowlisted raw HTML, and keep editing as the original Markdown source.
+
+Resolve repository links and relative images against an exact commit selected from the post's related
+commit, repository target, current Walkthrough source, or thread creation head. Use the target file's
+directory as the relative base for repository comments and the repository root for other targets.
+Fetch only repository-relative images through the existing size-limited same-origin asset endpoint;
+external images remain placeholders.
+
+Extract the strict Mermaid rendering surface shared by Walkthroughs and comments. Comment Mermaid is
+display-only, lazy while outside the viewport, and has no node binding or generated-SVG comment target.
+Do not add comment-body source mapping or `rvw-ref:` support. Replies continue to target the enclosing
+thread, while typed exact code references remain a Walkthrough capability.
+
+### Trade-offs
+
+- Existing posts containing Markdown punctuation may render differently, although ordinary text and
+  line breaks remain readable without a data migration.
+- Agent comments can carry inspectable repository evidence and compact diagrams without becoming
+  standalone Walkthrough documents.
+- Walkthrough comments follow the current Walkthrough source commit; a related commit on an individual
+  post overrides that moving context.
+- Large or numerous diagrams still have a rendering cost, reduced by collapsed-thread behavior,
+  viewport deferral, and serialized Mermaid rendering.
+- Adding typed references later would require an explicit post-level persistence and edit-validation
+  design instead of silently accepting `rvw-ref:` syntax now.

@@ -123,7 +123,15 @@ test("restores focus to the actions button after Quick Open is closed from its m
 });
 
 test("supports standard keyboard navigation in the actions menu", async ({ page }) => {
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
   const actionsButton = page.getByRole("button", { name: "その他の操作", exact: true });
   await actionsButton.click();
 
@@ -131,8 +139,8 @@ test("supports standard keyboard navigation in the actions menu", async ({ page 
   const quickOpen = menu.getByRole("menuitem", { name: /ファイルを開く/ });
   const sync = menu.getByRole("menuitem", { name: "GitHubと同期" });
   const rebuild = menu.getByRole("menuitem", { name: "ローカル状態を削除して再構築" });
-  await expect(quickOpen).toBeFocused();
   await expect(sync).toBeEnabled();
+  await expect(quickOpen).toBeFocused();
 
   await quickOpen.press("ArrowDown");
   await expect(sync).toBeFocused();

@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CommentPlacement, ReviewComment } from "../../domain/models.js";
+import type { CommentPlacement, ReviewComment, WalkthroughSummary } from "../../domain/models.js";
 import { api, jsonRequest, type PlacementResponse } from "../api.js";
+import type { ThemePreference } from "../theme.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
@@ -19,18 +20,24 @@ function CommentCard({
   pullRequestId,
   selectedOid,
   selected,
+  markdownSourceOid,
+  themePreference,
   onSelect,
   onCommentActiveChange,
   onOpenTarget,
+  onOpenRepositoryLink,
   onDeleted,
 }: {
   comment: ReviewComment;
   pullRequestId: string;
   selectedOid: string;
   selected: boolean;
+  markdownSourceOid?: string | undefined;
+  themePreference: ThemePreference;
   onSelect: (selected: boolean) => void;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onOpenTarget: (placement: CommentPlacement | null) => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
   onDeleted: () => void;
 }) {
   const placement = useQuery({
@@ -64,8 +71,11 @@ function CommentCard({
         comment={comment}
         variant="sidebar"
         placement={placement.data?.placement ?? null}
+        markdownSourceOid={markdownSourceOid}
+        themePreference={themePreference}
         onActiveChange={onCommentActiveChange}
         onOpenTarget={() => onOpenTarget(placement.data?.placement ?? null)}
+        onOpenRepositoryLink={onOpenRepositoryLink}
         onDeleted={onDeleted}
       />
       {placement.error && <ErrorNotice error={placement.error} />}
@@ -75,16 +85,22 @@ function CommentCard({
 
 export function CommentSidebar({
   comments,
+  walkthroughs,
   pullRequestId,
   selectedOid,
+  themePreference,
   onCommentActiveChange,
   onOpenTarget,
+  onOpenRepositoryLink,
 }: {
   comments: ReviewComment[];
+  walkthroughs: WalkthroughSummary[];
   pullRequestId: string;
   selectedOid: string;
+  themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onOpenTarget: (comment: ReviewComment, placement: CommentPlacement | null) => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -103,6 +119,10 @@ export function CommentSidebar({
     [comments, showResolved],
   );
   const selectedComments = visible.filter((comment) => selected.has(comment.id));
+  const walkthroughSourceOids = useMemo(
+    () => new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough.sourceOid])),
+    [walkthroughs],
+  );
   const allSelected = visible.length > 0 && selectedComments.length === visible.length;
   const someSelected = selectedComments.length > 0 && !allSelected;
 
@@ -229,6 +249,12 @@ export function CommentSidebar({
             pullRequestId={pullRequestId}
             selectedOid={selectedOid}
             selected={selected.has(comment.id)}
+            markdownSourceOid={
+              comment.target.kind === "walkthrough"
+                ? walkthroughSourceOids.get(comment.target.walkthroughId)
+                : undefined
+            }
+            themePreference={themePreference}
             onCommentActiveChange={onCommentActiveChange}
             onSelect={(checked) => {
               const next = new Set(selected);
@@ -237,6 +263,7 @@ export function CommentSidebar({
               setSelected(next);
             }}
             onOpenTarget={(placement) => onOpenTarget(comment, placement)}
+            onOpenRepositoryLink={onOpenRepositoryLink}
             onDeleted={() => {
               setSelected((current) => {
                 const next = new Set(current);

@@ -263,8 +263,9 @@ empty fileは従来どおり明示的に扱う。
   retained exact sourceの全文を表示する。参照元と対象commitが異なる場合は両方のshort SHAを控えめに
   明示する。Walkthrough referenceのexact sourceを取得できない場合はtabやpaneを開かず、操作元の
   Walkthroughへ一時chipを表示し、リンク切れと一時的な取得失敗を区別する。
-- Markdown内の画像はrepository Markdownから同一commit内の相対pathを参照する場合だけ自動取得する。
-  PR本文、Walkthrough、外部URL、protocol-relative URL、repository pathへ安全に解決できない参照は
+- Markdown内の画像はrepository Markdownまたはcomment postから、後述する基準commit内の相対pathを
+  参照する場合だけ自動取得する。PR本文、Walkthrough本文、外部URL、protocol-relative URL、repository
+  pathへ安全に解決できない参照は
   requestを送らずplaceholderを表示する。SVG asset responseは同一originへの直接navigationも含め、
   scriptと外部subresourceを禁止するContent Security Policyとsandboxを付ける。
 - Files、Search、Comments、Walkthroughは排他的なmodeにせず、sidebar内の独立して折りたためるstack
@@ -495,8 +496,21 @@ PR全体commentとWalkthrough全体commentはOutdatedにならない。
 
 ### 6.4 Reply
 
-投稿はplain UTF-8 textで、rootとreplyを編集できる。replyは任意の`related_commit_oid`を持てる。
+投稿は64 KiB以下のUTF-8 GFM Markdown sourceで、rootとreplyを編集できる。既存のplain textも同じsource
+としてrenderし、soft line breakは表示上の改行へ変換する。raw HTMLはallowlistでsanitizeし、scriptを
+実行しない。table、task list、code block、repository内link、repository相対画像、表示専用Mermaidを
+扱うが、comment本文へsource mapping、`rvw-ref:`、Mermaid node bindingは持たせない。外部linkだけを
+browserの別tabで開き、外部画像は取得しない。
+
+repository内linkと画像の基準commitは、postの`related_commit_oid`、repository targetの`source_oid`、
+Walkthrough targetのcurrent `sourceOid`、`comments.created_head_oid`の順に選ぶ。repository targetでは
+target fileのdirectory、それ以外ではrepository rootを相対pathの起点にする。通常clickは操作元pane、
+pane内の`Cmd` / `Ctrl`+clickは反対pane、sidebar内のmodifier clickは右paneへexact source全文を開き、
+globalなcommit範囲や表示modeを変更しない。replyは任意の`related_commit_oid`を持てる。
 Agent batch syncのreplyは同期後のGitHub headへ自動的に関連付ける。
+人間はviewerから、明示的に依頼された外部AgentはCLIから、同じtarget validationを通して新しいroot
+commentを作成できる。Agent作成commentも通常の未解決threadであり、専用stateや自動resolveを持たない。
+CLI作成は一回に一threadとし、batch生成やbrowser navigationを行わない。
 resolved済みthreadにもreplyできるが、reply単独ではreopenしない。standalone replyとbatch syncの
 replyはいずれも現在stateを維持し、resolve/reopenは明示的な別の状態変更とする。
 誤投稿を取り消すため、reply postは個別に物理削除できる。root postの削除はcomment targetと
@@ -530,6 +544,7 @@ rvw walkthrough publish --stdin --json
 rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
 rvw walkthrough delete <WALKTHROUGH_URI> --json
 rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
+rvw comment create --stdin --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
@@ -544,6 +559,8 @@ current protocol versionは2とし、最初のpublic compatibility contractはve
 changeのたびに単調増加させる。capabilityは次を含む。
 
 ```text
+agent.transport
+comment.create
 comment.list
 comment.read
 comment.reply
@@ -556,7 +573,43 @@ walkthrough.update
 walkthrough.delete
 ```
 
-### 7.1 pr sync
+### 7.1 comment create
+
+Agentは、明示的にコメント作成を依頼されたreviewで見つけた指摘を、viewerと同じcomment threadとして
+登録できる。
+
+```bash
+rvw comment create --stdin --json
+```
+
+stdinのrepository line comment例:
+
+```json
+{
+  "pullRequest": "https://github.com/owner/repo/pull/123",
+  "target": {
+    "kind": "document",
+    "documentKind": "repository-file",
+    "sourceOid": "0123456789abcdef0123456789abcdef01234567",
+    "path": "src/request-handler.ts",
+    "startLine": 18,
+    "endLine": 24
+  },
+  "body": "この分岐では失敗結果が呼び出し元へ返りません。",
+  "authorLabel": "Agent name"
+}
+```
+
+`pullRequest`は登録済みPRの完全URLまたは全登録PRで一意な番号とする。targetは通常のPR全体、最新
+`Pull Request.md`全体／行範囲、exact commitのrepository file全体／行範囲、Walkthrough全体／行範囲を
+受け付ける。行を省略した入力は`null`へ正規化し、line pair、commit、path、文書availability、
+Walkthrough所属、本文byte上限はviewer作成と同じapplication serviceで検証する。
+
+成功時は未解決のcommentとroot post、`rvw://comment/<uuid>`を返す。作成は非冪等であり、送信後の結果が
+不明な場合は`comment list`で重複を確認してから、未作成の場合だけ再実行する。作成はviewerを開かず、
+tab、pane、scroll、commit selectionを変更しない。
+
+### 7.2 pr sync
 
 stdin:
 
@@ -593,10 +646,10 @@ fetchするが、behindなworktreeのcheckoutやbranch refは変更しない。
 4. SQLite transactionでlatest PR cache、reply、resolve、change sequence更新
 5. replyの`related_commit_oid`へcurrent GitHub headを設定
 
-`pr sync`と`comment reply`はPhase 1では非冪等である。結果が不明な場合はcommentを再取得して
-重複を確認する。
+`comment create`、`pr sync`、`comment reply`はPhase 1では非冪等である。結果が不明な場合はcommentを
+再取得して重複を確認する。
 
-### 7.2 Walkthrough lifecycle
+### 7.3 Walkthrough lifecycle
 
 既存Walkthroughはstable URIから現在内容と対象PRを取得できる。
 
@@ -679,7 +732,7 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   process callerはJSON送信後にstdinをcloseし、shell callerはpipe、quoted heredoc、input redirectionの
   いずれかを使って対話PTYでのEOF待ちを避ける。Agent socket frameはこの入力とprotocol envelopeを
   収める固定上限を持つ。
-- comment本文とreplyはplain UTF-8 textで64 KiB以下とする。
+- comment本文とreplyはUTF-8 GFM Markdown sourceで64 KiB以下とする。
 - Walkthrough本文は256 KiB以下、referenceは最大200件とする。
 - `walkthrough get`はcurrent WalkthroughとPR identity、local repository pathを返す。
 - `comment list`は登録済みPRをURLまたは番号で受け、`unresolved`を既定に`resolved` / `all`も選べる。
@@ -702,9 +755,12 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   local repositoryのexact OIDから読む。
 - standalone `comment reply`のstdinは`body`、任意の`authorLabel`、任意の
   `relatedCommitOid`を持つ。関連OIDを指定した場合は対象PRで利用可能なcommitでなければならない。
+- `comment create`は登録済みPR、通常のcomment target、本文、任意の`authorLabel`をstdinで受け、
+  viewerと同じtarget validationから未解決threadを一件作成する。batch作成は行わない。
 - `pr sync`の`commentUpdates`は最大500件で、各要素は`commentRef`、`reply`、`resolve`を必須とする。
-- protocol schemaを変更する場合はprotocol version、CLI contract test、2つの共通Skill、README、
-  `docs/cli-protocol.md`を同じ変更で更新する。
+- breakingなprotocol schema変更ではprotocol versionを進める。additiveなcommandは同じversionへ新しい
+  capabilityを追加する。いずれもCLI contract test、2つの共通Skill、README、`docs/cli-protocol.md`を
+  同じ変更で更新する。
 
 ## 8. SQLite
 
@@ -1012,11 +1068,14 @@ E2E:
     入力中に同じtextarea DOMとcaretを維持して正順に入力でき、本文置換後に一意なquoteは再配置、
     一意に置けないquoteはOutdated表示
 16. viewerでWalkthroughと紐づくcomment件数を確認して削除し、tabとcommentを同時に除去
+17. root commentとreplyのGFM、soft line break、sanitize、repository内link、同一commit相対画像、
+    表示専用Mermaidをsidebarとinline threadでrenderし、編集時は元Markdown sourceを表示する
 
 CLI contract:
 
 - stdout JSONのみ、stderr progress/error、exit code、stdin sizeとschema
 - protocol versionとcapability
+- `comment create`のtarget normalization、viewer共通validation、未解決root作成、非冪等契約
 - `comment list`の未解決既定filter、resolved/all filter、最大100件のpagination、512 bytesのroot
   preview、latest placement、全replyを読み込まないbounded query
 - `comment get`の最新PR metadata、PR本文の既定省略と`--include-pr-body` opt-in、service導出placement、
@@ -1097,7 +1156,8 @@ Functional:
 - `Pull Request.md`は常に最後に成功した同期の最新内容だけを表示する。
 - Agentがcommit固定WalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の
   referenceだけを最大二ペインのtabで検証できる。不要なWalkthroughは件数確認後に削除できる。
-- PR全体、PR本文、file、line/range comment、reply、post edit/delete、resolve/reopen、sidebar、Outdatedが機能する。
+- PR全体、PR本文、file、line/range comment、reply、post edit/delete、resolve/reopen、sidebar、Outdatedが機能し、
+  postはsafe GFM、repository link／相対画像、表示専用Mermaidとしてrenderされる。
 - 一件／一覧／選択comment参照をcopyし、Codex / Claude Codeへ同じ`rvw` Skillを配置してCLIで解決・返信できる。
 - Agentは登録済みPRの未解決commentをCLIから発見し、個別取得後に対応できる。
 - sync後のreplyをGitHub head commitへ関連付け、UIのpollで更新を表示する。

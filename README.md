@@ -92,6 +92,7 @@ viewerはこの流れのために次を提供します。
 - `@pierre/vscode-icons`による全画面共通の言語／tooling file icon
 - ファイル名fuzzy検索、Gitによるrealtime全文fixed-string検索（case / whole-word、file grouping、行jump）
 - PR全体、PR本文、ファイル全体、行範囲、Walkthrough全体へのコメント
+- コメントと返信のsafe GFM表示（repository内link／同一commit相対画像、表示専用Mermaidを含む）
 - 未解決／解決済み、返信、Outdated追跡
 - Agentへ渡す一件・一覧・複数選択した`rvw://comment/<uuid>`参照のコピー
 - Agentが提示したWalkthrough、exact code reference、選択可能なMermaid node
@@ -173,6 +174,13 @@ rvw://comment/00000000-0000-4000-8000-000000000000
 rvw Skillを使って、https://github.com/owner/repository/pull/123 の未解決コメントを確認してください。
 ```
 
+Agentにreview結果をRVWへ残してもらう場合は、対象PRとコメント作成を明示します。Agentはcommit済みの
+exact sourceを確認し、通常の未解決threadを一件ずつ作成します。
+
+```text
+rvw Skillを使って、https://github.com/owner/repository/pull/123 をreviewし、見つけた指摘をRVWのコメントとして作成してください。
+```
+
 Walkthroughを作る場合は、説明したい対象をセッションへ伝えて`rvw-walkthrough` Skillを使います。
 Skillは文書の見出しや説明順序を固定せず、セッションが作った説明をcommit固定のreference付きartifactとして
 検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、現在内容を取得して同じURIを
@@ -207,6 +215,7 @@ rvw protocol --json
 rvw agent ping --json
 rvw agent status --json
 rvw pr refresh <PR_REF> --json
+rvw comment create --stdin --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
@@ -227,6 +236,10 @@ rvw pr attach <PR_REF> --repository <PATH> --json
 stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの
 対話commandへJSONと改行だけを送るとEOF待ちになります。
 
+`comment create`は登録済みPR、通常のcomment target、本文、任意のAgent名をstdin JSONで受け取り、
+未解決のroot threadを一件作成します。repository targetはexact commit、path、任意のinclusive line rangeを
+指定し、viewerと同じ文書・行検証を通ります。作成してもbrowserを開かず、tabやcommit選択を変更しません。
+
 `comment list`は未解決を既定として`unresolved` / `resolved` / `all`をページング列挙し、各threadの
 root post preview、post件数、最新head時点のOutdated判定を返します。`hasMore`なら`nextOffset`から
 続けて取得し、完全なthreadは`comment get`で読みます。listと通常の`comment get`はPR本文を省略し、
@@ -235,7 +248,7 @@ root post preview、post件数、最新head時点のOutdated判定を返しま�
 `comment get`は最新PRのtitle、base/head、serviceが導出したplacement、対象commitのbounded source
 excerptを返すため、AgentはOID比較でOutdatedを推測しません。
 
-`comment get --live`はGitHubの現在値とcacheの差をread-onlyで確認し、DBを更新しません。`pr sync`はGitHub上の最新PR状態を取得し、任意の`commentUpdates`を同じSQLite transactionで反映します。保存先がdirtyでも同じrepositoryのcleanなworktreeを`--repository`で選べ、確認済みの未追跡fileだけは`--allow-untracked`で許可できます。local branchがGitHub headより単にbehindな場合や最終同期後にforce-pushされた場合はcheckoutを変更せず同期します。`pr sync`と`comment reply`は冪等ではないため、結果が不明な場合はコメントを再取得してから再試行してください。
+`comment get --live`はGitHubの現在値とcacheの差をread-onlyで確認し、DBを更新しません。`pr sync`はGitHub上の最新PR状態を取得し、任意の`commentUpdates`を同じSQLite transactionで反映します。保存先がdirtyでも同じrepositoryのcleanなworktreeを`--repository`で選べ、確認済みの未追跡fileだけは`--allow-untracked`で許可できます。local branchがGitHub headより単にbehindな場合や最終同期後にforce-pushされた場合はcheckoutを変更せず同期します。`comment create`、`pr sync`、`comment reply`は冪等ではないため、結果が不明な場合はコメント一覧または対象threadを再取得してから再試行してください。
 
 `rvw agent ping/status --json`はsocket path、接続結果とOS error詳細、期待／接続先DB、選択transport、
 fallback理由を表示します。人向け出力にも同じ診断項目を表示します。`RVW_AGENT_SOCKET_PATH`を明示した場合は
@@ -296,7 +309,8 @@ atomicなowner lockを取得した一つのNode processだけがlistenし、owne
 `rvw doctor --json`はmode/ownerだけでなくwrite transactionとAgent疎通も報告します。
 
 ローカルHTTP serverは`127.0.0.1`だけへbindしてHost / Originを検証し、write APIは
-`application/json`だけを受理し、CORSを有効にしません。コメントと返信はplain UTF-8 textです。
+`application/json`だけを受理し、CORSを有効にしません。コメントと返信はUTF-8 GFM Markdown sourceとして
+保存し、raw HTMLをsanitizeします。外部画像は取得せず、repository相対画像だけをexact commitから取得します。
 CLIとfrontend bundleに含まれる第三者softwareのlicenseはpackage内の
 `dist/cli-THIRD_PARTY_NOTICES.txt`と`dist/web/THIRD_PARTY_NOTICES.txt`へbuild時に収録します。
 

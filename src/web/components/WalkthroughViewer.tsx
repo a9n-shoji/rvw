@@ -7,7 +7,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -48,10 +47,9 @@ import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
+import { MermaidSurface } from "./MermaidSurface.js";
 import { WalkthroughIcon } from "./WalkthroughPanel.js";
 
-let mermaidQueue = Promise.resolve();
-const darkColorSchemeQuery = "(prefers-color-scheme: dark)";
 const referenceNoticeDurationMs = 2400;
 const walkthroughMarkdownSanitizeSchema = {
   ...defaultSchema,
@@ -60,22 +58,6 @@ const walkthroughMarkdownSanitizeSchema = {
     href: [...(defaultSchema.protocols?.href ?? []), "rvw-ref"],
   },
 };
-
-function usePrefersDarkColorScheme(): boolean {
-  const [prefersDark, setPrefersDark] = useState(
-    () => window.matchMedia(darkColorSchemeQuery).matches,
-  );
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia(darkColorSchemeQuery);
-    const updatePreference = (): void => setPrefersDark(mediaQuery.matches);
-    updatePreference();
-    mediaQuery.addEventListener("change", updatePreference);
-    return () => mediaQuery.removeEventListener("change", updatePreference);
-  }, []);
-
-  return prefersDark;
-}
 
 function referenceHrefId(href: string | undefined): string | null {
   if (!href?.startsWith("rvw-ref:")) return null;
@@ -141,14 +123,7 @@ function MermaidDiagram({
   onCommentRange: (range: MarkdownSourceRange) => void;
   commentComposer: ReactNode;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const commentComposerRef = useRef<HTMLDivElement>(null);
-  const generatedId = useId().replace(/[^A-Za-z0-9]/g, "");
-  const [error, setError] = useState<string | null>(null);
-  const prefersDarkColorScheme = usePrefersDarkColorScheme();
-  const dark =
-    themePreference === "dark" || (themePreference === "system" && prefersDarkColorScheme);
-
   const composerOpen = Boolean(commentComposer);
   useLayoutEffect(() => {
     if (!composerOpen) return;
@@ -167,56 +142,34 @@ function MermaidDiagram({
     [references],
   );
 
-  useEffect(() => {
-    let disposed = false;
-    mermaidQueue = mermaidQueue
-      .then(async () => {
-        const { default: mermaid } = await import("mermaid");
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: "strict",
-          theme: dark ? "dark" : "base",
-          flowchart: { htmlLabels: false, curve: "basis" },
-          themeVariables: dark
-            ? { primaryColor: "#1f2937", primaryTextColor: "#f0f6fc", lineColor: "#8c959f" }
-            : { primaryColor: "#eef5ff", primaryTextColor: "#24292f", lineColor: "#57606a" },
-        });
-        const rendered = await mermaid.render(`rvwWalkthrough${generatedId}`, source);
-        if (disposed || !containerRef.current) return;
-        containerRef.current.innerHTML = rendered.svg;
-        for (const node of containerRef.current.querySelectorAll<SVGGElement>(
-          "g.node, g.classGroup, g[data-id], g[id^='classId-']",
-        )) {
-          const nodeId =
-            node.dataset.id ??
-            Object.keys(bindings).find(
-              (candidate) =>
-                node.id === candidate ||
-                node.id.includes(`-${candidate}`) ||
-                node.id.includes(`-${candidate}-`) ||
-                node.id.endsWith(`-${candidate}`),
-            );
-          if (!nodeId) continue;
-          const referenceId = bindings[nodeId];
-          const reference = referenceId ? references.get(referenceId) : undefined;
-          if (!reference) continue;
-          node.classList.add("walkthrough-diagram-node--linked");
-          node.setAttribute("role", "button");
-          node.setAttribute("tabindex", "0");
-          node.setAttribute("aria-label", `${reference.label}をコードで開く`);
-          node.dataset.walkthroughReferenceId = reference.id;
-        }
-      })
-      .catch((reason: unknown) => {
-        if (!disposed)
-          setError(reason instanceof Error ? reason.message : "diagramを表示できません。");
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [bindings, dark, generatedId, references, source]);
+  const prepareSvg = useCallback(
+    (container: HTMLDivElement): void => {
+      for (const node of container.querySelectorAll<SVGGElement>(
+        "g.node, g.classGroup, g[data-id], g[id^='classId-']",
+      )) {
+        const nodeId =
+          node.dataset.id ??
+          Object.keys(bindings).find(
+            (candidate) =>
+              node.id === candidate ||
+              node.id.includes(`-${candidate}`) ||
+              node.id.includes(`-${candidate}-`) ||
+              node.id.endsWith(`-${candidate}`),
+          );
+        if (!nodeId) continue;
+        const referenceId = bindings[nodeId];
+        const reference = referenceId ? references.get(referenceId) : undefined;
+        if (!reference) continue;
+        node.classList.add("walkthrough-diagram-node--linked");
+        node.setAttribute("role", "button");
+        node.setAttribute("tabindex", "0");
+        node.setAttribute("aria-label", `${reference.label}をコードで開く`);
+        node.dataset.walkthroughReferenceId = reference.id;
+      }
+    },
+    [bindings, references],
+  );
 
-  if (error) return <div className="walkthrough-diagram-error">{error}</div>;
   return (
     <div
       className={`walkthrough-diagram-shell${commented ? " has-comment" : ""}`}
@@ -247,9 +200,13 @@ function MermaidDiagram({
           </button>
         )}
       </div>
-      <div
+      <MermaidSurface
         className="walkthrough-diagram"
-        ref={containerRef}
+        source={source}
+        themePreference={themePreference}
+        renderIdPrefix="rvwWalkthrough"
+        errorClassName="walkthrough-diagram-error"
+        onRendered={prepareSvg}
         onPointerDown={(event) => {
           const reference = referenceFromTarget(event.target);
           if (!reference) return;
@@ -382,8 +339,10 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   selectedRange,
   selectionComposerOpen,
   diagramCommentRange,
+  markdownSourceOid,
   themePreference,
   onOpenReference,
+  onOpenRepositoryLink,
   onCommentActiveChange,
   onCommentRange,
   diagramCommentPending,
@@ -399,8 +358,10 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   selectedRange: MarkdownSourceRange | null;
   selectionComposerOpen: boolean;
   diagramCommentRange: MarkdownSourceRange | null;
+  markdownSourceOid: string;
   themePreference: ThemePreference;
   onOpenReference: (reference: WalkthroughReference, openInOtherPane: boolean) => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
   diagramCommentPending: boolean;
@@ -436,14 +397,17 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
                 comment={annotation.comment}
                 variant="inline"
                 placement={annotation.placement}
+                markdownSourceOid={markdownSourceOid}
+                themePreference={themePreference}
                 onActiveChange={onCommentActiveChange}
+                onOpenRepositoryLink={onOpenRepositoryLink}
               />
             ) : null;
           })}
         </div>
       );
     },
-    [commentsById, onCommentActiveChange],
+    [commentsById, markdownSourceOid, onCommentActiveChange, onOpenRepositoryLink, themePreference],
   );
   return (
     <MermaidMarkdownRenderContext.Provider
@@ -554,6 +518,7 @@ export function WalkthroughViewer({
   themePreference,
   onCommentActiveChange,
   onOpenReference,
+  onOpenRepositoryLink,
   onDeleted,
 }: {
   walkthrough: Walkthrough;
@@ -567,6 +532,7 @@ export function WalkthroughViewer({
     reference: WalkthroughReference,
     openInOtherPane: boolean,
   ) => Promise<string | null>;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
   onDeleted: (walkthrough: Walkthrough) => void;
 }) {
   const queryClient = useQueryClient();
@@ -788,8 +754,10 @@ export function WalkthroughViewer({
       selectedRange={lineComposerPlacement === "selection" ? selectedRange : null}
       selectionComposerOpen={lineComposerPlacement === "selection"}
       diagramCommentRange={diagramRange}
+      markdownSourceOid={walkthrough.sourceOid}
       themePreference={themePreference}
       onOpenReference={openReference}
+      onOpenRepositoryLink={onOpenRepositoryLink}
       onCommentActiveChange={onCommentActiveChange}
       onCommentRange={openDiagramComposer}
       diagramCommentPending={createComment.isPending}
@@ -872,7 +840,10 @@ export function WalkthroughViewer({
               comment={comment}
               variant="inline"
               placement={placement}
+              markdownSourceOid={walkthrough.sourceOid}
+              themePreference={themePreference}
               onActiveChange={onCommentActiveChange}
+              onOpenRepositoryLink={onOpenRepositoryLink}
             />
           ))}
         </div>

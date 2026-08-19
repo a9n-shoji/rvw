@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { DEFAULT_COMMENT_LIST_LIMIT, MAX_COMMENT_LIST_LIMIT } from "../shared/constants.js";
 export {
+  commentCreateInputSchema,
   commentReplyInputSchema,
   pullRequestSyncInputSchema,
   walkthroughPublishInputSchema,

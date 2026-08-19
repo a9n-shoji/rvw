@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  commentCreateInputSchema,
   commentReplyInputSchema,
   pullRequestSyncInputSchema,
   walkthroughPublishInputSchema,
@@ -8,6 +9,72 @@ import {
 import { MAX_COMMENT_BODY_BYTES } from "../../src/shared/constants.js";
 
 describe("CLI input schemas", () => {
+  it("accepts an exact repository comment target and normalizes omitted lines", () => {
+    expect(
+      commentCreateInputSchema.parse({
+        pullRequest: "https://github.com/acme/review-repo/pull/7",
+        target: {
+          kind: "document",
+          documentKind: "repository-file",
+          sourceOid: "a".repeat(40),
+          path: "src/request-handler.ts",
+        },
+        body: "Preserve the failure result.",
+        authorLabel: "Codex",
+      }),
+    ).toMatchObject({
+      target: { startLine: null, endLine: null },
+      authorLabel: "Codex",
+    });
+  });
+
+  it("rejects malformed comment creation ranges and persisted target fields", () => {
+    const base = {
+      pullRequest: "https://github.com/acme/review-repo/pull/7",
+      body: "Review finding",
+    };
+    expect(
+      commentCreateInputSchema.safeParse({
+        ...base,
+        target: {
+          kind: "document",
+          documentKind: "repository-file",
+          sourceOid: "a".repeat(40),
+          path: "src/example.ts",
+          startLine: 12,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      commentCreateInputSchema.safeParse({
+        ...base,
+        target: {
+          kind: "document",
+          documentKind: "pull-request-markdown",
+          startLine: 5,
+          endLine: 4,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      commentCreateInputSchema.safeParse({
+        ...base,
+        target: {
+          kind: "document",
+          documentKind: "pull-request-markdown",
+          sourceDocumentHash: "caller-controlled",
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      commentCreateInputSchema.safeParse({
+        ...base,
+        target: { kind: "pull-request" },
+        body: "   ",
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts the pull request sync protocol shape", () => {
     expect(
       pullRequestSyncInputSchema.parse({

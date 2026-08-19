@@ -152,6 +152,7 @@ describe("CLI protocol discovery", () => {
       appVersion: "0.1.1",
       capabilities: [
         "agent.transport",
+        "comment.create",
         "comment.list",
         "comment.read",
         "comment.reply",
@@ -168,7 +169,7 @@ describe("CLI protocol discovery", () => {
       program.commands
         .find((command) => command.name() === "comment")
         ?.commands.map((command) => command.name()),
-    ).toEqual(["list", "get", "reply", "resolve", "reopen"]);
+    ).toEqual(["create", "list", "get", "reply", "resolve", "reopen"]);
     expect(
       program.commands
         .find((command) => command.name() === "walkthrough")
@@ -190,6 +191,44 @@ describe("CLI protocol discovery", () => {
         .visibleCommands(program)
         .map((command) => command.name()),
     ).not.toContain("__open-worker");
+  });
+
+  it("creates one unresolved comment from a strict stdin payload", async () => {
+    const input = {
+      pullRequest: pullRequest.url,
+      target: {
+        kind: "document" as const,
+        documentKind: "repository-file" as const,
+        sourceOid: "d".repeat(40),
+        path: "src/example.ts",
+        startLine: 12,
+        endLine: 12,
+      },
+      body: rootPost.body,
+      authorLabel: "Codex",
+    };
+    const created = {
+      ...reviewCommentWithoutPosts,
+      target: input.target,
+      posts: [{ ...rootPost, authorLabel: "Codex" }],
+    };
+    const createCommentForReference = vi.fn().mockResolvedValue(created);
+    const { runtime, close } = mockRuntime({ createCommentForReference });
+    const readStdout = captureStdout();
+    provideStdin(input);
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "comment",
+      "create",
+      "--stdin",
+      "--json",
+    ]);
+
+    expect(createCommentForReference).toHaveBeenCalledWith(input);
+    expect(readStdout()).toEqual({ ok: true, comment: created });
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it("lists unresolved comments by default with latest placement", async () => {
