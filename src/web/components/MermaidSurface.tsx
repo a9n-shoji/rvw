@@ -47,11 +47,13 @@ export function MermaidSurface({
     if (!container) return;
     let disposed = false;
     setError(null);
+    const renderId = `${renderIdPrefix}${generatedId}`;
     mermaidQueue = mermaidQueue
       .then(async () => {
         const { default: mermaid } = await import("mermaid");
         mermaid.initialize({
           startOnLoad: false,
+          suppressErrorRendering: true,
           securityLevel: "strict",
           theme: dark ? "dark" : "base",
           flowchart: { htmlLabels: false, curve: "basis" },
@@ -59,7 +61,7 @@ export function MermaidSurface({
             ? { primaryColor: "#1f2937", primaryTextColor: "#f0f6fc", lineColor: "#8c959f" }
             : { primaryColor: "#eef5ff", primaryTextColor: "#24292f", lineColor: "#57606a" },
         });
-        const rendered = await mermaid.render(`${renderIdPrefix}${generatedId}`, source);
+        const rendered = await mermaid.render(renderId, source);
         if (disposed) return;
         container.innerHTML = rendered.svg;
         onRendered?.(container);
@@ -68,6 +70,10 @@ export function MermaidSurface({
         if (!disposed) {
           setError(reason instanceof Error ? reason.message : "diagramを表示できません。");
         }
+      })
+      .finally(() => {
+        document.getElementById(`d${renderId}`)?.remove();
+        document.getElementById(`i${renderId}`)?.remove();
       });
     return () => {
       disposed = true;

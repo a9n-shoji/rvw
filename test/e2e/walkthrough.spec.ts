@@ -1779,3 +1779,29 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await expect(sidebarThread.getByRole("textbox", { name: "コメントを編集" })).toHaveValue(body);
   await sidebarThread.getByRole("button", { name: "キャンセル" }).click();
 });
+
+test("removes Mermaid temporary output when a Markdown comment diagram is invalid", async ({
+  page,
+  request,
+}) => {
+  const createResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: { kind: "pull-request" },
+      body: ["Invalid diagram", "", "```mermaid", "flowchart LR", "  Request -->", "```"].join(
+        "\n",
+      ),
+      authorLabel: "Codex · Invalid Mermaid",
+    },
+  });
+  expect(createResponse.ok()).toBe(true);
+  const created = (await createResponse.json()) as { comment: { id: string } };
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const thread = page.locator(`.comment-sidebar [data-comment-id="${created.comment.id}"]`);
+  await thread.scrollIntoViewIfNeeded();
+  await expect(thread.locator(".comment-mermaid-error")).toBeVisible();
+  await expect(page.locator('body > [id^="drvwComment"], body > [id^="irvwComment"]')).toHaveCount(
+    0,
+  );
+});
