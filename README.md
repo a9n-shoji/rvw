@@ -181,10 +181,11 @@ exact sourceを確認し、通常の未解決threadを一件ずつ作成しま�
 rvw Skillを使って、https://github.com/owner/repository/pull/123 をreviewし、見つけた指摘をRVWのコメントとして作成してください。
 ```
 
-Walkthroughを作る場合は、説明したい対象をセッションへ伝えて`rvw-walkthrough` Skillを使います。
-Skillは文書の見出しや説明順序を固定せず、セッションが作った説明をcommit固定のreference付きartifactとして
-検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、現在内容を取得して同じURIを
-更新し、重複した「改訂版」を追加しません。
+Walkthroughを作る場合は、説明したい対象と必要な作成指示をセッションへ伝えて`rvw-walkthrough` Skillを使います。
+Skillは明示された指示を優先し、未指定の作成判断だけを既定guideで補って、reviewerが変更または実装対象の
+mental modelを作るための最初の読解経路を構成します。文書の見出しや説明順序は固定せず、commit固定の
+reference付きartifactとして検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、
+現在内容を取得して同じURIを更新し、重複した「改訂版」を追加しません。
 
 二つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
 `rvw walkthrough get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`だけを利用します。

@@ -387,8 +387,10 @@ installation with no trustworthy rvw marker (`unmanaged-difference`). None is ov
 an explicit forced install.
 
 `rvw-walkthrough` constrains commit identity, code references, diagram bindings, CLI validation,
-passive publication and update, and explicit destructive authorization. It deliberately leaves the
-explanation's structure and emphasis to the current session and user request.
+passive publication and update, and explicit destructive authorization. It treats the explanation as
+a first reading path for building a mental model of a change or requested implementation subject,
+follows explicit authoring instructions first, and uses a flexible default guide only for unspecified
+choices. It deliberately avoids a fixed template, an exhaustive review boundary, and AI-review conclusions.
 
 ## Protocol discovery
 

@@ -5,7 +5,13 @@ description: Read, publish, improve in place, or explicitly delete a commit-fixe
 
 # rvw Walkthrough management
 
-Turn the explanation appropriate to the current request and repository into a verifiable rvw artifact. Leave the document's organization, emphasis, granularity, and use of diagrams to the current session; do not impose fixed headings or a narrative template.
+Create a first reading path that helps a reviewer build a mental model of a committed change or requested implementation subject and continue into the code. Treat the Walkthrough as orientation, not as the code's source of truth, an exhaustive change log, a completed AI review, a review-scope guarantee, or an approval plan.
+
+Follow explicit instructions from the user, caller, Pull Request body, or an upstream Skill before any default in this Skill. Instructions may set the reading order, focus, format, detail, scope, exclusions, assumed knowledge, design decisions to explain, or non-code evidence to include. Apply the default authoring guide only where those instructions are silent. Add only the minimum context needed to keep the requested Walkthrough understandable; never replace the requested purpose with a different one.
+
+Prefer verified repository and subject facts. Use the smallest necessary inference when facts do not establish intent, label the uncertainty, and never invent business requirements or off-repository constraints.
+
+Leave the document's organization, emphasis, granularity, step count, and use of diagrams to the current request and subject. Do not impose fixed headings or a narrative template.
 
 Use only the `rvw` CLI protocol. Never access the SQLite database directly or control a viewer through browser automation.
 
@@ -31,13 +37,16 @@ Read the complete current body, source OID, diagram bindings, references, and Pu
 
 ## Prepare the artifact
 
-1. Inspect the user's requested scope and the relevant committed repository state.
-2. Choose one exact commit containing every referenced path. Do not publish an explanation of uncommitted code.
-3. Compose the explanation in the structure best suited to the current task. Make material boundaries and uncertainty explicit.
-4. Link important code claims with Markdown URLs of the form `rvw-ref:<referenceId>`.
-5. Define every reference with a repository-relative path and, when useful, an inclusive line range at the chosen `sourceOid`. Prefer the smallest meaningful multi-line range that lets the reader verify a code block or flow; include the signature and relevant body instead of pointing only at its first line. Use a single-line range only for a genuinely line-local claim such as one constant or declaration. Omit both `startLine` and `endLine` when the claim concerns the file as a whole. Keep IDs unique and stable within the publication.
-6. Add Mermaid only when it helps the explanation. Bind only elements that should open code. rvw renders Mermaid-supported diagram types, while interactive binding is currently guaranteed for flowchart nodes and class-diagram classes.
-7. Ensure every supplied reference is used by at least one Markdown `rvw-ref:` link or a Mermaid binding whose key is an actual flowchart node or classDiagram class in the body, and ensure every link and binding names a supplied reference. Never invent a binding key merely to mark a reference as used. For a line reference, supply both `startLine` and `endLine`; for a file reference, omit both. Let the CLI reject invalid commits, paths, ranges, IDs, unused references, or bindings; never silently omit a failed reference.
+1. Inspect the explicit instructions and relevant committed repository state. Determine whether the request explains a change or a standalone implementation, flow, or architecture subject. Use available Pull Request context when it contains authoring directions or establishes purpose.
+2. When explicit instructions leave authoring choices unresolved, read [the authoring guide](references/walkthrough-authoring.md). Apply its workflow, adaptation rules, anti-patterns, example, and completion check only as defaults for those choices.
+3. Choose one exact commit containing every referenced path. Do not publish an explanation of uncommitted code.
+4. For a change-focused Walkthrough, inspect the diff and enough surrounding code to identify the change's center and connections. For a standalone subject, inspect its central responsibility, contract, entry points, and connections without inventing a before/after story. Include unchanged callers, callees, contracts, models, or tests when they materially reduce the reader's exploration cost; do not include them merely because they are related.
+5. Compose the smallest useful reading path in the order that best builds the mental model, rather than file order or diff order. Connect each step to concrete code, explain why it comes next, expose meaningful uncertainty, and leave useful starting points for exploration beyond the Walkthrough.
+6. Generate the completed Walkthrough in one pass unless the user explicitly requests an interactive process. Do not ask for approval of an intermediate review plan.
+7. Link important code claims with Markdown URLs of the form `rvw-ref:<referenceId>`.
+8. Define every reference with a repository-relative path and, when useful, an inclusive line range at the chosen `sourceOid`. Prefer the smallest meaningful multi-line range that lets the reader verify a code block or flow; include the signature and relevant body instead of pointing only at its first line. Use a single-line range only for a genuinely line-local claim such as one constant or declaration. Omit both `startLine` and `endLine` when the claim concerns the file as a whole. Keep IDs unique and stable within the publication.
+9. Add Mermaid only when it helps the explanation. Bind only elements that should open code. rvw renders Mermaid-supported diagram types, while interactive binding is currently guaranteed for flowchart nodes and class-diagram classes.
+10. Ensure every supplied reference is used by at least one Markdown `rvw-ref:` link or a Mermaid binding whose key is an actual flowchart node or classDiagram class in the body, and ensure every link and binding names a supplied reference. Never invent a binding key merely to mark a reference as used. For a line reference, supply both `startLine` and `endLine`; for a file reference, omit both. Let the CLI reject invalid commits, paths, ranges, IDs, unused references, or bindings; never silently omit a failed reference.
 
 ## Send JSON without interactive input
 

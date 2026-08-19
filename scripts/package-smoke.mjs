@@ -245,6 +245,7 @@ try {
     "skills/rvw/agents/openai.yaml",
     "skills/rvw-walkthrough/SKILL.md",
     "skills/rvw-walkthrough/agents/openai.yaml",
+    "skills/rvw-walkthrough/references/walkthrough-authoring.md",
     ...readdirSync(path.join(repositoryRoot, "migrations"))
       .filter((name) => /^\d+_.*\.sql$/.test(name))
       .map((name) => `migrations/${name}`),
