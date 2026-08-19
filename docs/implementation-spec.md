@@ -50,8 +50,9 @@ rvwが担うもの:
 - 返信と未解決／解決済み
 - commit間の保守的なコメントline mappingとOutdated表示
 - `rvw://comment/<uuid>`参照とSkill用CLI
+- 新規comment postのDB-wide event順序、opaque cursor、10秒pollのwatch CLI
 - commit固定のAgent Walkthrough、typed code reference、Mermaid図
-- platform非依存の`rvw` / `rvw-walkthrough` SkillのCodex / Claude Code向けinstall/status
+- platform非依存の`rvw` / `rvw-walkthrough` / `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
 
 rvwが担わないもの:
 
@@ -133,7 +134,7 @@ GitHub CLIの既存認証を使用する。独自OAuthを持たない。
 
 ```bash
 gh pr view <PR> --json \
-  number,url,title,body,updatedAt,state,isDraft,\
+  author,number,url,title,body,updatedAt,state,isDraft,\
   baseRefName,baseRefOid,headRefName,headRefOid,\
   headRepository,headRepositoryOwner
 ```
@@ -525,6 +526,9 @@ commentを作成できる。Agent作成commentも通常の未解決threadであ�
 CLI作成は一回に一threadとし、batch生成やbrowser navigationを行わない。
 resolved済みthreadにもreplyできるが、reply単独ではreopenしない。standalone replyとbatch syncの
 replyはいずれも現在stateを維持し、resolve/reopenは明示的な別の状態変更とする。
+新しいroot postとreplyは同じtransactionでDB-wideな単調増加event sequenceへ記録する。既存postは
+migration時にbackfillせず、編集、削除、resolve/reopenはeventを作らない。Agent自身のreplyも通常eventであり、
+watch taskが返却post IDで抑止する。
 誤投稿を取り消すため、reply postは個別に物理削除できる。root postの削除はcomment targetと
 `rvw://comment/<uuid>`のanchorを含むthread全体の削除として扱い、返信があれば同じtransactionで
 すべて削除する。確認画面は返信も削除されることを明示する。編集・削除はchange sequenceを更新する。
@@ -558,6 +562,7 @@ rvw walkthrough delete <WALKTHROUGH_URI> --json
 rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
 rvw comment create --stdin --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
+rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
 rvw comment get <COMMENT_URI> --live --json
@@ -574,6 +579,7 @@ changeのたびに単調増加させる。capabilityは次を含む。
 agent.transport
 comment.create
 comment.list
+comment.watch
 comment.read
 comment.reply
 comment.resolve
@@ -658,10 +664,29 @@ fetchするが、behindなworktreeのcheckoutやbranch refは変更しない。
 4. SQLite transactionでlatest PR cache、reply、resolve、change sequence更新
 5. replyの`related_commit_oid`へcurrent GitHub headを設定
 
-`comment create`、`pr sync`、`comment reply`はPhase 1では非冪等である。結果が不明な場合はcommentを
-再取得して重複を確認する。
+`comment create`は非冪等である。`pr sync`と`comment reply`のreplyは任意のidempotency keyを受け、
+同じcaller payloadのretryは元のpostを返す。syncが内部で関連付けるGitHub head OIDはcaller payload
+fingerprintへ含めない。keyのreuseは拒否し、元postが削除済みなら再作成せず明示errorにする。
 
-### 7.3 Walkthrough lifecycle
+### 7.3 comment watch
+
+`rvw comment watch --json-seq`は保存済み全PRの新規root commentとreplyをRFC 7464 JSON text
+sequenceとして出力する。cursor省略時は現在の最新event位置へanchorし、起動前の既存未解決commentを
+処理しない。最初の`ready` frameがdatabase-scoped opaque cursorを返し、その後の`comment-posted` frameは
+各event直後のcursor、sequence、post ID、comment URI、PR URL、削除済みかを返す。eventは調査contextを
+含まない最小triggerとし、Agentは必ず`comment get`でthreadを読み直す。
+
+`--after`は同じdatabaseのcursorから再生し、別database、最新sequenceより先、破損、未知versionのcursorを拒否する。poll間隔は
+既定10秒、1〜300秒とする。event rowはcomment/post削除と独立して保持し、削除後の再生は`deleted: true`
+として返す。複数の独立taskは別cursorで同じlogを読める。
+
+cursor、pending queue、retry、authorization、Agentが作成したpost IDは外部Agent taskがrepository外へ
+保持する。同梱Skillのstate scriptはtask専用SQLiteを使い、event enqueueとcursor更新、batch lease、retry、
+自己post抑制をtransaction化する。rvwはAgentやsubagentを起動せず、これらのtask stateも保持しない。
+task起動時に明示された場合だけ、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
+OIDとpush先が一致するPRをfix-and-push候補にできる。他人、不明、不一致はinvestigate-and-replyとする。
+
+### 7.4 Walkthrough lifecycle
 
 既存Walkthroughはstable URIから現在内容と対象PRを取得できる。
 
@@ -736,9 +761,10 @@ rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
 postを一つのSQLite transactionで物理削除し、change sequenceを更新する。この削除はretained commit refを
 削除しない。
 
-### 7.3 JSON transport contract
+### 7.5 JSON transport contract
 
 - machine consumerは`--json`または`--stdin --json`を必須とし、stdoutへJSON valueを一つだけ返す。
+- 長時間の`comment watch`だけは`--json-seq`を必須とし、stdoutへRFC 7464 frameを複数返す。
 - progressとdiagnosticはstderrへ出し、errorは`code`、`message`、`suggestions`を持つ。
 - stdinは40 MiB以下の単一JSON objectとし、EOFを受けてからparseする。改行だけでは入力を終了しない。
   process callerはJSON送信後にstdinをcloseし、shell callerはpipe、quoted heredoc、input redirectionの
@@ -752,13 +778,14 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   各threadはURI、state、target要約、post件数、root postの先頭512 bytes、latest headに対してserviceが
   導出したplacementだけを返し、PR本文は含めない。完全なtarget、全post、source excerptは
   `comment get`だけが返す。
-- `comment get`はPR URL、repository path、最新title、base/head branchとOID、comparison base、comment
+- `comment get`はPR URL、repository path、最新title、base/head branchとOID、head repository owner/name、comparison base、comment
   target、posts、`createdHeadOid`、`latestHeadOid`、各postの`relatedCommitOid`、latest headに対してserviceが
   導出したplacementを返す。既定ではPR本文を含めず、`--include-pr-body`指定時だけ最新の同期済み本文を
   `pullRequest.body`として返す。呼び出し側はOID比較でOutdatedを推測しない。
 - `comment get --live`はGitHubの現在値をread-onlyで取得し、同期済みcacheを更新せず、`githubState`へ
   `liveCheckedAt`、`staleAgainstGitHub`、live metadataを返す。指定しない場合の値は`null`であり、GitHubを
-  確認していないことを明示する。
+  確認していないことを明示する。live metadataにはforkでもpush先を一意にできるhead repository
+  owner/name、head branch、head OIDを含める。
 - repository targetの`comment get`はexact source OID/pathとavailabilityに加え、line/rangeなら前後
   最大20行、file-levelなら先頭からのsource excerptを返す。excerptは最大200行、64 KiBとし、前後と
   byte上限による切り詰めを明示する。`availability`の値域は`available`（textとして取得可能。submoduleは
@@ -766,12 +793,14 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   存在しない）とする。`available`だけがexcerptを持ち、それ以外は`null`とする。Agentは必要な周辺contextを
   local repositoryのexact OIDから読む。
 - standalone `comment reply`のstdinは`body`、任意の`authorLabel`、任意の
-  `relatedCommitOid`を持つ。関連OIDを指定した場合は対象PRで利用可能なcommitでなければならない。
+  `relatedCommitOid`、任意の`idempotencyKey`を持つ。関連OIDを指定した場合は対象PRで利用可能なcommitで
+  なければならない。同じkeyと同じpayloadのretryは既存postを返し、異なる利用を拒否する。
 - `comment create`は登録済みPR、通常のcomment target、本文、任意の`authorLabel`をstdinで受け、
   viewerと同じtarget validationから未解決threadを一件作成する。batch作成は行わない。
-- `pr sync`の`commentUpdates`は最大500件で、各要素は`commentRef`、`reply`、`resolve`を必須とする。
+- `pr sync`の`commentUpdates`は最大500件で、各要素は`commentRef`、`reply`、`resolve`と任意の
+  `idempotencyKey`を持つ。
 - breakingなprotocol schema変更ではprotocol versionを進める。additiveなcommandは同じversionへ新しい
-  capabilityを追加する。いずれもCLI contract test、2つの共通Skill、README、`docs/cli-protocol.md`を
+  capabilityを追加する。いずれもCLI contract test、3つの共通Skill、README、`docs/cli-protocol.md`を
   同じ変更で更新する。
 
 ## 8. SQLite
@@ -805,7 +834,7 @@ CREATE TABLE app_meta (
   value TEXT NOT NULL
 );
 
--- change_sequenceに加え、globalなtheme_preferenceをlight / dark / systemで保持する。
+-- change_sequence、global theme_preference、comment_watch_database_idを保持する。
 
 CREATE TABLE pull_requests (
   id TEXT PRIMARY KEY,
@@ -814,6 +843,9 @@ CREATE TABLE pull_requests (
   repository TEXT NOT NULL,
   number INTEGER NOT NULL,
   github_url TEXT NOT NULL,
+  latest_author_login TEXT,
+  latest_head_repository_owner TEXT,
+  latest_head_repository_name TEXT,
   local_repository_path TEXT NOT NULL,
   git_common_dir TEXT NOT NULL,
   latest_title TEXT NOT NULL,
@@ -861,6 +893,21 @@ CREATE TABLE comment_posts (
   is_root INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE comment_reply_idempotency (
+  key_hash TEXT PRIMARY KEY,
+  request_hash TEXT NOT NULL,
+  post_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE comment_post_events (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id TEXT NOT NULL UNIQUE,
+  comment_ref TEXT NOT NULL,
+  pull_request_url TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 
 CREATE TABLE walkthroughs (
@@ -1096,9 +1143,13 @@ CLI contract:
 - `comment get`の最新PR metadata、PR本文の既定省略と`--include-pr-body` opt-in、service導出placement、
   bounded exact source excerpt
 - resolved threadへのreplyが自動reopenしない状態契約
+- cursorless watchが既存postをskipし、新規root/replyだけをDB-wide sequenceで返すこと
+- watch cursorのresume、別DB拒否、削除後event、minimal payload、RFC 7464 framing
+- replyとsync updateのidempotency key retry、head advance、payload conflict、result削除
+- task state scriptのatomic ingest、lease recovery、自己event抑制、repository write直列化
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
 - `pr sync`のreply/head関連付けと非冪等時の再取得
-- 2つのSkillの初回install、同一内容の再install、いずれかに差異がある場合の更新検知と`--force`
+- 3つのSkillの初回install、同一内容の再install、いずれかに差異がある場合の更新検知と`--force`
 - Skill installerが対象Skill directory外を変更しないこと
 - `skill status --json`のschema
 
@@ -1108,8 +1159,8 @@ Package smoke:
 - CLIはNode built-in以外のruntime依存を`dist/cli.mjs`へbundleし、package manifestにruntime
   `dependencies`を残さない
 - 空のnpm cacheを使ってtemp prefixへoffline global installし、`rvw --version`と`rvw doctor`を実行
-- temp Skill rootへCodex / Claude Code向けの同じ2つのSkillをinstallし、`skill status --json`で一致を確認
-- static assets、migrations、`rvw` / `rvw-walkthrough` Skill assetがtarballに存在することを確認
+- temp Skill rootへCodex / Claude Code向けの同じ3つのSkillをinstallし、`skill status --json`で一致を確認
+- static assets、migrations、`rvw` / `rvw-walkthrough` / `rvw-watch-comments` Skill assetがtarballに存在することを確認
 
 必須commands:
 
@@ -1141,7 +1192,8 @@ rvw skill status
 
 Skill sourceはcwdではなく実行中CLIのpackage rootを基準に解決する。`--force`でも対象Skill
 directory以外を削除しない。一度のinstallでコメント取得・返信・sync用の`rvw`と、Walkthroughの
-検証・publish・current値更新・確認付き削除用の`rvw-walkthrough`を配置する。二つのSkillの名前と内容はCodex / Claude Codeで共通とし、
+検証・publish・current値更新・確認付き削除用の`rvw-walkthrough`、新規post監視用の
+`rvw-watch-comments`を配置する。三つのSkillの名前と内容はCodex / Claude Codeで共通とし、
 platform adapterが変えるのは既定のSkill rootだけとする。Agent名はSkillへhardcodeせず、CLIの任意
 `authorLabel`として実行中Agentが正確に判断できる場合だけ渡す。
 
@@ -1151,6 +1203,12 @@ requestとrepository contextへ委ね、固定の文書templateを要求しな�
 明示された実装対象のmental modelを作るための最初の読解経路とし、作成指示を優先して、未指定部分だけを
 既定guideで補う。diffやfileの一覧、網羅的なAI review、完全性の保証にはしない。更新時は既存artifactを読んで完全置換し、
 改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への明示authorizationなしに実行しない。
+
+`rvw-watch-comments`は一つの外部Agent taskをreceiverとして使い、cursorless起動で既存未解決を処理せず、
+新規root/replyをPRごとにsubagentへまとめる。同梱state scriptがtask固有cursor、queue、lease、retry、
+自己event抑制をrepository外のSQLiteで管理する。task起動時の明示許可がある場合だけ、live authorが起動時
+GitHub loginと一致し、head repository/branch/OIDとpush先も一致するPRをfix-and-pushにできる。他人または
+不明なPRはinvestigate-and-replyとする。rvw自身はAgent sessionやtask stateを管理しない。
 
 Phase 2ではnpm account、scope、2FA、LICENSE、README、CHANGELOG、SECURITY、dependency license、
 macOS/Linux/Windows smokeを確認してから公開する。通常CIはregistryへ書き込まない。release workflowは
@@ -1186,7 +1244,7 @@ Quality:
 - API/CLI validationとmigrationがあり、Git commandへshell interpolationを使わない。
 - `pnpm install --frozen-lockfile`、check、unit/integration、E2E、build、package smokeが成功する。
 - Phase 1完了時点のpackageは`name: rvw`かつ`private: true`で、CIからnpm publishしない。
-- README、一次仕様、decisions、CLI protocol、`rvw` / `rvw-walkthrough`が同じ利用者モデルを説明する。
+- README、一次仕様、decisions、CLI protocol、3つのbundled Skillが同じ利用者モデルを説明する。
 
 Manual acceptance:
 

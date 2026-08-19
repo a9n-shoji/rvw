@@ -1,4 +1,8 @@
-import type { CommentListContext, CommentReviewContext } from "../application/rvw-service.js";
+import type {
+  CommentListContext,
+  CommentReviewContext,
+  CommentWatchEventContext,
+} from "../application/rvw-service.js";
 import type { CommentTarget, PullRequest } from "../domain/models.js";
 import { MAX_COMMENT_LIST_BODY_PREVIEW_BYTES } from "../shared/constants.js";
 import {
@@ -26,11 +30,21 @@ function formatPullRequest(
   pullRequest: PullRequest,
   options: { includeBody?: boolean } = {},
 ): CommentGetOutput["pullRequest"] {
+  const headRepository =
+    pullRequest.latestHeadRepositoryOwner && pullRequest.latestHeadRepositoryName
+      ? {
+          owner: pullRequest.latestHeadRepositoryOwner,
+          name: pullRequest.latestHeadRepositoryName,
+          url: `https://github.com/${pullRequest.latestHeadRepositoryOwner}/${pullRequest.latestHeadRepositoryName}`,
+        }
+      : null;
   return {
     url: pullRequest.url,
     owner: pullRequest.owner,
     repository: pullRequest.repository,
     number: pullRequest.number,
+    authorLogin: pullRequest.latestAuthorLogin,
+    headRepository,
     title: pullRequest.latestTitle,
     ...(options.includeBody ? { body: pullRequest.latestBody } : {}),
     baseRefName: pullRequest.latestBaseRefName,
@@ -96,6 +110,16 @@ export function formatCommentGetOutput(
       staleAgainstGitHub: result.githubState.staleAgainstGitHub,
       live: result.githubState.live
         ? {
+            authorLogin: result.githubState.live.authorLogin,
+            headRepository:
+              result.githubState.live.headRepositoryOwner &&
+              result.githubState.live.headRepositoryName
+                ? {
+                    owner: result.githubState.live.headRepositoryOwner,
+                    name: result.githubState.live.headRepositoryName,
+                    url: `https://github.com/${result.githubState.live.headRepositoryOwner}/${result.githubState.live.headRepositoryName}`,
+                  }
+                : null,
             title: result.githubState.live.title,
             ...(options.includePrBody ? { body: result.githubState.live.body } : {}),
             baseRefName: result.githubState.live.baseRefName,
@@ -107,6 +131,13 @@ export function formatCommentGetOutput(
         : null,
     },
   });
+}
+
+export function formatCommentWatchEvent(item: CommentWatchEventContext) {
+  return {
+    cursor: item.cursor,
+    event: item.event,
+  };
 }
 
 export function formatCommentListOutput(

@@ -18,9 +18,13 @@ import { APP_VERSION } from "../../shared/constants.js";
 import { RvwError } from "../../shared/errors.js";
 
 export type SkillPlatform = "codex" | "claude";
-export type SkillName = "rvw" | "rvw-walkthrough";
+export type SkillName = "rvw" | "rvw-walkthrough" | "rvw-watch-comments";
 
-const skillNames = ["rvw", "rvw-walkthrough"] as const satisfies readonly SkillName[];
+const skillNames = [
+  "rvw",
+  "rvw-walkthrough",
+  "rvw-watch-comments",
+] as const satisfies readonly SkillName[];
 const INSTALL_METADATA_FILE = ".rvw-install.json";
 const INSTALL_METADATA_SCHEMA_VERSION = 1;
 const MAX_DIGEST_ENTRIES = 10_000;

@@ -8,7 +8,7 @@
 - `rvw` CLIのcommand、flag、exit status
 - `rvw://comment/<uuid>`と`rvw://walkthrough/<uuid>`
 - `--json` responseと`rvw protocol --json`が公開するmachine protocol version / capability
-- bundled `rvw` / `rvw-walkthrough` SkillとCLI protocolの組み合わせ
+- bundled `rvw` / `rvw-walkthrough` / `rvw-watch-comments` SkillとCLI protocolの組み合わせ
 - user dataを新しいversionへ引き継ぐforward migration
 
 machine-readable contractへbreaking changeが必要な場合はprotocol versionを進め、同梱Skillと文書を同じ

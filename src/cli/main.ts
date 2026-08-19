@@ -8,7 +8,13 @@ import { z } from "zod";
 import { createRuntime, type Runtime } from "../application/runtime.js";
 import { databasePathConfiguration } from "../infrastructure/db/database.js";
 import { SkillInstaller, type SkillPlatform } from "../infrastructure/skills/skill-installer.js";
-import { APP_VERSION, DEFAULT_COMMENT_LIST_LIMIT, PROTOCOL_VERSION } from "../shared/constants.js";
+import {
+  APP_VERSION,
+  DEFAULT_COMMENT_LIST_LIMIT,
+  DEFAULT_COMMENT_WATCH_INTERVAL_SECONDS,
+  DEFAULT_COMMENT_WATCH_LIMIT,
+  PROTOCOL_VERSION,
+} from "../shared/constants.js";
 import {
   asRvwError,
   RvwError,
@@ -25,11 +31,16 @@ import {
   type AgentTransportStatus,
   type RunningAgentSocket,
 } from "../server/agent-socket.js";
-import { formatCommentGetOutput, formatCommentListOutput } from "./comment-protocol.js";
+import {
+  formatCommentGetOutput,
+  formatCommentListOutput,
+  formatCommentWatchEvent,
+} from "./comment-protocol.js";
 import {
   commentCreateInputSchema,
   commentListOptionsSchema,
   commentReplyInputSchema,
+  commentWatchOptionsSchema,
   pullRequestSyncInputSchema,
   walkthroughPublishInputSchema,
   walkthroughUpdateInputSchema,
@@ -46,6 +57,14 @@ interface OutputOptions {
 
 function writeJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+function writeJsonSequence(value: unknown): void {
+  process.stdout.write(`\u001e${JSON.stringify(value)}\n`);
+}
+
+async function waitForCommentWatchInterval(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function writeOutput(options: OutputOptions, value: unknown, human: string): void {
@@ -535,6 +554,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "agent.transport",
           "comment.create",
           "comment.list",
+          "comment.watch",
           "comment.read",
           "comment.reply",
           "comment.resolve",
@@ -803,6 +823,67 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     });
 
   comment
+    .command("watch")
+    .description("全登録PRで起動後に作成されたroot commentとreplyを監視")
+    .option("--after <cursor>", "以前のwatch cursorから再開")
+    .option(
+      "--interval <seconds>",
+      `poll間隔（既定: ${DEFAULT_COMMENT_WATCH_INTERVAL_SECONDS}秒）`,
+      String(DEFAULT_COMMENT_WATCH_INTERVAL_SECONDS),
+    )
+    .option(
+      "--limit <limit>",
+      `一度に取得する最大event数（既定: ${DEFAULT_COMMENT_WATCH_LIMIT}）`,
+      String(DEFAULT_COMMENT_WATCH_LIMIT),
+    )
+    .option("--once", "現在取得可能なeventを出力して終了")
+    .requiredOption("--json-seq", "RFC 7464 JSON text sequenceで出力")
+    .action(async (rawOptions: unknown) => {
+      const options = commentWatchOptionsSchema.parse(rawOptions);
+      let cursor = options.after;
+      let first = true;
+      let stopping = false;
+      const stop = (): void => {
+        stopping = true;
+      };
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+      try {
+        do {
+          const result = await callService(
+            "comment.watch",
+            {
+              ...(cursor === undefined ? {} : { cursor }),
+              limit: options.limit,
+            },
+            () => getRuntime().service.listCommentPostEvents(cursor, options.limit),
+          );
+          if (first) {
+            writeJsonSequence({
+              type: "ready",
+              databaseId: result.databaseId,
+              cursor: result.startCursor,
+              anchoredAtCurrent: result.anchoredAtCurrent,
+            });
+          }
+          for (const item of result.events) {
+            writeJsonSequence({ type: "comment-posted", ...formatCommentWatchEvent(item) });
+          }
+          cursor = result.cursor;
+          first = false;
+          if (options.once || stopping) break;
+          if (!result.hasMore) {
+            await waitForCommentWatchInterval(options.interval * 1_000);
+          }
+        } while (!stopping);
+        writeJsonSequence({ type: "stopped", cursor });
+      } finally {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+      }
+    });
+
+  comment
     .command("create")
     .requiredOption("--stdin", "stdinからJSONを読む")
     .requiredOption("--json", "JSONで出力")
@@ -880,6 +961,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         ...(input.relatedCommitOid === undefined
           ? {}
           : { relatedCommitOid: input.relatedCommitOid }),
+        ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
       };
       const post = await callService(
         "comment.reply",
@@ -958,6 +1040,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
 
 export async function runCli(argv = process.argv): Promise<void> {
   const json = argv.includes("--json");
+  const jsonSequence = argv.includes("--json-seq");
   try {
     await createProgram().parseAsync(argv);
   } catch (error) {
@@ -967,7 +1050,8 @@ export async function runCli(argv = process.argv): Promise<void> {
             details: z.treeifyError(error),
           })
         : asRvwError(error);
-    if (json) writeJson({ ok: false, error: rvwError.toJSON() });
+    if (jsonSequence) writeJsonSequence({ type: "error", error: rvwError.toJSON() });
+    else if (json) writeJson({ ok: false, error: rvwError.toJSON() });
     else process.stderr.write(`rvw: ${rvwError.message}\n${rvwError.suggestions.join("\n")}\n`);
     if (rvwError.status >= 500 && error instanceof Error && error.stack) {
       process.stderr.write(`${error.stack}\n`);

@@ -36,6 +36,15 @@ image resolution uses the post's related commit, repository target, current Walk
 thread creation head in that order; comment Markdown has neither source-position targets nor
 `rvw-ref:` bindings. Browser state, prompts, and Agent sessions never enter the domain model.
 
+New root posts and replies also append a database-wide event sequence. A long-running external Agent
+task may consume that sequence with an opaque database-scoped cursor through `rvw comment watch`.
+rvw retains minimal event identifiers independently of deletable posts and owns only ordering and
+replay. The bundled Skill's task-local state script atomically owns its cursor, queue, leases, retries,
+self-event suppression, and repository-writer serialization. Separate tasks may consume the same log
+with separate state. This terminal-bound consumer is not a daemon and rvw never starts it. A durable
+reply-idempotency ledger makes an exact caller-payload retry safe without introducing Agent session
+identity into comments.
+
 Walkthroughs cross the same one-way CLI boundary in the other direction. An Agent can publish a
 Markdown explanation fixed to one commit, with validated file references and optional inclusive line
 ranges, plus optional Mermaid-node bindings. SQLite stores one current explanation per stable Walkthrough
@@ -65,7 +74,8 @@ Policy and sandbox so direct navigation cannot execute repository-controlled scr
 
 The bundled Skills are named by capability rather than Agent host. `rvw` handles review comments and
 synchronization; `rvw-walkthrough` converts the current session's explanation into a validated,
-commit-fixed publication without prescribing its document structure. Codex and Claude Code receive
+commit-fixed publication without prescribing its document structure; `rvw-watch-comments` keeps an
+external Agent task subscribed to newly created posts and fails closed on PR ownership. Codex and Claude Code receive
 the same Skill directories under their respective local Skill roots. Platform selection is a packaging
 concern only and does not fork the Agent protocol or workflow instructions. Installer metadata records
 the bundled digest so update availability and local customization are reported separately.

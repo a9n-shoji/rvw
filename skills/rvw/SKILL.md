@@ -140,12 +140,17 @@ rvw comment reply '<COMMENT_URI>' --stdin --json <<'RVW_JSON'
 {
   "body": "Investigation result or completed change",
   "authorLabel": "Agent name",
-  "relatedCommitOid": null
+  "relatedCommitOid": null,
+  "idempotencyKey": "task-stable-key-for-this-exact-reply"
 }
 RVW_JSON
 ```
 
-Set `authorLabel` to an accurate current Agent name when known; otherwise omit it. This command is not idempotent. After an uncertain failure, re-read the comment before retrying to avoid a duplicate reply.
+Set `authorLabel` to an accurate current Agent name when known; otherwise omit it. `idempotencyKey` is
+optional for ordinary interactive work and required for automated or resumable workflows. Reuse a key
+only for the same comment and exact caller payload. If the original post was deleted, retry fails
+without recreating it. Without a key, an uncertain failure still requires re-reading the comment before
+retrying to avoid a duplicate reply.
 
 A resolved thread accepts replies, and replying does not reopen it. Likewise, a `pr sync` reply leaves
 the current state unchanged unless its update has `resolve: true`. Use `comment reopen` as a separate,
@@ -167,14 +172,19 @@ rvw pr sync --stdin --json <<'RVW_JSON'
     {
       "commentRef": "rvw://comment/uuid",
       "reply": "Change included in the pushed commit",
-      "resolve": false
+      "resolve": false,
+      "idempotencyKey": "task-stable-key-for-this-exact-update"
     }
   ]
 }
 RVW_JSON
 ```
 
-Prefer this atomic path when the GitHub refresh and comment updates belong to the same operation. Successful replies are linked to the synchronized head commit. The command is not idempotent when it adds replies; re-read affected comments before retrying an uncertain result.
+Prefer this atomic path when the GitHub refresh and comment updates belong to the same operation.
+Successful replies are linked to the synchronized head commit. Give each automated or resumable
+update a stable `idempotencyKey`; an exact retry returns the existing reply. Without keys, re-read
+affected comments before retrying an uncertain result. A later GitHub head advance does not change the
+identity of the original caller payload.
 
 If the saved checkout is dirty but a clean worktree in the same Git common directory exists, pass
 `--repository <PATH>`. Inspect every reported dirty entry before deciding whether untracked files are

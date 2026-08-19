@@ -138,8 +138,9 @@ Agentは現在内容を読み、同じ`rvw://walkthrough/<uuid>`を更新して�
 
 ## Codex / Claude Code Skills
 
-アプリ本体からローカルSkillをインストールします。一度のinstallで、コメント処理用の`rvw`と
-Walkthroughのpublish・改善・削除用の`rvw-walkthrough`が入ります。Skill名と内容はCodex / Claude Codeで共通で、
+アプリ本体からローカルSkillをインストールします。一度のinstallで、コメント処理用の`rvw`、
+Walkthroughのpublish・改善・削除用の`rvw-walkthrough`、新規コメント監視用の
+`rvw-watch-comments`が入ります。Skill名と内容はCodex / Claude Codeで共通で、
 platform指定は配置先だけを選びます。
 
 ```bash
@@ -150,8 +151,8 @@ rvw skill status
 
 既定の配置先は次です。
 
-- Codex: `~/.agents/skills/rvw`、`~/.agents/skills/rvw-walkthrough`
-- Claude Code: `~/.claude/skills/rvw`、`~/.claude/skills/rvw-walkthrough`
+- Codex: `~/.agents/skills/rvw`、`~/.agents/skills/rvw-walkthrough`、`~/.agents/skills/rvw-watch-comments`
+- Claude Code: `~/.claude/skills/rvw`、`~/.claude/skills/rvw-walkthrough`、`~/.claude/skills/rvw-watch-comments`
 
 rvwがインストールしたSkillには同梱版digestを記録します。`skill status --json`と`doctor --json`は、
 管理済みの旧版なら`updateAvailable: true`、ローカル編集なら`locallyModified: true`、記録のない差異なら
@@ -187,7 +188,14 @@ mental modelを作るための最初の読解経路を構成します。文書�
 reference付きartifactとして検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、
 現在内容を取得して同じURIを更新し、重複した「改訂版」を追加しません。
 
-二つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
+新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRを
+約10秒間隔で監視し、起動前の既存未解決commentは処理しません。自分のPRのfix-and-pushを起動taskへ
+明示許可した場合だけ、live PR authorと起動時のGitHub loginが一致するPRで修正・test・commit・pushを
+行えます。fork PRではlive head repository、branch、OIDとpush先も一致させます。他人またはauthor不明の
+PRは常にcode/GitHub read-onlyで調査し、rvwへ最終結果だけ返信します。Skill同梱のtask-state toolが
+repository外のSQLiteへcursor、queue、retry、自己返信抑制をtransactionalに保存します。
+
+三つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
 `rvw walkthrough get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`だけを利用します。
 ローカルDBやrepositoryへアクセスできないCloud Agentは対象外です。
 
@@ -209,7 +217,8 @@ resetは対象PRのコメント、返信、コメント対象、Walkthrough、co
 
 ## CLI protocol
 
-機械向けコマンドはstdoutへJSONだけを出します。
+機械向けコマンドはstdoutへJSONだけを出します。長時間の`comment watch`だけはRFC 7464 JSON text
+sequenceを出します。
 
 ```bash
 rvw protocol --json
@@ -218,6 +227,7 @@ rvw agent status --json
 rvw pr refresh <PR_REF> --json
 rvw comment create --stdin --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
+rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
 rvw comment get <COMMENT_URI> --live --json

@@ -19,6 +19,10 @@ const contractFiles = [
     path: "skills/rvw-walkthrough/SKILL.md",
     pattern: (version: number) => `Require \`protocolVersion\` ${version}`,
   },
+  {
+    path: "skills/rvw-watch-comments/SKILL.md",
+    pattern: (version: number) => `Require \`protocolVersion\` ${version}`,
+  },
 ];
 
 describe("protocol version contract", () => {

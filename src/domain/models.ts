@@ -7,6 +7,9 @@ export interface PullRequestIdentity {
 }
 
 export interface GitHubPullRequest extends PullRequestIdentity {
+  authorLogin: string | null;
+  headRepositoryOwner: string | null;
+  headRepositoryName: string | null;
   title: string;
   body: string;
   baseRefName: string;
@@ -20,6 +23,9 @@ export interface GitHubPullRequest extends PullRequestIdentity {
 
 export interface PullRequest extends PullRequestIdentity {
   id: string;
+  latestAuthorLogin: string | null;
+  latestHeadRepositoryOwner: string | null;
+  latestHeadRepositoryName: string | null;
   localRepositoryPath: string;
   gitCommonDir: string;
   latestTitle: string;
@@ -205,6 +211,15 @@ export interface CommentPost {
   isRoot: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CommentPostEvent {
+  sequence: number;
+  createdAt: string;
+  postId: string;
+  commentRef: string;
+  pullRequestUrl: string;
+  deleted: boolean;
 }
 
 export interface ReviewComment {

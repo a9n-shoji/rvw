@@ -1,5 +1,12 @@
 import { z } from "zod";
-import { DEFAULT_COMMENT_LIST_LIMIT, MAX_COMMENT_LIST_LIMIT } from "../shared/constants.js";
+import {
+  DEFAULT_COMMENT_LIST_LIMIT,
+  DEFAULT_COMMENT_WATCH_INTERVAL_SECONDS,
+  DEFAULT_COMMENT_WATCH_LIMIT,
+  MAX_COMMENT_LIST_LIMIT,
+  MAX_COMMENT_WATCH_INTERVAL_SECONDS,
+  MAX_COMMENT_WATCH_LIMIT,
+} from "../shared/constants.js";
 export {
   commentCreateInputSchema,
   commentReplyInputSchema,
@@ -19,12 +26,35 @@ export const commentListOptionsSchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+export const commentWatchOptionsSchema = z.object({
+  after: z.string().min(1).max(512).optional(),
+  interval: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_COMMENT_WATCH_INTERVAL_SECONDS)
+    .default(DEFAULT_COMMENT_WATCH_INTERVAL_SECONDS),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_COMMENT_WATCH_LIMIT)
+    .default(DEFAULT_COMMENT_WATCH_LIMIT),
+  once: z.boolean().optional().default(false),
+  jsonSeq: z.literal(true),
+});
+
 export const commentPullRequestOutputSchema = z
   .object({
     url: z.string(),
     owner: z.string(),
     repository: z.string(),
     number: z.number().int(),
+    authorLogin: z.string().nullable(),
+    headRepository: z
+      .object({ owner: z.string(), name: z.string(), url: z.string() })
+      .strict()
+      .nullable(),
     title: z.string(),
     body: z.string().optional(),
     baseRefName: z.string(),
@@ -216,6 +246,11 @@ export const commentGetOutputSchema = z
         staleAgainstGitHub: z.boolean().nullable(),
         live: z
           .object({
+            authorLogin: z.string().nullable(),
+            headRepository: z
+              .object({ owner: z.string(), name: z.string(), url: z.string() })
+              .strict()
+              .nullable(),
             title: z.string(),
             body: z.string().optional(),
             baseRefName: z.string(),

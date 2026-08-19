@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -15,6 +15,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import envPaths from "env-paths";
 import type {
   CommentPost,
+  CommentPostEvent,
   CommentTarget,
   DeletedWalkthrough,
   GitHubPullRequest,
@@ -99,6 +100,9 @@ function mapPullRequest(row: DbRow): PullRequest {
     repository: stringValue(row, "repository"),
     number: numberValue(row, "number"),
     url: stringValue(row, "github_url"),
+    latestAuthorLogin: nullableString(row, "latest_author_login"),
+    latestHeadRepositoryOwner: nullableString(row, "latest_head_repository_owner"),
+    latestHeadRepositoryName: nullableString(row, "latest_head_repository_name"),
     localRepositoryPath: stringValue(row, "local_repository_path"),
     gitCommonDir: stringValue(row, "git_common_dir"),
     latestTitle: stringValue(row, "latest_title"),
@@ -113,6 +117,23 @@ function mapPullRequest(row: DbRow): PullRequest {
     createdAt: stringValue(row, "created_at"),
     updatedAt: stringValue(row, "updated_at"),
   };
+}
+
+function mapCommentPost(row: DbRow): CommentPost {
+  return {
+    id: stringValue(row, "id"),
+    commentId: stringValue(row, "comment_id"),
+    body: stringValue(row, "body"),
+    relatedCommitOid: nullableString(row, "related_commit_oid"),
+    authorLabel: nullableString(row, "author_label"),
+    isRoot: numberValue(row, "is_root") === 1,
+    createdAt: stringValue(row, "created_at"),
+    updatedAt: stringValue(row, "updated_at"),
+  };
+}
+
+function hashIdempotencyKey(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function findMigrationsDirectory(explicit: string | undefined): string {
@@ -260,6 +281,8 @@ export interface CommentUpdateInput {
   reply: string;
   resolve: boolean;
   authorLabel?: string | null;
+  idempotencyKey?: string;
+  idempotencyRequestHash?: string;
 }
 
 export interface NewWalkthroughInput {
@@ -454,6 +477,42 @@ export class RvwDatabase {
     return Number(stringValue(row, "value"));
   }
 
+  getCommentWatchDatabaseId(): string {
+    const row = this.database
+      .prepare("SELECT value FROM app_meta WHERE key = 'comment_watch_database_id'")
+      .get() as DbRow | undefined;
+    if (!row) throw new RvwError("DATABASE_ERROR", "comment watchのdatabase IDがありません。");
+    return stringValue(row, "value");
+  }
+
+  getLatestCommentPostEventSequence(): number {
+    const row = this.database
+      .prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM comment_post_events")
+      .get() as DbRow;
+    return numberValue(row, "sequence");
+  }
+
+  listCommentPostEvents(afterSequence: number, limit: number): CommentPostEvent[] {
+    const rows = this.database
+      .prepare(
+        `SELECT e.*, CASE WHEN p.id IS NULL THEN 1 ELSE 0 END AS deleted
+        FROM comment_post_events e
+        LEFT JOIN comment_posts p ON p.id = e.post_id
+        WHERE e.sequence > ?
+        ORDER BY e.sequence ASC
+        LIMIT ?`,
+      )
+      .all(afterSequence, limit) as DbRow[];
+    return rows.map((row) => ({
+      sequence: numberValue(row, "sequence"),
+      createdAt: stringValue(row, "created_at"),
+      postId: stringValue(row, "post_id"),
+      commentRef: stringValue(row, "comment_ref"),
+      pullRequestUrl: stringValue(row, "pull_request_url"),
+      deleted: numberValue(row, "deleted") === 1,
+    }));
+  }
+
   getThemePreference(): ThemePreference {
     const row = this.database
       .prepare("SELECT value FROM app_meta WHERE key = 'theme_preference'")
@@ -539,14 +598,18 @@ export class RvwDatabase {
         `INSERT INTO pull_requests(
           id, host, owner, repository, number, github_url,
           local_repository_path, git_common_dir,
+          latest_author_login, latest_head_repository_owner, latest_head_repository_name,
           latest_title, latest_body, latest_base_ref_name, latest_head_ref_name,
           latest_base_oid, latest_head_oid, github_updated_at, fetched_at,
           created_at, updated_at, latest_comparison_base_oid
-        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(host, owner, repository, number) DO UPDATE SET
           github_url = excluded.github_url,
           local_repository_path = excluded.local_repository_path,
           git_common_dir = excluded.git_common_dir,
+          latest_author_login = excluded.latest_author_login,
+          latest_head_repository_owner = excluded.latest_head_repository_owner,
+          latest_head_repository_name = excluded.latest_head_repository_name,
           latest_title = excluded.latest_title,
           latest_body = excluded.latest_body,
           latest_base_ref_name = excluded.latest_base_ref_name,
@@ -566,6 +629,9 @@ export class RvwDatabase {
         github.url,
         repository.localRepositoryPath,
         repository.gitCommonDir,
+        github.authorLogin,
+        github.headRepositoryOwner,
+        github.headRepositoryName,
         github.title,
         github.body,
         github.baseRefName,
@@ -868,6 +934,8 @@ export class RvwDatabase {
     const now = new Date().toISOString();
     const id = randomUUID();
     const postId = randomUUID();
+    const pullRequest = this.getPullRequest(input.pullRequestId);
+    if (!pullRequest) throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
     this.immediateTransaction(() => {
       this.database
         .prepare(
@@ -880,6 +948,13 @@ export class RvwDatabase {
           "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, 1, ?, ?)",
         )
         .run(postId, id, input.body, input.authorLabel ?? null, now, now);
+      this.database
+        .prepare(
+          `INSERT INTO comment_post_events(
+            post_id, comment_ref, pull_request_url, created_at
+          ) VALUES (?, ?, ?, ?)`,
+        )
+        .run(postId, formatCommentUri(id), pullRequest.url, now);
       this.incrementChangeSequence();
     });
     const comment = this.getComment(id);
@@ -1089,56 +1164,110 @@ export class RvwDatabase {
           "SELECT * FROM comment_posts WHERE comment_id = ? ORDER BY is_root DESC, created_at ASC, id ASC",
         )
         .all(commentId) as DbRow[]
-    ).map((row) => ({
-      id: stringValue(row, "id"),
-      commentId: stringValue(row, "comment_id"),
-      body: stringValue(row, "body"),
-      relatedCommitOid: nullableString(row, "related_commit_oid"),
-      authorLabel: nullableString(row, "author_label"),
-      isRoot: numberValue(row, "is_root") === 1,
-      createdAt: stringValue(row, "created_at"),
-      updatedAt: stringValue(row, "updated_at"),
-    }));
+    ).map(mapCommentPost);
   }
 
   insertReply(
     commentId: string,
-    input: { body: string; relatedCommitOid?: string | null; authorLabel?: string | null },
+    input: {
+      body: string;
+      relatedCommitOid?: string | null;
+      authorLabel?: string | null;
+      idempotencyKey?: string;
+      idempotencyRequestHash?: string;
+    },
     incrementSequence = true,
   ): CommentPost {
-    if (!this.getComment(commentId))
-      throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
-    const id = randomUUID();
-    const now = new Date().toISOString();
+    let result: CommentPost | undefined;
     const write = (): void => {
+      const comment = this.getComment(commentId);
+      if (!comment) {
+        throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
+      }
+      const pullRequest = this.getPullRequest(comment.pullRequestId);
+      if (!pullRequest) throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
+      const relatedCommitOid = input.relatedCommitOid ?? null;
+      const authorLabel = input.authorLabel ?? null;
+      const idempotencyKeyHash =
+        input.idempotencyKey === undefined ? null : hashIdempotencyKey(input.idempotencyKey);
+      const idempotencyRequestHash =
+        idempotencyKeyHash === null
+          ? null
+          : (input.idempotencyRequestHash ??
+            hashIdempotencyKey(
+              JSON.stringify({
+                operation: "comment.reply",
+                commentId,
+                body: input.body,
+                relatedCommitOid,
+                authorLabel,
+              }),
+            ));
+      if (idempotencyKeyHash !== null) {
+        const existingRow = this.database
+          .prepare("SELECT * FROM comment_reply_idempotency WHERE key_hash = ?")
+          .get(idempotencyKeyHash) as DbRow | undefined;
+        if (existingRow) {
+          if (stringValue(existingRow, "request_hash") !== idempotencyRequestHash) {
+            throw new RvwError(
+              "IDEMPOTENCY_CONFLICT",
+              "同じidempotencyKeyが別のcomment replyに使用されています。",
+            );
+          }
+          const postId = stringValue(existingRow, "post_id");
+          const postRow = this.database
+            .prepare("SELECT * FROM comment_posts WHERE id = ?")
+            .get(postId) as DbRow | undefined;
+          if (!postRow) {
+            throw new RvwError(
+              "IDEMPOTENCY_RESULT_DELETED",
+              "このidempotencyKeyで作成したcomment replyは既に削除されています。",
+              { details: { postId } },
+            );
+          }
+          const existing = mapCommentPost(postRow);
+          result = existing;
+          return;
+        }
+      }
+      const id = randomUUID();
+      const now = new Date().toISOString();
       this.database
         .prepare(
           "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
         )
-        .run(
-          id,
-          commentId,
-          input.body,
-          input.relatedCommitOid ?? null,
-          input.authorLabel ?? null,
-          now,
-          now,
-        );
+        .run(id, commentId, input.body, relatedCommitOid, authorLabel, now, now);
+      this.database
+        .prepare(
+          `INSERT INTO comment_post_events(
+            post_id, comment_ref, pull_request_url, created_at
+          ) VALUES (?, ?, ?, ?)`,
+        )
+        .run(id, comment.ref, pullRequest.url, now);
+      if (idempotencyKeyHash !== null && idempotencyRequestHash !== null) {
+        this.database
+          .prepare(
+            "INSERT INTO comment_reply_idempotency(key_hash, request_hash, post_id, created_at) VALUES (?, ?, ?, ?)",
+          )
+          .run(idempotencyKeyHash, idempotencyRequestHash, id, now);
+      }
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
       if (incrementSequence) this.incrementChangeSequence();
+      result = {
+        id,
+        commentId,
+        body: input.body,
+        relatedCommitOid,
+        authorLabel,
+        isRoot: false,
+        createdAt: now,
+        updatedAt: now,
+      };
     };
     if (incrementSequence) this.immediateTransaction(write);
     else write();
-    return {
-      id,
-      commentId,
-      body: input.body,
-      relatedCommitOid: input.relatedCommitOid ?? null,
-      authorLabel: input.authorLabel ?? null,
-      isRoot: false,
-      createdAt: now,
-      updatedAt: now,
-    };
+    if (!result) throw new RvwError("DATABASE_ERROR", "返信結果を読み出せません。");
+    return result;
   }
 
   updateCommentPost(commentId: string, postId: string, body: string): CommentPost {
@@ -1237,6 +1366,12 @@ export class RvwDatabase {
             body: update.reply,
             relatedCommitOid,
             authorLabel: update.authorLabel ?? "Agent",
+            ...(update.idempotencyKey === undefined
+              ? {}
+              : { idempotencyKey: update.idempotencyKey }),
+            ...(update.idempotencyRequestHash === undefined
+              ? {}
+              : { idempotencyRequestHash: update.idempotencyRequestHash }),
           },
           false,
         );
