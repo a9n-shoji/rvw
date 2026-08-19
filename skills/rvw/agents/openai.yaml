@@ -1,4 +1,4 @@
 interface:
   display_name: "rvw"
-  short_description: "Inspect and address review comments through rvw"
-  default_prompt: "Use $rvw to inspect and address the supplied rvw comment references."
+  short_description: "Create, inspect, and address rvw review comments"
+  default_prompt: "Use $rvw to create or address the requested rvw review comments."

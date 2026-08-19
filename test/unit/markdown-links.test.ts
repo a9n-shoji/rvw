@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isExternalMarkdownHref,
+  markdownAssetUrl,
   markdownLinkWasDragged,
   resolveRepositoryMarkdownPath,
 } from "../../src/web/markdown-links.js";
@@ -13,6 +14,12 @@ describe("Markdown repository links", () => {
     expect(resolveRepositoryMarkdownPath("/README.md", "docs/design/a.md")).toBe("README.md");
     expect(resolveRepositoryMarkdownPath("order%20flow.md", "docs/index.md")).toBe(
       "docs/order flow.md",
+    );
+  });
+
+  it("encodes asset query values for the same-origin endpoint", () => {
+    expect(markdownAssetUrl("pr-id", "a".repeat(40), "docs/order flow.svg")).toBe(
+      `/api/pull-requests/pr-id/markdown-asset?sourceOid=${"a".repeat(40)}&path=docs%2Forder+flow.svg`,
     );
   });
 

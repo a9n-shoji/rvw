@@ -52,6 +52,7 @@ import {
 } from "../api.js";
 import {
   isExternalMarkdownHref,
+  markdownAssetUrl,
   markdownLinkWasDragged,
   resolveRepositoryMarkdownPath,
   type PointerPosition,
@@ -268,11 +269,6 @@ function params(ref: DocumentRef): string {
     search.set("path", ref.path);
   }
   return search.toString();
-}
-
-function markdownAssetUrl(pullRequestId: string, sourceOid: string, filePath: string): string {
-  const search = new URLSearchParams({ sourceOid, path: filePath });
-  return `/api/pull-requests/${pullRequestId}/markdown-asset?${search.toString()}`;
 }
 
 function markdownNodeText(node: ReactNode): string {
@@ -1118,7 +1114,9 @@ export function DocumentViewer({
                 comment={annotation.comment}
                 variant="inline"
                 placement={annotation.placement}
+                themePreference={themePreference}
                 onActiveChange={onCommentActiveChange}
+                onOpenRepositoryLink={openRepositoryLink}
                 {...(annotation.comment.id === optimisticCommentId
                   ? { onDeleted: () => setOptimisticComment(null) }
                   : {})}
@@ -1128,7 +1126,13 @@ export function DocumentViewer({
         </div>
       );
     },
-    [markdownCommentsById, onCommentActiveChange, optimisticCommentId],
+    [
+      markdownCommentsById,
+      onCommentActiveChange,
+      openRepositoryLink,
+      optimisticCommentId,
+      themePreference,
+    ],
   );
   useLayoutEffect(() => {
     if (!optimisticComment) return;
@@ -1322,7 +1326,9 @@ export function DocumentViewer({
           variant="inline"
           placement={annotation.metadata.placement}
           side={side ?? null}
+          themePreference={themePreference}
           onActiveChange={onCommentActiveChange}
+          onOpenRepositoryLink={openRepositoryLink}
           {...(annotation.metadata.comment.id === optimisticComment?.comment.id
             ? { onDeleted: () => setOptimisticComment(null) }
             : {})}

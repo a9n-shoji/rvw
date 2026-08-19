@@ -1,6 +1,6 @@
 ---
 name: rvw
-description: Inspect, address, reply to, resolve, reopen, and synchronize rvw review comments through the local rvw CLI. Use when a request contains rvw://comment references, asks to handle feedback recorded in rvw, or asks to synchronize rvw after pushed changes. Do not use this Skill to publish implementation walkthroughs; use rvw-walkthrough for that task.
+description: Create, inspect, address, reply to, resolve, reopen, and synchronize rvw review comments through the local rvw CLI. Use when a request asks an Agent to record review findings in rvw, contains rvw://comment references, asks to handle feedback recorded in rvw, or asks to synchronize rvw after pushed changes. Do not use this Skill to publish implementation walkthroughs; use rvw-walkthrough for that task.
 ---
 
 # rvw review comments
@@ -16,6 +16,59 @@ Use only the `rvw` CLI protocol to access rvw state. Never read or edit the SQLi
    Explain the exact local permission needed only if both the socket route and direct CLI access are
    unavailable. `RVW_DATABASE_PATH` selects an explicitly managed database path; the CLI uses a
    running viewer only when it reports that same database.
+
+## Create comments
+
+Create a new root thread only when the user explicitly asks to record review findings in rvw. Do not
+turn an unrelated implementation task into an autonomous review or create a comment merely to narrate
+your work. Require the `comment.create` capability and inspect the committed snapshot before writing.
+
+Resolve the registered PR and its cached head without refreshing GitHub by running:
+
+```bash
+rvw comment list <PULL_REQUEST> --state all --limit 1 --offset 0 --json
+```
+
+Use `pullRequest.localRepositoryPath` to inspect the repository. For a repository target, choose the
+exact committed `sourceOid`, repository-relative path, and the narrowest inclusive line range that
+supports the finding. Never anchor a comment to uncommitted worktree content. Use a file-level target
+when the whole file is the subject and a Pull Request target only when no document is a better anchor.
+
+Create one thread per closed-stdin invocation:
+
+```bash
+rvw comment create --stdin --json <<'RVW_JSON'
+{
+  "pullRequest": "https://github.com/owner/repository/pull/123",
+  "target": {
+    "kind": "document",
+    "documentKind": "repository-file",
+    "sourceOid": "0123456789abcdef0123456789abcdef01234567",
+    "path": "src/request-handler.ts",
+    "startLine": 18,
+    "endLine": 24
+  },
+  "body": "This branch drops the failure result before it reaches the caller.",
+  "authorLabel": "Agent name"
+}
+RVW_JSON
+```
+
+For a whole document, omit both `startLine` and `endLine`; never supply only one. PR-Markdown targets
+use `kind: "document"` with `documentKind: "pull-request-markdown"`. Walkthrough targets use
+`kind: "walkthrough"` with the current Walkthrough ID. Let rvw derive mutable-document hashes, quoted
+text, titles, and the creation head instead of supplying persisted target fields.
+
+Write `body` as concise GFM Markdown when structure improves the finding. Fenced code, tables, task
+lists, repository-relative links and images, and Mermaid fences render in rvw. Relative paths on a
+repository target start at the target file's directory; other comment targets start at the repository
+root. Use only repository paths that exist at the target commit. External images are not fetched.
+`rvw-ref:` and Mermaid node bindings are Walkthrough-only and must not be used in comment bodies.
+
+Set `authorLabel` to an accurate current Agent name when known; otherwise omit it. Creation is not
+idempotent. After an uncertain failure, page through unresolved comments, fetch plausible candidates
+with `comment get`, and compare the complete root body and exact target before retrying. Report every
+created `rvw://comment/<uuid>` reference to the user.
 
 ## Read comments
 

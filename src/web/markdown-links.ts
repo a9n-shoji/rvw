@@ -5,6 +5,15 @@ export interface PointerPosition {
   y: number;
 }
 
+export function markdownAssetUrl(
+  pullRequestId: string,
+  sourceOid: string,
+  filePath: string,
+): string {
+  const search = new URLSearchParams({ sourceOid, path: filePath });
+  return `/api/pull-requests/${pullRequestId}/markdown-asset?${search.toString()}`;
+}
+
 export function markdownLinkWasDragged(
   start: PointerPosition | null,
   end: PointerPosition,

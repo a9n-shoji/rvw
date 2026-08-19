@@ -2,7 +2,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CommentPlacement, CommentPost, ReviewComment } from "../../domain/models.js";
 import { api, jsonRequest } from "../api.js";
+import type { ThemePreference } from "../theme.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
+import { CommentMarkdown } from "./CommentMarkdown.js";
 import { ErrorNotice } from "./ErrorNotice.js";
 
 type CommentThreadVariant = "inline" | "sidebar";
@@ -85,12 +87,50 @@ function formattedTime(value: string): string {
   }).format(date);
 }
 
+function CommentPostMarkdown({
+  comment,
+  post,
+  markdownSourceOid,
+  themePreference,
+  onOpenRepositoryLink,
+}: {
+  comment: ReviewComment;
+  post: CommentPost;
+  markdownSourceOid?: string | undefined;
+  themePreference: ThemePreference;
+  onOpenRepositoryLink?:
+    ((path: string, sourceOid: string, openInOtherPane: boolean) => void) | undefined;
+}) {
+  const repositoryTarget =
+    comment.target.kind === "document" && comment.target.documentKind === "repository-file"
+      ? comment.target
+      : null;
+  const sourceOid =
+    post.relatedCommitOid ??
+    repositoryTarget?.sourceOid ??
+    markdownSourceOid ??
+    comment.createdHeadOid;
+  return (
+    <CommentMarkdown
+      body={post.body}
+      pullRequestId={comment.pullRequestId}
+      sourceOid={sourceOid}
+      sourcePath={repositoryTarget?.path ?? null}
+      themePreference={themePreference}
+      onOpenRepositoryLink={onOpenRepositoryLink}
+    />
+  );
+}
+
 export function CommentThread({
   comment,
   variant = "sidebar",
   placement = null,
   side = null,
+  markdownSourceOid,
+  themePreference,
   onOpenTarget,
+  onOpenRepositoryLink,
   onDeleted,
   onActiveChange,
 }: {
@@ -98,7 +138,11 @@ export function CommentThread({
   variant?: CommentThreadVariant;
   placement?: CommentPlacement | null;
   side?: DiffSide;
+  markdownSourceOid?: string | undefined;
+  themePreference: ThemePreference;
   onOpenTarget?: () => void;
+  onOpenRepositoryLink?:
+    ((path: string, sourceOid: string, openInOtherPane: boolean) => void) | undefined;
   onDeleted?: () => void;
   onActiveChange?: (commentId: string, active: boolean) => void;
 }) {
@@ -583,7 +627,13 @@ export function CommentThread({
                     </div>
                   </div>
                 ) : (
-                  <p>{post.body}</p>
+                  <CommentPostMarkdown
+                    comment={comment}
+                    post={post}
+                    markdownSourceOid={markdownSourceOid}
+                    themePreference={themePreference}
+                    onOpenRepositoryLink={onOpenRepositoryLink}
+                  />
                 )}
                 {post.relatedCommitOid && <small>commit {post.relatedCommitOid.slice(0, 8)}</small>}
               </div>

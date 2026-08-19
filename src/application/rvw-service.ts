@@ -78,6 +78,13 @@ export interface CommentUpdateRequest {
   authorLabel?: string | null;
 }
 
+export interface CommentCreateRequest {
+  pullRequest: string;
+  target: CommentTargetRequest;
+  body: string;
+  authorLabel?: string | null;
+}
+
 export interface CommentExactSource {
   sourceOid: string;
   path: string;
@@ -980,6 +987,16 @@ export class RvwService {
       createdHeadOid: pullRequest.latestHeadOid,
       target,
       body: assertTextBody(input.body),
+      ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+    });
+  }
+
+  async createCommentForReference(input: CommentCreateRequest): Promise<ReviewComment> {
+    const pullRequest = this.resolveStoredPullRequest(input.pullRequest);
+    return await this.createComment({
+      pullRequestId: pullRequest.id,
+      target: input.target,
+      body: input.body,
       ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
     });
   }

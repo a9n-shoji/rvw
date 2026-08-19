@@ -2640,11 +2640,185 @@ diffs-container > [slot="header-metadata"] {
   color: var(--muted);
   font-size: var(--comment-badge-size);
 }
-.comment-post p {
+.comment-markdown {
   margin: 4px 0 0;
-  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font-size: var(--comment-body-size);
   line-height: 1.5;
+}
+.comment-markdown > :first-child {
+  margin-top: 0;
+}
+.comment-markdown > :last-child {
+  margin-bottom: 0;
+}
+.comment-markdown p,
+.comment-markdown ul,
+.comment-markdown ol,
+.comment-markdown blockquote,
+.comment-markdown pre,
+.comment-markdown details,
+.comment-markdown-table-scroll {
+  margin: 7px 0;
+}
+.comment-markdown h1,
+.comment-markdown h2,
+.comment-markdown h3,
+.comment-markdown h4,
+.comment-markdown h5,
+.comment-markdown h6 {
+  margin: 10px 0 6px;
+  padding: 0;
+  border: 0;
+  color: var(--text);
+  font-size: var(--comment-body-size);
+  line-height: 1.35;
+}
+.comment-markdown h1,
+.comment-markdown h2 {
+  font-size: calc(var(--comment-body-size) + 2px);
+}
+.comment-markdown ul,
+.comment-markdown ol {
+  padding-left: 20px;
+}
+.comment-markdown li + li {
+  margin-top: 2px;
+}
+.comment-markdown blockquote {
+  padding: 5px 8px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--muted);
+}
+.comment-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.comment-markdown-unavailable-link {
+  color: var(--muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.comment-markdown code {
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel-2);
+  font-size: 0.92em;
+}
+.comment-markdown pre {
+  max-width: 100%;
+  padding: 9px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  white-space: pre;
+}
+.comment-markdown pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.comment-markdown img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 7px 0;
+  border-radius: 6px;
+}
+.comment-markdown details > summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.comment-markdown-table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+}
+.comment-markdown-table-scroll table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+.comment-markdown-table-scroll th,
+.comment-markdown-table-scroll td {
+  max-width: 28ch;
+  padding: 5px 7px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+}
+.comment-markdown-table-scroll th:last-child,
+.comment-markdown-table-scroll td:last-child {
+  border-right: 0;
+}
+.comment-markdown-table-scroll tr:last-child td {
+  border-bottom: 0;
+}
+.comment-markdown-table-scroll th {
+  background: var(--panel-2);
+  font-weight: 700;
+}
+.comment-markdown .contains-task-list {
+  padding-left: 0;
+  list-style: none;
+}
+.comment-markdown .task-list-item {
+  list-style: none;
+}
+.comment-markdown .task-list-item > input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0 6px 0 0;
+  padding: 0;
+  accent-color: var(--accent-emphasis);
+  vertical-align: -2px;
+}
+.comment-mermaid-shell {
+  margin: 8px 0;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--panel);
+}
+.comment-mermaid-toolbar {
+  padding: 5px 7px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--comment-badge-size);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+.comment-mermaid {
+  min-height: 120px;
+  padding: 10px;
+  overflow: auto;
+}
+.comment-mermaid svg {
+  display: block;
+  width: 100%;
+  min-width: 420px;
+  max-height: 360px;
+  margin: 0 auto;
+}
+.comment-mermaid-placeholder,
+.comment-mermaid-error {
+  padding: 12px;
+  color: var(--muted);
+  font-size: var(--comment-meta-size);
+}
+.comment-mermaid-error {
+  background: var(--warning);
+  color: var(--warning-text);
 }
 .comment-reply-composer {
   display: grid;

@@ -1074,6 +1074,25 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     },
     [openDocument],
   );
+  const openRepositoryMarkdownLinkFromLeftPane = useCallback(
+    (filePath: string, sourceOid: string, openInOtherPane: boolean): void =>
+      openRepositoryMarkdownLink(filePath, sourceOid, openInOtherPane ? "right" : "left"),
+    [openRepositoryMarkdownLink],
+  );
+  const openRepositoryMarkdownLinkFromRightPane = useCallback(
+    (filePath: string, sourceOid: string, openInOtherPane: boolean): void =>
+      openRepositoryMarkdownLink(filePath, sourceOid, openInOtherPane ? "left" : "right"),
+    [openRepositoryMarkdownLink],
+  );
+  const openRepositoryMarkdownLinkFromSidebar = useCallback(
+    (filePath: string, sourceOid: string, openInOtherPane: boolean): void =>
+      openRepositoryMarkdownLink(
+        filePath,
+        sourceOid,
+        openInOtherPane ? "right" : documentWorkspaceRef.current.focusedPane,
+      ),
+    [openRepositoryMarkdownLink],
+  );
   const openSearchResult = (result: SearchResult, openInRightPane = false): void => {
     const requestedDocument: ActiveDocument =
       result.document.kind === "pull-request-markdown"
@@ -1378,6 +1397,11 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                   paneId === "left"
                     ? openWalkthroughReferenceFromLeftPane
                     : openWalkthroughReferenceFromRightPane
+                }
+                onOpenRepositoryLink={
+                  paneId === "left"
+                    ? openRepositoryMarkdownLinkFromLeftPane
+                    : openRepositoryMarkdownLinkFromRightPane
                 }
                 onDeleted={() => closeDocument(paneViewerDocument)}
               />
@@ -1696,10 +1720,13 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
               <ErrorNotice error={commentsQuery.error} />
               <CommentSidebar
                 comments={comments}
+                walkthroughs={walkthroughs}
                 pullRequestId={pullRequest.id}
                 selectedOid={selectedOid}
+                themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}
                 onOpenTarget={openCommentTarget}
+                onOpenRepositoryLink={openRepositoryMarkdownLinkFromSidebar}
               />
             </div>
           </section>

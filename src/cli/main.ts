@@ -27,6 +27,7 @@ import {
 } from "../server/agent-socket.js";
 import { formatCommentGetOutput, formatCommentListOutput } from "./comment-protocol.js";
 import {
+  commentCreateInputSchema,
   commentListOptionsSchema,
   commentReplyInputSchema,
   pullRequestSyncInputSchema,
@@ -532,6 +533,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         appVersion: APP_VERSION,
         capabilities: [
           "agent.transport",
+          "comment.create",
           "comment.list",
           "comment.read",
           "comment.reply",
@@ -798,6 +800,27 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         getRuntime().service.deleteWalkthroughByUri(uri),
       );
       writeJson({ ok: true, deleted });
+    });
+
+  comment
+    .command("create")
+    .requiredOption("--stdin", "stdinからJSONを読む")
+    .requiredOption("--json", "JSONで出力")
+    .description("登録済みPRへ未解決コメントを一件作成")
+    .action(async () => {
+      const input = commentCreateInputSchema.parse(await readStdinJson());
+      const request = {
+        pullRequest: input.pullRequest,
+        target: input.target,
+        body: input.body,
+        ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+      };
+      const created = await callService(
+        "comment.create",
+        request,
+        async () => await getRuntime().service.createCommentForReference(request),
+      );
+      writeJson({ ok: true, comment: created });
     });
 
   comment

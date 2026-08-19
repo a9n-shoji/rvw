@@ -16,6 +16,67 @@ import {
 const nonEmptyString = z.string().min(1);
 const commentUri = z.string().regex(/^rvw:\/\/comment\//);
 const walkthroughUri = z.string().regex(/^rvw:\/\/walkthrough\//);
+const nullableCommentLine = z.number().int().positive().nullable().optional().default(null);
+
+export const commentTargetInputSchema = z
+  .union([
+    z.object({ kind: z.literal("pull-request") }).strict(),
+    z
+      .object({
+        kind: z.literal("walkthrough"),
+        walkthroughId: z.uuid(),
+        startLine: nullableCommentLine,
+        endLine: nullableCommentLine,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("document"),
+        documentKind: z.literal("pull-request-markdown"),
+        startLine: nullableCommentLine,
+        endLine: nullableCommentLine,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("document"),
+        documentKind: z.literal("repository-file"),
+        sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
+        path: nonEmptyString,
+        startLine: nullableCommentLine,
+        endLine: nullableCommentLine,
+      })
+      .strict(),
+  ])
+  .superRefine((target, context) => {
+    if (target.kind === "pull-request") return;
+    if ((target.startLine === null) !== (target.endLine === null)) {
+      context.addIssue({
+        code: "custom",
+        message: "startLineとendLineは両方指定するか、両方省略してください。",
+      });
+      return;
+    }
+    if (target.startLine !== null && target.endLine !== null && target.endLine < target.startLine) {
+      context.addIssue({
+        code: "custom",
+        message: "endLineはstartLine以上にしてください。",
+      });
+    }
+  });
+
+export const commentCreateInputSchema = z
+  .object({
+    pullRequest: nonEmptyString,
+    target: commentTargetInputSchema,
+    body: z
+      .string()
+      .min(1)
+      .refine((value) => value.trim().length > 0)
+      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
+    authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
+  })
+  .strict();
 
 export const commentReplyInputSchema = z
   .object({
@@ -121,6 +182,7 @@ export const agentCommandInputSchemas = {
       offset: z.number().int().min(0).default(0),
     })
     .strict(),
+  "comment.create": commentCreateInputSchema,
   "comment.get": z.object({ uri: commentUri, live: z.boolean().default(false) }).strict(),
   "comment.reply": z.object({ uri: commentUri, reply: commentReplyInputSchema }).strict(),
   "comment.resolve": z.object({ uri: commentUri }).strict(),

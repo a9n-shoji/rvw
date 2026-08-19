@@ -4,10 +4,11 @@ Version 1 is the first public compatibility contract. Pre-public internal versio
 released or supported; after the first public release, protocol versions only increase for breaking
 changes and are never reused. Version 2 adds the invariant that every declared Walkthrough reference
 must be reachable from its Markdown body or Mermaid bindings. It also advertises the additive
-`agent.transport` diagnostic capability.
+`agent.transport` diagnostic and `comment.create` capabilities.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
-Agent and lets that Agent publish a commit-fixed explanation back to the human. It is not an
+Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
+commit-fixed explanation back to the human. It is not an
 Agent-session, prompt, or browser-control protocol: the viewer stores durable review artifacts while
 all navigation remains a human action.
 
@@ -56,7 +57,7 @@ Its stdin value is:
 
 `pullRequest` is required. `commentUpdates` is optional and contains at most 500 items. Every item
 requires `commentRef`, `reply`, and `resolve`; at least a non-blank reply or `resolve: true` is
-required. Reply text is plain UTF-8 and at most 64 KiB.
+required. Reply text is UTF-8 GFM Markdown source and at most 64 KiB.
 
 A successful sync refreshes the latest GitHub PR metadata and commit head, protects that head with
 an rvw ref, and applies all comment updates in one SQLite transaction. Created replies are linked to
@@ -84,6 +85,7 @@ rvw pr attach <PULL_REQUEST> --repository <PATH> --json
 ## Comment commands
 
 ```bash
+rvw comment create --stdin --json
 rvw comment list <PULL_REQUEST> --state unresolved --limit 50 --offset 0 --json
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
@@ -92,6 +94,76 @@ rvw comment reply <COMMENT_URI> --stdin --json
 rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
+
+`comment create` records one new unresolved thread for a registered Pull Request. Its stdin value is:
+
+```json
+{
+  "pullRequest": "https://github.com/owner/repository/pull/123",
+  "target": {
+    "kind": "document",
+    "documentKind": "repository-file",
+    "sourceOid": "0123456789abcdef0123456789abcdef01234567",
+    "path": "src/request-handler.ts",
+    "startLine": 18,
+    "endLine": 24
+  },
+  "body": "This branch drops the failure result before it reaches the caller.",
+  "authorLabel": "Agent name"
+}
+```
+
+`pullRequest`, `target`, and `body` are required. `authorLabel` is optional and may be `null`.
+`pullRequest` is a saved PR's full URL or a number that is unique across saved PRs. `body` is non-blank
+UTF-8 GFM Markdown source of at most 64 KiB. The viewer sanitizes raw HTML, preserves soft line
+breaks, and supports repository-relative links and images plus display-only Mermaid. `rvw-ref:` and
+Mermaid node bindings remain Walkthrough-only. The target is one of:
+
+```json
+{ "kind": "pull-request" }
+```
+
+```json
+{
+  "kind": "document",
+  "documentKind": "pull-request-markdown",
+  "startLine": 2,
+  "endLine": 4
+}
+```
+
+```json
+{
+  "kind": "document",
+  "documentKind": "repository-file",
+  "sourceOid": "0123456789abcdef0123456789abcdef01234567",
+  "path": "src/request-handler.ts",
+  "startLine": 18,
+  "endLine": 24
+}
+```
+
+```json
+{
+  "kind": "walkthrough",
+  "walkthroughId": "00000000-0000-4000-8000-000000000000",
+  "startLine": 5,
+  "endLine": 8
+}
+```
+
+Omitting both line fields creates a whole-document target and normalizes both values to `null`.
+Supplying only one line, reversing the range, selecting a line outside the document, naming an
+unavailable commit or path, or selecting a Walkthrough from another PR is rejected. File-wide
+comments are accepted for binary and oversized entries, but line comments require displayable text.
+PR-Markdown hashes and quoted lines, Walkthrough titles and quoted lines, and the creation head are
+derived by the same application service used by the viewer; callers do not supply those persisted
+values.
+
+Success returns `{ "ok": true, "comment": ... }`, including the root post and stable
+`rvw://comment/<uuid>` reference. Creation is passive: it does not open or navigate a viewer. The
+operation is not idempotent. After an uncertain result, list the PR's comments and verify whether the
+same target and body already exist before retrying.
 
 `comment list` discovers saved threads for one registered PR. `--state` accepts `unresolved`,
 `resolved`, or `all` and defaults to `unresolved`. `--limit` defaults to 50 and accepts 1 through 100;
@@ -150,7 +222,7 @@ A standalone reply accepts:
 }
 ```
 
-`body` is required, non-empty plain UTF-8 text of at most 64 KiB. `authorLabel` and
+`body` is required, non-empty UTF-8 GFM Markdown source of at most 64 KiB. `authorLabel` and
 `relatedCommitOid` are optional and may be null. A non-null related OID must be a 40–64 digit hex
 commit available to the PR. Standalone replies are not idempotent; re-read the comment before
 retrying an uncertain result.
@@ -273,7 +345,7 @@ resolving. Deletion does not remove the retained Git commit ref because other re
 
 When a normally launched rvw viewer is running, its process exposes a database-specific Unix socket
 with mode `0600` inside a per-user `0700` temporary directory. Agent CLI commands try that socket
-first, so writes such as reply, resolve, Walkthrough update,
+first, so writes such as comment creation, reply, resolve, Walkthrough update,
 and repository attachment execute through the already-authorized rvw process instead of requiring the
 Agent sandbox to open SQLite for writing. Without `RVW_AGENT_SOCKET_PATH`, a connection failure before
 request transmission may fall back to the selected direct database. When `RVW_AGENT_SOCKET_PATH` is
@@ -305,7 +377,7 @@ Skill status.
 ## Bundled Skills
 
 `rvw skill install codex` and `rvw skill install claude` each install the same two capability-named
-Skills: `rvw` for comment handling and synchronization, and `rvw-walkthrough` for publication. The
+Skills: `rvw` for comment creation, handling, and synchronization, and `rvw-walkthrough` for publication. The
 platform argument selects only the destination Skill root. Neither Skill hardcodes an Agent identity;
 the current Agent may supply an accurate optional `authorLabel`.
 
@@ -329,6 +401,7 @@ comment URI subsequently returns the updated current object.
 
 ```text
 agent.transport
+comment.create
 comment.list
 comment.read
 comment.reply

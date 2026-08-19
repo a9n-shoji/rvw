@@ -28,8 +28,13 @@ a rollback-only write transaction instead of inferring writeability from Unix mo
 
 The viewer reads committed Git objects rather than the worktree or index. That keeps the human's
 reading context stable while an external Agent edits, tests, commits, and pushes. Comments bridge the
-two processes through stable references and the JSON CLI protocol; browser state, prompts, and Agent
-sessions never enter the domain model.
+two processes through stable references and the JSON CLI protocol: an authorized Agent can create an
+ordinary unresolved thread or act on an existing one through the same application validation used by
+the browser. Post bodies remain UTF-8 Markdown source in SQLite and render as sanitized GFM with soft
+line breaks, repository-relative links and images, and strict display-only Mermaid diagrams. Link and
+image resolution uses the post's related commit, repository target, current Walkthrough source, or
+thread creation head in that order; comment Markdown has neither source-position targets nor
+`rvw-ref:` bindings. Browser state, prompts, and Agent sessions never enter the domain model.
 
 Walkthroughs cross the same one-way CLI boundary in the other direction. An Agent can publish a
 Markdown explanation fixed to one commit, with validated file references and optional inclusive line
@@ -53,8 +58,8 @@ it never persists DOM or layout coordinates.
 The selection boundary resolves to the smallest mapped Markdown leaf, and its composer is portaled
 into a React-owned declarative slot in normal document flow immediately after the selected block so
 wrapped text is never covered.
-Relative preview images are fetched from the same commit through a size-limited read-only endpoint.
-PR Markdown, Walkthroughs, external image URLs, and paths that cannot be resolved inside the repository
+Relative preview and comment images are fetched from their resolved exact commit through a size-limited
+read-only endpoint. PR Markdown, Walkthrough bodies, external image URLs, and paths that cannot be resolved inside the repository
 render as non-fetching placeholders. Same-origin SVG asset responses carry a restrictive Content Security
 Policy and sandbox so direct navigation cannot execute repository-controlled script under the viewer origin.
 
