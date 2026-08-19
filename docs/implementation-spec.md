@@ -1147,7 +1147,9 @@ platform adapterが変えるのは既定のSkill rootだけとする。Agent名�
 
 `rvw-walkthrough`は一つのcurrent `sourceOid`、exact code reference、Mermaid binding、passiveなpublishと
 同一ID更新、削除の明示authorizationを規定する。説明の見出し、順序、分割、粒度、diagram選択はsessionの
-requestとrepository contextへ委ね、固定の文書templateを要求しない。更新時は既存artifactを読んで完全置換し、
+requestとrepository contextへ委ね、固定の文書templateを要求しない。Walkthroughはreviewerが変更または
+明示された実装対象のmental modelを作るための最初の読解経路とし、作成指示を優先して、未指定部分だけを
+既定guideで補う。diffやfileの一覧、網羅的なAI review、完全性の保証にはしない。更新時は既存artifactを読んで完全置換し、
 改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への明示authorizationなしに実行しない。
 
 Phase 2ではnpm account、scope、2FA、LICENSE、README、CHANGELOG、SECURITY、dependency license、

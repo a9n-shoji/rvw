@@ -90,6 +90,10 @@ describe("SkillInstaller", () => {
         readFileSync(path.join(claudeTarget, name, "SKILL.md"), "utf8"),
       );
     }
+    const authoringGuide = path.join("rvw-walkthrough", "references", "walkthrough-authoring.md");
+    expect(readFileSync(path.join(codexTarget, authoringGuide), "utf8")).toBe(
+      readFileSync(path.join(claudeTarget, authoringGuide), "utf8"),
+    );
   });
 
   it("requires a platform when checking a custom skill root", () => {
