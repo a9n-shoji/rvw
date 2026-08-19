@@ -259,6 +259,10 @@ export async function dispatchAgentSocketRequest(
         offset: input.offset,
       });
     }
+    case "comment.watch": {
+      const input = parseOperationInput("comment.watch", request.input);
+      return service.listCommentPostEvents(input.cursor, input.limit);
+    }
     case "comment.create": {
       const input = parseOperationInput("comment.create", request.input);
       return await service.createCommentForReference(

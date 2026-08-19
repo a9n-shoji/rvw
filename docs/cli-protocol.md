@@ -4,7 +4,8 @@ Version 1 is the first public compatibility contract. Pre-public internal versio
 released or supported; after the first public release, protocol versions only increase for breaking
 changes and are never reused. Version 2 adds the invariant that every declared Walkthrough reference
 must be reachable from its Markdown body or Mermaid bindings. It also advertises the additive
-`agent.transport` diagnostic and `comment.create` capabilities.
+`agent.transport`, `comment.create`, and `comment.watch` capabilities. Optional idempotency keys are
+additive fields and do not change existing callers.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
@@ -16,7 +17,8 @@ Machine consumers always pass `--json` or JSON over stdin. Commands using `--std
 JSON value until EOF; a trailing newline does not terminate input. Process callers must close stdin
 after writing, and shell callers should use a pipe, quoted heredoc, or input redirection instead of
 typing JSON into an already-running interactive command. Successful commands emit one JSON value to
-stdout. Progress and diagnostics go to stderr. Errors use:
+stdout. The long-running `comment watch` command is the only exception: it requires `--json-seq` and
+emits RFC 7464 JSON text sequences. Progress and diagnostics go to stderr. Errors use:
 
 ```json
 {
@@ -49,23 +51,28 @@ Its stdin value is:
     {
       "commentRef": "rvw://comment/00000000-0000-4000-8000-000000000000",
       "reply": "対応内容。返信しない場合は空文字列。",
-      "resolve": false
+      "resolve": false,
+      "idempotencyKey": "stable-key-for-this-exact-update"
     }
   ]
 }
 ```
 
 `pullRequest` is required. `commentUpdates` is optional and contains at most 500 items. Every item
-requires `commentRef`, `reply`, and `resolve`; at least a non-blank reply or `resolve: true` is
-required. Reply text is UTF-8 GFM Markdown source and at most 64 KiB.
+requires `commentRef`, `reply`, and `resolve`; optional `idempotencyKey` is 1–200 characters. At least
+a non-blank reply or `resolve: true` is required. Reply text is UTF-8 GFM Markdown source and at most
+64 KiB.
 
 A successful sync refreshes the latest GitHub PR metadata and commit head, protects that head with
 an rvw ref, and applies all comment updates in one SQLite transaction. Created replies are linked to
 the synchronized head commit. A successful response includes the current pull request, comparison
 base, head OID, commit summaries, and `commentUpdatesApplied`.
 
-The operation is not idempotent when it contains replies. After an uncertain result, re-read every
-affected comment before retrying.
+An exact retry of an update carrying the same idempotency key returns its existing reply. Reusing the
+key for another comment or caller payload fails. The derived synchronized head is not part of that
+caller payload, so a concurrent head advance does not invalidate an exact retry. If the original post
+was deleted, retry fails without recreating it. An update without a key remains non-idempotent; after
+an uncertain result, re-read the affected comment before retrying.
 
 By default sync inspects the saved `localRepositoryPath`. `--repository <PATH>` selects another
 worktree from the same Git common directory without first changing the saved path. Tracked dirty
@@ -87,6 +94,7 @@ rvw pr attach <PULL_REQUEST> --repository <PATH> --json
 ```bash
 rvw comment create --stdin --json
 rvw comment list <PULL_REQUEST> --state unresolved --limit 50 --offset 0 --json
+rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
 rvw comment get <COMMENT_URI> --live --json
@@ -179,7 +187,7 @@ omit the source hash and quoted text. The list does not load or return replies o
 consumers read every URI they inspect or address with `comment get`.
 
 Both list and get return the latest successfully synchronized PR URL, owner, repository, number,
-title, base branch/OID, comparison base OID, head branch/OID, GitHub update/fetch times, and local
+nullable author login, title, base branch/OID, comparison base OID, head branch/OID, GitHub update/fetch times, and local
 repository path. This metadata is cached and does not require a GitHub refresh. Neither the list nor
 the default get response contains `pullRequest.body`. A consumer that needs the latest successfully
 synchronized PR body requests it with `comment get --include-pr-body`; only that response adds the
@@ -192,7 +200,8 @@ OIDs as Outdated: rvw accounts for unchanged lines, renames, deletion, and PR-Ma
 placement.
 
 `comment get --live` performs a read-only GitHub lookup without updating the SQLite snapshot. Its
-`githubState` contains `liveCheckedAt`, `staleAgainstGitHub`, and current live metadata. Without
+`githubState` contains `liveCheckedAt`, `staleAgainstGitHub`, and current live metadata including the
+author login. Without
 `--live`, all three values are `null`, making it explicit that the response only reflects the last
 successful synchronization. `--include-pr-body` controls both cached and live body inclusion.
 
@@ -218,18 +227,42 @@ A standalone reply accepts:
 {
   "body": "調査結果または対応内容",
   "authorLabel": "Agent name",
-  "relatedCommitOid": null
+  "relatedCommitOid": null,
+  "idempotencyKey": "stable-key-for-this-exact-reply"
 }
 ```
 
 `body` is required, non-empty UTF-8 GFM Markdown source of at most 64 KiB. `authorLabel` and
-`relatedCommitOid` are optional and may be null. A non-null related OID must be a 40–64 digit hex
-commit available to the PR. Standalone replies are not idempotent; re-read the comment before
-retrying an uncertain result.
+`relatedCommitOid` are optional and may be null. `idempotencyKey` is optional and 1–200 characters.
+A non-null related OID must be a 40–64 digit hex commit available to the PR. An exact retry with the
+same key returns the existing post; reuse for another payload fails. Without a key, re-read the
+comment before retrying an uncertain result.
 
 Resolved threads accept replies. A standalone or synchronized reply does not reopen a resolved
 thread; state changes remain explicit. `comment reopen` reopens it, while `comment resolve` or a sync
 update with `resolve: true` resolves it.
+
+### Continuous watch
+
+`rvw comment watch --json-seq` watches new root comments and replies across all PRs saved in the
+selected rvw database. A cursorless invocation emits a `ready` frame anchored at the current event
+position and does not replay existing unresolved comments. Each subsequent `comment-posted` frame
+contains an opaque database-scoped cursor plus `sequence`, `postId`, `commentRef`, `pullRequestUrl`,
+`createdAt`, and `deleted`. It is a minimal trigger; consumers must
+run `comment get` for complete context. Edits, deletions, resolve, and reopen do not create new events.
+An existing event survives post deletion and is then returned with `deleted: true`.
+
+Persist the `ready` or event cursor outside the reviewed repository. Resume with `--after <CURSOR>`;
+a cursor from another database, beyond the current event sequence, or otherwise invalid fails. The default poll interval is 10 seconds
+and accepts 1 through 300 seconds. `--once` drains the currently available page and exits, primarily
+for protocol tests and recovery tools. Independent tasks may consume the log with separate cursors.
+
+rvw does not start an Agent, store its queue, or authorize code changes. The external task owns
+batching, retries, and self-event suppression. The bundled `rvw-watch-comments` Skill supplies a
+task-local SQLite state tool for atomic cursor ingestion and batch leases. It requires explicit startup
+authorization before an authenticated user's own PR can be fixed and pushed, and verifies the live
+head repository, branch, and OID so fork PRs cannot target the base repository accidentally. Another
+or unknown author remains code/GitHub read-only.
 
 ## Walkthrough lifecycle
 
@@ -376,8 +409,9 @@ Skill status.
 
 ## Bundled Skills
 
-`rvw skill install codex` and `rvw skill install claude` each install the same two capability-named
-Skills: `rvw` for comment creation, handling, and synchronization, and `rvw-walkthrough` for publication. The
+`rvw skill install codex` and `rvw skill install claude` each install the same three capability-named
+Skills: `rvw` for comment creation, handling, and synchronization, `rvw-walkthrough` for publication,
+and `rvw-watch-comments` for continuous new-post intake. The
 platform argument selects only the destination Skill root. Neither Skill hardcodes an Agent identity;
 the current Agent may supply an accurate optional `authorLabel`.
 
@@ -405,6 +439,7 @@ comment URI subsequently returns the updated current object.
 agent.transport
 comment.create
 comment.list
+comment.watch
 comment.read
 comment.reply
 comment.resolve

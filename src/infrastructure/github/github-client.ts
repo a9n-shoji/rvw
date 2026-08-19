@@ -10,6 +10,9 @@ export interface GitHubPort {
 }
 
 const ghPullRequestSchema = z.object({
+  author: z.object({ login: z.string().min(1) }).nullable(),
+  headRepository: z.object({ name: z.string().min(1) }).nullable(),
+  headRepositoryOwner: z.object({ login: z.string().min(1) }).nullable(),
   number: z.number().int().positive(),
   url: z.url(),
   title: z.string(),
@@ -58,6 +61,7 @@ export class GitHubClient implements GitHubPort {
   async getPullRequest(reference: string | undefined, cwd: string): Promise<GitHubPullRequest> {
     await this.assertAuthenticated();
     const fields = [
+      "author",
       "number",
       "url",
       "title",
@@ -107,6 +111,9 @@ export class GitHubClient implements GitHubPort {
       repository: identity.repository,
       number: parsed.data.number,
       url: parsed.data.url,
+      authorLogin: parsed.data.author?.login ?? null,
+      headRepositoryOwner: parsed.data.headRepositoryOwner?.login ?? null,
+      headRepositoryName: parsed.data.headRepository?.name ?? null,
       title: parsed.data.title,
       body: parsed.data.body ?? "",
       baseRefName: parsed.data.baseRefName,

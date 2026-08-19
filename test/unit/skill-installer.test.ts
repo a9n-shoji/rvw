@@ -4,10 +4,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SkillInstaller } from "../../src/infrastructure/skills/skill-installer.js";
 
-const expectedSkillNames = ["rvw", "rvw-walkthrough"];
+const expectedSkillNames = ["rvw", "rvw-walkthrough", "rvw-watch-comments"];
 
 describe("SkillInstaller", () => {
-  it("installs both skills idempotently and requires force for divergent content", () => {
+  it("installs every bundled skill idempotently and requires force for divergent content", () => {
     const target = mkdtempSync(path.join(os.tmpdir(), "rvw-skills-"));
     const sentinel = path.join(target, "keep.txt");
     writeFileSync(sentinel, "keep");
@@ -32,6 +32,15 @@ describe("SkillInstaller", () => {
       },
       {
         name: "rvw-walkthrough",
+        installed: true,
+        matchesBundled: true,
+        locallyModified: false,
+        updateAvailable: false,
+        updateRequired: false,
+        state: "current",
+      },
+      {
+        name: "rvw-watch-comments",
         installed: true,
         matchesBundled: true,
         locallyModified: false,

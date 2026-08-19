@@ -11,6 +11,9 @@ const pullRequest: PullRequest = {
   repository: "review-repo",
   number: 7,
   url: "https://github.com/acme/review-repo/pull/7",
+  latestAuthorLogin: "review-author",
+  latestHeadRepositoryOwner: "review-author",
+  latestHeadRepositoryName: "review-repo",
   localRepositoryPath: "/review-repo",
   gitCommonDir: "/review-repo/.git",
   latestTitle: "Improve review context",
@@ -60,6 +63,12 @@ const formattedPullRequest = {
   owner: pullRequest.owner,
   repository: pullRequest.repository,
   number: pullRequest.number,
+  authorLogin: pullRequest.latestAuthorLogin,
+  headRepository: {
+    owner: "review-author",
+    name: "review-repo",
+    url: "https://github.com/review-author/review-repo",
+  },
   title: pullRequest.latestTitle,
   baseRefName: pullRequest.latestBaseRefName,
   baseOid: pullRequest.latestBaseOid,
@@ -116,6 +125,19 @@ function captureStdout(): () => unknown {
   return () => JSON.parse(stdout) as unknown;
 }
 
+function captureJsonSequence(): () => unknown[] {
+  let stdout = "";
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+    stdout += String(chunk);
+    return true;
+  });
+  return () =>
+    stdout
+      .split("\u001e")
+      .filter((value) => value.trim().length > 0)
+      .map((value) => JSON.parse(value) as unknown);
+}
+
 function provideStdin(value: unknown): void {
   vi.spyOn(process, "stdin", "get").mockReturnValue(
     Readable.from([JSON.stringify(value)]) as unknown as typeof process.stdin,
@@ -154,6 +176,7 @@ describe("CLI protocol discovery", () => {
         "agent.transport",
         "comment.create",
         "comment.list",
+        "comment.watch",
         "comment.read",
         "comment.reply",
         "comment.resolve",
@@ -169,7 +192,7 @@ describe("CLI protocol discovery", () => {
       program.commands
         .find((command) => command.name() === "comment")
         ?.commands.map((command) => command.name()),
-    ).toEqual(["create", "list", "get", "reply", "resolve", "reopen"]);
+    ).toEqual(["watch", "create", "list", "get", "reply", "resolve", "reopen"]);
     expect(
       program.commands
         .find((command) => command.name() === "walkthrough")
@@ -191,6 +214,66 @@ describe("CLI protocol discovery", () => {
         .visibleCommands(program)
         .map((command) => command.name()),
     ).not.toContain("__open-worker");
+  });
+
+  it("streams a resumable comment watch as an RFC 7464 sequence", async () => {
+    const listCommentPostEvents = vi.fn().mockReturnValue({
+      databaseId: "0123456789abcdef0123456789abcdef",
+      startCursor: "previous-cursor",
+      cursor: "next-cursor",
+      anchoredAtCurrent: false,
+      hasMore: false,
+      events: [
+        {
+          cursor: "next-cursor",
+          event: {
+            sequence: 2,
+            createdAt: "2026-08-20T00:00:00.000Z",
+            postId: "reply-1",
+            commentId: "comment-1",
+            commentRef,
+            pullRequestId: pullRequest.id,
+            pullRequestUrl: pullRequest.url,
+            deleted: false,
+          },
+        },
+      ],
+    });
+    const { runtime } = mockRuntime({ listCommentPostEvents });
+    const readStdout = captureJsonSequence();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "comment",
+      "watch",
+      "--after",
+      "previous-cursor",
+      "--once",
+      "--json-seq",
+    ]);
+
+    expect(listCommentPostEvents).toHaveBeenCalledWith("previous-cursor", 100);
+    expect(readStdout()).toMatchObject([
+      {
+        type: "ready",
+        databaseId: "0123456789abcdef0123456789abcdef",
+        cursor: "previous-cursor",
+        anchoredAtCurrent: false,
+      },
+      {
+        type: "comment-posted",
+        cursor: "next-cursor",
+        event: {
+          sequence: 2,
+          postId: "reply-1",
+          commentRef,
+          pullRequestUrl: pullRequest.url,
+          deleted: false,
+        },
+      },
+      { type: "stopped", cursor: "next-cursor" },
+    ]);
   });
 
   it("creates one unresolved comment from a strict stdin payload", async () => {

@@ -46,6 +46,65 @@ Back remains the explicit action for revisiting earlier same-origin reading entr
   reference, and Markdown heading jumps retain line locators until manual reading continues, after which
   ordinary reading falls back to the captured scroll.
 
+## 2026-08-20: Let an external Agent task watch new rvw comment posts with a task-owned cursor
+
+### Problem
+
+The comment CLI supports explicit discovery and handling, but a long-lived Agent task cannot learn
+about new root comments or replies without repeatedly listing every saved Pull Request. Offset-based
+thread lists are not a durable event boundary, edits reorder threads, and retrying a reply after an
+uncertain transport result can create duplicates. The watcher must cover all saved PRs while keeping
+the existing boundary that rvw neither starts nor manages Codex or Claude sessions. It must also keep
+write permission for another author's PR strictly narrower than permission for the authenticated
+user's own PR.
+
+### Choice
+
+Add an append-only `comment_post_events` sequence for newly created root posts and replies. Migration
+does not backfill existing posts, so a cursorless `rvw comment watch --json-seq` anchors at the current
+position and intentionally skips existing unresolved comments. A database-scoped opaque cursor allows
+replay after restart. Event rows retain only post/comment/PR identifiers and survive comment deletion;
+watch marks a missing post as deleted instead of losing the sequence. The command polls every 10
+seconds by default and uses RFC 7464 framing because a persistent stream cannot satisfy the ordinary
+one-JSON-value stdout contract.
+
+The external Agent task owns its cursor, pending queue, retry state, and created post IDs in a separate
+task database managed by the bundled Skill's deterministic state script. Ingesting an event and
+advancing its cursor is one transaction. Batch leases preserve idempotency keys across restart, and
+completing a lease registers returned post IDs while removing any already-queued self events in the
+same transaction. Separate tasks use separate state databases; rvw does not impose a database-global
+consumer lock or store Agent execution state.
+
+Cache the latest GitHub PR author login and head repository owner/name, and expose them in comment
+context. Watch events remain minimal triggers that require a fresh comment read. The watcher
+task may receive explicit startup authorization for the predicate "live PR author equals the recorded
+authenticated GitHub login". Matching PRs may use `fix-and-push`; every non-matching, missing, or
+conflicting identity is `investigate-and-reply`, with code and GitHub writes forbidden. A live author
+and current authenticated login check is required immediately before a write. A write also requires
+an exact live head repository, branch, and OID match so a fork PR cannot target the base repository by
+mistake. rvw does not enforce this Agent policy or perform Git writes; the bundled Skill does.
+
+Add optional per-reply idempotency keys to standalone replies and sync updates. A durable ledger stores
+the key hash, caller-payload hash, and result post ID independently of the deletable post. The sync
+fingerprint excludes its derived current head OID, so the same caller input still finds the original
+reply after a concurrent head advance. Reuse for another caller payload fails; retry after result
+deletion reports a permanent deleted-result error instead of recreating it. Edits, deletes, and
+resolve/reopen changes do not create watch events. Keep protocol version 2 and add the `comment.watch`
+capability because the new command and optional fields are additive.
+
+### Trade-offs
+
+- The event log grows with created posts and has no Phase 2 retention policy; local comment volume is
+  expected to be modest, and premature compaction would complicate cursor guarantees.
+- A task that loses its separate task database cannot reconstruct skipped startup work automatically.
+  This is deliberate: Agent execution state does not enter the rvw product database.
+- PR author cache is null until an old saved PR is synchronized again. The policy fails closed and can
+  use the live comment read before considering a write.
+- Multiple independent tasks can consume the same rvw event log. A single task database serializes its
+  own claims and repository writers; users should not intentionally start competing automation tasks
+  with overlapping responsibility.
+- RFC 7464 requires a stream-aware consumer; ordinary CLI commands retain their single JSON response.
+
 ## 2026-08-17: Use an annotated initial release tag without fabricating a signing identity
 
 ### Problem

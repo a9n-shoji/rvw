@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RvwService } from "../../src/application/rvw-service.js";
+import { formatCommentWatchCursor } from "../../src/domain/comment-watch-cursor.js";
 import type { GitHubPullRequest } from "../../src/domain/models.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
@@ -27,6 +28,9 @@ const openPr = (baseOid: string, headOid: string): GitHubPullRequest => ({
   repository: "review-repo",
   number: 7,
   url: "https://github.com/acme/review-repo/pull/7",
+  authorLogin: "review-author",
+  headRepositoryOwner: "acme",
+  headRepositoryName: "review-repo",
   title: "Initial review",
   body: "Please review.",
   baseRefName: "main",
@@ -1073,6 +1077,65 @@ describe("RvwService commit workflow", () => {
     });
     expect(service.database.listCommentPosts(replied.id)).toHaveLength(0);
     expect(service.listComments(opened.pullRequest.id)).toHaveLength(0);
+  });
+
+  it("anchors a new watch at current state and replays later posts from its cursor", async () => {
+    const { repository, service } = setup("rvw-comment-watch-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const comment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "pull-request" },
+      body: "Existing at startup",
+    });
+
+    const anchored = service.listCommentPostEvents();
+    expect(anchored).toMatchObject({ anchoredAtCurrent: true, events: [] });
+    expect(() =>
+      service.listCommentPostEvents(
+        formatCommentWatchCursor({ databaseId: anchored.databaseId, sequence: 999 }),
+      ),
+    ).toThrow("最新eventより先");
+
+    const reply = await service.replyToComment(comment.ref, {
+      body: "Created after startup",
+      authorLabel: "You",
+      idempotencyKey: "watch-task:comment-1",
+    });
+    const replayed = service.listCommentPostEvents(anchored.cursor);
+    expect(replayed).toMatchObject({
+      anchoredAtCurrent: false,
+      hasMore: false,
+      events: [
+        {
+          event: {
+            commentRef: comment.ref,
+            postId: reply.id,
+            pullRequestUrl: opened.pullRequest.url,
+            deleted: false,
+          },
+        },
+      ],
+    });
+
+    const retried = await service.replyToComment(comment.ref, {
+      body: "Created after startup",
+      authorLabel: "You",
+      idempotencyKey: "watch-task:comment-1",
+    });
+    expect(retried.id).toBe(reply.id);
+    expect(service.listCommentPostEvents(replayed.cursor).events).toEqual([]);
+
+    service.deleteReply(comment.id, reply.id);
+    expect(service.listCommentPostEvents(anchored.cursor).events).toMatchObject([
+      { event: { postId: reply.id, deleted: true } },
+    ]);
+    await expect(
+      service.replyToComment(comment.ref, {
+        body: "Created after startup",
+        authorLabel: "You",
+        idempotencyKey: "watch-task:comment-1",
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_RESULT_DELETED" });
   });
 
   it("keeps only latest PR markdown and repositions a unique quoted selection", async () => {

@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import type {
   ChangedFile,
   CommentPlacement,
+  CommentPostEvent,
   CommentTarget,
   CommitSummary,
   DiffDocumentRef,
@@ -23,16 +25,23 @@ import type {
   WalkthroughSummary,
 } from "../domain/models.js";
 import { parseCommentUri } from "../domain/comment-uri.js";
+import {
+  formatCommentWatchCursor,
+  parseCommentWatchCursor,
+} from "../domain/comment-watch-cursor.js";
 import { parseWalkthroughUri } from "../domain/walkthrough-uri.js";
 import { mapUnchangedLineRange, placeMutableDocumentComment } from "../domain/line-mapping.js";
 import { buildPullRequestMarkdown, hashDocument, selectedLineText } from "../domain/pr-markdown.js";
 import { createSourceExcerpt, type SourceExcerpt } from "../domain/source-excerpt.js";
 import {
   DEFAULT_COMMENT_LIST_LIMIT,
+  DEFAULT_COMMENT_WATCH_LIMIT,
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
   MAX_COMMENT_BODY_BYTES,
   MAX_COMMENT_LIST_LIMIT,
+  MAX_COMMENT_WATCH_LIMIT,
+  MAX_IDEMPOTENCY_KEY_CHARACTERS,
   MAX_SEARCH_QUERY_BYTES,
   MAX_SEARCH_RESULTS,
   MAX_SEARCH_STDOUT_BYTES,
@@ -76,6 +85,7 @@ export interface CommentUpdateRequest {
   reply: string;
   resolve: boolean;
   authorLabel?: string | null;
+  idempotencyKey?: string | undefined;
 }
 
 export interface CommentCreateRequest {
@@ -123,6 +133,20 @@ export interface CommentListContext {
     hasMore: boolean;
     nextOffset: number | null;
   };
+}
+
+export interface CommentWatchEventContext {
+  cursor: string;
+  event: CommentPostEvent;
+}
+
+export interface CommentWatchContext {
+  databaseId: string;
+  startCursor: string;
+  cursor: string;
+  anchoredAtCurrent: boolean;
+  hasMore: boolean;
+  events: CommentWatchEventContext[];
 }
 
 export interface WalkthroughContentRequest {
@@ -197,6 +221,20 @@ function assertAuthorLabel(authorLabel: string | null | undefined): void {
       `authorLabelは${MAX_AUTHOR_LABEL_CHARACTERS}文字以下にしてください。`,
     );
   }
+}
+
+function assertIdempotencyKey(idempotencyKey: string | undefined): void {
+  if (idempotencyKey === undefined) return;
+  if (idempotencyKey.length === 0 || idempotencyKey.length > MAX_IDEMPOTENCY_KEY_CHARACTERS) {
+    throw new RvwError(
+      "INVALID_INPUT",
+      `idempotencyKeyは1〜${MAX_IDEMPOTENCY_KEY_CHARACTERS}文字にしてください。`,
+    );
+  }
+}
+
+function idempotencyRequestHash(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
 }
 
 function assertLinePair(startLine: number | null, endLine: number | null): void {
@@ -563,11 +601,25 @@ export class RvwService {
       }
       if (update.reply.trim()) assertTextBody(update.reply);
       assertAuthorLabel(update.authorLabel);
+      assertIdempotencyKey(update.idempotencyKey);
+      const authorLabel = update.authorLabel ?? "Agent";
       return {
         commentId,
         reply: update.reply,
         resolve: update.resolve,
         ...(update.authorLabel === undefined ? {} : { authorLabel: update.authorLabel }),
+        ...(update.idempotencyKey === undefined ? {} : { idempotencyKey: update.idempotencyKey }),
+        ...(update.idempotencyKey === undefined
+          ? {}
+          : {
+              idempotencyRequestHash: idempotencyRequestHash({
+                operation: "pr.sync.comment-update",
+                commentId,
+                reply: update.reply,
+                resolve: update.resolve,
+                authorLabel,
+              }),
+            }),
       };
     });
   }
@@ -1053,6 +1105,8 @@ export class RvwService {
     const staleAgainstGitHub = live
       ? live.title !== result.pullRequest.latestTitle ||
         live.body !== result.pullRequest.latestBody ||
+        live.headRepositoryOwner !== result.pullRequest.latestHeadRepositoryOwner ||
+        live.headRepositoryName !== result.pullRequest.latestHeadRepositoryName ||
         live.baseOid !== result.pullRequest.latestBaseOid ||
         live.headOid !== result.pullRequest.latestHeadOid ||
         live.updatedAt !== result.pullRequest.githubUpdatedAt
@@ -1108,6 +1162,40 @@ export class RvwService {
         hasMore,
         nextOffset: hasMore ? nextOffset : null,
       },
+    };
+  }
+
+  listCommentPostEvents(cursor?: string, limit = DEFAULT_COMMENT_WATCH_LIMIT): CommentWatchContext {
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_COMMENT_WATCH_LIMIT) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `comment watchのlimitは1〜${MAX_COMMENT_WATCH_LIMIT}の整数にしてください。`,
+      );
+    }
+    const databaseId = this.database.getCommentWatchDatabaseId();
+    const parsed = cursor === undefined ? null : parseCommentWatchCursor(cursor);
+    if (parsed !== null && parsed.databaseId !== databaseId) {
+      throw new RvwError("INVALID_INPUT", "comment watch cursorは別のrvw database用です。");
+    }
+    const latestAtStart = this.database.getLatestCommentPostEventSequence();
+    if (parsed !== null && parsed.sequence > latestAtStart) {
+      throw new RvwError("INVALID_INPUT", "comment watch cursorはdatabaseの最新eventより先です。");
+    }
+    const afterSequence = parsed?.sequence ?? latestAtStart;
+    const rawEvents = this.database.listCommentPostEvents(afterSequence, limit);
+    const events = rawEvents.map((event) => ({
+      cursor: formatCommentWatchCursor({ databaseId, sequence: event.sequence }),
+      event,
+    }));
+    const lastSequence = rawEvents.at(-1)?.sequence ?? afterSequence;
+    const latestSequence = this.database.getLatestCommentPostEventSequence();
+    return {
+      databaseId,
+      startCursor: formatCommentWatchCursor({ databaseId, sequence: afterSequence }),
+      cursor: formatCommentWatchCursor({ databaseId, sequence: lastSequence }),
+      anchoredAtCurrent: parsed === null,
+      hasMore: lastSequence < latestSequence,
+      events,
     };
   }
 
@@ -1343,20 +1431,41 @@ export class RvwService {
 
   async replyToComment(
     uriOrId: string,
-    input: { body: string; relatedCommitOid?: string | null; authorLabel?: string | null },
+    input: {
+      body: string;
+      relatedCommitOid?: string | null;
+      authorLabel?: string | null;
+      idempotencyKey?: string;
+    },
   ) {
     const id = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
     const comment = this.database.getComment(id);
     if (!comment)
       throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
     assertAuthorLabel(input.authorLabel);
+    assertIdempotencyKey(input.idempotencyKey);
     if (input.relatedCommitOid) {
       await this.assertCommitAvailable(
         this.getPullRequest(comment.pullRequestId),
         input.relatedCommitOid,
       );
     }
-    return this.database.insertReply(id, { ...input, body: assertTextBody(input.body) });
+    const body = assertTextBody(input.body);
+    return this.database.insertReply(id, {
+      ...input,
+      body,
+      ...(input.idempotencyKey === undefined
+        ? {}
+        : {
+            idempotencyRequestHash: idempotencyRequestHash({
+              operation: "comment.reply",
+              commentId: id,
+              body,
+              relatedCommitOid: input.relatedCommitOid ?? null,
+              authorLabel: input.authorLabel ?? null,
+            }),
+          }),
+    });
   }
 
   setCommentResolved(uriOrId: string, resolved: boolean): ReviewComment {

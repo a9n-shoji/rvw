@@ -29,4 +29,8 @@ export default tseslint.config(
       "@typescript-eslint/no-misused-promises": "error",
     },
   },
+  {
+    files: ["skills/rvw-watch-comments/scripts/*.mjs"],
+    ...tseslint.configs.disableTypeChecked,
+  },
 );

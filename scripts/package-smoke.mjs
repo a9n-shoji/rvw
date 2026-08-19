@@ -52,6 +52,10 @@ const skillInstallSchema = z.object({
     }),
   ),
 });
+const watchStateInitSchema = z.object({
+  ok: z.literal(true),
+  ownPullRequests: z.literal("investigate-and-reply"),
+});
 const packageJson = packageJsonSchema.parse(
   JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")),
 );
@@ -246,6 +250,9 @@ try {
     "skills/rvw-walkthrough/SKILL.md",
     "skills/rvw-walkthrough/agents/openai.yaml",
     "skills/rvw-walkthrough/references/walkthrough-authoring.md",
+    "skills/rvw-watch-comments/SKILL.md",
+    "skills/rvw-watch-comments/agents/openai.yaml",
+    "skills/rvw-watch-comments/scripts/watch-state.mjs",
     ...readdirSync(path.join(repositoryRoot, "migrations"))
       .filter((name) => /^\d+_.*\.sql$/.test(name))
       .map((name) => `migrations/${name}`),
@@ -380,9 +387,23 @@ try {
   );
   assert.deepEqual(
     installedSkills.skills.map((skill) => skill.name),
-    ["rvw", "rvw-walkthrough"],
+    ["rvw", "rvw-walkthrough", "rvw-watch-comments"],
   );
   assert.ok(installedSkills.skills.every((skill) => skill.matchesBundled));
+  const installedWatchState = path.join(
+    skillRoot,
+    "rvw-watch-comments",
+    "scripts",
+    "watch-state.mjs",
+  );
+  const watchTaskState = path.join(temporaryRoot, "watch-task", "state.db");
+  const initializedWatchState = parseJson(
+    run(process.execPath, [installedWatchState, "init", "--state", watchTaskState]),
+    watchStateInitSchema,
+    "rvw-watch-comments state init",
+  );
+  assert.equal(initializedWatchState.ok, true);
+  assert.equal(initializedWatchState.ownPullRequests, "investigate-and-reply");
 
   process.stdout.write(
     `Package smoke passed: ${pack.files.length} files, ${packedBytes} bytes packed, ${unpackedBytes} bytes unpacked.\n`,

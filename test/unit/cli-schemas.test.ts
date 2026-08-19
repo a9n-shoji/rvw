@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   commentCreateInputSchema,
   commentReplyInputSchema,
+  commentWatchOptionsSchema,
   pullRequestSyncInputSchema,
   walkthroughPublishInputSchema,
   walkthroughUpdateInputSchema,
@@ -84,6 +85,7 @@ describe("CLI input schemas", () => {
             commentRef: "rvw://comment/11111111-1111-4111-8111-111111111111",
             reply: "Fixed in this commit.",
             resolve: true,
+            idempotencyKey: "watch-task:batch-1:comment-1",
           },
         ],
       }),
@@ -95,6 +97,13 @@ describe("CLI input schemas", () => {
       pullRequestSyncInputSchema.safeParse({ pullRequest: "", commentUpdates: [] }).success,
     ).toBe(false);
     expect(commentReplyInputSchema.safeParse({ body: "" }).success).toBe(false);
+    expect(
+      commentReplyInputSchema.safeParse({ body: "Reply", idempotencyKey: "x".repeat(201) }).success,
+    ).toBe(false);
+    expect(commentWatchOptionsSchema.parse({ jsonSeq: true, once: true })).toMatchObject({
+      interval: 10,
+      limit: 100,
+    });
   });
 
   it("applies the UTF-8 byte limit to batch-sync replies", () => {

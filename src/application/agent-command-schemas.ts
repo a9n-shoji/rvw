@@ -5,6 +5,8 @@ import {
   MAX_AUTHOR_LABEL_CHARACTERS,
   MAX_COMMENT_BODY_BYTES,
   MAX_COMMENT_LIST_LIMIT,
+  MAX_COMMENT_WATCH_LIMIT,
+  MAX_IDEMPOTENCY_KEY_CHARACTERS,
   MAX_WALKTHROUGH_BODY_BYTES,
   MAX_WALKTHROUGH_REFERENCE_DESCRIPTION_CHARACTERS,
   MAX_WALKTHROUGH_REFERENCE_LABEL_CHARACTERS,
@@ -17,6 +19,7 @@ const nonEmptyString = z.string().min(1);
 const commentUri = z.string().regex(/^rvw:\/\/comment\//);
 const walkthroughUri = z.string().regex(/^rvw:\/\/walkthrough\//);
 const nullableCommentLine = z.number().int().positive().nullable().optional().default(null);
+const idempotencyKey = z.string().min(1).max(MAX_IDEMPOTENCY_KEY_CHARACTERS).optional();
 
 export const commentTargetInputSchema = z
   .union([
@@ -86,6 +89,7 @@ export const commentReplyInputSchema = z
       .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
     authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
     relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
+    idempotencyKey,
   })
   .strict();
 
@@ -101,6 +105,7 @@ export const pullRequestSyncInputSchema = z
               .string()
               .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
             resolve: z.boolean(),
+            idempotencyKey,
           })
           .strict(),
       )
@@ -180,6 +185,12 @@ export const agentCommandInputSchemas = {
         .max(MAX_COMMENT_LIST_LIMIT)
         .default(DEFAULT_COMMENT_LIST_LIMIT),
       offset: z.number().int().min(0).default(0),
+    })
+    .strict(),
+  "comment.watch": z
+    .object({
+      cursor: z.string().min(1).max(512).optional(),
+      limit: z.number().int().min(1).max(MAX_COMMENT_WATCH_LIMIT),
     })
     .strict(),
   "comment.create": commentCreateInputSchema,

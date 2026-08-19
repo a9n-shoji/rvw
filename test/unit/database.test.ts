@@ -55,6 +55,9 @@ const github = {
   repository: "review-repo",
   number: 7,
   url: "https://github.com/acme/review-repo/pull/7",
+  authorLogin: "review-author",
+  headRepositoryOwner: "acme",
+  headRepositoryName: "review-repo",
   title: "Review me",
   body: "Body",
   baseRefName: "main",
@@ -135,6 +138,7 @@ describe("RvwDatabase", () => {
       "004_walkthroughs.sql",
       "005_walkthrough_comments.sql",
       "006_theme_preference.sql",
+      "009_comment_watch.sql",
     ]) {
       writeFileSync(
         path.join(legacyMigrationsDirectory, migration),
@@ -334,6 +338,96 @@ describe("RvwDatabase", () => {
       },
       posts: [{ relatedCommitOid: github.headOid, createdAt: now, updatedAt: now }],
     });
+    database.close();
+  });
+
+  it("records only newly created posts and deduplicates replies by idempotency key", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    expect(database.getLatestCommentPostEventSequence()).toBe(0);
+
+    const comment = database.createComment({
+      pullRequestId: pullRequest.id,
+      createdHeadOid: github.headOid,
+      target: { kind: "pull-request" },
+      body: "Please investigate.",
+    });
+    const firstCursor = database.getLatestCommentPostEventSequence();
+    expect(database.listCommentPostEvents(0, 100)).toMatchObject([
+      {
+        sequence: firstCursor,
+        commentRef: comment.ref,
+        pullRequestUrl: pullRequest.url,
+        deleted: false,
+      },
+    ]);
+
+    const firstReply = database.insertReply(comment.id, {
+      body: "Investigation complete.",
+      authorLabel: "Codex",
+      idempotencyKey: "watch-task:batch-1:comment-1",
+    });
+    const repeatedReply = database.insertReply(comment.id, {
+      body: "Investigation complete.",
+      authorLabel: "Codex",
+      idempotencyKey: "watch-task:batch-1:comment-1",
+    });
+    expect(repeatedReply.id).toBe(firstReply.id);
+    expect(database.listCommentPostEvents(firstCursor, 100)).toHaveLength(1);
+    expect(() =>
+      database.insertReply(comment.id, {
+        body: "Different payload.",
+        authorLabel: "Codex",
+        idempotencyKey: "watch-task:batch-1:comment-1",
+      }),
+    ).toThrow("同じidempotencyKey");
+    database.close();
+  });
+
+  it("reuses a synchronized reply when the derived GitHub head advances", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const comment = database.createComment({
+      pullRequestId: pullRequest.id,
+      createdHeadOid: github.headOid,
+      target: { kind: "pull-request" },
+      body: "Please update this.",
+    });
+    const update = {
+      commentId: comment.id,
+      reply: "Updated.",
+      resolve: false,
+      authorLabel: "Agent",
+      idempotencyKey: "sync-retry-key",
+      idempotencyRequestHash: "d".repeat(64),
+    };
+
+    database.syncPullRequestAndComments(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+      [update],
+    );
+    database.syncPullRequestAndComments(
+      { ...github, headOid: "e".repeat(40), updatedAt: "2026-08-09T00:00:00.000Z" },
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "f".repeat(40),
+      [update],
+    );
+
+    expect(database.listCommentPosts(comment.id)).toMatchObject([
+      { isRoot: true },
+      { body: "Updated.", relatedCommitOid: github.headOid },
+    ]);
+    expect(database.listCommentPostEvents(0, 100)).toHaveLength(2);
     database.close();
   });
 });
