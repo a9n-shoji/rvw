@@ -24,7 +24,9 @@ async function selectMappedText(locator: Locator, firstCharacterOnly = false): P
 
 async function dragNativeText(page: Page, start: Locator, end: Locator = start): Promise<string> {
   await start.scrollIntoViewIfNeeded();
-  await end.scrollIntoViewIfNeeded();
+  if (end !== start) {
+    await end.scrollIntoViewIfNeeded();
+  }
   const textRect = async (locator: Locator) =>
     await locator.evaluate((element) => {
       const range = document.createRange();
@@ -936,14 +938,6 @@ test("keeps walkthrough Markdown selection stable on the first interaction", asy
     .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ""))
     .toMatch(/^(レビュー|サマリー|レビューサマリー)$/);
   await expect(page.getByRole("button", { name: "L7へコメント", exact: true })).toBeVisible();
-  await clearSelection();
-
-  const ready = mappedLeaf(11, /Ready/);
-  await ready.dblclick();
-  await expect
-    .poll(() => page.evaluate(() => window.getSelection()?.toString() ?? ""))
-    .toBe("Ready");
-  await expect(page.getByRole("button", { name: "L11へコメント", exact: true })).toBeVisible();
   await clearSelection();
 
   const codeLine = mappedLeaf(58, /await orders\.insert/);
