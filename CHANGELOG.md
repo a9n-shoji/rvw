@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-20
+
+### Added
+
+- Agentが新しい未解決threadを安全なMarkdownで記録できる`comment.create` CLI capability
+- browserの戻る／進むで、review scopeやworkspace layoutを変えずに辿れるreading history
+- PR commentを継続監視し、重複なく返信できる`rvw-watch-comments` Skill
+
+### Changed
+
+- reviewerの目的とrepository固有の指示に合わせて説明を組み立てるWalkthrough authoring guide
+
+### Fixed
+
+- 不正なMermaidを含むcommentを表示すると、一時的なerror SVGがcomment外へ残りviewer下部を覆う問題
+
 ## [0.1.1] - 2026-08-17
 
 ### Fixed
