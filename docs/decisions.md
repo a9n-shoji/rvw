@@ -1,5 +1,51 @@
 # Architecture decisions
 
+## 2026-08-19: Make browser history a focused reading trail
+
+### Problem
+
+The document workspace keeps multiple temporary tabs and up to two panes, but every navigation was
+held only in React state. A reviewer following a search result, comment, Markdown link, or Walkthrough
+reference therefore could not use the browser's Back action to return to the code or explanation they
+had been reading. Serializing the whole workspace into each browser entry would make Back behave like
+layout undo: it could close useful tabs, move documents between panes, and restore an obsolete commit
+range even though review scope is intentionally independent from document navigation.
+
+### Choice
+
+Treat same-page browser history as a chronological trail of the focused pane's reading destination.
+Each versioned entry contains the Pull Request, active document, pane hint, line range or pane-local
+scroll position. Explicit document activation, line navigation, and in-document Markdown heading
+navigation push an entry. A line jump remains a semantic line locator while it is still anchored at the
+applied position; once the reviewer scrolls away, the same entry becomes the actual pane scroll position.
+Presentation changes, transient comment hover/focus, tab closing or movement, review-scope controls,
+and automatic data refresh do not add entries.
+
+Back and Forward activate only the recorded reading destination. If its document remains open, its
+current pane ownership wins; otherwise it reopens in the recorded pane. The other pane, open-tab set,
+pane sizing, and current global commit range and display controls remain untouched. Repository paths
+without an exact source continue to follow the current selected commit, while exact-source and
+selected-range reference policies remain part of their document target. Use manual restoration because
+the reading surfaces scroll inside panes rather than the browser window. Keep the page URL limited to
+the existing Pull Request route and store the ephemeral destination in namespaced, runtime-validated
+`history.state`.
+
+A full reload starts a fresh ephemeral workspace and replaces the retained current entry with that
+default reading target. This preserves the established reload boundary for tab and pane placement;
+Back remains the explicit action for revisiting earlier same-origin reading entries.
+
+### Trade-offs
+
+- Back follows the reviewer's reading order across both panes without turning browser history into a
+  second workspace or review-scope model.
+- A closed historical destination can reopen when explicitly revisited, but unrelated closed tabs and
+  earlier pane layouts are not resurrected.
+- Same-origin history entries are not independently shareable URLs. A future deep-link contract can
+  project the same reading target into the URL without serializing the complete workspace.
+- Raw pane scroll is less stable than a source anchor when content changes; explicit search, comment,
+  reference, and Markdown heading jumps retain line locators until manual reading continues, after which
+  ordinary reading falls back to the captured scroll.
+
 ## 2026-08-17: Use an annotated initial release tag without fabricating a signing identity
 
 ### Problem

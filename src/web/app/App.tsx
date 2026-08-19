@@ -74,6 +74,13 @@ import {
 import { clearCommentDraftsForPullRequest } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
+import {
+  parseReadingHistoryEntry,
+  readingHistoryState,
+  sameReadingDocument,
+  type ReadingHistoryEntry,
+  type ReadingLocator,
+} from "../reading-history.js";
 const DocumentViewer = lazy(async () => {
   const module = await import("../components/DocumentViewer.js");
   return { default: module.DocumentViewer };
@@ -116,6 +123,13 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 }
 
 type DocumentDisplayMode = "full" | "diff";
+
+interface AppliedLineNavigation {
+  requestId: number;
+  documentKey: string;
+  pane: DocumentPaneId;
+  top: number;
+}
 
 function SidebarCommentIcon() {
   return (
@@ -480,13 +494,20 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [treeMode, setTreeMode] = useState<"changed" | "all">("changed");
   const [viewerNavigationTarget, setViewerNavigationTarget] =
     useState<ViewerNavigationTarget | null>(null);
-  const resetViewerNavigation = useCallback((): void => setViewerNavigationTarget(null), []);
+  const viewerNavigationTargetRef = useRef(viewerNavigationTarget);
+  const appliedLineNavigation = useRef<AppliedLineNavigation | null>(null);
+  viewerNavigationTargetRef.current = viewerNavigationTarget;
+  const resetViewerNavigation = useCallback((): void => {
+    viewerNavigationTargetRef.current = null;
+    appliedLineNavigation.current = null;
+    setViewerNavigationTarget(null);
+  }, []);
   const {
     workspace: documentWorkspace,
     workspaceRef: documentWorkspaceRef,
     setWorkspace: setDocumentWorkspace,
-    activateDocument,
-    openDocument,
+    activateDocument: activateWorkspaceDocument,
+    openDocument: openWorkspaceDocument,
     closeDocument,
     closePaneDocuments,
     moveDocument,
@@ -531,6 +552,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     right: null,
   });
   const documentScrollPositions = useRef(new Map<string, number>());
+  const readingHistoryReady = useRef(false);
+  const readingHistoryScrollTimeout = useRef<number | null>(null);
   const leftActiveDocumentKey = documentWorkspace.active.left
     ? documentTabKey(documentWorkspace.active.left)
     : null;
@@ -548,6 +571,207 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     if (!pane || !rightActiveDocumentKey) return;
     pane.scrollTop = documentScrollPositions.current.get(rightActiveDocumentKey) ?? 0;
   }, [reviewStateRevision, rightActiveDocumentKey]);
+
+  const currentReadingHistoryEntry = useCallback((): ReadingHistoryEntry | null => {
+    if (!pullRequestId) return null;
+    const workspace = documentWorkspaceRef.current;
+    const pane = workspace.focusedPane;
+    const document = workspace.active[pane];
+    if (!document) return null;
+    const documentKey = documentTabKey(document);
+    const navigationTarget = viewerNavigationTargetRef.current;
+    const scrollTop =
+      paneElements.current[pane]?.scrollTop ??
+      documentScrollPositions.current.get(documentKey) ??
+      0;
+    const lineNavigation = appliedLineNavigation.current;
+    const lineNavigationStillAnchored = Boolean(
+      navigationTarget?.documentKey === documentKey &&
+      (!lineNavigation ||
+        lineNavigation.requestId !== navigationTarget.requestId ||
+        lineNavigation.documentKey !== documentKey ||
+        lineNavigation.pane !== pane ||
+        Math.abs(lineNavigation.top - scrollTop) <= 1),
+    );
+    const locator: ReadingLocator =
+      navigationTarget?.documentKey === documentKey && lineNavigationStillAnchored
+        ? {
+            kind: "line",
+            line: navigationTarget.line,
+            ...(navigationTarget.endLine === undefined
+              ? {}
+              : { endLine: navigationTarget.endLine }),
+          }
+        : {
+            kind: "scroll",
+            top: scrollTop,
+          };
+    return {
+      version: 1,
+      pullRequestId,
+      pane,
+      document,
+      locator,
+    };
+  }, [pullRequestId]);
+
+  const markLineNavigationApplied = useCallback(
+    (pane: DocumentPaneId, requestId: number): void => {
+      const navigationTarget = viewerNavigationTargetRef.current;
+      const workspace = documentWorkspaceRef.current;
+      const document = workspace.active[pane];
+      if (
+        !navigationTarget ||
+        navigationTarget.requestId !== requestId ||
+        !document ||
+        documentTabKey(document) !== navigationTarget.documentKey
+      ) {
+        return;
+      }
+      appliedLineNavigation.current = {
+        requestId,
+        documentKey: navigationTarget.documentKey,
+        pane,
+        top:
+          paneElements.current[pane]?.scrollTop ??
+          documentScrollPositions.current.get(navigationTarget.documentKey) ??
+          0,
+      };
+    },
+    [documentWorkspaceRef],
+  );
+
+  const cancelReadingHistoryScrollSnapshot = useCallback((): void => {
+    if (readingHistoryScrollTimeout.current === null) return;
+    window.clearTimeout(readingHistoryScrollTimeout.current);
+    readingHistoryScrollTimeout.current = null;
+  }, []);
+
+  const replaceCurrentReadingHistory = useCallback((): void => {
+    if (!readingHistoryReady.current) return;
+    const entry = currentReadingHistoryEntry();
+    if (!entry) return;
+    window.history.replaceState(readingHistoryState(window.history.state, entry), "");
+  }, [currentReadingHistoryEntry]);
+
+  const scheduleReadingHistoryScrollSnapshot = useCallback((): void => {
+    if (!readingHistoryReady.current) return;
+    cancelReadingHistoryScrollSnapshot();
+    readingHistoryScrollTimeout.current = window.setTimeout(() => {
+      readingHistoryScrollTimeout.current = null;
+      replaceCurrentReadingHistory();
+    }, 150);
+  }, [cancelReadingHistoryScrollSnapshot, replaceCurrentReadingHistory]);
+
+  const pushReadingHistory = useCallback(
+    (
+      document: ActiveDocument,
+      pane: DocumentPaneId,
+      locator: ReadingLocator,
+      hash?: string,
+    ): void => {
+      if (!pullRequestId || !readingHistoryReady.current) return;
+      cancelReadingHistoryScrollSnapshot();
+      const currentWorkspace = documentWorkspaceRef.current;
+      const currentDocument = currentWorkspace.active[currentWorkspace.focusedPane];
+      replaceCurrentReadingHistory();
+      const destination: ReadingHistoryEntry = {
+        version: 1,
+        pullRequestId,
+        pane,
+        document,
+        locator,
+      };
+      if (
+        locator.kind === "scroll" &&
+        currentDocument &&
+        currentWorkspace.focusedPane === pane &&
+        sameReadingDocument(currentDocument, document)
+      ) {
+        window.history.replaceState(readingHistoryState(window.history.state, destination), "");
+        return;
+      }
+      const url = new URL(window.location.href);
+      url.hash = hash ?? "";
+      window.history.pushState(readingHistoryState(window.history.state, destination), "", url);
+    },
+    [cancelReadingHistoryScrollSnapshot, pullRequestId, replaceCurrentReadingHistory],
+  );
+
+  const requestLineNavigation = useCallback(
+    (
+      documentKey: string,
+      locator: Extract<ReadingLocator, { kind: "line" }>,
+      resetHorizontal: boolean,
+    ) => {
+      searchNavigationSequence.current += 1;
+      const target: ViewerNavigationTarget = {
+        documentKey,
+        line: locator.line,
+        ...(locator.endLine === undefined ? {} : { endLine: locator.endLine }),
+        requestId: searchNavigationSequence.current,
+        resetHorizontal,
+      };
+      appliedLineNavigation.current = null;
+      viewerNavigationTargetRef.current = target;
+      setViewerNavigationTarget(target);
+    },
+    [],
+  );
+
+  const navigateToDocument = useCallback(
+    (
+      document: ActiveDocument,
+      targetPane?: DocumentPaneId,
+      locator?: ReadingLocator,
+      resetHorizontal = true,
+    ): void => {
+      const workspace = documentWorkspaceRef.current;
+      const documentKey = documentTabKey(document);
+      const pane = targetPane ?? workspace.panes[documentKey] ?? workspace.focusedPane;
+      const destinationLocator =
+        locator ??
+        ({
+          kind: "scroll",
+          top: documentScrollPositions.current.get(documentKey) ?? 0,
+        } satisfies ReadingLocator);
+      pushReadingHistory(document, pane, destinationLocator);
+      openWorkspaceDocument(document, pane);
+      if (destinationLocator.kind === "line") {
+        requestLineNavigation(documentKey, destinationLocator, resetHorizontal);
+      }
+    },
+    [openWorkspaceDocument, pushReadingHistory, requestLineNavigation],
+  );
+
+  const navigateToMarkdownFragment = useCallback(
+    (document: ActiveDocument, pane: DocumentPaneId, line: number, hash: string): void => {
+      const documentKey = documentTabKey(document);
+      const locator = { kind: "line", line } satisfies ReadingLocator;
+      pushReadingHistory(document, pane, locator, hash);
+      requestLineNavigation(documentKey, locator, true);
+    },
+    [pushReadingHistory, requestLineNavigation],
+  );
+
+  const openDocument = useCallback(
+    (document: ActiveDocument, targetPane?: DocumentPaneId): void =>
+      navigateToDocument(document, targetPane),
+    [navigateToDocument],
+  );
+
+  const activateDocument = useCallback(
+    (document: ActiveDocument, pane?: DocumentPaneId): void => {
+      const workspace = documentWorkspaceRef.current;
+      const targetPane = pane ?? workspace.panes[documentTabKey(document)] ?? workspace.focusedPane;
+      pushReadingHistory(document, targetPane, {
+        kind: "scroll",
+        top: documentScrollPositions.current.get(documentTabKey(document)) ?? 0,
+      });
+      activateWorkspaceDocument(document, targetPane);
+    },
+    [activateWorkspaceDocument, pushReadingHistory],
+  );
 
   useEffect(() => {
     if (!syncFeedback) return;
@@ -661,6 +885,68 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
 
   const displayMode: DisplayMode =
     documentDisplayMode === "full" ? "full" : rangeStartIndex === 0 ? "pull-request" : "range";
+
+  const restoreReadingHistory = useCallback(
+    (entry: ReadingHistoryEntry): void => {
+      cancelReadingHistoryScrollSnapshot();
+      const workspace = documentWorkspaceRef.current;
+      const documentKey = documentTabKey(entry.document);
+      const pane = workspace.panes[documentKey] ?? entry.pane;
+      if (entry.locator.kind === "scroll") {
+        documentScrollPositions.current.set(documentKey, entry.locator.top);
+      }
+      openWorkspaceDocument(entry.document, pane);
+      if (entry.locator.kind === "line") {
+        requestLineNavigation(documentKey, entry.locator, true);
+        return;
+      }
+      const scrollTop = entry.locator.top;
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const targetPane = documentWorkspaceRef.current.panes[documentKey] ?? pane;
+          const paneElement = paneElements.current[targetPane];
+          if (paneElement) paneElement.scrollTop = scrollTop;
+        });
+      });
+    },
+    [cancelReadingHistoryScrollSnapshot, openWorkspaceDocument, requestLineNavigation],
+  );
+
+  useEffect(() => {
+    const previousScrollRestoration = window.history.scrollRestoration;
+    window.history.scrollRestoration = "manual";
+    return () => {
+      cancelReadingHistoryScrollSnapshot();
+      window.history.scrollRestoration = previousScrollRestoration;
+    };
+  }, [cancelReadingHistoryScrollSnapshot]);
+
+  useEffect(() => {
+    if (!pullRequestId) return;
+    const restoreFromPopState = (event: PopStateEvent): void => {
+      const entry = parseReadingHistoryEntry(event.state, pullRequestId);
+      if (entry) restoreReadingHistory(entry);
+    };
+    window.addEventListener("popstate", restoreFromPopState);
+    return () => window.removeEventListener("popstate", restoreFromPopState);
+  }, [pullRequestId, restoreReadingHistory]);
+
+  useEffect(() => {
+    if (
+      !pullRequestId ||
+      !pullRequestQuery.isSuccess ||
+      !selectedOid ||
+      readingHistoryReady.current
+    ) {
+      return;
+    }
+    readingHistoryReady.current = true;
+    const entry = currentReadingHistoryEntry();
+    if (!entry) return;
+    const url = new URL(window.location.href);
+    url.hash = "";
+    window.history.replaceState(readingHistoryState(window.history.state, entry), "", url);
+  }, [currentReadingHistoryEntry, pullRequestId, pullRequestQuery.isSuccess, selectedOid]);
 
   useEffect(() => {
     const warnBeforeBrowserClose = (event: BeforeUnloadEvent): void => {
@@ -1114,14 +1400,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       : (workspace.panes[documentKey] ?? workspace.focusedPane);
     const activeTarget = workspace.active[targetPane];
     const resetHorizontal = !activeTarget || documentTabKey(activeTarget) !== documentKey;
-    openDocument(document, targetPane);
-    searchNavigationSequence.current += 1;
-    setViewerNavigationTarget({
-      documentKey,
-      line: result.line,
-      requestId: searchNavigationSequence.current,
-      resetHorizontal,
-    });
+    navigateToDocument(document, targetPane, { kind: "line", line: result.line }, resetHorizontal);
   };
   const openCommentTarget = (comment: ReviewComment, placement: CommentPlacement | null): void => {
     const target = comment.target;
@@ -1130,20 +1409,16 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       startLine: number | null,
       endLine: number | null,
     ): void => {
-      searchNavigationSequence.current += 1;
-      setViewerNavigationTarget({
-        documentKey: documentTabKey(document),
+      navigateToDocument(document, undefined, {
+        kind: "line",
         line: startLine,
         ...(endLine === null ? {} : { endLine }),
-        requestId: searchNavigationSequence.current,
-        resetHorizontal: true,
       });
     };
     setCommentsExpanded(true);
     setActiveCommentId(comment.id);
     if (target.kind === "pull-request") {
       const document: ActiveDocument = { kind: "pull-request-markdown" };
-      openDocument(document);
       navigate(document, null, null);
       return;
     }
@@ -1158,14 +1433,12 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           title: walkthrough.title,
           sourceOid: walkthrough.sourceOid,
         };
-        openDocument(document);
         navigate(document, startLine, endLine);
       }
       return;
     }
     if (target.documentKind === "pull-request-markdown") {
       const document: ActiveDocument = { kind: "pull-request-markdown" };
-      openDocument(document);
       navigate(document, startLine, endLine);
       return;
     }
@@ -1175,7 +1448,6 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       sourceOid: target.sourceOid,
       comparisonPolicy: "exact-source",
     };
-    openDocument(document);
     navigate(document, startLine, endLine);
   };
   const openWalkthrough = useCallback(
@@ -1237,18 +1509,19 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       const documentKey = documentTabKey(document);
       const activeTarget = documentWorkspaceRef.current.active[targetPane];
       const resetHorizontal = !activeTarget || documentTabKey(activeTarget) !== documentKey;
-      openDocument(document, targetPane);
-      searchNavigationSequence.current += 1;
-      setViewerNavigationTarget({
-        documentKey,
-        line: reference.startLine,
-        ...(reference.endLine === null ? {} : { endLine: reference.endLine }),
-        requestId: searchNavigationSequence.current,
+      navigateToDocument(
+        document,
+        targetPane,
+        {
+          kind: "line",
+          line: reference.startLine,
+          ...(reference.endLine === null ? {} : { endLine: reference.endLine }),
+        },
         resetHorizontal,
-      });
+      );
       return null;
     },
-    [openDocument, queryClient],
+    [navigateToDocument, queryClient],
   );
   const openWalkthroughReferenceFromLeftPane = useCallback(
     (walkthrough: Walkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
@@ -1352,6 +1625,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
               documentTabKey(paneViewerDocument),
               event.currentTarget.scrollTop,
             );
+            if (documentWorkspaceRef.current.focusedPane === paneId) {
+              scheduleReadingHistoryScrollSnapshot();
+            }
           }
         }}
         className={`document-pane${activePane === paneId ? " active" : ""}${paneDocuments.length === 0 ? " empty" : ""}`}
@@ -1391,6 +1667,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                     ? viewerNavigationTarget
                     : null
                 }
+                onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
                 themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}
                 onOpenReference={
@@ -1439,6 +1716,10 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                   viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
                     ? viewerNavigationTarget
                     : null
+                }
+                onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
+                onOpenMarkdownFragment={(line, hash) =>
+                  navigateToMarkdownFragment(paneViewerDocument, paneId, line, hash)
                 }
                 onOpenRepositoryLink={(filePath, sourceOid, openInOtherPane) =>
                   openRepositoryMarkdownLink(
