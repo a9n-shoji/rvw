@@ -5,25 +5,19 @@
 
 ## [Unreleased]
 
-### Added
-
-- Agentが既存post本文と関連commitを置き換えられる`comment.edit` CLI capability
-
-### Changed
-
-- `rvw-watch-comments`がclaim直後に確認中replyを追加し、同じreplyを最終結果へ更新するよう改善
-
 ## [0.2.0] - 2026-08-20
 
 ### Added
 
 - Agentが新しい未解決threadを安全なMarkdownで記録できる`comment.create` CLI capability
+- Agentが既存post本文と関連commitを置き換えられる`comment.edit` CLI capability
 - browserの戻る／進むで、review scopeやworkspace layoutを変えずに辿れるreading history
 - PR commentを継続監視し、重複なく返信できる`rvw-watch-comments` Skill
 
 ### Changed
 
 - reviewerの目的とrepository固有の指示に合わせて説明を組み立てるWalkthrough authoring guide
+- `rvw-watch-comments`がclaim直後に確認中replyを追加し、同じreplyを最終結果へ更新するよう改善
 
 ### Fixed
 
