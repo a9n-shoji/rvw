@@ -84,7 +84,7 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
   const state = path.join(directory, "watch-state.db");
   const database = new RvwDatabase({ filePath: databasePath, migrationsDirectory: "./migrations" });
   const headOid = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  const baseOid = execFileSync("git", ["rev-parse", "HEAD^"], { encoding: "utf8" }).trim();
+  const baseOid = headOid;
   const pullRequest = database.upsertPullRequest(
     {
       host: "github.com",
