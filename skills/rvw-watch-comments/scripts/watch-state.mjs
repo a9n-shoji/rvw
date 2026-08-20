@@ -11,20 +11,37 @@ function fail(message) {
 
 function parseOptions(values) {
   const result = {};
+  const flags = new Set(["follow"]);
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
     if (!key?.startsWith("--")) fail(`Unexpected argument: ${key ?? ""}`);
+    const name = key.slice(2);
     const value = values[index + 1];
-    if (value === undefined || value.startsWith("--")) fail(`${key} requires a value`);
-    result[key.slice(2)] = value;
-    index += 1;
+    if (value === undefined || value.startsWith("--")) {
+      if (!flags.has(name)) fail(`${key} requires a value`);
+      result[name] = true;
+    } else {
+      result[name] = value;
+      index += 1;
+    }
   }
   return result;
 }
 
 function required(options, key) {
   const value = options[key];
-  if (!value) fail(`--${key} is required`);
+  if (typeof value !== "string" || value.length === 0) fail(`--${key} is required`);
+  return value;
+}
+
+function positiveIntegerOption(options, key, defaultValue) {
+  const raw = options[key];
+  if (raw === undefined) return defaultValue;
+  if (typeof raw !== "string" || !/^\d+$/.test(raw)) {
+    fail(`--${key} must be a positive integer`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) fail(`--${key} must be a positive integer`);
   return value;
 }
 
@@ -37,6 +54,10 @@ async function readInput() {
 
 function write(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+function waitFor(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function openState(statePath, create) {
@@ -376,6 +397,34 @@ function listPending(database) {
     });
 }
 
+async function waitForPending(database, options) {
+  const intervalMs = positiveIntegerOption(options, "interval-ms", 250);
+  const follow = options.follow === true;
+  let wasNonEmpty = false;
+  do {
+    const pending = listPending(database);
+    const isNonEmpty = pending.length > 0;
+    if (isNonEmpty && !wasNonEmpty) {
+      write({
+        ok: true,
+        type: "pending",
+        pullRequests: pending.map((batch) => batch.pullRequest),
+        pending,
+      });
+      if (!follow) return;
+    }
+    wasNonEmpty = isNonEmpty;
+    await waitFor(intervalMs);
+  } while (follow || !wasNonEmpty);
+}
+
+function normalizeWriteKey(writeKey) {
+  if (typeof writeKey !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(writeKey)) {
+    fail("--write-key must be owner/repository");
+  }
+  return writeKey.toLowerCase();
+}
+
 function createBatch(database, pullRequestUrl, now) {
   const batchId = randomUUID();
   const events = database
@@ -405,10 +454,7 @@ function createBatch(database, pullRequestUrl, now) {
 }
 
 function claim(database, pullRequestUrl, writeKey) {
-  if (writeKey !== undefined && !/^[^/\s]+\/[^/\s]+$/.test(writeKey)) {
-    fail("--write-key must be owner/repository");
-  }
-  const canonicalWriteKey = writeKey?.toLowerCase();
+  const canonicalWriteKey = writeKey === undefined ? undefined : normalizeWriteKey(writeKey);
   return transaction(database, () => {
     const now = new Date().toISOString();
     const active = database
@@ -477,6 +523,36 @@ function claim(database, pullRequestUrl, writeKey) {
       writeKey: canonicalWriteKey ?? null,
       events,
       operations,
+    };
+  });
+}
+
+function reserveWrite(database, leaseId, writeKey) {
+  const canonicalWriteKey = normalizeWriteKey(writeKey);
+  return transaction(database, () => {
+    const batch = database
+      .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
+      .get(leaseId);
+    if (!batch) fail("Active lease was not found");
+    if (batch.write_key !== null && batch.write_key !== canonicalWriteKey) {
+      fail(`Active lease already owns repository ${batch.write_key}`);
+    }
+    try {
+      database
+        .prepare("UPDATE batches SET write_key = ?, updated_at = ? WHERE id = ?")
+        .run(canonicalWriteKey, new Date().toISOString(), batch.id);
+    } catch (error) {
+      if (String(error).includes("UNIQUE constraint failed")) {
+        fail(`Another write-capable batch owns repository ${canonicalWriteKey}`);
+      }
+      throw error;
+    }
+    return {
+      leaseId,
+      batchId: batch.id,
+      pullRequest: batch.pull_request_url,
+      writeKey: canonicalWriteKey,
+      status: batch.write_key === canonicalWriteKey ? "existing" : "reserved",
     };
   });
 }
@@ -635,6 +711,21 @@ function status(database) {
   const unbatched = database
     .prepare("SELECT count(*) AS count FROM events WHERE status = 'pending' AND batch_id IS NULL")
     .get();
+  const inFlightBatches = database
+    .prepare(
+      `SELECT id, pull_request_url, attempts, lease_id, write_key, updated_at
+      FROM batches WHERE status = 'in_flight' ORDER BY created_at`,
+    )
+    .all()
+    .map((batch) => ({
+      batchId: batch.id,
+      leaseId: batch.lease_id,
+      pullRequest: batch.pull_request_url,
+      attempts: Number(batch.attempts),
+      writeKey: batch.write_key,
+      updatedAt: batch.updated_at,
+      operations: batchStatusOperations(database, batch.id),
+    }));
   return {
     taskId: getMeta(database, "task_id"),
     databaseId: getMeta(database, "database_id"),
@@ -649,6 +740,7 @@ function status(database) {
       quarantined: batchCounts.quarantined ?? 0,
       unbatchedEvents: Number(unbatched.count),
     },
+    inFlightBatches,
     quarantinedBatches: quarantinedBatches(database),
   };
 }
@@ -683,10 +775,21 @@ async function main() {
       write({ ok: true, pending: listPending(database) });
       return;
     }
+    if (command === "wait") {
+      await waitForPending(database, options);
+      return;
+    }
     if (command === "claim") {
       write({
         ok: true,
         ...claim(database, required(options, "pull-request"), options["write-key"]),
+      });
+      return;
+    }
+    if (command === "reserve-write") {
+      write({
+        ok: true,
+        ...reserveWrite(database, required(options, "lease"), required(options, "write-key")),
       });
       return;
     }

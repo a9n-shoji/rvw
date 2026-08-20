@@ -1,7 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
@@ -21,6 +21,93 @@ function ingest(state: string, frame: unknown) {
 }
 
 describe("rvw-watch-comments task state", () => {
+  it("waits for the pending set to become non-empty and emits monitor-ready JSON", async () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-wait-")), "task.db");
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "ffeeddccbbaa00998877665544332211",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    const waiter = spawn(
+      process.execPath,
+      [script, "wait", "--state", state, "--interval-ms", "10"],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const output = new Promise<string>((resolve, reject) => {
+      let stdout = "";
+      let stderr = "";
+      waiter.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+      });
+      waiter.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+      });
+      waiter.on("error", reject);
+      waiter.on("close", (code) => {
+        if (code === 0) resolve(stdout);
+        else reject(new Error(stderr));
+      });
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "human-post-wait",
+        commentRef: "rvw://comment/comment-wait",
+        pullRequestUrl: "https://github.com/acme/repo/pull/8",
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+
+    expect(JSON.parse(await output)).toMatchObject({
+      ok: true,
+      type: "pending",
+      pullRequests: ["https://github.com/acme/repo/pull/8"],
+      pending: [{ commentRefs: ["rvw://comment/comment-wait"] }],
+    });
+  });
+
+  it("can reserve a repository writer after an automatically acknowledged claim", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-reserve-")), "task.db");
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "abcdefabcdefabcdefabcdefabcdefab",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "human-post-reserve",
+        commentRef: "rvw://comment/comment-reserve",
+        pullRequestUrl: "https://github.com/acme/repo/pull/9",
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+    const claimed = run(state, "claim", ["--pull-request", "https://github.com/acme/repo/pull/9"]);
+
+    expect(
+      run(state, "reserve-write", ["--lease", String(claimed.leaseId), "--write-key", "Acme/Repo"]),
+    ).toMatchObject({ status: "reserved", writeKey: "acme/repo" });
+    expect(run(state, "status")).toMatchObject({
+      inFlightBatches: [
+        {
+          leaseId: claimed.leaseId,
+          writeKey: "acme/repo",
+          operations: [{ commentRef: "rvw://comment/comment-reserve" }],
+        },
+      ],
+    });
+  });
+
   it("records one durable status post per thread and suppresses its event immediately", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-state-")), "task.db");
     run(state, "init", ["--expected-login", "reviewer", "--own-mode", "fix-and-push"]);

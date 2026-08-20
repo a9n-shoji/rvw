@@ -76,7 +76,9 @@ export const commentCreateInputSchema = z
       .string()
       .min(1)
       .refine((value) => value.trim().length > 0)
-      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
+      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
+        message: `bodyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
+      }),
     authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
   })
   .strict();
@@ -86,7 +88,9 @@ export const commentReplyInputSchema = z
     body: z
       .string()
       .min(1)
-      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
+      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
+        message: `bodyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
+      }),
     authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
     relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
     idempotencyKey,
@@ -107,7 +111,9 @@ export const pullRequestSyncInputSchema = z
             commentRef: commentUri,
             reply: z
               .string()
-              .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
+              .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
+                message: `replyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
+              }),
             resolve: z.boolean(),
             idempotencyKey,
           })

@@ -252,6 +252,10 @@ try {
     "skills/rvw-walkthrough/references/walkthrough-authoring.md",
     "skills/rvw-watch-comments/SKILL.md",
     "skills/rvw-watch-comments/agents/openai.yaml",
+    "skills/rvw-watch-comments/scripts/auto-ack.mjs",
+    "skills/rvw-watch-comments/scripts/preflight.mjs",
+    "skills/rvw-watch-comments/scripts/rvw-command.mjs",
+    "skills/rvw-watch-comments/scripts/watch-driver.mjs",
     "skills/rvw-watch-comments/scripts/watch-state.mjs",
     ...readdirSync(path.join(repositoryRoot, "migrations"))
       .filter((name) => /^\d+_.*\.sql$/.test(name))

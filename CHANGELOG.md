@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- `rvw-watch-comments`向けの一括preflight、cursor-resume watch driver、pending待機、即時auto-ack
+
+### Changed
+
+- 小規模batchの直接調査と、絶対pathのJSON fileによるworker結果回収をSkill契約へ明記
+- comment / replyの64 KiB超過errorへ実際のUTF-8 byte上限を明記
+
 ## [0.2.0] - 2026-08-20
 
 ### Added
