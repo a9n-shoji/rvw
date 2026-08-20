@@ -52,6 +52,7 @@ import {
   codeReferenceMarkdownSanitizeSchema,
 } from "./CodeReferenceLink.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
+import { PreviewMarkdownTable } from "./MarkdownTable.js";
 import { MermaidSurface } from "./MermaidSurface.js";
 import { WalkthroughIcon } from "./WalkthroughPanel.js";
 
@@ -433,13 +434,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
           urlTransform={(url) => (url.startsWith("rvw-ref:") ? url : defaultUrlTransform(url))}
           components={{
             div: markdownDiv,
-            table: ({ children, node: _node, ...props }) => (
-              <div className="markdown-table-scroll">
-                <table {...markdownSourceDataAttributes(_node)} {...props}>
-                  {children}
-                </table>
-              </div>
-            ),
+            table: PreviewMarkdownTable,
             a: ({ href, children, node: _node, ...props }) => {
               const referenceId = codeReferenceIdFromHref(href);
               const reference = referenceId ? references.get(referenceId) : undefined;

@@ -72,6 +72,7 @@ import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
+import { PreviewMarkdownTable } from "./MarkdownTable.js";
 
 type ViewerAnnotation =
   | { kind: "comment"; comment: ReviewComment; placement: CommentPlacement }
@@ -376,13 +377,7 @@ function renderRepositoryMarkdown({
       remarkPlugins={pullRequestMarkdown ? [remarkGfm, remarkBreaks] : [remarkGfm]}
       components={{
         div: markdownDiv,
-        table: ({ children, node: _node, ...props }) => (
-          <div className="markdown-table-scroll">
-            <table {...markdownSourceDataAttributes(_node)} {...props}>
-              {children}
-            </table>
-          </div>
-        ),
+        table: PreviewMarkdownTable,
         h1: ({ children, node: _node, ...props }) => (
           <h1
             {...markdownSourceDataAttributes(_node)}
