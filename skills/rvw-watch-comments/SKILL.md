@@ -1,13 +1,14 @@
 ---
 name: rvw-watch-comments
-description: Continuously watch all Pull Requests saved in the local rvw database for new root comments and replies, durably queue them, delegate investigation, and post final rvw replies. Use when a user asks an Agent task to monitor, watch, poll, or continuously address new rvw review comments, optionally allowing fixes and pushes only for Pull Requests authored by the authenticated GitHub user.
+description: Continuously watch all Pull Requests saved in the local rvw database for new root comments and replies, durably queue them, acknowledge them immediately, investigate or delegate bounded batches, and replace the acknowledgement with a final rvw reply. Use when a user asks an Agent task to monitor, watch, poll, or continuously address new rvw review comments, optionally allowing fixes and pushes only for Pull Requests authored by the authenticated GitHub user.
 ---
 
 # Watch rvw comments
 
-Run one long-lived parent task as the intake and durable-state owner. Delegate PR batches to workers;
-never ask rvw to launch or manage an Agent. Use the `rvw` Skill for per-comment reading, exact-source
-inspection, replies, and synchronization.
+Run one long-lived parent task as the intake and durable-state owner. The bundled driver owns the
+watch process, cursor resume, RFC 7464 parsing, ingestion, and optional immediate acknowledgement;
+do not recreate that plumbing. rvw never launches or manages an Agent. Use the `rvw` Skill for
+exact-source inspection, final edits, authorized fixes, and synchronization.
 
 ## Fix policy
 
@@ -27,9 +28,9 @@ rvw replies remain allowed. Never resolve unless the user separately changes tha
 
 ## Durable task state
 
-Use the bundled `scripts/watch-state.mjs` with Node 24. Give it one task-private absolute SQLite path
-outside every reviewed repository. The tool stores identifiers, cursors, leases, retries, and generated
-post IDs, but never comment bodies or source. Separate watch tasks use separate state databases.
+Use Node 24 and one task-private absolute SQLite path outside every reviewed repository. The state
+tool stores identifiers, cursors, leases, retries, and generated post IDs, but never comment bodies or
+source. Separate watch tasks use separate state databases.
 
 Initialize once after running `gh api user --jq .login`:
 
@@ -40,79 +41,141 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' init \
   --own-mode 'investigate-and-reply'
 ```
 
-Omit `--expected-login` and force `investigate-and-reply` when identity is unavailable. On restart,
-run `recover`, then `status`. Initialization rejects a policy change for an existing task.
+Omit `--expected-login` and force `investigate-and-reply` when identity is unavailable.
+Initialization rejects a policy change for an existing task.
+
+On restart, run `recover`, then `status`. Both expose `quarantinedBatches`; `status` also exposes
+recoverable `inFlightBatches` with lease IDs and status posts.
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-state.mjs' recover --state '<TASK_STATE_DB>'
 node '<SKILL_DIR>/scripts/watch-state.mjs' status --state '<TASK_STATE_DB>'
 ```
 
-Both outputs expose `quarantinedBatches`. Before resuming intake, edit every extant `statusPostId` in
-those batches to `⚠️ 対応を継続できませんでした` with the recorded error. Repeating this exact edit is
-safe and prevents an interrupted third attempt from leaving `確認中` indefinitely.
+Before resuming intake, edit every extant `statusPostId` in quarantined batches to
+`⚠️ 対応を継続できませんでした` with the recorded error. Repeating that exact edit is safe and
+prevents an interrupted third attempt from leaving `確認中` indefinitely.
 
 ## Start or resume intake
 
-1. Require `protocolVersion` 2 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
-   `comment.edit`, and `pullRequest.sync`; stop when `rvw agent status --json` selects `unavailable`.
-2. Start `rvw comment watch --json-seq` when state has no cursor. Otherwise pass the exact saved cursor
-   with `--after`. A cursorless start intentionally skips every existing comment.
-3. Parse each RFC 7464 frame and pass that single JSON value to `ingest` over closed stdin:
+Run the single preflight command. It concurrently detects `rvw` and verifies Node `>=24.15.0`.
+Require `protocolVersion` 2 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
+`comment.edit`, and `pullRequest.sync`, and reports agent status and ping in one JSON value. Stop when
+`ok` is false. A disconnected ping is diagnostic when status safely selects direct-database transport;
+an unavailable selected transport is fatal.
 
 ```bash
-node '<SKILL_DIR>/scripts/watch-state.mjs' ingest --state '<TASK_STATE_DB>'
+node '<SKILL_DIR>/scripts/preflight.mjs'
 ```
 
-`ingest` commits an event and its cursor atomically. A crash before that commit causes rvw to replay the
-event. Deleted posts and already-suppressed task replies advance the cursor without creating work. Do
-not construct or edit cursors.
-
-## Batch and delegate
-
-Run `list` to find eligible PR batches. Re-read every returned comment URI with `rvw comment get`; the
-watch event is only a minimal trigger. Coalesce the current batch by PR and comment.
+Start the bundled driver with the state path. `--auto-ack` is the normal mode: it claims an eligible
+PR batch, re-reads every thread, creates or restores `🔎 確認中です…`, records suppression, and emits
+one `batch-acknowledged` JSON line containing the lease and operations. The first `watch-ready` line
+means monitoring is established. The driver chooses cursorless start only when state has no cursor;
+that intentionally skips all existing comments. Otherwise it resumes from the exact durable cursor.
+Before each initial connection or reconnect, it auto-acknowledges any eligible event that was durably
+ingested before an earlier driver interruption.
 
 ```bash
-node '<SKILL_DIR>/scripts/watch-state.mjs' list --state '<TASK_STATE_DB>'
+node '<SKILL_DIR>/scripts/watch-driver.mjs' '<TASK_STATE_DB>' --auto-ack
 ```
 
-Choose the mode, then claim the PR. For a write-capable batch, pass the canonical `owner/repository` as
-`--write-key`; the state tool prevents another write-capable batch for that repository. Omit it for
-investigate-only work.
+The driver polls rvw once per second. After an unexpected EOF or process exit it re-reads the durable
+cursor and reconnects after 1, 2, 4, 8, then 16 seconds, capped at 30 seconds. Five short-lived
+reconnect failures are terminal; a run lasting at least 30 seconds resets that budget. Protocol error
+frames are terminal because retrying an invalid cursor or incompatible contract cannot recover.
+
+Driver exit codes are stable:
+
+| Exit | Meaning                                                                                                             |
+| ---- | ------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Graceful `SIGINT` / `SIGTERM` stop after forwarding termination to rvw.                                             |
+| `20` | rvw process, startup, protocol error frame, or reconnect budget failure.                                            |
+| `21` | Malformed, non-RFC-7464, or truncated watch output.                                                                 |
+| `22` | Durable state status or ingest failure.                                                                             |
+| `23` | Automatic acknowledgement failed; its claimed lease has already been returned to retry or quarantine when possible. |
+
+Without `--auto-ack`, the driver emits `pending` lines and leaves the batch unclaimed. An external
+monitor can also wait independently without hand-written polling:
 
 ```bash
-node '<SKILL_DIR>/scripts/watch-state.mjs' claim \
+node '<SKILL_DIR>/scripts/watch-state.mjs' wait --state '<TASK_STATE_DB>'
+```
+
+`wait` immediately returns existing eligible work or waits for the pending set to change from empty
+to non-empty, then prints one JSON line with `pullRequests` and `pending`. Add `--follow` to emit every
+later empty-to-non-empty transition. The driver and `ingest` commit each event and cursor atomically;
+a crash before that commit causes rvw to replay it. Never construct or edit cursors.
+
+## Acknowledge and process a batch
+
+With the normal auto-ack driver, consume its `batch-acknowledged` object directly. Each operation has
+`commentRef`, the thread-stable `idempotencyKey`, `statusPostId`, `acknowledgement`, `status`, and the
+fresh `comment get` result as `thread`. A disappeared thread has `status: "gone"` and is not
+acknowledged. If intake runs without auto-ack, invoke the same complete fast path once for the PR:
+
+```bash
+node '<SKILL_DIR>/scripts/auto-ack.mjs' \
   --state '<TASK_STATE_DB>' \
   --pull-request '<PR_URL>'
 ```
 
-Immediately acknowledge every extant claimed thread before delegating. Each operation contains a
-thread-stable `idempotencyKey` and nullable `statusPostId`:
+For a null `statusPostId`, auto-ack sends exactly `{ "body": "🔎 確認中です…",
+"idempotencyKey": "<THREAD_KEY>" }` to `rvw comment reply`, then records the returned post. It omits
+`authorLabel` and `relatedCommitOid`, so an uncertain retry has the identical payload. For an existing
+status post it sends `{ "body": "🔎 確認中です…", "relatedCommitOid": null }` to `comment edit`.
+The acknowledgement's watch event is suppressed even when intake queued it before the post ID was
+recorded.
 
-- When `statusPostId` is null, create exactly `🔎 確認中です…` with `rvw comment reply`. Pass the
-  operation key as `idempotencyKey`; omit `authorLabel` and `relatedCommitOid` so an uncertain retry has
-  the identical payload. Record the returned post with `ack` over closed stdin:
+The auto-ack claim initially has no repository write reservation. This lets acknowledgement remain
+fast without a live GitHub round trip. If the batch later passes every fix-and-push check, reserve its
+verified head repository immediately before the first code write:
 
 ```bash
-node '<SKILL_DIR>/scripts/watch-state.mjs' ack \
-  --state '<TASK_STATE_DB>' --lease '<LEASE_ID>'
+node '<SKILL_DIR>/scripts/watch-state.mjs' reserve-write \
+  --state '<TASK_STATE_DB>' \
+  --lease '<LEASE_ID>' \
+  --write-key '<HEAD_OWNER>/<HEAD_REPOSITORY>'
 ```
 
-Pass `{ "commentRef": "rvw://comment/...", "postId": "..." }`. This immediately suppresses the
-acknowledgement's own watch event, including when intake queued it first.
+The unique reservation prevents two leases from writing the same repository. A manually invoked
+`auto-ack` may instead receive `--write-key` when that identity was already verified.
 
-- When `statusPostId` is present, replace that post with the same acknowledgement through
-  `rvw comment edit <URI> --post <STATUS_POST_ID> --stdin --json`; set `relatedCommitOid` to null. This
-  reuses one status reply when a human adds another reply to the same thread.
+## Investigate directly or delegate
 
-Do not acknowledge a thread that disappeared before its initial read. Give one fresh worker the raw
-comment URIs, policy, expected login, repository location, and live head identity. Keep the parent as
-sole watcher and state owner. Accept only a final structured result with one concise outcome body per
-comment, commit OID, and push status. Do not post other progress, plans, or partial findings.
+For an `investigate-and-reply` batch containing only one or two comments with a focused source scope,
+the parent may investigate directly when doing so will not materially delay intake handling. Do not
+pay worker startup and result-relay cost for those small batches. Delegate broader investigation,
+multiple unrelated comments, or any authorized fix-and-push batch to one fresh worker per PR. The
+driver continues intake independently while the parent or worker investigates.
 
-Re-read each complete thread immediately before applying the result. Replace its recorded status post
-with exactly one final outcome:
+Workers never access the task state or post rvw replies. Give a worker the raw comment URIs, policy,
+expected login, repository location, live head identity when relevant, lease ID, and one absolute
+result path outside the reviewed repository. Require an atomic write (temporary sibling followed by
+rename) of exactly this final JSON shape:
+
+```json
+{
+  "leaseId": "<LEASE_ID>",
+  "pullRequest": "https://github.com/owner/repository/pull/123",
+  "outcomes": [
+    {
+      "commentRef": "rvw://comment/uuid",
+      "body": "📝 調査結果\n\nConcise final outcome.",
+      "commitOid": null,
+      "pushStatus": "not-attempted"
+    }
+  ]
+}
+```
+
+`pushStatus` is `not-attempted`, `not-needed`, or `pushed`; `commitOid` is null unless a synchronized
+commit should be attached. The worker's completion notification only signals that the file is ready.
+The parent reads and validates the file after that notification and never depends on relayed message
+text for the result. Accept no progress, plans, or partial findings as the final result.
+
+Re-read each extant thread immediately before applying a direct or file result. Replace its recorded
+status post with exactly one final outcome:
 
 - `✅ 対応しました` followed by the change, commit, and test result.
 - `📝 調査結果` followed by the conclusion when no code change was made.
@@ -125,27 +188,29 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' complete \
   --state '<TASK_STATE_DB>' --lease '<LEASE_ID>'
 ```
 
-Pass `{ "postIds": [] }` over closed stdin. The field remains available to suppress any exceptional
+Pass `{ "postIds": [] }` over closed stdin. The field remains available to suppress exceptional
 additional task-created posts. If a thread or its recorded status post disappeared during work,
-complete it without creating a replacement and report it as gone. A watched status-post deletion
-clears the mapping and rotates its idempotency key, so a later human follow-up can create a fresh one.
+complete it without creating a replacement and report it as gone. Comment and reply bodies are UTF-8
+GFM Markdown up to 64 KiB, not 4 KiB; a 4093-byte result is within the contract.
 
 ## Choose the worker mode
 
-Use `fix-and-push` only when all checks succeed immediately before the first write:
+Use `fix-and-push` only when all checks succeed immediately before reserving and making the first
+write:
 
 1. The immutable task policy allows it.
 2. `gh api user --jq .login` still equals the expected login, case-insensitively.
 3. `rvw comment get <URI> --live --json` reports the same PR author login.
 4. Live `headRepository.owner`, `headRepository.name`, branch, and head OID are all present.
 5. The intended push URL, branch, and current remote head exactly match those live values.
+6. `reserve-write` succeeds for the live head repository.
 
-Otherwise downgrade to `investigate-and-reply`. Never infer ownership or a push target from the base
-repository, branch name alone, local Git author, remote name, or rvw `authorLabel`.
+Otherwise use `investigate-and-reply`. Never infer ownership or a push target from the base repository,
+branch name alone, local Git author, remote name, or rvw `authorLabel`.
 
 ### Investigate and reply
 
-Inspect exact and surrounding source read-only and return one concise final outcome per affected
+Inspect exact and surrounding source read-only and produce one concise final outcome per affected
 comment. The parent edits the recorded status post; do not add another final reply.
 
 ### Fix and push an owned PR
@@ -158,18 +223,70 @@ retrying; never repeat the implementation blindly.
 
 After GitHub exposes the pushed head, run `rvw pr sync --repository '<WORKTREE>' --stdin --json`
 without comment updates. Then edit each status post with its final body and the synchronized head as
-`relatedCommitOid`. If no code change is appropriate, edit the status post without a related commit.
+`relatedCommitOid`. If no code change is appropriate, edit without a related commit.
 
 ## Failure and stop
 
-Report a failed lease through `fail` with `{ "error": "...", "retryable": true }` over stdin. The
-state tool retains the same batch, status posts, and idempotency keys, retries after about 10 seconds
-and then 1 minute, and quarantines it after the third failed attempt. Leave `🔎 確認中です…` unchanged
-for a scheduled retry. Before a non-retryable failure or the third failed attempt, edit every extant
-status post to the terminal warning form, then call `fail`. On a recovered retry, immediately restore
-the acknowledgement before work. `fail` returns affected operations when it quarantines a batch;
-`recover` and `status` expose all quarantined operations for restart cleanup. Continue unrelated PRs.
+Report a failed lease through `fail` with `{ "error": "...", "retryable": true }` over closed stdin.
+The state tool retains the same batch, status posts, and idempotency keys, retries after about 10
+seconds and then 1 minute, and quarantines it after the third failed attempt. Leave
+`🔎 確認中です…` unchanged for a scheduled retry. Before a non-retryable failure or the third failed
+attempt, edit every extant status post to the terminal warning form, then call `fail`. On a recovered
+retry, auto-ack restores the acknowledgement before work. Continue unrelated PRs.
 
-On graceful stop, stop dispatching, let the active write operation reach a safe boundary, terminate the
-watch process, and report `status`. Resume with the stored cursor and `recover`; never start the same
-task without its state database.
+On graceful stop, stop dispatching, let active writes reach a safe boundary, terminate the driver,
+and report `status`. Resume with the stored cursor and `recover`; never start the same task twice with
+one state database.
+
+## Bundled CLI contract reference
+
+Successful commands write exactly one newline-terminated JSON object to stdout, except `wait --follow`
+and the long-lived driver, which write one object per transition. State-command errors and driver
+fatal errors write JSON to stderr with a nonzero exit; auto-ack returns its structured failure on
+stdout with a nonzero exit. Commands marked with stdin read one complete JSON object through EOF.
+
+| Command         | Arguments                                                                                | stdin JSON                                             | Success JSON                                                                                                         |
+| --------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `init`          | `--state PATH [--expected-login LOGIN] [--own-mode investigate-and-reply\|fix-and-push]` | none                                                   | `{ok,state,taskId,databaseId,cursor,expectedGitHubLogin,ownPullRequests,batches,inFlightBatches,quarantinedBatches}` |
+| `ingest`        | `--state PATH`                                                                           | `ready`, `comment-posted`, or `stopped` frame from rvw | `{ok,status,cursor[,sequence]}`; event and cursor commit atomically                                                  |
+| `list`          | `--state PATH`                                                                           | none                                                   | `{ok,pending:[{pullRequest,batchId,eventCount,firstSequence,commentRefs}]}`                                          |
+| `wait`          | `--state PATH [--interval-ms N] [--follow]`                                              | none                                                   | `{ok,type:"pending",pullRequests,pending}` on empty-to-non-empty                                                     |
+| `claim`         | `--state PATH --pull-request URL [--write-key owner/repo]`                               | none                                                   | `{ok,leaseId,batchId,pullRequest,attempts,writeKey,events,operations}`                                               |
+| `reserve-write` | `--state PATH --lease ID --write-key owner/repo`                                         | none                                                   | `{ok,leaseId,batchId,pullRequest,writeKey,status}`                                                                   |
+| `ack`           | `--state PATH --lease ID`                                                                | `{commentRef,postId}`                                  | `{ok,batchId,commentRef,statusPostId,status}`                                                                        |
+| `complete`      | `--state PATH --lease ID`                                                                | `{postIds:string[]}`                                   | `{ok,batchId,status:"completed",suppressedPostIds}`                                                                  |
+| `fail`          | `--state PATH --lease ID`                                                                | `{error:string,retryable:boolean}`                     | `{ok,batchId,status,attempts,nextAttemptAt[,operations]}`                                                            |
+| `recover`       | `--state PATH`                                                                           | none                                                   | `{ok,recovered,pending,quarantined,quarantinedBatches}`                                                              |
+| `status`        | `--state PATH`                                                                           | none                                                   | task policy, cursor, batch counts, `inFlightBatches`, and `quarantinedBatches`                                       |
+
+Frame schemas accepted by `ingest`:
+
+```json
+{ "type": "ready", "databaseId": "32 lowercase hex", "cursor": "opaque", "anchoredAtCurrent": true }
+```
+
+```json
+{
+  "type": "comment-posted",
+  "cursor": "opaque",
+  "event": {
+    "sequence": 1,
+    "postId": "id",
+    "commentRef": "rvw://comment/uuid",
+    "pullRequestUrl": "https://github.com/owner/repo/pull/123",
+    "createdAt": "ISO-8601",
+    "deleted": false
+  }
+}
+```
+
+Claim `operations` are `{commentRef,idempotencyKey,statusPostId}`. Claim `events` are
+`{sequence,postId,commentRef,pullRequestUrl}`. State schema additions are created with
+`CREATE TABLE IF NOT EXISTS`; existing state databases remain readable and retain their cursors,
+leases, keys, and status posts.
+
+| Script    | Invocation                                                                            | Output                                                                                        |
+| --------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Preflight | `node scripts/preflight.mjs`                                                          | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                     |
+| Driver    | `node scripts/watch-driver.mjs STATE [--auto-ack]`                                    | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
+| Auto-ack  | `node scripts/auto-ack.mjs --state STATE --pull-request URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`. |

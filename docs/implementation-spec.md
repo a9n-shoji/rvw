@@ -691,7 +691,11 @@ cursor、pending queue、retry、authorization、Agentが作成したpost IDは�
 保持する。同梱Skillのstate scriptはtask専用SQLiteを使い、event enqueueとcursor更新、batch lease、retry、
 comment URIごとのstatus post mapping、自己post抑制をtransaction化する。batch claim直後にthreadを確認し、
 status postがなければ冪等なack replyを即時作成し、あれば同じpostをack本文へ戻す。完了時はそのpostを
-最終結果へ編集する。rvwはAgentやsubagentを起動せず、これらのtask stateも保持しない。
+最終結果へ編集する。同梱preflightはprotocol、capability、transport、Nodeを一括検査し、watch driverは
+stateのcursorを自動解決してRFC 7464 frameをatomicにingestする。driverのauto-ack modeは新規batchを
+LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthread contextを一行JSONで通知する。
+state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。rvwはAgentやsubagentを
+起動せず、これらのtask stateも保持しない。
 task起動時に明示された場合だけ、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
 OIDとpush先が一致するPRをfix-and-push候補にできる。他人、不明、不一致はinvestigate-and-replyとする。
 
@@ -1219,9 +1223,12 @@ requestとrepository contextへ委ね、固定の文書templateを要求しな�
 改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への明示authorizationなしに実行しない。
 
 `rvw-watch-comments`は一つの外部Agent taskをreceiverとして使い、cursorless起動で既存未解決を処理せず、
-新規root/replyをPRごとにsubagentへまとめる。同梱state scriptがtask固有cursor、queue、lease、retry、
-comment URIごとのstatus post、自己event抑制をrepository外のSQLiteで管理する。claim直後に各threadへ
-`🔎 確認中です…`を即時返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。task起動時の
+新規root/replyをPRごとのbatchへまとめる。同梱preflight、watch driver、state script、auto-ackが
+prerequisite確認、cursor resume、RFC 7464 ingest、pending通知、queue、lease、retry、comment URIごとの
+status post、自己event抑制をrepository外のSQLiteで管理する。検知直後に各threadを再読込して
+`🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。
+investigate-onlyで1〜2 commentの小batchは親taskが直接調査でき、それ以外をworkerへ委譲する場合は
+絶対pathのJSON fileを唯一の結果回収経路にする。task起動時の
 明示許可がある場合だけ、live authorが起動時
 GitHub loginと一致し、head repository/branch/OIDとpush先も一致するPRをfix-and-pushにできる。他人または
 不明なPRはinvestigate-and-replyとする。rvw自身はAgent sessionやtask stateを管理しない。

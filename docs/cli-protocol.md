@@ -281,6 +281,15 @@ startup authorization before an authenticated user's own PR can be fixed and pus
 live head repository, branch, and OID so fork PRs cannot target the base repository accidentally.
 Another or unknown author remains code/GitHub read-only.
 
+The Skill also bundles one aggregate preflight, a cursor-resolving RFC 7464 driver, an empty-to-non-empty
+pending waiter, and an auto-ack command. The normal driver polls once per second and invokes auto-ack
+immediately after durable ingestion, so the status marker needs no Agent shell round trip. Unexpected
+watch exits reconnect from the state cursor with bounded exponential backoff; protocol frames, ingest,
+and acknowledgement failures have distinct nonzero driver exits. These helpers remain external Skill
+processes and do not move Agent runtime or task state into rvw. Before an initial connection or
+reconnect, the driver drains eligible pending work left between a durable ingest and an interrupted
+acknowledgement.
+
 ## Walkthrough lifecycle
 
 Walkthroughs expose one current value under a stable URI. rvw does not keep Walkthrough revisions or
@@ -431,6 +440,10 @@ Skills: `rvw` for comment creation, handling, and synchronization, `rvw-walkthro
 and `rvw-watch-comments` for continuous new-post intake. The
 platform argument selects only the destination Skill root. Neither Skill hardcodes an Agent identity;
 the current Agent may supply an accurate optional `authorLabel`.
+
+`rvw-watch-comments` documents the complete state-script stdin/stdout contract. Its driver derives
+`--after` from task state, its auto-ack reuses the thread idempotency key and status post, and its
+worker handoff uses an absolute JSON result path rather than relying on relayed completion text.
 
 Each rvw-managed installation records the bundled digest. Status distinguishes a clean older bundle
 (`updateAvailable` and `updateRequired`), local customization (`locallyModified`), and a differing
