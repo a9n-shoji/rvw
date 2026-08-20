@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   commentCreateInputSchema,
+  commentPostEditInputSchema,
   commentReplyInputSchema,
   commentWatchOptionsSchema,
   pullRequestSyncInputSchema,
@@ -97,6 +98,16 @@ describe("CLI input schemas", () => {
       pullRequestSyncInputSchema.safeParse({ pullRequest: "", commentUpdates: [] }).success,
     ).toBe(false);
     expect(commentReplyInputSchema.safeParse({ body: "" }).success).toBe(false);
+    expect(
+      commentPostEditInputSchema.parse({
+        body: "✅ 対応しました",
+        relatedCommitOid: "a".repeat(40),
+      }),
+    ).toEqual({ body: "✅ 対応しました", relatedCommitOid: "a".repeat(40) });
+    expect(
+      commentPostEditInputSchema.safeParse({ body: "Result", idempotencyKey: "not-accepted" })
+        .success,
+    ).toBe(false);
     expect(
       commentReplyInputSchema.safeParse({ body: "Reply", idempotencyKey: "x".repeat(201) }).success,
     ).toBe(false);

@@ -4,6 +4,7 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 import type {
   ChangedFile,
   CommentPlacement,
+  CommentPost,
   CommentPostEvent,
   CommentTarget,
   CommitSummary,
@@ -1478,8 +1479,32 @@ export class RvwService {
     return this.database.deleteComment(id);
   }
 
-  updateCommentPost(commentId: string, postId: string, body: string) {
+  updateCommentPost(commentId: string, postId: string, body: string): CommentPost {
     return this.database.updateCommentPost(commentId, postId, assertTextBody(body));
+  }
+
+  async editCommentPost(
+    uriOrId: string,
+    postId: string,
+    input: { body: string; relatedCommitOid?: string | null },
+  ): Promise<CommentPost> {
+    const commentId = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
+    const comment = this.database.getComment(commentId);
+    if (!comment) {
+      throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
+    }
+    if (input.relatedCommitOid) {
+      await this.assertCommitAvailable(
+        this.getPullRequest(comment.pullRequestId),
+        input.relatedCommitOid,
+      );
+    }
+    return this.database.updateCommentPost(
+      commentId,
+      postId,
+      assertTextBody(input.body),
+      input.relatedCommitOid,
+    );
   }
 
   deleteReply(commentId: string, postId: string): { commentId: string; postId: string } {

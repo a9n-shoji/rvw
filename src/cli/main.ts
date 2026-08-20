@@ -39,6 +39,7 @@ import {
 import {
   commentCreateInputSchema,
   commentListOptionsSchema,
+  commentPostEditInputSchema,
   commentReplyInputSchema,
   commentWatchOptionsSchema,
   pullRequestSyncInputSchema,
@@ -557,6 +558,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "comment.watch",
           "comment.read",
           "comment.reply",
+          "comment.edit",
           "comment.resolve",
           "comment.reopen",
           "pullRequest.sync",
@@ -967,6 +969,28 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         "comment.reply",
         { uri, reply },
         async () => await getRuntime().service.replyToComment(uri, reply),
+      );
+      writeJson({ ok: true, post });
+    });
+
+  comment
+    .command("edit")
+    .argument("<comment-uri>")
+    .requiredOption("--post <post-id>", "編集するpost ID")
+    .requiredOption("--stdin", "stdinからJSONを読む")
+    .requiredOption("--json", "JSONで出力")
+    .action(async (uri: string, options: { post: string }) => {
+      const input = commentPostEditInputSchema.parse(await readStdinJson());
+      const edit = {
+        body: input.body,
+        ...(input.relatedCommitOid === undefined
+          ? {}
+          : { relatedCommitOid: input.relatedCommitOid }),
+      };
+      const post = await callService(
+        "comment.edit",
+        { uri, postId: options.post, edit },
+        async () => await getRuntime().service.editCommentPost(uri, options.post, edit),
       );
       writeJson({ ok: true, post });
     });

@@ -179,6 +179,7 @@ describe("CLI protocol discovery", () => {
         "comment.watch",
         "comment.read",
         "comment.reply",
+        "comment.edit",
         "comment.resolve",
         "comment.reopen",
         "pullRequest.sync",
@@ -192,7 +193,7 @@ describe("CLI protocol discovery", () => {
       program.commands
         .find((command) => command.name() === "comment")
         ?.commands.map((command) => command.name()),
-    ).toEqual(["watch", "create", "list", "get", "reply", "resolve", "reopen"]);
+    ).toEqual(["watch", "create", "list", "get", "reply", "edit", "resolve", "reopen"]);
     expect(
       program.commands
         .find((command) => command.name() === "walkthrough")
@@ -311,6 +312,31 @@ describe("CLI protocol discovery", () => {
 
     expect(createCommentForReference).toHaveBeenCalledWith(input);
     expect(readStdout()).toEqual({ ok: true, comment: created });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("replaces one recorded comment post through the Agent CLI", async () => {
+    const input = { body: "✅ 対応しました", relatedCommitOid: "d".repeat(40) };
+    const edited = { ...rootPost, ...input, updatedAt: "2026-08-20T00:00:00.000Z" };
+    const editCommentPost = vi.fn().mockResolvedValue(edited);
+    const { runtime, close } = mockRuntime({ editCommentPost });
+    const readStdout = captureStdout();
+    provideStdin(input);
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "comment",
+      "edit",
+      commentRef,
+      "--post",
+      rootPost.id,
+      "--stdin",
+      "--json",
+    ]);
+
+    expect(editCommentPost).toHaveBeenCalledWith(commentRef, rootPost.id, input);
+    expect(readStdout()).toEqual({ ok: true, post: edited });
     expect(close).toHaveBeenCalledOnce();
   });
 

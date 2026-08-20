@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Agentが既存post本文と関連commitを置き換えられる`comment.edit` CLI capability
+
+### Changed
+
+- `rvw-watch-comments`がclaim直後に確認中replyを追加し、同じreplyを最終結果へ更新するよう改善
+
 ## [0.2.0] - 2026-08-20
 
 ### Added

@@ -192,8 +192,9 @@ reference付きartifactとして検証してpublishします。Walkthrough全体
 約10秒間隔で監視し、起動前の既存未解決commentは処理しません。自分のPRのfix-and-pushを起動taskへ
 明示許可した場合だけ、live PR authorと起動時のGitHub loginが一致するPRで修正・test・commit・pushを
 行えます。fork PRではlive head repository、branch、OIDとpush先も一致させます。他人またはauthor不明の
-PRは常にcode/GitHub read-onlyで調査し、rvwへ最終結果だけ返信します。Skill同梱のtask-state toolが
-repository外のSQLiteへcursor、queue、retry、自己返信抑制をtransactionalに保存します。
+PRは常にcode/GitHub read-onlyで調査します。batchをclaimすると各threadへ`🔎 確認中です…`を即時返信し、
+完了時は同じreplyを最終結果へ編集します。Skill同梱のtask-state toolがrepository外のSQLiteへcursor、
+queue、retry、thread単位のstatus post、自己返信抑制をtransactionalに保存します。
 
 三つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
 `rvw walkthrough get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`だけを利用します。
@@ -232,6 +233,7 @@ rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
 rvw comment get <COMMENT_URI> --live --json
 rvw comment reply <COMMENT_URI> --stdin --json
+rvw comment edit <COMMENT_URI> --post <POST_ID> --stdin --json
 rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 rvw walkthrough get <WALKTHROUGH_URI> --json
@@ -259,7 +261,7 @@ root post preview、post件数、最新head時点のOutdated判定を返しま�
 `comment get`は最新PRのtitle、base/head、serviceが導出したplacement、対象commitのbounded source
 excerptを返すため、AgentはOID比較でOutdatedを推測しません。
 
-`comment get --live`はGitHubの現在値とcacheの差をread-onlyで確認し、DBを更新しません。`pr sync`はGitHub上の最新PR状態を取得し、任意の`commentUpdates`を同じSQLite transactionで反映します。保存先がdirtyでも同じrepositoryのcleanなworktreeを`--repository`で選べ、確認済みの未追跡fileだけは`--allow-untracked`で許可できます。local branchがGitHub headより単にbehindな場合や最終同期後にforce-pushされた場合はcheckoutを変更せず同期します。`comment create`、`pr sync`、`comment reply`は冪等ではないため、結果が不明な場合はコメント一覧または対象threadを再取得してから再試行してください。
+`comment get --live`はGitHubの現在値とcacheの差をread-onlyで確認し、DBを更新しません。`pr sync`はGitHub上の最新PR状態を取得し、任意の`commentUpdates`を同じSQLite transactionで反映します。保存先がdirtyでも同じrepositoryのcleanなworktreeを`--repository`で選べ、確認済みの未追跡fileだけは`--allow-untracked`で許可できます。local branchがGitHub headより単にbehindな場合や最終同期後にforce-pushされた場合はcheckoutを変更せず同期します。`comment create`は非冪等です。`pr sync`と`comment reply`は任意の冪等keyを受け、`comment edit`は同じpostの完全置換なので安全に再試行できます。
 
 `rvw agent ping/status --json`はsocket path、接続結果とOS error詳細、期待／接続先DB、選択transport、
 fallback理由を表示します。人向け出力にも同じ診断項目を表示します。`RVW_AGENT_SOCKET_PATH`を明示した場合は

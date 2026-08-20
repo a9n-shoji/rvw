@@ -529,6 +529,11 @@ replyはいずれも現在stateを維持し、resolve/reopenは明示的な別�
 新しいroot postとreplyは同じtransactionでDB-wideな単調増加event sequenceへ記録する。既存postは
 migration時にbackfillせず、編集、削除、resolve/reopenはeventを作らない。Agent自身のreplyも通常eventであり、
 watch taskが返却post IDで抑止する。
+watch taskはbatchをclaimし、対象threadの存在を確認した直後に通常replyとして`🔎 確認中です…`を一件
+作成する。task-local DBはcomment URIごとの冪等keyとstatus post IDを保持し、同じthreadへの後続replyでも
+そのpostを再利用する。調査または作業の完了、terminal failureでは同じpost本文を一つの最終結果へ編集し、
+新しい完了replyを追加しない。このstatus postは専用comment stateではなく通常postであり、threadの
+unresolved/resolved状態を変えない。
 誤投稿を取り消すため、reply postは個別に物理削除できる。root postの削除はcomment targetと
 `rvw://comment/<uuid>`のanchorを含むthread全体の削除として扱い、返信があれば同じtransactionで
 すべて削除する。確認画面は返信も削除されることを明示する。編集・削除はchange sequenceを更新する。
@@ -567,6 +572,7 @@ rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
 rvw comment get <COMMENT_URI> --live --json
 rvw comment reply <COMMENT_URI> --stdin --json
+rvw comment edit <COMMENT_URI> --post <POST_ID> --stdin --json
 rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
@@ -582,6 +588,7 @@ comment.list
 comment.watch
 comment.read
 comment.reply
+comment.edit
 comment.resolve
 comment.reopen
 pullRequest.sync
@@ -682,7 +689,9 @@ sequenceとして出力する。cursor省略時は現在の最新event位置へa
 
 cursor、pending queue、retry、authorization、Agentが作成したpost IDは外部Agent taskがrepository外へ
 保持する。同梱Skillのstate scriptはtask専用SQLiteを使い、event enqueueとcursor更新、batch lease、retry、
-自己post抑制をtransaction化する。rvwはAgentやsubagentを起動せず、これらのtask stateも保持しない。
+comment URIごとのstatus post mapping、自己post抑制をtransaction化する。batch claim直後にthreadを確認し、
+status postがなければ冪等なack replyを即時作成し、あれば同じpostをack本文へ戻す。完了時はそのpostを
+最終結果へ編集する。rvwはAgentやsubagentを起動せず、これらのtask stateも保持しない。
 task起動時に明示された場合だけ、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
 OIDとpush先が一致するPRをfix-and-push候補にできる。他人、不明、不一致はinvestigate-and-replyとする。
 
@@ -795,6 +804,9 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
 - standalone `comment reply`のstdinは`body`、任意の`authorLabel`、任意の
   `relatedCommitOid`、任意の`idempotencyKey`を持つ。関連OIDを指定した場合は対象PRで利用可能なcommitで
   なければならない。同じkeyと同じpayloadのretryは既存postを返し、異なる利用を拒否する。
+- `comment edit`はcomment URIとpost IDを引数、stdinの`body`と任意の`relatedCommitOid`を入力として
+  postを完全置換する。OID省略は現在値を維持し、`null`は関連を外し、非nullは対象PRで利用可能なcommitへ
+  置き換える。同じ内容へのretryはpostを増やさない。
 - `comment create`は登録済みPR、通常のcomment target、本文、任意の`authorLabel`をstdinで受け、
   viewerと同じtarget validationから未解決threadを一件作成する。batch作成は行わない。
 - `pr sync`の`commentUpdates`は最大500件で、各要素は`commentRef`、`reply`、`resolve`と任意の
@@ -1146,7 +1158,9 @@ CLI contract:
 - cursorless watchが既存postをskipし、新規root/replyだけをDB-wide sequenceで返すこと
 - watch cursorのresume、別DB拒否、削除後event、minimal payload、RFC 7464 framing
 - replyとsync updateのidempotency key retry、head advance、payload conflict、result削除
-- task state scriptのatomic ingest、lease recovery、自己event抑制、repository write直列化
+- task state scriptのatomic ingest、lease recovery、thread単位status post再利用、即時ackの自己event抑制、
+  repository write直列化、旧task DBの未完了batchからの冪等key移行、status post削除後のmapping再生成
+- `comment edit`のbody完全置換、related commit維持／解除／更新、Agent socket経由write
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
 - `pr sync`のreply/head関連付けと非冪等時の再取得
 - 3つのSkillの初回install、同一内容の再install、いずれかに差異がある場合の更新検知と`--force`
@@ -1206,7 +1220,9 @@ requestとrepository contextへ委ね、固定の文書templateを要求しな�
 
 `rvw-watch-comments`は一つの外部Agent taskをreceiverとして使い、cursorless起動で既存未解決を処理せず、
 新規root/replyをPRごとにsubagentへまとめる。同梱state scriptがtask固有cursor、queue、lease、retry、
-自己event抑制をrepository外のSQLiteで管理する。task起動時の明示許可がある場合だけ、live authorが起動時
+comment URIごとのstatus post、自己event抑制をrepository外のSQLiteで管理する。claim直後に各threadへ
+`🔎 確認中です…`を即時返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。task起動時の
+明示許可がある場合だけ、live authorが起動時
 GitHub loginと一致し、head repository/branch/OIDとpush先も一致するPRをfix-and-pushにできる。他人または
 不明なPRはinvestigate-and-replyとする。rvw自身はAgent sessionやtask stateを管理しない。
 

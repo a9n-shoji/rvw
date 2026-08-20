@@ -70,10 +70,12 @@ one-JSON-value stdout contract.
 
 The external Agent task owns its cursor, pending queue, retry state, and created post IDs in a separate
 task database managed by the bundled Skill's deterministic state script. Ingesting an event and
-advancing its cursor is one transaction. Batch leases preserve idempotency keys across restart, and
-completing a lease registers returned post IDs while removing any already-queued self events in the
-same transaction. Separate tasks use separate state databases; rvw does not impose a database-global
-consumer lock or store Agent execution state.
+advancing its cursor is one transaction. Batch leases preserve idempotency keys across restart. After
+a claim and initial thread read, create `🔎 確認中です…` immediately as one normal idempotent reply per
+comment URI, record that status post ID, and suppress its own event in one task-state transaction.
+Reuse the same status post for later replies in that thread. Completion or terminal failure replaces
+its body instead of adding another reply. Separate tasks use separate state databases; rvw does not
+impose a database-global consumer lock or store Agent execution state.
 
 Cache the latest GitHub PR author login and head repository owner/name, and expose them in comment
 context. Watch events remain minimal triggers that require a fresh comment read. The watcher
@@ -89,8 +91,9 @@ the key hash, caller-payload hash, and result post ID independently of the delet
 fingerprint excludes its derived current head OID, so the same caller input still finds the original
 reply after a concurrent head advance. Reuse for another caller payload fails; retry after result
 deletion reports a permanent deleted-result error instead of recreating it. Edits, deletes, and
-resolve/reopen changes do not create watch events. Keep protocol version 2 and add the `comment.watch`
-capability because the new command and optional fields are additive.
+resolve/reopen changes do not create watch events. Add an exact post-replacement `comment.edit`
+capability so the task can safely retry an uncertain edit and optionally update the related commit.
+Keep protocol version 2 because both `comment.watch` and `comment.edit` are additive commands.
 
 ### Trade-offs
 
@@ -103,6 +106,8 @@ capability because the new command and optional fields are additive.
 - Multiple independent tasks can consume the same rvw event log. A single task database serializes its
   own claims and repository writers; users should not intentionally start competing automation tasks
   with overlapping responsibility.
+- Replacing the status post keeps a thread quiet but rvw does not retain the acknowledgement or an
+  earlier Agent outcome as post history; the current result and Git commits remain the intended record.
 - RFC 7464 requires a stream-aware consumer; ordinary CLI commands retain their single JSON response.
 
 ## 2026-08-17: Use an annotated initial release tag without fabricating a signing identity

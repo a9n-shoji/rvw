@@ -1270,14 +1270,27 @@ export class RvwDatabase {
     return result;
   }
 
-  updateCommentPost(commentId: string, postId: string, body: string): CommentPost {
+  updateCommentPost(
+    commentId: string,
+    postId: string,
+    body: string,
+    relatedCommitOid?: string | null,
+  ): CommentPost {
     const now = new Date().toISOString();
     this.immediateTransaction(() => {
-      const result = this.database
-        .prepare(
-          "UPDATE comment_posts SET body = ?, updated_at = ? WHERE id = ? AND comment_id = ?",
-        )
-        .run(body, now, postId, commentId);
+      const result =
+        relatedCommitOid === undefined
+          ? this.database
+              .prepare(
+                "UPDATE comment_posts SET body = ?, updated_at = ? WHERE id = ? AND comment_id = ?",
+              )
+              .run(body, now, postId, commentId)
+          : this.database
+              .prepare(
+                `UPDATE comment_posts SET body = ?, related_commit_oid = ?, updated_at = ?
+                WHERE id = ? AND comment_id = ?`,
+              )
+              .run(body, relatedCommitOid, now, postId, commentId);
       if (Number(result.changes) === 0) {
         throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
           status: 404,

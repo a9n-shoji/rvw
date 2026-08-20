@@ -4,8 +4,8 @@ Version 1 is the first public compatibility contract. Pre-public internal versio
 released or supported; after the first public release, protocol versions only increase for breaking
 changes and are never reused. Version 2 adds the invariant that every declared Walkthrough reference
 must be reachable from its Markdown body or Mermaid bindings. It also advertises the additive
-`agent.transport`, `comment.create`, and `comment.watch` capabilities. Optional idempotency keys are
-additive fields and do not change existing callers.
+`agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
+idempotency keys are additive fields and do not change existing callers.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
@@ -99,6 +99,7 @@ rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
 rvw comment get <COMMENT_URI> --live --json
 rvw comment reply <COMMENT_URI> --stdin --json
+rvw comment edit <COMMENT_URI> --post <POST_ID> --stdin --json
 rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
@@ -238,6 +239,20 @@ A non-null related OID must be a 40–64 digit hex commit available to the PR. A
 same key returns the existing post; reuse for another payload fails. Without a key, re-read the
 comment before retrying an uncertain result.
 
+`comment edit` replaces one existing post identified within its thread:
+
+```json
+{
+  "body": "✅ 対応しました\n\n変更内容と検証結果。",
+  "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567"
+}
+```
+
+`body` has the same 64 KiB GFM contract as a reply. Omitting `relatedCommitOid` preserves the post's
+current association, null clears it, and a non-null value must be an available commit for the PR.
+The operation is an exact replacement: retrying the same edit may advance `updatedAt` again but does
+not create another post. Success returns `{ "ok": true, "post": ... }`.
+
 Resolved threads accept replies. A standalone or synchronized reply does not reopen a resolved
 thread; state changes remain explicit. `comment reopen` reopens it, while `comment resolve` or a sync
 update with `resolve: true` resolves it.
@@ -259,10 +274,12 @@ for protocol tests and recovery tools. Independent tasks may consume the log wit
 
 rvw does not start an Agent, store its queue, or authorize code changes. The external task owns
 batching, retries, and self-event suppression. The bundled `rvw-watch-comments` Skill supplies a
-task-local SQLite state tool for atomic cursor ingestion and batch leases. It requires explicit startup
-authorization before an authenticated user's own PR can be fixed and pushed, and verifies the live
-head repository, branch, and OID so fork PRs cannot target the base repository accidentally. Another
-or unknown author remains code/GitHub read-only.
+task-local SQLite state tool for atomic cursor ingestion, batch leases, and one status post per comment
+URI. After a claim and successful thread read, it immediately creates or restores `🔎 確認中です…`,
+suppresses that reply's watch event, and edits the same post to the final outcome. It requires explicit
+startup authorization before an authenticated user's own PR can be fixed and pushed, and verifies the
+live head repository, branch, and OID so fork PRs cannot target the base repository accidentally.
+Another or unknown author remains code/GitHub read-only.
 
 ## Walkthrough lifecycle
 

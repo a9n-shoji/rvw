@@ -1058,6 +1058,27 @@ describe("RvwService commit workflow", () => {
     expect(service.updateCommentPost(replied.id, reply.id, "Updated reply")).toMatchObject({
       body: "Updated reply",
     });
+    await expect(
+      service.editCommentPost(replied.ref, reply.id, {
+        body: "✅ Addressed",
+        relatedCommitOid: firstHead,
+      }),
+    ).resolves.toMatchObject({ body: "✅ Addressed", relatedCommitOid: firstHead });
+    await expect(
+      service.editCommentPost(replied.ref, reply.id, { body: "✅ Addressed again" }),
+    ).resolves.toMatchObject({ body: "✅ Addressed again", relatedCommitOid: firstHead });
+    await expect(
+      service.editCommentPost(replied.ref, reply.id, {
+        body: "🔎 Checking again",
+        relatedCommitOid: null,
+      }),
+    ).resolves.toMatchObject({ body: "🔎 Checking again", relatedCommitOid: null });
+    await expect(
+      service.editCommentPost(replied.ref, reply.id, {
+        body: "Invalid commit",
+        relatedCommitOid: "f".repeat(40),
+      }),
+    ).rejects.toBeDefined();
     const disposableReply = await service.replyToComment(replied.id, {
       body: "Disposable reply",
     });
