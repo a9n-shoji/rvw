@@ -1718,6 +1718,7 @@ code {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--panel-2);
+  font-size: inherit;
 }
 .markdown-preview pre {
   padding: 16px;
@@ -2179,6 +2180,7 @@ diffs-container > [slot="header-metadata"] {
   border-radius: 4px;
   background: var(--panel-2);
   color: var(--text);
+  font-size: inherit;
 }
 .walkthrough-markdown pre {
   margin: 18px 0;
@@ -2192,7 +2194,6 @@ diffs-container > [slot="header-metadata"] {
   padding: 0;
   border: 0;
   background: transparent;
-  font-size: 12px;
 }
 .code-inline-reference {
   display: inline-flex;
@@ -2713,7 +2714,7 @@ diffs-container > [slot="header-metadata"] {
   border: 1px solid var(--line);
   border-radius: 4px;
   background: var(--panel-2);
-  font-size: 0.92em;
+  font-size: inherit;
 }
 .comment-markdown pre {
   max-width: 100%;

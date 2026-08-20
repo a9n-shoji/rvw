@@ -624,6 +624,16 @@ test("moves document tabs between at most two panes and previews repository Mark
   await page.getByRole("button", { name: "Preview", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Orders service", exact: true })).toBeVisible();
   await expect(page.getByText("Rendered Markdown", { exact: true })).toBeVisible();
+  const previewBodyFontSize = await page
+    .locator(".markdown-preview > .markdown-comment-surface > article")
+    .evaluate((element) => getComputedStyle(element).fontSize);
+  await expect(page.locator(".markdown-preview pre code")).toHaveCSS(
+    "font-size",
+    previewBodyFontSize,
+  );
+  await expect(
+    page.locator(".markdown-preview p code").filter({ hasText: "FOR UPDATE SKIP LOCKED" }),
+  ).toHaveCSS("font-size", previewBodyFontSize);
   const repositorySoftBreak = page.locator(".markdown-preview p").filter({
     hasText:
       /This repository line uses a soft break\.\s*It stays inline when rendered as a Markdown file\./,
@@ -995,6 +1005,16 @@ test("renders the Markdown walkthrough showcase and keeps every expression comme
   await expect(
     page.locator(".walkthrough-inline-reference").filter({ hasText: "コード参照" }),
   ).toBeVisible();
+  const walkthroughBodyFontSize = await page
+    .locator(".walkthrough-markdown")
+    .evaluate((element) => getComputedStyle(element).fontSize);
+  await expect(
+    page.locator(".walkthrough-markdown p code").filter({ hasText: "inline code" }),
+  ).toHaveCSS("font-size", walkthroughBodyFontSize);
+  await expect(page.locator(".walkthrough-markdown pre code").first()).toHaveCSS(
+    "font-size",
+    walkthroughBodyFontSize,
+  );
   const summaryTable = page.locator(".walkthrough-markdown").getByRole("table");
   await expect(summaryTable.getByRole("columnheader", { name: "観点" })).toBeVisible();
   await expect(summaryTable.getByRole("cell", { name: "⚠️ Review" })).toBeVisible();
@@ -1605,6 +1625,12 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
     "| --- | --- |",
     "| Fixture | Needs attention |",
     "",
+    "Run `pnpm check` before posting the result.",
+    "",
+    "```text",
+    "pnpm check",
+    "```",
+    "",
     "Open [the fixture source](src/fixture.ts).",
     "[Walkthrough-only reference](rvw-ref:comment-reference)",
     "Inspect [the typed fixture](rvw-ref:typed-fixture).",
@@ -1699,10 +1725,18 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   const sidebarThread = page.locator(`.comment-sidebar [data-comment-id="${created.comment.id}"]`);
   await sidebarThread.scrollIntoViewIfNeeded();
-  const sidebarMarkdown = sidebarThread.locator(".comment-markdown");
+  const sidebarMarkdown = sidebarThread.locator(".comment-markdown").first();
   await expect(
     sidebarMarkdown.getByRole("heading", { name: "Agent Markdown finding" }),
   ).toBeVisible();
+  const commentBodyFontSize = await sidebarMarkdown.evaluate(
+    (element) => getComputedStyle(element).fontSize,
+  );
+  await expect(sidebarMarkdown.locator("p code").filter({ hasText: "pnpm check" })).toHaveCSS(
+    "font-size",
+    commentBodyFontSize,
+  );
+  await expect(sidebarMarkdown.locator("pre code")).toHaveCSS("font-size", commentBodyFontSize);
   await expect(sidebarMarkdown.getByRole("checkbox")).toBeChecked();
   await expect(sidebarMarkdown.getByRole("table")).toBeVisible();
   await expect(
