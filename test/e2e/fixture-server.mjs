@@ -13,11 +13,20 @@ import {
 
 const host = "127.0.0.1";
 const port = Number(process.env.RVW_E2E_PORT ?? 43117);
-const pullRequestId = "11111111-1111-4111-8111-111111111111";
-const baseOid = "a".repeat(40);
-const firstHead = "b".repeat(40);
-const secondHead = "c".repeat(40);
-const comments = [];
+const repositoryDemo =
+  process.env.RVW_FIXTURE_MODE === "repository-demo"
+    ? (await import("../../scripts/repository-demo-fixture.ts")).createRepositoryDemoFixture(
+        path.resolve(import.meta.dirname, "../.."),
+      )
+    : null;
+const pullRequestId = repositoryDemo?.pullRequestId ?? "11111111-1111-4111-8111-111111111111";
+const baseOid = repositoryDemo?.baseOid ?? "a".repeat(40);
+const firstHead = repositoryDemo?.commits[0]?.oid ?? "b".repeat(40);
+const secondHead = repositoryDemo?.headOid ?? "c".repeat(40);
+const comments = repositoryDemo ? structuredClone(repositoryDemo.comments) : [];
+const activeWalkthroughs = repositoryDemo
+  ? structuredClone(repositoryDemo.walkthroughs)
+  : walkthroughs;
 const activeViewers = new Set();
 const releasedViewers = new Set();
 let changeSequence = 0;
@@ -53,6 +62,7 @@ const commit = (oid, parentOid, subject, hour) => ({
 });
 
 function currentPullRequest() {
+  if (repositoryDemo) return repositoryDemo.pullRequest;
   const headOid = syncStage > 0 ? secondHead : firstHead;
   return {
     id: pullRequestId,
@@ -88,6 +98,14 @@ function currentPullRequest() {
 }
 
 function currentView() {
+  if (repositoryDemo) {
+    return {
+      pullRequest: repositoryDemo.pullRequest,
+      comparisonBaseOid: repositoryDemo.baseOid,
+      headOid: repositoryDemo.headOid,
+      commits: repositoryDemo.commits,
+    };
+  }
   const pullRequest = currentPullRequest();
   return {
     pullRequest,
@@ -123,6 +141,7 @@ function repositoryText(oid) {
 }
 
 function repositoryDocumentText(oid, filePath) {
+  if (repositoryDemo) return repositoryDemo.repositoryDocumentAt(oid, filePath).text ?? "";
   if (filePath === "binary.bin" || filePath === "large.txt") return "";
   if (filePath === "README.md") {
     return [
@@ -195,6 +214,9 @@ function repositoryDocumentText(oid, filePath) {
 }
 
 function repositoryPathsAt(oid) {
+  if (repositoryDemo) {
+    return repositoryDemo.repositoryEntriesAt(oid).map((entry) => entry.path);
+  }
   return [
     ...new Set([
       "README.md",
@@ -262,6 +284,9 @@ function document(ref, text, isVirtual = false) {
 }
 
 function repositoryDocument(ref) {
+  if (repositoryDemo) {
+    return { ref, ...repositoryDemo.repositoryDocumentAt(ref.sourceOid, ref.path) };
+  }
   if (ref.path === "binary.bin") return unavailableRepositoryDocument(ref, "binary");
   if (ref.path === "large.txt") return unavailableRepositoryDocument(ref, "too-large");
   return document(ref, repositoryDocumentText(ref.sourceOid, ref.path));
@@ -395,13 +420,22 @@ app.get("/api/pull-requests/:id", (context) => context.json({ ok: true, ...curre
 
 app.post("/api/pull-requests/:id/refresh", async (context) => {
   await new Promise((resolve) => setTimeout(resolve, 100));
-  syncStage = Math.min(syncStage + 1, 2);
+  if (!repositoryDemo) syncStage = Math.min(syncStage + 1, 2);
   changeSequence += 1;
   return context.json({ ok: true, ...currentView(), commentUpdatesApplied: 0 });
 });
 
 app.get("/api/pull-requests/:id/tree", (context) => {
-  const oid = currentView().headOid;
+  const oid = repositoryDemo
+    ? (context.req.query("oid") ?? currentView().headOid)
+    : currentView().headOid;
+  if (repositoryDemo) {
+    return context.json({
+      ok: true,
+      virtual: "Pull Request.md",
+      entries: repositoryDemo.repositoryEntriesAt(oid),
+    });
+  }
   const paths = repositoryPathsAt(oid);
   return context.json({
     ok: true,
@@ -423,6 +457,16 @@ app.get("/api/pull-requests/:id/tree", (context) => {
 });
 
 app.get("/api/pull-requests/:id/changed-files", (context) => {
+  if (repositoryDemo) {
+    const oldOid = context.req.query("oldOid");
+    const newOid = context.req.query("newOid");
+    return context.json({
+      ok: true,
+      oldOid,
+      newOid,
+      files: repositoryDemo.changedFiles(oldOid, newOid),
+    });
+  }
   const range = context.req.query("oldOid") === firstHead;
   const files = range
     ? [
@@ -585,7 +629,7 @@ app.get("/api/pull-requests/:id/comments", (context) => context.json({ ok: true,
 app.get("/api/pull-requests/:id/walkthroughs", (context) =>
   context.json({
     ok: true,
-    walkthroughs: walkthroughs.map((walkthrough) => ({
+    walkthroughs: activeWalkthroughs.map((walkthrough) => ({
       id: walkthrough.id,
       pullRequestId: walkthrough.pullRequestId,
       sourceOid: walkthrough.sourceOid,
@@ -598,7 +642,7 @@ app.get("/api/pull-requests/:id/walkthroughs", (context) =>
 );
 
 app.get("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
-  const walkthrough = walkthroughs.find(
+  const walkthrough = activeWalkthroughs.find(
     (candidate) => candidate.id === context.req.param("walkthroughId"),
   );
   return walkthrough
@@ -610,7 +654,7 @@ app.get("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
 });
 
 app.post("/api/fixture/walkthroughs/:walkthroughId/update", async (context) => {
-  const walkthrough = walkthroughs.find(
+  const walkthrough = activeWalkthroughs.find(
     (candidate) => candidate.id === context.req.param("walkthroughId"),
   );
   if (!walkthrough) {
@@ -633,7 +677,7 @@ app.post("/api/fixture/walkthroughs/:walkthroughId/update", async (context) => {
 });
 
 app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
-  const walkthroughIndex = walkthroughs.findIndex(
+  const walkthroughIndex = activeWalkthroughs.findIndex(
     (candidate) => candidate.id === context.req.param("walkthroughId"),
   );
   if (walkthroughIndex < 0) {
@@ -642,7 +686,7 @@ app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
       404,
     );
   }
-  const [walkthrough] = walkthroughs.splice(walkthroughIndex, 1);
+  const [walkthrough] = activeWalkthroughs.splice(walkthroughIndex, 1);
   const associatedComments = comments.filter(
     (comment) =>
       comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id,
@@ -680,7 +724,7 @@ app.get("/api/comments/:id/placement", (context) => {
     return context.json({ ok: true, placement: { outdated: false, range: null, path: null } });
   }
   if (comment.target.kind === "walkthrough") {
-    const walkthrough = walkthroughs.find(
+    const walkthrough = activeWalkthroughs.find(
       (candidate) => candidate.id === comment.target.walkthroughId,
     );
     if (
@@ -743,7 +787,7 @@ app.post("/api/comments", async (context) => {
   const target =
     input.target.kind === "walkthrough"
       ? (() => {
-          const walkthrough = walkthroughs.find(
+          const walkthrough = activeWalkthroughs.find(
             (candidate) => candidate.id === input.target.walkthroughId,
           );
           const startLine = input.target.startLine ?? null;

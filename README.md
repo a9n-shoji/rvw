@@ -295,6 +295,18 @@ maintainer向けのversion、tag、npm staged publishing、障害対応手順は
 
 ## 開発
 
+source checkoutでは、GitHub接続や保存済みPRを用意せずにrepository規模のviewerを確認できます。
+
+```bash
+pnpm demo
+```
+
+このデモは小さなE2E fixtureとは分離され、現在のcheckoutにある直近6件のfirst-parent commitを
+一つのsynthetic PRとして表示します。tree、文書、diff、検索はworktreeではなく実際のGit objectから読み、
+100件以上の実在file、複数commit、変更外のtest・document・Skill、初期commentとWalkthroughを含みます。
+browserを自動で開かない場合は`pnpm demo -- --no-open`、portを変える場合は`RVW_DEMO_PORT`を指定します。
+デモを停止するには起動したterminalでCtrl+Cを押してください。
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm check
