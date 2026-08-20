@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const unknownPullRequestId = "22222222-2222-4222-8222-222222222222";
@@ -7,6 +7,23 @@ const comparisonBase = "a".repeat(40);
 const firstHead = "b".repeat(40);
 const secondHead = "c".repeat(40);
 const featureParentBeforeMergeBack = "d".repeat(40);
+
+async function openWalkthroughFromSidebar(page: Page, title: string): Promise<void> {
+  const walkthroughsFolder = page.getByRole("button", { name: /^ウォークスルー \d+$/ });
+  if ((await walkthroughsFolder.getAttribute("aria-expanded")) !== "true") {
+    await walkthroughsFolder.click();
+  }
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await reviewTree.getByRole("button", { name: title, exact: true }).click();
+}
+
+async function openCommentsSidebar(page: Page): Promise<void> {
+  const toggle = page.locator(".sidebar-stack--comments > .sidebar-stack-toggle");
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+  }
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
 
 test("uses the comparison base for a PR range starting with a merge-back commit", async ({
   page,
@@ -603,6 +620,7 @@ test("handles Unicode empty symlink submodule and very long repository paths", a
 
   await openFromQuickOpen(longPath, "review-target");
   await openFromQuickOpen(emojiPath, "🚀");
+  await page.keyboard.press("Control+Shift+F");
   const searchInput = page.getByRole("textbox", { name: "全文検索" });
   await searchInput.fill("注文");
   await expect(page.getByRole("button", { name: `${emojiPath}、1件` })).toBeVisible();
@@ -664,7 +682,7 @@ test("allows file-level comments while line comments stay unavailable for binary
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "binary.bin", exact: true }).click();
   await expect(page.getByText("非UTF-8またはbinaryのため本文を表示できません。")).toBeVisible();
   await expect(page.locator("diffs-container")).toHaveCount(0);
@@ -725,7 +743,7 @@ test("preserves a Markdown table's horizontal scroll when the preview rerenders"
   await page.setViewportSize({ width: 640, height: 720 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await page.getByRole("button", { name: "全文", exact: true }).click();
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "README.md", exact: true }).click();
 
   const sourceLine = page
@@ -806,7 +824,7 @@ test("keeps full and diff file headers directly below the sticky document tabs",
 
 test("starts a newly activated document at the top of its pane", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "ファイルツリーをすべて展開" }).click();
   await page
     .getByRole("button", { name: "src/application/orders/create-order.ts", exact: true })
@@ -864,7 +882,7 @@ test("browser back and forward restore the focused reading pane without rolling 
       .getByRole("tab", { name: "src/fixture.ts", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
 
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "全文", exact: true }).click();
   await page
     .getByRole("button", { name: "Pull Request.md", exact: true })
@@ -883,7 +901,7 @@ test("browser back and forward restore the focused reading pane without rolling 
   );
   await expect(leftPane).toHaveClass(/active/);
   await expect(pullRequestTab).toHaveCount(1);
-  await expect(page.getByRole("button", { name: "全ファイル", exact: true })).toHaveClass(/active/);
+  await expect(page.getByRole("checkbox", { name: "変更のないファイルも表示" })).toBeChecked();
   await expect(page.getByRole("button", { name: "全文", exact: true })).toHaveClass(/active/);
 
   await page.goForward();
@@ -895,6 +913,7 @@ test("browser back restores the reading position after scrolling away from a lin
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.keyboard.press("Control+Shift+F");
   await page.getByRole("textbox", { name: "全文検索", exact: true }).fill("dispatcher");
   await page.getByRole("button", { name: "README.md 50行", exact: true }).click();
 
@@ -929,6 +948,7 @@ test("browser back restores the reading position after scrolling away from a lin
     )
     .toBe(200);
 
+  await page.getByRole("button", { name: "ファイルツリーに戻る", exact: true }).click();
   await page.getByRole("button", { name: "src/new.ts", exact: true }).click();
   await page.goBack();
   await expect(pane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
@@ -954,7 +974,7 @@ test("browser back returns from a Markdown heading to the prior position in the 
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "README.md", exact: true }).click();
 
   const pane = page.locator('.document-pane[data-pane="left"]');
@@ -990,9 +1010,7 @@ test("focuses a deep Walkthrough range when command-click creates the right pane
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page
-    .getByRole("button", { name: "注文作成フロー：HTTPからtransactional outboxまで", exact: true })
-    .click();
+  await openWalkthroughFromSidebar(page, "注文作成フロー：HTTPからtransactional outboxまで");
   await page
     .getByRole("button", { name: "recordPaymentAuthorization L26–34", exact: true })
     .click({ modifiers: ["Meta"] });
@@ -1047,6 +1065,7 @@ test("comment targets participate in reading history without persisting transien
   try {
     await page.goto(`/?pullRequestId=${pullRequestId}`);
     await page.getByRole("button", { name: "src/new.ts", exact: true }).click();
+    await openCommentsSidebar(page);
     const comment = page.locator(`.comment-thread--sidebar[data-comment-id="${commentId}"]`);
     await comment.getByRole("button", { name: "コメント対象を開く", exact: true }).click();
 
@@ -1112,6 +1131,7 @@ test("reopens an inline thread consistently after it changes while unmounted", a
   await expect(inline).toHaveClass(/is-collapsed/);
   await page.getByRole("tab", { name: "Pull Request.md" }).click();
 
+  await openCommentsSidebar(page);
   const sidebar = page.locator(`.comment-thread--sidebar[data-comment-id="${commentId}"]`);
   await sidebar.getByRole("button", { name: "解決", exact: true }).click();
   await expect(sidebar).toHaveCount(0);
@@ -1134,7 +1154,7 @@ test("explains that full view is unavailable for a deleted file", async ({ page 
 
 test("keeps activated overflow tabs visible and supports tablist arrow keys", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "ファイルツリーをすべて展開" }).click();
   const paths = [
     "README.md",
@@ -1192,7 +1212,7 @@ test("keeps activated overflow tabs visible and supports tablist arrow keys", as
 test("keeps both panes reachable inside a 640px viewport", async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 600 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "README.md", exact: true }).click({ modifiers: ["Meta"] });
 
   const mainView = page.locator(".main-view.two-pane");
@@ -1240,11 +1260,9 @@ test("keeps every top bar control inside a 640px viewport", async ({ page }) => 
 test("keeps the beginning of code visible after narrow reference navigation", async ({ page }) => {
   await page.setViewportSize({ width: 640, height: 760 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "README.md", exact: true }).click({ modifiers: ["Meta"] });
-  await page
-    .getByRole("button", { name: "注文作成フロー：HTTPからtransactional outboxまで", exact: true })
-    .click();
+  await openWalkthroughFromSidebar(page, "注文作成フロー：HTTPからtransactional outboxまで");
   await page.getByRole("button", { name: "POST /orders L10–12", exact: true }).click();
 
   const diff = page.locator('.document-pane[data-pane="right"] diffs-container');
@@ -1255,6 +1273,7 @@ test("keeps the beginning of code visible after narrow reference navigation", as
   await diff.locator("code").evaluate((code) => {
     code.scrollLeft = 80;
   });
+  await page.keyboard.press("Control+Shift+F");
   await page.getByRole("textbox", { name: "全文検索" }).fill("routes.post");
   await page.getByRole("button", { name: "src/http/routes/orders.ts 10行" }).click();
   await expect.poll(() => diff.locator("code").evaluate((code) => code.scrollLeft)).toBe(80);

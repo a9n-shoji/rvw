@@ -133,17 +133,45 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await actionsMenu.getByRole("menuitemradio", { name: "システム" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "system");
   await expect(page.locator(".topbar").getByRole("region", { name: "レビュー範囲" })).toBeVisible();
-  const filesStack = page.getByRole("button", { name: "ファイル", exact: true });
+  const codeStack = page.getByRole("button", { name: "エクスプローラー", exact: true });
   const commentsStack = page.getByRole("button", { name: "コメント 0", exact: true });
-  await expect(filesStack).toHaveAttribute("aria-expanded", "true");
-  await expect(commentsStack).toHaveAttribute("aria-expanded", "true");
-  await filesStack.click();
-  await expect(filesStack).toHaveAttribute("aria-expanded", "false");
-  await expect(commentsStack).toHaveAttribute("aria-expanded", "true");
-  await filesStack.click();
+  await expect(codeStack).toHaveAttribute("aria-expanded", "true");
+  await expect(commentsStack).toHaveAttribute("aria-expanded", "false");
+  await codeStack.click();
+  await expect(codeStack).toHaveAttribute("aria-expanded", "false");
+  await expect(commentsStack).toHaveAttribute("aria-expanded", "false");
+  await codeStack.click();
   const fileNameSearchInput = page.getByPlaceholder("ファイル名を検索");
   await expect(fileNameSearchInput).toHaveCSS("height", "34px");
   await expect(fileNameSearchInput).toHaveCSS("font-size", "12px");
+  const showUnchangedFiles = page.getByRole("checkbox", {
+    name: "変更のないファイルも表示",
+  });
+  await expect(showUnchangedFiles).not.toBeChecked();
+  const fileControlRects = await Promise.all(
+    [
+      page.locator(".review-tree-items"),
+      fileNameSearchInput,
+      page.locator(".file-scope-checkbox"),
+      page.locator(".file-tree"),
+    ].map((locator) =>
+      locator.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom };
+      }),
+    ),
+  );
+  const reviewToSearchGap = fileControlRects[1]!.top - fileControlRects[0]!.bottom;
+  expect(reviewToSearchGap).toBeGreaterThanOrEqual(6);
+  expect(reviewToSearchGap).toBeLessThanOrEqual(10);
+  const groupedFileControlGaps = [
+    fileControlRects[2]!.top - fileControlRects[1]!.bottom,
+    fileControlRects[3]!.top - fileControlRects[2]!.bottom,
+  ];
+  expect(groupedFileControlGaps.every((gap) => gap >= 2 && gap <= 4)).toBe(true);
+  await expect(page.locator(".file-tree-summary")).toHaveCSS("padding-top", "0px");
+  await expect(page.locator(".file-tree-summary")).toHaveCSS("padding-bottom", "0px");
+  await expect(page.getByRole("button", { name: "全ファイル", exact: true })).toHaveCount(0);
   await expect(
     page
       .getByRole("button", { name: "src/fixture.ts" })
@@ -154,18 +182,25 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   ).toBeVisible();
   const fixtureTreeFile = page.getByRole("button", { name: "src/fixture.ts", exact: true });
   await expect(fixtureTreeFile.locator('[data-file-icon="lang-typescript-duo"]')).toBeVisible();
-  const pullRequestTreeFile = page.getByRole("button", {
+  const pullRequestShortcut = page.getByRole("button", {
     name: "Pull Request.md",
     exact: true,
   });
-  await expect(pullRequestTreeFile.locator('[data-file-icon="lang-markdown"]')).toBeVisible();
+  await expect(pullRequestShortcut.locator('[data-file-icon="lang-markdown"]')).toBeVisible();
   expect(
-    await pullRequestTreeFile.evaluate(
-      (element) =>
-        element.parentElement?.classList.contains("file-tree") &&
-        element.parentElement.firstElementChild === element,
+    await pullRequestShortcut.evaluate(
+      (element) => element.parentElement?.classList.contains("review-tree-items") ?? false,
     ),
   ).toBe(true);
+  const walkthroughShortcut = page.getByRole("button", {
+    name: "ウォークスルー 5",
+    exact: true,
+  });
+  await walkthroughShortcut.click();
+  await expect(page.locator(".review-tree-walkthrough-list .review-tree-walkthrough")).toHaveCount(
+    5,
+  );
+  await page.keyboard.press("Escape");
   await fixtureTreeFile.click();
   await commitPicker.click();
   await expect(
@@ -221,7 +256,7 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   ).toBeVisible();
   await page.getByRole("button", { name: "src/removed.tsを閉じる" }).click();
 
-  await page.getByRole("button", { name: "全ファイル" }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   const srcFolder = page.getByRole("button", { name: "src フォルダ" });
   await expect(srcFolder).toHaveAttribute("aria-expanded", "false");
   await expect(srcFolder.locator('[data-file-icon="folder-duo"]')).toBeVisible();
@@ -239,26 +274,28 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(
     page.getByRole("button", { name: "src/removed.ts" }).locator('[data-change-kind="deleted"]'),
   ).toBeVisible();
-  const prRowMetrics = await page
-    .getByRole("button", { name: "Pull Request.md", exact: true })
-    .evaluate((element) => ({
-      fontSize: getComputedStyle(element).fontSize,
-      height: element.getBoundingClientRect().height,
-    }));
-  const folderRowMetrics = await srcFolder.evaluate((element) => ({
-    fontSize: getComputedStyle(element).fontSize,
-    height: element.getBoundingClientRect().height,
-  }));
-  expect(prRowMetrics.height).toBeCloseTo(folderRowMetrics.height, 1);
-  expect(prRowMetrics.fontSize).toBe(folderRowMetrics.fontSize);
+  const firstFileTopBeforeWalkthroughs = await page
+    .getByRole("button", { name: "src/fixture.ts", exact: true })
+    .evaluate((element) => element.getBoundingClientRect().top);
+  await walkthroughShortcut.click();
+  await expect(page.locator(".review-tree-walkthrough-list")).toBeVisible();
+  const firstFileTopWithWalkthroughs = await page
+    .getByRole("button", { name: "src/fixture.ts", exact: true })
+    .evaluate((element) => element.getBoundingClientRect().top);
+  expect(firstFileTopWithWalkthroughs).toBeGreaterThan(firstFileTopBeforeWalkthroughs);
+  await page.keyboard.press("Escape");
+  const firstFileTopAfterWalkthroughs = await page
+    .getByRole("button", { name: "src/fixture.ts", exact: true })
+    .evaluate((element) => element.getBoundingClientRect().top);
+  expect(firstFileTopAfterWalkthroughs).toBeCloseTo(firstFileTopBeforeWalkthroughs, 1);
   await page.getByRole("button", { name: "ファイルツリーをすべて折りたたむ" }).click();
   await expect(srcFolder.locator('[data-file-icon="folder-duo"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "src/fixture.ts" })).toBeHidden();
   await page.getByRole("button", { name: "src フォルダ" }).click();
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
   await expect(page.getByText("src/fixture.ts", { exact: true }).first()).toBeVisible();
-  await page.getByRole("button", { name: "変更ファイル" }).click();
-  await page.getByRole("button", { name: "全ファイル" }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).uncheck();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await expect(srcFolder).toHaveAttribute("aria-expanded", "true");
   await expect(page.getByRole("button", { name: "docs フォルダ" })).toHaveAttribute(
     "aria-expanded",
@@ -268,9 +305,9 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
     "aria-selected",
     "true",
   );
-  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
-  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
   await expect(displayFullButton).toBeVisible();
   const reviewControlLayout = async () => {
     const styleBox = await diffStyleModes.boundingBox();
@@ -479,7 +516,13 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
     hasText: "関数の契約を確認してください。",
   });
   await expect(createdInlineLineThread).toBeVisible();
-  await expect(page.getByRole("button", { name: "コメント 1", exact: true })).toBeVisible();
+  const commentsWithOneUnresolved = page.getByRole("button", {
+    name: "コメント 1",
+    exact: true,
+  });
+  await expect(commentsWithOneUnresolved).toHaveAttribute("aria-expanded", "false");
+  await commentsWithOneUnresolved.click();
+  await expect(commentsWithOneUnresolved).toHaveAttribute("aria-expanded", "true");
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
@@ -655,9 +698,9 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
     "aria-selected",
     "true",
   );
-  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
 
-  await page.getByRole("button", { name: "変更ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).uncheck();
   await expect(page.getByRole("button", { name: "README.md", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "src/new.ts", exact: true })).toHaveCount(0);
   await selectCommitRangeByDrag(/Add fixture function/, /Trim fixture input/);
@@ -761,7 +804,7 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(page.getByText(/参照元 c{8} ≠ 対象 b{8} · 全文表示/, { exact: true })).toBeVisible();
   await expect(diff.getByText("return value.trim();", { exact: true })).toBeVisible();
   await expect(diff.getByText("return value;", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
   await sidebarLineThread.getByRole("button", { name: "コメントのその他の操作" }).click();
   await sidebarLineThread.getByRole("menuitem", { name: "参照をコピー" }).click();
   await expect
@@ -1098,10 +1141,9 @@ test("searches while typing, groups occurrences, and reveals a result without ch
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("button", { name: "検索", exact: true })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
+  const searchAction = page.getByRole("button", { name: "コード検索を開く", exact: true });
+  await expect(searchAction).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("tab", { name: "検索", exact: true })).toHaveCount(0);
 
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
   const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
@@ -1113,7 +1155,21 @@ test("searches while typing, groups occurrences, and reveals a result without ch
   ).toBeVisible();
   await expect(diff.locator('[data-line="13"]')).toHaveCount(0);
 
+  const walkthroughFolder = page.getByRole("button", { name: "ウォークスルー 5", exact: true });
+  await walkthroughFolder.click();
+  const srcFolder = page.getByRole("button", { name: "src フォルダ", exact: true });
+  await srcFolder.click();
+  await expect(srcFolder).toHaveAttribute("aria-expanded", "false");
+
   await page.keyboard.press("Control+Shift+F");
+  await expect(page.getByRole("button", { name: "ファイルツリーに戻る" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByRole("button", { name: "コード検索", exact: true })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   const searchInput = page.getByRole("textbox", { name: "全文検索" });
   await expect(searchInput).toBeFocused();
   await searchInput.fill("fixture");
@@ -1132,6 +1188,15 @@ test("searches while typing, groups occurrences, and reveals a result without ch
       .locator('[data-change-kind="modified"]'),
   ).toBeVisible();
   await expect(page.locator(".search-result-line mark")).toHaveCount(5);
+
+  await fixtureSearchGroup.click();
+  await expect(fixtureSearchGroup).toHaveAttribute("aria-expanded", "false");
+  await page.getByRole("button", { name: "ファイルツリーに戻る", exact: true }).click();
+  await expect(walkthroughFolder).toHaveAttribute("aria-expanded", "true");
+  await expect(srcFolder).toHaveAttribute("aria-expanded", "false");
+  await searchAction.click();
+  await expect(fixtureSearchGroup).toHaveAttribute("aria-expanded", "false");
+  await fixtureSearchGroup.click();
 
   await searchInput.fill("added");
   await expect(page.getByText("1件・1ファイル", { exact: true })).toBeVisible();
@@ -1171,16 +1236,22 @@ test("searches while typing, groups occurrences, and reveals a result without ch
   await expect(diff.locator('[data-line="13"][data-editor-active-line]')).toBeVisible();
 });
 
-test("keeps every sidebar stack heading visible in a short viewport", async ({ page }) => {
+test("keeps every sidebar section heading visible in a short viewport", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 320 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
 
   const stackToggles = page.locator(".sidebar-stack-toggle");
-  await expect(stackToggles).toHaveCount(4);
-  for (const label of [/^ファイル$/, /^検索(?: \d+)?$/, /^コメント \d+$/, /^ウォークスルー \d+$/]) {
+  await expect(stackToggles).toHaveCount(2);
+  for (const label of [/^エクスプローラー$/, /^コメント \d+$/]) {
     await expect(page.getByRole("button", { name: label })).toBeVisible();
   }
+  await expect(page.getByRole("button", { name: "Pull Request.md", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^ウォークスルー \d+$/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "エクスプローラー", exact: true })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
 
   const layout = await page.locator(".sidebar").evaluate((sidebar) => {
     const sidebarBounds = sidebar.getBoundingClientRect();
@@ -1193,10 +1264,11 @@ test("keeps every sidebar stack heading visible in a short viewport", async ({ p
     };
   });
   expect(layout.latestToggleBottom).toBeLessThanOrEqual(layout.sidebarBottom + 1);
-  expect(layout.bodyOverflow).toEqual(["auto", "auto", "auto", "auto"]);
+  expect(layout.bodyOverflow.length).toBeGreaterThanOrEqual(1);
+  expect(layout.bodyOverflow.every((overflow) => overflow === "auto")).toBe(true);
 });
 
-test("keeps useful minimum heights while sizing expanded sidebar stacks by content", async ({
+test("keeps virtual review nodes compact and useful height for code navigation", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -1211,10 +1283,11 @@ test("keeps useful minimum heights while sizing expanded sidebar stacks by conte
   );
 
   const heightByKind = new Map(stackHeights.map((stack) => [stack.kind, stack.height]));
-  expect(heightByKind.get("sidebar-stack--files")).toBeGreaterThanOrEqual(190);
-  expect(heightByKind.get("sidebar-stack--search")).toBeGreaterThanOrEqual(190);
-  expect(heightByKind.get("sidebar-stack--comments")).toBeGreaterThanOrEqual(210);
-  expect(heightByKind.get("sidebar-stack--walkthroughs")).toBeGreaterThanOrEqual(180);
+  expect(heightByKind.get("sidebar-stack--code")).toBeGreaterThanOrEqual(260);
+  const reviewNodeHeights = await page
+    .locator(".review-tree-items > .review-tree-item")
+    .evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().height)));
+  expect(reviewNodeHeights).toEqual([31, 31]);
 });
 
 test("opens a fuzzy-matched file from Cmd/Ctrl+P in the active pane", async ({ page }) => {
@@ -1291,7 +1364,7 @@ test("registers the browser document and releases it when the tab closes", async
 
 test("closes other or all tabs within the selected pane", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "ファイルツリーをすべて展開" }).click();
 
   const fileTree = page.locator(".file-tree");
@@ -1346,7 +1419,7 @@ test("keeps a large all-files tree responsive while documents open and close", a
   });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "ファイルツリーをすべて展開" }).click();
 
   const virtualTree = page.locator(".file-tree-virtualized");

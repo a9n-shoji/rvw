@@ -52,11 +52,11 @@ import {
 import { FileEntryIcon } from "../components/FileIcon.js";
 import { LazyLoadBoundary } from "../components/LazyLoadBoundary.js";
 import type { DisplayMode, ViewerNavigationTarget } from "../components/DocumentViewer.js";
-import { SearchPanel, SearchStackIcon } from "../components/SearchPanel.js";
+import { SearchPanel } from "../components/SearchPanel.js";
 import { QuickOpenPalette } from "../components/QuickOpenPalette.js";
 import { applyThemePreference, storeThemePreference, type ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
-import { WalkthroughIcon, WalkthroughPanel } from "../components/WalkthroughPanel.js";
+import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
 import {
   commitRangeOldOid,
   earliestIncludedCommitOid,
@@ -153,6 +153,30 @@ function SidebarChevron({ expanded }: { expanded: boolean }) {
             ? "M3.72 5.97a.75.75 0 0 1 1.06 0L8 9.19l3.22-3.22a.75.75 0 1 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0L3.72 7.03a.75.75 0 0 1 0-1.06Z"
             : "M5.97 3.72a.75.75 0 0 1 1.06 0l3.75 3.75a.75.75 0 0 1 0 1.06l-3.75 3.75a.75.75 0 1 1-1.06-1.06L9.19 8 5.97 4.78a.75.75 0 0 1 0-1.06Z"
         }
+      />
+    </svg>
+  );
+}
+
+function SidebarSearchIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16">
+      <circle cx="7" cy="7" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d="m10.5 10.5 3.25 3.25" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function SidebarBackIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16">
+      <path
+        d="M9.75 3.25 5 8l4.75 4.75"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.5"
       />
     </svg>
   );
@@ -488,10 +512,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [rangeStartOid, setRangeStartOid] = useState<string | null>(null);
   const [documentDisplayMode, setDocumentDisplayMode] = useState<DocumentDisplayMode>("full");
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("unified");
-  const [filesExpanded, setFilesExpanded] = useState(true);
-  const [searchExpanded, setSearchExpanded] = useState(true);
-  const [commentsExpanded, setCommentsExpanded] = useState(true);
-  const [walkthroughsExpanded, setWalkthroughsExpanded] = useState(true);
+  const [codeExpanded, setCodeExpanded] = useState(true);
+  const [commentsExpanded, setCommentsExpanded] = useState(false);
+  const [codeNavigationMode, setCodeNavigationMode] = useState<"files" | "search">("files");
   const [treeMode, setTreeMode] = useState<"changed" | "all">("changed");
   const [viewerNavigationTarget, setViewerNavigationTarget] =
     useState<ViewerNavigationTarget | null>(null);
@@ -981,7 +1004,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         return;
       }
       event.preventDefault();
-      setSearchExpanded(true);
+      setCodeExpanded(true);
+      setCodeNavigationMode("search");
       window.requestAnimationFrame(() => {
         searchInputRef.current?.focus();
         searchInputRef.current?.select();
@@ -1106,6 +1130,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         : undefined,
   });
   const comments = commentsQuery.data?.comments ?? [];
+  const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
   const walkthroughsQuery = useQuery({
     queryKey: ["walkthroughs", pullRequestId],
     queryFn: async () =>
@@ -1937,65 +1962,84 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       >
         <aside className="sidebar" aria-label="レビューサイドバー">
           <section
-            className={`sidebar-stack sidebar-stack--files${filesExpanded ? " is-expanded" : ""}`}
+            className={`sidebar-stack sidebar-stack--code${codeExpanded ? " is-expanded" : ""}`}
           >
-            <button
-              className="sidebar-stack-toggle"
-              aria-expanded={filesExpanded}
-              onClick={() => setFilesExpanded((expanded) => !expanded)}
+            <div className="sidebar-stack-header">
+              <button
+                className="sidebar-stack-toggle"
+                aria-expanded={codeExpanded}
+                onClick={() => setCodeExpanded((expanded) => !expanded)}
+              >
+                <FileEntryIcon kind="file" />
+                <span>{codeNavigationMode === "search" ? "コード検索" : "エクスプローラー"}</span>
+                <SidebarChevron expanded={codeExpanded} />
+              </button>
+              <button
+                type="button"
+                className={`sidebar-stack-action${codeNavigationMode === "search" ? " active" : ""}`}
+                aria-label={
+                  codeNavigationMode === "search" ? "ファイルツリーに戻る" : "コード検索を開く"
+                }
+                aria-pressed={codeNavigationMode === "search"}
+                title={
+                  codeNavigationMode === "search"
+                    ? "ファイルツリーに戻る"
+                    : "コード検索 (⌘ / Ctrl Shift F)"
+                }
+                onClick={() => {
+                  if (codeNavigationMode === "search") {
+                    setCodeNavigationMode("files");
+                    return;
+                  }
+                  setCodeExpanded(true);
+                  setCodeNavigationMode("search");
+                  window.requestAnimationFrame(() => {
+                    searchInputRef.current?.focus();
+                    searchInputRef.current?.select();
+                  });
+                }}
+              >
+                {codeNavigationMode === "search" ? <SidebarBackIcon /> : <SidebarSearchIcon />}
+              </button>
+            </div>
+            <div
+              className="sidebar-stack-body sidebar-code-body"
+              hidden={!codeExpanded || codeNavigationMode !== "files"}
             >
-              <FileEntryIcon kind="file" />
-              <span>ファイル</span>
-              <SidebarChevron expanded={filesExpanded} />
-            </button>
-            <div className="sidebar-stack-body" hidden={!filesExpanded}>
               <div className="file-panel">
+                <ReviewTreeItems
+                  walkthroughs={walkthroughs}
+                  pullRequestActive={activeDocument?.kind === "pull-request-markdown"}
+                  activeWalkthroughId={
+                    activeDocument?.kind === "walkthrough" ? activeDocument.id : null
+                  }
+                  onOpenPullRequest={(openInRightPane) => {
+                    if (openInRightPane) {
+                      openDocument({ kind: "pull-request-markdown" }, "right");
+                      return;
+                    }
+                    openDocument({ kind: "pull-request-markdown" });
+                  }}
+                  onOpen={openWalkthrough}
+                />
+                <ErrorNotice error={walkthroughsQuery.error} />
                 <input
                   value={fileFilter}
                   onChange={(event) => setFileFilter(event.target.value)}
                   placeholder="ファイル名を検索"
                 />
-                <div className="segmented file-tree-mode">
-                  <button
-                    className={treeMode === "changed" ? "active" : ""}
-                    onClick={() => setTreeMode("changed")}
-                  >
-                    変更ファイル
-                  </button>
-                  <button
-                    className={treeMode === "all" ? "active" : ""}
-                    onClick={() => setTreeMode("all")}
-                  >
-                    全ファイル
-                  </button>
-                </div>
+                <label className="file-scope-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={treeMode === "all"}
+                    onChange={(event) => setTreeMode(event.target.checked ? "all" : "changed")}
+                  />
+                  <span>変更のないファイルも表示</span>
+                </label>
                 <ErrorNotice
                   error={treeMode === "changed" ? changedQuery.error : treeQuery.error}
                 />
                 <nav className="file-tree">
-                  <button
-                    className={`file-tree-row file-tree-file${activeDocument?.kind === "pull-request-markdown" ? " active" : ""}`}
-                    onMouseDown={(event) => {
-                      if (!event.metaKey && !event.ctrlKey) return;
-                      event.preventDefault();
-                      openDocument({ kind: "pull-request-markdown" }, "right");
-                    }}
-                    onClick={(event) => {
-                      if (!event.metaKey && !event.ctrlKey) {
-                        openDocument({ kind: "pull-request-markdown" });
-                      }
-                    }}
-                    onContextMenu={(event) => {
-                      if (event.ctrlKey || event.metaKey) event.preventDefault();
-                    }}
-                    aria-label="Pull Request.md"
-                  >
-                    <span className="directory-chevron" aria-hidden="true" />
-                    <span className="file-tree-icon-group" aria-hidden="true">
-                      <FileEntryIcon path="Pull Request.md" kind="file" />
-                    </span>
-                    <span className="file-tree-label">Pull Request.md</span>
-                  </button>
                   <FileTree
                     key={`${rangeStartOid}:${selectedOid}:${treeMode}:${treeMode === "changed" ? changedQuery.dataUpdatedAt : treeQuery.dataUpdatedAt}`}
                     files={filteredFiles}
@@ -2009,23 +2053,10 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 </nav>
               </div>
             </div>
-          </section>
-          <section
-            className={`sidebar-stack sidebar-stack--search${searchExpanded ? " is-expanded" : ""}`}
-          >
-            <button
-              className="sidebar-stack-toggle"
-              aria-expanded={searchExpanded}
-              onClick={() => setSearchExpanded((expanded) => !expanded)}
+            <div
+              className="sidebar-stack-body sidebar-code-body"
+              hidden={!codeExpanded || codeNavigationMode !== "search"}
             >
-              <SearchStackIcon />
-              <span>検索</span>
-              {searchQuery.data && debouncedSearch && (
-                <span className="sidebar-stack-count">{searchQuery.data.matchCount}</span>
-              )}
-              <SidebarChevron expanded={searchExpanded} />
-            </button>
-            <div className="sidebar-stack-body" hidden={!searchExpanded}>
               <SearchPanel
                 inputRef={searchInputRef}
                 query={searchText}
@@ -2052,9 +2083,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
             >
               <SidebarCommentIcon />
               <span>コメント</span>
-              <span className="sidebar-stack-count">
-                {comments.filter((comment) => !comment.resolvedAt).length}
-              </span>
+              <span className="sidebar-stack-count">{unresolvedCommentCount}</span>
               <SidebarChevron expanded={commentsExpanded} />
             </button>
             <div className="sidebar-stack-body" hidden={!commentsExpanded}>
@@ -2069,30 +2098,6 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 onOpenCodeReference={openCommentCodeReferenceFromSidebar}
                 onOpenTarget={openCommentTarget}
                 onOpenRepositoryLink={openRepositoryMarkdownLinkFromSidebar}
-              />
-            </div>
-          </section>
-          <section
-            className={`sidebar-stack sidebar-stack--walkthroughs${walkthroughsExpanded ? " is-expanded" : ""}`}
-          >
-            <button
-              className="sidebar-stack-toggle"
-              aria-expanded={walkthroughsExpanded}
-              onClick={() => setWalkthroughsExpanded((expanded) => !expanded)}
-            >
-              <WalkthroughIcon className="sidebar-stack-icon" />
-              <span>ウォークスルー</span>
-              <span className="sidebar-stack-count">{walkthroughs.length}</span>
-              <SidebarChevron expanded={walkthroughsExpanded} />
-            </button>
-            <div className="sidebar-stack-body" hidden={!walkthroughsExpanded}>
-              <ErrorNotice error={walkthroughsQuery.error} />
-              <WalkthroughPanel
-                walkthroughs={walkthroughs}
-                activeWalkthroughId={
-                  activeDocument?.kind === "walkthrough" ? activeDocument.id : null
-                }
-                onOpen={openWalkthrough}
               />
             </div>
           </section>

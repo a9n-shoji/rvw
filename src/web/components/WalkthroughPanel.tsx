@@ -1,4 +1,6 @@
+import { useState } from "react";
 import type { WalkthroughSummary } from "../../domain/models.js";
+import { FileEntryIcon } from "./FileIcon.js";
 
 export function WalkthroughIcon({ className = "" }: { className?: string }) {
   return (
@@ -11,52 +13,102 @@ export function WalkthroughIcon({ className = "" }: { className?: string }) {
   );
 }
 
-function shortOid(oid: string): string {
-  return oid.slice(0, 8);
-}
-
-export function WalkthroughPanel({
+export function ReviewTreeItems({
   walkthroughs,
+  pullRequestActive,
   activeWalkthroughId,
+  onOpenPullRequest,
   onOpen,
 }: {
   walkthroughs: WalkthroughSummary[];
+  pullRequestActive: boolean;
   activeWalkthroughId: string | null;
+  onOpenPullRequest: (openInRightPane: boolean) => void;
   onOpen: (walkthrough: WalkthroughSummary, openInRightPane: boolean) => void;
 }) {
-  if (walkthroughs.length === 0) {
-    return <p className="walkthrough-panel-empty">Agentからのwalkthroughはまだありません。</p>;
-  }
+  const [walkthroughsExpanded, setWalkthroughsExpanded] = useState(false);
+
   return (
-    <div className="walkthrough-panel-list">
-      {walkthroughs.map((walkthrough) => (
-        <button
-          key={walkthrough.id}
-          className={`walkthrough-panel-item${activeWalkthroughId === walkthrough.id ? " active" : ""}`}
-          onMouseDown={(event) => {
-            if (!event.metaKey && !event.ctrlKey) return;
-            event.preventDefault();
-            onOpen(walkthrough, true);
-          }}
-          onClick={(event) => {
-            if (!event.metaKey && !event.ctrlKey) onOpen(walkthrough, false);
-          }}
-          onContextMenu={(event) => {
-            if (event.ctrlKey || event.metaKey) event.preventDefault();
-          }}
-          aria-label={walkthrough.title}
-        >
-          <span className="walkthrough-panel-item-icon">
-            <WalkthroughIcon />
-          </span>
-          <span className="walkthrough-panel-item-copy">
-            <strong>{walkthrough.title}</strong>
-            <span>
-              {walkthrough.authorLabel ?? "Agent"} · {shortOid(walkthrough.sourceOid)}
-            </span>
-          </span>
-        </button>
-      ))}
-    </div>
+    <nav className="review-tree-items" aria-label="レビュー文書">
+      <button
+        type="button"
+        className={`file-tree-row review-tree-item review-tree-pull-request${pullRequestActive ? " active" : ""}`}
+        onMouseDown={(event) => {
+          if (!event.metaKey && !event.ctrlKey) return;
+          event.preventDefault();
+          onOpenPullRequest(true);
+        }}
+        onClick={(event) => {
+          if (!event.metaKey && !event.ctrlKey) onOpenPullRequest(false);
+        }}
+        onContextMenu={(event) => {
+          if (event.ctrlKey || event.metaKey) event.preventDefault();
+        }}
+        title="Pull Request.md"
+        aria-label="Pull Request.md"
+      >
+        <span className="directory-chevron" aria-hidden="true" />
+        <span className="file-tree-icon-group" aria-hidden="true">
+          <FileEntryIcon path="Pull Request.md" kind="file" />
+        </span>
+        <span className="file-tree-label">Pull Request.md</span>
+      </button>
+      <button
+        type="button"
+        className="file-tree-row review-tree-item review-tree-walkthroughs"
+        aria-expanded={walkthroughsExpanded}
+        aria-label={`ウォークスルー ${walkthroughs.length}`}
+        disabled={walkthroughs.length === 0}
+        onClick={() => setWalkthroughsExpanded((expanded) => !expanded)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || !walkthroughsExpanded) return;
+          event.preventDefault();
+          setWalkthroughsExpanded(false);
+        }}
+      >
+        <span className="directory-chevron" aria-hidden="true">
+          {walkthroughsExpanded ? "▾" : "▸"}
+        </span>
+        <span className="file-tree-icon-group review-tree-walkthrough-icon" aria-hidden="true">
+          <WalkthroughIcon />
+        </span>
+        <span className="file-tree-label">ウォークスルー</span>
+        <span className="review-tree-count">{walkthroughs.length}</span>
+      </button>
+      {walkthroughsExpanded && (
+        <div className="review-tree-walkthrough-list">
+          {walkthroughs.map((walkthrough) => (
+            <button
+              type="button"
+              key={walkthrough.id}
+              className={`file-tree-row review-tree-item review-tree-walkthrough${activeWalkthroughId === walkthrough.id ? " active" : ""}`}
+              onMouseDown={(event) => {
+                if (!event.metaKey && !event.ctrlKey) return;
+                event.preventDefault();
+                onOpen(walkthrough, true);
+              }}
+              onClick={(event) => {
+                if (event.metaKey || event.ctrlKey) return;
+                onOpen(walkthrough, false);
+              }}
+              onContextMenu={(event) => {
+                if (event.ctrlKey || event.metaKey) event.preventDefault();
+              }}
+              title={`${walkthrough.title}\n${walkthrough.authorLabel ?? "Agent"} · ${walkthrough.sourceOid.slice(0, 8)}`}
+              aria-label={walkthrough.title}
+            >
+              <span className="directory-chevron" aria-hidden="true" />
+              <span
+                className="file-tree-icon-group review-tree-walkthrough-icon"
+                aria-hidden="true"
+              >
+                <WalkthroughIcon />
+              </span>
+              <span className="file-tree-label">{walkthrough.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </nav>
   );
 }

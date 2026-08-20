@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-20
+
 ### Added
 
 - Agentが作成・返信・編集・同期するcomment postへ、exact commitに固定したinline code referenceを付与できるprotocol v3
@@ -15,6 +17,14 @@
 - Walkthroughとcomment postがcode referenceのschema、検証、表示、navigationを共有
 - 小規模batchの直接調査と、絶対pathのJSON fileによるworker結果回収をSkill契約へ明記
 - comment / replyの64 KiB超過errorへ実際のUTF-8 byte上限を明記
+- review sidebarをExplorerとCommentsの二階層へ整理し、PR本文、Walkthrough、repository fileを一つの
+  file treeとして扱うよう変更
+- Explorerと全文検索の切り替え時に、各viewの展開状態、検索語、scroll位置を保持
+
+### Fixed
+
+- Markdown previewの再描画後もtableの横scroll位置を保持
+- Markdownのinline codeとcode blockでfont sizeが不揃いになる表示を修正
 
 ## [0.2.0] - 2026-08-20
 
