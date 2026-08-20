@@ -90,6 +90,7 @@ function selectCommitOids(repositoryRoot: string, commitCount: number): string[]
     .filter(Boolean);
   const candidates = ["HEAD", ...refs];
   const visitedTips = new Set<string>();
+  const attempts: string[] = [];
 
   for (const candidate of candidates) {
     const tip = gitText(repositoryRoot, ["rev-parse", `${candidate}^{commit}`]).trim();
@@ -104,11 +105,16 @@ function selectCommitOids(repositoryRoot: string, commitCount: number): string[]
       .trim()
       .split("\n")
       .filter(Boolean);
+    attempts.push(`${candidate}=${tip.slice(0, 12)}:${commitOids.length}`);
     if (commitOids.length === commitCount) return commitOids.reverse();
   }
 
+  const topLevel = gitText(repositoryRoot, ["rev-parse", "--show-toplevel"]).trim();
+  const shallow = gitText(repositoryRoot, ["rev-parse", "--is-shallow-repository"]).trim();
   throw new Error(
-    `demo fixture requires ${commitCount} first-parent commits from HEAD or a local ref; fetch more Git history and retry`,
+    `demo fixture requires ${commitCount} first-parent commits from HEAD or a local ref; ` +
+      `repository=${topLevel}, shallow=${shallow}, attempts=${attempts.join(", ") || "none"}; ` +
+      "fetch more Git history and retry",
   );
 }
 
