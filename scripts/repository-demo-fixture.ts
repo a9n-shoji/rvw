@@ -91,6 +91,7 @@ function selectCommitOids(repositoryRoot: string, commitCount: number): string[]
   const candidates = ["HEAD", ...refs];
   const visitedTips = new Set<string>();
   const attempts: string[] = [];
+  let selection: { commitOids: string[]; changedFileCount: number } | null = null;
 
   for (const candidate of candidates) {
     const tip = gitText(repositoryRoot, ["rev-parse", `${candidate}^{commit}`]).trim();
@@ -105,11 +106,34 @@ function selectCommitOids(repositoryRoot: string, commitCount: number): string[]
       .trim()
       .split("\n")
       .filter(Boolean);
-    attempts.push(`${candidate}=${tip.slice(0, 12)}:${commitOids.length}`);
     if (commitOids.length === commitCount + 1) {
-      return commitOids.slice(0, commitCount).reverse();
+      const baseOid = commitOids[commitCount];
+      const headOid = commitOids[0];
+      if (!baseOid || !headOid) throw new Error(`demo fixture range is incomplete at ${candidate}`);
+      const changedFileCount = gitText(repositoryRoot, [
+        "diff",
+        "--name-only",
+        "-z",
+        baseOid,
+        headOid,
+      ])
+        .split("\0")
+        .filter(Boolean).length;
+      attempts.push(
+        `${candidate}=${tip.slice(0, 12)}:${commitOids.length}/${changedFileCount} changed`,
+      );
+      if (!selection || changedFileCount > selection.changedFileCount) {
+        selection = {
+          commitOids: commitOids.slice(0, commitCount).reverse(),
+          changedFileCount,
+        };
+      }
+      continue;
     }
+    attempts.push(`${candidate}=${tip.slice(0, 12)}:${commitOids.length}`);
   }
+
+  if (selection) return selection.commitOids;
 
   const topLevel = gitText(repositoryRoot, ["rev-parse", "--show-toplevel"]).trim();
   const shallow = gitText(repositoryRoot, ["rev-parse", "--is-shallow-repository"]).trim();
