@@ -40,7 +40,9 @@ New root posts and replies also append a database-wide event sequence. A long-ru
 task may consume that sequence with an opaque database-scoped cursor through `rvw comment watch`.
 rvw retains minimal event identifiers independently of deletable posts and owns only ordering and
 replay. The bundled Skill's task-local state script atomically owns its cursor, queue, leases, retries,
-self-event suppression, and repository-writer serialization. Separate tasks may consume the same log
+per-thread status post, self-event suppression, and repository-writer serialization. After claim, the
+task creates or restores one immediate acknowledgement and later edits that same normal post to the
+final outcome. Separate tasks may consume the same log
 with separate state. This terminal-bound consumer is not a daemon and rvw never starts it. A durable
 reply-idempotency ledger makes an exact caller-payload retry safe without introducing Agent session
 identity into comments.

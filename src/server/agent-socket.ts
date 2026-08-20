@@ -280,6 +280,15 @@ export async function dispatchAgentSocketRequest(
         input.reply as unknown as Parameters<RvwService["replyToComment"]>[1],
       );
     }
+    case "comment.edit": {
+      const input = parseOperationInput("comment.edit", request.input);
+      return await service.editCommentPost(input.uri, input.postId, {
+        body: input.edit.body,
+        ...(input.edit.relatedCommitOid === undefined
+          ? {}
+          : { relatedCommitOid: input.edit.relatedCommitOid }),
+      });
+    }
     case "comment.resolve": {
       const input = parseOperationInput("comment.resolve", request.input);
       return service.setCommentResolved(input.uri, true);

@@ -48,10 +48,14 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' recover --state '<TASK_STATE_DB>'
 node '<SKILL_DIR>/scripts/watch-state.mjs' status --state '<TASK_STATE_DB>'
 ```
 
+Both outputs expose `quarantinedBatches`. Before resuming intake, edit every extant `statusPostId` in
+those batches to `⚠️ 対応を継続できませんでした` with the recorded error. Repeating this exact edit is
+safe and prevents an interrupted third attempt from leaving `確認中` indefinitely.
+
 ## Start or resume intake
 
 1. Require `protocolVersion` 2 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
-   and `pullRequest.sync`; stop when `rvw agent status --json` selects `unavailable`.
+   `comment.edit`, and `pullRequest.sync`; stop when `rvw agent status --json` selects `unavailable`.
 2. Start `rvw comment watch --json-seq` when state has no cursor. Otherwise pass the exact saved cursor
    with `--after`. A cursorless start intentionally skips every existing comment.
 3. Parse each RFC 7464 frame and pass that single JSON value to `ingest` over closed stdin:
@@ -83,22 +87,48 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' claim \
   --pull-request '<PR_URL>'
 ```
 
-Give one fresh worker the raw comment URIs, policy, expected login, repository location, live head
-identity, and the claim's per-comment idempotency keys. Keep the parent as sole watcher and state owner.
-Accept only a final structured result containing outcomes, returned post IDs, commit OID, and push
-status. Do not post acknowledgements, progress, plans, or partial findings.
+Immediately acknowledge every extant claimed thread before delegating. Each operation contains a
+thread-stable `idempotencyKey` and nullable `statusPostId`:
 
-Finish the lease only after recording every returned post ID. This transaction completes the input
-batch, registers self-post suppression, and removes a self-event even when intake queued it before the
-worker returned:
+- When `statusPostId` is null, create exactly `🔎 確認中です…` with `rvw comment reply`. Pass the
+  operation key as `idempotencyKey`; omit `authorLabel` and `relatedCommitOid` so an uncertain retry has
+  the identical payload. Record the returned post with `ack` over closed stdin:
+
+```bash
+node '<SKILL_DIR>/scripts/watch-state.mjs' ack \
+  --state '<TASK_STATE_DB>' --lease '<LEASE_ID>'
+```
+
+Pass `{ "commentRef": "rvw://comment/...", "postId": "..." }`. This immediately suppresses the
+acknowledgement's own watch event, including when intake queued it first.
+
+- When `statusPostId` is present, replace that post with the same acknowledgement through
+  `rvw comment edit <URI> --post <STATUS_POST_ID> --stdin --json`; set `relatedCommitOid` to null. This
+  reuses one status reply when a human adds another reply to the same thread.
+
+Do not acknowledge a thread that disappeared before its initial read. Give one fresh worker the raw
+comment URIs, policy, expected login, repository location, and live head identity. Keep the parent as
+sole watcher and state owner. Accept only a final structured result with one concise outcome body per
+comment, commit OID, and push status. Do not post other progress, plans, or partial findings.
+
+Re-read each complete thread immediately before applying the result. Replace its recorded status post
+with exactly one final outcome:
+
+- `✅ 対応しました` followed by the change, commit, and test result.
+- `📝 調査結果` followed by the conclusion when no code change was made.
+- `⚠️ 対応を継続できませんでした` followed by the terminal reason.
+
+Finish the lease only after every required final edit succeeds:
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-state.mjs' complete \
   --state '<TASK_STATE_DB>' --lease '<LEASE_ID>'
 ```
 
-Pass `{ "postIds": ["..."] }` over closed stdin. If a thread disappeared before work, complete it with
-an empty list and report it as gone.
+Pass `{ "postIds": [] }` over closed stdin. The field remains available to suppress any exceptional
+additional task-created posts. If a thread or its recorded status post disappeared during work,
+complete it without creating a replacement and report it as gone. A watched status-post deletion
+clears the mapping and rotates its idempotency key, so a later human follow-up can create a fresh one.
 
 ## Choose the worker mode
 
@@ -115,9 +145,8 @@ repository, branch name alone, local Git author, remote name, or rvw `authorLabe
 
 ### Investigate and reply
 
-Inspect exact and surrounding source read-only, re-read the complete thread immediately before the
-final action, and add at most one concise final reply per affected comment. Use the idempotency key from
-the claim unchanged for that exact payload and record the returned post ID.
+Inspect exact and surrounding source read-only and return one concise final outcome per affected
+comment. The parent edits the recorded status post; do not add another final reply.
 
 ### Fix and push an owned PR
 
@@ -127,16 +156,19 @@ force-push without separate authorization. Before push, verify that the remote h
 live OID used as the work base. After an uncertain push result, read the remote head and commit before
 retrying; never repeat the implementation blindly.
 
-After GitHub exposes the pushed head, run `rvw pr sync --repository '<WORKTREE>' --stdin --json`. Give
-each `commentUpdates` item its claim-provided idempotency key and `resolve: false`. If no code change is
-appropriate, use standalone idempotent replies.
+After GitHub exposes the pushed head, run `rvw pr sync --repository '<WORKTREE>' --stdin --json`
+without comment updates. Then edit each status post with its final body and the synchronized head as
+`relatedCommitOid`. If no code change is appropriate, edit the status post without a related commit.
 
 ## Failure and stop
 
 Report a failed lease through `fail` with `{ "error": "...", "retryable": true }` over stdin. The
-state tool retains the same batch and idempotency keys, retries after about 10 seconds and then 1 minute,
-and quarantines it after the third failed attempt. Use `retryable: false` for permanent errors such as
-an idempotency conflict. Continue unrelated PRs.
+state tool retains the same batch, status posts, and idempotency keys, retries after about 10 seconds
+and then 1 minute, and quarantines it after the third failed attempt. Leave `🔎 確認中です…` unchanged
+for a scheduled retry. Before a non-retryable failure or the third failed attempt, edit every extant
+status post to the terminal warning form, then call `fail`. On a recovered retry, immediately restore
+the acknowledgement before work. `fail` returns affected operations when it quarantines a batch;
+`recover` and `status` expose all quarantined operations for restart cleanup. Continue unrelated PRs.
 
 On graceful stop, stop dispatching, let the active write operation reach a safe boundary, terminate the
 watch process, and report `status`. Resume with the stored cursor and `recover`; never start the same

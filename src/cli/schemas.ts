@@ -9,6 +9,7 @@ import {
 } from "../shared/constants.js";
 export {
   commentCreateInputSchema,
+  commentPostEditInputSchema,
   commentReplyInputSchema,
   pullRequestSyncInputSchema,
   walkthroughPublishInputSchema,

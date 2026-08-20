@@ -77,6 +77,13 @@ function openState(statePath, create) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS comment_statuses (
+      comment_ref TEXT PRIMARY KEY,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      post_id TEXT UNIQUE,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS operations (
       batch_id TEXT NOT NULL,
       comment_ref TEXT NOT NULL,
@@ -126,6 +133,63 @@ function setMeta(database, key, value) {
       "INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     )
     .run(key, value);
+}
+
+function ensureCommentStatus(database, commentRef, now) {
+  const existing = database
+    .prepare("SELECT * FROM comment_statuses WHERE comment_ref = ?")
+    .get(commentRef);
+  if (existing) return existing;
+  const legacyOperation = database
+    .prepare(
+      `SELECT o.idempotency_key
+      FROM operations o
+      JOIN batches b ON b.id = o.batch_id
+      WHERE o.comment_ref = ? AND b.status IN ('pending', 'in_flight')
+      ORDER BY b.created_at DESC LIMIT 1`,
+    )
+    .get(commentRef);
+  const idempotencyKey =
+    legacyOperation?.idempotency_key ?? `${getMeta(database, "task_id")}:status:${randomUUID()}`;
+  database
+    .prepare(
+      `INSERT INTO comment_statuses(
+        comment_ref, idempotency_key, post_id, created_at, updated_at
+      ) VALUES (?, ?, NULL, ?, ?)`,
+    )
+    .run(commentRef, idempotencyKey, now, now);
+  return database.prepare("SELECT * FROM comment_statuses WHERE comment_ref = ?").get(commentRef);
+}
+
+function batchStatusOperations(database, batchId) {
+  return database
+    .prepare(
+      `SELECT DISTINCT e.comment_ref, s.post_id
+      FROM events e
+      LEFT JOIN comment_statuses s ON s.comment_ref = e.comment_ref
+      WHERE e.batch_id = ? ORDER BY e.comment_ref`,
+    )
+    .all(batchId)
+    .map((operation) => ({
+      commentRef: operation.comment_ref,
+      statusPostId: operation.post_id ?? null,
+    }));
+}
+
+function quarantinedBatches(database) {
+  return database
+    .prepare(
+      `SELECT id, pull_request_url, attempts, last_error
+      FROM batches WHERE status = 'quarantined' ORDER BY created_at`,
+    )
+    .all()
+    .map((batch) => ({
+      batchId: batch.id,
+      pullRequest: batch.pull_request_url,
+      attempts: Number(batch.attempts),
+      error: batch.last_error,
+      operations: batchStatusOperations(database, batch.id),
+    }));
 }
 
 function initialize(database, options) {
@@ -225,6 +289,23 @@ function ingestEvent(database, frame) {
         now,
         now,
       );
+    if (event.deleted) {
+      const commentStatus = database
+        .prepare("SELECT comment_ref FROM comment_statuses WHERE post_id = ?")
+        .get(event.postId);
+      if (commentStatus) {
+        database
+          .prepare(
+            `UPDATE comment_statuses SET post_id = NULL, idempotency_key = ?, updated_at = ?
+            WHERE comment_ref = ?`,
+          )
+          .run(
+            `${getMeta(database, "task_id")}:status:${randomUUID()}`,
+            now,
+            commentStatus.comment_ref,
+          );
+      }
+    }
     setMeta(database, "last_sequence", String(event.sequence));
     setMeta(database, "cursor", frame.cursor);
     return {
@@ -272,7 +353,9 @@ function listPending(database) {
     .map((row) => {
       const commentRefs = row.batch_id
         ? database
-            .prepare("SELECT comment_ref FROM operations WHERE batch_id = ? ORDER BY comment_ref")
+            .prepare(
+              "SELECT DISTINCT comment_ref FROM events WHERE batch_id = ? ORDER BY comment_ref",
+            )
             .all(row.batch_id)
             .map((item) => item.comment_ref)
         : database
@@ -317,11 +400,7 @@ function createBatch(database, pullRequestUrl, now) {
     )
     .run(batchId, now, pullRequestUrl);
   const commentRefs = [...new Set(events.map((event) => event.comment_ref))];
-  for (let index = 0; index < commentRefs.length; index += 1) {
-    database
-      .prepare("INSERT INTO operations(batch_id, comment_ref, idempotency_key) VALUES (?, ?, ?)")
-      .run(batchId, commentRefs[index], `${getMeta(database, "task_id")}:${batchId}:${index + 1}`);
-  }
+  for (const commentRef of commentRefs) ensureCommentStatus(database, commentRef, now);
   return batchId;
 }
 
@@ -372,14 +451,23 @@ function claim(database, pullRequestUrl, writeKey) {
         commentRef: event.comment_ref,
         pullRequestUrl: event.pull_request_url,
       }));
+    const commentRefs = database
+      .prepare("SELECT DISTINCT comment_ref FROM events WHERE batch_id = ? ORDER BY comment_ref")
+      .all(batchId)
+      .map((operation) => operation.comment_ref);
+    for (const commentRef of commentRefs) ensureCommentStatus(database, commentRef, now);
     const operations = database
       .prepare(
-        "SELECT comment_ref, idempotency_key FROM operations WHERE batch_id = ? ORDER BY comment_ref",
+        `SELECT DISTINCT e.comment_ref, s.idempotency_key, s.post_id
+        FROM events e
+        JOIN comment_statuses s ON s.comment_ref = e.comment_ref
+        WHERE e.batch_id = ? ORDER BY e.comment_ref`,
       )
       .all(batchId)
       .map((operation) => ({
         commentRef: operation.comment_ref,
         idempotencyKey: operation.idempotency_key,
+        statusPostId: operation.post_id,
       }));
     return {
       leaseId,
@@ -389,6 +477,45 @@ function claim(database, pullRequestUrl, writeKey) {
       writeKey: canonicalWriteKey ?? null,
       events,
       operations,
+    };
+  });
+}
+
+function acknowledge(database, leaseId, input) {
+  if (typeof input.commentRef !== "string" || input.commentRef.length === 0) {
+    fail("commentRef is required");
+  }
+  if (typeof input.postId !== "string" || input.postId.length === 0) fail("postId is required");
+  return transaction(database, () => {
+    const batch = database
+      .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
+      .get(leaseId);
+    if (!batch) fail("Active lease was not found");
+    const operation = database
+      .prepare("SELECT 1 AS present FROM events WHERE batch_id = ? AND comment_ref = ? LIMIT 1")
+      .get(batch.id, input.commentRef);
+    if (!operation) fail("Comment is not part of the active lease");
+    const now = new Date().toISOString();
+    const status = ensureCommentStatus(database, input.commentRef, now);
+    if (status.post_id !== null && status.post_id !== input.postId) {
+      fail("Comment already has another status post");
+    }
+    database
+      .prepare("UPDATE comment_statuses SET post_id = ?, updated_at = ? WHERE comment_ref = ?")
+      .run(input.postId, now, input.commentRef);
+    database
+      .prepare("INSERT OR IGNORE INTO suppressed_posts(post_id, created_at) VALUES (?, ?)")
+      .run(input.postId, now);
+    database
+      .prepare(
+        "UPDATE events SET status = 'completed', updated_at = ? WHERE post_id = ? AND status = 'pending'",
+      )
+      .run(now, input.postId);
+    return {
+      batchId: batch.id,
+      commentRef: input.commentRef,
+      statusPostId: input.postId,
+      status: status.post_id === null ? "recorded" : "existing",
     };
   });
 }
@@ -461,6 +588,7 @@ function failLease(database, leaseId, input) {
       status: quarantine ? "quarantined" : "pending",
       attempts,
       nextAttemptAt,
+      ...(quarantine ? { operations: batchStatusOperations(database, batch.id) } : {}),
     };
   });
 }
@@ -488,7 +616,12 @@ function recover(database) {
       if (quarantine) quarantined += 1;
       else pending += 1;
     }
-    return { recovered: batches.length, pending, quarantined };
+    return {
+      recovered: batches.length,
+      pending,
+      quarantined,
+      quarantinedBatches: quarantinedBatches(database),
+    };
   });
 }
 
@@ -516,6 +649,7 @@ function status(database) {
       quarantined: batchCounts.quarantined ?? 0,
       unbatchedEvents: Number(unbatched.count),
     },
+    quarantinedBatches: quarantinedBatches(database),
   };
 }
 
@@ -558,6 +692,10 @@ async function main() {
     }
     if (command === "complete") {
       write({ ok: true, ...complete(database, required(options, "lease"), await readInput()) });
+      return;
+    }
+    if (command === "ack") {
+      write({ ok: true, ...acknowledge(database, required(options, "lease"), await readInput()) });
       return;
     }
     if (command === "fail") {

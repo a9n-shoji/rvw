@@ -2,6 +2,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 const script = path.resolve("skills/rvw-watch-comments/scripts/watch-state.mjs");
@@ -20,7 +21,7 @@ function ingest(state: string, frame: unknown) {
 }
 
 describe("rvw-watch-comments task state", () => {
-  it("atomically queues cursors and suppresses a self event received before completion", () => {
+  it("records one durable status post per thread and suppresses its event immediately", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-state-")), "task.db");
     run(state, "init", ["--expected-login", "reviewer", "--own-mode", "fix-and-push"]);
     ingest(state, {
@@ -60,8 +61,10 @@ describe("rvw-watch-comments task state", () => {
     ]);
     expect(claimed).toMatchObject({
       attempts: 1,
-      operations: [{ commentRef: "rvw://comment/comment-1" }],
+      operations: [{ commentRef: "rvw://comment/comment-1", statusPostId: null }],
     });
+    const acknowledgementKey = (claimed.operations as Array<{ idempotencyKey: string }>)[0]!
+      .idempotencyKey;
 
     ingest(state, {
       type: "comment-posted",
@@ -77,8 +80,14 @@ describe("rvw-watch-comments task state", () => {
         deleted: false,
       },
     });
+    expect(
+      run(state, "ack", ["--lease", String(claimed.leaseId)], {
+        commentRef: "rvw://comment/comment-1",
+        postId: "agent-post",
+      }),
+    ).toMatchObject({ status: "recorded", statusPostId: "agent-post" });
     run(state, "complete", ["--lease", String(claimed.leaseId)], {
-      postIds: ["agent-post"],
+      postIds: [],
     });
 
     expect(run(state, "list")).toMatchObject({ pending: [] });
@@ -86,6 +95,67 @@ describe("rvw-watch-comments task state", () => {
       cursor: "cursor-2",
       batches: { inFlight: 0, unbatchedEvents: 0 },
     });
+
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-3",
+      event: {
+        sequence: 3,
+        postId: "human-follow-up",
+        commentRef: "rvw://comment/comment-1",
+        pullRequestUrl: "https://github.com/acme/repo/pull/1",
+        createdAt: "2026-08-20T00:00:02.000Z",
+        deleted: false,
+      },
+    });
+    const followUp = run(state, "claim", ["--pull-request", "https://github.com/acme/repo/pull/1"]);
+    expect(followUp).toMatchObject({
+      operations: [
+        {
+          commentRef: "rvw://comment/comment-1",
+          idempotencyKey: acknowledgementKey,
+          statusPostId: "agent-post",
+        },
+      ],
+    });
+    run(state, "complete", ["--lease", String(followUp.leaseId)], { postIds: [] });
+
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-4",
+      event: {
+        sequence: 4,
+        postId: "agent-post",
+        commentRef: "rvw://comment/comment-1",
+        pullRequestUrl: "https://github.com/acme/repo/pull/1",
+        createdAt: "2026-08-20T00:00:03.000Z",
+        deleted: true,
+      },
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-5",
+      event: {
+        sequence: 5,
+        postId: "human-after-status-deletion",
+        commentRef: "rvw://comment/comment-1",
+        pullRequestUrl: "https://github.com/acme/repo/pull/1",
+        createdAt: "2026-08-20T00:00:04.000Z",
+        deleted: false,
+      },
+    });
+    const afterDeletion = run(state, "claim", [
+      "--pull-request",
+      "https://github.com/acme/repo/pull/1",
+    ]);
+    const replacement = (
+      afterDeletion.operations as Array<{
+        idempotencyKey: string;
+        statusPostId: string | null;
+      }>
+    )[0]!;
+    expect(replacement.statusPostId).toBeNull();
+    expect(replacement.idempotencyKey).not.toBe(acknowledgementKey);
   });
 
   it("recovers a lease with the same idempotency key and serializes repository writers", () => {
@@ -149,5 +219,99 @@ describe("rvw-watch-comments task state", () => {
     expect((retried.operations as Array<{ idempotencyKey: string }>)[0]!.idempotencyKey).toBe(
       firstKey,
     );
+  });
+
+  it("migrates the idempotency key of an unfinished legacy batch", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-state-")), "task.db");
+    const pullRequest = "https://github.com/acme/repo/pull/4";
+    const commentRef = "rvw://comment/comment-4";
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "11223344556677889900aabbccddeeff",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "human-post-4",
+        commentRef,
+        pullRequestUrl: pullRequest,
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+    const first = run(state, "claim", ["--pull-request", pullRequest]);
+    const legacyKey = "legacy-task:batch:1";
+    const database = new DatabaseSync(state);
+    database.prepare("DELETE FROM comment_statuses WHERE comment_ref = ?").run(commentRef);
+    database
+      .prepare("INSERT INTO operations(batch_id, comment_ref, idempotency_key) VALUES (?, ?, ?)")
+      .run(String(first.batchId), commentRef, legacyKey);
+    database.close();
+
+    run(state, "recover");
+    const migrated = run(state, "claim", ["--pull-request", pullRequest]);
+    expect(migrated).toMatchObject({
+      operations: [{ commentRef, idempotencyKey: legacyKey, statusPostId: null }],
+    });
+  });
+
+  it("surfaces status posts for an interrupted third attempt that becomes quarantined", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-state-")), "task.db");
+    const pullRequest = "https://github.com/acme/repo/pull/3";
+    const commentRef = "rvw://comment/comment-3";
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "00112233445566778899aabbccddeeff",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "human-post-3",
+        commentRef,
+        pullRequestUrl: pullRequest,
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+
+    const first = run(state, "claim", ["--pull-request", pullRequest]);
+    run(state, "ack", ["--lease", String(first.leaseId)], {
+      commentRef,
+      postId: "agent-status-3",
+    });
+    expect(run(state, "recover")).toMatchObject({ pending: 1, quarantined: 0 });
+    run(state, "claim", ["--pull-request", pullRequest]);
+    expect(run(state, "recover")).toMatchObject({ pending: 1, quarantined: 0 });
+    run(state, "claim", ["--pull-request", pullRequest]);
+
+    expect(run(state, "recover")).toMatchObject({
+      pending: 0,
+      quarantined: 1,
+      quarantinedBatches: [
+        {
+          pullRequest,
+          operations: [{ commentRef, statusPostId: "agent-status-3" }],
+        },
+      ],
+    });
+    expect(run(state, "status")).toMatchObject({
+      batches: { quarantined: 1 },
+      quarantinedBatches: [
+        {
+          pullRequest,
+          operations: [{ commentRef, statusPostId: "agent-status-3" }],
+        },
+      ],
+    });
   });
 });

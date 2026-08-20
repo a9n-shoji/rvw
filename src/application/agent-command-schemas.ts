@@ -93,6 +93,10 @@ export const commentReplyInputSchema = z
   })
   .strict();
 
+export const commentPostEditInputSchema = commentReplyInputSchema
+  .pick({ body: true, relatedCommitOid: true })
+  .strict();
+
 export const pullRequestSyncInputSchema = z
   .object({
     pullRequest: nonEmptyString,
@@ -196,6 +200,9 @@ export const agentCommandInputSchemas = {
   "comment.create": commentCreateInputSchema,
   "comment.get": z.object({ uri: commentUri, live: z.boolean().default(false) }).strict(),
   "comment.reply": z.object({ uri: commentUri, reply: commentReplyInputSchema }).strict(),
+  "comment.edit": z
+    .object({ uri: commentUri, postId: nonEmptyString, edit: commentPostEditInputSchema })
+    .strict(),
   "comment.resolve": z.object({ uri: commentUri }).strict(),
   "comment.reopen": z.object({ uri: commentUri }).strict(),
   "walkthrough.get": z.object({ uri: walkthroughUri }).strict(),

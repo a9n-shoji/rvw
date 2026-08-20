@@ -137,6 +137,24 @@ describe("Agent socket", () => {
     expect(createCommentForReference).toHaveBeenCalledOnce();
   });
 
+  it("routes a strict comment post edit through the running rvw service", async () => {
+    const editCommentPost = vi.fn().mockResolvedValue({ id: "post-1", body: "✅ Done" });
+    const input = {
+      uri: "rvw://comment/10000000-0000-4000-8000-000000000008",
+      postId: "post-1",
+      edit: { body: "✅ Done", relatedCommitOid: "a".repeat(40) },
+    };
+
+    await expect(
+      dispatchAgentSocketRequest({ editCommentPost } as unknown as RvwService, {
+        protocolVersion: 1,
+        operation: "comment.edit",
+        input,
+      }),
+    ).resolves.toEqual({ id: "post-1", body: "✅ Done" });
+    expect(editCommentPost).toHaveBeenCalledWith(input.uri, input.postId, input.edit);
+  });
+
   it("rejects a different explicit database before dispatching the operation", async () => {
     const setCommentResolved = vi.fn();
 

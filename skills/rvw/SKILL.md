@@ -1,6 +1,6 @@
 ---
 name: rvw
-description: Create, inspect, address, reply to, resolve, reopen, and synchronize rvw review comments through the local rvw CLI. Use when a request asks an Agent to record review findings in rvw, contains rvw://comment references, asks to handle feedback recorded in rvw, or asks to synchronize rvw after pushed changes. Do not use this Skill to publish implementation walkthroughs; use rvw-walkthrough for that task.
+description: Create, inspect, address, reply to, edit, resolve, reopen, and synchronize rvw review comments through the local rvw CLI. Use when a request asks an Agent to record review findings in rvw, contains rvw://comment references, asks to handle feedback recorded in rvw, or asks to synchronize rvw after pushed changes. Do not use this Skill to publish implementation walkthroughs; use rvw-walkthrough for that task.
 ---
 
 # rvw review comments
@@ -151,6 +151,22 @@ optional for ordinary interactive work and required for automated or resumable w
 only for the same comment and exact caller payload. If the original post was deleted, retry fails
 without recreating it. Without a key, an uncertain failure still requires re-reading the comment before
 retrying to avoid a duplicate reply.
+
+To replace a post whose ID you obtained from rvw, require `comment.edit` and use:
+
+```bash
+rvw comment edit '<COMMENT_URI>' --post '<POST_ID>' --stdin --json <<'RVW_JSON'
+{
+  "body": "✅ 対応しました\n\nChange and validation summary.",
+  "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567"
+}
+RVW_JSON
+```
+
+This is an exact replacement, so retrying the same edit after an uncertain transport result is safe.
+Omit `relatedCommitOid` to preserve the current association, pass null to clear it, or pass an
+available PR commit to replace it. Edit only a post the current task was explicitly authorized to
+change; automated watchers must use the status post ID recorded in their task-local state.
 
 A resolved thread accepts replies, and replying does not reopen it. Likewise, a `pr sync` reply leaves
 the current state unchanged unless its update has `resolve: true`. Use `comment reopen` as a separate,
