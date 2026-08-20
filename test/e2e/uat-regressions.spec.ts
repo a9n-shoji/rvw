@@ -719,6 +719,48 @@ test("defaults Markdown to preview and preserves an explicit mode per document t
   );
 });
 
+test("preserves a Markdown table's horizontal scroll when the preview rerenders", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 640, height: 720 });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "全文", exact: true }).click();
+  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("button", { name: "README.md", exact: true }).click();
+
+  const sourceLine = page
+    .locator('.markdown-preview [data-rvw-source-start-line="6"][data-rvw-source-leaf="true"]')
+    .first();
+  await expect(sourceLine).toBeVisible();
+  await sourceLine.evaluate((element) => {
+    const text = element.firstChild;
+    if (!(text instanceof Text) || text.data.length === 0) {
+      throw new Error("Expected a non-empty mapped Markdown text node.");
+    }
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  });
+
+  const tableScroller = page.locator(".markdown-preview .markdown-table-scroll");
+  const expectedScrollLeft = await tableScroller.evaluate((element) => {
+    const maximum = element.scrollWidth - element.clientWidth;
+    if (maximum <= 0) throw new Error("Expected the Markdown table to overflow horizontally.");
+    element.scrollLeft = Math.min(80, maximum);
+    return element.scrollLeft;
+  });
+  expect(expectedScrollLeft).toBeGreaterThan(0);
+
+  await page.getByRole("button", { name: "L6へコメント", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "README.md · L6へコメント" })).toBeVisible();
+  await expect
+    .poll(() => tableScroller.evaluate((element) => element.scrollLeft))
+    .toBe(expectedScrollLeft);
+});
+
 test("keeps full and diff file headers directly below the sticky document tabs", async ({
   page,
 }) => {
