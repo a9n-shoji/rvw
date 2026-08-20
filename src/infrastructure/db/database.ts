@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import envPaths from "env-paths";
 import type {
+  CodeReference,
   CommentPost,
   CommentPostEvent,
   CommentTarget,
@@ -119,12 +120,24 @@ function mapPullRequest(row: DbRow): PullRequest {
   };
 }
 
-function mapCommentPost(row: DbRow): CommentPost {
+function mapCodeReference(row: DbRow): CodeReference {
+  return {
+    id: stringValue(row, "reference_id"),
+    label: stringValue(row, "label"),
+    path: stringValue(row, "file_path"),
+    startLine: nullableNumber(row, "start_line"),
+    endLine: nullableNumber(row, "end_line"),
+    description: nullableString(row, "description"),
+  };
+}
+
+function mapCommentPost(row: DbRow, references: CodeReference[] = []): CommentPost {
   return {
     id: stringValue(row, "id"),
     commentId: stringValue(row, "comment_id"),
     body: stringValue(row, "body"),
     relatedCommitOid: nullableString(row, "related_commit_oid"),
+    references,
     authorLabel: nullableString(row, "author_label"),
     isRoot: numberValue(row, "is_root") === 1,
     createdAt: stringValue(row, "created_at"),
@@ -273,6 +286,8 @@ export interface NewCommentInput {
   createdHeadOid: string;
   target: CommentTarget;
   body: string;
+  relatedCommitOid?: string | null;
+  references?: CodeReference[];
   authorLabel?: string | null;
 }
 
@@ -281,6 +296,7 @@ export interface CommentUpdateInput {
   reply: string;
   resolve: boolean;
   authorLabel?: string | null;
+  references?: CodeReference[];
   idempotencyKey?: string;
   idempotencyRequestHash?: string;
 }
@@ -707,6 +723,18 @@ export class RvwDatabase {
         "SELECT count(*) AS count FROM comment_posts WHERE comment_id IN (SELECT id FROM comments WHERE pull_request_id = ?)",
       )
       .get(pullRequestId) as DbRow;
+    const commentReferences = this.database
+      .prepare(
+        `SELECT count(*) AS count
+         FROM comment_post_references
+         WHERE post_id IN (
+           SELECT posts.id
+           FROM comment_posts AS posts
+           JOIN comments ON comments.id = posts.comment_id
+           WHERE comments.pull_request_id = ?
+         )`,
+      )
+      .get(pullRequestId) as DbRow;
     const targets = this.database
       .prepare(
         "SELECT count(*) AS count FROM comment_targets WHERE comment_id IN (SELECT id FROM comments WHERE pull_request_id = ?)",
@@ -723,6 +751,7 @@ export class RvwDatabase {
     return {
       comments: numberValue(comments, "count"),
       posts: numberValue(posts, "count"),
+      commentReferences: numberValue(commentReferences, "count"),
       targets: numberValue(targets, "count"),
       walkthroughs: numberValue(walkthroughs, "count"),
       walkthroughReferences: numberValue(walkthroughReferences, "count"),
@@ -735,21 +764,52 @@ export class RvwDatabase {
     this.database.prepare("DELETE FROM walkthroughs WHERE pull_request_id = ?").run(pullRequestId);
   }
 
-  private listWalkthroughReferences(walkthroughId: string): WalkthroughReference[] {
+  private codeReferenceStorage(kind: "comment-post" | "walkthrough"): {
+    table: "comment_post_references" | "walkthrough_references";
+    ownerColumn: "post_id" | "walkthrough_id";
+  } {
+    return kind === "comment-post"
+      ? { table: "comment_post_references", ownerColumn: "post_id" }
+      : { table: "walkthrough_references", ownerColumn: "walkthrough_id" };
+  }
+
+  private listCodeReferences(
+    kind: "comment-post" | "walkthrough",
+    ownerId: string,
+  ): CodeReference[] {
+    const { table, ownerColumn } = this.codeReferenceStorage(kind);
     return (
       this.database
-        .prepare(
-          "SELECT * FROM walkthrough_references WHERE walkthrough_id = ? ORDER BY sort_order ASC",
-        )
-        .all(walkthroughId) as DbRow[]
-    ).map((row) => ({
-      id: stringValue(row, "reference_id"),
-      label: stringValue(row, "label"),
-      path: stringValue(row, "file_path"),
-      startLine: nullableNumber(row, "start_line"),
-      endLine: nullableNumber(row, "end_line"),
-      description: nullableString(row, "description"),
-    }));
+        .prepare(`SELECT * FROM ${table} WHERE ${ownerColumn} = ? ORDER BY sort_order ASC`)
+        .all(ownerId) as DbRow[]
+    ).map(mapCodeReference);
+  }
+
+  private insertCodeReferences(
+    kind: "comment-post" | "walkthrough",
+    ownerId: string,
+    references: CodeReference[],
+  ): void {
+    if (references.length === 0) return;
+    const { table, ownerColumn } = this.codeReferenceStorage(kind);
+    const insertReference = this.database.prepare(
+      `INSERT INTO ${table}(
+        ${ownerColumn}, reference_id, label, file_path, start_line, end_line,
+        description, sort_order
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    references.forEach((reference, index) => {
+      insertReference.run(
+        ownerId,
+        reference.id,
+        reference.label,
+        reference.path,
+        reference.startLine,
+        reference.endLine,
+        reference.description,
+        index,
+      );
+    });
   }
 
   private mapWalkthrough(row: DbRow): Walkthrough {
@@ -763,7 +823,7 @@ export class RvwDatabase {
       body: stringValue(row, "body"),
       authorLabel: nullableString(row, "author_label"),
       diagramBindings: stringRecordValue(row, "diagram_bindings_json"),
-      references: this.listWalkthroughReferences(id),
+      references: this.listCodeReferences("walkthrough", id),
       createdAt: stringValue(row, "created_at"),
     };
   }
@@ -819,7 +879,7 @@ export class RvwDatabase {
           JSON.stringify(input.diagramBindings),
           now,
         );
-      this.insertWalkthroughReferences(id, input.references);
+      this.insertCodeReferences("walkthrough", id, input.references);
       this.incrementChangeSequence();
     });
     const walkthrough = this.getWalkthrough(id);
@@ -827,30 +887,6 @@ export class RvwDatabase {
       throw new RvwError("DATABASE_ERROR", "保存したwalkthroughを読み出せません。");
     }
     return walkthrough;
-  }
-
-  private insertWalkthroughReferences(
-    walkthroughId: string,
-    references: WalkthroughReference[],
-  ): void {
-    const insertReference = this.database.prepare(
-      `INSERT INTO walkthrough_references(
-        walkthrough_id, reference_id, label, file_path, start_line, end_line,
-        description, sort_order
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    references.forEach((reference, index) => {
-      insertReference.run(
-        walkthroughId,
-        reference.id,
-        reference.label,
-        reference.path,
-        reference.startLine,
-        reference.endLine,
-        reference.description,
-        index,
-      );
-    });
   }
 
   updateWalkthrough(id: string, input: Omit<NewWalkthroughInput, "pullRequestId">): Walkthrough {
@@ -873,7 +909,7 @@ export class RvwDatabase {
         throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
       }
       this.database.prepare("DELETE FROM walkthrough_references WHERE walkthrough_id = ?").run(id);
-      this.insertWalkthroughReferences(id, input.references);
+      this.insertCodeReferences("walkthrough", id, input.references);
       this.incrementChangeSequence();
     });
     const walkthrough = this.getWalkthrough(id);
@@ -945,9 +981,18 @@ export class RvwDatabase {
       this.insertCommentTarget(id, input.target);
       this.database
         .prepare(
-          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, 1, ?, ?)",
+          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
         )
-        .run(postId, id, input.body, input.authorLabel ?? null, now, now);
+        .run(
+          postId,
+          id,
+          input.body,
+          input.relatedCommitOid ?? null,
+          input.authorLabel ?? null,
+          now,
+          now,
+        );
+      this.insertCodeReferences("comment-post", postId, input.references ?? []);
       this.database
         .prepare(
           `INSERT INTO comment_post_events(
@@ -1146,6 +1191,7 @@ export class RvwDatabase {
           commentId: comment.id,
           body: stringValue(row, "root_body"),
           relatedCommitOid: nullableString(row, "root_related_commit_oid"),
+          references: [],
           authorLabel: nullableString(row, "root_author_label"),
           isRoot: true,
           createdAt: stringValue(row, "root_created_at"),
@@ -1164,7 +1210,16 @@ export class RvwDatabase {
           "SELECT * FROM comment_posts WHERE comment_id = ? ORDER BY is_root DESC, created_at ASC, id ASC",
         )
         .all(commentId) as DbRow[]
-    ).map(mapCommentPost);
+    ).map((row) => {
+      const postId = stringValue(row, "id");
+      return mapCommentPost(row, this.listCodeReferences("comment-post", postId));
+    });
+  }
+
+  private getCommentPost(postId: string): CommentPost | null {
+    const row = this.database.prepare("SELECT * FROM comment_posts WHERE id = ?").get(postId) as
+      DbRow | undefined;
+    return row ? mapCommentPost(row, this.listCodeReferences("comment-post", postId)) : null;
   }
 
   insertReply(
@@ -1173,6 +1228,7 @@ export class RvwDatabase {
       body: string;
       relatedCommitOid?: string | null;
       authorLabel?: string | null;
+      references?: CodeReference[];
       idempotencyKey?: string;
       idempotencyRequestHash?: string;
     },
@@ -1201,6 +1257,7 @@ export class RvwDatabase {
                 body: input.body,
                 relatedCommitOid,
                 authorLabel,
+                references: input.references ?? [],
               }),
             ));
       if (idempotencyKeyHash !== null) {
@@ -1215,17 +1272,14 @@ export class RvwDatabase {
             );
           }
           const postId = stringValue(existingRow, "post_id");
-          const postRow = this.database
-            .prepare("SELECT * FROM comment_posts WHERE id = ?")
-            .get(postId) as DbRow | undefined;
-          if (!postRow) {
+          const existing = this.getCommentPost(postId);
+          if (!existing) {
             throw new RvwError(
               "IDEMPOTENCY_RESULT_DELETED",
               "このidempotencyKeyで作成したcomment replyは既に削除されています。",
               { details: { postId } },
             );
           }
-          const existing = mapCommentPost(postRow);
           result = existing;
           return;
         }
@@ -1237,6 +1291,7 @@ export class RvwDatabase {
           "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
         )
         .run(id, commentId, input.body, relatedCommitOid, authorLabel, now, now);
+      this.insertCodeReferences("comment-post", id, input.references ?? []);
       this.database
         .prepare(
           `INSERT INTO comment_post_events(
@@ -1258,6 +1313,7 @@ export class RvwDatabase {
         commentId,
         body: input.body,
         relatedCommitOid,
+        references: input.references ?? [],
         authorLabel,
         isRoot: false,
         createdAt: now,
@@ -1275,6 +1331,7 @@ export class RvwDatabase {
     postId: string,
     body: string,
     relatedCommitOid?: string | null,
+    references?: CodeReference[],
   ): CommentPost {
     const now = new Date().toISOString();
     this.immediateTransaction(() => {
@@ -1296,10 +1353,14 @@ export class RvwDatabase {
           status: 404,
         });
       }
+      if (references !== undefined) {
+        this.database.prepare("DELETE FROM comment_post_references WHERE post_id = ?").run(postId);
+        this.insertCodeReferences("comment-post", postId, references);
+      }
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
       this.incrementChangeSequence();
     });
-    const post = this.listCommentPosts(commentId).find((candidate) => candidate.id === postId);
+    const post = this.getCommentPost(postId);
     if (!post) {
       throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
         status: 404,
@@ -1378,6 +1439,7 @@ export class RvwDatabase {
           {
             body: update.reply,
             relatedCommitOid,
+            references: update.references ?? [],
             authorLabel: update.authorLabel ?? "Agent",
             ...(update.idempotencyKey === undefined
               ? {}

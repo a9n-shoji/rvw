@@ -5,7 +5,10 @@ const primaryWalkthrough = "注文作成フロー：HTTPからtransactional outb
 const markdownShowcase = "Markdown表現デモ：レビューコメントのショーケース";
 
 async function selectMappedText(locator: Locator, firstCharacterOnly = false): Promise<void> {
-  await locator.scrollIntoViewIfNeeded();
+  await expect(locator).toBeVisible();
+  await locator.evaluate((element) => {
+    element.scrollIntoView({ block: "center", inline: "nearest" });
+  });
   await expect(locator).toBeVisible();
   await locator.evaluate((element, selectFirstCharacter) => {
     const text = element.firstChild;
@@ -1604,6 +1607,7 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
     "",
     "Open [the fixture source](src/fixture.ts).",
     "[Walkthrough-only reference](rvw-ref:comment-reference)",
+    "Inspect [the typed fixture](rvw-ref:typed-fixture).",
     "",
     "![Order lifecycle](docs/order-lifecycle.svg)",
     "![External evidence](https://example.invalid/comment.png)",
@@ -1627,6 +1631,17 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
         endLine: 5,
       },
       body,
+      relatedCommitOid: view.headOid,
+      references: [
+        {
+          id: "typed-fixture",
+          label: "Fixture implementation",
+          path: "src/fixture.ts",
+          startLine: 1,
+          endLine: 2,
+          description: "The implementation discussed by this post",
+        },
+      ],
       authorLabel: "Codex · Markdown",
     },
   });
@@ -1696,6 +1711,8 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await expect(
     sidebarMarkdown.getByRole("link", { name: "Walkthrough-only reference" }),
   ).toHaveCount(0);
+  const typedReference = sidebarMarkdown.getByRole("button", { name: /the typed fixture/ });
+  await expect(typedReference).toHaveAttribute("title", "src/fixture.ts:L1–2");
   await expect(sidebarMarkdown.locator("[data-rvw-source-start-line]")).toHaveCount(0);
   await expect(sidebarMarkdown.locator("[data-rvw-composer-anchor]")).toHaveCount(0);
   await expect(
@@ -1745,6 +1762,22 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await expect(sidebarDiagram.locator("svg")).toBeVisible();
   await expect(sidebarDiagram.locator("[data-walkthrough-reference-id]")).toHaveCount(0);
 
+  const commitPicker = page.getByRole("button", { name: /^対象commit:/ });
+  const initialCommitSelection = await commitPicker.getAttribute("aria-label");
+  await typedReference.click();
+  await expect(page.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.locator('diffs-container[data-search-target-line="1"]')).toBeVisible();
+  await expect(
+    page.locator('diffs-container [data-line="1"][data-selected-line="first"]'),
+  ).toBeVisible();
+  await expect(
+    page.locator('diffs-container [data-line="2"][data-selected-line="last"]'),
+  ).toBeVisible();
+  await expect(commitPicker).toHaveAttribute("aria-label", initialCommitSelection!);
+
   await page.getByRole("button", { name: "全ファイル", exact: true }).click();
   await page.locator(".file-tree").getByRole("button", { name: "README.md", exact: true }).click();
   const inlineThread = page.locator(
@@ -1753,16 +1786,7 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await expect(inlineThread).toBeVisible();
   await expect(inlineThread.getByRole("heading", { name: "Agent Markdown finding" })).toBeVisible();
 
-  const sourceRequest = page.waitForRequest((candidate) => {
-    const url = new URL(candidate.url());
-    return (
-      url.pathname === `/api/pull-requests/${pullRequestId}/document` &&
-      url.searchParams.get("sourceOid") === view.headOid &&
-      url.searchParams.get("path") === "src/fixture.ts"
-    );
-  });
   await sidebarThread.getByRole("link", { name: "the fixture source" }).click();
-  await sourceRequest;
   await expect(page.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
     "aria-selected",
     "true",

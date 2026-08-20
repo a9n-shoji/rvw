@@ -35,6 +35,7 @@ const rootPost: CommentPost = {
   commentId: "comment-1",
   body: "Please preserve this line.",
   relatedCommitOid: null,
+  references: [],
   authorLabel: "Reviewer",
   isRoot: true,
   createdAt: "2026-08-10T00:02:00.000Z",
@@ -170,7 +171,7 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 2,
+      protocolVersion: 3,
       appVersion: "0.2.0",
       capabilities: [
         "agent.transport",
@@ -180,6 +181,7 @@ describe("CLI protocol discovery", () => {
         "comment.read",
         "comment.reply",
         "comment.edit",
+        "comment.codeReferences",
         "comment.resolve",
         "comment.reopen",
         "pullRequest.sync",
@@ -288,7 +290,18 @@ describe("CLI protocol discovery", () => {
         startLine: 12,
         endLine: 12,
       },
-      body: rootPost.body,
+      body: "Inspect [the implementation](rvw-ref:implementation).",
+      relatedCommitOid: "d".repeat(40),
+      references: [
+        {
+          id: "implementation",
+          label: "Implementation",
+          path: "src/example.ts",
+          startLine: 12,
+          endLine: 12,
+          description: null,
+        },
+      ],
       authorLabel: "Codex",
     };
     const created = {
@@ -316,7 +329,20 @@ describe("CLI protocol discovery", () => {
   });
 
   it("replaces one recorded comment post through the Agent CLI", async () => {
-    const input = { body: "✅ 対応しました", relatedCommitOid: "d".repeat(40) };
+    const input = {
+      body: "✅ [対応しました](rvw-ref:result)",
+      relatedCommitOid: "d".repeat(40),
+      references: [
+        {
+          id: "result",
+          label: "Result",
+          path: "src/example.ts",
+          startLine: 12,
+          endLine: 12,
+          description: null,
+        },
+      ],
+    };
     const edited = { ...rootPost, ...input, updatedAt: "2026-08-20T00:00:00.000Z" };
     const editCommentPost = vi.fn().mockResolvedValue(edited);
     const { runtime, close } = mockRuntime({ editCommentPost });

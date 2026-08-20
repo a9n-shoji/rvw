@@ -3,15 +3,15 @@ import {
   DEFAULT_COMMENT_LIST_LIMIT,
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
+  MAX_CODE_REFERENCE_DESCRIPTION_CHARACTERS,
+  MAX_CODE_REFERENCE_LABEL_CHARACTERS,
+  MAX_CODE_REFERENCE_PATH_CHARACTERS,
+  MAX_CODE_REFERENCES,
   MAX_COMMENT_BODY_BYTES,
   MAX_COMMENT_LIST_LIMIT,
   MAX_COMMENT_WATCH_LIMIT,
   MAX_IDEMPOTENCY_KEY_CHARACTERS,
   MAX_WALKTHROUGH_BODY_BYTES,
-  MAX_WALKTHROUGH_REFERENCE_DESCRIPTION_CHARACTERS,
-  MAX_WALKTHROUGH_REFERENCE_LABEL_CHARACTERS,
-  MAX_WALKTHROUGH_REFERENCE_PATH_CHARACTERS,
-  MAX_WALKTHROUGH_REFERENCES,
   MAX_WALKTHROUGH_TITLE_CHARACTERS,
 } from "../shared/constants.js";
 
@@ -68,70 +68,14 @@ export const commentTargetInputSchema = z
     }
   });
 
-export const commentCreateInputSchema = z
-  .object({
-    pullRequest: nonEmptyString,
-    target: commentTargetInputSchema,
-    body: z
-      .string()
-      .min(1)
-      .refine((value) => value.trim().length > 0)
-      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
-        message: `bodyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
-      }),
-    authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
-  })
-  .strict();
-
-export const commentReplyInputSchema = z
-  .object({
-    body: z
-      .string()
-      .min(1)
-      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
-        message: `bodyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
-      }),
-    authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
-    relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
-    idempotencyKey,
-  })
-  .strict();
-
-export const commentPostEditInputSchema = commentReplyInputSchema
-  .pick({ body: true, relatedCommitOid: true })
-  .strict();
-
-export const pullRequestSyncInputSchema = z
-  .object({
-    pullRequest: nonEmptyString,
-    commentUpdates: z
-      .array(
-        z
-          .object({
-            commentRef: commentUri,
-            reply: z
-              .string()
-              .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
-                message: `replyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
-              }),
-            resolve: z.boolean(),
-            idempotencyKey,
-          })
-          .strict(),
-      )
-      .max(500)
-      .optional(),
-  })
-  .strict();
-
-const walkthroughReferenceInputSchema = z
+export const codeReferenceInputSchema = z
   .object({
     id: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/),
-    label: z.string().min(1).max(MAX_WALKTHROUGH_REFERENCE_LABEL_CHARACTERS),
-    path: z.string().min(1).max(MAX_WALKTHROUGH_REFERENCE_PATH_CHARACTERS),
+    label: z.string().min(1).max(MAX_CODE_REFERENCE_LABEL_CHARACTERS),
+    path: z.string().min(1).max(MAX_CODE_REFERENCE_PATH_CHARACTERS),
     startLine: z.number().int().positive().nullable().optional().default(null),
     endLine: z.number().int().positive().nullable().optional().default(null),
-    description: z.string().max(MAX_WALKTHROUGH_REFERENCE_DESCRIPTION_CHARACTERS).nullable(),
+    description: z.string().max(MAX_CODE_REFERENCE_DESCRIPTION_CHARACTERS).nullable(),
   })
   .strict()
   .superRefine((reference, context) => {
@@ -154,6 +98,98 @@ const walkthroughReferenceInputSchema = z
     }
   });
 
+const optionalCodeReferences = z
+  .array(codeReferenceInputSchema)
+  .max(MAX_CODE_REFERENCES)
+  .optional();
+
+function requireRelatedCommitForReferences(
+  input: {
+    relatedCommitOid?: string | null | undefined;
+    references?: unknown[] | undefined;
+  },
+  context: z.RefinementCtx,
+): void {
+  if ((input.references?.length ?? 0) > 0 && !input.relatedCommitOid) {
+    context.addIssue({
+      code: "custom",
+      path: ["relatedCommitOid"],
+      message: "code referenceを持つcomment postにはrelatedCommitOidが必要です。",
+    });
+  }
+}
+
+export const commentCreateInputSchema = z
+  .object({
+    pullRequest: nonEmptyString,
+    target: commentTargetInputSchema,
+    body: z
+      .string()
+      .min(1)
+      .refine((value) => value.trim().length > 0)
+      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
+        message: `bodyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
+      }),
+    authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
+    relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
+    references: optionalCodeReferences,
+  })
+  .strict()
+  .superRefine(requireRelatedCommitForReferences);
+
+export const commentReplyInputSchema = z
+  .object({
+    body: z
+      .string()
+      .min(1)
+      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
+        message: `bodyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
+      }),
+    authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
+    relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
+    references: optionalCodeReferences,
+    idempotencyKey,
+  })
+  .strict()
+  .superRefine(requireRelatedCommitForReferences);
+
+export const commentPostEditInputSchema = z
+  .object({
+    body: z
+      .string()
+      .min(1)
+      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
+        message: `bodyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
+      }),
+    relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
+    references: optionalCodeReferences,
+  })
+  .strict();
+
+export const pullRequestSyncInputSchema = z
+  .object({
+    pullRequest: nonEmptyString,
+    commentUpdates: z
+      .array(
+        z
+          .object({
+            commentRef: commentUri,
+            reply: z
+              .string()
+              .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
+                message: `replyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
+              }),
+            resolve: z.boolean(),
+            references: optionalCodeReferences,
+            idempotencyKey,
+          })
+          .strict(),
+      )
+      .max(500)
+      .optional(),
+  })
+  .strict();
+
 const walkthroughContentInputSchema = z
   .object({
     sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
@@ -164,7 +200,7 @@ const walkthroughContentInputSchema = z
       .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_WALKTHROUGH_BODY_BYTES),
     authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
     diagramBindings: z.record(z.string(), z.string()).optional(),
-    references: z.array(walkthroughReferenceInputSchema).min(1).max(MAX_WALKTHROUGH_REFERENCES),
+    references: z.array(codeReferenceInputSchema).min(1).max(MAX_CODE_REFERENCES),
   })
   .strict();
 

@@ -17,10 +17,11 @@ import {
 } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import type {
   CommentPlacement,
+  CodeReference,
   ReviewComment,
   Walkthrough,
   WalkthroughReference,
@@ -45,25 +46,16 @@ import type { ViewerNavigationTarget } from "./DocumentViewer.js";
 import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
-import { FileEntryIcon } from "./FileIcon.js";
+import {
+  CodeReferenceLink,
+  codeReferenceIdFromHref,
+  codeReferenceMarkdownSanitizeSchema,
+} from "./CodeReferenceLink.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import { MermaidSurface } from "./MermaidSurface.js";
 import { WalkthroughIcon } from "./WalkthroughPanel.js";
 
 const referenceNoticeDurationMs = 2400;
-const walkthroughMarkdownSanitizeSchema = {
-  ...defaultSchema,
-  protocols: {
-    ...defaultSchema.protocols,
-    href: [...(defaultSchema.protocols?.href ?? []), "rvw-ref"],
-  },
-};
-
-function referenceHrefId(href: string | undefined): string | null {
-  if (!href?.startsWith("rvw-ref:")) return null;
-  return href.slice("rvw-ref:".length);
-}
-
 function codeText(content: ReactNode): string {
   return Children.toArray(content)
     .map((part) => {
@@ -71,18 +63,6 @@ function codeText(content: ReactNode): string {
       return isValidElement<{ children?: ReactNode }>(part) ? codeText(part.props.children) : "";
     })
     .join("");
-}
-
-function referenceLineLabel(reference: WalkthroughReference): string | null {
-  if (reference.startLine === null || reference.endLine === null) return null;
-  return reference.startLine === reference.endLine
-    ? `L${reference.startLine}`
-    : `L${reference.startLine}–${reference.endLine}`;
-}
-
-function fullReferenceLocation(reference: WalkthroughReference): string {
-  const lineLabel = referenceLineLabel(reference);
-  return lineLabel ? `${reference.path}:${lineLabel}` : reference.path;
 }
 
 function sameRange(left: MarkdownSourceRange | null, right: MarkdownSourceRange | null): boolean {
@@ -342,6 +322,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   markdownSourceOid,
   themePreference,
   onOpenReference,
+  onOpenCommentCodeReference,
   onOpenRepositoryLink,
   onCommentActiveChange,
   onCommentRange,
@@ -361,6 +342,11 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   markdownSourceOid: string;
   themePreference: ThemePreference;
   onOpenReference: (reference: WalkthroughReference, openInOtherPane: boolean) => void;
+  onOpenCommentCodeReference: (
+    sourceOid: string,
+    reference: CodeReference,
+    openInOtherPane: boolean,
+  ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
@@ -369,7 +355,6 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   onCancelDiagramComment: () => void;
   onSubmitDiagramComment: (range: MarkdownSourceRange, body: string) => void;
 }) {
-  const inlineReferencePointerStart = useRef<{ x: number; y: number } | null>(null);
   const annotations = useMemo<MarkdownCommentAnnotation[]>(
     () =>
       placedComments.map(({ comment, placement }) => ({
@@ -400,6 +385,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
                 markdownSourceOid={markdownSourceOid}
                 themePreference={themePreference}
                 onActiveChange={onCommentActiveChange}
+                onOpenCodeReference={onOpenCommentCodeReference}
                 onOpenRepositoryLink={onOpenRepositoryLink}
               />
             ) : null;
@@ -407,7 +393,14 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
         </div>
       );
     },
-    [commentsById, markdownSourceOid, onCommentActiveChange, onOpenRepositoryLink, themePreference],
+    [
+      commentsById,
+      markdownSourceOid,
+      onCommentActiveChange,
+      onOpenCommentCodeReference,
+      onOpenRepositoryLink,
+      themePreference,
+    ],
   );
   return (
     <MermaidMarkdownRenderContext.Provider
@@ -430,7 +423,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
         <ReactMarkdown
           rehypePlugins={[
             rehypeRaw,
-            [rehypeSanitize, walkthroughMarkdownSanitizeSchema],
+            [rehypeSanitize, codeReferenceMarkdownSanitizeSchema],
             [
               rehypeRvwSourceMap,
               { annotations, activeCommentId, selectedRange, composerOpen: selectionComposerOpen },
@@ -448,45 +441,16 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
               </div>
             ),
             a: ({ href, children, node: _node, ...props }) => {
-              const referenceId = referenceHrefId(href);
+              const referenceId = codeReferenceIdFromHref(href);
               const reference = referenceId ? references.get(referenceId) : undefined;
               return reference ? (
-                <button
+                <CodeReferenceLink
+                  reference={reference}
                   className="walkthrough-inline-reference"
-                  title={fullReferenceLocation(reference)}
-                  onPointerDown={(event) => {
-                    if (event.button !== 0) return;
-                    inlineReferencePointerStart.current = {
-                      x: event.clientX,
-                      y: event.clientY,
-                    };
-                  }}
-                  onPointerUp={(event) => {
-                    const start = inlineReferencePointerStart.current;
-                    inlineReferencePointerStart.current = null;
-                    if (!start) return;
-                    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 4) {
-                      return;
-                    }
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onOpenReference(reference, event.metaKey || event.ctrlKey);
-                  }}
-                  onPointerCancel={() => {
-                    inlineReferencePointerStart.current = null;
-                  }}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    if (event.detail === 0) onOpenReference(reference, false);
-                  }}
-                  onContextMenu={(event) => {
-                    if (event.ctrlKey || event.metaKey) event.preventDefault();
-                  }}
+                  onOpen={onOpenReference}
                 >
-                  <FileEntryIcon path={reference.path} kind="file" />
-                  <span>{children}</span>
-                  <small>{referenceLineLabel(reference) ?? "File"}</small>
-                </button>
+                  {children}
+                </CodeReferenceLink>
               ) : (
                 <a {...markdownSourceDataAttributes(_node)} {...props} href={href}>
                   {children}
@@ -519,6 +483,7 @@ export function WalkthroughViewer({
   themePreference,
   onCommentActiveChange,
   onOpenReference,
+  onOpenCommentCodeReference,
   onOpenRepositoryLink,
   onDeleted,
 }: {
@@ -532,6 +497,11 @@ export function WalkthroughViewer({
   onOpenReference: (
     walkthrough: Walkthrough,
     reference: WalkthroughReference,
+    openInOtherPane: boolean,
+  ) => Promise<string | null>;
+  onOpenCommentCodeReference: (
+    sourceOid: string,
+    reference: CodeReference,
     openInOtherPane: boolean,
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
@@ -766,6 +736,7 @@ export function WalkthroughViewer({
       markdownSourceOid={walkthrough.sourceOid}
       themePreference={themePreference}
       onOpenReference={openReference}
+      onOpenCommentCodeReference={onOpenCommentCodeReference}
       onOpenRepositoryLink={onOpenRepositoryLink}
       onCommentActiveChange={onCommentActiveChange}
       onCommentRange={openDiagramComposer}
@@ -817,7 +788,11 @@ export function WalkthroughViewer({
           </button>
         </div>
         {referenceNotice && (
-          <div className="walkthrough-reference-notice" role="status" aria-live="polite">
+          <div
+            className="code-reference-notice walkthrough-reference-notice"
+            role="status"
+            aria-live="polite"
+          >
             {referenceNotice}
           </div>
         )}
@@ -852,6 +827,7 @@ export function WalkthroughViewer({
               markdownSourceOid={walkthrough.sourceOid}
               themePreference={themePreference}
               onActiveChange={onCommentActiveChange}
+              onOpenCodeReference={onOpenCommentCodeReference}
               onOpenRepositoryLink={onOpenRepositoryLink}
             />
           ))}

@@ -59,10 +59,10 @@ prevents an interrupted third attempt from leaving `確認中` indefinitely.
 ## Start or resume intake
 
 Run the single preflight command. It concurrently detects `rvw` and verifies Node `>=24.15.0`.
-Require `protocolVersion` 2 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
-`comment.edit`, and `pullRequest.sync`, and reports agent status and ping in one JSON value. Stop when
-`ok` is false. A disconnected ping is diagnostic when status safely selects direct-database transport;
-an unavailable selected transport is fatal.
+Require `protocolVersion` 3 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
+`comment.edit`, `comment.codeReferences`, and `pullRequest.sync`, and report agent status and ping in
+one JSON value. Stop when `ok` is false. A disconnected ping is diagnostic when status safely selects
+direct-database transport; an unavailable selected transport is fatal.
 
 ```bash
 node '<SKILL_DIR>/scripts/preflight.mjs'
@@ -223,7 +223,9 @@ retrying; never repeat the implementation blindly.
 
 After GitHub exposes the pushed head, run `rvw pr sync --repository '<WORKTREE>' --stdin --json`
 without comment updates. Then edit each status post with its final body and the synchronized head as
-`relatedCommitOid`. If no code change is appropriate, edit without a related commit.
+`relatedCommitOid`. When a concise result benefits from direct evidence, include `rvw-ref:` links and
+the post's complete typed `references` array at that exact head. Otherwise omit references. If no code
+change is appropriate, edit the status post without a related commit or references.
 
 ## Failure and stop
 

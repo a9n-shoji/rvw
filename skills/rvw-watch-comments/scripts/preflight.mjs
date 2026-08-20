@@ -3,13 +3,14 @@
 import { runRvw } from "./rvw-command.mjs";
 
 const REQUIRED_NODE = [24, 15, 0];
-const REQUIRED_PROTOCOL = 2;
+const REQUIRED_PROTOCOL = 3;
 const REQUIRED_CAPABILITIES = [
   "agent.transport",
   "comment.watch",
   "comment.read",
   "comment.reply",
   "comment.edit",
+  "comment.codeReferences",
   "pullRequest.sync",
 ];
 

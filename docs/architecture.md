@@ -7,7 +7,7 @@ not limit which repository documents can be opened, searched, or commented on.
 
 rvw is a local Node.js application with four boundaries:
 
-- `domain`: pure commit/document, walkthrough-reference, comment, and line-mapping rules.
+- `domain`: pure commit/document, shared code-reference, comment, Walkthrough, and line-mapping rules.
 - `application`: use cases shared by HTTP and CLI transports.
 - `infrastructure`: SQLite, Git, GitHub CLI, filesystem, and subprocess adapters.
 - `server`, `cli`, and `web`: transport and presentation only.
@@ -33,8 +33,11 @@ ordinary unresolved thread or act on an existing one through the same applicatio
 the browser. Post bodies remain UTF-8 Markdown source in SQLite and render as sanitized GFM with soft
 line breaks, repository-relative links and images, and strict display-only Mermaid diagrams. Link and
 image resolution uses the post's related commit, repository target, current Walkthrough source, or
-thread creation head in that order; comment Markdown has neither source-position targets nor
-`rvw-ref:` bindings. Browser state, prompts, and Agent sessions never enter the domain model.
+thread creation head in that order. A post may additionally own validated `rvw-ref:` links backed by
+typed paths and optional line ranges at its exact related commit. Comment Markdown still has neither
+source-position targets nor Mermaid-node bindings. Walkthroughs reuse the same code-reference model
+and renderer while adding their document mapping and diagram bindings. Browser state, prompts, and
+Agent sessions never enter the domain model.
 
 New root posts and replies also append a database-wide event sequence. A long-running external Agent
 task may consume that sequence with an opaque database-scoped cursor through `rvw comment watch`.

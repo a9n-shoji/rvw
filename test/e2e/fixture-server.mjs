@@ -778,7 +778,8 @@ app.post("/api/comments", async (context) => {
         id: randomUUID(),
         commentId: id,
         body: input.body,
-        relatedCommitOid: null,
+        relatedCommitOid: input.relatedCommitOid ?? null,
+        references: input.references ?? [],
         authorLabel: input.authorLabel,
         isRoot: true,
         createdAt: now,
@@ -800,6 +801,7 @@ app.post("/api/comments/:id/posts", async (context) => {
     commentId: comment.id,
     body: input.body,
     relatedCommitOid: input.relatedCommitOid,
+    references: input.references ?? [],
     authorLabel: input.authorLabel,
     isRoot: false,
     createdAt: now,
@@ -823,6 +825,7 @@ app.patch("/api/comments/:id/posts/:postId", async (context) => {
   }
   const now = new Date().toISOString();
   post.body = input.body;
+  if (input.references !== undefined) post.references = input.references;
   post.updatedAt = now;
   comment.updatedAt = now;
   changeSequence += 1;

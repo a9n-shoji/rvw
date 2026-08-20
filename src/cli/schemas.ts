@@ -158,12 +158,24 @@ const commentPlacementOutputSchema = z.union([
     .strict(),
 ]);
 
+const codeReferenceOutputSchema = z
+  .object({
+    id: z.string(),
+    label: z.string(),
+    path: z.string(),
+    startLine: z.number().int().nullable(),
+    endLine: z.number().int().nullable(),
+    description: z.string().nullable(),
+  })
+  .strict();
+
 const commentPostOutputSchema = z
   .object({
     id: z.string(),
     commentId: z.string(),
     body: z.string(),
     relatedCommitOid: z.string().nullable(),
+    references: z.array(codeReferenceOutputSchema),
     authorLabel: z.string().nullable(),
     isRoot: z.boolean(),
     createdAt: z.string(),
@@ -196,18 +208,7 @@ const walkthroughOutputSchema = z
     body: z.string(),
     authorLabel: z.string().nullable(),
     diagramBindings: z.record(z.string(), z.string()),
-    references: z.array(
-      z
-        .object({
-          id: z.string(),
-          label: z.string(),
-          path: z.string(),
-          startLine: z.number().int().nullable(),
-          endLine: z.number().int().nullable(),
-          description: z.string().nullable(),
-        })
-        .strict(),
-    ),
+    references: z.array(codeReferenceOutputSchema),
     createdAt: z.string(),
   })
   .strict();

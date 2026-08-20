@@ -1,9 +1,11 @@
-# CLI protocol v2
+# CLI protocol v3
 
 Version 1 is the first public compatibility contract. Pre-public internal version numbers were not
 released or supported; after the first public release, protocol versions only increase for breaking
-changes and are never reused. Version 2 adds the invariant that every declared Walkthrough reference
-must be reachable from its Markdown body or Mermaid bindings. It also advertises the additive
+changes and are never reused. Version 2 added the invariant that every declared Walkthrough reference
+must be reachable from its Markdown body or Mermaid bindings. Version 3 adds post-level typed code
+references to comment create, reply, edit, get, and synchronized replies, and advertises
+`comment.codeReferences`. It also keeps the additive
 `agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
 idempotency keys are additive fields and do not change existing callers.
 
@@ -50,8 +52,18 @@ Its stdin value is:
   "commentUpdates": [
     {
       "commentRef": "rvw://comment/00000000-0000-4000-8000-000000000000",
-      "reply": "対応内容。返信しない場合は空文字列。",
+      "reply": "対応内容は [the handler](rvw-ref:handler) で確認できます。",
       "resolve": false,
+      "references": [
+        {
+          "id": "handler",
+          "label": "RequestHandler.execute",
+          "path": "src/request-handler.ts",
+          "startLine": 10,
+          "endLine": 24,
+          "description": null
+        }
+      ],
       "idempotencyKey": "stable-key-for-this-exact-update"
     }
   ]
@@ -59,13 +71,15 @@ Its stdin value is:
 ```
 
 `pullRequest` is required. `commentUpdates` is optional and contains at most 500 items. Every item
-requires `commentRef`, `reply`, and `resolve`; optional `idempotencyKey` is 1–200 characters. At least
+requires `commentRef`, `reply`, and `resolve`; optional `references` holds post-level code references,
+and optional `idempotencyKey` is 1–200 characters. At least
 a non-blank reply or `resolve: true` is required. Reply text is UTF-8 GFM Markdown source and at most
 64 KiB.
 
 A successful sync refreshes the latest GitHub PR metadata and commit head, protects that head with
-an rvw ref, and applies all comment updates in one SQLite transaction. Created replies are linked to
-the synchronized head commit. A successful response includes the current pull request, comparison
+an rvw ref, validates every reply reference against that exact synchronized head, and applies all
+comment updates in one SQLite transaction. Created replies and their references are linked to the
+synchronized head commit. A successful response includes the current pull request, comparison
 base, head OID, commit summaries, and `commentUpdatesApplied`.
 
 An exact retry of an update carrying the same idempotency key returns its existing reply. Reusing the
@@ -117,16 +131,29 @@ rvw comment reopen <COMMENT_URI> --json
     "startLine": 18,
     "endLine": 24
   },
-  "body": "This branch drops the failure result before it reaches the caller.",
+  "body": "This branch drops the failure result before it reaches [the caller](rvw-ref:caller).",
+  "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567",
+  "references": [
+    {
+      "id": "caller",
+      "label": "Request caller",
+      "path": "src/request-caller.ts",
+      "startLine": 30,
+      "endLine": 38,
+      "description": "The caller that loses the result"
+    }
+  ],
   "authorLabel": "Agent name"
 }
 ```
 
-`pullRequest`, `target`, and `body` are required. `authorLabel` is optional and may be `null`.
+`pullRequest`, `target`, and `body` are required. `authorLabel`, `relatedCommitOid`, and `references`
+are optional. `authorLabel` and `relatedCommitOid` may be `null`.
 `pullRequest` is a saved PR's full URL or a number that is unique across saved PRs. `body` is non-blank
 UTF-8 GFM Markdown source of at most 64 KiB. The viewer sanitizes raw HTML, preserves soft line
-breaks, and supports repository-relative links and images plus display-only Mermaid. `rvw-ref:` and
-Mermaid node bindings remain Walkthrough-only. The target is one of:
+breaks, and supports repository-relative links and images plus display-only Mermaid. A comment post
+may use `rvw-ref:<referenceId>` links backed by its own typed `references`; Mermaid node bindings and
+Markdown source-range targets remain Walkthrough-only. The target is one of:
 
 ```json
 { "kind": "pull-request" }
@@ -169,6 +196,14 @@ PR-Markdown hashes and quoted lines, Walkthrough titles and quoted lines, and th
 derived by the same application service used by the viewer; callers do not supply those persisted
 values.
 
+Comment references reuse the Walkthrough reference shape: an ID, label, repository-relative path,
+nullable description, and either both ends of an inclusive line range or neither for a file-level
+reference. A post may declare at most 200 references. Every declared reference must be linked from
+that post's Markdown body, and every `rvw-ref:` link must name a declaration. Paths and line ranges are
+validated as displayable UTF-8 documents at `relatedCommitOid`; therefore a non-empty `references`
+array requires a non-null related commit. The commit is retained by rvw. References belong to one
+post, not its thread, and do not inherit from another root or reply.
+
 Success returns `{ "ok": true, "comment": ... }`, including the root post and stable
 `rvw://comment/<uuid>` reference. Creation is passive: it does not open or navigate a viewer. The
 operation is not idempotent. After an uncertain result, list the PR's comments and verify whether the
@@ -195,7 +230,8 @@ synchronized PR body requests it with `comment get --include-pr-body`; only that
 `pullRequest.body` string.
 
 `comment get` returns the same top-level `comment` and `latestPlacement` keys with the complete comment
-target and posts, `createdHeadOid`, and the PR's `latestHeadOid`. `latestPlacement` is rvw's
+target and posts, `createdHeadOid`, and the PR's `latestHeadOid`. Each complete post includes its
+`relatedCommitOid` and `references`. `latestPlacement` is rvw's
 authoritative derived placement at the latest head. Consumers must not treat unequal creation/latest
 OIDs as Outdated: rvw accounts for unchanged lines, renames, deletion, and PR-Markdown quoted-text
 placement.
@@ -239,17 +275,25 @@ A non-null related OID must be a 40–64 digit hex commit available to the PR. A
 same key returns the existing post; reuse for another payload fails. Without a key, re-read the
 comment before retrying an uncertain result.
 
+Replies accept the same optional `references` array as creation. When references are present,
+`relatedCommitOid` must be non-null and the body, declarations, commit, paths, and lines must satisfy
+the shared validation above. References are part of the idempotent caller payload.
+
 `comment edit` replaces one existing post identified within its thread:
 
 ```json
 {
   "body": "✅ 対応しました\n\n変更内容と検証結果。",
-  "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567"
+  "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567",
+  "references": []
 }
 ```
 
 `body` has the same 64 KiB GFM contract as a reply. Omitting `relatedCommitOid` preserves the post's
 current association, null clears it, and a non-null value must be an available commit for the PR.
+Omitting `references` preserves the current set; supplying it replaces the complete set. The resulting
+body, related commit, and reference set are validated together, so clearing a related commit also
+requires removing all `rvw-ref:` links and supplying an empty reference array.
 The operation is an exact replacement: retrying the same edit may advance `updatedAt` again but does
 not create another post. Success returns `{ "ok": true, "post": ... }`.
 
@@ -463,7 +507,7 @@ current `walkthrough` object. This gives the Agent the explanation body and exac
 discussed without relying on rendered browser positions. If the Walkthrough is updated, the same
 comment URI subsequently returns the updated current object.
 
-`rvw protocol --json` returns `protocolVersion: 2`, the application version, and these capabilities:
+`rvw protocol --json` returns `protocolVersion: 3`, the application version, and these capabilities:
 
 ```text
 agent.transport
@@ -472,6 +516,8 @@ comment.list
 comment.watch
 comment.read
 comment.reply
+comment.edit
+comment.codeReferences
 comment.resolve
 comment.reopen
 pullRequest.sync

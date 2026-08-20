@@ -397,6 +397,114 @@ describe("RvwService commit workflow", () => {
     });
   });
 
+  it("persists, validates, edits, and synchronizes post-level code references", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-comment-code-references-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const sourceReference = {
+      id: "source",
+      label: "Source implementation",
+      path: "src.txt",
+      startLine: 1,
+      endLine: 2,
+      description: "The exact implementation discussed in this post",
+    };
+
+    const comment = await service.createCommentForReference({
+      pullRequest: fake.pullRequest.url,
+      target: { kind: "pull-request" },
+      body: "Inspect [the source](rvw-ref:source).",
+      relatedCommitOid: firstHead,
+      references: [sourceReference],
+      authorLabel: "Codex",
+    });
+    expect(comment.posts[0]).toMatchObject({
+      relatedCommitOid: firstHead,
+      references: [sourceReference],
+    });
+    expect(service.getCommentByUri(comment.ref).comment.posts[0]?.references).toEqual([
+      sourceReference,
+    ]);
+
+    const reply = await service.replyToComment(comment.ref, {
+      body: "The relevant range is still [the source](rvw-ref:source).",
+      relatedCommitOid: firstHead,
+      references: [{ ...sourceReference, label: "Reply source" }],
+    });
+    expect(reply).toMatchObject({
+      relatedCommitOid: firstHead,
+      references: [{ id: "source", label: "Reply source" }],
+    });
+
+    await expect(
+      service.editCommentPost(comment.ref, reply.id, {
+        body: "The whole file supplies the context: [source](rvw-ref:file).",
+        references: [
+          {
+            id: "file",
+            label: "Source file",
+            path: "src.txt",
+            startLine: null,
+            endLine: null,
+            description: null,
+          },
+        ],
+      }),
+    ).resolves.toMatchObject({
+      relatedCommitOid: firstHead,
+      references: [{ id: "file", startLine: null, endLine: null }],
+    });
+    await expect(
+      service.updateCommentPost(comment.id, reply.id, "The reference was removed."),
+    ).resolves.toMatchObject({ references: [] });
+
+    await expect(
+      service.replyToComment(comment.ref, {
+        body: "Missing exact commit: [source](rvw-ref:source).",
+        references: [sourceReference],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.replyToComment(comment.ref, {
+        body: "This body does not use its declaration.",
+        relatedCommitOid: firstHead,
+        references: [sourceReference],
+      }),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: "code referenceが本文から参照されていません: source",
+    });
+
+    const secondHead = commitFile(repository, "src.txt", "first\nsecond\nthird\n", "extend source");
+    fake.pullRequest = { ...fake.pullRequest, headOid: secondHead };
+    await service.syncPullRequest({
+      pullRequest: fake.pullRequest.url,
+      commentUpdates: [
+        {
+          commentRef: comment.ref,
+          reply: "The synchronized result is [here](rvw-ref:result).",
+          resolve: false,
+          references: [
+            {
+              id: "result",
+              label: "Synchronized source",
+              path: "src.txt",
+              startLine: 3,
+              endLine: 3,
+              description: null,
+            },
+          ],
+        },
+      ],
+    });
+    expect(service.getCommentByUri(comment.ref).comment.posts.at(-1)).toMatchObject({
+      relatedCommitOid: secondHead,
+      references: [{ id: "result", startLine: 3, endLine: 3 }],
+    });
+    await expect(service.getResetPreview(opened.pullRequest.id)).resolves.toMatchObject({
+      counts: { commentReferences: 2 },
+    });
+  });
+
   it("enforces the shared author label limit at the application boundary", async () => {
     const { repository, service } = setup("rvw-author-label-");
     const opened = await service.openPullRequest(undefined, repository);
@@ -861,7 +969,7 @@ describe("RvwService commit workflow", () => {
       }),
     ).rejects.toMatchObject({
       code: "INVALID_INPUT",
-      message: "walkthrough referenceが本文またはMermaid bindingから参照されていません: diagram",
+      message: "code referenceが本文またはbindingから参照されていません: diagram",
     });
 
     await expect(
@@ -891,7 +999,7 @@ describe("RvwService commit workflow", () => {
       }),
     ).rejects.toMatchObject({
       code: "INVALID_INPUT",
-      message: "walkthrough referenceが本文またはMermaid bindingから参照されていません: unused",
+      message: "code referenceが本文またはbindingから参照されていません: unused",
     });
   });
 
@@ -1052,10 +1160,12 @@ describe("RvwService commit workflow", () => {
     });
     const reply = await service.replyToComment(replied.id, { body: "A reply" });
 
-    expect(
+    await expect(
       service.updateCommentPost(replied.id, replied.posts[0]!.id, "Updated root"),
-    ).toMatchObject({ body: "Updated root" });
-    expect(service.updateCommentPost(replied.id, reply.id, "Updated reply")).toMatchObject({
+    ).resolves.toMatchObject({ body: "Updated root" });
+    await expect(
+      service.updateCommentPost(replied.id, reply.id, "Updated reply"),
+    ).resolves.toMatchObject({
       body: "Updated reply",
     });
     await expect(

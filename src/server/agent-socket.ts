@@ -287,6 +287,7 @@ export async function dispatchAgentSocketRequest(
         ...(input.edit.relatedCommitOid === undefined
           ? {}
           : { relatedCommitOid: input.edit.relatedCommitOid }),
+        ...(input.edit.references === undefined ? {} : { references: input.edit.references }),
       });
     }
     case "comment.resolve": {

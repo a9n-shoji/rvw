@@ -129,7 +129,7 @@ export interface SearchResponse {
   };
 }
 
-export interface WalkthroughReference {
+export interface CodeReference {
   id: string;
   label: string;
   path: string;
@@ -137,6 +137,8 @@ export interface WalkthroughReference {
   endLine: number | null;
   description: string | null;
 }
+
+export type WalkthroughReference = CodeReference;
 
 export interface Walkthrough {
   id: string;
@@ -207,6 +209,7 @@ export interface CommentPost {
   commentId: string;
   body: string;
   relatedCommitOid: string | null;
+  references: CodeReference[];
   authorLabel: string | null;
   isRoot: boolean;
   createdAt: string;
@@ -246,6 +249,7 @@ export type CommentPlacement =
 export interface ResetCounts {
   comments: number;
   posts: number;
+  commentReferences: number;
   targets: number;
   walkthroughs: number;
   walkthroughReferences: number;

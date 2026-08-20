@@ -10,7 +10,8 @@ Use only the `rvw` CLI protocol to access rvw state. Never read or edit the SQLi
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 2, `agent.transport`, and every task capability needed for the task.
+2. Require `protocolVersion` 3, `agent.transport`, and every task capability needed for the task.
+   Require `comment.codeReferences` whenever reading or writing typed post references.
 3. Run `rvw agent status --json`. Read `socketPath`, `connectionResult`, `selectedDatabasePath`, `selectedTransport`, and `fallbackReason`. If `selectedTransport` is `unavailable`, stop and report the diagnostic; an explicitly configured `RVW_AGENT_SOCKET_PATH` never falls back to direct database access. Otherwise use the reported transport without overriding it.
 4. Prefer the CLI's transparent Unix-socket route when a normally launched rvw viewer is running.
    Explain the exact local permission needed only if both the socket route and direct CLI access are
@@ -48,7 +49,18 @@ rvw comment create --stdin --json <<'RVW_JSON'
     "startLine": 18,
     "endLine": 24
   },
-  "body": "This branch drops the failure result before it reaches the caller.",
+  "body": "This branch drops the failure result before it reaches [the caller](rvw-ref:caller).",
+  "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567",
+  "references": [
+    {
+      "id": "caller",
+      "label": "Request caller",
+      "path": "src/request-caller.ts",
+      "startLine": 30,
+      "endLine": 38,
+      "description": "The caller that loses the result"
+    }
+  ],
   "authorLabel": "Agent name"
 }
 RVW_JSON
@@ -63,7 +75,13 @@ Write `body` as concise GFM Markdown when structure improves the finding. Fenced
 lists, repository-relative links and images, and Mermaid fences render in rvw. Relative paths on a
 repository target start at the target file's directory; other comment targets start at the repository
 root. Use only repository paths that exist at the target commit. External images are not fetched.
-`rvw-ref:` and Mermaid node bindings are Walkthrough-only and must not be used in comment bodies.
+When a finding or outcome depends on code outside its comment target, add the smallest useful typed
+reference to that post. Link it from the body as `rvw-ref:<referenceId>`, set `relatedCommitOid` to the
+one exact commit containing every referenced path, and supply the post's complete `references` array.
+Use unique IDs, repository-relative paths, and either both inclusive line endpoints or neither for a
+file-level reference. Every declaration must be linked from that body, and every link must be declared.
+References do not carry across a thread. Let rvw validate and retain the commit; never point at
+uncommitted code. Comment Mermaid remains display-only and has no node bindings.
 
 Set `authorLabel` to an accurate current Agent name when known; otherwise omit it. Creation is not
 idempotent. After an uncertain failure, page through unresolved comments, fetch plausible candidates
@@ -103,6 +121,9 @@ latest successfully synchronized body for every comment from the same Pull Reque
 same PR body once per comment. When supplied references span multiple Pull Requests, fetch the body at
 most once for each group that needs it. `latestPlacement` is rvw's authoritative derived placement at
 the latest head; never infer Outdated by comparing OIDs.
+
+For every post, read its own `relatedCommitOid` and `references`. Treat each `rvw-ref:` declaration as
+evidence at that exact post commit, not as a target that moves with the thread or latest head.
 
 When the task needs to distinguish the cached snapshot from current GitHub state, use
 `rvw comment get <COMMENT_URI> --live --json`. Read `githubState.staleAgainstGitHub` and live metadata;
@@ -152,6 +173,10 @@ only for the same comment and exact caller payload. If the original post was del
 without recreating it. Without a key, an uncertain failure still requires re-reading the comment before
 retrying to avoid a duplicate reply.
 
+When the reply needs direct code evidence, add `rvw-ref:` links, set the exact non-null
+`relatedCommitOid`, and send that reply's complete `references` array using the same rules as comment
+creation. References are part of the idempotent payload.
+
 To replace a post whose ID you obtained from rvw, require `comment.edit` and use:
 
 ```bash
@@ -167,6 +192,9 @@ This is an exact replacement, so retrying the same edit after an uncertain trans
 Omit `relatedCommitOid` to preserve the current association, pass null to clear it, or pass an
 available PR commit to replace it. Edit only a post the current task was explicitly authorized to
 change; automated watchers must use the status post ID recorded in their task-local state.
+Omit `references` to preserve the current set; otherwise send the complete replacement set. Ensure the
+replacement body uses every retained reference. To clear a related commit, also remove its links and
+send `references: []`.
 
 A resolved thread accepts replies, and replying does not reopen it. Likewise, a `pr sync` reply leaves
 the current state unchanged unless its update has `resolve: true`. Use `comment reopen` as a separate,
@@ -201,6 +229,10 @@ Successful replies are linked to the synchronized head commit. Give each automat
 update a stable `idempotencyKey`; an exact retry returns the existing reply. Without keys, re-read
 affected comments before retrying an uncertain result. A later GitHub head advance does not change the
 identity of the original caller payload.
+
+A synchronized reply may include `rvw-ref:` links and a complete `references` array without a
+`relatedCommitOid`; rvw validates and fixes them to the synchronized GitHub head. Do not attach
+references when `reply` is blank.
 
 If the saved checkout is dirty but a clean worktree in the same Git common directory exists, pass
 `--repository <PATH>`. Inspect every reported dirty entry before deciding whether untracked files are
