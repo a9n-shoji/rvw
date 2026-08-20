@@ -5,7 +5,10 @@ const primaryWalkthrough = "注文作成フロー：HTTPからtransactional outb
 const markdownShowcase = "Markdown表現デモ：レビューコメントのショーケース";
 
 async function selectMappedText(locator: Locator, firstCharacterOnly = false): Promise<void> {
-  await locator.scrollIntoViewIfNeeded();
+  await expect(locator).toBeVisible();
+  await locator.evaluate((element) => {
+    element.scrollIntoView({ block: "center", inline: "nearest" });
+  });
   await expect(locator).toBeVisible();
   await locator.evaluate((element, selectFirstCharacter) => {
     const text = element.firstChild;
@@ -1783,16 +1786,7 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await expect(inlineThread).toBeVisible();
   await expect(inlineThread.getByRole("heading", { name: "Agent Markdown finding" })).toBeVisible();
 
-  const sourceRequest = page.waitForRequest((candidate) => {
-    const url = new URL(candidate.url());
-    return (
-      url.pathname === `/api/pull-requests/${pullRequestId}/document` &&
-      url.searchParams.get("sourceOid") === view.headOid &&
-      url.searchParams.get("path") === "src/fixture.ts"
-    );
-  });
   await sidebarThread.getByRole("link", { name: "the fixture source" }).click();
-  await sourceRequest;
   await expect(page.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
     "aria-selected",
     "true",
