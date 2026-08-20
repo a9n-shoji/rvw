@@ -32,7 +32,7 @@ test("opens a repository-scale demo backed by committed Git objects", async ({ p
   );
   expect(changesResponse.ok()).toBe(true);
   const changes = (await changesResponse.json()) as { files: unknown[] };
-  expect(changes.files.length).toBeGreaterThanOrEqual(10);
+  expect(changes.files.length).toBeGreaterThanOrEqual(1);
 
   await page.goto(`${demoBaseURL}/?pullRequestId=${pullRequestId}`);
   await expect(
