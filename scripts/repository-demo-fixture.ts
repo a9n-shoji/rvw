@@ -77,6 +77,41 @@ function gitBuffer(repositoryRoot: string, args: string[]): Buffer {
   });
 }
 
+function selectCommitOids(repositoryRoot: string, commitCount: number): string[] {
+  const refs = gitText(repositoryRoot, [
+    "for-each-ref",
+    "--sort=-committerdate",
+    "--format=%(refname)",
+    "refs/heads",
+    "refs/remotes",
+  ])
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  const candidates = ["HEAD", ...refs];
+  const visitedTips = new Set<string>();
+
+  for (const candidate of candidates) {
+    const tip = gitText(repositoryRoot, ["rev-parse", `${candidate}^{commit}`]).trim();
+    if (visitedTips.has(tip)) continue;
+    visitedTips.add(tip);
+    const commitOids = gitText(repositoryRoot, [
+      "rev-list",
+      "--first-parent",
+      `--max-count=${commitCount}`,
+      tip,
+    ])
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    if (commitOids.length === commitCount) return commitOids.reverse();
+  }
+
+  throw new Error(
+    `demo fixture requires ${commitCount} first-parent commits from HEAD or a local ref; fetch more Git history and retry`,
+  );
+}
+
 function parseCommit(repositoryRoot: string, oid: string): CommitSummary {
   const [commitOid, parents, subject, authorName, authoredAt] = gitText(repositoryRoot, [
     "show",
@@ -516,21 +551,7 @@ export function createRepositoryDemoFixture(
   if (!Number.isInteger(commitCount) || commitCount < 2 || commitCount > 12) {
     throw new Error("demo fixture commit count must be an integer from 2 to 12");
   }
-  const commitOids = gitText(resolvedRoot, [
-    "rev-list",
-    "--first-parent",
-    `--max-count=${commitCount}`,
-    "HEAD",
-  ])
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .reverse();
-  if (commitOids.length < commitCount) {
-    throw new Error(
-      `demo fixture requires ${commitCount} first-parent commits; fetch more Git history and retry`,
-    );
-  }
+  const commitOids = selectCommitOids(resolvedRoot, commitCount);
   const commits = commitOids.map((oid) => parseCommit(resolvedRoot, oid));
   const firstCommit = commits[0];
   const latestCommit = commits.at(-1);
