@@ -99,20 +99,22 @@ function selectCommitOids(repositoryRoot: string, commitCount: number): string[]
     const commitOids = gitText(repositoryRoot, [
       "rev-list",
       "--first-parent",
-      `--max-count=${commitCount}`,
+      `--max-count=${commitCount + 1}`,
       tip,
     ])
       .trim()
       .split("\n")
       .filter(Boolean);
     attempts.push(`${candidate}=${tip.slice(0, 12)}:${commitOids.length}`);
-    if (commitOids.length === commitCount) return commitOids.reverse();
+    if (commitOids.length === commitCount + 1) {
+      return commitOids.slice(0, commitCount).reverse();
+    }
   }
 
   const topLevel = gitText(repositoryRoot, ["rev-parse", "--show-toplevel"]).trim();
   const shallow = gitText(repositoryRoot, ["rev-parse", "--is-shallow-repository"]).trim();
   throw new Error(
-    `demo fixture requires ${commitCount} first-parent commits from HEAD or a local ref; ` +
+    `demo fixture requires ${commitCount} first-parent commits plus a comparison base from HEAD or a local ref; ` +
       `repository=${topLevel}, shallow=${shallow}, attempts=${attempts.join(", ") || "none"}; ` +
       "fetch more Git history and retry",
   );
