@@ -26,6 +26,11 @@ jobs:
       - run: pnpm check
       - run: pnpm test
       - run: pnpm exec playwright install chromium
+      - name: Ensure demo fixture history
+        run: |
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --no-tags --unshallow origin
+          fi
       - run: pnpm test:e2e
 
   package-smoke:
