@@ -77,6 +77,19 @@ Reuse the same status post for later replies in that thread. Completion or termi
 its body instead of adding another reply. Separate tasks use separate state databases; rvw does not
 impose a database-global consumer lock or store Agent execution state.
 
+Bundle deterministic orchestration around that state machine: one aggregate preflight, one driver
+that derives its cursor and ingests RFC 7464 frames, one pending-transition waiter, and one auto-ack
+command that performs claim, thread reads, idempotent reply/edit, and state acknowledgement. The
+driver's normal auto-ack mode keeps the human-visible marker off the LLM control path. It reconnects
+from the committed cursor with bounded backoff and uses distinct exit codes for watch, framing,
+ingestion, and acknowledgement failures. An auto-ack claim can reserve the verified head repository
+later, preserving the existing single-writer rule without delaying the marker for live GitHub checks.
+
+For a focused investigate-only batch of one or two comments, allow the parent to investigate directly.
+When a worker is warranted, make an absolute, atomically replaced JSON file the result channel; an idle
+or completion notification is only a readiness signal. This prevents Agent-harness message relay from
+becoming part of the durable workflow.
+
 Cache the latest GitHub PR author login and head repository owner/name, and expose them in comment
 context. Watch events remain minimal triggers that require a fresh comment read. The watcher
 task may receive explicit startup authorization for the predicate "live PR author equals the recorded

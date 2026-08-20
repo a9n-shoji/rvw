@@ -8,10 +8,13 @@
 ### Added
 
 - Agentが作成・返信・編集・同期するcomment postへ、exact commitに固定したinline code referenceを付与できるprotocol v3
+- `rvw-watch-comments`向けの一括preflight、cursor-resume watch driver、pending待機、即時auto-ack
 
 ### Changed
 
 - Walkthroughとcomment postがcode referenceのschema、検証、表示、navigationを共有
+- 小規模batchの直接調査と、絶対pathのJSON fileによるworker結果回収をSkill契約へ明記
+- comment / replyの64 KiB超過errorへ実際のUTF-8 byte上限を明記
 
 ## [0.2.0] - 2026-08-20
 

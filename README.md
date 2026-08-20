@@ -192,10 +192,11 @@ reference付きartifactとして検証してpublishします。Walkthrough全体
 現在内容を取得して同じURIを更新し、重複した「改訂版」を追加しません。
 
 新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRを
-約10秒間隔で監視し、起動前の既存未解決commentは処理しません。自分のPRのfix-and-pushを起動taskへ
+同梱driverから約1秒間隔で監視し、起動前の既存未解決commentは処理しません。自分のPRのfix-and-pushを起動taskへ
 明示許可した場合だけ、live PR authorと起動時のGitHub loginが一致するPRで修正・test・commit・pushを
 行えます。fork PRではlive head repository、branch、OIDとpush先も一致させます。他人またはauthor不明の
-PRは常にcode/GitHub read-onlyで調査します。batchをclaimすると各threadへ`🔎 確認中です…`を即時返信し、
+PRは常にcode/GitHub read-onlyで調査します。同梱driverがcursor resumeとRFC 7464 ingestを行い、
+batchをclaimすると各threadへ`🔎 確認中です…`をAgent往復なしに即時返信し、
 完了時は同じreplyを最終結果へ編集します。Skill同梱のtask-state toolがrepository外のSQLiteへcursor、
 queue、retry、thread単位のstatus post、自己返信抑制をtransactionalに保存します。
 

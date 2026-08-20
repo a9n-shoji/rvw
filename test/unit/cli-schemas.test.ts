@@ -202,18 +202,20 @@ describe("CLI input schemas", () => {
   });
 
   it("applies the UTF-8 byte limit to batch-sync replies", () => {
-    expect(
-      pullRequestSyncInputSchema.safeParse({
-        pullRequest: "https://github.com/acme/review-repo/pull/7",
-        commentUpdates: [
-          {
-            commentRef: "rvw://comment/11111111-1111-4111-8111-111111111111",
-            reply: "あ".repeat(Math.floor(MAX_COMMENT_BODY_BYTES / 3) + 1),
-            resolve: false,
-          },
-        ],
-      }).success,
-    ).toBe(false);
+    const result = pullRequestSyncInputSchema.safeParse({
+      pullRequest: "https://github.com/acme/review-repo/pull/7",
+      commentUpdates: [
+        {
+          commentRef: "rvw://comment/11111111-1111-4111-8111-111111111111",
+          reply: "あ".repeat(Math.floor(MAX_COMMENT_BODY_BYTES / 3) + 1),
+          resolve: false,
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.message).toContain("65536 bytes（64 KiB）");
+    }
   });
 
   it("accepts a commit-fixed walkthrough with typed code references", () => {
