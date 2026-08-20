@@ -312,6 +312,10 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
           pullRequestId: input.pullRequestId,
           target: input.target,
           body: input.body,
+          ...(input.relatedCommitOid === undefined
+            ? {}
+            : { relatedCommitOid: input.relatedCommitOid }),
+          ...(input.references === undefined ? {} : { references: input.references }),
           ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         }),
       },
@@ -330,6 +334,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
             ? {}
             : { relatedCommitOid: input.relatedCommitOid }),
           ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+          ...(input.references === undefined ? {} : { references: input.references }),
         }),
       },
       201,
@@ -340,11 +345,17 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     const input = editCommentPostSchema.parse(await context.req.json());
     return context.json({
       ok: true,
-      post: service.updateCommentPost(
-        context.req.param("id"),
-        context.req.param("postId"),
-        input.body,
-      ),
+      post:
+        input.references === undefined
+          ? await service.updateCommentPost(
+              context.req.param("id"),
+              context.req.param("postId"),
+              input.body,
+            )
+          : await service.editCommentPost(context.req.param("id"), context.req.param("postId"), {
+              body: input.body,
+              references: input.references,
+            }),
     });
   });
 

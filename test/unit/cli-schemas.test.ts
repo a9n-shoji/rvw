@@ -30,6 +30,65 @@ describe("CLI input schemas", () => {
     });
   });
 
+  it("accepts typed code references on comment posts and requires their exact commit", () => {
+    const reference = {
+      id: "handler",
+      label: "RequestHandler.execute",
+      path: "src/request-handler.ts",
+      startLine: 10,
+      endLine: 24,
+      description: "Application orchestration boundary",
+    };
+    const relatedCommitOid = "a".repeat(40);
+
+    expect(
+      commentCreateInputSchema.parse({
+        pullRequest: "https://github.com/acme/review-repo/pull/7",
+        target: { kind: "pull-request" },
+        body: "Open [the handler](rvw-ref:handler).",
+        relatedCommitOid,
+        references: [reference],
+      }),
+    ).toMatchObject({ relatedCommitOid, references: [{ id: "handler" }] });
+    expect(
+      commentReplyInputSchema.parse({
+        body: "The fix is in [the handler](rvw-ref:handler).",
+        relatedCommitOid,
+        references: [reference],
+      }),
+    ).toMatchObject({ relatedCommitOid, references: [{ id: "handler" }] });
+    expect(
+      commentPostEditInputSchema.parse({
+        body: "Re-check [the handler](rvw-ref:handler).",
+        relatedCommitOid,
+        references: [reference],
+      }),
+    ).toMatchObject({ relatedCommitOid, references: [{ id: "handler" }] });
+
+    for (const schema of [commentCreateInputSchema, commentReplyInputSchema]) {
+      const base =
+        schema === commentCreateInputSchema
+          ? {
+              pullRequest: "https://github.com/acme/review-repo/pull/7",
+              target: { kind: "pull-request" as const },
+            }
+          : {};
+      expect(
+        schema.safeParse({
+          ...base,
+          body: "Open [the handler](rvw-ref:handler).",
+          references: [reference],
+        }).success,
+      ).toBe(false);
+    }
+    expect(
+      commentPostEditInputSchema.safeParse({
+        body: "Open [the handler](rvw-ref:handler).",
+        references: [reference],
+      }).success,
+    ).toBe(true);
+  });
+
   it("rejects malformed comment creation ranges and persisted target fields", () => {
     const base = {
       pullRequest: "https://github.com/acme/review-repo/pull/7",
@@ -91,6 +150,31 @@ describe("CLI input schemas", () => {
         ],
       }),
     ).toMatchObject({ pullRequest: "https://github.com/acme/review-repo/pull/7" });
+  });
+
+  it("accepts code references on sync replies because the synchronized head is implicit", () => {
+    expect(
+      pullRequestSyncInputSchema.parse({
+        pullRequest: "https://github.com/acme/review-repo/pull/7",
+        commentUpdates: [
+          {
+            commentRef: "rvw://comment/11111111-1111-4111-8111-111111111111",
+            reply: "Fixed in [the source](rvw-ref:source).",
+            resolve: true,
+            references: [
+              {
+                id: "source",
+                label: "Updated source",
+                path: "src.txt",
+                startLine: 1,
+                endLine: 2,
+                description: null,
+              },
+            ],
+          },
+        ],
+      }),
+    ).toMatchObject({ commentUpdates: [{ references: [{ id: "source" }] }] });
   });
 
   it("rejects malformed protocol input", () => {

@@ -8,11 +8,12 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
+import type { CodeReference } from "../../domain/models.js";
 import {
   isExternalMarkdownHref,
   markdownAssetUrl,
@@ -21,6 +22,11 @@ import {
   type PointerPosition,
 } from "../markdown-links.js";
 import type { ThemePreference } from "../theme.js";
+import {
+  CodeReferenceLink,
+  codeReferenceIdFromHref,
+  codeReferenceMarkdownSanitizeSchema,
+} from "./CodeReferenceLink.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import { MermaidSurface } from "./MermaidSurface.js";
 
@@ -87,18 +93,26 @@ export function CommentMarkdown({
   pullRequestId,
   sourceOid,
   sourcePath,
+  references,
   themePreference,
+  onOpenCodeReference,
   onOpenRepositoryLink,
 }: {
   body: string;
   pullRequestId: string;
   sourceOid: string;
   sourcePath: string | null;
+  references: CodeReference[];
   themePreference: ThemePreference;
+  onOpenCodeReference?: ((reference: CodeReference, openInOtherPane: boolean) => void) | undefined;
   onOpenRepositoryLink?:
     ((path: string, sourceOid: string, openInOtherPane: boolean) => void) | undefined;
 }) {
   const linkPointerStart = useRef<PointerPosition | null>(null);
+  const referencesById = useMemo(
+    () => new Map(references.map((reference) => [reference.id, reference])),
+    [references],
+  );
   const components = useMemo<Components>(
     () => ({
       table: ({ children, node, ...props }) => {
@@ -111,6 +125,21 @@ export function CommentMarkdown({
       },
       a: ({ href, children, node, ...props }) => {
         void node;
+        const referenceId = codeReferenceIdFromHref(href);
+        if (referenceId !== null) {
+          const reference = referencesById.get(referenceId);
+          return reference && onOpenCodeReference ? (
+            <CodeReferenceLink
+              reference={reference}
+              className="comment-inline-reference"
+              onOpen={onOpenCodeReference}
+            >
+              {children}
+            </CodeReferenceLink>
+          ) : (
+            <span>{children}</span>
+          );
+        }
         const repositoryPath = resolveRepositoryMarkdownPath(href, sourcePath);
         if (!repositoryPath) {
           if (!href) return <span>{children}</span>;
@@ -211,14 +240,23 @@ export function CommentMarkdown({
         );
       },
     }),
-    [onOpenRepositoryLink, pullRequestId, sourceOid, sourcePath, themePreference],
+    [
+      onOpenCodeReference,
+      onOpenRepositoryLink,
+      pullRequestId,
+      referencesById,
+      sourceOid,
+      sourcePath,
+      themePreference,
+    ],
   );
 
   return (
     <div className="comment-markdown">
       <ReactMarkdown
-        rehypePlugins={[rehypeRaw, rehypeSanitize]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, codeReferenceMarkdownSanitizeSchema]]}
         remarkPlugins={[remarkGfm, remarkBreaks]}
+        urlTransform={(url) => (url.startsWith("rvw-ref:") ? url : defaultUrlTransform(url))}
         components={components}
       >
         {body}

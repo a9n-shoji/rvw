@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CommentPlacement, ReviewComment, WalkthroughSummary } from "../../domain/models.js";
+import type {
+  CodeReference,
+  CommentPlacement,
+  ReviewComment,
+  WalkthroughSummary,
+} from "../../domain/models.js";
 import { api, jsonRequest, type PlacementResponse } from "../api.js";
 import type { ThemePreference } from "../theme.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
@@ -24,6 +29,7 @@ function CommentCard({
   themePreference,
   onSelect,
   onCommentActiveChange,
+  onOpenCodeReference,
   onOpenTarget,
   onOpenRepositoryLink,
   onDeleted,
@@ -36,6 +42,11 @@ function CommentCard({
   themePreference: ThemePreference;
   onSelect: (selected: boolean) => void;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
+  onOpenCodeReference: (
+    sourceOid: string,
+    reference: CodeReference,
+    openInOtherPane: boolean,
+  ) => Promise<string | null>;
   onOpenTarget: (placement: CommentPlacement | null) => void;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
   onDeleted: () => void;
@@ -74,6 +85,7 @@ function CommentCard({
         markdownSourceOid={markdownSourceOid}
         themePreference={themePreference}
         onActiveChange={onCommentActiveChange}
+        onOpenCodeReference={onOpenCodeReference}
         onOpenTarget={() => onOpenTarget(placement.data?.placement ?? null)}
         onOpenRepositoryLink={onOpenRepositoryLink}
         onDeleted={onDeleted}
@@ -90,6 +102,7 @@ export function CommentSidebar({
   selectedOid,
   themePreference,
   onCommentActiveChange,
+  onOpenCodeReference,
   onOpenTarget,
   onOpenRepositoryLink,
 }: {
@@ -99,6 +112,11 @@ export function CommentSidebar({
   selectedOid: string;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
+  onOpenCodeReference: (
+    sourceOid: string,
+    reference: CodeReference,
+    openInOtherPane: boolean,
+  ) => Promise<string | null>;
   onOpenTarget: (comment: ReviewComment, placement: CommentPlacement | null) => void;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
 }) {
@@ -256,6 +274,7 @@ export function CommentSidebar({
             }
             themePreference={themePreference}
             onCommentActiveChange={onCommentActiveChange}
+            onOpenCodeReference={onOpenCodeReference}
             onSelect={(checked) => {
               const next = new Set(selected);
               if (checked) next.add(comment.id);

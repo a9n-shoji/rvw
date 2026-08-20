@@ -29,6 +29,7 @@ import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type {
+  CodeReference,
   CommentPlacement,
   DocumentContent,
   DocumentRef,
@@ -603,6 +604,7 @@ export function DocumentViewer({
   navigationTarget = null,
   onNavigationApplied,
   onOpenMarkdownFragment,
+  onOpenCodeReference,
   onOpenRepositoryLink,
 }: {
   pullRequestId: string;
@@ -620,6 +622,11 @@ export function DocumentViewer({
   navigationTarget?: ViewerNavigationTarget | null;
   onNavigationApplied: (requestId: number) => void;
   onOpenMarkdownFragment: (line: number, hash: string) => void;
+  onOpenCodeReference: (
+    sourceOid: string,
+    reference: CodeReference,
+    openInOtherPane: boolean,
+  ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
 }) {
   if (activeDocument.kind === "walkthrough") {
@@ -1162,6 +1169,7 @@ export function DocumentViewer({
                 placement={annotation.placement}
                 themePreference={themePreference}
                 onActiveChange={onCommentActiveChange}
+                onOpenCodeReference={onOpenCodeReference}
                 onOpenRepositoryLink={openRepositoryLink}
                 {...(annotation.comment.id === optimisticCommentId
                   ? { onDeleted: () => setOptimisticComment(null) }
@@ -1175,6 +1183,7 @@ export function DocumentViewer({
     [
       markdownCommentsById,
       onCommentActiveChange,
+      onOpenCodeReference,
       openRepositoryLink,
       optimisticCommentId,
       themePreference,
@@ -1380,6 +1389,7 @@ export function DocumentViewer({
           side={side ?? null}
           themePreference={themePreference}
           onActiveChange={onCommentActiveChange}
+          onOpenCodeReference={onOpenCodeReference}
           onOpenRepositoryLink={openRepositoryLink}
           {...(annotation.metadata.comment.id === optimisticComment?.comment.id
             ? { onDeleted: () => setOptimisticComment(null) }

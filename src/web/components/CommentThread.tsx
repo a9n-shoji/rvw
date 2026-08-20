@@ -1,6 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CommentPlacement, CommentPost, ReviewComment } from "../../domain/models.js";
+import type {
+  CodeReference,
+  CommentPlacement,
+  CommentPost,
+  ReviewComment,
+} from "../../domain/models.js";
 import { api, jsonRequest } from "../api.js";
 import type { ThemePreference } from "../theme.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
@@ -24,6 +29,7 @@ interface CommentMenuPosition {
 
 const inlineExpansionByComment = new Map<string, StoredInlineExpansion>();
 const pendingInlineScrollByComment = new Set<string>();
+const referenceNoticeDurationMs = 2400;
 
 function rangeLabel(comment: ReviewComment, placement: CommentPlacement | null): string | null {
   if (comment.target.kind === "pull-request" || comment.target.startLine === null) return null;
@@ -92,15 +98,25 @@ function CommentPostMarkdown({
   post,
   markdownSourceOid,
   themePreference,
+  onOpenCodeReference,
   onOpenRepositoryLink,
 }: {
   comment: ReviewComment;
   post: CommentPost;
   markdownSourceOid?: string | undefined;
   themePreference: ThemePreference;
+  onOpenCodeReference?:
+    | ((
+        sourceOid: string,
+        reference: CodeReference,
+        openInOtherPane: boolean,
+      ) => Promise<string | null>)
+    | undefined;
   onOpenRepositoryLink?:
     ((path: string, sourceOid: string, openInOtherPane: boolean) => void) | undefined;
 }) {
+  const [referenceNotice, setReferenceNotice] = useState<string | null>(null);
+  const referenceNoticeTimeout = useRef<number | null>(null);
   const repositoryTarget =
     comment.target.kind === "document" && comment.target.documentKind === "repository-file"
       ? comment.target
@@ -110,15 +126,50 @@ function CommentPostMarkdown({
     repositoryTarget?.sourceOid ??
     markdownSourceOid ??
     comment.createdHeadOid;
+  useEffect(
+    () => () => {
+      if (referenceNoticeTimeout.current !== null) {
+        window.clearTimeout(referenceNoticeTimeout.current);
+      }
+    },
+    [],
+  );
+  const openCodeReference = async (
+    reference: CodeReference,
+    openInOtherPane: boolean,
+  ): Promise<void> => {
+    if (!onOpenCodeReference) return;
+    const notice = await onOpenCodeReference(sourceOid, reference, openInOtherPane);
+    if (!notice) return;
+    if (referenceNoticeTimeout.current !== null) {
+      window.clearTimeout(referenceNoticeTimeout.current);
+    }
+    setReferenceNotice(notice);
+    referenceNoticeTimeout.current = window.setTimeout(() => {
+      setReferenceNotice(null);
+      referenceNoticeTimeout.current = null;
+    }, referenceNoticeDurationMs);
+  };
   return (
-    <CommentMarkdown
-      body={post.body}
-      pullRequestId={comment.pullRequestId}
-      sourceOid={sourceOid}
-      sourcePath={repositoryTarget?.path ?? null}
-      themePreference={themePreference}
-      onOpenRepositoryLink={onOpenRepositoryLink}
-    />
+    <>
+      <CommentMarkdown
+        body={post.body}
+        pullRequestId={comment.pullRequestId}
+        sourceOid={sourceOid}
+        sourcePath={repositoryTarget?.path ?? null}
+        references={post.references}
+        themePreference={themePreference}
+        onOpenCodeReference={(reference, openInOtherPane) => {
+          void openCodeReference(reference, openInOtherPane);
+        }}
+        onOpenRepositoryLink={onOpenRepositoryLink}
+      />
+      {referenceNotice && (
+        <div className="code-reference-notice comment-reference-notice" role="status">
+          {referenceNotice}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -129,6 +180,7 @@ export function CommentThread({
   side = null,
   markdownSourceOid,
   themePreference,
+  onOpenCodeReference,
   onOpenTarget,
   onOpenRepositoryLink,
   onDeleted,
@@ -140,6 +192,13 @@ export function CommentThread({
   side?: DiffSide;
   markdownSourceOid?: string | undefined;
   themePreference: ThemePreference;
+  onOpenCodeReference?:
+    | ((
+        sourceOid: string,
+        reference: CodeReference,
+        openInOtherPane: boolean,
+      ) => Promise<string | null>)
+    | undefined;
   onOpenTarget?: () => void;
   onOpenRepositoryLink?:
     ((path: string, sourceOid: string, openInOtherPane: boolean) => void) | undefined;
@@ -632,6 +691,7 @@ export function CommentThread({
                     post={post}
                     markdownSourceOid={markdownSourceOid}
                     themePreference={themePreference}
+                    onOpenCodeReference={onOpenCodeReference}
                     onOpenRepositoryLink={onOpenRepositoryLink}
                   />
                 )}

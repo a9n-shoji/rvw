@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Agentが作成・返信・編集・同期するcomment postへ、exact commitに固定したinline code referenceを付与できるprotocol v3
+
+### Changed
+
+- Walkthroughとcomment postがcode referenceのschema、検証、表示、navigationを共有
+
 ## [0.2.0] - 2026-08-20
 
 ### Added

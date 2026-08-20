@@ -2057,10 +2057,7 @@ diffs-container > [slot="header-metadata"] {
   align-items: center;
   gap: 6px;
 }
-.walkthrough-reference-notice {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 20px;
+.code-reference-notice {
   max-width: min(420px, calc(100% - 40px));
   overflow: hidden;
   padding: 7px 11px;
@@ -2073,6 +2070,16 @@ diffs-container > [slot="header-metadata"] {
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.walkthrough-reference-notice {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 20px;
+}
+.comment-reference-notice {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 5px;
 }
 .walkthrough-delete-button {
   color: var(--muted);
@@ -2187,7 +2194,7 @@ diffs-container > [slot="header-metadata"] {
   background: transparent;
   font-size: 12px;
 }
-.walkthrough-inline-reference {
+.code-inline-reference {
   display: inline-flex;
   max-width: 100%;
   align-items: center;
@@ -2202,22 +2209,22 @@ diffs-container > [slot="header-metadata"] {
   user-select: text;
   vertical-align: baseline;
 }
-.walkthrough-inline-reference:hover {
+.code-inline-reference:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
-.walkthrough-inline-reference svg {
+.code-inline-reference svg {
   width: 13px;
   height: 13px;
   flex: 0 0 auto;
 }
-.walkthrough-inline-reference > span {
+.code-inline-reference > span {
   overflow: hidden;
   font: 650 12px var(--mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.walkthrough-inline-reference small {
+.code-inline-reference small {
   color: var(--muted);
   font: 9px var(--mono);
   white-space: nowrap;

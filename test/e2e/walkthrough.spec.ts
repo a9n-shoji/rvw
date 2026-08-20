@@ -1604,6 +1604,7 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
     "",
     "Open [the fixture source](src/fixture.ts).",
     "[Walkthrough-only reference](rvw-ref:comment-reference)",
+    "Inspect [the typed fixture](rvw-ref:typed-fixture).",
     "",
     "![Order lifecycle](docs/order-lifecycle.svg)",
     "![External evidence](https://example.invalid/comment.png)",
@@ -1627,6 +1628,17 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
         endLine: 5,
       },
       body,
+      relatedCommitOid: view.headOid,
+      references: [
+        {
+          id: "typed-fixture",
+          label: "Fixture implementation",
+          path: "src/fixture.ts",
+          startLine: 1,
+          endLine: 2,
+          description: "The implementation discussed by this post",
+        },
+      ],
       authorLabel: "Codex · Markdown",
     },
   });
@@ -1696,6 +1708,8 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await expect(
     sidebarMarkdown.getByRole("link", { name: "Walkthrough-only reference" }),
   ).toHaveCount(0);
+  const typedReference = sidebarMarkdown.getByRole("button", { name: /the typed fixture/ });
+  await expect(typedReference).toHaveAttribute("title", "src/fixture.ts:L1–2");
   await expect(sidebarMarkdown.locator("[data-rvw-source-start-line]")).toHaveCount(0);
   await expect(sidebarMarkdown.locator("[data-rvw-composer-anchor]")).toHaveCount(0);
   await expect(
@@ -1744,6 +1758,22 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await sidebarDiagram.scrollIntoViewIfNeeded();
   await expect(sidebarDiagram.locator("svg")).toBeVisible();
   await expect(sidebarDiagram.locator("[data-walkthrough-reference-id]")).toHaveCount(0);
+
+  const commitPicker = page.getByRole("button", { name: /^対象commit:/ });
+  const initialCommitSelection = await commitPicker.getAttribute("aria-label");
+  await typedReference.click();
+  await expect(page.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.locator('diffs-container[data-search-target-line="1"]')).toBeVisible();
+  await expect(
+    page.locator('diffs-container [data-line="1"][data-selected-line="first"]'),
+  ).toBeVisible();
+  await expect(
+    page.locator('diffs-container [data-line="2"][data-selected-line="last"]'),
+  ).toBeVisible();
+  await expect(commitPicker).toHaveAttribute("aria-label", initialCommitSelection!);
 
   await page.getByRole("button", { name: "全ファイル", exact: true }).click();
   await page.locator(".file-tree").getByRole("button", { name: "README.md", exact: true }).click();

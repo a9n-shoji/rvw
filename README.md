@@ -92,7 +92,8 @@ viewerはこの流れのために次を提供します。
 - `@pierre/vscode-icons`による全画面共通の言語／tooling file icon
 - ファイル名fuzzy検索、Gitによるrealtime全文fixed-string検索（case / whole-word、file grouping、行jump）
 - PR全体、PR本文、ファイル全体、行範囲、Walkthrough全体へのコメント
-- コメントと返信のsafe GFM表示（repository内link／同一commit相対画像、表示専用Mermaidを含む）
+- コメントと返信のsafe GFM表示（repository内link／同一commit相対画像、表示専用Mermaid、
+  exact commitへ固定したinline code referenceを含む）
 - 未解決／解決済み、返信、Outdated追跡
 - Agentへ渡す一件・一覧・複数選択した`rvw://comment/<uuid>`参照のコピー
 - Agentが提示したWalkthrough、exact code reference、選択可能なMermaid node
@@ -176,7 +177,9 @@ rvw Skillを使って、https://github.com/owner/repository/pull/123 の未解�
 ```
 
 Agentにreview結果をRVWへ残してもらう場合は、対象PRとコメント作成を明示します。Agentはcommit済みの
-exact sourceを確認し、通常の未解決threadを一件ずつ作成します。
+exact sourceを確認し、通常の未解決threadを一件ずつ作成します。指摘や回答の理解に別の実装箇所が
+必要なら、投稿本文の`rvw-ref:<id>` linkと同じ投稿に保存したtyped referenceから、その時点のcommitを
+globalなcommit選択を変えずに開けます。
 
 ```text
 rvw Skillを使って、https://github.com/owner/repository/pull/123 をreviewし、見つけた指摘をRVWのコメントとして作成してください。
@@ -212,7 +215,7 @@ rvw pr reset https://github.com/owner/repository/pull/123 --json
 rvw pr reset https://github.com/owner/repository/pull/123 --yes --json
 ```
 
-resetは対象PRのコメント、返信、コメント対象、Walkthrough、code reference、
+resetは対象PRのコメント、返信、コメント対象、コメント投稿とWalkthroughのcode reference、
 `refs/rvw/pr/<number>/...`を削除し、現在のGitHub状態からcacheとhead refを再構築します。
 バックアップや旧コメント移行は行わず、元に戻せません。
 
@@ -249,7 +252,7 @@ rvw pr attach <PR_REF> --repository <PATH> --json
 stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの
 対話commandへJSONと改行だけを送るとEOF待ちになります。
 
-`comment create`は登録済みPR、通常のcomment target、本文、任意のAgent名をstdin JSONで受け取り、
+`comment create`は登録済みPR、通常のcomment target、本文、任意のAgent名、任意の投稿単位code referenceをstdin JSONで受け取り、
 未解決のroot threadを一件作成します。repository targetはexact commit、path、任意のinclusive line rangeを
 指定し、viewerと同じ文書・行検証を通ります。作成してもbrowserを開かず、tabやcommit選択を変更しません。
 

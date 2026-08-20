@@ -3,6 +3,7 @@ import path from "node:path";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import type {
   ChangedFile,
+  CodeReference,
   CommentPlacement,
   CommentPost,
   CommentPostEvent,
@@ -47,10 +48,10 @@ import {
   MAX_SEARCH_RESULTS,
   MAX_SEARCH_STDOUT_BYTES,
   MAX_WALKTHROUGH_BODY_BYTES,
-  MAX_WALKTHROUGH_REFERENCE_DESCRIPTION_CHARACTERS,
-  MAX_WALKTHROUGH_REFERENCE_LABEL_CHARACTERS,
-  MAX_WALKTHROUGH_REFERENCE_PATH_CHARACTERS,
-  MAX_WALKTHROUGH_REFERENCES,
+  MAX_CODE_REFERENCE_DESCRIPTION_CHARACTERS,
+  MAX_CODE_REFERENCE_LABEL_CHARACTERS,
+  MAX_CODE_REFERENCE_PATH_CHARACTERS,
+  MAX_CODE_REFERENCES,
   MAX_WALKTHROUGH_TITLE_CHARACTERS,
 } from "../shared/constants.js";
 import { findFixedStringMatches } from "../domain/search.js";
@@ -86,6 +87,7 @@ export interface CommentUpdateRequest {
   reply: string;
   resolve: boolean;
   authorLabel?: string | null;
+  references?: CodeReference[] | undefined;
   idempotencyKey?: string | undefined;
 }
 
@@ -94,6 +96,8 @@ export interface CommentCreateRequest {
   target: CommentTargetRequest;
   body: string;
   authorLabel?: string | null;
+  relatedCommitOid?: string | null;
+  references?: CodeReference[] | undefined;
 }
 
 export interface CommentExactSource {
@@ -244,7 +248,7 @@ function assertLinePair(startLine: number | null, endLine: number | null): void 
   }
 }
 
-const walkthroughReferenceIdPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const codeReferenceIdPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const walkthroughDiagramNodePattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 interface MarkdownNode {
@@ -368,7 +372,7 @@ function addMermaidDiagramNodes(source: string, nodeIds: Set<string>): void {
   }
 }
 
-function analyzeWalkthroughMarkdown(body: string): WalkthroughMarkdownAnalysis {
+function analyzeReferenceMarkdown(body: string): WalkthroughMarkdownAnalysis {
   const root = fromMarkdown(body) as MarkdownNode;
   const definitions = new Map<string, string>();
   const visit = (node: MarkdownNode, callback: (candidate: MarkdownNode) => void): void => {
@@ -404,16 +408,16 @@ function analyzeWalkthroughMarkdown(body: string): WalkthroughMarkdownAnalysis {
   };
 }
 
-function assertWalkthroughPath(filePath: string): void {
+function assertCodeReferencePath(filePath: string): void {
   if (
-    filePath.length > MAX_WALKTHROUGH_REFERENCE_PATH_CHARACTERS ||
+    filePath.length > MAX_CODE_REFERENCE_PATH_CHARACTERS ||
     filePath.includes("\\") ||
     path.posix.isAbsolute(filePath) ||
     path.posix.normalize(filePath) !== filePath ||
     filePath === "." ||
     filePath.startsWith("../")
   ) {
-    throw new RvwError("INVALID_INPUT", `walkthroughのpathが不正です: ${filePath}`);
+    throw new RvwError("INVALID_INPUT", `code referenceのpathが不正です: ${filePath}`);
   }
 }
 
@@ -600,6 +604,12 @@ export class RvwService {
           `commentUpdatesにはreplyまたはresolveが必要です: ${update.commentRef}`,
         );
       }
+      if (!update.reply.trim() && (update.references?.length ?? 0) > 0) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `replyのないcomment updateへcode referenceは追加できません: ${update.commentRef}`,
+        );
+      }
       if (update.reply.trim()) assertTextBody(update.reply);
       assertAuthorLabel(update.authorLabel);
       assertIdempotencyKey(update.idempotencyKey);
@@ -608,6 +618,7 @@ export class RvwService {
         commentId,
         reply: update.reply,
         resolve: update.resolve,
+        ...(update.references === undefined ? {} : { references: update.references }),
         ...(update.authorLabel === undefined ? {} : { authorLabel: update.authorLabel }),
         ...(update.idempotencyKey === undefined ? {} : { idempotencyKey: update.idempotencyKey }),
         ...(update.idempotencyKey === undefined
@@ -619,6 +630,7 @@ export class RvwService {
                 reply: update.reply,
                 resolve: update.resolve,
                 authorLabel,
+                references: update.references ?? [],
               }),
             }),
       };
@@ -649,6 +661,19 @@ export class RvwService {
       github.headOid,
     );
     await this.git.ensureCommitRef(repository.worktreePath, github.number, github.headOid);
+    for (const update of updates) {
+      if (!update.reply.trim()) continue;
+      const comment = this.database.getComment(update.commentId);
+      if (!comment) {
+        throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
+      }
+      await this.validateCodeReferences(this.getPullRequest(comment.pullRequestId), {
+        sourceOid: github.headOid,
+        body: update.reply,
+        references: update.references ?? [],
+        subject: "comment sync reply",
+      });
+    }
     const repositoryLocation = {
       localRepositoryPath: repository.worktreePath,
       gitCommonDir: repository.gitCommonDir,
@@ -955,6 +980,109 @@ export class RvwService {
     }
   }
 
+  private async validateCodeReferences(
+    pullRequest: PullRequest,
+    input: {
+      sourceOid: string | null;
+      body: string;
+      references: CodeReference[];
+      additionalUsedReferenceIds?: Iterable<string>;
+      subject: string;
+    },
+  ): Promise<WalkthroughMarkdownAnalysis> {
+    const markdown = analyzeReferenceMarkdown(input.body);
+    if (input.references.length > MAX_CODE_REFERENCES) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `${input.subject}のcode referenceは${MAX_CODE_REFERENCES}件以下にしてください。`,
+      );
+    }
+    if ((input.references.length > 0 || markdown.referenceIds.length > 0) && !input.sourceOid) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `${input.subject}でcode referenceを使う場合はrelated commitが必要です。`,
+      );
+    }
+    if (input.sourceOid) await this.assertCommitAvailable(pullRequest, input.sourceOid);
+
+    const referenceIds = new Set<string>();
+    for (const reference of input.references) {
+      if (!codeReferenceIdPattern.test(reference.id) || referenceIds.has(reference.id)) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `code reference IDが不正または重複しています: ${reference.id}`,
+        );
+      }
+      referenceIds.add(reference.id);
+      assertCodeReferencePath(reference.path);
+      if (
+        reference.label.trim().length === 0 ||
+        reference.label.length > MAX_CODE_REFERENCE_LABEL_CHARACTERS
+      ) {
+        throw new RvwError("INVALID_INPUT", `code reference labelが不正です: ${reference.id}`);
+      }
+      if (
+        reference.description !== null &&
+        reference.description.length > MAX_CODE_REFERENCE_DESCRIPTION_CHARACTERS
+      ) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `code reference descriptionが長すぎます: ${reference.id}`,
+        );
+      }
+      const content = await this.getDocument({
+        kind: "repository-file",
+        pullRequestId: pullRequest.id,
+        sourceOid: input.sourceOid!,
+        path: reference.path,
+      });
+      if (content.availability !== "available") {
+        throw new RvwError("INVALID_INPUT", `code referenceを表示できません: ${reference.path}`);
+      }
+      this.validateLineRange(
+        content.text ?? "",
+        reference.startLine,
+        reference.endLine,
+        `code reference ${reference.id}`,
+      );
+    }
+
+    const malformedReference = markdown.referenceIds.find(
+      (referenceId) => !codeReferenceIdPattern.test(referenceId),
+    );
+    if (malformedReference !== undefined) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `Markdown reference IDが不正です: ${malformedReference || "(empty)"}`,
+      );
+    }
+    const missingReference = markdown.referenceIds.find(
+      (referenceId) => !referenceIds.has(referenceId),
+    );
+    if (missingReference) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `Markdown referenceが見つかりません: ${missingReference}`,
+      );
+    }
+    const usedReferenceIds = new Set([
+      ...markdown.referenceIds,
+      ...(input.additionalUsedReferenceIds ?? []),
+    ]);
+    const unusedReference = input.references.find(
+      (reference) => !usedReferenceIds.has(reference.id),
+    );
+    if (unusedReference) {
+      const usageSurface =
+        input.additionalUsedReferenceIds === undefined ? "本文" : "本文またはbinding";
+      throw new RvwError(
+        "INVALID_INPUT",
+        `code referenceが${usageSurface}から参照されていません: ${unusedReference.id}`,
+      );
+    }
+    return markdown;
+  }
+
   private async prepareCommentTarget(
     pullRequest: PullRequest,
     target: CommentTargetRequest,
@@ -1031,17 +1159,35 @@ export class RvwService {
     target: CommentTargetRequest;
     body: string;
     authorLabel?: string | null;
+    relatedCommitOid?: string | null;
+    references?: CodeReference[];
   }): Promise<ReviewComment> {
     const pullRequest = this.getPullRequest(input.pullRequestId);
     const target = await this.prepareCommentTarget(pullRequest, input.target);
     assertAuthorLabel(input.authorLabel);
-    return this.database.createComment({
-      pullRequestId: pullRequest.id,
-      createdHeadOid: pullRequest.latestHeadOid,
-      target,
-      body: assertTextBody(input.body),
-      ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+    const body = assertTextBody(input.body);
+    const references = input.references ?? [];
+    await this.validateCodeReferences(pullRequest, {
+      sourceOid: input.relatedCommitOid ?? null,
+      body,
+      references,
+      subject: "comment post",
     });
+    const write = (): ReviewComment =>
+      this.database.createComment({
+        pullRequestId: pullRequest.id,
+        createdHeadOid: pullRequest.latestHeadOid,
+        target,
+        body,
+        ...(input.relatedCommitOid === undefined
+          ? {}
+          : { relatedCommitOid: input.relatedCommitOid }),
+        references,
+        ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+      });
+    return input.relatedCommitOid
+      ? await this.writeWithRetainedCommit(pullRequest, input.relatedCommitOid, "comment", write)
+      : write();
   }
 
   async createCommentForReference(input: CommentCreateRequest): Promise<ReviewComment> {
@@ -1050,6 +1196,8 @@ export class RvwService {
       pullRequestId: pullRequest.id,
       target: input.target,
       body: input.body,
+      ...(input.relatedCommitOid === undefined ? {} : { relatedCommitOid: input.relatedCommitOid }),
+      ...(input.references === undefined ? {} : { references: input.references }),
       ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
     });
   }
@@ -1255,56 +1403,16 @@ export class RvwService {
         `walkthrough本文は1〜${MAX_WALKTHROUGH_BODY_BYTES} UTF-8 bytesにしてください。`,
       );
     }
-    if (input.references.length === 0 || input.references.length > MAX_WALKTHROUGH_REFERENCES) {
+    if (input.references.length === 0 || input.references.length > MAX_CODE_REFERENCES) {
       throw new RvwError(
         "INVALID_INPUT",
-        `walkthrough referenceは1〜${MAX_WALKTHROUGH_REFERENCES}件にしてください。`,
+        `walkthrough referenceは1〜${MAX_CODE_REFERENCES}件にしてください。`,
       );
     }
     assertAuthorLabel(input.authorLabel);
-    const referenceIds = new Set<string>();
-    for (const reference of input.references) {
-      if (!walkthroughReferenceIdPattern.test(reference.id) || referenceIds.has(reference.id)) {
-        throw new RvwError(
-          "INVALID_INPUT",
-          `walkthrough reference IDが不正または重複しています: ${reference.id}`,
-        );
-      }
-      referenceIds.add(reference.id);
-      assertWalkthroughPath(reference.path);
-      if (
-        reference.label.trim().length === 0 ||
-        reference.label.length > MAX_WALKTHROUGH_REFERENCE_LABEL_CHARACTERS
-      ) {
-        throw new RvwError("INVALID_INPUT", `reference labelが不正です: ${reference.id}`);
-      }
-      if (
-        reference.description !== null &&
-        reference.description.length > MAX_WALKTHROUGH_REFERENCE_DESCRIPTION_CHARACTERS
-      ) {
-        throw new RvwError("INVALID_INPUT", `reference descriptionが長すぎます: ${reference.id}`);
-      }
-      const content = await this.getDocument({
-        kind: "repository-file",
-        pullRequestId: pullRequest.id,
-        sourceOid: input.sourceOid,
-        path: reference.path,
-      });
-      if (content.availability !== "available") {
-        throw new RvwError(
-          "INVALID_INPUT",
-          `walkthrough referenceを表示できません: ${reference.path}`,
-        );
-      }
-      this.validateLineRange(
-        content.text ?? "",
-        reference.startLine,
-        reference.endLine,
-        `walkthrough reference ${reference.id}`,
-      );
-    }
-    const markdown = analyzeWalkthroughMarkdown(input.body);
+    const markdown = analyzeReferenceMarkdown(input.body);
     const diagramBindings = input.diagramBindings ?? {};
+    const referenceIds = new Set(input.references.map((reference) => reference.id));
     for (const [nodeId, referenceId] of Object.entries(diagramBindings)) {
       if (!walkthroughDiagramNodePattern.test(nodeId)) {
         throw new RvwError("INVALID_INPUT", `Mermaid node IDが不正です: ${nodeId}`);
@@ -1322,35 +1430,13 @@ export class RvwService {
         );
       }
     }
-    const markdownReferenceIds = markdown.referenceIds;
-    const malformedReference = markdownReferenceIds.find(
-      (referenceId) => !walkthroughReferenceIdPattern.test(referenceId),
-    );
-    if (malformedReference !== undefined) {
-      throw new RvwError(
-        "INVALID_INPUT",
-        `Markdown reference IDが不正です: ${malformedReference || "(empty)"}`,
-      );
-    }
-    const missingReference = markdownReferenceIds.find(
-      (referenceId) => !referenceIds.has(referenceId),
-    );
-    if (missingReference) {
-      throw new RvwError(
-        "INVALID_INPUT",
-        `Markdown referenceが見つかりません: ${missingReference}`,
-      );
-    }
-    const usedReferenceIds = new Set([...markdownReferenceIds, ...Object.values(diagramBindings)]);
-    const unusedReference = input.references.find(
-      (reference) => !usedReferenceIds.has(reference.id),
-    );
-    if (unusedReference) {
-      throw new RvwError(
-        "INVALID_INPUT",
-        `walkthrough referenceが本文またはMermaid bindingから参照されていません: ${unusedReference.id}`,
-      );
-    }
+    await this.validateCodeReferences(pullRequest, {
+      sourceOid: input.sourceOid,
+      body: input.body,
+      references: input.references,
+      additionalUsedReferenceIds: Object.values(diagramBindings),
+      subject: "Walkthrough",
+    });
     return {
       sourceOid: input.sourceOid,
       title,
@@ -1361,9 +1447,10 @@ export class RvwService {
     };
   }
 
-  private async writeWalkthroughWithRetainedCommit<T>(
+  private async writeWithRetainedCommit<T>(
     pullRequest: PullRequest,
     sourceOid: string,
+    subject: "comment" | "Walkthrough",
     write: () => T,
   ): Promise<T> {
     const commitRef = await this.git.ensureCommitRef(
@@ -1380,7 +1467,7 @@ export class RvwService {
         } catch (cleanupError) {
           throw new RvwError(
             "LOCAL_STATE_INCONSISTENT",
-            "Walkthroughの書き込み失敗後にGit refを復元できませんでした。",
+            `${subject}の書き込み失敗後にGit refを復元できませんでした。`,
             { cause: cleanupError },
           );
         }
@@ -1392,7 +1479,7 @@ export class RvwService {
   async publishWalkthrough(input: WalkthroughPublishRequest): Promise<Walkthrough> {
     const pullRequest = this.resolveStoredPullRequest(input.pullRequest);
     const content = await this.validateWalkthroughContent(pullRequest, input);
-    return await this.writeWalkthroughWithRetainedCommit(pullRequest, content.sourceOid, () =>
+    return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, "Walkthrough", () =>
       this.database.createWalkthrough({
         pullRequestId: pullRequest.id,
         ...content,
@@ -1406,7 +1493,7 @@ export class RvwService {
       ...input,
       authorLabel: input.authorLabel === undefined ? walkthrough.authorLabel : input.authorLabel,
     });
-    return await this.writeWalkthroughWithRetainedCommit(pullRequest, content.sourceOid, () =>
+    return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, "Walkthrough", () =>
       this.database.updateWalkthrough(walkthrough.id, content),
     );
   }
@@ -1436,6 +1523,7 @@ export class RvwService {
       body: string;
       relatedCommitOid?: string | null;
       authorLabel?: string | null;
+      references?: CodeReference[];
       idempotencyKey?: string;
     },
   ) {
@@ -1445,28 +1533,36 @@ export class RvwService {
       throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
     assertAuthorLabel(input.authorLabel);
     assertIdempotencyKey(input.idempotencyKey);
-    if (input.relatedCommitOid) {
-      await this.assertCommitAvailable(
-        this.getPullRequest(comment.pullRequestId),
-        input.relatedCommitOid,
-      );
-    }
+    const pullRequest = this.getPullRequest(comment.pullRequestId);
     const body = assertTextBody(input.body);
-    return this.database.insertReply(id, {
-      ...input,
+    const references = input.references ?? [];
+    await this.validateCodeReferences(pullRequest, {
+      sourceOid: input.relatedCommitOid ?? null,
       body,
-      ...(input.idempotencyKey === undefined
-        ? {}
-        : {
-            idempotencyRequestHash: idempotencyRequestHash({
-              operation: "comment.reply",
-              commentId: id,
-              body,
-              relatedCommitOid: input.relatedCommitOid ?? null,
-              authorLabel: input.authorLabel ?? null,
-            }),
-          }),
+      references,
+      subject: "comment reply",
     });
+    const write = (): CommentPost =>
+      this.database.insertReply(id, {
+        ...input,
+        body,
+        references,
+        ...(input.idempotencyKey === undefined
+          ? {}
+          : {
+              idempotencyRequestHash: idempotencyRequestHash({
+                operation: "comment.reply",
+                commentId: id,
+                body,
+                relatedCommitOid: input.relatedCommitOid ?? null,
+                authorLabel: input.authorLabel ?? null,
+                references,
+              }),
+            }),
+      });
+    return input.relatedCommitOid
+      ? await this.writeWithRetainedCommit(pullRequest, input.relatedCommitOid, "comment", write)
+      : write();
   }
 
   setCommentResolved(uriOrId: string, resolved: boolean): ReviewComment {
@@ -1479,32 +1575,57 @@ export class RvwService {
     return this.database.deleteComment(id);
   }
 
-  updateCommentPost(commentId: string, postId: string, body: string): CommentPost {
-    return this.database.updateCommentPost(commentId, postId, assertTextBody(body));
+  async updateCommentPost(commentId: string, postId: string, body: string): Promise<CommentPost> {
+    const comment = this.database.getComment(commentId);
+    const post = comment?.posts.find((candidate) => candidate.id === postId);
+    if (!comment || !post) {
+      throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
+        status: 404,
+      });
+    }
+    const usedReferenceIds = new Set(analyzeReferenceMarkdown(body).referenceIds);
+    return await this.editCommentPost(commentId, postId, {
+      body,
+      references: post.references.filter((reference) => usedReferenceIds.has(reference.id)),
+    });
   }
 
   async editCommentPost(
     uriOrId: string,
     postId: string,
-    input: { body: string; relatedCommitOid?: string | null },
+    input: {
+      body: string;
+      relatedCommitOid?: string | null;
+      references?: CodeReference[];
+    },
   ): Promise<CommentPost> {
     const commentId = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
     const comment = this.database.getComment(commentId);
     if (!comment) {
       throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
     }
-    if (input.relatedCommitOid) {
-      await this.assertCommitAvailable(
-        this.getPullRequest(comment.pullRequestId),
-        input.relatedCommitOid,
-      );
+    const post = comment.posts.find((candidate) => candidate.id === postId);
+    if (!post) {
+      throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
+        status: 404,
+      });
     }
-    return this.database.updateCommentPost(
-      commentId,
-      postId,
-      assertTextBody(input.body),
-      input.relatedCommitOid,
-    );
+    const body = assertTextBody(input.body);
+    const relatedCommitOid =
+      input.relatedCommitOid === undefined ? post.relatedCommitOid : input.relatedCommitOid;
+    const references = input.references ?? post.references;
+    const pullRequest = this.getPullRequest(comment.pullRequestId);
+    await this.validateCodeReferences(pullRequest, {
+      sourceOid: relatedCommitOid,
+      body,
+      references,
+      subject: "comment post",
+    });
+    const write = (): CommentPost =>
+      this.database.updateCommentPost(commentId, postId, body, input.relatedCommitOid, references);
+    return relatedCommitOid
+      ? await this.writeWithRetainedCommit(pullRequest, relatedCommitOid, "comment", write)
+      : write();
   }
 
   deleteReply(commentId: string, postId: string): { commentId: string; postId: string } {

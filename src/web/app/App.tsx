@@ -17,6 +17,7 @@ import { changedFilePath } from "../../domain/changed-file.js";
 import type {
   ChangedFile,
   ChangeKind,
+  CodeReference,
   CommentPlacement,
   DocumentRef,
   ReviewComment,
@@ -539,7 +540,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchNavigationSequence = useRef(0);
-  const walkthroughReferenceRequestSequence = useRef<Record<DocumentPaneId, number>>({
+  const codeReferenceRequestSequence = useRef<Record<DocumentPaneId, number>>({
     left: 0,
     right: 0,
   });
@@ -1310,7 +1311,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       }
       const counts = preview.counts;
       const confirmed = window.confirm(
-        `ローカルレビュー状態を削除して再構築します。\n\nコメント ${counts.comments ?? 0}\n返信 ${counts.posts ?? 0}\n対象 ${counts.targets ?? 0}\nウォークスルー ${counts.walkthroughs ?? 0}\nコード参照 ${counts.walkthroughReferences ?? 0}\nGit ref ${counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
+        `ローカルレビュー状態を削除して再構築します。\n\nコメント ${counts.comments ?? 0}\n返信 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\n対象 ${counts.targets ?? 0}\nウォークスルー ${counts.walkthroughs ?? 0}\nウォークスルーコード参照 ${counts.walkthroughReferences ?? 0}\nGit ref ${counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
       );
       if (!confirmed) return null;
       return await api<{
@@ -1464,22 +1465,24 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     },
     [openDocument],
   );
-  const openWalkthroughReference = useCallback(
+  const openCodeReference = useCallback(
     async (
-      walkthrough: Walkthrough,
-      reference: WalkthroughReference,
+      pullRequestId: string,
+      sourceOid: string,
+      reference: CodeReference,
       targetPane: DocumentPaneId,
+      comparisonPolicy: "exact-source" | "selected-range",
     ): Promise<string | null> => {
-      walkthroughReferenceRequestSequence.current[targetPane] += 1;
-      const requestSequence = walkthroughReferenceRequestSequence.current[targetPane];
+      codeReferenceRequestSequence.current[targetPane] += 1;
+      const requestSequence = codeReferenceRequestSequence.current[targetPane];
       const targetNavigationRevision = documentWorkspaceRef.current.navigationRevision[targetPane];
       const requestIsCurrent = (): boolean =>
-        requestSequence === walkthroughReferenceRequestSequence.current[targetPane] &&
+        requestSequence === codeReferenceRequestSequence.current[targetPane] &&
         documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
       const ref: DocumentRef = {
         kind: "repository-file",
-        pullRequestId: walkthrough.pullRequestId,
-        sourceOid: walkthrough.sourceOid,
+        pullRequestId,
+        sourceOid,
         path: reference.path,
       };
       try {
@@ -1503,8 +1506,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       const document: ActiveDocument = {
         kind: "repository-file",
         path: reference.path,
-        sourceOid: walkthrough.sourceOid,
-        comparisonPolicy: "selected-range",
+        sourceOid,
+        comparisonPolicy,
       };
       const documentKey = documentTabKey(document);
       const activeTarget = documentWorkspaceRef.current.active[targetPane];
@@ -1523,6 +1526,21 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     },
     [navigateToDocument, queryClient],
   );
+  const openWalkthroughReference = useCallback(
+    (
+      walkthrough: Walkthrough,
+      reference: WalkthroughReference,
+      targetPane: DocumentPaneId,
+    ): Promise<string | null> =>
+      openCodeReference(
+        walkthrough.pullRequestId,
+        walkthrough.sourceOid,
+        reference,
+        targetPane,
+        "selected-range",
+      ),
+    [openCodeReference],
+  );
   const openWalkthroughReferenceFromLeftPane = useCallback(
     (walkthrough: Walkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
       openWalkthroughReference(walkthrough, reference, openInOtherPane ? "right" : "left"),
@@ -1532,6 +1550,38 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     (walkthrough: Walkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
       openWalkthroughReference(walkthrough, reference, openInOtherPane ? "left" : "right"),
     [openWalkthroughReference],
+  );
+  const openCommentCodeReference = useCallback(
+    (
+      sourceOid: string,
+      reference: CodeReference,
+      targetPane: DocumentPaneId,
+    ): Promise<string | null> => {
+      if (!pullRequestId) {
+        return Promise.resolve(`参照先を開けません · ${reference.path}`);
+      }
+      return openCodeReference(pullRequestId, sourceOid, reference, targetPane, "exact-source");
+    },
+    [openCodeReference, pullRequestId],
+  );
+  const openCommentCodeReferenceFromLeftPane = useCallback(
+    (sourceOid: string, reference: CodeReference, openInOtherPane: boolean) =>
+      openCommentCodeReference(sourceOid, reference, openInOtherPane ? "right" : "left"),
+    [openCommentCodeReference],
+  );
+  const openCommentCodeReferenceFromRightPane = useCallback(
+    (sourceOid: string, reference: CodeReference, openInOtherPane: boolean) =>
+      openCommentCodeReference(sourceOid, reference, openInOtherPane ? "left" : "right"),
+    [openCommentCodeReference],
+  );
+  const openCommentCodeReferenceFromSidebar = useCallback(
+    (sourceOid: string, reference: CodeReference, openInOtherPane: boolean) =>
+      openCommentCodeReference(
+        sourceOid,
+        reference,
+        openInOtherPane ? "right" : documentWorkspaceRef.current.focusedPane,
+      ),
+    [openCommentCodeReference],
   );
 
   if (!pullRequestIdParameter) {
@@ -1675,6 +1725,11 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                     ? openWalkthroughReferenceFromLeftPane
                     : openWalkthroughReferenceFromRightPane
                 }
+                onOpenCommentCodeReference={
+                  paneId === "left"
+                    ? openCommentCodeReferenceFromLeftPane
+                    : openCommentCodeReferenceFromRightPane
+                }
                 onOpenRepositoryLink={
                   paneId === "left"
                     ? openRepositoryMarkdownLinkFromLeftPane
@@ -1720,6 +1775,11 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
                 onOpenMarkdownFragment={(line, hash) =>
                   navigateToMarkdownFragment(paneViewerDocument, paneId, line, hash)
+                }
+                onOpenCodeReference={
+                  paneId === "left"
+                    ? openCommentCodeReferenceFromLeftPane
+                    : openCommentCodeReferenceFromRightPane
                 }
                 onOpenRepositoryLink={(filePath, sourceOid, openInOtherPane) =>
                   openRepositoryMarkdownLink(
@@ -2006,6 +2066,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 selectedOid={selectedOid}
                 themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}
+                onOpenCodeReference={openCommentCodeReferenceFromSidebar}
                 onOpenTarget={openCommentTarget}
                 onOpenRepositoryLink={openRepositoryMarkdownLinkFromSidebar}
               />

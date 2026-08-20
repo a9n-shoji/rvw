@@ -559,6 +559,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "comment.read",
           "comment.reply",
           "comment.edit",
+          "comment.codeReferences",
           "comment.resolve",
           "comment.reopen",
           "pullRequest.sync",
@@ -715,7 +716,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         writeOutput(
           options,
           result,
-          `削除対象: コメント${preview.counts.comments}、返信${preview.counts.posts}、対象${preview.counts.targets}、Walkthrough${preview.counts.walkthroughs}、コード参照${preview.counts.walkthroughReferences}、Git ref${preview.counts.gitRefs}\n続行するには --yes を指定してください。`,
+          `削除対象: コメント${preview.counts.comments}、返信${preview.counts.posts}、コメント内コード参照${preview.counts.commentReferences}、対象${preview.counts.targets}、Walkthrough${preview.counts.walkthroughs}、Walkthroughコード参照${preview.counts.walkthroughReferences}、Git ref${preview.counts.gitRefs}\n続行するには --yes を指定してください。`,
         );
         process.exitCode = 2;
         return;
@@ -897,6 +898,10 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         target: input.target,
         body: input.body,
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+        ...(input.relatedCommitOid === undefined
+          ? {}
+          : { relatedCommitOid: input.relatedCommitOid }),
+        ...(input.references === undefined ? {} : { references: input.references }),
       };
       const created = await callService(
         "comment.create",
@@ -963,6 +968,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         ...(input.relatedCommitOid === undefined
           ? {}
           : { relatedCommitOid: input.relatedCommitOid }),
+        ...(input.references === undefined ? {} : { references: input.references }),
         ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
       };
       const post = await callService(
@@ -986,6 +992,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         ...(input.relatedCommitOid === undefined
           ? {}
           : { relatedCommitOid: input.relatedCommitOid }),
+        ...(input.references === undefined ? {} : { references: input.references }),
       };
       const post = await callService(
         "comment.edit",

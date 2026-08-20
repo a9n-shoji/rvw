@@ -1461,3 +1461,42 @@ thread, while typed exact code references remain a Walkthrough capability.
   viewport deferral, and serialized Mermaid rendering.
 - Adding typed references later would require an explicit post-level persistence and edit-validation
   design instead of silently accepting `rvw-ref:` syntax now.
+
+## 2026-08-20: Add post-level typed code references to Agent comments
+
+### Problem
+
+The safe Markdown decision lets an Agent explain a finding or completed change, but a repository link
+can only resolve relative to one inferred context and cannot express a validated line range. Reviewers
+therefore cannot open the exact evidence behind an Agent-created root post or reply with the same
+precision as a Walkthrough. Treating references as thread-wide would make replies at different commits
+ambiguous, while reusing the full Walkthrough document model would incorrectly add source mapping,
+diagram bindings, and a separate document identity to comments.
+
+### Choice
+
+Supersede only the no-`rvw-ref:` portion of the 2026-08-18 comment Markdown decision. Give each
+`comment_posts` row zero or more typed code references and keep one exact `related_commit_oid` as their
+snapshot. Reuse the Walkthrough code-reference value shape, limits, Markdown parsing, commit/path/line
+validation, inline button, broken-link status, and pane navigation. Persist references in a dedicated
+child table so reply deletion and thread reset cascade naturally.
+
+Require every declaration to be used by an `rvw-ref:` link in the same post and every link to resolve
+to a declaration. A non-empty reference set requires a non-null related commit, which rvw retains with
+its immutable Git ref. Comment references never inherit between posts, bind Mermaid nodes, or create
+Markdown source-line targets. `comment create`, `comment reply`, and `comment edit` accept references;
+sync replies validate them against the newly synchronized GitHub head. Omitted references on CLI edit
+preserve the existing set, while an explicit array completely replaces it. Viewer body-only edits
+remove declarations whose links were removed and reject newly invented links.
+
+This adds `references` to the public post shape and accepted command payloads, so advance the machine
+contract to protocol version 3 and advertise `comment.codeReferences`.
+
+### Trade-offs
+
+- A post can link evidence from only one commit; evidence spanning commits must be split across posts.
+- Exact commit validation and retention add work to comment writes but prevent navigation from silently
+  drifting to the current review range.
+- Agent callers must keep Markdown links and the complete typed declaration set consistent on edits.
+- Comments remain lightweight thread content: they gain direct evidence links without becoming
+  Walkthrough documents or an in-app Agent conversation surface.

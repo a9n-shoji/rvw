@@ -139,6 +139,7 @@ describe("RvwDatabase", () => {
       "005_walkthrough_comments.sql",
       "006_theme_preference.sql",
       "009_comment_watch.sql",
+      "010_comment_post_references.sql",
     ]) {
       writeFileSync(
         path.join(legacyMigrationsDirectory, migration),
@@ -385,6 +386,57 @@ describe("RvwDatabase", () => {
         idempotencyKey: "watch-task:batch-1:comment-1",
       }),
     ).toThrow("同じidempotencyKey");
+    database.close();
+  });
+
+  it("persists post-level code references and removes them with their posts", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const rootReference = {
+      id: "root",
+      label: "Root source",
+      path: "src/root.ts",
+      startLine: 1,
+      endLine: 3,
+      description: null,
+    };
+    const comment = database.createComment({
+      pullRequestId: pullRequest.id,
+      createdHeadOid: github.headOid,
+      target: { kind: "pull-request" },
+      body: "Open [the root](rvw-ref:root).",
+      relatedCommitOid: github.headOid,
+      references: [rootReference],
+    });
+    const reply = database.insertReply(comment.id, {
+      body: "Open [the reply source](rvw-ref:reply).",
+      relatedCommitOid: github.headOid,
+      references: [
+        {
+          id: "reply",
+          label: "Reply source",
+          path: "src/reply.ts",
+          startLine: null,
+          endLine: null,
+          description: "File-level context",
+        },
+      ],
+    });
+
+    expect(database.getComment(comment.id)?.posts).toMatchObject([
+      { references: [rootReference] },
+      { references: [{ id: "reply", startLine: null, endLine: null }] },
+    ]);
+    expect(database.getResetCounts(pullRequest.id, 0).commentReferences).toBe(2);
+
+    database.updateCommentPost(comment.id, reply.id, "Reference removed.", undefined, []);
+    expect(database.getResetCounts(pullRequest.id, 0).commentReferences).toBe(1);
+    database.deleteComment(comment.id);
+    expect(database.getResetCounts(pullRequest.id, 0).commentReferences).toBe(0);
     database.close();
   });
 

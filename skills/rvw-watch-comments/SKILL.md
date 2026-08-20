@@ -54,8 +54,9 @@ safe and prevents an interrupted third attempt from leaving `確認中` indefini
 
 ## Start or resume intake
 
-1. Require `protocolVersion` 2 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
-   `comment.edit`, and `pullRequest.sync`; stop when `rvw agent status --json` selects `unavailable`.
+1. Require `protocolVersion` 3 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
+   `comment.edit`, `comment.codeReferences`, and `pullRequest.sync`; stop when `rvw agent status --json`
+   selects `unavailable`.
 2. Start `rvw comment watch --json-seq` when state has no cursor. Otherwise pass the exact saved cursor
    with `--after`. A cursorless start intentionally skips every existing comment.
 3. Parse each RFC 7464 frame and pass that single JSON value to `ingest` over closed stdin:
@@ -158,7 +159,9 @@ retrying; never repeat the implementation blindly.
 
 After GitHub exposes the pushed head, run `rvw pr sync --repository '<WORKTREE>' --stdin --json`
 without comment updates. Then edit each status post with its final body and the synchronized head as
-`relatedCommitOid`. If no code change is appropriate, edit the status post without a related commit.
+`relatedCommitOid`. When a concise result benefits from direct evidence, include `rvw-ref:` links and
+the post's complete typed `references` array at that exact head. Otherwise omit references. If no code
+change is appropriate, edit the status post without a related commit or references.
 
 ## Failure and stop
 

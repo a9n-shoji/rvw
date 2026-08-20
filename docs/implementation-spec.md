@@ -50,6 +50,7 @@ rvwが担うもの:
 - 返信と未解決／解決済み
 - commit間の保守的なコメントline mappingとOutdated表示
 - `rvw://comment/<uuid>`参照とSkill用CLI
+- comment postごとのexact commit固定typed code reference
 - 新規comment postのDB-wide event順序、opaque cursor、10秒pollのwatch CLI
 - commit固定のAgent Walkthrough、typed code reference、Mermaid図
 - platform非依存の`rvw` / `rvw-walkthrough` / `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
@@ -362,7 +363,7 @@ Walkthroughは、外部AgentがCLIで登録するcommit固定のMarkdown documen
 Agentを起動せず、登録時にもbrowserを開いたりactive tabやscroll位置を変更したりしない。
 
 ```typescript
-interface WalkthroughReference {
+interface CodeReference {
   id: string;
   label: string;
   path: string;
@@ -378,7 +379,7 @@ interface Walkthrough {
   body: string;
   authorLabel: string | null;
   diagramBindings: Record<string, string>; // Mermaid node ID -> reference ID
-  references: WalkthroughReference[];
+  references: CodeReference[];
 }
 ```
 
@@ -512,8 +513,16 @@ PR全体commentとWalkthrough全体commentはOutdatedにならない。
 投稿は64 KiB以下のUTF-8 GFM Markdown sourceで、rootとreplyを編集できる。既存のplain textも同じsource
 としてrenderし、soft line breakは表示上の改行へ変換する。raw HTMLはallowlistでsanitizeし、scriptを
 実行しない。table、task list、code block、repository内link、repository相対画像、表示専用Mermaidを
-扱うが、comment本文へsource mapping、`rvw-ref:`、Mermaid node bindingは持たせない。外部linkだけを
+扱う。comment本文へsource mappingやMermaid node bindingは持たせないが、post単位でtypedな
+`rvw-ref:<referenceId>`を持てる。外部linkだけを
 browserの別tabで開き、外部画像は取得しない。
+
+comment code referenceはWalkthroughと同じ`CodeReference` schema、ID/path/line/document検証、inline
+buttonを再利用する。各postは一つの`related_commit_oid`と0〜200件のreferenceを所有し、referenceが
+ある場合は関連commitを必須とする。全宣言はそのpost本文のMarkdown linkから使われ、全linkは宣言済み
+IDへ一致しなければならない。referenceはthread内で継承せず、Mermaid bindingにも使わない。通常clickは
+related commitのexact sourceを操作元paneへ、modifier clickは反対paneへ開き、globalなcommit範囲を
+変えない。作成・reply・edit成功前に関連commitをimmutable refで保持する。
 
 repository内linkと画像の基準commitは、postの`related_commit_oid`、repository targetの`source_oid`、
 Walkthrough targetのcurrent `sourceOid`、`comments.created_head_oid`の順に選ぶ。repository targetでは
@@ -577,7 +586,7 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-current protocol versionは2とし、最初のpublic compatibility contractはversion 1である。公開前に
+current protocol versionは3とし、最初のpublic compatibility contractはversion 1である。公開前に
 使用した内部version番号は互換性保証の対象外とする。public release後は番号を再利用せず、breaking
 changeのたびに単調増加させる。capabilityは次を含む。
 
@@ -589,6 +598,7 @@ comment.watch
 comment.read
 comment.reply
 comment.edit
+comment.codeReferences
 comment.resolve
 comment.reopen
 pullRequest.sync
@@ -620,7 +630,18 @@ stdinのrepository line comment例:
     "startLine": 18,
     "endLine": 24
   },
-  "body": "この分岐では失敗結果が呼び出し元へ返りません。",
+  "body": "この分岐では失敗結果が [呼び出し元](rvw-ref:caller) へ返りません。",
+  "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567",
+  "references": [
+    {
+      "id": "caller",
+      "label": "Request caller",
+      "path": "src/request-caller.ts",
+      "startLine": 30,
+      "endLine": 38,
+      "description": null
+    }
+  ],
   "authorLabel": "Agent name"
 }
 ```
@@ -629,6 +650,9 @@ stdinのrepository line comment例:
 `Pull Request.md`全体／行範囲、exact commitのrepository file全体／行範囲、Walkthrough全体／行範囲を
 受け付ける。行を省略した入力は`null`へ正規化し、line pair、commit、path、文書availability、
 Walkthrough所属、本文byte上限はviewer作成と同じapplication serviceで検証する。
+任意の`references`は同じpostの`relatedCommitOid`を必須とし、Walkthroughと共通のschemaでcommit、
+UTF-8 document、path、line range、Markdown linkとの完全一致を検証する。参照はpost単位でありthreadへ
+共有しない。
 
 成功時は未解決のcommentとroot post、`rvw://comment/<uuid>`を返す。作成は非冪等であり、送信後の結果が
 不明な場合は`comment list`で重複を確認してから、未作成の場合だけ再実行する。作成はviewerを開かず、
@@ -644,8 +668,18 @@ stdin:
   "commentUpdates": [
     {
       "commentRef": "rvw://comment/uuid",
-      "reply": "対応内容",
-      "resolve": false
+      "reply": "対応内容は [更新箇所](rvw-ref:result) で確認できます。",
+      "resolve": false,
+      "references": [
+        {
+          "id": "result",
+          "label": "Updated implementation",
+          "path": "src/request-handler.ts",
+          "startLine": 18,
+          "endLine": 24,
+          "description": null
+        }
+      ]
     }
   ]
 }
@@ -669,7 +703,7 @@ fetchするが、behindなworktreeのcheckoutやbranch refは変更しない。
 2. object取得、comparison base計算
 3. immutable head ref作成・検証
 4. SQLite transactionでlatest PR cache、reply、resolve、change sequence更新
-5. replyの`related_commit_oid`へcurrent GitHub headを設定
+5. reply referenceをcurrent GitHub headで検証し、replyの`related_commit_oid`へそのheadを設定
 
 `comment create`は非冪等である。`pr sync`と`comment reply`のreplyは任意のidempotency keyを受け、
 同じcaller payloadのretryは元のpostを返す。syncが内部で関連付けるGitHub head OIDはcaller payload
@@ -779,8 +813,8 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   process callerはJSON送信後にstdinをcloseし、shell callerはpipe、quoted heredoc、input redirectionの
   いずれかを使って対話PTYでのEOF待ちを避ける。Agent socket frameはこの入力とprotocol envelopeを
   収める固定上限を持つ。
-- comment本文とreplyはUTF-8 GFM Markdown sourceで64 KiB以下とする。
-- Walkthrough本文は256 KiB以下、referenceは最大200件とする。
+- comment本文とreplyはUTF-8 GFM Markdown sourceで64 KiB以下とする。comment postとWalkthroughの
+  referenceはそれぞれ最大200件とする。
 - `walkthrough get`はcurrent WalkthroughとPR identity、local repository pathを返す。
 - `comment list`は登録済みPRをURLまたは番号で受け、`unresolved`を既定に`resolved` / `all`も選べる。
   `limit`は既定50、最大100、`offset`は既定0とし、`total`、`hasMore`、`nextOffset`を返す。
@@ -788,7 +822,7 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   導出したplacementだけを返し、PR本文は含めない。完全なtarget、全post、source excerptは
   `comment get`だけが返す。
 - `comment get`はPR URL、repository path、最新title、base/head branchとOID、head repository owner/name、comparison base、comment
-  target、posts、`createdHeadOid`、`latestHeadOid`、各postの`relatedCommitOid`、latest headに対してserviceが
+  target、posts、`createdHeadOid`、`latestHeadOid`、各postの`relatedCommitOid`と`references`、latest headに対してserviceが
   導出したplacementを返す。既定ではPR本文を含めず、`--include-pr-body`指定時だけ最新の同期済み本文を
   `pullRequest.body`として返す。呼び出し側はOID比較でOutdatedを推測しない。
 - `comment get --live`はGitHubの現在値をread-onlyで取得し、同期済みcacheを更新せず、`githubState`へ
@@ -802,15 +836,17 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   存在しない）とする。`available`だけがexcerptを持ち、それ以外は`null`とする。Agentは必要な周辺contextを
   local repositoryのexact OIDから読む。
 - standalone `comment reply`のstdinは`body`、任意の`authorLabel`、任意の
-  `relatedCommitOid`、任意の`idempotencyKey`を持つ。関連OIDを指定した場合は対象PRで利用可能なcommitで
-  なければならない。同じkeyと同じpayloadのretryは既存postを返し、異なる利用を拒否する。
-- `comment edit`はcomment URIとpost IDを引数、stdinの`body`と任意の`relatedCommitOid`を入力として
-  postを完全置換する。OID省略は現在値を維持し、`null`は関連を外し、非nullは対象PRで利用可能なcommitへ
-  置き換える。同じ内容へのretryはpostを増やさない。
-- `comment create`は登録済みPR、通常のcomment target、本文、任意の`authorLabel`をstdinで受け、
+  `relatedCommitOid`、任意の`references`、任意の`idempotencyKey`を持つ。referenceがある場合は関連OIDを
+  必須とし、対象PRで利用可能なcommitでなければならない。同じkeyと同じpayloadのretryは既存postを返し、
+  異なる利用を拒否する。
+- `comment edit`はcomment URIとpost IDを引数、stdinの`body`、任意の`relatedCommitOid`と`references`を
+  入力としてpostを完全置換する。OID省略は現在値、reference省略は現在setを維持し、明示値は完全置換する。
+  `null` OIDは関連を外し、非nullは対象PRで利用可能なcommitへ置き換える。同じ内容へのretryはpostを増やさない。
+- `comment create`は登録済みPR、通常のcomment target、本文、任意の`authorLabel`、`relatedCommitOid`、
+  `references`をstdinで受け、
   viewerと同じtarget validationから未解決threadを一件作成する。batch作成は行わない。
 - `pr sync`の`commentUpdates`は最大500件で、各要素は`commentRef`、`reply`、`resolve`と任意の
-  `idempotencyKey`を持つ。
+  `references`、`idempotencyKey`を持つ。referenceは同期したcurrent GitHub headへ固定する。
 - breakingなprotocol schema変更ではprotocol versionを進める。additiveなcommandは同じversionへ新しい
   capabilityを追加する。いずれもCLI contract test、3つの共通Skill、README、`docs/cli-protocol.md`を
   同じ変更で更新する。
@@ -905,6 +941,20 @@ CREATE TABLE comment_posts (
   is_root INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE comment_post_references (
+  post_id TEXT NOT NULL REFERENCES comment_posts(id) ON DELETE CASCADE,
+  reference_id TEXT NOT NULL,
+  label TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  start_line INTEGER,
+  end_line INTEGER,
+  description TEXT,
+  sort_order INTEGER NOT NULL,
+  CHECK((start_line IS NULL AND end_line IS NULL) OR
+        (start_line IS NOT NULL AND end_line IS NOT NULL AND start_line > 0 AND end_line >= start_line)),
+  PRIMARY KEY(post_id, reference_id)
 );
 
 CREATE TABLE comment_reply_idempotency (
@@ -1140,7 +1190,9 @@ E2E:
     一意に置けないquoteはOutdated表示
 16. viewerでWalkthroughと紐づくcomment件数を確認して削除し、tabとcommentを同時に除去
 17. root commentとreplyのGFM、soft line break、sanitize、repository内link、同一commit相対画像、
-    表示専用Mermaidをsidebarとinline threadでrenderし、編集時は元Markdown sourceを表示する
+    表示専用Mermaid、post単位のtyped code referenceをsidebarとinline threadでrenderし、編集時は
+    元Markdown sourceを表示する。referenceはrelated commitのexact sourceへ開き、壊れた参照は
+    Walkthroughと共通のstatusを表示する
 18. file、tab、Search result、comment、Walkthrough reference、Markdown相対／見出しlinkを辿ったbrowser
     Back / Forwardがfocused paneの文書と位置を復元し、行jump後に手動で読み進めた位置、反対paneのtab、
     現在のcommit範囲、表示mode、tree modeを維持。reloadは初期一時workspaceへ戻る
@@ -1161,6 +1213,7 @@ CLI contract:
 - task state scriptのatomic ingest、lease recovery、thread単位status post再利用、即時ackの自己event抑制、
   repository write直列化、旧task DBの未完了batchからの冪等key移行、status post削除後のmapping再生成
 - `comment edit`のbody完全置換、related commit維持／解除／更新、Agent socket経由write
+- comment create/reply/edit/syncのpost単位reference検証、保存、完全置換、commit保持、idempotency
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
 - `pr sync`のreply/head関連付けと非冪等時の再取得
 - 3つのSkillの初回install、同一内容の再install、いずれかに差異がある場合の更新検知と`--force`
