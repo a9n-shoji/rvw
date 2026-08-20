@@ -40,17 +40,6 @@ export function groupSearchResults(results: SearchResult[]): SearchResultGroup[]
   return [...groups.values()];
 }
 
-function SearchIcon() {
-  return (
-    <svg className="sidebar-stack-icon" aria-hidden="true" viewBox="0 0 16 16">
-      <path
-        fill="currentColor"
-        d="M6.75 1a5.75 5.75 0 1 0 3.58 10.25l3.71 3.71a.75.75 0 1 0 1.06-1.06l-3.71-3.71A5.75 5.75 0 0 0 6.75 1Zm-4.25 5.75a4.25 4.25 0 1 1 8.5 0 4.25 4.25 0 0 1-8.5 0Z"
-      />
-    </svg>
-  );
-}
-
 function ResultChevron({ expanded }: { expanded: boolean }) {
   return (
     <svg aria-hidden="true" viewBox="0 0 16 16">
@@ -82,10 +71,6 @@ function HighlightedSearchText({ result }: { result: SearchResult }) {
   }
   if (offset < result.text.length) content.push(result.text.slice(offset));
   return <>{content}</>;
-}
-
-export function SearchStackIcon() {
-  return <SearchIcon />;
 }
 
 export function SearchPanel({

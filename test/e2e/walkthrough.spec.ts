@@ -4,6 +4,23 @@ const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryWalkthrough = "注文作成フロー：HTTPからtransactional outboxまで";
 const markdownShowcase = "Markdown表現デモ：レビューコメントのショーケース";
 
+async function openWalkthroughFromSidebar(page: Page, title: string): Promise<void> {
+  const walkthroughsFolder = page.getByRole("button", { name: /^ウォークスルー \d+$/ });
+  if ((await walkthroughsFolder.getAttribute("aria-expanded")) !== "true") {
+    await walkthroughsFolder.click();
+  }
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await reviewTree.getByRole("button", { name: title, exact: true }).click();
+}
+
+async function openCommentsSidebar(page: Page): Promise<void> {
+  const toggle = page.locator(".sidebar-stack--comments > .sidebar-stack-toggle");
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") {
+    await toggle.click();
+  }
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
 async function selectMappedText(locator: Locator, firstCharacterOnly = false): Promise<void> {
   await expect(locator).toBeVisible();
   await locator.evaluate((element) => {
@@ -55,17 +72,47 @@ test("keeps agent explanation passive until a human opens an exact code referenc
 }) => {
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("heading", { name: "Fixture review updated" })).toBeVisible();
+  await expect(
+    page.locator(".topbar").getByRole("heading", { name: "Fixture review updated" }),
+  ).toBeVisible();
 
-  const walkthroughStack = page.getByRole("button", { name: "ウォークスルー 5", exact: true });
-  await expect(walkthroughStack).toHaveAttribute("aria-expanded", "true");
-  await expect(page.locator(".walkthrough-panel-item")).toHaveCount(5);
-  await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+  const walkthroughShortcut = page.getByRole("button", {
+    name: "ウォークスルー 5",
+    exact: true,
+  });
+  await expect(page.getByRole("button", { name: "Pull Request.md", exact: true })).toBeVisible();
+  await expect(walkthroughShortcut).toHaveAttribute("aria-expanded", "false");
+  await walkthroughShortcut.click();
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await expect(reviewTree.locator(".review-tree-walkthrough")).toHaveCount(5);
+  await reviewTree.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
 
   await expect(page.getByRole("tab", { name: primaryWalkthrough })).toHaveAttribute(
     "aria-selected",
     "true",
   );
+  await expect(walkthroughShortcut).toHaveAttribute("aria-expanded", "true");
+  await expect(reviewTree.locator(".review-tree-walkthrough")).toHaveCount(5);
+  await expect(
+    reviewTree.getByRole("button", { name: primaryWalkthrough, exact: true }),
+  ).toHaveAttribute(
+    "title",
+    `${primaryWalkthrough}\nCodex · implementation walkthrough · cccccccc`,
+  );
+  const [walkthroughFolderColor, repositoryFolderColor] = await Promise.all([
+    walkthroughShortcut.evaluate((element) => getComputedStyle(element).color),
+    page
+      .getByRole("button", { name: "src フォルダ", exact: true })
+      .evaluate((element) => getComputedStyle(element).color),
+  ]);
+  expect(walkthroughFolderColor).toBe(repositoryFolderColor);
+  const walkthroughCountGap = await walkthroughShortcut.evaluate((element) => {
+    const label = element.querySelector(".file-tree-label");
+    const count = element.querySelector(".review-tree-count");
+    if (!(label instanceof HTMLElement) || !(count instanceof HTMLElement)) return -1;
+    return count.getBoundingClientRect().left - label.getBoundingClientRect().right;
+  });
+  expect(walkthroughCountGap).toBeCloseTo(4, 0);
   await expect(page.getByRole("heading", { name: "注文作成フローの全体像" })).toBeVisible();
   await expect(
     page.getByRole("img", { name: "画像: External walkthrough（自動読み込み停止）" }),
@@ -73,7 +120,7 @@ test("keeps agent explanation passive until a human opens an exact code referenc
   await expect(page.locator('img[src="https://example.invalid/walkthrough.png"]')).toHaveCount(0);
   await expect(page.locator(".walkthrough-viewer-header .walkthrough-meta")).toHaveCount(0);
   await expect(page.getByText("Code references", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
   await expect(page.locator(".walkthrough-diagram svg")).toBeVisible();
   await expect(page.locator(".walkthrough-diagram-node--linked")).toHaveCount(9);
   await expect(page.locator(".walkthrough-diagram-node--linked").first()).toHaveCSS(
@@ -106,7 +153,7 @@ test("keeps agent explanation passive until a human opens an exact code referenc
   );
   await expect(page.locator('.document-pane[data-pane="right"]')).toBeVisible();
   await expect(commitPicker).toHaveAttribute("aria-label", initialCommitSelection!);
-  await expect(page.getByRole("tab")).toHaveCount(3);
+  await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(3);
   await expect(page.locator('.document-pane[data-pane="right"] diffs-container')).toHaveAttribute(
     "data-search-target-line",
     "9",
@@ -272,7 +319,7 @@ test("falls back to full text for an unchanged file opened from a Walkthrough re
 
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
   const destinationDocumentRequest = page.waitForRequest((request) => {
     const url = new URL(request.url());
     return (
@@ -350,7 +397,7 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
     .locator('.document-pane[data-pane="left"]')
     .getByRole("tab", { name: "Pull Request.md" })
     .click();
-  await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
   const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
   const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
   const displayDiffButton = reviewScope.getByRole("button", { name: "変更", exact: true });
@@ -411,7 +458,7 @@ test("keeps the review scope and reports a broken Walkthrough reference temporar
   });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
   const commitPicker = page.getByRole("button", { name: /^対象commit:/ });
   const initialCommitSelection = await commitPicker.getAttribute("aria-label");
   expect(initialCommitSelection).not.toBeNull();
@@ -443,7 +490,7 @@ test("reports a Walkthrough reference load failure without calling it a broken l
   });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
   await page
     .locator(".walkthrough-markdown .walkthrough-inline-reference")
     .filter({ hasText: "CreateOrderHandler.execute" })
@@ -478,7 +525,7 @@ test("resolves concurrent Walkthrough references independently in each pane", as
 
   try {
     await page.goto(`/?pullRequestId=${pullRequestId}`);
-    await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+    await openWalkthroughFromSidebar(page, primaryWalkthrough);
     await page
       .locator(".walkthrough-markdown .walkthrough-inline-reference")
       .filter({ hasText: "CreateOrderHandler.execute" })
@@ -529,7 +576,7 @@ test("does not let a delayed Walkthrough reference replace navigation that retur
 
   try {
     await page.goto(`/?pullRequestId=${pullRequestId}`);
-    await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+    await openWalkthroughFromSidebar(page, primaryWalkthrough);
     await page
       .locator(".walkthrough-markdown .walkthrough-inline-reference")
       .filter({ hasText: "CreateOrderHandler.execute" })
@@ -575,13 +622,12 @@ test("moves document tabs between at most two panes and previews repository Mark
 
   const sidebarStackLabels = await page.locator(".sidebar-stack-toggle").allTextContents();
   expect(sidebarStackLabels.map((label) => label.replace(/\s+/g, "").replace(/\d+$/, ""))).toEqual([
-    "ファイル",
-    "検索",
+    "エクスプローラー",
     "コメント",
-    "ウォークスルー",
   ]);
+  await expect(page.getByRole("navigation", { name: "レビュー文書" })).toBeVisible();
 
-  await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
   await page.getByRole("button", { name: "左ペインの操作" }).click();
   await page.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
   await expect(
@@ -619,7 +665,7 @@ test("moves document tabs between at most two panes and previews repository Mark
     }),
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.locator(".file-tree").getByRole("button", { name: "README.md", exact: true }).click();
   await page.getByRole("button", { name: "Preview", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Orders service", exact: true })).toBeVisible();
@@ -757,6 +803,7 @@ test("moves document tabs between at most two panes and previews repository Mark
   await expect(operationalDetails).not.toHaveAttribute("open", "");
   await expect(operationalDetails.getByText(/Payment reconciliation/)).toBeHidden();
   await expect(detailsComment).toBeHidden();
+  await openCommentsSidebar(page);
   await expect(
     page.locator(".comment-list-item").filter({
       hasText: "折りたたみ内の説明へコメントしました。",
@@ -880,7 +927,7 @@ test("keeps native Markdown pointer selection stable across headings, tables, an
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.locator(".file-tree").getByRole("button", { name: "README.md", exact: true }).click();
   await page.getByRole("button", { name: "Preview", exact: true }).click();
 
@@ -930,9 +977,7 @@ test("keeps native Markdown pointer selection stable across headings, tables, an
 
 test("keeps walkthrough Markdown selection stable on the first interaction", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page
-    .getByRole("button", { name: "Markdown表現デモ：レビューコメントのショーケース" })
-    .click();
+  await openWalkthroughFromSidebar(page, markdownShowcase);
 
   const mappedLeaf = (line: number, text: RegExp) =>
     page
@@ -960,9 +1005,7 @@ test("keeps walkthrough Markdown selection stable on the first interaction", asy
 
 test("renders a class diagram with code-bound classes", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page
-    .getByRole("button", { name: "テストマップ：各層で何を保証しているか", exact: true })
-    .click();
+  await openWalkthroughFromSidebar(page, "テストマップ：各層で何を保証しているか");
 
   await expect(page.locator(".walkthrough-diagram svg")).toBeVisible();
   await expect(page.locator(".walkthrough-diagram-node--linked")).toHaveCount(5);
@@ -995,7 +1038,7 @@ test("renders the Markdown walkthrough showcase and keeps every expression comme
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: markdownShowcase, exact: true }).click();
+  await openWalkthroughFromSidebar(page, markdownShowcase);
 
   await expect(page.getByRole("tab", { name: markdownShowcase })).toHaveAttribute(
     "aria-selected",
@@ -1052,6 +1095,7 @@ test("renders the Markdown walkthrough showcase and keeps every expression comme
   await page.getByRole("textbox", { name: "L25へコメント" }).press("Control+Enter");
   await detailsSummary.click();
   await expect(details).not.toHaveAttribute("open", "");
+  await openCommentsSidebar(page);
   const detailsSidebarComment = page.locator(".comment-list-item").filter({
     hasText: "details内の探索コメントです。",
   });
@@ -1132,7 +1176,7 @@ test("renders the Markdown walkthrough showcase and keeps every expression comme
 
 test("keeps Markdown comment menus reachable across narrow viewports", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: markdownShowcase, exact: true }).click();
+  await openWalkthroughFromSidebar(page, markdownShowcase);
 
   const line = page
     .locator('.walkthrough-markdown [data-rvw-source-start-line="5"][data-rvw-source-leaf="true"]')
@@ -1169,7 +1213,7 @@ test("keeps Markdown comment menus reachable across narrow viewports", async ({ 
 
 test("normalizes mixed Markdown selections and ignores comment UI text", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: markdownShowcase, exact: true }).click();
+  await openWalkthroughFromSidebar(page, markdownShowcase);
   await expect(page.locator(".walkthrough-diagram-shell svg")).toHaveCount(2);
 
   const selectBetween = async (
@@ -1284,7 +1328,7 @@ test("resizes the sidebar and two reading panes with pointer drag", async ({ pag
   const sidebarAfter = await sidebar.boundingBox();
   expect(sidebarAfter!.width).toBeGreaterThan(sidebarBefore!.width + 70);
 
-  await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
   const handlerReference = page
     .locator(".walkthrough-markdown .walkthrough-inline-reference")
     .filter({ hasText: "CreateOrderHandler.execute" });
@@ -1323,7 +1367,7 @@ test("keeps readable minimum widths on a narrow viewport", async ({ page }) => {
   expect(singlePaneLayout.mainWidth).toBeGreaterThanOrEqual(500);
   expect(singlePaneLayout.scrollWidth).toBeGreaterThan(singlePaneLayout.clientWidth);
 
-  await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
   await page
     .locator(".walkthrough-markdown .walkthrough-inline-reference")
     .filter({ hasText: "CreateOrderHandler.execute" })
@@ -1355,7 +1399,7 @@ test("refreshes an open walkthrough in place after an agent update", async ({ pa
   const updatedTitle = "障害とretry：レビュー反映版";
   const updatedReferenceLabel = "Idempotency envelope（補足済み）";
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: originalTitle, exact: true }).click();
+  await openWalkthroughFromSidebar(page, originalTitle);
   await expect(page.getByRole("tab", { name: originalTitle })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -1385,12 +1429,12 @@ test("refreshes an open walkthrough in place after an agent update", async ({ pa
   await expect(
     page.locator(".walkthrough-inline-reference").filter({ hasText: updatedReferenceLabel }),
   ).toBeVisible();
-  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
 });
 
 test("comments on the walkthrough as a whole", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
 
   await page.getByRole("button", { name: "ウォークスルー全体へコメント" }).click();
   await page
@@ -1403,6 +1447,7 @@ test("comments on the walkthrough as a whole", async ({ page }) => {
     walkthroughPane.getByText("outboxの責務境界をもう少し説明してほしいです。"),
   ).toBeVisible();
   await expect(walkthroughPane.getByText("ウォークスルー全体", { exact: true })).toBeVisible();
+  await openCommentsSidebar(page);
   const sidebarComment = page
     .locator(".comment-list-item")
     .filter({ hasText: "outboxの責務境界をもう少し説明してほしいです。" });
@@ -1430,7 +1475,7 @@ test("comments on selected walkthrough lines and marks them Outdated after repla
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
 
   const explanationLine = page
     .locator('.walkthrough-markdown [data-rvw-source-start-line="5"][data-rvw-source-leaf="true"]')
@@ -1529,6 +1574,7 @@ test("comments on selected walkthrough lines and marks them Outdated after repla
   await walkthroughPane.evaluate((pane) => {
     pane.scrollTop = 0;
   });
+  await openCommentsSidebar(page);
   const sidebarDiagramComment = page.locator(".comment-list-item").filter({
     hasText: "この図全体の境界を確認してください。",
   });
@@ -1586,12 +1632,12 @@ test("deletes an unnecessary walkthrough and its whole-document feedback after c
   const title = "認証・認可境界：actorが注文に到達するまで";
   const feedback = "この説明は別のウォークスルーへ統合済みです。";
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: title, exact: true }).click();
+  await openWalkthroughFromSidebar(page, title);
 
   await page.getByRole("button", { name: "ウォークスルー全体へコメント" }).click();
   await page.getByRole("textbox", { name: "ウォークスルー全体へコメント" }).fill(feedback);
   await page.getByRole("button", { name: "コメント", exact: true }).click();
-  await expect(page.getByText(feedback).first()).toBeVisible();
+  await expect(page.locator(".document-pane.active").getByText(feedback)).toBeVisible();
 
   page.once("dialog", (dialog) => {
     expect(dialog.message()).toContain("紐づくコメント 1件と投稿 1件も削除されます。");
@@ -1723,6 +1769,7 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openCommentsSidebar(page);
   const sidebarThread = page.locator(`.comment-sidebar [data-comment-id="${created.comment.id}"]`);
   await sidebarThread.scrollIntoViewIfNeeded();
   const sidebarMarkdown = sidebarThread.locator(".comment-markdown").first();
@@ -1812,7 +1859,7 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   ).toBeVisible();
   await expect(commitPicker).toHaveAttribute("aria-label", initialCommitSelection!);
 
-  await page.getByRole("button", { name: "全ファイル", exact: true }).click();
+  await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.locator(".file-tree").getByRole("button", { name: "README.md", exact: true }).click();
   const inlineThread = page.locator(
     `.markdown-inline-comments [data-comment-id="${created.comment.id}"]`,
@@ -1856,6 +1903,7 @@ test("removes Mermaid temporary output when a Markdown comment diagram is invali
   const created = (await createResponse.json()) as { comment: { id: string } };
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openCommentsSidebar(page);
   const thread = page.locator(`.comment-sidebar [data-comment-id="${created.comment.id}"]`);
   await thread.scrollIntoViewIfNeeded();
   await expect(thread.locator(".comment-mermaid-error")).toBeVisible();

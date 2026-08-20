@@ -1,4 +1,4 @@
-export const APP_VERSION = "0.2.0";
+export const APP_VERSION = "0.2.1";
 export const PROTOCOL_VERSION = 3;
 export const VIEWER_ID_HEADER = "x-rvw-viewer-id";
 

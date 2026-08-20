@@ -282,8 +282,10 @@ empty fileは従来どおり明示的に扱う。
   pathへ安全に解決できない参照は
   requestを送らずplaceholderを表示する。SVG asset responseは同一originへの直接navigationも含め、
   scriptと外部subresourceを禁止するContent Security Policyとsandboxを付ける。
-- Files、Search、Comments、Walkthroughは排他的なmodeにせず、sidebar内の独立して折りたためるstack
-  として同時に置く。Walkthrough stackはsidebarの末尾に置く。
+- sidebarのtop-level stackはExplorerとCommentsの二つにする。Explorerには`Pull Request.md`、
+  collapsibleなWalkthrough folder、file名filter、unchanged file表示checkbox、repository treeをこの順に置く。
+  本文検索はExplorer headerのactionでSearch viewへ切り替える。ExplorerとSearchは別々のscroll領域へ
+  mountしたまま片方だけを表示し、directory、Walkthrough、検索結果の展開状態とscroll位置を保持する。
 - tab列は文書navigationだけに使い、review scopeを置かない。review scopeとstacked / splitは
   tabごとに保存しない。
 - changed-files tree、tabのchange icon、中央viewerはtop barで選択した同じcommit範囲を使用する。
@@ -293,11 +295,10 @@ empty fileは従来どおり明示的に扱う。
 - commit範囲切り替え時はopen pathとglobal表示modeを保ち、latest側commitが変わった場合だけ文書を
   そのcommitへ結び直す。exact source commentから開いた文書は
   通常の選択commit文書へ結び直す。current PR commit列外のexact sourceを開く場合はfull viewだけにする。
-- app shellはviewportを上限とし、sidebarの各stack本文と中央viewerを独立してscrollさせる。sidebarは
-  通常の高さではFilesのfile行、Searchの入力と結果、Commentsのcomment概要、Walkthroughの2項目が概ね見える
-  stackごとの最低高を持つ。viewportがその合計に足りない場合は項目別の比率で本文領域だけを縮め、全stack見出しを
-  下端まで常に表示する。browser tabのclose、reload、navigationは`beforeunload`で標準確認を出すが、in-app tab
-  closeは確認しない。
+- app shellはviewportを上限とし、Explorerのfile／Search view、Comments本文、中央viewerを独立してscroll
+  させる。viewportが足りない場合もExplorerとCommentsの両見出しを下端まで常に表示する。Commentsは初期状態を
+  collapsedとし、明示操作またはcomment target navigationだけで開く。browser tabのclose、reload、navigationは
+  `beforeunload`で標準確認を出すが、in-app tab closeは確認しない。
 - top barのPR titleはGitHubのPR pageを別tabで開くlinkとする。その他menuではUI themeを
   light / dark / systemから選べる。選択はOS user data directoryの共通DBへ保存し、異なるPRや
   自動割り当てportで新しく起動したviewerにも引き継ぐ。browser storageは初期表示用cacheに限る。
@@ -318,7 +319,7 @@ empty fileは従来どおり明示的に扱う。
 - 本文検索は選択destination OIDのGit objectだけを`git grep -z -n -I -F`で検索し、worktreeや
   indexの未commit内容を混ぜない。queryは1 KiB、結果は500件、stdoutは8 MiBを上限とする。
 - `Pull Request.md`も最新本文だけをfixed-string検索対象に含める。
-- 本文検索は独立したSearch stackに置き、正規表現は提供しない。case-insensitiveと部分一致を既定にし、
+- 本文検索はExplorer内のSearch viewに置き、正規表現は提供しない。case-insensitiveと部分一致を既定にし、
   case-sensitiveとwhole-wordを明示toggleできる。入力は250 ms debounceで自動反映し、submit buttonを
   持たない。`Cmd+Shift+F` / `Ctrl+Shift+F`はSearch stackを開いて入力欄へfocusする。
 - 結果はfile単位で折りたたみ、一致した行と全一致箇所のhighlightを表示する。各fileにはfile treeと
@@ -396,7 +397,8 @@ interface Walkthrough {
   開けないため登録を拒否する。
 - sidebar一覧はtitle、current source OID、author、reference件数だけを返し、現在の本文・参照・diagram
   bindingは人間がWalkthrough tabを開いた時に取得する。CLI更新をpollで検出した場合は、開いているtabも
-  同じIDの最新内容とtitleへ結び直す。
+  同じIDの最新内容とtitleへ結び直す。Explorerの一行表示はtitleを主表示とし、authorと短縮source OIDは
+  native tooltipで確認できるようにする。
 - Walkthrough tabは本文中のtyped inline referenceとbinding済みMermaid nodeを維持するが、横または下に
   全referenceを重複表示する`Code references` indexは持たない。sidebar itemにもreference件数を表示しない。
 - `language-mermaid` code blockはstrict security設定でSVG化する。bundled Mermaidが扱うflowchart、
@@ -1082,9 +1084,9 @@ tab row
 - 明示capture button、未取り込みbanner、version selectorは存在しない。
 - refreshは取得・ref保持・cache更新を一度に行う。
 
-ファイル、コメント、検索、diff style、line selectionの既存UXは維持する。SearchはFiles、Commentsと
-同じく独立したcollapsible stackとする。Walkthroughはsidebar末尾の独立stackに一覧表示し、選択すると説明tabを
-開く。説明tabはMarkdown本文とdiagramを持ち、重複するcode reference indexは持たない。本文のinline
+ファイル、コメント、検索、diff style、line selectionの既存UXは維持する。PR本文とWalkthroughはExplorer先頭の
+virtual rowとして表示し、Walkthrough folderを展開して選択すると説明tabを開く。本文検索はExplorer headerから
+Search viewへ切り替える。説明tabはMarkdown本文とdiagramを持ち、重複するcode reference indexは持たない。本文のinline
 referenceまたはbinding済みdiagram nodeを選んだ時だけ
 exact source tabへ移動し、説明tabと既に開いているcode tabはworking setとして残す。必要なら最大二つの
 横ペインへtabを移動し、Walkthroughとsource、二つのsource、Markdown previewとcodeを並べて読む。

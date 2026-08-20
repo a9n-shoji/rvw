@@ -1,5 +1,46 @@
 # Architecture decisions
 
+## 2026-08-20: Consolidate review navigation into Explorer and Comments
+
+### Problem
+
+Four independently expanded Files, Search, Comments, and Walkthrough stacks made an ordinary monitor
+feel vertically crowded. PR Markdown and Walkthroughs are review documents that participate in the
+same working set as repository files, but separate top-level stacks made them look like unrelated
+tools. Keeping Changed Files and All Files as peer tabs also gave a secondary file-scope choice more
+visual weight than file navigation itself.
+
+### Choice
+
+Use two top-level sidebar stacks: Explorer and Comments. Explorer starts with compact virtual rows for
+`Pull Request.md` and a collapsible Walkthrough folder, followed by file-name filtering, one
+`Show unchanged files` checkbox, and the repository tree. Walkthrough rows use the same selection
+language as repository files; opening one keeps its folder expanded. Keep the single-line rows compact
+and expose author plus abbreviated source commit in the native title tooltip rather than a permanent
+second metadata line.
+
+Move full-text search behind an action in the Explorer header. Explorer and Search are alternate visible
+views, but both remain mounted in separate scroll bodies so directory expansion, Walkthrough expansion,
+search-result expansion, and each view's scroll position survive switching. `Cmd+Shift+F` /
+`Ctrl+Shift+F` opens and focuses Search, and the header action returns to Explorer without changing the
+global review display mode.
+
+Comments starts collapsed. It opens only through an explicit user action or comment-target navigation;
+viewport height and unresolved-count changes do not change its expansion state automatically.
+
+This supersedes only the independent sidebar-stack placement in the 2026-08-09 full-text-search and
+document-tab decisions. Search semantics, passive document navigation, comment behavior, document tabs,
+and the maximum-two-pane workspace remain unchanged.
+
+### Trade-offs
+
+- File navigation and full-text results are no longer visible simultaneously, but switching preserves
+  both views' transient state.
+- Review documents become easier to reach without consuming additional stack headers, while their
+  provenance moves from a persistent second line to a tooltip.
+- Comments no longer reveal themselves merely because unresolved data arrives; their count remains
+  visible in the collapsed header.
+
 ## 2026-08-19: Make browser history a focused reading trail
 
 ### Problem
