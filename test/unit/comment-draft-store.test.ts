@@ -3,6 +3,7 @@ import {
   clearCommentDraftsForReview,
   commentDraftContextKey,
   currentCommentDraftRevision,
+  deleteCommentDraftForIssue,
   readCommentDraft,
   readCommentReplyDraft,
   writeCommentDraft,
@@ -81,6 +82,43 @@ describe("comment draft store", () => {
 
     writeCommentDraft(pullRequestId, key, revision, draft);
     expect(readCommentDraft(pullRequestId, key)).toBeUndefined();
+  });
+
+  it("clears only the removed Issue draft and rejects its stale unmount write", () => {
+    const removedIssueKey = contextKey({
+      kind: "issue",
+      id: "issue-142",
+      number: 142,
+      title: "Remove this Issue",
+      url: "https://github.com/example/repository/issues/142",
+    });
+    const retainedIssueKey = contextKey({
+      kind: "issue",
+      id: "issue-143",
+      number: 143,
+      title: "Keep this Issue",
+      url: "https://github.com/example/repository/issues/143",
+    });
+    const fileKey = contextKey({ kind: "repository-file", path: "src/example.ts" });
+    const removedRevision = currentCommentDraftRevision(pullRequestId, removedIssueKey);
+    const retainedRevision = currentCommentDraftRevision(pullRequestId, retainedIssueKey);
+    const fileRevision = currentCommentDraftRevision(pullRequestId, fileKey);
+    writeCommentDraft(pullRequestId, removedIssueKey, removedRevision, draft);
+    writeCommentDraft(pullRequestId, retainedIssueKey, retainedRevision, draft);
+    writeCommentDraft(pullRequestId, fileKey, fileRevision, draft);
+
+    deleteCommentDraftForIssue(pullRequestId, "issue-142");
+
+    expect(readCommentDraft(pullRequestId, removedIssueKey)).toBeUndefined();
+    expect(readCommentDraft(pullRequestId, retainedIssueKey)).toEqual(draft);
+    expect(readCommentDraft(pullRequestId, fileKey)).toEqual(draft);
+    writeCommentDraft(pullRequestId, removedIssueKey, removedRevision, draft);
+    expect(readCommentDraft(pullRequestId, removedIssueKey)).toBeUndefined();
+
+    const reopenedRevision = currentCommentDraftRevision(pullRequestId, removedIssueKey);
+    expect(reopenedRevision).not.toBe(removedRevision);
+    writeCommentDraft(pullRequestId, removedIssueKey, reopenedRevision, draft);
+    expect(readCommentDraft(pullRequestId, removedIssueKey)).toEqual(draft);
   });
 
   it("restores an in-progress reply and rejects it after the review state is reset", () => {

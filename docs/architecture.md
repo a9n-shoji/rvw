@@ -86,8 +86,9 @@ Walkthrough as another document tab, and only a human action opens the reference
 Inline references and bound Mermaid nodes remain interactive, but the viewer does not duplicate the
 complete reference set in a side or bottom index.
 Publish and update return an enumerable application result envelope containing the saved Walkthrough
-and an explicit `issuesAdded` array. The CLI serializes the same envelope whether it calls the service
-directly or through the Agent socket.
+and an explicit `issuesAdded` array populated from membership rows actually inserted in the same
+transaction. The CLI serializes the same envelope whether it calls the service directly or through the
+Agent socket.
 The browser owns an ephemeral two-pane workspace: every document identity belongs to one pane, tabs can
 move between panes, and modifier-click targets the right pane from the sidebar or the opposite pane from
 within a document. Pane placement never enters SQLite or the Agent protocol. Repository Markdown uses
@@ -99,6 +100,8 @@ into a stable imperative host in normal document flow immediately after the sele
 text is never covered. Issue document identity excludes the Branch source OID: refreshes replace query
 data without remounting the composer. Drafts record the Issue body hash; a changed body preserves text
 and focus but blocks the old range until the human selects a range in the current body.
+Removing an Issue membership invalidates only that Issue's composer generation and deleted threads'
+reply drafts, so a late unmount cannot resurrect them and unrelated document drafts remain available.
 Relative preview and comment images are fetched from their resolved exact commit through a size-limited
 read-only endpoint. PR Markdown, Walkthrough bodies, external image URLs, and paths that cannot be resolved inside the repository
 render as non-fetching placeholders. Same-origin SVG asset responses carry a restrictive Content Security

@@ -27,13 +27,19 @@ const replyDraftsByReview = new Map<string, Map<string, CommentReplyDraftSnapsho
 const emptyReplyDraftByReview = new Map<string, CommentReplyDraftSnapshot>();
 const replyDraftListeners = new Set<() => void>();
 const revisionByReview = new Map<string, number>();
+const revisionByContext = new Map<string, Map<string, number>>();
+let nextDraftRevision = 0;
+
+function issueDocumentIdentity(issueId: string): unknown[] {
+  return ["issue", issueId];
+}
 
 function documentIdentity(document: ActiveDocument): unknown[] {
   if (document.kind === "pull-request-markdown") return ["pull-request-markdown"];
   if (document.kind === "walkthrough") {
     return ["walkthrough", document.id, document.sourceOid];
   }
-  if (document.kind === "issue") return ["issue", document.id];
+  if (document.kind === "issue") return issueDocumentIdentity(document.id);
   return [
     "repository-file",
     document.path,
@@ -56,8 +62,10 @@ export function commentDraftContextKey(context: CommentDraftContext): string {
   ]);
 }
 
-export function currentCommentDraftRevision(reviewId: string): number {
-  return revisionByReview.get(reviewId) ?? 0;
+export function currentCommentDraftRevision(reviewId: string, contextKey?: string): number {
+  const reviewRevision = revisionByReview.get(reviewId) ?? 0;
+  if (contextKey === undefined) return reviewRevision;
+  return Math.max(reviewRevision, revisionByContext.get(reviewId)?.get(contextKey) ?? 0);
 }
 
 function emptyCommentReplyDraft(reviewId: string): CommentReplyDraftSnapshot {
@@ -131,7 +139,7 @@ export function writeCommentDraft(
   revision: number,
   draft: CommentDraftState,
 ): void {
-  if (revision !== currentCommentDraftRevision(reviewId)) return;
+  if (revision !== currentCommentDraftRevision(reviewId, contextKey)) return;
   let drafts = draftsByReview.get(reviewId);
   if (!drafts) {
     drafts = new Map();
@@ -141,16 +149,29 @@ export function writeCommentDraft(
 }
 
 export function deleteCommentDraft(reviewId: string, contextKey: string, revision: number): void {
-  if (revision !== currentCommentDraftRevision(reviewId)) return;
+  if (revision !== currentCommentDraftRevision(reviewId, contextKey)) return;
   const drafts = draftsByReview.get(reviewId);
   drafts?.delete(contextKey);
   if (drafts?.size === 0) draftsByReview.delete(reviewId);
 }
 
+export function deleteCommentDraftForIssue(reviewId: string, issueId: string): void {
+  const contextKey = JSON.stringify([issueDocumentIdentity(issueId)]);
+  draftsByReview.get(reviewId)?.delete(contextKey);
+  if (draftsByReview.get(reviewId)?.size === 0) draftsByReview.delete(reviewId);
+  let revisions = revisionByContext.get(reviewId);
+  if (!revisions) {
+    revisions = new Map();
+    revisionByContext.set(reviewId, revisions);
+  }
+  revisions.set(contextKey, ++nextDraftRevision);
+}
+
 export function clearCommentDraftsForReview(reviewId: string): void {
   draftsByReview.delete(reviewId);
   replyDraftsByReview.delete(reviewId);
-  revisionByReview.set(reviewId, currentCommentDraftRevision(reviewId) + 1);
+  revisionByReview.set(reviewId, ++nextDraftRevision);
+  revisionByContext.delete(reviewId);
   emptyReplyDraftByReview.delete(reviewId);
   notifyReplyDraftListeners();
 }

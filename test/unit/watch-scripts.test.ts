@@ -403,6 +403,8 @@ describe("rvw-watch-comments bundled scripts", () => {
         encoding: "utf8",
         env: fakeEnvironment(fake),
         input: JSON.stringify({
+          leaseId: claimed.leaseId,
+          context: { kind: "branch", repository: "acme/repo" },
           outcomes: [
             {
               commentRef: "rvw://comment/branch-comment",
@@ -416,7 +418,65 @@ describe("rvw-watch-comments bundled scripts", () => {
     );
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("cannot include a related commit");
+    expect(result.stderr).toContain("relatedCommitOid: null");
+    expect(readFakeCalls(fake.log)).toEqual([]);
+    expect(runState(state, "status").inFlightBatches).toHaveLength(1);
+  });
+
+  it("rejects an incomplete Branch worker result before posting any reply", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-schema-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeBranchQueuedState(state);
+    const claimed = runState(state, "claim", [
+      "--context-kind",
+      "branch",
+      "--context-key",
+      "acme/repo",
+    ]);
+    const validOutcome = {
+      commentRef: "rvw://comment/branch-comment",
+      body: "📝 調査結果\n\nNo repository write was attempted.",
+      relatedCommitOid: null,
+      pushStatus: "not-attempted",
+    };
+    const invalidInputs = [
+      {
+        context: { kind: "branch", repository: "acme/repo" },
+        outcomes: [validOutcome],
+      },
+      { leaseId: claimed.leaseId, outcomes: [validOutcome] },
+      {
+        leaseId: "different-lease",
+        context: { kind: "branch", repository: "acme/repo" },
+        outcomes: [validOutcome],
+      },
+      {
+        leaseId: claimed.leaseId,
+        context: { kind: "branch", repository: "acme/other" },
+        outcomes: [validOutcome],
+      },
+      {
+        leaseId: claimed.leaseId,
+        context: { kind: "branch", repository: "acme/repo" },
+        outcomes: [{ ...validOutcome, relatedCommitOid: undefined }],
+      },
+      {
+        leaseId: claimed.leaseId,
+        context: { kind: "branch", repository: "acme/repo" },
+        outcomes: [{ ...validOutcome, pushStatus: undefined }],
+      },
+    ];
+
+    for (const input of invalidInputs) {
+      const result = spawnSync(
+        process.execPath,
+        [completeBranchScript, "--state", state, "--lease", String(claimed.leaseId)],
+        { encoding: "utf8", env: fakeEnvironment(fake), input: JSON.stringify(input) },
+      );
+      expect(result.status).not.toBe(0);
+    }
+
     expect(readFakeCalls(fake.log)).toEqual([]);
     expect(runState(state, "status").inFlightBatches).toHaveLength(1);
   });

@@ -57,6 +57,38 @@ class ThrowBeforeDeleteGitClient extends GitClient {
   }
 }
 
+class BranchRetainBarrierGitClient extends GitClient {
+  private barrier: Promise<void> | null = null;
+  private releaseBarrier: (() => void) | null = null;
+  private arrivals = 0;
+
+  armRetainBarrier(): void {
+    this.arrivals = 0;
+    this.barrier = new Promise((resolve) => {
+      this.releaseBarrier = resolve;
+    });
+  }
+
+  override async ensureBranchCommitRef(
+    cwd: string,
+    owner: string,
+    repository: string,
+    oid: string,
+  ) {
+    const retained = await super.ensureBranchCommitRef(cwd, owner, repository, oid);
+    const barrier = this.barrier;
+    if (!barrier) return retained;
+    this.arrivals += 1;
+    if (this.arrivals === 2) {
+      this.barrier = null;
+      this.releaseBarrier?.();
+      this.releaseBarrier = null;
+    }
+    await barrier;
+    return retained;
+  }
+}
+
 function issue(number: number, body = `Requirement ${number}\nDetails`): GitHubIssue {
   return {
     host: "github.com",
@@ -384,6 +416,56 @@ describe("Branch Review", () => {
       if (previousSocketPath === undefined) delete process.env.RVW_AGENT_SOCKET_PATH;
       else process.env.RVW_AGENT_SOCKET_PATH = previousSocketPath;
     }
+  });
+
+  it("reports a concurrently requested Branch Issue in exactly one Walkthrough update", async () => {
+    const gitClient = new BranchRetainBarrierGitClient();
+    const { repositoryPath, sourceOid, github, service } = setup(gitClient);
+    github.issues.set(142, issue(142));
+    await service.openBranchReview(repositoryPath);
+    const content = {
+      sourceOid,
+      body: "Read [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "Source",
+          path: "README.md",
+          startLine: 1,
+          endLine: 1,
+          description: null,
+        },
+      ],
+    };
+    const first = await service.publishWalkthrough({
+      review: { kind: "branch", repository: "acme/review-repo" },
+      ...content,
+      title: "Concurrent target A",
+    });
+    const second = await service.publishWalkthrough({
+      review: { kind: "branch", repository: "acme/review-repo" },
+      ...content,
+      title: "Concurrent target B",
+    });
+    gitClient.armRetainBarrier();
+
+    const results = await Promise.all([
+      service.updateWalkthrough(first.walkthrough.ref, {
+        ...content,
+        title: "Concurrent update A",
+        issues: ["#142"],
+      }),
+      service.updateWalkthrough(second.walkthrough.ref, {
+        ...content,
+        title: "Concurrent update B",
+        issues: ["#142"],
+      }),
+    ]);
+
+    expect(results.map((result) => result.issuesAdded.map((item) => item.number)).sort()).toEqual([
+      [],
+      [142],
+    ]);
   });
 
   it("does not partially publish a Walkthrough when one requested Issue fails", async () => {

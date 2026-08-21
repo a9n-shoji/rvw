@@ -125,7 +125,8 @@ reset後だけ許可する。同期はIssueを一件ずつ更新し、一件の�
 Issue cacheはcanonical GitHub identityで共有し、review membershipは別tableで所有する。PR本文からは
 同一repositoryの直接参照だけを一段抽出し、Walkthrough payloadの`issues`は追加だけを保証する。Issue
 本文やWalkthroughから再帰探索せず、参照消失でもmembershipを自動削除しない。Issue本文hashが変わった
-場合、旧本文range Commentは保守的にOutdatedとし、自動resolveしない。
+場合、旧本文range Commentは保守的にOutdatedとし、自動resolveしない。membershipを明示削除した場合は、
+そのIssue文書と削除されるthreadのpage内draftだけを破棄し、別文書のdraftは保持する。
 
 ### 3.1 Commit選択
 
@@ -598,12 +599,13 @@ review resetでは破棄し、page reloadを越えて永続化しない。
 新しいroot postとreplyは同じtransactionでDB-wideな単調増加event sequenceへ記録する。既存postは
 migration時にbackfillせず、編集、削除、resolve/reopenはeventを作らない。Agent自身のreplyも通常eventであり、
 watch taskが返却post IDで抑止する。
-watch taskはbatchをclaimし、対象threadの存在を確認した直後に通常replyとして`🔎 確認中です…`を一件
-作成する。task-local DBはbatch内のcomment URIごとに冪等keyとstatus post IDを保持し、同じbatchのretryだけで
-そのpostを再利用する。同じthreadへの後続replyを別batchで処理するときは新しいstatus postを作成し、過去の
-回答を変更しない。調査または作業の完了、terminal failureでは現在のbatchの同じpost本文を一つの最終結果へ
-編集し、新しい完了replyを追加しない。このstatus postは専用comment stateではなく通常postであり、threadの
-unresolved/resolved状態を変えない。
+Pull Requestのwatch taskはbatchをclaimし、対象threadの存在を確認した直後に通常replyとして
+`🔎 確認中です…`を一件作成する。task-local DBはbatch内のcomment URIごとに冪等keyとstatus post IDを
+保持し、同じbatchのretryだけでそのpostを再利用する。同じthreadへの後続replyを別batchで処理するときは
+新しいstatus postを作成し、過去の回答を変更しない。調査または作業の完了、terminal failureでは現在の
+batchの同じpost本文を一つの最終結果へ編集し、新しい完了replyを追加しない。このstatus postは専用comment
+stateではなく通常postであり、threadのunresolved/resolved状態を変えない。Branch batchは進捗postを作らず、
+完了時に一件のfinal replyだけを追加する。
 誤投稿を取り消すため、reply postは個別に物理削除できる。root postの削除はcomment targetと
 `rvw://comment/<uuid>`のanchorを含むthread全体の削除として扱い、返信があれば同じtransactionで
 すべて削除する。確認画面は返信も削除されることを明示する。編集・削除はchange sequenceを更新する。
@@ -772,11 +774,11 @@ fingerprintへ含めない。keyのreuseは拒否し、元postが削除済みな
 
 ### 7.3 comment watch
 
-`rvw comment watch --json-seq`は保存済み全PRの新規root commentとreplyをRFC 7464 JSON text
+`rvw comment watch --json-seq`は保存済みの全Pull Request ReviewとBranch Reviewの新規root commentとreplyをRFC 7464 JSON text
 sequenceとして出力する。cursor省略時は現在の最新event位置へanchorし、起動前の既存未解決commentを
 処理しない。最初の`ready` frameがdatabase-scoped opaque cursorを返し、その後の`comment-posted` frameは
-各event直後のcursor、sequence、post ID、comment URI、PR URL、削除済みかを返す。eventは調査contextを
-含まない最小triggerとし、Agentは必ず`comment get`でthreadを読み直す。
+各event直後のcursor、sequence、post ID、comment URI、削除済みかと、PR URLまたはcanonical repositoryを
+持つ明示的なreview contextを返す。eventは最小triggerとし、Agentは必ず`comment get`でthreadを読み直す。
 
 `--after`は同じdatabaseのcursorから再生し、別database、最新sequenceより先、破損、未知versionのcursorを拒否する。poll間隔は
 既定10秒、1〜300秒とする。event rowはcomment/post削除と独立して保持し、削除後の再生は`deleted: true`
@@ -807,7 +809,7 @@ retryやacknowledgementから宣言を引き継がない。
 
 ### 7.4 Walkthrough lifecycle
 
-既存Walkthroughはstable URIから現在内容と対象PRを取得できる。
+既存Walkthroughはstable URIから現在内容と対象review contextを取得できる。
 
 ```bash
 rvw walkthrough get <WALKTHROUGH_URI> --json
@@ -850,12 +852,13 @@ stdinの最小例:
 }
 ```
 
-`pullRequest`と`sourceOid`、title、body、1件以上のreferenceは必須である。CLIはcommit、path、
+`review`と`sourceOid`、title、body、1件以上のreferenceは必須である。`review`はPull Request URLまたは
+Branch Reviewのcanonical repositoryをdiscriminated unionで指定する。CLIはcommit、path、
 任意のline range、Markdown reference、実在するflowchart/classDiagram nodeへのdiagram bindingを検証し、本文linkまたはdiagram bindingから
 一度も参照されないreferenceを拒否してから、一つのSQLite transactionで保存してchange sequenceを
 更新する。成功responseは`walkthrough`へ`rvw://walkthrough/<uuid>`を含むWalkthrough全体、`issuesAdded`へ
-このmutationで追加したIssueを返す。追加がなくても空配列を返し、direct database fallbackとAgent socketで
-JSON serialize後のschemaを一致させる。
+同じSQLite transactionでmembershipを実際に追加したIssueだけを返す。追加がなくても空配列を返し、
+direct database fallbackとAgent socketでJSON serialize後のschemaを一致させる。
 このcommandはbrowserを開かず、どのviewerのnavigationも変更しない。
 
 #### Update
@@ -864,7 +867,7 @@ JSON serialize後のschemaを一致させる。
 rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
 ```
 
-stdinはpublish inputから`pullRequest`を除いた完全置換objectであり、`sourceOid`、title、body、全referenceを
+stdinはpublish inputから`review`を除いた完全置換objectであり、`sourceOid`、title、body、全referenceを
 必須とする。`diagramBindings`省略時は空、`authorLabel`省略時だけ既存値を保つ。publishと同じ検証後、
 同じWalkthrough IDとURI、`createdAt`を保って現在値を一つのSQLite transactionで置き換え、change
 sequenceを更新する。過去値は保存しない。既存の文書全体commentは同じIDへ残る。publishとupdateは
@@ -894,7 +897,7 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   収める固定上限を持つ。
 - comment本文とreplyはUTF-8 GFM Markdown sourceで64 KiB以下とする。comment postとWalkthroughの
   referenceはそれぞれ最大200件とする。
-- `walkthrough get`はcurrent WalkthroughとPR identity、local repository pathを返す。
+- `walkthrough get`はcurrent WalkthroughとPull RequestまたはBranch Reviewのidentity、local repository pathを返す。
 - `comment list`は登録済みPRをURLまたは番号で受け、`unresolved`を既定に`resolved` / `all`も選べる。
   `limit`は既定50、最大100、`offset`は既定0とし、`total`、`hasMore`、`nextOffset`を返す。
   各threadはURI、state、target要約、post件数、root postの先頭512 bytes、latest headに対してserviceが
@@ -1351,11 +1354,12 @@ requestとrepository contextへ委ね、固定の文書templateを要求しな�
 改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への明示authorizationなしに実行しない。
 
 `rvw-watch-comments`は一つの外部Agent taskをreceiverとして使い、cursorless起動で既存未解決を処理せず、
-新規root/replyをPRごとのbatchへまとめる。同梱preflight、watch driver、state script、auto-ackが
+新規root/replyをreview contextごとのbatchへまとめる。同梱preflight、watch driver、state script、auto-ackが
 prerequisite確認、cursor resume、RFC 7464 ingest、pending通知、queue、lease、retry、comment URIごとの
-batch単位status post、自己event抑制をrepository外のSQLiteで管理する。検知直後に各threadを再読込して
-`🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。
-同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を保持する。
+batch単位status post、自己event抑制をrepository外のSQLiteで管理する。Pull Request batchは検知直後に
+各threadを再読込して`🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを
+最終結果へ編集する。同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を
+保持する。Branch batchはacknowledgementを作らず、厳格に検証したworker resultから一件のfinal replyを投稿する。
 investigate-onlyで1〜2 commentの小batchは親taskが直接調査でき、それ以外をworkerへ委譲する場合は
 絶対pathのJSON fileを唯一の結果回収経路にする。直接またはworkerの最終結果はbody、
 `relatedCommitOid`、完全なtyped reference配列、push状態を持ち、具体的なcode上の結論、実装、testには

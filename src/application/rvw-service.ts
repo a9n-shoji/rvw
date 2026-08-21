@@ -2651,43 +2651,19 @@ export class RvwService {
       }
       const content = await this.validateWalkthroughContent(branchReview, input);
       const issues = await this.fetchRequestedIssues(branchReview, input.issues ?? []);
-      const existingIds = new Set(
-        this.database.listReviewIssues("branch", branchReview.id).map((issue) => issue.number),
+      return await this.writeWithBranchRetainedCommit(branchReview, content.sourceOid, () =>
+        this.database.createBranchWalkthrough(
+          { branchReviewId: branchReview.id, ...content },
+          issues,
+        ),
       );
-      const walkthrough = await this.writeWithBranchRetainedCommit(
-        branchReview,
-        content.sourceOid,
-        () =>
-          this.database.createBranchWalkthrough(
-            { branchReviewId: branchReview.id, ...content },
-            issues,
-          ),
-      );
-      return {
-        walkthrough,
-        issuesAdded: this.database
-          .listReviewIssues("branch", branchReview.id)
-          .filter((issue) => !existingIds.has(issue.number)),
-      };
     }
     const pullRequest = this.resolveStoredPullRequest(target.pullRequest);
     const content = await this.validateWalkthroughContent(pullRequest, input);
     const issues = await this.fetchRequestedIssues(pullRequest, input.issues ?? []);
-    const existingIds = new Set(
-      this.database.listReviewIssues("pull-request", pullRequest.id).map((issue) => issue.number),
+    return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, "Walkthrough", () =>
+      this.database.createWalkthrough({ pullRequestId: pullRequest.id, ...content }, issues),
     );
-    const walkthrough = await this.writeWithRetainedCommit(
-      pullRequest,
-      content.sourceOid,
-      "Walkthrough",
-      () => this.database.createWalkthrough({ pullRequestId: pullRequest.id, ...content }, issues),
-    );
-    return {
-      walkthrough,
-      issuesAdded: this.database
-        .listReviewIssues("pull-request", pullRequest.id)
-        .filter((issue) => !existingIds.has(issue.number)),
-    };
   }
 
   async updateWalkthrough(
@@ -2705,29 +2681,18 @@ export class RvwService {
         input.authorLabel === undefined ? current.walkthrough.authorLabel : input.authorLabel,
     });
     const issues = await this.fetchRequestedIssues(review, input.issues ?? []);
-    const kind = current.context.kind;
-    const existingIds = new Set(
-      this.database.listReviewIssues(kind, review.id).map((issue) => issue.number),
-    );
-    const walkthrough =
-      current.context.kind === "pull-request"
-        ? await this.writeWithRetainedCommit(
-            current.context.pullRequest,
-            content.sourceOid,
-            "Walkthrough",
-            () => this.database.updateWalkthrough(current.walkthrough.id, content, issues),
-          )
-        : await this.writeWithBranchRetainedCommit(
-            current.context.branchReview,
-            content.sourceOid,
-            () => this.database.updateBranchWalkthrough(current.walkthrough.id, content, issues),
-          );
-    return {
-      walkthrough,
-      issuesAdded: this.database
-        .listReviewIssues(kind, review.id)
-        .filter((issue) => !existingIds.has(issue.number)),
-    };
+    return current.context.kind === "pull-request"
+      ? await this.writeWithRetainedCommit(
+          current.context.pullRequest,
+          content.sourceOid,
+          "Walkthrough",
+          () => this.database.updateWalkthrough(current.walkthrough.id, content, issues),
+        )
+      : await this.writeWithBranchRetainedCommit(
+          current.context.branchReview,
+          content.sourceOid,
+          () => this.database.updateBranchWalkthrough(current.walkthrough.id, content, issues),
+        );
   }
 
   getWalkthroughDeletePreview(uri: string): WalkthroughDeletePreview {

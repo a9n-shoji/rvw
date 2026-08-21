@@ -12,6 +12,7 @@ import type {
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
+import { startAgentSocket, tryAgentSocketRequest } from "../../src/server/agent-socket.js";
 import { RvwError } from "../../src/shared/errors.js";
 import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
 
@@ -43,6 +44,33 @@ class FakeGitHub implements GitHubPort {
   }
 }
 
+class PullRequestRetainBarrierGitClient extends GitClient {
+  private barrier: Promise<void> | null = null;
+  private releaseBarrier: (() => void) | null = null;
+  private arrivals = 0;
+
+  armRetainBarrier(): void {
+    this.arrivals = 0;
+    this.barrier = new Promise((resolve) => {
+      this.releaseBarrier = resolve;
+    });
+  }
+
+  override async ensureCommitRef(cwd: string, number: number, oid: string) {
+    const retained = await super.ensureCommitRef(cwd, number, oid);
+    const barrier = this.barrier;
+    if (!barrier) return retained;
+    this.arrivals += 1;
+    if (this.arrivals === 2) {
+      this.barrier = null;
+      this.releaseBarrier?.();
+      this.releaseBarrier = null;
+    }
+    await barrier;
+    return retained;
+  }
+}
+
 function githubIssue(number: number, body = `Issue ${number} body`): GitHubIssue {
   return {
     host: "github.com",
@@ -56,6 +84,14 @@ function githubIssue(number: number, body = `Issue ${number} body`): GitHubIssue
     state: "OPEN",
     updatedAt: "2026-08-20T00:00:00.000Z",
   };
+}
+
+function jsonShape(value: unknown): unknown {
+  if (Array.isArray(value)) return value.length === 0 ? [] : [jsonShape(value[0])];
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, jsonShape(child)]));
+  }
+  return typeof value;
 }
 
 const openPr = (baseOid: string, headOid: string): GitHubPullRequest => ({
@@ -84,7 +120,7 @@ describe("RvwService commit workflow", () => {
     while (databases.length) databases.pop()?.close();
   });
 
-  function setup(prefix = "rvw-commit-") {
+  function setup(prefix = "rvw-commit-", gitClient: GitClient = new GitClient()) {
     const repository = createGitRepository(prefix);
     const base = git(repository, "rev-parse", "HEAD");
     git(repository, "switch", "-c", "feature");
@@ -99,7 +135,7 @@ describe("RvwService commit workflow", () => {
       firstHead,
       fake,
       database,
-      service: new RvwService(database, new GitClient(), fake),
+      service: new RvwService(database, gitClient, fake),
     };
   }
 
@@ -1006,6 +1042,140 @@ describe("RvwService commit workflow", () => {
     await service.resetPullRequest(opened.pullRequest.id);
     expect(service.listWalkthroughs(opened.pullRequest.id)).toEqual([]);
     expect(service.listComments(opened.pullRequest.id)).toEqual([]);
+  });
+
+  it("keeps Pull Request Walkthrough publish and update JSON shapes equal across direct and Agent socket transports", async () => {
+    const { repository, firstHead, fake, database, service } = setup(
+      "rvw-pr-walkthrough-transport-",
+    );
+    fake.issues.set(142, githubIssue(142));
+    fake.issues.set(143, githubIssue(143));
+    const opened = await service.openPullRequest(undefined, repository);
+    const content = {
+      sourceOid: firstHead,
+      title: "Direct transport",
+      body: "Read [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "Source",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 1,
+          description: null,
+        },
+      ],
+    };
+    const directPublish = await service.publishWalkthrough({
+      review: { kind: "pull-request", pullRequest: opened.pullRequest.url },
+      ...content,
+      issues: ["#142"],
+    });
+    const directUpdate = await service.updateWalkthrough(directPublish.walkthrough.ref, {
+      ...content,
+      title: "Direct update",
+      issues: ["#142"],
+    });
+    expect(JSON.parse(JSON.stringify(directPublish))).toMatchObject({
+      walkthrough: { ref: directPublish.walkthrough.ref },
+      issuesAdded: [{ number: 142 }],
+    });
+    expect(JSON.parse(JSON.stringify(directUpdate))).toMatchObject({
+      walkthrough: { ref: directPublish.walkthrough.ref },
+      issuesAdded: [],
+    });
+
+    const socketDirectory = mkdtempSync(path.join(os.tmpdir(), "rvw-pr-agent-socket-"));
+    const previousSocketPath = process.env.RVW_AGENT_SOCKET_PATH;
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(socketDirectory, "agent.sock");
+    let running: Awaited<ReturnType<typeof startAgentSocket>>;
+    try {
+      running = await startAgentSocket(service);
+    } catch (error) {
+      if (previousSocketPath === undefined) delete process.env.RVW_AGENT_SOCKET_PATH;
+      else process.env.RVW_AGENT_SOCKET_PATH = previousSocketPath;
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    try {
+      const socketPublishResponse = await tryAgentSocketRequest(
+        "walkthrough.publish",
+        {
+          review: { kind: "pull-request", pullRequest: opened.pullRequest.url },
+          ...content,
+          title: "Socket transport",
+          issues: ["#143"],
+        },
+        { expectedDatabasePath: database.filePath },
+      );
+      if (!socketPublishResponse.available) throw new Error(socketPublishResponse.reason);
+      const socketPublish = socketPublishResponse.result as typeof directPublish;
+      const socketUpdateResponse = await tryAgentSocketRequest(
+        "walkthrough.update",
+        {
+          uri: socketPublish.walkthrough.ref,
+          content: { ...content, title: "Socket update", issues: ["#143"] },
+        },
+        { expectedDatabasePath: database.filePath },
+      );
+      if (!socketUpdateResponse.available) throw new Error(socketUpdateResponse.reason);
+      const socketUpdate = socketUpdateResponse.result as typeof directUpdate;
+
+      expect(JSON.parse(JSON.stringify(socketPublish))).toMatchObject({
+        walkthrough: { ref: socketPublish.walkthrough.ref },
+        issuesAdded: [{ number: 143 }],
+      });
+      expect(JSON.parse(JSON.stringify(socketUpdate))).toMatchObject({
+        walkthrough: { ref: socketPublish.walkthrough.ref },
+        issuesAdded: [],
+      });
+      expect(jsonShape(JSON.parse(JSON.stringify(socketPublish)))).toEqual(
+        jsonShape(JSON.parse(JSON.stringify(directPublish))),
+      );
+      expect(jsonShape(JSON.parse(JSON.stringify(socketUpdate)))).toEqual(
+        jsonShape(JSON.parse(JSON.stringify(directUpdate))),
+      );
+    } finally {
+      await running.close();
+      if (previousSocketPath === undefined) delete process.env.RVW_AGENT_SOCKET_PATH;
+      else process.env.RVW_AGENT_SOCKET_PATH = previousSocketPath;
+    }
+  });
+
+  it("reports a concurrently requested Pull Request Issue in exactly one Walkthrough mutation", async () => {
+    const gitClient = new PullRequestRetainBarrierGitClient();
+    const { repository, firstHead, fake, service } = setup(
+      "rvw-pr-walkthrough-concurrency-",
+      gitClient,
+    );
+    fake.issues.set(142, githubIssue(142));
+    const opened = await service.openPullRequest(undefined, repository);
+    const content = {
+      review: { kind: "pull-request" as const, pullRequest: opened.pullRequest.url },
+      sourceOid: firstHead,
+      body: "Read [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "Source",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 1,
+          description: null,
+        },
+      ],
+      issues: ["#142"],
+    };
+    gitClient.armRetainBarrier();
+
+    const results = await Promise.all([
+      service.publishWalkthrough({ ...content, title: "Concurrent A" }),
+      service.publishWalkthrough({ ...content, title: "Concurrent B" }),
+    ]);
+
+    expect(results.map((result) => result.issuesAdded.map((issue) => issue.number)).sort()).toEqual(
+      [[], [142]],
+    );
   });
 
   it("rejects walkthrough references that no Markdown link or Mermaid binding uses", async () => {

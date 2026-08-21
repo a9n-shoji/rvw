@@ -222,8 +222,8 @@ The worker's completion notification only signals that the file is ready.
 The parent reads and validates the file after that notification and never depends on relayed message
 text for the result. Accept no progress, plans, or partial findings as the final result.
 
-For every concrete Pull Request claim about code behavior, an implemented change, or relevant test
-coverage, use typed references by default so the reviewer can open the exact evidence. Select the
+For every concrete claim about code behavior, an implemented change, or relevant test coverage in a
+Pull Request outcome, use typed references by default so the reviewer can open the exact evidence. Select the
 smallest useful committed range, include a signature plus the relevant body for multi-line behavior,
 link every declaration from `body` as `rvw-ref:<referenceId>`, and keep IDs unique within the post. A
 repository comment target already opens its exact source; do not duplicate it unless a separately
@@ -231,8 +231,9 @@ labeled range adds navigation value. Omit references only for outcomes without u
 uncommitted evidence, terminal errors, or target-only evidence where another link would not help
 navigation.
 
-Re-read each extant thread immediately before applying a direct or file result. Replace its recorded
-status post with exactly one final outcome:
+Re-read each extant thread immediately before applying a direct or file result. For a Pull Request,
+replace its recorded status post with exactly one final outcome. For a Branch Review, use the same
+outcome body as the one final reply posted by `complete-branch.mjs`:
 
 - `✅ 対応しました` followed by the change, commit, and test result.
 - `📝 調査結果` followed by the conclusion when no code change was made.
@@ -263,6 +264,10 @@ then completes the lease:
 node '<SKILL_DIR>/scripts/complete-branch.mjs' \
   --state '<TASK_STATE_DB>' --lease '<LEASE_ID>' < '<WORKER_RESULT_JSON>'
 ```
+
+The helper requires the worker's `leaseId`, Branch `context`, and every outcome's explicit
+`commentRef`, non-empty `body`, `relatedCommitOid: null`, and `pushStatus: "not-attempted"`. It rejects
+the complete input before posting any reply when any field is absent, mismatched, or write-capable.
 
 If the process stops after posting but before completion, run `recover`, claim the same Branch batch,
 and invoke the helper with the same outcomes and new lease. The batch retains its operation keys, so

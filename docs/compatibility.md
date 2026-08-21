@@ -23,8 +23,10 @@ version番号を再利用せず、breaking changeのたびに単調増加させ�
 documents、review kindで判別できるcomment eventを導入したため、version 3 consumerは新しいeventを
 安全に処理できません。同梱する3つのSkillはversion 4と必要capabilityをpreflightで確認します。
 version 4のWalkthrough publish/update成功responseは、direct executionとAgent socketの双方で
-`walkthrough`と常設の`issuesAdded`配列を返します。Branch watcher worker resultは
-`context.kind = "branch"`とrepositoryを返し、fake Pull Request URLへfallbackしません。
+`walkthrough`と常設の`issuesAdded`配列を返し、後者は同じtransactionで実際に追加したmembershipだけを
+含みます。Branch watcher worker resultは`context.kind = "branch"`とrepositoryを返し、fake Pull Request
+URLへfallbackしません。Branch completion helperはlease、context、read-only outcome fieldsをすべて
+必須として、欠落時はreply投稿前に拒否します。
 
 Branch Reviewのlocal source bindingはGit common directory単位です。同じcommon directoryのworktreeは
 互換ですが、独立cloneへの自動移動は互換性契約に含めません。既存reviewを明示resetしてから別cloneで

@@ -696,7 +696,9 @@ export function DocumentViewer({
     oldOid,
     displayMode,
   });
-  const commentDraftRevision = useRef(currentCommentDraftRevision(review.id)).current;
+  const commentDraftRevision = useRef(
+    currentCommentDraftRevision(review.id, commentDraftKey),
+  ).current;
   const initialCommentDraft = readCommentDraft(review.id, commentDraftKey);
   const [selection, setSelection] = useState<SelectedLineRange | null>(
     initialCommentDraft?.selection ?? null,

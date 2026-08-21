@@ -26,7 +26,11 @@ import { ReviewSidebar } from "../components/ReviewSidebar.js";
 import { ReviewWorkspace } from "../components/ReviewWorkspace.js";
 import { SearchPanel, type AnySearchResult } from "../components/SearchPanel.js";
 import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
-import { clearCommentDraftsForReview } from "../comment-draft-store.js";
+import {
+  clearCommentDraftsForReview,
+  deleteCommentDraftForIssue,
+  deleteCommentReplyDraftsForComment,
+} from "../comment-draft-store.js";
 import {
   documentTabKey,
   otherDocumentPane,
@@ -288,6 +292,12 @@ export function BranchReviewApp({
     },
     onSuccess: async (result, issue) => {
       if (!result) return;
+      deleteCommentDraftForIssue(branchReviewId, issue.id);
+      for (const comment of comments) {
+        if (comment.target.kind === "issue" && comment.target.issueId === issue.id) {
+          deleteCommentReplyDraftsForComment(branchReviewId, comment.id);
+        }
+      }
       const openIssue = workspaceRef.current.documents.find(
         (document) => document.kind === "issue" && document.id === issue.id,
       );

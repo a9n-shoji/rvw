@@ -425,8 +425,8 @@ Read an existing Walkthrough before updating or deleting it:
 rvw walkthrough get <WALKTHROUGH_URI> --json
 ```
 
-The response contains the complete current Walkthrough and its Pull Request, including the local
-repository path needed to inspect referenced code.
+The response contains the complete current Walkthrough and its Pull Request or Branch Review context,
+including the local repository path needed to inspect referenced code.
 
 ### Publish
 
@@ -495,8 +495,9 @@ phantom-bound references are rejected because the viewer has no separate referen
 The body is limited to 256 KiB, and a publication may contain at most 200 references. A successful
 publication protects `sourceOid` with rvw's immutable commit ref. The response contains the saved
 Walkthrough and its `rvw://walkthrough/<uuid>` reference under `walkthrough`, plus every Issue
-membership added by this mutation under `issuesAdded`. The array is present and empty when nothing was
-added. Publication is
+membership actually inserted by this mutation's SQLite transaction under `issuesAdded`. The array is
+present and empty when nothing was added, including when a concurrent mutation inserted the same
+membership first. Publication is
 not a viewer command: it does not open a browser, activate a document, choose a commit, or change any
 tab or scroll position. The human later chooses which inline reference or bound diagram node to open;
 the viewer does not duplicate all references in a side or bottom index.

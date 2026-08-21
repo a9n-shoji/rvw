@@ -23,6 +23,19 @@
 - Walkthrough publish/update responseを、transportに依存しない`walkthrough` + `issuesAdded` envelopeへ変更
 - watcher worker resultをPull Request URL前提からreview contextのdiscriminated unionへ変更
 
+### Fixed
+
+- Branch Review resetでGit ref削除が適用済みなら、終了statusだけを根拠に不整合errorを返さないよう修正
+- `investigate-and-reply`で開始したwatch taskがPull Requestのwrite reservationを取得できる抜け道を修正
+- Branch Issue本文の同期でviewerをremountせず、入力中のrange comment draft、selection、focusを保持するよう修正
+- Branch syncが共通document queryを正しく更新し、Issue本文とOutdated placementを最新化するよう修正
+- 同じGitHub repositoryの独立cloneから既存Branch Reviewを開いても、保存済みGit common directoryを
+  暗黙に再bindしないよう修正
+- Branch watcherの最終reply post IDをdurableにself-suppressし、event ingest順序や再起動による自己loopを修正
+- Walkthroughの`issuesAdded`をtransaction外のsnapshot差分ではなく、実際に追加したmembershipから返すよう修正
+- Branch completion helperがworker contextとread-only outcome fieldsの省略を投稿前に拒否するよう修正
+- Issue membership削除後に対象Issueの未送信draftだけが復活し得る問題を修正
+
 ## [0.2.2] - 2026-08-21
 
 ### Changed
@@ -33,13 +46,6 @@
 
 - `rvw-watch-comments`が同じthreadの後続replyを処理するとき、以前の回答を確認中へ戻さず、新しい確認中replyを最終回答へ更新するよう修正
 - Markdown Previewで別commentへの返信が同期されても、入力中の未送信replyとfocusを保持するよう修正
-- Branch Review resetでGit ref削除が適用済みなら、終了statusだけを根拠に不整合errorを返さないよう修正
-- `investigate-and-reply`で開始したwatch taskがPull Requestのwrite reservationを取得できる抜け道を修正
-- Branch Issue本文の同期でviewerをremountせず、入力中のrange comment draft、selection、focusを保持するよう修正
-- Branch syncが共通document queryを正しく更新し、Issue本文とOutdated placementを最新化するよう修正
-- 同じGitHub repositoryの独立cloneから既存Branch Reviewを開いても、保存済みGit common directoryを
-  暗黙に再bindしないよう修正
-- Branch watcherの最終reply post IDをdurableにself-suppressし、event ingest順序や再起動による自己loopを修正
 
 ## [0.2.1] - 2026-08-20
 

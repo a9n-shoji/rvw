@@ -156,7 +156,7 @@ describe("RvwDatabase", () => {
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
       "c".repeat(40),
     );
-    const ranged = legacy.createWalkthrough({
+    const { walkthrough: ranged } = legacy.createWalkthrough({
       pullRequestId: pullRequest.id,
       sourceOid: github.headOid,
       title: "Ranged reference",
@@ -211,7 +211,7 @@ describe("RvwDatabase", () => {
       },
       posts: [{ body: "Keep this whole-Walkthrough comment." }],
     });
-    const fileLevel = migrated.createWalkthrough({
+    const { walkthrough: fileLevel } = migrated.createWalkthrough({
       pullRequestId: pullRequest.id,
       sourceOid: github.headOid,
       title: "File reference",

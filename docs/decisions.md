@@ -23,9 +23,13 @@ may refresh the usable worktree path; an independent clone fails before source, 
 mutated. Moving clones remains an explicit reset-and-recreate operation.
 
 Return Walkthrough mutations as an enumerable `{walkthrough, issuesAdded}` result for every review kind
-and transport. Branch watcher workers return a discriminated Branch context, post exactly one final
-reply with the operation's stable idempotency key, and complete the lease with that reply's post ID so
-self-events are suppressed whether they are ingested before or after completion.
+and transport, with `issuesAdded` taken from successful membership inserts inside the Walkthrough
+transaction rather than a before/after snapshot. Branch watcher workers return a discriminated Branch
+context, post exactly one final reply with the operation's stable idempotency key, and complete the lease
+with that reply's post ID so self-events are suppressed whether they are ingested before or after
+completion. The Branch completion helper validates the complete read-only worker schema before posting.
+Issue membership removal invalidates only the removed Issue's in-memory composer generation and reply
+drafts belonging to comments deleted with that Issue.
 
 ### Trade-offs
 

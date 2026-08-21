@@ -920,15 +920,17 @@ export class RvwDatabase {
     reviewId: string,
     issues: GitHubIssue[],
   ): IssueDocument[] {
-    return issues.map((issue) => {
+    const added: IssueDocument[] = [];
+    for (const issue of issues) {
       const cached = this.upsertIssue(issue);
-      this.database
+      const membership = this.database
         .prepare(
           "INSERT INTO review_issues(review_kind, review_id, issue_id, added_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
         )
         .run(reviewKind, reviewId, cached.id, new Date().toISOString());
-      return cached;
-    });
+      if (Number(membership.changes) === 1) added.push(cached);
+    }
+    return added;
   }
 
   listReviewIssues(reviewKind: "pull-request" | "branch", reviewId: string): IssueDocument[] {
@@ -1396,10 +1398,13 @@ export class RvwDatabase {
     }));
   }
 
-  createWalkthrough(input: NewWalkthroughInput, issues: GitHubIssue[] = []): Walkthrough {
+  createWalkthrough(
+    input: NewWalkthroughInput,
+    issues: GitHubIssue[] = [],
+  ): { walkthrough: Walkthrough; issuesAdded: IssueDocument[] } {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.immediateTransaction(() => {
+    const issuesAdded = this.immediateTransaction(() => {
       this.database
         .prepare(
           `INSERT INTO walkthroughs(
@@ -1418,22 +1423,23 @@ export class RvwDatabase {
           now,
         );
       this.insertCodeReferences("walkthrough", id, input.references);
-      this.writeReviewIssueMemberships("pull-request", input.pullRequestId, issues);
+      const added = this.writeReviewIssueMemberships("pull-request", input.pullRequestId, issues);
       this.incrementChangeSequence();
+      return added;
     });
     const walkthrough = this.getWalkthrough(id);
     if (!walkthrough) {
       throw new RvwError("DATABASE_ERROR", "保存したwalkthroughを読み出せません。");
     }
-    return walkthrough;
+    return { walkthrough, issuesAdded };
   }
 
   updateWalkthrough(
     id: string,
     input: Omit<NewWalkthroughInput, "pullRequestId">,
     issues: GitHubIssue[] = [],
-  ): Walkthrough {
-    this.immediateTransaction(() => {
+  ): { walkthrough: Walkthrough; issuesAdded: IssueDocument[] } {
+    const issuesAdded = this.immediateTransaction(() => {
       const result = this.database
         .prepare(
           `UPDATE walkthroughs
@@ -1455,14 +1461,19 @@ export class RvwDatabase {
       this.insertCodeReferences("walkthrough", id, input.references);
       const walkthrough = this.getWalkthrough(id);
       if (!walkthrough) throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。");
-      this.writeReviewIssueMemberships("pull-request", walkthrough.pullRequestId, issues);
+      const added = this.writeReviewIssueMemberships(
+        "pull-request",
+        walkthrough.pullRequestId,
+        issues,
+      );
       this.incrementChangeSequence();
+      return added;
     });
     const walkthrough = this.getWalkthrough(id);
     if (!walkthrough) {
       throw new RvwError("DATABASE_ERROR", "更新したwalkthroughを読み出せません。");
     }
-    return walkthrough;
+    return { walkthrough, issuesAdded };
   }
 
   getWalkthroughDeleteCounts(id: string): WalkthroughDeleteCounts {
@@ -2111,9 +2122,9 @@ export class RvwDatabase {
   createBranchWalkthrough(
     input: NewBranchWalkthroughInput,
     issues: GitHubIssue[] = [],
-  ): BranchWalkthrough {
+  ): { walkthrough: BranchWalkthrough; issuesAdded: IssueDocument[] } {
     const id = randomUUID();
-    this.immediateTransaction(() => {
+    const issuesAdded = this.immediateTransaction(() => {
       this.database
         .prepare(
           `INSERT INTO branch_walkthroughs(
@@ -2131,20 +2142,21 @@ export class RvwDatabase {
           new Date().toISOString(),
         );
       this.insertCodeReferences("branch-walkthrough", id, input.references);
-      this.writeReviewIssueMemberships("branch", input.branchReviewId, issues);
+      const added = this.writeReviewIssueMemberships("branch", input.branchReviewId, issues);
       this.incrementChangeSequence();
+      return added;
     });
     const walkthrough = this.getBranchWalkthrough(id);
     if (!walkthrough) throw new RvwError("DATABASE_ERROR", "Walkthroughを読み出せません。");
-    return walkthrough;
+    return { walkthrough, issuesAdded };
   }
 
   updateBranchWalkthrough(
     id: string,
     input: Omit<NewBranchWalkthroughInput, "branchReviewId">,
     issues: GitHubIssue[] = [],
-  ): BranchWalkthrough {
-    this.immediateTransaction(() => {
+  ): { walkthrough: BranchWalkthrough; issuesAdded: IssueDocument[] } {
+    const issuesAdded = this.immediateTransaction(() => {
       const result = this.database
         .prepare(
           `UPDATE branch_walkthroughs
@@ -2168,12 +2180,13 @@ export class RvwDatabase {
       this.insertCodeReferences("branch-walkthrough", id, input.references);
       const walkthrough = this.getBranchWalkthrough(id);
       if (!walkthrough) throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。");
-      this.writeReviewIssueMemberships("branch", walkthrough.branchReviewId, issues);
+      const added = this.writeReviewIssueMemberships("branch", walkthrough.branchReviewId, issues);
       this.incrementChangeSequence();
+      return added;
     });
     const walkthrough = this.getBranchWalkthrough(id);
     if (!walkthrough) throw new RvwError("DATABASE_ERROR", "Walkthroughを読み出せません。");
-    return walkthrough;
+    return { walkthrough, issuesAdded };
   }
 
   getBranchWalkthroughDeleteCounts(id: string): WalkthroughDeleteCounts {

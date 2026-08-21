@@ -63,18 +63,17 @@ function validatedOutcomes(input, operations) {
       !outcome ||
       typeof outcome !== "object" ||
       typeof outcome.commentRef !== "string" ||
+      outcome.commentRef.length === 0 ||
       typeof outcome.body !== "string" ||
       outcome.body.trim().length === 0
     ) {
       fail("Each outcome requires commentRef and a non-empty body");
     }
     if (outcomes.has(outcome.commentRef)) fail(`Duplicate outcome: ${outcome.commentRef}`);
-    if (outcome.relatedCommitOid !== undefined && outcome.relatedCommitOid !== null) {
-      fail("Branch Review outcomes cannot include a related commit");
-    }
-    if (outcome.pushStatus !== undefined && outcome.pushStatus !== "not-attempted") {
+    if (outcome.relatedCommitOid !== null)
+      fail("Branch Review outcomes must use relatedCommitOid: null");
+    if (outcome.pushStatus !== "not-attempted")
       fail("Branch Review outcomes must use pushStatus: not-attempted");
-    }
     outcomes.set(outcome.commentRef, outcome);
   }
   if (outcomes.size !== operations.length) fail("One final outcome is required per operation");
@@ -90,25 +89,37 @@ async function main() {
   const state = path.resolve(required(options, "state"));
   const leaseId = required(options, "lease");
   const input = await readInput();
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    fail("Worker result must be an object");
+  }
   const status = await runState(state, "status");
   const batch = status.inFlightBatches?.find((candidate) => candidate.leaseId === leaseId);
   if (!batch) fail("Active lease was not found");
   if (batch.context?.kind !== "branch") fail("complete-branch only accepts a Branch Review lease");
   if (batch.writeKey !== null) fail("Branch Review lease must not own a write key");
-  if (input.leaseId !== undefined && input.leaseId !== leaseId)
-    fail("Worker leaseId does not match");
-  if (
-    input.context !== undefined &&
-    (input.context?.kind !== "branch" || input.context.repository !== batch.context.repository)
-  ) {
-    fail("Worker context does not match the Branch Review lease");
+  if (typeof input.leaseId !== "string" || input.leaseId.length === 0) {
+    fail("Worker leaseId is required");
   }
+  if (input.leaseId !== leaseId) fail("Worker leaseId does not match");
+  if (
+    !input.context ||
+    typeof input.context !== "object" ||
+    input.context.kind !== "branch" ||
+    typeof input.context.repository !== "string" ||
+    input.context.repository.length === 0
+  ) {
+    fail("Worker Branch context is required");
+  }
+  if (input.context.repository !== batch.context.repository)
+    fail("Worker context does not match the Branch Review lease");
   const pending = validatedOutcomes(input, batch.operations ?? []);
-  const replies = [];
-  for (const { operation, outcome } of pending) {
+  for (const { operation } of pending) {
     if (typeof operation.idempotencyKey !== "string" || operation.idempotencyKey.length === 0) {
       fail(`Missing stable idempotency key: ${operation.commentRef}`);
     }
+  }
+  const replies = [];
+  for (const { operation, outcome } of pending) {
     const reply = {
       body: outcome.body,
       idempotencyKey: operation.idempotencyKey,

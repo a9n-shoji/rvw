@@ -97,7 +97,8 @@ Do not recursively discover linked Issues; omitting an Issue from a later update
 
 Parse the successful response as `{ "ok": true, "walkthrough": {...}, "issuesAdded": [...] }` and
 report the returned `walkthrough.ref`. `issuesAdded` is always present, including as `[]`, and has the
-same schema through direct database execution and the Agent socket. Publication is passive: never
+same schema through direct database execution and the Agent socket. It contains only memberships
+actually inserted by that mutation; a concurrent or earlier addition is not reported again. Publication is passive: never
 claim it opened rvw, activated a document, selected a commit, or changed a tab or scroll position. The
 human chooses which Walkthrough and code references to open and when.
 

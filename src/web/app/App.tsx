@@ -73,7 +73,11 @@ import {
   type ActiveDocument,
   type DocumentPaneId,
 } from "../document-workspace.js";
-import { clearCommentDraftsForReview } from "../comment-draft-store.js";
+import {
+  clearCommentDraftsForReview,
+  deleteCommentDraftForIssue,
+  deleteCommentReplyDraftsForComment,
+} from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
 import { useDebouncedValue } from "../use-debounced-value.js";
@@ -988,7 +992,13 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       });
     },
     onSuccess: async (result, issue) => {
-      if (!result) return;
+      if (!result || !pullRequestId) return;
+      deleteCommentDraftForIssue(pullRequestId, issue.id);
+      for (const comment of comments) {
+        if (comment.target.kind === "issue" && comment.target.issueId === issue.id) {
+          deleteCommentReplyDraftsForComment(pullRequestId, comment.id);
+        }
+      }
       setDocumentWorkspace((current) => {
         let next = current;
         for (const document of current.documents) {

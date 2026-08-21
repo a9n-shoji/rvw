@@ -203,7 +203,7 @@ Skillは明示された指示を優先し、未指定の作成判断だけを既
 mental modelを作るための最初の読解経路を構成します。文書の見出しや説明順序は固定せず、commit固定の
 reference付きartifactとして検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、
 現在内容を取得して同じURIを更新し、重複した「改訂版」を追加しません。
-`walkthrough publish`と`walkthrough update`は常に`walkthrough`と、同時にmembershipへ追加した
+`walkthrough publish`と`walkthrough update`は常に`walkthrough`と、同じtransactionで実際にmembershipへ追加した
 `issuesAdded`（追加がなければ空配列）を返し、viewerのAgent socket経由でもdirect executionでも同じ
 JSON schemaです。
 
@@ -213,7 +213,7 @@ Branch Reviewを
 明示許可した場合だけ、live PR authorと起動時のGitHub loginが一致するPRで修正・test・commit・pushを
 行えます。fork PRではlive head repository、branch、OIDとpush先も一致させます。他人またはauthor不明の
 PRは常にcode/GitHub read-onlyで調査します。同梱driverがcursor resumeとRFC 7464 ingestを行い、
-batchをclaimすると各threadへ`🔎 確認中です…`をAgent往復なしに即時返信し、
+Pull Request batchをclaimすると各threadへ`🔎 確認中です…`をAgent往復なしに即時返信し、
 完了時は同じreplyを最終結果へ編集します。Skill同梱のtask-state toolがrepository外のSQLiteへcursor、
 queue、retry、batch内のthread単位status post、自己返信抑制をtransactionalに保存します。同じthreadへ
 後から返信が追加された場合は新しいstatus postを返信するため、以前の回答は書き換えません。
