@@ -1034,7 +1034,7 @@ app.get("/api/branch-reviews/:id/document", (context) => {
         byteLength: Buffer.byteLength(issue.body, "utf8"),
         entryKind: "virtual",
         normalizedLineEndings: false,
-        oid: issue.bodyHash,
+        oid: null,
       },
     });
   }
@@ -1276,6 +1276,19 @@ app.get("/api/pull-requests/:id/document", (context) => {
       document: document(ref, `# ${pullRequest.latestTitle}\n\n${pullRequest.latestBody}`, true),
     });
   }
+  if (context.req.query("kind") === "issue-markdown") {
+    const issue = pullRequestIssues.find(
+      (candidate) => candidate.id === context.req.query("issueId"),
+    );
+    if (!issue) {
+      return context.json(
+        { ok: false, error: { code: "ISSUE_NOT_FOUND", message: "missing issue" } },
+        404,
+      );
+    }
+    const ref = { kind: "issue-markdown", pullRequestId, issueId: issue.id };
+    return context.json({ ok: true, document: document(ref, issue.body, true) });
+  }
   const sourceOid = context.req.query("sourceOid");
   const filePath = context.req.query("path");
   const ref = { kind: "repository-file", pullRequestId, sourceOid, path: filePath };
@@ -1472,6 +1485,17 @@ app.get("/api/comments/:id/placement", (context) => {
     );
   }
   if (comment.branchReviewId) {
+    if (comment.target.kind === "issue" && context.req.query("kind") !== "commit") {
+      const matches =
+        context.req.query("kind") === "issue-markdown" &&
+        context.req.query("issueId") === comment.target.issueId;
+      return context.json({
+        ok: true,
+        placement: matches
+          ? branchCommentPlacement(comment.target)
+          : { outdated: true, range: null, path: null },
+      });
+    }
     return context.json({ ok: true, placement: branchCommentPlacement(comment.target) });
   }
   if (comment.target.kind === "pull-request") {
@@ -1503,7 +1527,11 @@ app.get("/api/comments/:id/placement", (context) => {
   }
   if (comment.target.kind === "issue") {
     const issue = pullRequestIssues.find((candidate) => candidate.id === comment.target.issueId);
-    const current = issue?.bodyHash === comment.target.sourceDocumentHash;
+    const destinationMatches =
+      context.req.query("kind") === "commit" ||
+      (context.req.query("kind") === "issue-markdown" &&
+        context.req.query("issueId") === comment.target.issueId);
+    const current = destinationMatches && issue?.bodyHash === comment.target.sourceDocumentHash;
     return context.json({
       ok: true,
       placement: current

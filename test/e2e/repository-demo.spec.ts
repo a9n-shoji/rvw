@@ -38,29 +38,27 @@ test("opens a repository-scale demo backed by committed Git objects", async ({ p
   await expect(
     page.getByRole("heading", { name: "Demo: review rvw as a medium-sized repository" }),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Issues\s+3/ })).toBeVisible();
-  await expect(
-    page.getByRole("region", { name: "Issues" }).getByRole("button", { name: /#98.*CLOSED/ }),
-  ).toBeVisible();
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await expect(reviewTree.getByRole("button", { name: "Issues 3", exact: true })).toBeVisible();
+  await expect(reviewTree.locator(".review-tree-issue").filter({ hasText: "#98" })).toContainText(
+    "CLOSED",
+  );
   await expect(page.getByRole("button", { name: "ウォークスルー 2", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "コメント 4", exact: true })).toBeVisible();
 
-  await page
-    .getByRole("region", { name: "Issues" })
-    .getByRole("button", { name: /#156 Read the default branch/ })
-    .click();
+  await reviewTree.getByRole("button", { name: /#156 Read the default branch/ }).click();
   await expect(
     page.getByRole("heading", {
-      name: "#156 Read the default branch without changing the checkout",
+      name: "Default-branch reading surface",
     }),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "RVW Comments" })).toBeVisible();
+  await expect(page.locator(".markdown-inline-comments")).toBeVisible();
   await page.getByRole("button", { name: "コメント 4", exact: true }).click();
   await page
     .locator('.comment-sidebar [data-comment-id="90000000-0000-4000-8000-000000000005"]')
     .getByRole("button", { name: "コメント対象を開く" })
     .click();
-  await expect(page.locator('[data-issue-line="5"].is-navigation-target')).toBeVisible();
+  await expect(page.locator(".rvw-markdown-commented").first()).toBeVisible();
 
   const commitPicker = page
     .getByRole("region", { name: "レビュー範囲", exact: true })
@@ -77,5 +75,5 @@ test("opens a repository-scale demo backed by committed Git objects", async ({ p
     await dialog.accept();
   });
   await page.getByRole("button", { name: "#98を削除" }).click();
-  await expect(page.getByRole("heading", { name: /Issues\s+2/ })).toBeVisible();
+  await expect(reviewTree.getByRole("button", { name: "Issues 2", exact: true })).toBeVisible();
 });

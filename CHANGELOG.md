@@ -18,6 +18,8 @@
 - Issue cacheをGitHub identityで共有しつつ、membershipとreview artifactを各reviewへ分離
 - Branch ReviewをPR Reviewと同じExplorer / Search / Comments、document tab、最大二pane、theme、
   comment操作へ統一し、PR固有controlだけを省略
+- IssueをPR本文・Walkthroughと同列のreview文書nodeへ統合し、追加formを必要時だけ開くUIと、共通Markdown
+  viewerからのIssue全体／本文選択コメントへ変更
 
 ## [0.2.2] - 2026-08-21
 

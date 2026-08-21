@@ -37,7 +37,6 @@ import {
   type WalkthroughsResponse,
 } from "../api.js";
 import { CommentSidebar } from "../components/CommentSidebar.js";
-import { IssueDocumentViewer } from "../components/IssueDocumentViewer.js";
 import { ErrorNotice } from "../components/ErrorNotice.js";
 import {
   decorateAllFilesWithChanges,
@@ -45,7 +44,6 @@ import {
   type FileTreeFile,
 } from "../components/FileTree.js";
 import { LazyLoadBoundary } from "../components/LazyLoadBoundary.js";
-import { ReviewIssuePanel } from "../components/ReviewIssuePanel.js";
 import { ReviewActionsMenu } from "../components/ReviewActionsMenu.js";
 import { ReviewDocumentPane } from "../components/ReviewDocumentPane.js";
 import { ReviewSidebar } from "../components/ReviewSidebar.js";
@@ -463,6 +461,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const [searchMatchCase, setSearchMatchCase] = useState(false);
   const [searchWholeWord, setSearchWholeWord] = useState(false);
   const [issueReference, setIssueReference] = useState("");
+  const [issueAddOpen, setIssueAddOpen] = useState(false);
   const [reviewStateRevision, setReviewStateRevision] = useState(0);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const {
@@ -947,6 +946,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       ),
     onSuccess: async () => {
       setIssueReference("");
+      setIssueAddOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["issues", pullRequestId] });
     },
   });
@@ -1342,7 +1342,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       const issue = issues.find((candidate) => candidate.id === target.issueId);
       if (issue) {
         navigate(
-          { kind: "issue", id: issue.id, number: issue.number, title: issue.title },
+          { kind: "issue", id: issue.id, number: issue.number, title: issue.title, url: issue.url },
           startLine,
           endLine,
         );
@@ -1616,37 +1616,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
             />
           </Suspense>
         </LazyLoadBoundary>
-      ) : paneViewerDocument?.kind === "issue" ? (
-        (() => {
-          const issue = issues.find((candidate) => candidate.id === paneViewerDocument.id);
-          return issue ? (
-            <IssueDocumentViewer
-              review={{ kind: "pull-request", id: pullRequest.id, sourceOid: selectedOid }}
-              issue={issue}
-              comments={comments}
-              themePreference={themePreference}
-              navigationTarget={
-                viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
-                  ? viewerNavigationTarget
-                  : null
-              }
-              onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
-              onCommentActiveChange={handleCommentActiveChange}
-              onOpenCodeReference={
-                paneId === "left"
-                  ? openCommentCodeReferenceFromLeftPane
-                  : openCommentCodeReferenceFromRightPane
-              }
-              onOpenRepositoryLink={
-                paneId === "left"
-                  ? openRepositoryMarkdownLinkFromLeftPane
-                  : openRepositoryMarkdownLinkFromRightPane
-              }
-            />
-          ) : (
-            <div className="empty-document-viewer">Issueを読み込めませんでした。</div>
-          );
-        })()
       ) : paneViewerDocument?.kind === "walkthrough" ? (
         <div className="empty-document-viewer">
           <strong>
@@ -1671,7 +1640,12 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
               diffStyle={diffStyle}
               comments={comments}
               activeCommentId={activeCommentId}
-              fullViewNotice={paneViewerState.fullViewNotice}
+              fullViewNotice={
+                paneViewerDocument.kind === "issue" &&
+                issues.find((issue) => issue.id === paneViewerDocument.id)?.syncError
+                  ? "Issue同期失敗 · 最終取得本文"
+                  : paneViewerState.fullViewNotice
+              }
               fullViewUnavailableMessage={paneViewerState.fullViewUnavailableMessage}
               themePreference={themePreference}
               onCommentActiveChange={handleCommentActiveChange}
@@ -1824,29 +1798,37 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
             onModeChange={setCodeNavigationMode}
             explorer={
               <div className="file-panel">
-                <ReviewIssuePanel
-                  issues={issues}
-                  activeIssueId={activeDocument?.kind === "issue" ? activeDocument.id : null}
-                  reference={issueReference}
-                  adding={addIssueMutation.isPending}
-                  removingIssueId={removeIssueMutation.variables?.id ?? null}
-                  error={issuesQuery.error ?? addIssueMutation.error ?? removeIssueMutation.error}
-                  onReferenceChange={setIssueReference}
-                  onAdd={() => addIssueMutation.mutate()}
-                  onOpen={(issue, openInOtherPane) =>
-                    openDocument(
-                      { kind: "issue", id: issue.id, number: issue.number, title: issue.title },
-                      openInOtherPane ? "right" : undefined,
-                    )
-                  }
-                  onRemove={(issue) => removeIssueMutation.mutate(issue)}
-                />
                 <ReviewTreeItems
+                  issues={issues}
                   walkthroughs={walkthroughs}
+                  activeIssueId={activeDocument?.kind === "issue" ? activeDocument.id : null}
                   pullRequestActive={activeDocument?.kind === "pull-request-markdown"}
                   activeWalkthroughId={
                     activeDocument?.kind === "walkthrough" ? activeDocument.id : null
                   }
+                  issueReference={issueReference}
+                  issueAddOpen={issueAddOpen}
+                  issueAdding={addIssueMutation.isPending}
+                  removingIssueId={removeIssueMutation.variables?.id ?? null}
+                  issueError={
+                    issuesQuery.error ?? addIssueMutation.error ?? removeIssueMutation.error
+                  }
+                  onIssueReferenceChange={setIssueReference}
+                  onIssueAddOpenChange={setIssueAddOpen}
+                  onIssueAdd={() => addIssueMutation.mutate()}
+                  onOpenIssue={(issue, openInOtherPane) =>
+                    openDocument(
+                      {
+                        kind: "issue",
+                        id: issue.id,
+                        number: issue.number,
+                        title: issue.title,
+                        url: issue.url,
+                      },
+                      openInOtherPane ? "right" : undefined,
+                    )
+                  }
+                  onRemoveIssue={(issue) => removeIssueMutation.mutate(issue)}
                   onOpenPullRequest={(openInRightPane) =>
                     openDocument(
                       { kind: "pull-request-markdown" },

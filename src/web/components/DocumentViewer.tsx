@@ -85,11 +85,17 @@ type ViewerAnnotation =
   | { kind: "comment"; comment: AnyReviewComment; placement: CommentPlacement }
   | { kind: "line-composer" };
 
-type ReviewFileRef = DocumentRef | Extract<BranchDocumentRef, { kind: "repository-file" }>;
+type ReviewFileRef = DocumentRef | BranchDocumentRef;
 type ReviewDocumentContent = DocumentContent | BranchDocumentContent;
 
 type CreateCommentTarget =
   | { kind: "pull-request" }
+  | {
+      kind: "issue";
+      issue: string;
+      startLine: number | null;
+      endLine: number | null;
+    }
   | {
       kind: "document";
       documentKind: "pull-request-markdown";
@@ -302,25 +308,35 @@ function restoreDiffViewportAnchor(surface: HTMLElement | null, anchor: DiffView
 function params(ref: ReviewFileRef): string {
   const search = new URLSearchParams({
     kind: ref.kind,
-    ...(ref.kind === "pull-request-markdown" || "pullRequestId" in ref
+    ...("pullRequestId" in ref
       ? { pullRequestId: ref.pullRequestId }
       : { branchReviewId: ref.branchReviewId }),
   });
   if (ref.kind === "repository-file") {
     search.set("sourceOid", ref.sourceOid);
     search.set("path", ref.path);
+  } else if (ref.kind === "issue-markdown") {
+    search.set("issueId", ref.issueId);
   }
   return search.toString();
 }
 
 function reviewDocumentUrl(ref: ReviewFileRef): string {
-  if (ref.kind === "pull-request-markdown" || "pullRequestId" in ref) return documentUrl(ref);
-  const search = new URLSearchParams({
-    kind: "repository-file",
-    sourceOid: ref.sourceOid,
-    path: ref.path,
-  });
+  if ("pullRequestId" in ref) return documentUrl(ref);
+  const search = new URLSearchParams({ kind: ref.kind });
+  if (ref.kind === "repository-file") {
+    search.set("sourceOid", ref.sourceOid);
+    search.set("path", ref.path);
+  } else {
+    search.set("issueId", ref.issueId);
+  }
   return `/api/branch-reviews/${ref.branchReviewId}/document?${search.toString()}`;
+}
+
+function reviewDocumentPath(ref: ReviewFileRef, activeDocument: ActiveDocument): string {
+  if (ref.kind === "repository-file") return ref.path;
+  if (ref.kind === "pull-request-markdown") return "Pull Request.md";
+  return activeDocument.kind === "issue" ? `#${activeDocument.number}` : "Issue";
 }
 
 function markdownNodeText(node: ReactNode): string {
@@ -363,7 +379,7 @@ function markdownFragmentLine(anchor: HTMLAnchorElement, href: string): number |
   return Number.isInteger(line) && line > 0 ? line : null;
 }
 
-function renderRepositoryMarkdown({
+function renderReviewMarkdown({
   text,
   pullRequestMarkdown,
   annotations,
@@ -654,12 +670,13 @@ export function DocumentViewer({
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
 }) {
-  if (activeDocument.kind === "walkthrough" || activeDocument.kind === "issue") {
+  if (activeDocument.kind === "walkthrough") {
     throw new Error("この文書は専用viewerで表示してください。");
   }
   const queryClient = useQueryClient();
   const markdownCapable =
     activeDocument.kind === "pull-request-markdown" ||
+    activeDocument.kind === "issue" ||
     activeDocument.path.toLowerCase().endsWith(".md") ||
     activeDocument.path.toLowerCase().endsWith(".markdown");
   const activeMarkdownViewKey = markdownViewKey(activeDocument);
@@ -801,7 +818,9 @@ export function DocumentViewer({
     [navigationTarget],
   );
   const effectiveDisplayMode =
-    activeDocument.kind === "pull-request-markdown" ? "full" : displayMode;
+    activeDocument.kind === "pull-request-markdown" || activeDocument.kind === "issue"
+      ? "full"
+      : displayMode;
   const showingMarkdownPreview =
     markdownCapable && effectiveDisplayMode === "full" && markdownView === "preview";
   const fullRef = useMemo<ReviewFileRef>(
@@ -811,21 +830,34 @@ export function DocumentViewer({
             kind: "pull-request-markdown",
             pullRequestId: review.id,
           }
-        : review.kind === "pull-request"
-          ? {
-              kind: "repository-file",
-              pullRequestId: review.id,
-              sourceOid: activeDocument.sourceOid ?? selectedOid,
-              path: activeDocument.path,
-            }
-          : {
-              kind: "repository-file",
-              branchReviewId: review.id,
-              sourceOid: activeDocument.sourceOid ?? selectedOid,
-              path: activeDocument.path,
-            },
+        : activeDocument.kind === "issue"
+          ? review.kind === "pull-request"
+            ? {
+                kind: "issue-markdown",
+                pullRequestId: review.id,
+                issueId: activeDocument.id,
+              }
+            : {
+                kind: "issue-markdown",
+                branchReviewId: review.id,
+                issueId: activeDocument.id,
+              }
+          : review.kind === "pull-request"
+            ? {
+                kind: "repository-file",
+                pullRequestId: review.id,
+                sourceOid: activeDocument.sourceOid ?? selectedOid,
+                path: activeDocument.path,
+              }
+            : {
+                kind: "repository-file",
+                branchReviewId: review.id,
+                sourceOid: activeDocument.sourceOid ?? selectedOid,
+                path: activeDocument.path,
+              },
     [
       activeDocument.kind,
+      activeDocument.kind === "issue" ? activeDocument.id : null,
       activeDocument.kind === "repository-file" ? activeDocument.path : null,
       activeDocument.kind === "repository-file" ? activeDocument.sourceOid : null,
       review.id,
@@ -867,9 +899,10 @@ export function DocumentViewer({
       Boolean(oldOid) &&
       oldOid !== selectedOid,
   });
+  const documentPath = reviewDocumentPath(fullRef, activeDocument);
   const fullFile = useMemo(
-    () => fileValue(fullQuery.data ?? null, "Pull Request.md"),
-    [fullQuery.data],
+    () => fileValue(fullQuery.data ?? null, documentPath),
+    [documentPath, fullQuery.data],
   );
   const oldFile = useMemo(
     () => fileValue(diffQuery.data?.old ?? null, "Pull Request.md"),
@@ -902,7 +935,7 @@ export function DocumentViewer({
       "annotations",
       comments.map((comment) => `${comment.id}:${comment.updatedAt}`),
       renderedRefs,
-      renderedRefs.new?.kind === "pull-request-markdown" ? fullQuery.data?.text : null,
+      renderedRefs.new?.kind !== "repository-file" ? fullQuery.data?.text : null,
     ],
     queryFn: async () => {
       const fileAnnotations: LineAnnotation<ViewerAnnotation>[] = [];
@@ -919,10 +952,7 @@ export function DocumentViewer({
           );
           if (
             !placement.outdated &&
-            placement.path ===
-              (renderedRefs.new.kind === "repository-file"
-                ? renderedRefs.new.path
-                : "Pull Request.md")
+            placement.path === reviewDocumentPath(renderedRefs.new, activeDocument)
           ) {
             const lineNumber = placement.range?.endLine ?? 0;
             const metadata = { kind: "comment", comment, placement } as const;
@@ -939,10 +969,7 @@ export function DocumentViewer({
           );
           if (
             !placement.outdated &&
-            placement.path ===
-              (renderedRefs.old.kind === "repository-file"
-                ? renderedRefs.old.path
-                : "Pull Request.md")
+            placement.path === reviewDocumentPath(renderedRefs.old, activeDocument)
           ) {
             diffAnnotations.push({
               side: "deletions",
@@ -977,15 +1004,17 @@ export function DocumentViewer({
     onSuccess: async ({ comment }, { target, location }) => {
       window.getSelection()?.removeAllRanges();
       const range =
-        target.kind === "document" && target.startLine !== null && target.endLine !== null
+        target.kind !== "pull-request" && target.startLine !== null && target.endLine !== null
           ? { startLine: target.startLine, endLine: target.endLine }
           : null;
       const path =
-        target.kind !== "document"
+        target.kind === "pull-request"
           ? null
-          : target.documentKind === "pull-request-markdown"
-            ? "Pull Request.md"
-            : target.path;
+          : target.kind === "issue"
+            ? documentPath
+            : target.documentKind === "pull-request-markdown"
+              ? "Pull Request.md"
+              : target.path;
       loadedOptimisticCommentId.current = null;
       setOptimisticComment({
         comment,
@@ -1052,14 +1081,21 @@ export function DocumentViewer({
             startLine,
             endLine,
           }
-        : {
-            kind: "document" as const,
-            documentKind: "repository-file" as const,
-            sourceOid: selectedRef.sourceOid,
-            path: selectedRef.path,
-            startLine,
-            endLine,
-          };
+        : selectedRef.kind === "issue-markdown"
+          ? {
+              kind: "issue" as const,
+              issue: activeDocument.kind === "issue" ? activeDocument.url : "",
+              startLine,
+              endLine,
+            }
+          : {
+              kind: "document" as const,
+              documentKind: "repository-file" as const,
+              sourceOid: selectedRef.sourceOid,
+              path: selectedRef.path,
+              startLine,
+              endLine,
+            };
     const lineNumber = endLine ?? 0;
     const location: OptimisticCommentLocation =
       effectiveDisplayMode === "full"
@@ -1277,13 +1313,14 @@ export function DocumentViewer({
     ? (markdownSelectedRange?.startLine ?? null)
     : null;
   const composerEndLine = markdownComposerOpen ? (markdownSelectedRange?.endLine ?? null) : null;
-  const renderedRepositoryMarkdown = useMemo(
+  const renderedReviewMarkdown = useMemo(
     () =>
       markdownText === null
         ? null
-        : renderRepositoryMarkdown({
+        : renderReviewMarkdown({
             text: markdownText,
-            pullRequestMarkdown: activeDocument.kind === "pull-request-markdown",
+            pullRequestMarkdown:
+              activeDocument.kind === "pull-request-markdown" || activeDocument.kind === "issue",
             annotations: markdownCommentAnnotations,
             activeCommentId,
             selectedRange:
@@ -1321,7 +1358,7 @@ export function DocumentViewer({
       !navigationTarget ||
       navigationTarget.line === null ||
       appliedNavigationRequest.current === navigationTarget.requestId ||
-      renderedRepositoryMarkdown === null
+      renderedReviewMarkdown === null
     ) {
       return;
     }
@@ -1336,15 +1373,17 @@ export function DocumentViewer({
       navigationAppliedRef.current(requestId);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [navigationTarget, renderedRepositoryMarkdown, showingMarkdownPreview]);
+  }, [navigationTarget, renderedReviewMarkdown, showingMarkdownPreview]);
+  const wholeDocumentCommentLabel =
+    activeDocument.kind === "issue" ? "Issue全体へコメント" : "ファイル全体へコメント";
   const activeSelection = fileComposerOpen
     ? null
     : (selectionPreview ?? selection ?? navigationSelection);
   const fileCommentButton = (
     <button
       className="comment-icon-button diff-header-comment-button"
-      aria-label="ファイル全体へコメント"
-      title="ファイル全体へコメント"
+      aria-label={wholeDocumentCommentLabel}
+      title={wholeDocumentCommentLabel}
       aria-pressed={fileComposerOpen}
       disabled={!fileLevelRef}
       onClick={() => {
@@ -1406,8 +1445,9 @@ export function DocumentViewer({
   const selectedRangeLabel = selection
     ? `L${Math.min(selection.start, selection.end)}${selection.start === selection.end ? "" : `–${Math.max(selection.start, selection.end)}`}`
     : null;
-  const selectedPathLabel =
-    selectedLineRef?.kind === "repository-file" ? selectedLineRef.path : "Pull Request.md";
+  const selectedPathLabel = selectedLineRef
+    ? reviewDocumentPath(selectedLineRef, activeDocument)
+    : documentPath;
   const selectedSideLabel =
     effectiveDisplayMode === "full"
       ? null
@@ -1459,7 +1499,11 @@ export function DocumentViewer({
     );
   };
   const markdownPath =
-    activeDocument.kind === "repository-file" ? activeDocument.path : "Pull Request.md";
+    activeDocument.kind === "repository-file"
+      ? activeDocument.path
+      : activeDocument.kind === "issue"
+        ? `#${activeDocument.number} ${activeDocument.title}`
+        : "Pull Request.md";
   return (
     <div className="document-viewer">
       <ErrorNotice error={annotationQuery.error} />
@@ -1467,7 +1511,19 @@ export function DocumentViewer({
         <div className="markdown-view-toolbar" aria-label="Markdown表示">
           <span>
             <FileEntryIcon path={markdownPath} kind="file" />
-            <code>{markdownPath}</code>
+            {activeDocument.kind === "issue" ? (
+              <a
+                className="markdown-document-link"
+                href={activeDocument.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="GitHub Issueを開く"
+              >
+                <code>{markdownPath}</code>
+              </a>
+            ) : (
+              <code>{markdownPath}</code>
+            )}
           </span>
           <div className="segmented markdown-view-modes">
             <button
@@ -1490,7 +1546,7 @@ export function DocumentViewer({
       {fileComposerOpen && (
         <InlineCommentComposer
           body={body}
-          label="ファイル全体へコメント"
+          label={wholeDocumentCommentLabel}
           pending={createMutation.isPending}
           error={createMutation.error}
           validationError={undefined}
@@ -1536,7 +1592,7 @@ export function DocumentViewer({
                   />
                 }
               >
-                <article>{renderedRepositoryMarkdown}</article>
+                <article>{renderedReviewMarkdown}</article>
               </MarkdownSelectionSurface>
             </div>
           ) : (

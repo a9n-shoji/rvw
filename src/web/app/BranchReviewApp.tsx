@@ -18,12 +18,10 @@ import { CommentSidebar } from "../components/CommentSidebar.js";
 import type { ViewerNavigationTarget } from "../components/DocumentViewer.js";
 import { ErrorNotice } from "../components/ErrorNotice.js";
 import { FileTree, type FileTreeFile } from "../components/FileTree.js";
-import { IssueDocumentViewer } from "../components/IssueDocumentViewer.js";
 import { LazyLoadBoundary } from "../components/LazyLoadBoundary.js";
 import { QuickOpenPalette } from "../components/QuickOpenPalette.js";
 import { ReviewActionsMenu } from "../components/ReviewActionsMenu.js";
 import { ReviewDocumentPane } from "../components/ReviewDocumentPane.js";
-import { ReviewIssuePanel } from "../components/ReviewIssuePanel.js";
 import { ReviewSidebar } from "../components/ReviewSidebar.js";
 import { ReviewWorkspace } from "../components/ReviewWorkspace.js";
 import { SearchPanel, type AnySearchResult } from "../components/SearchPanel.js";
@@ -105,6 +103,7 @@ export function BranchReviewApp({
   const [searchMatchCase, setSearchMatchCase] = useState(false);
   const [searchWholeWord, setSearchWholeWord] = useState(false);
   const [issueReference, setIssueReference] = useState("");
+  const [issueAddOpen, setIssueAddOpen] = useState(false);
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenReturnFocus, setQuickOpenReturnFocus] = useState<HTMLElement | null>(null);
   const [draggedDocumentKey, setDraggedDocumentKey] = useState<string | null>(null);
@@ -239,6 +238,7 @@ export function BranchReviewApp({
       ),
     onSuccess: async () => {
       setIssueReference("");
+      setIssueAddOpen(false);
       await refresh();
     },
   });
@@ -528,7 +528,7 @@ export function BranchReviewApp({
   };
   const openIssue = (issue: IssueDocument, openInOtherPane: boolean): void => {
     navigateToDocument(
-      { kind: "issue", id: issue.id, number: issue.number, title: issue.title },
+      { kind: "issue", id: issue.id, number: issue.number, title: issue.title, url: issue.url },
       openInOtherPane ? "right" : undefined,
     );
   };
@@ -606,6 +606,7 @@ export function BranchReviewApp({
           id: target.issueId,
           number: target.issueNumber,
           title: target.issueTitle,
+          url: target.issueUrl,
         },
         undefined,
         locator,
@@ -696,37 +697,6 @@ export function BranchReviewApp({
             />
           </Suspense>
         </LazyLoadBoundary>
-      ) : paneDocument?.kind === "issue" ? (
-        (() => {
-          const issue = issues.find((candidate) => candidate.id === paneDocument.id);
-          return issue ? (
-            <IssueDocumentViewer
-              review={review}
-              issue={issue}
-              comments={comments}
-              themePreference={themePreference}
-              navigationTarget={
-                viewerNavigationTarget?.documentKey === documentTabKey(paneDocument)
-                  ? viewerNavigationTarget
-                  : null
-              }
-              onNavigationApplied={() => undefined}
-              onCommentActiveChange={handleCommentActiveChange}
-              onOpenCodeReference={(sourceOid, reference, openInOtherPane) =>
-                openCodeReference(
-                  sourceOid,
-                  reference,
-                  openInOtherPane ? otherDocumentPane(paneId) : paneId,
-                )
-              }
-              onOpenRepositoryLink={(path, sourceOid, openInOtherPane) =>
-                openRepositoryLink(path, sourceOid, openInOtherPane, paneId)
-              }
-            />
-          ) : (
-            <div className="empty-document-viewer">Issueを読み込めませんでした。</div>
-          );
-        })()
       ) : paneDocument?.kind === "walkthrough" ? (
         <div className="empty-document-viewer">
           <strong>
@@ -738,11 +708,11 @@ export function BranchReviewApp({
             <span>サイドバーからもう一度開いてください。</span>
           )}
         </div>
-      ) : paneDocument?.kind === "repository-file" ? (
+      ) : paneDocument?.kind === "repository-file" || paneDocument?.kind === "issue" ? (
         <LazyLoadBoundary label="文書ビューアー">
           <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
             <DocumentViewer
-              key={`${paneId}:${branchReview.sourceOid}:${documentTabKey(paneDocument)}:${paneDocument.sourceOid ?? ""}`}
+              key={`${paneId}:${branchReview.sourceOid}:${documentTabKey(paneDocument)}:${paneDocument.kind === "repository-file" ? (paneDocument.sourceOid ?? "") : ""}`}
               review={review}
               selectedOid={branchReview.sourceOid}
               oldOid={null}
@@ -751,6 +721,12 @@ export function BranchReviewApp({
               diffStyle="unified"
               comments={comments}
               activeCommentId={activeCommentId}
+              fullViewNotice={
+                paneDocument.kind === "issue" &&
+                issues.find((issue) => issue.id === paneDocument.id)?.syncError
+                  ? "Issue同期失敗 · 最終取得本文"
+                  : null
+              }
               themePreference={themePreference}
               onCommentActiveChange={handleCommentActiveChange}
               navigationTarget={
@@ -901,25 +877,25 @@ export function BranchReviewApp({
             onModeChange={setSidebarMode}
             explorer={
               <div className="file-panel">
-                <ReviewIssuePanel
-                  issues={issues}
-                  activeIssueId={activeDocument?.kind === "issue" ? activeDocument.id : null}
-                  reference={issueReference}
-                  adding={issueMutation.isPending}
-                  removingIssueId={removeIssueMutation.variables?.id ?? null}
-                  error={issueMutation.error ?? removeIssueMutation.error}
-                  onReferenceChange={setIssueReference}
-                  onAdd={() => issueMutation.mutate()}
-                  onOpen={openIssue}
-                  onRemove={(issue) => removeIssueMutation.mutate(issue)}
-                />
                 <ReviewTreeItems
+                  issues={issues}
                   walkthroughs={walkthroughs}
                   includePullRequestDocument={false}
+                  activeIssueId={activeDocument?.kind === "issue" ? activeDocument.id : null}
                   pullRequestActive={false}
                   activeWalkthroughId={
                     activeDocument?.kind === "walkthrough" ? activeDocument.id : null
                   }
+                  issueReference={issueReference}
+                  issueAddOpen={issueAddOpen}
+                  issueAdding={issueMutation.isPending}
+                  removingIssueId={removeIssueMutation.variables?.id ?? null}
+                  issueError={issueMutation.error ?? removeIssueMutation.error}
+                  onIssueReferenceChange={setIssueReference}
+                  onIssueAddOpenChange={setIssueAddOpen}
+                  onIssueAdd={() => issueMutation.mutate()}
+                  onOpenIssue={openIssue}
+                  onRemoveIssue={(issue) => removeIssueMutation.mutate(issue)}
                   onOpenPullRequest={() => undefined}
                   onOpen={(walkthrough, openInRightPane) =>
                     openWalkthrough(walkthrough as BranchWalkthroughSummary, openInRightPane)

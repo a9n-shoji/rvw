@@ -133,6 +133,38 @@ describe("RvwService commit workflow", () => {
     expect(
       service.listPullRequestIssues(opened.pullRequest.id).map(({ number }) => number),
     ).toEqual([142, 99, 88]);
+    const issue142 = service
+      .listPullRequestIssues(opened.pullRequest.id)
+      .find(({ number }) => number === 142)!;
+    const issue99 = service
+      .listPullRequestIssues(opened.pullRequest.id)
+      .find(({ number }) => number === 99)!;
+    await expect(
+      service.getDocument({
+        kind: "issue-markdown",
+        pullRequestId: opened.pullRequest.id,
+        issueId: issue142.id,
+      }),
+    ).resolves.toMatchObject({ text: "Requirement with a nested #77 reference." });
+    const issueComment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "issue", issue: "#142", startLine: 1, endLine: 1 },
+      body: "Review this requirement.",
+    });
+    await expect(
+      service.placeComment(issueComment, {
+        kind: "issue-markdown",
+        pullRequestId: opened.pullRequest.id,
+        issueId: issue142.id,
+      }),
+    ).resolves.toEqual({ outdated: false, range: { startLine: 1, endLine: 1 }, path: "#142" });
+    await expect(
+      service.placeComment(issueComment, {
+        kind: "issue-markdown",
+        pullRequestId: opened.pullRequest.id,
+        issueId: issue99.id,
+      }),
+    ).resolves.toEqual({ outdated: true, range: null, path: null });
 
     fake.pullRequest = { ...fake.pullRequest, body: "References removed from the PR body." };
     await service.refreshPullRequest(opened.pullRequest.id);

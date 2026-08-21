@@ -103,6 +103,11 @@ export type DocumentRef =
       pullRequestId: string;
     }
   | {
+      kind: "issue-markdown";
+      pullRequestId: string;
+      issueId: string;
+    }
+  | {
       kind: "repository-file";
       pullRequestId: string;
       sourceOid: string;
@@ -117,13 +122,6 @@ export type BranchDocumentRef =
       path: string;
     }
   | { kind: "issue-markdown"; branchReviewId: string; issueId: string };
-
-export type IssueDocumentRef = {
-  kind: "issue-markdown";
-  reviewKind: "pull-request" | "branch";
-  reviewId: string;
-  issueId: string;
-};
 
 export interface DiffDocumentRef {
   kind: "diff";

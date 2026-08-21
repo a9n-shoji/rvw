@@ -58,7 +58,8 @@ export function deriveDocumentViewerState(
     context.changedFilesLoaded &&
     !activeChange;
   const showingFullFallback =
-    (context.documentDisplayMode !== "full" && document?.kind === "pull-request-markdown") ||
+    (context.documentDisplayMode !== "full" &&
+      (document?.kind === "pull-request-markdown" || document?.kind === "issue")) ||
     selectedRangeFullFallback;
   const fullViewNotice = referenceSourceDiffers
     ? `参照元 ${shortOid(referenceSourceOid)} ≠ 対象 ${shortOid(context.selectedOid)}${

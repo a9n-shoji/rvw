@@ -58,4 +58,20 @@ describe("reading history", () => {
     expect(sameReadingDocument(current, { ...current })).toBe(true);
     expect(sameReadingDocument(current, exact)).toBe(false);
   });
+
+  it("round-trips an Issue document with the GitHub URL needed for comments", () => {
+    const issueEntry = entry({
+      document: {
+        kind: "issue",
+        id: "70000000-0000-4000-8000-000000000142",
+        number: 142,
+        title: "Treat Issues as documents",
+        url: "https://github.com/acme/review-repo/issues/142",
+      },
+    });
+
+    expect(parseReadingHistoryEntry(readingHistoryState(null, issueEntry), reviewKey)).toEqual(
+      issueEntry,
+    );
+  });
 });

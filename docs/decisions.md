@@ -12,12 +12,16 @@ therefore keep widening an accidental product split.
 
 ### Choice
 
-Use shared review-level components for the two-stack Explorer / Search / Comments sidebar, Issues,
-tabs, document viewers, comments, actions menu, theme preference, reading history, and resizable
-one-or-two-pane workspace. Pass a discriminated Pull Request or Branch Review identity only where an
-API route or persisted target actually differs. Branch Review omits PR-only controls and documents:
-commit range, changes mode, diff style, and `Pull Request.md`. It does not replace those controls with
-Branch-specific variants.
+Use shared review-level components for the two-stack Explorer / Search / Comments sidebar, tabs,
+document viewers, comments, actions menu, theme preference, reading history, and resizable
+one-or-two-pane workspace. `Pull Request.md`, Issues, and Walkthroughs are sibling review-document
+nodes in Explorer; Issue addition is a temporary form opened from the Issues folder action. Issue
+bodies use the same Source / Preview Markdown viewer, source mapping, whole-document comment action,
+and text-selection comment flow as other Markdown documents instead of a dedicated Issue panel or
+renderer. Pass a discriminated Pull Request or Branch Review identity only where an API route or
+persisted target actually differs. Branch Review omits PR-only controls and documents: commit range,
+changes mode, diff style, and `Pull Request.md`. It does not replace those controls with Branch-specific
+variants.
 
 ### Trade-offs
 
@@ -53,6 +57,11 @@ task-local keys from PR URL alone to `(review_kind, context_key)`.
 Branch watcher batches are always `investigate-and-reply`: they cannot reserve a repository write key,
 receive no progress acknowledgement, create one final idempotent reply, and never commit, push, edit a
 GitHub Issue, change the default branch, or resolve the thread.
+
+Keep `branchReviewId` as the internal and route-level identity even though repository identity is
+unique. “One Branch Review” means one per canonical repository, not one process-wide; the ID scopes
+comments, Issue memberships, Walkthroughs, watch cursors, reset ownership, and retained Git refs, and
+allows reset to recreate that aggregate without overloading a mutable repository path or display name.
 
 ### Trade-offs
 

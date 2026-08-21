@@ -296,7 +296,7 @@ empty fileは従来どおり明示的に扱う。
 - sidebarとdocument workspaceの境界、および二ペイン間の境界はpointer dragで横幅を変更できる。
   sidebarはmain reading surfaceの最低幅を残し、各document paneも最低幅を持つ。dividerのdouble clickは
   既定幅へ戻し、左右arrow keyでも調整できる。幅はbrowser内だけの一時状態で永続化しない。
-- sidebarのfile、search result、Walkthroughは`Cmd` / `Ctrl`+clickで右ペインへ開ける。document
+- sidebarのfile、search result、Issue、Walkthroughは`Cmd` / `Ctrl`+clickで右ペインへ開ける。document
   pane内のWalkthrough reference、diagram node、repository Markdown linkは`Cmd` / `Ctrl`+clickで
   操作元と反対のペインへ開く。通常clickは操作元のペインへ開く。新しい反対paneを初めて作る場合も、code
   referenceの選択範囲を描画完了後にviewport中央へfocusする。
@@ -316,7 +316,10 @@ empty fileは従来どおり明示的に扱う。
   使い、review種別だけを理由に別のinteractionや簡易rendererを持たない。Branch ReviewではPR固有のcommit
   range、changes / diff style、`Pull Request.md`だけを表示しない。
 - sidebarのtop-level stackはExplorerとCommentsの二つにする。Explorerには、Pull Request Reviewだけの
-  `Pull Request.md`、collapsibleなWalkthrough folder、file名filter、repository treeをこの順に置く。
+  `Pull Request.md`、collapsibleなIssues folder、collapsibleなWalkthrough folder、file名filter、repository
+  treeをこの順に置き、review文書を同じtreeの並列nodeとして扱う。Issues folder右端の`+` actionでのみ
+  Issue追加formを開き、追加成功またはEscapeで閉じる。Issue row右端の削除actionは文書を開くactionから
+  分離する。
   Pull Request Reviewではunchanged file表示checkboxを置き、Branch Reviewではrepository tree全体を
   常に表示する。
   本文検索はExplorer headerのactionでSearch viewへ切り替える。ExplorerとSearchは別々のscroll領域へ
@@ -326,7 +329,10 @@ empty fileは従来どおり明示的に扱う。
 - changed-files tree、tabのchange icon、中央viewerはtop barで選択した同じcommit範囲を使用する。
   sidebar内に別のcomparison selectorを持たない。
 - 選択比較で対象fileに変更がなければglobal controlを変えず、そのfileだけdestination commitの
-  full textへfallbackして`差分なし · 全文表示`を明示する。`Pull Request.md`も常にfullへfallbackする。
+  full textへfallbackして`差分なし · 全文表示`を明示する。`Pull Request.md`とIssue本文も常にfullへ
+  fallbackする。Issue本文はPR本文とrepository Markdownが使うSource / Preview viewer、safe rendering、
+  source line mapping、inline comment表示を共有する。本文選択からrange commentを作成でき、Issue全体の
+  composerは常設せずviewer右上のcomment iconから開く。
 - commit範囲切り替え時はopen pathとglobal表示modeを保ち、latest側commitが変わった場合だけ文書を
   そのcommitへ結び直す。exact source commentから開いた文書は
   通常の選択commit文書へ結び直す。current PR commit列外のexact sourceを開く場合はfull viewだけにする。

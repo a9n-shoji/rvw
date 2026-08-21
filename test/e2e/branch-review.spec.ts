@@ -1,7 +1,23 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 
 const branchReviewId = "33333333-3333-4333-8333-333333333333";
 const modifier = process.platform === "darwin" ? "Meta" : "Control";
+
+async function selectMappedText(locator: Locator): Promise<void> {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((element) => {
+    const text = element.firstChild;
+    if (!(text instanceof Text) || text.data.length === 0) {
+      throw new Error("Expected a non-empty mapped text node.");
+    }
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  });
+}
 
 test.beforeEach(async ({ request }) => {
   const response = await request.post("/api/test/reset-branch-review", { data: {} });
@@ -27,8 +43,9 @@ test("uses the shared review workspace for the default branch, Issues, code, and
     "false",
   );
 
-  const issues = page.getByRole("region", { name: "Issues" });
-  const issueButtons = issues.locator(".issue-list-open");
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await expect(reviewTree.getByRole("button", { name: "Issues 2", exact: true })).toBeVisible();
+  const issueButtons = reviewTree.locator(".review-tree-issue");
   await expect(issueButtons).toHaveCount(2);
   await expect(issueButtons.nth(0)).toContainText("#142");
   await expect(issueButtons.nth(0)).toContainText("OPEN");
@@ -151,28 +168,42 @@ test("keeps Branch mutations isolated and recreates an empty review after reset"
   ).json()) as Record<string, unknown>;
   await page.goto(`/?branchReviewId=${branchReviewId}`);
 
-  const issues = page.getByRole("region", { name: "Issues" });
-  const issueButtons = issues.locator(".issue-list-open");
-  const issueInput = issues.getByPlaceholder("#142 または Issue URL");
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  const issueButtons = reviewTree.locator(".review-tree-issue");
+  const addIssueButton = reviewTree.getByRole("button", { name: "Issueを追加", exact: true });
+  const issueInput = reviewTree.getByRole("textbox", { name: "Issue番号またはURL" });
   await expect(issueButtons).toHaveCount(2);
+  await expect(issueInput).toHaveCount(0);
 
+  await addIssueButton.click();
   await issueInput.fill("#142");
-  await issues.getByRole("button", { name: "追加", exact: true }).click();
-  await expect(issueInput).toHaveValue("");
+  await reviewTree.getByRole("button", { name: "追加", exact: true }).click();
+  await expect(issueInput).toHaveCount(0);
   await expect(issueButtons).toHaveCount(2);
 
+  await addIssueButton.click();
   await issueInput.fill("#77");
-  await issues.getByRole("button", { name: "追加", exact: true }).click();
+  await reviewTree.getByRole("button", { name: "追加", exact: true }).click();
   await expect(issueButtons).toHaveCount(3);
   await expect(issueButtons.first()).toContainText("#77");
 
   await issueButtons.filter({ hasText: "#142" }).click();
   const leftPane = page.getByRole("region", { name: "左のコードペイン" });
-  await leftPane.getByRole("button", { name: "Source", exact: true }).click();
-  await leftPane.locator('[data-issue-line="1"]').click();
-  await leftPane.locator(".document-comment-composer textarea").fill("Issue range fixture comment");
+  await expect(leftPane.getByRole("button", { name: "Preview", exact: true })).toBeVisible();
+  await expect(leftPane.getByRole("textbox", { name: "Issue全体へコメント" })).toHaveCount(0);
+  await leftPane.getByRole("button", { name: "Issue全体へコメント" }).click();
+  await expect(leftPane.getByRole("textbox", { name: "Issue全体へコメント" })).toBeVisible();
+  await leftPane.getByRole("textbox", { name: "Issue全体へコメント" }).press("Escape");
+  const issueBodyLine = leftPane
+    .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
+    .filter({ hasText: "Inspect the default-branch implementation." });
+  await selectMappedText(issueBodyLine);
+  await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();
   await leftPane
-    .locator(".document-comment-composer")
+    .getByRole("textbox", { name: "#142 · L3へコメント" })
+    .fill("Issue range fixture comment");
+  await leftPane
+    .locator(".markdown-selection-composer-slot")
     .getByRole("button", { name: "コメント", exact: true })
     .click();
   await expect(leftPane.getByText("Issue range fixture comment", { exact: true })).toBeVisible();
@@ -200,8 +231,8 @@ test("keeps Branch mutations isolated and recreates an empty review after reset"
             kind: "issue",
             issueNumber: 142,
             issueTitle: "Stabilize the request path",
-            startLine: 1,
-            endLine: 1,
+            startLine: 3,
+            endLine: 3,
           }),
         }),
       }),
@@ -230,9 +261,7 @@ test("keeps Branch mutations isolated and recreates an empty review after reset"
   await page.getByRole("button", { name: "その他の操作", exact: true }).click();
   await page.getByRole("menuitem", { name: "Branch Reviewを削除して再構築" }).click();
   await expect(page).not.toHaveURL(`/?branchReviewId=${branchReviewId}`);
-  await expect(page.getByRole("region", { name: "Issues" }).getByRole("heading")).toHaveText(
-    "Issues 0",
-  );
+  await expect(page.getByRole("button", { name: "Issues 0", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "ウォークスルー 0" })).toBeVisible();
   await expect(page.getByRole("button", { name: "コメント 0", exact: true })).toBeVisible();
 });

@@ -82,6 +82,9 @@ function documentRefFromQuery(pullRequestId: string, query: Record<string, strin
   if (query.kind === "pull-request-markdown") {
     return { kind: "pull-request-markdown", pullRequestId };
   }
+  if (query.kind === "issue-markdown" && query.issueId) {
+    return { kind: "issue-markdown", pullRequestId, issueId: query.issueId };
+  }
   if (query.kind === "repository-file" && query.sourceOid && query.path) {
     return {
       kind: "repository-file",
@@ -653,6 +656,13 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
             branchComment,
             walkthroughId,
           ),
+        });
+      }
+      if (context.req.query("kind") === "issue-markdown") {
+        const issueId = requiredQuery(context.req.query("issueId"), "issueId");
+        return context.json({
+          ok: true,
+          placement: service.placeBranchIssueComment(branchReviewId, branchComment, issueId),
         });
       }
       const oid = oidQuery(context.req.query("oid"), "oid");

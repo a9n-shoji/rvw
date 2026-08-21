@@ -49,8 +49,9 @@ function parseDocument(value: unknown): ActiveDocument | null {
   if (value.kind === "issue") {
     return typeof value.id === "string" &&
       typeof value.number === "number" &&
-      typeof value.title === "string"
-      ? { kind: "issue", id: value.id, number: value.number, title: value.title }
+      typeof value.title === "string" &&
+      typeof value.url === "string"
+      ? { kind: "issue", id: value.id, number: value.number, title: value.title, url: value.url }
       : null;
   }
   if (value.kind === "walkthrough") {

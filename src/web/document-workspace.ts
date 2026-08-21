@@ -2,7 +2,7 @@ export type DocumentPaneId = "left" | "right";
 
 export type ActiveDocument =
   | { kind: "pull-request-markdown" }
-  | { kind: "issue"; id: string; number: number; title: string }
+  | { kind: "issue"; id: string; number: number; title: string; url: string }
   | { kind: "walkthrough"; id: string; title: string; sourceOid: string }
   | {
       kind: "repository-file";

@@ -77,6 +77,8 @@ export function documentUrl(ref: DocumentRef): string {
   if (ref.kind === "repository-file") {
     search.set("sourceOid", ref.sourceOid);
     search.set("path", ref.path);
+  } else if (ref.kind === "issue-markdown") {
+    search.set("issueId", ref.issueId);
   }
   return `/api/pull-requests/${ref.pullRequestId}/document?${search.toString()}`;
 }

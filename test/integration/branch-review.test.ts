@@ -193,6 +193,29 @@ describe("Branch Review", () => {
       target: { kind: "issue", issue: "#142", startLine: 1, endLine: 1 },
       body: "Confirm this requirement against the implementation.",
     });
+    const issue142 = service
+      .listBranchIssues(opened.branchReview.id)
+      .find(({ number }) => number === 142)!;
+    const issue143 = service
+      .listBranchIssues(opened.branchReview.id)
+      .find(({ number }) => number === 143)!;
+    await expect(
+      service.getBranchDocument({
+        kind: "issue-markdown",
+        branchReviewId: opened.branchReview.id,
+        issueId: issue142.id,
+      }),
+    ).resolves.toMatchObject({ text: "Requirement 142\nDetails" });
+    expect(service.placeBranchIssueComment(opened.branchReview.id, comment, issue142.id)).toEqual({
+      outdated: false,
+      range: { startLine: 1, endLine: 1 },
+      path: "#142",
+    });
+    expect(service.placeBranchIssueComment(opened.branchReview.id, comment, issue143.id)).toEqual({
+      outdated: true,
+      range: null,
+      path: null,
+    });
     const events = service.listCommentPostEvents(undefined, 10);
     expect(events.events).toHaveLength(0);
     const replay = service.listCommentPostEvents(events.startCursor.replace(/:0$/, ":0"), 10);

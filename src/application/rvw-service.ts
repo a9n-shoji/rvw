@@ -1422,6 +1422,21 @@ export class RvwService {
         oid: null,
       };
     }
+    if (ref.kind === "issue-markdown") {
+      const issue = this.database.getIssue(ref.issueId);
+      if (!issue || !this.database.hasReviewIssue("pull-request", pullRequest.id, issue.id)) {
+        throw new RvwError("ISSUE_NOT_FOUND", "Issue documentが見つかりません。", { status: 404 });
+      }
+      return {
+        ref,
+        availability: "available",
+        text: issue.body,
+        byteLength: Buffer.byteLength(issue.body, "utf8"),
+        entryKind: "virtual",
+        normalizedLineEndings: false,
+        oid: null,
+      };
+    }
     await this.assertCommitAvailable(pullRequest, ref.sourceOid);
     const content = await this.git.readDocument(
       pullRequest.localRepositoryPath,
@@ -2132,6 +2147,32 @@ export class RvwService {
       return { outdated: false, range: null, path: null };
     }
     return { ...placeMutableDocumentComment(comment.target, walkthrough.body), path: null };
+  }
+
+  placeBranchIssueComment(
+    branchReviewId: string,
+    comment: BranchReviewComment,
+    issueId: string,
+  ): CommentPlacement {
+    if (
+      comment.branchReviewId !== branchReviewId ||
+      comment.target.kind !== "issue" ||
+      comment.target.issueId !== issueId
+    ) {
+      return { outdated: true, range: null, path: null };
+    }
+    const issue = this.database.getIssue(issueId);
+    if (
+      !issue ||
+      !this.database.hasReviewIssue("branch", branchReviewId, issue.id) ||
+      issue.bodyHash !== comment.target.sourceDocumentHash
+    ) {
+      return { outdated: true, range: null, path: `#${comment.target.issueNumber}` };
+    }
+    return {
+      ...placeMutableDocumentComment(comment.target, issue.body),
+      path: `#${issue.number}`,
+    };
   }
 
   async getAnyCommentReviewContext(
@@ -3003,6 +3044,9 @@ export class RvwService {
       return this.placeWalkthroughComment(comment);
     }
     if (comment.target.kind === "issue") {
+      if (destination.kind !== "issue-markdown" || destination.issueId !== comment.target.issueId) {
+        return { outdated: true, range: null, path: null };
+      }
       const issue = this.database.getIssue(comment.target.issueId);
       if (!issue || issue.bodyHash !== comment.target.sourceDocumentHash) {
         return { outdated: true, range: null, path: `#${comment.target.issueNumber}` };
