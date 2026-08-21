@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-21
+
 ### Changed
 
 - `rvw`と`rvw-watch-comments` Skillが具体的なcode上の結論、実装、testを投稿するとき、navigation価値のあるtyped code referenceを既定で付けるよう改善
