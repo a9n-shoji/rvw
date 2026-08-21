@@ -26,11 +26,10 @@ jobs:
       - run: pnpm check
       - run: pnpm test
       - run: pnpm exec playwright install chromium
-      - name: Ensure demo fixture history
+      - name: Fetch demo fixture history
         run: |
-          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
-            git fetch --no-tags --unshallow origin +refs/heads/main:refs/remotes/origin/main
-          fi
+          git fetch --no-tags --depth=50 origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-list --first-parent --count refs/remotes/origin/main)" -ge 7
       - run: pnpm test:e2e
 
   package-smoke:
