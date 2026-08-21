@@ -131,7 +131,11 @@ and objects retained by other refs remain reachable.
 
 Branch commands resolve the canonical GitHub base repository and Git common directory from the
 current directory or `--repository`; callers never pass an internal Branch Review ID. There is one
-durable Branch Review per repository. `branch sync` resolves GitHub's current default branch and OID,
+durable Branch Review per repository. A worktree in the saved Git common directory may reuse it and
+refresh the usable local path. An independent clone of the same canonical repository fails with an
+actionable repository-mismatch error before changing the saved path, common directory, source OID,
+retained refs, or artifacts. After an explicit `branch reset` in the registered clone, opening from the
+other clone creates a new review. `branch sync` resolves GitHub's current default branch and OID,
 fetches and verifies that exact object without changing checkout or index, advances the cached source,
 and refreshes every registered Issue independently. A previously synchronized review remains readable
 offline. `branch comments` returns the explicit Branch context and full comments for the selected state.
@@ -392,7 +396,12 @@ startup authorization before an authenticated user's own PR can be fixed and pus
 live head repository, branch, and OID so fork PRs cannot target the base repository accidentally.
 Another or unknown author remains code/GitHub read-only. A Branch batch is always
 `investigate-and-reply`, cannot reserve a write key, creates no progress post, and records exactly one
-final idempotent reply without resolving the thread.
+final idempotent reply without resolving the thread. Its worker result uses
+`{kind:"branch",repository}` rather than a fake Pull Request URL. The final reply uses the operation's
+stable idempotency key, and lease completion receives the returned post ID as a durable suppression.
+If the reply event was already ingested, completion marks that pending event completed; if it arrives
+later, ingestion suppresses it. A restart retries the same key, recovers the existing reply, and then
+completes without adding a duplicate or a new batch.
 
 The Skill also bundles one aggregate preflight, a cursor-resolving RFC 7464 driver, an empty-to-non-empty
 pending waiter, and an auto-ack command. The normal driver polls once per second and invokes auto-ack
@@ -485,7 +494,9 @@ phantom-bound references are rejected because the viewer has no separate referen
 
 The body is limited to 256 KiB, and a publication may contain at most 200 references. A successful
 publication protects `sourceOid` with rvw's immutable commit ref. The response contains the saved
-Walkthrough and its `rvw://walkthrough/<uuid>` reference. Publication is
+Walkthrough and its `rvw://walkthrough/<uuid>` reference under `walkthrough`, plus every Issue
+membership added by this mutation under `issuesAdded`. The array is present and empty when nothing was
+added. Publication is
 not a viewer command: it does not open a browser, activate a document, choose a commit, or change any
 tab or scroll position. The human later chooses which inline reference or bound diagram node to open;
 the viewer does not duplicate all references in a side or bottom index.
@@ -503,7 +514,8 @@ complete replacement rather than a patch. Omitting `authorLabel` preserves the c
 or `null` replaces it. Commit, document, line, Markdown-link, and diagram-binding validation is identical
 to publication.
 
-Success returns the updated Walkthrough with the same ID, URI, and `createdAt`. No previous body,
+Success returns the updated Walkthrough under `walkthrough`, with the same ID, URI, and `createdAt`,
+and an explicit `issuesAdded` array under the same rules as publish. No previous body,
 reference set, source OID, or update revision is retained. Existing whole-Walkthrough comments resolve
 to the current body and references; line comments are re-anchored from their bounded quoted text or reported
 Outdated. Updating remains passive and does not control a viewer.
@@ -543,6 +555,8 @@ The non-JSON output shows the same diagnostic fields. Multiple viewer processes 
 coexist, but an atomic owner lock ensures only one Node process can own a socket path at a time; a
 follower acquires the lock and socket only after the owner exits. CLI stdin and socket
 request/response frames are capped at 40 MiB.
+Walkthrough publish/update use the same enumerable application result envelope through direct database
+execution and Agent socket execution; JSON serialization cannot omit `issuesAdded`.
 
 The default database directory and file are created with modes `0700` and `0600`. Existing paths are
 checked with `stat`; rvw does not chmod them when owner and mode are already safe. A failed chmod on a

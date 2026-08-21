@@ -265,3 +265,125 @@ test("keeps Branch mutations isolated and recreates an empty review after reset"
   await expect(page.getByRole("button", { name: "ウォークスルー 0" })).toBeVisible();
   await expect(page.getByRole("button", { name: "コメント 0", exact: true })).toBeVisible();
 });
+
+test("keeps an Issue range composer focused across a same-body Branch refresh", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await reviewTree.locator(".review-tree-issue").filter({ hasText: "#142" }).click();
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const issueBodyLine = leftPane
+    .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
+    .filter({ hasText: "Inspect the default-branch implementation." });
+  await selectMappedText(issueBodyLine);
+  await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();
+  const textarea = leftPane.getByRole("textbox", { name: "#142 · L3へコメント" });
+  await textarea.fill("Background sync must preserve this draft");
+  await textarea.evaluate((element) => {
+    element.dataset.rvwE2eIdentity = "original-textarea";
+  });
+  await expect(textarea).toBeFocused();
+
+  const refresh = await request.post("/api/test/refresh-branch-review", {
+    data: { sourceOid: "b".repeat(40) },
+  });
+  expect(refresh.ok()).toBe(true);
+  await expect(
+    page.getByRole("heading", { name: "Branch Review · trunk · bbbbbbbb" }),
+  ).toBeVisible();
+  await expect(textarea).toHaveValue("Background sync must preserve this draft");
+  await expect(textarea).toHaveAttribute("data-rvw-e2e-identity", "original-textarea");
+  await expect(textarea).toBeFocused();
+
+  await leftPane
+    .locator(".markdown-selection-composer-slot")
+    .getByRole("button", { name: "コメント", exact: true })
+    .click();
+  await expect(
+    leftPane.getByText("Background sync must preserve this draft", { exact: true }),
+  ).toBeVisible();
+});
+
+test("refreshes an open Issue body without silently applying a stale range draft", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await reviewTree.locator(".review-tree-issue").filter({ hasText: "#142" }).click();
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const originalLine = leftPane
+    .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
+    .filter({ hasText: "Inspect the default-branch implementation." });
+
+  await selectMappedText(originalLine);
+  await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();
+  await leftPane
+    .getByRole("textbox", { name: "#142 · L3へコメント" })
+    .fill("Comment that should become outdated");
+  await leftPane
+    .locator(".markdown-selection-composer-slot")
+    .getByRole("button", { name: "コメント", exact: true })
+    .click();
+  await expect(
+    leftPane.getByText("Comment that should become outdated", { exact: true }),
+  ).toBeVisible();
+
+  await selectMappedText(originalLine);
+  await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();
+  const textarea = leftPane.getByRole("textbox", { name: "#142 · L3へコメント" });
+  await textarea.fill("Preserve this unsent draft");
+  await expect(textarea).toBeFocused();
+
+  const updatedBody = [
+    "# Stabilize the request path",
+    "",
+    "Inspect the refreshed default-branch implementation.",
+    "",
+    "The Issue body changed while a reviewer was writing.",
+  ].join("\n");
+  const refresh = await request.post("/api/test/refresh-branch-review", {
+    data: { issueNumber: 142, issueBody: updatedBody },
+  });
+  expect(refresh.ok()).toBe(true);
+  const refreshedLine = leftPane
+    .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
+    .filter({ hasText: "Inspect the refreshed default-branch implementation." });
+  await expect(refreshedLine).toBeVisible();
+  await expect(textarea).toHaveValue("Preserve this unsent draft");
+  await expect(textarea).toBeFocused();
+  await expect(
+    leftPane.getByText(
+      "Issue本文が更新されました。draftは保持されています。現在の本文で範囲を選び直してください。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    leftPane
+      .locator(".markdown-selection-composer-slot")
+      .getByRole("button", { name: "コメント", exact: true }),
+  ).toBeDisabled();
+
+  const commentsToggle = page.getByRole("button", { name: "コメント 3", exact: true });
+  await commentsToggle.click();
+  const outdatedComment = page.locator(".comment-list-item").filter({
+    hasText: "Comment that should become outdated",
+  });
+  await expect(outdatedComment.locator(".badge--outdated")).toBeVisible();
+  await expect(
+    leftPane.locator(".markdown-inline-comments").getByText("Comment that should become outdated"),
+  ).toHaveCount(0);
+  await commentsToggle.click();
+
+  await selectMappedText(refreshedLine);
+  await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();
+  const refreshedTextarea = leftPane.getByRole("textbox", { name: "#142 · L3へコメント" });
+  await expect(refreshedTextarea).toHaveValue("Preserve this unsent draft");
+  await leftPane
+    .locator(".markdown-selection-composer-slot")
+    .getByRole("button", { name: "コメント", exact: true })
+    .click();
+  await expect(leftPane.getByText("Preserve this unsent draft", { exact: true })).toBeVisible();
+});

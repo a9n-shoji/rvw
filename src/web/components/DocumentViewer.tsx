@@ -74,6 +74,7 @@ import {
   type MarkdownSourceRange,
 } from "../markdown-source-map.js";
 import type { ThemePreference } from "../theme.js";
+import { reviewQueryKeys } from "../review-query-keys.js";
 import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
@@ -634,6 +635,7 @@ export function DocumentViewer({
   selectedOid,
   oldOid,
   activeDocument,
+  documentRevision = null,
   displayMode,
   diffStyle,
   comments,
@@ -652,6 +654,7 @@ export function DocumentViewer({
   selectedOid: string;
   oldOid: string | null;
   activeDocument: ActiveDocument;
+  documentRevision?: string | null;
   displayMode: DisplayMode;
   diffStyle: "unified" | "split";
   comments: AnyReviewComment[];
@@ -698,6 +701,9 @@ export function DocumentViewer({
   const [selection, setSelection] = useState<SelectedLineRange | null>(
     initialCommentDraft?.selection ?? null,
   );
+  const [selectionDocumentRevision, setSelectionDocumentRevision] = useState<string | null>(
+    initialCommentDraft?.documentRevision ?? documentRevision,
+  );
   const [selectionPreview, setSelectionPreview] = useState<SelectedLineRange | null>(null);
   const [markdownComposerOpen, setMarkdownComposerOpen] = useState(
     initialCommentDraft?.markdownComposerOpen ?? false,
@@ -715,6 +721,7 @@ export function DocumentViewer({
         writeCommentDraft(review.id, commentDraftKey, commentDraftRevision, {
           body,
           selection,
+          documentRevision: selectionDocumentRevision,
           markdownComposerOpen,
           fileComposerOpen,
         });
@@ -732,6 +739,7 @@ export function DocumentViewer({
     markdownComposerOpen,
     review.id,
     selection,
+    selectionDocumentRevision,
   ]);
   const loadedOptimisticCommentId = useRef<string | null>(null);
   const markdownLinkPointerStart = useRef<PointerPosition | null>(null);
@@ -866,7 +874,7 @@ export function DocumentViewer({
     ],
   );
   const fullQuery = useQuery({
-    queryKey: ["document", fullRef],
+    queryKey: reviewQueryKeys.document(fullRef),
     queryFn: async () =>
       (
         await api<DocumentResponse | { document: BranchDocumentContent }>(
@@ -1023,6 +1031,7 @@ export function DocumentViewer({
       });
       setBody("");
       setSelection(null);
+      setSelectionDocumentRevision(null);
       setSelectionPreview(null);
       setMarkdownComposerOpen(false);
       setFileComposerOpen(false);
@@ -1036,6 +1045,7 @@ export function DocumentViewer({
     if (navigationRequestId === null) return;
     setBody("");
     setSelection(null);
+    setSelectionDocumentRevision(null);
     setSelectionPreview(null);
     setMarkdownComposerOpen(false);
     setFileComposerOpen(false);
@@ -1063,8 +1073,13 @@ export function DocumentViewer({
         : renderedRefs.new;
   const fileLevelRef =
     effectiveDisplayMode === "full" ? fullRef : (renderedRefs.new ?? renderedRefs.old ?? null);
+  const issueSelectionIsStale =
+    activeDocument.kind === "issue" &&
+    selection !== null &&
+    selectionDocumentRevision !== documentRevision;
   const canSubmitSelection =
     selection !== null &&
+    !issueSelectionIsStale &&
     selectedLineRef !== null &&
     selectedLineRef !== undefined &&
     (!selection.side || !selection.endSide || selection.side === selection.endSide);
@@ -1118,6 +1133,7 @@ export function DocumentViewer({
     createMutation.reset();
     setBody("");
     setSelection(null);
+    setSelectionDocumentRevision(null);
     setSelectionPreview(null);
     setMarkdownComposerOpen(false);
     setFileComposerOpen(false);
@@ -1126,7 +1142,9 @@ export function DocumentViewer({
   const handleLineSelectionStart = useCallback(
     (range: SelectedLineRange | null): void => {
       resetCreateMutation();
-      setBody("");
+      if (activeDocument.kind !== "issue" || selectionDocumentRevision === documentRevision) {
+        setBody("");
+      }
       setSelection(null);
       setSelectionPreview(range);
       setMarkdownComposerOpen(false);
@@ -1134,20 +1152,23 @@ export function DocumentViewer({
         setFileComposerOpen(false);
       }
     },
-    [resetCreateMutation],
+    [activeDocument.kind, documentRevision, resetCreateMutation, selectionDocumentRevision],
   );
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null): void => {
       resetCreateMutation();
-      setBody("");
+      if (activeDocument.kind !== "issue" || selectionDocumentRevision === documentRevision) {
+        setBody("");
+      }
       setSelection(range);
+      setSelectionDocumentRevision(range ? documentRevision : null);
       setSelectionPreview(null);
       setMarkdownComposerOpen(false);
       if (range) {
         setFileComposerOpen(false);
       }
     },
-    [resetCreateMutation],
+    [activeDocument.kind, documentRevision, resetCreateMutation, selectionDocumentRevision],
   );
   const { fileAnnotations, diffAnnotations } = useMemo(() => {
     const fileAnnotations = [...(annotationQuery.data?.fileAnnotations ?? [])];
@@ -1206,6 +1227,7 @@ export function DocumentViewer({
     const placed = [...(annotationQuery.data?.markdownComments ?? [])];
     if (
       optimisticComment &&
+      loadedOptimisticCommentId.current !== optimisticComment.comment.id &&
       !placed.some(({ comment }) => comment.id === optimisticComment.comment.id)
     ) {
       placed.push({
@@ -1457,6 +1479,11 @@ export function DocumentViewer({
   const selectionLabel = selection
     ? `${[selectedPathLabel, selectedSideLabel, selectedRangeLabel].filter(Boolean).join(" · ")}へコメント`
     : "選択範囲へコメント";
+  const selectionValidationError = issueSelectionIsStale
+    ? "Issue本文が更新されました。draftは保持されています。現在の本文で範囲を選び直してください。"
+    : selection?.side && selection.endSide && selection.side !== selection.endSide
+      ? "old/newをまたぐ選択にはコメントできません。"
+      : undefined;
   const annotationRenderer = (
     annotation: LineAnnotation<ViewerAnnotation> | DiffLineAnnotation<ViewerAnnotation>,
   ) => {
@@ -1486,11 +1513,7 @@ export function DocumentViewer({
         disabled={!canSubmitSelection}
         pending={createMutation.isPending}
         error={createMutation.error}
-        validationError={
-          selection?.side && selection.endSide && selection.side !== selection.endSide
-            ? "old/newをまたぐ選択にはコメントできません。"
-            : undefined
-        }
+        validationError={selectionValidationError}
         placement="line"
         onBodyChange={setBody}
         onCancel={closeComposer}
@@ -1571,8 +1594,17 @@ export function DocumentViewer({
                 composerOpen={markdownComposerOpen}
                 onSelection={(range) => {
                   createMutation.reset();
-                  setBody("");
-                  setSelection(range ? { start: range.startLine, end: range.endLine } : null);
+                  const nextSelection = range
+                    ? { start: range.startLine, end: range.endLine }
+                    : null;
+                  const keepsReselectedDraft =
+                    nextSelection !== null &&
+                    selection !== null &&
+                    nextSelection.start === selection.start &&
+                    nextSelection.end === selection.end;
+                  if (!issueSelectionIsStale && !keepsReselectedDraft) setBody("");
+                  setSelection(nextSelection);
+                  setSelectionDocumentRevision(range ? documentRevision : null);
                   setSelectionPreview(null);
                   setMarkdownComposerOpen(false);
                   if (range) setFileComposerOpen(false);
@@ -1582,9 +1614,10 @@ export function DocumentViewer({
                   <InlineCommentComposer
                     body={body}
                     label={selectionLabel}
+                    disabled={!canSubmitSelection}
                     pending={createMutation.isPending}
                     error={createMutation.error}
-                    validationError={undefined}
+                    validationError={selectionValidationError}
                     placement="line"
                     onBodyChange={setBody}
                     onCancel={closeComposer}

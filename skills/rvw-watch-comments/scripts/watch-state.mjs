@@ -267,12 +267,13 @@ function ensureBatchOperations(database, batchId) {
 function batchStatusOperations(database, batchId) {
   return database
     .prepare(
-      `SELECT comment_ref, post_id FROM operations
+      `SELECT comment_ref, idempotency_key, post_id FROM operations
       WHERE batch_id = ? ORDER BY comment_ref`,
     )
     .all(batchId)
     .map((operation) => ({
       commentRef: operation.comment_ref,
+      idempotencyKey: operation.idempotency_key,
       statusPostId: operation.post_id ?? null,
     }));
 }

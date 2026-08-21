@@ -20,6 +20,8 @@
   comment操作へ統一し、PR固有controlだけを省略
 - IssueをPR本文・Walkthroughと同列のreview文書nodeへ統合し、追加formを必要時だけ開くUIと、共通Markdown
   viewerからのIssue全体／本文選択コメントへ変更
+- Walkthrough publish/update responseを、transportに依存しない`walkthrough` + `issuesAdded` envelopeへ変更
+- watcher worker resultをPull Request URL前提からreview contextのdiscriminated unionへ変更
 
 ## [0.2.2] - 2026-08-21
 
@@ -33,6 +35,11 @@
 - Markdown Previewで別commentへの返信が同期されても、入力中の未送信replyとfocusを保持するよう修正
 - Branch Review resetでGit ref削除が適用済みなら、終了statusだけを根拠に不整合errorを返さないよう修正
 - `investigate-and-reply`で開始したwatch taskがPull Requestのwrite reservationを取得できる抜け道を修正
+- Branch Issue本文の同期でviewerをremountせず、入力中のrange comment draft、selection、focusを保持するよう修正
+- Branch syncが共通document queryを正しく更新し、Issue本文とOutdated placementを最新化するよう修正
+- 同じGitHub repositoryの独立cloneから既存Branch Reviewを開いても、保存済みGit common directoryを
+  暗黙に再bindしないよう修正
+- Branch watcherの最終reply post IDをdurableにself-suppressし、event ingest順序や再起動による自己loopを修正
 
 ## [0.2.1] - 2026-08-20
 

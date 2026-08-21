@@ -161,8 +161,8 @@ reject write reservations unless the task was initialized with `--own-mode fix-a
 For an `investigate-and-reply` batch containing only one or two comments with a focused source scope,
 the parent may investigate directly when doing so will not materially delay intake handling. Do not
 pay worker startup and result-relay cost for those small batches. Delegate broader investigation,
-multiple unrelated comments, or any authorized fix-and-push batch to one fresh worker per PR. The
-driver continues intake independently while the parent or worker investigates.
+multiple unrelated comments, or any authorized fix-and-push batch to one fresh worker per review
+context. The driver continues intake independently while the parent or worker investigates.
 
 Workers never access the task state or post rvw replies. Give a worker the raw comment URIs, policy,
 expected login, repository location, live head identity when relevant, lease ID, and one absolute
@@ -172,7 +172,10 @@ rename) of exactly this final JSON shape:
 ```json
 {
   "leaseId": "<LEASE_ID>",
-  "pullRequest": "https://github.com/owner/repository/pull/123",
+  "context": {
+    "kind": "pull-request",
+    "pullRequestUrl": "https://github.com/owner/repository/pull/123"
+  },
   "outcomes": [
     {
       "commentRef": "rvw://comment/uuid",
@@ -193,20 +196,40 @@ rename) of exactly this final JSON shape:
 }
 ```
 
-`pushStatus` is `not-attempted`, `not-needed`, or `pushed`. `relatedCommitOid` is the exact available PR
-commit containing every referenced path and may identify investigation evidence even when no change
-was made. Set it to null only when `references` is empty. `references` is always the complete array for
-that outcome. The worker's completion notification only signals that the file is ready. The parent
-reads and validates the file after that notification and never depends on relayed message text for the
-result. Accept no progress, plans, or partial findings as the final result.
+For a Branch Review, use this context and never invent a Pull Request URL:
 
-For every concrete claim about code behavior, an implemented change, or relevant test coverage, use
-typed references by default so the reviewer can open the exact evidence. Select the smallest useful
-committed range, include a signature plus the relevant body for multi-line behavior, link every
-declaration from `body` as `rvw-ref:<referenceId>`, and keep IDs unique within the post. A repository
-comment target already opens its exact source; do not duplicate it unless a separately labeled range
-adds navigation value. Omit references only for outcomes without useful code evidence, uncommitted
-evidence, terminal errors, or target-only evidence where another link would not help navigation.
+```json
+{
+  "leaseId": "<LEASE_ID>",
+  "context": { "kind": "branch", "repository": "owner/repository" },
+  "outcomes": [
+    {
+      "commentRef": "rvw://comment/uuid",
+      "body": "📝 調査結果\n\nConcise final outcome.",
+      "relatedCommitOid": null,
+      "pushStatus": "not-attempted"
+    }
+  ]
+}
+```
+
+`pushStatus` is `not-attempted`, `not-needed`, or `pushed`; `relatedCommitOid` is null unless a
+synchronized Pull Request commit should be attached. For Pull Request outcomes, `relatedCommitOid` is
+the exact available PR commit containing every referenced path and may identify investigation evidence
+even when no change was made. Set it to null only when `references` is empty. `references` is always the
+complete array for that outcome. Branch outcomes always use null, no references, and `not-attempted`.
+The worker's completion notification only signals that the file is ready.
+The parent reads and validates the file after that notification and never depends on relayed message
+text for the result. Accept no progress, plans, or partial findings as the final result.
+
+For every concrete Pull Request claim about code behavior, an implemented change, or relevant test
+coverage, use typed references by default so the reviewer can open the exact evidence. Select the
+smallest useful committed range, include a signature plus the relevant body for multi-line behavior,
+link every declaration from `body` as `rvw-ref:<referenceId>`, and keep IDs unique within the post. A
+repository comment target already opens its exact source; do not duplicate it unless a separately
+labeled range adds navigation value. Omit references only for outcomes without useful code evidence,
+uncommitted evidence, terminal errors, or target-only evidence where another link would not help
+navigation.
 
 Re-read each extant thread immediately before applying a direct or file result. Replace its recorded
 status post with exactly one final outcome:
@@ -215,22 +238,36 @@ status post with exactly one final outcome:
 - `📝 調査結果` followed by the conclusion when no code change was made.
 - `⚠️ 対応を継続できませんでした` followed by the terminal reason.
 
-Validate the outcome's body, `relatedCommitOid`, and complete `references` array against the freshly
-read thread, then pass all three fields to `rvw comment edit`. A result without references must send
-`references: []`; set `relatedCommitOid` to null unless the post needs that commit for repository links
-or images. Never leave references from the acknowledgement or a previous retry on the status post.
-
-Finish the lease only after every required final edit succeeds:
+For a Pull Request, validate the outcome's body, `relatedCommitOid`, and complete `references` array
+against the freshly read thread, then pass all three fields to `rvw comment edit`. A result without
+references must send `references: []`; set `relatedCommitOid` to null unless the post needs that commit
+for repository links or images. Never leave references from the acknowledgement or a previous retry on
+the status post. Finish the lease only after every required final status-post edit succeeds:
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-state.mjs' complete \
   --state '<TASK_STATE_DB>' --lease '<LEASE_ID>'
 ```
 
-Pass `{ "postIds": [] }` over closed stdin. The field remains available to suppress exceptional
-additional task-created posts. If a thread or its recorded status post disappeared during work,
+Pass `{ "postIds": [] }` over closed stdin for this Pull Request status-edit path. The field remains
+available to suppress exceptional additional task-created posts. If a thread or its recorded status post disappeared during work,
 complete it without creating a replacement and report it as gone. Comment and reply bodies are UTF-8
 GFM Markdown up to 64 KiB, not 4 KiB; a 4093-byte result is within the contract.
+
+For a Branch Review, do not use the empty `postIds` example. Pass the validated worker result to the
+bundled completion helper. It posts exactly one final reply per operation with that operation's stable
+idempotency key, captures every returned post ID, durably records those IDs for suppression, and only
+then completes the lease:
+
+```bash
+node '<SKILL_DIR>/scripts/complete-branch.mjs' \
+  --state '<TASK_STATE_DB>' --lease '<LEASE_ID>' < '<WORKER_RESULT_JSON>'
+```
+
+If the process stops after posting but before completion, run `recover`, claim the same Branch batch,
+and invoke the helper with the same outcomes and new lease. The batch retains its operation keys, so
+`comment reply` returns the existing posts and completion suppresses them without duplicate replies.
+Whether each reply event arrives before or after completion, it must not create another pending batch.
 
 ## Choose the worker mode
 
@@ -250,9 +287,11 @@ branch name alone, local Git author, remote name, or rvw `authorLabel`.
 ### Investigate and reply
 
 Inspect exact and surrounding source read-only and produce one concise final outcome per affected
-comment. Use the exact commit that supports the conclusion as `relatedCommitOid` and follow the code
-evidence defaults above even though no commit was pushed. The parent edits the recorded status post;
-do not add another final reply.
+comment. For a Pull Request, use the exact commit that supports the conclusion as `relatedCommitOid`
+and follow the code evidence defaults above even though no commit was pushed. The parent edits the
+recorded status post; do not add another final reply. For a Branch Review there is no
+acknowledgement/status post, so use `complete-branch.mjs` to create the one final reply and suppress its
+self-event.
 
 ### Fix and push an owned PR
 
@@ -276,7 +315,7 @@ The state tool retains the same batch, status posts, and idempotency keys, retri
 seconds and then 1 minute, and quarantines it after the third failed attempt. Leave
 `🔎 確認中です…` unchanged for a scheduled retry. Before a non-retryable failure or the third failed
 attempt, edit every extant status post to the terminal warning form, then call `fail`. On a recovered
-retry, auto-ack restores the acknowledgement before work. Continue unrelated PRs.
+retry, auto-ack restores the acknowledgement before work. Continue unrelated review contexts.
 
 On graceful stop, stop dispatching, let active writes reach a safe boundary, terminate the driver,
 and report `status`. Resume with the stored cursor and `recover`; never start the same task twice with
@@ -333,8 +372,9 @@ For a Branch Review the event context is `{kind:"branch",repository:"owner/repo"
 `review_kind` plus `context_key` discriminator, rebuilds the context indexes, and preserves cursors,
 leases, unfinished batch keys, batch-scoped status posts, and PR compatibility fields.
 
-| Script    | Invocation                                                                            | Output                                                                                        |
-| --------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Preflight | `node scripts/preflight.mjs`                                                          | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                     |
-| Driver    | `node scripts/watch-driver.mjs STATE [--auto-ack]`                                    | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
-| Auto-ack  | `node scripts/auto-ack.mjs --state STATE --pull-request URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`. |
+| Script            | Invocation                                                                            | Output                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Preflight         | `node scripts/preflight.mjs`                                                          | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                     |
+| Driver            | `node scripts/watch-driver.mjs STATE [--auto-ack]`                                    | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
+| Auto-ack          | `node scripts/auto-ack.mjs --state STATE --pull-request URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`. |
+| Branch completion | `node scripts/complete-branch.mjs --state STATE --lease ID < RESULT.json`             | Posts idempotent final replies, records their post IDs, and completes the Branch lease.       |

@@ -15,6 +15,7 @@ const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const draft: CommentDraftState = {
   body: "未送信ドラフト",
   selection: null,
+  documentRevision: null,
   markdownComposerOpen: false,
   fileComposerOpen: true,
 };
@@ -47,6 +48,25 @@ describe("comment draft store", () => {
     });
 
     expect(new Set([current, exactFirst, exactSecond]).size).toBe(3);
+  });
+
+  it("keeps an Issue draft identity stable across source refreshes", () => {
+    const issue: ActiveDocument = {
+      kind: "issue",
+      id: "issue-142",
+      number: 142,
+      title: "同期中も入力を保持する",
+      url: "https://github.com/example/repository/issues/142",
+    };
+    const first = contextKey(issue);
+    const refreshed = commentDraftContextKey({
+      activeDocument: issue,
+      selectedOid: "d".repeat(40),
+      oldOid: null,
+      displayMode: "full",
+    });
+
+    expect(refreshed).toBe(first);
   });
 
   it("clears one pull request and rejects stale unmount writes", () => {

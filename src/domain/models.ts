@@ -329,6 +329,11 @@ export interface BranchWalkthrough extends Omit<Walkthrough, "pullRequestId"> {
   branchReviewId: string;
 }
 
+export interface WalkthroughMutationResult {
+  walkthrough: Walkthrough | BranchWalkthrough;
+  issuesAdded: IssueDocument[];
+}
+
 export interface BranchWalkthroughSummary extends Omit<WalkthroughSummary, "pullRequestId"> {
   branchReviewId: string;
 }

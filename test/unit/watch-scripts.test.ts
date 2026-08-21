@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ const scripts = path.resolve("skills/rvw-watch-comments/scripts");
 const stateScript = path.join(scripts, "watch-state.mjs");
 const preflightScript = path.join(scripts, "preflight.mjs");
 const autoAckScript = path.join(scripts, "auto-ack.mjs");
+const completeBranchScript = path.join(scripts, "complete-branch.mjs");
 const driverScript = path.join(scripts, "watch-driver.mjs");
 
 interface FakeRvwCall {
@@ -16,6 +17,7 @@ interface FakeRvwCall {
 }
 
 function readFakeCalls(log: string): FakeRvwCall[] {
+  if (!existsSync(log)) return [];
   return readFileSync(log, "utf8")
     .trim()
     .split("\n")
@@ -61,7 +63,13 @@ if (args[0] === "protocol") {
 } else if (args[0] === "comment" && args[1] === "get") {
   json({ ok: true, pullRequest: { url: "https://github.com/acme/repo/pull/1" }, comment: { ref: args[2], posts: [] } });
 } else if (args[0] === "comment" && args[1] === "reply") {
-  const replyCount = priorCalls.filter((call) => call.args[0] === "comment" && call.args[1] === "reply").length + 1;
+  const priorReplyIndex = priorCalls.findIndex((call) =>
+    call.args[0] === "comment" && call.args[1] === "reply" &&
+    call.input?.idempotencyKey === parsedInput.idempotencyKey
+  );
+  const replyCount = priorReplyIndex >= 0
+    ? priorCalls.slice(0, priorReplyIndex + 1).filter((call) => call.args[0] === "comment" && call.args[1] === "reply").length
+    : priorCalls.filter((call) => call.args[0] === "comment" && call.args[1] === "reply").length + 1;
   json({ ok: true, post: { id: "status-post-" + replyCount, body: parsedInput.body } });
 } else if (args[0] === "comment" && args[1] === "edit") {
   json({ ok: true, post: { id: args[4], body: parsedInput.body } });
@@ -119,6 +127,28 @@ function initializeQueuedState(state: string) {
       postId: "human-post",
       commentRef: "rvw://comment/comment-1",
       pullRequestUrl: "https://github.com/acme/repo/pull/1",
+      createdAt: "2026-08-20T00:00:00.000Z",
+      deleted: false,
+    },
+  });
+}
+
+function initializeBranchQueuedState(state: string) {
+  runState(state, "init", ["--own-mode", "fix-and-push"]);
+  runState(state, "ingest", [], {
+    type: "ready",
+    databaseId: "fedcba9876543210fedcba9876543210",
+    cursor: "cursor-0",
+    anchoredAtCurrent: true,
+  });
+  runState(state, "ingest", [], {
+    type: "comment-posted",
+    cursor: "cursor-1",
+    event: {
+      sequence: 1,
+      postId: "branch-human-post",
+      commentRef: "rvw://comment/branch-comment",
+      context: { kind: "branch", repository: "acme/repo" },
       createdAt: "2026-08-20T00:00:00.000Z",
       deleted: false,
     },
@@ -226,6 +256,169 @@ describe("rvw-watch-comments bundled scripts", () => {
     const calls = readFakeCalls(fake.log);
     expect(calls.filter((call) => call.args[1] === "reply")).toHaveLength(2);
     expect(calls.some((call) => call.args[1] === "edit")).toBe(false);
+  });
+
+  it("posts one Branch final reply and durably suppresses its later event", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-complete-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeBranchQueuedState(state);
+    const claimed = runState(state, "claim", [
+      "--context-kind",
+      "branch",
+      "--context-key",
+      "acme/repo",
+    ]);
+    const input = {
+      leaseId: claimed.leaseId,
+      context: { kind: "branch", repository: "acme/repo" },
+      outcomes: [
+        {
+          commentRef: "rvw://comment/branch-comment",
+          body: "📝 調査結果\n\nThe Branch review is complete.",
+          relatedCommitOid: null,
+          pushStatus: "not-attempted",
+        },
+      ],
+    };
+    const completed = spawnSync(
+      process.execPath,
+      [completeBranchScript, "--state", state, "--lease", String(claimed.leaseId)],
+      { encoding: "utf8", env: fakeEnvironment(fake), input: JSON.stringify(input) },
+    );
+
+    expect(completed.status, completed.stderr).toBe(0);
+    const result = JSON.parse(completed.stdout) as {
+      replies: Array<{ idempotencyKey: string; postId: string }>;
+    };
+    expect(result).toMatchObject({
+      type: "branch-completed",
+      context: { kind: "branch", repository: "acme/repo" },
+      replies: [{ postId: "status-post-1" }],
+    });
+    expect(result.replies[0]?.idempotencyKey).toBe(
+      (claimed.operations as Array<{ idempotencyKey: string }>)[0]?.idempotencyKey,
+    );
+    expect(runState(state, "list")).toMatchObject({ pending: [] });
+    expect(
+      runState(state, "ingest", [], {
+        type: "comment-posted",
+        cursor: "cursor-2",
+        event: {
+          sequence: 2,
+          postId: result.replies[0]?.postId,
+          commentRef: "rvw://comment/branch-comment",
+          context: { kind: "branch", repository: "acme/repo" },
+          createdAt: "2026-08-20T00:00:01.000Z",
+          deleted: false,
+        },
+      }),
+    ).toMatchObject({ status: "suppressed" });
+  });
+
+  it("reuses the Branch final-reply idempotency key after recovery", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-restart-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeBranchQueuedState(state);
+    const firstClaim = runState(state, "claim", [
+      "--context-kind",
+      "branch",
+      "--context-key",
+      "acme/repo",
+    ]);
+    const idempotencyKey = (firstClaim.operations as Array<{ idempotencyKey: string }>)[0]
+      ?.idempotencyKey;
+    const firstReply = spawnSync(
+      process.execPath,
+      [fake.script, "comment", "reply", "rvw://comment/branch-comment", "--stdin", "--json"],
+      {
+        encoding: "utf8",
+        env: fakeEnvironment(fake),
+        input: JSON.stringify({
+          body: "📝 調査結果\n\nRecovered outcome.",
+          idempotencyKey,
+        }),
+      },
+    );
+    expect(firstReply.status, firstReply.stderr).toBe(0);
+    const firstPostId = (JSON.parse(firstReply.stdout) as { post: { id: string } }).post.id;
+
+    expect(runState(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
+    const recoveredClaim = runState(state, "claim", [
+      "--context-kind",
+      "branch",
+      "--context-key",
+      "acme/repo",
+    ]);
+    expect(
+      (recoveredClaim.operations as Array<{ idempotencyKey: string }>)[0]?.idempotencyKey,
+    ).toBe(idempotencyKey);
+    const completed = spawnSync(
+      process.execPath,
+      [completeBranchScript, "--state", state, "--lease", String(recoveredClaim.leaseId)],
+      {
+        encoding: "utf8",
+        env: fakeEnvironment(fake),
+        input: JSON.stringify({
+          leaseId: recoveredClaim.leaseId,
+          context: { kind: "branch", repository: "acme/repo" },
+          outcomes: [
+            {
+              commentRef: "rvw://comment/branch-comment",
+              body: "📝 調査結果\n\nRecovered outcome.",
+              relatedCommitOid: null,
+              pushStatus: "not-attempted",
+            },
+          ],
+        }),
+      },
+    );
+    expect(completed.status, completed.stderr).toBe(0);
+    const result = JSON.parse(completed.stdout) as { replies: Array<{ postId: string }> };
+    expect(result.replies[0]?.postId).toBe(firstPostId);
+    const replyCalls = readFakeCalls(fake.log).filter((call) => call.args[1] === "reply");
+    expect(replyCalls).toHaveLength(2);
+    expect(
+      new Set(replyCalls.map((call) => (call.input as { idempotencyKey: string }).idempotencyKey)),
+    ).toEqual(new Set([idempotencyKey]));
+    expect(runState(state, "list")).toMatchObject({ pending: [] });
+  });
+
+  it("rejects Branch worker outcomes that claim a write", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-write-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeBranchQueuedState(state);
+    const claimed = runState(state, "claim", [
+      "--context-kind",
+      "branch",
+      "--context-key",
+      "acme/repo",
+    ]);
+    const result = spawnSync(
+      process.execPath,
+      [completeBranchScript, "--state", state, "--lease", String(claimed.leaseId)],
+      {
+        encoding: "utf8",
+        env: fakeEnvironment(fake),
+        input: JSON.stringify({
+          outcomes: [
+            {
+              commentRef: "rvw://comment/branch-comment",
+              body: "This must not be posted.",
+              relatedCommitOid: "a".repeat(40),
+              pushStatus: "pushed",
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("cannot include a related commit");
+    expect(readFakeCalls(fake.log)).toEqual([]);
+    expect(runState(state, "status").inFlightBatches).toHaveLength(1);
   });
 
   it("drives RFC 7464 intake and auto-ack without an Agent shell round trip", async () => {

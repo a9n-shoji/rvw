@@ -56,6 +56,7 @@ import type { ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
 import type { AnyReviewComment, AnyWalkthrough, AnyWalkthroughSummary } from "../review-context.js";
+import { reviewQueryKeys } from "../review-query-keys.js";
 import { BranchReviewApp } from "./BranchReviewApp.js";
 import {
   commitRangeOldOid,
@@ -734,7 +735,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   );
 
   const pullRequestQuery = useQuery({
-    queryKey: ["pull-request", pullRequestId],
+    queryKey: reviewQueryKeys.review("pull-request", pullRequestId),
     queryFn: async () => await api<PullRequestResponse>(`/api/pull-requests/${pullRequestId}`),
     enabled: Boolean(pullRequestId),
   });
@@ -898,7 +899,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     ),
   });
   const changeSequence = useQuery({
-    queryKey: ["change-sequence"],
+    queryKey: reviewQueryKeys.changeSequence(),
     queryFn: async () =>
       await api<{ changeSequence: number }>("/api/meta/change-sequence", viewerHeartbeatRequest()),
     refetchInterval: 1000,
@@ -912,15 +913,19 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     observedChangeSequence.current = nextSequence;
     if (previousSequence === null || previousSequence === nextSequence) return;
     void queryClient.invalidateQueries({ queryKey: ["pull-request"] });
-    void queryClient.invalidateQueries({ queryKey: ["document"] });
-    void queryClient.invalidateQueries({ queryKey: ["annotations"] });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.document() });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() });
     void queryClient.invalidateQueries({ queryKey: ["comment-placement"] });
     void queryClient.invalidateQueries({ queryKey: ["search"] });
     void queryClient.invalidateQueries({ queryKey: ["walkthroughs"] });
     void queryClient.invalidateQueries({ queryKey: ["walkthrough"] });
   }, [changeSequence.data?.changeSequence, queryClient]);
   const commentsQuery = useQuery({
-    queryKey: ["comments", pullRequestId, changeSequence.data?.changeSequence],
+    queryKey: reviewQueryKeys.comments(
+      "pull-request",
+      pullRequestId,
+      changeSequence.data?.changeSequence,
+    ),
     queryFn: async () =>
       await api<CommentsResponse>(`/api/pull-requests/${pullRequestId}/comments?resolved=all`),
     enabled: Boolean(pullRequestId),
@@ -932,7 +937,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const comments = commentsQuery.data?.comments ?? [];
   const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
   const issuesQuery = useQuery({
-    queryKey: ["issues", pullRequestId, changeSequence.data?.changeSequence],
+    queryKey: reviewQueryKeys.issues(pullRequestId, changeSequence.data?.changeSequence),
     queryFn: async () =>
       await api<{ issues: IssueDocument[] }>(`/api/pull-requests/${pullRequestId}/issues`),
     enabled: Boolean(pullRequestId),
@@ -1631,11 +1636,20 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
         <LazyLoadBoundary label="文書ビューアー">
           <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
             <DocumentViewer
-              key={`${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`}
+              key={
+                paneViewerDocument.kind === "issue"
+                  ? `${reviewStateRevision}:${paneId}:pull-request:${pullRequest.id}:issue:${paneViewerDocument.id}`
+                  : `${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`
+              }
               review={{ kind: "pull-request", id: pullRequest.id, sourceOid: selectedOid }}
               selectedOid={selectedOid}
               oldOid={effectiveOldOid}
               activeDocument={paneViewerDocument}
+              documentRevision={
+                paneViewerDocument.kind === "issue"
+                  ? (issues.find((issue) => issue.id === paneViewerDocument.id)?.bodyHash ?? null)
+                  : null
+              }
               displayMode={paneViewerState.effectiveDisplayMode}
               diffStyle={diffStyle}
               comments={comments}

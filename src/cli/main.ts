@@ -1068,12 +1068,12 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.diagramBindings === undefined ? {} : { diagramBindings: input.diagramBindings }),
       };
-      const published = await callService(
+      const result = await callService(
         "walkthrough.publish",
         request,
         async () => await getRuntime().service.publishWalkthrough(request),
       );
-      writeJson({ ok: true, walkthrough: published, issuesAdded: published.issuesAdded });
+      writeJson({ ok: true, ...result });
     });
 
   walkthrough
@@ -1108,12 +1108,12 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.diagramBindings === undefined ? {} : { diagramBindings: input.diagramBindings }),
       };
-      const updated = await callService(
+      const result = await callService(
         "walkthrough.update",
         { uri, content },
         async () => await getRuntime().service.updateWalkthrough(uri, content),
       );
-      writeJson({ ok: true, walkthrough: updated, issuesAdded: updated.issuesAdded });
+      writeJson({ ok: true, ...result });
     });
 
   walkthrough

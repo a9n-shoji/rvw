@@ -95,7 +95,11 @@ investigation without an Issue, but must not merely paraphrase Issue text. Optio
 `"issues": ["#98", "#156"]` adds only those same-repository Issues while publishing or updating.
 Do not recursively discover linked Issues; omitting an Issue from a later update does not remove it.
 
-Parse the successful response and report the returned `rvw://walkthrough/<uuid>` reference. Publication is passive: never claim it opened rvw, activated a document, selected a commit, or changed a tab or scroll position. The human chooses which Walkthrough and code references to open and when.
+Parse the successful response as `{ "ok": true, "walkthrough": {...}, "issuesAdded": [...] }` and
+report the returned `walkthrough.ref`. `issuesAdded` is always present, including as `[]`, and has the
+same schema through direct database execution and the Agent socket. Publication is passive: never
+claim it opened rvw, activated a document, selected a commit, or changed a tab or scroll position. The
+human chooses which Walkthrough and code references to open and when.
 
 ## Improve an existing Walkthrough
 
@@ -105,7 +109,10 @@ Use an in-place update when the user or a Walkthrough comment asks for a clearer
 rvw walkthrough update '<WALKTHROUGH_URI>' --stdin --json
 ```
 
-The successful response keeps the same Walkthrough ID and URI. rvw does not create or retain a previous Walkthrough version. Whole-document comments stay attached to the same identity and resolve to the current body and references. Updating is passive and must not be described as browser navigation.
+The successful response is the same `{walkthrough,issuesAdded}` envelope used by publish and keeps the
+same Walkthrough ID and URI. rvw does not create or retain a previous Walkthrough version.
+Whole-document comments stay attached to the same identity and resolve to the current body and
+references. Updating is passive and must not be described as browser navigation.
 
 ## Delete an unnecessary Walkthrough
 

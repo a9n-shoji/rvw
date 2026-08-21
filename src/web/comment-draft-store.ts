@@ -4,6 +4,7 @@ import type { ActiveDocument } from "./document-workspace.js";
 export interface CommentDraftState {
   body: string;
   selection: SelectedLineRange | null;
+  documentRevision: string | null;
   markdownComposerOpen: boolean;
   fileComposerOpen: boolean;
 }
@@ -44,6 +45,9 @@ function documentIdentity(document: ActiveDocument): unknown[] {
 }
 
 export function commentDraftContextKey(context: CommentDraftContext): string {
+  if (context.activeDocument.kind === "issue") {
+    return JSON.stringify([documentIdentity(context.activeDocument)]);
+  }
   return JSON.stringify([
     documentIdentity(context.activeDocument),
     context.selectedOid,

@@ -804,7 +804,7 @@ describe("RvwService commit workflow", () => {
     );
     expect(repositoryAsset.content.toString("utf8")).toBe("first\nsecond\n");
 
-    const walkthrough = await service.publishWalkthrough({
+    const { walkthrough } = await service.publishWalkthrough({
       pullRequest: opened.pullRequest.url,
       sourceOid: firstHead,
       title: "Source flow",
@@ -907,7 +907,7 @@ describe("RvwService commit workflow", () => {
       range: { startLine: 2, endLine: 2 },
       path: null,
     });
-    const updatedWalkthrough = await service.updateWalkthrough(walkthrough.ref, {
+    const { walkthrough: updatedWalkthrough } = await service.updateWalkthrough(walkthrough.ref, {
       sourceOid: firstHead,
       title: "Source flow explained",
       body: [
@@ -1037,7 +1037,7 @@ describe("RvwService commit workflow", () => {
         description: null,
       },
     ];
-    const walkthrough = await service.publishWalkthrough({
+    const { walkthrough } = await service.publishWalkthrough({
       pullRequest: opened.pullRequest.url,
       sourceOid: firstHead,
       title: "Reachable references",
@@ -1083,7 +1083,7 @@ describe("RvwService commit workflow", () => {
         diagramBindings: { Right: "diagram" },
         references,
       }),
-    ).resolves.toMatchObject({ diagramBindings: { Right: "diagram" } });
+    ).resolves.toMatchObject({ walkthrough: { diagramBindings: { Right: "diagram" } } });
 
     await expect(
       service.publishWalkthrough({
@@ -1101,7 +1101,7 @@ describe("RvwService commit workflow", () => {
         diagramBindings: { Actual: "diagram" },
         references,
       }),
-    ).resolves.toMatchObject({ diagramBindings: { Actual: "diagram" } });
+    ).resolves.toMatchObject({ walkthrough: { diagramBindings: { Actual: "diagram" } } });
 
     await expect(
       service.updateWalkthrough(walkthrough.ref, {
@@ -1149,7 +1149,7 @@ describe("RvwService commit workflow", () => {
   it("deletes a walkthrough and its comments without deleting retained commit refs", async () => {
     const { repository, firstHead, service } = setup("rvw-walkthrough-delete-");
     const opened = await service.openPullRequest(undefined, repository);
-    const walkthrough = await service.publishWalkthrough({
+    const { walkthrough } = await service.publishWalkthrough({
       pullRequest: opened.pullRequest.url,
       sourceOid: firstHead,
       title: "Temporary explanation",

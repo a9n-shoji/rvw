@@ -36,6 +36,7 @@ import type {
   DeletedWalkthrough,
   Walkthrough,
   WalkthroughDeleteCounts,
+  WalkthroughMutationResult,
   WalkthroughReference,
   WalkthroughSummary,
 } from "../domain/models.js";
@@ -312,16 +313,6 @@ function assertIdempotencyKey(idempotencyKey: string | undefined): void {
 
 function idempotencyRequestHash(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
-}
-
-function withIssuesAdded<T extends object>(
-  value: T,
-  issuesAdded: IssueDocument[],
-): T & {
-  issuesAdded: IssueDocument[];
-} {
-  Object.defineProperty(value, "issuesAdded", { value: issuesAdded, enumerable: false });
-  return value as T & { issuesAdded: IssueDocument[] };
 }
 
 function assertLinePair(startLine: number | null, endLine: number | null): void {
@@ -686,6 +677,16 @@ export class RvwService {
       throw new RvwError(
         "REPOSITORY_MISMATCH",
         "このBranch Reviewは別の独立cloneへすでに登録されています。",
+        {
+          details: {
+            registered: branchReview.localRepositoryPath,
+            current: repository.worktreePath,
+          },
+          suggestions: [
+            `${branchReview.localRepositoryPath} または同じcloneのworktreeから開いてください。`,
+            "別cloneで作り直す場合は、登録済みのBranch Reviewを明示的にresetしてから開いてください。",
+          ],
+        },
       );
     }
   }
@@ -701,6 +702,8 @@ export class RvwService {
       throw new RvwError("GITHUB_REPOSITORY_ERROR", "GitHub repository取得が利用できません。");
     }
     const remote = await this.git.baseRepositoryIdentity(repository.worktreePath);
+    const existing = this.database.findBranchReviewByIdentity(remote.owner, remote.repository);
+    if (existing) this.assertBranchRepositoryMatch(existing, repository);
     const identity = {
       host: "github.com" as const,
       owner: remote.owner,
@@ -2631,9 +2634,7 @@ export class RvwService {
     return [...issues.values()];
   }
 
-  async publishWalkthrough(
-    input: WalkthroughPublishRequest,
-  ): Promise<(Walkthrough | BranchWalkthrough) & { issuesAdded: IssueDocument[] }> {
+  async publishWalkthrough(input: WalkthroughPublishRequest): Promise<WalkthroughMutationResult> {
     const target =
       input.review ??
       (input.pullRequest
@@ -2662,12 +2663,12 @@ export class RvwService {
             issues,
           ),
       );
-      return withIssuesAdded(
+      return {
         walkthrough,
-        this.database
+        issuesAdded: this.database
           .listReviewIssues("branch", branchReview.id)
           .filter((issue) => !existingIds.has(issue.number)),
-      );
+      };
     }
     const pullRequest = this.resolveStoredPullRequest(target.pullRequest);
     const content = await this.validateWalkthroughContent(pullRequest, input);
@@ -2681,18 +2682,18 @@ export class RvwService {
       "Walkthrough",
       () => this.database.createWalkthrough({ pullRequestId: pullRequest.id, ...content }, issues),
     );
-    return withIssuesAdded(
+    return {
       walkthrough,
-      this.database
+      issuesAdded: this.database
         .listReviewIssues("pull-request", pullRequest.id)
         .filter((issue) => !existingIds.has(issue.number)),
-    );
+    };
   }
 
   async updateWalkthrough(
     uri: string,
     input: WalkthroughUpdateRequest,
-  ): Promise<(Walkthrough | BranchWalkthrough) & { issuesAdded: IssueDocument[] }> {
+  ): Promise<WalkthroughMutationResult> {
     const current = this.getAnyWalkthroughByUri(uri);
     const review =
       current.context.kind === "pull-request"
@@ -2721,12 +2722,12 @@ export class RvwService {
             content.sourceOid,
             () => this.database.updateBranchWalkthrough(current.walkthrough.id, content, issues),
           );
-    return withIssuesAdded(
+    return {
       walkthrough,
-      this.database
+      issuesAdded: this.database
         .listReviewIssues(kind, review.id)
         .filter((issue) => !existingIds.has(issue.number)),
-    );
+    };
   }
 
   getWalkthroughDeletePreview(uri: string): WalkthroughDeletePreview {

@@ -1,5 +1,40 @@
 # Architecture decisions
 
+## 2026-08-21: Harden Branch Review lifecycle without widening its product model
+
+### Problem
+
+Branch source synchronization crossed several transient and transport boundaries that were not explicit
+enough. A source OID refresh remounted an open Issue composer, Branch invalidation missed the common
+document query, canonical repository matching could silently replace an independent clone binding,
+Walkthrough Issue additions were attached as a non-enumerable property, and a Branch watcher's final
+reply was not required to enter durable self-suppression.
+
+### Choice
+
+Keep the existing repository-singleton Branch Review and make each boundary explicit. Issue component
+identity is `(review kind, review ID, Issue ID)`, independent of Branch source OID, while repository
+documents remain exact-source identities. Common query-key helpers connect refresh to the queries the
+shared viewer actually reads. Issue drafts retain the body hash and block a stale range after a real
+body change until the reviewer reselects it.
+
+Treat the saved Git common directory as the local source binding. Another worktree from that directory
+may refresh the usable worktree path; an independent clone fails before source, refs, or review state are
+mutated. Moving clones remains an explicit reset-and-recreate operation.
+
+Return Walkthrough mutations as an enumerable `{walkthrough, issuesAdded}` result for every review kind
+and transport. Branch watcher workers return a discriminated Branch context, post exactly one final
+reply with the operation's stable idempotency key, and complete the lease with that reply's post ID so
+self-events are suppressed whether they are ingested before or after completion.
+
+### Trade-offs
+
+- A changed Issue body requires human reselection instead of attempting semantic range migration.
+- An unavailable registered clone is not automatically replaced by another clone of the same GitHub
+  repository; reset is intentionally required.
+- The query-key helper stays limited to the shared review data currently invalidated rather than becoming
+  a generic cache framework.
+
 ## 2026-08-21: Share one review workspace across Pull Requests and Branch Reviews
 
 ### Problem

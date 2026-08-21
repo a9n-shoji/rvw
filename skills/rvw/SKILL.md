@@ -107,6 +107,12 @@ with the membership. First run `rvw pr issue remove ... --json` or
 range, and reply counts, and stop unless the human explicitly authorizes those exact deletions. Only
 then repeat with `--yes`. These commands never edit or close the GitHub Issue itself.
 
+A Branch Review stays bound to one Git common directory. Another worktree from that same clone may
+reuse it and become the current local path. An independent clone of the same canonical GitHub
+repository is rejected rather than silently replacing the saved path and retained-object store. To
+use that independent clone, first obtain explicit authorization for the destructive Branch Review
+reset, inspect its deletion preview, reset it, and then open the Branch Review from the new clone.
+
 ## Read comments
 
 When the user asks for unresolved feedback without supplying individual comment references, run:

@@ -117,7 +117,10 @@ diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分�
 Branch Reviewのidentityはcanonical GitHub repositoryであり、default branch名が変わっても同じrowを
 再利用する。sourceはGitHub repository metadataが返したdefault branch OIDを一時refへfetchして一致を
 検証し、`refs/rvw/branch/<owner>/<repository>/commits/oid-<oid>`へ保持する。checkout、index、worktreeを
-変更しない。同期はIssueを一件ずつ更新し、一件の取得失敗で他のcached文書を失わない。
+変更しない。保存済みGit common directoryはlocal source bindingの一部とする。同じcommon directoryの
+別worktreeは同じreviewを利用できるが、canonical repositoryが同じ独立cloneは同期前に明示errorとし、
+path、common directory、source、ref、artifactを変更しない。別cloneでの再作成は登録済みreviewの明示
+reset後だけ許可する。同期はIssueを一件ずつ更新し、一件の取得失敗で他のcached文書を失わない。
 
 Issue cacheはcanonical GitHub identityで共有し、review membershipは別tableで所有する。PR本文からは
 同一repositoryの直接参照だけを一段抽出し、Walkthrough payloadの`issues`は追加だけを保証する。Issue
@@ -333,6 +336,13 @@ empty fileは従来どおり明示的に扱う。
   fallbackする。Issue本文はPR本文とrepository Markdownが使うSource / Preview viewer、safe rendering、
   source line mapping、inline comment表示を共有する。本文選択からrange commentを作成でき、Issue全体の
   composerは常設せずviewer右上のcomment iconから開く。
+- review metadata、Issue一覧、文書、annotation、comment placement、Walkthrough、検索、treeのquery keyは
+  Pull Request / Branchで共通helperから構成し、Branch syncと`change_sequence`更新は共通DocumentViewerが
+  実際に読むqueryをinvalidateする。Issue documentのcomponent identityはreview kind、review ID、Issue IDとし、
+  Branch source OIDを含めない。repository documentだけはpathとsource policy / exact OIDをidentityへ含める。
+- Issue range composerは同一本文のquery refresh中もopen状態、本文、selection、focus、pane、documentを保持する。
+  draftは対象body hashを保存し、本文hashが変わった場合は本文とplacementを最新化しつつdraftを残す。古い
+  rangeの送信は拒否し、現在本文での明示的な再選択後だけ許可する。semantic range migrationは行わない。
 - commit範囲切り替え時はopen pathとglobal表示modeを保ち、latest側commitが変わった場合だけ文書を
   そのcommitへ結び直す。exact source commentから開いた文書は
   通常の選択commit文書へ結び直す。current PR commit列外のexact sourceを開く場合はfull viewだけにする。
@@ -775,8 +785,13 @@ sequenceとして出力する。cursor省略時は現在の最新event位置へa
 cursor、pending queue、retry、authorization、Agentが作成したpost IDは外部Agent taskがrepository外へ
 保持する。同梱Skillのstate scriptはtask専用SQLiteを使い、event enqueueとcursor更新、batch lease、retry、
 batch内のcomment URIごとのstatus post mapping、自己post抑制をtransaction化する。batch claim直後にthreadを
-確認して冪等なack replyを即時作成する。同じbatchのretryでstatus postがあればそのpostをack本文へ戻すが、
-後続replyの新しいbatchは新しいpostを作る。完了時は現在のbatchのpostを最終結果へ編集する。同梱preflightは
+確認する。Pull Request batchだけが冪等なack replyを即時作成し、同じbatchのretryでstatus postがあれば
+そのpostをack本文へ戻す。後続replyの新しいbatchは新しいpostを作り、完了時は現在のbatchのpostを最終結果へ
+編集する。Branch batchは常に`investigate-and-reply`でacknowledgementやwrite reservationを作らず、worker
+resultの`context.kind = branch`とrepositoryを使用する。各operationのstable idempotency keyで一つのfinal
+replyを投稿し、返されたpost IDをsuppressionとしてdurableに登録してからleaseをcompleteする。eventが
+complete前にingest済みならpending rowをcompletedへ移し、後ならingest時にsuppressする。reply後の再起動は
+同じkeyで既存postを取得して同じ完了手順を再開する。同梱preflightは
 protocol、capability、transport、Nodeを一括検査し、watch driverは
 stateのcursorを自動解決してRFC 7464 frameをatomicにingestする。driverのauto-ack modeは新規batchを
 LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthread contextを一行JSONで通知する。
@@ -838,7 +853,9 @@ stdinの最小例:
 `pullRequest`と`sourceOid`、title、body、1件以上のreferenceは必須である。CLIはcommit、path、
 任意のline range、Markdown reference、実在するflowchart/classDiagram nodeへのdiagram bindingを検証し、本文linkまたはdiagram bindingから
 一度も参照されないreferenceを拒否してから、一つのSQLite transactionで保存してchange sequenceを
-更新する。成功responseは`rvw://walkthrough/<uuid>`を含むWalkthrough全体を返す。
+更新する。成功responseは`walkthrough`へ`rvw://walkthrough/<uuid>`を含むWalkthrough全体、`issuesAdded`へ
+このmutationで追加したIssueを返す。追加がなくても空配列を返し、direct database fallbackとAgent socketで
+JSON serialize後のschemaを一致させる。
 このcommandはbrowserを開かず、どのviewerのnavigationも変更しない。
 
 #### Update
@@ -852,6 +869,7 @@ stdinはpublish inputから`pullRequest`を除いた完全置換objectであり�
 同じWalkthrough IDとURI、`createdAt`を保って現在値を一つのSQLite transactionで置き換え、change
 sequenceを更新する。過去値は保存しない。既存の文書全体commentは同じIDへ残る。publishとupdateは
 passiveであり、browserを開かずnavigationも変更しない。
+成功responseはpublishと同じ`{walkthrough, issuesAdded}` envelopeを返す。
 
 #### Delete
 
@@ -1364,7 +1382,8 @@ Functional:
 
 - URLまたはcurrent branchからopen/draft PRを開き、登録済みPRはofflineでも再表示できる。
 - `rvw branch open`でrepository singletonのBranch Reviewを開き、default branch名とsource OIDを表示し、
-  同じGit common directoryのworktreeとoffline openから同じreviewを再利用できる。
+  同じGit common directoryのworktreeとoffline openから同じreviewを再利用できる。独立cloneからはbindingを
+  変更せず失敗し、明示reset後にだけそのcloneで作り直せる。
 - Pull Request / Branch Reviewへ同一repository Issueを追加し、番号降順で通常文書として二ペイン表示、
   全体・source range Comment、Outdated追跡を利用できる。
 - Issue番号/titleとowned Comment/reply件数をpreviewした明示確認後、選択reviewのmembershipとIssue feedback
@@ -1372,7 +1391,10 @@ Functional:
 - Branch Review resetはIssue、Comment、Walkthrough、review recordとBranch専用retained ref候補をpreviewし、
   `--yes`後にBranch固有状態だけを削除する。再openは新しい空reviewを作る。
 - Branch Review WalkthroughとCommentを既存URI/CLIで扱い、watcherは明示contextでbatchしてread-only調査後の
-  最終replyだけを冪等に記録できる。
+  最終replyだけを冪等に記録し、そのpost eventをdurableにself-suppressできる。
+- Branch Issue range comment draftはbackground sync中も本文とfocusを保持し、Issue本文変更時はdraftを失わず
+  古いrangeの送信を拒否する。同期後の本文、inline placement、sidebar Outdated表示は一致する。
+- Walkthrough publish/updateはreview kindとtransportによらず`walkthrough`と`issuesAdded`を返す。
 - destination commit選択、PR全体diff、複数commit range、changed/all tree、全文、検索を利用できる。
 - `Pull Request.md`は常に最後に成功した同期の最新内容だけを表示する。
 - Agentがcommit固定WalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の

@@ -523,7 +523,22 @@ export function MarkdownSelectionSurface({
   const [transientRange, setTransientRange] = useState<MarkdownSourceRange | null>(null);
   const [anchor, setAnchor] = useState<{ left: number; top: number } | null>(null);
   const [popoverLeft, setPopoverLeft] = useState<number | null>(null);
-  const [composerHost, setComposerHost] = useState<HTMLDivElement | null>(null);
+  const composerHostRef = useRef<HTMLDivElement | null>(null);
+  const composerHadFocusRef = useRef(false);
+  const [composerHostReady, setComposerHostReady] = useState(false);
+  if (composerHostRef.current === null && typeof document !== "undefined") {
+    const host = document.createElement("div");
+    host.dataset.rvwComposerHost = "true";
+    host.addEventListener("focusin", () => {
+      composerHadFocusRef.current = true;
+    });
+    host.addEventListener("focusout", (event) => {
+      if (event.relatedTarget instanceof Node && !host.contains(event.relatedTarget)) {
+        composerHadFocusRef.current = false;
+      }
+    });
+    composerHostRef.current = host;
+  }
   useEffect(() => {
     if (composerOpen) return;
     const clearInvalidSelection = (): void => {
@@ -584,21 +599,37 @@ export function MarkdownSelectionSurface({
     };
   }, [anchor, composerOpen]);
   useLayoutEffect(() => {
+    const composerHost = composerHostRef.current;
+    if (!composerHost) return;
     if (!composerOpen) {
-      setComposerHost(null);
+      composerHost.remove();
+      if (composerHostReady) setComposerHostReady(false);
+      composerHadFocusRef.current = false;
       return;
     }
     const container = containerRef.current;
-    const host = container?.querySelector<HTMLDivElement>("[data-rvw-composer-anchor='true']");
-    if (!host) return;
-    setComposerHost(host);
+    const anchorHost = container?.querySelector<HTMLDivElement>(
+      "[data-rvw-composer-anchor='true']",
+    );
+    if (!anchorHost) return;
+    if (composerHost.parentElement !== anchorHost) anchorHost.append(composerHost);
+    if (!composerHostReady) setComposerHostReady(true);
     const frame = window.requestAnimationFrame(() => {
-      host.scrollIntoView({ block: "nearest", inline: "nearest" });
+      composerHost.scrollIntoView({ block: "nearest", inline: "nearest" });
+      if (composerHadFocusRef.current && !composerHost.contains(document.activeElement)) {
+        composerHost.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
+      }
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [composerOpen, selectedRange?.endLine, selectedRange?.startLine]);
+  });
+  useEffect(
+    () => () => {
+      composerHostRef.current?.remove();
+    },
+    [],
+  );
   const updateSelection = (
     pointerStartRange: MarkdownSourceRange | null = null,
     pointerEndRange: MarkdownSourceRange | null = null,
@@ -626,6 +657,7 @@ export function MarkdownSelectionSurface({
       top: Math.max(8, rect.bottom - containerRect.top + 8),
     });
     setTransientRange(sourceRange);
+    if (composerOpen) onSelectionRef.current(sourceRange);
   };
   const displayedRange = composerOpen ? selectedRange : transientRange;
   return (
@@ -698,30 +730,29 @@ export function MarkdownSelectionSurface({
       }}
     >
       {children}
-      {displayedRange && anchor && !composerHost && (
+      {displayedRange && anchor && !composerOpen && (
         <div
           ref={popoverRef}
           className={`markdown-selection-popover${composerOpen ? " is-composing" : ""}`}
           style={{ left: popoverLeft ?? anchor.left, top: anchor.top }}
           onPointerDown={(event) => event.stopPropagation()}
         >
-          {composerOpen ? (
-            composer
-          ) : (
-            <button
-              className="markdown-selection-comment-action"
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => {
-                onSelectionRef.current(displayedRange);
-                onOpenComposer();
-              }}
-            >
-              {rangeLabel(displayedRange)}へコメント
-            </button>
-          )}
+          <button
+            className="markdown-selection-comment-action"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => {
+              onSelectionRef.current(displayedRange);
+              onOpenComposer();
+            }}
+          >
+            {rangeLabel(displayedRange)}へコメント
+          </button>
         </div>
       )}
-      {composerHost && createPortal(composer, composerHost)}
+      {composerOpen &&
+        composerHostReady &&
+        composerHostRef.current &&
+        createPortal(composer, composerHostRef.current)}
     </div>
   );
 }

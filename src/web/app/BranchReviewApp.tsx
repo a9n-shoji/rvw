@@ -41,6 +41,7 @@ import {
   type ReadingLocator,
 } from "../reading-history.js";
 import type { AnyReviewComment } from "../review-context.js";
+import { reviewQueryKeys } from "../review-query-keys.js";
 import type { ThemePreference } from "../theme.js";
 import { useDebouncedValue } from "../use-debounced-value.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
@@ -148,16 +149,16 @@ export function BranchReviewApp({
   const reviewHistoryKey = `branch:${branchReviewId}`;
 
   const reviewQuery = useQuery({
-    queryKey: ["branch-review", branchReviewId],
+    queryKey: reviewQueryKeys.review("branch", branchReviewId),
     queryFn: async () => await api<BranchReviewResponse>(`/api/branch-reviews/${branchReviewId}`),
   });
   const treeQuery = useQuery({
-    queryKey: ["branch-tree", branchReviewId],
+    queryKey: reviewQueryKeys.tree("branch", branchReviewId),
     queryFn: async () =>
       await api<BranchTreeResponse>(`/api/branch-reviews/${branchReviewId}/tree`),
   });
   const changeSequence = useQuery({
-    queryKey: ["change-sequence"],
+    queryKey: reviewQueryKeys.changeSequence(),
     queryFn: async () =>
       await api<{ changeSequence: number }>("/api/meta/change-sequence", viewerHeartbeatRequest()),
     refetchInterval: 1_000,
@@ -165,7 +166,11 @@ export function BranchReviewApp({
     networkMode: "always",
   });
   const commentsQuery = useQuery({
-    queryKey: ["comments", "branch", branchReviewId, changeSequence.data?.changeSequence],
+    queryKey: reviewQueryKeys.comments(
+      "branch",
+      branchReviewId,
+      changeSequence.data?.changeSequence,
+    ),
     queryFn: async () =>
       await api<BranchCommentsResponse>(
         `/api/branch-reviews/${branchReviewId}/comments?resolved=all`,
@@ -190,13 +195,20 @@ export function BranchReviewApp({
 
   const refresh = useCallback(async (): Promise<void> => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["branch-review", branchReviewId] }),
-      queryClient.invalidateQueries({ queryKey: ["branch-tree", branchReviewId] }),
-      queryClient.invalidateQueries({ queryKey: ["branch-document", branchReviewId] }),
-      queryClient.invalidateQueries({ queryKey: ["branch-search", branchReviewId] }),
-      queryClient.invalidateQueries({ queryKey: ["comments", "branch", branchReviewId] }),
-      queryClient.invalidateQueries({ queryKey: ["comment-placement", "branch", branchReviewId] }),
-      queryClient.invalidateQueries({ queryKey: ["walkthrough", "branch", branchReviewId] }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.review("branch", branchReviewId) }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.tree("branch", branchReviewId) }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.document() }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.search("branch", branchReviewId) }),
+      queryClient.invalidateQueries({
+        queryKey: reviewQueryKeys.comments("branch", branchReviewId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: reviewQueryKeys.commentPlacement("branch", branchReviewId),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: reviewQueryKeys.walkthroughs("branch", branchReviewId),
+      }),
     ]);
   }, [branchReviewId, queryClient]);
 
@@ -712,11 +724,20 @@ export function BranchReviewApp({
         <LazyLoadBoundary label="文書ビューアー">
           <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
             <DocumentViewer
-              key={`${paneId}:${branchReview.sourceOid}:${documentTabKey(paneDocument)}:${paneDocument.kind === "repository-file" ? (paneDocument.sourceOid ?? "") : ""}`}
+              key={
+                paneDocument.kind === "issue"
+                  ? `${paneId}:branch:${branchReview.id}:issue:${paneDocument.id}`
+                  : `${paneId}:branch:${branchReview.id}:repository-file:${paneDocument.path}:${paneDocument.sourceOid ?? branchReview.sourceOid}:${paneDocument.comparisonPolicy ?? ""}`
+              }
               review={review}
               selectedOid={branchReview.sourceOid}
               oldOid={null}
               activeDocument={paneDocument}
+              documentRevision={
+                paneDocument.kind === "issue"
+                  ? (issues.find((issue) => issue.id === paneDocument.id)?.bodyHash ?? null)
+                  : null
+              }
               displayMode="full"
               diffStyle="unified"
               comments={comments}

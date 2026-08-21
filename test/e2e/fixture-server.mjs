@@ -798,6 +798,29 @@ app.post("/api/test/reset-branch-review", (context) => {
   return context.json({ ok: true, branchReviewId: branchReview.id });
 });
 
+app.post("/api/test/refresh-branch-review", async (context) => {
+  const input = await context.req.json();
+  if (typeof input.sourceOid === "string") {
+    branchReview.sourceOid = input.sourceOid;
+    branchReview.updatedAt = new Date().toISOString();
+  }
+  if (typeof input.issueNumber === "number" && typeof input.issueBody === "string") {
+    const issue = branchIssues.find((candidate) => candidate.number === input.issueNumber);
+    if (!issue) {
+      return context.json(
+        { ok: false, error: { code: "ISSUE_NOT_FOUND", message: "missing issue" } },
+        404,
+      );
+    }
+    issue.body = input.issueBody;
+    issue.bodyHash = hashDocument(input.issueBody);
+    issue.updatedAt = new Date().toISOString();
+    issue.fetchedAt = issue.updatedAt;
+  }
+  changeSequence += 1;
+  return context.json({ ok: true, branchReview, issues: branchIssues, changeSequence });
+});
+
 app.get("/api/pull-requests/:id", (context) => context.json({ ok: true, ...currentView() }));
 
 app.get("/api/pull-requests/:id/issues", (context) =>

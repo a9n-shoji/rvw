@@ -17,6 +17,10 @@ The SQLite database is user-global. One Branch Review is keyed by canonical GitH
 independent from every Pull Request Review. Issue cache rows are shared by GitHub identity while
 memberships and Issue-target comments belong to exactly one review. Observed PR heads and Branch
 Review sources are retained by `refs/rvw/...` in the base repository's common Git directory. The
+saved Git common directory is therefore part of the Branch Review's source binding: worktrees in that
+common directory may reuse the review, but an independent clone with the same canonical GitHub identity
+fails closed instead of moving the binding. An explicit Branch reset is the boundary for recreating it
+from another clone. The
 Issue removal transaction deletes only the selected membership and its owned comments/replies.
 Branch reset deletes Branch comments, Walkthroughs, memberships, and the singleton review before
 releasing only its `refs/rvw/branch/<owner>/<repository>/...` namespace; PR refs and shared Issue cache
@@ -57,7 +61,11 @@ task creates one immediate acknowledgement per affected thread and later edits t
 to the final outcome. A retry of that batch restores its acknowledgement, while a later batch for the
 same thread creates a new post and preserves the earlier outcome. Branch Review batches are always
 read-only investigation: they receive one final idempotent reply, never reserve a repository write key,
-and never auto-resolve. Separate tasks may consume the same log
+and never auto-resolve. Their worker result carries an explicit Branch context, not a fabricated Pull
+Request URL. The final reply uses the operation's stable idempotency key; its returned post ID is stored
+as a durable suppression before the lease completes. Completion also marks an already-ingested pending
+self-event completed, so either ingest ordering and a retry after process restart avoid a new batch.
+Separate tasks may consume the same log
 with separate state. This terminal-bound consumer is not a daemon and rvw never starts it. A durable
 reply-idempotency ledger makes an exact caller-payload retry safe without introducing Agent session
 identity into comments.
@@ -77,6 +85,9 @@ include viewer state and cannot navigate a browser. The React viewer treats a
 Walkthrough as another document tab, and only a human action opens the referenced exact Git document.
 Inline references and bound Mermaid nodes remain interactive, but the viewer does not duplicate the
 complete reference set in a side or bottom index.
+Publish and update return an enumerable application result envelope containing the saved Walkthrough
+and an explicit `issuesAdded` array. The CLI serializes the same envelope whether it calls the service
+directly or through the Agent socket.
 The browser owns an ephemeral two-pane workspace: every document identity belongs to one pane, tabs can
 move between panes, and modifier-click targets the right pane from the sidebar or the opposite pane from
 within a document. Pane placement never enters SQLite or the Agent protocol. Repository Markdown uses
@@ -84,8 +95,10 @@ the same exact Git document fetch and can switch locally between source and a sa
 The preview preserves native browser text selection while translating parser positions back to source line ranges;
 it never persists DOM or layout coordinates.
 The selection boundary resolves to the smallest mapped Markdown leaf, and its composer is portaled
-into a React-owned declarative slot in normal document flow immediately after the selected block so
-wrapped text is never covered.
+into a stable imperative host in normal document flow immediately after the selected block so wrapped
+text is never covered. Issue document identity excludes the Branch source OID: refreshes replace query
+data without remounting the composer. Drafts record the Issue body hash; a changed body preserves text
+and focus but blocks the old range until the human selects a range in the current body.
 Relative preview and comment images are fetched from their resolved exact commit through a size-limited
 read-only endpoint. PR Markdown, Walkthrough bodies, external image URLs, and paths that cannot be resolved inside the repository
 render as non-fetching placeholders. Same-origin SVG asset responses carry a restrictive Content Security

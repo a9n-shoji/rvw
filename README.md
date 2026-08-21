@@ -35,7 +35,9 @@ rvw branch open
 
 Branch ReviewはcanonicalなGitHub repositoryごとに一件だけ作られ、GitHubのdefault branch名とexact
 source OIDをheaderへ表示します。default branch名が変わっても同じreviewを再利用し、checkoutやindexを
-変更せずに同期します。一度同期したcode、Issue、Walkthrough、Commentはofflineでも読めます。
+変更せずに同期します。同じGit common directoryのworktreeからは同じreviewを利用できますが、同じ
+GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作り直す場合は、登録済みcloneから
+`rvw branch reset`を明示実行します。一度同期したcode、Issue、Walkthrough、Commentはofflineでも読めます。
 
 この考え方とプロダクト境界は[Product principles](docs/product-principles.md)にまとめています。
 
@@ -201,6 +203,9 @@ Skillは明示された指示を優先し、未指定の作成判断だけを既
 mental modelを作るための最初の読解経路を構成します。文書の見出しや説明順序は固定せず、commit固定の
 reference付きartifactとして検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、
 現在内容を取得して同じURIを更新し、重複した「改訂版」を追加しません。
+`walkthrough publish`と`walkthrough update`は常に`walkthrough`と、同時にmembershipへ追加した
+`issuesAdded`（追加がなければ空配列）を返し、viewerのAgent socket経由でもdirect executionでも同じ
+JSON schemaです。
 
 新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRと
 Branch Reviewを
@@ -216,7 +221,8 @@ queue、retry、batch内のthread単位status post、自己返信抑制をtransa
 line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動できるようにします。
 Branch
 Reviewは常にread-only調査で、進捗replyを作らず一件の冪等な最終replyだけを追加し、commit、push、
-GitHub Issue更新、resolveを行いません。
+GitHub Issue更新、resolveを行いません。最終replyのpost IDはlease完了時にdurableな自己抑止対象へ
+登録されるため、そのreply eventが完了の前後どちらで届いても新しいBranch batchを作りません。
 
 三つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
 `rvw walkthrough get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`だけを利用します。

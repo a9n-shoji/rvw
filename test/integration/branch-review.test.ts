@@ -12,6 +12,7 @@ import type {
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
+import { startAgentSocket, tryAgentSocketRequest } from "../../src/server/agent-socket.js";
 import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
 
 class BranchGitHub implements GitHubPort {
@@ -71,6 +72,14 @@ function issue(number: number, body = `Requirement ${number}\nDetails`): GitHubI
   };
 }
 
+function jsonShape(value: unknown): unknown {
+  if (Array.isArray(value)) return value.length === 0 ? [] : [jsonShape(value[0])];
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, jsonShape(child)]));
+  }
+  return typeof value;
+}
+
 describe("Branch Review", () => {
   const databases: RvwDatabase[] = [];
   afterEach(() => {
@@ -124,6 +133,53 @@ describe("Branch Review", () => {
     });
   });
 
+  it("rejects an independent clone without rebinding and permits it after an explicit reset", async () => {
+    const { repositoryPath, sourceOid, github, database, service } = setup();
+    const opened = await service.openBranchReview(repositoryPath);
+    const registered = database.getBranchReview(opened.branchReview.id);
+    const retainedRefs = await service.git.listRefsByPrefix(
+      repositoryPath,
+      "refs/rvw/branch/acme/review-repo/commits/",
+    );
+    const independentClone = createGitRepository("rvw-branch-independent-clone-");
+    const independentContext = await service.git.repositoryContext(independentClone);
+
+    await expect(service.openBranchReview(independentClone)).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+      details: {
+        registered: registered?.localRepositoryPath,
+        current: independentContext.worktreePath,
+      },
+    });
+    expect(database.getBranchReview(opened.branchReview.id)).toEqual(registered);
+    await expect(
+      service.git.listRefsByPrefix(repositoryPath, "refs/rvw/branch/acme/review-repo/commits/"),
+    ).resolves.toEqual(retainedRefs);
+    await expect(
+      service.getBranchDocument({
+        kind: "repository-file",
+        branchReviewId: opened.branchReview.id,
+        sourceOid,
+        path: "README.md",
+      }),
+    ).resolves.toMatchObject({ text: "# Fixture\n" });
+
+    await service.resetBranchReview(opened.branchReview.id);
+    github.repository = {
+      ...github.repository,
+      defaultBranchOid: git(independentClone, "rev-parse", "HEAD"),
+    };
+    const recreated = await service.openBranchReview(independentClone);
+    expect(recreated).toMatchObject({
+      fromCache: false,
+      branchReview: {
+        localRepositoryPath: independentContext.worktreePath,
+        gitCommonDir: independentContext.gitCommonDir,
+      },
+    });
+    expect(recreated.branchReview.id).not.toBe(opened.branchReview.id);
+  });
+
   it("preserves canonical identities when GitHub changes repository casing", async () => {
     const { repositoryPath, github, service } = setup();
     github.issues.set(142, issue(142));
@@ -164,7 +220,7 @@ describe("Branch Review", () => {
     github.issues.set(143, issue(143));
     const opened = await service.openBranchReview(repositoryPath);
     await service.addBranchIssue(repositoryPath, "#142");
-    const walkthrough = await service.publishWalkthrough({
+    const published = await service.publishWalkthrough({
       review: { kind: "branch", repository: "acme/review-repo" },
       sourceOid: opened.branchReview.sourceOid,
       title: "Current fixture",
@@ -181,8 +237,8 @@ describe("Branch Review", () => {
       ],
       issues: ["#143"],
     });
-    expect(walkthrough).toMatchObject({
-      branchReviewId: opened.branchReview.id,
+    expect(published).toMatchObject({
+      walkthrough: { branchReviewId: opened.branchReview.id },
       issuesAdded: [{ number: 143 }],
     });
     expect(service.listBranchIssues(opened.branchReview.id).map(({ number }) => number)).toEqual([
@@ -235,6 +291,101 @@ describe("Branch Review", () => {
     });
   });
 
+  it("keeps Branch Walkthrough publish and update JSON shapes equal across direct and Agent socket transports", async () => {
+    const { repositoryPath, sourceOid, github, database, service } = setup();
+    for (const number of [142, 143, 144, 145]) github.issues.set(number, issue(number));
+    await service.openBranchReview(repositoryPath);
+    const content = {
+      sourceOid,
+      title: "Direct transport",
+      body: "Read [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "Source",
+          path: "README.md",
+          startLine: 1,
+          endLine: 1,
+          description: null,
+        },
+      ],
+    };
+    const directPublish = await service.publishWalkthrough({
+      review: { kind: "branch", repository: "acme/review-repo" },
+      ...content,
+      issues: ["#142"],
+    });
+    const directUpdate = await service.updateWalkthrough(directPublish.walkthrough.ref, {
+      ...content,
+      title: "Direct update",
+      issues: ["#143"],
+    });
+    expect(JSON.parse(JSON.stringify(directPublish))).toMatchObject({
+      walkthrough: { ref: directPublish.walkthrough.ref },
+      issuesAdded: [{ number: 142 }],
+    });
+    expect(JSON.parse(JSON.stringify(directUpdate))).toMatchObject({
+      walkthrough: { ref: directPublish.walkthrough.ref },
+      issuesAdded: [{ number: 143 }],
+    });
+
+    const socketDirectory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-agent-socket-"));
+    const previousSocketPath = process.env.RVW_AGENT_SOCKET_PATH;
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(socketDirectory, "agent.sock");
+    let running: Awaited<ReturnType<typeof startAgentSocket>>;
+    try {
+      running = await startAgentSocket(service);
+    } catch (error) {
+      if (previousSocketPath === undefined) delete process.env.RVW_AGENT_SOCKET_PATH;
+      else process.env.RVW_AGENT_SOCKET_PATH = previousSocketPath;
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    try {
+      const socketPublishResponse = await tryAgentSocketRequest(
+        "walkthrough.publish",
+        {
+          review: { kind: "branch", repository: "acme/review-repo" },
+          ...content,
+          title: "Socket transport",
+          issues: ["#144"],
+        },
+        { expectedDatabasePath: database.filePath },
+      );
+      if (!socketPublishResponse.available) throw new Error(socketPublishResponse.reason);
+      const socketPublish = socketPublishResponse.result as typeof directPublish;
+      const socketUpdateResponse = await tryAgentSocketRequest(
+        "walkthrough.update",
+        {
+          uri: socketPublish.walkthrough.ref,
+          content: { ...content, title: "Socket update", issues: ["#145"] },
+        },
+        { expectedDatabasePath: database.filePath },
+      );
+      if (!socketUpdateResponse.available) throw new Error(socketUpdateResponse.reason);
+      const socketUpdate = socketUpdateResponse.result as typeof directUpdate;
+
+      expect(JSON.parse(JSON.stringify(socketPublish))).toMatchObject({
+        walkthrough: { ref: socketPublish.walkthrough.ref },
+        issuesAdded: [{ number: 144 }],
+      });
+      expect(JSON.parse(JSON.stringify(socketUpdate))).toMatchObject({
+        walkthrough: { ref: socketPublish.walkthrough.ref },
+        issuesAdded: [{ number: 145 }],
+      });
+      expect(jsonShape(JSON.parse(JSON.stringify(socketPublish)))).toEqual(
+        jsonShape(JSON.parse(JSON.stringify(directPublish))),
+      );
+      expect(jsonShape(JSON.parse(JSON.stringify(socketUpdate)))).toEqual(
+        jsonShape(JSON.parse(JSON.stringify(directUpdate))),
+      );
+    } finally {
+      await running.close();
+      if (previousSocketPath === undefined) delete process.env.RVW_AGENT_SOCKET_PATH;
+      else process.env.RVW_AGENT_SOCKET_PATH = previousSocketPath;
+    }
+  });
+
   it("does not partially publish a Walkthrough when one requested Issue fails", async () => {
     const { repositoryPath, github, service } = setup();
     github.issues.set(142, issue(142));
@@ -266,7 +417,7 @@ describe("Branch Review", () => {
   it("places and deletes Branch Walkthrough comments through the shared viewer operations", async () => {
     const { repositoryPath, sourceOid, database, service } = setup();
     const opened = await service.openBranchReview(repositoryPath);
-    const walkthrough = await service.publishWalkthrough({
+    const { walkthrough } = await service.publishWalkthrough({
       review: { kind: "branch", repository: "acme/review-repo" },
       sourceOid,
       title: "Branch walkthrough",

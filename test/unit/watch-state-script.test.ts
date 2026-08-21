@@ -80,6 +80,58 @@ describe("rvw-watch-comments task state", () => {
     ).toMatchObject({ status: "suppressed" });
   });
 
+  it("completes an already-ingested Branch final reply when suppression is recorded", () => {
+    const state = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-first-")),
+      "task.db",
+    );
+    run(state, "init", ["--own-mode", "fix-and-push"]);
+    ingest(state, {
+      type: "ready",
+      databaseId: "99992222333344445555666677778888",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "branch-human-post",
+        commentRef: "rvw://comment/branch-comment",
+        context: { kind: "branch", repository: "acme/repo" },
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+    const claimed = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    expect(
+      ingest(state, {
+        type: "comment-posted",
+        cursor: "cursor-2",
+        event: {
+          sequence: 2,
+          postId: "branch-final-reply",
+          commentRef: "rvw://comment/branch-comment",
+          context: { kind: "branch", repository: "acme/repo" },
+          createdAt: "2026-08-20T00:00:01.000Z",
+          deleted: false,
+        },
+      }),
+    ).toMatchObject({ status: "queued" });
+    expect(run(state, "status")).toMatchObject({
+      batches: { inFlight: 1, unbatchedEvents: 1 },
+    });
+
+    run(state, "complete", ["--lease", String(claimed.leaseId)], {
+      postIds: ["branch-final-reply"],
+    });
+    expect(run(state, "list")).toMatchObject({ pending: [] });
+    expect(run(state, "status")).toMatchObject({
+      batches: { inFlight: 0, unbatchedEvents: 0 },
+    });
+  });
+
   it("waits for the pending set to become non-empty and emits monitor-ready JSON", async () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-wait-")), "task.db");
     run(state, "init");
