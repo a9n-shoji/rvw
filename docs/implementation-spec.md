@@ -7,8 +7,9 @@
 
 ## 1. プロダクトの定義
 
-`rvw`は、AIや人間が実装したGitHub Pull Requestを、差分だけでなく変更後のsoftware全体として
-人間が理解し、次の実装判断をAgentへ返すためのローカルWeb viewerである。
+`rvw`は、GitHub Pull Requestが作るsoftwareと、GitHub repositoryのdefault branchにある現在の
+softwareを、人間が文書とexact Git sourceから理解し、次の判断をAgentへ返すためのローカルWeb
+viewerである。
 
 利用者は最新PRタイトル・本文から変更の意図を読み、PRを構成するGit commitから実装の進行を読み、
 変更箇所を入口に選択commit時点のrepository全体へ移動する。コード全文、変更されていないfile、
@@ -29,6 +30,18 @@ Pull Request
 └─ コメント
 ```
 
+```text
+Branch Review（repositoryごとに一件）
+├─ GitHub default branchのexact source
+├─ repository全体
+├─ 明示的に登録したGitHub Issue documents
+├─ Agentが提示したWalkthroughとexact code reference
+└─ コメント
+```
+
+Pull Request ReviewとBranch Reviewは独立する。同じIssueを双方へ登録できるが、membership、Comment、
+Walkthroughをコピー・移動・統合せず、Branch Reviewをfake Pull Requestとして表現しない。
+
 コード履歴の正本はGit commitである。rvw独自の「レビュー版」は持たず、ユーザーへ
 capture、版番号、版説明、版切り替えを要求しない。
 
@@ -42,6 +55,8 @@ runtimeにはならない。説明上の原則は`docs/product-principles.md`に
 rvwが担うもの:
 
 - GitHub PRの取得と最新メタデータcache
+- repositoryごとに一件のBranch Review、GitHub default branchとexact sourceの同期・offline cache
+- Pull Request / Branch Reviewへ明示登録する同一repositoryのGitHub Issue document
 - PR commitのfetch、保持、一覧表示、選択
 - 任意の連続commit範囲とPR全体diff
 - 最新PRタイトル・本文を表す`Pull Request.md`
@@ -58,6 +73,9 @@ rvwが担うもの:
 rvwが担わないもの:
 
 - in-app Ask、AI chat、Agent起動、Agent session管理
+- arbitrary branch selector、Branch Review一覧、同一repositoryの複数Branch Review
+- Branch ReviewとPull Request Reviewのartifact attach、Issue relation graph、Issue revision履歴
+- cross-repository Issue、GitHub Issueの作成・編集・close / reopen
 - コード編集、テスト実行、commit、push、PR編集
 - GitHub review commentとの双方向同期
 - Skillなしで通じる巨大prompt fallback
@@ -79,6 +97,8 @@ Pull Request
 Commit
 Commit range
 Pull Request.md
+Branch Review
+Issue
 Code
 Walkthrough
 Comment
@@ -93,6 +113,16 @@ Git ref、full source OID、comment target、SQLite IDは必要なprotocol以外
 WalkthroughはAgentが説明として提示する読み物であり、事実の正本ではない。人間はinline referenceや
 diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分で照合する。同じ参照を横や下へ
 列挙するindexは表示しない。
+
+Branch Reviewのidentityはcanonical GitHub repositoryであり、default branch名が変わっても同じrowを
+再利用する。sourceはGitHub repository metadataが返したdefault branch OIDを一時refへfetchして一致を
+検証し、`refs/rvw/branch/<owner>/<repository>/commits/oid-<oid>`へ保持する。checkout、index、worktreeを
+変更しない。同期はIssueを一件ずつ更新し、一件の取得失敗で他のcached文書を失わない。
+
+Issue cacheはcanonical GitHub identityで共有し、review membershipは別tableで所有する。PR本文からは
+同一repositoryの直接参照だけを一段抽出し、Walkthrough payloadの`issues`は追加だけを保証する。Issue
+本文やWalkthroughから再帰探索せず、参照消失でもmembershipを自動削除しない。Issue本文hashが変わった
+場合、旧本文range Commentは保守的にOutdatedとし、自動resolveしない。
 
 ### 3.1 Commit選択
 
@@ -596,7 +626,7 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-current protocol versionは3とし、最初のpublic compatibility contractはversion 1である。公開前に
+current protocol versionは4とし、最初のpublic compatibility contractはversion 1である。公開前に
 使用した内部version番号は互換性保証の対象外とする。public release後は番号を再利用せず、breaking
 changeのたびに単調増加させる。capabilityは次を含む。
 
@@ -1322,6 +1352,16 @@ source of truthとする。
 Functional:
 
 - URLまたはcurrent branchからopen/draft PRを開き、登録済みPRはofflineでも再表示できる。
+- `rvw branch open`でrepository singletonのBranch Reviewを開き、default branch名とsource OIDを表示し、
+  同じGit common directoryのworktreeとoffline openから同じreviewを再利用できる。
+- Pull Request / Branch Reviewへ同一repository Issueを追加し、番号降順で通常文書として二ペイン表示、
+  全体・source range Comment、Outdated追跡を利用できる。
+- Issue番号/titleとowned Comment/reply件数をpreviewした明示確認後、選択reviewのmembershipとIssue feedback
+  だけを削除でき、別reviewの同じIssueは残る。
+- Branch Review resetはIssue、Comment、Walkthrough、review recordとBranch専用retained ref候補をpreviewし、
+  `--yes`後にBranch固有状態だけを削除する。再openは新しい空reviewを作る。
+- Branch Review WalkthroughとCommentを既存URI/CLIで扱い、watcherは明示contextでbatchしてread-only調査後の
+  最終replyだけを冪等に記録できる。
 - destination commit選択、PR全体diff、複数commit range、changed/all tree、全文、検索を利用できる。
 - `Pull Request.md`は常に最後に成功した同期の最新内容だけを表示する。
 - Agentがcommit固定WalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の
@@ -1361,6 +1401,9 @@ Manual acceptance:
 - PR本文履歴やPR revision selectorを追加しない
 - PR本文をcommitへ擬似的にbindingしない
 - Ask/AI chat/Agent spawnを追加しない
+- arbitrary branch selector、複数Branch Review、Branch ReviewとPull Request Reviewのattachを追加しない
+- Issue relation/revision history/cross-repository membership/GitHub Issue writeを追加しない
+- Branch Reviewでfix-and-pushやremote writeを許可しない
 - Agentにbrowser tabやscroll位置を操作させない
 - unresolved/resolved以外のcomment stateを追加しない
 - Skill-less fallback、GitHub comment syncを追加しない

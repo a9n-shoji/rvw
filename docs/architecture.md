@@ -1,9 +1,10 @@
 # Architecture
 
-rvw is a human reading environment for the software produced by a pull request. Its primary code
-read model is the repository snapshot at an exact Git commit. Pull Request metadata explains intent;
-commit ranges and diffs are derived lenses that locate change inside that snapshot. Changed files do
-not limit which repository documents can be opened, searched, or commented on.
+rvw is a human reading environment for a software repository. A Pull Request Review reads the exact
+PR head and its commit range; a Branch Review reads the exact current head of the repository's GitHub
+default branch. Pull Request metadata and explicitly registered GitHub Issue documents explain intent.
+Diffs remain derived lenses, and changed files do not limit which repository documents can be opened,
+searched, or commented on.
 
 rvw is a local Node.js application with four boundaries:
 
@@ -12,8 +13,15 @@ rvw is a local Node.js application with four boundaries:
 - `infrastructure`: SQLite, Git, GitHub CLI, filesystem, and subprocess adapters.
 - `server`, `cli`, and `web`: transport and presentation only.
 
-The SQLite database is user-global. Observed PR heads are retained by `refs/rvw/...` in the base
-repository's common Git directory. The browser polls `app_meta.change_sequence`; there is no
+The SQLite database is user-global. One Branch Review is keyed by canonical GitHub repository,
+independent from every Pull Request Review. Issue cache rows are shared by GitHub identity while
+memberships and Issue-target comments belong to exactly one review. Observed PR heads and Branch
+Review sources are retained by `refs/rvw/...` in the base repository's common Git directory. The
+Issue removal transaction deletes only the selected membership and its owned comments/replies.
+Branch reset deletes Branch comments, Walkthroughs, memberships, and the singleton review before
+releasing only its `refs/rvw/branch/<owner>/<repository>/...` namespace; PR refs and shared Issue cache
+are outside that deletion boundary. The
+browser polls `app_meta.change_sequence`; there is no
 persistent daemon or agent session coupling. While a viewer process is running, it exposes a
 user/database-specific Unix socket inside a `0700` temporary directory as an alternate transport for
 the same application service. Agent
@@ -39,21 +47,26 @@ source-position targets nor Mermaid-node bindings. Walkthroughs reuse the same c
 and renderer while adding their document mapping and diagram bindings. Browser state, prompts, and
 Agent sessions never enter the domain model.
 
-New root posts and replies also append a database-wide event sequence. A long-running external Agent
+New root posts and replies also append a database-wide event sequence with an explicit Pull Request or
+Branch context. A long-running external Agent
 task may consume that sequence with an opaque database-scoped cursor through `rvw comment watch`.
 rvw retains minimal event identifiers independently of deletable posts and owns only ordering and
 replay. The bundled Skill's task-local state script atomically owns its cursor, queue, leases, retries,
 per-batch status posts, self-event suppression, and repository-writer serialization. After claim, the
 task creates one immediate acknowledgement per affected thread and later edits that same normal post
 to the final outcome. A retry of that batch restores its acknowledgement, while a later batch for the
-same thread creates a new post and preserves the earlier outcome. Separate tasks may consume the same log
+same thread creates a new post and preserves the earlier outcome. Branch Review batches are always
+read-only investigation: they receive one final idempotent reply, never reserve a repository write key,
+and never auto-resolve. Separate tasks may consume the same log
 with separate state. This terminal-bound consumer is not a daemon and rvw never starts it. A durable
 reply-idempotency ledger makes an exact caller-payload retry safe without introducing Agent session
 identity into comments.
 
 Walkthroughs cross the same one-way CLI boundary in the other direction. An Agent can publish a
-Markdown explanation fixed to one commit, with validated file references and optional inclusive line
-ranges, plus optional Mermaid-node bindings. SQLite stores one current explanation per stable Walkthrough
+Markdown explanation to a Pull Request or Branch Review, fixed to one commit with validated file
+references and optional inclusive line ranges, plus optional Mermaid-node bindings. A publish or
+update may explicitly add same-repository Issues without creating a semantic relation. SQLite stores
+one current explanation per stable Walkthrough
 ID without revision history. The CLI can read and replace that value in place; the HTTP API remains read-only except for a
 human-confirmed delete action. Whole-document comments keep targeting the stable ID across updates. Rendered
 Markdown text selection maps parser source positions to inclusive source-line comments; those comments retain a
@@ -79,9 +92,10 @@ render as non-fetching placeholders. Same-origin SVG asset responses carry a res
 Policy and sandbox so direct navigation cannot execute repository-controlled script under the viewer origin.
 
 The bundled Skills are named by capability rather than Agent host. `rvw` handles review comments and
-synchronization; `rvw-walkthrough` converts the current session's explanation into a validated,
+synchronization and read-only Branch Review investigation; `rvw-walkthrough` converts the current session's explanation into a validated,
 commit-fixed publication without prescribing its document structure; `rvw-watch-comments` keeps an
-external Agent task subscribed to newly created posts and fails closed on PR ownership. Codex and Claude Code receive
+external Agent task subscribed to newly created posts. It fails closed on PR ownership before any
+authorized fix-and-push, and categorically disables remote writes for Branch Reviews. Codex and Claude Code receive
 the same Skill directories under their respective local Skill roots. Platform selection is a packaging
 concern only and does not fork the Agent protocol or workflow instructions. Installer metadata records
 the bundled digest so update availability and local customization are reported separately.

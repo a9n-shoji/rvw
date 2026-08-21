@@ -6,8 +6,8 @@ Use this guide when creating a Walkthrough or materially revising its explanatio
 
 Apply inputs in this order:
 
-1. Follow explicit directions from the user, caller, Pull Request body, or upstream Skill.
-2. Fill gaps with facts verified in the diff, committed code, tests, documentation, and available Pull Request context.
+1. Follow explicit directions from the user, caller, Pull Request body, Issue document, or upstream Skill.
+2. Fill gaps with facts verified in the diff, exact committed code, tests, documentation, and available review context.
 3. Use only necessary inference when facts do not establish intent. Mark the inference or uncertainty instead of presenting it as fact.
 
 Honor partial directions for the parts they cover and use this guide for the rest. Add minimal context when an instruction would otherwise leave the Walkthrough unintelligible, but do not substitute a different goal.
@@ -15,6 +15,12 @@ Honor partial directions for the parts they cover and use this guide for the res
 Provide an initial route through the implementation that lowers the cost of building a mental model. Let the reviewer choose which references to open and where to explore next. Do not present the route as the full review boundary or as a substitute for the committed source.
 
 When the requested subject is a standalone architecture, flow, or surrounding-code explanation rather than a change, treat its central responsibility, contract, or path as the center. Do not require a diff or invent a change narrative.
+
+For a Branch Review, use the current default-branch source OID and explain the software that exists at
+that exact commit. An Issue may establish the investigation question, but do not merely restate its
+body or require a future implementation plan. A Branch Walkthrough may also explain architecture with
+no Issue. Add only explicitly requested same-repository Issues and never recursively discover related
+Issues.
 
 ## Build the default reading path
 
@@ -102,4 +108,5 @@ Use this checklist internally; do not reproduce it mechanically in the Walkthrou
 - [ ] The output is an orientation path, not an AI review, approval plan, or completeness claim.
 - [ ] The endpoint leaves clear starting points for continued exploration.
 - [ ] Every file, symbol, range, link, and binding is real and valid at the selected commit.
+- [ ] A Branch Review uses the current exact default-branch source and does not paraphrase an Issue.
 - [ ] A reviewer seeing the subject for the first time gains a useful route into the committed code.

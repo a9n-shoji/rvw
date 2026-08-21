@@ -1,5 +1,42 @@
 # Architecture decisions
 
+## 2026-08-21: Add repository-scoped Branch Reviews without fabricating Pull Requests
+
+### Problem
+
+The existing reading substrate assumed that every exact Git snapshot and durable review artifact
+belonged to a GitHub Pull Request. Reviewing a repository's current default branch and the GitHub
+Issues that describe future work needs the same document, comment, Walkthrough, and watch machinery,
+but a default branch has no PR number, author, head repository, or base/head comparison semantics.
+
+### Choice
+
+Store one `branch_reviews` row per canonical GitHub repository and advance its exact source OID when
+GitHub's default branch advances. Keep Pull Request and Branch Review tables and foreign keys explicit;
+application operations use a discriminated review context at shared CLI, comment, Walkthrough, and
+event boundaries. Never insert a synthetic Pull Request. Branch code reading uses the existing exact
+Git object adapters with a repository-wide tree and an internally empty comparison only where a shared
+reader requires one.
+
+Cache each GitHub Issue once by canonical identity, and store review membership separately. The same
+Issue may belong independently to a Pull Request Review and a Branch Review. Issue comments and
+Walkthroughs retain their owning review, while `rvw://comment` and `rvw://walkthrough` references remain
+globally resolvable. Protocol version 4 makes review context explicit and the watcher migrates its
+task-local keys from PR URL alone to `(review_kind, context_key)`.
+
+Branch watcher batches are always `investigate-and-reply`: they cannot reserve a repository write key,
+receive no progress acknowledgement, create one final idempotent reply, and never commit, push, edit a
+GitHub Issue, change the default branch, or resolve the thread.
+
+### Trade-offs
+
+- Some storage and application methods remain context-specific instead of hiding invalid PR-only
+  operations behind nullable fields.
+- Issue content is shared cache state, but removal and reset must count and delete only artifacts owned
+  by the selected review.
+- Branch Reviews intentionally have no arbitrary branch selector, history picker, list screen, or
+  automatic attachment to a later Pull Request.
+
 ## 2026-08-20: Consolidate review navigation into Explorer and Comments
 
 ### Problem

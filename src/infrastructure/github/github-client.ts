@@ -1,5 +1,10 @@
 import { z } from "zod";
-import type { GitHubPullRequest } from "../../domain/models.js";
+import type {
+  GitHubIssue,
+  GitHubPullRequest,
+  GitHubRepository,
+  RepositoryIdentity,
+} from "../../domain/models.js";
 import { GIT_OBJECT_ID_PATTERN } from "../../shared/constants.js";
 import { RvwError } from "../../shared/errors.js";
 import { runProcess, runText } from "../process/run-process.js";
@@ -7,6 +12,8 @@ import { runProcess, runText } from "../process/run-process.js";
 export interface GitHubPort {
   doctor(): Promise<{ version: string; authenticated: boolean }>;
   getPullRequest(reference: string | undefined, cwd: string): Promise<GitHubPullRequest>;
+  getRepository?(identity: RepositoryIdentity, cwd: string): Promise<GitHubRepository>;
+  getIssue?(number: number, identity: RepositoryIdentity, cwd: string): Promise<GitHubIssue>;
 }
 
 const ghPullRequestSchema = z.object({
@@ -26,6 +33,27 @@ const ghPullRequestSchema = z.object({
   headRefOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
 });
 
+const ghRepositorySchema = z.object({
+  full_name: z.string().regex(/^[^/]+\/[^/]+$/),
+  default_branch: z.string().min(1),
+});
+
+const ghRefSchema = z.object({
+  object: z.object({ sha: z.string().regex(GIT_OBJECT_ID_PATTERN) }),
+});
+
+const ghIssueSchema = z
+  .object({
+    number: z.number().int().positive(),
+    html_url: z.url(),
+    title: z.string(),
+    body: z.string().nullable(),
+    state: z.enum(["open", "closed"]),
+    updated_at: z.string(),
+    pull_request: z.unknown().optional(),
+  })
+  .passthrough();
+
 export function parsePullRequestUrl(url: string): {
   owner: string;
   repository: string;
@@ -36,6 +64,27 @@ export function parsePullRequestUrl(url: string): {
     throw new RvwError("INVALID_INPUT", `GitHub Pull Request URLが不正です: ${url}`);
   }
   return { owner: match[1], repository: match[2], number: Number(match[3]) };
+}
+
+export function parseIssueReference(
+  reference: string,
+  repository: Pick<RepositoryIdentity, "owner" | "repository">,
+): { owner: string; repository: string; number: number } {
+  const short = /^#(\d+)$/.exec(reference.trim());
+  if (short?.[1]) {
+    return { ...repository, number: Number(short[1]) };
+  }
+  const qualified = /^([^/#\s]+)\/([^/#\s]+)#(\d+)$/.exec(reference.trim());
+  if (qualified?.[1] && qualified[2] && qualified[3]) {
+    return { owner: qualified[1], repository: qualified[2], number: Number(qualified[3]) };
+  }
+  const url = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/(\d+)(?:[/?#].*)?$/.exec(
+    reference.trim(),
+  );
+  if (url?.[1] && url[2] && url[3]) {
+    return { owner: url[1], repository: url[2], number: Number(url[3]) };
+  }
+  throw new RvwError("INVALID_INPUT", `GitHub Issue参照が不正です: ${reference}`);
 }
 
 export class GitHubClient implements GitHubPort {
@@ -124,5 +173,81 @@ export class GitHubClient implements GitHubPort {
       state: "OPEN",
       isDraft: parsed.data.isDraft,
     };
+  }
+
+  async getRepository(identity: RepositoryIdentity, cwd: string): Promise<GitHubRepository> {
+    await this.assertAuthenticated();
+    const repositoryPath = `repos/${identity.owner}/${identity.repository}`;
+    try {
+      const metadata = ghRepositorySchema.parse(
+        JSON.parse(await runText("gh", ["api", repositoryPath], { cwd, timeoutMs: 60_000 })),
+      );
+      const encodedBranch = metadata.default_branch.split("/").map(encodeURIComponent).join("/");
+      const ref = ghRefSchema.parse(
+        JSON.parse(
+          await runText("gh", ["api", `${repositoryPath}/git/ref/heads/${encodedBranch}`], {
+            cwd,
+            timeoutMs: 60_000,
+          }),
+        ),
+      );
+      const [owner, repository] = metadata.full_name.split("/");
+      if (!owner || !repository) throw new Error("invalid full_name");
+      return {
+        host: "github.com",
+        owner,
+        repository,
+        canonicalName: `${owner}/${repository}`,
+        defaultBranchName: metadata.default_branch,
+        defaultBranchOid: ref.object.sha,
+      };
+    } catch (error) {
+      throw new RvwError(
+        "GITHUB_REPOSITORY_ERROR",
+        "GitHub repository情報を取得できませんでした。",
+        {
+          cause: error,
+          suggestions: ["repositoryへのaccessとgh認証を確認してください。"],
+        },
+      );
+    }
+  }
+
+  async getIssue(number: number, identity: RepositoryIdentity, cwd: string): Promise<GitHubIssue> {
+    await this.assertAuthenticated();
+    try {
+      const data = ghIssueSchema.parse(
+        JSON.parse(
+          await runText(
+            "gh",
+            ["api", `repos/${identity.owner}/${identity.repository}/issues/${number}`],
+            { cwd, timeoutMs: 60_000 },
+          ),
+        ),
+      );
+      if (data.pull_request !== undefined) {
+        throw new RvwError(
+          "GITHUB_ISSUE_IS_PULL_REQUEST",
+          `#${number}はIssueではなくPull Requestです。`,
+        );
+      }
+      return {
+        host: "github.com",
+        owner: identity.owner,
+        repository: identity.repository,
+        canonicalName: `${identity.owner}/${identity.repository}`,
+        number: data.number,
+        url: data.html_url,
+        title: data.title,
+        body: data.body ?? "",
+        state: data.state === "open" ? "OPEN" : "CLOSED",
+        updatedAt: data.updated_at,
+      };
+    } catch (error) {
+      if (error instanceof RvwError && error.code === "GITHUB_ISSUE_IS_PULL_REQUEST") throw error;
+      throw new RvwError("GITHUB_ISSUE_ERROR", `GitHub Issue #${number}を取得できませんでした。`, {
+        cause: error,
+      });
+    }
   }
 }

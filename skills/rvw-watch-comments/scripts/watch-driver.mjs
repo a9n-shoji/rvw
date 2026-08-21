@@ -86,9 +86,25 @@ function write(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
-async function dispatchAutoAck(state, pullRequest) {
+async function dispatchAutoAck(state, context) {
+  if (context.kind === "branch") {
+    write({
+      ok: true,
+      type: "pending",
+      context,
+      repository: context.repository,
+      reason: "branch-reviews-use-one-final-reply-without-acknowledgement",
+    });
+    return;
+  }
+  const pullRequest = context.pullRequestUrl;
   const pending = await stateCommand(state, "list");
-  if (!pending.pending.some((batch) => batch.pullRequest === pullRequest)) {
+  if (
+    !pending.pending.some(
+      (batch) =>
+        batch.context?.kind === "pull-request" && batch.context.pullRequestUrl === pullRequest,
+    )
+  ) {
     write({ ok: true, type: "queued", pullRequest, reason: "batch-not-yet-eligible" });
     return;
   }
@@ -107,11 +123,11 @@ async function dispatchAutoAck(state, pullRequest) {
 async function dispatchPendingAutoAcks(state) {
   const pending = await stateCommand(state, "list");
   for (const batch of pending.pending) {
-    await dispatchAutoAck(state, batch.pullRequest);
+    await dispatchAutoAck(state, batch.context);
   }
 }
 
-async function processFrame(state, frame, autoAck, pullRequests) {
+async function processFrame(state, frame, autoAck, contexts) {
   if (!frame || typeof frame !== "object" || typeof frame.type !== "string") {
     throw new DriverError("Invalid RFC 7464 frame", EXIT_SEQUENCE, frame);
   }
@@ -129,12 +145,23 @@ async function processFrame(state, frame, autoAck, pullRequests) {
       autoAck,
     });
   } else if (frame.type === "comment-posted" && ingested.status === "queued") {
-    if (autoAck) pullRequests.add(frame.event.pullRequestUrl);
-    else {
+    const context = frame.event.context ?? {
+      kind: "pull-request",
+      pullRequestUrl: frame.event.pullRequestUrl,
+    };
+    if (autoAck) {
+      const key =
+        context.kind === "branch"
+          ? `branch:${context.repository}`
+          : `pull-request:${context.pullRequestUrl}`;
+      contexts.set(key, context);
+    } else {
       write({
         ok: true,
         type: "pending",
-        pullRequest: frame.event.pullRequestUrl,
+        context,
+        ...(context.kind === "pull-request" ? { pullRequest: context.pullRequestUrl } : {}),
+        ...(context.kind === "branch" ? { repository: context.repository } : {}),
         commentRef: frame.event.commentRef,
         cursor: ingested.cursor,
       });
@@ -169,7 +196,7 @@ async function runWatchOnce(state, autoAck, stopping) {
       buffered += decoder.write(chunk);
       const lines = buffered.split("\n");
       buffered = lines.pop() ?? "";
-      const pullRequests = new Set();
+      const contexts = new Map();
       for (const rawLine of lines) {
         if (!rawLine) continue;
         if (!rawLine.startsWith("\u001e")) {
@@ -183,9 +210,9 @@ async function runWatchOnce(state, autoAck, stopping) {
         }
         readySeen ||= frame.type === "ready";
         stoppedSeen ||= frame.type === "stopped";
-        await processFrame(state, frame, autoAck, pullRequests);
+        await processFrame(state, frame, autoAck, contexts);
       }
-      for (const pullRequest of pullRequests) await dispatchAutoAck(state, pullRequest);
+      for (const context of contexts.values()) await dispatchAutoAck(state, context);
     }
     buffered += decoder.end();
     if (buffered.trim()) {

@@ -20,6 +20,7 @@ import type {
   CodeReference,
   CommentPlacement,
   DocumentRef,
+  IssueDocument,
   ReviewComment,
   SearchResult,
   Walkthrough,
@@ -42,6 +43,7 @@ import {
   type WalkthroughsResponse,
 } from "../api.js";
 import { CommentSidebar } from "../components/CommentSidebar.js";
+import { IssueDocumentViewer } from "../components/IssueDocumentViewer.js";
 import { DocumentTabs } from "../components/DocumentTabs.js";
 import { ErrorNotice } from "../components/ErrorNotice.js";
 import {
@@ -57,6 +59,7 @@ import { QuickOpenPalette } from "../components/QuickOpenPalette.js";
 import { applyThemePreference, storeThemePreference, type ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
+import { BranchReviewApp } from "./BranchReviewApp.js";
 import {
   commitRangeOldOid,
   earliestIncludedCommitOid,
@@ -498,7 +501,7 @@ function pullRequestLoadErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "PR commitがありません。";
 }
 
-export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
+function PullRequestApp({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
   const queryClient = useQueryClient();
   const pullRequestIdParameter = new URL(window.location.href).searchParams.get("pullRequestId");
   const pullRequestIdValid = Boolean(
@@ -547,6 +550,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [searchText, setSearchText] = useState("");
   const [searchMatchCase, setSearchMatchCase] = useState(false);
   const [searchWholeWord, setSearchWholeWord] = useState(false);
+  const [issueReference, setIssueReference] = useState("");
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [reviewStateRevision, setReviewStateRevision] = useState(0);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
@@ -1131,6 +1135,75 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   });
   const comments = commentsQuery.data?.comments ?? [];
   const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
+  const issuesQuery = useQuery({
+    queryKey: ["issues", pullRequestId, changeSequence.data?.changeSequence],
+    queryFn: async () =>
+      await api<{ issues: IssueDocument[] }>(`/api/pull-requests/${pullRequestId}/issues`),
+    enabled: Boolean(pullRequestId),
+  });
+  const issues = issuesQuery.data?.issues ?? [];
+  const addIssueMutation = useMutation({
+    mutationFn: async () =>
+      await api(
+        `/api/pull-requests/${pullRequestId}/issues`,
+        jsonRequest({ issue: issueReference }),
+      ),
+    onSuccess: async () => {
+      setIssueReference("");
+      await queryClient.invalidateQueries({ queryKey: ["issues", pullRequestId] });
+    },
+  });
+  const removeIssueMutation = useMutation({
+    mutationFn: async (issue: IssueDocument) => {
+      const endpoint = `/api/pull-requests/${pullRequestId}/issues/${issue.id}`;
+      const response = await fetch(endpoint, {
+        ...jsonRequest({ yes: false }),
+        method: "DELETE",
+      });
+      const preview = (await response.json()) as {
+        counts?: {
+          issueWholeComments: number;
+          issueRangeComments: number;
+          replies: number;
+        };
+        error?: { code: string; message: string; details?: unknown; suggestions?: string[] };
+      };
+      if (response.status !== 409 || !preview.counts) {
+        throw new ApiError(
+          preview.error?.message ?? `HTTP ${response.status}`,
+          preview.error?.code ?? "HTTP_ERROR",
+          preview.error?.details,
+          preview.error?.suggestions ?? [],
+        );
+      }
+      const confirmed = window.confirm(
+        `Issue #${issue.number} ${issue.title} をこのPull Request Reviewから削除します。\n\nIssue全体コメント ${preview.counts.issueWholeComments}\nIssue本文rangeコメント ${preview.counts.issueRangeComments}\n返信 ${preview.counts.replies}\n\nこの操作は元に戻せません。`,
+      );
+      if (!confirmed) return null;
+      return await api(endpoint, {
+        ...jsonRequest({ yes: true }),
+        method: "DELETE",
+      });
+    },
+    onSuccess: async (result, issue) => {
+      if (!result) return;
+      setDocumentWorkspace((current) => {
+        let next = current;
+        for (const document of current.documents) {
+          if (document.kind === "issue" && document.id === issue.id) {
+            next = removeDocumentFromWorkspace(next, document);
+          }
+        }
+        return next;
+      });
+      resetViewerNavigation();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["issues", pullRequestId] }),
+        queryClient.invalidateQueries({ queryKey: ["comments"] }),
+        queryClient.invalidateQueries({ queryKey: ["change-sequence"] }),
+      ]);
+    },
+  });
   const walkthroughsQuery = useQuery({
     queryKey: ["walkthroughs", pullRequestId],
     queryFn: async () =>
@@ -1336,7 +1409,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       }
       const counts = preview.counts;
       const confirmed = window.confirm(
-        `ローカルレビュー状態を削除して再構築します。\n\nコメント ${counts.comments ?? 0}\n返信 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\n対象 ${counts.targets ?? 0}\nウォークスルー ${counts.walkthroughs ?? 0}\nウォークスルーコード参照 ${counts.walkthroughReferences ?? 0}\nGit ref ${counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
+        `ローカルレビュー状態を削除して再構築します。\n\nIssue membership ${counts.issueMemberships ?? 0}\nコメント ${counts.comments ?? 0}\n返信 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\n対象 ${counts.targets ?? 0}\nウォークスルー ${counts.walkthroughs ?? 0}\nウォークスルーコード参照 ${counts.walkthroughReferences ?? 0}\nGit ref ${counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
       );
       if (!confirmed) return null;
       return await api<{
@@ -1460,6 +1533,17 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           sourceOid: walkthrough.sourceOid,
         };
         navigate(document, startLine, endLine);
+      }
+      return;
+    }
+    if (target.kind === "issue") {
+      const issue = issues.find((candidate) => candidate.id === target.issueId);
+      if (issue) {
+        navigate(
+          { kind: "issue", id: issue.id, number: issue.number, title: issue.title },
+          startLine,
+          endLine,
+        );
       }
       return;
     }
@@ -1764,6 +1848,26 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
               />
             </Suspense>
           </LazyLoadBoundary>
+        ) : paneViewerDocument?.kind === "issue" ? (
+          (() => {
+            const issue = issues.find((candidate) => candidate.id === paneViewerDocument.id);
+            return issue ? (
+              <IssueDocumentViewer
+                pullRequestId={pullRequest.id}
+                issue={issue}
+                comments={comments}
+                themePreference={themePreference}
+                navigationTarget={
+                  viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
+                    ? viewerNavigationTarget
+                    : null
+                }
+                onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
+              />
+            ) : (
+              <div className="empty-document-viewer">Issueを読み込めませんでした。</div>
+            );
+          })()
         ) : paneViewerDocument?.kind === "walkthrough" ? (
           <div className="empty-document-viewer">
             <strong>
@@ -2007,6 +2111,74 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
               hidden={!codeExpanded || codeNavigationMode !== "files"}
             >
               <div className="file-panel">
+                <section className="pr-issues-panel" aria-label="Issues">
+                  <h3>
+                    Issues <span>{issues.length}</span>
+                  </h3>
+                  <form
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      addIssueMutation.mutate();
+                    }}
+                  >
+                    <input
+                      value={issueReference}
+                      onChange={(event) => setIssueReference(event.target.value)}
+                      placeholder="#142 または Issue URL"
+                    />
+                    <button disabled={!issueReference.trim() || addIssueMutation.isPending}>
+                      追加
+                    </button>
+                  </form>
+                  <nav>
+                    {issues.map((issue) => (
+                      <div className="issue-list-row" key={issue.id}>
+                        <button
+                          className={`issue-list-open${
+                            activeDocument?.kind === "issue" && activeDocument.id === issue.id
+                              ? " active"
+                              : ""
+                          }`}
+                          onClick={(event) =>
+                            openDocument(
+                              {
+                                kind: "issue",
+                                id: issue.id,
+                                number: issue.number,
+                                title: issue.title,
+                              },
+                              event.metaKey || event.ctrlKey
+                                ? otherDocumentPane(activePane)
+                                : activePane,
+                            )
+                          }
+                        >
+                          <strong>#{issue.number}</strong>
+                          <span>{issue.title}</span>
+                          <em>
+                            {issue.state}
+                            {issue.syncError ? " · stale" : ""}
+                          </em>
+                        </button>
+                        <button
+                          className="issue-list-remove"
+                          aria-label={`#${issue.number}を削除`}
+                          title="このreviewからIssueを削除"
+                          disabled={
+                            removeIssueMutation.isPending &&
+                            removeIssueMutation.variables?.id === issue.id
+                          }
+                          onClick={() => removeIssueMutation.mutate(issue)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </nav>
+                  <ErrorNotice
+                    error={issuesQuery.error ?? addIssueMutation.error ?? removeIssueMutation.error}
+                  />
+                </section>
                 <ReviewTreeItems
                   walkthroughs={walkthroughs}
                   pullRequestActive={activeDocument?.kind === "pull-request-markdown"}
@@ -2189,5 +2361,17 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         </section>
       </div>
     </main>
+  );
+}
+
+export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
+  const branchReviewId = new URLSearchParams(window.location.search).get("branchReviewId");
+  return branchReviewId ? (
+    <BranchReviewApp
+      branchReviewId={branchReviewId}
+      initialThemePreference={initialThemePreference}
+    />
+  ) : (
+    <PullRequestApp initialThemePreference={initialThemePreference} />
   );
 }

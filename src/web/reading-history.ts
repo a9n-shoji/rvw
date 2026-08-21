@@ -18,6 +18,9 @@ export function sameReadingDocument(left: ActiveDocument, right: ActiveDocument)
   if (left.kind === "pull-request-markdown" || right.kind === "pull-request-markdown") {
     return left.kind === right.kind;
   }
+  if (left.kind === "issue" || right.kind === "issue") {
+    return left.kind === "issue" && right.kind === "issue" && left.id === right.id;
+  }
   if (left.kind === "walkthrough" || right.kind === "walkthrough") {
     return left.kind === "walkthrough" && right.kind === "walkthrough" && left.id === right.id;
   }
@@ -43,6 +46,13 @@ function optionalNullableString(value: unknown): value is string | null | undefi
 function parseDocument(value: unknown): ActiveDocument | null {
   if (!isRecord(value) || typeof value.kind !== "string") return null;
   if (value.kind === "pull-request-markdown") return { kind: "pull-request-markdown" };
+  if (value.kind === "issue") {
+    return typeof value.id === "string" &&
+      typeof value.number === "number" &&
+      typeof value.title === "string"
+      ? { kind: "issue", id: value.id, number: value.number, title: value.title }
+      : null;
+  }
   if (value.kind === "walkthrough") {
     return typeof value.id === "string" &&
       typeof value.title === "string" &&

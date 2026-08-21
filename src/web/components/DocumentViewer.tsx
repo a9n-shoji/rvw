@@ -117,6 +117,7 @@ const markdownViewByDocument = new Map<string, "source" | "preview">();
 function markdownViewKey(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "pull-request-markdown";
   if (document.kind === "walkthrough") return `walkthrough:${document.id}`;
+  if (document.kind === "issue") return `issue:${document.id}`;
   return `repository-file:${document.path}`;
 }
 
@@ -624,8 +625,8 @@ export function DocumentViewer({
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
 }) {
-  if (activeDocument.kind === "walkthrough") {
-    throw new Error("walkthroughはWalkthroughViewerで表示してください。");
+  if (activeDocument.kind === "walkthrough" || activeDocument.kind === "issue") {
+    throw new Error("この文書は専用viewerで表示してください。");
   }
   const queryClient = useQueryClient();
   const markdownCapable =

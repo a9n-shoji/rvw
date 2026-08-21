@@ -15,6 +15,8 @@ import { ErrorNotice } from "./ErrorNotice.js";
 function selectionLabel(comment: ReviewComment): string {
   if (comment.target.kind === "pull-request") return "Pull Request全体";
   if (comment.target.kind === "walkthrough") return comment.target.walkthroughTitle;
+  if (comment.target.kind === "issue")
+    return `#${comment.target.issueNumber} ${comment.target.issueTitle}`;
   return comment.target.documentKind === "pull-request-markdown"
     ? "Pull Request.md"
     : comment.target.path;

@@ -2,6 +2,7 @@ export type DocumentPaneId = "left" | "right";
 
 export type ActiveDocument =
   | { kind: "pull-request-markdown" }
+  | { kind: "issue"; id: string; number: number; title: string }
   | { kind: "walkthrough"; id: string; title: string; sourceOid: string }
   | {
       kind: "repository-file";
@@ -24,12 +25,14 @@ const initialDocument: ActiveDocument = { kind: "pull-request-markdown" };
 
 export function documentTabKey(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "pull-request-markdown";
+  if (document.kind === "issue") return `issue:${document.id}`;
   if (document.kind === "walkthrough") return `walkthrough:${document.id}`;
   return `file:${document.path}`;
 }
 
 export function documentTabPath(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "Pull Request.md";
+  if (document.kind === "issue") return `#${document.number} ${document.title}`;
   if (document.kind === "walkthrough") return document.title;
   return document.path;
 }
@@ -167,6 +170,7 @@ export function removeDocumentFromWorkspace(
 
 export function currentCommitDocument(document: ActiveDocument): ActiveDocument {
   if (document.kind === "pull-request-markdown") return { kind: "pull-request-markdown" };
+  if (document.kind === "issue") return document;
   if (document.kind === "walkthrough") return document;
   return { kind: "repository-file", path: document.path };
 }

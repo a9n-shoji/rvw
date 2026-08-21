@@ -171,10 +171,14 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 3,
+      protocolVersion: 4,
       appVersion: "0.2.2",
       capabilities: [
         "agent.transport",
+        "branchReview.read",
+        "branchReview.sync",
+        "issue.read",
+        "issue.membership",
         "comment.create",
         "comment.list",
         "comment.watch",
@@ -201,6 +205,18 @@ describe("CLI protocol discovery", () => {
         .find((command) => command.name() === "walkthrough")
         ?.commands.map((command) => command.name()),
     ).toEqual(["publish", "get", "update", "delete"]);
+    expect(
+      program.commands
+        .find((command) => command.name() === "pr")
+        ?.commands.find((command) => command.name() === "issue")
+        ?.commands.map((command) => command.name()),
+    ).toEqual(["add", "remove"]);
+    expect(
+      program.commands
+        .find((command) => command.name() === "branch")
+        ?.commands.find((command) => command.name() === "issue")
+        ?.commands.map((command) => command.name()),
+    ).toEqual(["add", "remove"]);
     expect(
       program.commands
         .find((command) => command.name() === "agent")
@@ -591,6 +607,10 @@ describe("CLI protocol discovery", () => {
     expect(getCommentReviewContext).toHaveBeenCalledWith(commentRef, { live: false });
     expect(readStdout()).toEqual({
       ok: true,
+      context: {
+        kind: "pull-request",
+        pullRequestUrl: pullRequest.url,
+      },
       pullRequest: formattedPullRequest,
       comment: {
         ...reviewCommentWithoutPosts,
@@ -617,6 +637,7 @@ describe("CLI protocol discovery", () => {
         },
       },
       walkthrough: null,
+      issue: null,
       githubState: {
         liveCheckedAt: null,
         staleAgainstGitHub: null,

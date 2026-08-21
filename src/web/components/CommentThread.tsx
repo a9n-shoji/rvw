@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
+  BranchReviewComment,
   CodeReference,
   CommentPlacement,
   CommentPost,
@@ -36,9 +37,15 @@ interface CommentMenuPosition {
 const inlineExpansionByComment = new Map<string, StoredInlineExpansion>();
 const pendingInlineScrollByComment = new Set<string>();
 const referenceNoticeDurationMs = 2400;
+type AnyReviewComment = ReviewComment | BranchReviewComment;
 
-function rangeLabel(comment: ReviewComment, placement: CommentPlacement | null): string | null {
-  if (comment.target.kind === "pull-request" || comment.target.startLine === null) return null;
+function rangeLabel(comment: AnyReviewComment, placement: CommentPlacement | null): string | null {
+  if (
+    comment.target.kind === "pull-request" ||
+    comment.target.kind === "branch" ||
+    comment.target.startLine === null
+  )
+    return null;
   const range = placement && !placement.outdated ? placement.range : null;
   const start = range?.startLine ?? comment.target.startLine;
   const end = range?.endLine ?? comment.target.endLine ?? start;
@@ -46,15 +53,22 @@ function rangeLabel(comment: ReviewComment, placement: CommentPlacement | null):
 }
 
 function targetLabel(
-  comment: ReviewComment,
+  comment: AnyReviewComment,
   placement: CommentPlacement | null,
   side: DiffSide,
 ): string {
   if (comment.target.kind === "pull-request") return "Pull Request全体";
+  if (comment.target.kind === "branch") return "Branch Review全体";
   if (comment.target.kind === "walkthrough") {
     return [
       comment.target.walkthroughTitle,
       rangeLabel(comment, placement) ?? "ウォークスルー全体",
+    ].join(" · ");
+  }
+  if (comment.target.kind === "issue") {
+    return [
+      `#${comment.target.issueNumber} ${comment.target.issueTitle}`,
+      rangeLabel(comment, placement) ?? "Issue全体",
     ].join(" · ");
   }
   const path =
@@ -69,13 +83,17 @@ function targetLabel(
 }
 
 function inlineTargetLabel(
-  comment: ReviewComment,
+  comment: AnyReviewComment,
   placement: CommentPlacement | null,
   side: DiffSide,
 ): string {
   if (comment.target.kind === "pull-request") return "Pull Request全体";
+  if (comment.target.kind === "branch") return "Branch Review全体";
   if (comment.target.kind === "walkthrough") {
     return rangeLabel(comment, placement) ?? "ウォークスルー全体";
+  }
+  if (comment.target.kind === "issue") {
+    return rangeLabel(comment, placement) ?? "Issue全体";
   }
   const range = rangeLabel(comment, placement);
   const level =
@@ -84,7 +102,7 @@ function inlineTargetLabel(
   return side === "deletions" ? `変更前 · ${level}` : level;
 }
 
-function navigationLabel(comment: ReviewComment): string {
+function navigationLabel(comment: AnyReviewComment): string {
   return comment.target.kind === "pull-request" ? "Pull Request.mdを開く" : "コメント対象を開く";
 }
 
@@ -107,7 +125,7 @@ function CommentPostMarkdown({
   onOpenCodeReference,
   onOpenRepositoryLink,
 }: {
-  comment: ReviewComment;
+  comment: AnyReviewComment;
   post: CommentPost;
   markdownSourceOid?: string | undefined;
   themePreference: ThemePreference;
@@ -131,7 +149,7 @@ function CommentPostMarkdown({
     post.relatedCommitOid ??
     repositoryTarget?.sourceOid ??
     markdownSourceOid ??
-    comment.createdHeadOid;
+    ("createdHeadOid" in comment ? comment.createdHeadOid : comment.createdSourceOid);
   useEffect(
     () => () => {
       if (referenceNoticeTimeout.current !== null) {
@@ -160,7 +178,9 @@ function CommentPostMarkdown({
     <>
       <CommentMarkdown
         body={post.body}
-        pullRequestId={comment.pullRequestId}
+        {...("pullRequestId" in comment
+          ? { pullRequestId: comment.pullRequestId }
+          : { branchReviewId: comment.branchReviewId })}
         sourceOid={sourceOid}
         sourcePath={repositoryTarget?.path ?? null}
         references={post.references}
@@ -192,7 +212,7 @@ export function CommentThread({
   onDeleted,
   onActiveChange,
 }: {
-  comment: ReviewComment;
+  comment: AnyReviewComment;
   variant?: CommentThreadVariant;
   placement?: CommentPlacement | null;
   side?: DiffSide;
@@ -653,7 +673,8 @@ export function CommentThread({
           )}
           {((comment.target.kind === "document" &&
             comment.target.documentKind === "pull-request-markdown") ||
-            comment.target.kind === "walkthrough") &&
+            comment.target.kind === "walkthrough" ||
+            comment.target.kind === "issue") &&
             comment.target.quotedText &&
             placementOutdated && (
               <div className="comment-source-quote">

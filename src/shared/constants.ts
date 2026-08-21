@@ -1,5 +1,5 @@
 export const APP_VERSION = "0.2.2";
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 export const VIEWER_ID_HEADER = "x-rvw-viewer-id";
 
 export const GIT_OBJECT_ID_PATTERN = /^[0-9a-f]{40,64}$/i;

@@ -180,10 +180,16 @@ describe("Agent socket", () => {
 
   it("requires server-side confirmation for destructive operations", async () => {
     const resetPullRequest = vi.fn();
+    const resetBranchReview = vi.fn();
+    const removePullRequestIssue = vi.fn();
+    const removeBranchIssue = vi.fn();
     const deleteWalkthroughByUri = vi.fn();
     const service = {
       resolveStoredPullRequest: vi.fn().mockReturnValue({ id: "pr-1" }),
       resetPullRequest,
+      resetBranchReview,
+      removePullRequestIssue,
+      removeBranchIssue,
       deleteWalkthroughByUri,
     } as unknown as RvwService;
 
@@ -197,11 +203,35 @@ describe("Agent socket", () => {
     await expect(
       dispatchAgentSocketRequest(service, {
         protocolVersion: 1,
+        operation: "pr.issue.remove",
+        input: { reference: "1", issueReference: "#142" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: 1,
+        operation: "branch.issue.remove",
+        input: { repositoryPath: "/repo", issueReference: "#142" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: 1,
+        operation: "branch.reset",
+        input: { repositoryPath: "/repo" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: 1,
         operation: "walkthrough.delete",
         input: { uri: "rvw://walkthrough/10000000-0000-4000-8000-000000000001" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     expect(resetPullRequest).not.toHaveBeenCalled();
+    expect(resetBranchReview).not.toHaveBeenCalled();
+    expect(removePullRequestIssue).not.toHaveBeenCalled();
+    expect(removeBranchIssue).not.toHaveBeenCalled();
     expect(deleteWalkthroughByUri).not.toHaveBeenCalled();
   });
 

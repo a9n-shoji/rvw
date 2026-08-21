@@ -3083,3 +3083,304 @@ diffs-container > [slot="header-metadata"] {
     padding-inline: 5px;
   }
 }
+
+/* Branch Review keeps its repository-wide reading surface separate from PR-only controls. */
+.branch-topbar .pr-heading h1 {
+  font-family: var(--mono);
+  font-size: 14px;
+}
+.branch-workspace {
+  --sidebar-width: 350px;
+}
+.branch-sidebar {
+  overflow-y: auto;
+}
+.branch-sidebar-section {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.branch-sidebar-section h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 9px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.branch-sidebar-section h2 span {
+  min-width: 20px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  text-align: center;
+  font-size: 10px;
+}
+.branch-sidebar-section form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.branch-list,
+.branch-search-results {
+  display: grid;
+  gap: 2px;
+}
+.branch-list > button,
+.branch-list .issue-list-open,
+.branch-search-results > button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 7px;
+  padding: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.branch-list > button:hover,
+.branch-list .issue-list-open:hover,
+.branch-search-results > button:hover {
+  background: var(--accent-soft);
+}
+.branch-list > button span,
+.branch-list .issue-list-open span,
+.branch-search-results > button span {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+}
+.branch-list em {
+  color: var(--warning-text);
+  font-size: 10px;
+}
+.branch-code-section {
+  min-height: 260px;
+}
+.branch-code-section > input + input {
+  margin-top: 6px;
+}
+.branch-code-section .file-tree {
+  margin-top: 8px;
+}
+.branch-search-results {
+  max-height: 280px;
+  margin-top: 8px;
+  overflow: auto;
+}
+.branch-search-results > button {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+}
+.branch-comments-section {
+  min-height: 220px;
+}
+.branch-comments-section > button {
+  width: 100%;
+  margin: 6px 0 10px;
+}
+.branch-document-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.branch-document-content {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+.branch-document-toolbar {
+  width: 180px;
+  margin: 8px 14px 0 auto;
+}
+.branch-markdown {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 28px 42px;
+}
+.branch-source-lines {
+  display: table;
+  min-width: 100%;
+  margin: 0;
+  padding: 12px 0;
+  background: var(--panel);
+  color: var(--text);
+  font: 12px/1.55 var(--mono);
+}
+.branch-source-lines > button {
+  display: table-row;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.branch-source-lines > button:hover,
+.branch-source-lines > button.is-selected {
+  background: var(--accent-soft);
+}
+.branch-source-lines > button.is-navigation-target {
+  box-shadow: inset 3px 0 var(--accent);
+  background: var(--accent-soft);
+}
+.branch-source-lines > button > span,
+.branch-source-lines > button > code {
+  display: table-cell;
+  white-space: pre;
+}
+.branch-source-lines > button > span {
+  width: 1%;
+  padding: 0 12px;
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+.branch-source-lines > button > code {
+  padding-right: 24px;
+}
+.branch-document-comment {
+  position: sticky;
+  bottom: 12px;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  width: min(720px, calc(100% - 32px));
+  margin: 20px auto 12px;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 25px var(--shadow-medium);
+}
+.branch-document-comment label,
+.branch-document-comment .error-notice {
+  grid-column: 1 / -1;
+}
+.branch-document-error {
+  padding: 20px;
+}
+.branch-empty-document {
+  min-height: calc(100% - 72px);
+}
+.pr-issues-panel {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.pr-issues-panel h3 {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 7px;
+  font-size: 12px;
+}
+.pr-issues-panel form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px;
+}
+.pr-issues-panel nav {
+  display: grid;
+  max-height: 190px;
+  margin-top: 6px;
+  overflow: auto;
+}
+.issue-list-row {
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+}
+.pr-issues-panel nav .issue-list-open {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  flex: 1;
+  gap: 6px;
+  padding: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.pr-issues-panel nav .issue-list-open:hover,
+.pr-issues-panel nav .issue-list-open.active {
+  background: var(--accent-soft);
+}
+.pr-issues-panel nav .issue-list-open span {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pr-issues-panel nav .issue-list-open em {
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+.issue-list-remove {
+  width: 28px;
+  flex: 0 0 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+.issue-list-remove:hover,
+.issue-list-remove:focus-visible {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.branch-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.issue-document-viewer {
+  min-height: 100%;
+  background: var(--bg);
+}
+.issue-document-header {
+  position: sticky;
+  top: 40px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.issue-document-header span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.issue-document-header h2 {
+  margin: 3px 0 0;
+  font-size: 16px;
+}
+.issue-document-header h2 a {
+  color: inherit;
+  text-decoration: none;
+}
+.issue-stale-notice {
+  margin: 12px 18px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning-text) 30%, var(--line));
+  border-radius: 7px;
+  color: var(--warning-text);
+}
+.issue-inline-comments {
+  max-width: 900px;
+  margin: 16px auto;
+  padding: 0 42px 36px;
+}
+.issue-inline-comments h3 {
+  font-size: 13px;
+}

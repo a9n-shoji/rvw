@@ -5,6 +5,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- GitHub repositoryごとに一件だけ保持し、default branchのexact commitを読むBranch Review
+- Pull Request ReviewとBranch Reviewで、GitHub Issue本文を通常文書として読む・コメントするsurface
+- Branch Reviewのcomment eventをcontext別にbatchし、read-only調査と冪等な最終replyを行うwatcher mode
+- 件数previewと明示確認を伴うPR / Branch Issue membership削除、およびBranch Review reset
+
+### Changed
+
+- comment、Walkthrough、watch eventをPull Request / Branch Reviewの明示contextで扱うprotocol v4
+- Issue cacheをGitHub identityで共有しつつ、membershipとreview artifactを各reviewへ分離
+
 ## [0.2.2] - 2026-08-21
 
 ### Changed

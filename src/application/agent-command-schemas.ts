@@ -21,9 +21,23 @@ const walkthroughUri = z.string().regex(/^rvw:\/\/walkthrough\//);
 const nullableCommentLine = z.number().int().positive().nullable().optional().default(null);
 const idempotencyKey = z.string().min(1).max(MAX_IDEMPOTENCY_KEY_CHARACTERS).optional();
 
+export const reviewTargetInputSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("pull-request"), pullRequest: nonEmptyString }).strict(),
+  z.object({ kind: z.literal("branch"), repository: nonEmptyString }).strict(),
+]);
+
 export const commentTargetInputSchema = z
   .union([
     z.object({ kind: z.literal("pull-request") }).strict(),
+    z.object({ kind: z.literal("branch") }).strict(),
+    z
+      .object({
+        kind: z.literal("issue"),
+        issue: nonEmptyString,
+        startLine: nullableCommentLine,
+        endLine: nullableCommentLine,
+      })
+      .strict(),
     z
       .object({
         kind: z.literal("walkthrough"),
@@ -52,7 +66,7 @@ export const commentTargetInputSchema = z
       .strict(),
   ])
   .superRefine((target, context) => {
-    if (target.kind === "pull-request") return;
+    if (target.kind === "pull-request" || target.kind === "branch") return;
     if ((target.startLine === null) !== (target.endLine === null)) {
       context.addIssue({
         code: "custom",
@@ -121,7 +135,8 @@ function requireRelatedCommitForReferences(
 
 export const commentCreateInputSchema = z
   .object({
-    pullRequest: nonEmptyString,
+    review: reviewTargetInputSchema.optional(),
+    pullRequest: nonEmptyString.optional(),
     target: commentTargetInputSchema,
     body: z
       .string()
@@ -135,7 +150,16 @@ export const commentCreateInputSchema = z
     references: optionalCodeReferences,
   })
   .strict()
-  .superRefine(requireRelatedCommitForReferences);
+  .superRefine((input, context) => {
+    requireRelatedCommitForReferences(input, context);
+    if (Boolean(input.review) === Boolean(input.pullRequest)) {
+      context.addIssue({
+        code: "custom",
+        path: ["review"],
+        message: "reviewまたはpullRequestのどちらか一方が必要です。",
+      });
+    }
+  });
 
 export const commentReplyInputSchema = z
   .object({
@@ -201,12 +225,21 @@ const walkthroughContentInputSchema = z
     authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
     diagramBindings: z.record(z.string(), z.string()).optional(),
     references: z.array(codeReferenceInputSchema).min(1).max(MAX_CODE_REFERENCES),
+    issues: z.array(nonEmptyString).optional(),
   })
   .strict();
 
-export const walkthroughPublishInputSchema = walkthroughContentInputSchema.extend({
-  pullRequest: nonEmptyString,
-});
+export const walkthroughPublishInputSchema = walkthroughContentInputSchema
+  .extend({ review: reviewTargetInputSchema.optional(), pullRequest: nonEmptyString.optional() })
+  .superRefine((input, context) => {
+    if (Boolean(input.review) === Boolean(input.pullRequest)) {
+      context.addIssue({
+        code: "custom",
+        path: ["review"],
+        message: "reviewまたはpullRequestのどちらか一方が必要です。",
+      });
+    }
+  });
 
 export const walkthroughUpdateInputSchema = walkthroughContentInputSchema;
 
@@ -220,6 +253,39 @@ export const agentCommandInputSchemas = {
   "pr.attach": z.object({ reference: nonEmptyString, repositoryPath: nonEmptyString }).strict(),
   "pr.reset.preview": z.object({ reference: nonEmptyString }).strict(),
   "pr.reset": z.object({ reference: nonEmptyString, confirmed: z.literal(true) }).strict(),
+  "pr.issue.add": z.object({ reference: nonEmptyString, issueReference: nonEmptyString }).strict(),
+  "pr.issue.remove.preview": z
+    .object({ reference: nonEmptyString, issueReference: nonEmptyString })
+    .strict(),
+  "pr.issue.remove": z
+    .object({
+      reference: nonEmptyString,
+      issueReference: nonEmptyString,
+      confirmed: z.literal(true),
+    })
+    .strict(),
+  "branch.sync": z.object({ repositoryPath: nonEmptyString }).strict(),
+  "branch.issue.add": z
+    .object({ repositoryPath: nonEmptyString, issueReference: nonEmptyString })
+    .strict(),
+  "branch.issue.remove.preview": z
+    .object({ repositoryPath: nonEmptyString, issueReference: nonEmptyString })
+    .strict(),
+  "branch.issue.remove": z
+    .object({
+      repositoryPath: nonEmptyString,
+      issueReference: nonEmptyString,
+      confirmed: z.literal(true),
+    })
+    .strict(),
+  "branch.reset.preview": z.object({ repositoryPath: nonEmptyString }).strict(),
+  "branch.reset": z.object({ repositoryPath: nonEmptyString, confirmed: z.literal(true) }).strict(),
+  "branch.comments": z
+    .object({
+      repositoryPath: nonEmptyString,
+      resolved: z.boolean().optional(),
+    })
+    .strict(),
   "comment.list": z
     .object({
       reference: nonEmptyString,

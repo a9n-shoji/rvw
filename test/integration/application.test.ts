@@ -4,13 +4,21 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RvwService } from "../../src/application/rvw-service.js";
 import { formatCommentWatchCursor } from "../../src/domain/comment-watch-cursor.js";
-import type { GitHubPullRequest } from "../../src/domain/models.js";
+import type {
+  GitHubIssue,
+  GitHubPullRequest,
+  RepositoryIdentity,
+} from "../../src/domain/models.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
+import { RvwError } from "../../src/shared/errors.js";
 import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
 
 class FakeGitHub implements GitHubPort {
+  readonly issues = new Map<number, GitHubIssue>();
+  readonly pullRequestIssueNumbers = new Set<number>();
+
   constructor(public pullRequest: GitHubPullRequest) {}
 
   doctor() {
@@ -20,6 +28,34 @@ class FakeGitHub implements GitHubPort {
   getPullRequest() {
     return Promise.resolve(this.pullRequest);
   }
+
+  getIssue(number: number, repository: RepositoryIdentity): Promise<GitHubIssue> {
+    expect(repository.canonicalName).toBe("acme/review-repo");
+    if (this.pullRequestIssueNumbers.has(number)) {
+      throw new RvwError(
+        "GITHUB_ISSUE_IS_PULL_REQUEST",
+        `#${number}はIssueではなくPull Requestです。`,
+      );
+    }
+    const issue = this.issues.get(number);
+    if (!issue) throw new Error(`missing Issue #${number}`);
+    return Promise.resolve(issue);
+  }
+}
+
+function githubIssue(number: number, body = `Issue ${number} body`): GitHubIssue {
+  return {
+    host: "github.com",
+    owner: "acme",
+    repository: "review-repo",
+    canonicalName: "acme/review-repo",
+    number,
+    url: `https://github.com/acme/review-repo/issues/${number}`,
+    title: `Issue ${number}`,
+    body,
+    state: "OPEN",
+    updatedAt: "2026-08-20T00:00:00.000Z",
+  };
 }
 
 const openPr = (baseOid: string, headOid: string): GitHubPullRequest => ({
@@ -76,6 +112,71 @@ describe("RvwService commit workflow", () => {
       databaseWriteProbe: { ok: true, error: null },
     });
     expect(database.getChangeSequence()).toBe(changeSequence);
+  });
+
+  it("adds only direct same-repository Issue references from the PR body and never removes them", async () => {
+    const { repository, fake, service } = setup("rvw-pr-direct-issues-");
+    fake.issues.set(142, githubIssue(142, "Requirement with a nested #77 reference."));
+    fake.issues.set(99, githubIssue(99));
+    fake.issues.set(88, githubIssue(88));
+    fake.pullRequest = {
+      ...fake.pullRequest,
+      body: [
+        "Closes #142.",
+        "Also acme/review-repo#99.",
+        "See https://github.com/acme/review-repo/issues/88.",
+        "Ignore other/repository#77.",
+      ].join("\n"),
+    };
+
+    const opened = await service.openPullRequest(undefined, repository);
+    expect(
+      service.listPullRequestIssues(opened.pullRequest.id).map(({ number }) => number),
+    ).toEqual([142, 99, 88]);
+
+    fake.pullRequest = { ...fake.pullRequest, body: "References removed from the PR body." };
+    await service.refreshPullRequest(opened.pullRequest.id);
+    expect(
+      service.listPullRequestIssues(opened.pullRequest.id).map(({ number }) => number),
+    ).toEqual([142, 99, 88]);
+    expect(service.listPullRequestIssues(opened.pullRequest.id)).not.toContainEqual(
+      expect.objectContaining({ number: 77 }),
+    );
+
+    fake.pullRequestIssueNumbers.add(44);
+    fake.pullRequest = {
+      ...fake.pullRequest,
+      body: "Closes #44\nCloses #404",
+    };
+    const partial = await service.refreshPullRequest(opened.pullRequest.id);
+    const pullRequestFailure = partial.issueResults.find(({ reference }) => reference === "#44");
+    expect(pullRequestFailure).toMatchObject({ issue: null, ok: false });
+    expect(pullRequestFailure?.ok === false ? pullRequestFailure.error.code : null).toBe(
+      "GITHUB_ISSUE_IS_PULL_REQUEST",
+    );
+    expect(partial.issueResults.find(({ reference }) => reference === "#404")).toMatchObject({
+      issue: null,
+      ok: false,
+    });
+    expect(
+      service.listPullRequestIssues(opened.pullRequest.id).map(({ number }) => number),
+    ).toEqual([142, 99, 88]);
+    await expect(
+      service.addPullRequestIssue(opened.pullRequest.url, "other/repository#142"),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(service.addPullRequestIssue(opened.pullRequest.url, "#44")).rejects.toMatchObject({
+      code: "GITHUB_ISSUE_IS_PULL_REQUEST",
+    });
+
+    fake.issues.delete(142);
+    fake.pullRequest = { ...fake.pullRequest, body: "Closes #142" };
+    const stale = await service.refreshPullRequest(opened.pullRequest.id);
+    const staleResults = stale.issueResults.filter(({ reference }) => reference === "#142");
+    expect(staleResults).toHaveLength(1);
+    expect(staleResults[0]).toMatchObject({
+      ok: false,
+      issue: { number: 142, syncError: "missing Issue #142" },
+    });
   });
 
   it("uses commits as history, keeps PR markdown latest, syncs comment updates, and resets", async () => {
@@ -155,12 +256,22 @@ describe("RvwService commit workflow", () => {
     expect(cached.fromCache).toBe(true);
     expect(cached.pullRequest.gitCommonDir).toBe(opened.pullRequest.gitCommonDir);
 
+    fake.issues.set(142, githubIssue(142));
+    await service.addPullRequestIssue(opened.pullRequest.url, "#142");
+
     const preview = await service.getResetPreview(opened.pullRequest.id);
-    expect(preview.counts).toMatchObject({ comments: 1, posts: 2, targets: 1, gitRefs: 2 });
+    expect(preview.counts).toMatchObject({
+      issueMemberships: 1,
+      comments: 1,
+      posts: 2,
+      targets: 1,
+      gitRefs: 2,
+    });
     const reset = await service.resetPullRequest(opened.pullRequest.id);
     expect(reset.pullRequest.latestComparisonBaseOid).toBe(base);
     expect(reset.commits.map(({ oid }) => oid)).toEqual([firstHead, secondHead]);
     expect(service.listComments(opened.pullRequest.id)).toHaveLength(0);
+    expect(service.listPullRequestIssues(opened.pullRequest.id)).toHaveLength(0);
     expect((await service.getResetPreview(opened.pullRequest.id)).counts.gitRefs).toBe(1);
   });
 

@@ -32,6 +32,7 @@ function documentIdentity(document: ActiveDocument): unknown[] {
   if (document.kind === "walkthrough") {
     return ["walkthrough", document.id, document.sourceOid];
   }
+  if (document.kind === "issue") return ["issue", document.id];
   return [
     "repository-file",
     document.path,

@@ -15,6 +15,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { CodeReference } from "../../domain/models.js";
 import {
+  branchMarkdownAssetUrl,
   isExternalMarkdownHref,
   markdownAssetUrl,
   markdownLinkWasDragged,
@@ -91,19 +92,23 @@ function CommentMermaidDiagram({
 export function CommentMarkdown({
   body,
   pullRequestId,
+  branchReviewId,
   sourceOid,
   sourcePath,
   references,
   themePreference,
+  repositoryAssetsEnabled = true,
   onOpenCodeReference,
   onOpenRepositoryLink,
 }: {
   body: string;
-  pullRequestId: string;
+  pullRequestId?: string | undefined;
+  branchReviewId?: string | undefined;
   sourceOid: string;
   sourcePath: string | null;
   references: CodeReference[];
   themePreference: ThemePreference;
+  repositoryAssetsEnabled?: boolean;
   onOpenCodeReference?: ((reference: CodeReference, openInOtherPane: boolean) => void) | undefined;
   onOpenRepositoryLink?:
     ((path: string, sourceOid: string, openInOtherPane: boolean) => void) | undefined;
@@ -140,10 +145,19 @@ export function CommentMarkdown({
             <span>{children}</span>
           );
         }
-        const repositoryPath = resolveRepositoryMarkdownPath(href, sourcePath);
+        const repositoryPath = repositoryAssetsEnabled
+          ? resolveRepositoryMarkdownPath(href, sourcePath)
+          : null;
         if (!repositoryPath) {
           if (!href) return <span>{children}</span>;
           const external = isExternalMarkdownHref(href);
+          if (!repositoryAssetsEnabled && !external && !href.startsWith("#")) {
+            return (
+              <span className="comment-markdown-unavailable-link" title={href}>
+                {children}
+              </span>
+            );
+          }
           return (
             <a
               {...props}
@@ -205,14 +219,18 @@ export function CommentMarkdown({
       },
       img: ({ src, alt, title, node, ...props }) => {
         void node;
-        const repositoryPath = resolveRepositoryMarkdownPath(src, sourcePath);
-        return repositoryPath ? (
-          <img
-            {...props}
-            src={markdownAssetUrl(pullRequestId, sourceOid, repositoryPath)}
-            alt={alt ?? ""}
-            title={title}
-          />
+        const repositoryPath = repositoryAssetsEnabled
+          ? resolveRepositoryMarkdownPath(src, sourcePath)
+          : null;
+        const assetUrl = repositoryPath
+          ? branchReviewId
+            ? branchMarkdownAssetUrl(branchReviewId, sourceOid, repositoryPath)
+            : pullRequestId
+              ? markdownAssetUrl(pullRequestId, sourceOid, repositoryPath)
+              : null
+          : null;
+        return assetUrl ? (
+          <img {...props} src={assetUrl} alt={alt ?? ""} title={title} />
         ) : (
           <MarkdownImagePlaceholder alt={alt} title={title} sourceAttributes={{}} />
         );
@@ -243,8 +261,10 @@ export function CommentMarkdown({
     [
       onOpenCodeReference,
       onOpenRepositoryLink,
+      branchReviewId,
       pullRequestId,
       referencesById,
+      repositoryAssetsEnabled,
       sourceOid,
       sourcePath,
       themePreference,

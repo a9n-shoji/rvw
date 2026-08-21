@@ -29,6 +29,7 @@ function shortestUniqueDirectorySuffix(path: string, peerPaths: string[]): strin
 
 export function documentIdentityQualifier(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "PR本文";
+  if (document.kind === "issue") return `Issue #${document.number}`;
   if (document.kind === "walkthrough") return `Walkthrough ${document.id.slice(0, 8)}`;
   return "repository";
 }

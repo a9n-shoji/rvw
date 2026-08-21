@@ -469,6 +469,82 @@ async function runOpenWorker(
   }
 }
 
+function forkBranchOpenWorker(repositoryPath: string, port: number): BackgroundOpenChild {
+  const modulePath = process.argv[1];
+  if (!modulePath) {
+    throw new RvwError("PROCESS_FAILED", "rvw CLIの実行pathを解決できませんでした。");
+  }
+  return fork(
+    path.resolve(modulePath),
+    ["__branch-open-worker", "--repository", repositoryPath, "--port", String(port)],
+    {
+      cwd: process.cwd(),
+      env: process.env,
+      detached: true,
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    },
+  );
+}
+
+async function startBackgroundBranchOpen(repositoryPath: string, port: number): Promise<string> {
+  return await completeBackgroundOpen(
+    forkBranchOpenWorker(repositoryPath, port),
+    async (url) => await openBrowser(url),
+  );
+}
+
+async function runBranchOpenServer(
+  activeRuntime: Runtime,
+  repositoryPath: string,
+  port: number,
+  openAutomatically: boolean,
+  useAgentSocket: boolean,
+  worker = false,
+): Promise<void> {
+  let running: RunningServer | undefined;
+  let agentSocket: RunningAgentSocket | undefined;
+  try {
+    if (worker && (!process.send || !process.connected)) {
+      throw new RvwError("INVALID_INPUT", "内部viewer workerは親CLIから起動してください。");
+    }
+    const opened = await activeRuntime.service.openBranchReview(repositoryPath);
+    running = await startServer(activeRuntime.service, {
+      port,
+      staticDirectory: staticDirectory(),
+      autoCloseWhenNoViewers: worker || openAutomatically,
+    });
+    if (useAgentSocket || worker) agentSocket = await startAgentSocket(activeRuntime.service);
+    const url = new URL(running.origin);
+    url.searchParams.set("branchReviewId", opened.branchReview.id);
+    if (worker) {
+      if (!(await sendOpenWorkerMessage({ type: "ready", url: url.toString() }))) return;
+      if (!running.firstViewerConnected) {
+        throw new RvwError("INTERNAL_ERROR", "viewer lifecycleを初期化できませんでした.");
+      }
+      const initialViewer = await waitForInitialViewer(running.firstViewerConnected);
+      if (initialViewer === "aborted") return;
+      if (initialViewer === "timeout") {
+        throw new RvwError("PROCESS_TIMEOUT", "ブラウザviewerの起動確認がタイムアウトしました。");
+      }
+      await sendOpenWorkerMessage({ type: "viewer-connected" });
+    } else {
+      process.stdout.write(`rvw: ${url.toString()}\n`);
+      if (openAutomatically) await openBrowser(url.toString());
+    }
+    await waitForServerShutdown(running.allViewersClosed);
+  } finally {
+    try {
+      await agentSocket?.close();
+    } finally {
+      try {
+        await running?.close();
+      } finally {
+        activeRuntime.close();
+      }
+    }
+  }
+}
+
 const defaultRuntimeFactory = (): Runtime => createRuntime();
 
 export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFactory): Command {
@@ -492,7 +568,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
   const program = new Command();
   program
     .name("rvw")
-    .description("GitHub Pull Requestをcommit単位で閲覧・コメントするローカルviewer")
+    .description("GitHub Pull Requestとdefault branchを閲覧・コメントするローカルviewer")
     .version(APP_VERSION)
     .showHelpAfterError();
 
@@ -553,6 +629,10 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         appVersion: APP_VERSION,
         capabilities: [
           "agent.transport",
+          "branchReview.read",
+          "branchReview.sync",
+          "issue.read",
+          "issue.membership",
           "comment.create",
           "comment.list",
           "comment.watch",
@@ -637,6 +717,188 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       }
     });
 
+  program
+    .command("__branch-open-worker", { hidden: true })
+    .requiredOption("--repository <path>")
+    .requiredOption("--port <port>", "listen port", parsePort)
+    .action(async (options: { repository: string; port: number }) => {
+      try {
+        await runBranchOpenServer(getRuntime(), options.repository, options.port, true, true, true);
+      } catch (error) {
+        const rvwError = asRvwError(error);
+        const sent = await sendOpenWorkerMessage({
+          type: "error",
+          error: { ...rvwError.toJSON(), status: rvwError.status },
+        });
+        if (!sent) throw error;
+        process.exitCode = rvwError.status >= 500 ? 1 : 2;
+      }
+    });
+
+  const branch = program.command("branch").description("default branchのBranch Reviewを管理");
+  branch
+    .command("open")
+    .option("--repository <path>", "対象repository", process.cwd())
+    .option("--no-open", "ブラウザを開かない")
+    .option("--foreground", "terminalに接続したままviewerを実行")
+    .option("--port <port>", "listen port（0は自動）", parsePort, 0)
+    .description("repositoryのdefault branchをreview viewerで開く")
+    .action(
+      async (options: {
+        repository: string;
+        open: boolean;
+        foreground?: boolean;
+        port: number;
+      }) => {
+        if (options.open && !options.foreground && useAgentSocket) {
+          const url = await startBackgroundBranchOpen(options.repository, options.port);
+          process.stdout.write(`rvw: ${url}\n`);
+          return;
+        }
+        await runBranchOpenServer(
+          getRuntime(),
+          options.repository,
+          options.port,
+          options.open,
+          useAgentSocket,
+        );
+      },
+    );
+
+  branch
+    .command("sync")
+    .option("--repository <path>", "対象repository", process.cwd())
+    .requiredOption("--json", "JSONで出力")
+    .action(async (options: { repository: string }) => {
+      const result = await callService(
+        "branch.sync",
+        { repositoryPath: options.repository },
+        async () => await getRuntime().service.syncBranchReview(options.repository),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
+  const branchIssue = branch.command("issue").description("Branch ReviewのIssueを管理");
+  branchIssue
+    .command("add")
+    .argument("<issue-ref>")
+    .option("--repository <path>", "対象repository", process.cwd())
+    .requiredOption("--json", "JSONで出力")
+    .action(async (issueReference: string, options: { repository: string }) => {
+      const result = await callService(
+        "branch.issue.add",
+        { repositoryPath: options.repository, issueReference },
+        async () => await getRuntime().service.addBranchIssue(options.repository, issueReference),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
+  branchIssue
+    .command("remove")
+    .argument("<issue-ref>")
+    .option("--repository <path>", "対象repository", process.cwd())
+    .option("--yes", "不可逆な削除を確認")
+    .requiredOption("--json", "JSONで出力")
+    .action(async (issueReference: string, options: { repository: string; yes?: boolean }) => {
+      if (!options.yes) {
+        const preview = await callService(
+          "branch.issue.remove.preview",
+          { repositoryPath: options.repository, issueReference },
+          async () => {
+            const service = getRuntime().service;
+            const opened = await service.openBranchReview(options.repository);
+            return service.getIssueRemovalPreview("branch", opened.branchReview.id, issueReference);
+          },
+        );
+        writeJson({
+          ok: false,
+          error: {
+            code: "RESET_CONFIRMATION_REQUIRED",
+            message: "Issue削除には--yesが必要です。",
+            suggestions: [
+              `rvw branch issue remove ${issueReference} --repository ${options.repository} --yes --json`,
+            ],
+          },
+          ...preview,
+        });
+        process.exitCode = 2;
+        return;
+      }
+      const result = await callService(
+        "branch.issue.remove",
+        { repositoryPath: options.repository, issueReference, confirmed: true },
+        async () =>
+          await getRuntime().service.removeBranchIssue(options.repository, issueReference),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
+  branch
+    .command("comments")
+    .option("--repository <path>", "対象repository", process.cwd())
+    .option("--state <state>", "unresolved、resolved、all（既定: unresolved）", "unresolved")
+    .requiredOption("--json", "JSONで出力")
+    .action(async (options: { repository: string; state: string }) => {
+      if (!["unresolved", "resolved", "all"].includes(options.state)) {
+        throw new RvwError("INVALID_INPUT", "stateはunresolved、resolved、allにしてください。");
+      }
+      const resolved = options.state === "all" ? undefined : options.state === "resolved";
+      const result = await callService(
+        "branch.comments",
+        { repositoryPath: options.repository, resolved },
+        async () => {
+          const service = getRuntime().service;
+          const opened = await service.openBranchReview(options.repository);
+          return {
+            context: { kind: "branch" as const, repository: opened.branchReview.canonicalName },
+            branchReview: opened.branchReview,
+            comments: await service.listBranchCommentContexts(opened.branchReview.id, resolved),
+          };
+        },
+      );
+      writeJson({ ok: true, ...result });
+    });
+
+  branch
+    .command("reset")
+    .option("--repository <path>", "対象repository", process.cwd())
+    .option("--yes", "不可逆な削除を確認")
+    .requiredOption("--json", "JSONで出力")
+    .action(async (options: { repository: string; yes?: boolean }) => {
+      if (!options.yes) {
+        const preview = await callService(
+          "branch.reset.preview",
+          { repositoryPath: options.repository },
+          async () => {
+            const service = getRuntime().service;
+            const opened = await service.openBranchReview(options.repository);
+            return await service.getBranchResetPreview(opened.branchReview.id);
+          },
+        );
+        writeJson({
+          ok: false,
+          error: {
+            code: "RESET_CONFIRMATION_REQUIRED",
+            message: "resetには--yesが必要です。",
+            suggestions: ["rvw branch reset --yes --json"],
+          },
+          ...preview,
+        });
+        process.exitCode = 2;
+        return;
+      }
+      const result = await callService(
+        "branch.reset",
+        { repositoryPath: options.repository, confirmed: true },
+        async () => {
+          const service = getRuntime().service;
+          const opened = await service.openBranchReview(options.repository);
+          return await service.resetBranchReview(opened.branchReview.id);
+        },
+      );
+      writeJson({ ok: true, ...result });
+    });
+
   const pr = program.command("pr").description("Pull Request状態を管理");
   pr.command("refresh")
     .argument("<pull-request>", "登録済みPR URLまたは番号")
@@ -693,6 +955,58 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       );
     });
 
+  const prIssue = pr.command("issue").description("Pull Request ReviewのIssueを管理");
+  prIssue
+    .command("add")
+    .argument("<pull-request>", "登録済みPR URLまたは番号")
+    .argument("<issue-ref>")
+    .requiredOption("--json", "JSONで出力")
+    .action(async (reference: string, issueReference: string) => {
+      const result = await callService(
+        "pr.issue.add",
+        { reference, issueReference },
+        async () => await getRuntime().service.addPullRequestIssue(reference, issueReference),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
+  prIssue
+    .command("remove")
+    .argument("<pull-request>", "登録済みPR URLまたは番号")
+    .argument("<issue-ref>")
+    .option("--yes", "不可逆な削除を確認")
+    .requiredOption("--json", "JSONで出力")
+    .action(async (reference: string, issueReference: string, options: { yes?: boolean }) => {
+      if (!options.yes) {
+        const preview = await callService(
+          "pr.issue.remove.preview",
+          { reference, issueReference },
+          () => {
+            const service = getRuntime().service;
+            const pullRequest = service.resolveStoredPullRequest(reference);
+            return service.getIssueRemovalPreview("pull-request", pullRequest.id, issueReference);
+          },
+        );
+        writeJson({
+          ok: false,
+          error: {
+            code: "RESET_CONFIRMATION_REQUIRED",
+            message: "Issue削除には--yesが必要です。",
+            suggestions: [`rvw pr issue remove ${reference} ${issueReference} --yes --json`],
+          },
+          ...preview,
+        });
+        process.exitCode = 2;
+        return;
+      }
+      const result = await callService(
+        "pr.issue.remove",
+        { reference, issueReference, confirmed: true },
+        () => getRuntime().service.removePullRequestIssue(reference, issueReference),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
   pr.command("reset")
     .argument("<pull-request>", "登録済みPR URLまたは番号")
     .option("--yes", "不可逆な削除を確認")
@@ -716,7 +1030,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         writeOutput(
           options,
           result,
-          `削除対象: コメント${preview.counts.comments}、返信${preview.counts.posts}、コメント内コード参照${preview.counts.commentReferences}、対象${preview.counts.targets}、Walkthrough${preview.counts.walkthroughs}、Walkthroughコード参照${preview.counts.walkthroughReferences}、Git ref${preview.counts.gitRefs}\n続行するには --yes を指定してください。`,
+          `削除対象: Issue membership${preview.counts.issueMemberships}、コメント${preview.counts.comments}、返信${preview.counts.posts}、コメント内コード参照${preview.counts.commentReferences}、対象${preview.counts.targets}、Walkthrough${preview.counts.walkthroughs}、Walkthroughコード参照${preview.counts.walkthroughReferences}、Git ref${preview.counts.gitRefs}\n続行するには --yes を指定してください。`,
         );
         process.exitCode = 2;
         return;
@@ -744,11 +1058,13 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .action(async () => {
       const input = walkthroughPublishInputSchema.parse(await readStdinJson());
       const request = {
-        pullRequest: input.pullRequest,
+        ...(input.review === undefined ? {} : { review: input.review }),
+        ...(input.pullRequest === undefined ? {} : { pullRequest: input.pullRequest }),
         sourceOid: input.sourceOid,
         title: input.title,
         body: input.body,
         references: input.references,
+        ...(input.issues === undefined ? {} : { issues: input.issues }),
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.diagramBindings === undefined ? {} : { diagramBindings: input.diagramBindings }),
       };
@@ -757,7 +1073,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         request,
         async () => await getRuntime().service.publishWalkthrough(request),
       );
-      writeJson({ ok: true, walkthrough: published });
+      writeJson({ ok: true, walkthrough: published, issuesAdded: published.issuesAdded });
     });
 
   walkthrough
@@ -766,9 +1082,12 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .requiredOption("--json", "JSONで出力")
     .description("walkthroughの現在内容を取得")
     .action(async (uri: string) => {
-      const result = await callService("walkthrough.get", { uri }, () =>
-        getRuntime().service.getWalkthroughByUri(uri),
-      );
+      const result = await callService("walkthrough.get", { uri }, () => {
+        const service = getRuntime().service;
+        return typeof service.getAnyWalkthroughByUri === "function"
+          ? service.getAnyWalkthroughByUri(uri)
+          : service.getWalkthroughByUri(uri);
+      });
       writeJson({ ok: true, ...result });
     });
 
@@ -785,6 +1104,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         title: input.title,
         body: input.body,
         references: input.references,
+        ...(input.issues === undefined ? {} : { issues: input.issues }),
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.diagramBindings === undefined ? {} : { diagramBindings: input.diagramBindings }),
       };
@@ -793,7 +1113,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         { uri, content },
         async () => await getRuntime().service.updateWalkthrough(uri, content),
       );
-      writeJson({ ok: true, walkthrough: updated });
+      writeJson({ ok: true, walkthrough: updated, issuesAdded: updated.issuesAdded });
     });
 
   walkthrough
@@ -894,7 +1214,8 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .action(async () => {
       const input = commentCreateInputSchema.parse(await readStdinJson());
       const request = {
-        pullRequest: input.pullRequest,
+        ...(input.review === undefined ? {} : { review: input.review }),
+        ...(input.pullRequest === undefined ? {} : { pullRequest: input.pullRequest }),
         target: input.target,
         body: input.body,
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
@@ -947,10 +1268,12 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       const result = await callService(
         "comment.get",
         { uri, live: options.live ?? false },
-        async () =>
-          await getRuntime().service.getCommentReviewContext(uri, {
-            live: options.live ?? false,
-          }),
+        async () => {
+          const service = getRuntime().service;
+          return typeof service.getAnyCommentReviewContext === "function"
+            ? await service.getAnyCommentReviewContext(uri, { live: options.live ?? false })
+            : await service.getCommentReviewContext(uri, { live: options.live ?? false });
+        },
       );
       writeJson(formatCommentGetOutput(result, { includePrBody: options.includePrBody ?? false }));
     });
@@ -1062,7 +1385,11 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     });
 
   program.hook("postAction", (_command, actionCommand) => {
-    if (actionCommand.name() !== "open" && actionCommand.name() !== "__open-worker") {
+    if (
+      actionCommand.name() !== "open" &&
+      actionCommand.name() !== "__open-worker" &&
+      actionCommand.name() !== "__branch-open-worker"
+    ) {
       runtime?.close();
     }
   });

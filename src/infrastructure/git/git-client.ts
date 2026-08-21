@@ -253,6 +253,36 @@ export class GitClient {
     );
   }
 
+  async baseRepositoryIdentity(cwd: string): Promise<{
+    owner: string;
+    repository: string;
+    remoteUrl: string;
+  }> {
+    const remoteNames = (await runText("git", ["remote"], { cwd }))
+      .split("\n")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const ordered = [...remoteNames].sort((left, right) => {
+      if (left === "origin") return -1;
+      if (right === "origin") return 1;
+      return left.localeCompare(right);
+    });
+    for (const remoteName of ordered) {
+      const urls = (await runText("git", ["remote", "get-url", "--all", remoteName], { cwd }))
+        .split("\n")
+        .filter(Boolean);
+      for (const remoteUrl of urls) {
+        const parsed = parseGithubRemote(remoteUrl);
+        if (parsed) return { ...parsed, remoteUrl };
+      }
+    }
+    throw new RvwError(
+      "REPOSITORY_MISMATCH",
+      "github.comのbase repository remoteを解決できません。",
+      { suggestions: ["対象repositoryのorigin remoteを確認してください。"] },
+    );
+  }
+
   async hasObject(cwd: string, oid: string): Promise<boolean> {
     const result = await runProcess("git", ["cat-file", "-e", `${oid}^{commit}`], {
       cwd,
@@ -327,6 +357,43 @@ export class GitClient {
     }
   }
 
+  async ensureBranchObject(input: {
+    cwd: string;
+    remoteUrl: string;
+    branchName: string;
+    oid: string;
+  }): Promise<void> {
+    const operationId = randomUUID();
+    const temporaryRef = `refs/rvw/tmp/${operationId}/branch`;
+    try {
+      if (!(await this.hasObject(input.cwd, input.oid))) {
+        await runProcess(
+          "git",
+          [
+            "fetch",
+            "--no-write-fetch-head",
+            "--no-tags",
+            input.remoteUrl,
+            `+refs/heads/${input.branchName}:${temporaryRef}`,
+          ],
+          { cwd: input.cwd, timeoutMs: 120_000 },
+        );
+        const fetched = await runText("git", ["rev-parse", temporaryRef], { cwd: input.cwd });
+        if (fetched !== input.oid) {
+          throw new RvwError(
+            "LOCAL_STATE_INCONSISTENT",
+            "取得したdefault branch headがGitHubのOIDと一致しません。",
+            { details: { expected: input.oid, actual: fetched } },
+          );
+        }
+      }
+    } finally {
+      await this.deleteRefsByPrefix(input.cwd, `refs/rvw/tmp/${operationId}/`).catch(
+        () => undefined,
+      );
+    }
+  }
+
   async mergeBase(cwd: string, baseOid: string, headOid: string): Promise<string> {
     return await runText("git", ["merge-base", baseOid, headOid], { cwd });
   }
@@ -367,6 +434,31 @@ export class GitClient {
   commitRef(number: number, oid: string): string {
     // Git rejects a ref path component that is exactly a 40-hex object ID.
     return `refs/rvw/pr/${number}/commits/oid-${oid.toLowerCase()}`;
+  }
+
+  branchCommitRef(owner: string, repository: string, oid: string): string {
+    return `refs/rvw/branch/${owner.toLowerCase()}/${repository.toLowerCase()}/commits/oid-${oid.toLowerCase()}`;
+  }
+
+  async ensureBranchCommitRef(
+    cwd: string,
+    owner: string,
+    repository: string,
+    oid: string,
+  ): Promise<EnsuredCommitRef> {
+    const ref = this.branchCommitRef(owner, repository, oid);
+    const existing = await runProcess("git", ["show-ref", "--verify", "--hash", ref], {
+      cwd,
+      allowExitCodes: [1, 128],
+    });
+    if (existing.exitCode === 0) {
+      if (existing.stdout.toString("utf8").trim() !== oid) {
+        throw new RvwError("LOCAL_STATE_INCONSISTENT", `Git ref ${ref} のOIDが不正です。`);
+      }
+      return { ref, created: false };
+    }
+    await runProcess("git", ["update-ref", ref, oid], { cwd });
+    return { ref, created: true };
   }
 
   async ensureCommitRef(cwd: string, number: number, oid: string): Promise<EnsuredCommitRef> {

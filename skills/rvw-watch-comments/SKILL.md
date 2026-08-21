@@ -1,6 +1,6 @@
 ---
 name: rvw-watch-comments
-description: Continuously watch all Pull Requests saved in the local rvw database for new root comments and replies, durably queue them, acknowledge them immediately, investigate or delegate bounded batches, and replace the acknowledgement with a final rvw reply. Use when a user asks an Agent task to monitor, watch, poll, or continuously address new rvw review comments, optionally allowing fixes and pushes only for Pull Requests authored by the authenticated GitHub user.
+description: Continuously watch new RVW comments and replies across saved Pull Request Reviews and Branch Reviews. Investigate and reply for Branch Reviews. Preserve explicitly authorized fix-and-push only for verified owned Pull Requests.
 ---
 
 # Watch rvw comments
@@ -59,9 +59,9 @@ prevents an interrupted third attempt from leaving `確認中` indefinitely.
 ## Start or resume intake
 
 Run the single preflight command. It concurrently detects `rvw` and verifies Node `>=24.15.0`.
-Require `protocolVersion` 3 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
-`comment.edit`, `comment.codeReferences`, and `pullRequest.sync`, and report agent status and ping in
-one JSON value. Stop when `ok` is false. A disconnected ping is diagnostic when status safely selects
+Require `protocolVersion` 4 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
+`comment.edit`, `comment.codeReferences`, `pullRequest.sync`, and `branchReview.read`, and report agent
+status and ping in one JSON value. Stop when `ok` is false. A disconnected ping is diagnostic when status safely selects
 direct-database transport; an unavailable selected transport is fatal.
 
 ```bash
@@ -76,6 +76,15 @@ means monitoring is established. The driver chooses cursorless start only when s
 that intentionally skips all existing comments. Otherwise it resumes from the exact durable cursor.
 Before each initial connection or reconnect, it auto-acknowledges any eligible event that was durably
 ingested before an earlier driver interruption.
+
+Events and batches carry either `{kind:"pull-request",pullRequestUrl}` or
+`{kind:"branch",repository}`. Never combine those context kinds. Branch Review events remain queued
+without an acknowledgement post even when `--auto-ack` is enabled. Claim them with
+`--context-kind branch --context-key owner/repository`; their mode is always
+`investigate-and-reply`. Read each thread with `rvw comment get`, inspect only the exact/current source,
+Issue, or Walkthrough needed, and create exactly one final idempotent reply per affected comment. Do
+not create progress replies, edit code, commit, push, open a Pull Request, synchronize a PR, change the
+default branch, update a GitHub Issue, or resolve the thread. `reserve-write` rejects Branch leases.
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-driver.mjs' '<TASK_STATE_DB>' --auto-ack
@@ -104,7 +113,8 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' wait --state '<TASK_STATE_DB>'
 ```
 
 `wait` immediately returns existing eligible work or waits for the pending set to change from empty
-to non-empty, then prints one JSON line with `pullRequests` and `pending`. Add `--follow` to emit every
+to non-empty, then prints one JSON line with `contexts`, the PR-only compatibility projection
+`pullRequests`, and `pending`. Add `--follow` to emit every
 later empty-to-non-empty transition. The driver and `ingest` commit each event and cursor atomically;
 a crash before that commit causes rvw to replay it. Never construct or edit cursors.
 
@@ -278,19 +288,19 @@ and the long-lived driver, which write one object per transition. State-command 
 fatal errors write JSON to stderr with a nonzero exit; auto-ack returns its structured failure on
 stdout with a nonzero exit. Commands marked with stdin read one complete JSON object through EOF.
 
-| Command         | Arguments                                                                                | stdin JSON                                             | Success JSON                                                                                                         |
-| --------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `init`          | `--state PATH [--expected-login LOGIN] [--own-mode investigate-and-reply\|fix-and-push]` | none                                                   | `{ok,state,taskId,databaseId,cursor,expectedGitHubLogin,ownPullRequests,batches,inFlightBatches,quarantinedBatches}` |
-| `ingest`        | `--state PATH`                                                                           | `ready`, `comment-posted`, or `stopped` frame from rvw | `{ok,status,cursor[,sequence]}`; event and cursor commit atomically                                                  |
-| `list`          | `--state PATH`                                                                           | none                                                   | `{ok,pending:[{pullRequest,batchId,eventCount,firstSequence,commentRefs}]}`                                          |
-| `wait`          | `--state PATH [--interval-ms N] [--follow]`                                              | none                                                   | `{ok,type:"pending",pullRequests,pending}` on empty-to-non-empty                                                     |
-| `claim`         | `--state PATH --pull-request URL [--write-key owner/repo]`                               | none                                                   | `{ok,leaseId,batchId,pullRequest,attempts,writeKey,events,operations}`                                               |
-| `reserve-write` | `--state PATH --lease ID --write-key owner/repo`                                         | none                                                   | `{ok,leaseId,batchId,pullRequest,writeKey,status}`                                                                   |
-| `ack`           | `--state PATH --lease ID`                                                                | `{commentRef,postId}`                                  | `{ok,batchId,commentRef,statusPostId,status}`                                                                        |
-| `complete`      | `--state PATH --lease ID`                                                                | `{postIds:string[]}`                                   | `{ok,batchId,status:"completed",suppressedPostIds}`                                                                  |
-| `fail`          | `--state PATH --lease ID`                                                                | `{error:string,retryable:boolean}`                     | `{ok,batchId,status,attempts,nextAttemptAt[,operations]}`                                                            |
-| `recover`       | `--state PATH`                                                                           | none                                                   | `{ok,recovered,pending,quarantined,quarantinedBatches}`                                                              |
-| `status`        | `--state PATH`                                                                           | none                                                   | task policy, cursor, batch counts, `inFlightBatches`, and `quarantinedBatches`                                       |
+| Command         | Arguments                                                                                           | stdin JSON                                             | Success JSON                                                                                                         |
+| --------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `init`          | `--state PATH [--expected-login LOGIN] [--own-mode investigate-and-reply\|fix-and-push]`            | none                                                   | `{ok,state,taskId,databaseId,cursor,expectedGitHubLogin,ownPullRequests,batches,inFlightBatches,quarantinedBatches}` |
+| `ingest`        | `--state PATH`                                                                                      | `ready`, `comment-posted`, or `stopped` frame from rvw | `{ok,status,cursor,context[,sequence]}`; event and cursor commit atomically                                          |
+| `list`          | `--state PATH`                                                                                      | none                                                   | `{ok,pending:[{context,batchId,eventCount,firstSequence,commentRefs}]}`                                              |
+| `wait`          | `--state PATH [--interval-ms N] [--follow]`                                                         | none                                                   | `{ok,type:"pending",contexts,pullRequests,pending}` on empty-to-non-empty                                            |
+| `claim`         | `--state PATH (--pull-request URL\|--context-kind KIND --context-key KEY) [--write-key owner/repo]` | none                                                   | `{ok,leaseId,batchId,context,attempts,writeKey,events,operations}`                                                   |
+| `reserve-write` | `--state PATH --lease ID --write-key owner/repo`                                                    | none                                                   | `{ok,leaseId,batchId,context,writeKey,status}`                                                                       |
+| `ack`           | `--state PATH --lease ID`                                                                           | `{commentRef,postId}`                                  | `{ok,batchId,commentRef,statusPostId,status}`                                                                        |
+| `complete`      | `--state PATH --lease ID`                                                                           | `{postIds:string[]}`                                   | `{ok,batchId,status:"completed",suppressedPostIds}`                                                                  |
+| `fail`          | `--state PATH --lease ID`                                                                           | `{error:string,retryable:boolean}`                     | `{ok,batchId,status,attempts,nextAttemptAt[,operations]}`                                                            |
+| `recover`       | `--state PATH`                                                                                      | none                                                   | `{ok,recovered,pending,quarantined,quarantinedBatches}`                                                              |
+| `status`        | `--state PATH`                                                                                      | none                                                   | task policy, cursor, batch counts, `inFlightBatches`, and `quarantinedBatches`                                       |
 
 Frame schemas accepted by `ingest`:
 
@@ -306,17 +316,21 @@ Frame schemas accepted by `ingest`:
     "sequence": 1,
     "postId": "id",
     "commentRef": "rvw://comment/uuid",
-    "pullRequestUrl": "https://github.com/owner/repo/pull/123",
+    "context": {
+      "kind": "pull-request",
+      "pullRequestUrl": "https://github.com/owner/repo/pull/123"
+    },
     "createdAt": "ISO-8601",
     "deleted": false
   }
 }
 ```
 
-Claim `operations` are `{commentRef,idempotencyKey,statusPostId}`. Claim `events` are
-`{sequence,postId,commentRef,pullRequestUrl}`. State schema additions are created with
-idempotent local migrations; existing state databases remain readable and retain their cursors,
-leases, and unfinished batch keys and status posts.
+For a Branch Review the event context is `{kind:"branch",repository:"owner/repo"}`. Claim
+`operations` are `{commentRef,idempotencyKey,statusPostId}`. Claim `events` are
+`{sequence,postId,commentRef,context}`. Startup migrates existing state rows to the explicit
+`review_kind` plus `context_key` discriminator, rebuilds the context indexes, and preserves cursors,
+leases, unfinished batch keys, batch-scoped status posts, and PR compatibility fields.
 
 | Script    | Invocation                                                                            | Output                                                                                        |
 | --------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |

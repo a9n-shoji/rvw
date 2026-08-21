@@ -21,6 +21,65 @@ function ingest(state: string, frame: unknown) {
 }
 
 describe("rvw-watch-comments task state", () => {
+  it("batches Branch Reviews by repository and rejects write reservations", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-")), "task.db");
+    run(state, "init", ["--own-mode", "fix-and-push"]);
+    ingest(state, {
+      type: "ready",
+      databaseId: "11112222333344445555666677778888",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "branch-human-post",
+        commentRef: "rvw://comment/branch-comment",
+        context: { kind: "branch", repository: "Acme/Repo" },
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+
+    expect(run(state, "list")).toMatchObject({
+      pending: [
+        {
+          context: { kind: "branch", repository: "acme/repo" },
+          repository: "acme/repo",
+          commentRefs: ["rvw://comment/branch-comment"],
+        },
+      ],
+    });
+    const claimed = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    expect(claimed).toMatchObject({
+      context: { kind: "branch", repository: "acme/repo" },
+      writeKey: null,
+      operations: [{ commentRef: "rvw://comment/branch-comment", statusPostId: null }],
+    });
+    expect(() =>
+      run(state, "reserve-write", ["--lease", String(claimed.leaseId), "--write-key", "acme/repo"]),
+    ).toThrow(/investigate-and-reply/);
+    run(state, "complete", ["--lease", String(claimed.leaseId)], {
+      postIds: ["branch-final-reply"],
+    });
+    expect(
+      ingest(state, {
+        type: "comment-posted",
+        cursor: "cursor-2",
+        event: {
+          sequence: 2,
+          postId: "branch-final-reply",
+          commentRef: "rvw://comment/branch-comment",
+          context: { kind: "branch", repository: "acme/repo" },
+          createdAt: "2026-08-20T00:00:01.000Z",
+          deleted: false,
+        },
+      }),
+    ).toMatchObject({ status: "suppressed" });
+  });
+
   it("waits for the pending set to become non-empty and emits monitor-ready JSON", async () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-wait-")), "task.db");
     run(state, "init");
