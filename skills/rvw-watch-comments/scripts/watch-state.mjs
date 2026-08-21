@@ -68,7 +68,8 @@ function openState(statePath, create) {
     fail(`State database does not exist: ${absolute}`);
   }
   const database = new DatabaseSync(absolute);
-  database.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+  database.exec("PRAGMA busy_timeout = 5000;");
+  database.exec("PRAGMA journal_mode = WAL;");
   database.exec(`
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
@@ -455,6 +456,16 @@ function listPending(database) {
     });
 }
 
+function listWork(database) {
+  const inFlight = database
+    .prepare("SELECT count(*) AS count FROM batches WHERE status = 'in_flight'")
+    .get();
+  return {
+    inFlight: Number(inFlight.count),
+    pending: listPending(database),
+  };
+}
+
 async function waitForPending(database, options) {
   const intervalMs = positiveIntegerOption(options, "interval-ms", 250);
   const follow = options.follow === true;
@@ -822,7 +833,7 @@ async function main() {
       return;
     }
     if (command === "list") {
-      write({ ok: true, pending: listPending(database) });
+      write({ ok: true, ...listWork(database) });
       return;
     }
     if (command === "wait") {

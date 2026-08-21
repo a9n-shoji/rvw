@@ -199,7 +199,10 @@ PRは常にcode/GitHub read-onlyで調査します。同梱driverがcursor resum
 batchをclaimすると各threadへ`🔎 確認中です…`をAgent往復なしに即時返信し、
 完了時は同じreplyを最終結果へ編集します。Skill同梱のtask-state toolがrepository外のSQLiteへcursor、
 queue、retry、batch内のthread単位status post、自己返信抑制をtransactionalに保存します。同じthreadへ
-後から返信が追加された場合は新しいstatus postを返信するため、以前の回答は書き換えません。
+後から返信が追加された場合は新しいstatus postを返信するため、以前の回答は書き換えません。親taskは
+起動前にsubagent枠を予約し、driverはその枠数までだけbatchをclaimします。acknowledge済みbatchは大小や
+変更有無にかかわらず同じscheduling turnでfresh subagentへ委譲し、親taskは直接処理しません。lease解放後の
+同一PR follow-upと期限到達したretryはdriverがtask stateから自動的に再開します。
 調査結果、実装内容、test結果が具体的なcodeに基づく場合、Skillは最終replyからexact commitの有用な
 line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動できるようにします。
 
