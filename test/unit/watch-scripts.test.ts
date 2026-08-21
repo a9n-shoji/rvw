@@ -561,14 +561,14 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(code, stderr).toBe(0);
   });
 
-  it("drains a same-PR follow-up after the preceding lease completes", async () => {
+  it("acknowledges a same-PR follow-up while an investigate-only lease is active", async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-follow-up-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
     initializeQueuedState(state);
     const child = spawn(
       process.execPath,
-      [driverScript, state, "--auto-ack", "--max-in-flight", "1"],
+      [driverScript, state, "--auto-ack", "--max-in-flight", "2"],
       {
         env: { ...fakeEnvironment(fake), RVW_WATCH_AUTO_ACK_POLL_MS: "10" },
         stdio: ["pipe", "pipe", "pipe"],
@@ -601,7 +601,6 @@ describe("rvw-watch-comments bundled scripts", () => {
       batches: { inFlight: 1, unbatchedEvents: 1 },
     });
 
-    runState(state, "complete", ["--lease", String(first.leaseId)], { postIds: [] });
     const followUp = await output.waitFor(
       (message) =>
         message.type === "batch-acknowledged" &&
@@ -613,8 +612,11 @@ describe("rvw-watch-comments bundled scripts", () => {
       operations: [expect.objectContaining({ acknowledgement: "created" })],
     });
     expect(runState(state, "status")).toMatchObject({
-      batches: { inFlight: 1, unbatchedEvents: 0 },
+      batches: { inFlight: 2, unbatchedEvents: 0 },
     });
+
+    runState(state, "complete", ["--lease", String(first.leaseId)], { postIds: [] });
+    runState(state, "complete", ["--lease", String(followUp.leaseId)], { postIds: [] });
 
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve, reject) => {

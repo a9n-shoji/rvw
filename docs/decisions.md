@@ -1,5 +1,37 @@
 # Architecture decisions
 
+## 2026-08-21: Parallelize investigate-only leases within one Pull Request
+
+### Problem
+
+The watch task serialized every lease for a Pull Request until completion. That protected code writes,
+but also delayed later read-only investigations even when worker capacity was available. Investigation
+workers never modify the repository, and batch-scoped status posts already give concurrent replies
+independent edit targets.
+
+### Choice
+
+When the task's immutable policy is `investigate-and-reply`, allow a newly arrived event to form and
+claim a second batch while another lease for the same Pull Request is active. Keep the driver's
+`max-in-flight` worker-capacity bound, but do not reduce it because leases share a Pull Request or
+repository. Target eight reserved workers and `max-in-flight=8` when the runtime can guarantee that
+capacity; otherwise use the largest guaranteed positive capacity, falling back to one only when
+parallel capacity cannot be guaranteed. Reject repository write reservations under this read-only
+policy.
+
+When the task policy permits `fix-and-push`, retain one active lease per Pull Request and the unique
+head-repository write reservation across Pull Requests. This keeps potentially overlapping code work
+serialized without imposing that restriction on tasks that cannot write code.
+
+### Trade-offs
+
+- Later review feedback can be acknowledged, investigated, and answered without waiting for an older
+  read-only investigation.
+- Two investigations may finish out of order, but each updates only its own batch status post and reads
+  the thread again before the final edit.
+- A fix-enabled task remains conservative even for an individual lease that ultimately falls back to
+  investigation because author and live-head classification happens after acknowledgement.
+
 ## 2026-08-21: Proxy only modern GitHub attachments and render repository images separately
 
 ### Problem
@@ -335,8 +367,9 @@ Keep protocol version 2 because both `comment.watch` and `comment.edit` are addi
   This is deliberate: Agent execution state does not enter the rvw product database.
 - PR author cache is null until an old saved PR is synchronized again. The policy fails closed and can
   use the live comment read before considering a write.
-- Multiple independent tasks can consume the same rvw event log. A single task database serializes its
-  own claims and repository writers; users should not intentionally start competing automation tasks
+- Multiple independent tasks can consume the same rvw event log. A single task database serializes
+  same-PR claims and repository writers when fixes are permitted; the newer investigate-only decision
+  allows read-only claims to overlap. Users should not intentionally start competing automation tasks
   with overlapping responsibility.
 - Replacing the status post keeps a thread quiet but rvw does not retain the acknowledgement or an
   earlier Agent outcome as post history; the current result and Git commits remain the intended record.

@@ -791,9 +791,13 @@ batch内のcomment URIごとのstatus post mapping、自己post抑制をtransact
 protocol、capability、transport、Nodeを一括検査し、watch driverは
 stateのcursorを自動解決してRFC 7464 frameをatomicにingestする。driverのauto-ack modeは新規batchを
 LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthread contextを一行JSONで通知する。
-親taskは起動前にsubagent slot数を予約し、driverの`max-in-flight`をその数以下に固定する。driverはlimit
-未満だけauto-ackし、task stateを短周期で再確認する。同一PRのactive lease中に到着したeventは先行lease
-解放後に、retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
+親taskは起動前にsubagent slot数を予約する。`max-in-flight`は8を目標とし、runtimeが8枠を保証できれば8、
+それ未満なら保証できる最大の正数、複数枠を保証できなければ1を指定し、予約数を超えない。driverはlimit
+未満だけauto-ackし、task stateを短周期で再確認する。investigate-and-replyだけを許可したtaskでは、同一PRの
+active lease中に到着したeventも別batchとしてcapacity内でauto-ackし、同じPRまたはrepositoryをread-onlyで
+並列調査できる。batchごとのstatus postを使うため最終reply editは衝突しない。fix-and-pushを許可したtaskでは
+同一PRの後続eventを先行lease解放後まで待たせ、repository write reservationにより異なるPR間のwriterも直列化
+する。retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
 state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。rvwはAgentやsubagentを
 起動せず、これらのtask stateも保持しない。
 task起動時に明示された場合だけ、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
@@ -1364,9 +1368,12 @@ processが存在しない場合だけ回収する。検知直後に各threadを�
 親taskはintake、dispatch、task state、最終replyだけを所有し、batchの大きさ、mode、変更有無にかかわらず、
 acknowledge済みleaseを同じscheduling turn内で一つのfresh subagentへ必ず委譲する。親taskによる直接調査・
 実装と、複数leaseの後回しの一括委譲を認めない。親taskは起動前にsubagent slot数を予約し、driverの
-`max-in-flight`をその数以下に固定する。driverはlimit未満だけauto-ackし、task stateを短周期で再確認して、
-同一PRのactive lease中に到着したeventを先行lease解放後に、retryable failureを`nextAttemptAt`到達後に、
-新しいwatch eventやreconnectを待たずauto-ackする。subagentを速やかに起動できない場合はleaseをretryable
+`max-in-flight`は8を目標に、8枠を保証できれば8、それ未満なら保証できる最大の正数、複数枠を保証できなければ
+1を指定する。予約数を超えてはならない。driverはlimit未満だけauto-ackし、task stateを短周期で再確認する。
+investigate-and-replyだけを許可したtaskでは同一PRのactive lease中に到着したeventも別leaseとして並列委譲し、
+fix-and-pushを許可したtaskでは同一PRの後続eventを先行lease解放後まで待たせ、repository writerもwrite
+reservationで直列化する。retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たず
+auto-ackする。subagentを速やかに起動できない場合はleaseをretryable
 failureへ戻し、親taskが代行しない。subagentごとに一leaseだけを割り当て、絶対pathのatomic JSON fileを
 唯一の最終結果回収経路にする。subagentの最終結果はbody、
 `relatedCommitOid`、完全なtyped reference配列、push状態を持ち、具体的なcode上の結論、実装、testには

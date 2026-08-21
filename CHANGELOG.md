@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `rvw-watch-comments`のinvestigate-and-reply専用taskで、同じPR／repositoryの後続batchもworker capacity内で
+  並列に調査・返信。保証できる場合は`max-in-flight=8`を目標とし、fix-and-pushを許可したtaskだけ従来の
+  writer排他を維持
+
 ## [0.2.3] - 2026-08-21
 
 ### Added

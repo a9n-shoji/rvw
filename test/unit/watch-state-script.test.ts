@@ -73,7 +73,7 @@ describe("rvw-watch-comments task state", () => {
 
   it("can reserve a repository writer after an automatically acknowledged claim", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-reserve-")), "task.db");
-    run(state, "init");
+    run(state, "init", ["--own-mode", "fix-and-push"]);
     ingest(state, {
       type: "ready",
       databaseId: "abcdefabcdefabcdefabcdefabcdefab",
@@ -106,6 +106,91 @@ describe("rvw-watch-comments task state", () => {
         },
       ],
     });
+  });
+
+  it("allows concurrent leases for the same PR under an investigate-only policy", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-parallel-")), "task.db");
+    const pullRequest = "https://github.com/acme/repo/pull/9";
+    run(state, "init", ["--own-mode", "investigate-and-reply"]);
+    ingest(state, {
+      type: "ready",
+      databaseId: "abc123abc123abc123abc123abc123ab",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "human-post-parallel-1",
+        commentRef: "rvw://comment/comment-parallel-1",
+        pullRequestUrl: pullRequest,
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+    const first = run(state, "claim", ["--pull-request", pullRequest]);
+
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-2",
+      event: {
+        sequence: 2,
+        postId: "human-post-parallel-2",
+        commentRef: "rvw://comment/comment-parallel-2",
+        pullRequestUrl: pullRequest,
+        createdAt: "2026-08-20T00:00:01.000Z",
+        deleted: false,
+      },
+    });
+    expect(run(state, "list")).toMatchObject({
+      inFlight: 1,
+      pending: [{ pullRequest, commentRefs: ["rvw://comment/comment-parallel-2"] }],
+    });
+
+    const second = run(state, "claim", ["--pull-request", pullRequest]);
+    expect(second).toMatchObject({ pullRequest, attempts: 1, writeKey: null });
+    expect(second.batchId).not.toBe(first.batchId);
+    expect(run(state, "status")).toMatchObject({ batches: { inFlight: 2 } });
+
+    const writeCapableClaim = spawnSync(
+      process.execPath,
+      [
+        script,
+        "claim",
+        "--state",
+        state,
+        "--pull-request",
+        pullRequest,
+        "--write-key",
+        "acme/repo",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(writeCapableClaim.status).toBe(1);
+    expect(writeCapableClaim.stderr).toContain(
+      "Task policy does not allow repository write reservations",
+    );
+
+    const writeReservation = spawnSync(
+      process.execPath,
+      [
+        script,
+        "reserve-write",
+        "--state",
+        state,
+        "--lease",
+        String(first.leaseId),
+        "--write-key",
+        "acme/repo",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(writeReservation.status).toBe(1);
+    expect(writeReservation.stderr).toContain(
+      "Task policy does not allow repository write reservations",
+    );
   });
 
   it("records a new durable status post for a later batch in the same thread", () => {
@@ -277,7 +362,7 @@ describe("rvw-watch-comments task state", () => {
 
   it("recovers a lease with the same idempotency key and serializes repository writers", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-state-")), "task.db");
-    run(state, "init", ["--own-mode", "investigate-and-reply"]);
+    run(state, "init", ["--own-mode", "fix-and-push"]);
     ingest(state, {
       type: "ready",
       databaseId: "fedcba9876543210fedcba9876543210",
