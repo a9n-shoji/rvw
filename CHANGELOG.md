@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-08-21
+
 ### Added
 
 - GitHub repositoryごとに一件だけ保持し、default branchのexact commitを読むBranch Review
