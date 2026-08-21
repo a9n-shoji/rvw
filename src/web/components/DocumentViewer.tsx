@@ -596,6 +596,18 @@ function placementUrl(commentId: string, ref: ReviewFileRef): string {
   return `/api/comments/${commentId}/placement?${params(ref)}`;
 }
 
+function commentCanTargetDocument(comment: AnyReviewComment, ref: ReviewFileRef): boolean {
+  if (ref.kind === "issue-markdown") {
+    return comment.target.kind === "issue" && comment.target.issueId === ref.issueId;
+  }
+  if (ref.kind === "pull-request-markdown") {
+    return (
+      comment.target.kind === "document" && comment.target.documentKind === "pull-request-markdown"
+    );
+  }
+  return comment.target.kind === "document" && comment.target.documentKind === "repository-file";
+}
+
 function fileValue(document: ReviewDocumentContent | null, fallbackName: string) {
   if (!document || document.availability !== "available") return null;
   const file = {
@@ -639,6 +651,7 @@ export function DocumentViewer({
   displayMode,
   diffStyle,
   comments,
+  commentPlacements,
   activeCommentId,
   fullViewNotice = null,
   fullViewUnavailableMessage = null,
@@ -658,6 +671,7 @@ export function DocumentViewer({
   displayMode: DisplayMode;
   diffStyle: "unified" | "split";
   comments: AnyReviewComment[];
+  commentPlacements?: ReadonlyMap<string, CommentPlacement>;
   activeCommentId: string | null;
   fullViewNotice?: string | null;
   fullViewUnavailableMessage?: string | null;
@@ -940,10 +954,29 @@ export function DocumentViewer({
       new: diffQuery.data?.new?.ref ?? null,
     };
   }, [effectiveDisplayMode, fullRef, diffQuery.data]);
+  const placementCacheKey = comments.map((comment) => {
+    const placement = commentPlacements?.get(comment.id);
+    return placement
+      ? `${comment.id}:${placement.outdated}:${placement.path ?? ""}:${placement.range?.startLine ?? ""}:${placement.range?.endLine ?? ""}`
+      : `${comment.id}:uncached`;
+  });
+  const loadPlacement = async (
+    comment: AnyReviewComment,
+    ref: ReviewFileRef,
+  ): Promise<CommentPlacement> => {
+    const cachedPlacement =
+      ref.kind === "issue-markdown" ||
+      (ref.kind === "repository-file" && ref.sourceOid === review.sourceOid)
+        ? commentPlacements?.get(comment.id)
+        : undefined;
+    if (cachedPlacement) return cachedPlacement;
+    return (await api<PlacementResponse>(placementUrl(comment.id, ref))).placement;
+  };
   const annotationQuery = useQuery({
     queryKey: [
       "annotations",
       comments.map((comment) => `${comment.id}:${comment.updatedAt}`),
+      placementCacheKey,
       renderedRefs,
       renderedRefs.new?.kind !== "repository-file" ? fullQuery.data?.text : null,
     ],
@@ -956,10 +989,8 @@ export function DocumentViewer({
       }> = [];
       for (const comment of comments) {
         let added = false;
-        if (renderedRefs.new) {
-          const { placement } = await api<PlacementResponse>(
-            placementUrl(comment.id, renderedRefs.new),
-          );
+        if (renderedRefs.new && commentCanTargetDocument(comment, renderedRefs.new)) {
+          const placement = await loadPlacement(comment, renderedRefs.new);
           if (
             !placement.outdated &&
             placement.path === reviewDocumentPath(renderedRefs.new, activeDocument)
@@ -973,10 +1004,8 @@ export function DocumentViewer({
             added = true;
           }
         }
-        if (!added && renderedRefs.old) {
-          const { placement } = await api<PlacementResponse>(
-            placementUrl(comment.id, renderedRefs.old),
-          );
+        if (!added && renderedRefs.old && commentCanTargetDocument(comment, renderedRefs.old)) {
+          const placement = await loadPlacement(comment, renderedRefs.old);
           if (
             !placement.outdated &&
             placement.path === reviewDocumentPath(renderedRefs.old, activeDocument)

@@ -5,7 +5,6 @@ import {
   Suspense,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -57,7 +56,6 @@ import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
 import type { AnyReviewComment, AnyWalkthrough, AnyWalkthroughSummary } from "../review-context.js";
 import { reviewQueryKeys } from "../review-query-keys.js";
-import { BranchReviewApp } from "./BranchReviewApp.js";
 import {
   commitRangeOldOid,
   earliestIncludedCommitOid,
@@ -84,13 +82,7 @@ import { useDebouncedValue } from "../use-debounced-value.js";
 import { useThemePreference } from "../use-theme-preference.js";
 import { useReviewSidebarSearch } from "../use-review-sidebar-search.js";
 import { useQuickOpenShortcut } from "../use-quick-open-shortcut.js";
-import {
-  parseReadingHistoryEntry,
-  readingHistoryState,
-  sameReadingDocument,
-  type ReadingHistoryEntry,
-  type ReadingLocator,
-} from "../reading-history.js";
+import { useReviewReadingHistory } from "../use-review-reading-history.js";
 const DocumentViewer = lazy(async () => {
   const module = await import("../components/DocumentViewer.js");
   return { default: module.DocumentViewer };
@@ -98,6 +90,10 @@ const DocumentViewer = lazy(async () => {
 const WalkthroughViewer = lazy(async () => {
   const module = await import("../components/WalkthroughViewer.js");
   return { default: module.WalkthroughViewer };
+});
+const BranchReviewApp = lazy(async () => {
+  const module = await import("./BranchReviewApp.js");
+  return { default: module.BranchReviewApp };
 });
 
 function changePath(change: ChangedFile): string {
@@ -109,13 +105,6 @@ function shortOid(oid: string): string {
 }
 
 type DocumentDisplayMode = "full" | "diff";
-
-interface AppliedLineNavigation {
-  requestId: number;
-  documentKey: string;
-  pane: DocumentPaneId;
-  top: number;
-}
 
 function CommitRangePicker({
   commits,
@@ -439,14 +428,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const [treeMode, setTreeMode] = useState<"changed" | "all">("changed");
   const [viewerNavigationTarget, setViewerNavigationTarget] =
     useState<ViewerNavigationTarget | null>(null);
-  const viewerNavigationTargetRef = useRef(viewerNavigationTarget);
-  const appliedLineNavigation = useRef<AppliedLineNavigation | null>(null);
-  viewerNavigationTargetRef.current = viewerNavigationTarget;
-  const resetViewerNavigation = useCallback((): void => {
-    viewerNavigationTargetRef.current = null;
-    appliedLineNavigation.current = null;
-    setViewerNavigationTarget(null);
-  }, []);
+  const resetViewerNavigation = useCallback((): void => setViewerNavigationTarget(null), []);
   const {
     workspace: documentWorkspace,
     workspaceRef: documentWorkspaceRef,
@@ -484,7 +466,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const observedLatestHead = useRef<string | null>(null);
   const observedChangeSequence = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchNavigationSequence = useRef(0);
   const codeReferenceRequestSequence = useRef<Record<DocumentPaneId, number>>({
     left: 0,
     right: 0,
@@ -503,225 +484,30 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     right: null,
   });
   const documentScrollPositions = useRef(new Map<string, number>());
-  const readingHistoryReady = useRef(false);
-  const readingHistoryScrollTimeout = useRef<number | null>(null);
-  const leftActiveDocumentKey = documentWorkspace.active.left
-    ? documentTabKey(documentWorkspace.active.left)
-    : null;
-  const rightActiveDocumentKey = documentWorkspace.active.right
-    ? documentTabKey(documentWorkspace.active.right)
-    : null;
-
-  useLayoutEffect(() => {
-    const pane = paneElements.current.left;
-    if (!pane || !leftActiveDocumentKey) return;
-    pane.scrollTop = documentScrollPositions.current.get(leftActiveDocumentKey) ?? 0;
-  }, [leftActiveDocumentKey, reviewStateRevision]);
-  useLayoutEffect(() => {
-    const pane = paneElements.current.right;
-    if (!pane || !rightActiveDocumentKey) return;
-    pane.scrollTop = documentScrollPositions.current.get(rightActiveDocumentKey) ?? 0;
-  }, [reviewStateRevision, rightActiveDocumentKey]);
-
-  const currentReadingHistoryEntry = useCallback((): ReadingHistoryEntry | null => {
-    if (!reviewHistoryKey) return null;
-    const workspace = documentWorkspaceRef.current;
-    const pane = workspace.focusedPane;
-    const document = workspace.active[pane];
-    if (!document) return null;
-    const documentKey = documentTabKey(document);
-    const navigationTarget = viewerNavigationTargetRef.current;
-    const scrollTop =
-      paneElements.current[pane]?.scrollTop ??
-      documentScrollPositions.current.get(documentKey) ??
-      0;
-    const lineNavigation = appliedLineNavigation.current;
-    const lineNavigationStillAnchored = Boolean(
-      navigationTarget?.documentKey === documentKey &&
-      (!lineNavigation ||
-        lineNavigation.requestId !== navigationTarget.requestId ||
-        lineNavigation.documentKey !== documentKey ||
-        lineNavigation.pane !== pane ||
-        Math.abs(lineNavigation.top - scrollTop) <= 1),
-    );
-    const locator: ReadingLocator =
-      navigationTarget?.documentKey === documentKey && lineNavigationStillAnchored
-        ? {
-            kind: "line",
-            line: navigationTarget.line,
-            ...(navigationTarget.endLine === undefined
-              ? {}
-              : { endLine: navigationTarget.endLine }),
-          }
-        : {
-            kind: "scroll",
-            top: scrollTop,
-          };
-    return {
-      version: 1,
-      reviewKey: reviewHistoryKey,
-      pane,
-      document,
-      locator,
-    };
-  }, [reviewHistoryKey]);
-
-  const markLineNavigationApplied = useCallback(
-    (pane: DocumentPaneId, requestId: number): void => {
-      const navigationTarget = viewerNavigationTargetRef.current;
-      const workspace = documentWorkspaceRef.current;
-      const document = workspace.active[pane];
-      if (
-        !navigationTarget ||
-        navigationTarget.requestId !== requestId ||
-        !document ||
-        documentTabKey(document) !== navigationTarget.documentKey
-      ) {
-        return;
-      }
-      appliedLineNavigation.current = {
-        requestId,
-        documentKey: navigationTarget.documentKey,
-        pane,
-        top:
-          paneElements.current[pane]?.scrollTop ??
-          documentScrollPositions.current.get(navigationTarget.documentKey) ??
-          0,
-      };
-    },
-    [documentWorkspaceRef],
-  );
-
-  const cancelReadingHistoryScrollSnapshot = useCallback((): void => {
-    if (readingHistoryScrollTimeout.current === null) return;
-    window.clearTimeout(readingHistoryScrollTimeout.current);
-    readingHistoryScrollTimeout.current = null;
-  }, []);
-
-  const replaceCurrentReadingHistory = useCallback((): void => {
-    if (!readingHistoryReady.current) return;
-    const entry = currentReadingHistoryEntry();
-    if (!entry) return;
-    window.history.replaceState(readingHistoryState(window.history.state, entry), "");
-  }, [currentReadingHistoryEntry]);
-
-  const scheduleReadingHistoryScrollSnapshot = useCallback((): void => {
-    if (!readingHistoryReady.current) return;
-    cancelReadingHistoryScrollSnapshot();
-    readingHistoryScrollTimeout.current = window.setTimeout(() => {
-      readingHistoryScrollTimeout.current = null;
-      replaceCurrentReadingHistory();
-    }, 150);
-  }, [cancelReadingHistoryScrollSnapshot, replaceCurrentReadingHistory]);
-
-  const pushReadingHistory = useCallback(
-    (
-      document: ActiveDocument,
-      pane: DocumentPaneId,
-      locator: ReadingLocator,
-      hash?: string,
-    ): void => {
-      if (!reviewHistoryKey || !readingHistoryReady.current) return;
-      cancelReadingHistoryScrollSnapshot();
-      const currentWorkspace = documentWorkspaceRef.current;
-      const currentDocument = currentWorkspace.active[currentWorkspace.focusedPane];
-      replaceCurrentReadingHistory();
-      const destination: ReadingHistoryEntry = {
-        version: 1,
-        reviewKey: reviewHistoryKey,
-        pane,
-        document,
-        locator,
-      };
-      if (
-        locator.kind === "scroll" &&
-        currentDocument &&
-        currentWorkspace.focusedPane === pane &&
-        sameReadingDocument(currentDocument, document)
-      ) {
-        window.history.replaceState(readingHistoryState(window.history.state, destination), "");
-        return;
-      }
-      const url = new URL(window.location.href);
-      url.hash = hash ?? "";
-      window.history.pushState(readingHistoryState(window.history.state, destination), "", url);
-    },
-    [cancelReadingHistoryScrollSnapshot, replaceCurrentReadingHistory, reviewHistoryKey],
-  );
-
-  const requestLineNavigation = useCallback(
-    (
-      documentKey: string,
-      locator: Extract<ReadingLocator, { kind: "line" }>,
-      resetHorizontal: boolean,
-    ) => {
-      searchNavigationSequence.current += 1;
-      const target: ViewerNavigationTarget = {
-        documentKey,
-        line: locator.line,
-        ...(locator.endLine === undefined ? {} : { endLine: locator.endLine }),
-        requestId: searchNavigationSequence.current,
-        resetHorizontal,
-      };
-      appliedLineNavigation.current = null;
-      viewerNavigationTargetRef.current = target;
-      setViewerNavigationTarget(target);
-    },
-    [],
-  );
-
-  const navigateToDocument = useCallback(
-    (
-      document: ActiveDocument,
-      targetPane?: DocumentPaneId,
-      locator?: ReadingLocator,
-      resetHorizontal = true,
-    ): void => {
-      const workspace = documentWorkspaceRef.current;
-      const documentKey = documentTabKey(document);
-      const pane = targetPane ?? workspace.panes[documentKey] ?? workspace.focusedPane;
-      const destinationLocator =
-        locator ??
-        ({
-          kind: "scroll",
-          top: documentScrollPositions.current.get(documentKey) ?? 0,
-        } satisfies ReadingLocator);
-      pushReadingHistory(document, pane, destinationLocator);
-      openWorkspaceDocument(document, pane);
-      if (destinationLocator.kind === "line") {
-        requestLineNavigation(documentKey, destinationLocator, resetHorizontal);
-      }
-    },
-    [openWorkspaceDocument, pushReadingHistory, requestLineNavigation],
-  );
-
-  const navigateToMarkdownFragment = useCallback(
-    (document: ActiveDocument, pane: DocumentPaneId, line: number, hash: string): void => {
-      const documentKey = documentTabKey(document);
-      const locator = { kind: "line", line } satisfies ReadingLocator;
-      pushReadingHistory(document, pane, locator, hash);
-      requestLineNavigation(documentKey, locator, true);
-    },
-    [pushReadingHistory, requestLineNavigation],
-  );
+  const {
+    activateDocument,
+    initializeReadingHistory,
+    markLineNavigationApplied,
+    navigateToDocument,
+    navigateToMarkdownFragment,
+    recordPaneScroll,
+  } = useReviewReadingHistory({
+    reviewKey: reviewHistoryKey,
+    workspace: documentWorkspace,
+    workspaceRef: documentWorkspaceRef,
+    paneElements,
+    documentScrollPositions,
+    viewerNavigationTarget,
+    setViewerNavigationTarget,
+    openWorkspaceDocument,
+    activateWorkspaceDocument,
+    scrollRevision: reviewStateRevision,
+  });
 
   const openDocument = useCallback(
     (document: ActiveDocument, targetPane?: DocumentPaneId): void =>
       navigateToDocument(document, targetPane),
     [navigateToDocument],
-  );
-
-  const activateDocument = useCallback(
-    (document: ActiveDocument, pane?: DocumentPaneId): void => {
-      const workspace = documentWorkspaceRef.current;
-      const targetPane = pane ?? workspace.panes[documentTabKey(document)] ?? workspace.focusedPane;
-      pushReadingHistory(document, targetPane, {
-        kind: "scroll",
-        top: documentScrollPositions.current.get(documentTabKey(document)) ?? 0,
-      });
-      activateWorkspaceDocument(document, targetPane);
-    },
-    [activateWorkspaceDocument, pushReadingHistory],
   );
 
   useEffect(() => {
@@ -787,67 +573,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const displayMode: DisplayMode =
     documentDisplayMode === "full" ? "full" : rangeStartIndex === 0 ? "pull-request" : "range";
 
-  const restoreReadingHistory = useCallback(
-    (entry: ReadingHistoryEntry): void => {
-      cancelReadingHistoryScrollSnapshot();
-      const workspace = documentWorkspaceRef.current;
-      const documentKey = documentTabKey(entry.document);
-      const pane = workspace.panes[documentKey] ?? entry.pane;
-      if (entry.locator.kind === "scroll") {
-        documentScrollPositions.current.set(documentKey, entry.locator.top);
-      }
-      openWorkspaceDocument(entry.document, pane);
-      if (entry.locator.kind === "line") {
-        requestLineNavigation(documentKey, entry.locator, true);
-        return;
-      }
-      const scrollTop = entry.locator.top;
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          const targetPane = documentWorkspaceRef.current.panes[documentKey] ?? pane;
-          const paneElement = paneElements.current[targetPane];
-          if (paneElement) paneElement.scrollTop = scrollTop;
-        });
-      });
-    },
-    [cancelReadingHistoryScrollSnapshot, openWorkspaceDocument, requestLineNavigation],
-  );
-
   useEffect(() => {
-    const previousScrollRestoration = window.history.scrollRestoration;
-    window.history.scrollRestoration = "manual";
-    return () => {
-      cancelReadingHistoryScrollSnapshot();
-      window.history.scrollRestoration = previousScrollRestoration;
-    };
-  }, [cancelReadingHistoryScrollSnapshot]);
-
-  useEffect(() => {
-    if (!reviewHistoryKey) return;
-    const restoreFromPopState = (event: PopStateEvent): void => {
-      const entry = parseReadingHistoryEntry(event.state, reviewHistoryKey);
-      if (entry) restoreReadingHistory(entry);
-    };
-    window.addEventListener("popstate", restoreFromPopState);
-    return () => window.removeEventListener("popstate", restoreFromPopState);
-  }, [reviewHistoryKey, restoreReadingHistory]);
-
-  useEffect(() => {
-    if (
-      !pullRequestId ||
-      !pullRequestQuery.isSuccess ||
-      !selectedOid ||
-      readingHistoryReady.current
-    ) {
-      return;
-    }
-    readingHistoryReady.current = true;
-    const entry = currentReadingHistoryEntry();
-    if (!entry) return;
-    const url = new URL(window.location.href);
-    url.hash = "";
-    window.history.replaceState(readingHistoryState(window.history.state, entry), "", url);
-  }, [currentReadingHistoryEntry, pullRequestId, pullRequestQuery.isSuccess, selectedOid]);
+    if (!pullRequestId || !pullRequestQuery.isSuccess || !selectedOid) return;
+    initializeReadingHistory();
+  }, [initializeReadingHistory, pullRequestId, pullRequestQuery.isSuccess, selectedOid]);
 
   useEffect(() => {
     const warnBeforeBrowserClose = (event: BeforeUnloadEvent): void => {
@@ -1711,12 +1440,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           paneElements.current[paneId] = element;
         }}
         onScroll={(scrollTop) => {
-          if (paneViewerDocument) {
-            documentScrollPositions.current.set(documentTabKey(paneViewerDocument), scrollTop);
-            if (documentWorkspaceRef.current.focusedPane === paneId) {
-              scheduleReadingHistoryScrollSnapshot();
-            }
-          }
+          recordPaneScroll(paneId, paneViewerDocument, scrollTop);
         }}
         onFocus={() =>
           setDocumentWorkspace((current) =>
@@ -1935,10 +1659,12 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
 export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
   const branchReviewId = new URLSearchParams(window.location.search).get("branchReviewId");
   return branchReviewId ? (
-    <BranchReviewApp
-      branchReviewId={branchReviewId}
-      initialThemePreference={initialThemePreference}
-    />
+    <Suspense fallback={<main className="fatal-state">Branch Reviewを準備しています…</main>}>
+      <BranchReviewApp
+        branchReviewId={branchReviewId}
+        initialThemePreference={initialThemePreference}
+      />
+    </Suspense>
   ) : (
     <PullRequestApp initialThemePreference={initialThemePreference} />
   );

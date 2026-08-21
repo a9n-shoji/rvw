@@ -37,14 +37,8 @@ import {
   type ActiveDocument,
   type DocumentPaneId,
 } from "../document-workspace.js";
-import {
-  parseReadingHistoryEntry,
-  readingHistoryState,
-  sameReadingDocument,
-  type ReadingHistoryEntry,
-  type ReadingLocator,
-} from "../reading-history.js";
 import type { AnyReviewComment } from "../review-context.js";
+import type { ReadingLocator } from "../reading-history.js";
 import { reviewQueryKeys } from "../review-query-keys.js";
 import type { ThemePreference } from "../theme.js";
 import { useDebouncedValue } from "../use-debounced-value.js";
@@ -52,6 +46,7 @@ import { useDocumentWorkspace } from "../use-document-workspace.js";
 import { useThemePreference } from "../use-theme-preference.js";
 import { useReviewSidebarSearch } from "../use-review-sidebar-search.js";
 import { useQuickOpenShortcut } from "../use-quick-open-shortcut.js";
+import { useReviewReadingHistory } from "../use-review-reading-history.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 
 const DocumentViewer = lazy(async () => {
@@ -117,15 +112,14 @@ export function BranchReviewApp({
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const navigationSequence = useRef(0);
   const attemptedInitialSync = useRef(false);
   const observedChangeSequence = useRef<number | null>(null);
-  const readingHistoryReady = useRef(false);
   const paneElements = useRef<Record<DocumentPaneId, HTMLElement | null>>({
     left: null,
     right: null,
   });
   const documentScrollPositions = useRef(new Map<string, number>());
+  const reviewHistoryKey = `branch:${branchReviewId}`;
   const resetViewerNavigation = useCallback((): void => setViewerNavigationTarget(null), []);
   const {
     workspace,
@@ -139,6 +133,24 @@ export function BranchReviewApp({
     dropDocument,
   } = useDocumentWorkspace(resetViewerNavigation, null);
   const {
+    activateDocument,
+    initializeReadingHistory,
+    markLineNavigationApplied,
+    navigateToDocument,
+    navigateToMarkdownFragment,
+    recordPaneScroll,
+  } = useReviewReadingHistory({
+    reviewKey: reviewHistoryKey,
+    workspace,
+    workspaceRef,
+    paneElements,
+    documentScrollPositions,
+    viewerNavigationTarget,
+    setViewerNavigationTarget,
+    openWorkspaceDocument,
+    activateWorkspaceDocument,
+  });
+  const {
     themePreference,
     selectThemePreference,
     query: themeQuery,
@@ -150,8 +162,6 @@ export function BranchReviewApp({
     onCodeExpandedChange: setCodeExpanded,
     onModeChange: setSidebarMode,
   });
-  const reviewHistoryKey = `branch:${branchReviewId}`;
-
   const reviewQuery = useQuery({
     queryKey: reviewQueryKeys.review("branch", branchReviewId),
     queryFn: async () => await api<BranchReviewResponse>(`/api/branch-reviews/${branchReviewId}`),
@@ -344,111 +354,16 @@ export function BranchReviewApp({
     },
   });
 
-  const currentReadingHistoryEntry = useCallback((): ReadingHistoryEntry | null => {
-    const current = workspaceRef.current;
-    const pane = current.focusedPane;
-    const document = current.active[pane];
-    if (!document) return null;
-    return {
-      version: 1,
-      reviewKey: reviewHistoryKey,
-      pane,
-      document,
-      locator: {
-        kind: "scroll",
-        top:
-          paneElements.current[pane]?.scrollTop ??
-          documentScrollPositions.current.get(documentTabKey(document)) ??
-          0,
-      },
-    };
-  }, [reviewHistoryKey, workspaceRef]);
-  const requestNavigation = useCallback(
-    (document: ActiveDocument, locator: ReadingLocator): void => {
-      navigationSequence.current += 1;
-      setViewerNavigationTarget({
-        documentKey: documentTabKey(document),
-        line: locator.kind === "line" ? locator.line : null,
-        ...(locator.kind === "line" && locator.endLine !== undefined
-          ? { endLine: locator.endLine }
-          : {}),
-        requestId: navigationSequence.current,
-        resetHorizontal: true,
-      });
-    },
-    [],
-  );
-  const navigateToDocument = useCallback(
-    (
-      document: ActiveDocument,
-      targetPane?: DocumentPaneId,
-      locator: ReadingLocator = { kind: "line", line: null },
-      pushHistory = true,
-    ): void => {
-      const current = workspaceRef.current;
-      const pane = targetPane ?? current.panes[documentTabKey(document)] ?? current.focusedPane;
-      if (pushHistory && readingHistoryReady.current) {
-        const currentEntry = currentReadingHistoryEntry();
-        if (currentEntry) {
-          window.history.replaceState(readingHistoryState(window.history.state, currentEntry), "");
-        }
-      }
-      openWorkspaceDocument(document, pane);
-      requestNavigation(document, locator);
-      if (pushHistory && readingHistoryReady.current) {
-        const destination: ReadingHistoryEntry = {
-          version: 1,
-          reviewKey: reviewHistoryKey,
-          pane,
-          document,
-          locator,
-        };
-        const currentDocument = current.active[current.focusedPane];
-        const replace =
-          currentDocument &&
-          current.focusedPane === pane &&
-          sameReadingDocument(currentDocument, document);
-        const state = readingHistoryState(window.history.state, destination);
-        if (replace) window.history.replaceState(state, "");
-        else window.history.pushState(state, "", window.location.href);
-      }
-    },
-    [
-      currentReadingHistoryEntry,
-      openWorkspaceDocument,
-      requestNavigation,
-      reviewHistoryKey,
-      workspaceRef,
-    ],
-  );
   useEffect(() => {
-    readingHistoryReady.current = true;
-    const restore = (event: PopStateEvent): void => {
-      const entry = parseReadingHistoryEntry(event.state, reviewHistoryKey);
-      if (!entry) return;
-      openWorkspaceDocument(entry.document, entry.pane);
-      requestNavigation(entry.document, entry.locator);
-      if (entry.locator.kind === "scroll") {
-        const scrollTop = entry.locator.top;
-        window.requestAnimationFrame(() => {
-          const pane = paneElements.current[entry.pane];
-          if (pane) pane.scrollTop = scrollTop;
-        });
-      }
-    };
-    window.addEventListener("popstate", restore);
-    return () => window.removeEventListener("popstate", restore);
-  }, [openWorkspaceDocument, requestNavigation, reviewHistoryKey]);
+    if (reviewQuery.isSuccess) initializeReadingHistory();
+  }, [initializeReadingHistory, reviewQuery.isSuccess]);
   useEffect(() => {
-    const previousScrollRestoration = window.history.scrollRestoration;
-    window.history.scrollRestoration = "manual";
     const warnBeforeBrowserClose = (event: BeforeUnloadEvent): void => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warnBeforeBrowserClose);
     return () => {
-      window.history.scrollRestoration = previousScrollRestoration;
       window.removeEventListener("beforeunload", warnBeforeBrowserClose);
     };
   }, []);
@@ -686,13 +601,14 @@ export function BranchReviewApp({
             <WalkthroughViewer
               walkthrough={walkthroughDetails.get(paneDocument.id)!}
               comments={comments}
+              commentPlacements={placements}
               activeCommentId={activeCommentId}
               navigationTarget={
                 viewerNavigationTarget?.documentKey === documentTabKey(paneDocument)
                   ? viewerNavigationTarget
                   : null
               }
-              onNavigationApplied={() => undefined}
+              onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
               themePreference={themePreference}
               onCommentActiveChange={handleCommentActiveChange}
               onOpenReference={(walkthrough, reference, openInOtherPane) =>
@@ -751,6 +667,7 @@ export function BranchReviewApp({
               displayMode="full"
               diffStyle="unified"
               comments={comments}
+              commentPlacements={placements}
               activeCommentId={activeCommentId}
               fullViewNotice={
                 paneDocument.kind === "issue" &&
@@ -765,9 +682,9 @@ export function BranchReviewApp({
                   ? viewerNavigationTarget
                   : null
               }
-              onNavigationApplied={() => undefined}
-              onOpenMarkdownFragment={(line) =>
-                navigateToDocument(paneDocument, paneId, { kind: "line", line })
+              onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
+              onOpenMarkdownFragment={(line, hash) =>
+                navigateToMarkdownFragment(paneDocument, paneId, line, hash)
               }
               onOpenCodeReference={(sourceOid, reference, openInOtherPane) =>
                 openCodeReference(
@@ -796,26 +713,14 @@ export function BranchReviewApp({
           paneElements.current[paneId] = element;
         }}
         onScroll={(scrollTop) => {
-          if (paneDocument) {
-            documentScrollPositions.current.set(documentTabKey(paneDocument), scrollTop);
-          }
+          recordPaneScroll(paneId, paneDocument, scrollTop);
         }}
         onFocus={() =>
           setWorkspace((current) =>
             current.focusedPane === paneId ? current : { ...current, focusedPane: paneId },
           )
         }
-        onActivate={(document) => {
-          const current = currentReadingHistoryEntry();
-          if (current) {
-            window.history.replaceState(readingHistoryState(window.history.state, current), "");
-          }
-          activateWorkspaceDocument(document, paneId);
-          requestNavigation(document, {
-            kind: "scroll",
-            top: documentScrollPositions.current.get(documentTabKey(document)) ?? 0,
-          });
-        }}
+        onActivate={(document) => activateDocument(document, paneId)}
         onClose={closeDocument}
         onCloseOthers={(document) => closePaneDocuments(paneId, document)}
         onCloseAll={() => closePaneDocuments(paneId)}

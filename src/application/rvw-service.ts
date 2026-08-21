@@ -71,7 +71,11 @@ import {
 import { findFixedStringMatches } from "../domain/search.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 import { RvwDatabase, type CommentUpdateInput } from "../infrastructure/db/database.js";
-import { GitClient, type RepositoryContext } from "../infrastructure/git/git-client.js";
+import {
+  GitClient,
+  type BlobContent,
+  type RepositoryContext,
+} from "../infrastructure/git/git-client.js";
 import {
   parseIssueReference,
   parsePullRequestUrl,
@@ -182,6 +186,11 @@ export interface BranchCommentReviewContext {
     staleAgainstGitHub: null;
     live: null;
   };
+}
+
+interface BranchPlacementCache {
+  changedFiles: Map<string, Promise<ChangedFile[]>>;
+  documents: Map<string, Promise<BlobContent>>;
 }
 
 export interface CommentListItemContext {
@@ -2046,6 +2055,7 @@ export class RvwService {
     branchReview: BranchReview,
     comment: BranchReviewComment,
     destinationOid: string,
+    cache?: BranchPlacementCache,
   ): Promise<CommentPlacement> {
     const target = comment.target;
     if (target.kind === "branch") return { outdated: false, range: null, path: null };
@@ -2075,11 +2085,17 @@ export class RvwService {
       target.sourceOid === destinationOid
         ? { path: target.path, deleted: false }
         : await (async () => {
-            const changes = await this.git.changedFiles(
-              branchReview.localRepositoryPath,
-              target.sourceOid,
-              destinationOid,
-            );
+            const cacheKey = `${target.sourceOid}:${destinationOid}`;
+            let changesPromise = cache?.changedFiles.get(cacheKey);
+            if (!changesPromise) {
+              changesPromise = this.git.changedFiles(
+                branchReview.localRepositoryPath,
+                target.sourceOid,
+                destinationOid,
+              );
+              cache?.changedFiles.set(cacheKey, changesPromise);
+            }
+            const changes = await changesPromise;
             const change = changes.find((candidate) => candidate.oldPath === target.path);
             return {
               path: change?.newPath ?? target.path,
@@ -2088,21 +2104,22 @@ export class RvwService {
             };
           })();
     if (resolved.deleted) return { outdated: true, range: null, path: target.path };
-    const destination = await this.git.readDocument(
-      branchReview.localRepositoryPath,
-      destinationOid,
-      resolved.path,
-    );
+    const readDocument = (oid: string, filePath: string): Promise<BlobContent> => {
+      const cacheKey = `${oid}:${filePath}`;
+      let documentPromise = cache?.documents.get(cacheKey);
+      if (!documentPromise) {
+        documentPromise = this.git.readDocument(branchReview.localRepositoryPath, oid, filePath);
+        cache?.documents.set(cacheKey, documentPromise);
+      }
+      return documentPromise;
+    };
+    const destination = await readDocument(destinationOid, resolved.path);
     if (target.startLine === null || target.endLine === null) {
       return destination.availability === "missing"
         ? { outdated: true, range: null, path: resolved.path }
         : { outdated: false, range: null, path: resolved.path };
     }
-    const source = await this.git.readDocument(
-      branchReview.localRepositoryPath,
-      target.sourceOid,
-      target.path,
-    );
+    const source = await readDocument(target.sourceOid, target.path);
     if (source.availability !== "available" || destination.availability !== "available") {
       return { outdated: true, range: null, path: resolved.path };
     }
@@ -2254,6 +2271,10 @@ export class RvwService {
     resolved?: boolean,
   ): Promise<Array<{ comment: BranchReviewComment; latestPlacement: CommentPlacement }>> {
     const branchReview = this.getBranchReview(branchReviewId);
+    const cache: BranchPlacementCache = {
+      changedFiles: new Map(),
+      documents: new Map(),
+    };
     return await Promise.all(
       this.database.listBranchComments(branchReviewId, resolved).map(async (comment) => ({
         comment,
@@ -2261,6 +2282,7 @@ export class RvwService {
           branchReview,
           comment,
           branchReview.sourceOid,
+          cache,
         ),
       })),
     );

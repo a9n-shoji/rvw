@@ -541,6 +541,7 @@ export function WalkthroughReadingSurface({
 export function WalkthroughViewer({
   walkthrough,
   comments,
+  commentPlacements,
   activeCommentId,
   navigationTarget,
   onNavigationApplied,
@@ -553,6 +554,7 @@ export function WalkthroughViewer({
 }: {
   walkthrough: AnyWalkthrough;
   comments: AnyReviewComment[];
+  commentPlacements?: ReadonlyMap<string, CommentPlacement>;
   activeCommentId: string | null;
   navigationTarget?: ViewerNavigationTarget | null;
   onNavigationApplied: (requestId: number) => void;
@@ -662,6 +664,12 @@ export function WalkthroughViewer({
       walkthrough.id,
       walkthrough.body,
       walkthroughComments.map((comment) => `${comment.id}:${comment.updatedAt}`),
+      walkthroughComments.map((comment) => {
+        const placement = commentPlacements?.get(comment.id);
+        return placement
+          ? `${comment.id}:${placement.outdated}:${placement.range?.startLine ?? ""}:${placement.range?.endLine ?? ""}`
+          : `${comment.id}:uncached`;
+      }),
     ],
     queryFn: async () => {
       const search = new URLSearchParams({
@@ -672,11 +680,13 @@ export function WalkthroughViewer({
       return await Promise.all(
         walkthroughComments.map(async (comment) => ({
           comment,
-          placement: (
-            await api<PlacementResponse>(
-              `/api/comments/${comment.id}/placement?${search.toString()}`,
-            )
-          ).placement,
+          placement:
+            commentPlacements?.get(comment.id) ??
+            (
+              await api<PlacementResponse>(
+                `/api/comments/${comment.id}/placement?${search.toString()}`,
+              )
+            ).placement,
         })),
       );
     },

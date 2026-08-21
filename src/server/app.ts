@@ -665,7 +665,15 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
           placement: service.placeBranchIssueComment(branchReviewId, branchComment, issueId),
         });
       }
-      const oid = oidQuery(context.req.query("oid"), "oid");
+      const kind = context.req.query("kind");
+      let oid: string;
+      if (kind === "repository-file") {
+        oid = oidQuery(context.req.query("sourceOid"), "sourceOid");
+      } else if (kind === "commit") {
+        oid = oidQuery(context.req.query("oid"), "oid");
+      } else {
+        throw new RvwError("INVALID_INPUT", "Branch配置先queryが不正です。");
+      }
       return context.json({
         ok: true,
         placement: await service.placeBranchCommentAtCommit(branchReviewId, branchComment, oid),

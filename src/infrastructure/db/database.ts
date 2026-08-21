@@ -39,6 +39,7 @@ import type {
   WalkthroughSummary,
 } from "../../domain/models.js";
 import { formatCommentUri } from "../../domain/comment-uri.js";
+import { hashDocument, normalizeLf } from "../../domain/pr-markdown.js";
 import { formatWalkthroughUri } from "../../domain/walkthrough-uri.js";
 import { RvwError } from "../../shared/errors.js";
 import { isThemePreference, type ThemePreference } from "../../shared/preferences.js";
@@ -851,6 +852,7 @@ export class RvwDatabase {
     const existing = this.findIssue(issue.owner, issue.repository, issue.number);
     const id = existing?.id ?? randomUUID();
     const fetchedAt = new Date().toISOString();
+    const body = normalizeLf(issue.body);
     this.database
       .prepare(
         `INSERT INTO github_issues(
@@ -878,10 +880,10 @@ export class RvwDatabase {
         issue.number,
         issue.url,
         issue.title,
-        issue.body,
+        body,
         issue.state,
         issue.updatedAt,
-        createHash("sha256").update(issue.body, "utf8").digest("hex"),
+        hashDocument(body),
         fetchedAt,
       );
     const result = this.findIssue(issue.owner, issue.repository, issue.number);
@@ -1325,6 +1327,56 @@ export class RvwDatabase {
     ).map(mapCodeReference);
   }
 
+  private listCodeReferencesForOwners(
+    kind: "comment-post" | "branch-comment-post",
+    ownerIds: string[],
+  ): Map<string, CodeReference[]> {
+    const referencesByOwner = new Map(ownerIds.map((ownerId) => [ownerId, [] as CodeReference[]]));
+    if (ownerIds.length === 0) return referencesByOwner;
+    const { table, ownerColumn } = this.codeReferenceStorage(kind);
+    const placeholders = ownerIds.map(() => "?").join(", ");
+    const rows = this.database
+      .prepare(
+        `SELECT *, ${ownerColumn} AS reference_owner_id
+         FROM ${table}
+         WHERE ${ownerColumn} IN (${placeholders})
+         ORDER BY ${ownerColumn} ASC, sort_order ASC`,
+      )
+      .all(...ownerIds) as DbRow[];
+    for (const row of rows) {
+      referencesByOwner.get(stringValue(row, "reference_owner_id"))?.push(mapCodeReference(row));
+    }
+    return referencesByOwner;
+  }
+
+  private listPostsForComments(
+    kind: "comment-post" | "branch-comment-post",
+    commentIds: string[],
+  ): Map<string, CommentPost[]> {
+    const postsByComment = new Map(commentIds.map((commentId) => [commentId, [] as CommentPost[]]));
+    if (commentIds.length === 0) return postsByComment;
+    const table = kind === "comment-post" ? "comment_posts" : "branch_comment_posts";
+    const placeholders = commentIds.map(() => "?").join(", ");
+    const rows = this.database
+      .prepare(
+        `SELECT * FROM ${table}
+         WHERE comment_id IN (${placeholders})
+         ORDER BY comment_id ASC, is_root DESC, created_at ASC, id ASC`,
+      )
+      .all(...commentIds) as DbRow[];
+    const referencesByPost = this.listCodeReferencesForOwners(
+      kind,
+      rows.map((row) => stringValue(row, "id")),
+    );
+    for (const row of rows) {
+      const postId = stringValue(row, "id");
+      postsByComment
+        .get(stringValue(row, "comment_id"))
+        ?.push(mapCommentPost(row, referencesByPost.get(postId) ?? []));
+    }
+    return postsByComment;
+  }
+
   private insertCodeReferences(
     kind: "comment-post" | "walkthrough" | "branch-comment-post" | "branch-walkthrough",
     ownerId: string,
@@ -1747,10 +1799,9 @@ export class RvwDatabase {
         : resolved
           ? " AND c.resolved_at IS NOT NULL"
           : " AND c.resolved_at IS NULL";
-    return (
-      this.database
-        .prepare(
-          `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
+    const rows = this.database
+      .prepare(
+        `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
             t.source_document_hash, t.quoted_text, t.walkthrough_id, t.start_line, t.end_line,
             w.title AS walkthrough_title,
             ${this.pullRequestIssueTargetColumns()}
@@ -1759,9 +1810,17 @@ export class RvwDatabase {
           LEFT JOIN walkthroughs w ON w.id = t.walkthrough_id
           ${this.pullRequestIssueTargetJoins()}
           WHERE c.pull_request_id = ?${where} ORDER BY c.updated_at DESC`,
-        )
-        .all(pullRequestId) as DbRow[]
-    ).map((row) => this.mapComment(row));
+      )
+      .all(pullRequestId) as DbRow[];
+    const comments = rows.map((row) => this.mapCommentWithoutPosts(row));
+    const postsByComment = this.listPostsForComments(
+      "comment-post",
+      comments.map((comment) => comment.id),
+    );
+    return comments.map((comment) => ({
+      ...comment,
+      posts: postsByComment.get(comment.id) ?? [],
+    }));
   }
 
   listCommentPage(
@@ -1823,16 +1882,7 @@ export class RvwDatabase {
   }
 
   listCommentPosts(commentId: string): CommentPost[] {
-    return (
-      this.database
-        .prepare(
-          "SELECT * FROM comment_posts WHERE comment_id = ? ORDER BY is_root DESC, created_at ASC, id ASC",
-        )
-        .all(commentId) as DbRow[]
-    ).map((row) => {
-      const postId = stringValue(row, "id");
-      return mapCommentPost(row, this.listCodeReferences("comment-post", postId));
-    });
+    return this.listPostsForComments("comment-post", [commentId]).get(commentId) ?? [];
   }
 
   private getCommentPost(postId: string): CommentPost | null {
@@ -2366,30 +2416,25 @@ export class RvwDatabase {
         : resolved
           ? " AND c.resolved_at IS NOT NULL"
           : " AND c.resolved_at IS NULL";
-    return (
-      this.database
-        .prepare(
-          `${this.branchCommentSelect(`WHERE c.branch_review_id = ?${state}`)}
+    const rows = this.database
+      .prepare(
+        `${this.branchCommentSelect(`WHERE c.branch_review_id = ?${state}`)}
            ORDER BY c.updated_at DESC, c.id DESC`,
-        )
-        .all(branchReviewId) as DbRow[]
-    ).map((row) => {
-      const comment = this.mapBranchCommentWithoutPosts(row);
-      return { ...comment, posts: this.listBranchCommentPosts(comment.id) };
-    });
+      )
+      .all(branchReviewId) as DbRow[];
+    const comments = rows.map((row) => this.mapBranchCommentWithoutPosts(row));
+    const postsByComment = this.listPostsForComments(
+      "branch-comment-post",
+      comments.map((comment) => comment.id),
+    );
+    return comments.map((comment) => ({
+      ...comment,
+      posts: postsByComment.get(comment.id) ?? [],
+    }));
   }
 
   listBranchCommentPosts(commentId: string): CommentPost[] {
-    return (
-      this.database
-        .prepare(
-          "SELECT * FROM branch_comment_posts WHERE comment_id = ? ORDER BY is_root DESC, created_at ASC, id ASC",
-        )
-        .all(commentId) as DbRow[]
-    ).map((row) => {
-      const id = stringValue(row, "id");
-      return mapCommentPost(row, this.listCodeReferences("branch-comment-post", id));
-    });
+    return this.listPostsForComments("branch-comment-post", [commentId]).get(commentId) ?? [];
   }
 
   createBranchComment(input: NewBranchCommentInput): BranchReviewComment {

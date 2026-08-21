@@ -1508,6 +1508,21 @@ app.get("/api/comments/:id/placement", (context) => {
     );
   }
   if (comment.branchReviewId) {
+    if (context.req.query("branchReviewId") !== comment.branchReviewId) {
+      return context.json({
+        ok: true,
+        placement: { outdated: true, range: null, path: null },
+      });
+    }
+    if (
+      (context.req.query("kind") === "repository-file" && !context.req.query("sourceOid")) ||
+      (context.req.query("kind") === "commit" && !context.req.query("oid"))
+    ) {
+      return context.json(
+        { ok: false, error: { code: "INVALID_INPUT", message: "missing placement source" } },
+        400,
+      );
+    }
     if (comment.target.kind === "issue" && context.req.query("kind") !== "commit") {
       const matches =
         context.req.query("kind") === "issue-markdown" &&

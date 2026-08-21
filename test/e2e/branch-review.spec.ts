@@ -24,6 +24,76 @@ test.beforeEach(async ({ request }) => {
   expect(response.ok()).toBe(true);
 });
 
+test("keeps a moved Branch document in its current pane during reading-history restore", async ({
+  page,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.getByRole("button", { name: "src フォルダ", exact: true }).click();
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await page.getByRole("button", { name: "README.md", exact: true }).click();
+
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  await leftPane.getByRole("button", { name: "左ペインの操作" }).click();
+  await leftPane.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
+  await expect(rightPane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  await page.goBack();
+  await expect(leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rightPane.getByRole("tab", { name: "README.md", exact: true })).toHaveCount(1);
+  await page.goForward();
+  await expect(rightPane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(leftPane.getByRole("tab", { name: "README.md", exact: true })).toHaveCount(0);
+});
+
+test("restores the actual Branch pane scroll position after leaving a line jump", async ({
+  page,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.getByRole("button", { name: "コード検索を開く" }).click();
+  await page.getByRole("textbox", { name: "全文検索", exact: true }).fill("dispatcher");
+  await page.getByRole("button", { name: /README\.md \d+行/ }).click();
+
+  const pane = page.getByRole("region", { name: "左のコードペイン" });
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(100);
+  const lineJumpTop = await pane.evaluate((element) => element.scrollTop);
+  await pane.hover();
+  await page.mouse.wheel(0, -300);
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeLessThan(lineJumpTop);
+  const scrolledTop = await pane.evaluate((element) => element.scrollTop);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const locator = (
+          window.history.state as {
+            rvwReading?: { locator?: { kind?: unknown; top?: unknown } };
+          } | null
+        )?.rvwReading?.locator;
+        return locator?.kind === "scroll" ? locator.top : null;
+      }),
+    )
+    .toBe(scrolledTop);
+
+  await page.getByRole("button", { name: "ファイルツリーに戻る" }).click();
+  await page.getByRole("button", { name: "src フォルダ", exact: true }).click();
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await page.goBack();
+  await expect(pane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBe(scrolledTop);
+});
+
 test("uses the shared review workspace for the default branch, Issues, code, and Walkthroughs", async ({
   page,
 }) => {
@@ -74,6 +144,11 @@ test("uses the shared review workspace for the default branch, Issues, code, and
   );
   await expect(source).toHaveAttribute("data-search-target-line", "2");
   await expect(source.locator('[data-line="2"][data-editor-active-line]')).toBeVisible();
+  await expect(
+    leftPane.locator(".comment-thread--inline").filter({
+      hasText: "Verify the default-branch trimming behavior at its exact source.",
+    }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "解決済み 1", exact: true }).click();
   await expect(
     page.getByText("The default-branch scope is confirmed.", { exact: true }),

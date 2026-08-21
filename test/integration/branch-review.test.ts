@@ -9,10 +9,12 @@ import type {
   GitHubRepository,
   RepositoryIdentity,
 } from "../../src/domain/models.js";
+import { hashDocument } from "../../src/domain/pr-markdown.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
 import { startAgentSocket, tryAgentSocketRequest } from "../../src/server/agent-socket.js";
+import { createApp } from "../../src/server/app.js";
 import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
 
 class BranchGitHub implements GitHubPort {
@@ -162,6 +164,79 @@ describe("Branch Review", () => {
     expect(synchronized.branchReview).toMatchObject({
       id: first.branchReview.id,
       defaultBranchName: "trunk",
+    });
+  });
+
+  it("places Branch repository comments through the document-reference HTTP contract", async () => {
+    const { repositoryPath, sourceOid, service } = setup();
+    const opened = await service.openBranchReview(repositoryPath);
+    const comment = await service.createBranchComment({
+      branchReviewId: opened.branchReview.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid,
+        path: "README.md",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Keep this comment inline.",
+    });
+    const app = createApp(service, {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+    const query = new URLSearchParams({
+      kind: "repository-file",
+      branchReviewId: opened.branchReview.id,
+      sourceOid,
+      path: "README.md",
+    });
+
+    const response = await app.request(
+      `http://127.0.0.1:4321/api/comments/${comment.id}/placement?${query.toString()}`,
+      { headers: { host: "127.0.0.1:4321" } },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      placement: {
+        outdated: false,
+        range: { startLine: 1, endLine: 1 },
+        path: "README.md",
+      },
+    });
+  });
+
+  it("normalizes Issue bodies before hashing, displaying, and placing comments", async () => {
+    const { repositoryPath, github, service } = setup();
+    github.issues.set(142, issue(142, "First\r\nSecond\rThird"));
+    const opened = await service.openBranchReview(repositoryPath);
+    const added = await service.addBranchIssue(repositoryPath, "#142");
+
+    expect(added.issue).toMatchObject({
+      body: "First\nSecond\nThird",
+      bodyHash: hashDocument("First\nSecond\nThird"),
+    });
+    await expect(
+      service.getBranchDocument({
+        kind: "issue-markdown",
+        branchReviewId: opened.branchReview.id,
+        issueId: added.issue.id,
+      }),
+    ).resolves.toMatchObject({ text: "First\nSecond\nThird" });
+
+    const comment = await service.createBranchComment({
+      branchReviewId: opened.branchReview.id,
+      target: { kind: "issue", issue: "#142", startLine: 2, endLine: 2 },
+      body: "Keep the normalized range current.",
+    });
+    expect(
+      service.placeBranchIssueComment(opened.branchReview.id, comment, added.issue.id),
+    ).toEqual({
+      outdated: false,
+      range: { startLine: 2, endLine: 2 },
+      path: "#142",
     });
   });
 
