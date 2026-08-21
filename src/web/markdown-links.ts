@@ -1,3 +1,5 @@
+import { canonicalGitHubAttachmentUrl } from "../shared/image-assets.js";
+
 const urlScheme = /^[A-Za-z][A-Za-z\d+.-]*:/;
 
 export interface PointerPosition {
@@ -12,6 +14,16 @@ export function markdownAssetUrl(
 ): string {
   const search = new URLSearchParams({ sourceOid, path: filePath });
   return `/api/pull-requests/${pullRequestId}/markdown-asset?${search.toString()}`;
+}
+
+export function githubAttachmentAssetUrl(
+  pullRequestId: string,
+  absoluteUrl: string | undefined,
+): string | null {
+  const canonicalUrl = canonicalGitHubAttachmentUrl(absoluteUrl);
+  if (!canonicalUrl) return null;
+  const search = new URLSearchParams({ url: canonicalUrl });
+  return `/api/pull-requests/${pullRequestId}/github-attachment?${search.toString()}`;
 }
 
 export function markdownLinkWasDragged(

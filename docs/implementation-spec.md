@@ -283,10 +283,12 @@ empty fileは従来どおり明示的に扱う。
   明示する。Walkthrough referenceのexact sourceを取得できない場合はtabやpaneを開かず、操作元の
   Walkthroughへ一時chipを表示し、リンク切れと一時的な取得失敗を区別する。
 - Markdown内の画像はrepository Markdownまたはcomment postから、後述する基準commit内の相対pathを
-  参照する場合だけ自動取得する。PR本文、Walkthrough本文、外部URL、protocol-relative URL、repository
-  pathへ安全に解決できない参照は
-  requestを送らずplaceholderを表示する。SVG asset responseは同一originへの直接navigationも含め、
-  scriptと外部subresourceを禁止するContent Security Policyとsandboxを付ける。
+  参照する場合だけexact commit assetとして自動取得する。PR本文ではmodernな
+  `https://github.com/user-attachments/assets/<uuid>`だけをlocalhost endpointへ書き換えて取得する。
+  それ以外の外部URL、protocol-relative URL、`data:`、`blob:`、Walkthrough本文、repository pathへ
+  安全に解決できない参照はrequestを送らずplaceholderを表示する。画像load errorもalt/titleを保った
+  placeholderへ戻す。SVG asset responseは同一originへの直接navigationも含め、scriptと外部subresourceを
+  禁止するContent Security Policyとsandboxを付ける。
 - sidebarのtop-level stackはExplorerとCommentsの二つにする。Explorerには`Pull Request.md`、
   collapsibleなWalkthrough folder、file名filter、unchanged file表示checkbox、repository treeをこの順に置く。
   本文検索はExplorer headerのactionでSearch viewへ切り替える。ExplorerとSearchは別々のscroll領域へ
@@ -362,6 +364,34 @@ empty fileは従来どおり明示的に扱う。
   line commentをrender済み本文へinline表示する。DOM path、
   layout上の行、生成HTMLはtargetへ保存しない。
   line commentはSourceのgutter/range selectionとPreviewの文字列選択、file commentは両表示から作成できる。
+
+### 5.3.1 画像assetとrepository画像viewer
+
+- GitHub user attachment URLは`https:`、exact `github.com`、空のusername/password/port/query/fragment、
+  exact `/user-attachments/assets/<uuid>` pathを共通validatorで検証し、parse後のcanonical URLだけを使う。
+  `user-images.githubusercontent.com`と`private-user-images.githubusercontent.com`は安全な認証取得経路を
+  確認していないため対象外とする。
+- browserはGitHub attachment hostへ直接接続せず、PRにscopeしたsame-origin GET endpointを使う。
+  endpointは`Sec-Fetch-Site`がある場合に`same-origin`または`none`だけを受理し、`Origin`がある場合は
+  viewer originとの一致も検証する。serverは対象PRの存在を確認してから、shellを使わない
+  `gh api <canonical-url>` argument配列でbinaryを取得する。tokenを抽出、保存、header化せず、認証と
+  cross-host redirect処理はGitHub CLIへ委ねる。timeoutは30秒、stdoutは10 MiB、stderrは64 KiBを上限とし、
+  process errorのstderrやprivate URLをresponseへ含めない。binaryはSQLiteやpersistent cacheへ保存しない。
+- attachmentとrepository assetはbyte列からPNG、JPEG、GIF87a/GIF89a、WebP、AVIFをmagic byteで判定する。
+  SVGはUTF-8、任意のBOM/先頭空白/XML declarationと安全なXML commentの後に`svg` rootがある場合だけ許可する。
+  doctype、HTML、JSON、任意XML、truncated headerは画像として返さない。responseは検出したimage Content-Type、
+  `nosniff`、`Content-Disposition: inline`、`Cross-Origin-Resource-Policy: same-origin`、private immutable cache
+  headerを持ち、SVGにはsandbox CSPも付ける。
+- repository画像fileは`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.avif`、`.svg`をcase-insensitiveに
+  判定し、5 MiB以下のexact commit asset endpointだけで取得する。全文表示は選択sourceのnatural-size画像を
+  container内へ縮小し、変更表示はglobalなstacked/split設定にかかわらずold/new二列の単純Splitとする。
+  added/deletedは存在しない側を明示し、renameは両pathを表示する。画像・非画像間の変更も画像viewerで両側を
+  明示するが、old/new両方の`DocumentRef`を保持して非画像側を含むfile-level comment targetを失わない。
+  全文表示へ切り替えたときactive pathが非画像なら通常のdocument viewerへ戻す。
+- 画像viewerはtext document/diff APIを呼ばず、表示前のsame-origin HEADで404、413、415を区別した後に
+  browser image GETを行う。file-level commentだけを許可し、変更後が存在すればnew side、削除だけはold sideへ
+  exact source targetを保存する。既存commentはtargetと一致するold/new側へ表示する。
+- extensionless repository画像、zoom/pan、pixel diff、画像座標commentはPhase 1の対象外とする。
 
 ### 5.4 Agent Walkthrough
 
@@ -1048,7 +1078,8 @@ GET /api/pull-requests/:id/commits
 GET /api/pull-requests/:id/tree?oid=<oid>
 GET /api/pull-requests/:id/changed-files?oldOid=<oid>&newOid=<oid>
 GET /api/pull-requests/:id/document?kind=...&sourceOid=...&path=...
-GET /api/pull-requests/:id/markdown-asset?sourceOid=...&path=...
+GET|HEAD /api/pull-requests/:id/markdown-asset?sourceOid=...&path=...
+GET /api/pull-requests/:id/github-attachment?url=...
 GET /api/pull-requests/:id/diff?oldOid=...&newOid=...&oldPath=...&newPath=...
 GET /api/pull-requests/:id/search?oid=<oid>&q=<query>&matchCase=<bool>&wholeWord=<bool>
 GET /api/pull-requests/:id/walkthroughs
@@ -1134,6 +1165,8 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - expected Hostを検証
 - write APIは`application/json`だけ
 - same-origin以外のwriteを拒否、CORSを有効にしない
+- GitHub attachment readも存在するFetch Metadataと`Origin`でsame-originへ限定し、画像responseへ
+  `Cross-Origin-Resource-Policy: same-origin`を付ける
 - browser tab leaseはtransport-onlyで永続化しない
 - 通常の自動openはPRごとのbackground workerを起動し、worker ready後にbrowserを開き、最初のviewer
   heartbeatを確認してから親CLIを終了する

@@ -35,6 +35,7 @@ export type RvwErrorCode =
   | "SKILL_CONFLICT"
   | "SKILL_NOT_FOUND"
   | "STALE_PROTOCOL"
+  | "UNSUPPORTED_IMAGE"
   | "WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED";
 
 export interface SerializedRvwError {

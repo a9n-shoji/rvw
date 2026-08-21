@@ -1,5 +1,50 @@
 # Architecture decisions
 
+## 2026-08-21: Proxy only modern GitHub attachments and render repository images separately
+
+### Problem
+
+PR Markdown is untrusted input. Letting its image URLs load directly would disclose browser network
+activity and turn rvw into an arbitrary external-image client; proxying arbitrary URLs would add an
+SSRF and credential-forwarding boundary. Private GitHub attachments need authentication, while their
+modern URLs have no file extension. Repository images have a different problem: they are intentionally
+classified as binary by the UTF-8 document reader, so sending them through the text or diff API makes
+them unavailable and encourages weakening the existing binary boundary.
+
+### Choice
+
+Allow only canonical `https://github.com/user-attachments/assets/<uuid>` URLs in PR Markdown. Validate
+the exact scheme, hostname, empty credentials/port/query/fragment, and complete UUID path in shared
+browser-safe code, then rewrite the source to a PR-scoped localhost endpoint. Revalidate server-side
+and in the GitHub client before invoking `gh api` with an argument array. Let GitHub CLI own existing
+authentication and redirect behavior; never extract a token or construct an authorization header.
+Reject cross-site Fetch Metadata (and require a matching Origin when present), bound the binary process at
+30 seconds, 10 MiB stdout, and 64 KiB stderr, and map failures without returning the private URL or stderr.
+
+Detect PNG, JPEG, GIF, WebP, and AVIF from complete binary signatures. Accept SVG only when fatal UTF-8
+decoding and the optional BOM/whitespace/XML declaration plus safe leading comments lead directly to an
+`svg` root. Serve detected images with `nosniff`, same-origin CORP, private immutable caching, and the
+existing sandbox CSP for SVG. Keep legacy GitHub image hosts and every other external source as
+placeholders until a separately verified safe fetch contract exists.
+
+Treat supported repository image extensions as a dedicated viewer path. Fetch the existing 5 MiB
+exact-commit asset endpoint, use a HEAD check to distinguish too-large/unsupported states before the
+browser loads the exact URL, and never call the text document or diff endpoint. Full view uses only the
+active path to select the image viewer. Changes view constructs both old/new refs even when one side is
+not a supported image, then renders a simple two-column Split with explicit empty sides. This preserves
+the correct new-side target for image-to-text renames and the old-side target for deletions. Attach only
+file-level comments and preserve exact old/new comment placement.
+
+### Trade-offs
+
+- A repository image does one local metadata HEAD followed by its image GET; this avoids buffering a
+  blob in application JavaScript and keeps the displayed `src` immutable and inspectable.
+- GitHub attachments are not persisted, so an offline viewer can still read cached PR text but cannot
+  newly load an uncached private attachment.
+- Legacy `user-images` and `private-user-images` URLs, extensionless repository images, image zoom/pan,
+  pixel diffs, and image-coordinate comments remain unsupported.
+- SVG is displayed only as an image response under the sandbox policy and is never inserted as inline HTML.
+
 ## 2026-08-21: Delegate every acknowledged watch batch immediately
 
 ### Problem

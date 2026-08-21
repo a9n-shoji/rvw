@@ -5,9 +5,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- PR本文へ貼り付けたmodern GitHub user attachment画像を、public/private共通のlocalhost proxyで表示
+- repositoryのPNG、JPEG、GIF、WebP、AVIF、SVGをexact commit固定の全文表示とold/new Split表示で閲覧
+- 画像ファイルのadded、deleted、renamed、画像・非画像間の変更表示とfile-level comment
+
 ### Fixed
 
 - 同じtask stateで`rvw-watch-comments`のwatch driverを複数起動できないようにし、二重監視と重複処理を防止
+
+### Security
+
+- GitHub attachment proxyを厳密な`https://github.com/user-attachments/assets/<uuid>`だけへ限定し、
+  同一origin request、GitHub CLIの既存認証、10 MiB上限、magic-byte判定、`nosniff`、SVG sandbox CSPを適用
+- arbitrary external image、legacy GitHub image host、unknown binary、HTML/JSON error responseは引き続き自動取得しない
 
 ## [0.2.2] - 2026-08-21
 

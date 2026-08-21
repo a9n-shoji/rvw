@@ -28,6 +28,7 @@ import {
   codeReferenceMarkdownSanitizeSchema,
 } from "./CodeReferenceLink.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
+import { MarkdownImage } from "./MarkdownImage.js";
 import { MermaidSurface } from "./MermaidSurface.js";
 
 function codeText(content: ReactNode): string {
@@ -207,11 +208,12 @@ export function CommentMarkdown({
         void node;
         const repositoryPath = resolveRepositoryMarkdownPath(src, sourcePath);
         return repositoryPath ? (
-          <img
+          <MarkdownImage
             {...props}
             src={markdownAssetUrl(pullRequestId, sourceOid, repositoryPath)}
-            alt={alt ?? ""}
+            alt={alt}
             title={title}
+            sourceAttributes={{}}
           />
         ) : (
           <MarkdownImagePlaceholder alt={alt} title={title} sourceAttributes={{}} />

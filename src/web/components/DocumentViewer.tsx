@@ -35,6 +35,7 @@ import type {
   DocumentRef,
   ReviewComment,
 } from "../../domain/models.js";
+import { isSupportedImagePath } from "../../shared/image-assets.js";
 import {
   commentDraftContextKey,
   currentCommentDraftRevision,
@@ -52,6 +53,7 @@ import {
   type PlacementResponse,
 } from "../api.js";
 import {
+  githubAttachmentAssetUrl,
   isExternalMarkdownHref,
   markdownAssetUrl,
   markdownLinkWasDragged,
@@ -72,7 +74,9 @@ import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
+import { MarkdownImage } from "./MarkdownImage.js";
 import { PreviewMarkdownTable } from "./MarkdownTable.js";
+import { RepositoryImageViewer } from "./RepositoryImageViewer.js";
 
 type ViewerAnnotation =
   | { kind: "comment"; comment: ReviewComment; placement: CommentPlacement }
@@ -510,12 +514,31 @@ function renderRepositoryMarkdown({
           );
         },
         img: ({ src, alt, title, node: _node, ...props }) => {
+          const sourceAttributes = markdownSourceDataAttributes(_node);
+          if (sourceRef.kind === "pull-request-markdown") {
+            const attachmentUrl = githubAttachmentAssetUrl(pullRequestId, src);
+            return attachmentUrl ? (
+              <MarkdownImage
+                {...props}
+                src={attachmentUrl}
+                alt={alt}
+                title={title}
+                sourceAttributes={sourceAttributes}
+              />
+            ) : (
+              <MarkdownImagePlaceholder
+                alt={alt}
+                title={title}
+                sourceAttributes={sourceAttributes}
+              />
+            );
+          }
           if (sourceRef.kind !== "repository-file") {
             return (
               <MarkdownImagePlaceholder
                 alt={alt}
                 title={title}
-                sourceAttributes={markdownSourceDataAttributes(_node)}
+                sourceAttributes={sourceAttributes}
               />
             );
           }
@@ -525,17 +548,17 @@ function renderRepositoryMarkdown({
               <MarkdownImagePlaceholder
                 alt={alt}
                 title={title}
-                sourceAttributes={markdownSourceDataAttributes(_node)}
+                sourceAttributes={sourceAttributes}
               />
             );
           }
           return (
-            <img
-              {...markdownSourceDataAttributes(_node)}
+            <MarkdownImage
               {...props}
               src={markdownAssetUrl(pullRequestId, sourceRef.sourceOid, repositoryPath)}
-              alt={alt ?? ""}
+              alt={alt}
               title={title}
+              sourceAttributes={sourceAttributes}
             />
           );
         },
@@ -796,20 +819,38 @@ export function DocumentViewer({
       selectedOid,
     ],
   );
+  const oldPath =
+    activeDocument.kind === "repository-file"
+      ? activeDocument.oldPath === undefined
+        ? activeDocument.path
+        : activeDocument.oldPath
+      : null;
+  const newPath =
+    activeDocument.kind === "repository-file"
+      ? activeDocument.newPath === undefined
+        ? activeDocument.path
+        : activeDocument.newPath
+      : null;
+  const repositoryImageViewerActive =
+    activeDocument.kind === "repository-file" &&
+    (effectiveDisplayMode === "full"
+      ? isSupportedImagePath(activeDocument.path)
+      : Boolean(
+          (oldPath && isSupportedImagePath(oldPath)) || (newPath && isSupportedImagePath(newPath)),
+        ));
   const fullQuery = useQuery({
     queryKey: ["document", fullRef],
     queryFn: async () => (await api<DocumentResponse>(documentUrl(fullRef))).document,
-    enabled: effectiveDisplayMode === "full" && !fullViewUnavailableMessage,
+    enabled:
+      effectiveDisplayMode === "full" &&
+      !repositoryImageViewerActive &&
+      !fullViewUnavailableMessage,
     staleTime: fullRef.kind === "repository-file" ? Number.POSITIVE_INFINITY : 0,
   });
   const diffSearch = new URLSearchParams({ kind: activeDocument.kind });
   if (activeDocument.kind === "repository-file") {
     if (oldOid) diffSearch.set("oldOid", oldOid);
     diffSearch.set("newOid", selectedOid);
-    const oldPath =
-      activeDocument.oldPath === undefined ? activeDocument.path : activeDocument.oldPath;
-    const newPath =
-      activeDocument.newPath === undefined ? activeDocument.path : activeDocument.newPath;
     if (oldPath) diffSearch.set("oldPath", oldPath);
     if (newPath) diffSearch.set("newPath", newPath);
   }
@@ -820,6 +861,7 @@ export function DocumentViewer({
         .diff,
     enabled:
       effectiveDisplayMode !== "full" &&
+      !repositoryImageViewerActive &&
       activeDocument.kind === "repository-file" &&
       Boolean(oldOid) &&
       oldOid !== selectedOid,
@@ -847,13 +889,52 @@ export function DocumentViewer({
           : null,
     [newFile, oldFile],
   );
+  const repositoryImageRefs = useMemo(() => {
+    if (!repositoryImageViewerActive || activeDocument.kind !== "repository-file") return null;
+    if (effectiveDisplayMode === "full") {
+      return {
+        old: null,
+        new: fullRef.kind === "repository-file" ? fullRef : null,
+      };
+    }
+    return {
+      old:
+        oldOid && oldPath
+          ? {
+              kind: "repository-file" as const,
+              pullRequestId,
+              sourceOid: oldOid,
+              path: oldPath,
+            }
+          : null,
+      new: newPath
+        ? {
+            kind: "repository-file" as const,
+            pullRequestId,
+            sourceOid: selectedOid,
+            path: newPath,
+          }
+        : null,
+    };
+  }, [
+    activeDocument.kind,
+    effectiveDisplayMode,
+    fullRef,
+    newPath,
+    oldOid,
+    oldPath,
+    pullRequestId,
+    repositoryImageViewerActive,
+    selectedOid,
+  ]);
   const renderedRefs = useMemo(() => {
+    if (repositoryImageRefs) return repositoryImageRefs;
     if (effectiveDisplayMode === "full") return { old: null, new: fullRef };
     return {
       old: diffQuery.data?.old?.ref ?? null,
       new: diffQuery.data?.new?.ref ?? null,
     };
-  }, [effectiveDisplayMode, fullRef, diffQuery.data]);
+  }, [effectiveDisplayMode, fullRef, diffQuery.data, repositoryImageRefs]);
   const annotationQuery = useQuery({
     queryKey: [
       "annotations",
@@ -868,6 +949,40 @@ export function DocumentViewer({
         comment: ReviewComment;
         placement: CommentPlacement;
       }> = [];
+      const imageComments: {
+        old: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+        new: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+      } = { old: [], new: [] };
+      if (repositoryImageRefs) {
+        for (const comment of comments) {
+          const exactOldTarget =
+            comment.target.kind === "document" &&
+            comment.target.documentKind === "repository-file" &&
+            repositoryImageRefs.old?.kind === "repository-file" &&
+            comment.target.sourceOid === repositoryImageRefs.old.sourceOid &&
+            comment.target.path === repositoryImageRefs.old.path;
+          const candidates = exactOldTarget
+            ? ([
+                { side: "old" as const, ref: repositoryImageRefs.old },
+                { side: "new" as const, ref: repositoryImageRefs.new },
+              ] as const)
+            : ([
+                { side: "new" as const, ref: repositoryImageRefs.new },
+                { side: "old" as const, ref: repositoryImageRefs.old },
+              ] as const);
+          for (const candidate of candidates) {
+            if (!candidate.ref) continue;
+            const { placement } = await api<PlacementResponse>(
+              placementUrl(comment.id, candidate.ref),
+            );
+            if (!placement.outdated && placement.path === candidate.ref.path) {
+              imageComments[candidate.side].push({ comment, placement });
+              break;
+            }
+          }
+        }
+        return { fileAnnotations, diffAnnotations, markdownComments, imageComments };
+      }
       for (const comment of comments) {
         let added = false;
         if (renderedRefs.new) {
@@ -909,7 +1024,7 @@ export function DocumentViewer({
           }
         }
       }
-      return { fileAnnotations, diffAnnotations, markdownComments };
+      return { fileAnnotations, diffAnnotations, markdownComments, imageComments };
     },
     enabled: Boolean(renderedRefs.new || renderedRefs.old),
     placeholderData: (previousData) => previousData,
@@ -982,6 +1097,27 @@ export function DocumentViewer({
     });
     return () => window.cancelAnimationFrame(frame);
   }, [navigationTarget]);
+  useLayoutEffect(() => {
+    if (
+      !repositoryImageRefs ||
+      !navigationTarget ||
+      navigationTarget.line === null ||
+      appliedNavigationRequest.current === navigationTarget.requestId
+    ) {
+      return;
+    }
+    const requestId = navigationTarget.requestId;
+    const frame = window.requestAnimationFrame(() => {
+      diffSurfaceRef.current?.scrollIntoView({
+        behavior: "auto",
+        block: "start",
+        inline: "nearest",
+      });
+      appliedNavigationRequest.current = requestId;
+      navigationAppliedRef.current(requestId);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [navigationTarget, repositoryImageRefs]);
 
   const selectedLineRef =
     effectiveDisplayMode === "full"
@@ -1136,6 +1272,29 @@ export function DocumentViewer({
     }
     return placed;
   }, [annotationQuery.data?.markdownComments, optimisticComment]);
+  const repositoryImageComments = useMemo(() => {
+    const placed = {
+      old: [...(annotationQuery.data?.imageComments.old ?? [])],
+      new: [...(annotationQuery.data?.imageComments.new ?? [])],
+    };
+    if (
+      optimisticComment &&
+      ![...placed.old, ...placed.new].some(
+        ({ comment }) => comment.id === optimisticComment.comment.id,
+      )
+    ) {
+      const side =
+        optimisticComment.location.mode === "diff" &&
+        optimisticComment.location.side === "deletions"
+          ? "old"
+          : "new";
+      placed[side].push({
+        comment: optimisticComment.comment,
+        placement: optimisticComment.placement,
+      });
+    }
+    return placed;
+  }, [annotationQuery.data?.imageComments, optimisticComment]);
   const markdownCommentAnnotations = useMemo<MarkdownCommentAnnotation[]>(
     () =>
       markdownComments.map(({ comment, placement }) => ({
@@ -1342,7 +1501,11 @@ export function DocumentViewer({
       </div>
     );
   }
-  const loading = effectiveDisplayMode === "full" ? fullQuery.isLoading : diffQuery.isLoading;
+  const loading = repositoryImageRefs
+    ? false
+    : effectiveDisplayMode === "full"
+      ? fullQuery.isLoading
+      : diffQuery.isLoading;
   if (loading) {
     return (
       <div className="document-viewer">
@@ -1350,7 +1513,11 @@ export function DocumentViewer({
       </div>
     );
   }
-  const documentError = effectiveDisplayMode === "full" ? fullQuery.error : diffQuery.error;
+  const documentError = repositoryImageRefs
+    ? null
+    : effectiveDisplayMode === "full"
+      ? fullQuery.error
+      : diffQuery.error;
   if (documentError) {
     return (
       <div className="document-viewer">
@@ -1417,6 +1584,84 @@ export function DocumentViewer({
   };
   const markdownPath =
     activeDocument.kind === "repository-file" ? activeDocument.path : "Pull Request.md";
+  const repositoryImageCommentNodes = (
+    side: "old" | "new",
+    diffSide: "deletions" | "additions" | null,
+  ): ReactNode => {
+    const placed = repositoryImageComments[side];
+    return placed.length > 0 ? (
+      <div className="repository-image-comments">
+        {placed.map(({ comment, placement }) => (
+          <CommentThread
+            key={comment.id}
+            comment={comment}
+            variant="inline"
+            placement={placement}
+            side={diffSide}
+            themePreference={themePreference}
+            onActiveChange={onCommentActiveChange}
+            onOpenCodeReference={onOpenCodeReference}
+            onOpenRepositoryLink={openRepositoryLink}
+            {...(comment.id === optimisticComment?.comment.id
+              ? { onDeleted: () => setOptimisticComment(null) }
+              : {})}
+          />
+        ))}
+      </div>
+    ) : null;
+  };
+  const repositoryImageSurface =
+    repositoryImageRefs && activeDocument.kind === "repository-file" ? (
+      <RepositoryImageViewer
+        mode={effectiveDisplayMode === "full" ? "full" : "split"}
+        oldSide={
+          effectiveDisplayMode === "full"
+            ? null
+            : {
+                label: "変更前",
+                path: oldPath,
+                sourceUrl:
+                  repositoryImageRefs.old?.kind === "repository-file" &&
+                  isSupportedImagePath(repositoryImageRefs.old.path)
+                    ? markdownAssetUrl(
+                        pullRequestId,
+                        repositoryImageRefs.old.sourceOid,
+                        repositoryImageRefs.old.path,
+                      )
+                    : null,
+                emptyMessage: oldPath
+                  ? "変更前は対応画像ではありません。"
+                  : "変更前の画像はありません。",
+                action: repositoryImageRefs.new ? null : fileCommentButton,
+                comments: repositoryImageCommentNodes("old", "deletions"),
+              }
+        }
+        newSide={{
+          label: effectiveDisplayMode === "full" ? "全文" : "変更後",
+          path: effectiveDisplayMode === "full" ? activeDocument.path : newPath,
+          sourceUrl:
+            repositoryImageRefs.new?.kind === "repository-file" &&
+            isSupportedImagePath(repositoryImageRefs.new.path)
+              ? markdownAssetUrl(
+                  pullRequestId,
+                  repositoryImageRefs.new.sourceOid,
+                  repositoryImageRefs.new.path,
+                )
+              : null,
+          emptyMessage:
+            effectiveDisplayMode === "full"
+              ? "画像を表示できません。"
+              : newPath
+                ? "変更後は対応画像ではありません。"
+                : "変更後の画像はありません。",
+          action: repositoryImageRefs.new ? fileCommentButton : null,
+          comments: repositoryImageCommentNodes(
+            "new",
+            effectiveDisplayMode === "full" ? null : "additions",
+          ),
+        }}
+      />
+    ) : null;
   return (
     <div className="document-viewer">
       <ErrorNotice error={annotationQuery.error} />
@@ -1458,7 +1703,9 @@ export function DocumentViewer({
         />
       )}
       <div className="diff-surface" ref={diffSurfaceRef}>
-        {showingMarkdownPreview ? (
+        {repositoryImageSurface ? (
+          repositoryImageSurface
+        ) : showingMarkdownPreview ? (
           markdownText !== null ? (
             <div className="markdown-preview">
               <header>
