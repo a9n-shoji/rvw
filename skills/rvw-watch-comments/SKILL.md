@@ -165,18 +165,37 @@ rename) of exactly this final JSON shape:
   "outcomes": [
     {
       "commentRef": "rvw://comment/uuid",
-      "body": "📝 調査結果\n\nConcise final outcome.",
-      "commitOid": null,
-      "pushStatus": "not-attempted"
+      "body": "📝 調査結果\n\nThe failure is handled by [the retry guard](rvw-ref:retry-guard).",
+      "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567",
+      "references": [
+        {
+          "id": "retry-guard",
+          "label": "Retry guard",
+          "path": "src/request-handler.ts",
+          "startLine": 18,
+          "endLine": 24
+        }
+      ],
+      "pushStatus": "not-needed"
     }
   ]
 }
 ```
 
-`pushStatus` is `not-attempted`, `not-needed`, or `pushed`; `commitOid` is null unless a synchronized
-commit should be attached. The worker's completion notification only signals that the file is ready.
-The parent reads and validates the file after that notification and never depends on relayed message
-text for the result. Accept no progress, plans, or partial findings as the final result.
+`pushStatus` is `not-attempted`, `not-needed`, or `pushed`. `relatedCommitOid` is the exact available PR
+commit containing every referenced path and may identify investigation evidence even when no change
+was made. Set it to null only when `references` is empty. `references` is always the complete array for
+that outcome. The worker's completion notification only signals that the file is ready. The parent
+reads and validates the file after that notification and never depends on relayed message text for the
+result. Accept no progress, plans, or partial findings as the final result.
+
+For every concrete claim about code behavior, an implemented change, or relevant test coverage, use
+typed references by default so the reviewer can open the exact evidence. Select the smallest useful
+committed range, include a signature plus the relevant body for multi-line behavior, link every
+declaration from `body` as `rvw-ref:<referenceId>`, and keep IDs unique within the post. A repository
+comment target already opens its exact source; do not duplicate it unless a separately labeled range
+adds navigation value. Omit references only for outcomes without useful code evidence, uncommitted
+evidence, terminal errors, or target-only evidence where another link would not help navigation.
 
 Re-read each extant thread immediately before applying a direct or file result. Replace its recorded
 status post with exactly one final outcome:
@@ -184,6 +203,11 @@ status post with exactly one final outcome:
 - `✅ 対応しました` followed by the change, commit, and test result.
 - `📝 調査結果` followed by the conclusion when no code change was made.
 - `⚠️ 対応を継続できませんでした` followed by the terminal reason.
+
+Validate the outcome's body, `relatedCommitOid`, and complete `references` array against the freshly
+read thread, then pass all three fields to `rvw comment edit`. A result without references must send
+`references: []`; set `relatedCommitOid` to null unless the post needs that commit for repository links
+or images. Never leave references from the acknowledgement or a previous retry on the status post.
 
 Finish the lease only after every required final edit succeeds:
 
@@ -215,7 +239,9 @@ branch name alone, local Git author, remote name, or rvw `authorLabel`.
 ### Investigate and reply
 
 Inspect exact and surrounding source read-only and produce one concise final outcome per affected
-comment. The parent edits the recorded status post; do not add another final reply.
+comment. Use the exact commit that supports the conclusion as `relatedCommitOid` and follow the code
+evidence defaults above even though no commit was pushed. The parent edits the recorded status post;
+do not add another final reply.
 
 ### Fix and push an owned PR
 
@@ -227,9 +253,10 @@ retrying; never repeat the implementation blindly.
 
 After GitHub exposes the pushed head, run `rvw pr sync --repository '<WORKTREE>' --stdin --json`
 without comment updates. Then edit each status post with its final body and the synchronized head as
-`relatedCommitOid`. When a concise result benefits from direct evidence, include `rvw-ref:` links and
-the post's complete typed `references` array at that exact head. Otherwise omit references. If no code
-change is appropriate, edit the status post without a related commit or references.
+`relatedCommitOid`. Follow the code evidence defaults above: link the implemented behavior and relevant
+test ranges from the final body and include the post's complete typed `references` array at that exact
+head. If the outcome has no useful code evidence, send `references: []` explicitly rather than
+retaining stale declarations.
 
 ## Failure and stop
 

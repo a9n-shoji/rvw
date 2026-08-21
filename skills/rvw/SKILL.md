@@ -75,13 +75,20 @@ Write `body` as concise GFM Markdown when structure improves the finding. Fenced
 lists, repository-relative links and images, and Mermaid fences render in rvw. Relative paths on a
 repository target start at the target file's directory; other comment targets start at the repository
 root. Use only repository paths that exist at the target commit. External images are not fetched.
-When a finding or outcome depends on code outside its comment target, add the smallest useful typed
-reference to that post. Link it from the body as `rvw-ref:<referenceId>`, set `relatedCommitOid` to the
-one exact commit containing every referenced path, and supply the post's complete `references` array.
+Use typed references by default whenever a post makes a concrete claim about committed code and
+opening the exact evidence would help the reviewer verify it. Apply this to findings, investigation
+results, implemented changes, and relevant tests. Link the smallest useful range from the body as
+`rvw-ref:<referenceId>`, set `relatedCommitOid` to the one exact commit containing every referenced
+path, and supply the post's complete `references` array. A repository comment target already opens its
+exact source; do not duplicate that target unless a separately labeled range adds navigation value.
+Omit references only when the post has no useful code evidence, the evidence is not committed, or a
+reference would merely repeat the target without helping the reviewer navigate.
+
 Use unique IDs, repository-relative paths, and either both inclusive line endpoints or neither for a
-file-level reference. Every declaration must be linked from that body, and every link must be declared.
-References do not carry across a thread. Let rvw validate and retain the commit; never point at
-uncommitted code. Comment Mermaid remains display-only and has no node bindings.
+file-level reference. Include a signature and the relevant body instead of pointing only at the first
+line of a multi-line behavior. Every declaration must be linked from that body, and every link must be
+declared. References do not carry across a thread. Let rvw validate and retain the commit; never point
+at uncommitted code. Comment Mermaid remains display-only and has no node bindings.
 
 Set `authorLabel` to an accurate current Agent name when known; otherwise omit it. Creation is not
 idempotent. After an uncertain failure, page through unresolved comments, fetch plausible candidates
@@ -159,9 +166,25 @@ To add a standalone reply, use one closed-stdin invocation:
 ```bash
 rvw comment reply '<COMMENT_URI>' --stdin --json <<'RVW_JSON'
 {
-  "body": "Investigation result or completed change",
+  "body": "The guard now returns the validated failure from [the request boundary](rvw-ref:guard), with [a regression test](rvw-ref:test).",
   "authorLabel": "Agent name",
-  "relatedCommitOid": null,
+  "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567",
+  "references": [
+    {
+      "id": "guard",
+      "label": "Request validation guard",
+      "path": "src/request-handler.ts",
+      "startLine": 18,
+      "endLine": 24
+    },
+    {
+      "id": "test",
+      "label": "Failure regression test",
+      "path": "test/request-handler.test.ts",
+      "startLine": 41,
+      "endLine": 55
+    }
+  ],
   "idempotencyKey": "task-stable-key-for-this-exact-reply"
 }
 RVW_JSON
@@ -173,9 +196,10 @@ only for the same comment and exact caller payload. If the original post was del
 without recreating it. Without a key, an uncertain failure still requires re-reading the comment before
 retrying to avoid a duplicate reply.
 
-When the reply needs direct code evidence, add `rvw-ref:` links, set the exact non-null
-`relatedCommitOid`, and send that reply's complete `references` array using the same rules as comment
-creation. References are part of the idempotent payload.
+Before posting a code-related outcome, identify the exact committed evidence and apply the typed
+reference defaults above. Set a non-null `relatedCommitOid` and send that reply's complete
+`references` array. References are part of the idempotent payload. A conclusion about intent,
+permissions, unavailable evidence, or another non-code subject may omit them.
 
 To replace a post whose ID you obtained from rvw, require `comment.edit` and use:
 
@@ -215,8 +239,24 @@ rvw pr sync --stdin --json <<'RVW_JSON'
   "commentUpdates": [
     {
       "commentRef": "rvw://comment/uuid",
-      "reply": "Change included in the pushed commit",
+      "reply": "The pushed commit handles [the missing failure branch](rvw-ref:result) and covers it in [the regression test](rvw-ref:test).",
       "resolve": false,
+      "references": [
+        {
+          "id": "result",
+          "label": "Failure branch",
+          "path": "src/request-handler.ts",
+          "startLine": 18,
+          "endLine": 24
+        },
+        {
+          "id": "test",
+          "label": "Failure regression test",
+          "path": "test/request-handler.test.ts",
+          "startLine": 41,
+          "endLine": 55
+        }
+      ],
       "idempotencyKey": "task-stable-key-for-this-exact-update"
     }
   ]
@@ -230,9 +270,10 @@ update a stable `idempotencyKey`; an exact retry returns the existing reply. Wit
 affected comments before retrying an uncertain result. A later GitHub head advance does not change the
 identity of the original caller payload.
 
-A synchronized reply may include `rvw-ref:` links and a complete `references` array without a
-`relatedCommitOid`; rvw validates and fixes them to the synchronized GitHub head. Do not attach
-references when `reply` is blank.
+Apply the same code-evidence default to synchronized replies. Include `rvw-ref:` links and the complete
+`references` array whenever the reply makes concrete claims about the pushed implementation or tests;
+omit `relatedCommitOid` because rvw validates and fixes those references to the synchronized GitHub
+head. Do not attach references when `reply` is blank.
 
 If the saved checkout is dirty but a clean worktree in the same Git common directory exists, pass
 `--repository <PATH>`. Inspect every reported dirty entry before deciding whether untracked files are
