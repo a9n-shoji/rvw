@@ -62,7 +62,11 @@ export function DocumentTabs({
   onCloseOthers: (document: ActiveDocument) => void;
   onCloseAll: () => void;
   onMove: (document: ActiveDocument, targetPane: DocumentPaneId) => void;
-  onDropDocument: (documentKey: string, targetPane: DocumentPaneId) => void;
+  onDropDocument: (
+    documentKey: string,
+    sourcePane: DocumentPaneId,
+    targetPane: DocumentPaneId,
+  ) => void;
   onDragStartDocument: (documentKey: string) => void;
   onDragEndDocument: () => void;
 }) {
@@ -76,7 +80,10 @@ export function DocumentTabs({
   const dropDocument = (event: DragEvent<HTMLDivElement>): void => {
     event.preventDefault();
     const documentKey = event.dataTransfer.getData("application/x-rvw-document-tab");
-    if (documentKey) onDropDocument(documentKey, paneId);
+    const sourcePane = event.dataTransfer.getData("application/x-rvw-document-pane");
+    if (documentKey && (sourcePane === "left" || sourcePane === "right")) {
+      onDropDocument(documentKey, sourcePane, paneId);
+    }
   };
   const activateAt = (index: number): void => {
     const document = documents[index];
@@ -167,6 +174,7 @@ export function DocumentTabs({
               onDragStart={(event) => {
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("application/x-rvw-document-tab", key);
+                event.dataTransfer.setData("application/x-rvw-document-pane", paneId);
                 onDragStartDocument(key);
               }}
               onDragEnd={onDragEndDocument}

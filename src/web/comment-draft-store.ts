@@ -1,5 +1,5 @@
 import type { SelectedLineRange } from "@pierre/diffs/react";
-import type { ActiveDocument } from "./document-workspace.js";
+import type { ActiveDocument, DocumentPaneId } from "./document-workspace.js";
 
 export interface CommentDraftState {
   body: string;
@@ -11,6 +11,7 @@ export interface CommentDraftState {
 
 export interface CommentDraftContext {
   activeDocument: ActiveDocument;
+  pane: DocumentPaneId;
   selectedOid: string;
   oldOid: string | null;
   displayMode: "full" | "pull-request" | "range";
@@ -55,6 +56,7 @@ export function commentDraftContextKey(context: CommentDraftContext): string {
     return JSON.stringify([documentIdentity(context.activeDocument)]);
   }
   return JSON.stringify([
+    context.pane,
     documentIdentity(context.activeDocument),
     context.selectedOid,
     context.oldOid,

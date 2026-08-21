@@ -44,6 +44,10 @@ class BranchGitHub implements GitHubPort {
     if (!issue) throw new Error(`missing Issue #${number}`);
     return Promise.resolve(issue);
   }
+
+  getAttachment() {
+    return Promise.reject(new Error("Branch Review must not fetch GitHub attachments"));
+  }
 }
 
 class DeleteThenThrowGitClient extends GitClient {

@@ -65,8 +65,12 @@ and never auto-resolve. Their worker result carries an explicit Branch context, 
 Request URL. The final reply uses the operation's stable idempotency key; its returned post ID is stored
 as a durable suppression before the lease completes. Completion also marks an already-ingested pending
 self-event completed, so either ingest ordering and a retry after process restart avoid a new batch.
-Separate tasks may consume the same log
-with separate state. This terminal-bound consumer is not a daemon and rvw never starts it. A durable
+The parent reserves subagent capacity
+before intake; the driver caps in-flight claims to that capacity and polls task state to drain same-PR
+follow-ups after lease release and retries after their due time. Every acknowledged lease is handed to
+one fresh subagent immediately, while the parent retains only intake, state, and final-post ownership.
+Separate tasks may consume the same log with separate state. This terminal-bound consumer is not a daemon
+and rvw never starts it. A durable
 reply-idempotency ledger makes an exact caller-payload retry safe without introducing Agent session
 identity into comments.
 
@@ -89,9 +93,9 @@ Publish and update return an enumerable application result envelope containing t
 and an explicit `issuesAdded` array populated from membership rows actually inserted in the same
 transaction. The CLI serializes the same envelope whether it calls the service directly or through the
 Agent socket.
-The browser owns an ephemeral two-pane workspace: every document identity belongs to one pane, tabs can
-move between panes, and modifier-click targets the right pane from the sidebar or the opposite pane from
-within a document. Pane placement never enters SQLite or the Agent protocol. Repository Markdown uses
+The browser owns an ephemeral two-pane workspace: every document identity may appear once per pane, tabs
+can move between panes, ordinary document-opening clicks target the left pane, and modifier-click targets
+the right pane regardless of focus or origin. Pane placement never enters SQLite or the Agent protocol. Repository Markdown uses
 the same exact Git document fetch and can switch locally between source and a safe rendered preview.
 The preview preserves native browser text selection while translating parser positions back to source line ranges;
 it never persists DOM or layout coordinates.

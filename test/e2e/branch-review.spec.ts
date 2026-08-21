@@ -220,6 +220,10 @@ test("uses the shared review workspace for the default branch, Issues, code, and
     expect(dialog.message()).toContain("紐づくコメント 1件と投稿 1件");
     await dialog.accept();
   });
+  await page
+    .getByRole("region", { name: "右のコードペイン" })
+    .getByRole("tab", { name: "Current request flow", exact: true })
+    .click();
   await page.getByRole("button", { name: "ウォークスルーを削除" }).click();
   await expect(page.getByRole("button", { name: "ウォークスルー 0" })).toBeVisible();
   await expect(page.getByRole("button", { name: "コメント 1", exact: true })).toBeVisible();

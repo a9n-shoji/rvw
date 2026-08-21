@@ -42,6 +42,10 @@ class FakeGitHub implements GitHubPort {
     if (!issue) throw new Error(`missing Issue #${number}`);
     return Promise.resolve(issue);
   }
+
+  getAttachment() {
+    return Promise.reject(new Error("not used"));
+  }
 }
 
 class PullRequestRetainBarrierGitClient extends GitClient {

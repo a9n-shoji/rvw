@@ -1,7 +1,8 @@
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 const scripts = path.resolve("skills/rvw-watch-comments/scripts");
@@ -153,6 +154,47 @@ function initializeBranchQueuedState(state: string) {
       deleted: false,
     },
   });
+}
+
+function collectJsonLines(child: ChildProcessWithoutNullStreams) {
+  const messages: Array<Record<string, unknown>> = [];
+  const waiters: Array<{
+    predicate: (message: Record<string, unknown>) => boolean;
+    resolve: (message: Record<string, unknown>) => void;
+  }> = [];
+  let buffered = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    buffered += chunk;
+    const lines = buffered.split("\n");
+    buffered = lines.pop() ?? "";
+    for (const line of lines.filter(Boolean)) {
+      const message = JSON.parse(line) as Record<string, unknown>;
+      messages.push(message);
+      for (const waiter of [...waiters]) {
+        if (!waiter.predicate(message)) continue;
+        waiters.splice(waiters.indexOf(waiter), 1);
+        waiter.resolve(message);
+      }
+    }
+  });
+  return {
+    messages,
+    waitFor(predicate: (message: Record<string, unknown>) => boolean) {
+      const existing = messages.find(predicate);
+      if (existing) return Promise.resolve(existing);
+      return new Promise<Record<string, unknown>>((resolve, reject) => {
+        const waiter = { predicate, resolve };
+        waiters.push(waiter);
+        setTimeout(() => {
+          const index = waiters.indexOf(waiter);
+          if (index < 0) return;
+          waiters.splice(index, 1);
+          reject(new Error("Timed out waiting for watch-driver output"));
+        }, 5000);
+      });
+    },
+  };
 }
 
 describe("rvw-watch-comments bundled scripts", () => {
@@ -597,5 +639,293 @@ describe("rvw-watch-comments bundled scripts", () => {
       "1",
       "--json-seq",
     ]);
+  });
+
+  it("allows only one driver process to own a task state", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-driver-owner-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    runState(state, "init");
+    const canonicalState = realpathSync(state);
+    const lockPath = `${canonicalState}.watch-driver.lock`;
+    const first = spawn(process.execPath, [driverScript, state], {
+      env: fakeEnvironment(fake),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let firstStderr = "";
+    first.stderr.setEncoding("utf8");
+    first.stderr.on("data", (chunk: string) => {
+      firstStderr += chunk;
+    });
+    const ready = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("first driver startup timed out")), 5000);
+      let buffered = "";
+      first.stdout.setEncoding("utf8");
+      first.stdout.on("data", (chunk: string) => {
+        buffered += chunk;
+        const lines = buffered.split("\n");
+        buffered = lines.pop() ?? "";
+        for (const line of lines.filter(Boolean)) {
+          const parsed = JSON.parse(line) as { type?: string };
+          if (parsed.type !== "watch-ready") continue;
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+
+    await ready;
+    expect(existsSync(lockPath)).toBe(true);
+    const duplicate = spawnSync(process.execPath, [driverScript, state], {
+      encoding: "utf8",
+      env: fakeEnvironment(fake),
+    });
+    expect(duplicate.status).toBe(24);
+    expect(duplicate.stdout).toBe("");
+    expect(JSON.parse(duplicate.stderr)).toMatchObject({
+      ok: false,
+      error: "Another watch-driver process already owns this task state",
+      details: { state: canonicalState, lockPath, ownerPid: first.pid },
+      exitCode: 24,
+    });
+    expect(
+      readFakeCalls(fake.log).filter(
+        (call) => call.args[0] === "comment" && call.args[1] === "watch",
+      ),
+    ).toHaveLength(1);
+
+    first.kill("SIGTERM");
+    const firstCode = await new Promise<number | null>((resolve, reject) => {
+      first.once("error", reject);
+      first.once("close", resolve);
+    });
+    expect(firstCode, firstStderr).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+
+    const exitedOwner = spawnSync(process.execPath, ["--eval", ""]);
+    if (!exitedOwner.pid) throw new Error("could not create a stale owner PID");
+    writeFileSync(lockPath, `${JSON.stringify({ pid: exitedOwner.pid, state: canonicalState })}\n`);
+    const restarted = spawn(process.execPath, [driverScript, state], {
+      env: fakeEnvironment(fake),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let restartedStderr = "";
+    restarted.stderr.setEncoding("utf8");
+    restarted.stderr.on("data", (chunk: string) => {
+      restartedStderr += chunk;
+    });
+    const restartedReady = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("restarted driver startup timed out")),
+        5000,
+      );
+      let buffered = "";
+      restarted.stdout.setEncoding("utf8");
+      restarted.stdout.on("data", (chunk: string) => {
+        buffered += chunk;
+        const lines = buffered.split("\n");
+        buffered = lines.pop() ?? "";
+        for (const line of lines.filter(Boolean)) {
+          const parsed = JSON.parse(line) as { type?: string };
+          if (parsed.type !== "watch-ready") continue;
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+    await restartedReady;
+    restarted.kill("SIGTERM");
+    const restartedCode = await new Promise<number | null>((resolve, reject) => {
+      restarted.once("error", reject);
+      restarted.once("close", resolve);
+    });
+    expect(restartedCode, restartedStderr).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it("limits acknowledged leases to reserved worker capacity and drains after completion", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-capacity-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    runState(state, "init");
+    runState(state, "ingest", [], {
+      type: "ready",
+      databaseId: "0123456789abcdef0123456789abcdef",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    for (const sequence of [1, 2]) {
+      runState(state, "ingest", [], {
+        type: "comment-posted",
+        cursor: `cursor-${sequence}`,
+        event: {
+          sequence,
+          postId: `human-post-${sequence}`,
+          commentRef: `rvw://comment/comment-${sequence}`,
+          pullRequestUrl: `https://github.com/acme/repo/pull/${sequence}`,
+          createdAt: `2026-08-20T00:00:0${sequence}.000Z`,
+          deleted: false,
+        },
+      });
+    }
+    const child = spawn(
+      process.execPath,
+      [driverScript, state, "--auto-ack", "--max-in-flight", "1"],
+      {
+        env: { ...fakeEnvironment(fake), RVW_WATCH_AUTO_ACK_POLL_MS: "10" },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    const output = collectJsonLines(child);
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    const ready = await output.waitFor((message) => message.type === "watch-ready");
+    expect(ready).toMatchObject({ autoAck: true, maxInFlight: 1 });
+    const firstAcknowledgements = output.messages.filter(
+      (message) => message.type === "batch-acknowledged",
+    );
+    expect(firstAcknowledgements).toHaveLength(1);
+    expect(runState(state, "status")).toMatchObject({
+      batches: { inFlight: 1, unbatchedEvents: 1 },
+    });
+
+    runState(state, "complete", ["--lease", String(firstAcknowledgements[0]?.leaseId)], {
+      postIds: [],
+    });
+    const second = await output.waitFor(
+      (message) =>
+        message.type === "batch-acknowledged" &&
+        message.pullRequest !== firstAcknowledgements[0]?.pullRequest,
+    );
+    expect(second).toMatchObject({ attempts: 1 });
+    expect(runState(state, "status")).toMatchObject({
+      batches: { inFlight: 1, unbatchedEvents: 0 },
+    });
+
+    child.kill("SIGTERM");
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    expect(code, stderr).toBe(0);
+  });
+
+  it("drains a same-PR follow-up after the preceding lease completes", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-follow-up-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeQueuedState(state);
+    const child = spawn(
+      process.execPath,
+      [driverScript, state, "--auto-ack", "--max-in-flight", "1"],
+      {
+        env: { ...fakeEnvironment(fake), RVW_WATCH_AUTO_ACK_POLL_MS: "10" },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    const output = collectJsonLines(child);
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    const first = await output.waitFor(
+      (message) => message.type === "batch-acknowledged" && message.attempts === 1,
+    );
+    await output.waitFor((message) => message.type === "watch-ready");
+    runState(state, "ingest", [], {
+      type: "comment-posted",
+      cursor: "cursor-2",
+      event: {
+        sequence: 2,
+        postId: "human-follow-up",
+        commentRef: "rvw://comment/comment-1",
+        pullRequestUrl: "https://github.com/acme/repo/pull/1",
+        createdAt: "2026-08-20T00:00:02.000Z",
+        deleted: false,
+      },
+    });
+    expect(runState(state, "status")).toMatchObject({
+      batches: { inFlight: 1, unbatchedEvents: 1 },
+    });
+
+    runState(state, "complete", ["--lease", String(first.leaseId)], { postIds: [] });
+    const followUp = await output.waitFor(
+      (message) =>
+        message.type === "batch-acknowledged" &&
+        message.pullRequest === first.pullRequest &&
+        message.batchId !== first.batchId,
+    );
+    expect(followUp).toMatchObject({
+      attempts: 1,
+      operations: [expect.objectContaining({ acknowledgement: "created" })],
+    });
+    expect(runState(state, "status")).toMatchObject({
+      batches: { inFlight: 1, unbatchedEvents: 0 },
+    });
+
+    child.kill("SIGTERM");
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    expect(code, stderr).toBe(0);
+  });
+
+  it("auto-acknowledges a retry when nextAttemptAt becomes due without another event", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-retry-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeQueuedState(state);
+    const child = spawn(
+      process.execPath,
+      [driverScript, state, "--auto-ack", "--max-in-flight", "1"],
+      {
+        env: { ...fakeEnvironment(fake), RVW_WATCH_AUTO_ACK_POLL_MS: "10" },
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    const output = collectJsonLines(child);
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    const first = await output.waitFor(
+      (message) => message.type === "batch-acknowledged" && message.attempts === 1,
+    );
+    const failed = runState(state, "fail", ["--lease", String(first.leaseId)], {
+      error: "No subagent slot accepted the lease",
+      retryable: true,
+    });
+    expect(failed).toMatchObject({ status: "pending", attempts: 1 });
+    expect(runState(state, "list")).toMatchObject({ inFlight: 0, pending: [] });
+
+    const database = new DatabaseSync(state);
+    database
+      .prepare("UPDATE batches SET next_attempt_at = ? WHERE id = ?")
+      .run("2026-08-20T00:00:00.000Z", String(first.batchId));
+    database.close();
+
+    const retried = await output.waitFor(
+      (message) => message.type === "batch-acknowledged" && message.attempts === 2,
+    );
+    expect(retried).toMatchObject({
+      batchId: first.batchId,
+      operations: [expect.objectContaining({ acknowledgement: "restored" })],
+    });
+
+    child.kill("SIGTERM");
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    });
+    expect(code, stderr).toBe(0);
   });
 });

@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import {
+  chmodSync,
+  linkSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
@@ -10,9 +20,13 @@ const EXIT_WATCH = 20;
 const EXIT_SEQUENCE = 21;
 const EXIT_INGEST = 22;
 const EXIT_AUTO_ACK = 23;
+const EXIT_ALREADY_RUNNING = 24;
+const DEFAULT_MAX_IN_FLIGHT = 1;
+const DEFAULT_AUTO_ACK_POLL_MS = 250;
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const stateScript = path.join(scriptDirectory, "watch-state.mjs");
 const autoAckScript = path.join(scriptDirectory, "auto-ack.mjs");
+const DRIVER_LOCK_SUFFIX = ".watch-driver.lock";
 
 class DriverError extends Error {
   constructor(message, exitCode, details = null) {
@@ -25,10 +39,25 @@ class DriverError extends Error {
 function parseArguments(values) {
   let state = null;
   let autoAck = false;
+  let maxInFlight = DEFAULT_MAX_IN_FLIGHT;
+  let maxInFlightProvided = false;
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--auto-ack") {
       autoAck = true;
+      continue;
+    }
+    if (value === "--max-in-flight") {
+      const next = values[index + 1];
+      if (!next || next.startsWith("--")) {
+        throw new DriverError("--max-in-flight requires an integer", EXIT_WATCH);
+      }
+      maxInFlight = Number(next);
+      maxInFlightProvided = true;
+      if (!Number.isSafeInteger(maxInFlight) || maxInFlight < 1 || maxInFlight > 64) {
+        throw new DriverError("--max-in-flight must be an integer from 1 through 64", EXIT_WATCH);
+      }
+      index += 1;
       continue;
     }
     if (value === "--state") {
@@ -47,7 +76,10 @@ function parseArguments(values) {
     throw new DriverError(`Unexpected argument: ${value}`, EXIT_WATCH);
   }
   if (!state) throw new DriverError("Pass the task state database path", EXIT_WATCH);
-  return { state: path.resolve(state), autoAck };
+  if (!autoAck && maxInFlightProvided) {
+    throw new DriverError("--max-in-flight requires --auto-ack", EXIT_WATCH);
+  }
+  return { state: path.resolve(state), autoAck, maxInFlight };
 }
 
 async function runNodeScript(script, args, input) {
@@ -86,28 +118,114 @@ function write(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
+function fileIdentity(filePath) {
+  try {
+    const stat = lstatSync(filePath);
+    return { dev: stat.dev, ino: stat.ino };
+  } catch {
+    return null;
+  }
+}
+
+function unlinkIfOwned(filePath, identity) {
+  const current = fileIdentity(filePath);
+  if (!identity || !current || current.dev !== identity.dev || current.ino !== identity.ino) return;
+  try {
+    unlinkSync(filePath);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
+function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== "ESRCH";
+  }
+}
+
+function lockOwner(lockPath) {
+  try {
+    const value = JSON.parse(readFileSync(lockPath, "utf8"));
+    return Number.isInteger(value?.pid) && value.pid > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function acquireDriverLock(state) {
+  const canonicalState = realpathSync(state);
+  const lockPath = `${canonicalState}${DRIVER_LOCK_SUFFIX}`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const stagingPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(
+        stagingPath,
+        `${JSON.stringify({ pid: process.pid, state: canonicalState, startedAt: new Date().toISOString() })}\n`,
+        { flag: "wx", mode: 0o600 },
+      );
+      chmodSync(stagingPath, 0o600);
+      linkSync(stagingPath, lockPath);
+    } catch (error) {
+      try {
+        unlinkSync(stagingPath);
+      } catch (unlinkError) {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      }
+      if (error.code !== "EEXIST") throw error;
+      const observedIdentity = fileIdentity(lockPath);
+      const owner = lockOwner(lockPath);
+      // Preserve unreadable locks rather than risking two live drivers.
+      if (!owner || processIsAlive(owner.pid)) {
+        throw new DriverError(
+          "Another watch-driver process already owns this task state",
+          EXIT_ALREADY_RUNNING,
+          {
+            state: canonicalState,
+            lockPath,
+            ownerPid: owner?.pid ?? null,
+          },
+        );
+      }
+      unlinkIfOwned(lockPath, observedIdentity);
+      continue;
+    }
+    try {
+      const identity = fileIdentity(lockPath);
+      if (!identity) throw new Error("Could not verify the watch-driver owner lock");
+      unlinkSync(stagingPath);
+      return { identity, path: lockPath };
+    } catch (error) {
+      const stagingIdentity = fileIdentity(stagingPath);
+      unlinkIfOwned(lockPath, stagingIdentity);
+      try {
+        unlinkSync(stagingPath);
+      } catch (unlinkError) {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      }
+      throw error;
+    }
+  }
+  throw new DriverError("Could not acquire the watch-driver owner lock", EXIT_ALREADY_RUNNING, {
+    state: canonicalState,
+    lockPath,
+  });
+}
+
+function releaseDriverLock(lock) {
+  unlinkIfOwned(lock.path, lock.identity);
+}
+
 async function dispatchAutoAck(state, context) {
-  if (context.kind === "branch") {
-    write({
-      ok: true,
-      type: "pending",
+  if (context.kind !== "pull-request") {
+    throw new DriverError("Branch Review batches cannot be auto-acknowledged", EXIT_AUTO_ACK, {
       context,
-      repository: context.repository,
-      reason: "branch-reviews-use-one-final-reply-without-acknowledgement",
     });
-    return;
   }
   const pullRequest = context.pullRequestUrl;
-  const pending = await stateCommand(state, "list");
-  if (
-    !pending.pending.some(
-      (batch) =>
-        batch.context?.kind === "pull-request" && batch.context.pullRequestUrl === pullRequest,
-    )
-  ) {
-    write({ ok: true, type: "queued", pullRequest, reason: "batch-not-yet-eligible" });
-    return;
-  }
   const result = await runNodeScript(autoAckScript, [
     "--state",
     state,
@@ -120,14 +238,36 @@ async function dispatchAutoAck(state, context) {
   write({ ...result.json, type: "batch-acknowledged" });
 }
 
-async function dispatchPendingAutoAcks(state) {
-  const pending = await stateCommand(state, "list");
-  for (const batch of pending.pending) {
+async function dispatchPendingAutoAcks(state, maxInFlight, notifiedBranchBatches) {
+  const work = await stateCommand(state, "list");
+  const inFlight = Number(work.inFlight);
+  if (!Number.isSafeInteger(inFlight) || inFlight < 0 || !Array.isArray(work.pending)) {
+    throw new DriverError("watch-state list returned invalid work capacity", EXIT_INGEST, work);
+  }
+  let available = Math.max(0, maxInFlight - inFlight);
+  for (const batch of work.pending) {
+    if (batch.context?.kind === "branch") {
+      const notificationKey = batch.batchId ?? `unbatched:${batch.context.repository}`;
+      if (!notifiedBranchBatches.has(notificationKey)) {
+        notifiedBranchBatches.add(notificationKey);
+        write({
+          ok: true,
+          type: "pending",
+          context: batch.context,
+          repository: batch.context.repository,
+          batchId: batch.batchId,
+          reason: "branch-reviews-use-one-final-reply-without-acknowledgement",
+        });
+      }
+      continue;
+    }
+    if (available === 0) continue;
     await dispatchAutoAck(state, batch.context);
+    available -= 1;
   }
 }
 
-async function processFrame(state, frame, autoAck, contexts) {
+async function processFrame(state, frame, autoAck, maxInFlight) {
   if (!frame || typeof frame !== "object" || typeof frame.type !== "string") {
     throw new DriverError("Invalid RFC 7464 frame", EXIT_SEQUENCE, frame);
   }
@@ -143,19 +283,14 @@ async function processFrame(state, frame, autoAck, contexts) {
       databaseId: frame.databaseId,
       anchoredAtCurrent: frame.anchoredAtCurrent,
       autoAck,
+      maxInFlight: autoAck ? maxInFlight : null,
     });
   } else if (frame.type === "comment-posted" && ingested.status === "queued") {
     const context = frame.event.context ?? {
       kind: "pull-request",
       pullRequestUrl: frame.event.pullRequestUrl,
     };
-    if (autoAck) {
-      const key =
-        context.kind === "branch"
-          ? `branch:${context.repository}`
-          : `pull-request:${context.pullRequestUrl}`;
-      contexts.set(key, context);
-    } else {
+    if (!autoAck || context.kind === "branch") {
       write({
         ok: true,
         type: "pending",
@@ -169,7 +304,16 @@ async function processFrame(state, frame, autoAck, contexts) {
   }
 }
 
-async function runWatchOnce(state, autoAck, stopping) {
+function autoAckPollMilliseconds() {
+  const configured = Number(
+    process.env.RVW_WATCH_AUTO_ACK_POLL_MS ?? String(DEFAULT_AUTO_ACK_POLL_MS),
+  );
+  return Number.isSafeInteger(configured) && configured >= 10 && configured <= 60_000
+    ? configured
+    : DEFAULT_AUTO_ACK_POLL_MS;
+}
+
+async function runWatchOnce(state, autoAck, maxInFlight, stopping, notifiedBranchBatches) {
   const current = await stateCommand(state, "status");
   const args = ["comment", "watch"];
   if (current.cursor) args.push("--after", current.cursor);
@@ -187,6 +331,25 @@ async function runWatchOnce(state, autoAck, stopping) {
     child.once("close", (code, signal) => resolve({ code, signal }));
   });
   child.stdin.end();
+  let autoAckPump = null;
+  let autoAckError = null;
+  const pumpAutoAcks = async () => {
+    if (!autoAck || stopping.requested) return;
+    if (autoAckPump) return autoAckPump;
+    autoAckPump = dispatchPendingAutoAcks(state, maxInFlight, notifiedBranchBatches);
+    try {
+      await autoAckPump;
+    } catch (error) {
+      autoAckError ??= error;
+      child.kill("SIGTERM");
+      throw error;
+    } finally {
+      autoAckPump = null;
+    }
+  };
+  const autoAckTimer = autoAck
+    ? setInterval(() => void pumpAutoAcks().catch(() => undefined), autoAckPollMilliseconds())
+    : null;
   const decoder = new StringDecoder("utf8");
   let buffered = "";
   let readySeen = false;
@@ -196,7 +359,6 @@ async function runWatchOnce(state, autoAck, stopping) {
       buffered += decoder.write(chunk);
       const lines = buffered.split("\n");
       buffered = lines.pop() ?? "";
-      const contexts = new Map();
       for (const rawLine of lines) {
         if (!rawLine) continue;
         if (!rawLine.startsWith("\u001e")) {
@@ -210,9 +372,9 @@ async function runWatchOnce(state, autoAck, stopping) {
         }
         readySeen ||= frame.type === "ready";
         stoppedSeen ||= frame.type === "stopped";
-        await processFrame(state, frame, autoAck, contexts);
+        await processFrame(state, frame, autoAck, maxInFlight);
       }
-      for (const context of contexts.values()) await dispatchAutoAck(state, context);
+      await pumpAutoAcks();
     }
     buffered += decoder.end();
     if (buffered.trim()) {
@@ -223,6 +385,8 @@ async function runWatchOnce(state, autoAck, stopping) {
       );
     }
     const status = await statusPromise;
+    if (autoAckPump) await autoAckPump.catch(() => undefined);
+    if (autoAckError) throw autoAckError;
     stopping.child = null;
     return { ...status, stderr, readySeen, stoppedSeen };
   } catch (error) {
@@ -230,6 +394,8 @@ async function runWatchOnce(state, autoAck, stopping) {
     await statusPromise.catch(() => undefined);
     stopping.child = null;
     throw error;
+  } finally {
+    if (autoAckTimer) clearInterval(autoAckTimer);
   }
 }
 
@@ -244,42 +410,60 @@ function delay(milliseconds) {
 }
 
 async function main() {
-  const { state, autoAck } = parseArguments(process.argv.slice(2));
-  const stopping = { requested: false, child: null };
-  const stop = () => {
-    stopping.requested = true;
-    stopping.child?.kill("SIGTERM");
-  };
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-  const maxRestarts = Number(process.env.RVW_WATCH_DRIVER_MAX_RESTARTS ?? "5");
-  let restarts = 0;
+  const { state, autoAck, maxInFlight } = parseArguments(process.argv.slice(2));
+  const driverLock = acquireDriverLock(state);
   try {
-    while (!stopping.requested) {
-      const startedAt = Date.now();
-      if (autoAck) await dispatchPendingAutoAcks(state);
-      const result = await runWatchOnce(state, autoAck, stopping);
-      if (stopping.requested) return;
-      if (Date.now() - startedAt >= 30_000) restarts = 0;
-      restarts += 1;
-      if (restarts > maxRestarts) {
-        throw new DriverError("rvw comment watch exceeded its reconnect limit", EXIT_WATCH, result);
+    const stopping = { requested: false, child: null };
+    const stop = () => {
+      stopping.requested = true;
+      stopping.child?.kill("SIGTERM");
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    const maxRestarts = Number(process.env.RVW_WATCH_DRIVER_MAX_RESTARTS ?? "5");
+    const notifiedBranchBatches = new Set();
+    let restarts = 0;
+    try {
+      while (!stopping.requested) {
+        const startedAt = Date.now();
+        if (autoAck) {
+          await dispatchPendingAutoAcks(state, maxInFlight, notifiedBranchBatches);
+        }
+        const result = await runWatchOnce(
+          state,
+          autoAck,
+          maxInFlight,
+          stopping,
+          notifiedBranchBatches,
+        );
+        if (stopping.requested) return;
+        if (Date.now() - startedAt >= 30_000) restarts = 0;
+        restarts += 1;
+        if (restarts > maxRestarts) {
+          throw new DriverError(
+            "rvw comment watch exceeded its reconnect limit",
+            EXIT_WATCH,
+            result,
+          );
+        }
+        const delayMs = retryDelay(restarts);
+        write({
+          ok: true,
+          type: "reconnecting",
+          attempt: restarts,
+          delayMs,
+          lastExitCode: result.code,
+          lastSignal: result.signal,
+          readySeen: result.readySeen,
+        });
+        await delay(delayMs);
       }
-      const delayMs = retryDelay(restarts);
-      write({
-        ok: true,
-        type: "reconnecting",
-        attempt: restarts,
-        delayMs,
-        lastExitCode: result.code,
-        lastSignal: result.signal,
-        readySeen: result.readySeen,
-      });
-      await delay(delayMs);
+    } finally {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
     }
   } finally {
-    process.off("SIGINT", stop);
-    process.off("SIGTERM", stop);
+    releaseDriverLock(driverLock);
   }
 }
 

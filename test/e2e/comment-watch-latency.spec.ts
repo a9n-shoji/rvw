@@ -122,10 +122,14 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
     rvw: { protocolVersion: 4, missingCapabilities: [] },
     checks: { agentStatus: true, agentPingInspected: true },
   });
-  const driver = spawn(process.execPath, [driverScript, state, "--auto-ack"], {
-    env: childEnvironment(databasePath),
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const driver = spawn(
+    process.execPath,
+    [driverScript, state, "--auto-ack", "--max-in-flight", "1"],
+    {
+      env: childEnvironment(databasePath),
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
   const output = collectJsonLines(driver);
   const driverExit = new Promise<number | null>((resolve) => driver.once("close", resolve));
   let stderr = "";

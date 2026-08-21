@@ -111,6 +111,130 @@ allows reset to recreate that aggregate without overloading a mutable repository
 - Branch Reviews intentionally have no arbitrary branch selector, history picker, list screen, or
   automatic attachment to a later Pull Request.
 
+## 2026-08-21: Proxy only modern GitHub attachments and render repository images separately
+
+### Problem
+
+PR Markdown is untrusted input. Letting its image URLs load directly would disclose browser network
+activity and turn rvw into an arbitrary external-image client; proxying arbitrary URLs would add an
+SSRF and credential-forwarding boundary. Private GitHub attachments need authentication, while their
+modern URLs have no file extension. Repository images have a different problem: they are intentionally
+classified as binary by the UTF-8 document reader, so sending them through the text or diff API makes
+them unavailable and encourages weakening the existing binary boundary.
+
+### Choice
+
+Allow only canonical `https://github.com/user-attachments/assets/<uuid>` URLs in PR Markdown. Validate
+the exact scheme, hostname, empty credentials/port/query/fragment, and complete UUID path in shared
+browser-safe code, then rewrite the source to a PR-scoped localhost endpoint. Revalidate server-side
+and in the GitHub client before invoking `gh api` with an argument array. Let GitHub CLI own existing
+authentication and redirect behavior; never extract a token or construct an authorization header.
+Reject cross-site Fetch Metadata (and require a matching Origin when present), bound the binary process at
+30 seconds, 10 MiB stdout, and 64 KiB stderr, and map failures without returning the private URL or stderr.
+
+Detect PNG, JPEG, GIF, WebP, and AVIF from complete binary signatures. Accept SVG only when fatal UTF-8
+decoding and the optional BOM/whitespace/XML declaration plus safe leading comments lead directly to an
+`svg` root. Serve detected images with `nosniff`, same-origin CORP, private immutable caching, and the
+existing sandbox CSP for SVG. Keep legacy GitHub image hosts and every other external source as
+placeholders until a separately verified safe fetch contract exists.
+
+Treat supported repository image extensions as a dedicated viewer path. Fetch the existing 5 MiB
+exact-commit asset endpoint, use a HEAD check to distinguish too-large/unsupported states before the
+browser loads the exact URL, and never call the text document or diff endpoint. Full view uses only the
+active path to select the image viewer. Changes view constructs both old/new refs even when one side is
+not a supported image, then renders a simple two-column Split with explicit empty sides. This preserves
+the correct new-side target for image-to-text renames and the old-side target for deletions. Attach only
+file-level comments and preserve exact old/new comment placement.
+
+### Trade-offs
+
+- A repository image does one local metadata HEAD followed by its image GET; this avoids buffering a
+  blob in application JavaScript and keeps the displayed `src` immutable and inspectable.
+- GitHub attachments are not persisted, so an offline viewer can still read cached PR text but cannot
+  newly load an uncached private attachment.
+- Legacy `user-images` and `private-user-images` URLs, extensionless repository images, image zoom/pan,
+  pixel diffs, and image-coordinate comments remain unsupported.
+- SVG is displayed only as an image response under the sandbox policy and is never inserted as inline HTML.
+
+## 2026-08-21: Delegate every acknowledged watch batch immediately
+
+### Problem
+
+The watch Skill allowed the parent task to investigate a small `investigate-and-reply` batch directly.
+That work kept the batch lease in flight in the same task that owned intake. Because task state permits
+only one in-flight batch per PR, later events for that PR remained durable but ineligible, and could
+wait indefinitely for another event or driver reconnect even after the first lease was released.
+
+### Choice
+
+Limit the parent watch task to intake, dispatch, durable state, final status-post edits, and lease
+release. Delegate every acknowledged lease, including one-comment and no-code batches, to exactly one
+fresh subagent in the same parent scheduling turn. Perform no investigation, mode classification, or
+live-head lookup before dispatch. If a subagent cannot accept the lease promptly, fail it retryably;
+never substitute parent execution. This supersedes the small-batch parent-processing exception in the
+2026-08-20 watch-task decision.
+
+Keep one lease per subagent and collect the final result only through an atomically written absolute
+JSON path. Reserve subagent capacity before intake and pass that number as the driver's in-flight
+limit. Have the driver poll task state and claim only below that limit. Its pump automatically claims
+same-PR follow-ups after lease release and retryable batches after `nextAttemptAt`, without a new watch
+event or reconnect. Preserve the process-owner lock so only one pump controls a task database.
+
+### Trade-offs
+
+- Intake stays responsive and an acknowledged lease never competes with parent-side investigation.
+- Even trivial batches pay subagent startup and file-handoff cost.
+- The parent must preserve the capacity declared to the driver; uncertain runtimes use a conservative
+  limit of one.
+- The driver performs a small read-only task-state poll about four times per second while auto-ack is
+  enabled.
+- A temporary lack of subagent capacity becomes a visible retry instead of silently delaying work or
+  changing execution ownership.
+
+## 2026-08-21: Use deterministic pane destinations and per-pane document identity
+
+### Problem
+
+The two-pane workspace treated a document path as globally unique, so opening a reference in the
+opposite pane moved the existing tab instead of opening a second reading position. In particular, a
+reviewer reading a file in the left pane could not Cmd/Ctrl+click a code reference in a comment and
+inspect another range of that same file in the right pane while preserving the original context.
+The focused-pane and opposite-pane rules also made a file-opening action depend on UI state the
+reviewer had to remember, so the same click could replace a different reading surface each time.
+
+### Choice
+
+Keep path-based document identity, but enforce uniqueness within each pane instead of across the whole
+workspace. The same document may be open once in the left pane and once in the right pane; repeated
+opens in one pane continue to reuse that pane's tab. Opening a document in one pane creates or updates
+that destination-pane copy without removing the other pane's copy.
+
+Give every document-opening interaction one deterministic destination: an ordinary click opens in the
+left pane, while Cmd/Ctrl+click opens in the right pane. This applies to Explorer rows, search results,
+Quick Open (Enter opens left), comment targets and references, repository links, and Walkthrough
+references or diagram nodes. The focused or originating pane does not affect the destination. Tab
+activation still uses the tab's own pane, in-document heading links stay in their current pane, and
+history restores its recorded pane.
+
+Track active tabs, scroll positions, line-navigation requests, unsent comment drafts, closing, and
+history restoration by pane plus document identity. When both panes contain a document, history uses
+its recorded pane. Tab move remains a move: it removes the source copy and merges with an existing
+destination copy when necessary. The workspace still has at most two panes and remains ephemeral
+browser state.
+
+This supersedes both the global one-document-identity ownership rule and the focused/opposite-pane
+document-opening rules in the 2026-08-09 two-pane decision.
+
+### Trade-offs
+
+- A reviewer can compare two locations or retained sources of the same file without losing either
+  reading position.
+- Duplicate-looking tab labels can appear across panes, but never twice within one pane.
+- The left pane has a clear primary-reading role and the right pane a clear modifier-open role; opening
+  a link normally from content in the right pane therefore navigates the left pane.
+- Pane-local scroll and navigation state add a small amount of workspace bookkeeping without creating
+  persistent editor groups or expanding beyond two panes.
+
 ## 2026-08-20: Consolidate review navigation into Explorer and Comments
 
 ### Problem
@@ -290,10 +414,11 @@ from the committed cursor with bounded backoff and uses distinct exit codes for 
 ingestion, and acknowledgement failures. An auto-ack claim can reserve the verified head repository
 later, preserving the existing single-writer rule without delaying the marker for live GitHub checks.
 
-For a focused investigate-only batch of one or two comments, allow the parent to investigate directly.
-When a worker is warranted, make an absolute, atomically replaced JSON file the result channel; an idle
-or completion notification is only a readiness signal. This prevents Agent-harness message relay from
-becoming part of the durable workflow.
+The 2026-08-21 mandatory-delegation decision supersedes the original exception that allowed the parent
+to investigate a focused batch of one or two comments directly. For every delegated batch, make an
+absolute, atomically replaced JSON file the result channel; an idle or completion notification is only
+a readiness signal. This prevents Agent-harness message relay from becoming part of the durable
+workflow.
 
 Cache the latest GitHub PR author login and head repository owner/name, and expose them in comment
 context. Watch events remain minimal triggers that require a fresh comment read. The watcher
@@ -933,6 +1058,9 @@ pane layout persistent review state would add a larger workspace model than the 
 - Allow at most two panes, keep one tab identity per document, and let the human choose placement.
 
 ### Choice
+
+The 2026-08-21 deterministic-pane decision above supersedes the identity and click-destination rules
+in this choice; the remaining two-pane and ephemeral-state boundaries still apply.
 
 The browser owns an ephemeral workspace with one pane by default and at most two horizontal panes.
 Every open document identity belongs to exactly one pane. A tab can move by drag and drop or the pane

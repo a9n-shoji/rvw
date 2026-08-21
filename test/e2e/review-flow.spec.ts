@@ -1308,7 +1308,7 @@ test("keeps virtual review nodes compact and useful height for code navigation",
   expect(reviewNodeHeights).toEqual([31, 31, 31]);
 });
 
-test("opens a fuzzy-matched file from Cmd/Ctrl+P in the active pane", async ({ page }) => {
+test("opens a fuzzy-matched file from Cmd/Ctrl+P in the left pane", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await expect(page.getByRole("button", { name: "src/new.ts", exact: true })).toBeVisible();
 
@@ -1337,11 +1337,25 @@ test("opens a fuzzy-matched file from Cmd/Ctrl+P in the active pane", async ({ p
   await page.keyboard.press("Control+P");
   await input.fill("rdm");
   await input.press("Enter");
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  await expect(leftPane.getByRole("tab", { name: "README.md" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(leftPane.getByRole("tab", { name: "src/fixture.ts" })).toBeVisible();
+  await expect(rightPane.getByRole("tab", { name: "src/new.ts" })).toBeVisible();
+
+  await page.keyboard.press("Control+P");
+  await input.fill("rdm");
+  await palette.getByRole("option", { name: "README.md" }).click({ modifiers: ["Control"] });
+  await expect(leftPane.getByRole("tab", { name: "README.md" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(rightPane.getByRole("tab", { name: "README.md" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await expect(rightPane.getByRole("tab", { name: "src/new.ts" })).toBeVisible();
 });
 
 test("registers the browser document and releases it when the tab closes", async ({

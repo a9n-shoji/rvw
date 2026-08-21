@@ -1902,6 +1902,97 @@ diffs-container > [slot="header-metadata"] {
   border-radius: 8px;
   font: 700 12px var(--mono);
 }
+.repository-image-viewer {
+  width: 100%;
+  overflow-x: auto;
+}
+.repository-image-grid {
+  display: grid;
+  min-width: 0;
+}
+.repository-image-viewer--split .repository-image-grid {
+  min-width: 680px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.repository-image-pane {
+  min-width: 0;
+  border-right: 1px solid var(--line);
+}
+.repository-image-pane:last-child {
+  border-right: 0;
+}
+.repository-image-pane > header {
+  display: flex;
+  min-height: 39px;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 10px 5px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.repository-image-pane > header strong {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+.repository-image-pane > header code {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repository-image-asset {
+  position: relative;
+  display: grid;
+  min-height: 55vh;
+  place-items: center;
+  padding: 24px;
+  overflow: hidden;
+  background-color: var(--panel);
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--muted) 9%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--muted) 9%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--muted) 9%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--muted) 9%, transparent) 75%);
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  background-size: 16px 16px;
+}
+.repository-image-asset img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+.repository-image-status,
+.repository-image-empty {
+  display: grid;
+  min-height: 55vh;
+  place-items: center;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+.repository-image-status {
+  position: absolute;
+  inset: 0;
+}
+.repository-image-status--error {
+  color: var(--danger);
+}
+.repository-image-comments {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
 .comment-icon-button {
   display: grid;
   place-items: center;

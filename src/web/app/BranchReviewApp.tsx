@@ -31,12 +31,7 @@ import {
   deleteCommentDraftForIssue,
   deleteCommentReplyDraftsForComment,
 } from "../comment-draft-store.js";
-import {
-  documentTabKey,
-  otherDocumentPane,
-  type ActiveDocument,
-  type DocumentPaneId,
-} from "../document-workspace.js";
+import { documentTabKey, type ActiveDocument, type DocumentPaneId } from "../document-workspace.js";
 import type { AnyReviewComment } from "../review-context.js";
 import type { ReadingLocator } from "../reading-history.js";
 import { reviewQueryKeys } from "../review-query-keys.js";
@@ -107,8 +102,11 @@ export function BranchReviewApp({
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenReturnFocus, setQuickOpenReturnFocus] = useState<HTMLElement | null>(null);
   const [draggedDocumentKey, setDraggedDocumentKey] = useState<string | null>(null);
-  const [viewerNavigationTarget, setViewerNavigationTarget] =
-    useState<ViewerNavigationTarget | null>(null);
+  const [viewerNavigationTargets, setViewerNavigationTargets] = useState<
+    Record<DocumentPaneId, ViewerNavigationTarget | null>
+  >({ left: null, right: null });
+  const viewerNavigationTargetsRef = useRef(viewerNavigationTargets);
+  viewerNavigationTargetsRef.current = viewerNavigationTargets;
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -120,7 +118,16 @@ export function BranchReviewApp({
   });
   const documentScrollPositions = useRef(new Map<string, number>());
   const reviewHistoryKey = `branch:${branchReviewId}`;
-  const resetViewerNavigation = useCallback((): void => setViewerNavigationTarget(null), []);
+  const resetViewerNavigation = useCallback((paneIds: readonly DocumentPaneId[]): void => {
+    const uniquePaneIds = [...new Set(paneIds)];
+    const nextTargets = { ...viewerNavigationTargetsRef.current };
+    for (const paneId of uniquePaneIds) nextTargets[paneId] = null;
+    viewerNavigationTargetsRef.current = nextTargets;
+    setViewerNavigationTargets((current) => {
+      if (uniquePaneIds.every((paneId) => current[paneId] === null)) return current;
+      return { ...current, ...Object.fromEntries(uniquePaneIds.map((paneId) => [paneId, null])) };
+    });
+  }, []);
   const {
     workspace,
     workspaceRef,
@@ -145,8 +152,8 @@ export function BranchReviewApp({
     workspaceRef,
     paneElements,
     documentScrollPositions,
-    viewerNavigationTarget,
-    setViewerNavigationTarget,
+    viewerNavigationTargets,
+    setViewerNavigationTargets,
     openWorkspaceDocument,
     activateWorkspaceDocument,
   });
@@ -308,10 +315,12 @@ export function BranchReviewApp({
           deleteCommentReplyDraftsForComment(branchReviewId, comment.id);
         }
       }
-      const openIssue = workspaceRef.current.documents.find(
-        (document) => document.kind === "issue" && document.id === issue.id,
-      );
-      if (openIssue) closeDocument(openIssue);
+      for (const paneId of ["left", "right"] as const) {
+        const openIssue = workspaceRef.current.documents[paneId].find(
+          (document) => document.kind === "issue" && document.id === issue.id,
+        );
+        if (openIssue) closeDocument(openIssue, paneId);
+      }
       await refresh();
     },
   });
@@ -393,17 +402,23 @@ export function BranchReviewApp({
     );
     return files.filter((file) => matches.has(file.path));
   }, [fileFilter, files]);
-  const openDocuments = workspace.documents;
+  const openDocuments = useMemo(
+    () => [...workspace.documents.left, ...workspace.documents.right],
+    [workspace.documents.left, workspace.documents.right],
+  );
   const activePane = workspace.focusedPane;
   const activeDocument = workspace.active[activePane];
   const openWalkthroughIds = useMemo(
-    () =>
-      openDocuments
-        .filter(
-          (document): document is Extract<ActiveDocument, { kind: "walkthrough" }> =>
-            document.kind === "walkthrough",
-        )
-        .map((document) => document.id),
+    () => [
+      ...new Set(
+        openDocuments
+          .filter(
+            (document): document is Extract<ActiveDocument, { kind: "walkthrough" }> =>
+              document.kind === "walkthrough",
+          )
+          .map((document) => document.id),
+      ),
+    ],
     [openDocuments],
   );
   const walkthroughDetailQueries = useQueries({
@@ -449,29 +464,27 @@ export function BranchReviewApp({
     if (query?.data?.walkthrough) walkthroughDetails.set(walkthroughId, query.data.walkthrough);
     if (query?.isPending) loadingWalkthroughIds.add(walkthroughId);
   });
-  const rightPaneVisible =
-    openDocuments.some((document) => workspace.panes[documentTabKey(document)] === "right") ||
-    draggedDocumentKey !== null;
+  const rightPaneVisible = workspace.documents.right.length > 0 || draggedDocumentKey !== null;
   const openFile = (
     path: string,
     openInRightPane = false,
     sourceOid?: string,
     line: number | null = null,
   ): void => {
-    navigateToDocument(repositoryDocument(path, sourceOid), openInRightPane ? "right" : undefined, {
+    navigateToDocument(repositoryDocument(path, sourceOid), openInRightPane ? "right" : "left", {
       kind: "line",
       line,
     });
   };
-  const openIssue = (issue: IssueDocument, openInOtherPane: boolean): void => {
+  const openIssue = (issue: IssueDocument, openInRightPane: boolean): void => {
     navigateToDocument(
       { kind: "issue", id: issue.id, number: issue.number, title: issue.title, url: issue.url },
-      openInOtherPane ? "right" : undefined,
+      openInRightPane ? "right" : "left",
     );
   };
   const openWalkthrough = (
     walkthrough: BranchWalkthroughSummary,
-    openInOtherPane: boolean,
+    openInRightPane: boolean,
   ): void => {
     navigateToDocument(
       {
@@ -480,7 +493,7 @@ export function BranchReviewApp({
         title: walkthrough.title,
         sourceOid: walkthrough.sourceOid,
       },
-      openInOtherPane ? "right" : undefined,
+      openInRightPane ? "right" : "left",
     );
   };
   const openCodeReference = async (
@@ -515,6 +528,7 @@ export function BranchReviewApp({
   const openCommentTarget = (
     comment: AnyReviewComment,
     placement: CommentPlacement | null,
+    openInRightPane: boolean,
   ): void => {
     if (!("branchReviewId" in comment)) return;
     setCommentsExpanded(true);
@@ -535,6 +549,7 @@ export function BranchReviewApp({
       line: startLine,
       ...(endLine === null ? {} : { endLine }),
     };
+    const targetPane: DocumentPaneId = openInRightPane ? "right" : "left";
     if (target.kind === "branch") return;
     if (target.kind === "issue") {
       navigateToDocument(
@@ -545,7 +560,7 @@ export function BranchReviewApp({
           title: target.issueTitle,
           url: target.issueUrl,
         },
-        undefined,
+        targetPane,
         locator,
       );
       return;
@@ -560,7 +575,7 @@ export function BranchReviewApp({
           title: walkthrough.title,
           sourceOid: walkthrough.sourceOid,
         },
-        undefined,
+        targetPane,
         locator,
       );
       return;
@@ -569,28 +584,18 @@ export function BranchReviewApp({
       placement?.outdated
         ? repositoryDocument(target.path, target.sourceOid)
         : repositoryDocument(placement?.path ?? target.path),
-      undefined,
+      targetPane,
       locator,
     );
   };
   const handleCommentActiveChange = (commentId: string, active: boolean): void => {
     setActiveCommentId((current) => (active ? commentId : current === commentId ? null : current));
   };
-  const openRepositoryLink = (
-    path: string,
-    sourceOid: string,
-    openInOtherPane: boolean,
-    sourcePane: DocumentPaneId = activePane,
-  ): void => {
-    navigateToDocument(
-      repositoryDocument(path, sourceOid),
-      openInOtherPane ? otherDocumentPane(sourcePane) : sourcePane,
-    );
+  const openRepositoryLink = (path: string, sourceOid: string, openInRightPane: boolean): void => {
+    navigateToDocument(repositoryDocument(path, sourceOid), openInRightPane ? "right" : "left");
   };
   const renderDocumentPane = (paneId: DocumentPaneId) => {
-    const paneDocuments = openDocuments.filter(
-      (document) => (workspace.panes[documentTabKey(document)] ?? "left") === paneId,
-    );
+    const paneDocuments = workspace.documents[paneId];
     const paneDocument = workspace.active[paneId];
     const content =
       paneDocument?.kind === "walkthrough" && walkthroughDetails.get(paneDocument.id) ? (
@@ -604,32 +609,26 @@ export function BranchReviewApp({
               commentPlacements={placements}
               activeCommentId={activeCommentId}
               navigationTarget={
-                viewerNavigationTarget?.documentKey === documentTabKey(paneDocument)
-                  ? viewerNavigationTarget
+                viewerNavigationTargets[paneId]?.documentKey === documentTabKey(paneDocument)
+                  ? viewerNavigationTargets[paneId]
                   : null
               }
               onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
               themePreference={themePreference}
               onCommentActiveChange={handleCommentActiveChange}
-              onOpenReference={(walkthrough, reference, openInOtherPane) =>
+              onOpenReference={(walkthrough, reference, openInRightPane) =>
                 openCodeReference(
                   walkthrough.sourceOid,
                   reference,
-                  openInOtherPane ? otherDocumentPane(paneId) : paneId,
+                  openInRightPane ? "right" : "left",
                 )
               }
-              onOpenCommentCodeReference={(sourceOid, reference, openInOtherPane) =>
-                openCodeReference(
-                  sourceOid,
-                  reference,
-                  openInOtherPane ? otherDocumentPane(paneId) : paneId,
-                )
+              onOpenCommentCodeReference={(sourceOid, reference, openInRightPane) =>
+                openCodeReference(sourceOid, reference, openInRightPane ? "right" : "left")
               }
-              onOpenRepositoryLink={(path, sourceOid, openInOtherPane) =>
-                openRepositoryLink(path, sourceOid, openInOtherPane, paneId)
-              }
+              onOpenRepositoryLink={openRepositoryLink}
               onDeleted={() => {
-                closeDocument(paneDocument);
+                closeDocument(paneDocument, paneId);
                 void refresh();
               }}
             />
@@ -656,6 +655,7 @@ export function BranchReviewApp({
                   : `${paneId}:branch:${branchReview.id}:repository-file:${paneDocument.path}:${paneDocument.sourceOid ?? branchReview.sourceOid}:${paneDocument.comparisonPolicy ?? ""}`
               }
               review={review}
+              paneId={paneId}
               selectedOid={branchReview.sourceOid}
               oldOid={null}
               activeDocument={paneDocument}
@@ -678,24 +678,18 @@ export function BranchReviewApp({
               themePreference={themePreference}
               onCommentActiveChange={handleCommentActiveChange}
               navigationTarget={
-                viewerNavigationTarget?.documentKey === documentTabKey(paneDocument)
-                  ? viewerNavigationTarget
+                viewerNavigationTargets[paneId]?.documentKey === documentTabKey(paneDocument)
+                  ? viewerNavigationTargets[paneId]
                   : null
               }
               onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
               onOpenMarkdownFragment={(line, hash) =>
                 navigateToMarkdownFragment(paneDocument, paneId, line, hash)
               }
-              onOpenCodeReference={(sourceOid, reference, openInOtherPane) =>
-                openCodeReference(
-                  sourceOid,
-                  reference,
-                  openInOtherPane ? otherDocumentPane(paneId) : paneId,
-                )
+              onOpenCodeReference={(sourceOid, reference, openInRightPane) =>
+                openCodeReference(sourceOid, reference, openInRightPane ? "right" : "left")
               }
-              onOpenRepositoryLink={(path, sourceOid, openInOtherPane) =>
-                openRepositoryLink(path, sourceOid, openInOtherPane, paneId)
-              }
+              onOpenRepositoryLink={openRepositoryLink}
             />
           </Suspense>
         </LazyLoadBoundary>
@@ -721,10 +715,10 @@ export function BranchReviewApp({
           )
         }
         onActivate={(document) => activateDocument(document, paneId)}
-        onClose={closeDocument}
+        onClose={(document) => closeDocument(document, paneId)}
         onCloseOthers={(document) => closePaneDocuments(paneId, document)}
         onCloseAll={() => closePaneDocuments(paneId)}
-        onMove={moveDocument}
+        onMove={(document, targetPane) => moveDocument(document, paneId, targetPane)}
         onDropDocument={dropDocument}
         onDragStartDocument={setDraggedDocumentKey}
         onDragEndDocument={() => setDraggedDocumentKey(null)}
@@ -780,12 +774,13 @@ export function BranchReviewApp({
           files={files}
           openDocuments={openDocuments}
           activeDocument={activeDocument}
-          activePane={activePane}
           loading={treeQuery.isPending}
           error={treeQuery.error}
           includePullRequestDocument={false}
           onClose={() => setQuickOpenVisible(false)}
-          onOpen={(document) => navigateToDocument(document, activePane)}
+          onOpen={(document, openInRightPane) =>
+            navigateToDocument(document, openInRightPane ? "right" : "left")
+          }
         />
       )}
       <ErrorNotice error={actionError} />
@@ -893,13 +888,11 @@ export function BranchReviewApp({
                   }
                   themePreference={themePreference}
                   onCommentActiveChange={handleCommentActiveChange}
-                  onOpenCodeReference={(sourceOid, reference, openInOtherPane) =>
-                    openCodeReference(sourceOid, reference, openInOtherPane ? "right" : activePane)
+                  onOpenCodeReference={(sourceOid, reference, openInRightPane) =>
+                    openCodeReference(sourceOid, reference, openInRightPane ? "right" : "left")
                   }
                   onOpenTarget={openCommentTarget}
-                  onOpenRepositoryLink={(path, sourceOid, openInOtherPane) =>
-                    openRepositoryLink(path, sourceOid, openInOtherPane)
-                  }
+                  onOpenRepositoryLink={openRepositoryLink}
                 />
               </>
             }

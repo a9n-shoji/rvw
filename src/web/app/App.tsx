@@ -66,8 +66,7 @@ import {
   currentCommitDocument,
   documentTabKey,
   initialDocumentWorkspace,
-  otherDocumentPane,
-  removeDocumentFromWorkspace,
+  normalizeDocumentPanes,
   type ActiveDocument,
   type DocumentPaneId,
 } from "../document-workspace.js";
@@ -426,9 +425,23 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const [commentsExpanded, setCommentsExpanded] = useState(false);
   const [codeNavigationMode, setCodeNavigationMode] = useState<"files" | "search">("files");
   const [treeMode, setTreeMode] = useState<"changed" | "all">("changed");
-  const [viewerNavigationTarget, setViewerNavigationTarget] =
-    useState<ViewerNavigationTarget | null>(null);
-  const resetViewerNavigation = useCallback((): void => setViewerNavigationTarget(null), []);
+  const [viewerNavigationTargets, setViewerNavigationTargets] = useState<
+    Record<DocumentPaneId, ViewerNavigationTarget | null>
+  >({ left: null, right: null });
+  const viewerNavigationTargetsRef = useRef(viewerNavigationTargets);
+  viewerNavigationTargetsRef.current = viewerNavigationTargets;
+  const resetViewerNavigation = useCallback((paneIds: readonly DocumentPaneId[]): void => {
+    const uniquePaneIds = [...new Set(paneIds)];
+    const nextTargets = { ...viewerNavigationTargetsRef.current };
+    for (const paneId of uniquePaneIds) {
+      nextTargets[paneId] = null;
+    }
+    viewerNavigationTargetsRef.current = nextTargets;
+    setViewerNavigationTargets((current) => {
+      if (uniquePaneIds.every((paneId) => current[paneId] === null)) return current;
+      return { ...current, ...Object.fromEntries(uniquePaneIds.map((paneId) => [paneId, null])) };
+    });
+  }, []);
   const {
     workspace: documentWorkspace,
     workspaceRef: documentWorkspaceRef,
@@ -476,7 +489,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     onCodeExpandedChange: setCodeExpanded,
     onModeChange: setCodeNavigationMode,
   });
-  const openDocuments = documentWorkspace.documents;
+  const openDocuments = useMemo(
+    () => [...documentWorkspace.documents.left, ...documentWorkspace.documents.right],
+    [documentWorkspace.documents.left, documentWorkspace.documents.right],
+  );
   const activePane = documentWorkspace.focusedPane;
   const activeDocument = documentWorkspace.active[activePane];
   const paneElements = useRef<Record<DocumentPaneId, HTMLElement | null>>({
@@ -497,8 +513,8 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     workspaceRef: documentWorkspaceRef,
     paneElements,
     documentScrollPositions,
-    viewerNavigationTarget,
-    setViewerNavigationTarget,
+    viewerNavigationTargets,
+    setViewerNavigationTargets,
     openWorkspaceDocument,
     activateWorkspaceDocument,
     scrollRevision: reviewStateRevision,
@@ -517,8 +533,8 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   }, [syncFeedback]);
 
   const dropDocument = useCallback(
-    (documentKey: string, targetPane: DocumentPaneId): void => {
-      dropWorkspaceDocument(documentKey, targetPane);
+    (documentKey: string, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
+      dropWorkspaceDocument(documentKey, sourcePane, targetPane);
       setDraggedDocumentKey(null);
     },
     [dropWorkspaceDocument],
@@ -597,10 +613,13 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     setRangeStartOid(range.startOid);
     setSelectedOid(range.endOid);
     if (range.endOid !== selectedOid) {
-      setViewerNavigationTarget(null);
+      resetViewerNavigation(["left", "right"]);
       setDocumentWorkspace((current) => ({
         ...current,
-        documents: current.documents.map(currentCommitDocument),
+        documents: {
+          left: current.documents.left.map(currentCommitDocument),
+          right: current.documents.right.map(currentCommitDocument),
+        },
         active: {
           left: current.active.left ? currentCommitDocument(current.active.left) : null,
           right: current.active.right ? currentCommitDocument(current.active.right) : null,
@@ -728,16 +747,12 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           deleteCommentReplyDraftsForComment(pullRequestId, comment.id);
         }
       }
-      setDocumentWorkspace((current) => {
-        let next = current;
-        for (const document of current.documents) {
-          if (document.kind === "issue" && document.id === issue.id) {
-            next = removeDocumentFromWorkspace(next, document);
-          }
-        }
-        return next;
-      });
-      resetViewerNavigation();
+      for (const paneId of ["left", "right"] as const) {
+        const openIssue = documentWorkspaceRef.current.documents[paneId].find(
+          (document) => document.kind === "issue" && document.id === issue.id,
+        );
+        if (openIssue) closeDocument(openIssue, paneId);
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["issues", pullRequestId] }),
         queryClient.invalidateQueries({ queryKey: ["comments"] }),
@@ -756,12 +771,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     if (!walkthroughsQuery.isSuccess) return;
     const summaries = new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough]));
     setDocumentWorkspace((current) => {
-      let reconciled = current;
-      for (const document of current.documents) {
-        if (document.kind === "walkthrough" && !summaries.has(document.id)) {
-          reconciled = removeDocumentFromWorkspace(reconciled, document);
-        }
-      }
       const rebind = (document: ActiveDocument | null): ActiveDocument | null => {
         if (document?.kind !== "walkthrough") return document;
         const summary = summaries.get(document.id);
@@ -774,24 +783,53 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
             }
           : null;
       };
-      return {
-        ...reconciled,
-        documents: reconciled.documents.map((document) => rebind(document)!),
-        active: {
-          left: rebind(reconciled.active.left),
-          right: rebind(reconciled.active.right),
-        },
+      const documents = {
+        left: current.documents.left
+          .map(rebind)
+          .filter((document): document is ActiveDocument => document !== null),
+        right: current.documents.right
+          .map(rebind)
+          .filter((document): document is ActiveDocument => document !== null),
       };
+      const activeDocument = (
+        paneId: DocumentPaneId,
+        document: ActiveDocument | null,
+      ): ActiveDocument | null => {
+        const rebound = rebind(document);
+        if (
+          rebound &&
+          documents[paneId].some(
+            (candidate) => documentTabKey(candidate) === documentTabKey(rebound),
+          )
+        ) {
+          return rebound;
+        }
+        return documents[paneId][0] ?? null;
+      };
+      return normalizeDocumentPanes({
+        ...current,
+        documents: {
+          left: documents.left,
+          right: documents.right,
+        },
+        active: {
+          left: activeDocument("left", current.active.left),
+          right: activeDocument("right", current.active.right),
+        },
+      });
     });
   }, [walkthroughsQuery.data?.walkthroughs, walkthroughsQuery.isSuccess]);
   const openWalkthroughIds = useMemo(
-    () =>
-      openDocuments
-        .filter(
-          (document): document is Extract<ActiveDocument, { kind: "walkthrough" }> =>
-            document.kind === "walkthrough",
-        )
-        .map((document) => document.id),
+    () => [
+      ...new Set(
+        openDocuments
+          .filter(
+            (document): document is Extract<ActiveDocument, { kind: "walkthrough" }> =>
+              document.kind === "walkthrough",
+          )
+          .map((document) => document.id),
+      ),
+    ],
     [openDocuments],
   );
   const walkthroughDetailQueries = useQueries({
@@ -964,7 +1002,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       documentScrollPositions.current.clear();
       setReviewStateRevision((revision) => revision + 1);
       setDocumentWorkspace(initialDocumentWorkspace());
-      setViewerNavigationTarget(null);
+      resetViewerNavigation(["left", "right"]);
       commitRangeTouched.current = false;
       setSelectedOid(result.pullRequest.latestHeadOid);
       setRangeStartOid(pullRequestRangeStartOid(result.commits, result.pullRequest.latestHeadOid));
@@ -1000,23 +1038,9 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     },
     [openDocument],
   );
-  const openRepositoryMarkdownLinkFromLeftPane = useCallback(
-    (filePath: string, sourceOid: string, openInOtherPane: boolean): void =>
-      openRepositoryMarkdownLink(filePath, sourceOid, openInOtherPane ? "right" : "left"),
-    [openRepositoryMarkdownLink],
-  );
-  const openRepositoryMarkdownLinkFromRightPane = useCallback(
-    (filePath: string, sourceOid: string, openInOtherPane: boolean): void =>
-      openRepositoryMarkdownLink(filePath, sourceOid, openInOtherPane ? "left" : "right"),
-    [openRepositoryMarkdownLink],
-  );
-  const openRepositoryMarkdownLinkFromSidebar = useCallback(
-    (filePath: string, sourceOid: string, openInOtherPane: boolean): void =>
-      openRepositoryMarkdownLink(
-        filePath,
-        sourceOid,
-        openInOtherPane ? "right" : documentWorkspaceRef.current.focusedPane,
-      ),
+  const openRepositoryMarkdownLinkFromInteraction = useCallback(
+    (filePath: string, sourceOid: string, openInRightPane: boolean): void =>
+      openRepositoryMarkdownLink(filePath, sourceOid, openInRightPane ? "right" : "left"),
     [openRepositoryMarkdownLink],
   );
   const openSearchResult = (result: AnySearchResult, openInRightPane = false): void => {
@@ -1027,7 +1051,8 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
         : { kind: "repository-file", path: result.path };
     const workspace = documentWorkspaceRef.current;
     const documentKey = documentTabKey(requestedDocument);
-    const openDocumentWithSameSource = workspace.documents.find((candidate) => {
+    const targetPane = openInRightPane ? "right" : "left";
+    const openDocumentWithSameSource = workspace.documents[targetPane].find((candidate) => {
       if (documentTabKey(candidate) !== documentKey) return false;
       return (
         candidate.kind !== "repository-file" ||
@@ -1036,9 +1061,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       );
     });
     const document = openDocumentWithSameSource ?? requestedDocument;
-    const targetPane = openInRightPane
-      ? "right"
-      : (workspace.panes[documentKey] ?? workspace.focusedPane);
     const activeTarget = workspace.active[targetPane];
     const resetHorizontal = !activeTarget || documentTabKey(activeTarget) !== documentKey;
     navigateToDocument(document, targetPane, { kind: "line", line: result.line }, resetHorizontal);
@@ -1046,15 +1068,17 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const openCommentTarget = (
     comment: AnyReviewComment,
     placement: CommentPlacement | null,
+    openInRightPane: boolean,
   ): void => {
     if ("branchReviewId" in comment) return;
     const target = comment.target;
+    const targetPane: DocumentPaneId = openInRightPane ? "right" : "left";
     const navigate = (
       document: ActiveDocument,
       startLine: number | null,
       endLine: number | null,
     ): void => {
-      navigateToDocument(document, undefined, {
+      navigateToDocument(document, targetPane, {
         kind: "line",
         line: startLine,
         ...(endLine === null ? {} : { endLine }),
@@ -1200,14 +1224,9 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     },
     [openCodeReference],
   );
-  const openWalkthroughReferenceFromLeftPane = useCallback(
-    (walkthrough: AnyWalkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
-      openWalkthroughReference(walkthrough, reference, openInOtherPane ? "right" : "left"),
-    [openWalkthroughReference],
-  );
-  const openWalkthroughReferenceFromRightPane = useCallback(
-    (walkthrough: AnyWalkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
-      openWalkthroughReference(walkthrough, reference, openInOtherPane ? "left" : "right"),
+  const openWalkthroughReferenceFromInteraction = useCallback(
+    (walkthrough: AnyWalkthrough, reference: WalkthroughReference, openInRightPane: boolean) =>
+      openWalkthroughReference(walkthrough, reference, openInRightPane ? "right" : "left"),
     [openWalkthroughReference],
   );
   const openCommentCodeReference = useCallback(
@@ -1223,23 +1242,9 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     },
     [openCodeReference, pullRequestId],
   );
-  const openCommentCodeReferenceFromLeftPane = useCallback(
-    (sourceOid: string, reference: CodeReference, openInOtherPane: boolean) =>
-      openCommentCodeReference(sourceOid, reference, openInOtherPane ? "right" : "left"),
-    [openCommentCodeReference],
-  );
-  const openCommentCodeReferenceFromRightPane = useCallback(
-    (sourceOid: string, reference: CodeReference, openInOtherPane: boolean) =>
-      openCommentCodeReference(sourceOid, reference, openInOtherPane ? "left" : "right"),
-    [openCommentCodeReference],
-  );
-  const openCommentCodeReferenceFromSidebar = useCallback(
-    (sourceOid: string, reference: CodeReference, openInOtherPane: boolean) =>
-      openCommentCodeReference(
-        sourceOid,
-        reference,
-        openInOtherPane ? "right" : documentWorkspaceRef.current.focusedPane,
-      ),
+  const openCommentCodeReferenceFromInteraction = useCallback(
+    (sourceOid: string, reference: CodeReference, openInRightPane: boolean) =>
+      openCommentCodeReference(sourceOid, reference, openInRightPane ? "right" : "left"),
     [openCommentCodeReference],
   );
 
@@ -1312,14 +1317,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     themePreferenceMutation.error ??
     changeSequence.error;
   const rightPaneVisible =
-    openDocuments.some(
-      (document) => documentWorkspace.panes[documentTabKey(document)] === "right",
-    ) || draggedDocumentKey !== null;
+    documentWorkspace.documents.right.length > 0 || draggedDocumentKey !== null;
 
   const renderDocumentPane = (paneId: DocumentPaneId) => {
-    const paneDocuments = openDocuments.filter(
-      (document) => (documentWorkspace.panes[documentTabKey(document)] ?? "left") === paneId,
-    );
+    const paneDocuments = documentWorkspace.documents[paneId];
     const paneDocument = documentWorkspace.active[paneId];
     const paneViewerState = paneViewerStates[paneId];
     const paneViewerDocument = paneViewerState.viewerDocument;
@@ -1334,29 +1335,17 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
               comments={comments}
               activeCommentId={activeCommentId}
               navigationTarget={
-                viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
-                  ? viewerNavigationTarget
+                viewerNavigationTargets[paneId]?.documentKey === documentTabKey(paneViewerDocument)
+                  ? viewerNavigationTargets[paneId]
                   : null
               }
               onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
               themePreference={themePreference}
               onCommentActiveChange={handleCommentActiveChange}
-              onOpenReference={
-                paneId === "left"
-                  ? openWalkthroughReferenceFromLeftPane
-                  : openWalkthroughReferenceFromRightPane
-              }
-              onOpenCommentCodeReference={
-                paneId === "left"
-                  ? openCommentCodeReferenceFromLeftPane
-                  : openCommentCodeReferenceFromRightPane
-              }
-              onOpenRepositoryLink={
-                paneId === "left"
-                  ? openRepositoryMarkdownLinkFromLeftPane
-                  : openRepositoryMarkdownLinkFromRightPane
-              }
-              onDeleted={() => closeDocument(paneViewerDocument)}
+              onOpenReference={openWalkthroughReferenceFromInteraction}
+              onOpenCommentCodeReference={openCommentCodeReferenceFromInteraction}
+              onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
+              onDeleted={() => closeDocument(paneViewerDocument, paneId)}
             />
           </Suspense>
         </LazyLoadBoundary>
@@ -1381,6 +1370,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
                   : `${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`
               }
               review={{ kind: "pull-request", id: pullRequest.id, sourceOid: selectedOid }}
+              paneId={paneId}
               selectedOid={selectedOid}
               oldOid={effectiveOldOid}
               activeDocument={paneViewerDocument}
@@ -1403,26 +1393,16 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
               themePreference={themePreference}
               onCommentActiveChange={handleCommentActiveChange}
               navigationTarget={
-                viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
-                  ? viewerNavigationTarget
+                viewerNavigationTargets[paneId]?.documentKey === documentTabKey(paneViewerDocument)
+                  ? viewerNavigationTargets[paneId]
                   : null
               }
               onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
               onOpenMarkdownFragment={(line, hash) =>
                 navigateToMarkdownFragment(paneViewerDocument, paneId, line, hash)
               }
-              onOpenCodeReference={
-                paneId === "left"
-                  ? openCommentCodeReferenceFromLeftPane
-                  : openCommentCodeReferenceFromRightPane
-              }
-              onOpenRepositoryLink={(filePath, sourceOid, openInOtherPane) =>
-                openRepositoryMarkdownLink(
-                  filePath,
-                  sourceOid,
-                  openInOtherPane ? otherDocumentPane(paneId) : paneId,
-                )
-              }
+              onOpenCodeReference={openCommentCodeReferenceFromInteraction}
+              onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
             />
           </Suspense>
         </LazyLoadBoundary>
@@ -1448,10 +1428,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           )
         }
         onActivate={(document) => activateDocument(document, paneId)}
-        onClose={closeDocument}
+        onClose={(document) => closeDocument(document, paneId)}
         onCloseOthers={(document) => closePaneDocuments(paneId, document)}
         onCloseAll={() => closePaneDocuments(paneId)}
-        onMove={moveDocument}
+        onMove={(document, targetPane) => moveDocument(document, paneId, targetPane)}
         onDropDocument={dropDocument}
         onDragStartDocument={setDraggedDocumentKey}
         onDragEndDocument={() => setDraggedDocumentKey(null)}
@@ -1520,11 +1500,12 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           files={allFiles}
           openDocuments={openDocuments}
           activeDocument={activeDocument}
-          activePane={activePane}
           loading={treeQuery.isPending}
           error={treeQuery.error}
           onClose={() => setQuickOpenVisible(false)}
-          onOpen={(document) => openDocument(document, activePane)}
+          onOpen={(document, openInRightPane) =>
+            openDocument(document, openInRightPane ? "right" : "left")
+          }
         />
       )}
       <ErrorNotice error={actionError} />
@@ -1564,7 +1545,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
                   onIssueReferenceChange={setIssueReference}
                   onIssueAddOpenChange={setIssueAddOpen}
                   onIssueAdd={() => addIssueMutation.mutate()}
-                  onOpenIssue={(issue, openInOtherPane) =>
+                  onOpenIssue={(issue, openInRightPane) =>
                     openDocument(
                       {
                         kind: "issue",
@@ -1573,14 +1554,14 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
                         title: issue.title,
                         url: issue.url,
                       },
-                      openInOtherPane ? "right" : undefined,
+                      openInRightPane ? "right" : "left",
                     )
                   }
                   onRemoveIssue={(issue) => removeIssueMutation.mutate(issue)}
                   onOpenPullRequest={(openInRightPane) =>
                     openDocument(
                       { kind: "pull-request-markdown" },
-                      openInRightPane ? "right" : undefined,
+                      openInRightPane ? "right" : "left",
                     )
                   }
                   onOpen={openWalkthrough}
@@ -1641,9 +1622,9 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
                   review={{ kind: "pull-request", id: pullRequest.id, sourceOid: selectedOid }}
                   themePreference={themePreference}
                   onCommentActiveChange={handleCommentActiveChange}
-                  onOpenCodeReference={openCommentCodeReferenceFromSidebar}
+                  onOpenCodeReference={openCommentCodeReferenceFromInteraction}
                   onOpenTarget={openCommentTarget}
-                  onOpenRepositoryLink={openRepositoryMarkdownLinkFromSidebar}
+                  onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
                 />
               </>
             }

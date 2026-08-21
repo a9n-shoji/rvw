@@ -1,4 +1,4 @@
 interface:
   display_name: "rvw Watch Comments"
-  short_description: "Watch and address new rvw review comments"
-  default_prompt: "Use $rvw-watch-comments to watch for and address new rvw review comments."
+  short_description: "Watch and delegate new rvw review comments"
+  default_prompt: "Use $rvw-watch-comments to watch and immediately delegate new rvw review comments."

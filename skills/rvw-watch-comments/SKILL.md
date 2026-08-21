@@ -1,6 +1,6 @@
 ---
 name: rvw-watch-comments
-description: Continuously watch new RVW comments and replies across saved Pull Request Reviews and Branch Reviews. Investigate and reply for Branch Reviews. Preserve explicitly authorized fix-and-push only for verified owned Pull Requests.
+description: Continuously watch saved Pull Request Reviews and Branch Reviews for new RVW comments and replies, durably queue them, dispatch work within reserved subagent capacity, and publish the final RVW reply. Preserve explicitly authorized fix-and-push only for verified owned Pull Requests; Branch Reviews are always investigate-and-reply.
 ---
 
 # Watch rvw comments
@@ -68,14 +68,18 @@ direct-database transport; an unavailable selected transport is fatal.
 node '<SKILL_DIR>/scripts/preflight.mjs'
 ```
 
-Start the bundled driver with the state path. `--auto-ack` is the normal mode: it claims an eligible
-PR batch, re-reads every thread, creates `🔎 確認中です…` (or restores it when retrying that batch),
-records suppression, and emits
-one `batch-acknowledged` JSON line containing the lease and operations. The first `watch-ready` line
-means monitoring is established. The driver chooses cursorless start only when state has no cursor;
-that intentionally skips all existing comments. Otherwise it resumes from the exact durable cursor.
-Before each initial connection or reconnect, it auto-acknowledges any eligible event that was durably
-ingested before an earlier driver interruption.
+Before starting intake, reserve a positive number of subagent slots for this task. Use that exact
+number as `<RESERVED_WORKER_SLOTS>`; use `1` when the runtime cannot guarantee more. Start the bundled
+driver with the state path and the matching in-flight limit. `--auto-ack` is the normal mode: it claims
+eligible PR batches only while fewer than that limit are in flight, re-reads every thread, creates
+`🔎 確認中です…` (or restores it when retrying that batch), records suppression, and emits one
+`batch-acknowledged` JSON line containing the lease and operations. The first `watch-ready` line
+reports `maxInFlight` and means monitoring is established. The driver chooses cursorless start only
+when state has no cursor; that intentionally skips all existing comments. Otherwise it resumes from
+the exact durable cursor. Before each initial connection or reconnect, it auto-acknowledges eligible
+durable work up to the same capacity. The driver atomically owns one lock beside the canonical state
+path before spawning rvw. A second driver for the same state exits immediately; a later restart
+removes a stale lock only when its recorded owner process no longer exists.
 
 Events and batches carry either `{kind:"pull-request",pullRequestUrl}` or
 `{kind:"branch",repository}`. Never combine those context kinds. Branch Review events remain queued
@@ -87,13 +91,22 @@ not create progress replies, edit code, commit, push, open a Pull Request, synch
 default branch, update a GitHub Issue, or resolve the thread. `reserve-write` rejects Branch leases.
 
 ```bash
-node '<SKILL_DIR>/scripts/watch-driver.mjs' '<TASK_STATE_DB>' --auto-ack
+node '<SKILL_DIR>/scripts/watch-driver.mjs' '<TASK_STATE_DB>' \
+  --auto-ack --max-in-flight '<RESERVED_WORKER_SLOTS>'
 ```
 
-The driver polls rvw once per second. After an unexpected EOF or process exit it re-reads the durable
-cursor and reconnects after 1, 2, 4, 8, then 16 seconds, capped at 30 seconds. Five short-lived
-reconnect failures are terminal; a run lasting at least 30 seconds resets that budget. Protocol error
-frames are terminal because retrying an invalid cursor or incompatible contract cannot recover.
+Launch the driver through the runtime's long-lived streaming-process facility. Yield stdout to the
+parent as soon as lines arrive; never wait for the driver to exit or buffer a group of lines before
+dispatch. Process every `batch-acknowledged` line already received before waiting for more driver
+output.
+
+The driver polls rvw once per second and task state about every 250 milliseconds. Its state pump
+automatically acknowledges work that becomes eligible after a lease release or `nextAttemptAt`; do
+not wait for another comment event or reconnect and do not run a competing manual auto-ack loop. After
+an unexpected EOF or process exit the driver re-reads the durable cursor and reconnects after 1, 2, 4,
+8, then 16 seconds, capped at 30 seconds. Five short-lived reconnect failures are terminal; a run
+lasting at least 30 seconds resets that budget. Protocol error frames are terminal because retrying an
+invalid cursor or incompatible contract cannot recover.
 
 Driver exit codes are stable:
 
@@ -104,6 +117,7 @@ Driver exit codes are stable:
 | `21` | Malformed, non-RFC-7464, or truncated watch output.                                                                 |
 | `22` | Durable state status or ingest failure.                                                                             |
 | `23` | Automatic acknowledgement failed; its claimed lease has already been returned to retry or quarantine when possible. |
+| `24` | Another driver process already owns the same task state, or its owner lock cannot be acquired safely.               |
 
 Without `--auto-ack`, the driver emits `pending` lines and leaves the batch unclaimed. An external
 monitor can also wait independently without hand-written polling:
@@ -156,18 +170,37 @@ The unique reservation prevents two leases from writing the same repository. A m
 `auto-ack` may instead receive `--write-key` when that identity was already verified. Both paths
 reject write reservations unless the task was initialized with `--own-mode fix-and-push`.
 
-## Investigate directly or delegate
+## Delegate every acknowledged batch immediately
 
-For an `investigate-and-reply` batch containing only one or two comments with a focused source scope,
-the parent may investigate directly when doing so will not materially delay intake handling. Do not
-pay worker startup and result-relay cost for those small batches. Delegate broader investigation,
-multiple unrelated comments, or any authorized fix-and-push batch to one fresh worker per review
-context. The driver continues intake independently while the parent or worker investigates.
+Treat delegation as a lease-safety invariant, not a size or complexity heuristic. On every
+`batch-acknowledged` line, complete the handoff to exactly one fresh subagent for that lease in the
+same parent scheduling turn and before any source inspection, mode classification, live-head check,
+plan, progress update, or wait. Creating the absolute result path and assembling the handoff envelope
+are the only parent actions allowed before dispatch. Do not accumulate leases for a later bulk
+handoff.
 
-Workers never access the task state or post rvw replies. Give a worker the raw comment URIs, policy,
-expected login, repository location, live head identity when relevant, lease ID, and one absolute
-result path outside the reviewed repository. Require an atomic write (temporary sibling followed by
-rename) of exactly this final JSON shape:
+No direct-processing exception exists. Delegate one-comment batches, apparently trivial requests,
+`investigate-and-reply` work, no-code outcomes, and `fix-and-push` work alike. The parent must never
+read surrounding source, edit code, run tests, commit, push, or synchronize on behalf of an
+acknowledged batch. Keep the driver running and continue consuming intake while subagents work.
+
+Consider dispatch complete only when the subagent runtime has accepted the task. Never leave an
+acknowledged lease parked without a live subagent. If a fresh subagent cannot be started promptly,
+call `fail` with a retryable dispatch error instead of processing the batch in the parent. Preserve
+the reserved capacity for prompt dispatch and keep `--max-in-flight` at or below the number of slots
+that can accept batches. The driver will restore the acknowledgement and emit a new lease when the
+retry becomes due. Do not knowingly start or resume auto-ack intake without reserved capacity.
+
+One subagent owns exactly one acknowledged lease. Do not add later events to its scope or reuse it for
+another lease, including a later lease for the same PR. The parent alone owns the state database,
+driver, result validation, final status-post edits, lease completion or failure, and follow-up drain.
+
+Subagents never access the task state or post rvw replies. Give the subagent the unmodified
+`batch-acknowledged` operations and raw comment URIs, policy, expected login, known repository
+location, lease ID, and one absolute result path outside the reviewed repository. Do not delay the
+handoff to discover live head identity; require the subagent to obtain and verify live values when
+needed. Require an atomic write (temporary sibling followed by rename) of exactly this final JSON
+shape:
 
 ```json
 {
@@ -231,7 +264,7 @@ labeled range adds navigation value. Omit references only for outcomes without u
 uncommitted evidence, terminal errors, or target-only evidence where another link would not help
 navigation.
 
-Re-read each extant thread immediately before applying a direct or file result. For a Pull Request,
+Re-read each extant thread immediately before applying a file result. For a Pull Request,
 replace its recorded status post with exactly one final outcome. For a Branch Review, use the same
 outcome body as the one final reply posted by `complete-branch.mjs`:
 
@@ -273,6 +306,12 @@ If the process stops after posting but before completion, run `recover`, claim t
 and invoke the helper with the same outcomes and new lease. The batch retains its operation keys, so
 `comment reply` returns the existing posts and completion suppresses them without duplicate replies.
 Whether each reply event arrives before or after completion, it must not create another pending batch.
+
+An event for a PR with an active lease remains durable but is not eligible for another claim. After
+`complete` releases the current lease, let the driver's state pump claim that PR's newly eligible
+events and immediately delegate the emitted lease under the same rules. After retryable `fail`, let
+the pump wait through the recorded `nextAttemptAt` and dispatch the restored lease when due. Never
+assign a follow-up or retry to the previous subagent.
 
 ## Choose the worker mode
 
@@ -323,8 +362,8 @@ attempt, edit every extant status post to the terminal warning form, then call `
 retry, auto-ack restores the acknowledgement before work. Continue unrelated review contexts.
 
 On graceful stop, stop dispatching, let active writes reach a safe boundary, terminate the driver,
-and report `status`. Resume with the stored cursor and `recover`; never start the same task twice with
-one state database.
+and report `status`. The driver releases its owner lock after the rvw child exits. Resume with the
+stored cursor and `recover`; never start the same task twice with one state database.
 
 ## Bundled CLI contract reference
 
@@ -337,7 +376,7 @@ stdout with a nonzero exit. Commands marked with stdin read one complete JSON ob
 | --------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
 | `init`          | `--state PATH [--expected-login LOGIN] [--own-mode investigate-and-reply\|fix-and-push]`            | none                                                   | `{ok,state,taskId,databaseId,cursor,expectedGitHubLogin,ownPullRequests,batches,inFlightBatches,quarantinedBatches}` |
 | `ingest`        | `--state PATH`                                                                                      | `ready`, `comment-posted`, or `stopped` frame from rvw | `{ok,status,cursor,context[,sequence]}`; event and cursor commit atomically                                          |
-| `list`          | `--state PATH`                                                                                      | none                                                   | `{ok,pending:[{context,batchId,eventCount,firstSequence,commentRefs}]}`                                              |
+| `list`          | `--state PATH`                                                                                      | none                                                   | `{ok,inFlight,pending:[{context,batchId,eventCount,firstSequence,commentRefs}]}`                                     |
 | `wait`          | `--state PATH [--interval-ms N] [--follow]`                                                         | none                                                   | `{ok,type:"pending",contexts,pullRequests,pending}` on empty-to-non-empty                                            |
 | `claim`         | `--state PATH (--pull-request URL\|--context-kind KIND --context-key KEY) [--write-key owner/repo]` | none                                                   | `{ok,leaseId,batchId,context,attempts,writeKey,events,operations}`                                                   |
 | `reserve-write` | `--state PATH --lease ID --write-key owner/repo`                                                    | none                                                   | `{ok,leaseId,batchId,context,writeKey,status}`                                                                       |
@@ -380,6 +419,6 @@ leases, unfinished batch keys, batch-scoped status posts, and PR compatibility f
 | Script            | Invocation                                                                            | Output                                                                                        |
 | ----------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
 | Preflight         | `node scripts/preflight.mjs`                                                          | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                     |
-| Driver            | `node scripts/watch-driver.mjs STATE [--auto-ack]`                                    | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
+| Driver            | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N]`                  | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
 | Auto-ack          | `node scripts/auto-ack.mjs --state STATE --pull-request URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`. |
 | Branch completion | `node scripts/complete-branch.mjs --state STATE --lease ID < RESULT.json`             | Posts idempotent final replies, records their post IDs, and completes the Branch lease.       |

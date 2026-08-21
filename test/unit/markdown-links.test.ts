@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  githubAttachmentAssetUrl,
   isExternalMarkdownHref,
   markdownAssetUrl,
   markdownLinkWasDragged,
@@ -15,6 +16,20 @@ describe("Markdown repository links", () => {
     expect(resolveRepositoryMarkdownPath("order%20flow.md", "docs/index.md")).toBe(
       "docs/order flow.md",
     );
+  });
+
+  it("only builds same-origin URLs for validated GitHub user attachments", () => {
+    const attachment =
+      "https://github.com/user-attachments/assets/37948111-1227-4cdb-a76d-dc8eb469ae5c";
+    expect(githubAttachmentAssetUrl("pr-id", attachment)).toBe(
+      `/api/pull-requests/pr-id/github-attachment?url=${encodeURIComponent(attachment)}`,
+    );
+    expect(
+      githubAttachmentAssetUrl(
+        "pr-id",
+        "https://github.com.evil.example/user-attachments/assets/37948111-1227-4cdb-a76d-dc8eb469ae5c",
+      ),
+    ).toBeNull();
   });
 
   it("encodes asset query values for the same-origin endpoint", () => {

@@ -9,7 +9,10 @@ import {
 } from "react";
 import type { ViewerNavigationTarget } from "./components/DocumentViewer.js";
 import {
+  documentPaneIds,
+  documentPaneTabKey,
   documentTabKey,
+  preferredDocumentPane,
   type ActiveDocument,
   type DocumentPaneId,
   type DocumentWorkspaceState,
@@ -35,8 +38,10 @@ interface ReviewReadingHistoryOptions {
   workspaceRef: RefObject<DocumentWorkspaceState>;
   paneElements: RefObject<Record<DocumentPaneId, HTMLElement | null>>;
   documentScrollPositions: RefObject<Map<string, number>>;
-  viewerNavigationTarget: ViewerNavigationTarget | null;
-  setViewerNavigationTarget: Dispatch<SetStateAction<ViewerNavigationTarget | null>>;
+  viewerNavigationTargets: Record<DocumentPaneId, ViewerNavigationTarget | null>;
+  setViewerNavigationTargets: Dispatch<
+    SetStateAction<Record<DocumentPaneId, ViewerNavigationTarget | null>>
+  >;
   openWorkspaceDocument: (document: ActiveDocument, pane?: DocumentPaneId) => void;
   activateWorkspaceDocument: (document: ActiveDocument, pane?: DocumentPaneId) => void;
   scrollRevision?: number;
@@ -48,8 +53,8 @@ export function useReviewReadingHistory({
   workspaceRef,
   paneElements,
   documentScrollPositions,
-  viewerNavigationTarget,
-  setViewerNavigationTarget,
+  viewerNavigationTargets,
+  setViewerNavigationTargets,
   openWorkspaceDocument,
   activateWorkspaceDocument,
   scrollRevision = 0,
@@ -57,17 +62,50 @@ export function useReviewReadingHistory({
   const initializedReviewKey = useRef<string | null>(null);
   const scrollSnapshotTimeout = useRef<number | null>(null);
   const navigationSequence = useRef(0);
-  const navigationTargetRef = useRef(viewerNavigationTarget);
-  const appliedLineNavigation = useRef<AppliedLineNavigation | null>(null);
-  navigationTargetRef.current = viewerNavigationTarget;
-  if (!viewerNavigationTarget) appliedLineNavigation.current = null;
+  const navigationTargetsRef = useRef(viewerNavigationTargets);
+  const appliedLineNavigation = useRef<Record<DocumentPaneId, AppliedLineNavigation | null>>({
+    left: null,
+    right: null,
+  });
+  navigationTargetsRef.current = viewerNavigationTargets;
+  for (const pane of ["left", "right"] as const) {
+    if (!viewerNavigationTargets[pane]) appliedLineNavigation.current[pane] = null;
+  }
 
   const leftActiveDocumentKey = workspace.active.left
-    ? documentTabKey(workspace.active.left)
+    ? documentPaneTabKey("left", workspace.active.left)
     : null;
   const rightActiveDocumentKey = workspace.active.right
-    ? documentTabKey(workspace.active.right)
+    ? documentPaneTabKey("right", workspace.active.right)
     : null;
+  const previousWorkspace = useRef(workspace);
+
+  useLayoutEffect(() => {
+    const previous = previousWorkspace.current;
+    for (const sourcePane of ["left", "right"] as const) {
+      const targetPane = sourcePane === "left" ? "right" : "left";
+      for (const document of previous.documents[sourcePane]) {
+        const documentKey = documentTabKey(document);
+        const remainedInSource = workspace.documents[sourcePane].some(
+          (candidate) => documentTabKey(candidate) === documentKey,
+        );
+        const alreadyExistedInTarget = previous.documents[targetPane].some(
+          (candidate) => documentTabKey(candidate) === documentKey,
+        );
+        const movedToTarget = workspace.documents[targetPane].some(
+          (candidate) => documentTabKey(candidate) === documentKey,
+        );
+        if (remainedInSource || alreadyExistedInTarget || !movedToTarget) continue;
+        const sourceTop = documentScrollPositions.current?.get(
+          documentPaneTabKey(sourcePane, document),
+        );
+        if (sourceTop !== undefined) {
+          documentScrollPositions.current?.set(documentPaneTabKey(targetPane, document), sourceTop);
+        }
+      }
+    }
+    previousWorkspace.current = workspace;
+  }, [documentScrollPositions, workspace]);
 
   useLayoutEffect(() => {
     const pane = paneElements.current?.left;
@@ -89,14 +127,16 @@ export function useReviewReadingHistory({
     const document = currentWorkspace.active[pane];
     if (!document) return null;
     const documentKey = documentTabKey(document);
-    const navigationTarget = navigationTargetRef.current;
+    const paneDocumentKey = documentPaneTabKey(pane, document);
+    const navigationTarget = navigationTargetsRef.current[pane];
     const scrollTop =
       paneElements.current?.[pane]?.scrollTop ??
-      documentScrollPositions.current?.get(documentKey) ??
+      documentScrollPositions.current?.get(paneDocumentKey) ??
       0;
-    const lineNavigation = appliedLineNavigation.current;
+    const lineNavigation = appliedLineNavigation.current[pane];
     const lineNavigationStillAnchored = Boolean(
-      navigationTarget?.documentKey === documentKey &&
+      navigationTarget?.pane === pane &&
+      navigationTarget.documentKey === documentKey &&
       (!lineNavigation ||
         lineNavigation.requestId !== navigationTarget.requestId ||
         lineNavigation.documentKey !== documentKey ||
@@ -124,24 +164,25 @@ export function useReviewReadingHistory({
 
   const markLineNavigationApplied = useCallback(
     (pane: DocumentPaneId, requestId: number): void => {
-      const navigationTarget = navigationTargetRef.current;
+      const navigationTarget = navigationTargetsRef.current[pane];
       const currentWorkspace = workspaceRef.current;
       const document = currentWorkspace?.active[pane];
       if (
         !navigationTarget ||
         navigationTarget.requestId !== requestId ||
+        navigationTarget.pane !== pane ||
         !document ||
         documentTabKey(document) !== navigationTarget.documentKey
       ) {
         return;
       }
-      appliedLineNavigation.current = {
+      appliedLineNavigation.current[pane] = {
         requestId,
         documentKey: navigationTarget.documentKey,
         pane,
         top:
           paneElements.current?.[pane]?.scrollTop ??
-          documentScrollPositions.current?.get(navigationTarget.documentKey) ??
+          documentScrollPositions.current?.get(documentPaneTabKey(pane, document)) ??
           0,
       };
     },
@@ -209,22 +250,25 @@ export function useReviewReadingHistory({
   const requestLineNavigation = useCallback(
     (
       documentKey: string,
+      pane: DocumentPaneId,
       locator: Extract<ReadingLocator, { kind: "line" }>,
       resetHorizontal: boolean,
     ): void => {
       navigationSequence.current += 1;
       const target: ViewerNavigationTarget = {
         documentKey,
+        pane,
         line: locator.line,
         ...(locator.endLine === undefined ? {} : { endLine: locator.endLine }),
         requestId: navigationSequence.current,
         resetHorizontal,
       };
-      appliedLineNavigation.current = null;
-      navigationTargetRef.current = target;
-      setViewerNavigationTarget(target);
+      appliedLineNavigation.current[pane] = null;
+      const nextTargets = { ...navigationTargetsRef.current, [pane]: target };
+      navigationTargetsRef.current = nextTargets;
+      setViewerNavigationTargets(nextTargets);
     },
-    [setViewerNavigationTarget],
+    [setViewerNavigationTargets],
   );
 
   const navigateToDocument = useCallback(
@@ -234,30 +278,21 @@ export function useReviewReadingHistory({
       locator?: ReadingLocator,
       resetHorizontal = true,
     ): void => {
-      const currentWorkspace = workspaceRef.current;
-      if (!currentWorkspace) return;
       const documentKey = documentTabKey(document);
-      const pane =
-        targetPane ?? currentWorkspace.panes[documentKey] ?? currentWorkspace.focusedPane;
+      const pane = targetPane ?? "left";
       const destinationLocator =
         locator ??
         ({
           kind: "scroll",
-          top: documentScrollPositions.current?.get(documentKey) ?? 0,
+          top: documentScrollPositions.current?.get(documentPaneTabKey(pane, document)) ?? 0,
         } satisfies ReadingLocator);
       pushReadingHistory(document, pane, destinationLocator);
       openWorkspaceDocument(document, pane);
       if (destinationLocator.kind === "line") {
-        requestLineNavigation(documentKey, destinationLocator, resetHorizontal);
+        requestLineNavigation(documentKey, pane, destinationLocator, resetHorizontal);
       }
     },
-    [
-      documentScrollPositions,
-      openWorkspaceDocument,
-      pushReadingHistory,
-      requestLineNavigation,
-      workspaceRef,
-    ],
+    [documentScrollPositions, openWorkspaceDocument, pushReadingHistory, requestLineNavigation],
   );
 
   const navigateToMarkdownFragment = useCallback(
@@ -265,7 +300,7 @@ export function useReviewReadingHistory({
       const documentKey = documentTabKey(document);
       const locator = { kind: "line", line } satisfies ReadingLocator;
       pushReadingHistory(document, pane, locator, hash);
-      requestLineNavigation(documentKey, locator, true);
+      requestLineNavigation(documentKey, pane, locator, true);
     },
     [pushReadingHistory, requestLineNavigation],
   );
@@ -274,11 +309,10 @@ export function useReviewReadingHistory({
     (document: ActiveDocument, pane?: DocumentPaneId): void => {
       const currentWorkspace = workspaceRef.current;
       if (!currentWorkspace) return;
-      const targetPane =
-        pane ?? currentWorkspace.panes[documentTabKey(document)] ?? currentWorkspace.focusedPane;
+      const targetPane = pane ?? preferredDocumentPane(currentWorkspace, document);
       pushReadingHistory(document, targetPane, {
         kind: "scroll",
-        top: documentScrollPositions.current?.get(documentTabKey(document)) ?? 0,
+        top: documentScrollPositions.current?.get(documentPaneTabKey(targetPane, document)) ?? 0,
       });
       activateWorkspaceDocument(document, targetPane);
     },
@@ -291,20 +325,23 @@ export function useReviewReadingHistory({
       const currentWorkspace = workspaceRef.current;
       if (!currentWorkspace) return;
       const documentKey = documentTabKey(entry.document);
-      const pane = currentWorkspace.panes[documentKey] ?? entry.pane;
+      const openPanes = documentPaneIds(currentWorkspace, entry.document);
+      const pane = openPanes.includes(entry.pane) ? entry.pane : (openPanes[0] ?? entry.pane);
       if (entry.locator.kind === "scroll") {
-        documentScrollPositions.current?.set(documentKey, entry.locator.top);
+        documentScrollPositions.current?.set(
+          documentPaneTabKey(pane, entry.document),
+          entry.locator.top,
+        );
       }
       openWorkspaceDocument(entry.document, pane);
       if (entry.locator.kind === "line") {
-        requestLineNavigation(documentKey, entry.locator, true);
+        requestLineNavigation(documentKey, pane, entry.locator, true);
         return;
       }
       const scrollTop = entry.locator.top;
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
-          const targetPane = workspaceRef.current?.panes[documentKey] ?? pane;
-          const paneElement = paneElements.current?.[targetPane];
+          const paneElement = paneElements.current?.[pane];
           if (paneElement) paneElement.scrollTop = scrollTop;
         });
       });
@@ -332,7 +369,7 @@ export function useReviewReadingHistory({
   const recordPaneScroll = useCallback(
     (pane: DocumentPaneId, document: ActiveDocument | null, scrollTop: number): void => {
       if (!document) return;
-      documentScrollPositions.current?.set(documentTabKey(document), scrollTop);
+      documentScrollPositions.current?.set(documentPaneTabKey(pane, document), scrollTop);
       if (workspaceRef.current?.focusedPane === pane) {
         scheduleReadingHistoryScrollSnapshot();
       }

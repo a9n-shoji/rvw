@@ -131,8 +131,8 @@ rvw walkthrough publish --stdin --json
 構成されます。参照は意味のある複数行range、単行、またはfile全体を指せます。rvwは登録時にcommit、
 path、指定された行範囲を検証します。publishしてもbrowserは開かれず、
 active tabやscroll位置も変わりません。人間がviewerのWalkthroughを開き、必要なreferenceを選んだ
-時だけ、exact sourceがdocument tabへ開き、行指定があれば範囲全体が強調されます。`Cmd` / `Ctrl`を押しながら選べば
-操作元と反対のペインへ開きます。説明tabは残るため、
+時だけ、exact sourceがdocument tabへ開き、行指定があれば範囲全体が強調されます。通常clickは左ペイン、
+`Cmd` / `Ctrl`を押しながら選べば右ペインへ開きます。説明tabは残るため、
 複数のclaimと実装を任意の順序・任意のタイミングで往復できます。
 
 Walkthrough本文のinline referenceとMermaid node linkは維持しますが、同じ参照を横や下へ列挙する
@@ -216,7 +216,10 @@ PRは常にcode/GitHub read-onlyで調査します。同梱driverがcursor resum
 Pull Request batchをclaimすると各threadへ`🔎 確認中です…`をAgent往復なしに即時返信し、
 完了時は同じreplyを最終結果へ編集します。Skill同梱のtask-state toolがrepository外のSQLiteへcursor、
 queue、retry、batch内のthread単位status post、自己返信抑制をtransactionalに保存します。同じthreadへ
-後から返信が追加された場合は新しいstatus postを返信するため、以前の回答は書き換えません。
+後から返信が追加された場合は新しいstatus postを返信するため、以前の回答は書き換えません。親taskは
+起動前にsubagent枠を予約し、driverはその枠数までだけbatchをclaimします。acknowledge済みbatchは大小や
+変更有無にかかわらず同じscheduling turnでfresh subagentへ委譲し、親taskは直接処理しません。lease解放後の
+同一PR follow-upと期限到達したretryはdriverがtask stateから自動的に再開します。
 調査結果、実装内容、test結果が具体的なcodeに基づく場合、Skillは最終replyからexact commitの有用な
 line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動できるようにします。
 Branch

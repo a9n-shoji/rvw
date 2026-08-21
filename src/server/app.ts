@@ -9,6 +9,12 @@ import type { DiffDocumentRef, DocumentRef } from "../domain/models.js";
 import { GIT_OBJECT_ID_PATTERN, VIEWER_ID_HEADER } from "../shared/constants.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 import {
+  detectImageContentType,
+  imageContentTypeHeader,
+  isSupportedImagePath,
+  type ImageContentType,
+} from "../shared/image-assets.js";
+import {
   createCommentSchema,
   editCommentPostSchema,
   issueMutationSchema,
@@ -63,19 +69,32 @@ function parseBooleanQuery(value: string | undefined, name: string): boolean {
   throw new RvwError("INVALID_INPUT", `${name} queryはtrueまたはfalseにしてください。`);
 }
 
-function markdownAssetContentType(filePath: string): string {
-  const extension = path.extname(filePath).toLowerCase();
-  return (
-    {
-      ".avif": "image/avif",
-      ".gif": "image/gif",
-      ".jpeg": "image/jpeg",
-      ".jpg": "image/jpeg",
-      ".png": "image/png",
-      ".svg": "image/svg+xml; charset=utf-8",
-      ".webp": "image/webp",
-    }[extension] ?? "application/octet-stream"
-  );
+function repositoryAssetContentType(
+  filePath: string,
+  content: Uint8Array,
+): ImageContentType | null {
+  if (!isSupportedImagePath(filePath)) return null;
+  const contentType = detectImageContentType(content);
+  if (!contentType) {
+    throw new RvwError("UNSUPPORTED_IMAGE", "repository assetは対応画像形式ではありません。", {
+      status: 415,
+    });
+  }
+  return contentType;
+}
+
+function setImageResponseHeaders(
+  setHeader: (name: string, value: string) => void,
+  contentType: ImageContentType,
+): void {
+  setHeader("content-type", imageContentTypeHeader(contentType));
+  setHeader("cache-control", "private, max-age=31536000, immutable");
+  setHeader("x-content-type-options", "nosniff");
+  setHeader("content-disposition", "inline");
+  setHeader("cross-origin-resource-policy", "same-origin");
+  if (contentType === "image/svg+xml") {
+    setHeader("content-security-policy", svgAssetContentSecurityPolicy);
+  }
 }
 
 function documentRefFromQuery(pullRequestId: string, query: Record<string, string>): DocumentRef {
@@ -275,17 +294,42 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     return context.json({ ok: true, document: await service.getDocument(ref) });
   });
 
-  app.get("/api/pull-requests/:id/markdown-asset", async (context) => {
+  app.on(["GET", "HEAD"], "/api/pull-requests/:id/markdown-asset", async (context) => {
     const sourceOid = oidQuery(context.req.query("sourceOid"), "sourceOid");
     const filePath = requiredQuery(context.req.query("path"), "path");
     const asset = await service.getRepositoryAsset(context.req.param("id"), sourceOid, filePath);
-    context.header("content-type", markdownAssetContentType(filePath));
-    context.header("cache-control", "private, max-age=31536000, immutable");
-    context.header("x-content-type-options", "nosniff");
-    if (path.extname(filePath).toLowerCase() === ".svg") {
-      context.header("content-security-policy", svgAssetContentSecurityPolicy);
+    const contentType = repositoryAssetContentType(filePath, asset.content);
+    if (contentType) {
+      setImageResponseHeaders((name, value) => context.header(name, value), contentType);
+    } else {
+      context.header("content-type", "application/octet-stream");
+      context.header("cache-control", "private, max-age=31536000, immutable");
+      context.header("x-content-type-options", "nosniff");
     }
-    return context.body(Uint8Array.from(asset.content));
+    return context.req.method === "HEAD"
+      ? context.body(null)
+      : context.body(Uint8Array.from(asset.content));
+  });
+
+  app.get("/api/pull-requests/:id/github-attachment", async (context) => {
+    const fetchSite = context.req.header("sec-fetch-site");
+    const origin = context.req.header("origin");
+    if (
+      (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") ||
+      (origin !== undefined && origin !== options.security.expectedOrigin)
+    ) {
+      throw new RvwError(
+        "INVALID_ORIGIN",
+        "cross-origin attachment requestは許可されていません。",
+        {
+          status: 403,
+        },
+      );
+    }
+    const absoluteUrl = requiredQuery(context.req.query("url"), "url");
+    const attachment = await service.getGitHubAttachment(context.req.param("id"), absoluteUrl);
+    setImageResponseHeaders((name, value) => context.header(name, value), attachment.contentType);
+    return context.body(Uint8Array.from(attachment.content));
   });
 
   app.get("/api/pull-requests/:id/diff", async (context) => {
@@ -422,7 +466,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     throw new RvwError("INVALID_INPUT", "Branch document参照queryが不正です。");
   });
 
-  app.get("/api/branch-reviews/:id/markdown-asset", async (context) => {
+  app.on(["GET", "HEAD"], "/api/branch-reviews/:id/markdown-asset", async (context) => {
     const sourceOid = oidQuery(context.req.query("sourceOid"), "sourceOid");
     const filePath = requiredQuery(context.req.query("path"), "path");
     const asset = await service.getBranchRepositoryAsset(
@@ -430,13 +474,17 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
       sourceOid,
       filePath,
     );
-    context.header("content-type", markdownAssetContentType(filePath));
-    context.header("cache-control", "private, max-age=31536000, immutable");
-    context.header("x-content-type-options", "nosniff");
-    if (path.extname(filePath).toLowerCase() === ".svg") {
-      context.header("content-security-policy", svgAssetContentSecurityPolicy);
+    const contentType = repositoryAssetContentType(filePath, asset.content);
+    if (contentType) {
+      setImageResponseHeaders((name, value) => context.header(name, value), contentType);
+    } else {
+      context.header("content-type", "application/octet-stream");
+      context.header("cache-control", "private, max-age=31536000, immutable");
+      context.header("x-content-type-options", "nosniff");
     }
-    return context.body(Uint8Array.from(asset.content));
+    return context.req.method === "HEAD"
+      ? context.body(null)
+      : context.body(Uint8Array.from(asset.content));
   });
 
   app.get("/api/branch-reviews/:id/search", async (context) => {

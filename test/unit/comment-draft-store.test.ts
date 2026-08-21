@@ -21,9 +21,10 @@ const draft: CommentDraftState = {
   fileComposerOpen: true,
 };
 
-function contextKey(activeDocument: ActiveDocument): string {
+function contextKey(activeDocument: ActiveDocument, pane: "left" | "right" = "left"): string {
   return commentDraftContextKey({
     activeDocument,
+    pane,
     selectedOid: "c".repeat(40),
     oldOid: "b".repeat(40),
     displayMode: "range",
@@ -62,12 +63,19 @@ describe("comment draft store", () => {
     const first = contextKey(issue);
     const refreshed = commentDraftContextKey({
       activeDocument: issue,
+      pane: "left",
       selectedOid: "d".repeat(40),
       oldOid: null,
       displayMode: "full",
     });
 
     expect(refreshed).toBe(first);
+  });
+
+  it("isolates the same document by pane", () => {
+    const document: ActiveDocument = { kind: "repository-file", path: "src/example.ts" };
+
+    expect(contextKey(document, "left")).not.toBe(contextKey(document, "right"));
   });
 
   it("clears one pull request and rejects stale unmount writes", () => {

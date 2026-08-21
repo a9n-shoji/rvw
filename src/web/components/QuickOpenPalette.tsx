@@ -10,12 +10,7 @@ import {
 } from "react";
 import type { ChangeKind, TreeEntryKind } from "../../domain/models.js";
 import { documentIdentityQualifier } from "../document-tab-presentation.js";
-import {
-  documentTabKey,
-  documentTabPath,
-  type ActiveDocument,
-  type DocumentPaneId,
-} from "../document-workspace.js";
+import { documentTabKey, documentTabPath, type ActiveDocument } from "../document-workspace.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { ChangeIcon } from "./FileTree.js";
 
@@ -198,7 +193,6 @@ export function QuickOpenPalette({
   files,
   openDocuments,
   activeDocument,
-  activePane,
   loading,
   error,
   includePullRequestDocument = true,
@@ -210,12 +204,11 @@ export function QuickOpenPalette({
   files: QuickOpenFile[];
   openDocuments: ActiveDocument[];
   activeDocument: ActiveDocument | null;
-  activePane: DocumentPaneId;
   loading: boolean;
   error: Error | null;
   includePullRequestDocument?: boolean;
   onClose: () => void;
-  onOpen: (document: ActiveDocument) => void;
+  onOpen: (document: ActiveDocument, openInRightPane: boolean) => void;
 }) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -229,7 +222,6 @@ export function QuickOpenPalette({
   );
   const results = useMemo(() => rankQuickOpenCandidates(candidates, query), [candidates, query]);
   const selectedResult = results[activeIndex] ?? null;
-  const paneLabel = activePane === "left" ? "左ペイン" : "右ペイン";
 
   useEffect(() => {
     if (!open) return;
@@ -259,9 +251,9 @@ export function QuickOpenPalette({
 
   if (!open) return null;
 
-  const chooseResult = (result: QuickOpenMatch | null): void => {
+  const chooseResult = (result: QuickOpenMatch | null, openInRightPane = false): void => {
     if (!result) return;
-    onOpen(result.candidate.document);
+    onOpen(result.candidate.document, openInRightPane);
     onClose();
   };
   const moveSelection = (offset: number): void => {
@@ -339,7 +331,7 @@ export function QuickOpenPalette({
         </div>
         <div className="quick-open-summary">
           <span>{query ? `${results.length}件の一致` : "開いている文書と全ファイル"}</span>
-          <span>{paneLabel}に開く</span>
+          <span>Enter / クリック: 左 · Cmd/Ctrl+クリック: 右</span>
         </div>
         <div className="quick-open-results" id="quick-open-results" role="listbox">
           {error ? (
@@ -363,8 +355,16 @@ export function QuickOpenPalette({
                   aria-label={`${candidate.path}${candidate.identityQualifier ? `（${candidate.identityQualifier}）` : ""}${candidate.isOpen ? "、開いています" : ""}`}
                   tabIndex={-1}
                   onMouseEnter={() => setActiveIndex(index)}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => chooseResult(result)}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    if (event.metaKey || event.ctrlKey) chooseResult(result, true);
+                  }}
+                  onClick={(event) => {
+                    if (!event.metaKey && !event.ctrlKey) chooseResult(result);
+                  }}
+                  onContextMenu={(event) => {
+                    if (event.ctrlKey || event.metaKey) event.preventDefault();
+                  }}
                 >
                   <span className="quick-open-icon-group" aria-hidden="true">
                     <FileEntryIcon path={candidate.path} kind={candidate.entryKind} />

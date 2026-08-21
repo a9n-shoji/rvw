@@ -11,6 +11,9 @@
 - Pull Request ReviewとBranch Reviewで、GitHub Issue本文を通常文書として読む・コメントするsurface
 - Branch Reviewのcomment eventをcontext別にbatchし、read-only調査と冪等な最終replyを行うwatcher mode
 - 件数previewと明示確認を伴うPR / Branch Issue membership削除、およびBranch Review reset
+- PR本文へ貼り付けたmodern GitHub user attachment画像を、public/private共通のlocalhost proxyで表示
+- repositoryのPNG、JPEG、GIF、WebP、AVIF、SVGをexact commit固定の全文表示とold/new Split表示で閲覧
+- 画像ファイルのadded、deleted、renamed、画像・非画像間の変更表示とfile-level comment
 
 ### Changed
 
@@ -35,6 +38,13 @@
 - Walkthroughの`issuesAdded`をtransaction外のsnapshot差分ではなく、実際に追加したmembershipから返すよう修正
 - Branch completion helperがworker contextとread-only outcome fieldsの省略を投稿前に拒否するよう修正
 - Issue membership削除後に対象Issueの未送信draftだけが復活し得る問題を修正
+- 同じtask stateで`rvw-watch-comments`のwatch driverを複数起動できないようにし、二重監視と重複処理を防止
+
+### Security
+
+- GitHub attachment proxyを厳密な`https://github.com/user-attachments/assets/<uuid>`だけへ限定し、
+  同一origin request、GitHub CLIの既存認証、10 MiB上限、magic-byte判定、`nosniff`、SVG sandbox CSPを適用
+- arbitrary external image、legacy GitHub image host、unknown binary、HTML/JSON error responseは引き続き自動取得しない
 
 ## [0.2.2] - 2026-08-21
 

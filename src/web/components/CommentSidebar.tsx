@@ -49,10 +49,10 @@ function CommentCard({
   onOpenCodeReference: (
     sourceOid: string,
     reference: CodeReference,
-    openInOtherPane: boolean,
+    openInRightPane: boolean,
   ) => Promise<string | null>;
-  onOpenTarget: (placement: CommentPlacement | null) => void;
-  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
+  onOpenTarget: (placement: CommentPlacement | null, openInRightPane: boolean) => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onDeleted: () => void;
 }) {
   const placement = useQuery({
@@ -87,7 +87,9 @@ function CommentCard({
         themePreference={themePreference}
         onActiveChange={onCommentActiveChange}
         onOpenCodeReference={onOpenCodeReference}
-        onOpenTarget={() => onOpenTarget(placement.data?.placement ?? null)}
+        onOpenTarget={(openInRightPane) =>
+          onOpenTarget(placement.data?.placement ?? null, openInRightPane)
+        }
         onOpenRepositoryLink={onOpenRepositoryLink}
         onDeleted={onDeleted}
       />
@@ -116,10 +118,14 @@ export function CommentSidebar({
   onOpenCodeReference: (
     sourceOid: string,
     reference: CodeReference,
-    openInOtherPane: boolean,
+    openInRightPane: boolean,
   ) => Promise<string | null>;
-  onOpenTarget: (comment: AnyReviewComment, placement: CommentPlacement | null) => void;
-  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
+  onOpenTarget: (
+    comment: AnyReviewComment,
+    placement: CommentPlacement | null,
+    openInRightPane: boolean,
+  ) => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const selectAllRef = useRef<HTMLInputElement>(null);
@@ -290,7 +296,9 @@ export function CommentSidebar({
               else next.delete(comment.id);
               setSelected(next);
             }}
-            onOpenTarget={(placement) => onOpenTarget(comment, placement)}
+            onOpenTarget={(placement, openInRightPane) =>
+              onOpenTarget(comment, placement, openInRightPane)
+            }
             onOpenRepositoryLink={onOpenRepositoryLink}
             onDeleted={() => {
               setSelected((current) => {

@@ -38,7 +38,11 @@ export function ReviewDocumentPane({
   onCloseOthers: (document: ActiveDocument) => void;
   onCloseAll: () => void;
   onMove: (document: ActiveDocument, targetPane: DocumentPaneId) => void;
-  onDropDocument: (documentKey: string, targetPane: DocumentPaneId) => void;
+  onDropDocument: (
+    documentKey: string,
+    sourcePane: DocumentPaneId,
+    targetPane: DocumentPaneId,
+  ) => void;
   onDragStartDocument: (documentKey: string) => void;
   onDragEndDocument: () => void;
 }) {

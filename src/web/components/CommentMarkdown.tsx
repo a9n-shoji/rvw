@@ -29,6 +29,7 @@ import {
   codeReferenceMarkdownSanitizeSchema,
 } from "./CodeReferenceLink.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
+import { MarkdownImage } from "./MarkdownImage.js";
 import { MermaidSurface } from "./MermaidSurface.js";
 
 function codeText(content: ReactNode): string {
@@ -109,9 +110,9 @@ export function CommentMarkdown({
   references: CodeReference[];
   themePreference: ThemePreference;
   repositoryAssetsEnabled?: boolean;
-  onOpenCodeReference?: ((reference: CodeReference, openInOtherPane: boolean) => void) | undefined;
+  onOpenCodeReference?: ((reference: CodeReference, openInRightPane: boolean) => void) | undefined;
   onOpenRepositoryLink?:
-    ((path: string, sourceOid: string, openInOtherPane: boolean) => void) | undefined;
+    ((path: string, sourceOid: string, openInRightPane: boolean) => void) | undefined;
 }) {
   const linkPointerStart = useRef<PointerPosition | null>(null);
   const referencesById = useMemo(
@@ -230,7 +231,7 @@ export function CommentMarkdown({
               : null
           : null;
         return assetUrl ? (
-          <img {...props} src={assetUrl} alt={alt ?? ""} title={title} />
+          <MarkdownImage {...props} src={assetUrl} alt={alt} title={title} sourceAttributes={{}} />
         ) : (
           <MarkdownImagePlaceholder alt={alt} title={title} sourceAttributes={{}} />
         );

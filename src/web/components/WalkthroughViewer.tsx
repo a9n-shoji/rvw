@@ -105,7 +105,7 @@ function MermaidDiagram({
   bindings: Record<string, string>;
   references: ReadonlyMap<string, WalkthroughReference>;
   themePreference: ThemePreference;
-  onOpenReference: (reference: WalkthroughReference, openInOtherPane: boolean) => void;
+  onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
   diagramCommentEnabled: boolean;
   commentComposer: ReactNode;
@@ -228,7 +228,7 @@ interface MermaidMarkdownRenderContext {
   activeCommentId: string | null;
   diagramCommentRange: MarkdownSourceRange | null;
   themePreference: ThemePreference;
-  onOpenReference: (reference: WalkthroughReference, openInOtherPane: boolean) => void;
+  onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
   diagramCommentEnabled: boolean;
   onCommentRange: (range: MarkdownSourceRange) => void;
   diagramCommentPending: boolean;
@@ -357,13 +357,13 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   diagramCommentRange: MarkdownSourceRange | null;
   markdownSourceOid: string;
   themePreference: ThemePreference;
-  onOpenReference: (reference: WalkthroughReference, openInOtherPane: boolean) => void;
+  onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
   onOpenCommentCodeReference: (
     sourceOid: string,
     reference: CodeReference,
-    openInOtherPane: boolean,
+    openInRightPane: boolean,
   ) => Promise<string | null>;
-  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
   diagramCommentPending: boolean;
@@ -563,14 +563,14 @@ export function WalkthroughViewer({
   onOpenReference: (
     walkthrough: AnyWalkthrough,
     reference: WalkthroughReference,
-    openInOtherPane: boolean,
+    openInRightPane: boolean,
   ) => Promise<string | null>;
   onOpenCommentCodeReference: (
     sourceOid: string,
     reference: CodeReference,
-    openInOtherPane: boolean,
+    openInRightPane: boolean,
   ) => Promise<string | null>;
-  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onDeleted: (walkthrough: AnyWalkthrough) => void;
 }) {
   const queryClient = useQueryClient();
@@ -620,7 +620,7 @@ export function WalkthroughViewer({
     return () => window.cancelAnimationFrame(frame);
   }, [navigationTarget]);
   const openReference = useCallback(
-    (reference: WalkthroughReference, openInOtherPane: boolean): void => {
+    (reference: WalkthroughReference, openInRightPane: boolean): void => {
       referenceRequestSequence.current += 1;
       const requestSequence = referenceRequestSequence.current;
       if (referenceNoticeTimeout.current !== null) {
@@ -628,7 +628,7 @@ export function WalkthroughViewer({
         referenceNoticeTimeout.current = null;
       }
       setReferenceNotice(null);
-      void onOpenReference(walkthrough, reference, openInOtherPane).then((notice) => {
+      void onOpenReference(walkthrough, reference, openInRightPane).then((notice) => {
         if (requestSequence !== referenceRequestSequence.current || !notice) return;
         setReferenceNotice(notice);
         referenceNoticeTimeout.current = window.setTimeout(() => {

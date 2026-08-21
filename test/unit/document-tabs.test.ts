@@ -6,6 +6,7 @@ import {
   documentTabLabel,
   documentTabPath,
   initialDocumentWorkspace,
+  moveDocumentToPane,
   removeDocumentFromWorkspace,
   withDocumentNavigationRevision,
   type ActiveDocument,
@@ -108,28 +109,72 @@ describe("document tabs", () => {
     ]);
   });
 
-  it("moves a document between panes and keeps both panes usable", () => {
+  it("opens the same document once in each pane", () => {
     const repositoryFile: ActiveDocument = { kind: "repository-file", path: "src/index.ts" };
     const withFile = assignDocumentToPane(initialDocumentWorkspace(), repositoryFile, "left");
-    const moved = assignDocumentToPane(withFile, repositoryFile, "right");
+    const duplicated = assignDocumentToPane(
+      withFile,
+      {
+        ...repositoryFile,
+        sourceOid: "a".repeat(40),
+        comparisonPolicy: "exact-source",
+      },
+      "right",
+    );
 
-    expect(moved.panes).toMatchObject({
-      "pull-request-markdown": "left",
-      "file:src/index.ts": "right",
+    expect(duplicated.documents.left).toEqual([{ kind: "pull-request-markdown" }, repositoryFile]);
+    expect(duplicated.documents.right).toEqual([
+      {
+        ...repositoryFile,
+        sourceOid: "a".repeat(40),
+        comparisonPolicy: "exact-source",
+      },
+    ]);
+    expect(duplicated.active.left).toEqual(repositoryFile);
+    expect(duplicated.active.right).toEqual(duplicated.documents.right[0]);
+  });
+
+  it("keeps at most one copy of a document within a pane", () => {
+    const repositoryFile: ActiveDocument = { kind: "repository-file", path: "src/index.ts" };
+    const withFile = assignDocumentToPane(initialDocumentWorkspace(), repositoryFile, "left");
+    const replaced = assignDocumentToPane(
+      withFile,
+      { ...repositoryFile, sourceOid: "a".repeat(40), comparisonPolicy: "exact-source" },
+      "left",
+    );
+
+    expect(replaced.documents.left).toHaveLength(2);
+    expect(replaced.documents.left[1]).toMatchObject({
+      kind: "repository-file",
+      path: "src/index.ts",
+      comparisonPolicy: "exact-source",
     });
+  });
+
+  it("moves a tab without leaving a duplicate in its source pane", () => {
+    const repositoryFile: ActiveDocument = { kind: "repository-file", path: "src/index.ts" };
+    const withFile = assignDocumentToPane(initialDocumentWorkspace(), repositoryFile, "left");
+    const moved = moveDocumentToPane(withFile, repositoryFile, "left", "right");
+
+    expect(moved.documents.left).toEqual([{ kind: "pull-request-markdown" }]);
+    expect(moved.documents.right).toEqual([repositoryFile]);
     expect(moved.active.left).toEqual({ kind: "pull-request-markdown" });
     expect(moved.active.right).toEqual(repositoryFile);
     expect(moved.focusedPane).toBe("right");
   });
 
   it("collapses a right-only workspace back into the left pane", () => {
-    const moved = assignDocumentToPane(
+    const moved = moveDocumentToPane(
       initialDocumentWorkspace(),
       { kind: "pull-request-markdown" },
+      "left",
       "right",
     );
 
-    expect(moved.panes).toEqual({ "pull-request-markdown": "left" });
+    expect(moved.documents).toEqual({
+      left: [{ kind: "pull-request-markdown" }],
+      right: [],
+    });
     expect(moved.active).toEqual({ left: { kind: "pull-request-markdown" }, right: null });
     expect(moved.focusedPane).toBe("left");
   });
@@ -141,8 +186,18 @@ describe("document tabs", () => {
     const withSecond = assignDocumentToPane(withFirst, secondFile, "left");
     const closed = removeDocumentFromWorkspace(withSecond, secondFile);
 
-    expect(closed.documents).not.toContain(secondFile);
+    expect(closed.documents.left).not.toContain(secondFile);
     expect(closed.active.left).toEqual(firstFile);
+  });
+
+  it("closes only the requested pane copy", () => {
+    const file: ActiveDocument = { kind: "repository-file", path: "src/index.ts" };
+    const inLeft = assignDocumentToPane(initialDocumentWorkspace(), file, "left");
+    const inBoth = assignDocumentToPane(inLeft, file, "right");
+    const closedRight = removeDocumentFromWorkspace(inBoth, file, "right");
+
+    expect(closedRight.documents.left).toContainEqual(file);
+    expect(closedRight.documents.right).toEqual([]);
   });
 
   it("increments navigation revisions only for panes whose active document changed", () => {

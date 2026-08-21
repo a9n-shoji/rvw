@@ -410,7 +410,12 @@ watch exits reconnect from the state cursor with bounded exponential backoff; pr
 and acknowledgement failures have distinct nonzero driver exits. These helpers remain external Skill
 processes and do not move Agent runtime or task state into rvw. Before an initial connection or
 reconnect, the driver drains eligible pending work left between a durable ingest and an interrupted
-acknowledgement.
+acknowledgement. Auto-ack is capped by the subagent capacity reserved by the parent, and a short-period
+task-state pump drains same-PR follow-ups after lease release and retryable batches after their due time
+without waiting for another watch event or reconnect. Before spawning rvw, the driver atomically acquires
+one process-owner lock beside the canonical task-state path. A concurrent driver for that state exits
+without starting another watcher. The lock is released on graceful shutdown, and a later driver reclaims
+it only when the recorded owner process no longer exists.
 
 ## Walkthrough lifecycle
 
@@ -579,10 +584,11 @@ the current Agent may supply an accurate optional `authorLabel`.
 
 `rvw-watch-comments` documents the complete state-script stdin/stdout contract. Its driver derives
 `--after` from task state, its auto-ack reuses each batch operation's idempotency key and status post
-only when that batch is retried, and its
-worker handoff uses an absolute JSON result path rather than relying on relayed completion text.
-Direct and worker outcomes carry `body`, `relatedCommitOid`, a complete `references` array, and
-`pushStatus`. The Skill uses typed references by default for concrete code behavior, implemented
+only when that batch is retried, and it hands every acknowledged lease to one fresh subagent in the
+same parent scheduling turn. The parent never substitutes direct processing. Each subagent handoff uses
+an absolute JSON result path rather than relying on relayed completion text. Subagent outcomes carry
+`body`, `relatedCommitOid`, a complete `references` array, and `pushStatus`. The Skill uses typed
+references by default for concrete code behavior, implemented
 changes, and relevant tests when an exact committed range adds navigation value. Investigation-only
 outcomes may cite their evidence commit without claiming that a change was pushed.
 

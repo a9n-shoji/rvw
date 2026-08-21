@@ -277,10 +277,12 @@ empty fileは従来どおり明示的に扱う。
   選択範囲のlatest側なら`最新`を明示する。
 - range picker内はclickで一件、pointer dragまたはShift+clickで両端を含む連続範囲を選択する。
   `PR全体`と`最新だけ`のshortcutも提供し、範囲内のcommitを一件ずつtoggleさせない。
-- 開いた`Pull Request.md`とrepository fileはpath identityで重複しない一時tabとして保持する。
+- 開いた`Pull Request.md`とrepository fileはpaneごとにpath identityで重複しない一時tabとして保持する。
+  同じdocument identityは左paneと右paneへ一つずつまで開ける。
 - `Cmd` / `Ctrl`+`P`は全repository fileと`Pull Request.md`を対象にQuick Openを開く。file名を
   pathより優先するbrowser内fuzzy search、match highlight、open / active状態、file / change iconを表示し、
-  Arrow keyで選択、Enterで現在activeなpaneへ追加して開き、Escapeで閉じる。
+  Arrow keyで選択、Enterまたは通常clickで左pane、`Cmd` / `Ctrl`+clickで右paneへ追加して開き、
+  Escapeで閉じる。
 - Walkthroughも独立した一時tabとして保持し、そこからcodeを開いても説明tabを閉じない。
   tabは個別に閉じられ、paneの`...` menuからactive以外またはpane内すべてを一括で閉じられる。
   overflow時は横scrollとopen-tab一覧を提供する。
@@ -290,19 +292,22 @@ empty fileは従来どおり明示的に扱う。
   単なるpane focus、tab close／move、pane幅、sidebar、検索入力、自動syncをentryにしない。commit範囲、
   全文／変更、stacked / split、
   tree modeはhistoryから復元せず、Back / Forward後も現在のglobal review scopeを維持する。
-- history復元では対象文書が現在属するpaneを優先し、閉じている場合だけ記録したpaneへ再度開く。対象paneを
+- history復元では記録したpaneに対象文書が開いていればそのcopyを優先し、一方のpaneだけに開いている場合は
+  そのpaneを使う。閉じている場合だけ記録したpaneへ再度開く。対象paneを
   focusして文書と位置を復元するが、もう一方のpane、open tab集合、pane配置を巻き戻さず、移動元のtabも
   閉じない。line navigationは適用位置に留まる間だけline anchorを保持し、利用者がそこからscrollした後は
   実際のpane内scroll位置へ切り替える。pane内scrollはbrowserのwindow scroll restorationへ委ねず、文書
   ごとの位置として復元する。reloadは既存の一時workspace境界を保ち、保持された現在entryを初期文書で置換する。
-- document workspaceは通常一ペイン、必要時に横並びの最大二ペインとする。document identityは一つの
-  paneだけに所属し、tab drag & dropまたはpane headerの`...` menuで左右へ移動できる。
+- document workspaceは通常一ペイン、必要時に横並びの最大二ペインとする。同じdocument identityは各paneに
+  一つまで所属でき、tab drag & dropまたはpane headerの`...` menuで左右へ移動できる。移動先に同じidentityが
+  すでにある場合は移動先の一つへ統合する。
 - sidebarとdocument workspaceの境界、および二ペイン間の境界はpointer dragで横幅を変更できる。
   sidebarはmain reading surfaceの最低幅を残し、各document paneも最低幅を持つ。dividerのdouble clickは
   既定幅へ戻し、左右arrow keyでも調整できる。幅はbrowser内だけの一時状態で永続化しない。
-- sidebarのfile、search result、Issue、Walkthroughは`Cmd` / `Ctrl`+clickで右ペインへ開ける。document
-  pane内のWalkthrough reference、diagram node、repository Markdown linkは`Cmd` / `Ctrl`+clickで
-  操作元と反対のペインへ開く。通常clickは操作元のペインへ開く。新しい反対paneを初めて作る場合も、code
+- sidebarのfile、search result、Issue、Walkthrough、comment targetと、document pane内のWalkthrough reference、
+  diagram node、repository Markdown link、comment内referenceは、通常clickで左pane、`Cmd` / `Ctrl`+clickで右paneへ
+  開く。操作元やfocused paneは文書を開く先へ影響させない。tab clickはそのtabが属するpaneをactivateし、
+  同一Markdown内の見出しlinkは表示中pane内を移動する。新しい右paneを初めて作る場合も、code
   referenceの選択範囲を描画完了後にviewport中央へfocusする。
 - Walkthrough reference、repository Markdownの相対link、comment targetを開いても、repository全体の
   commit範囲、全文／変更、stacked / split、tree modeを変更しない。Walkthrough referenceは全文では
@@ -312,10 +317,12 @@ empty fileは従来どおり明示的に扱う。
   明示する。Walkthrough referenceのexact sourceを取得できない場合はtabやpaneを開かず、操作元の
   Walkthroughへ一時chipを表示し、リンク切れと一時的な取得失敗を区別する。
 - Markdown内の画像はrepository Markdownまたはcomment postから、後述する基準commit内の相対pathを
-  参照する場合だけ自動取得する。PR本文、Walkthrough本文、外部URL、protocol-relative URL、repository
-  pathへ安全に解決できない参照は
-  requestを送らずplaceholderを表示する。SVG asset responseは同一originへの直接navigationも含め、
-  scriptと外部subresourceを禁止するContent Security Policyとsandboxを付ける。
+  参照する場合だけexact commit assetとして自動取得する。PR本文ではmodernな
+  `https://github.com/user-attachments/assets/<uuid>`だけをlocalhost endpointへ書き換えて取得する。
+  それ以外の外部URL、protocol-relative URL、`data:`、`blob:`、Walkthrough本文、repository pathへ
+  安全に解決できない参照はrequestを送らずplaceholderを表示する。画像load errorもalt/titleを保った
+  placeholderへ戻す。SVG asset responseは同一originへの直接navigationも含め、scriptと外部subresourceを
+  禁止するContent Security Policyとsandboxを付ける。
 - Pull Request ReviewとBranch Reviewは同じsidebar、document tab、最大二pane、resize、theme、comment操作を
   使い、review種別だけを理由に別のinteractionや簡易rendererを持たない。Branch ReviewではPR固有のcommit
   range、changes / diff style、`Pull Request.md`だけを表示しない。
@@ -398,7 +405,7 @@ empty fileは従来どおり明示的に扱う。
   renderする。repository内の`.md` / `.markdown`はGitHubのfile previewと同じくsoft line breakを
   hard breakへ変換しない。
   repository内への相対linkは表示中のfile pathから解決し、同じexact source commitのdocumentとして
-  通常clickは現在pane、`Cmd` / `Ctrl`+clickは右paneへ開く。外部URLだけをbrowserの別tabで開き、
+  通常clickは左pane、`Cmd` / `Ctrl`+clickは右paneへ開く。外部URLだけをbrowserの別tabで開き、
   fragment-only linkは表示中document内のnavigationとして残す。相対linkを開いてもglobalなcommit範囲、
   full / changes、stacked / split、tree modeは変更せず、対象paneだけexact sourceの全文を表示する。
   Previewのrender treeにはMarkdown parserが持つsource positionを付与し、browser標準の文字列選択を
@@ -409,6 +416,51 @@ empty fileは従来どおり明示的に扱う。
   line commentをrender済み本文へinline表示する。DOM path、
   layout上の行、生成HTMLはtargetへ保存しない。
   line commentはSourceのgutter/range selectionとPreviewの文字列選択、file commentは両表示から作成できる。
+
+### 5.3.1 画像assetとrepository画像viewer
+
+- GitHub user attachment URLは`https:`、exact `github.com`、空のusername/password/port/query/fragment、
+  exact `/user-attachments/assets/<uuid>` pathを共通validatorで検証し、parse後のcanonical URLだけを使う。
+  `user-images.githubusercontent.com`と`private-user-images.githubusercontent.com`は安全な認証取得経路を
+  確認していないため対象外とする。
+- browserはGitHub attachment hostへ直接接続せず、PRにscopeしたsame-origin GET endpointを使う。
+  endpointは`Sec-Fetch-Site`がある場合に`same-origin`または`none`だけを受理し、`Origin`がある場合は
+  viewer originとの一致も検証する。serverは対象PRの存在を確認してから、shellを使わない
+  `gh api <canonical-url>` argument配列でbinaryを取得する。tokenを抽出、保存、header化せず、認証と
+  cross-host redirect処理はGitHub CLIへ委ねる。timeoutは30秒、stdoutは10 MiB、stderrは64 KiBを上限とし、
+  process errorのstderrやprivate URLをresponseへ含めない。binaryはSQLiteやpersistent cacheへ保存しない。
+- attachmentとrepository assetはbyte列からPNG、JPEG、GIF87a/GIF89a、WebP、AVIFをmagic byteで判定する。
+  SVGはUTF-8、任意のBOM/先頭空白/XML declarationと安全なXML commentの後に`svg` rootがある場合だけ許可する。
+  doctype、HTML、JSON、任意XML、truncated headerは画像として返さない。responseは検出したimage Content-Type、
+  `nosniff`、`Content-Disposition: inline`、`Cross-Origin-Resource-Policy: same-origin`、private immutable cache
+  headerを持ち、SVGにはsandbox CSPも付ける。
+- repository画像fileは`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.avif`、`.svg`をcase-insensitiveに
+  判定し、5 MiB以下のexact commit asset endpointだけで取得する。全文表示は選択sourceのnatural-size画像を
+  container内へ縮小し、変更表示はglobalなstacked/split設定にかかわらずold/new二列の単純Splitとする。
+  added/deletedは存在しない側を明示し、renameは両pathを表示する。画像・非画像間の変更も画像viewerで両側を
+  明示するが、old/new両方の`DocumentRef`を保持して非画像側を含むfile-level comment targetを失わない。
+  全文表示へ切り替えたときactive pathが非画像なら通常のdocument viewerへ戻す。
+- 画像viewerはtext document/diff APIを呼ばず、表示前のsame-origin HEADで404、413、415を区別した後に
+  browser image GETを行う。file-level commentだけを許可し、変更後が存在すればnew side、削除だけはold sideへ
+  exact source targetを保存する。既存commentはtargetと一致するold/new側へ表示する。
+- extensionless repository画像、zoom/pan、pixel diff、画像座標commentはPhase 1の対象外とする。
+
+#### Private PR release前manual smoke
+
+private attachmentをCI fixtureへ保存しないため、release前に次を人間が実施する。
+
+1. private repositoryを閲覧できるaccountで`gh auth status --hostname github.com`が成功することを確認する。
+2. そのrepositoryのopen PR本文へ小さなPNGまたはJPEGをpasteし、生成されたmodern
+   `https://github.com/user-attachments/assets/<uuid>` URLを本文に残す。比較用に任意の外部画像URLも一件置く。
+3. `rvw open <private-pr-url>`でviewerを開き、`Pull Request.md`のPreviewでprivate attachmentが表示され、
+   外部画像はalt/title付きplaceholderのままであることを確認する。
+4. browser DevToolsのNetworkで、表示画像の`src`とrequest先がlocalhostの
+   `/api/pull-requests/:id/github-attachment`であり、browserから`github.com/user-attachments`や外部画像hostへ
+   直接requestしていないことを確認する。
+5. localhost responseが検出済みのimage Content-Type、`nosniff`、private immutable cache、same-origin CORPを
+   持ち、reload後も画像表示とplaceholderが維持されることを確認する。
+6. private attachment URL、response body、DevTools traceをrepository、issue、CI logへ保存せず、実施結果だけを
+   release checklistへ記録する。
 
 ### 5.4 Agent Walkthrough
 
@@ -575,7 +627,7 @@ comment code referenceはWalkthroughと同じ`CodeReference` schema、ID/path/li
 buttonを再利用する。各postは一つの`related_commit_oid`と0〜200件のreferenceを所有し、referenceが
 ある場合は関連commitを必須とする。全宣言はそのpost本文のMarkdown linkから使われ、全linkは宣言済み
 IDへ一致しなければならない。referenceはthread内で継承せず、Mermaid bindingにも使わない。通常clickは
-related commitのexact sourceを操作元paneへ、modifier clickは反対paneへ開き、globalなcommit範囲を
+related commitのexact sourceを左paneへ、modifier clickは右paneへ開き、globalなcommit範囲を
 変えない。作成・reply・edit成功前に関連commitをimmutable refで保持する。
 同梱Skillは、finding、調査結果、実装内容、test結果について具体的なcode上のclaimを投稿するとき、
 reviewerがexact evidenceを開く価値があればtyped referenceを既定で付ける。comment target自身が同じ
@@ -584,8 +636,8 @@ exact sourceを既に開ける場合は、別のlabel付きrangeにnavigation価
 
 repository内linkと画像の基準commitは、postの`related_commit_oid`、repository targetの`source_oid`、
 Walkthrough targetのcurrent `sourceOid`、`comments.created_head_oid`の順に選ぶ。repository targetでは
-target fileのdirectory、それ以外ではrepository rootを相対pathの起点にする。通常clickは操作元pane、
-pane内の`Cmd` / `Ctrl`+clickは反対pane、sidebar内のmodifier clickは右paneへexact source全文を開き、
+target fileのdirectory、それ以外ではrepository rootを相対pathの起点にする。通常clickは左pane、
+`Cmd` / `Ctrl`+clickは操作元にかかわらず右paneへexact source全文を開き、
 globalなcommit範囲や表示modeを変更しない。replyは任意の`related_commit_oid`を持てる。
 Agent batch syncのreplyは同期後のGitHub headへ自動的に関連付ける。
 人間はviewerから、明示的に依頼された外部AgentはCLIから、同じtarget validationを通して新しいroot
@@ -797,11 +849,17 @@ complete前にingest済みならpending rowをcompletedへ移し、後ならinge
 protocol、capability、transport、Nodeを一括検査し、watch driverは
 stateのcursorを自動解決してRFC 7464 frameをatomicにingestする。driverのauto-ack modeは新規batchを
 LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthread contextを一行JSONで通知する。
+親taskは起動前にsubagent slot数を予約し、driverの`max-in-flight`をその数以下に固定する。driverはlimit
+未満だけauto-ackし、task stateを短周期で再確認する。同一PRのactive lease中に到着したeventは先行lease
+解放後に、retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
 state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。rvwはAgentやsubagentを
 起動せず、これらのtask stateも保持しない。
 task起動時に明示された場合だけ、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
 OIDとpush先が一致するPRをfix-and-push候補にできる。他人、不明、不一致はinvestigate-and-replyとする。
-直接調査とworker結果は、最終bodyに加えて`relatedCommitOid`、完全な`references`配列、`pushStatus`を持つ。
+親taskはacknowledge済みleaseをbatchの大きさ、mode、変更有無にかかわらず同じscheduling turn内で一つの
+fresh subagentへ必ず委譲し、直接調査・実装しない。subagentを速やかに起動できない場合はleaseをretryable
+failureへ戻し、親taskが代行しない。subagent結果は、最終bodyに加えて`relatedCommitOid`、完全な
+`references`配列、`pushStatus`を持つ。
 code変更がない調査結果でも、具体的なcode上の結論を支える利用可能なPR commitとtyped referenceを返せる。
 parentはthreadを再取得してbody、commit、referenceを検証し、同じstatus postの完全置換へすべて渡す。
 fix-and-push後のreferenceは同期済みGitHub headへ固定する。referenceがない結果は空配列を明示し、以前の
@@ -1099,7 +1157,8 @@ GET /api/pull-requests/:id/commits
 GET /api/pull-requests/:id/tree?oid=<oid>
 GET /api/pull-requests/:id/changed-files?oldOid=<oid>&newOid=<oid>
 GET /api/pull-requests/:id/document?kind=...&sourceOid=...&path=...
-GET /api/pull-requests/:id/markdown-asset?sourceOid=...&path=...
+GET|HEAD /api/pull-requests/:id/markdown-asset?sourceOid=...&path=...
+GET /api/pull-requests/:id/github-attachment?url=...
 GET /api/pull-requests/:id/diff?oldOid=...&newOid=...&oldPath=...&newPath=...
 GET /api/pull-requests/:id/search?oid=<oid>&q=<query>&matchCase=<bool>&wholeWord=<bool>
 GET /api/pull-requests/:id/walkthroughs
@@ -1155,7 +1214,7 @@ tab row
 - historical commitを選択中ならrefresh後も選択を維持する。
 - PR本文はselectorと無関係に常にlatest cacheを全文表示し、global controlがdiff modeなら
   `差分なし · 全文表示`を明示する。
-- 未送信comment draftはPR、文書、exact source、commit範囲、表示modeごとに分離し、tab切替や
+- 未送信comment draftはPR、pane、文書、exact source、commit範囲、表示modeごとに分離し、tab切替や
   tabの閉じ直しでは保持する。送信、明示cancel、comment targetへのnavigation、reset成功時に破棄する。
 - 明示capture button、未取り込みbanner、version selectorは存在しない。
 - refreshは取得・ref保持・cache更新を一度に行う。
@@ -1185,6 +1244,8 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - expected Hostを検証
 - write APIは`application/json`だけ
 - same-origin以外のwriteを拒否、CORSを有効にしない
+- GitHub attachment readも存在するFetch Metadataと`Origin`でsame-originへ限定し、画像responseへ
+  `Cross-Origin-Resource-Policy: same-origin`を付ける
 - browser tab leaseはtransport-onlyで永続化しない
 - 通常の自動openはPRごとのbackground workerを起動し、worker ready後にbrowserを開き、最初のviewer
   heartbeatを確認してから親CLIを終了する
@@ -1262,8 +1323,8 @@ E2E:
 10. Walkthroughを開いてもcode tabを自動で開かず、inline referenceまたはMermaid nodeを人間が
     選んだ時だけ対象commitを変えずexact source行へ移動し、説明tabを保持。missing時はtabを開かず
     一時的なリンク切れchip、通信や一時的な取得失敗では区別したstatusを表示
-11. tabをdragまたはpane menuで左右へ移し、`Cmd` / `Ctrl`+clickでreferenceを操作元と反対の
-    ペインへ開く
+11. tabをdragまたはpane menuで左右へ移し、通常clickでreferenceを左pane、`Cmd` / `Ctrl`+clickで
+    右paneへ開く。同じfileを参照している場合も左右に一つずつ保持し、参照先paneだけを指定行へ移動する
 12. repository MarkdownをSource / Previewで切り替え、Previewの文字列選択からsource行commentを作成する
 13. flowchartとclass diagramのbinding済み要素からexact sourceを開く
 14. CLI更新したWalkthroughのtitle、本文、referenceを同じopen tabへpoll反映
@@ -1293,7 +1354,8 @@ CLI contract:
 - watch cursorのresume、別DB拒否、削除後event、minimal payload、RFC 7464 framing
 - replyとsync updateのidempotency key retry、head advance、payload conflict、result削除
 - task state scriptのatomic ingest、lease recovery、batch単位status post再利用、後続replyでの新規status post、
-  即時ackの自己event抑制、repository write直列化、旧task DBの未完了batch mapping移行、status post削除後の再生成
+  即時ackの自己event抑制、予約済みworker容量によるin-flight制限、同一PR後続batchとdue retryのevent非依存drain、
+  repository write直列化、旧task DBの未完了batch mapping移行、status post削除後の再生成
 - `comment edit`のbody完全置換、related commit維持／解除／更新、Agent socket経由write
 - comment create/reply/edit/syncのpost単位reference検証、保存、完全置換、commit保持、idempotency
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
@@ -1357,11 +1419,20 @@ requestとrepository contextへ委ね、固定の文書templateを要求しな�
 新規root/replyをreview contextごとのbatchへまとめる。同梱preflight、watch driver、state script、auto-ackが
 prerequisite確認、cursor resume、RFC 7464 ingest、pending通知、queue、lease、retry、comment URIごとの
 batch単位status post、自己event抑制をrepository外のSQLiteで管理する。Pull Request batchは検知直後に
-各threadを再読込して`🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを
-最終結果へ編集する。同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を
-保持する。Branch batchはacknowledgementを作らず、厳格に検証したworker resultから一件のfinal replyを投稿する。
-investigate-onlyで1〜2 commentの小batchは親taskが直接調査でき、それ以外をworkerへ委譲する場合は
-絶対pathのJSON fileを唯一の結果回収経路にする。直接またはworkerの最終結果はbody、
+batch単位status post、自己event抑制をrepository外のSQLiteで管理する。watch driverはstate DBごとの
+process owner lockをrvw起動前に取得し、同じtaskの二重起動を拒否する。異常終了後のlockは記録したowner
+processが存在しない場合だけ回収する。検知直後に各threadを再読込して
+`🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。
+同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を保持する。
+親taskはintake、dispatch、task state、最終replyだけを所有し、batchの大きさ、mode、変更有無にかかわらず、
+acknowledge済みleaseを同じscheduling turn内で一つのfresh subagentへ必ず委譲する。親taskによる直接調査・
+実装と、複数leaseの後回しの一括委譲を認めない。親taskは起動前にsubagent slot数を予約し、driverの
+`max-in-flight`をその数以下に固定する。driverはlimit未満だけauto-ackし、task stateを短周期で再確認して、
+同一PRのactive lease中に到着したeventを先行lease解放後に、retryable failureを`nextAttemptAt`到達後に、
+新しいwatch eventやreconnectを待たずauto-ackする。subagentを速やかに起動できない場合はleaseをretryable
+failureへ戻し、親taskが代行しない。subagentごとに一leaseだけを割り当て、絶対pathのatomic JSON fileを
+唯一の最終結果回収経路にする。Branch batchはacknowledgementを作らず、同じ即時委譲規則で調査し、
+厳格に検証したworker resultから一件のfinal replyを投稿する。subagentの最終結果はbody、
 `relatedCommitOid`、完全なtyped reference配列、push状態を持ち、具体的なcode上の結論、実装、testには
 navigation価値のあるexact rangeを既定で付ける。task起動時の
 明示許可がある場合だけ、live authorが起動時
