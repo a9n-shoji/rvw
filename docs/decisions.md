@@ -87,6 +87,59 @@ Back remains the explicit action for revisiting earlier same-origin reading entr
   reference, and Markdown heading jumps retain line locators until manual reading continues, after which
   ordinary reading falls back to the captured scroll.
 
+## 2026-08-21: Give each comment-watch batch its own acknowledgement post
+
+### Problem
+
+The initial watch lifecycle stored one acknowledgement post per comment URI. When a reviewer replied
+again after an Agent had completed an answer, the new batch edited that earlier answer back to
+`🔎 確認中です…`. This erased useful conversation history and made the old answer appear to belong to
+the new request until processing finished.
+
+### Choice
+
+Scope the acknowledgement idempotency key and status post ID to one batch operation for one comment
+URI. Retries of that batch retain and restore the same acknowledgement, but a later batch triggered by
+another reply creates a new acknowledgement. Completion and terminal failure edit only the current
+batch's post, leaving every earlier final answer intact. Migrate an unfinished legacy thread-scoped
+mapping into its active batch so restart safety is preserved across the change.
+
+This supersedes only the per-thread status-post reuse in the 2026-08-20 comment-watch decision. Cursor,
+batching, suppression, authorization, and one final edit per claimed operation remain unchanged.
+
+### Trade-offs
+
+- A long conversation now keeps one Agent outcome per interaction instead of collapsing all outcomes
+  into one post.
+- Threads accumulate more replies, but each pending marker and answer has an unambiguous place in the
+  conversation.
+- Task databases need a local schema migration, while the rvw comment protocol itself is unchanged.
+
+## 2026-08-21: Preserve reply drafts across synchronized comment redraws
+
+### Problem
+
+The viewer polls a database-wide change sequence so an Agent reply appears without a page reload. In
+Markdown Preview, refreshing one comment rebuilds the mapped Markdown subtree and can remount another
+inline thread. A human typing in that other thread then lost the unsent reply and focus even though the
+underlying comment had not changed.
+
+### Choice
+
+Keep thread reply drafts in a Pull Request-scoped in-memory external store, keyed separately for inline
+and sidebar surfaces. Treat the body and focused state as one snapshot so a remounted thread restores
+both. Use the existing review-draft revision boundary to reject stale writes after reset. Successful
+submission, local thread deletion, and review reset clear the applicable draft; page reload remains the
+durability boundary.
+
+### Trade-offs
+
+- Agent and other external comment updates no longer interrupt an in-progress human reply.
+- Inline and sidebar composers stay independent, while the same inline thread can survive Preview,
+  source, and document remounts.
+- A small application-memory subscription is required, but no draft enters SQLite or the comment
+  protocol.
+
 ## 2026-08-20: Let an external Agent task watch new rvw comment posts with a task-owned cursor
 
 ### Problem

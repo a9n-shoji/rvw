@@ -717,6 +717,9 @@ test("defaults Markdown to preview and preserves an explicit mode per document t
     .getByRole("dialog", { name: "対象commitを選択" })
     .getByRole("button", { name: "最新だけ", exact: true })
     .click();
+  await expect(reviewScope.getByRole("button", { name: /^対象commit:/ })).toHaveAccessibleName(
+    /最新/,
+  );
   await reviewScope.getByRole("button", { name: "変更", exact: true }).click();
   await page.getByRole("button", { name: "README.md", exact: true }).click();
   await expect(page.locator("diffs-container")).toBeVisible();

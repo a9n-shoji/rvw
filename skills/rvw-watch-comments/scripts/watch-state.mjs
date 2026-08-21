@@ -98,17 +98,11 @@ function openState(statePath, create) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-    CREATE TABLE IF NOT EXISTS comment_statuses (
-      comment_ref TEXT PRIMARY KEY,
-      idempotency_key TEXT NOT NULL UNIQUE,
-      post_id TEXT UNIQUE,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
     CREATE TABLE IF NOT EXISTS operations (
       batch_id TEXT NOT NULL,
       comment_ref TEXT NOT NULL,
       idempotency_key TEXT NOT NULL UNIQUE,
+      post_id TEXT,
       PRIMARY KEY(batch_id, comment_ref)
     );
     CREATE TABLE IF NOT EXISTS suppressed_posts (
@@ -123,6 +117,7 @@ function openState(statePath, create) {
     CREATE INDEX IF NOT EXISTS batches_pending_pr
       ON batches(status, pull_request_url, next_attempt_at, created_at);
   `);
+  migrateStateSchema(database);
   if (create) chmodSync(absolute, 0o600);
   return { database, absolute };
 }
@@ -156,39 +151,102 @@ function setMeta(database, key, value) {
     .run(key, value);
 }
 
-function ensureCommentStatus(database, commentRef, now) {
-  const existing = database
-    .prepare("SELECT * FROM comment_statuses WHERE comment_ref = ?")
-    .get(commentRef);
-  if (existing) return existing;
-  const legacyOperation = database
-    .prepare(
-      `SELECT o.idempotency_key
-      FROM operations o
-      JOIN batches b ON b.id = o.batch_id
-      WHERE o.comment_ref = ? AND b.status IN ('pending', 'in_flight')
-      ORDER BY b.created_at DESC LIMIT 1`,
-    )
-    .get(commentRef);
-  const idempotencyKey =
-    legacyOperation?.idempotency_key ?? `${getMeta(database, "task_id")}:status:${randomUUID()}`;
-  database
-    .prepare(
-      `INSERT INTO comment_statuses(
-        comment_ref, idempotency_key, post_id, created_at, updated_at
-      ) VALUES (?, ?, NULL, ?, ?)`,
-    )
-    .run(commentRef, idempotencyKey, now, now);
-  return database.prepare("SELECT * FROM comment_statuses WHERE comment_ref = ?").get(commentRef);
+function tableExists(database, tableName) {
+  return Boolean(
+    database
+      .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?")
+      .get(tableName),
+  );
+}
+
+function migrateStateSchema(database) {
+  const operationColumns = database.prepare("PRAGMA table_info(operations)").all();
+  if (
+    operationColumns.some((column) => column.name === "post_id") &&
+    getMeta(database, "batch_scoped_status_posts") === "1"
+  ) {
+    return;
+  }
+  transaction(database, () => {
+    const currentOperationColumns = database.prepare("PRAGMA table_info(operations)").all();
+    if (!currentOperationColumns.some((column) => column.name === "post_id")) {
+      database.exec("ALTER TABLE operations ADD COLUMN post_id TEXT;");
+    }
+    if (getMeta(database, "batch_scoped_status_posts") === "1") return;
+    if (tableExists(database, "comment_statuses")) {
+      const rows = database
+        .prepare(
+          `SELECT b.id AS batch_id, e.comment_ref,
+            b.created_at AS batch_created_at,
+            o.idempotency_key AS operation_key, o.post_id AS operation_post_id,
+            s.idempotency_key AS legacy_key, s.post_id AS legacy_post_id,
+            s.updated_at AS legacy_updated_at
+          FROM batches b
+          JOIN (
+            SELECT DISTINCT batch_id, comment_ref FROM events WHERE batch_id IS NOT NULL
+          ) e ON e.batch_id = b.id
+          LEFT JOIN operations o ON o.batch_id = b.id AND o.comment_ref = e.comment_ref
+          LEFT JOIN comment_statuses s ON s.comment_ref = e.comment_ref
+          WHERE b.status != 'completed' AND b.attempts > 0
+          ORDER BY e.comment_ref,
+            CASE b.status WHEN 'in_flight' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
+            b.created_at DESC`,
+        )
+        .all();
+      const migratedCommentRefs = new Set();
+      for (const row of rows) {
+        const useLegacyStatus =
+          !migratedCommentRefs.has(row.comment_ref) &&
+          row.legacy_key &&
+          row.legacy_updated_at >= row.batch_created_at;
+        if (useLegacyStatus) migratedCommentRefs.add(row.comment_ref);
+        if (row.operation_key) {
+          if (useLegacyStatus && row.operation_post_id === null && row.legacy_post_id !== null) {
+            database
+              .prepare("UPDATE operations SET post_id = ? WHERE batch_id = ? AND comment_ref = ?")
+              .run(row.legacy_post_id, row.batch_id, row.comment_ref);
+          }
+          continue;
+        }
+        database
+          .prepare(
+            `INSERT INTO operations(batch_id, comment_ref, idempotency_key, post_id)
+            VALUES (?, ?, ?, ?)`,
+          )
+          .run(
+            row.batch_id,
+            row.comment_ref,
+            useLegacyStatus
+              ? row.legacy_key
+              : `${getMeta(database, "task_id") ?? "task"}:${row.batch_id}:${randomUUID()}`,
+            useLegacyStatus ? row.legacy_post_id : null,
+          );
+      }
+    }
+    setMeta(database, "batch_scoped_status_posts", "1");
+  });
+}
+
+function ensureBatchOperations(database, batchId) {
+  const commentRefs = database
+    .prepare("SELECT DISTINCT comment_ref FROM events WHERE batch_id = ? ORDER BY comment_ref")
+    .all(batchId)
+    .map((operation) => operation.comment_ref);
+  for (let index = 0; index < commentRefs.length; index += 1) {
+    database
+      .prepare(
+        `INSERT OR IGNORE INTO operations(batch_id, comment_ref, idempotency_key, post_id)
+        VALUES (?, ?, ?, NULL)`,
+      )
+      .run(batchId, commentRefs[index], `${getMeta(database, "task_id")}:${batchId}:${index + 1}`);
+  }
 }
 
 function batchStatusOperations(database, batchId) {
   return database
     .prepare(
-      `SELECT DISTINCT e.comment_ref, s.post_id
-      FROM events e
-      LEFT JOIN comment_statuses s ON s.comment_ref = e.comment_ref
-      WHERE e.batch_id = ? ORDER BY e.comment_ref`,
+      `SELECT comment_ref, post_id FROM operations
+      WHERE batch_id = ? ORDER BY comment_ref`,
     )
     .all(batchId)
     .map((operation) => ({
@@ -311,19 +369,19 @@ function ingestEvent(database, frame) {
         now,
       );
     if (event.deleted) {
-      const commentStatus = database
-        .prepare("SELECT comment_ref FROM comment_statuses WHERE post_id = ?")
-        .get(event.postId);
-      if (commentStatus) {
+      const operations = database
+        .prepare("SELECT batch_id, comment_ref FROM operations WHERE post_id = ?")
+        .all(event.postId);
+      for (const operation of operations) {
         database
           .prepare(
-            `UPDATE comment_statuses SET post_id = NULL, idempotency_key = ?, updated_at = ?
-            WHERE comment_ref = ?`,
+            `UPDATE operations SET post_id = NULL, idempotency_key = ?
+            WHERE batch_id = ? AND comment_ref = ?`,
           )
           .run(
-            `${getMeta(database, "task_id")}:status:${randomUUID()}`,
-            now,
-            commentStatus.comment_ref,
+            `${getMeta(database, "task_id")}:${operation.batch_id}:${randomUUID()}`,
+            operation.batch_id,
+            operation.comment_ref,
           );
       }
     }
@@ -448,8 +506,7 @@ function createBatch(database, pullRequestUrl, now) {
       "UPDATE events SET batch_id = ?, updated_at = ? WHERE pull_request_url = ? AND status = 'pending' AND batch_id IS NULL",
     )
     .run(batchId, now, pullRequestUrl);
-  const commentRefs = [...new Set(events.map((event) => event.comment_ref))];
-  for (const commentRef of commentRefs) ensureCommentStatus(database, commentRef, now);
+  ensureBatchOperations(database, batchId);
   return batchId;
 }
 
@@ -497,17 +554,11 @@ function claim(database, pullRequestUrl, writeKey) {
         commentRef: event.comment_ref,
         pullRequestUrl: event.pull_request_url,
       }));
-    const commentRefs = database
-      .prepare("SELECT DISTINCT comment_ref FROM events WHERE batch_id = ? ORDER BY comment_ref")
-      .all(batchId)
-      .map((operation) => operation.comment_ref);
-    for (const commentRef of commentRefs) ensureCommentStatus(database, commentRef, now);
+    ensureBatchOperations(database, batchId);
     const operations = database
       .prepare(
-        `SELECT DISTINCT e.comment_ref, s.idempotency_key, s.post_id
-        FROM events e
-        JOIN comment_statuses s ON s.comment_ref = e.comment_ref
-        WHERE e.batch_id = ? ORDER BY e.comment_ref`,
+        `SELECT comment_ref, idempotency_key, post_id FROM operations
+        WHERE batch_id = ? ORDER BY comment_ref`,
       )
       .all(batchId)
       .map((operation) => ({
@@ -568,17 +619,16 @@ function acknowledge(database, leaseId, input) {
       .get(leaseId);
     if (!batch) fail("Active lease was not found");
     const operation = database
-      .prepare("SELECT 1 AS present FROM events WHERE batch_id = ? AND comment_ref = ? LIMIT 1")
+      .prepare("SELECT post_id FROM operations WHERE batch_id = ? AND comment_ref = ?")
       .get(batch.id, input.commentRef);
     if (!operation) fail("Comment is not part of the active lease");
     const now = new Date().toISOString();
-    const status = ensureCommentStatus(database, input.commentRef, now);
-    if (status.post_id !== null && status.post_id !== input.postId) {
-      fail("Comment already has another status post");
+    if (operation.post_id !== null && operation.post_id !== input.postId) {
+      fail("Batch operation already has another status post");
     }
     database
-      .prepare("UPDATE comment_statuses SET post_id = ?, updated_at = ? WHERE comment_ref = ?")
-      .run(input.postId, now, input.commentRef);
+      .prepare("UPDATE operations SET post_id = ? WHERE batch_id = ? AND comment_ref = ?")
+      .run(input.postId, batch.id, input.commentRef);
     database
       .prepare("INSERT OR IGNORE INTO suppressed_posts(post_id, created_at) VALUES (?, ?)")
       .run(input.postId, now);
@@ -591,7 +641,7 @@ function acknowledge(database, leaseId, input) {
       batchId: batch.id,
       commentRef: input.commentRef,
       statusPostId: input.postId,
-      status: status.post_id === null ? "recorded" : "existing",
+      status: operation.post_id === null ? "recorded" : "existing",
     };
   });
 }

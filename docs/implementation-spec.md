@@ -537,13 +537,17 @@ commentを作成できる。Agent作成commentも通常の未解決threadであ�
 CLI作成は一回に一threadとし、batch生成やbrowser navigationを行わない。
 resolved済みthreadにもreplyできるが、reply単独ではreopenしない。standalone replyとbatch syncの
 replyはいずれも現在stateを維持し、resolve/reopenは明示的な別の状態変更とする。
+viewerのthread reply draftはpage内memoryへ保持し、server change sequenceによるcomment再取得や
+Markdown Preview再構築でthreadが再mountされても本文と入力focusを復元する。送信成功、thread削除、
+review resetでは破棄し、page reloadを越えて永続化しない。
 新しいroot postとreplyは同じtransactionでDB-wideな単調増加event sequenceへ記録する。既存postは
 migration時にbackfillせず、編集、削除、resolve/reopenはeventを作らない。Agent自身のreplyも通常eventであり、
 watch taskが返却post IDで抑止する。
 watch taskはbatchをclaimし、対象threadの存在を確認した直後に通常replyとして`🔎 確認中です…`を一件
-作成する。task-local DBはcomment URIごとの冪等keyとstatus post IDを保持し、同じthreadへの後続replyでも
-そのpostを再利用する。調査または作業の完了、terminal failureでは同じpost本文を一つの最終結果へ編集し、
-新しい完了replyを追加しない。このstatus postは専用comment stateではなく通常postであり、threadの
+作成する。task-local DBはbatch内のcomment URIごとに冪等keyとstatus post IDを保持し、同じbatchのretryだけで
+そのpostを再利用する。同じthreadへの後続replyを別batchで処理するときは新しいstatus postを作成し、過去の
+回答を変更しない。調査または作業の完了、terminal failureでは現在のbatchの同じpost本文を一つの最終結果へ
+編集し、新しい完了replyを追加しない。このstatus postは専用comment stateではなく通常postであり、threadの
 unresolved/resolved状態を変えない。
 誤投稿を取り消すため、reply postは個別に物理削除できる。root postの削除はcomment targetと
 `rvw://comment/<uuid>`のanchorを含むthread全体の削除として扱い、返信があれば同じtransactionで
@@ -725,9 +729,10 @@ sequenceとして出力する。cursor省略時は現在の最新event位置へa
 
 cursor、pending queue、retry、authorization、Agentが作成したpost IDは外部Agent taskがrepository外へ
 保持する。同梱Skillのstate scriptはtask専用SQLiteを使い、event enqueueとcursor更新、batch lease、retry、
-comment URIごとのstatus post mapping、自己post抑制をtransaction化する。batch claim直後にthreadを確認し、
-status postがなければ冪等なack replyを即時作成し、あれば同じpostをack本文へ戻す。完了時はそのpostを
-最終結果へ編集する。同梱preflightはprotocol、capability、transport、Nodeを一括検査し、watch driverは
+batch内のcomment URIごとのstatus post mapping、自己post抑制をtransaction化する。batch claim直後にthreadを
+確認して冪等なack replyを即時作成する。同じbatchのretryでstatus postがあればそのpostをack本文へ戻すが、
+後続replyの新しいbatchは新しいpostを作る。完了時は現在のbatchのpostを最終結果へ編集する。同梱preflightは
+protocol、capability、transport、Nodeを一括検査し、watch driverは
 stateのcursorを自動解決してRFC 7464 frameをatomicにingestする。driverのauto-ack modeは新規batchを
 LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthread contextを一行JSONで通知する。
 state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。rvwはAgentやsubagentを
@@ -1216,8 +1221,8 @@ CLI contract:
 - cursorless watchが既存postをskipし、新規root/replyだけをDB-wide sequenceで返すこと
 - watch cursorのresume、別DB拒否、削除後event、minimal payload、RFC 7464 framing
 - replyとsync updateのidempotency key retry、head advance、payload conflict、result削除
-- task state scriptのatomic ingest、lease recovery、thread単位status post再利用、即時ackの自己event抑制、
-  repository write直列化、旧task DBの未完了batchからの冪等key移行、status post削除後のmapping再生成
+- task state scriptのatomic ingest、lease recovery、batch単位status post再利用、後続replyでの新規status post、
+  即時ackの自己event抑制、repository write直列化、旧task DBの未完了batch mapping移行、status post削除後の再生成
 - `comment edit`のbody完全置換、related commit維持／解除／更新、Agent socket経由write
 - comment create/reply/edit/syncのpost単位reference検証、保存、完全置換、commit保持、idempotency
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
@@ -1280,8 +1285,9 @@ requestとrepository contextへ委ね、固定の文書templateを要求しな�
 `rvw-watch-comments`は一つの外部Agent taskをreceiverとして使い、cursorless起動で既存未解決を処理せず、
 新規root/replyをPRごとのbatchへまとめる。同梱preflight、watch driver、state script、auto-ackが
 prerequisite確認、cursor resume、RFC 7464 ingest、pending通知、queue、lease、retry、comment URIごとの
-status post、自己event抑制をrepository外のSQLiteで管理する。検知直後に各threadを再読込して
+batch単位status post、自己event抑制をrepository外のSQLiteで管理する。検知直後に各threadを再読込して
 `🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。
+同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を保持する。
 investigate-onlyで1〜2 commentの小batchは親taskが直接調査でき、それ以外をworkerへ委譲する場合は
 絶対pathのJSON fileを唯一の結果回収経路にする。task起動時の
 明示許可がある場合だけ、live authorが起動時

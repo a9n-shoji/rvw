@@ -4,7 +4,9 @@ import {
   commentDraftContextKey,
   currentCommentDraftRevision,
   readCommentDraft,
+  readCommentReplyDraft,
   writeCommentDraft,
+  writeCommentReplyDraft,
   type CommentDraftState,
 } from "../../src/web/comment-draft-store.js";
 import type { ActiveDocument } from "../../src/web/document-workspace.js";
@@ -59,5 +61,32 @@ describe("comment draft store", () => {
 
     writeCommentDraft(pullRequestId, key, revision, draft);
     expect(readCommentDraft(pullRequestId, key)).toBeUndefined();
+  });
+
+  it("restores an in-progress reply and rejects it after the review state is reset", () => {
+    const key = "inline:comment-1";
+    const initial = readCommentReplyDraft(pullRequestId, key);
+    writeCommentReplyDraft(pullRequestId, key, {
+      ...initial,
+      body: "別コメントの同期中も保持する返信",
+      focused: true,
+    });
+    expect(readCommentReplyDraft(pullRequestId, key)).toEqual({
+      revision: initial.revision,
+      body: "別コメントの同期中も保持する返信",
+      focused: true,
+    });
+
+    clearCommentDraftsForPullRequest(pullRequestId);
+    expect(readCommentReplyDraft(pullRequestId, key)).toEqual({
+      revision: initial.revision + 1,
+      body: "",
+      focused: false,
+    });
+    writeCommentReplyDraft(pullRequestId, key, {
+      ...initial,
+      body: "復元してはいけない返信",
+    });
+    expect(readCommentReplyDraft(pullRequestId, key).body).toBe("");
   });
 });

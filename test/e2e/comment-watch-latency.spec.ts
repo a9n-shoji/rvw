@@ -186,7 +186,68 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
       { isRoot: true, body: "Please confirm that the acknowledgement is immediate." },
       { id: operation.statusPostId, isRoot: false, body: finalBody },
     ]);
+    verified.insertReply(comment.id, {
+      body: "Please also confirm that a follow-up keeps the first answer.",
+      authorLabel: "Reviewer",
+    });
     verified.close();
+
+    const followUpAcknowledged = await output.waitFor(
+      (message) =>
+        message.type === "batch-acknowledged" && message.batchId !== acknowledged.batchId,
+    );
+    const followUpLeaseId = String(followUpAcknowledged.leaseId);
+    const followUpOperation = (
+      followUpAcknowledged.operations as Array<{ commentRef: string; statusPostId: string }>
+    )[0];
+    expect(followUpOperation).toBeDefined();
+    if (!followUpOperation) throw new Error("follow-up auto-ack did not return an operation");
+    expect(followUpOperation.commentRef).toBe(comment.ref);
+    expect(followUpOperation.statusPostId).not.toBe(operation.statusPostId);
+
+    const pendingFollowUp = new RvwDatabase({
+      filePath: databasePath,
+      migrationsDirectory: "./migrations",
+    });
+    const pendingPosts = pendingFollowUp.getComment(comment.id)?.posts ?? [];
+    expect(pendingPosts.find((post) => post.id === operation.statusPostId)?.body).toBe(finalBody);
+    expect(pendingPosts.find((post) => post.id === followUpOperation.statusPostId)?.body).toBe(
+      "🔎 確認中です…",
+    );
+    pendingFollowUp.close();
+
+    const followUpFinalBody = "📝 追加調査結果\n\nThe first answer was preserved.";
+    const followUpEdited = spawnSync(
+      process.execPath,
+      [
+        cli,
+        "comment",
+        "edit",
+        followUpOperation.commentRef,
+        "--post",
+        followUpOperation.statusPostId,
+        "--stdin",
+        "--json",
+      ],
+      {
+        encoding: "utf8",
+        env: childEnvironment(databasePath),
+        input: JSON.stringify({ body: followUpFinalBody, relatedCommitOid: null }),
+      },
+    );
+    expect(followUpEdited.status, followUpEdited.stderr).toBe(0);
+    runState(state, "complete", ["--lease", followUpLeaseId], { postIds: [] });
+
+    const finalThread = new RvwDatabase({
+      filePath: databasePath,
+      migrationsDirectory: "./migrations",
+    });
+    const finalPosts = finalThread.getComment(comment.id)?.posts ?? [];
+    expect(finalPosts.find((post) => post.id === operation.statusPostId)?.body).toBe(finalBody);
+    expect(finalPosts.find((post) => post.id === followUpOperation.statusPostId)?.body).toBe(
+      followUpFinalBody,
+    );
+    finalThread.close();
     expect(startupMs).toBeLessThan(5_000);
     expect(acknowledgementMs).toBeLessThan(5_000);
     console.log(

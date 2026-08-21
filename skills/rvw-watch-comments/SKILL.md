@@ -69,7 +69,8 @@ node '<SKILL_DIR>/scripts/preflight.mjs'
 ```
 
 Start the bundled driver with the state path. `--auto-ack` is the normal mode: it claims an eligible
-PR batch, re-reads every thread, creates or restores `🔎 確認中です…`, records suppression, and emits
+PR batch, re-reads every thread, creates `🔎 確認中です…` (or restores it when retrying that batch),
+records suppression, and emits
 one `batch-acknowledged` JSON line containing the lease and operations. The first `watch-ready` line
 means monitoring is established. The driver chooses cursorless start only when state has no cursor;
 that intentionally skips all existing comments. Otherwise it resumes from the exact durable cursor.
@@ -110,7 +111,7 @@ a crash before that commit causes rvw to replay it. Never construct or edit curs
 ## Acknowledge and process a batch
 
 With the normal auto-ack driver, consume its `batch-acknowledged` object directly. Each operation has
-`commentRef`, the thread-stable `idempotencyKey`, `statusPostId`, `acknowledgement`, `status`, and the
+`commentRef`, the batch-operation-stable `idempotencyKey`, `statusPostId`, `acknowledgement`, `status`, and the
 fresh `comment get` result as `thread`. A disappeared thread has `status: "gone"` and is not
 acknowledged. If intake runs without auto-ack, invoke the same complete fast path once for the PR:
 
@@ -121,9 +122,12 @@ node '<SKILL_DIR>/scripts/auto-ack.mjs' \
 ```
 
 For a null `statusPostId`, auto-ack sends exactly `{ "body": "🔎 確認中です…",
-"idempotencyKey": "<THREAD_KEY>" }` to `rvw comment reply`, then records the returned post. It omits
+"idempotencyKey": "<BATCH_OPERATION_KEY>" }` to `rvw comment reply`, then records the returned post. It omits
 `authorLabel` and `relatedCommitOid`, so an uncertain retry has the identical payload. For an existing
-status post it sends `{ "body": "🔎 確認中です…", "relatedCommitOid": null }` to `comment edit`.
+status post in the same retried batch it sends
+`{ "body": "🔎 確認中です…", "relatedCommitOid": null }` to `comment edit`. A later batch for the
+same thread has a new key and null `statusPostId`, so it creates another acknowledgement and never
+rewrites the previous final answer.
 The acknowledgement's watch event is suppressed even when intake queued it before the post ID was
 recorded.
 
@@ -284,8 +288,8 @@ Frame schemas accepted by `ingest`:
 
 Claim `operations` are `{commentRef,idempotencyKey,statusPostId}`. Claim `events` are
 `{sequence,postId,commentRef,pullRequestUrl}`. State schema additions are created with
-`CREATE TABLE IF NOT EXISTS`; existing state databases remain readable and retain their cursors,
-leases, keys, and status posts.
+idempotent local migrations; existing state databases remain readable and retain their cursors,
+leases, and unfinished batch keys and status posts.
 
 | Script    | Invocation                                                                            | Output                                                                                        |
 | --------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
