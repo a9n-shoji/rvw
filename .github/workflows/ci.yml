@@ -30,7 +30,8 @@ jobs:
         run: |
           git fetch --no-tags --depth=50 origin +refs/heads/main:refs/remotes/origin/main
           test "$(git rev-list --first-parent --count refs/remotes/origin/main)" -ge 7
-          pnpm test:e2e
+          # The PR merge checkout can restore its shallow boundary after the fetch; the objects remain.
+          GIT_SHALLOW_FILE= pnpm test:e2e
 
   package-smoke:
     name: Package smoke (${{ matrix.os }})
