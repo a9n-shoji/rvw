@@ -491,6 +491,10 @@ the current Agent may supply an accurate optional `authorLabel`.
 `--after` from task state, its auto-ack reuses each batch operation's idempotency key and status post
 only when that batch is retried, and its
 worker handoff uses an absolute JSON result path rather than relying on relayed completion text.
+Direct and worker outcomes carry `body`, `relatedCommitOid`, a complete `references` array, and
+`pushStatus`. The Skill uses typed references by default for concrete code behavior, implemented
+changes, and relevant tests when an exact committed range adds navigation value. Investigation-only
+outcomes may cite their evidence commit without claiming that a change was pushed.
 
 Each rvw-managed installation records the bundled digest. Status distinguishes a clean older bundle
 (`updateAvailable` and `updateRequired`), local customization (`locallyModified`), and a differing

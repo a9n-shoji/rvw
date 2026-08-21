@@ -200,6 +200,8 @@ batchをclaimすると各threadへ`🔎 確認中です…`をAgent往復なし�
 完了時は同じreplyを最終結果へ編集します。Skill同梱のtask-state toolがrepository外のSQLiteへcursor、
 queue、retry、batch内のthread単位status post、自己返信抑制をtransactionalに保存します。同じthreadへ
 後から返信が追加された場合は新しいstatus postを返信するため、以前の回答は書き換えません。
+調査結果、実装内容、test結果が具体的なcodeに基づく場合、Skillは最終replyからexact commitの有用な
+line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動できるようにします。
 
 三つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
 `rvw walkthrough get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`だけを利用します。
@@ -254,9 +256,11 @@ rvw pr attach <PR_REF> --repository <PATH> --json
 stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの
 対話commandへJSONと改行だけを送るとEOF待ちになります。
 
-`comment create`は登録済みPR、通常のcomment target、本文、任意のAgent名、任意の投稿単位code referenceをstdin JSONで受け取り、
+`comment create`は登録済みPR、通常のcomment target、本文、任意のAgent名、投稿単位code referenceをstdin JSONで受け取り、
 未解決のroot threadを一件作成します。repository targetはexact commit、path、任意のinclusive line rangeを
 指定し、viewerと同じ文書・行検証を通ります。作成してもbrowserを開かず、tabやcommit選択を変更しません。
+同梱Skillは具体的なcode上のclaimにnavigation価値のある根拠がある場合、Walkthroughと同じくtyped
+referenceを既定で使います。
 
 `comment list`は未解決を既定として`unresolved` / `resolved` / `all`をページング列挙し、各threadの
 root post preview、post件数、最新head時点のOutdated判定を返します。`hasMore`なら`nextOffset`から

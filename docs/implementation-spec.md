@@ -525,6 +525,10 @@ buttonを再利用する。各postは一つの`related_commit_oid`と0〜200件�
 IDへ一致しなければならない。referenceはthread内で継承せず、Mermaid bindingにも使わない。通常clickは
 related commitのexact sourceを操作元paneへ、modifier clickは反対paneへ開き、globalなcommit範囲を
 変えない。作成・reply・edit成功前に関連commitをimmutable refで保持する。
+同梱Skillは、finding、調査結果、実装内容、test結果について具体的なcode上のclaimを投稿するとき、
+reviewerがexact evidenceを開く価値があればtyped referenceを既定で付ける。comment target自身が同じ
+exact sourceを既に開ける場合は、別のlabel付きrangeにnavigation価値がない限り重複させない。code evidenceが
+ない、未commit、terminal error、またはtargetの重複にしかならない場合はreferenceを要求しない。
 
 repository内linkと画像の基準commitは、postの`related_commit_oid`、repository targetの`source_oid`、
 Walkthrough targetのcurrent `sourceOid`、`comments.created_head_oid`の順に選ぶ。repository targetでは
@@ -739,6 +743,11 @@ state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待
 起動せず、これらのtask stateも保持しない。
 task起動時に明示された場合だけ、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
 OIDとpush先が一致するPRをfix-and-push候補にできる。他人、不明、不一致はinvestigate-and-replyとする。
+直接調査とworker結果は、最終bodyに加えて`relatedCommitOid`、完全な`references`配列、`pushStatus`を持つ。
+code変更がない調査結果でも、具体的なcode上の結論を支える利用可能なPR commitとtyped referenceを返せる。
+parentはthreadを再取得してbody、commit、referenceを検証し、同じstatus postの完全置換へすべて渡す。
+fix-and-push後のreferenceは同期済みGitHub headへ固定する。referenceがない結果は空配列を明示し、以前の
+retryやacknowledgementから宣言を引き継がない。
 
 ### 7.4 Walkthrough lifecycle
 
@@ -1289,7 +1298,9 @@ batch単位status post、自己event抑制をrepository外のSQLiteで管理す�
 `🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。
 同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を保持する。
 investigate-onlyで1〜2 commentの小batchは親taskが直接調査でき、それ以外をworkerへ委譲する場合は
-絶対pathのJSON fileを唯一の結果回収経路にする。task起動時の
+絶対pathのJSON fileを唯一の結果回収経路にする。直接またはworkerの最終結果はbody、
+`relatedCommitOid`、完全なtyped reference配列、push状態を持ち、具体的なcode上の結論、実装、testには
+navigation価値のあるexact rangeを既定で付ける。task起動時の
 明示許可がある場合だけ、live authorが起動時
 GitHub loginと一致し、head repository/branch/OIDとpush先も一致するPRをfix-and-pushにできる。他人または
 不明なPRはinvestigate-and-replyとする。rvw自身はAgent sessionやtask stateを管理しない。
