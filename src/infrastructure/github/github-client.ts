@@ -1,13 +1,22 @@
 import { z } from "zod";
 import type { GitHubPullRequest } from "../../domain/models.js";
-import { GIT_OBJECT_ID_PATTERN } from "../../shared/constants.js";
+import {
+  GITHUB_ATTACHMENT_TIMEOUT_MS,
+  GIT_OBJECT_ID_PATTERN,
+  MAX_GITHUB_ATTACHMENT_BYTES,
+  MAX_GITHUB_ATTACHMENT_STDERR_BYTES,
+} from "../../shared/constants.js";
 import { RvwError } from "../../shared/errors.js";
+import { canonicalGitHubAttachmentUrl } from "../../shared/image-assets.js";
 import { runProcess, runText } from "../process/run-process.js";
 
 export interface GitHubPort {
   doctor(): Promise<{ version: string; authenticated: boolean }>;
   getPullRequest(reference: string | undefined, cwd: string): Promise<GitHubPullRequest>;
+  getAttachment(absoluteUrl: string): Promise<{ content: Buffer; byteLength: number }>;
 }
+
+type ProcessRunner = typeof runProcess;
 
 const ghPullRequestSchema = z.object({
   author: z.object({ login: z.string().min(1) }).nullable(),
@@ -39,6 +48,8 @@ export function parsePullRequestUrl(url: string): {
 }
 
 export class GitHubClient implements GitHubPort {
+  constructor(private readonly processRunner: ProcessRunner = runProcess) {}
+
   async doctor(): Promise<{ version: string; authenticated: boolean }> {
     const version = await runText("gh", ["--version"]);
     const auth = await runProcess("gh", ["auth", "status", "--hostname", "github.com"], {
@@ -124,5 +135,35 @@ export class GitHubClient implements GitHubPort {
       state: "OPEN",
       isDraft: parsed.data.isDraft,
     };
+  }
+
+  async getAttachment(absoluteUrl: string): Promise<{ content: Buffer; byteLength: number }> {
+    const canonicalUrl = canonicalGitHubAttachmentUrl(absoluteUrl);
+    if (!canonicalUrl) {
+      throw new RvwError("INVALID_INPUT", "GitHub user attachment URLが不正です。");
+    }
+    try {
+      const result = await this.processRunner("gh", ["api", canonicalUrl], {
+        timeoutMs: GITHUB_ATTACHMENT_TIMEOUT_MS,
+        maxStdoutBytes: MAX_GITHUB_ATTACHMENT_BYTES,
+        maxStderrBytes: MAX_GITHUB_ATTACHMENT_STDERR_BYTES,
+      });
+      return { content: result.stdout, byteLength: result.stdout.byteLength };
+    } catch (error) {
+      if (
+        error instanceof RvwError &&
+        error.code === "PROCESS_OUTPUT_LIMIT" &&
+        (error.details as { stream?: unknown } | undefined)?.stream === "stdout"
+      ) {
+        throw new RvwError("FILE_TOO_LARGE", "GitHub attachmentは10 MiB以下にしてください。", {
+          status: 413,
+        });
+      }
+      throw new RvwError(
+        "GITHUB_ERROR",
+        "GitHub attachmentを取得できませんでした。gh認証と画像の閲覧権限を確認してください。",
+        { status: 502 },
+      );
+    }
   }
 }

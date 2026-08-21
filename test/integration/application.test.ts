@@ -20,6 +20,10 @@ class FakeGitHub implements GitHubPort {
   getPullRequest() {
     return Promise.resolve(this.pullRequest);
   }
+
+  getAttachment() {
+    return Promise.reject(new Error("not used"));
+  }
 }
 
 const openPr = (baseOid: string, headOid: string): GitHubPullRequest => ({

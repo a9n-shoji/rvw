@@ -20,6 +20,14 @@ const repositoryDemo =
       )
     : null;
 const pullRequestId = repositoryDemo?.pullRequestId ?? "11111111-1111-4111-8111-111111111111";
+const attachmentId = "37948111-1227-4cdb-a76d-dc8eb469ae5c";
+const brokenAttachmentId = "11111111-2222-4333-8444-555555555555";
+const attachmentUrl = `https://github.com/user-attachments/assets/${attachmentId}`;
+const brokenAttachmentUrl = `https://github.com/user-attachments/assets/${brokenAttachmentId}`;
+const fixturePng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
 const baseOid = repositoryDemo?.baseOid ?? "a".repeat(40);
 const firstHead = repositoryDemo?.commits[0]?.oid ?? "b".repeat(40);
 const secondHead = repositoryDemo?.headOid ?? "c".repeat(40);
@@ -33,6 +41,7 @@ let changeSequence = 0;
 let syncStage = 0;
 let themePreference = "system";
 let blockedImageRequestCount = 0;
+let imageTextRequestCount = 0;
 const selectedLineText = (value, startLine, endLine) =>
   value
     .replace(/\r\n?/g, "\n")
@@ -64,6 +73,12 @@ const commit = (oid, parentOid, subject, hour) => ({
 function currentPullRequest() {
   if (repositoryDemo) return repositoryDemo.pullRequest;
   const headOid = syncStage > 0 ? secondHead : firstHead;
+  const body =
+    syncStage > 1
+      ? "The PR body was rewritten.\nAdditional review details.\n\nFinal note."
+      : syncStage > 0
+        ? "This is always the latest PR body."
+        : "Review the fixture application.";
   return {
     id: pullRequestId,
     host: "github.com",
@@ -74,12 +89,12 @@ function currentPullRequest() {
     localRepositoryPath: "/fixture/review-repo",
     gitCommonDir: "/fixture/review-repo/.git",
     latestTitle: syncStage > 0 ? "Fixture review updated" : "Fixture review",
-    latestBody:
-      syncStage > 1
-        ? "The PR body was rewritten.\nAdditional review details.\n\nFinal note."
-        : syncStage > 0
-          ? "This is always the latest PR body."
-          : "Review the fixture application.",
+    latestBody: [
+      body,
+      `![Private attachment](${attachmentUrl})`,
+      `![Broken attachment](${brokenAttachmentUrl})`,
+      `![External PR image](http://${host}:${port}/api/test/external-image)`,
+    ].join("\n\n"),
     latestBaseRefName: "main",
     latestHeadRefName: "feature",
     latestBaseOid: baseOid,
@@ -143,6 +158,10 @@ function repositoryText(oid) {
 function repositoryDocumentText(oid, filePath) {
   if (repositoryDemo) return repositoryDemo.repositoryDocumentAt(oid, filePath).text ?? "";
   if (filePath === "binary.bin" || filePath === "large.txt") return "";
+  if (/\.(?:png|jpe?g|gif|webp|avif|svg)$/i.test(filePath)) return "";
+  if (filePath === "docs/hybrid.md") {
+    return "# Hybrid document\n\nThe renamed image is now Markdown.\n";
+  }
   if (filePath === "README.md") {
     return [
       "# Orders service",
@@ -224,6 +243,14 @@ function repositoryPathsAt(oid) {
       "large.txt",
       "src/fixture.ts",
       ...(oid === secondHead ? ["src/new.ts"] : ["src/removed.ts"]),
+      "assets/modified.png",
+      "assets/broken.png",
+      "assets/too-large.png",
+      "assets/unsupported.png",
+      ...(oid === baseOid
+        ? ["assets/deleted.png", "assets/old-name.png", "assets/hybrid.png"]
+        : []),
+      ...(oid === baseOid ? [] : ["assets/added.png", "assets/new-name.png", "docs/hybrid.md"]),
       ...walkthroughRepositoryPaths,
     ]),
   ];
@@ -416,6 +443,10 @@ app.get("/api/test/external-image-count", (context) =>
   context.json({ ok: true, count: blockedImageRequestCount }),
 );
 
+app.get("/api/test/image-text-request-count", (context) =>
+  context.json({ ok: true, count: imageTextRequestCount }),
+);
+
 app.get("/api/pull-requests/:id", (context) => context.json({ ok: true, ...currentView() }));
 
 app.post("/api/pull-requests/:id/refresh", async (context) => {
@@ -508,6 +539,59 @@ app.get("/api/pull-requests/:id/changed-files", (context) => {
           newPath: null,
         },
       ];
+  files.push(
+    {
+      kind: "modified",
+      status: "M",
+      similarity: null,
+      oldPath: "assets/modified.png",
+      newPath: "assets/modified.png",
+    },
+    {
+      kind: "added",
+      status: "A",
+      similarity: null,
+      oldPath: null,
+      newPath: "assets/added.png",
+    },
+    {
+      kind: "deleted",
+      status: "D",
+      similarity: null,
+      oldPath: "assets/deleted.png",
+      newPath: null,
+    },
+    {
+      kind: "renamed",
+      status: "R100",
+      similarity: 100,
+      oldPath: "assets/old-name.png",
+      newPath: "assets/new-name.png",
+    },
+    {
+      kind: "modified",
+      status: "M",
+      similarity: null,
+      oldPath: "assets/too-large.png",
+      newPath: "assets/too-large.png",
+    },
+    {
+      kind: "modified",
+      status: "M",
+      similarity: null,
+      oldPath: "assets/unsupported.png",
+      newPath: "assets/unsupported.png",
+    },
+  );
+  if (context.req.query("oldOid") === baseOid) {
+    files.push({
+      kind: "renamed",
+      status: "R100",
+      similarity: 100,
+      oldPath: "assets/hybrid.png",
+      newPath: "docs/hybrid.md",
+    });
+  }
   return context.json({
     ok: true,
     oldOid: context.req.query("oldOid"),
@@ -527,6 +611,9 @@ app.get("/api/pull-requests/:id/document", (context) => {
   }
   const sourceOid = context.req.query("sourceOid");
   const filePath = context.req.query("path");
+  if (/\.(?:png|jpe?g|gif|webp|avif|svg)$/i.test(filePath ?? "")) {
+    imageTextRequestCount += 1;
+  }
   const ref = { kind: "repository-file", pullRequestId, sourceOid, path: filePath };
   if (!repositoryPathsAt(sourceOid).includes(filePath)) {
     return context.json({
@@ -537,17 +624,60 @@ app.get("/api/pull-requests/:id/document", (context) => {
   return context.json({ ok: true, document: repositoryDocument(ref) });
 });
 
-app.get("/api/pull-requests/:id/markdown-asset", (context) => {
-  if (context.req.query("path") !== "docs/order-lifecycle.svg") {
+app.on(["GET", "HEAD"], "/api/pull-requests/:id/markdown-asset", (context) => {
+  const sourceOid = context.req.query("sourceOid");
+  const filePath = context.req.query("path");
+  if (filePath === "docs/order-lifecycle.svg") {
+    context.header("content-type", "image/svg+xml; charset=utf-8");
+    return context.req.method === "HEAD"
+      ? context.body(null)
+      : context.body(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60" viewBox="0 0 240 60"><rect width="240" height="60" rx="8" fill="#1f6feb"/><text x="120" y="36" text-anchor="middle" fill="white" font-family="sans-serif" font-size="16">Order lifecycle</text></svg>',
+        );
+  }
+  if (filePath === "assets/too-large.png") {
+    return context.json(
+      { ok: false, error: { code: "FILE_TOO_LARGE", message: "too large" } },
+      413,
+    );
+  }
+  if (filePath === "assets/unsupported.png") {
+    return context.json(
+      { ok: false, error: { code: "UNSUPPORTED_IMAGE", message: "unsupported" } },
+      415,
+    );
+  }
+  if (
+    !filePath ||
+    !sourceOid ||
+    filePath === "assets/broken.png" ||
+    !repositoryPathsAt(sourceOid).includes(filePath) ||
+    !/\.(?:png|jpe?g|gif|webp|avif)$/i.test(filePath)
+  ) {
     return context.json(
       { ok: false, error: { code: "DOCUMENT_NOT_FOUND", message: "missing asset" } },
       404,
     );
   }
-  context.header("content-type", "image/svg+xml; charset=utf-8");
-  return context.body(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60" viewBox="0 0 240 60"><rect width="240" height="60" rx="8" fill="#1f6feb"/><text x="120" y="36" text-anchor="middle" fill="white" font-family="sans-serif" font-size="16">Order lifecycle</text></svg>',
-  );
+  context.header("content-type", "image/png");
+  context.header("cache-control", "private, max-age=31536000, immutable");
+  context.header("x-content-type-options", "nosniff");
+  context.header("cross-origin-resource-policy", "same-origin");
+  return context.req.method === "HEAD" ? context.body(null) : context.body(fixturePng);
+});
+
+app.get("/api/pull-requests/:id/github-attachment", (context) => {
+  if (context.req.query("url") !== attachmentUrl) {
+    return context.json(
+      { ok: false, error: { code: "GITHUB_ERROR", message: "attachment unavailable" } },
+      502,
+    );
+  }
+  context.header("content-type", "image/png");
+  context.header("cache-control", "private, max-age=31536000, immutable");
+  context.header("x-content-type-options", "nosniff");
+  context.header("cross-origin-resource-policy", "same-origin");
+  return context.body(fixturePng);
 });
 
 app.get("/api/pull-requests/:id/diff", (context) => {
@@ -555,6 +685,13 @@ app.get("/api/pull-requests/:id/diff", (context) => {
   const newOid = context.req.query("newOid");
   const oldPath = context.req.query("oldPath");
   const newPath = context.req.query("newPath");
+  if (
+    [oldPath, newPath].some((filePath) =>
+      /\.(?:png|jpe?g|gif|webp|avif|svg)$/i.test(filePath ?? ""),
+    )
+  ) {
+    imageTextRequestCount += 1;
+  }
   const oldDocument =
     oldPath && repositoryPathsAt(oldOid).includes(oldPath)
       ? repositoryDocument({

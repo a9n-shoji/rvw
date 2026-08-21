@@ -56,6 +56,11 @@ import {
 } from "../shared/constants.js";
 import { findFixedStringMatches } from "../domain/search.js";
 import { RvwError } from "../shared/errors.js";
+import {
+  canonicalGitHubAttachmentUrl,
+  detectImageContentType,
+  type ImageContentType,
+} from "../shared/image-assets.js";
 import { RvwDatabase, type CommentUpdateInput } from "../infrastructure/db/database.js";
 import { GitClient, type RepositoryContext } from "../infrastructure/git/git-client.js";
 import { parsePullRequestUrl, type GitHubPort } from "../infrastructure/github/github-client.js";
@@ -891,6 +896,25 @@ export class RvwService {
     const pullRequest = this.getPullRequest(pullRequestId);
     await this.assertCommitAvailable(pullRequest, sourceOid);
     return await this.git.readRepositoryAsset(pullRequest.localRepositoryPath, sourceOid, filePath);
+  }
+
+  async getGitHubAttachment(
+    pullRequestId: string,
+    absoluteUrl: string,
+  ): Promise<{ content: Buffer; byteLength: number; contentType: ImageContentType }> {
+    this.getPullRequest(pullRequestId);
+    const canonicalUrl = canonicalGitHubAttachmentUrl(absoluteUrl);
+    if (!canonicalUrl) {
+      throw new RvwError("INVALID_INPUT", "GitHub user attachment URLが不正です。");
+    }
+    const attachment = await this.github.getAttachment(canonicalUrl);
+    const contentType = detectImageContentType(attachment.content);
+    if (!contentType) {
+      throw new RvwError("UNSUPPORTED_IMAGE", "GitHub attachmentは対応画像形式ではありません。", {
+        status: 415,
+      });
+    }
+    return { ...attachment, contentType };
   }
 
   async getDiff(ref: DiffDocumentRef): Promise<{
