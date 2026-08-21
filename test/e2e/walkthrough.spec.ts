@@ -628,6 +628,13 @@ test("moves document tabs between at most two panes and previews repository Mark
   await expect(page.getByRole("navigation", { name: "レビュー文書" })).toBeVisible();
 
   await openWalkthroughFromSidebar(page, primaryWalkthrough);
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  await expect(leftPane.getByRole("heading", { name: "注文作成フローの全体像" })).toBeVisible();
+  const leftScrollTop = await leftPane.evaluate((element) => {
+    element.scrollTop = Math.min(320, element.scrollHeight - element.clientHeight);
+    return element.scrollTop;
+  });
+  expect(leftScrollTop).toBeGreaterThan(0);
   await page.getByRole("button", { name: "左ペインの操作" }).click();
   await page.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
   await expect(
@@ -637,20 +644,17 @@ test("moves document tabs between at most two panes and previews repository Mark
   ).toBeVisible();
 
   const rightPane = page.locator('.document-pane[data-pane="right"]');
+  await expect.poll(() => rightPane.evaluate((element) => element.scrollTop)).toBe(leftScrollTop);
   await rightPane
     .locator(".walkthrough-inline-reference")
     .filter({ hasText: "POST /orders" })
     .click({ modifiers: ["Meta"] });
-  await expect(
-    page
-      .locator('.document-pane[data-pane="left"]')
-      .getByRole("tab", { name: "src/http/routes/orders.ts" }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(rightPane.getByRole("tab", { name: primaryWalkthrough })).toHaveAttribute(
+  await expect(rightPane.getByRole("tab", { name: "src/http/routes/orders.ts" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await expect(page.locator('.document-pane[data-pane="left"] diffs-container')).toHaveAttribute(
+  await expect(rightPane.getByRole("tab", { name: primaryWalkthrough })).toBeVisible();
+  await expect(rightPane.locator("diffs-container")).toHaveAttribute(
     "data-search-target-line",
     "10",
   );
@@ -907,9 +911,7 @@ test("moves document tabs between at most two panes and previews repository Mark
     .getByRole("button", { name: "README.md", exact: true })
     .click({ modifiers: ["Meta"] });
   await rightMarkdownPane.getByRole("button", { name: "Preview", exact: true }).click();
-  await rightMarkdownPane
-    .getByRole("link", { name: "the order workflow", exact: true })
-    .click({ modifiers: ["Meta"] });
+  await rightMarkdownPane.getByRole("link", { name: "the order workflow", exact: true }).click();
   await expect(
     page
       .locator('.document-pane[data-pane="left"]')
@@ -1648,6 +1650,110 @@ test("deletes an unnecessary walkthrough and its whole-document feedback after c
   await expect(page.getByRole("tab", { name: title })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "ウォークスルー 4", exact: true })).toBeVisible();
   await expect(page.getByText(feedback)).toHaveCount(0);
+});
+
+test("removes both pane copies when a walkthrough is deleted externally", async ({
+  page,
+  request,
+}) => {
+  const walkthroughId = "70000000-0000-4000-8000-000000000004";
+  const title = "テストマップ：各層で何を保証しているか";
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  await leftPane.getByRole("button", { name: /Pull Request\.md.*を閉じる/ }).click();
+  await openWalkthroughFromSidebar(page, title);
+  const walkthroughButton = page
+    .getByRole("navigation", { name: "レビュー文書" })
+    .getByRole("button", { name: title, exact: true });
+  await walkthroughButton.click({ modifiers: ["Meta"] });
+
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  await expect(leftPane.getByRole("tab", { name: title })).toBeVisible();
+  await expect(rightPane.getByRole("tab", { name: title })).toBeVisible();
+
+  const response = await request.delete(
+    `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}`,
+    { data: {} },
+  );
+  expect(response.ok()).toBe(true);
+  await expect(page.getByRole("tab", { name: title })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+});
+
+test("opens a comment reference to the same file in the right pane", async ({ page, request }) => {
+  const viewResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  expect(viewResponse.ok()).toBe(true);
+  const { headOid } = (await viewResponse.json()) as { headOid: string };
+  const createResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: headOid,
+        path: "src/fixture.ts",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Inspect [another range in this file](rvw-ref:same-file).",
+      relatedCommitOid: headOid,
+      references: [
+        {
+          id: "same-file",
+          label: "Same file range",
+          path: "src/fixture.ts",
+          startLine: 2,
+          endLine: 2,
+          description: "A second reading position in the same file",
+        },
+      ],
+      authorLabel: "Codex · Same file",
+    },
+  });
+  expect(createResponse.ok()).toBe(true);
+  const { comment } = (await createResponse.json()) as { comment: { id: string } };
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page
+    .locator(".file-tree")
+    .getByRole("button", { name: "src/fixture.ts", exact: true })
+    .click();
+
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  await openCommentsSidebar(page);
+  const sidebarThread = page.locator(".comment-list-item").filter({
+    hasText: "another range in this file",
+  });
+  const openTarget = sidebarThread.getByRole("button", { name: "コメント対象を開く" });
+  await openTarget.click();
+  await expect(leftPane.locator("diffs-container")).toHaveAttribute("data-search-target-line", "1");
+
+  await openTarget.click({ modifiers: ["Meta"] });
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  await expect(rightPane.locator("diffs-container")).toHaveAttribute(
+    "data-search-target-line",
+    "1",
+  );
+  await expect(leftPane.locator("diffs-container")).toHaveAttribute("data-search-target-line", "1");
+
+  const inlineThread = leftPane.locator(`[data-comment-id="${comment.id}"]`);
+  await inlineThread
+    .getByRole("button", { name: /another range in this file/ })
+    .click({ modifiers: ["Meta"] });
+
+  await expect(leftPane.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rightPane.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rightPane.locator("diffs-container")).toHaveAttribute(
+    "data-search-target-line",
+    "2",
+  );
+  await expect(leftPane.locator("diffs-container")).toHaveAttribute("data-search-target-line", "1");
 });
 
 test("renders safe context-bound Markdown in sidebar and inline comment posts", async ({

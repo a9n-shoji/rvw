@@ -381,6 +381,34 @@ test("preserves an unsent file comment draft while switching document tabs", asy
   await expect(draft).toBeHidden();
 });
 
+test("keeps unsent drafts independent for the same file in both panes", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const file = page.getByRole("button", { name: "src/fixture.ts", exact: true });
+  await file.click();
+  await file.click({ modifiers: ["Meta"] });
+
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  await leftPane.getByRole("button", { name: "ファイル全体へコメント" }).click();
+  await rightPane.getByRole("button", { name: "ファイル全体へコメント" }).click();
+  const leftDraft = leftPane.getByRole("textbox", { name: "ファイル全体へコメント" });
+  const rightDraft = rightPane.getByRole("textbox", { name: "ファイル全体へコメント" });
+  await leftDraft.fill("左ペインの未送信ドラフト");
+  await rightDraft.fill("右ペインの未送信ドラフト");
+
+  await rightPane.getByRole("button", { name: "src/fixture.tsを閉じる" }).click();
+  await file.click({ modifiers: ["Meta"] });
+  await expect(rightPane.getByRole("textbox", { name: "ファイル全体へコメント" })).toHaveValue(
+    "右ペインの未送信ドラフト",
+  );
+
+  await leftPane.getByRole("button", { name: "src/fixture.tsを閉じる" }).click();
+  await file.click();
+  await expect(leftPane.getByRole("textbox", { name: "ファイル全体へコメント" })).toHaveValue(
+    "左ペインの未送信ドラフト",
+  );
+});
+
 test("visually disambiguates open tabs that share the same basename", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   const paths = [
@@ -1268,7 +1296,7 @@ test("keeps the beginning of code visible after narrow reference navigation", as
   await openWalkthroughFromSidebar(page, "注文作成フロー：HTTPからtransactional outboxまで");
   await page.getByRole("button", { name: "POST /orders L10–12", exact: true }).click();
 
-  const diff = page.locator('.document-pane[data-pane="right"] diffs-container');
+  const diff = page.locator('.document-pane[data-pane="left"] diffs-container');
   await expect(diff.locator('[data-line="10"][data-editor-active-line]')).toBeVisible();
   await expect.poll(() => diff.locator("code").evaluate((code) => code.scrollLeft)).toBe(0);
   await expect(diff.locator('[data-line="1"] span').first()).toHaveText("import");

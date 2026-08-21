@@ -68,9 +68,9 @@ include viewer state and cannot navigate a browser. The React viewer treats a
 Walkthrough as another document tab, and only a human action opens the referenced exact Git document.
 Inline references and bound Mermaid nodes remain interactive, but the viewer does not duplicate the
 complete reference set in a side or bottom index.
-The browser owns an ephemeral two-pane workspace: every document identity belongs to one pane, tabs can
-move between panes, and modifier-click targets the right pane from the sidebar or the opposite pane from
-within a document. Pane placement never enters SQLite or the Agent protocol. Repository Markdown uses
+The browser owns an ephemeral two-pane workspace: every document identity may appear once per pane, tabs
+can move between panes, ordinary document-opening clicks target the left pane, and modifier-click targets
+the right pane regardless of focus or origin. Pane placement never enters SQLite or the Agent protocol. Repository Markdown uses
 the same exact Git document fetch and can switch locally between source and a safe rendered preview.
 The preview preserves native browser text selection while translating parser positions back to source line ranges;
 it never persists DOM or layout coordinates.

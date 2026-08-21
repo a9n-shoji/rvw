@@ -243,10 +243,12 @@ empty fileは従来どおり明示的に扱う。
   選択範囲のlatest側なら`最新`を明示する。
 - range picker内はclickで一件、pointer dragまたはShift+clickで両端を含む連続範囲を選択する。
   `PR全体`と`最新だけ`のshortcutも提供し、範囲内のcommitを一件ずつtoggleさせない。
-- 開いた`Pull Request.md`とrepository fileはpath identityで重複しない一時tabとして保持する。
+- 開いた`Pull Request.md`とrepository fileはpaneごとにpath identityで重複しない一時tabとして保持する。
+  同じdocument identityは左paneと右paneへ一つずつまで開ける。
 - `Cmd` / `Ctrl`+`P`は全repository fileと`Pull Request.md`を対象にQuick Openを開く。file名を
   pathより優先するbrowser内fuzzy search、match highlight、open / active状態、file / change iconを表示し、
-  Arrow keyで選択、Enterで現在activeなpaneへ追加して開き、Escapeで閉じる。
+  Arrow keyで選択、Enterまたは通常clickで左pane、`Cmd` / `Ctrl`+clickで右paneへ追加して開き、
+  Escapeで閉じる。
 - Walkthroughも独立した一時tabとして保持し、そこからcodeを開いても説明tabを閉じない。
   tabは個別に閉じられ、paneの`...` menuからactive以外またはpane内すべてを一括で閉じられる。
   overflow時は横scrollとopen-tab一覧を提供する。
@@ -256,19 +258,22 @@ empty fileは従来どおり明示的に扱う。
   単なるpane focus、tab close／move、pane幅、sidebar、検索入力、自動syncをentryにしない。commit範囲、
   全文／変更、stacked / split、
   tree modeはhistoryから復元せず、Back / Forward後も現在のglobal review scopeを維持する。
-- history復元では対象文書が現在属するpaneを優先し、閉じている場合だけ記録したpaneへ再度開く。対象paneを
+- history復元では記録したpaneに対象文書が開いていればそのcopyを優先し、一方のpaneだけに開いている場合は
+  そのpaneを使う。閉じている場合だけ記録したpaneへ再度開く。対象paneを
   focusして文書と位置を復元するが、もう一方のpane、open tab集合、pane配置を巻き戻さず、移動元のtabも
   閉じない。line navigationは適用位置に留まる間だけline anchorを保持し、利用者がそこからscrollした後は
   実際のpane内scroll位置へ切り替える。pane内scrollはbrowserのwindow scroll restorationへ委ねず、文書
   ごとの位置として復元する。reloadは既存の一時workspace境界を保ち、保持された現在entryを初期文書で置換する。
-- document workspaceは通常一ペイン、必要時に横並びの最大二ペインとする。document identityは一つの
-  paneだけに所属し、tab drag & dropまたはpane headerの`...` menuで左右へ移動できる。
+- document workspaceは通常一ペイン、必要時に横並びの最大二ペインとする。同じdocument identityは各paneに
+  一つまで所属でき、tab drag & dropまたはpane headerの`...` menuで左右へ移動できる。移動先に同じidentityが
+  すでにある場合は移動先の一つへ統合する。
 - sidebarとdocument workspaceの境界、および二ペイン間の境界はpointer dragで横幅を変更できる。
   sidebarはmain reading surfaceの最低幅を残し、各document paneも最低幅を持つ。dividerのdouble clickは
   既定幅へ戻し、左右arrow keyでも調整できる。幅はbrowser内だけの一時状態で永続化しない。
-- sidebarのfile、search result、Walkthroughは`Cmd` / `Ctrl`+clickで右ペインへ開ける。document
-  pane内のWalkthrough reference、diagram node、repository Markdown linkは`Cmd` / `Ctrl`+clickで
-  操作元と反対のペインへ開く。通常clickは操作元のペインへ開く。新しい反対paneを初めて作る場合も、code
+- sidebarのfile、search result、Walkthrough、comment targetと、document pane内のWalkthrough reference、
+  diagram node、repository Markdown link、comment内referenceは、通常clickで左pane、`Cmd` / `Ctrl`+clickで右paneへ
+  開く。操作元やfocused paneは文書を開く先へ影響させない。tab clickはそのtabが属するpaneをactivateし、
+  同一Markdown内の見出しlinkは表示中pane内を移動する。新しい右paneを初めて作る場合も、code
   referenceの選択範囲を描画完了後にviewport中央へfocusする。
 - Walkthrough reference、repository Markdownの相対link、comment targetを開いても、repository全体の
   commit範囲、全文／変更、stacked / split、tree modeを変更しない。Walkthrough referenceは全文では
@@ -346,7 +351,7 @@ empty fileは従来どおり明示的に扱う。
   renderする。repository内の`.md` / `.markdown`はGitHubのfile previewと同じくsoft line breakを
   hard breakへ変換しない。
   repository内への相対linkは表示中のfile pathから解決し、同じexact source commitのdocumentとして
-  通常clickは現在pane、`Cmd` / `Ctrl`+clickは右paneへ開く。外部URLだけをbrowserの別tabで開き、
+  通常clickは左pane、`Cmd` / `Ctrl`+clickは右paneへ開く。外部URLだけをbrowserの別tabで開き、
   fragment-only linkは表示中document内のnavigationとして残す。相対linkを開いてもglobalなcommit範囲、
   full / changes、stacked / split、tree modeは変更せず、対象paneだけexact sourceの全文を表示する。
   Previewのrender treeにはMarkdown parserが持つsource positionを付与し、browser標準の文字列選択を
@@ -523,7 +528,7 @@ comment code referenceはWalkthroughと同じ`CodeReference` schema、ID/path/li
 buttonを再利用する。各postは一つの`related_commit_oid`と0〜200件のreferenceを所有し、referenceが
 ある場合は関連commitを必須とする。全宣言はそのpost本文のMarkdown linkから使われ、全linkは宣言済み
 IDへ一致しなければならない。referenceはthread内で継承せず、Mermaid bindingにも使わない。通常clickは
-related commitのexact sourceを操作元paneへ、modifier clickは反対paneへ開き、globalなcommit範囲を
+related commitのexact sourceを左paneへ、modifier clickは右paneへ開き、globalなcommit範囲を
 変えない。作成・reply・edit成功前に関連commitをimmutable refで保持する。
 同梱Skillは、finding、調査結果、実装内容、test結果について具体的なcode上のclaimを投稿するとき、
 reviewerがexact evidenceを開く価値があればtyped referenceを既定で付ける。comment target自身が同じ
@@ -532,8 +537,8 @@ exact sourceを既に開ける場合は、別のlabel付きrangeにnavigation価
 
 repository内linkと画像の基準commitは、postの`related_commit_oid`、repository targetの`source_oid`、
 Walkthrough targetのcurrent `sourceOid`、`comments.created_head_oid`の順に選ぶ。repository targetでは
-target fileのdirectory、それ以外ではrepository rootを相対pathの起点にする。通常clickは操作元pane、
-pane内の`Cmd` / `Ctrl`+clickは反対pane、sidebar内のmodifier clickは右paneへexact source全文を開き、
+target fileのdirectory、それ以外ではrepository rootを相対pathの起点にする。通常clickは左pane、
+`Cmd` / `Ctrl`+clickは操作元にかかわらず右paneへexact source全文を開き、
 globalなcommit範囲や表示modeを変更しない。replyは任意の`related_commit_oid`を持てる。
 Agent batch syncのreplyは同期後のGitHub headへ自動的に関連付ける。
 人間はviewerから、明示的に依頼された外部AgentはCLIから、同じtarget validationを通して新しいroot
@@ -1099,7 +1104,7 @@ tab row
 - historical commitを選択中ならrefresh後も選択を維持する。
 - PR本文はselectorと無関係に常にlatest cacheを全文表示し、global controlがdiff modeなら
   `差分なし · 全文表示`を明示する。
-- 未送信comment draftはPR、文書、exact source、commit範囲、表示modeごとに分離し、tab切替や
+- 未送信comment draftはPR、pane、文書、exact source、commit範囲、表示modeごとに分離し、tab切替や
   tabの閉じ直しでは保持する。送信、明示cancel、comment targetへのnavigation、reset成功時に破棄する。
 - 明示capture button、未取り込みbanner、version selectorは存在しない。
 - refreshは取得・ref保持・cache更新を一度に行う。
@@ -1206,8 +1211,8 @@ E2E:
 10. Walkthroughを開いてもcode tabを自動で開かず、inline referenceまたはMermaid nodeを人間が
     選んだ時だけ対象commitを変えずexact source行へ移動し、説明tabを保持。missing時はtabを開かず
     一時的なリンク切れchip、通信や一時的な取得失敗では区別したstatusを表示
-11. tabをdragまたはpane menuで左右へ移し、`Cmd` / `Ctrl`+clickでreferenceを操作元と反対の
-    ペインへ開く
+11. tabをdragまたはpane menuで左右へ移し、通常clickでreferenceを左pane、`Cmd` / `Ctrl`+clickで
+    右paneへ開く。同じfileを参照している場合も左右に一つずつ保持し、参照先paneだけを指定行へ移動する
 12. repository MarkdownをSource / Previewで切り替え、Previewの文字列選択からsource行commentを作成する
 13. flowchartとclass diagramのbinding済み要素からexact sourceを開く
 14. CLI更新したWalkthroughのtitle、本文、referenceを同じopen tabへpoll反映
