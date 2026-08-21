@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -344,5 +344,107 @@ describe("rvw-watch-comments bundled scripts", () => {
       "1",
       "--json-seq",
     ]);
+  });
+
+  it("allows only one driver process to own a task state", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-driver-owner-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    runState(state, "init");
+    const canonicalState = realpathSync(state);
+    const lockPath = `${canonicalState}.watch-driver.lock`;
+    const first = spawn(process.execPath, [driverScript, state], {
+      env: fakeEnvironment(fake),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let firstStderr = "";
+    first.stderr.setEncoding("utf8");
+    first.stderr.on("data", (chunk: string) => {
+      firstStderr += chunk;
+    });
+    const ready = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("first driver startup timed out")), 5000);
+      let buffered = "";
+      first.stdout.setEncoding("utf8");
+      first.stdout.on("data", (chunk: string) => {
+        buffered += chunk;
+        const lines = buffered.split("\n");
+        buffered = lines.pop() ?? "";
+        for (const line of lines.filter(Boolean)) {
+          const parsed = JSON.parse(line) as { type?: string };
+          if (parsed.type !== "watch-ready") continue;
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+
+    await ready;
+    expect(existsSync(lockPath)).toBe(true);
+    const duplicate = spawnSync(process.execPath, [driverScript, state], {
+      encoding: "utf8",
+      env: fakeEnvironment(fake),
+    });
+    expect(duplicate.status).toBe(24);
+    expect(duplicate.stdout).toBe("");
+    expect(JSON.parse(duplicate.stderr)).toMatchObject({
+      ok: false,
+      error: "Another watch-driver process already owns this task state",
+      details: { state: canonicalState, lockPath, ownerPid: first.pid },
+      exitCode: 24,
+    });
+    expect(
+      readFakeCalls(fake.log).filter(
+        (call) => call.args[0] === "comment" && call.args[1] === "watch",
+      ),
+    ).toHaveLength(1);
+
+    first.kill("SIGTERM");
+    const firstCode = await new Promise<number | null>((resolve, reject) => {
+      first.once("error", reject);
+      first.once("close", resolve);
+    });
+    expect(firstCode, firstStderr).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
+
+    const exitedOwner = spawnSync(process.execPath, ["--eval", ""]);
+    if (!exitedOwner.pid) throw new Error("could not create a stale owner PID");
+    writeFileSync(lockPath, `${JSON.stringify({ pid: exitedOwner.pid, state: canonicalState })}\n`);
+    const restarted = spawn(process.execPath, [driverScript, state], {
+      env: fakeEnvironment(fake),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let restartedStderr = "";
+    restarted.stderr.setEncoding("utf8");
+    restarted.stderr.on("data", (chunk: string) => {
+      restartedStderr += chunk;
+    });
+    const restartedReady = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("restarted driver startup timed out")),
+        5000,
+      );
+      let buffered = "";
+      restarted.stdout.setEncoding("utf8");
+      restarted.stdout.on("data", (chunk: string) => {
+        buffered += chunk;
+        const lines = buffered.split("\n");
+        buffered = lines.pop() ?? "";
+        for (const line of lines.filter(Boolean)) {
+          const parsed = JSON.parse(line) as { type?: string };
+          if (parsed.type !== "watch-ready") continue;
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+    });
+    await restartedReady;
+    restarted.kill("SIGTERM");
+    const restartedCode = await new Promise<number | null>((resolve, reject) => {
+      restarted.once("error", reject);
+      restarted.once("close", resolve);
+    });
+    expect(restartedCode, restartedStderr).toBe(0);
+    expect(existsSync(lockPath)).toBe(false);
   });
 });

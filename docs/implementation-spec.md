@@ -1294,7 +1294,9 @@ requestとrepository contextへ委ね、固定の文書templateを要求しな�
 `rvw-watch-comments`は一つの外部Agent taskをreceiverとして使い、cursorless起動で既存未解決を処理せず、
 新規root/replyをPRごとのbatchへまとめる。同梱preflight、watch driver、state script、auto-ackが
 prerequisite確認、cursor resume、RFC 7464 ingest、pending通知、queue、lease、retry、comment URIごとの
-batch単位status post、自己event抑制をrepository外のSQLiteで管理する。検知直後に各threadを再読込して
+batch単位status post、自己event抑制をrepository外のSQLiteで管理する。watch driverはstate DBごとの
+process owner lockをrvw起動前に取得し、同じtaskの二重起動を拒否する。異常終了後のlockは記録したowner
+processが存在しない場合だけ回収する。検知直後に各threadを再読込して
 `🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。
 同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を保持する。
 investigate-onlyで1〜2 commentの小batchは親taskが直接調査でき、それ以外をworkerへ委譲する場合は
