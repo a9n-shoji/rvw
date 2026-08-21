@@ -115,11 +115,11 @@ function CommentPostMarkdown({
     | ((
         sourceOid: string,
         reference: CodeReference,
-        openInOtherPane: boolean,
+        openInRightPane: boolean,
       ) => Promise<string | null>)
     | undefined;
   onOpenRepositoryLink?:
-    ((path: string, sourceOid: string, openInOtherPane: boolean) => void) | undefined;
+    ((path: string, sourceOid: string, openInRightPane: boolean) => void) | undefined;
 }) {
   const [referenceNotice, setReferenceNotice] = useState<string | null>(null);
   const referenceNoticeTimeout = useRef<number | null>(null);
@@ -142,10 +142,10 @@ function CommentPostMarkdown({
   );
   const openCodeReference = async (
     reference: CodeReference,
-    openInOtherPane: boolean,
+    openInRightPane: boolean,
   ): Promise<void> => {
     if (!onOpenCodeReference) return;
-    const notice = await onOpenCodeReference(sourceOid, reference, openInOtherPane);
+    const notice = await onOpenCodeReference(sourceOid, reference, openInRightPane);
     if (!notice) return;
     if (referenceNoticeTimeout.current !== null) {
       window.clearTimeout(referenceNoticeTimeout.current);
@@ -165,8 +165,8 @@ function CommentPostMarkdown({
         sourcePath={repositoryTarget?.path ?? null}
         references={post.references}
         themePreference={themePreference}
-        onOpenCodeReference={(reference, openInOtherPane) => {
-          void openCodeReference(reference, openInOtherPane);
+        onOpenCodeReference={(reference, openInRightPane) => {
+          void openCodeReference(reference, openInRightPane);
         }}
         onOpenRepositoryLink={onOpenRepositoryLink}
       />
@@ -202,12 +202,12 @@ export function CommentThread({
     | ((
         sourceOid: string,
         reference: CodeReference,
-        openInOtherPane: boolean,
+        openInRightPane: boolean,
       ) => Promise<string | null>)
     | undefined;
-  onOpenTarget?: () => void;
+  onOpenTarget?: (openInRightPane: boolean) => void;
   onOpenRepositoryLink?:
-    ((path: string, sourceOid: string, openInOtherPane: boolean) => void) | undefined;
+    ((path: string, sourceOid: string, openInRightPane: boolean) => void) | undefined;
   onDeleted?: () => void;
   onActiveChange?: (commentId: string, active: boolean) => void;
 }) {
@@ -779,7 +779,20 @@ export function CommentThread({
               {comment.resolvedAt ? "再度開く" : "解決"}
             </button>
             {onOpenTarget && (
-              <button className="button--quiet" onClick={onOpenTarget}>
+              <button
+                className="button--quiet"
+                onMouseDown={(event) => {
+                  if (!event.metaKey && !event.ctrlKey) return;
+                  event.preventDefault();
+                  onOpenTarget(true);
+                }}
+                onClick={(event) => {
+                  if (!event.metaKey && !event.ctrlKey) onOpenTarget(false);
+                }}
+                onContextMenu={(event) => {
+                  if (event.ctrlKey || event.metaKey) event.preventDefault();
+                }}
+              >
                 {navigationLabel(comment)}
               </button>
             )}

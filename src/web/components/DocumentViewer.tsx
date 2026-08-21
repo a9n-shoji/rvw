@@ -42,7 +42,7 @@ import {
   readCommentDraft,
   writeCommentDraft,
 } from "../comment-draft-store.js";
-import type { ActiveDocument } from "../document-workspace.js";
+import type { ActiveDocument, DocumentPaneId } from "../document-workspace.js";
 import {
   api,
   documentUrl,
@@ -157,6 +157,7 @@ const viewerUnsafeCss = `
 export type DisplayMode = "full" | "pull-request" | "range";
 export interface ViewerNavigationTarget {
   documentKey: string;
+  pane: DocumentPaneId;
   line: number | null;
   endLine?: number;
   requestId: number;
@@ -363,7 +364,7 @@ function renderRepositoryMarkdown({
   selectedOid: string;
   pullRequestId: string;
   linkPointerStart: { current: PointerPosition | null };
-  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onOpenMarkdownFragment: (line: number, hash: string) => void;
 }): ReactNode {
   const headingCounts = new Map<string, number>();
@@ -585,6 +586,7 @@ function Unavailable({
 
 export function DocumentViewer({
   pullRequestId,
+  paneId,
   selectedOid,
   oldOid,
   activeDocument,
@@ -603,6 +605,7 @@ export function DocumentViewer({
   onOpenRepositoryLink,
 }: {
   pullRequestId: string;
+  paneId: DocumentPaneId;
   selectedOid: string;
   oldOid: string | null;
   activeDocument: ActiveDocument;
@@ -620,9 +623,9 @@ export function DocumentViewer({
   onOpenCodeReference: (
     sourceOid: string,
     reference: CodeReference,
-    openInOtherPane: boolean,
+    openInRightPane: boolean,
   ) => Promise<string | null>;
-  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
 }) {
   if (activeDocument.kind === "walkthrough") {
     throw new Error("walkthroughはWalkthroughViewerで表示してください。");
@@ -642,6 +645,7 @@ export function DocumentViewer({
   };
   const commentDraftKey = commentDraftContextKey({
     activeDocument,
+    pane: paneId,
     selectedOid,
     oldOid,
     displayMode,
@@ -699,8 +703,8 @@ export function DocumentViewer({
     [],
   );
   const openRepositoryLink = useCallback(
-    (path: string, sourceOid: string, openInOtherPane: boolean) =>
-      openRepositoryLinkRef.current(path, sourceOid, openInOtherPane),
+    (path: string, sourceOid: string, openInRightPane: boolean) =>
+      openRepositoryLinkRef.current(path, sourceOid, openInRightPane),
     [],
   );
   const diffSurfaceRef = useRef<HTMLDivElement>(null);

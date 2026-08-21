@@ -118,8 +118,8 @@ rvw walkthrough publish --stdin --json
 構成されます。参照は意味のある複数行range、単行、またはfile全体を指せます。rvwは登録時にcommit、
 path、指定された行範囲を検証します。publishしてもbrowserは開かれず、
 active tabやscroll位置も変わりません。人間がviewerのWalkthroughを開き、必要なreferenceを選んだ
-時だけ、exact sourceがdocument tabへ開き、行指定があれば範囲全体が強調されます。`Cmd` / `Ctrl`を押しながら選べば
-操作元と反対のペインへ開きます。説明tabは残るため、
+時だけ、exact sourceがdocument tabへ開き、行指定があれば範囲全体が強調されます。通常clickは左ペイン、
+`Cmd` / `Ctrl`を押しながら選べば右ペインへ開きます。説明tabは残るため、
 複数のclaimと実装を任意の順序・任意のタイミングで往復できます。
 
 Walkthrough本文のinline referenceとMermaid node linkは維持しますが、同じ参照を横や下へ列挙する

@@ -104,9 +104,9 @@ export function CommentMarkdown({
   sourcePath: string | null;
   references: CodeReference[];
   themePreference: ThemePreference;
-  onOpenCodeReference?: ((reference: CodeReference, openInOtherPane: boolean) => void) | undefined;
+  onOpenCodeReference?: ((reference: CodeReference, openInRightPane: boolean) => void) | undefined;
   onOpenRepositoryLink?:
-    ((path: string, sourceOid: string, openInOtherPane: boolean) => void) | undefined;
+    ((path: string, sourceOid: string, openInRightPane: boolean) => void) | undefined;
 }) {
   const linkPointerStart = useRef<PointerPosition | null>(null);
   const referencesById = useMemo(

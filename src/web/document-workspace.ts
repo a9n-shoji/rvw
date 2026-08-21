@@ -13,8 +13,7 @@ export type ActiveDocument =
     };
 
 export interface DocumentWorkspaceState {
-  documents: ActiveDocument[];
-  panes: Record<string, DocumentPaneId>;
+  documents: Record<DocumentPaneId, ActiveDocument[]>;
   active: Record<DocumentPaneId, ActiveDocument | null>;
   focusedPane: DocumentPaneId;
   navigationRevision: Record<DocumentPaneId, number>;
@@ -26,6 +25,10 @@ export function documentTabKey(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "pull-request-markdown";
   if (document.kind === "walkthrough") return `walkthrough:${document.id}`;
   return `file:${document.path}`;
+}
+
+export function documentPaneTabKey(paneId: DocumentPaneId, document: ActiveDocument): string {
+  return `${paneId}:${documentTabKey(document)}`;
 }
 
 export function documentTabPath(document: ActiveDocument): string {
@@ -41,8 +44,7 @@ export function documentTabLabel(document: ActiveDocument): string {
 
 export function initialDocumentWorkspace(): DocumentWorkspaceState {
   return {
-    documents: [initialDocument],
-    panes: { [documentTabKey(initialDocument)]: "left" },
+    documents: { left: [initialDocument], right: [] },
     active: { left: initialDocument, right: null },
     focusedPane: "left",
     navigationRevision: { left: 0, right: 0 },
@@ -72,20 +74,38 @@ export function otherDocumentPane(paneId: DocumentPaneId): DocumentPaneId {
   return paneId === "left" ? "right" : "left";
 }
 
-function normalizeDocumentPanes(current: DocumentWorkspaceState): DocumentWorkspaceState {
-  const leftDocuments = current.documents.filter(
-    (document) => (current.panes[documentTabKey(document)] ?? "left") === "left",
+export function findDocumentInPane(
+  current: DocumentWorkspaceState,
+  document: ActiveDocument,
+  paneId: DocumentPaneId,
+): ActiveDocument | undefined {
+  const key = documentTabKey(document);
+  return current.documents[paneId].find((candidate) => documentTabKey(candidate) === key);
+}
+
+export function documentPaneIds(
+  current: DocumentWorkspaceState,
+  document: ActiveDocument,
+): DocumentPaneId[] {
+  return (["left", "right"] as const).filter((paneId) =>
+    findDocumentInPane(current, document, paneId),
   );
-  const rightDocuments = current.documents.filter(
-    (document) => current.panes[documentTabKey(document)] === "right",
-  );
-  if (leftDocuments.length > 0 || rightDocuments.length === 0) return current;
+}
+
+export function preferredDocumentPane(
+  current: DocumentWorkspaceState,
+  document: ActiveDocument,
+): DocumentPaneId {
+  if (findDocumentInPane(current, document, current.focusedPane)) return current.focusedPane;
+  return documentPaneIds(current, document)[0] ?? current.focusedPane;
+}
+
+export function normalizeDocumentPanes(current: DocumentWorkspaceState): DocumentWorkspaceState {
+  if (current.documents.left.length > 0 || current.documents.right.length === 0) return current;
   return {
     ...current,
-    panes: Object.fromEntries(
-      current.documents.map((document) => [documentTabKey(document), "left" as const]),
-    ),
-    active: { left: current.active.right ?? rightDocuments[0] ?? null, right: null },
+    documents: { left: current.documents.right, right: [] },
+    active: { left: current.active.right ?? current.documents.right[0] ?? null, right: null },
     focusedPane: "left",
   };
 }
@@ -96,34 +116,59 @@ export function assignDocumentToPane(
   targetPane: DocumentPaneId,
 ): DocumentWorkspaceState {
   const key = documentTabKey(document);
-  const existingIndex = current.documents.findIndex(
+  const existingIndex = current.documents[targetPane].findIndex(
     (candidate) => documentTabKey(candidate) === key,
   );
-  const documents =
+  const targetDocuments =
     existingIndex < 0
-      ? [...current.documents, document]
-      : current.documents.map((candidate, index) =>
+      ? [...current.documents[targetPane], document]
+      : current.documents[targetPane].map((candidate, index) =>
           index === existingIndex ? document : candidate,
         );
-  const sourcePane = current.panes[key];
-  const panes = { ...current.panes, [key]: targetPane };
+  return {
+    ...current,
+    documents: { ...current.documents, [targetPane]: targetDocuments },
+    active: { ...current.active, [targetPane]: document },
+    focusedPane: targetPane,
+  };
+}
+
+export function moveDocumentToPane(
+  current: DocumentWorkspaceState,
+  document: ActiveDocument,
+  sourcePane: DocumentPaneId,
+  targetPane: DocumentPaneId,
+): DocumentWorkspaceState {
+  if (sourcePane === targetPane) return assignDocumentToPane(current, document, targetPane);
+  const key = documentTabKey(document);
+  const sourceIndex = current.documents[sourcePane].findIndex(
+    (candidate) => documentTabKey(candidate) === key,
+  );
+  if (sourceIndex < 0) return current;
+  const sourceDocuments = current.documents[sourcePane].filter(
+    (candidate) => documentTabKey(candidate) !== key,
+  );
+  const targetIndex = current.documents[targetPane].findIndex(
+    (candidate) => documentTabKey(candidate) === key,
+  );
+  const targetDocuments =
+    targetIndex < 0
+      ? [...current.documents[targetPane], document]
+      : current.documents[targetPane].map((candidate, index) =>
+          index === targetIndex ? document : candidate,
+        );
   const active = { ...current.active, [targetPane]: document };
-  if (
-    sourcePane &&
-    sourcePane !== targetPane &&
-    current.active[sourcePane] &&
-    documentTabKey(current.active[sourcePane]) === key
-  ) {
-    active[sourcePane] =
-      documents.find(
-        (candidate) =>
-          documentTabKey(candidate) !== key && panes[documentTabKey(candidate)] === sourcePane,
-      ) ?? null;
+  if (current.active[sourcePane] && documentTabKey(current.active[sourcePane]) === key) {
+    const nextIndex = Math.min(sourceIndex, sourceDocuments.length - 1);
+    active[sourcePane] = sourceDocuments[nextIndex] ?? sourceDocuments.at(-1) ?? null;
   }
   return normalizeDocumentPanes({
     ...current,
-    documents,
-    panes,
+    documents: {
+      ...current.documents,
+      [sourcePane]: sourceDocuments,
+      [targetPane]: targetDocuments,
+    },
     active,
     focusedPane: targetPane,
   });
@@ -132,34 +177,37 @@ export function assignDocumentToPane(
 export function removeDocumentFromWorkspace(
   current: DocumentWorkspaceState,
   document: ActiveDocument,
+  paneId?: DocumentPaneId,
 ): DocumentWorkspaceState {
   const key = documentTabKey(document);
-  const closingIndex = current.documents.findIndex(
+  const closingPane =
+    paneId ??
+    (["left", "right"] as const).find((candidatePane) =>
+      current.documents[candidatePane].some((candidate) => candidate === document),
+    ) ??
+    (findDocumentInPane(current, document, current.focusedPane)
+      ? current.focusedPane
+      : documentPaneIds(current, document)[0]);
+  if (!closingPane) return current;
+  const closingIndex = current.documents[closingPane].findIndex(
     (candidate) => documentTabKey(candidate) === key,
   );
   if (closingIndex < 0) return current;
-  const closingPane = current.panes[key] ?? "left";
-  const remaining = current.documents.filter((candidate) => documentTabKey(candidate) !== key);
-  const panes = { ...current.panes };
-  delete panes[key];
+  const remaining = current.documents[closingPane].filter(
+    (candidate) => documentTabKey(candidate) !== key,
+  );
   const active = { ...current.active };
   if (active[closingPane] && documentTabKey(active[closingPane]) === key) {
-    const paneDocuments = remaining.filter(
-      (candidate) => panes[documentTabKey(candidate)] === closingPane,
-    );
-    const nextIndex = Math.min(closingIndex, paneDocuments.length - 1);
-    active[closingPane] = paneDocuments[nextIndex] ?? paneDocuments.at(-1) ?? null;
+    const nextIndex = Math.min(closingIndex, remaining.length - 1);
+    active[closingPane] = remaining[nextIndex] ?? remaining.at(-1) ?? null;
   }
   const focusedPane =
     current.focusedPane === closingPane && !active[closingPane]
-      ? closingPane === "left"
-        ? "right"
-        : "left"
+      ? otherDocumentPane(closingPane)
       : current.focusedPane;
   return normalizeDocumentPanes({
     ...current,
-    documents: remaining,
-    panes,
+    documents: { ...current.documents, [closingPane]: remaining },
     active,
     focusedPane,
   });

@@ -39,7 +39,7 @@ export function CodeReferenceLink({
   reference: CodeReference;
   children: ReactNode;
   className?: string;
-  onOpen: (reference: CodeReference, openInOtherPane: boolean) => void;
+  onOpen: (reference: CodeReference, openInRightPane: boolean) => void;
 }) {
   return (
     <button

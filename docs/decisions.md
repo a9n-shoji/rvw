@@ -35,6 +35,50 @@ event or reconnect. Preserve the process-owner lock so only one pump controls a 
 - A temporary lack of subagent capacity becomes a visible retry instead of silently delaying work or
   changing execution ownership.
 
+## 2026-08-21: Use deterministic pane destinations and per-pane document identity
+
+### Problem
+
+The two-pane workspace treated a document path as globally unique, so opening a reference in the
+opposite pane moved the existing tab instead of opening a second reading position. In particular, a
+reviewer reading a file in the left pane could not Cmd/Ctrl+click a code reference in a comment and
+inspect another range of that same file in the right pane while preserving the original context.
+The focused-pane and opposite-pane rules also made a file-opening action depend on UI state the
+reviewer had to remember, so the same click could replace a different reading surface each time.
+
+### Choice
+
+Keep path-based document identity, but enforce uniqueness within each pane instead of across the whole
+workspace. The same document may be open once in the left pane and once in the right pane; repeated
+opens in one pane continue to reuse that pane's tab. Opening a document in one pane creates or updates
+that destination-pane copy without removing the other pane's copy.
+
+Give every document-opening interaction one deterministic destination: an ordinary click opens in the
+left pane, while Cmd/Ctrl+click opens in the right pane. This applies to Explorer rows, search results,
+Quick Open (Enter opens left), comment targets and references, repository links, and Walkthrough
+references or diagram nodes. The focused or originating pane does not affect the destination. Tab
+activation still uses the tab's own pane, in-document heading links stay in their current pane, and
+history restores its recorded pane.
+
+Track active tabs, scroll positions, line-navigation requests, unsent comment drafts, closing, and
+history restoration by pane plus document identity. When both panes contain a document, history uses
+its recorded pane. Tab move remains a move: it removes the source copy and merges with an existing
+destination copy when necessary. The workspace still has at most two panes and remains ephemeral
+browser state.
+
+This supersedes both the global one-document-identity ownership rule and the focused/opposite-pane
+document-opening rules in the 2026-08-09 two-pane decision.
+
+### Trade-offs
+
+- A reviewer can compare two locations or retained sources of the same file without losing either
+  reading position.
+- Duplicate-looking tab labels can appear across panes, but never twice within one pane.
+- The left pane has a clear primary-reading role and the right pane a clear modifier-open role; opening
+  a link normally from content in the right pane therefore navigates the left pane.
+- Pane-local scroll and navigation state add a small amount of workspace bookkeeping without creating
+  persistent editor groups or expanding beyond two panes.
+
 ## 2026-08-20: Consolidate review navigation into Explorer and Comments
 
 ### Problem
@@ -858,6 +902,9 @@ pane layout persistent review state would add a larger workspace model than the 
 - Allow at most two panes, keep one tab identity per document, and let the human choose placement.
 
 ### Choice
+
+The 2026-08-21 deterministic-pane decision above supersedes the identity and click-destination rules
+in this choice; the remaining two-pane and ephemeral-state boundaries still apply.
 
 The browser owns an ephemeral workspace with one pane by default and at most two horizontal panes.
 Every open document identity belongs to exactly one pane. A tab can move by drag and drop or the pane

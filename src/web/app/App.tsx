@@ -65,10 +65,12 @@ import {
 } from "../commit-range.js";
 import {
   currentCommitDocument,
+  documentPaneIds,
+  documentPaneTabKey,
   documentTabKey,
   initialDocumentWorkspace,
-  otherDocumentPane,
-  removeDocumentFromWorkspace,
+  normalizeDocumentPanes,
+  preferredDocumentPane,
   type ActiveDocument,
   type DocumentPaneId,
 } from "../document-workspace.js";
@@ -516,15 +518,27 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [commentsExpanded, setCommentsExpanded] = useState(false);
   const [codeNavigationMode, setCodeNavigationMode] = useState<"files" | "search">("files");
   const [treeMode, setTreeMode] = useState<"changed" | "all">("changed");
-  const [viewerNavigationTarget, setViewerNavigationTarget] =
-    useState<ViewerNavigationTarget | null>(null);
-  const viewerNavigationTargetRef = useRef(viewerNavigationTarget);
-  const appliedLineNavigation = useRef<AppliedLineNavigation | null>(null);
-  viewerNavigationTargetRef.current = viewerNavigationTarget;
-  const resetViewerNavigation = useCallback((): void => {
-    viewerNavigationTargetRef.current = null;
-    appliedLineNavigation.current = null;
-    setViewerNavigationTarget(null);
+  const [viewerNavigationTargets, setViewerNavigationTargets] = useState<
+    Record<DocumentPaneId, ViewerNavigationTarget | null>
+  >({ left: null, right: null });
+  const viewerNavigationTargetsRef = useRef(viewerNavigationTargets);
+  const appliedLineNavigation = useRef<Record<DocumentPaneId, AppliedLineNavigation | null>>({
+    left: null,
+    right: null,
+  });
+  viewerNavigationTargetsRef.current = viewerNavigationTargets;
+  const resetViewerNavigation = useCallback((paneIds: readonly DocumentPaneId[]): void => {
+    const uniquePaneIds = [...new Set(paneIds)];
+    const nextTargets = { ...viewerNavigationTargetsRef.current };
+    for (const paneId of uniquePaneIds) {
+      nextTargets[paneId] = null;
+      appliedLineNavigation.current[paneId] = null;
+    }
+    viewerNavigationTargetsRef.current = nextTargets;
+    setViewerNavigationTargets((current) => {
+      if (uniquePaneIds.every((paneId) => current[paneId] === null)) return current;
+      return { ...current, ...Object.fromEntries(uniquePaneIds.map((paneId) => [paneId, null])) };
+    });
   }, []);
   const {
     workspace: documentWorkspace,
@@ -568,7 +582,10 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     right: 0,
   });
   const debouncedSearch = useDebouncedValue(searchText.trim(), 250);
-  const openDocuments = documentWorkspace.documents;
+  const openDocuments = useMemo(
+    () => [...documentWorkspace.documents.left, ...documentWorkspace.documents.right],
+    [documentWorkspace.documents.left, documentWorkspace.documents.right],
+  );
   const activePane = documentWorkspace.focusedPane;
   const activeDocument = documentWorkspace.active[activePane];
   const paneElements = useRef<Record<DocumentPaneId, HTMLElement | null>>({
@@ -579,11 +596,38 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const readingHistoryReady = useRef(false);
   const readingHistoryScrollTimeout = useRef<number | null>(null);
   const leftActiveDocumentKey = documentWorkspace.active.left
-    ? documentTabKey(documentWorkspace.active.left)
+    ? documentPaneTabKey("left", documentWorkspace.active.left)
     : null;
   const rightActiveDocumentKey = documentWorkspace.active.right
-    ? documentTabKey(documentWorkspace.active.right)
+    ? documentPaneTabKey("right", documentWorkspace.active.right)
     : null;
+  const previousDocumentWorkspace = useRef(documentWorkspace);
+
+  useLayoutEffect(() => {
+    const previous = previousDocumentWorkspace.current;
+    for (const sourcePane of ["left", "right"] as const) {
+      const targetPane = sourcePane === "left" ? "right" : "left";
+      for (const document of previous.documents[sourcePane]) {
+        const key = documentTabKey(document);
+        const remainedInSource = documentWorkspace.documents[sourcePane].some(
+          (candidate) => documentTabKey(candidate) === key,
+        );
+        const alreadyExistedInTarget = previous.documents[targetPane].some(
+          (candidate) => documentTabKey(candidate) === key,
+        );
+        const movedToTarget = documentWorkspace.documents[targetPane].some(
+          (candidate) => documentTabKey(candidate) === key,
+        );
+        if (remainedInSource || alreadyExistedInTarget || !movedToTarget) continue;
+        const sourceKey = documentPaneTabKey(sourcePane, document);
+        const sourceTop = documentScrollPositions.current.get(sourceKey);
+        if (sourceTop !== undefined) {
+          documentScrollPositions.current.set(documentPaneTabKey(targetPane, document), sourceTop);
+        }
+      }
+    }
+    previousDocumentWorkspace.current = documentWorkspace;
+  }, [documentWorkspace]);
 
   useLayoutEffect(() => {
     const pane = paneElements.current.left;
@@ -603,14 +647,16 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     const document = workspace.active[pane];
     if (!document) return null;
     const documentKey = documentTabKey(document);
-    const navigationTarget = viewerNavigationTargetRef.current;
+    const paneDocumentKey = documentPaneTabKey(pane, document);
+    const navigationTarget = viewerNavigationTargetsRef.current[pane];
     const scrollTop =
       paneElements.current[pane]?.scrollTop ??
-      documentScrollPositions.current.get(documentKey) ??
+      documentScrollPositions.current.get(paneDocumentKey) ??
       0;
-    const lineNavigation = appliedLineNavigation.current;
+    const lineNavigation = appliedLineNavigation.current[pane];
     const lineNavigationStillAnchored = Boolean(
-      navigationTarget?.documentKey === documentKey &&
+      navigationTarget?.pane === pane &&
+      navigationTarget.documentKey === documentKey &&
       (!lineNavigation ||
         lineNavigation.requestId !== navigationTarget.requestId ||
         lineNavigation.documentKey !== documentKey ||
@@ -641,24 +687,25 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
 
   const markLineNavigationApplied = useCallback(
     (pane: DocumentPaneId, requestId: number): void => {
-      const navigationTarget = viewerNavigationTargetRef.current;
+      const navigationTarget = viewerNavigationTargetsRef.current[pane];
       const workspace = documentWorkspaceRef.current;
       const document = workspace.active[pane];
       if (
         !navigationTarget ||
         navigationTarget.requestId !== requestId ||
+        navigationTarget.pane !== pane ||
         !document ||
         documentTabKey(document) !== navigationTarget.documentKey
       ) {
         return;
       }
-      appliedLineNavigation.current = {
+      appliedLineNavigation.current[pane] = {
         requestId,
         documentKey: navigationTarget.documentKey,
         pane,
         top:
           paneElements.current[pane]?.scrollTop ??
-          documentScrollPositions.current.get(navigationTarget.documentKey) ??
+          documentScrollPositions.current.get(documentPaneTabKey(pane, document)) ??
           0,
       };
     },
@@ -725,20 +772,23 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const requestLineNavigation = useCallback(
     (
       documentKey: string,
+      pane: DocumentPaneId,
       locator: Extract<ReadingLocator, { kind: "line" }>,
       resetHorizontal: boolean,
     ) => {
       searchNavigationSequence.current += 1;
       const target: ViewerNavigationTarget = {
         documentKey,
+        pane,
         line: locator.line,
         ...(locator.endLine === undefined ? {} : { endLine: locator.endLine }),
         requestId: searchNavigationSequence.current,
         resetHorizontal,
       };
-      appliedLineNavigation.current = null;
-      viewerNavigationTargetRef.current = target;
-      setViewerNavigationTarget(target);
+      appliedLineNavigation.current[pane] = null;
+      const nextTargets = { ...viewerNavigationTargetsRef.current, [pane]: target };
+      viewerNavigationTargetsRef.current = nextTargets;
+      setViewerNavigationTargets(nextTargets);
     },
     [],
   );
@@ -750,19 +800,18 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       locator?: ReadingLocator,
       resetHorizontal = true,
     ): void => {
-      const workspace = documentWorkspaceRef.current;
       const documentKey = documentTabKey(document);
-      const pane = targetPane ?? workspace.panes[documentKey] ?? workspace.focusedPane;
+      const pane = targetPane ?? "left";
       const destinationLocator =
         locator ??
         ({
           kind: "scroll",
-          top: documentScrollPositions.current.get(documentKey) ?? 0,
+          top: documentScrollPositions.current.get(documentPaneTabKey(pane, document)) ?? 0,
         } satisfies ReadingLocator);
       pushReadingHistory(document, pane, destinationLocator);
       openWorkspaceDocument(document, pane);
       if (destinationLocator.kind === "line") {
-        requestLineNavigation(documentKey, destinationLocator, resetHorizontal);
+        requestLineNavigation(documentKey, pane, destinationLocator, resetHorizontal);
       }
     },
     [openWorkspaceDocument, pushReadingHistory, requestLineNavigation],
@@ -773,7 +822,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       const documentKey = documentTabKey(document);
       const locator = { kind: "line", line } satisfies ReadingLocator;
       pushReadingHistory(document, pane, locator, hash);
-      requestLineNavigation(documentKey, locator, true);
+      requestLineNavigation(documentKey, pane, locator, true);
     },
     [pushReadingHistory, requestLineNavigation],
   );
@@ -787,10 +836,10 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const activateDocument = useCallback(
     (document: ActiveDocument, pane?: DocumentPaneId): void => {
       const workspace = documentWorkspaceRef.current;
-      const targetPane = pane ?? workspace.panes[documentTabKey(document)] ?? workspace.focusedPane;
+      const targetPane = pane ?? preferredDocumentPane(workspace, document);
       pushReadingHistory(document, targetPane, {
         kind: "scroll",
-        top: documentScrollPositions.current.get(documentTabKey(document)) ?? 0,
+        top: documentScrollPositions.current.get(documentPaneTabKey(targetPane, document)) ?? 0,
       });
       activateWorkspaceDocument(document, targetPane);
     },
@@ -804,8 +853,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   }, [syncFeedback]);
 
   const dropDocument = useCallback(
-    (documentKey: string, targetPane: DocumentPaneId): void => {
-      dropWorkspaceDocument(documentKey, targetPane);
+    (documentKey: string, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
+      dropWorkspaceDocument(documentKey, sourcePane, targetPane);
       setDraggedDocumentKey(null);
     },
     [dropWorkspaceDocument],
@@ -915,20 +964,23 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       cancelReadingHistoryScrollSnapshot();
       const workspace = documentWorkspaceRef.current;
       const documentKey = documentTabKey(entry.document);
-      const pane = workspace.panes[documentKey] ?? entry.pane;
+      const openPanes = documentPaneIds(workspace, entry.document);
+      const pane = openPanes.includes(entry.pane) ? entry.pane : (openPanes[0] ?? entry.pane);
       if (entry.locator.kind === "scroll") {
-        documentScrollPositions.current.set(documentKey, entry.locator.top);
+        documentScrollPositions.current.set(
+          documentPaneTabKey(pane, entry.document),
+          entry.locator.top,
+        );
       }
       openWorkspaceDocument(entry.document, pane);
       if (entry.locator.kind === "line") {
-        requestLineNavigation(documentKey, entry.locator, true);
+        requestLineNavigation(documentKey, pane, entry.locator, true);
         return;
       }
       const scrollTop = entry.locator.top;
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
-          const targetPane = documentWorkspaceRef.current.panes[documentKey] ?? pane;
-          const paneElement = paneElements.current[targetPane];
+          const paneElement = paneElements.current[pane];
           if (paneElement) paneElement.scrollTop = scrollTop;
         });
       });
@@ -1063,10 +1115,13 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     setRangeStartOid(range.startOid);
     setSelectedOid(range.endOid);
     if (range.endOid !== selectedOid) {
-      setViewerNavigationTarget(null);
+      resetViewerNavigation(["left", "right"]);
       setDocumentWorkspace((current) => ({
         ...current,
-        documents: current.documents.map(currentCommitDocument),
+        documents: {
+          left: current.documents.left.map(currentCommitDocument),
+          right: current.documents.right.map(currentCommitDocument),
+        },
         active: {
           left: current.active.left ? currentCommitDocument(current.active.left) : null,
           right: current.active.right ? currentCommitDocument(current.active.right) : null,
@@ -1142,12 +1197,6 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     if (!walkthroughsQuery.isSuccess) return;
     const summaries = new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough]));
     setDocumentWorkspace((current) => {
-      let reconciled = current;
-      for (const document of current.documents) {
-        if (document.kind === "walkthrough" && !summaries.has(document.id)) {
-          reconciled = removeDocumentFromWorkspace(reconciled, document);
-        }
-      }
       const rebind = (document: ActiveDocument | null): ActiveDocument | null => {
         if (document?.kind !== "walkthrough") return document;
         const summary = summaries.get(document.id);
@@ -1160,24 +1209,53 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
             }
           : null;
       };
-      return {
-        ...reconciled,
-        documents: reconciled.documents.map((document) => rebind(document)!),
-        active: {
-          left: rebind(reconciled.active.left),
-          right: rebind(reconciled.active.right),
-        },
+      const documents = {
+        left: current.documents.left
+          .map(rebind)
+          .filter((document): document is ActiveDocument => document !== null),
+        right: current.documents.right
+          .map(rebind)
+          .filter((document): document is ActiveDocument => document !== null),
       };
+      const activeDocument = (
+        paneId: DocumentPaneId,
+        document: ActiveDocument | null,
+      ): ActiveDocument | null => {
+        const rebound = rebind(document);
+        if (
+          rebound &&
+          documents[paneId].some(
+            (candidate) => documentTabKey(candidate) === documentTabKey(rebound),
+          )
+        ) {
+          return rebound;
+        }
+        return documents[paneId][0] ?? null;
+      };
+      return normalizeDocumentPanes({
+        ...current,
+        documents: {
+          left: documents.left,
+          right: documents.right,
+        },
+        active: {
+          left: activeDocument("left", current.active.left),
+          right: activeDocument("right", current.active.right),
+        },
+      });
     });
   }, [walkthroughsQuery.data?.walkthroughs, walkthroughsQuery.isSuccess]);
   const openWalkthroughIds = useMemo(
-    () =>
-      openDocuments
-        .filter(
-          (document): document is Extract<ActiveDocument, { kind: "walkthrough" }> =>
-            document.kind === "walkthrough",
-        )
-        .map((document) => document.id),
+    () => [
+      ...new Set(
+        openDocuments
+          .filter(
+            (document): document is Extract<ActiveDocument, { kind: "walkthrough" }> =>
+              document.kind === "walkthrough",
+          )
+          .map((document) => document.id),
+      ),
+    ],
     [openDocuments],
   );
   const walkthroughDetailQueries = useQueries({
@@ -1350,7 +1428,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       documentScrollPositions.current.clear();
       setReviewStateRevision((revision) => revision + 1);
       setDocumentWorkspace(initialDocumentWorkspace());
-      setViewerNavigationTarget(null);
+      resetViewerNavigation(["left", "right"]);
       commitRangeTouched.current = false;
       setSelectedOid(result.pullRequest.latestHeadOid);
       setRangeStartOid(pullRequestRangeStartOid(result.commits, result.pullRequest.latestHeadOid));
@@ -1386,23 +1464,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     },
     [openDocument],
   );
-  const openRepositoryMarkdownLinkFromLeftPane = useCallback(
-    (filePath: string, sourceOid: string, openInOtherPane: boolean): void =>
-      openRepositoryMarkdownLink(filePath, sourceOid, openInOtherPane ? "right" : "left"),
-    [openRepositoryMarkdownLink],
-  );
-  const openRepositoryMarkdownLinkFromRightPane = useCallback(
-    (filePath: string, sourceOid: string, openInOtherPane: boolean): void =>
-      openRepositoryMarkdownLink(filePath, sourceOid, openInOtherPane ? "left" : "right"),
-    [openRepositoryMarkdownLink],
-  );
-  const openRepositoryMarkdownLinkFromSidebar = useCallback(
-    (filePath: string, sourceOid: string, openInOtherPane: boolean): void =>
-      openRepositoryMarkdownLink(
-        filePath,
-        sourceOid,
-        openInOtherPane ? "right" : documentWorkspaceRef.current.focusedPane,
-      ),
+  const openRepositoryMarkdownLinkFromInteraction = useCallback(
+    (filePath: string, sourceOid: string, openInRightPane: boolean): void =>
+      openRepositoryMarkdownLink(filePath, sourceOid, openInRightPane ? "right" : "left"),
     [openRepositoryMarkdownLink],
   );
   const openSearchResult = (result: SearchResult, openInRightPane = false): void => {
@@ -1412,7 +1476,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         : { kind: "repository-file", path: result.path };
     const workspace = documentWorkspaceRef.current;
     const documentKey = documentTabKey(requestedDocument);
-    const openDocumentWithSameSource = workspace.documents.find((candidate) => {
+    const targetPane = openInRightPane ? "right" : "left";
+    const openDocumentWithSameSource = workspace.documents[targetPane].find((candidate) => {
       if (documentTabKey(candidate) !== documentKey) return false;
       return (
         candidate.kind !== "repository-file" ||
@@ -1421,21 +1486,23 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       );
     });
     const document = openDocumentWithSameSource ?? requestedDocument;
-    const targetPane = openInRightPane
-      ? "right"
-      : (workspace.panes[documentKey] ?? workspace.focusedPane);
     const activeTarget = workspace.active[targetPane];
     const resetHorizontal = !activeTarget || documentTabKey(activeTarget) !== documentKey;
     navigateToDocument(document, targetPane, { kind: "line", line: result.line }, resetHorizontal);
   };
-  const openCommentTarget = (comment: ReviewComment, placement: CommentPlacement | null): void => {
+  const openCommentTarget = (
+    comment: ReviewComment,
+    placement: CommentPlacement | null,
+    openInRightPane: boolean,
+  ): void => {
     const target = comment.target;
+    const targetPane: DocumentPaneId = openInRightPane ? "right" : "left";
     const navigate = (
       document: ActiveDocument,
       startLine: number | null,
       endLine: number | null,
     ): void => {
-      navigateToDocument(document, undefined, {
+      navigateToDocument(document, targetPane, {
         kind: "line",
         line: startLine,
         ...(endLine === null ? {} : { endLine }),
@@ -1566,14 +1633,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       ),
     [openCodeReference],
   );
-  const openWalkthroughReferenceFromLeftPane = useCallback(
-    (walkthrough: Walkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
-      openWalkthroughReference(walkthrough, reference, openInOtherPane ? "right" : "left"),
-    [openWalkthroughReference],
-  );
-  const openWalkthroughReferenceFromRightPane = useCallback(
-    (walkthrough: Walkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
-      openWalkthroughReference(walkthrough, reference, openInOtherPane ? "left" : "right"),
+  const openWalkthroughReferenceFromInteraction = useCallback(
+    (walkthrough: Walkthrough, reference: WalkthroughReference, openInRightPane: boolean) =>
+      openWalkthroughReference(walkthrough, reference, openInRightPane ? "right" : "left"),
     [openWalkthroughReference],
   );
   const openCommentCodeReference = useCallback(
@@ -1589,23 +1651,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     },
     [openCodeReference, pullRequestId],
   );
-  const openCommentCodeReferenceFromLeftPane = useCallback(
-    (sourceOid: string, reference: CodeReference, openInOtherPane: boolean) =>
-      openCommentCodeReference(sourceOid, reference, openInOtherPane ? "right" : "left"),
-    [openCommentCodeReference],
-  );
-  const openCommentCodeReferenceFromRightPane = useCallback(
-    (sourceOid: string, reference: CodeReference, openInOtherPane: boolean) =>
-      openCommentCodeReference(sourceOid, reference, openInOtherPane ? "left" : "right"),
-    [openCommentCodeReference],
-  );
-  const openCommentCodeReferenceFromSidebar = useCallback(
-    (sourceOid: string, reference: CodeReference, openInOtherPane: boolean) =>
-      openCommentCodeReference(
-        sourceOid,
-        reference,
-        openInOtherPane ? "right" : documentWorkspaceRef.current.focusedPane,
-      ),
+  const openCommentCodeReferenceFromInteraction = useCallback(
+    (sourceOid: string, reference: CodeReference, openInRightPane: boolean) =>
+      openCommentCodeReference(sourceOid, reference, openInRightPane ? "right" : "left"),
     [openCommentCodeReference],
   );
 
@@ -1678,14 +1726,10 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     themePreferenceMutation.error ??
     changeSequence.error;
   const rightPaneVisible =
-    openDocuments.some(
-      (document) => documentWorkspace.panes[documentTabKey(document)] === "right",
-    ) || draggedDocumentKey !== null;
+    documentWorkspace.documents.right.length > 0 || draggedDocumentKey !== null;
 
   const renderDocumentPane = (paneId: DocumentPaneId) => {
-    const paneDocuments = openDocuments.filter(
-      (document) => (documentWorkspace.panes[documentTabKey(document)] ?? "left") === paneId,
-    );
+    const paneDocuments = documentWorkspace.documents[paneId];
     const paneDocument = documentWorkspace.active[paneId];
     const paneViewerState = paneViewerStates[paneId];
     const paneViewerDocument = paneViewerState.viewerDocument;
@@ -1697,7 +1741,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         onScroll={(event) => {
           if (paneViewerDocument) {
             documentScrollPositions.current.set(
-              documentTabKey(paneViewerDocument),
+              documentPaneTabKey(paneId, paneViewerDocument),
               event.currentTarget.scrollTop,
             );
             if (documentWorkspaceRef.current.focusedPane === paneId) {
@@ -1720,10 +1764,10 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           activeDocument={paneDocument}
           changeKindsByPath={tabChangeKinds}
           onActivate={(document) => activateDocument(document, paneId)}
-          onClose={closeDocument}
+          onClose={(document) => closeDocument(document, paneId)}
           onCloseOthers={(document) => closePaneDocuments(paneId, document)}
           onCloseAll={() => closePaneDocuments(paneId)}
-          onMove={moveDocument}
+          onMove={(document, targetPane) => moveDocument(document, paneId, targetPane)}
           onDropDocument={dropDocument}
           onDragStartDocument={setDraggedDocumentKey}
           onDragEndDocument={() => setDraggedDocumentKey(null)}
@@ -1738,29 +1782,18 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 comments={comments}
                 activeCommentId={activeCommentId}
                 navigationTarget={
-                  viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
-                    ? viewerNavigationTarget
+                  viewerNavigationTargets[paneId]?.documentKey ===
+                  documentTabKey(paneViewerDocument)
+                    ? viewerNavigationTargets[paneId]
                     : null
                 }
                 onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
                 themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}
-                onOpenReference={
-                  paneId === "left"
-                    ? openWalkthroughReferenceFromLeftPane
-                    : openWalkthroughReferenceFromRightPane
-                }
-                onOpenCommentCodeReference={
-                  paneId === "left"
-                    ? openCommentCodeReferenceFromLeftPane
-                    : openCommentCodeReferenceFromRightPane
-                }
-                onOpenRepositoryLink={
-                  paneId === "left"
-                    ? openRepositoryMarkdownLinkFromLeftPane
-                    : openRepositoryMarkdownLinkFromRightPane
-                }
-                onDeleted={() => closeDocument(paneViewerDocument)}
+                onOpenReference={openWalkthroughReferenceFromInteraction}
+                onOpenCommentCodeReference={openCommentCodeReferenceFromInteraction}
+                onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
+                onDeleted={() => closeDocument(paneViewerDocument, paneId)}
               />
             </Suspense>
           </LazyLoadBoundary>
@@ -1781,6 +1814,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
               <DocumentViewer
                 key={`${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`}
                 pullRequestId={pullRequest.id}
+                paneId={paneId}
                 selectedOid={selectedOid}
                 oldOid={effectiveOldOid}
                 activeDocument={paneViewerDocument}
@@ -1793,26 +1827,17 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}
                 navigationTarget={
-                  viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
-                    ? viewerNavigationTarget
+                  viewerNavigationTargets[paneId]?.documentKey ===
+                  documentTabKey(paneViewerDocument)
+                    ? viewerNavigationTargets[paneId]
                     : null
                 }
                 onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
                 onOpenMarkdownFragment={(line, hash) =>
                   navigateToMarkdownFragment(paneViewerDocument, paneId, line, hash)
                 }
-                onOpenCodeReference={
-                  paneId === "left"
-                    ? openCommentCodeReferenceFromLeftPane
-                    : openCommentCodeReferenceFromRightPane
-                }
-                onOpenRepositoryLink={(filePath, sourceOid, openInOtherPane) =>
-                  openRepositoryMarkdownLink(
-                    filePath,
-                    sourceOid,
-                    openInOtherPane ? otherDocumentPane(paneId) : paneId,
-                  )
-                }
+                onOpenCodeReference={openCommentCodeReferenceFromInteraction}
+                onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
               />
             </Suspense>
           </LazyLoadBoundary>
@@ -1943,11 +1968,12 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           files={allFiles}
           openDocuments={openDocuments}
           activeDocument={activeDocument}
-          activePane={activePane}
           loading={treeQuery.isPending}
           error={treeQuery.error}
           onClose={() => setQuickOpenVisible(false)}
-          onOpen={(document) => openDocument(document, activePane)}
+          onOpen={(document, openInRightPane) =>
+            openDocument(document, openInRightPane ? "right" : "left")
+          }
         />
       )}
       <ErrorNotice error={actionError} />
@@ -2095,9 +2121,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 selectedOid={selectedOid}
                 themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}
-                onOpenCodeReference={openCommentCodeReferenceFromSidebar}
+                onOpenCodeReference={openCommentCodeReferenceFromInteraction}
                 onOpenTarget={openCommentTarget}
-                onOpenRepositoryLink={openRepositoryMarkdownLinkFromSidebar}
+                onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
               />
             </div>
           </section>
