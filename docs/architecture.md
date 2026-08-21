@@ -46,8 +46,12 @@ replay. The bundled Skill's task-local state script atomically owns its cursor, 
 per-batch status posts, self-event suppression, and repository-writer serialization. After claim, the
 task creates one immediate acknowledgement per affected thread and later edits that same normal post
 to the final outcome. A retry of that batch restores its acknowledgement, while a later batch for the
-same thread creates a new post and preserves the earlier outcome. Separate tasks may consume the same log
-with separate state. This terminal-bound consumer is not a daemon and rvw never starts it. A durable
+same thread creates a new post and preserves the earlier outcome. The parent reserves subagent capacity
+before intake; the driver caps in-flight claims to that capacity and polls task state to drain same-PR
+follow-ups after lease release and retries after their due time. Every acknowledged lease is handed to
+one fresh subagent immediately, while the parent retains only intake, state, and final-post ownership.
+Separate tasks may consume the same log with separate state. This terminal-bound consumer is not a daemon
+and rvw never starts it. A durable
 reply-idempotency ledger makes an exact caller-payload retry safe without introducing Agent session
 identity into comments.
 

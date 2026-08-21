@@ -1,5 +1,40 @@
 # Architecture decisions
 
+## 2026-08-21: Delegate every acknowledged watch batch immediately
+
+### Problem
+
+The watch Skill allowed the parent task to investigate a small `investigate-and-reply` batch directly.
+That work kept the batch lease in flight in the same task that owned intake. Because task state permits
+only one in-flight batch per PR, later events for that PR remained durable but ineligible, and could
+wait indefinitely for another event or driver reconnect even after the first lease was released.
+
+### Choice
+
+Limit the parent watch task to intake, dispatch, durable state, final status-post edits, and lease
+release. Delegate every acknowledged lease, including one-comment and no-code batches, to exactly one
+fresh subagent in the same parent scheduling turn. Perform no investigation, mode classification, or
+live-head lookup before dispatch. If a subagent cannot accept the lease promptly, fail it retryably;
+never substitute parent execution. This supersedes the small-batch parent-processing exception in the
+2026-08-20 watch-task decision.
+
+Keep one lease per subagent and collect the final result only through an atomically written absolute
+JSON path. Reserve subagent capacity before intake and pass that number as the driver's in-flight
+limit. Have the driver poll task state and claim only below that limit. Its pump automatically claims
+same-PR follow-ups after lease release and retryable batches after `nextAttemptAt`, without a new watch
+event or reconnect. Preserve the process-owner lock so only one pump controls a task database.
+
+### Trade-offs
+
+- Intake stays responsive and an acknowledged lease never competes with parent-side investigation.
+- Even trivial batches pay subagent startup and file-handoff cost.
+- The parent must preserve the capacity declared to the driver; uncertain runtimes use a conservative
+  limit of one.
+- The driver performs a small read-only task-state poll about four times per second while auto-ack is
+  enabled.
+- A temporary lack of subagent capacity becomes a visible retry instead of silently delaying work or
+  changing execution ownership.
+
 ## 2026-08-20: Consolidate review navigation into Explorer and Comments
 
 ### Problem
@@ -179,10 +214,11 @@ from the committed cursor with bounded backoff and uses distinct exit codes for 
 ingestion, and acknowledgement failures. An auto-ack claim can reserve the verified head repository
 later, preserving the existing single-writer rule without delaying the marker for live GitHub checks.
 
-For a focused investigate-only batch of one or two comments, allow the parent to investigate directly.
-When a worker is warranted, make an absolute, atomically replaced JSON file the result channel; an idle
-or completion notification is only a readiness signal. This prevents Agent-harness message relay from
-becoming part of the durable workflow.
+The 2026-08-21 mandatory-delegation decision supersedes the original exception that allowed the parent
+to investigate a focused batch of one or two comments directly. For every delegated batch, make an
+absolute, atomically replaced JSON file the result channel; an idle or completion notification is only
+a readiness signal. This prevents Agent-harness message relay from becoming part of the durable
+workflow.
 
 Cache the latest GitHub PR author login and head repository owner/name, and expose them in comment
 context. Watch events remain minimal triggers that require a fresh comment read. The watcher

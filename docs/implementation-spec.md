@@ -739,11 +739,17 @@ batch内のcomment URIごとのstatus post mapping、自己post抑制をtransact
 protocol、capability、transport、Nodeを一括検査し、watch driverは
 stateのcursorを自動解決してRFC 7464 frameをatomicにingestする。driverのauto-ack modeは新規batchを
 LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthread contextを一行JSONで通知する。
+親taskは起動前にsubagent slot数を予約し、driverの`max-in-flight`をその数以下に固定する。driverはlimit
+未満だけauto-ackし、task stateを短周期で再確認する。同一PRのactive lease中に到着したeventは先行lease
+解放後に、retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
 state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。rvwはAgentやsubagentを
 起動せず、これらのtask stateも保持しない。
 task起動時に明示された場合だけ、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
 OIDとpush先が一致するPRをfix-and-push候補にできる。他人、不明、不一致はinvestigate-and-replyとする。
-直接調査とworker結果は、最終bodyに加えて`relatedCommitOid`、完全な`references`配列、`pushStatus`を持つ。
+親taskはacknowledge済みleaseをbatchの大きさ、mode、変更有無にかかわらず同じscheduling turn内で一つの
+fresh subagentへ必ず委譲し、直接調査・実装しない。subagentを速やかに起動できない場合はleaseをretryable
+failureへ戻し、親taskが代行しない。subagent結果は、最終bodyに加えて`relatedCommitOid`、完全な
+`references`配列、`pushStatus`を持つ。
 code変更がない調査結果でも、具体的なcode上の結論を支える利用可能なPR commitとtyped referenceを返せる。
 parentはthreadを再取得してbody、commit、referenceを検証し、同じstatus postの完全置換へすべて渡す。
 fix-and-push後のreferenceは同期済みGitHub headへ固定する。referenceがない結果は空配列を明示し、以前の
@@ -1231,7 +1237,8 @@ CLI contract:
 - watch cursorのresume、別DB拒否、削除後event、minimal payload、RFC 7464 framing
 - replyとsync updateのidempotency key retry、head advance、payload conflict、result削除
 - task state scriptのatomic ingest、lease recovery、batch単位status post再利用、後続replyでの新規status post、
-  即時ackの自己event抑制、repository write直列化、旧task DBの未完了batch mapping移行、status post削除後の再生成
+  即時ackの自己event抑制、予約済みworker容量によるin-flight制限、同一PR後続batchとdue retryのevent非依存drain、
+  repository write直列化、旧task DBの未完了batch mapping移行、status post削除後の再生成
 - `comment edit`のbody完全置換、related commit維持／解除／更新、Agent socket経由write
 - comment create/reply/edit/syncのpost単位reference検証、保存、完全置換、commit保持、idempotency
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
@@ -1299,8 +1306,14 @@ process owner lockをrvw起動前に取得し、同じtaskの二重起動を拒�
 processが存在しない場合だけ回収する。検知直後に各threadを再読込して
 `🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。
 同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を保持する。
-investigate-onlyで1〜2 commentの小batchは親taskが直接調査でき、それ以外をworkerへ委譲する場合は
-絶対pathのJSON fileを唯一の結果回収経路にする。直接またはworkerの最終結果はbody、
+親taskはintake、dispatch、task state、最終replyだけを所有し、batchの大きさ、mode、変更有無にかかわらず、
+acknowledge済みleaseを同じscheduling turn内で一つのfresh subagentへ必ず委譲する。親taskによる直接調査・
+実装と、複数leaseの後回しの一括委譲を認めない。親taskは起動前にsubagent slot数を予約し、driverの
+`max-in-flight`をその数以下に固定する。driverはlimit未満だけauto-ackし、task stateを短周期で再確認して、
+同一PRのactive lease中に到着したeventを先行lease解放後に、retryable failureを`nextAttemptAt`到達後に、
+新しいwatch eventやreconnectを待たずauto-ackする。subagentを速やかに起動できない場合はleaseをretryable
+failureへ戻し、親taskが代行しない。subagentごとに一leaseだけを割り当て、絶対pathのatomic JSON fileを
+唯一の最終結果回収経路にする。subagentの最終結果はbody、
 `relatedCommitOid`、完全なtyped reference配列、push状態を持ち、具体的なcode上の結論、実装、testには
 navigation価値のあるexact rangeを既定で付ける。task起動時の
 明示許可がある場合だけ、live authorが起動時
