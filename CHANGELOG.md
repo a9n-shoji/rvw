@@ -27,6 +27,8 @@
 
 - `rvw-watch-comments`が同じthreadの後続replyを処理するとき、以前の回答を確認中へ戻さず、新しい確認中replyを最終回答へ更新するよう修正
 - Markdown Previewで別commentへの返信が同期されても、入力中の未送信replyとfocusを保持するよう修正
+- Branch Review resetでGit ref削除が適用済みなら、終了statusだけを根拠に不整合errorを返さないよう修正
+- `investigate-and-reply`で開始したwatch taskがPull Requestのwrite reservationを取得できる抜け道を修正
 
 ## [0.2.1] - 2026-08-20
 

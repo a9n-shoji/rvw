@@ -43,6 +43,19 @@ class BranchGitHub implements GitHubPort {
   }
 }
 
+class DeleteThenThrowGitClient extends GitClient {
+  override async deleteRefsByPrefix(repositoryPath: string, prefix: string): Promise<number> {
+    await super.deleteRefsByPrefix(repositoryPath, prefix);
+    throw new Error("git update-ref exited after applying the transaction");
+  }
+}
+
+class ThrowBeforeDeleteGitClient extends GitClient {
+  override deleteRefsByPrefix(): Promise<number> {
+    return Promise.reject(new Error("git update-ref failed before applying the transaction"));
+  }
+}
+
 function issue(number: number, body = `Requirement ${number}\nDetails`): GitHubIssue {
   return {
     host: "github.com",
@@ -64,7 +77,7 @@ describe("Branch Review", () => {
     while (databases.length) databases.pop()?.close();
   });
 
-  function setup() {
+  function setup(gitClient: GitClient = new GitClient()) {
     const repositoryPath = createGitRepository("rvw-branch-review-");
     const sourceOid = git(repositoryPath, "rev-parse", "HEAD");
     const github = new BranchGitHub({
@@ -85,7 +98,7 @@ describe("Branch Review", () => {
       sourceOid,
       github,
       database,
-      service: new RvwService(database, new GitClient(), github),
+      service: new RvwService(database, gitClient, github),
     };
   }
 
@@ -434,5 +447,36 @@ describe("Branch Review", () => {
       path: "README.md",
     });
     expect(historicalDocument.text).toContain(previousReadme);
+  });
+
+  it("accepts a reset when Git ref deletion reports an error after applying the transaction", async () => {
+    const { repositoryPath, database, service } = setup(new DeleteThenThrowGitClient());
+    const opened = await service.openBranchReview(repositoryPath);
+    const preview = await service.getBranchResetPreview(opened.branchReview.id);
+    expect(preview.retainedRefs.length).toBeGreaterThan(0);
+
+    await expect(service.resetBranchReview(opened.branchReview.id)).resolves.toMatchObject({
+      deleted: { gitRefs: preview.retainedRefs.length },
+      removedRefs: preview.retainedRefs,
+    });
+    expect(database.getBranchReview(opened.branchReview.id)).toBeNull();
+    await expect(
+      service.git.listRefsByPrefix(repositoryPath, "refs/rvw/branch/acme/review-repo/commits/"),
+    ).resolves.toEqual([]);
+  });
+
+  it("reports inconsistent local state when reset leaves retained refs behind", async () => {
+    const { repositoryPath, service } = setup(new ThrowBeforeDeleteGitClient());
+    const opened = await service.openBranchReview(repositoryPath);
+    const preview = await service.getBranchResetPreview(opened.branchReview.id);
+
+    await expect(service.resetBranchReview(opened.branchReview.id)).rejects.toMatchObject({
+      code: "LOCAL_STATE_INCONSISTENT",
+      details: {
+        branchReviewDeleted: true,
+        retainedRefs: preview.retainedRefs,
+        remainingRefs: preview.retainedRefs,
+      },
+    });
   });
 });

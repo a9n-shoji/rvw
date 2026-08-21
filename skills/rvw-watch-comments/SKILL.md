@@ -153,7 +153,8 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' reserve-write \
 ```
 
 The unique reservation prevents two leases from writing the same repository. A manually invoked
-`auto-ack` may instead receive `--write-key` when that identity was already verified.
+`auto-ack` may instead receive `--write-key` when that identity was already verified. Both paths
+reject write reservations unless the task was initialized with `--own-mode fix-and-push`.
 
 ## Investigate directly or delegate
 

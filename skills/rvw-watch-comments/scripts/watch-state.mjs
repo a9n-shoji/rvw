@@ -579,6 +579,9 @@ function claim(database, context, writeKey) {
   if (context.kind === "branch" && writeKey !== undefined) {
     fail("Branch Review batches are read-only and cannot reserve a write key");
   }
+  if (writeKey !== undefined && getMeta(database, "own_mode") !== "fix-and-push") {
+    fail("Task policy is investigate-and-reply and cannot reserve a write key");
+  }
   const canonicalWriteKey = writeKey === undefined ? undefined : normalizeWriteKey(writeKey);
   return transaction(database, () => {
     const now = new Date().toISOString();
@@ -665,6 +668,9 @@ function reserveWrite(database, leaseId, writeKey) {
     if (!batch) fail("Active lease was not found");
     if (batch.review_kind === "branch") {
       fail("Branch Review batches are investigate-and-reply only");
+    }
+    if (getMeta(database, "own_mode") !== "fix-and-push") {
+      fail("Task policy is investigate-and-reply and cannot reserve a write key");
     }
     if (batch.write_key !== null && batch.write_key !== canonicalWriteKey) {
       fail(`Active lease already owns repository ${batch.write_key}`);

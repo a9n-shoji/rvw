@@ -2329,18 +2329,32 @@ export class RvwService {
         prefix,
       );
     } catch (error) {
-      throw new RvwError(
-        "LOCAL_STATE_INCONSISTENT",
-        "Branch Reviewは削除されましたが、retained Git refの解放に失敗しました。",
-        {
-          cause: error,
-          details: {
-            branchReviewDeleted: true,
-            retainedRefs: preview.retainedRefs,
+      let remainingRefs: string[] | null = null;
+      try {
+        remainingRefs = await this.git.listRefsByPrefix(
+          preview.branchReview.localRepositoryPath,
+          prefix,
+        );
+      } catch {
+        // Preserve the deletion error when the uncertain outcome cannot be inspected.
+      }
+      if (remainingRefs?.length === 0) {
+        removedCount = preview.retainedRefs.length;
+      } else {
+        throw new RvwError(
+          "LOCAL_STATE_INCONSISTENT",
+          "Branch Reviewは削除されましたが、retained Git refの解放に失敗しました。",
+          {
+            cause: error,
+            details: {
+              branchReviewDeleted: true,
+              retainedRefs: preview.retainedRefs,
+              ...(remainingRefs === null ? {} : { remainingRefs }),
+            },
+            suggestions: ["rvw branch openで新しいBranch Reviewを作成できます。"],
           },
-          suggestions: ["rvw branch openで新しいBranch Reviewを作成できます。"],
-        },
-      );
+        );
+      }
     }
     return {
       branchReview: preview.branchReview,
