@@ -2024,9 +2024,10 @@ export class RvwService {
     };
   }
 
-  private async placeBranchCommentAtCurrent(
+  private async placeBranchCommentAtSource(
     branchReview: BranchReview,
     comment: BranchReviewComment,
+    destinationOid: string,
   ): Promise<CommentPlacement> {
     const target = comment.target;
     if (target.kind === "branch") return { outdated: false, range: null, path: null };
@@ -2053,13 +2054,13 @@ export class RvwService {
       return { ...placeMutableDocumentComment(target, walkthrough.body), path: null };
     }
     const resolved =
-      target.sourceOid === branchReview.sourceOid
+      target.sourceOid === destinationOid
         ? { path: target.path, deleted: false }
         : await (async () => {
             const changes = await this.git.changedFiles(
               branchReview.localRepositoryPath,
               target.sourceOid,
-              branchReview.sourceOid,
+              destinationOid,
             );
             const change = changes.find((candidate) => candidate.oldPath === target.path);
             return {
@@ -2071,7 +2072,7 @@ export class RvwService {
     if (resolved.deleted) return { outdated: true, range: null, path: target.path };
     const destination = await this.git.readDocument(
       branchReview.localRepositoryPath,
-      branchReview.sourceOid,
+      destinationOid,
       resolved.path,
     );
     if (target.startLine === null || target.endLine === null) {
@@ -2098,6 +2099,41 @@ export class RvwService {
       : { outdated: true, range: null, path: resolved.path };
   }
 
+  async placeBranchCommentAtCommit(
+    branchReviewId: string,
+    comment: BranchReviewComment,
+    destinationOid: string,
+  ): Promise<CommentPlacement> {
+    const branchReview = this.getBranchReview(branchReviewId);
+    if (comment.branchReviewId !== branchReview.id) {
+      return { outdated: true, range: null, path: null };
+    }
+    await this.assertBranchCommitAvailable(branchReview, destinationOid);
+    return await this.placeBranchCommentAtSource(branchReview, comment, destinationOid);
+  }
+
+  placeBranchWalkthroughComment(
+    branchReviewId: string,
+    comment: BranchReviewComment,
+    walkthroughId: string,
+  ): CommentPlacement {
+    if (
+      comment.branchReviewId !== branchReviewId ||
+      comment.target.kind !== "walkthrough" ||
+      comment.target.walkthroughId !== walkthroughId
+    ) {
+      return { outdated: true, range: null, path: null };
+    }
+    const walkthrough = this.database.getBranchWalkthrough(walkthroughId);
+    if (!walkthrough || walkthrough.branchReviewId !== branchReviewId) {
+      return { outdated: true, range: null, path: null };
+    }
+    if (comment.target.startLine === null || comment.target.endLine === null) {
+      return { outdated: false, range: null, path: null };
+    }
+    return { ...placeMutableDocumentComment(comment.target, walkthrough.body), path: null };
+  }
+
   async getAnyCommentReviewContext(
     uri: string,
     options: { live?: boolean } = {},
@@ -2107,7 +2143,7 @@ export class RvwService {
     if (branchComment) {
       const branchReview = this.getBranchReview(branchComment.branchReviewId);
       const [latestPlacement, exactSource] = await Promise.all([
-        this.placeBranchCommentAtCurrent(branchReview, branchComment),
+        this.placeBranchCommentAtSource(branchReview, branchComment, branchReview.sourceOid),
         this.getBranchCommentExactSource(branchReview, branchComment),
       ]);
       return {
@@ -2177,7 +2213,11 @@ export class RvwService {
     return await Promise.all(
       this.database.listBranchComments(branchReviewId, resolved).map(async (comment) => ({
         comment,
-        latestPlacement: await this.placeBranchCommentAtCurrent(branchReview, comment),
+        latestPlacement: await this.placeBranchCommentAtSource(
+          branchReview,
+          comment,
+          branchReview.sourceOid,
+        ),
       })),
     );
   }
@@ -2671,6 +2711,11 @@ export class RvwService {
   deleteWalkthrough(pullRequestId: string, walkthroughId: string): DeletedWalkthrough {
     this.getWalkthrough(pullRequestId, walkthroughId);
     return this.database.deleteWalkthrough(walkthroughId);
+  }
+
+  deleteBranchWalkthrough(branchReviewId: string, walkthroughId: string): DeletedBranchWalkthrough {
+    this.getBranchWalkthrough(branchReviewId, walkthroughId);
+    return this.database.deleteBranchWalkthrough(walkthroughId);
   }
 
   async replyToComment(

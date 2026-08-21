@@ -196,7 +196,7 @@ test("supports keyboard navigation and dismissal in a document pane menu", async
 
   await toggle.click();
   await expect(menu).toBeVisible();
-  await page.locator(".pr-heading").click();
+  await page.locator(".review-heading").click();
   await expect(menu).toBeHidden();
 });
 
@@ -301,7 +301,7 @@ test("makes reset destructive intent explicit and honors confirmation cancellati
   await expect.poll(() => previewRequests).toBe(1);
   expect(confirmedRequests).toBe(0);
   await expect(
-    page.locator(".pr-heading").getByRole("heading", { name: /Fixture review/ }),
+    page.locator(".review-heading").getByRole("heading", { name: /Fixture review/ }),
   ).toBeVisible();
 });
 
@@ -631,7 +631,7 @@ test("keeps cached review content and explains how to recover from server loss",
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  const pullRequestTitle = page.locator(".pr-heading h1");
+  const pullRequestTitle = page.locator(".review-heading h1");
   await expect(pullRequestTitle).toBeVisible();
   const title = await pullRequestTitle.textContent();
   await page.route("**/api/pull-requests/*/refresh", (route) => route.abort("connectionrefused"));

@@ -1,12 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import type {
-  BranchReviewComment,
-  CodeReference,
-  CommentPlacement,
-  CommentPost,
-  ReviewComment,
-} from "../../domain/models.js";
+import type { CodeReference, CommentPlacement, CommentPost } from "../../domain/models.js";
 import { api, jsonRequest } from "../api.js";
 import {
   deleteCommentReplyDraftsForComment,
@@ -15,6 +9,7 @@ import {
   writeCommentReplyDraft,
 } from "../comment-draft-store.js";
 import type { ThemePreference } from "../theme.js";
+import { reviewIdForComment, type AnyReviewComment } from "../review-context.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
 import { CommentMarkdown } from "./CommentMarkdown.js";
 import { ErrorNotice } from "./ErrorNotice.js";
@@ -37,7 +32,6 @@ interface CommentMenuPosition {
 const inlineExpansionByComment = new Map<string, StoredInlineExpansion>();
 const pendingInlineScrollByComment = new Set<string>();
 const referenceNoticeDurationMs = 2400;
-type AnyReviewComment = ReviewComment | BranchReviewComment;
 
 function rangeLabel(comment: AnyReviewComment, placement: CommentPlacement | null): string | null {
   if (
@@ -232,11 +226,12 @@ export function CommentThread({
   onActiveChange?: (commentId: string, active: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const reviewId = reviewIdForComment(comment);
   const replyDraftKey = `${variant}:${comment.id}`;
   const replyDraft = useSyncExternalStore(
     subscribeCommentReplyDrafts,
-    () => readCommentReplyDraft(comment.pullRequestId, replyDraftKey),
-    () => readCommentReplyDraft(comment.pullRequestId, replyDraftKey),
+    () => readCommentReplyDraft(reviewId, replyDraftKey),
+    () => readCommentReplyDraft(reviewId, replyDraftKey),
   );
   const reply = replyDraft.body;
   const replyInputRef = useRef<HTMLTextAreaElement>(null);
@@ -417,8 +412,8 @@ export function CommentThread({
         jsonRequest({ body: reply, authorLabel: "You", relatedCommitOid: null }),
       ),
     onSuccess: async () => {
-      const currentReplyDraft = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
-      writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+      const currentReplyDraft = readCommentReplyDraft(reviewId, replyDraftKey);
+      writeCommentReplyDraft(reviewId, replyDraftKey, {
         revision: currentReplyDraft.revision,
         body: "",
         focused: currentReplyDraft.focused,
@@ -465,7 +460,7 @@ export function CommentThread({
         method: "DELETE",
       }),
     onSuccess: async () => {
-      deleteCommentReplyDraftsForComment(comment.pullRequestId, comment.id);
+      deleteCommentReplyDraftsForComment(reviewId, comment.id);
       onDeleted?.();
       await invalidate();
     },
@@ -751,22 +746,22 @@ export function CommentThread({
               ref={replyInputRef}
               value={reply}
               onChange={(event) => {
-                const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
-                writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+                const current = readCommentReplyDraft(reviewId, replyDraftKey);
+                writeCommentReplyDraft(reviewId, replyDraftKey, {
                   ...current,
                   body: event.target.value,
                 });
               }}
               onFocus={() => {
-                const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
-                writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+                const current = readCommentReplyDraft(reviewId, replyDraftKey);
+                writeCommentReplyDraft(reviewId, replyDraftKey, {
                   ...current,
                   focused: true,
                 });
               }}
               onBlur={() => {
-                const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
-                writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+                const current = readCommentReplyDraft(reviewId, replyDraftKey);
+                writeCommentReplyDraft(reviewId, replyDraftKey, {
                   ...current,
                   focused: false,
                 });

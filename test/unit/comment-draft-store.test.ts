@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  clearCommentDraftsForPullRequest,
+  clearCommentDraftsForReview,
   commentDraftContextKey,
   currentCommentDraftRevision,
   readCommentDraft,
@@ -29,7 +29,7 @@ function contextKey(activeDocument: ActiveDocument): string {
 }
 
 describe("comment draft store", () => {
-  beforeEach(() => clearCommentDraftsForPullRequest(pullRequestId));
+  beforeEach(() => clearCommentDraftsForReview(pullRequestId));
 
   it("isolates the same path by exact source and comparison policy", () => {
     const current = contextKey({ kind: "repository-file", path: "src/example.ts" });
@@ -55,7 +55,7 @@ describe("comment draft store", () => {
     writeCommentDraft(pullRequestId, key, revision, draft);
     expect(readCommentDraft(pullRequestId, key)).toEqual(draft);
 
-    clearCommentDraftsForPullRequest(pullRequestId);
+    clearCommentDraftsForReview(pullRequestId);
     expect(readCommentDraft(pullRequestId, key)).toBeUndefined();
     expect(currentCommentDraftRevision(pullRequestId)).toBe(revision + 1);
 
@@ -77,7 +77,7 @@ describe("comment draft store", () => {
       focused: true,
     });
 
-    clearCommentDraftsForPullRequest(pullRequestId);
+    clearCommentDraftsForReview(pullRequestId);
     expect(readCommentReplyDraft(pullRequestId, key)).toEqual({
       revision: initial.revision + 1,
       body: "",

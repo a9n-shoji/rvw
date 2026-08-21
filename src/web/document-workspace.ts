@@ -42,11 +42,22 @@ export function documentTabLabel(document: ActiveDocument): string {
   return path.split("/").at(-1) ?? path;
 }
 
-export function initialDocumentWorkspace(): DocumentWorkspaceState {
+export function initialDocumentWorkspace(
+  initial: ActiveDocument | null = initialDocument,
+): DocumentWorkspaceState {
+  if (!initial) {
+    return {
+      documents: [],
+      panes: {},
+      active: { left: null, right: null },
+      focusedPane: "left",
+      navigationRevision: { left: 0, right: 0 },
+    };
+  }
   return {
-    documents: [initialDocument],
-    panes: { [documentTabKey(initialDocument)]: "left" },
-    active: { left: initialDocument, right: null },
+    documents: [initial],
+    panes: { [documentTabKey(initial)]: "left" },
+    active: { left: initial, right: null },
     focusedPane: "left",
     navigationRevision: { left: 0, right: 0 },
   };

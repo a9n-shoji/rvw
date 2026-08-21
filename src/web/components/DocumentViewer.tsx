@@ -29,11 +29,12 @@ import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type {
+  BranchDocumentContent,
+  BranchDocumentRef,
   CodeReference,
   CommentPlacement,
   DocumentContent,
   DocumentRef,
-  ReviewComment,
 } from "../../domain/models.js";
 import {
   commentDraftContextKey,
@@ -52,12 +53,18 @@ import {
   type PlacementResponse,
 } from "../api.js";
 import {
+  branchMarkdownAssetUrl,
   isExternalMarkdownHref,
   markdownAssetUrl,
   markdownLinkWasDragged,
   resolveRepositoryMarkdownPath,
   type PointerPosition,
 } from "../markdown-links.js";
+import {
+  reviewCommentPayload,
+  type AnyReviewComment,
+  type ReviewIdentity,
+} from "../review-context.js";
 import {
   MarkdownSelectionSurface,
   markdownCommentAnchorIds,
@@ -75,8 +82,11 @@ import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import { PreviewMarkdownTable } from "./MarkdownTable.js";
 
 type ViewerAnnotation =
-  | { kind: "comment"; comment: ReviewComment; placement: CommentPlacement }
+  | { kind: "comment"; comment: AnyReviewComment; placement: CommentPlacement }
   | { kind: "line-composer" };
+
+type ReviewFileRef = DocumentRef | Extract<BranchDocumentRef, { kind: "repository-file" }>;
+type ReviewDocumentContent = DocumentContent | BranchDocumentContent;
 
 type CreateCommentTarget =
   | { kind: "pull-request" }
@@ -100,7 +110,7 @@ type OptimisticCommentLocation =
   | { mode: "diff"; side: "additions" | "deletions"; lineNumber: number };
 
 interface OptimisticCommentAnnotation {
-  comment: ReviewComment;
+  comment: AnyReviewComment;
   placement: CommentPlacement;
   location: OptimisticCommentLocation;
 }
@@ -289,13 +299,28 @@ function restoreDiffViewportAnchor(surface: HTMLElement | null, anchor: DiffView
   pane.scrollTop += currentOffset - anchor.topOffset;
 }
 
-function params(ref: DocumentRef): string {
-  const search = new URLSearchParams({ kind: ref.kind, pullRequestId: ref.pullRequestId });
+function params(ref: ReviewFileRef): string {
+  const search = new URLSearchParams({
+    kind: ref.kind,
+    ...(ref.kind === "pull-request-markdown" || "pullRequestId" in ref
+      ? { pullRequestId: ref.pullRequestId }
+      : { branchReviewId: ref.branchReviewId }),
+  });
   if (ref.kind === "repository-file") {
     search.set("sourceOid", ref.sourceOid);
     search.set("path", ref.path);
   }
   return search.toString();
+}
+
+function reviewDocumentUrl(ref: ReviewFileRef): string {
+  if (ref.kind === "pull-request-markdown" || "pullRequestId" in ref) return documentUrl(ref);
+  const search = new URLSearchParams({
+    kind: "repository-file",
+    sourceOid: ref.sourceOid,
+    path: ref.path,
+  });
+  return `/api/branch-reviews/${ref.branchReviewId}/document?${search.toString()}`;
 }
 
 function markdownNodeText(node: ReactNode): string {
@@ -348,7 +373,7 @@ function renderRepositoryMarkdown({
   markdownDiv,
   sourceRef,
   selectedOid,
-  pullRequestId,
+  review,
   linkPointerStart,
   onOpenRepositoryLink,
   onOpenMarkdownFragment,
@@ -360,9 +385,9 @@ function renderRepositoryMarkdown({
   selectedRange: MarkdownSourceRange | null;
   composerOpen: boolean;
   markdownDiv: NonNullable<Components["div"]>;
-  sourceRef: DocumentRef;
+  sourceRef: ReviewFileRef;
   selectedOid: string;
-  pullRequestId: string;
+  review: ReviewIdentity;
   linkPointerStart: { current: PointerPosition | null };
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
   onOpenMarkdownFragment: (line: number, hash: string) => void;
@@ -533,7 +558,11 @@ function renderRepositoryMarkdown({
             <img
               {...markdownSourceDataAttributes(_node)}
               {...props}
-              src={markdownAssetUrl(pullRequestId, sourceRef.sourceOid, repositoryPath)}
+              src={
+                review.kind === "pull-request"
+                  ? markdownAssetUrl(review.id, sourceRef.sourceOid, repositoryPath)
+                  : branchMarkdownAssetUrl(review.id, sourceRef.sourceOid, repositoryPath)
+              }
               alt={alt ?? ""}
               title={title}
             />
@@ -546,11 +575,11 @@ function renderRepositoryMarkdown({
   );
 }
 
-function placementUrl(commentId: string, ref: DocumentRef): string {
+function placementUrl(commentId: string, ref: ReviewFileRef): string {
   return `/api/comments/${commentId}/placement?${params(ref)}`;
 }
 
-function fileValue(document: DocumentContent | null, fallbackName: string) {
+function fileValue(document: ReviewDocumentContent | null, fallbackName: string) {
   if (!document || document.availability !== "available") return null;
   const file = {
     name: document.ref.kind === "repository-file" ? document.ref.path : fallbackName,
@@ -565,7 +594,7 @@ function Unavailable({
   document,
   fileCommentAction = null,
 }: {
-  document: DocumentContent | null;
+  document: ReviewDocumentContent | null;
   fileCommentAction?: ReactNode;
 }) {
   const message = !document
@@ -585,7 +614,7 @@ function Unavailable({
 }
 
 export function DocumentViewer({
-  pullRequestId,
+  review,
   selectedOid,
   oldOid,
   activeDocument,
@@ -603,13 +632,13 @@ export function DocumentViewer({
   onOpenCodeReference,
   onOpenRepositoryLink,
 }: {
-  pullRequestId: string;
+  review: ReviewIdentity;
   selectedOid: string;
   oldOid: string | null;
   activeDocument: ActiveDocument;
   displayMode: DisplayMode;
   diffStyle: "unified" | "split";
-  comments: ReviewComment[];
+  comments: AnyReviewComment[];
   activeCommentId: string | null;
   fullViewNotice?: string | null;
   fullViewUnavailableMessage?: string | null;
@@ -647,8 +676,8 @@ export function DocumentViewer({
     oldOid,
     displayMode,
   });
-  const commentDraftRevision = useRef(currentCommentDraftRevision(pullRequestId)).current;
-  const initialCommentDraft = readCommentDraft(pullRequestId, commentDraftKey);
+  const commentDraftRevision = useRef(currentCommentDraftRevision(review.id)).current;
+  const initialCommentDraft = readCommentDraft(review.id, commentDraftKey);
   const [selection, setSelection] = useState<SelectedLineRange | null>(
     initialCommentDraft?.selection ?? null,
   );
@@ -666,7 +695,7 @@ export function DocumentViewer({
   useLayoutEffect(() => {
     const persistDraft = (): void => {
       if (fileComposerOpen || markdownComposerOpen || selection) {
-        writeCommentDraft(pullRequestId, commentDraftKey, commentDraftRevision, {
+        writeCommentDraft(review.id, commentDraftKey, commentDraftRevision, {
           body,
           selection,
           markdownComposerOpen,
@@ -674,7 +703,7 @@ export function DocumentViewer({
         });
         return;
       }
-      deleteCommentDraft(pullRequestId, commentDraftKey, commentDraftRevision);
+      deleteCommentDraft(review.id, commentDraftKey, commentDraftRevision);
     };
     persistDraft();
     return persistDraft;
@@ -684,7 +713,7 @@ export function DocumentViewer({
     commentDraftRevision,
     fileComposerOpen,
     markdownComposerOpen,
-    pullRequestId,
+    review.id,
     selection,
   ]);
   const loadedOptimisticCommentId = useRef<string | null>(null);
@@ -775,27 +804,43 @@ export function DocumentViewer({
     activeDocument.kind === "pull-request-markdown" ? "full" : displayMode;
   const showingMarkdownPreview =
     markdownCapable && effectiveDisplayMode === "full" && markdownView === "preview";
-  const fullRef = useMemo<DocumentRef>(
+  const fullRef = useMemo<ReviewFileRef>(
     () =>
       activeDocument.kind === "pull-request-markdown"
-        ? { kind: "pull-request-markdown", pullRequestId }
-        : {
-            kind: "repository-file",
-            pullRequestId,
-            sourceOid: activeDocument.sourceOid ?? selectedOid,
-            path: activeDocument.path,
-          },
+        ? {
+            kind: "pull-request-markdown",
+            pullRequestId: review.id,
+          }
+        : review.kind === "pull-request"
+          ? {
+              kind: "repository-file",
+              pullRequestId: review.id,
+              sourceOid: activeDocument.sourceOid ?? selectedOid,
+              path: activeDocument.path,
+            }
+          : {
+              kind: "repository-file",
+              branchReviewId: review.id,
+              sourceOid: activeDocument.sourceOid ?? selectedOid,
+              path: activeDocument.path,
+            },
     [
       activeDocument.kind,
       activeDocument.kind === "repository-file" ? activeDocument.path : null,
       activeDocument.kind === "repository-file" ? activeDocument.sourceOid : null,
-      pullRequestId,
+      review.id,
+      review.kind,
       selectedOid,
     ],
   );
   const fullQuery = useQuery({
     queryKey: ["document", fullRef],
-    queryFn: async () => (await api<DocumentResponse>(documentUrl(fullRef))).document,
+    queryFn: async () =>
+      (
+        await api<DocumentResponse | { document: BranchDocumentContent }>(
+          reviewDocumentUrl(fullRef),
+        )
+      ).document,
     enabled: effectiveDisplayMode === "full" && !fullViewUnavailableMessage,
     staleTime: fullRef.kind === "repository-file" ? Number.POSITIVE_INFINITY : 0,
   });
@@ -811,11 +856,12 @@ export function DocumentViewer({
     if (newPath) diffSearch.set("newPath", newPath);
   }
   const diffQuery = useQuery({
-    queryKey: ["diff", pullRequestId, oldOid, selectedOid, activeDocument],
+    queryKey: ["diff", review.kind, review.id, oldOid, selectedOid, activeDocument],
     queryFn: async () =>
-      (await api<DiffResponse>(`/api/pull-requests/${pullRequestId}/diff?${diffSearch.toString()}`))
+      (await api<DiffResponse>(`/api/pull-requests/${review.id}/diff?${diffSearch.toString()}`))
         .diff,
     enabled:
+      review.kind === "pull-request" &&
       effectiveDisplayMode !== "full" &&
       activeDocument.kind === "repository-file" &&
       Boolean(oldOid) &&
@@ -862,7 +908,7 @@ export function DocumentViewer({
       const fileAnnotations: LineAnnotation<ViewerAnnotation>[] = [];
       const diffAnnotations: DiffLineAnnotation<ViewerAnnotation>[] = [];
       const markdownComments: Array<{
-        comment: ReviewComment;
+        comment: AnyReviewComment;
         placement: CommentPlacement;
       }> = [];
       for (const comment of comments) {
@@ -919,10 +965,10 @@ export function DocumentViewer({
       target: CreateCommentTarget;
       location: OptimisticCommentLocation;
     }) =>
-      await api<{ comment: ReviewComment }>(
+      await api<{ comment: AnyReviewComment }>(
         "/api/comments",
         jsonRequest({
-          pullRequestId,
+          ...reviewCommentPayload(review),
           target,
           body,
           authorLabel: "You",
@@ -1248,7 +1294,7 @@ export function DocumentViewer({
             markdownDiv,
             sourceRef: fullRef,
             selectedOid,
-            pullRequestId,
+            review,
             linkPointerStart: markdownLinkPointerStart,
             onOpenRepositoryLink: openRepositoryLink,
             onOpenMarkdownFragment: openMarkdownFragment,
@@ -1265,7 +1311,7 @@ export function DocumentViewer({
       markdownText,
       openMarkdownFragment,
       openRepositoryLink,
-      pullRequestId,
+      review,
       selectedOid,
     ],
   );

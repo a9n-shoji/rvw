@@ -9,8 +9,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { changedFilePath } from "../../domain/changed-file.js";
@@ -21,11 +19,8 @@ import type {
   CommentPlacement,
   DocumentRef,
   IssueDocument,
-  ReviewComment,
-  SearchResult,
   Walkthrough,
   WalkthroughReference,
-  WalkthroughSummary,
 } from "../../domain/models.js";
 import {
   api,
@@ -37,28 +32,32 @@ import {
   jsonRequest,
   type PullRequestResponse,
   type SearchResponse,
-  type ThemePreferenceResponse,
   type TreeResponse,
   type WalkthroughResponse,
   type WalkthroughsResponse,
 } from "../api.js";
 import { CommentSidebar } from "../components/CommentSidebar.js";
 import { IssueDocumentViewer } from "../components/IssueDocumentViewer.js";
-import { DocumentTabs } from "../components/DocumentTabs.js";
 import { ErrorNotice } from "../components/ErrorNotice.js";
 import {
   decorateAllFilesWithChanges,
   FileTree,
   type FileTreeFile,
 } from "../components/FileTree.js";
-import { FileEntryIcon } from "../components/FileIcon.js";
 import { LazyLoadBoundary } from "../components/LazyLoadBoundary.js";
+import { ReviewIssuePanel } from "../components/ReviewIssuePanel.js";
+import { ReviewActionsMenu } from "../components/ReviewActionsMenu.js";
+import { ReviewDocumentPane } from "../components/ReviewDocumentPane.js";
+import { ReviewSidebar } from "../components/ReviewSidebar.js";
+import { ReviewWorkspace } from "../components/ReviewWorkspace.js";
 import type { DisplayMode, ViewerNavigationTarget } from "../components/DocumentViewer.js";
 import { SearchPanel } from "../components/SearchPanel.js";
+import type { AnySearchResult } from "../components/SearchPanel.js";
 import { QuickOpenPalette } from "../components/QuickOpenPalette.js";
-import { applyThemePreference, storeThemePreference, type ThemePreference } from "../theme.js";
+import type { ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
+import type { AnyReviewComment, AnyWalkthrough, AnyWalkthroughSummary } from "../review-context.js";
 import { BranchReviewApp } from "./BranchReviewApp.js";
 import {
   commitRangeOldOid,
@@ -75,9 +74,13 @@ import {
   type ActiveDocument,
   type DocumentPaneId,
 } from "../document-workspace.js";
-import { clearCommentDraftsForPullRequest } from "../comment-draft-store.js";
+import { clearCommentDraftsForReview } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
+import { useDebouncedValue } from "../use-debounced-value.js";
+import { useThemePreference } from "../use-theme-preference.js";
+import { useReviewSidebarSearch } from "../use-review-sidebar-search.js";
+import { useQuickOpenShortcut } from "../use-quick-open-shortcut.js";
 import {
   parseReadingHistoryEntry,
   readingHistoryState,
@@ -102,30 +105,6 @@ function shortOid(oid: string): string {
   return oid.slice(0, 8);
 }
 
-const DEFAULT_SIDEBAR_WIDTH = 330;
-const MIN_SIDEBAR_WIDTH = 240;
-const MAX_SIDEBAR_WIDTH = 560;
-const MIN_MAIN_VIEW_WIDTH = 500;
-const DEFAULT_PANE_SPLIT = 50;
-const MIN_PANE_WIDTH = 280;
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(maximum, Math.max(minimum, value));
-}
-
-function initialSidebarWidth(): number {
-  return window.innerWidth <= 850 ? 280 : DEFAULT_SIDEBAR_WIDTH;
-}
-
-function useDebouncedValue<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setDebouncedValue(value), delay);
-    return () => window.clearTimeout(timeout);
-  }, [delay, value]);
-  return debouncedValue;
-}
-
 type DocumentDisplayMode = "full" | "diff";
 
 interface AppliedLineNavigation {
@@ -133,66 +112,6 @@ interface AppliedLineNavigation {
   documentKey: string;
   pane: DocumentPaneId;
   top: number;
-}
-
-function SidebarCommentIcon() {
-  return (
-    <svg className="sidebar-stack-icon" aria-hidden="true" viewBox="0 0 16 16">
-      <path
-        fill="currentColor"
-        d="M1.75 2.5A1.75 1.75 0 0 1 3.5.75h9a1.75 1.75 0 0 1 1.75 1.75v7a1.75 1.75 0 0 1-1.75 1.75H7.06l-3.88 3.1A.75.75 0 0 1 2 13.77v-2.7A1.75 1.75 0 0 1 1.75 9.5v-7Zm1.75-.25a.25.25 0 0 0-.25.25v7c0 .14.11.25.25.25V12.2l3.03-2.42a.75.75 0 0 1 .47-.17h5.5a.25.25 0 0 0 .25-.25V2.5a.25.25 0 0 0-.25-.25h-9Z"
-      />
-    </svg>
-  );
-}
-
-function SidebarChevron({ expanded }: { expanded: boolean }) {
-  return (
-    <svg className="sidebar-stack-chevron" aria-hidden="true" viewBox="0 0 16 16">
-      <path
-        fill="currentColor"
-        d={
-          expanded
-            ? "M3.72 5.97a.75.75 0 0 1 1.06 0L8 9.19l3.22-3.22a.75.75 0 1 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0L3.72 7.03a.75.75 0 0 1 0-1.06Z"
-            : "M5.97 3.72a.75.75 0 0 1 1.06 0l3.75 3.75a.75.75 0 0 1 0 1.06l-3.75 3.75a.75.75 0 1 1-1.06-1.06L9.19 8 5.97 4.78a.75.75 0 0 1 0-1.06Z"
-        }
-      />
-    </svg>
-  );
-}
-
-function SidebarSearchIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16">
-      <circle cx="7" cy="7" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <path d="m10.5 10.5 3.25 3.25" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function SidebarBackIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16">
-      <path
-        d="M9.75 3.25 5 8l4.75 4.75"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.5"
-      />
-    </svg>
-  );
-}
-
-function MoreActionsIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16">
-      <circle cx="3" cy="8" r="1.4" fill="currentColor" />
-      <circle cx="8" cy="8" r="1.4" fill="currentColor" />
-      <circle cx="13" cy="8" r="1.4" fill="currentColor" />
-    </svg>
-  );
 }
 
 function CommitRangePicker({
@@ -487,11 +406,6 @@ function ReviewScopeBar({
   );
 }
 
-const themeOptions: { preference: ThemePreference; label: string }[] = [
-  { preference: "light", label: "ライトモード" },
-  { preference: "dark", label: "ダークモード" },
-  { preference: "system", label: "システム" },
-];
 const SYNC_FEEDBACK_DURATION_MS = 3_000;
 
 function pullRequestLoadErrorMessage(error: unknown): string {
@@ -511,6 +425,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     ),
   );
   const pullRequestId = pullRequestIdValid ? pullRequestIdParameter : null;
+  const reviewHistoryKey = pullRequestId ? `pull-request:${pullRequestId}` : null;
   const [selectedOid, setSelectedOid] = useState<string | null>(null);
   const [rangeStartOid, setRangeStartOid] = useState<string | null>(null);
   const [documentDisplayMode, setDocumentDisplayMode] = useState<DocumentDisplayMode>("full");
@@ -540,9 +455,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     moveDocument,
     dropDocument: dropWorkspaceDocument,
   } = useDocumentWorkspace(resetViewerNavigation);
-  const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
-  const [paneSplit, setPaneSplit] = useState(DEFAULT_PANE_SPLIT);
-  const [resizingSurface, setResizingSurface] = useState<"sidebar" | "panes" | null>(null);
   const [draggedDocumentKey, setDraggedDocumentKey] = useState<string | null>(null);
   const [fileFilter, setFileFilter] = useState("");
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
@@ -551,10 +463,14 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const [searchMatchCase, setSearchMatchCase] = useState(false);
   const [searchWholeWord, setSearchWholeWord] = useState(false);
   const [issueReference, setIssueReference] = useState("");
-  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [reviewStateRevision, setReviewStateRevision] = useState(0);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
-  const [themePreference, setThemePreference] = useState<ThemePreference>(initialThemePreference);
+  const {
+    themePreference,
+    selectThemePreference,
+    query: themePreferenceQuery,
+    mutation: themePreferenceMutation,
+  } = useThemePreference(initialThemePreference);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const handleCommentActiveChange = useCallback((commentId: string, active: boolean): void => {
     setActiveCommentId((current) => (active ? commentId : current === commentId ? null : current));
@@ -563,8 +479,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const commitRangeTouched = useRef(false);
   const observedLatestHead = useRef<string | null>(null);
   const observedChangeSequence = useRef<number | null>(null);
-  const actionsMenuRef = useRef<HTMLDivElement>(null);
-  const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchNavigationSequence = useRef(0);
   const codeReferenceRequestSequence = useRef<Record<DocumentPaneId, number>>({
@@ -572,6 +486,11 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     right: 0,
   });
   const debouncedSearch = useDebouncedValue(searchText.trim(), 250);
+  const openSidebarSearch = useReviewSidebarSearch({
+    searchInputRef,
+    onCodeExpandedChange: setCodeExpanded,
+    onModeChange: setCodeNavigationMode,
+  });
   const openDocuments = documentWorkspace.documents;
   const activePane = documentWorkspace.focusedPane;
   const activeDocument = documentWorkspace.active[activePane];
@@ -601,7 +520,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   }, [reviewStateRevision, rightActiveDocumentKey]);
 
   const currentReadingHistoryEntry = useCallback((): ReadingHistoryEntry | null => {
-    if (!pullRequestId) return null;
+    if (!reviewHistoryKey) return null;
     const workspace = documentWorkspaceRef.current;
     const pane = workspace.focusedPane;
     const document = workspace.active[pane];
@@ -636,12 +555,12 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           };
     return {
       version: 1,
-      pullRequestId,
+      reviewKey: reviewHistoryKey,
       pane,
       document,
       locator,
     };
-  }, [pullRequestId]);
+  }, [reviewHistoryKey]);
 
   const markLineNavigationApplied = useCallback(
     (pane: DocumentPaneId, requestId: number): void => {
@@ -698,14 +617,14 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       locator: ReadingLocator,
       hash?: string,
     ): void => {
-      if (!pullRequestId || !readingHistoryReady.current) return;
+      if (!reviewHistoryKey || !readingHistoryReady.current) return;
       cancelReadingHistoryScrollSnapshot();
       const currentWorkspace = documentWorkspaceRef.current;
       const currentDocument = currentWorkspace.active[currentWorkspace.focusedPane];
       replaceCurrentReadingHistory();
       const destination: ReadingHistoryEntry = {
         version: 1,
-        pullRequestId,
+        reviewKey: reviewHistoryKey,
         pane,
         document,
         locator,
@@ -723,7 +642,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       url.hash = hash ?? "";
       window.history.pushState(readingHistoryState(window.history.state, destination), "", url);
     },
-    [cancelReadingHistoryScrollSnapshot, pullRequestId, replaceCurrentReadingHistory],
+    [cancelReadingHistoryScrollSnapshot, replaceCurrentReadingHistory, reviewHistoryKey],
   );
 
   const requestLineNavigation = useCallback(
@@ -815,56 +734,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     [dropWorkspaceDocument],
   );
 
-  const updateSidebarWidth = (clientX: number, workspace: HTMLElement): void => {
-    const bounds = workspace.getBoundingClientRect();
-    const dynamicMaximum = Math.max(
-      MIN_SIDEBAR_WIDTH,
-      Math.min(MAX_SIDEBAR_WIDTH, bounds.width - MIN_MAIN_VIEW_WIDTH),
-    );
-    setSidebarWidth(clamp(clientX - bounds.left, MIN_SIDEBAR_WIDTH, dynamicMaximum));
-  };
-  const updatePaneSplit = (clientX: number, mainView: HTMLElement): void => {
-    const bounds = mainView.getBoundingClientRect();
-    const minimumWidth = Math.min(MIN_PANE_WIDTH, Math.max(160, (bounds.width - 48) / 2));
-    const minimumPercent = (minimumWidth / bounds.width) * 100;
-    const nextPercent = ((clientX - bounds.left) / bounds.width) * 100;
-    setPaneSplit(clamp(nextPercent, minimumPercent, 100 - minimumPercent));
-  };
-  const finishResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    setResizingSurface(null);
-  };
-
-  const themePreferenceQuery = useQuery({
-    queryKey: ["theme-preference"],
-    queryFn: async () => await api<ThemePreferenceResponse>("/api/preferences/theme"),
-  });
-  useEffect(() => {
-    const preference = themePreferenceQuery.data?.themePreference;
-    if (!preference) return;
-    setThemePreference(preference);
-    applyThemePreference(preference);
-    storeThemePreference(preference);
-  }, [themePreferenceQuery.data?.themePreference]);
-  const themePreferenceMutation = useMutation({
-    mutationFn: async (preference: ThemePreference) =>
-      await api<ThemePreferenceResponse>(
-        "/api/preferences/theme",
-        jsonRequest({ themePreference: preference }),
-      ),
-    onSuccess: (response) => {
-      queryClient.setQueryData(["theme-preference"], response);
-    },
-  });
-  const selectThemePreference = (preference: ThemePreference): void => {
-    setThemePreference(preference);
-    applyThemePreference(preference);
-    storeThemePreference(preference);
-    themePreferenceMutation.mutate(preference);
-  };
-
   const pullRequestQuery = useQuery({
     queryKey: ["pull-request", pullRequestId],
     queryFn: async () => await api<PullRequestResponse>(`/api/pull-requests/${pullRequestId}`),
@@ -950,14 +819,14 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   }, [cancelReadingHistoryScrollSnapshot]);
 
   useEffect(() => {
-    if (!pullRequestId) return;
+    if (!reviewHistoryKey) return;
     const restoreFromPopState = (event: PopStateEvent): void => {
-      const entry = parseReadingHistoryEntry(event.state, pullRequestId);
+      const entry = parseReadingHistoryEntry(event.state, reviewHistoryKey);
       if (entry) restoreReadingHistory(entry);
     };
     window.addEventListener("popstate", restoreFromPopState);
     return () => window.removeEventListener("popstate", restoreFromPopState);
-  }, [pullRequestId, restoreReadingHistory]);
+  }, [reviewHistoryKey, restoreReadingHistory]);
 
   useEffect(() => {
     if (
@@ -984,82 +853,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     window.addEventListener("beforeunload", warnBeforeBrowserClose);
     return () => window.removeEventListener("beforeunload", warnBeforeBrowserClose);
   }, []);
-  useEffect(() => {
-    const openQuickOpen = (event: KeyboardEvent): void => {
-      if (
-        !(event.metaKey || event.ctrlKey) ||
-        event.shiftKey ||
-        event.altKey ||
-        event.key.toLowerCase() !== "p"
-      ) {
-        return;
-      }
-      event.preventDefault();
-      setActionsMenuOpen(false);
-      setQuickOpenReturnFocus(null);
-      setQuickOpenVisible(true);
-    };
-    document.addEventListener("keydown", openQuickOpen);
-    return () => document.removeEventListener("keydown", openQuickOpen);
-  }, []);
-  useEffect(() => {
-    const focusFullTextSearch = (event: KeyboardEvent): void => {
-      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== "f") {
-        return;
-      }
-      event.preventDefault();
-      setCodeExpanded(true);
-      setCodeNavigationMode("search");
-      window.requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
-    };
-    document.addEventListener("keydown", focusFullTextSearch);
-    return () => document.removeEventListener("keydown", focusFullTextSearch);
-  }, []);
-  useLayoutEffect(() => {
-    if (!actionsMenuOpen) return;
-    actionsMenuRef.current
-      ?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')
-      ?.focus();
-  }, [actionsMenuOpen]);
-  useEffect(() => {
-    if (!actionsMenuOpen) return;
-    const closeOnOutsidePointer = (event: PointerEvent): void => {
-      if (!actionsMenuRef.current?.contains(event.target as Node)) {
-        setActionsMenuOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
-      setActionsMenuOpen(false);
-      actionsMenuButtonRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [actionsMenuOpen]);
-  const handleActionsMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    const items = [
-      ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-        '[role^="menuitem"]:not(:disabled)',
-      ),
-    ];
-    if (items.length === 0) return;
-    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % items.length;
-    if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + items.length) % items.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = items.length - 1;
-    if (nextIndex === null) return;
-    event.preventDefault();
-    items[nextIndex]?.focus();
-  };
+  useQuickOpenShortcut(() => {
+    setQuickOpenReturnFocus(null);
+    setQuickOpenVisible(true);
+  });
   const selectCommitRange = (startOid: string, endOid: string): void => {
     const range = normalizedCommitRange(commits, startOid, endOid);
     if (!range) return;
@@ -1419,7 +1216,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     },
     onSuccess: async (result) => {
       if (!result) return;
-      clearCommentDraftsForPullRequest(result.pullRequest.id);
+      clearCommentDraftsForReview(result.pullRequest.id);
       documentScrollPositions.current.clear();
       setReviewStateRevision((revision) => revision + 1);
       setDocumentWorkspace(initialDocumentWorkspace());
@@ -1478,7 +1275,8 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       ),
     [openRepositoryMarkdownLink],
   );
-  const openSearchResult = (result: SearchResult, openInRightPane = false): void => {
+  const openSearchResult = (result: AnySearchResult, openInRightPane = false): void => {
+    if ("branchReviewId" in result.document) return;
     const requestedDocument: ActiveDocument =
       result.document.kind === "pull-request-markdown"
         ? { kind: "pull-request-markdown" }
@@ -1501,7 +1299,11 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     const resetHorizontal = !activeTarget || documentTabKey(activeTarget) !== documentKey;
     navigateToDocument(document, targetPane, { kind: "line", line: result.line }, resetHorizontal);
   };
-  const openCommentTarget = (comment: ReviewComment, placement: CommentPlacement | null): void => {
+  const openCommentTarget = (
+    comment: AnyReviewComment,
+    placement: CommentPlacement | null,
+  ): void => {
+    if ("branchReviewId" in comment) return;
     const target = comment.target;
     const navigate = (
       document: ActiveDocument,
@@ -1561,7 +1363,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     navigate(document, startLine, endLine);
   };
   const openWalkthrough = useCallback(
-    (walkthrough: WalkthroughSummary, openInRightPane = false): void => {
+    (walkthrough: AnyWalkthroughSummary, openInRightPane = false): void => {
       openDocument(
         {
           kind: "walkthrough",
@@ -1637,26 +1439,30 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   );
   const openWalkthroughReference = useCallback(
     (
-      walkthrough: Walkthrough,
+      walkthrough: AnyWalkthrough,
       reference: WalkthroughReference,
       targetPane: DocumentPaneId,
-    ): Promise<string | null> =>
-      openCodeReference(
+    ): Promise<string | null> => {
+      if (!("pullRequestId" in walkthrough)) {
+        return Promise.resolve(`参照先を開けません · ${reference.path}`);
+      }
+      return openCodeReference(
         walkthrough.pullRequestId,
         walkthrough.sourceOid,
         reference,
         targetPane,
         "selected-range",
-      ),
+      );
+    },
     [openCodeReference],
   );
   const openWalkthroughReferenceFromLeftPane = useCallback(
-    (walkthrough: Walkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
+    (walkthrough: AnyWalkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
       openWalkthroughReference(walkthrough, reference, openInOtherPane ? "right" : "left"),
     [openWalkthroughReference],
   );
   const openWalkthroughReferenceFromRightPane = useCallback(
-    (walkthrough: Walkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
+    (walkthrough: AnyWalkthrough, reference: WalkthroughReference, openInOtherPane: boolean) =>
       openWalkthroughReference(walkthrough, reference, openInOtherPane ? "left" : "right"),
     [openWalkthroughReference],
   );
@@ -1773,162 +1579,161 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     const paneDocument = documentWorkspace.active[paneId];
     const paneViewerState = paneViewerStates[paneId];
     const paneViewerDocument = paneViewerState.viewerDocument;
+    const content =
+      paneViewerDocument?.kind === "walkthrough" && paneViewerState.walkthrough ? (
+        <LazyLoadBoundary label="ウォークスルー">
+          <Suspense
+            fallback={<div className="viewer-loading">ウォークスルーを準備しています…</div>}
+          >
+            <WalkthroughViewer
+              walkthrough={paneViewerState.walkthrough}
+              comments={comments}
+              activeCommentId={activeCommentId}
+              navigationTarget={
+                viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
+                  ? viewerNavigationTarget
+                  : null
+              }
+              onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
+              themePreference={themePreference}
+              onCommentActiveChange={handleCommentActiveChange}
+              onOpenReference={
+                paneId === "left"
+                  ? openWalkthroughReferenceFromLeftPane
+                  : openWalkthroughReferenceFromRightPane
+              }
+              onOpenCommentCodeReference={
+                paneId === "left"
+                  ? openCommentCodeReferenceFromLeftPane
+                  : openCommentCodeReferenceFromRightPane
+              }
+              onOpenRepositoryLink={
+                paneId === "left"
+                  ? openRepositoryMarkdownLinkFromLeftPane
+                  : openRepositoryMarkdownLinkFromRightPane
+              }
+              onDeleted={() => closeDocument(paneViewerDocument)}
+            />
+          </Suspense>
+        </LazyLoadBoundary>
+      ) : paneViewerDocument?.kind === "issue" ? (
+        (() => {
+          const issue = issues.find((candidate) => candidate.id === paneViewerDocument.id);
+          return issue ? (
+            <IssueDocumentViewer
+              review={{ kind: "pull-request", id: pullRequest.id, sourceOid: selectedOid }}
+              issue={issue}
+              comments={comments}
+              themePreference={themePreference}
+              navigationTarget={
+                viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
+                  ? viewerNavigationTarget
+                  : null
+              }
+              onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
+              onCommentActiveChange={handleCommentActiveChange}
+              onOpenCodeReference={
+                paneId === "left"
+                  ? openCommentCodeReferenceFromLeftPane
+                  : openCommentCodeReferenceFromRightPane
+              }
+              onOpenRepositoryLink={
+                paneId === "left"
+                  ? openRepositoryMarkdownLinkFromLeftPane
+                  : openRepositoryMarkdownLinkFromRightPane
+              }
+            />
+          ) : (
+            <div className="empty-document-viewer">Issueを読み込めませんでした。</div>
+          );
+        })()
+      ) : paneViewerDocument?.kind === "walkthrough" ? (
+        <div className="empty-document-viewer">
+          <strong>
+            {paneViewerState.walkthroughLoading
+              ? "ウォークスルーを読み込んでいます…"
+              : "ウォークスルーを読み込めませんでした。"}
+          </strong>
+          {!paneViewerState.walkthroughLoading && (
+            <span>サイドバーからもう一度開いてください。</span>
+          )}
+        </div>
+      ) : paneViewerDocument ? (
+        <LazyLoadBoundary label="文書ビューアー">
+          <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
+            <DocumentViewer
+              key={`${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`}
+              review={{ kind: "pull-request", id: pullRequest.id, sourceOid: selectedOid }}
+              selectedOid={selectedOid}
+              oldOid={effectiveOldOid}
+              activeDocument={paneViewerDocument}
+              displayMode={paneViewerState.effectiveDisplayMode}
+              diffStyle={diffStyle}
+              comments={comments}
+              activeCommentId={activeCommentId}
+              fullViewNotice={paneViewerState.fullViewNotice}
+              fullViewUnavailableMessage={paneViewerState.fullViewUnavailableMessage}
+              themePreference={themePreference}
+              onCommentActiveChange={handleCommentActiveChange}
+              navigationTarget={
+                viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
+                  ? viewerNavigationTarget
+                  : null
+              }
+              onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
+              onOpenMarkdownFragment={(line, hash) =>
+                navigateToMarkdownFragment(paneViewerDocument, paneId, line, hash)
+              }
+              onOpenCodeReference={
+                paneId === "left"
+                  ? openCommentCodeReferenceFromLeftPane
+                  : openCommentCodeReferenceFromRightPane
+              }
+              onOpenRepositoryLink={(filePath, sourceOid, openInOtherPane) =>
+                openRepositoryMarkdownLink(
+                  filePath,
+                  sourceOid,
+                  openInOtherPane ? otherDocumentPane(paneId) : paneId,
+                )
+              }
+            />
+          </Suspense>
+        </LazyLoadBoundary>
+      ) : null;
     return (
-      <section
-        ref={(element) => {
+      <ReviewDocumentPane
+        paneId={paneId}
+        documents={paneDocuments}
+        activeDocument={paneDocument}
+        focusedPane={activePane}
+        changeKindsByPath={tabChangeKinds}
+        draggedDocumentKey={draggedDocumentKey}
+        content={content}
+        onPaneRef={(element) => {
           paneElements.current[paneId] = element;
         }}
-        onScroll={(event) => {
+        onScroll={(scrollTop) => {
           if (paneViewerDocument) {
-            documentScrollPositions.current.set(
-              documentTabKey(paneViewerDocument),
-              event.currentTarget.scrollTop,
-            );
+            documentScrollPositions.current.set(documentTabKey(paneViewerDocument), scrollTop);
             if (documentWorkspaceRef.current.focusedPane === paneId) {
               scheduleReadingHistoryScrollSnapshot();
             }
           }
         }}
-        className={`document-pane${activePane === paneId ? " active" : ""}${paneDocuments.length === 0 ? " empty" : ""}`}
-        data-pane={paneId}
-        aria-label={`${paneId === "left" ? "左" : "右"}のコードペイン`}
-        onPointerDown={() =>
+        onFocus={() =>
           setDocumentWorkspace((current) =>
             current.focusedPane === paneId ? current : { ...current, focusedPane: paneId },
           )
         }
-      >
-        <DocumentTabs
-          paneId={paneId}
-          documents={paneDocuments}
-          activeDocument={paneDocument}
-          changeKindsByPath={tabChangeKinds}
-          onActivate={(document) => activateDocument(document, paneId)}
-          onClose={closeDocument}
-          onCloseOthers={(document) => closePaneDocuments(paneId, document)}
-          onCloseAll={() => closePaneDocuments(paneId)}
-          onMove={moveDocument}
-          onDropDocument={dropDocument}
-          onDragStartDocument={setDraggedDocumentKey}
-          onDragEndDocument={() => setDraggedDocumentKey(null)}
-        />
-        {paneViewerDocument?.kind === "walkthrough" && paneViewerState.walkthrough ? (
-          <LazyLoadBoundary label="ウォークスルー">
-            <Suspense
-              fallback={<div className="viewer-loading">ウォークスルーを準備しています…</div>}
-            >
-              <WalkthroughViewer
-                walkthrough={paneViewerState.walkthrough}
-                comments={comments}
-                activeCommentId={activeCommentId}
-                navigationTarget={
-                  viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
-                    ? viewerNavigationTarget
-                    : null
-                }
-                onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
-                themePreference={themePreference}
-                onCommentActiveChange={handleCommentActiveChange}
-                onOpenReference={
-                  paneId === "left"
-                    ? openWalkthroughReferenceFromLeftPane
-                    : openWalkthroughReferenceFromRightPane
-                }
-                onOpenCommentCodeReference={
-                  paneId === "left"
-                    ? openCommentCodeReferenceFromLeftPane
-                    : openCommentCodeReferenceFromRightPane
-                }
-                onOpenRepositoryLink={
-                  paneId === "left"
-                    ? openRepositoryMarkdownLinkFromLeftPane
-                    : openRepositoryMarkdownLinkFromRightPane
-                }
-                onDeleted={() => closeDocument(paneViewerDocument)}
-              />
-            </Suspense>
-          </LazyLoadBoundary>
-        ) : paneViewerDocument?.kind === "issue" ? (
-          (() => {
-            const issue = issues.find((candidate) => candidate.id === paneViewerDocument.id);
-            return issue ? (
-              <IssueDocumentViewer
-                pullRequestId={pullRequest.id}
-                issue={issue}
-                comments={comments}
-                themePreference={themePreference}
-                navigationTarget={
-                  viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
-                    ? viewerNavigationTarget
-                    : null
-                }
-                onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
-              />
-            ) : (
-              <div className="empty-document-viewer">Issueを読み込めませんでした。</div>
-            );
-          })()
-        ) : paneViewerDocument?.kind === "walkthrough" ? (
-          <div className="empty-document-viewer">
-            <strong>
-              {paneViewerState.walkthroughLoading
-                ? "ウォークスルーを読み込んでいます…"
-                : "ウォークスルーを読み込めませんでした。"}
-            </strong>
-            {!paneViewerState.walkthroughLoading && (
-              <span>サイドバーからもう一度開いてください。</span>
-            )}
-          </div>
-        ) : paneViewerDocument ? (
-          <LazyLoadBoundary label="文書ビューアー">
-            <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
-              <DocumentViewer
-                key={`${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`}
-                pullRequestId={pullRequest.id}
-                selectedOid={selectedOid}
-                oldOid={effectiveOldOid}
-                activeDocument={paneViewerDocument}
-                displayMode={paneViewerState.effectiveDisplayMode}
-                diffStyle={diffStyle}
-                comments={comments}
-                activeCommentId={activeCommentId}
-                fullViewNotice={paneViewerState.fullViewNotice}
-                fullViewUnavailableMessage={paneViewerState.fullViewUnavailableMessage}
-                themePreference={themePreference}
-                onCommentActiveChange={handleCommentActiveChange}
-                navigationTarget={
-                  viewerNavigationTarget?.documentKey === documentTabKey(paneViewerDocument)
-                    ? viewerNavigationTarget
-                    : null
-                }
-                onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
-                onOpenMarkdownFragment={(line, hash) =>
-                  navigateToMarkdownFragment(paneViewerDocument, paneId, line, hash)
-                }
-                onOpenCodeReference={
-                  paneId === "left"
-                    ? openCommentCodeReferenceFromLeftPane
-                    : openCommentCodeReferenceFromRightPane
-                }
-                onOpenRepositoryLink={(filePath, sourceOid, openInOtherPane) =>
-                  openRepositoryMarkdownLink(
-                    filePath,
-                    sourceOid,
-                    openInOtherPane ? otherDocumentPane(paneId) : paneId,
-                  )
-                }
-              />
-            </Suspense>
-          </LazyLoadBoundary>
-        ) : (
-          <div className="empty-document-viewer document-pane-drop-target">
-            <strong>
-              {draggedDocumentKey ? "ここへドロップ" : `${paneId === "left" ? "左" : "右"}ペイン`}
-            </strong>
-            <span>タブを移動するか、Cmd/Ctrl+クリックで文書を開けます。</span>
-          </div>
-        )}
-      </section>
+        onActivate={(document) => activateDocument(document, paneId)}
+        onClose={closeDocument}
+        onCloseOthers={(document) => closePaneDocuments(paneId, document)}
+        onCloseAll={() => closePaneDocuments(paneId)}
+        onMove={moveDocument}
+        onDropDocument={dropDocument}
+        onDragStartDocument={setDraggedDocumentKey}
+        onDragEndDocument={() => setDraggedDocumentKey(null)}
+      />
     );
   };
 
@@ -1942,7 +1747,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           <span className="brand-mark">r</span>
           <strong>rvw</strong>
         </div>
-        <div className="pr-heading">
+        <div className="review-heading">
           <span>
             {pullRequest.owner}/{pullRequest.repository} · #{pullRequest.number}
           </span>
@@ -1969,76 +1774,22 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           onDisplayModeChange={setDocumentDisplayMode}
           onDiffStyleChange={setDiffStyle}
         />
-        <div className="topbar-menu" ref={actionsMenuRef}>
-          <button
-            ref={actionsMenuButtonRef}
-            className="topbar-menu-toggle"
-            aria-label="その他の操作"
-            aria-haspopup="menu"
-            aria-expanded={actionsMenuOpen}
-            onClick={() => setActionsMenuOpen((open) => !open)}
-          >
-            <MoreActionsIcon />
-          </button>
-          {actionsMenuOpen && (
-            <div className="topbar-menu-popover" role="menu" onKeyDown={handleActionsMenuKeyDown}>
-              <button
-                role="menuitem"
-                className="topbar-menu-command"
-                onClick={() => {
-                  setActionsMenuOpen(false);
-                  setQuickOpenReturnFocus(actionsMenuButtonRef.current);
-                  setQuickOpenVisible(true);
-                }}
-              >
-                <span>ファイルを開く…</span>
-                <kbd>⌘ / Ctrl P</kbd>
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setActionsMenuOpen(false);
-                  setSyncFeedback(null);
-                  refreshMutation.mutate({ announce: true });
-                }}
-                disabled={refreshMutation.isPending}
-              >
-                GitHubと同期
-              </button>
-              <div className="topbar-menu-section" role="group" aria-label="UIテーマ">
-                <span className="topbar-menu-section-label">UIテーマ</span>
-                {themeOptions.map((option) => (
-                  <button
-                    key={option.preference}
-                    role="menuitemradio"
-                    aria-checked={themePreference === option.preference}
-                    disabled={themePreferenceMutation.isPending}
-                    onClick={() => {
-                      selectThemePreference(option.preference);
-                      setActionsMenuOpen(false);
-                    }}
-                  >
-                    <span>{option.label}</span>
-                    <span className="topbar-menu-check" aria-hidden="true">
-                      {themePreference === option.preference ? "✓" : ""}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <button
-                className="topbar-menu-danger"
-                role="menuitem"
-                onClick={() => {
-                  setActionsMenuOpen(false);
-                  resetMutation.mutate();
-                }}
-                disabled={resetMutation.isPending}
-              >
-                ローカル状態を削除して再構築
-              </button>
-            </div>
-          )}
-        </div>
+        <ReviewActionsMenu
+          themePreference={themePreference}
+          themePending={themePreferenceMutation.isPending}
+          syncPending={refreshMutation.isPending}
+          resetPending={resetMutation.isPending}
+          onOpenQuickOpen={(returnFocusElement) => {
+            setQuickOpenReturnFocus(returnFocusElement);
+            setQuickOpenVisible(true);
+          }}
+          onSync={() => {
+            setSyncFeedback(null);
+            refreshMutation.mutate({ announce: true });
+          }}
+          onThemeChange={selectThemePreference}
+          onReset={() => resetMutation.mutate()}
+        />
       </header>
       {quickOpenVisible && (
         <QuickOpenPalette
@@ -2060,138 +1811,48 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           {syncFeedback}
         </div>
       )}
-      <div
-        className={`workspace${resizingSurface ? " is-resizing" : ""}`}
-        style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
-      >
-        <aside className="sidebar" aria-label="レビューサイドバー">
-          <section
-            className={`sidebar-stack sidebar-stack--code${codeExpanded ? " is-expanded" : ""}`}
-          >
-            <div className="sidebar-stack-header">
-              <button
-                className="sidebar-stack-toggle"
-                aria-expanded={codeExpanded}
-                onClick={() => setCodeExpanded((expanded) => !expanded)}
-              >
-                <FileEntryIcon kind="file" />
-                <span>{codeNavigationMode === "search" ? "コード検索" : "エクスプローラー"}</span>
-                <SidebarChevron expanded={codeExpanded} />
-              </button>
-              <button
-                type="button"
-                className={`sidebar-stack-action${codeNavigationMode === "search" ? " active" : ""}`}
-                aria-label={
-                  codeNavigationMode === "search" ? "ファイルツリーに戻る" : "コード検索を開く"
-                }
-                aria-pressed={codeNavigationMode === "search"}
-                title={
-                  codeNavigationMode === "search"
-                    ? "ファイルツリーに戻る"
-                    : "コード検索 (⌘ / Ctrl Shift F)"
-                }
-                onClick={() => {
-                  if (codeNavigationMode === "search") {
-                    setCodeNavigationMode("files");
-                    return;
-                  }
-                  setCodeExpanded(true);
-                  setCodeNavigationMode("search");
-                  window.requestAnimationFrame(() => {
-                    searchInputRef.current?.focus();
-                    searchInputRef.current?.select();
-                  });
-                }}
-              >
-                {codeNavigationMode === "search" ? <SidebarBackIcon /> : <SidebarSearchIcon />}
-              </button>
-            </div>
-            <div
-              className="sidebar-stack-body sidebar-code-body"
-              hidden={!codeExpanded || codeNavigationMode !== "files"}
-            >
+      <ReviewWorkspace
+        sidebar={
+          <ReviewSidebar
+            codeExpanded={codeExpanded}
+            commentsExpanded={commentsExpanded}
+            mode={codeNavigationMode}
+            unresolvedCommentCount={unresolvedCommentCount}
+            onOpenSearch={openSidebarSearch}
+            onCodeExpandedChange={setCodeExpanded}
+            onCommentsExpandedChange={setCommentsExpanded}
+            onModeChange={setCodeNavigationMode}
+            explorer={
               <div className="file-panel">
-                <section className="pr-issues-panel" aria-label="Issues">
-                  <h3>
-                    Issues <span>{issues.length}</span>
-                  </h3>
-                  <form
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      addIssueMutation.mutate();
-                    }}
-                  >
-                    <input
-                      value={issueReference}
-                      onChange={(event) => setIssueReference(event.target.value)}
-                      placeholder="#142 または Issue URL"
-                    />
-                    <button disabled={!issueReference.trim() || addIssueMutation.isPending}>
-                      追加
-                    </button>
-                  </form>
-                  <nav>
-                    {issues.map((issue) => (
-                      <div className="issue-list-row" key={issue.id}>
-                        <button
-                          className={`issue-list-open${
-                            activeDocument?.kind === "issue" && activeDocument.id === issue.id
-                              ? " active"
-                              : ""
-                          }`}
-                          onClick={(event) =>
-                            openDocument(
-                              {
-                                kind: "issue",
-                                id: issue.id,
-                                number: issue.number,
-                                title: issue.title,
-                              },
-                              event.metaKey || event.ctrlKey
-                                ? otherDocumentPane(activePane)
-                                : activePane,
-                            )
-                          }
-                        >
-                          <strong>#{issue.number}</strong>
-                          <span>{issue.title}</span>
-                          <em>
-                            {issue.state}
-                            {issue.syncError ? " · stale" : ""}
-                          </em>
-                        </button>
-                        <button
-                          className="issue-list-remove"
-                          aria-label={`#${issue.number}を削除`}
-                          title="このreviewからIssueを削除"
-                          disabled={
-                            removeIssueMutation.isPending &&
-                            removeIssueMutation.variables?.id === issue.id
-                          }
-                          onClick={() => removeIssueMutation.mutate(issue)}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </nav>
-                  <ErrorNotice
-                    error={issuesQuery.error ?? addIssueMutation.error ?? removeIssueMutation.error}
-                  />
-                </section>
+                <ReviewIssuePanel
+                  issues={issues}
+                  activeIssueId={activeDocument?.kind === "issue" ? activeDocument.id : null}
+                  reference={issueReference}
+                  adding={addIssueMutation.isPending}
+                  removingIssueId={removeIssueMutation.variables?.id ?? null}
+                  error={issuesQuery.error ?? addIssueMutation.error ?? removeIssueMutation.error}
+                  onReferenceChange={setIssueReference}
+                  onAdd={() => addIssueMutation.mutate()}
+                  onOpen={(issue, openInOtherPane) =>
+                    openDocument(
+                      { kind: "issue", id: issue.id, number: issue.number, title: issue.title },
+                      openInOtherPane ? "right" : undefined,
+                    )
+                  }
+                  onRemove={(issue) => removeIssueMutation.mutate(issue)}
+                />
                 <ReviewTreeItems
                   walkthroughs={walkthroughs}
                   pullRequestActive={activeDocument?.kind === "pull-request-markdown"}
                   activeWalkthroughId={
                     activeDocument?.kind === "walkthrough" ? activeDocument.id : null
                   }
-                  onOpenPullRequest={(openInRightPane) => {
-                    if (openInRightPane) {
-                      openDocument({ kind: "pull-request-markdown" }, "right");
-                      return;
-                    }
-                    openDocument({ kind: "pull-request-markdown" });
-                  }}
+                  onOpenPullRequest={(openInRightPane) =>
+                    openDocument(
+                      { kind: "pull-request-markdown" },
+                      openInRightPane ? "right" : undefined,
+                    )
+                  }
                   onOpen={openWalkthrough}
                 />
                 <ErrorNotice error={walkthroughsQuery.error} />
@@ -2224,11 +1885,8 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
                   />
                 </nav>
               </div>
-            </div>
-            <div
-              className="sidebar-stack-body sidebar-code-body"
-              hidden={!codeExpanded || codeNavigationMode !== "search"}
-            >
+            }
+            search={
               <SearchPanel
                 inputRef={searchInputRef}
                 query={searchText}
@@ -2243,123 +1901,27 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
                 onWholeWordChange={setSearchWholeWord}
                 onOpenResult={openSearchResult}
               />
-            </div>
-          </section>
-          <section
-            className={`sidebar-stack sidebar-stack--comments${commentsExpanded ? " is-expanded" : ""}`}
-          >
-            <button
-              className="sidebar-stack-toggle"
-              aria-expanded={commentsExpanded}
-              onClick={() => setCommentsExpanded((expanded) => !expanded)}
-            >
-              <SidebarCommentIcon />
-              <span>コメント</span>
-              <span className="sidebar-stack-count">{unresolvedCommentCount}</span>
-              <SidebarChevron expanded={commentsExpanded} />
-            </button>
-            <div className="sidebar-stack-body" hidden={!commentsExpanded}>
-              <ErrorNotice error={commentsQuery.error} />
-              <CommentSidebar
-                comments={comments}
-                walkthroughs={walkthroughs}
-                pullRequestId={pullRequest.id}
-                selectedOid={selectedOid}
-                themePreference={themePreference}
-                onCommentActiveChange={handleCommentActiveChange}
-                onOpenCodeReference={openCommentCodeReferenceFromSidebar}
-                onOpenTarget={openCommentTarget}
-                onOpenRepositoryLink={openRepositoryMarkdownLinkFromSidebar}
-              />
-            </div>
-          </section>
-        </aside>
-        <div
-          className={`horizontal-resize-handle sidebar-resize-handle${resizingSurface === "sidebar" ? " active" : ""}`}
-          role="separator"
-          aria-label="サイドバーの幅を変更"
-          aria-orientation="vertical"
-          aria-valuemin={MIN_SIDEBAR_WIDTH}
-          aria-valuemax={MAX_SIDEBAR_WIDTH}
-          aria-valuenow={Math.round(sidebarWidth)}
-          tabIndex={0}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setResizingSurface("sidebar");
-            updateSidebarWidth(event.clientX, event.currentTarget.parentElement!);
-          }}
-          onPointerMove={(event) => {
-            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-            updateSidebarWidth(event.clientX, event.currentTarget.parentElement!);
-          }}
-          onPointerUp={finishResize}
-          onPointerCancel={finishResize}
-          onLostPointerCapture={() => setResizingSurface(null)}
-          onDoubleClick={() => setSidebarWidth(initialSidebarWidth())}
-          onKeyDown={(event) => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            event.preventDefault();
-            setSidebarWidth((width) =>
-              clamp(
-                width + (event.key === "ArrowLeft" ? -16 : 16),
-                MIN_SIDEBAR_WIDTH,
-                MAX_SIDEBAR_WIDTH,
-              ),
-            );
-          }}
-        />
-        <section
-          id="review-main-content"
-          tabIndex={-1}
-          className={`main-view${rightPaneVisible ? " two-pane" : ""}${resizingSurface === "panes" ? " is-resizing" : ""}`}
-          style={
-            rightPaneVisible
-              ? {
-                  gridTemplateColumns: `minmax(${MIN_PANE_WIDTH}px, ${paneSplit}fr) 6px minmax(${MIN_PANE_WIDTH}px, ${100 - paneSplit}fr)`,
-                }
-              : undefined
-          }
-        >
-          {renderDocumentPane("left")}
-          {rightPaneVisible && (
-            <div
-              className={`horizontal-resize-handle pane-resize-handle${resizingSurface === "panes" ? " active" : ""}`}
-              role="separator"
-              aria-label="左右ペインの幅を変更"
-              aria-orientation="vertical"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(paneSplit)}
-              tabIndex={0}
-              onPointerDown={(event) => {
-                if (event.button !== 0) return;
-                event.preventDefault();
-                event.currentTarget.setPointerCapture(event.pointerId);
-                setResizingSurface("panes");
-                updatePaneSplit(event.clientX, event.currentTarget.parentElement!);
-              }}
-              onPointerMove={(event) => {
-                if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-                updatePaneSplit(event.clientX, event.currentTarget.parentElement!);
-              }}
-              onPointerUp={finishResize}
-              onPointerCancel={finishResize}
-              onLostPointerCapture={() => setResizingSurface(null)}
-              onDoubleClick={() => setPaneSplit(DEFAULT_PANE_SPLIT)}
-              onKeyDown={(event) => {
-                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-                event.preventDefault();
-                setPaneSplit((split) =>
-                  clamp(split + (event.key === "ArrowLeft" ? -2 : 2), 20, 80),
-                );
-              }}
-            />
-          )}
-          {rightPaneVisible && renderDocumentPane("right")}
-        </section>
-      </div>
+            }
+            comments={
+              <>
+                <ErrorNotice error={commentsQuery.error} />
+                <CommentSidebar
+                  comments={comments}
+                  walkthroughs={walkthroughs}
+                  review={{ kind: "pull-request", id: pullRequest.id, sourceOid: selectedOid }}
+                  themePreference={themePreference}
+                  onCommentActiveChange={handleCommentActiveChange}
+                  onOpenCodeReference={openCommentCodeReferenceFromSidebar}
+                  onOpenTarget={openCommentTarget}
+                  onOpenRepositoryLink={openRepositoryMarkdownLinkFromSidebar}
+                />
+              </>
+            }
+          />
+        }
+        leftPane={renderDocumentPane("left")}
+        {...(rightPaneVisible ? { rightPane: renderDocumentPane("right") } : {})}
+      />
     </main>
   );
 }

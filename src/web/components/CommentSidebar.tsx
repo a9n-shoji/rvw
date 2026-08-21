@@ -1,19 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type {
-  CodeReference,
-  CommentPlacement,
-  ReviewComment,
-  WalkthroughSummary,
-} from "../../domain/models.js";
+import type { CodeReference, CommentPlacement } from "../../domain/models.js";
 import { api, jsonRequest, type PlacementResponse } from "../api.js";
+import {
+  reviewCommentPayload,
+  type AnyReviewComment,
+  type AnyWalkthroughSummary,
+  type ReviewIdentity,
+} from "../review-context.js";
 import type { ThemePreference } from "../theme.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
 
-function selectionLabel(comment: ReviewComment): string {
+function selectionLabel(comment: AnyReviewComment): string {
   if (comment.target.kind === "pull-request") return "Pull Request全体";
+  if (comment.target.kind === "branch") return "Branch Review全体";
   if (comment.target.kind === "walkthrough") return comment.target.walkthroughTitle;
   if (comment.target.kind === "issue")
     return `#${comment.target.issueNumber} ${comment.target.issueTitle}`;
@@ -24,8 +26,8 @@ function selectionLabel(comment: ReviewComment): string {
 
 function CommentCard({
   comment,
-  pullRequestId,
-  selectedOid,
+  review,
+  loadPlacement,
   selected,
   markdownSourceOid,
   themePreference,
@@ -36,9 +38,9 @@ function CommentCard({
   onOpenRepositoryLink,
   onDeleted,
 }: {
-  comment: ReviewComment;
-  pullRequestId: string;
-  selectedOid: string;
+  comment: AnyReviewComment;
+  review: ReviewIdentity;
+  loadPlacement: (comment: AnyReviewComment) => Promise<CommentPlacement>;
   selected: boolean;
   markdownSourceOid?: string | undefined;
   themePreference: ThemePreference;
@@ -54,11 +56,8 @@ function CommentCard({
   onDeleted: () => void;
 }) {
   const placement = useQuery({
-    queryKey: ["comment-placement", comment.id, selectedOid],
-    queryFn: async () =>
-      await api<PlacementResponse>(
-        `/api/comments/${comment.id}/placement?kind=commit&pullRequestId=${pullRequestId}&oid=${selectedOid}`,
-      ),
+    queryKey: ["comment-placement", review.kind, review.id, comment.id, review.sourceOid],
+    queryFn: async () => ({ placement: await loadPlacement(comment) }),
   });
   return (
     <div
@@ -100,18 +99,18 @@ function CommentCard({
 export function CommentSidebar({
   comments,
   walkthroughs,
-  pullRequestId,
-  selectedOid,
+  review,
+  loadPlacement,
   themePreference,
   onCommentActiveChange,
   onOpenCodeReference,
   onOpenTarget,
   onOpenRepositoryLink,
 }: {
-  comments: ReviewComment[];
-  walkthroughs: WalkthroughSummary[];
-  pullRequestId: string;
-  selectedOid: string;
+  comments: AnyReviewComment[];
+  walkthroughs: AnyWalkthroughSummary[];
+  review: ReviewIdentity;
+  loadPlacement?: (comment: AnyReviewComment) => Promise<CommentPlacement>;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onOpenCodeReference: (
@@ -119,15 +118,15 @@ export function CommentSidebar({
     reference: CodeReference,
     openInOtherPane: boolean,
   ) => Promise<string | null>;
-  onOpenTarget: (comment: ReviewComment, placement: CommentPlacement | null) => void;
+  onOpenTarget: (comment: AnyReviewComment, placement: CommentPlacement | null) => void;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const selectAllRef = useRef<HTMLInputElement>(null);
   const [showResolved, setShowResolved] = useState(false);
   const [selected, setSelected] = useState(() => new Set<string>());
-  const [prComposerOpen, setPrComposerOpen] = useState(false);
-  const [prComment, setPrComment] = useState("");
+  const [reviewComposerOpen, setReviewComposerOpen] = useState(false);
+  const [reviewComment, setReviewComment] = useState("");
   const [copyFeedback, setCopyFeedback] = useState(false);
   const unresolvedCount = comments.filter((comment) => comment.resolvedAt === null).length;
   const resolvedCount = comments.length - unresolvedCount;
@@ -150,20 +149,26 @@ export function CommentSidebar({
     if (selectAllRef.current) selectAllRef.current.indeterminate = someSelected;
   }, [someSelected]);
 
-  const createPrComment = useMutation({
+  const defaultLoadPlacement = async (comment: AnyReviewComment): Promise<CommentPlacement> =>
+    (
+      await api<PlacementResponse>(
+        `/api/comments/${comment.id}/placement?kind=commit&${review.kind === "pull-request" ? "pullRequestId" : "branchReviewId"}=${review.id}&oid=${review.sourceOid}`,
+      )
+    ).placement;
+  const createReviewComment = useMutation({
     mutationFn: async () =>
       await api(
         "/api/comments",
         jsonRequest({
-          pullRequestId,
-          target: { kind: "pull-request" },
-          body: prComment,
+          ...reviewCommentPayload(review),
+          target: { kind: review.kind === "pull-request" ? "pull-request" : "branch" },
+          body: reviewComment,
           authorLabel: "You",
         }),
       ),
     onSuccess: async () => {
-      setPrComment("");
-      setPrComposerOpen(false);
+      setReviewComment("");
+      setReviewComposerOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["comments"] });
       await queryClient.invalidateQueries({ queryKey: ["change-sequence"] });
     },
@@ -180,10 +185,10 @@ export function CommentSidebar({
     setShowResolved(resolved);
     setSelected(new Set());
   };
-  const closePrComposer = (): void => {
-    setPrComment("");
-    setPrComposerOpen(false);
-    createPrComment.reset();
+  const closeReviewComposer = (): void => {
+    setReviewComment("");
+    setReviewComposerOpen(false);
+    createReviewComment.reset();
   };
 
   return (
@@ -213,51 +218,53 @@ export function CommentSidebar({
           </label>
         )}
         <button
-          className="button--quiet comment-pr-create"
-          aria-expanded={prComposerOpen}
-          onClick={() => setPrComposerOpen((open) => !open)}
+          className="button--quiet comment-review-create"
+          aria-expanded={reviewComposerOpen}
+          onClick={() => setReviewComposerOpen((open) => !open)}
         >
-          ＋ PR全体
+          ＋ {review.kind === "pull-request" ? "PR全体" : "Branch全体"}
         </button>
       </div>
-      {prComposerOpen && (
-        <div className="pr-comment-composer">
-          <label>Pull Request全体へコメント</label>
+      {reviewComposerOpen && (
+        <div className="review-comment-composer">
+          <label>
+            {review.kind === "pull-request" ? "Pull Request" : "Branch Review"}全体へコメント
+          </label>
           <textarea
             autoFocus
             rows={3}
-            value={prComment}
-            onChange={(event) => setPrComment(event.target.value)}
+            value={reviewComment}
+            onChange={(event) => setReviewComment(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape" && !event.nativeEvent.isComposing) {
                 event.preventDefault();
-                closePrComposer();
+                closeReviewComposer();
                 return;
               }
               handleCommentSubmitShortcut(
                 event,
-                Boolean(prComment.trim()) && !createPrComment.isPending,
-                () => createPrComment.mutate(),
+                Boolean(reviewComment.trim()) && !createReviewComment.isPending,
+                () => createReviewComment.mutate(),
               );
             }}
-            placeholder="Pull Request全体へのコメント"
+            placeholder={`${review.kind === "pull-request" ? "Pull Request" : "Branch Review"}全体へのコメント`}
           />
-          <div className="pr-comment-actions">
+          <div className="review-comment-actions">
             <button
               className="button--quiet"
-              disabled={createPrComment.isPending}
-              onClick={closePrComposer}
+              disabled={createReviewComment.isPending}
+              onClick={closeReviewComposer}
             >
               キャンセル
             </button>
             <button
-              disabled={!prComment.trim() || createPrComment.isPending}
-              onClick={() => createPrComment.mutate()}
+              disabled={!reviewComment.trim() || createReviewComment.isPending}
+              onClick={() => createReviewComment.mutate()}
             >
               コメント
             </button>
           </div>
-          <ErrorNotice error={createPrComment.error} />
+          <ErrorNotice error={createReviewComment.error} />
         </div>
       )}
       <div className="comment-list">
@@ -266,8 +273,8 @@ export function CommentSidebar({
           <CommentCard
             key={comment.id}
             comment={comment}
-            pullRequestId={pullRequestId}
-            selectedOid={selectedOid}
+            review={review}
+            loadPlacement={loadPlacement ?? defaultLoadPlacement}
             selected={selected.has(comment.id)}
             markdownSourceOid={
               comment.target.kind === "walkthrough"

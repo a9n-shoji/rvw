@@ -7,7 +7,7 @@ export type ReadingLocator =
 
 export interface ReadingHistoryEntry {
   version: 1;
-  pullRequestId: string;
+  reviewKey: string;
   pane: DocumentPaneId;
   document: ActiveDocument;
   locator: ReadingLocator;
@@ -122,14 +122,14 @@ export function readingHistoryState(
 
 export function parseReadingHistoryEntry(
   state: unknown,
-  pullRequestId: string,
+  reviewKey: string,
 ): ReadingHistoryEntry | null {
   if (!isRecord(state)) return null;
   const value = state[READING_HISTORY_STATE_KEY];
   if (
     !isRecord(value) ||
     value.version !== 1 ||
-    value.pullRequestId !== pullRequestId ||
+    value.reviewKey !== reviewKey ||
     (value.pane !== "left" && value.pane !== "right")
   ) {
     return null;
@@ -139,7 +139,7 @@ export function parseReadingHistoryEntry(
   if (!document || !locator) return null;
   return {
     version: 1,
-    pullRequestId,
+    reviewKey,
     pane: value.pane,
     document,
     locator,

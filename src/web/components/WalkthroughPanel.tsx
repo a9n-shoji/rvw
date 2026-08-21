@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { WalkthroughSummary } from "../../domain/models.js";
+import type { AnyWalkthroughSummary } from "../review-context.js";
 import { FileEntryIcon } from "./FileIcon.js";
 
 export function WalkthroughIcon({ className = "" }: { className?: string }) {
@@ -15,44 +15,48 @@ export function WalkthroughIcon({ className = "" }: { className?: string }) {
 
 export function ReviewTreeItems({
   walkthroughs,
+  includePullRequestDocument = true,
   pullRequestActive,
   activeWalkthroughId,
   onOpenPullRequest,
   onOpen,
 }: {
-  walkthroughs: WalkthroughSummary[];
+  walkthroughs: AnyWalkthroughSummary[];
+  includePullRequestDocument?: boolean;
   pullRequestActive: boolean;
   activeWalkthroughId: string | null;
   onOpenPullRequest: (openInRightPane: boolean) => void;
-  onOpen: (walkthrough: WalkthroughSummary, openInRightPane: boolean) => void;
+  onOpen: (walkthrough: AnyWalkthroughSummary, openInRightPane: boolean) => void;
 }) {
   const [walkthroughsExpanded, setWalkthroughsExpanded] = useState(false);
 
   return (
     <nav className="review-tree-items" aria-label="レビュー文書">
-      <button
-        type="button"
-        className={`file-tree-row review-tree-item review-tree-pull-request${pullRequestActive ? " active" : ""}`}
-        onMouseDown={(event) => {
-          if (!event.metaKey && !event.ctrlKey) return;
-          event.preventDefault();
-          onOpenPullRequest(true);
-        }}
-        onClick={(event) => {
-          if (!event.metaKey && !event.ctrlKey) onOpenPullRequest(false);
-        }}
-        onContextMenu={(event) => {
-          if (event.ctrlKey || event.metaKey) event.preventDefault();
-        }}
-        title="Pull Request.md"
-        aria-label="Pull Request.md"
-      >
-        <span className="directory-chevron" aria-hidden="true" />
-        <span className="file-tree-icon-group" aria-hidden="true">
-          <FileEntryIcon path="Pull Request.md" kind="file" />
-        </span>
-        <span className="file-tree-label">Pull Request.md</span>
-      </button>
+      {includePullRequestDocument && (
+        <button
+          type="button"
+          className={`file-tree-row review-tree-item review-tree-pull-request${pullRequestActive ? " active" : ""}`}
+          onMouseDown={(event) => {
+            if (!event.metaKey && !event.ctrlKey) return;
+            event.preventDefault();
+            onOpenPullRequest(true);
+          }}
+          onClick={(event) => {
+            if (!event.metaKey && !event.ctrlKey) onOpenPullRequest(false);
+          }}
+          onContextMenu={(event) => {
+            if (event.ctrlKey || event.metaKey) event.preventDefault();
+          }}
+          title="Pull Request.md"
+          aria-label="Pull Request.md"
+        >
+          <span className="directory-chevron" aria-hidden="true" />
+          <span className="file-tree-icon-group" aria-hidden="true">
+            <FileEntryIcon path="Pull Request.md" kind="file" />
+          </span>
+          <span className="file-tree-label">Pull Request.md</span>
+        </button>
+      )}
       <button
         type="button"
         className="file-tree-row review-tree-item review-tree-walkthroughs"

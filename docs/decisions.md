@@ -1,5 +1,31 @@
 # Architecture decisions
 
+## 2026-08-21: Share one review workspace across Pull Requests and Branch Reviews
+
+### Problem
+
+The first Branch Review UI duplicated the PR review's sidebar, document tabs, panes, Markdown and
+source renderers, search form, comments, theme menu, and resize behavior. Those copies had fewer
+features and different interaction labels even though both review kinds expose the same repository,
+Issue, Walkthrough, comment, and document-reading concepts. Fixes to the mature PR workspace would
+therefore keep widening an accidental product split.
+
+### Choice
+
+Use shared review-level components for the two-stack Explorer / Search / Comments sidebar, Issues,
+tabs, document viewers, comments, actions menu, theme preference, reading history, and resizable
+one-or-two-pane workspace. Pass a discriminated Pull Request or Branch Review identity only where an
+API route or persisted target actually differs. Branch Review omits PR-only controls and documents:
+commit range, changes mode, diff style, and `Pull Request.md`. It does not replace those controls with
+Branch-specific variants.
+
+### Trade-offs
+
+- Shared components accept the union of review-owned comments and walkthroughs, but invalid PR-only
+  operations remain excluded by the review identity rather than nullable UI flags.
+- Branch Review inherits the established PR review interactions and accessibility behavior; future
+  divergence requires a product-semantic reason instead of a separate implementation by default.
+
 ## 2026-08-21: Add repository-scoped Branch Reviews without fabricating Pull Requests
 
 ### Problem

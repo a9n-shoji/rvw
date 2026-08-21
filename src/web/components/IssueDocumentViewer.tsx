@@ -3,28 +3,47 @@ import { useLayoutEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
-import type { IssueDocument, ReviewComment } from "../../domain/models.js";
+import type { CodeReference, IssueDocument } from "../../domain/models.js";
 import { api, jsonRequest } from "../api.js";
+import {
+  reviewCommentPayload,
+  type AnyReviewComment,
+  type ReviewIdentity,
+} from "../review-context.js";
 import type { ThemePreference } from "../theme.js";
 import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import type { ViewerNavigationTarget } from "./DocumentViewer.js";
 
+type IssueReviewComment = AnyReviewComment & {
+  target: Extract<AnyReviewComment["target"], { kind: "issue" }>;
+};
+
 export function IssueDocumentViewer({
-  pullRequestId,
+  review,
   issue,
   comments,
   themePreference,
   navigationTarget,
   onNavigationApplied,
+  onCommentActiveChange,
+  onOpenCodeReference,
+  onOpenRepositoryLink,
 }: {
-  pullRequestId: string;
+  review: ReviewIdentity;
   issue: IssueDocument;
-  comments: ReviewComment[];
+  comments: AnyReviewComment[];
   themePreference: ThemePreference;
   navigationTarget?: ViewerNavigationTarget | null;
   onNavigationApplied: (requestId: number) => void;
+  onCommentActiveChange?: (commentId: string, active: boolean) => void;
+  onOpenCodeReference?: (
+    sourceOid: string,
+    reference: CodeReference,
+    openInOtherPane: boolean,
+  ) => Promise<string | null>;
+  onOpenRepositoryLink?: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -57,7 +76,7 @@ export function IssueDocumentViewer({
       await api(
         "/api/comments",
         jsonRequest({
-          pullRequestId,
+          ...reviewCommentPayload(review),
           target: {
             kind: "issue",
             issue: issue.url,
@@ -77,11 +96,8 @@ export function IssueDocumentViewer({
     },
   });
   const issueComments = comments.filter(
-    (
-      comment,
-    ): comment is ReviewComment & {
-      target: Extract<ReviewComment["target"], { kind: "issue" }>;
-    } => comment.target.kind === "issue" && comment.target.issueId === issue.id,
+    (comment): comment is IssueReviewComment =>
+      comment.target.kind === "issue" && comment.target.issueId === issue.id,
   );
   const lines = issue.body.split("\n");
   const selectLine = (line: number): void => {
@@ -124,7 +140,7 @@ export function IssueDocumentViewer({
         </p>
       )}
       {sourceMode ? (
-        <pre className="branch-source-lines">
+        <pre className="document-source-lines">
           {lines.map((line, index) => {
             const lineNumber = index + 1;
             const selected =
@@ -149,7 +165,7 @@ export function IssueDocumentViewer({
           })}
         </pre>
       ) : (
-        <article className="markdown-preview branch-markdown">
+        <article className="markdown-preview document-markdown">
           <ReactMarkdown
             rehypePlugins={[rehypeSanitize]}
             remarkPlugins={[remarkGfm]}
@@ -168,7 +184,7 @@ export function IssueDocumentViewer({
           </ReactMarkdown>
         </article>
       )}
-      <div className="branch-document-comment">
+      <div className="document-comment-composer">
         <label>
           {sourceMode && selection
             ? `Issue本文 L${selection.start}${selection.end === selection.start ? "" : `–${selection.end}`} へコメント`
@@ -203,6 +219,9 @@ export function IssueDocumentViewer({
                     }
                   : { outdated: true, range: null, path: `#${issue.number}` }
               }
+              {...(onCommentActiveChange ? { onActiveChange: onCommentActiveChange } : {})}
+              {...(onOpenCodeReference ? { onOpenCodeReference } : {})}
+              {...(onOpenRepositoryLink ? { onOpenRepositoryLink } : {})}
             />
           ))}
         </section>

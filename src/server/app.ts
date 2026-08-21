@@ -522,6 +522,16 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }),
   );
 
+  app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) =>
+    context.json({
+      ok: true,
+      deleted: service.deleteBranchWalkthrough(
+        context.req.param("id"),
+        context.req.param("walkthroughId"),
+      ),
+    }),
+  );
+
   app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) =>
     context.json({
       ok: true,
@@ -621,8 +631,39 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
 
   app.get("/api/comments/:id/placement", async (context) => {
     const comment = service.database.getComment(context.req.param("id"));
-    if (!comment)
+    const branchComment = comment
+      ? null
+      : service.database.getBranchComment(context.req.param("id"));
+    if (!comment && !branchComment)
       throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
+    if (branchComment) {
+      const branchReviewId = requiredQuery(context.req.query("branchReviewId"), "branchReviewId");
+      if (branchComment.branchReviewId !== branchReviewId) {
+        return context.json({
+          ok: true,
+          placement: { outdated: true as const, range: null, path: null },
+        });
+      }
+      if (context.req.query("kind") === "walkthrough") {
+        const walkthroughId = requiredQuery(context.req.query("walkthroughId"), "walkthroughId");
+        return context.json({
+          ok: true,
+          placement: service.placeBranchWalkthroughComment(
+            branchReviewId,
+            branchComment,
+            walkthroughId,
+          ),
+        });
+      }
+      const oid = oidQuery(context.req.query("oid"), "oid");
+      return context.json({
+        ok: true,
+        placement: await service.placeBranchCommentAtCommit(branchReviewId, branchComment, oid),
+      });
+    }
+    if (!comment) {
+      throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
+    }
     const pullRequestId = requiredQuery(context.req.query("pullRequestId"), "pullRequestId");
     if (comment.pullRequestId !== pullRequestId) {
       return context.json({

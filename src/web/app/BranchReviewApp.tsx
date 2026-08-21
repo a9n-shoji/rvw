@@ -1,25 +1,64 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import fuzzysort from "fuzzysort";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BranchDocumentContent,
   BranchReview,
   BranchReviewComment,
-  CodeReference,
-  CommentPlacement,
   BranchSearchResponse,
   BranchWalkthrough,
   BranchWalkthroughSummary,
+  CodeReference,
+  CommentPlacement,
   IssueDocument,
   TreeEntry,
 } from "../../domain/models.js";
 import { api, ApiError, jsonRequest } from "../api.js";
-import type { ActiveDocument } from "../document-workspace.js";
-import { CommentMarkdown } from "../components/CommentMarkdown.js";
-import { CommentThread } from "../components/CommentThread.js";
+import { CommentSidebar } from "../components/CommentSidebar.js";
+import type { ViewerNavigationTarget } from "../components/DocumentViewer.js";
 import { ErrorNotice } from "../components/ErrorNotice.js";
 import { FileTree, type FileTreeFile } from "../components/FileTree.js";
+import { IssueDocumentViewer } from "../components/IssueDocumentViewer.js";
+import { LazyLoadBoundary } from "../components/LazyLoadBoundary.js";
 import { QuickOpenPalette } from "../components/QuickOpenPalette.js";
+import { ReviewActionsMenu } from "../components/ReviewActionsMenu.js";
+import { ReviewDocumentPane } from "../components/ReviewDocumentPane.js";
+import { ReviewIssuePanel } from "../components/ReviewIssuePanel.js";
+import { ReviewSidebar } from "../components/ReviewSidebar.js";
+import { ReviewWorkspace } from "../components/ReviewWorkspace.js";
+import { SearchPanel, type AnySearchResult } from "../components/SearchPanel.js";
+import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
+import { clearCommentDraftsForReview } from "../comment-draft-store.js";
+import {
+  documentTabKey,
+  otherDocumentPane,
+  type ActiveDocument,
+  type DocumentPaneId,
+} from "../document-workspace.js";
+import {
+  parseReadingHistoryEntry,
+  readingHistoryState,
+  sameReadingDocument,
+  type ReadingHistoryEntry,
+  type ReadingLocator,
+} from "../reading-history.js";
+import type { AnyReviewComment } from "../review-context.js";
 import type { ThemePreference } from "../theme.js";
+import { useDebouncedValue } from "../use-debounced-value.js";
+import { useDocumentWorkspace } from "../use-document-workspace.js";
+import { useThemePreference } from "../use-theme-preference.js";
+import { useReviewSidebarSearch } from "../use-review-sidebar-search.js";
+import { useQuickOpenShortcut } from "../use-quick-open-shortcut.js";
+import { viewerHeartbeatRequest } from "../viewer-session.js";
+
+const DocumentViewer = lazy(async () => {
+  const module = await import("../components/DocumentViewer.js");
+  return { default: module.DocumentViewer };
+});
+const WalkthroughViewer = lazy(async () => {
+  const module = await import("../components/WalkthroughViewer.js");
+  return { default: module.WalkthroughViewer };
+});
 
 interface BranchReviewResponse {
   branchReview: BranchReview;
@@ -35,522 +74,19 @@ interface BranchCommentsResponse {
   comments: Array<{ comment: BranchReviewComment; latestPlacement: CommentPlacement }>;
 }
 
-type BranchDocument =
-  | {
-      kind: "file";
-      key: string;
-      path: string;
-      title: string;
-      sourceOid: string | null;
-      line: number | null;
-    }
-  | { kind: "issue"; key: string; issueId: string; title: string; line: number | null }
-  | {
-      kind: "walkthrough";
-      key: string;
-      walkthroughId: string;
-      title: string;
-      line: number | null;
-    };
-
-type Pane = "left" | "right";
-
-const WalkthroughReadingSurface = lazy(async () => {
-  const module = await import("../components/WalkthroughViewer.js");
-  return { default: module.WalkthroughReadingSurface };
-});
-
 function shortOid(oid: string): string {
   return oid.slice(0, 8);
 }
 
-function docForFile(
+function repositoryDocument(
   path: string,
-  sourceOid: string | null = null,
-  line: number | null = null,
-): BranchDocument {
+  sourceOid?: string,
+): Extract<ActiveDocument, { kind: "repository-file" }> {
   return {
-    kind: "file",
-    key: `file:${path}`,
+    kind: "repository-file",
     path,
-    title: path.split("/").at(-1) ?? path,
-    sourceOid,
-    line,
+    ...(sourceOid ? { sourceOid, comparisonPolicy: "exact-source" as const } : {}),
   };
-}
-
-function BranchMarkdown({
-  body,
-  branchReviewId,
-  sourceOid,
-  sourcePath,
-  references = [],
-  themePreference,
-  repositoryAssetsEnabled = true,
-  onOpenCodeReference,
-  onOpenRepositoryLink,
-}: {
-  body: string;
-  branchReviewId: string;
-  sourceOid: string;
-  sourcePath?: string | null;
-  references?: CodeReference[];
-  themePreference: ThemePreference;
-  repositoryAssetsEnabled?: boolean;
-  onOpenCodeReference?: (reference: CodeReference, openInOtherPane: boolean) => void;
-  onOpenRepositoryLink?: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
-}) {
-  return (
-    <article className="markdown-preview branch-markdown">
-      <CommentMarkdown
-        body={body}
-        branchReviewId={branchReviewId}
-        sourceOid={sourceOid}
-        sourcePath={sourcePath ?? null}
-        references={references}
-        themePreference={themePreference}
-        repositoryAssetsEnabled={repositoryAssetsEnabled}
-        onOpenCodeReference={onOpenCodeReference}
-        onOpenRepositoryLink={onOpenRepositoryLink}
-      />
-    </article>
-  );
-}
-
-function SourceLines({
-  text,
-  selection,
-  navigationLine,
-  pane,
-  onSelectionChange,
-}: {
-  text: string;
-  selection: { start: number; end: number } | null;
-  navigationLine: number | null;
-  pane: Pane;
-  onSelectionChange: (selection: { start: number; end: number } | null) => void;
-}) {
-  const lines = text.split("\n");
-  const selectLine = (line: number): void => {
-    if (!selection || (selection.start !== selection.end && line !== selection.end)) {
-      onSelectionChange({ start: line, end: line });
-      return;
-    }
-    if (selection.start === selection.end && selection.start !== line) {
-      onSelectionChange({
-        start: Math.min(selection.start, line),
-        end: Math.max(selection.start, line),
-      });
-      return;
-    }
-    onSelectionChange(null);
-  };
-  return (
-    <pre className="branch-source-lines" aria-label="文書ソース">
-      {lines.map((line, index) => {
-        const lineNumber = index + 1;
-        const selected =
-          selection !== null && lineNumber >= selection.start && lineNumber <= selection.end;
-        return (
-          <button
-            type="button"
-            key={lineNumber}
-            data-branch-line={lineNumber}
-            data-branch-pane={pane}
-            className={[
-              selected ? "is-selected" : "",
-              navigationLine === lineNumber ? "is-navigation-target" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            onClick={() => selectLine(lineNumber)}
-          >
-            <span>{lineNumber}</span>
-            <code>{line || " "}</code>
-          </button>
-        );
-      })}
-    </pre>
-  );
-}
-
-function BranchCommentComposer({
-  branchReview,
-  document,
-  selection,
-  onCreated,
-}: {
-  branchReview: BranchReview;
-  document: BranchDocument;
-  selection: { start: number; end: number } | null;
-  onCreated: () => Promise<void>;
-}) {
-  const [body, setBody] = useState("");
-  const readOnlyOldSource =
-    document.kind === "file" &&
-    document.sourceOid !== null &&
-    document.sourceOid !== branchReview.sourceOid;
-  const target =
-    document.kind === "file"
-      ? {
-          kind: "document" as const,
-          documentKind: "repository-file" as const,
-          sourceOid: document.sourceOid ?? branchReview.sourceOid,
-          path: document.path,
-          startLine: selection?.start ?? null,
-          endLine: selection?.end ?? null,
-        }
-      : document.kind === "issue"
-        ? {
-            kind: "issue" as const,
-            issue: document.issueId,
-            startLine: selection?.start ?? null,
-            endLine: selection?.end ?? null,
-          }
-        : {
-            kind: "walkthrough" as const,
-            walkthroughId: document.walkthroughId,
-            startLine: selection?.start ?? null,
-            endLine: selection?.end ?? null,
-          };
-  const mutation = useMutation({
-    mutationFn: async () =>
-      await api(
-        "/api/comments",
-        jsonRequest({ branchReviewId: branchReview.id, target, body, authorLabel: "You" }),
-      ),
-    onSuccess: async () => {
-      setBody("");
-      await onCreated();
-    },
-  });
-  if (readOnlyOldSource) {
-    return (
-      <p className="issue-stale-notice">
-        この文書は古いexact sourceです。新しいcode commentはcurrent sourceで作成してください。
-      </p>
-    );
-  }
-  return (
-    <div className="branch-document-comment">
-      <label>
-        {selection
-          ? `選択行 L${selection.start}${selection.end === selection.start ? "" : `–${selection.end}`} へコメント`
-          : "文書全体へコメント"}
-      </label>
-      <textarea
-        rows={3}
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
-        placeholder="RVW Comment"
-      />
-      <button disabled={!body.trim() || mutation.isPending} onClick={() => mutation.mutate()}>
-        コメント
-      </button>
-      <ErrorNotice error={mutation.error} />
-    </div>
-  );
-}
-
-function BranchDocumentPane({
-  pane,
-  documents,
-  activeKey,
-  branchReview,
-  onActivate,
-  onClose,
-  onCreated,
-  comments,
-  themePreference,
-  onOpenDocument,
-}: {
-  pane: Pane;
-  documents: BranchDocument[];
-  activeKey: string | null;
-  branchReview: BranchReview;
-  onActivate: (document: BranchDocument) => void;
-  onClose: (document: BranchDocument) => void;
-  onCreated: () => Promise<void>;
-  comments: BranchCommentsResponse["comments"];
-  themePreference: ThemePreference;
-  onOpenDocument: (document: BranchDocument, pane: Pane) => void;
-}) {
-  const document = documents.find((candidate) => candidate.key === activeKey) ?? null;
-  const documentSourceOid =
-    document?.kind === "file" ? (document.sourceOid ?? branchReview.sourceOid) : null;
-  const [sourceMode, setSourceMode] = useState(false);
-  const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
-  useEffect(() => {
-    const repositorySource =
-      document?.kind === "file" && !document.path.toLowerCase().endsWith(".md");
-    setSourceMode(Boolean(repositorySource || (document?.line ?? null) !== null));
-    setSelection(null);
-  }, [document?.key, document?.line, documentSourceOid]);
-  useEffect(() => {
-    if (!document?.line) return;
-    const frame = window.requestAnimationFrame(() => {
-      window.document
-        .querySelector<HTMLElement>(
-          `[data-branch-pane="${pane}"][data-branch-line="${document.line}"]`,
-        )
-        ?.scrollIntoView({ block: "center", inline: "nearest" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [document?.line, document?.key, pane, sourceMode]);
-  const documentQuery = useQuery({
-    queryKey: ["branch-document", branchReview.id, document?.key, documentSourceOid],
-    queryFn: async () => {
-      if (!document) throw new Error("document is required");
-      if (document.kind === "walkthrough") {
-        return await api<{ walkthrough: BranchWalkthrough }>(
-          `/api/branch-reviews/${branchReview.id}/walkthroughs/${document.walkthroughId}`,
-        );
-      }
-      const query = new URLSearchParams(
-        document.kind === "issue"
-          ? { kind: "issue-markdown", issueId: document.issueId }
-          : {
-              kind: "repository-file",
-              sourceOid: documentSourceOid ?? branchReview.sourceOid,
-              path: document.path,
-            },
-      );
-      return await api<{ document: BranchDocumentContent }>(
-        `/api/branch-reviews/${branchReview.id}/document?${query.toString()}`,
-      );
-    },
-    enabled: Boolean(document),
-  });
-  const text =
-    document?.kind === "walkthrough"
-      ? (documentQuery.data as { walkthrough?: BranchWalkthrough } | undefined)?.walkthrough?.body
-      : (documentQuery.data as { document?: BranchDocumentContent } | undefined)?.document?.text;
-  const walkthrough =
-    document?.kind === "walkthrough"
-      ? (documentQuery.data as { walkthrough?: BranchWalkthrough } | undefined)?.walkthrough
-      : null;
-  const sourceOid =
-    document?.kind === "file"
-      ? (documentSourceOid ?? branchReview.sourceOid)
-      : (walkthrough?.sourceOid ?? branchReview.sourceOid);
-  const isMarkdown =
-    document?.kind === "issue" ||
-    document?.kind === "walkthrough" ||
-    document?.path.toLowerCase().endsWith(".md");
-  const documentComments = document
-    ? comments.flatMap(({ comment, latestPlacement }) => {
-        if (document.kind === "issue") {
-          return comment.target.kind === "issue" && comment.target.issueId === document.issueId
-            ? [{ comment, latestPlacement }]
-            : [];
-        }
-        if (document.kind === "walkthrough") {
-          return comment.target.kind === "walkthrough" &&
-            comment.target.walkthroughId === document.walkthroughId
-            ? [{ comment, latestPlacement }]
-            : [];
-        }
-        if (comment.target.kind !== "document") return [];
-        const historicalSource =
-          document.sourceOid !== null && document.sourceOid !== branchReview.sourceOid;
-        if (historicalSource) {
-          if (
-            comment.target.sourceOid !== document.sourceOid ||
-            comment.target.path !== document.path
-          ) {
-            return [];
-          }
-          return [
-            {
-              comment,
-              latestPlacement: {
-                outdated: false as const,
-                range:
-                  comment.target.startLine === null
-                    ? null
-                    : {
-                        startLine: comment.target.startLine,
-                        endLine: comment.target.endLine ?? comment.target.startLine,
-                      },
-                path: comment.target.path,
-              },
-            },
-          ];
-        }
-        return (latestPlacement.path ?? comment.target.path) === document.path
-          ? [{ comment, latestPlacement }]
-          : [];
-      })
-    : [];
-  const walkthroughInlineComments =
-    document?.kind === "walkthrough"
-      ? documentComments.filter(
-          ({ latestPlacement }) => !latestPlacement.outdated && latestPlacement.range !== null,
-        )
-      : [];
-  const trailingDocumentComments =
-    document?.kind === "walkthrough"
-      ? documentComments.filter(
-          ({ comment, latestPlacement }) =>
-            latestPlacement.outdated ||
-            (comment.target.kind === "walkthrough" && comment.target.startLine === null),
-        )
-      : documentComments;
-
-  return (
-    <section className="document-pane branch-document-pane" aria-label={`${pane} document pane`}>
-      <div className="document-tabs-shell">
-        <div className="document-tabs">
-          {documents.map((candidate) => (
-            <div
-              key={candidate.key}
-              className={`document-tab${candidate.key === activeKey ? " active" : ""}`}
-            >
-              <button className="document-tab-activate" onClick={() => onActivate(candidate)}>
-                <span>{candidate.title}</span>
-              </button>
-              <button
-                className="document-tab-close"
-                aria-label={`${candidate.title}を閉じる`}
-                onClick={() => onClose(candidate)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-      {!document ? (
-        <div className="empty-document-viewer branch-empty-document">
-          <strong>{pane === "left" ? "文書を選択してください" : "右ペイン"}</strong>
-          <span>Cmd/Ctrl+クリックでIssue・Walkthrough・コードを並べられます。</span>
-        </div>
-      ) : documentQuery.isPending ? (
-        <div className="empty-document-viewer">読み込んでいます…</div>
-      ) : documentQuery.error || text === null || text === undefined ? (
-        <div className="branch-document-error">
-          <ErrorNotice error={documentQuery.error ?? new Error("この文書は表示できません。")} />
-        </div>
-      ) : (
-        <>
-          {isMarkdown && (
-            <div className="branch-document-toolbar segmented compact">
-              <button className={!sourceMode ? "active" : ""} onClick={() => setSourceMode(false)}>
-                Preview
-              </button>
-              <button className={sourceMode ? "active" : ""} onClick={() => setSourceMode(true)}>
-                Source
-              </button>
-            </div>
-          )}
-          <div className="branch-document-content">
-            {document.kind === "walkthrough" && walkthrough && !sourceMode ? (
-              <Suspense
-                fallback={<div className="viewer-loading">Walkthroughを準備しています…</div>}
-              >
-                <WalkthroughReadingSurface
-                  walkthrough={walkthrough}
-                  placedComments={walkthroughInlineComments.map(({ comment, latestPlacement }) => ({
-                    comment,
-                    placement: latestPlacement,
-                  }))}
-                  themePreference={themePreference}
-                  onOpenReference={(reference, openInOtherPane) =>
-                    onOpenDocument(
-                      docForFile(reference.path, walkthrough.sourceOid, reference.startLine),
-                      openInOtherPane ? (pane === "left" ? "right" : "left") : pane,
-                    )
-                  }
-                  onOpenCommentCodeReference={(referenceSourceOid, reference, openInOtherPane) => {
-                    onOpenDocument(
-                      docForFile(reference.path, referenceSourceOid, reference.startLine),
-                      openInOtherPane ? (pane === "left" ? "right" : "left") : pane,
-                    );
-                    return Promise.resolve(null);
-                  }}
-                  onOpenRepositoryLink={(path, linkedSourceOid, openInOtherPane) =>
-                    onOpenDocument(
-                      docForFile(path, linkedSourceOid),
-                      openInOtherPane ? (pane === "left" ? "right" : "left") : pane,
-                    )
-                  }
-                />
-              </Suspense>
-            ) : isMarkdown && !sourceMode ? (
-              <BranchMarkdown
-                body={text}
-                branchReviewId={branchReview.id}
-                sourceOid={sourceOid}
-                sourcePath={document.kind === "file" ? document.path : null}
-                references={walkthrough?.references ?? []}
-                themePreference={themePreference}
-                repositoryAssetsEnabled={document.kind !== "issue"}
-                onOpenCodeReference={(reference, openInOtherPane) =>
-                  onOpenDocument(
-                    docForFile(
-                      reference.path,
-                      walkthrough?.sourceOid ?? sourceOid,
-                      reference.startLine,
-                    ),
-                    openInOtherPane ? (pane === "left" ? "right" : "left") : pane,
-                  )
-                }
-                onOpenRepositoryLink={(path, linkedSourceOid, openInOtherPane) =>
-                  onOpenDocument(
-                    docForFile(path, linkedSourceOid),
-                    openInOtherPane ? (pane === "left" ? "right" : "left") : pane,
-                  )
-                }
-              />
-            ) : (
-              <SourceLines
-                text={text}
-                selection={selection}
-                navigationLine={document.line}
-                pane={pane}
-                onSelectionChange={setSelection}
-              />
-            )}
-            <BranchCommentComposer
-              branchReview={branchReview}
-              document={document}
-              selection={sourceMode || !isMarkdown ? selection : null}
-              onCreated={onCreated}
-            />
-            {trailingDocumentComments.length > 0 && (
-              <section className="issue-inline-comments" aria-label="Document comments">
-                <h3>RVW Comments</h3>
-                {trailingDocumentComments.map(({ comment, latestPlacement }) => (
-                  <CommentThread
-                    key={comment.id}
-                    comment={comment}
-                    variant="inline"
-                    placement={latestPlacement}
-                    markdownSourceOid={sourceOid}
-                    themePreference={themePreference}
-                    onOpenCodeReference={(referenceSourceOid, reference, openInOtherPane) => {
-                      onOpenDocument(
-                        docForFile(reference.path, referenceSourceOid, reference.startLine),
-                        openInOtherPane ? (pane === "left" ? "right" : "left") : pane,
-                      );
-                      return Promise.resolve(null);
-                    }}
-                    onOpenRepositoryLink={(path, linkedSourceOid, openInOtherPane) =>
-                      onOpenDocument(
-                        docForFile(path, linkedSourceOid),
-                        openInOtherPane ? (pane === "left" ? "right" : "left") : pane,
-                      )
-                    }
-                    onDeleted={() => void onCreated()}
-                  />
-                ))}
-              </section>
-            )}
-          </div>
-        </>
-      )}
-    </section>
-  );
 }
 
 export function BranchReviewApp({
@@ -561,16 +97,57 @@ export function BranchReviewApp({
   initialThemePreference: ThemePreference;
 }) {
   const queryClient = useQueryClient();
-  const [documents, setDocuments] = useState<BranchDocument[]>([]);
-  const [panes, setPanes] = useState<Record<string, Pane>>({});
-  const [active, setActive] = useState<Record<Pane, string | null>>({ left: null, right: null });
-  const [focusedPane, setFocusedPane] = useState<Pane>("left");
-  const [quickOpenVisible, setQuickOpenVisible] = useState(false);
+  const [codeExpanded, setCodeExpanded] = useState(true);
+  const [commentsExpanded, setCommentsExpanded] = useState(false);
+  const [sidebarMode, setSidebarMode] = useState<"files" | "search">("files");
   const [fileFilter, setFileFilter] = useState("");
-  const [search, setSearch] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [searchMatchCase, setSearchMatchCase] = useState(false);
+  const [searchWholeWord, setSearchWholeWord] = useState(false);
   const [issueReference, setIssueReference] = useState("");
-  const [branchComment, setBranchComment] = useState("");
+  const [quickOpenVisible, setQuickOpenVisible] = useState(false);
+  const [quickOpenReturnFocus, setQuickOpenReturnFocus] = useState<HTMLElement | null>(null);
+  const [draggedDocumentKey, setDraggedDocumentKey] = useState<string | null>(null);
+  const [viewerNavigationTarget, setViewerNavigationTarget] =
+    useState<ViewerNavigationTarget | null>(null);
+  const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const navigationSequence = useRef(0);
   const attemptedInitialSync = useRef(false);
+  const observedChangeSequence = useRef<number | null>(null);
+  const readingHistoryReady = useRef(false);
+  const paneElements = useRef<Record<DocumentPaneId, HTMLElement | null>>({
+    left: null,
+    right: null,
+  });
+  const documentScrollPositions = useRef(new Map<string, number>());
+  const resetViewerNavigation = useCallback((): void => setViewerNavigationTarget(null), []);
+  const {
+    workspace,
+    workspaceRef,
+    setWorkspace,
+    activateDocument: activateWorkspaceDocument,
+    openDocument: openWorkspaceDocument,
+    closeDocument,
+    closePaneDocuments,
+    moveDocument,
+    dropDocument,
+  } = useDocumentWorkspace(resetViewerNavigation, null);
+  const {
+    themePreference,
+    selectThemePreference,
+    query: themeQuery,
+    mutation: themeMutation,
+  } = useThemePreference(initialThemePreference);
+  const debouncedSearch = useDebouncedValue(searchText.trim(), 250);
+  const openSidebarSearch = useReviewSidebarSearch({
+    searchInputRef,
+    onCodeExpandedChange: setCodeExpanded,
+    onModeChange: setSidebarMode,
+  });
+  const reviewHistoryKey = `branch:${branchReviewId}`;
+
   const reviewQuery = useQuery({
     queryKey: ["branch-review", branchReviewId],
     queryFn: async () => await api<BranchReviewResponse>(`/api/branch-reviews/${branchReviewId}`),
@@ -580,41 +157,80 @@ export function BranchReviewApp({
     queryFn: async () =>
       await api<BranchTreeResponse>(`/api/branch-reviews/${branchReviewId}/tree`),
   });
+  const changeSequence = useQuery({
+    queryKey: ["change-sequence"],
+    queryFn: async () =>
+      await api<{ changeSequence: number }>("/api/meta/change-sequence", viewerHeartbeatRequest()),
+    refetchInterval: 1_000,
+    refetchIntervalInBackground: true,
+    networkMode: "always",
+  });
   const commentsQuery = useQuery({
-    queryKey: ["comments", "branch", branchReviewId],
+    queryKey: ["comments", "branch", branchReviewId, changeSequence.data?.changeSequence],
     queryFn: async () =>
       await api<BranchCommentsResponse>(
         `/api/branch-reviews/${branchReviewId}/comments?resolved=all`,
       ),
-    refetchInterval: 2_000,
   });
   const searchQuery = useQuery({
-    queryKey: ["branch-search", branchReviewId, search],
-    queryFn: async () =>
-      await api<BranchSearchResponse>(
-        `/api/branch-reviews/${branchReviewId}/search?q=${encodeURIComponent(search)}`,
-      ),
-    enabled: Boolean(search.trim()),
+    queryKey: ["branch-search", branchReviewId, debouncedSearch, searchMatchCase, searchWholeWord],
+    queryFn: async ({ signal }) => {
+      const parameters = new URLSearchParams({
+        q: debouncedSearch,
+        matchCase: String(searchMatchCase),
+        wholeWord: String(searchWholeWord),
+      });
+      return await api<BranchSearchResponse>(
+        `/api/branch-reviews/${branchReviewId}/search?${parameters.toString()}`,
+        { signal },
+      );
+    },
+    enabled: Boolean(debouncedSearch),
+    placeholderData: (previousData) => previousData,
   });
-  const refresh = useCallback(async () => {
+
+  const refresh = useCallback(async (): Promise<void> => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["branch-review", branchReviewId] }),
       queryClient.invalidateQueries({ queryKey: ["branch-tree", branchReviewId] }),
       queryClient.invalidateQueries({ queryKey: ["branch-document", branchReviewId] }),
       queryClient.invalidateQueries({ queryKey: ["branch-search", branchReviewId] }),
       queryClient.invalidateQueries({ queryKey: ["comments", "branch", branchReviewId] }),
+      queryClient.invalidateQueries({ queryKey: ["comment-placement", "branch", branchReviewId] }),
+      queryClient.invalidateQueries({ queryKey: ["walkthrough", "branch", branchReviewId] }),
     ]);
   }, [branchReviewId, queryClient]);
+
+  useEffect(() => {
+    const nextSequence = changeSequence.data?.changeSequence;
+    if (nextSequence === undefined) return;
+    const previousSequence = observedChangeSequence.current;
+    observedChangeSequence.current = nextSequence;
+    if (previousSequence === null || previousSequence === nextSequence) return;
+    void refresh();
+  }, [changeSequence.data?.changeSequence, refresh]);
+
   const syncMutation = useMutation({
     mutationFn: async () =>
-      await api(`/api/branch-reviews/${branchReviewId}/sync`, jsonRequest({})),
-    onSettled: async () => await refresh(),
+      await api<{ branchReview: BranchReview }>(
+        `/api/branch-reviews/${branchReviewId}/sync`,
+        jsonRequest({}),
+      ),
+    onSuccess: async ({ branchReview }) => {
+      setSyncFeedback(
+        `${branchReview.defaultBranchName} · ${shortOid(branchReview.sourceOid)} に同期しました。`,
+      );
+      window.setTimeout(() => setSyncFeedback(null), 3_000);
+      await refresh();
+    },
+    onError: async () => await refresh(),
   });
   useEffect(() => {
     if (!reviewQuery.data || attemptedInitialSync.current) return;
     attemptedInitialSync.current = true;
     syncMutation.mutate();
   }, [reviewQuery.data]);
+
   const issueMutation = useMutation({
     mutationFn: async () =>
       await api(
@@ -660,17 +276,10 @@ export function BranchReviewApp({
     },
     onSuccess: async (result, issue) => {
       if (!result) return;
-      const key = `issue:${issue.id}`;
-      setDocuments((current) => current.filter((document) => document.key !== key));
-      setPanes((current) => {
-        const next = { ...current };
-        delete next[key];
-        return next;
-      });
-      setActive((current) => ({
-        left: current.left === key ? null : current.left,
-        right: current.right === key ? null : current.right,
-      }));
+      const openIssue = workspaceRef.current.documents.find(
+        (document) => document.kind === "issue" && document.id === issue.id,
+      );
+      if (openIssue) closeDocument(openIssue);
       await refresh();
     },
   });
@@ -706,108 +315,176 @@ export function BranchReviewApp({
     },
     onSuccess: (result) => {
       if (!result) return;
+      clearCommentDraftsForReview(branchReviewId);
       const next = new URL(window.location.href);
       next.search = `?branchReviewId=${encodeURIComponent(result.branchReview.id)}`;
       window.location.replace(next.toString());
     },
   });
-  const branchCommentMutation = useMutation({
-    mutationFn: async () =>
-      await api(
-        "/api/comments",
-        jsonRequest({
-          branchReviewId,
-          target: { kind: "branch" },
-          body: branchComment,
-          authorLabel: "You",
-        }),
-      ),
-    onSuccess: async () => {
-      setBranchComment("");
-      await refresh();
-    },
-  });
 
-  const openDocument = useCallback(
-    (document: BranchDocument, pane: Pane = "left", pushHistory = true): void => {
-      setDocuments((current) =>
-        current.some((candidate) => candidate.key === document.key)
-          ? current.map((candidate) => (candidate.key === document.key ? document : candidate))
-          : [...current, document],
-      );
-      setPanes((current) => ({ ...current, [document.key]: pane }));
-      setActive((current) => ({ ...current, [pane]: document.key }));
-      setFocusedPane(pane);
-      if (pushHistory) {
-        window.history.pushState(
-          { branchReviewHistory: branchReviewId, branchDocument: document, branchPane: pane },
-          "",
-          window.location.href,
-        );
+  const currentReadingHistoryEntry = useCallback((): ReadingHistoryEntry | null => {
+    const current = workspaceRef.current;
+    const pane = current.focusedPane;
+    const document = current.active[pane];
+    if (!document) return null;
+    return {
+      version: 1,
+      reviewKey: reviewHistoryKey,
+      pane,
+      document,
+      locator: {
+        kind: "scroll",
+        top:
+          paneElements.current[pane]?.scrollTop ??
+          documentScrollPositions.current.get(documentTabKey(document)) ??
+          0,
+      },
+    };
+  }, [reviewHistoryKey, workspaceRef]);
+  const requestNavigation = useCallback(
+    (document: ActiveDocument, locator: ReadingLocator): void => {
+      navigationSequence.current += 1;
+      setViewerNavigationTarget({
+        documentKey: documentTabKey(document),
+        line: locator.kind === "line" ? locator.line : null,
+        ...(locator.kind === "line" && locator.endLine !== undefined
+          ? { endLine: locator.endLine }
+          : {}),
+        requestId: navigationSequence.current,
+        resetHorizontal: true,
+      });
+    },
+    [],
+  );
+  const navigateToDocument = useCallback(
+    (
+      document: ActiveDocument,
+      targetPane?: DocumentPaneId,
+      locator: ReadingLocator = { kind: "line", line: null },
+      pushHistory = true,
+    ): void => {
+      const current = workspaceRef.current;
+      const pane = targetPane ?? current.panes[documentTabKey(document)] ?? current.focusedPane;
+      if (pushHistory && readingHistoryReady.current) {
+        const currentEntry = currentReadingHistoryEntry();
+        if (currentEntry) {
+          window.history.replaceState(readingHistoryState(window.history.state, currentEntry), "");
+        }
+      }
+      openWorkspaceDocument(document, pane);
+      requestNavigation(document, locator);
+      if (pushHistory && readingHistoryReady.current) {
+        const destination: ReadingHistoryEntry = {
+          version: 1,
+          reviewKey: reviewHistoryKey,
+          pane,
+          document,
+          locator,
+        };
+        const currentDocument = current.active[current.focusedPane];
+        const replace =
+          currentDocument &&
+          current.focusedPane === pane &&
+          sameReadingDocument(currentDocument, document);
+        const state = readingHistoryState(window.history.state, destination);
+        if (replace) window.history.replaceState(state, "");
+        else window.history.pushState(state, "", window.location.href);
       }
     },
-    [branchReviewId],
+    [
+      currentReadingHistoryEntry,
+      openWorkspaceDocument,
+      requestNavigation,
+      reviewHistoryKey,
+      workspaceRef,
+    ],
   );
   useEffect(() => {
-    const currentState = window.history.state as Record<string, unknown> | null;
-    if (currentState?.branchReviewHistory === branchReviewId) return;
-    window.history.replaceState(
-      {
-        ...(currentState ?? {}),
-        branchReviewHistory: branchReviewId,
-        branchDocument: null,
-        branchPane: "left",
-      },
-      "",
-      window.location.href,
-    );
-  }, [branchReviewId]);
-  useEffect(() => {
-    const onPopState = (event: PopStateEvent): void => {
-      const state = event.state as {
-        branchReviewHistory?: string;
-        branchDocument?: BranchDocument;
-        branchPane?: Pane;
-      } | null;
-      if (state?.branchReviewHistory !== branchReviewId) return;
-      if (!state.branchDocument) {
-        const pane = state.branchPane ?? "left";
-        setActive((current) => ({ ...current, [pane]: null }));
-        setFocusedPane(pane);
-        return;
+    readingHistoryReady.current = true;
+    const restore = (event: PopStateEvent): void => {
+      const entry = parseReadingHistoryEntry(event.state, reviewHistoryKey);
+      if (!entry) return;
+      openWorkspaceDocument(entry.document, entry.pane);
+      requestNavigation(entry.document, entry.locator);
+      if (entry.locator.kind === "scroll") {
+        const scrollTop = entry.locator.top;
+        window.requestAnimationFrame(() => {
+          const pane = paneElements.current[entry.pane];
+          if (pane) pane.scrollTop = scrollTop;
+        });
       }
-      openDocument(state.branchDocument, state.branchPane ?? "left", false);
     };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, [branchReviewId, openDocument]);
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, [openWorkspaceDocument, requestNavigation, reviewHistoryKey]);
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "p") return;
+    const previousScrollRestoration = window.history.scrollRestoration;
+    window.history.scrollRestoration = "manual";
+    const warnBeforeBrowserClose = (event: BeforeUnloadEvent): void => {
       event.preventDefault();
-      setQuickOpenVisible(true);
+      event.returnValue = "";
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("beforeunload", warnBeforeBrowserClose);
+    return () => {
+      window.history.scrollRestoration = previousScrollRestoration;
+      window.removeEventListener("beforeunload", warnBeforeBrowserClose);
+    };
   }, []);
-  const closeDocument = (document: BranchDocument): void => {
-    const pane = panes[document.key] ?? "left";
-    const remaining = documents.filter((candidate) => candidate.key !== document.key);
-    setDocuments(remaining);
-    setActive((current) => ({
-      ...current,
-      [pane]:
-        current[pane] === document.key
-          ? (remaining.find((candidate) => panes[candidate.key] === pane)?.key ?? null)
-          : current[pane],
-    }));
-  };
+  useQuickOpenShortcut(() => {
+    setQuickOpenReturnFocus(null);
+    setQuickOpenVisible(true);
+  });
+
+  const files = useMemo<FileTreeFile[]>(
+    () =>
+      (treeQuery.data?.entries ?? []).map((entry) => ({
+        path: entry.path,
+        entryKind: entry.kind,
+      })),
+    [treeQuery.data?.entries],
+  );
+  const filteredFiles = useMemo(() => {
+    if (!fileFilter.trim()) return files;
+    const matches = new Set(
+      fuzzysort
+        .go(
+          fileFilter,
+          files.map((file) => file.path),
+          { limit: 100 },
+        )
+        .map((result) => result.target),
+    );
+    return files.filter((file) => matches.has(file.path));
+  }, [fileFilter, files]);
+  const openDocuments = workspace.documents;
+  const activePane = workspace.focusedPane;
+  const activeDocument = workspace.active[activePane];
+  const openWalkthroughIds = useMemo(
+    () =>
+      openDocuments
+        .filter(
+          (document): document is Extract<ActiveDocument, { kind: "walkthrough" }> =>
+            document.kind === "walkthrough",
+        )
+        .map((document) => document.id),
+    [openDocuments],
+  );
+  const walkthroughDetailQueries = useQueries({
+    queries: openWalkthroughIds.map((walkthroughId) => ({
+      queryKey: ["walkthrough", "branch", branchReviewId, walkthroughId],
+      queryFn: async () =>
+        await api<{ walkthrough: BranchWalkthrough }>(
+          `/api/branch-reviews/${branchReviewId}/walkthroughs/${walkthroughId}`,
+        ),
+    })),
+  });
 
   if (!/^[0-9a-f-]{36}$/i.test(branchReviewId)) {
     return <main className="fatal-state">Branch Review IDが不正です。</main>;
   }
-  if (reviewQuery.isPending)
+  if (reviewQuery.isPending) {
     return <main className="fatal-state">Branch Reviewを読み込んでいます…</main>;
+  }
   if (reviewQuery.error || !reviewQuery.data) {
     return (
       <main className="fatal-state">
@@ -817,359 +494,508 @@ export function BranchReviewApp({
   }
 
   const { branchReview, issues, walkthroughs } = reviewQuery.data;
-  const files: FileTreeFile[] = (treeQuery.data?.entries ?? []).map((entry) => ({
-    path: entry.path,
-    entryKind: entry.kind,
-  }));
-  const filteredFiles = fileFilter
-    ? files.filter((file) => file.path.toLowerCase().includes(fileFilter.toLowerCase()))
-    : files;
-  const comments = commentsQuery.data?.comments ?? [];
-  const unresolved = comments.filter(({ comment }) => !comment.resolvedAt).length;
-  const paneDocuments = (pane: Pane) =>
-    documents.filter((document) => panes[document.key] === pane);
-  const activeDocument = documents.find((document) => document.key === active[focusedPane]) ?? null;
-  const quickOpenDocuments: ActiveDocument[] = documents.flatMap((document) =>
-    document.kind === "file"
-      ? [
-          {
-            kind: "repository-file" as const,
-            path: document.path,
-            ...(document.sourceOid ? { sourceOid: document.sourceOid } : {}),
-          },
-        ]
-      : [],
+  const review = {
+    kind: "branch" as const,
+    id: branchReview.id,
+    sourceOid: branchReview.sourceOid,
+  };
+  const commentsWithPlacement = commentsQuery.data?.comments ?? [];
+  const comments = commentsWithPlacement.map(({ comment }) => comment);
+  const placements = new Map(
+    commentsWithPlacement.map(({ comment, latestPlacement }) => [comment.id, latestPlacement]),
   );
-  const quickOpenActiveDocument: ActiveDocument | null =
-    activeDocument?.kind === "file"
-      ? {
-          kind: "repository-file",
-          path: activeDocument.path,
-          ...(activeDocument.sourceOid ? { sourceOid: activeDocument.sourceOid } : {}),
-        }
-      : null;
-  const otherPane = (pane: Pane): Pane => (pane === "left" ? "right" : "left");
-  const openCommentTarget = (
-    comment: BranchReviewComment,
-    latestPlacement: CommentPlacement,
+  const unresolvedCommentCount = comments.filter((comment) => comment.resolvedAt === null).length;
+  const walkthroughDetails = new Map<string, BranchWalkthrough>();
+  const loadingWalkthroughIds = new Set<string>();
+  openWalkthroughIds.forEach((walkthroughId, index) => {
+    const query = walkthroughDetailQueries[index];
+    if (query?.data?.walkthrough) walkthroughDetails.set(walkthroughId, query.data.walkthrough);
+    if (query?.isPending) loadingWalkthroughIds.add(walkthroughId);
+  });
+  const rightPaneVisible =
+    openDocuments.some((document) => workspace.panes[documentTabKey(document)] === "right") ||
+    draggedDocumentKey !== null;
+  const openFile = (
+    path: string,
+    openInRightPane = false,
+    sourceOid?: string,
+    line: number | null = null,
   ): void => {
-    const target = comment.target;
-    if (target.kind === "issue") {
-      openDocument(
-        {
-          kind: "issue",
-          key: `issue:${target.issueId}`,
-          issueId: target.issueId,
-          title: `#${target.issueNumber} ${target.issueTitle}`,
-          line: latestPlacement.outdated
-            ? target.startLine
-            : (latestPlacement.range?.startLine ?? target.startLine),
-        },
-        focusedPane,
+    navigateToDocument(repositoryDocument(path, sourceOid), openInRightPane ? "right" : undefined, {
+      kind: "line",
+      line,
+    });
+  };
+  const openIssue = (issue: IssueDocument, openInOtherPane: boolean): void => {
+    navigateToDocument(
+      { kind: "issue", id: issue.id, number: issue.number, title: issue.title },
+      openInOtherPane ? "right" : undefined,
+    );
+  };
+  const openWalkthrough = (
+    walkthrough: BranchWalkthroughSummary,
+    openInOtherPane: boolean,
+  ): void => {
+    navigateToDocument(
+      {
+        kind: "walkthrough",
+        id: walkthrough.id,
+        title: walkthrough.title,
+        sourceOid: walkthrough.sourceOid,
+      },
+      openInOtherPane ? "right" : undefined,
+    );
+  };
+  const openCodeReference = async (
+    sourceOid: string,
+    reference: CodeReference,
+    targetPane: DocumentPaneId,
+  ): Promise<string | null> => {
+    const parameters = new URLSearchParams({
+      kind: "repository-file",
+      sourceOid,
+      path: reference.path,
+    });
+    try {
+      const response = await api<{ document: BranchDocumentContent }>(
+        `/api/branch-reviews/${branchReview.id}/document?${parameters.toString()}`,
       );
-    } else if (target.kind === "walkthrough") {
-      openDocument(
-        {
-          kind: "walkthrough",
-          key: `walkthrough:${target.walkthroughId}`,
-          walkthroughId: target.walkthroughId,
-          title: target.walkthroughTitle,
-          line: latestPlacement.outdated
-            ? target.startLine
-            : (latestPlacement.range?.startLine ?? target.startLine),
-        },
-        focusedPane,
-      );
-    } else if (target.kind === "document") {
-      openDocument(
-        latestPlacement.outdated
-          ? docForFile(target.path, target.sourceOid, target.startLine)
-          : docForFile(
-              latestPlacement.path ?? target.path,
-              null,
-              latestPlacement.range?.startLine ?? target.startLine,
-            ),
-        focusedPane,
-      );
+      if (response.document.availability !== "available") {
+        return `参照先を開けません · ${reference.path}`;
+      }
+      navigateToDocument(repositoryDocument(reference.path, sourceOid), targetPane, {
+        kind: "line",
+        line: reference.startLine,
+        ...(reference.endLine === null ? {} : { endLine: reference.endLine }),
+      });
+      return null;
+    } catch (error) {
+      return error instanceof ApiError && error.code === "NOT_FOUND"
+        ? `参照切れ · ${reference.path}`
+        : `参照先を取得できません · ${reference.path}`;
     }
   };
+  const openCommentTarget = (
+    comment: AnyReviewComment,
+    placement: CommentPlacement | null,
+  ): void => {
+    if (!("branchReviewId" in comment)) return;
+    setCommentsExpanded(true);
+    setActiveCommentId(comment.id);
+    const target = comment.target;
+    const startLine = placement?.outdated
+      ? "startLine" in target
+        ? target.startLine
+        : null
+      : (placement?.range?.startLine ?? ("startLine" in target ? target.startLine : null));
+    const endLine = placement?.outdated
+      ? "endLine" in target
+        ? target.endLine
+        : null
+      : (placement?.range?.endLine ?? ("endLine" in target ? target.endLine : null));
+    const locator: ReadingLocator = {
+      kind: "line",
+      line: startLine,
+      ...(endLine === null ? {} : { endLine }),
+    };
+    if (target.kind === "branch") return;
+    if (target.kind === "issue") {
+      navigateToDocument(
+        {
+          kind: "issue",
+          id: target.issueId,
+          number: target.issueNumber,
+          title: target.issueTitle,
+        },
+        undefined,
+        locator,
+      );
+      return;
+    }
+    if (target.kind === "walkthrough") {
+      const walkthrough = walkthroughs.find((candidate) => candidate.id === target.walkthroughId);
+      if (!walkthrough) return;
+      navigateToDocument(
+        {
+          kind: "walkthrough",
+          id: walkthrough.id,
+          title: walkthrough.title,
+          sourceOid: walkthrough.sourceOid,
+        },
+        undefined,
+        locator,
+      );
+      return;
+    }
+    navigateToDocument(
+      placement?.outdated
+        ? repositoryDocument(target.path, target.sourceOid)
+        : repositoryDocument(placement?.path ?? target.path),
+      undefined,
+      locator,
+    );
+  };
+  const handleCommentActiveChange = (commentId: string, active: boolean): void => {
+    setActiveCommentId((current) => (active ? commentId : current === commentId ? null : current));
+  };
+  const openRepositoryLink = (
+    path: string,
+    sourceOid: string,
+    openInOtherPane: boolean,
+    sourcePane: DocumentPaneId = activePane,
+  ): void => {
+    navigateToDocument(
+      repositoryDocument(path, sourceOid),
+      openInOtherPane ? otherDocumentPane(sourcePane) : sourcePane,
+    );
+  };
+  const renderDocumentPane = (paneId: DocumentPaneId) => {
+    const paneDocuments = openDocuments.filter(
+      (document) => (workspace.panes[documentTabKey(document)] ?? "left") === paneId,
+    );
+    const paneDocument = workspace.active[paneId];
+    const content =
+      paneDocument?.kind === "walkthrough" && walkthroughDetails.get(paneDocument.id) ? (
+        <LazyLoadBoundary label="ウォークスルー">
+          <Suspense
+            fallback={<div className="viewer-loading">ウォークスルーを準備しています…</div>}
+          >
+            <WalkthroughViewer
+              walkthrough={walkthroughDetails.get(paneDocument.id)!}
+              comments={comments}
+              activeCommentId={activeCommentId}
+              navigationTarget={
+                viewerNavigationTarget?.documentKey === documentTabKey(paneDocument)
+                  ? viewerNavigationTarget
+                  : null
+              }
+              onNavigationApplied={() => undefined}
+              themePreference={themePreference}
+              onCommentActiveChange={handleCommentActiveChange}
+              onOpenReference={(walkthrough, reference, openInOtherPane) =>
+                openCodeReference(
+                  walkthrough.sourceOid,
+                  reference,
+                  openInOtherPane ? otherDocumentPane(paneId) : paneId,
+                )
+              }
+              onOpenCommentCodeReference={(sourceOid, reference, openInOtherPane) =>
+                openCodeReference(
+                  sourceOid,
+                  reference,
+                  openInOtherPane ? otherDocumentPane(paneId) : paneId,
+                )
+              }
+              onOpenRepositoryLink={(path, sourceOid, openInOtherPane) =>
+                openRepositoryLink(path, sourceOid, openInOtherPane, paneId)
+              }
+              onDeleted={() => {
+                closeDocument(paneDocument);
+                void refresh();
+              }}
+            />
+          </Suspense>
+        </LazyLoadBoundary>
+      ) : paneDocument?.kind === "issue" ? (
+        (() => {
+          const issue = issues.find((candidate) => candidate.id === paneDocument.id);
+          return issue ? (
+            <IssueDocumentViewer
+              review={review}
+              issue={issue}
+              comments={comments}
+              themePreference={themePreference}
+              navigationTarget={
+                viewerNavigationTarget?.documentKey === documentTabKey(paneDocument)
+                  ? viewerNavigationTarget
+                  : null
+              }
+              onNavigationApplied={() => undefined}
+              onCommentActiveChange={handleCommentActiveChange}
+              onOpenCodeReference={(sourceOid, reference, openInOtherPane) =>
+                openCodeReference(
+                  sourceOid,
+                  reference,
+                  openInOtherPane ? otherDocumentPane(paneId) : paneId,
+                )
+              }
+              onOpenRepositoryLink={(path, sourceOid, openInOtherPane) =>
+                openRepositoryLink(path, sourceOid, openInOtherPane, paneId)
+              }
+            />
+          ) : (
+            <div className="empty-document-viewer">Issueを読み込めませんでした。</div>
+          );
+        })()
+      ) : paneDocument?.kind === "walkthrough" ? (
+        <div className="empty-document-viewer">
+          <strong>
+            {loadingWalkthroughIds.has(paneDocument.id)
+              ? "ウォークスルーを読み込んでいます…"
+              : "ウォークスルーを読み込めませんでした。"}
+          </strong>
+          {!loadingWalkthroughIds.has(paneDocument.id) && (
+            <span>サイドバーからもう一度開いてください。</span>
+          )}
+        </div>
+      ) : paneDocument?.kind === "repository-file" ? (
+        <LazyLoadBoundary label="文書ビューアー">
+          <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
+            <DocumentViewer
+              key={`${paneId}:${branchReview.sourceOid}:${documentTabKey(paneDocument)}:${paneDocument.sourceOid ?? ""}`}
+              review={review}
+              selectedOid={branchReview.sourceOid}
+              oldOid={null}
+              activeDocument={paneDocument}
+              displayMode="full"
+              diffStyle="unified"
+              comments={comments}
+              activeCommentId={activeCommentId}
+              themePreference={themePreference}
+              onCommentActiveChange={handleCommentActiveChange}
+              navigationTarget={
+                viewerNavigationTarget?.documentKey === documentTabKey(paneDocument)
+                  ? viewerNavigationTarget
+                  : null
+              }
+              onNavigationApplied={() => undefined}
+              onOpenMarkdownFragment={(line) =>
+                navigateToDocument(paneDocument, paneId, { kind: "line", line })
+              }
+              onOpenCodeReference={(sourceOid, reference, openInOtherPane) =>
+                openCodeReference(
+                  sourceOid,
+                  reference,
+                  openInOtherPane ? otherDocumentPane(paneId) : paneId,
+                )
+              }
+              onOpenRepositoryLink={(path, sourceOid, openInOtherPane) =>
+                openRepositoryLink(path, sourceOid, openInOtherPane, paneId)
+              }
+            />
+          </Suspense>
+        </LazyLoadBoundary>
+      ) : null;
+    return (
+      <ReviewDocumentPane
+        paneId={paneId}
+        documents={paneDocuments}
+        activeDocument={paneDocument}
+        focusedPane={activePane}
+        changeKindsByPath={new Map()}
+        draggedDocumentKey={draggedDocumentKey}
+        content={content}
+        onPaneRef={(element) => {
+          paneElements.current[paneId] = element;
+        }}
+        onScroll={(scrollTop) => {
+          if (paneDocument) {
+            documentScrollPositions.current.set(documentTabKey(paneDocument), scrollTop);
+          }
+        }}
+        onFocus={() =>
+          setWorkspace((current) =>
+            current.focusedPane === paneId ? current : { ...current, focusedPane: paneId },
+          )
+        }
+        onActivate={(document) => {
+          const current = currentReadingHistoryEntry();
+          if (current) {
+            window.history.replaceState(readingHistoryState(window.history.state, current), "");
+          }
+          activateWorkspaceDocument(document, paneId);
+          requestNavigation(document, {
+            kind: "scroll",
+            top: documentScrollPositions.current.get(documentTabKey(document)) ?? 0,
+          });
+        }}
+        onClose={closeDocument}
+        onCloseOthers={(document) => closePaneDocuments(paneId, document)}
+        onCloseAll={() => closePaneDocuments(paneId)}
+        onMove={moveDocument}
+        onDropDocument={dropDocument}
+        onDragStartDocument={setDraggedDocumentKey}
+        onDragEndDocument={() => setDraggedDocumentKey(null)}
+      />
+    );
+  };
 
+  const actionError =
+    syncMutation.error ??
+    resetMutation.error ??
+    themeQuery.error ??
+    themeMutation.error ??
+    changeSequence.error;
   return (
-    <main className="app-shell branch-review-shell">
-      <header className="topbar branch-topbar">
+    <main className="app-shell">
+      <a className="skip-link" href="#review-main-content">
+        レビュー本文へ移動
+      </a>
+      <header className="topbar">
         <div className="brand">
           <span className="brand-mark">r</span>
           <strong>rvw</strong>
         </div>
-        <div className="pr-heading">
+        <div className="review-heading">
           <span>{branchReview.canonicalName}</span>
           <h1>
             Branch Review · {branchReview.defaultBranchName} · {shortOid(branchReview.sourceOid)}
           </h1>
         </div>
-        <div className="branch-topbar-actions">
-          <button onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
-            GitHubと同期
-          </button>
-          <button
-            className="button--danger-quiet"
-            onClick={() => resetMutation.mutate()}
-            disabled={resetMutation.isPending}
-          >
-            リセット
-          </button>
-        </div>
+        <div className="review-scope-spacer" />
+        <ReviewActionsMenu
+          themePreference={themePreference}
+          themePending={themeMutation.isPending}
+          syncPending={syncMutation.isPending}
+          resetPending={resetMutation.isPending}
+          resetLabel="Branch Reviewを削除して再構築"
+          onOpenQuickOpen={(returnFocusElement) => {
+            setQuickOpenReturnFocus(returnFocusElement);
+            setQuickOpenVisible(true);
+          }}
+          onSync={() => {
+            setSyncFeedback(null);
+            syncMutation.mutate();
+          }}
+          onThemeChange={selectThemePreference}
+          onReset={() => resetMutation.mutate()}
+        />
       </header>
-      <ErrorNotice error={syncMutation.error ?? resetMutation.error} />
+      {quickOpenVisible && (
+        <QuickOpenPalette
+          open
+          returnFocusElement={quickOpenReturnFocus}
+          files={files}
+          openDocuments={openDocuments}
+          activeDocument={activeDocument}
+          activePane={activePane}
+          loading={treeQuery.isPending}
+          error={treeQuery.error}
+          includePullRequestDocument={false}
+          onClose={() => setQuickOpenVisible(false)}
+          onOpen={(document) => navigateToDocument(document, activePane)}
+        />
+      )}
+      <ErrorNotice error={actionError} />
+      {syncFeedback && (
+        <div className="sync-feedback" role="status">
+          {syncFeedback}
+        </div>
+      )}
       {branchReview.sourceSyncError && (
-        <p className="issue-stale-notice branch-source-stale-notice">
+        <p className="issue-stale-notice">
           default branchの最新sourceを取得できなかったため、最後に同期できた
           {shortOid(branchReview.sourceOid)} を表示しています。
         </p>
       )}
-      <QuickOpenPalette
-        open={quickOpenVisible}
-        files={files}
-        openDocuments={quickOpenDocuments}
-        activeDocument={quickOpenActiveDocument}
-        activePane={focusedPane}
-        loading={treeQuery.isPending}
-        error={treeQuery.error}
-        includePullRequestDocument={false}
-        onClose={() => setQuickOpenVisible(false)}
-        onOpen={(document) => {
-          if (document.kind === "repository-file") {
-            openDocument(docForFile(document.path), focusedPane);
-          }
-        }}
-      />
-      <div className="workspace branch-workspace">
-        <aside className="sidebar branch-sidebar" aria-label="Branch Review sidebar">
-          <section className="branch-sidebar-section">
-            <h2>
-              Issues <span>{issues.length}</span>
-            </h2>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                issueMutation.mutate();
-              }}
-            >
-              <input
-                value={issueReference}
-                onChange={(event) => setIssueReference(event.target.value)}
-                placeholder="#142 または Issue URL"
+      <ReviewWorkspace
+        sidebar={
+          <ReviewSidebar
+            codeExpanded={codeExpanded}
+            commentsExpanded={commentsExpanded}
+            mode={sidebarMode}
+            unresolvedCommentCount={unresolvedCommentCount}
+            onOpenSearch={openSidebarSearch}
+            onCodeExpandedChange={setCodeExpanded}
+            onCommentsExpandedChange={setCommentsExpanded}
+            onModeChange={setSidebarMode}
+            explorer={
+              <div className="file-panel">
+                <ReviewIssuePanel
+                  issues={issues}
+                  activeIssueId={activeDocument?.kind === "issue" ? activeDocument.id : null}
+                  reference={issueReference}
+                  adding={issueMutation.isPending}
+                  removingIssueId={removeIssueMutation.variables?.id ?? null}
+                  error={issueMutation.error ?? removeIssueMutation.error}
+                  onReferenceChange={setIssueReference}
+                  onAdd={() => issueMutation.mutate()}
+                  onOpen={openIssue}
+                  onRemove={(issue) => removeIssueMutation.mutate(issue)}
+                />
+                <ReviewTreeItems
+                  walkthroughs={walkthroughs}
+                  includePullRequestDocument={false}
+                  pullRequestActive={false}
+                  activeWalkthroughId={
+                    activeDocument?.kind === "walkthrough" ? activeDocument.id : null
+                  }
+                  onOpenPullRequest={() => undefined}
+                  onOpen={(walkthrough, openInRightPane) =>
+                    openWalkthrough(walkthrough as BranchWalkthroughSummary, openInRightPane)
+                  }
+                />
+                <input
+                  value={fileFilter}
+                  onChange={(event) => setFileFilter(event.target.value)}
+                  placeholder="ファイル名を検索"
+                />
+                <ErrorNotice error={treeQuery.error} />
+                <nav className="file-tree">
+                  <FileTree
+                    files={filteredFiles}
+                    activePath={
+                      activeDocument?.kind === "repository-file" ? activeDocument.path : null
+                    }
+                    filtering={Boolean(fileFilter.trim())}
+                    initiallyExpanded="active-file"
+                    onOpenFile={(path, openInRightPane) => openFile(path, openInRightPane)}
+                  />
+                </nav>
+              </div>
+            }
+            search={
+              <SearchPanel
+                inputRef={searchInputRef}
+                query={searchText}
+                matchCase={searchMatchCase}
+                wholeWord={searchWholeWord}
+                changeKindsByPath={new Map()}
+                response={debouncedSearch ? searchQuery.data : undefined}
+                isFetching={Boolean(debouncedSearch && searchQuery.isFetching)}
+                error={debouncedSearch ? searchQuery.error : null}
+                onQueryChange={setSearchText}
+                onMatchCaseChange={setSearchMatchCase}
+                onWholeWordChange={setSearchWholeWord}
+                onOpenResult={(result: AnySearchResult, openInRightPane) => {
+                  if (!("branchReviewId" in result.document)) return;
+                  openFile(result.path, openInRightPane, result.document.sourceOid, result.line);
+                }}
               />
-              <button disabled={!issueReference.trim() || issueMutation.isPending}>追加</button>
-            </form>
-            <ErrorNotice error={issueMutation.error ?? removeIssueMutation.error} />
-            <nav className="branch-list">
-              {issues.map((issue) => (
-                <div className="issue-list-row" key={issue.id}>
-                  <button
-                    className="issue-list-open"
-                    onClick={(event) =>
-                      openDocument(
-                        {
-                          kind: "issue",
-                          key: `issue:${issue.id}`,
-                          issueId: issue.id,
-                          title: `#${issue.number} ${issue.title}`,
-                          line: null,
-                        },
-                        event.metaKey || event.ctrlKey ? otherPane(focusedPane) : focusedPane,
-                      )
-                    }
-                  >
-                    <strong>#{issue.number}</strong>
-                    <span>{issue.title}</span>
-                    <em>
-                      {issue.state}
-                      {issue.syncError ? " · stale" : ""}
-                    </em>
-                  </button>
-                  <button
-                    className="issue-list-remove"
-                    aria-label={`#${issue.number}を削除`}
-                    title="このreviewからIssueを削除"
-                    disabled={
-                      removeIssueMutation.isPending &&
-                      removeIssueMutation.variables?.id === issue.id
-                    }
-                    onClick={() => removeIssueMutation.mutate(issue)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </nav>
-          </section>
-          <section className="branch-sidebar-section">
-            <h2>
-              Walkthroughs <span>{walkthroughs.length}</span>
-            </h2>
-            <nav className="branch-list">
-              {walkthroughs.map((walkthrough) => (
-                <button
-                  key={walkthrough.id}
-                  onClick={(event) =>
-                    openDocument(
-                      {
-                        kind: "walkthrough",
-                        key: `walkthrough:${walkthrough.id}`,
-                        walkthroughId: walkthrough.id,
-                        title: walkthrough.title,
-                        line: null,
+            }
+            comments={
+              <>
+                <ErrorNotice error={commentsQuery.error} />
+                <CommentSidebar
+                  comments={comments}
+                  walkthroughs={walkthroughs}
+                  review={review}
+                  loadPlacement={(comment) =>
+                    Promise.resolve(
+                      placements.get(comment.id) ?? {
+                        outdated: true,
+                        range: null,
+                        path: null,
                       },
-                      event.metaKey || event.ctrlKey ? otherPane(focusedPane) : focusedPane,
                     )
                   }
-                >
-                  <span>{walkthrough.title}</span>
-                  {walkthrough.sourceOid !== branchReview.sourceOid && <em>Outdated</em>}
-                </button>
-              ))}
-            </nav>
-          </section>
-          <section className="branch-sidebar-section branch-code-section">
-            <h2>
-              Files <span>{files.length}</span>
-            </h2>
-            <button className="button--quiet" onClick={() => setQuickOpenVisible(true)}>
-              Quick Open
-            </button>
-            <input
-              value={fileFilter}
-              onChange={(event) => setFileFilter(event.target.value)}
-              placeholder="ファイル名を検索"
-            />
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="コード全文検索"
-            />
-            {search && (
-              <nav className="branch-search-results">
-                {(searchQuery.data?.results ?? []).slice(0, 80).map((result, index) => (
-                  <button
-                    key={`${result.path}:${result.line}:${index}`}
-                    onClick={() =>
-                      openDocument(docForFile(result.path, null, result.line), focusedPane)
-                    }
-                  >
-                    <strong>
-                      {result.path}:{result.line}
-                    </strong>
-                    <span>{result.text}</span>
-                  </button>
-                ))}
-              </nav>
-            )}
-            {!search && (
-              <FileTree
-                files={filteredFiles}
-                activePath={
-                  documents.find((document) => document.key === active.left)?.kind === "file"
-                    ? (
-                        documents.find((document) => document.key === active.left) as Extract<
-                          BranchDocument,
-                          { kind: "file" }
-                        >
-                      ).path
-                    : null
-                }
-                filtering={Boolean(fileFilter)}
-                initiallyExpanded="active-file"
-                onOpenFile={(path, right) =>
-                  openDocument(docForFile(path), right ? otherPane(focusedPane) : focusedPane)
-                }
-              />
-            )}
-            <ErrorNotice error={treeQuery.error ?? searchQuery.error} />
-          </section>
-          <section className="branch-sidebar-section branch-comments-section">
-            <h2>
-              Comments <span>{unresolved}</span>
-            </h2>
-            <textarea
-              rows={2}
-              value={branchComment}
-              onChange={(event) => setBranchComment(event.target.value)}
-              placeholder="Branch Review全体へコメント"
-            />
-            <button
-              disabled={!branchComment.trim() || branchCommentMutation.isPending}
-              onClick={() => branchCommentMutation.mutate()}
-            >
-              全体コメントを追加
-            </button>
-            <ErrorNotice error={branchCommentMutation.error ?? commentsQuery.error} />
-            {comments.map(({ comment, latestPlacement }) => (
-              <CommentThread
-                key={comment.id}
-                comment={comment}
-                placement={latestPlacement}
-                themePreference={initialThemePreference}
-                {...(comment.target.kind === "branch"
-                  ? {}
-                  : { onOpenTarget: () => openCommentTarget(comment, latestPlacement) })}
-                onOpenCodeReference={(sourceOid, reference, openInOtherPane) => {
-                  openDocument(
-                    docForFile(reference.path, sourceOid, reference.startLine),
-                    openInOtherPane ? otherPane(focusedPane) : focusedPane,
-                  );
-                  return Promise.resolve(null);
-                }}
-                onOpenRepositoryLink={(path, sourceOid, openInOtherPane) =>
-                  openDocument(
-                    docForFile(path, sourceOid),
-                    openInOtherPane ? otherPane(focusedPane) : focusedPane,
-                  )
-                }
-                onDeleted={() => void refresh()}
-              />
-            ))}
-          </section>
-        </aside>
-        <div className="horizontal-resize-handle" aria-hidden="true" />
-        <section className={`main-view${paneDocuments("right").length ? " two-pane" : ""}`}>
-          <BranchDocumentPane
-            pane="left"
-            documents={paneDocuments("left")}
-            activeKey={active.left}
-            branchReview={branchReview}
-            onActivate={(document) => {
-              setActive((current) => ({ ...current, left: document.key }));
-              setFocusedPane("left");
-            }}
-            onClose={closeDocument}
-            onCreated={refresh}
-            comments={comments}
-            themePreference={initialThemePreference}
-            onOpenDocument={(document, pane) => openDocument(document, pane)}
+                  themePreference={themePreference}
+                  onCommentActiveChange={handleCommentActiveChange}
+                  onOpenCodeReference={(sourceOid, reference, openInOtherPane) =>
+                    openCodeReference(sourceOid, reference, openInOtherPane ? "right" : activePane)
+                  }
+                  onOpenTarget={openCommentTarget}
+                  onOpenRepositoryLink={(path, sourceOid, openInOtherPane) =>
+                    openRepositoryLink(path, sourceOid, openInOtherPane)
+                  }
+                />
+              </>
+            }
           />
-          {paneDocuments("right").length > 0 && (
-            <>
-              <div className="horizontal-resize-handle pane-resize-handle" aria-hidden="true" />
-              <BranchDocumentPane
-                pane="right"
-                documents={paneDocuments("right")}
-                activeKey={active.right}
-                branchReview={branchReview}
-                onActivate={(document) => {
-                  setActive((current) => ({ ...current, right: document.key }));
-                  setFocusedPane("right");
-                }}
-                onClose={closeDocument}
-                onCreated={refresh}
-                comments={comments}
-                themePreference={initialThemePreference}
-                onOpenDocument={(document, pane) => openDocument(document, pane)}
-              />
-            </>
-          )}
-        </section>
-      </div>
+        }
+        leftPane={renderDocumentPane("left")}
+        {...(rightPaneVisible ? { rightPane: renderDocumentPane("right") } : {})}
+      />
     </main>
   );
 }

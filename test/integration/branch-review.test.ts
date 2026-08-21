@@ -240,6 +240,43 @@ describe("Branch Review", () => {
     expect(service.listBranchIssues(opened.branchReview.id)).toEqual([]);
   });
 
+  it("places and deletes Branch Walkthrough comments through the shared viewer operations", async () => {
+    const { repositoryPath, sourceOid, database, service } = setup();
+    const opened = await service.openBranchReview(repositoryPath);
+    const walkthrough = await service.publishWalkthrough({
+      review: { kind: "branch", repository: "acme/review-repo" },
+      sourceOid,
+      title: "Branch walkthrough",
+      body: "# Branch walkthrough\n\nRead [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "Source",
+          path: "README.md",
+          startLine: 1,
+          endLine: 1,
+          description: null,
+        },
+      ],
+    });
+    const comment = await service.createBranchComment({
+      branchReviewId: opened.branchReview.id,
+      target: { kind: "walkthrough", walkthroughId: walkthrough.id, startLine: 3, endLine: 3 },
+      body: "Check this step.",
+    });
+
+    expect(
+      service.placeBranchWalkthroughComment(opened.branchReview.id, comment, walkthrough.id),
+    ).toEqual({ outdated: false, range: { startLine: 3, endLine: 3 }, path: null });
+    expect(service.deleteBranchWalkthrough(opened.branchReview.id, walkthrough.id)).toMatchObject({
+      id: walkthrough.id,
+      branchReviewId: opened.branchReview.id,
+      counts: { comments: 1, posts: 1, references: 1 },
+    });
+    expect(database.getBranchWalkthrough(walkthrough.id)).toBeNull();
+    expect(database.getBranchComment(comment.id)).toBeNull();
+  });
+
   it("keeps the last source readable and records an explicit sync error", async () => {
     const { repositoryPath, sourceOid, github, database, service } = setup();
     const opened = await service.openBranchReview(repositoryPath);
@@ -437,6 +474,13 @@ describe("Branch Review", () => {
     expect(synchronized.branchReview.sourceOid).toBe(nextHead);
     expect(git(repositoryPath, "rev-parse", "HEAD")).toBe(previousHead);
     expect(await service.git.hasObject(repositoryPath, nextHead)).toBe(true);
+    await expect(
+      service.placeBranchCommentAtCommit(opened.branchReview.id, comment, previousHead),
+    ).resolves.toEqual({
+      outdated: false,
+      range: { startLine: 1, endLine: 1 },
+      path: "README.md",
+    });
     await expect(service.getAnyCommentReviewContext(comment.ref)).resolves.toMatchObject({
       latestPlacement: { outdated: false, range: { startLine: 2, endLine: 2 } },
     });

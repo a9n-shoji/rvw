@@ -157,6 +157,59 @@ const branchWalkthroughCommentFixture = {
     },
   ],
 };
+const branchCodeCommentFixture = {
+  id: "77777777-7777-4777-8777-777777777778",
+  ref: "rvw://comment/77777777-7777-4777-8777-777777777778",
+  branchReviewId,
+  createdSourceOid: secondHead,
+  resolvedAt: null,
+  createdAt: "2026-08-20T01:10:00.000Z",
+  updatedAt: "2026-08-20T01:10:00.000Z",
+  target: {
+    kind: "document",
+    documentKind: "repository-file",
+    sourceOid: secondHead,
+    path: "src/fixture.ts",
+    startLine: 2,
+    endLine: 2,
+  },
+  posts: [
+    {
+      id: "88888888-8888-4888-8888-888888888889",
+      commentId: "77777777-7777-4777-8777-777777777778",
+      body: "Verify the default-branch trimming behavior at its exact source.",
+      relatedCommitOid: secondHead,
+      references: [],
+      authorLabel: "Branch Reviewer",
+      isRoot: true,
+      createdAt: "2026-08-20T01:10:00.000Z",
+      updatedAt: "2026-08-20T01:10:00.000Z",
+    },
+  ],
+};
+const branchResolvedCommentFixture = {
+  id: "77777777-7777-4777-8777-777777777779",
+  ref: "rvw://comment/77777777-7777-4777-8777-777777777779",
+  branchReviewId,
+  createdSourceOid: secondHead,
+  resolvedAt: "2026-08-20T01:25:00.000Z",
+  createdAt: "2026-08-20T01:20:00.000Z",
+  updatedAt: "2026-08-20T01:25:00.000Z",
+  target: { kind: "branch" },
+  posts: [
+    {
+      id: "88888888-8888-4888-8888-888888888890",
+      commentId: "77777777-7777-4777-8777-777777777779",
+      body: "The default-branch scope is confirmed.",
+      relatedCommitOid: null,
+      references: [],
+      authorLabel: "Branch Reviewer",
+      isRoot: true,
+      createdAt: "2026-08-20T01:20:00.000Z",
+      updatedAt: "2026-08-20T01:20:00.000Z",
+    },
+  ],
+};
 let branchReview;
 let branchIssues;
 let branchWalkthroughs;
@@ -170,6 +223,18 @@ function resetBranchFixture() {
     {
       comment: structuredClone(branchWalkthroughCommentFixture),
       latestPlacement: { outdated: false, range: { startLine: 3, endLine: 3 }, path: null },
+    },
+    {
+      comment: structuredClone(branchCodeCommentFixture),
+      latestPlacement: {
+        outdated: false,
+        range: { startLine: 2, endLine: 2 },
+        path: "src/fixture.ts",
+      },
+    },
+    {
+      comment: structuredClone(branchResolvedCommentFixture),
+      latestPlacement: { outdated: false, range: null, path: null },
     },
   ];
 }
@@ -1009,12 +1074,14 @@ app.get("/api/branch-reviews/:id/markdown-asset", (context) => {
 
 app.get("/api/branch-reviews/:id/search", (context) => {
   const query = context.req.query("q") ?? "";
+  const matchCase = context.req.query("matchCase") === "true";
+  const wholeWord = context.req.query("wholeWord") === "true";
   const results = repositoryPathsAt(secondHead).flatMap((filePath) =>
     repositoryDocumentText(secondHead, filePath)
       .split("\n")
       .flatMap((line, index) => {
-        const start = line.toLowerCase().indexOf(query.toLowerCase());
-        return start < 0
+        const matches = fixedStringMatches(line, query, matchCase, wholeWord);
+        return matches.length === 0
           ? []
           : [
               {
@@ -1027,7 +1094,7 @@ app.get("/api/branch-reviews/:id/search", (context) => {
                 path: filePath,
                 line: index + 1,
                 text: line,
-                matches: [{ start, end: start + query.length }],
+                matches,
               },
             ];
       }),
@@ -1035,7 +1102,7 @@ app.get("/api/branch-reviews/:id/search", (context) => {
   return context.json({
     ok: true,
     results,
-    matchCount: results.length,
+    matchCount: results.reduce((total, result) => total + result.matches.length, 0),
     truncated: false,
     limits: { queryBytes: 1024, resultCount: 500, stdoutBytes: 8388608 },
   });
@@ -1061,6 +1128,45 @@ app.get("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
         { ok: false, error: { code: "WALKTHROUGH_NOT_FOUND", message: "missing walkthrough" } },
         404,
       );
+});
+
+app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
+  const walkthroughIndex = branchWalkthroughs.findIndex(
+    (candidate) => candidate.id === context.req.param("walkthroughId"),
+  );
+  if (walkthroughIndex < 0) {
+    return context.json(
+      { ok: false, error: { code: "WALKTHROUGH_NOT_FOUND", message: "missing walkthrough" } },
+      404,
+    );
+  }
+  const [walkthrough] = branchWalkthroughs.splice(walkthroughIndex, 1);
+  const associatedComments = branchCommentContexts.filter(
+    ({ comment }) =>
+      comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id,
+  );
+  const postCount = associatedComments.reduce(
+    (count, { comment }) => count + comment.posts.length,
+    0,
+  );
+  branchCommentContexts = branchCommentContexts.filter(
+    ({ comment }) =>
+      comment.target.kind !== "walkthrough" || comment.target.walkthroughId !== walkthrough.id,
+  );
+  changeSequence += 1;
+  return context.json({
+    ok: true,
+    deleted: {
+      id: walkthrough.id,
+      ref: walkthrough.ref,
+      branchReviewId,
+      counts: {
+        comments: associatedComments.length,
+        posts: postCount,
+        references: walkthrough.references.length,
+      },
+    },
+  });
 });
 
 app.post("/api/pull-requests/:id/refresh", async (context) => {

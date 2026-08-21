@@ -2177,19 +2177,27 @@ export class RvwDatabase {
   }
 
   getBranchWalkthroughDeleteCounts(id: string): WalkthroughDeleteCounts {
-    const row = this.database
+    const comments = this.database
+      .prepare("SELECT count(*) AS count FROM branch_comment_targets WHERE walkthrough_id = ?")
+      .get(id) as DbRow;
+    const posts = this.database
       .prepare(
-        `SELECT
-          (SELECT COUNT(*) FROM branch_comment_targets WHERE walkthrough_id = ?) AS comments,
-          (SELECT COUNT(*) FROM branch_comment_posts WHERE comment_id IN
-            (SELECT comment_id FROM branch_comment_targets WHERE walkthrough_id = ?)) AS posts,
-          (SELECT COUNT(*) FROM branch_walkthrough_references WHERE walkthrough_id = ?) AS references`,
+        `SELECT count(*) AS count
+         FROM branch_comment_posts
+         WHERE comment_id IN (
+           SELECT comment_id FROM branch_comment_targets WHERE walkthrough_id = ?
+         )`,
       )
-      .get(id, id, id) as DbRow;
+      .get(id) as DbRow;
+    const references = this.database
+      .prepare(
+        "SELECT count(*) AS count FROM branch_walkthrough_references WHERE walkthrough_id = ?",
+      )
+      .get(id) as DbRow;
     return {
-      comments: numberValue(row, "comments"),
-      posts: numberValue(row, "posts"),
-      references: numberValue(row, "references"),
+      comments: numberValue(comments, "count"),
+      posts: numberValue(posts, "count"),
+      references: numberValue(references, "count"),
     };
   }
 

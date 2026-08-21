@@ -28,12 +28,7 @@ import type {
   Walkthrough,
   WalkthroughReference,
 } from "../../domain/models.js";
-import {
-  api,
-  type DeleteWalkthroughResponse,
-  jsonRequest,
-  type PlacementResponse,
-} from "../api.js";
+import { api, jsonRequest, type PlacementResponse } from "../api.js";
 import {
   MarkdownSelectionSurface,
   markdownCommentAnchorIds,
@@ -44,6 +39,13 @@ import {
   type MarkdownSourceRange,
 } from "../markdown-source-map.js";
 import type { ThemePreference } from "../theme.js";
+import {
+  reviewCommentPayload,
+  reviewIdForWalkthrough,
+  reviewKindForWalkthrough,
+  type AnyReviewComment,
+  type AnyWalkthrough,
+} from "../review-context.js";
 import type { ViewerNavigationTarget } from "./DocumentViewer.js";
 import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
@@ -549,15 +551,15 @@ export function WalkthroughViewer({
   onOpenRepositoryLink,
   onDeleted,
 }: {
-  walkthrough: Walkthrough;
-  comments: ReviewComment[];
+  walkthrough: AnyWalkthrough;
+  comments: AnyReviewComment[];
   activeCommentId: string | null;
   navigationTarget?: ViewerNavigationTarget | null;
   onNavigationApplied: (requestId: number) => void;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onOpenReference: (
-    walkthrough: Walkthrough,
+    walkthrough: AnyWalkthrough,
     reference: WalkthroughReference,
     openInOtherPane: boolean,
   ) => Promise<string | null>;
@@ -567,7 +569,7 @@ export function WalkthroughViewer({
     openInOtherPane: boolean,
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
-  onDeleted: (walkthrough: Walkthrough) => void;
+  onDeleted: (walkthrough: AnyWalkthrough) => void;
 }) {
   const queryClient = useQueryClient();
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -652,6 +654,8 @@ export function WalkthroughViewer({
     (count, comment) => count + comment.posts.length,
     0,
   );
+  const reviewKind = reviewKindForWalkthrough(walkthrough);
+  const reviewId = reviewIdForWalkthrough(walkthrough);
   const placementQuery = useQuery({
     queryKey: [
       "walkthrough-comment-placements",
@@ -662,7 +666,7 @@ export function WalkthroughViewer({
     queryFn: async () => {
       const search = new URLSearchParams({
         kind: "walkthrough",
-        pullRequestId: walkthrough.pullRequestId,
+        [reviewKind === "pull-request" ? "pullRequestId" : "branchReviewId"]: reviewId,
         walkthroughId: walkthrough.id,
       });
       return await Promise.all(
@@ -697,7 +701,7 @@ export function WalkthroughViewer({
       await api(
         "/api/comments",
         jsonRequest({
-          pullRequestId: walkthrough.pullRequestId,
+          ...reviewCommentPayload({ kind: reviewKind, id: reviewId }),
           target: {
             kind: "walkthrough",
             walkthroughId: walkthrough.id,
@@ -721,8 +725,8 @@ export function WalkthroughViewer({
   });
   const deleteWalkthrough = useMutation({
     mutationFn: async () =>
-      await api<DeleteWalkthroughResponse>(
-        `/api/pull-requests/${walkthrough.pullRequestId}/walkthroughs/${walkthrough.id}`,
+      await api(
+        `/api/${reviewKind === "pull-request" ? "pull-requests" : "branch-reviews"}/${reviewId}/walkthroughs/${walkthrough.id}`,
         {
           ...jsonRequest({}),
           method: "DELETE",

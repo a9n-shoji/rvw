@@ -312,8 +312,13 @@ empty fileは従来どおり明示的に扱う。
   pathへ安全に解決できない参照は
   requestを送らずplaceholderを表示する。SVG asset responseは同一originへの直接navigationも含め、
   scriptと外部subresourceを禁止するContent Security Policyとsandboxを付ける。
-- sidebarのtop-level stackはExplorerとCommentsの二つにする。Explorerには`Pull Request.md`、
-  collapsibleなWalkthrough folder、file名filter、unchanged file表示checkbox、repository treeをこの順に置く。
+- Pull Request ReviewとBranch Reviewは同じsidebar、document tab、最大二pane、resize、theme、comment操作を
+  使い、review種別だけを理由に別のinteractionや簡易rendererを持たない。Branch ReviewではPR固有のcommit
+  range、changes / diff style、`Pull Request.md`だけを表示しない。
+- sidebarのtop-level stackはExplorerとCommentsの二つにする。Explorerには、Pull Request Reviewだけの
+  `Pull Request.md`、collapsibleなWalkthrough folder、file名filter、repository treeをこの順に置く。
+  Pull Request Reviewではunchanged file表示checkboxを置き、Branch Reviewではrepository tree全体を
+  常に表示する。
   本文検索はExplorer headerのactionでSearch viewへ切り替える。ExplorerとSearchは別々のscroll領域へ
   mountしたまま片方だけを表示し、directory、Walkthrough、検索結果の展開状態とscroll位置を保持する。
 - tab列は文書navigationだけに使い、review scopeを置かない。review scopeとstacked / splitは

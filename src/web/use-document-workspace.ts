@@ -13,8 +13,13 @@ import {
 type DocumentWorkspaceUpdate =
   DocumentWorkspaceState | ((current: DocumentWorkspaceState) => DocumentWorkspaceState);
 
-export function useDocumentWorkspace(onDocumentNavigation: () => void) {
-  const [workspace, setWorkspaceState] = useState<DocumentWorkspaceState>(initialDocumentWorkspace);
+export function useDocumentWorkspace(
+  onDocumentNavigation: () => void,
+  initialDocument?: ActiveDocument | null,
+) {
+  const [workspace, setWorkspaceState] = useState<DocumentWorkspaceState>(() =>
+    initialDocumentWorkspace(initialDocument === undefined ? undefined : initialDocument),
+  );
   const workspaceRef = useRef(workspace);
   const setWorkspace = useCallback((update: DocumentWorkspaceUpdate): void => {
     setWorkspaceState((current) => {
