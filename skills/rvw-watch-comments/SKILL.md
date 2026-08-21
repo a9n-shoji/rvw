@@ -68,9 +68,11 @@ direct-database transport; an unavailable selected transport is fatal.
 node '<SKILL_DIR>/scripts/preflight.mjs'
 ```
 
-Before starting intake, reserve a positive number of subagent slots for this task. Use that exact
-number as `<RESERVED_WORKER_SLOTS>`; use `1` when the runtime cannot guarantee more. Start the bundled
-driver with the state path and the matching in-flight limit. `--auto-ack` is the normal mode: it claims
+Before starting intake, target eight concurrent subagent slots for this task. When the runtime can
+guarantee at least eight, reserve exactly eight and set `<RESERVED_WORKER_SLOTS>` to `8`. Otherwise
+reserve the largest positive number it can guarantee and use that exact number; use `1` only when it
+cannot guarantee more than one. Never set the value above reserved capacity. Start the bundled driver
+with the state path and the matching in-flight limit. `--auto-ack` is the normal mode: it claims
 eligible PR batches only while fewer than that limit are in flight, re-reads every thread, creates
 `🔎 確認中です…` (or restores it when retrying that batch), records suppression, and emits one
 `batch-acknowledged` JSON line containing the lease and operations. The first `watch-ready` line
@@ -80,6 +82,10 @@ the exact durable cursor. Before each initial connection or reconnect, it auto-a
 durable work up to the same capacity. The driver atomically owns one lock beside the canonical state
 path before spawning rvw. A second driver for the same state exits immediately; a later restart
 removes a stale lock only when its recorded owner process no longer exists.
+
+For an `investigate-and-reply`-only task, prefer the target of eight above whenever capacity permits.
+Do not reduce capacity merely because multiple leases may inspect the same Pull Request or repository:
+those workers are source-read-only and each batch owns a distinct status post.
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-driver.mjs' '<TASK_STATE_DB>' \
@@ -157,7 +163,9 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' reserve-write \
 ```
 
 The unique reservation prevents two leases from writing the same repository. A manually invoked
-`auto-ack` may instead receive `--write-key` when that identity was already verified.
+`auto-ack` may instead receive `--write-key` when that identity was already verified and the immutable
+task policy allows `fix-and-push`. An `investigate-and-reply`-only task cannot claim or reserve a write
+key; its leases stay unreserved and may inspect the same repository concurrently.
 
 ## Delegate every acknowledged batch immediately
 
@@ -254,11 +262,14 @@ additional task-created posts. If a thread or its recorded status post disappear
 complete it without creating a replacement and report it as gone. Comment and reply bodies are UTF-8
 GFM Markdown up to 64 KiB, not 4 KiB; a 4093-byte result is within the contract.
 
-An event for a PR with an active lease remains durable but is not eligible for another claim. After
-`complete` releases the current lease, let the driver's state pump claim that PR's newly eligible
-events and immediately delegate the emitted lease under the same rules. After retryable `fail`, let
-the pump wait through the recorded `nextAttemptAt` and dispatch the restored lease when due. Never
-assign a follow-up or retry to the previous subagent.
+In an `investigate-and-reply`-only task, an event for a PR with an active lease becomes a separate
+eligible batch. The driver's state pump may acknowledge and delegate it immediately while reserved
+capacity remains; do not wait for the preceding investigation to complete. Batch-scoped status posts
+keep both final edits independent. When the immutable task policy allows `fix-and-push`, same-PR
+follow-ups remain durable but ineligible until the active lease is released, and repository write
+reservations serialize writers across different PRs. After retryable `fail`, let the pump wait through
+the recorded `nextAttemptAt` and dispatch the restored lease when due. Never assign a follow-up or retry
+to the previous subagent.
 
 ## Choose the worker mode
 
