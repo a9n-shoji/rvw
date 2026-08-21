@@ -944,6 +944,22 @@ test("keeps PR body preview comments interactive and stacks collapsed source men
     await reply.click();
     await reply.pressSequentially("Previewから返信できます");
     await expect(reply).toHaveValue("Previewから返信できます");
+    const externalReplyResponse = await request.post(`/api/comments/${upper.comment.id}/posts`, {
+      data: {
+        body: "別コメントへのAgent返信",
+        authorLabel: "Agent",
+        relatedCommitOid: null,
+      },
+    });
+    expect(externalReplyResponse.ok()).toBe(true);
+    const upperPreviewThread = page.locator(
+      `.markdown-inline-comments .comment-thread[data-comment-id="${upper.comment.id}"]`,
+    );
+    await expect(
+      upperPreviewThread.getByText("別コメントへのAgent返信", { exact: true }),
+    ).toBeVisible();
+    await expect(reply).toHaveValue("Previewから返信できます");
+    await expect(reply).toBeFocused();
     await reply.fill("");
 
     await page.getByRole("button", { name: "Source", exact: true }).click();

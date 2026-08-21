@@ -36,11 +36,14 @@ function createFakeRvw(directory: string): { script: string; log: string } {
   const log = path.join(directory, "rvw-calls.jsonl");
   writeFileSync(
     script,
-    String.raw`import { appendFileSync } from "node:fs";
+    String.raw`import { appendFileSync, existsSync, readFileSync } from "node:fs";
 const args = process.argv.slice(2);
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
 const parsedInput = input ? JSON.parse(input) : null;
+const priorCalls = existsSync(process.env.FAKE_RVW_LOG)
+  ? readFileSync(process.env.FAKE_RVW_LOG, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse)
+  : [];
 appendFileSync(process.env.FAKE_RVW_LOG, JSON.stringify({ args, input: parsedInput }) + "\n");
 const json = (value, code = 0) => {
   process.stdout.write(JSON.stringify(value) + "\n");
@@ -58,7 +61,8 @@ if (args[0] === "protocol") {
 } else if (args[0] === "comment" && args[1] === "get") {
   json({ ok: true, pullRequest: { url: "https://github.com/acme/repo/pull/1" }, comment: { ref: args[2], posts: [] } });
 } else if (args[0] === "comment" && args[1] === "reply") {
-  json({ ok: true, post: { id: "status-post-1", body: parsedInput.body } });
+  const replyCount = priorCalls.filter((call) => call.args[0] === "comment" && call.args[1] === "reply").length + 1;
+  json({ ok: true, post: { id: "status-post-" + replyCount, body: parsedInput.body } });
 } else if (args[0] === "comment" && args[1] === "edit") {
   json({ ok: true, post: { id: args[4], body: parsedInput.body } });
 } else if (args[0] === "comment" && args[1] === "watch") {
@@ -199,23 +203,29 @@ describe("rvw-watch-comments bundled scripts", () => {
         deleted: false,
       },
     });
-    const restored = spawnSync(
+    const followUpAcknowledgement = spawnSync(
       process.execPath,
       [autoAckScript, "--state", state, "--pull-request", "https://github.com/acme/repo/pull/1"],
       { encoding: "utf8", env: fakeEnvironment(fake) },
     );
-    expect(restored.status).toBe(0);
-    expect(JSON.parse(restored.stdout)).toMatchObject({
+    expect(followUpAcknowledgement.status).toBe(0);
+    const followUp = JSON.parse(followUpAcknowledgement.stdout) as {
+      operations: Array<{ idempotencyKey: string }>;
+    };
+    expect(followUp).toMatchObject({
       operations: [
         {
-          idempotencyKey: firstAcknowledgement.operations[0]?.idempotencyKey,
-          statusPostId: "status-post-1",
-          acknowledgement: "restored",
+          statusPostId: "status-post-2",
+          acknowledgement: "created",
         },
       ],
     });
-    const editCall = readFakeCalls(fake.log).find((call) => call.args[1] === "edit");
-    expect(editCall?.input).toEqual({ body: "🔎 確認中です…", relatedCommitOid: null });
+    expect(followUp.operations[0]?.idempotencyKey).not.toBe(
+      firstAcknowledgement.operations[0]?.idempotencyKey,
+    );
+    const calls = readFakeCalls(fake.log);
+    expect(calls.filter((call) => call.args[1] === "reply")).toHaveLength(2);
+    expect(calls.some((call) => call.args[1] === "edit")).toBe(false);
   });
 
   it("drives RFC 7464 intake and auto-ack without an Agent shell round trip", async () => {

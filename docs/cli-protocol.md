@@ -318,9 +318,11 @@ for protocol tests and recovery tools. Independent tasks may consume the log wit
 
 rvw does not start an Agent, store its queue, or authorize code changes. The external task owns
 batching, retries, and self-event suppression. The bundled `rvw-watch-comments` Skill supplies a
-task-local SQLite state tool for atomic cursor ingestion, batch leases, and one status post per comment
-URI. After a claim and successful thread read, it immediately creates or restores `🔎 確認中です…`,
-suppresses that reply's watch event, and edits the same post to the final outcome. It requires explicit
+task-local SQLite state tool for atomic cursor ingestion, batch leases, and one status post per affected
+comment URI in each batch. After a claim and successful thread read, it immediately creates
+`🔎 確認中です…`, suppresses that reply's watch event, and edits the same post to the final outcome.
+A retry of the same batch restores that post; a later batch for the same thread creates a new one and
+leaves the earlier outcome unchanged. It requires explicit
 startup authorization before an authenticated user's own PR can be fixed and pushed, and verifies the
 live head repository, branch, and OID so fork PRs cannot target the base repository accidentally.
 Another or unknown author remains code/GitHub read-only.
@@ -486,7 +488,8 @@ platform argument selects only the destination Skill root. Neither Skill hardcod
 the current Agent may supply an accurate optional `authorLabel`.
 
 `rvw-watch-comments` documents the complete state-script stdin/stdout contract. Its driver derives
-`--after` from task state, its auto-ack reuses the thread idempotency key and status post, and its
+`--after` from task state, its auto-ack reuses each batch operation's idempotency key and status post
+only when that batch is retried, and its
 worker handoff uses an absolute JSON result path rather than relying on relayed completion text.
 
 Each rvw-managed installation records the bundled digest. Status distinguishes a clean older bundle

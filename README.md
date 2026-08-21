@@ -198,7 +198,8 @@ reference付きartifactとして検証してpublishします。Walkthrough全体
 PRは常にcode/GitHub read-onlyで調査します。同梱driverがcursor resumeとRFC 7464 ingestを行い、
 batchをclaimすると各threadへ`🔎 確認中です…`をAgent往復なしに即時返信し、
 完了時は同じreplyを最終結果へ編集します。Skill同梱のtask-state toolがrepository外のSQLiteへcursor、
-queue、retry、thread単位のstatus post、自己返信抑制をtransactionalに保存します。
+queue、retry、batch内のthread単位status post、自己返信抑制をtransactionalに保存します。同じthreadへ
+後から返信が追加された場合は新しいstatus postを返信するため、以前の回答は書き換えません。
 
 三つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
 `rvw walkthrough get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`だけを利用します。

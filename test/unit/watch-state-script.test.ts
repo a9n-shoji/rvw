@@ -108,7 +108,7 @@ describe("rvw-watch-comments task state", () => {
     });
   });
 
-  it("records one durable status post per thread and suppresses its event immediately", () => {
+  it("records a new durable status post for a later batch in the same thread", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-state-")), "task.db");
     run(state, "init", ["--expected-login", "reviewer", "--own-mode", "fix-and-push"]);
     ingest(state, {
@@ -195,42 +195,72 @@ describe("rvw-watch-comments task state", () => {
         deleted: false,
       },
     });
+    const interruptedFollowUp = run(state, "claim", [
+      "--pull-request",
+      "https://github.com/acme/repo/pull/1",
+    ]);
+    const legacyState = new DatabaseSync(state);
+    legacyState.exec(`
+      DELETE FROM operations;
+      ALTER TABLE operations DROP COLUMN post_id;
+      CREATE TABLE comment_statuses (
+        comment_ref TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        post_id TEXT UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    legacyState
+      .prepare(
+        `INSERT INTO comment_statuses(
+          comment_ref, idempotency_key, post_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "rvw://comment/comment-1",
+        acknowledgementKey,
+        "agent-post",
+        "2026-08-20T00:00:01.000Z",
+        "2026-08-20T00:00:01.000Z",
+      );
+    legacyState.prepare("DELETE FROM meta WHERE key = 'batch_scoped_status_posts'").run();
+    legacyState.close();
+    expect(run(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
     const followUp = run(state, "claim", ["--pull-request", "https://github.com/acme/repo/pull/1"]);
+    expect(followUp).toMatchObject({
+      batchId: interruptedFollowUp.batchId,
+      attempts: 2,
+    });
     expect(followUp).toMatchObject({
       operations: [
         {
           commentRef: "rvw://comment/comment-1",
-          idempotencyKey: acknowledgementKey,
-          statusPostId: "agent-post",
+          statusPostId: null,
         },
       ],
     });
-    run(state, "complete", ["--lease", String(followUp.leaseId)], { postIds: [] });
+    const followUpKey = (followUp.operations as Array<{ idempotencyKey: string }>)[0]!
+      .idempotencyKey;
+    expect(followUpKey).not.toBe(acknowledgementKey);
+    run(state, "ack", ["--lease", String(followUp.leaseId)], {
+      commentRef: "rvw://comment/comment-1",
+      postId: "agent-follow-up",
+    });
 
     ingest(state, {
       type: "comment-posted",
       cursor: "cursor-4",
       event: {
         sequence: 4,
-        postId: "agent-post",
+        postId: "agent-follow-up",
         commentRef: "rvw://comment/comment-1",
         pullRequestUrl: "https://github.com/acme/repo/pull/1",
         createdAt: "2026-08-20T00:00:03.000Z",
         deleted: true,
       },
     });
-    ingest(state, {
-      type: "comment-posted",
-      cursor: "cursor-5",
-      event: {
-        sequence: 5,
-        postId: "human-after-status-deletion",
-        commentRef: "rvw://comment/comment-1",
-        pullRequestUrl: "https://github.com/acme/repo/pull/1",
-        createdAt: "2026-08-20T00:00:04.000Z",
-        deleted: false,
-      },
-    });
+    expect(run(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
     const afterDeletion = run(state, "claim", [
       "--pull-request",
       "https://github.com/acme/repo/pull/1",
@@ -242,7 +272,7 @@ describe("rvw-watch-comments task state", () => {
       }>
     )[0]!;
     expect(replacement.statusPostId).toBeNull();
-    expect(replacement.idempotencyKey).not.toBe(acknowledgementKey);
+    expect(replacement.idempotencyKey).not.toBe(followUpKey);
   });
 
   it("recovers a lease with the same idempotency key and serializes repository writers", () => {
@@ -296,6 +326,10 @@ describe("rvw-watch-comments task state", () => {
     expect(blocked.status).toBe(1);
 
     const firstKey = (first.operations as Array<{ idempotencyKey: string }>)[0]!.idempotencyKey;
+    run(state, "ack", ["--lease", String(first.leaseId)], {
+      commentRef: "rvw://comment/comment-1",
+      postId: "agent-status-1",
+    });
     expect(run(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
     const retried = run(state, "claim", [
       "--pull-request",
@@ -306,9 +340,12 @@ describe("rvw-watch-comments task state", () => {
     expect((retried.operations as Array<{ idempotencyKey: string }>)[0]!.idempotencyKey).toBe(
       firstKey,
     );
+    expect(retried).toMatchObject({
+      operations: [{ commentRef: "rvw://comment/comment-1", statusPostId: "agent-status-1" }],
+    });
   });
 
-  it("migrates the idempotency key of an unfinished legacy batch", () => {
+  it("migrates the status post of an unfinished thread-scoped legacy batch", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-state-")), "task.db");
     const pullRequest = "https://github.com/acme/repo/pull/4";
     const commentRef = "rvw://comment/comment-4";
@@ -334,16 +371,35 @@ describe("rvw-watch-comments task state", () => {
     const first = run(state, "claim", ["--pull-request", pullRequest]);
     const legacyKey = "legacy-task:batch:1";
     const database = new DatabaseSync(state);
-    database.prepare("DELETE FROM comment_statuses WHERE comment_ref = ?").run(commentRef);
+    database.exec(`
+      CREATE TABLE comment_statuses (
+        comment_ref TEXT PRIMARY KEY,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        post_id TEXT UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+    const batchCreatedAt = String(
+      database.prepare("SELECT created_at FROM batches WHERE id = ?").get(String(first.batchId))!
+        .created_at,
+    );
+    database.prepare("DELETE FROM operations WHERE batch_id = ?").run(String(first.batchId));
+    database.exec("ALTER TABLE operations DROP COLUMN post_id;");
     database
-      .prepare("INSERT INTO operations(batch_id, comment_ref, idempotency_key) VALUES (?, ?, ?)")
-      .run(String(first.batchId), commentRef, legacyKey);
+      .prepare(
+        `INSERT INTO comment_statuses(
+          comment_ref, idempotency_key, post_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(commentRef, legacyKey, "legacy-status-post", batchCreatedAt, batchCreatedAt);
+    database.prepare("DELETE FROM meta WHERE key = 'batch_scoped_status_posts'").run();
     database.close();
 
     run(state, "recover");
     const migrated = run(state, "claim", ["--pull-request", pullRequest]);
     expect(migrated).toMatchObject({
-      operations: [{ commentRef, idempotencyKey: legacyKey, statusPostId: null }],
+      operations: [{ commentRef, idempotencyKey: legacyKey, statusPostId: "legacy-status-post" }],
     });
   });
 

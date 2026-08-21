@@ -26,12 +26,12 @@ jobs:
       - run: pnpm check
       - run: pnpm test
       - run: pnpm exec playwright install chromium
-      - name: Ensure demo fixture history
+      - name: Run E2E with demo fixture history
         run: |
-          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
-            git fetch --no-tags --unshallow origin
-          fi
-      - run: pnpm test:e2e
+          git fetch --no-tags --depth=50 origin +refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-list --first-parent --count refs/remotes/origin/main)" -ge 7
+          # The PR merge checkout can restore its shallow boundary after the fetch; the objects remain.
+          GIT_SHALLOW_FILE= pnpm test:e2e
 
   package-smoke:
     name: Package smoke (${{ matrix.os }})

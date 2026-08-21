@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
   CodeReference,
   CommentPlacement,
@@ -7,6 +7,12 @@ import type {
   ReviewComment,
 } from "../../domain/models.js";
 import { api, jsonRequest } from "../api.js";
+import {
+  deleteCommentReplyDraftsForComment,
+  readCommentReplyDraft,
+  subscribeCommentReplyDrafts,
+  writeCommentReplyDraft,
+} from "../comment-draft-store.js";
 import type { ThemePreference } from "../theme.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
 import { CommentMarkdown } from "./CommentMarkdown.js";
@@ -206,7 +212,14 @@ export function CommentThread({
   onActiveChange?: (commentId: string, active: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const [reply, setReply] = useState("");
+  const replyDraftKey = `${variant}:${comment.id}`;
+  const replyDraft = useSyncExternalStore(
+    subscribeCommentReplyDrafts,
+    () => readCommentReplyDraft(comment.pullRequestId, replyDraftKey),
+    () => readCommentReplyDraft(comment.pullRequestId, replyDraftKey),
+  );
+  const reply = replyDraft.body;
+  const replyInputRef = useRef<HTMLTextAreaElement>(null);
   const [inlineExpanded, setInlineExpanded] = useState(() => {
     if (variant === "sidebar") return true;
     const stored = inlineExpansionByComment.get(comment.id);
@@ -226,6 +239,12 @@ export function CommentThread({
   const rootPost = comment.posts.find((post) => post.isRoot) ?? comment.posts[0];
   const replyCount = comment.posts.filter((post) => !post.isRoot).length;
   const placementOutdated = placement?.outdated ?? false;
+
+  useLayoutEffect(() => {
+    if (!replyDraft.focused || document.activeElement === replyInputRef.current) return;
+    replyInputRef.current?.focus();
+    replyInputRef.current?.setSelectionRange(reply.length, reply.length);
+  }, [reply.length, replyDraft.focused]);
 
   useEffect(() => {
     if (variant !== "inline") return;
@@ -378,7 +397,12 @@ export function CommentThread({
         jsonRequest({ body: reply, authorLabel: "You", relatedCommitOid: null }),
       ),
     onSuccess: async () => {
-      setReply("");
+      const currentReplyDraft = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
+      writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+        revision: currentReplyDraft.revision,
+        body: "",
+        focused: currentReplyDraft.focused,
+      });
       if (variant === "inline") pendingInlineScrollByComment.add(comment.id);
       await invalidate();
     },
@@ -421,6 +445,7 @@ export function CommentThread({
         method: "DELETE",
       }),
     onSuccess: async () => {
+      deleteCommentReplyDraftsForComment(comment.pullRequestId, comment.id);
       onDeleted?.();
       await invalidate();
     },
@@ -702,8 +727,29 @@ export function CommentThread({
 
           <div className="comment-reply-composer">
             <textarea
+              ref={replyInputRef}
               value={reply}
-              onChange={(event) => setReply(event.target.value)}
+              onChange={(event) => {
+                const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
+                writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+                  ...current,
+                  body: event.target.value,
+                });
+              }}
+              onFocus={() => {
+                const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
+                writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+                  ...current,
+                  focused: true,
+                });
+              }}
+              onBlur={() => {
+                const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
+                writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+                  ...current,
+                  focused: false,
+                });
+              }}
               onKeyDown={(event) =>
                 handleCommentSubmitShortcut(
                   event,
