@@ -393,6 +393,23 @@ empty fileは従来どおり明示的に扱う。
   exact source targetを保存する。既存commentはtargetと一致するold/new側へ表示する。
 - extensionless repository画像、zoom/pan、pixel diff、画像座標commentはPhase 1の対象外とする。
 
+#### Private PR release前manual smoke
+
+private attachmentをCI fixtureへ保存しないため、release前に次を人間が実施する。
+
+1. private repositoryを閲覧できるaccountで`gh auth status --hostname github.com`が成功することを確認する。
+2. そのrepositoryのopen PR本文へ小さなPNGまたはJPEGをpasteし、生成されたmodern
+   `https://github.com/user-attachments/assets/<uuid>` URLを本文に残す。比較用に任意の外部画像URLも一件置く。
+3. `rvw open <private-pr-url>`でviewerを開き、`Pull Request.md`のPreviewでprivate attachmentが表示され、
+   外部画像はalt/title付きplaceholderのままであることを確認する。
+4. browser DevToolsのNetworkで、表示画像の`src`とrequest先がlocalhostの
+   `/api/pull-requests/:id/github-attachment`であり、browserから`github.com/user-attachments`や外部画像hostへ
+   直接requestしていないことを確認する。
+5. localhost responseが検出済みのimage Content-Type、`nosniff`、private immutable cache、same-origin CORPを
+   持ち、reload後も画像表示とplaceholderが維持されることを確認する。
+6. private attachment URL、response body、DevTools traceをrepository、issue、CI logへ保存せず、実施結果だけを
+   release checklistへ記録する。
+
 ### 5.4 Agent Walkthrough
 
 Walkthroughは、外部AgentがCLIで登録するcommit固定のMarkdown documentである。rvwは説明を生成せず、
