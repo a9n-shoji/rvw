@@ -1,6 +1,16 @@
 #!/usr/bin/env node
 
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import {
+  chmodSync,
+  linkSync,
+  lstatSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
@@ -10,9 +20,11 @@ const EXIT_WATCH = 20;
 const EXIT_SEQUENCE = 21;
 const EXIT_INGEST = 22;
 const EXIT_AUTO_ACK = 23;
+const EXIT_ALREADY_RUNNING = 24;
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const stateScript = path.join(scriptDirectory, "watch-state.mjs");
 const autoAckScript = path.join(scriptDirectory, "auto-ack.mjs");
+const DRIVER_LOCK_SUFFIX = ".watch-driver.lock";
 
 class DriverError extends Error {
   constructor(message, exitCode, details = null) {
@@ -84,6 +96,107 @@ async function stateCommand(state, command, args = [], input) {
 
 function write(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+function fileIdentity(filePath) {
+  try {
+    const stat = lstatSync(filePath);
+    return { dev: stat.dev, ino: stat.ino };
+  } catch {
+    return null;
+  }
+}
+
+function unlinkIfOwned(filePath, identity) {
+  const current = fileIdentity(filePath);
+  if (!identity || !current || current.dev !== identity.dev || current.ino !== identity.ino) return;
+  try {
+    unlinkSync(filePath);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
+function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code !== "ESRCH";
+  }
+}
+
+function lockOwner(lockPath) {
+  try {
+    const value = JSON.parse(readFileSync(lockPath, "utf8"));
+    return Number.isInteger(value?.pid) && value.pid > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function acquireDriverLock(state) {
+  const canonicalState = realpathSync(state);
+  const lockPath = `${canonicalState}${DRIVER_LOCK_SUFFIX}`;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const stagingPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(
+        stagingPath,
+        `${JSON.stringify({ pid: process.pid, state: canonicalState, startedAt: new Date().toISOString() })}\n`,
+        { flag: "wx", mode: 0o600 },
+      );
+      chmodSync(stagingPath, 0o600);
+      linkSync(stagingPath, lockPath);
+    } catch (error) {
+      try {
+        unlinkSync(stagingPath);
+      } catch (unlinkError) {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      }
+      if (error.code !== "EEXIST") throw error;
+      const observedIdentity = fileIdentity(lockPath);
+      const owner = lockOwner(lockPath);
+      // Preserve unreadable locks rather than risking two live drivers.
+      if (!owner || processIsAlive(owner.pid)) {
+        throw new DriverError(
+          "Another watch-driver process already owns this task state",
+          EXIT_ALREADY_RUNNING,
+          {
+            state: canonicalState,
+            lockPath,
+            ownerPid: owner?.pid ?? null,
+          },
+        );
+      }
+      unlinkIfOwned(lockPath, observedIdentity);
+      continue;
+    }
+    try {
+      const identity = fileIdentity(lockPath);
+      if (!identity) throw new Error("Could not verify the watch-driver owner lock");
+      unlinkSync(stagingPath);
+      return { identity, path: lockPath };
+    } catch (error) {
+      const stagingIdentity = fileIdentity(stagingPath);
+      unlinkIfOwned(lockPath, stagingIdentity);
+      try {
+        unlinkSync(stagingPath);
+      } catch (unlinkError) {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      }
+      throw error;
+    }
+  }
+  throw new DriverError("Could not acquire the watch-driver owner lock", EXIT_ALREADY_RUNNING, {
+    state: canonicalState,
+    lockPath,
+  });
+}
+
+function releaseDriverLock(lock) {
+  unlinkIfOwned(lock.path, lock.identity);
 }
 
 async function dispatchAutoAck(state, pullRequest) {
@@ -218,41 +331,50 @@ function delay(milliseconds) {
 
 async function main() {
   const { state, autoAck } = parseArguments(process.argv.slice(2));
-  const stopping = { requested: false, child: null };
-  const stop = () => {
-    stopping.requested = true;
-    stopping.child?.kill("SIGTERM");
-  };
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-  const maxRestarts = Number(process.env.RVW_WATCH_DRIVER_MAX_RESTARTS ?? "5");
-  let restarts = 0;
+  const driverLock = acquireDriverLock(state);
   try {
-    while (!stopping.requested) {
-      const startedAt = Date.now();
-      if (autoAck) await dispatchPendingAutoAcks(state);
-      const result = await runWatchOnce(state, autoAck, stopping);
-      if (stopping.requested) return;
-      if (Date.now() - startedAt >= 30_000) restarts = 0;
-      restarts += 1;
-      if (restarts > maxRestarts) {
-        throw new DriverError("rvw comment watch exceeded its reconnect limit", EXIT_WATCH, result);
+    const stopping = { requested: false, child: null };
+    const stop = () => {
+      stopping.requested = true;
+      stopping.child?.kill("SIGTERM");
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    const maxRestarts = Number(process.env.RVW_WATCH_DRIVER_MAX_RESTARTS ?? "5");
+    let restarts = 0;
+    try {
+      while (!stopping.requested) {
+        const startedAt = Date.now();
+        if (autoAck) await dispatchPendingAutoAcks(state);
+        const result = await runWatchOnce(state, autoAck, stopping);
+        if (stopping.requested) return;
+        if (Date.now() - startedAt >= 30_000) restarts = 0;
+        restarts += 1;
+        if (restarts > maxRestarts) {
+          throw new DriverError(
+            "rvw comment watch exceeded its reconnect limit",
+            EXIT_WATCH,
+            result,
+          );
+        }
+        const delayMs = retryDelay(restarts);
+        write({
+          ok: true,
+          type: "reconnecting",
+          attempt: restarts,
+          delayMs,
+          lastExitCode: result.code,
+          lastSignal: result.signal,
+          readySeen: result.readySeen,
+        });
+        await delay(delayMs);
       }
-      const delayMs = retryDelay(restarts);
-      write({
-        ok: true,
-        type: "reconnecting",
-        attempt: restarts,
-        delayMs,
-        lastExitCode: result.code,
-        lastSignal: result.signal,
-        readySeen: result.readySeen,
-      });
-      await delay(delayMs);
+    } finally {
+      process.off("SIGINT", stop);
+      process.off("SIGTERM", stop);
     }
   } finally {
-    process.off("SIGINT", stop);
-    process.off("SIGTERM", stop);
+    releaseDriverLock(driverLock);
   }
 }
 

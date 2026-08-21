@@ -75,7 +75,9 @@ one `batch-acknowledged` JSON line containing the lease and operations. The firs
 means monitoring is established. The driver chooses cursorless start only when state has no cursor;
 that intentionally skips all existing comments. Otherwise it resumes from the exact durable cursor.
 Before each initial connection or reconnect, it auto-acknowledges any eligible event that was durably
-ingested before an earlier driver interruption.
+ingested before an earlier driver interruption. The driver atomically owns one lock beside the
+canonical state path before spawning rvw. A second driver for the same state exits immediately; a
+later restart removes a stale lock only when its recorded owner process no longer exists.
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-driver.mjs' '<TASK_STATE_DB>' --auto-ack
@@ -95,6 +97,7 @@ Driver exit codes are stable:
 | `21` | Malformed, non-RFC-7464, or truncated watch output.                                                                 |
 | `22` | Durable state status or ingest failure.                                                                             |
 | `23` | Automatic acknowledgement failed; its claimed lease has already been returned to retry or quarantine when possible. |
+| `24` | Another driver process already owns the same task state, or its owner lock cannot be acquired safely.               |
 
 Without `--auto-ack`, the driver emits `pending` lines and leaves the batch unclaimed. An external
 monitor can also wait independently without hand-written polling:
@@ -268,8 +271,8 @@ attempt, edit every extant status post to the terminal warning form, then call `
 retry, auto-ack restores the acknowledgement before work. Continue unrelated PRs.
 
 On graceful stop, stop dispatching, let active writes reach a safe boundary, terminate the driver,
-and report `status`. Resume with the stored cursor and `recover`; never start the same task twice with
-one state database.
+and report `status`. The driver releases its owner lock after the rvw child exits. Resume with the
+stored cursor and `recover`; never start the same task twice with one state database.
 
 ## Bundled CLI contract reference
 

@@ -334,7 +334,10 @@ watch exits reconnect from the state cursor with bounded exponential backoff; pr
 and acknowledgement failures have distinct nonzero driver exits. These helpers remain external Skill
 processes and do not move Agent runtime or task state into rvw. Before an initial connection or
 reconnect, the driver drains eligible pending work left between a durable ingest and an interrupted
-acknowledgement.
+acknowledgement. Before spawning rvw, it atomically acquires one process-owner lock beside the canonical
+task-state path. A concurrent driver for that state exits without starting another watcher. The lock is
+released on graceful shutdown, and a later driver reclaims it only when the recorded owner process no
+longer exists.
 
 ## Walkthrough lifecycle
 

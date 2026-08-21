@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 同じtask stateで`rvw-watch-comments`のwatch driverを複数起動できないようにし、二重監視と重複処理を防止
+
 ## [0.2.2] - 2026-08-21
 
 ### Changed
