@@ -26,11 +26,11 @@ jobs:
       - run: pnpm check
       - run: pnpm test
       - run: pnpm exec playwright install chromium
-      - name: Fetch demo fixture history
+      - name: Run E2E with demo fixture history
         run: |
           git fetch --no-tags --depth=50 origin +refs/heads/main:refs/remotes/origin/main
           test "$(git rev-list --first-parent --count refs/remotes/origin/main)" -ge 7
-      - run: pnpm test:e2e
+          pnpm test:e2e
 
   package-smoke:
     name: Package smoke (${{ matrix.os }})
