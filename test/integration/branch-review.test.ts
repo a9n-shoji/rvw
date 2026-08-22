@@ -780,6 +780,60 @@ describe("Branch Review", () => {
     expect(service.listBranchIssues(recreated.branchReview.id)).toEqual([]);
   });
 
+  it("notifies every owning Review only when a shared Issue cache changes", async () => {
+    const { repositoryPath, sourceOid, github, database, service } = setup();
+    github.issues.set(142, issue(142));
+    const opened = await service.openBranchReview(repositoryPath);
+    await service.addBranchIssue(repositoryPath, "#142");
+    const pullRequest = database.upsertPullRequest(
+      {
+        host: "github.com",
+        owner: "acme",
+        repository: "review-repo",
+        number: 7,
+        url: "https://github.com/acme/review-repo/pull/7",
+        authorLogin: "reviewer",
+        headRepositoryOwner: "acme",
+        headRepositoryName: "review-repo",
+        title: "Shared Issue review",
+        body: "Review #142.",
+        baseRefName: "main",
+        baseOid: sourceOid,
+        headRefName: "feature",
+        headOid: sourceOid,
+        updatedAt: "2026-08-20T00:00:00.000Z",
+        state: "OPEN",
+        isDraft: false,
+      },
+      { localRepositoryPath: repositoryPath, gitCommonDir: opened.branchReview.gitCommonDir },
+      sourceOid,
+    );
+    await service.addPullRequestIssue(pullRequest.url, "#142");
+
+    const unchangedPullRequestSequence = database.getReviewChangeSequence(
+      "pull-request",
+      pullRequest.id,
+    );
+    await service.syncBranchReview(repositoryPath);
+    expect(database.getReviewChangeSequence("pull-request", pullRequest.id)).toBe(
+      unchangedPullRequestSequence,
+    );
+
+    github.issues.set(142, issue(142, "Requirement 142\nUpdated shared evidence"));
+    const branchSequence = database.getReviewChangeSequence("branch", opened.branchReview.id);
+    await service.syncBranchReview(repositoryPath);
+
+    expect(database.getReviewChangeSequence("pull-request", pullRequest.id)).toBeGreaterThan(
+      unchangedPullRequestSequence,
+    );
+    expect(database.getReviewChangeSequence("branch", opened.branchReview.id)).toBeGreaterThan(
+      branchSequence,
+    );
+    expect(service.listPullRequestIssues(pullRequest.id)).toEqual([
+      expect.objectContaining({ body: "Requirement 142\nUpdated shared evidence" }),
+    ]);
+  });
+
   it("advances only the source snapshot and retains more than one hundred Issue memberships", async () => {
     const { repositoryPath, github, service } = setup();
     const opened = await service.openBranchReview(repositoryPath);

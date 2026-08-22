@@ -243,7 +243,14 @@ commit rowをSQLiteへ複製しない。message、author、time、parentはGit o
 ```typescript
 type DocumentRef =
   | { kind: "pull-request-markdown"; pullRequestId: string }
+  | { kind: "issue-markdown"; pullRequestId: string; issueId: string }
   | { kind: "repository-file"; pullRequestId: string; sourceOid: string; path: string };
+
+type BranchDocumentRef =
+  | { kind: "issue-markdown"; branchReviewId: string; issueId: string }
+  | { kind: "repository-file"; branchReviewId: string; sourceOid: string; path: string };
+
+type ReviewDocumentRef = DocumentRef | BranchDocumentRef;
 
 type DiffDocumentRef = {
   kind: "diff";
@@ -252,8 +259,9 @@ type DiffDocumentRef = {
 };
 ```
 
-repository documentは`sourceOid + path`がexact snapshotである。PR本文はlatest-onlyなので
-`pullRequestId`がidentityになる。
+repository documentはreview kind、review ID、`sourceOid + path`がexact snapshotである。PR本文は
+latest-onlyなので`pullRequestId`、Issue本文は共有cacheを参照しつつ`review kind + review ID + issueId`が
+viewer上のidentityになる。
 
 文書navigationは「変更箇所を確認して終了する」ためではなく、変更から周辺実装へ辿って結果を
 理解するためにある。changed filesは出発点、all filesとsearchは関連contextの発見、full viewは
@@ -321,8 +329,9 @@ empty fileは従来どおり明示的に扱う。
   明示する。Walkthrough referenceのexact sourceを取得できない場合はtabやpaneを開かず、操作元の
   Walkthroughへ一時chipを表示し、リンク切れと一時的な取得失敗を区別する。
 - Markdown内の画像はrepository Markdownまたはcomment postから、後述する基準commit内の相対pathを
-  参照する場合だけexact commit assetとして自動取得する。PR本文ではmodernな
-  `https://github.com/user-attachments/assets/<uuid>`だけをlocalhost endpointへ書き換えて取得する。
+  参照する場合だけexact commit assetとして自動取得する。PR本文とPull Request / Branch Reviewへ登録した
+  Issue本文ではmodernな`https://github.com/user-attachments/assets/<uuid>`だけをreview scopeの
+  localhost endpointへ書き換えて取得する。
   それ以外の外部URL、protocol-relative URL、`data:`、`blob:`、Walkthrough本文、repository pathへ
   安全に解決できない参照はrequestを送らずplaceholderを表示する。画像load errorもalt/titleを保った
   placeholderへ戻す。SVG asset responseは同一originへの直接navigationも含め、scriptと外部subresourceを
@@ -541,16 +550,27 @@ interface Walkthrough {
 コメント対象:
 
 1. PR全体
-2. 最新Pull Request.md全体
-3. 最新Pull Request.md行範囲
-4. exact commitのコードファイル全体
-5. exact commitのコード行範囲
+2. Branch Review全体
+3. 登録済みIssue本文全体またはMarkdown source行範囲
+4. 最新Pull Request.md全体またはMarkdown source行範囲
+5. exact commitのコードファイル全体またはコード行範囲
 6. diffのold/newいずれかのexact document
 7. stable IDを持つWalkthrough全体またはMarkdown source行範囲
 
 ```typescript
 type CommentTarget =
   | { kind: "pull-request" }
+  | {
+      kind: "issue";
+      issueId: string;
+      issueUrl: string;
+      issueNumber: number;
+      issueTitle: string;
+      sourceDocumentHash: string;
+      quotedText: string | null;
+      startLine: number | null;
+      endLine: number | null;
+    }
   | {
       kind: "walkthrough";
       walkthroughId: string;
@@ -568,6 +588,18 @@ type CommentTarget =
       startLine: number | null;
       endLine: number | null;
     }
+  | {
+      kind: "document";
+      documentKind: "repository-file";
+      sourceOid: string;
+      path: string;
+      startLine: number | null;
+      endLine: number | null;
+    };
+
+type BranchCommentTarget =
+  | { kind: "branch" }
+  | Extract<CommentTarget, { kind: "issue" | "walkthrough" }>
   | {
       kind: "document";
       documentKind: "repository-file";
@@ -1150,6 +1182,12 @@ CREATE TABLE walkthrough_references (
 );
 ```
 
+Branch ReviewとIssue追加migrationは、canonical Issue cacheの`github_issues`、reviewごとのmembershipを
+所有する`review_issues`、repository singletonの`branch_reviews`、およびBranch専用のWalkthrough、
+Comment、post、typed reference tableを追加する。PRとBranchのartifact ownershipとcascade境界は分離し、
+共有Issue cacheの表示内容または同期errorが変わった場合だけ、そのIssueを所有する全Reviewの
+`review_change_sequence`を同じtransactionで更新する。単なる`fetched_at`更新では他Reviewをinvalidateしない。
+
 commit table、review version table、PR revision tableは持たない。既存Phase 1 DBはmigrationで
 version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元できない場合Outdatedとして残す。
 既存の`refs/rvw/pr/<n>/version/...`は旧comment source objectを失わないようresetまで保持し、
@@ -1164,6 +1202,9 @@ GET  /api/pull-requests/:id
 POST /api/pull-requests/open
 POST /api/pull-requests/:id/refresh
 POST /api/pull-requests/:id/reset
+GET|POST /api/pull-requests/:id/issues
+GET /api/pull-requests/:id/issues/:issueId
+DELETE /api/pull-requests/:id/issues/:issueId
 
 GET /api/pull-requests/:id/commits
 GET /api/pull-requests/:id/tree?oid=<oid>
@@ -1171,12 +1212,28 @@ GET /api/pull-requests/:id/changed-files?oldOid=<oid>&newOid=<oid>
 GET /api/pull-requests/:id/document?kind=...&sourceOid=...&path=...
 GET|HEAD /api/pull-requests/:id/markdown-asset?sourceOid=...&path=...
 GET /api/pull-requests/:id/github-attachment?url=...
-GET /api/branch-reviews/:id/github-attachment?url=...
 GET /api/pull-requests/:id/diff?oldOid=...&newOid=...&oldPath=...&newPath=...
 GET /api/pull-requests/:id/search?oid=<oid>&q=<query>&matchCase=<bool>&wholeWord=<bool>
 GET /api/pull-requests/:id/walkthroughs
 GET /api/pull-requests/:id/walkthroughs/:walkthroughId
 DELETE /api/pull-requests/:id/walkthroughs/:walkthroughId
+
+GET  /api/branch-reviews/:id
+POST /api/branch-reviews/open
+POST /api/branch-reviews/:id/sync
+POST /api/branch-reviews/:id/reset
+GET /api/branch-reviews/:id/tree
+GET /api/branch-reviews/:id/document?kind=...&sourceOid=...&path=...&issueId=...
+GET|HEAD /api/branch-reviews/:id/markdown-asset?sourceOid=...&path=...
+GET /api/branch-reviews/:id/github-attachment?url=...
+GET /api/branch-reviews/:id/search?q=<query>&matchCase=<bool>&wholeWord=<bool>
+GET|POST /api/branch-reviews/:id/issues
+GET /api/branch-reviews/:id/issues/:issueId
+DELETE /api/branch-reviews/:id/issues/:issueId
+GET /api/branch-reviews/:id/comments
+GET /api/branch-reviews/:id/walkthroughs
+GET /api/branch-reviews/:id/walkthroughs/:walkthroughId
+DELETE /api/branch-reviews/:id/walkthroughs/:walkthroughId
 
 GET  /api/pull-requests/:id/comments
 POST /api/comments

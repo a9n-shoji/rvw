@@ -869,6 +869,24 @@ app.post("/api/test/refresh-branch-review", async (context) => {
   return context.json({ ok: true, branchReview, issues: branchIssues, changeSequence });
 });
 
+app.post("/api/test/update-branch-walkthrough", async (context) => {
+  const input = await context.req.json();
+  const walkthrough = branchWalkthroughs.find(
+    (candidate) => candidate.id === (input.walkthroughId ?? branchWalkthroughId),
+  );
+  if (!walkthrough) {
+    return context.json(
+      { ok: false, error: { code: "WALKTHROUGH_NOT_FOUND", message: "missing walkthrough" } },
+      404,
+    );
+  }
+  if (typeof input.title === "string") walkthrough.title = input.title;
+  if (typeof input.body === "string") walkthrough.body = input.body;
+  if (typeof input.sourceOid === "string") walkthrough.sourceOid = input.sourceOid;
+  changeSequence += 1;
+  return context.json({ ok: true, walkthrough, changeSequence });
+});
+
 app.get("/api/test/image-text-request-count", (context) =>
   context.json({ ok: true, count: imageTextRequestCount }),
 );

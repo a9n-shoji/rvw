@@ -16,7 +16,6 @@ import type {
   ChangeKind,
   CodeReference,
   CommentPlacement,
-  DocumentRef,
   IssueDocument,
   Walkthrough,
   WalkthroughReference,
@@ -26,8 +25,6 @@ import {
   ApiError,
   type ChangedFilesResponse,
   type CommentsResponse,
-  documentUrl,
-  type DocumentResponse,
   jsonRequest,
   type PullRequestResponse,
   type SearchResponse,
@@ -66,7 +63,6 @@ import {
   currentCommitDocument,
   documentTabKey,
   initialDocumentWorkspace,
-  normalizeDocumentPanes,
   type ActiveDocument,
   type DocumentPaneId,
 } from "../document-workspace.js";
@@ -82,6 +78,10 @@ import { useThemePreference } from "../use-theme-preference.js";
 import { useReviewSidebarSearch } from "../use-review-sidebar-search.js";
 import { useQuickOpenShortcut } from "../use-quick-open-shortcut.js";
 import { useReviewReadingHistory } from "../use-review-reading-history.js";
+import { parseReviewId } from "../review-id.js";
+import { useExactCodeReferenceNavigation } from "../use-exact-code-reference-navigation.js";
+import { useWalkthroughDocumentReconciliation } from "../use-walkthrough-document-reconciliation.js";
+import { useTemporaryFeedback } from "../use-temporary-feedback.js";
 const DocumentViewer = lazy(async () => {
   const module = await import("../components/DocumentViewer.js");
   return { default: module.DocumentViewer };
@@ -397,8 +397,6 @@ function ReviewScopeBar({
   );
 }
 
-const SYNC_FEEDBACK_DURATION_MS = 3_000;
-
 function pullRequestLoadErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === "PULL_REQUEST_NOT_FOUND") {
     return "Pull Requestが見つかりません。`rvw open`から起動し直してください。";
@@ -409,13 +407,7 @@ function pullRequestLoadErrorMessage(error: unknown): string {
 function PullRequestApp({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
   const queryClient = useQueryClient();
   const pullRequestIdParameter = new URL(window.location.href).searchParams.get("pullRequestId");
-  const pullRequestIdValid = Boolean(
-    pullRequestIdParameter &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      pullRequestIdParameter,
-    ),
-  );
-  const pullRequestId = pullRequestIdValid ? pullRequestIdParameter : null;
+  const pullRequestId = parseReviewId(pullRequestIdParameter);
   const reviewHistoryKey = pullRequestId ? `pull-request:${pullRequestId}` : null;
   const [selectedOid, setSelectedOid] = useState<string | null>(null);
   const [rangeStartOid, setRangeStartOid] = useState<string | null>(null);
@@ -463,7 +455,11 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const [issueReference, setIssueReference] = useState("");
   const [issueAddOpen, setIssueAddOpen] = useState(false);
   const [reviewStateRevision, setReviewStateRevision] = useState(0);
-  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const {
+    feedback: syncFeedback,
+    showFeedback: showSyncFeedback,
+    clearFeedback: clearSyncFeedback,
+  } = useTemporaryFeedback();
   const {
     themePreference,
     selectThemePreference,
@@ -479,10 +475,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const observedLatestHead = useRef<string | null>(null);
   const observedChangeSequence = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const codeReferenceRequestSequence = useRef<Record<DocumentPaneId, number>>({
-    left: 0,
-    right: 0,
-  });
   const debouncedSearch = useDebouncedValue(searchText.trim(), 250);
   const openSidebarSearch = useReviewSidebarSearch({
     searchInputRef,
@@ -519,18 +511,18 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     activateWorkspaceDocument,
     scrollRevision: reviewStateRevision,
   });
+  const openCodeReference = useExactCodeReferenceNavigation({
+    reviewKind: "pull-request",
+    reviewId: pullRequestId,
+    workspaceRef: documentWorkspaceRef,
+    navigateToDocument,
+  });
 
   const openDocument = useCallback(
     (document: ActiveDocument, targetPane?: DocumentPaneId): void =>
       navigateToDocument(document, targetPane),
     [navigateToDocument],
   );
-
-  useEffect(() => {
-    if (!syncFeedback) return;
-    const timeoutId = window.setTimeout(() => setSyncFeedback(null), SYNC_FEEDBACK_DURATION_MS);
-    return () => window.clearTimeout(timeoutId);
-  }, [syncFeedback]);
 
   const dropDocument = useCallback(
     (documentKey: string, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
@@ -777,58 +769,11 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     enabled: Boolean(pullRequestId),
   });
   const walkthroughs = walkthroughsQuery.data?.walkthroughs ?? [];
-  useEffect(() => {
-    if (!walkthroughsQuery.isSuccess) return;
-    const summaries = new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough]));
-    setDocumentWorkspace((current) => {
-      const rebind = (document: ActiveDocument | null): ActiveDocument | null => {
-        if (document?.kind !== "walkthrough") return document;
-        const summary = summaries.get(document.id);
-        return summary
-          ? {
-              kind: "walkthrough",
-              id: summary.id,
-              title: summary.title,
-              sourceOid: summary.sourceOid,
-            }
-          : null;
-      };
-      const documents = {
-        left: current.documents.left
-          .map(rebind)
-          .filter((document): document is ActiveDocument => document !== null),
-        right: current.documents.right
-          .map(rebind)
-          .filter((document): document is ActiveDocument => document !== null),
-      };
-      const activeDocument = (
-        paneId: DocumentPaneId,
-        document: ActiveDocument | null,
-      ): ActiveDocument | null => {
-        const rebound = rebind(document);
-        if (
-          rebound &&
-          documents[paneId].some(
-            (candidate) => documentTabKey(candidate) === documentTabKey(rebound),
-          )
-        ) {
-          return rebound;
-        }
-        return documents[paneId][0] ?? null;
-      };
-      return normalizeDocumentPanes({
-        ...current,
-        documents: {
-          left: documents.left,
-          right: documents.right,
-        },
-        active: {
-          left: activeDocument("left", current.active.left),
-          right: activeDocument("right", current.active.right),
-        },
-      });
-    });
-  }, [walkthroughsQuery.data?.walkthroughs, walkthroughsQuery.isSuccess]);
+  useWalkthroughDocumentReconciliation({
+    walkthroughs,
+    enabled: walkthroughsQuery.isSuccess,
+    setWorkspace: setDocumentWorkspace,
+  });
   const openWalkthroughIds = useMemo(
     () => [
       ...new Set(
@@ -962,7 +907,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
         queryClient.invalidateQueries({ queryKey: ["comment-placement"] }),
       ]);
       if (options.announce) {
-        setSyncFeedback(
+        showSyncFeedback(
           `GitHubと同期しました · ${new Intl.DateTimeFormat("ja-JP", {
             hour: "2-digit",
             minute: "2-digit",
@@ -1153,67 +1098,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     },
     [openDocument],
   );
-  const openCodeReference = useCallback(
-    async (
-      pullRequestId: string,
-      sourceOid: string,
-      reference: CodeReference,
-      targetPane: DocumentPaneId,
-      comparisonPolicy: "exact-source" | "selected-range",
-    ): Promise<string | null> => {
-      codeReferenceRequestSequence.current[targetPane] += 1;
-      const requestSequence = codeReferenceRequestSequence.current[targetPane];
-      const targetNavigationRevision = documentWorkspaceRef.current.navigationRevision[targetPane];
-      const requestIsCurrent = (): boolean =>
-        requestSequence === codeReferenceRequestSequence.current[targetPane] &&
-        documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
-      const ref: DocumentRef = {
-        kind: "repository-file",
-        pullRequestId,
-        sourceOid,
-        path: reference.path,
-      };
-      try {
-        const referencedDocument = await queryClient.fetchQuery({
-          queryKey: ["document", ref],
-          queryFn: async () => (await api<DocumentResponse>(documentUrl(ref))).document,
-        });
-        if (!requestIsCurrent()) return null;
-        if (referencedDocument.availability !== "available") {
-          return referencedDocument.availability === "missing"
-            ? `リンク切れ · ${reference.path}`
-            : `参照先を表示できません · ${reference.path}`;
-        }
-      } catch (error) {
-        if (!requestIsCurrent()) return null;
-        return error instanceof ApiError &&
-          ["COMMIT_NOT_FOUND", "DOCUMENT_NOT_FOUND", "NOT_FOUND"].includes(error.code)
-          ? `リンク切れ · ${reference.path}`
-          : `参照先を開けません · ${reference.path}`;
-      }
-      const document: ActiveDocument = {
-        kind: "repository-file",
-        path: reference.path,
-        sourceOid,
-        comparisonPolicy,
-      };
-      const documentKey = documentTabKey(document);
-      const activeTarget = documentWorkspaceRef.current.active[targetPane];
-      const resetHorizontal = !activeTarget || documentTabKey(activeTarget) !== documentKey;
-      navigateToDocument(
-        document,
-        targetPane,
-        {
-          kind: "line",
-          line: reference.startLine,
-          ...(reference.endLine === null ? {} : { endLine: reference.endLine }),
-        },
-        resetHorizontal,
-      );
-      return null;
-    },
-    [navigateToDocument, queryClient],
-  );
   const openWalkthroughReference = useCallback(
     (
       walkthrough: AnyWalkthrough,
@@ -1223,13 +1107,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       if (!("pullRequestId" in walkthrough)) {
         return Promise.resolve(`参照先を開けません · ${reference.path}`);
       }
-      return openCodeReference(
-        walkthrough.pullRequestId,
-        walkthrough.sourceOid,
-        reference,
-        targetPane,
-        "selected-range",
-      );
+      return openCodeReference(walkthrough.sourceOid, reference, targetPane, "selected-range");
     },
     [openCodeReference],
   );
@@ -1247,7 +1125,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       if (!pullRequestId) {
         return Promise.resolve(`参照先を開けません · ${reference.path}`);
       }
-      return openCodeReference(pullRequestId, sourceOid, reference, targetPane, "exact-source");
+      return openCodeReference(sourceOid, reference, targetPane, "exact-source");
     },
     [openCodeReference, pullRequestId],
   );
@@ -1265,7 +1143,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       </main>
     );
   }
-  if (!pullRequestIdValid || !pullRequestId) {
+  if (!pullRequestId) {
     return (
       <main className="fatal-state">
         <h1>rvw</h1>
@@ -1495,7 +1373,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
             setQuickOpenVisible(true);
           }}
           onSync={() => {
-            setSyncFeedback(null);
+            clearSyncFeedback();
             refreshMutation.mutate({ announce: true });
           }}
           onThemeChange={selectThemePreference}
@@ -1647,7 +1525,11 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
 }
 
 export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
-  const branchReviewId = new URLSearchParams(window.location.search).get("branchReviewId");
+  const branchReviewIdParameter = new URLSearchParams(window.location.search).get("branchReviewId");
+  const branchReviewId = parseReviewId(branchReviewIdParameter);
+  if (branchReviewIdParameter && !branchReviewId) {
+    return <main className="fatal-state">Branch Review IDが不正です。</main>;
+  }
   return branchReviewId ? (
     <Suspense fallback={<main className="fatal-state">Branch Reviewを準備しています…</main>}>
       <BranchReviewApp

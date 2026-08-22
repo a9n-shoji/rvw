@@ -24,6 +24,112 @@ test.beforeEach(async ({ request }) => {
   expect(response.ok()).toBe(true);
 });
 
+test("rejects a malformed Branch Review ID before starting Review queries", async ({
+  page,
+  request,
+}) => {
+  const branchRequests: string[] = [];
+  page.on("request", (browserRequest) => {
+    if (new URL(browserRequest.url()).pathname.startsWith("/api/branch-reviews/")) {
+      branchRequests.push(browserRequest.url());
+    }
+  });
+  await page.goto("/?branchReviewId=not-a-uuid");
+  await expect(page.getByText("Branch Review IDが不正です。", { exact: true })).toBeVisible();
+  expect(branchRequests).toEqual([]);
+  expect((await request.get("/api/branch-reviews/not-a-uuid")).status()).toBe(400);
+});
+
+test("does not let a delayed Branch reference replace newer navigation", async ({ page }) => {
+  let releaseRequest = (): void => undefined;
+  const requestMayContinue = new Promise<void>((resolve) => {
+    releaseRequest = resolve;
+  });
+  let markRequestStarted = (): void => undefined;
+  const requestStarted = new Promise<void>((resolve) => {
+    markRequestStarted = resolve;
+  });
+  await page.route("**/api/branch-reviews/*/document?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("path") !== "src/fixture.ts") {
+      await route.continue();
+      return;
+    }
+    markRequestStarted();
+    await requestMayContinue;
+    await route.continue();
+  });
+
+  try {
+    await page.goto(`/?branchReviewId=${branchReviewId}`);
+    await page.getByRole("button", { name: "ウォークスルー 1" }).click();
+    await page.getByRole("button", { name: "Current request flow", exact: true }).click();
+    await page.getByRole("button", { name: /the implementation.*L1–3/ }).click();
+    await requestStarted;
+
+    await page.getByRole("button", { name: "README.md", exact: true }).click();
+    const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+    await expect(leftPane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    const delayedResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === `/api/branch-reviews/${branchReviewId}/document` &&
+        url.searchParams.get("path") === "src/fixture.ts"
+      );
+    });
+    releaseRequest();
+    await delayedResponse;
+    await page.waitForTimeout(100);
+    await expect(leftPane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  } finally {
+    releaseRequest();
+  }
+});
+
+test("rebinds and removes both pane copies after external Branch Walkthrough changes", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.getByRole("button", { name: "ウォークスルー 1" }).click();
+  const walkthroughButton = page.getByRole("button", {
+    name: "Current request flow",
+    exact: true,
+  });
+  await walkthroughButton.click();
+  await walkthroughButton.click({ modifiers: [modifier] });
+  await expect(page.getByRole("tab", { name: "Current request flow", exact: true })).toHaveCount(2);
+  await page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/meta/change-sequence" && response.ok(),
+  );
+
+  const updatedTitle = "Updated request flow";
+  const update = await request.post("/api/test/update-branch-walkthrough", {
+    data: {
+      title: updatedTitle,
+      body: "# Updated request flow\n\nOpen [the implementation](rvw-ref:implementation).",
+    },
+  });
+  expect(update.ok()).toBe(true);
+  await expect(page.getByRole("tab", { name: updatedTitle, exact: true })).toHaveCount(2);
+  await expect(page.getByRole("tab", { name: "Current request flow", exact: true })).toHaveCount(0);
+
+  const deletion = await request.delete(
+    `/api/branch-reviews/${branchReviewId}/walkthroughs/66666666-6666-4666-8666-666666666666`,
+    { data: {} },
+  );
+  expect(deletion.ok()).toBe(true);
+  await expect(page.getByRole("tab", { name: updatedTitle, exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "ウォークスルー 0" })).toBeVisible();
+});
+
 test("keeps a moved Branch document in its current pane during reading-history restore", async ({
   page,
 }) => {

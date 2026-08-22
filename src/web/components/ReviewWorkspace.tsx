@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useState,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
@@ -17,7 +18,16 @@ function clamp(value: number, minimum: number, maximum: number): number {
 }
 
 function initialSidebarWidth(): number {
+  if (window.innerWidth <= 850) return 280;
   return clamp(Math.round(window.innerWidth * 0.24), DEFAULT_SIDEBAR_WIDTH, 430);
+}
+
+function maximumSidebarWidth(workspaceWidth: number, viewportWidth = window.innerWidth): number {
+  if (viewportWidth <= 850) return 280;
+  return Math.max(
+    MIN_SIDEBAR_WIDTH,
+    Math.min(MAX_SIDEBAR_WIDTH, workspaceWidth - MIN_MAIN_VIEW_WIDTH),
+  );
 }
 
 export function ReviewWorkspace({
@@ -30,16 +40,27 @@ export function ReviewWorkspace({
   rightPane?: ReactNode;
 }) {
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [paneSplit, setPaneSplit] = useState(DEFAULT_PANE_SPLIT);
   const [resizingSurface, setResizingSurface] = useState<"sidebar" | "panes" | null>(null);
   const rightPaneVisible = rightPane !== undefined;
+  const keyboardSidebarMaximum = maximumSidebarWidth(viewportWidth, viewportWidth);
+
+  useEffect(() => {
+    const handleResize = (): void => {
+      const width = window.innerWidth;
+      setViewportWidth(width);
+      setSidebarWidth((current) =>
+        clamp(current, MIN_SIDEBAR_WIDTH, maximumSidebarWidth(width, width)),
+      );
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const updateSidebarWidth = (clientX: number, workspace: HTMLElement): void => {
     const bounds = workspace.getBoundingClientRect();
-    const dynamicMaximum = Math.max(
-      MIN_SIDEBAR_WIDTH,
-      Math.min(MAX_SIDEBAR_WIDTH, bounds.width - MIN_MAIN_VIEW_WIDTH),
-    );
+    const dynamicMaximum = maximumSidebarWidth(bounds.width);
     setSidebarWidth(clamp(clientX - bounds.left, MIN_SIDEBAR_WIDTH, dynamicMaximum));
   };
   const updatePaneSplit = (clientX: number, mainView: HTMLElement): void => {
@@ -68,7 +89,7 @@ export function ReviewWorkspace({
         aria-label="サイドバーの幅を変更"
         aria-orientation="vertical"
         aria-valuemin={MIN_SIDEBAR_WIDTH}
-        aria-valuemax={MAX_SIDEBAR_WIDTH}
+        aria-valuemax={keyboardSidebarMaximum}
         aria-valuenow={Math.round(sidebarWidth)}
         tabIndex={0}
         onPointerDown={(event) => {
@@ -93,7 +114,7 @@ export function ReviewWorkspace({
             clamp(
               width + (event.key === "ArrowLeft" ? -16 : 16),
               MIN_SIDEBAR_WIDTH,
-              MAX_SIDEBAR_WIDTH,
+              keyboardSidebarMaximum,
             ),
           );
         }}

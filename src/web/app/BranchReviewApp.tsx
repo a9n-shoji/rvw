@@ -2,13 +2,11 @@ import fuzzysort from "fuzzysort";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
-  BranchDocumentContent,
   BranchReview,
   BranchReviewComment,
   BranchSearchResponse,
   BranchWalkthrough,
   BranchWalkthroughSummary,
-  CodeReference,
   CommentPlacement,
   IssueDocument,
   TreeEntry,
@@ -42,6 +40,9 @@ import { useThemePreference } from "../use-theme-preference.js";
 import { useReviewSidebarSearch } from "../use-review-sidebar-search.js";
 import { useQuickOpenShortcut } from "../use-quick-open-shortcut.js";
 import { useReviewReadingHistory } from "../use-review-reading-history.js";
+import { useExactCodeReferenceNavigation } from "../use-exact-code-reference-navigation.js";
+import { useWalkthroughDocumentReconciliation } from "../use-walkthrough-document-reconciliation.js";
+import { useTemporaryFeedback } from "../use-temporary-feedback.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 
 const DocumentViewer = lazy(async () => {
@@ -108,7 +109,11 @@ export function BranchReviewApp({
   const viewerNavigationTargetsRef = useRef(viewerNavigationTargets);
   viewerNavigationTargetsRef.current = viewerNavigationTargets;
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
-  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const {
+    feedback: syncFeedback,
+    showFeedback: showSyncFeedback,
+    clearFeedback: clearSyncFeedback,
+  } = useTemporaryFeedback();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const attemptedInitialSync = useRef(false);
   const observedChangeSequence = useRef<number | null>(null);
@@ -156,6 +161,12 @@ export function BranchReviewApp({
     setViewerNavigationTargets,
     openWorkspaceDocument,
     activateWorkspaceDocument,
+  });
+  const openCodeReference = useExactCodeReferenceNavigation({
+    reviewKind: "branch",
+    reviewId: branchReviewId,
+    workspaceRef,
+    navigateToDocument,
   });
   const {
     themePreference,
@@ -261,10 +272,9 @@ export function BranchReviewApp({
         jsonRequest({}),
       ),
     onSuccess: async ({ branchReview }) => {
-      setSyncFeedback(
+      showSyncFeedback(
         `${branchReview.defaultBranchName} · ${shortOid(branchReview.sourceOid)} に同期しました。`,
       );
-      window.setTimeout(() => setSyncFeedback(null), 3_000);
       await refresh();
     },
     onError: async () => await refresh(),
@@ -442,10 +452,13 @@ export function BranchReviewApp({
         ),
     })),
   });
+  const walkthroughs = reviewQuery.data?.walkthroughs ?? [];
+  useWalkthroughDocumentReconciliation({
+    walkthroughs,
+    enabled: reviewQuery.isSuccess,
+    setWorkspace,
+  });
 
-  if (!/^[0-9a-f-]{36}$/i.test(branchReviewId)) {
-    return <main className="fatal-state">Branch Review IDが不正です。</main>;
-  }
   if (reviewQuery.isPending) {
     return <main className="fatal-state">Branch Reviewを読み込んでいます…</main>;
   }
@@ -457,7 +470,7 @@ export function BranchReviewApp({
     );
   }
 
-  const { branchReview, issues, walkthroughs } = reviewQuery.data;
+  const { branchReview, issues } = reviewQuery.data;
   const review = {
     kind: "branch" as const,
     id: branchReview.id,
@@ -507,35 +520,6 @@ export function BranchReviewApp({
       },
       openInRightPane ? "right" : "left",
     );
-  };
-  const openCodeReference = async (
-    sourceOid: string,
-    reference: CodeReference,
-    targetPane: DocumentPaneId,
-  ): Promise<string | null> => {
-    const parameters = new URLSearchParams({
-      kind: "repository-file",
-      sourceOid,
-      path: reference.path,
-    });
-    try {
-      const response = await api<{ document: BranchDocumentContent }>(
-        `/api/branch-reviews/${branchReview.id}/document?${parameters.toString()}`,
-      );
-      if (response.document.availability !== "available") {
-        return `参照先を開けません · ${reference.path}`;
-      }
-      navigateToDocument(repositoryDocument(reference.path, sourceOid), targetPane, {
-        kind: "line",
-        line: reference.startLine,
-        ...(reference.endLine === null ? {} : { endLine: reference.endLine }),
-      });
-      return null;
-    } catch (error) {
-      return error instanceof ApiError && error.code === "NOT_FOUND"
-        ? `参照切れ · ${reference.path}`
-        : `参照先を取得できません · ${reference.path}`;
-    }
   };
   const openCommentTarget = (
     comment: AnyReviewComment,
@@ -633,14 +617,20 @@ export function BranchReviewApp({
                   walkthrough.sourceOid,
                   reference,
                   openInRightPane ? "right" : "left",
+                  "exact-source",
                 )
               }
               onOpenCommentCodeReference={(sourceOid, reference, openInRightPane) =>
-                openCodeReference(sourceOid, reference, openInRightPane ? "right" : "left")
+                openCodeReference(
+                  sourceOid,
+                  reference,
+                  openInRightPane ? "right" : "left",
+                  "exact-source",
+                )
               }
               onOpenRepositoryLink={openRepositoryLink}
               onDeleted={() => {
-                closeDocument(paneDocument, paneId);
+                closeDocument(paneDocument);
                 void refresh();
               }}
             />
@@ -699,7 +689,12 @@ export function BranchReviewApp({
                 navigateToMarkdownFragment(paneDocument, paneId, line, hash)
               }
               onOpenCodeReference={(sourceOid, reference, openInRightPane) =>
-                openCodeReference(sourceOid, reference, openInRightPane ? "right" : "left")
+                openCodeReference(
+                  sourceOid,
+                  reference,
+                  openInRightPane ? "right" : "left",
+                  "exact-source",
+                )
               }
               onOpenRepositoryLink={openRepositoryLink}
             />
@@ -772,7 +767,7 @@ export function BranchReviewApp({
             setQuickOpenVisible(true);
           }}
           onSync={() => {
-            setSyncFeedback(null);
+            clearSyncFeedback();
             syncMutation.mutate();
           }}
           onThemeChange={selectThemePreference}
@@ -901,7 +896,12 @@ export function BranchReviewApp({
                   themePreference={themePreference}
                   onCommentActiveChange={handleCommentActiveChange}
                   onOpenCodeReference={(sourceOid, reference, openInRightPane) =>
-                    openCodeReference(sourceOid, reference, openInRightPane ? "right" : "left")
+                    openCodeReference(
+                      sourceOid,
+                      reference,
+                      openInRightPane ? "right" : "left",
+                      "exact-source",
+                    )
                   }
                   onOpenTarget={openCommentTarget}
                   onOpenRepositoryLink={openRepositoryLink}

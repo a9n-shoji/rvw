@@ -586,21 +586,30 @@ export class RvwDatabase {
     }
   }
 
-  incrementChangeSequence(context?: { kind: "pull-request" | "branch"; reviewId: string }): number {
+  private incrementGlobalChangeSequence(): void {
     this.database
       .prepare(
         "UPDATE app_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'change_sequence'",
       )
       .run();
-    if (context) {
-      this.database
-        .prepare(
-          `INSERT INTO app_meta(key, value) VALUES (?, '1')
-           ON CONFLICT(key) DO UPDATE
-           SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`,
-        )
-        .run(`review_change_sequence:${context.kind}:${context.reviewId}`);
-    }
+  }
+
+  private incrementReviewChangeSequence(context: {
+    kind: "pull-request" | "branch";
+    reviewId: string;
+  }): void {
+    this.database
+      .prepare(
+        `INSERT INTO app_meta(key, value) VALUES (?, '1')
+         ON CONFLICT(key) DO UPDATE
+         SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`,
+      )
+      .run(`review_change_sequence:${context.kind}:${context.reviewId}`);
+  }
+
+  incrementChangeSequence(context?: { kind: "pull-request" | "branch"; reviewId: string }): number {
+    this.incrementGlobalChangeSequence();
+    if (context) this.incrementReviewChangeSequence(context);
     return this.getChangeSequence();
   }
 
@@ -864,7 +873,7 @@ export class RvwDatabase {
     return row ? mapIssue(row) : null;
   }
 
-  upsertIssue(issue: GitHubIssue): IssueDocument {
+  private writeIssue(issue: GitHubIssue): { issue: IssueDocument; changed: boolean } {
     const existing = this.findIssue(issue.owner, issue.repository, issue.number);
     const id = existing?.id ?? randomUUID();
     const fetchedAt = new Date().toISOString();
@@ -904,16 +913,59 @@ export class RvwDatabase {
       );
     const result = this.findIssue(issue.owner, issue.repository, issue.number);
     if (!result) throw new RvwError("DATABASE_ERROR", "Issue cacheを読み出せません。");
-    return result;
+    return {
+      issue: result,
+      changed:
+        existing === null ||
+        existing.canonicalName !== result.canonicalName ||
+        existing.url !== result.url ||
+        existing.title !== result.title ||
+        existing.bodyHash !== result.bodyHash ||
+        existing.state !== result.state ||
+        existing.updatedAt !== result.updatedAt ||
+        existing.syncError !== result.syncError,
+    };
+  }
+
+  upsertIssue(issue: GitHubIssue): IssueDocument {
+    return this.writeIssue(issue).issue;
+  }
+
+  private notifyIssueReviewChanges(
+    issueId: string,
+    exclude?: { kind: "pull-request" | "branch"; reviewId: string },
+  ): void {
+    const contexts = (
+      this.database
+        .prepare("SELECT review_kind, review_id FROM review_issues WHERE issue_id = ?")
+        .all(issueId) as DbRow[]
+    )
+      .map((row) => ({
+        kind: stringValue(row, "review_kind") as "pull-request" | "branch",
+        reviewId: stringValue(row, "review_id"),
+      }))
+      .filter(
+        (context) =>
+          !exclude || context.kind !== exclude.kind || context.reviewId !== exclude.reviewId,
+      );
+    if (contexts.length === 0) return;
+    this.incrementGlobalChangeSequence();
+    for (const context of contexts) this.incrementReviewChangeSequence(context);
   }
 
   setIssueSyncError(issueId: string, message: string): IssueDocument {
-    this.database
-      .prepare("UPDATE github_issues SET sync_error = ? WHERE id = ?")
-      .run(message, issueId);
-    const issue = this.getIssue(issueId);
-    if (!issue) throw new RvwError("ISSUE_NOT_FOUND", "Issueが見つかりません。");
-    return issue;
+    return this.immediateTransaction(() => {
+      const current = this.getIssue(issueId);
+      if (!current) throw new RvwError("ISSUE_NOT_FOUND", "Issueが見つかりません。");
+      if (current.syncError === message) return current;
+      this.database
+        .prepare("UPDATE github_issues SET sync_error = ? WHERE id = ?")
+        .run(message, issueId);
+      this.notifyIssueReviewChanges(issueId);
+      const issue = this.getIssue(issueId);
+      if (!issue) throw new RvwError("ISSUE_NOT_FOUND", "Issueが見つかりません。");
+      return issue;
+    });
   }
 
   addReviewIssue(
@@ -922,14 +974,20 @@ export class RvwDatabase {
     issue: GitHubIssue,
   ): { issue: IssueDocument; added: boolean } {
     return this.immediateTransaction(() => {
-      const cached = this.upsertIssue(issue);
+      const written = this.writeIssue(issue);
+      const cached = written.issue;
       const result = this.database
         .prepare(
           "INSERT INTO review_issues(review_kind, review_id, issue_id, added_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
         )
         .run(reviewKind, reviewId, cached.id, new Date().toISOString());
-      this.incrementChangeSequence({ kind: reviewKind, reviewId });
-      return { issue: cached, added: Number(result.changes) === 1 };
+      const added = Number(result.changes) === 1;
+      if (written.changed) {
+        this.notifyIssueReviewChanges(cached.id);
+      } else if (added) {
+        this.incrementChangeSequence({ kind: reviewKind, reviewId });
+      }
+      return { issue: cached, added };
     });
   }
 
@@ -940,13 +998,17 @@ export class RvwDatabase {
   ): IssueDocument[] {
     const added: IssueDocument[] = [];
     for (const issue of issues) {
-      const cached = this.upsertIssue(issue);
+      const written = this.writeIssue(issue);
+      const cached = written.issue;
       const membership = this.database
         .prepare(
           "INSERT INTO review_issues(review_kind, review_id, issue_id, added_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
         )
         .run(reviewKind, reviewId, cached.id, new Date().toISOString());
       if (Number(membership.changes) === 1) added.push(cached);
+      if (written.changed) {
+        this.notifyIssueReviewChanges(cached.id, { kind: reviewKind, reviewId });
+      }
     }
     return added;
   }
