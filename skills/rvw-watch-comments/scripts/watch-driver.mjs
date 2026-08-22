@@ -229,8 +229,12 @@ async function dispatchAutoAck(state, context) {
   const result = await runNodeScript(autoAckScript, [
     "--state",
     state,
-    "--pull-request",
-    pullRequest,
+    "--context-kind",
+    context.kind,
+    "--context-key",
+    context.pullRequestId,
+    "--context-display",
+    context.pullRequestUrl,
   ]);
   if (result.code !== 0 || !result.json?.ok) {
     throw new DriverError(`auto-ack failed for ${pullRequest}`, EXIT_AUTO_ACK, result);
@@ -247,7 +251,7 @@ async function dispatchPendingAutoAcks(state, maxInFlight, notifiedBranchBatches
   let available = Math.max(0, maxInFlight - inFlight);
   for (const batch of work.pending) {
     if (batch.context?.kind === "branch") {
-      const notificationKey = batch.batchId ?? `unbatched:${batch.context.repository}`;
+      const notificationKey = batch.batchId ?? `unbatched:${batch.context.branchReviewId}`;
       if (!notifiedBranchBatches.has(notificationKey)) {
         notifiedBranchBatches.add(notificationKey);
         write({
@@ -286,10 +290,7 @@ async function processFrame(state, frame, autoAck, maxInFlight) {
       maxInFlight: autoAck ? maxInFlight : null,
     });
   } else if (frame.type === "comment-posted" && ingested.status === "queued") {
-    const context = frame.event.context ?? {
-      kind: "pull-request",
-      pullRequestUrl: frame.event.pullRequestUrl,
-    };
+    const context = frame.event.context;
     if (!autoAck || context.kind === "branch") {
       write({
         ok: true,

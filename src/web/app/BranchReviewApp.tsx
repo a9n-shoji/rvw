@@ -216,14 +216,14 @@ export function BranchReviewApp({
       ),
   });
   const searchQuery = useQuery({
-    queryKey: [
-      "branch-search",
+    queryKey: reviewQueryKeys.search(
+      "branch",
       branchReviewId,
       reviewQuery.data?.branchReview.sourceOid,
       debouncedSearch,
       searchMatchCase,
       searchWholeWord,
-    ],
+    ),
     queryFn: async ({ signal }) => {
       const parameters = new URLSearchParams({
         q: debouncedSearch,
@@ -445,7 +445,7 @@ export function BranchReviewApp({
   );
   const walkthroughDetailQueries = useQueries({
     queries: openWalkthroughIds.map((walkthroughId) => ({
-      queryKey: ["walkthrough", "branch", branchReviewId, walkthroughId],
+      queryKey: reviewQueryKeys.walkthrough("branch", branchReviewId, walkthroughId),
       queryFn: async () =>
         await api<{ walkthrough: BranchWalkthrough }>(
           `/api/branch-reviews/${branchReviewId}/walkthroughs/${walkthroughId}`,

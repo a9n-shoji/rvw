@@ -307,9 +307,8 @@ export interface CommentPostEvent {
   postId: string;
   commentRef: string;
   context:
-    { kind: "pull-request"; pullRequestUrl: string } | { kind: "branch"; repository: string };
-  /** @deprecated protocol v3 compatibility for Pull Request events. */
-  pullRequestUrl?: string;
+    | { kind: "pull-request"; pullRequestId: string; pullRequestUrl: string }
+    | { kind: "branch"; branchReviewId: string; repository: string };
   deleted: boolean;
 }
 

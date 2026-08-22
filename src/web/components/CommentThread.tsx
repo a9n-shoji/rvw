@@ -10,6 +10,7 @@ import {
 } from "../comment-draft-store.js";
 import type { ThemePreference } from "../theme.js";
 import { reviewIdForComment, type AnyReviewComment } from "../review-context.js";
+import { reviewQueryKeys } from "../review-query-keys.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
 import { CommentMarkdown } from "./CommentMarkdown.js";
 import { ErrorNotice } from "./ErrorNotice.js";
@@ -399,10 +400,10 @@ export function CommentThread({
 
   const invalidate = async (): Promise<void> => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["comments"] }),
-      queryClient.invalidateQueries({ queryKey: ["change-sequence"] }),
-      queryClient.invalidateQueries({ queryKey: ["annotations"] }),
-      queryClient.invalidateQueries({ queryKey: ["comment-placement"] }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allCommentPlacements() }),
     ]);
   };
   const replyMutation = useMutation({

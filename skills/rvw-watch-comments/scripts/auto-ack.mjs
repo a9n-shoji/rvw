@@ -149,10 +149,22 @@ async function acknowledgeOperation(state, leaseId, operation, threadResult) {
 async function main() {
   const options = parseOptions(process.argv.slice(2));
   const state = path.resolve(required(options, "state"));
-  const pullRequest = required(options, "pull-request");
+  const contextKind = required(options, "context-kind");
+  const contextKey = required(options, "context-key");
+  const contextDisplay = required(options, "context-display");
   let claimed = null;
   try {
-    const claimArgs = ["--pull-request", pullRequest];
+    if (contextKind !== "pull-request") {
+      fail("auto-ack only accepts Pull Request batches");
+    }
+    const claimArgs = [
+      "--context-kind",
+      contextKind,
+      "--context-key",
+      contextKey,
+      "--context-display",
+      contextDisplay,
+    ];
     if (options["write-key"]) claimArgs.push("--write-key", options["write-key"]);
     claimed = await runState(state, "claim", claimArgs);
     const threadResults = await Promise.all(
@@ -177,6 +189,7 @@ async function main() {
         type: "acknowledged",
         leaseId: claimed.leaseId,
         batchId: claimed.batchId,
+        context: claimed.context,
         pullRequest: claimed.pullRequest,
         attempts: claimed.attempts,
         writeKey: claimed.writeKey,

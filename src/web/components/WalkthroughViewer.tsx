@@ -29,6 +29,7 @@ import type {
   WalkthroughReference,
 } from "../../domain/models.js";
 import { api, jsonRequest, type PlacementResponse } from "../api.js";
+import { reviewQueryKeys } from "../review-query-keys.js";
 import {
   MarkdownSelectionSurface,
   markdownCommentAnchorIds,
@@ -729,8 +730,8 @@ export function WalkthroughViewer({
       setSelectedRange(null);
       setDiagramRange(null);
       setLineComposerPlacement(null);
-      await queryClient.invalidateQueries({ queryKey: ["comments"] });
-      await queryClient.invalidateQueries({ queryKey: ["change-sequence"] });
+      await queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() });
+      await queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() });
     },
   });
   const deleteWalkthrough = useMutation({
@@ -745,10 +746,9 @@ export function WalkthroughViewer({
     onSuccess: async () => {
       onDeleted(walkthrough);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["walkthroughs"] }),
-        queryClient.invalidateQueries({ queryKey: ["walkthrough"] }),
-        queryClient.invalidateQueries({ queryKey: ["comments"] }),
-        queryClient.invalidateQueries({ queryKey: ["change-sequence"] }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allWalkthroughs() }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() }),
       ]);
     },
   });

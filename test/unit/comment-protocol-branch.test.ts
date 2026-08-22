@@ -24,7 +24,11 @@ describe("Branch Review comment protocol", () => {
       stale: false,
     };
     const context: BranchCommentReviewContext = {
-      context: { kind: "branch", repository: "acme/review-repo" },
+      context: {
+        kind: "branch",
+        branchReviewId: "branch-review-1",
+        repository: "acme/review-repo",
+      },
       branchReview: {
         id: "11111111-1111-4111-8111-111111111111",
         host: "github.com",
@@ -82,7 +86,11 @@ describe("Branch Review comment protocol", () => {
 
     expect(formatCommentGetOutput(context)).toMatchObject({
       ok: true,
-      context: { kind: "branch", repository: "acme/review-repo" },
+      context: {
+        kind: "branch",
+        branchReviewId: "branch-review-1",
+        repository: "acme/review-repo",
+      },
       branchReview: {
         repository: "acme/review-repo",
         defaultBranchName: "trunk",

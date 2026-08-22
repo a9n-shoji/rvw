@@ -1201,8 +1201,8 @@ export function DocumentViewer({
       setSelectionPreview(null);
       setMarkdownComposerOpen(false);
       setFileComposerOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["comments"] });
-      await queryClient.invalidateQueries({ queryKey: ["change-sequence"] });
+      await queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() });
+      await queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() });
     },
   });
 

@@ -358,12 +358,15 @@ empty fileは従来どおり明示的に扱う。
   source line mapping、inline comment表示を共有する。本文選択からrange commentを作成でき、Issue全体の
   composerは常設せずviewer右上のcomment iconから開く。
 - review metadata、Issue一覧、文書、annotation、comment placement、Walkthrough、検索、treeのquery keyは
-  Pull Request / Branchで共通helperから構成し、Branch syncと`change_sequence`更新は共通DocumentViewerが
+  Pull Request / Branchで共通helperから構成し、Issue keyにもreview kindを含める。各reviewの
+  `review_change_sequence`更新は共通DocumentViewerが
   実際に読むqueryをinvalidateする。Issue documentのcomponent identityはreview kind、review ID、Issue IDとし、
   Branch source OIDを含めない。repository documentだけはpathとsource policy / exact OIDをidentityへ含める。
 - Issue range composerは同一本文のquery refresh中もopen状態、本文、selection、focus、pane、documentを保持する。
   draftは対象body hashを保存し、本文hashが変わった場合は本文とplacementを最新化しつつdraftを残す。古い
   rangeの送信は拒否し、現在本文での明示的な再選択後だけ許可する。semantic range migrationは行わない。
+  保存済みのIssue全体コメントはstable Issue identityを対象にするため本文更新後もcurrent、rangeコメントだけは
+  作成時body hashと異なればOutdatedとする。
 - commit範囲切り替え時はopen pathとglobal表示modeを保ち、latest側commitが変わった場合だけ文書を
   そのcommitへ結び直す。exact source commentから開いた文書は
   通常の選択commit文書へ結び直す。current PR commit列外のexact sourceを開く場合はfull viewだけにする。
@@ -866,8 +869,10 @@ fingerprintへ含めない。keyのreuseは拒否し、元postが削除済みな
 `rvw comment watch --json-seq`は保存済みの全Pull Request ReviewとBranch Reviewの新規root commentとreplyをRFC 7464 JSON text
 sequenceとして出力する。cursor省略時は現在の最新event位置へanchorし、起動前の既存未解決commentを
 処理しない。最初の`ready` frameがdatabase-scoped opaque cursorを返し、その後の`comment-posted` frameは
-各event直後のcursor、sequence、post ID、comment URI、削除済みかと、PR URLまたはcanonical repositoryを
-持つ明示的なreview contextを返す。eventは最小triggerとし、Agentは必ず`comment get`でthreadを読み直す。
+各event直後のcursor、sequence、post ID、comment URI、削除済みかと、stableな`pullRequestId`または
+`branchReviewId`、表示用のPR URLまたはcanonical repositoryを持つ明示的なreview contextを返す。
+routingとbatch keyにはreview IDだけを使うため、repository casing変更は同じcontext、Branch reset後の
+再作成は同じrepository表示でも別contextになる。eventは最小triggerとし、Agentは必ず`comment get`でthreadを読み直す。
 
 `--after`は同じdatabaseのcursorから再生し、別database、最新sequenceより先、破損、未知versionのcursorを拒否する。poll間隔は
 既定10秒、1〜300秒とする。event rowはcomment/post削除と独立して保持し、削除後の再生は`deleted: true`
@@ -879,7 +884,7 @@ batch内のcomment URIごとのstatus post mapping、自己post抑制をtransact
 確認する。Pull Request batchだけが冪等なack replyを即時作成し、同じbatchのretryでstatus postがあれば
 そのpostをack本文へ戻す。後続replyの新しいbatchは新しいpostを作り、完了時は現在のbatchのpostを最終結果へ
 編集する。Branch batchは常に`investigate-and-reply`でacknowledgementやwrite reservationを作らず、worker
-resultの`context.kind = branch`とrepositoryを使用する。各operationのstable idempotency keyで一つのfinal
+resultの`context.kind = branch`、`branchReviewId`、repositoryを使用する。各operationのstable idempotency keyで一つのfinal
 replyを投稿し、返されたpost IDをsuppressionとしてdurableに登録してからleaseをcompleteする。eventが
 complete前にingest済みならpending rowをcompletedへ移し、後ならingest時にsuppressする。reply後の再起動は
 同じkeyで既存postを取得して同じ完了手順を再開する。同梱preflightは
@@ -1182,9 +1187,10 @@ CREATE TABLE walkthrough_references (
 );
 ```
 
-Branch ReviewとIssue追加migrationは、canonical Issue cacheの`github_issues`、reviewごとのmembershipを
-所有する`review_issues`、repository singletonの`branch_reviews`、およびBranch専用のWalkthrough、
-Comment、post、typed reference tableを追加する。PRとBranchのartifact ownershipとcascade境界は分離し、
+Branch ReviewとIssue追加migrationは、canonical Issue cacheの`github_issues`、実owner FKを持つ
+`pull_request_issues` / `branch_review_issues`、nativeなPR `comment_targets.target_kind = issue`、repository
+singletonの`branch_reviews`、およびBranch専用のWalkthrough、Comment、post、typed reference tableを追加する。
+PRとBranchのartifact ownershipとcascade境界は分離し、
 共有Issue cacheの表示内容または同期errorが変わった場合だけ、そのIssueを所有する全Reviewの
 `review_change_sequence`を同じtransactionで更新する。単なる`fetched_at`更新では他Reviewをinvalidateしない。
 

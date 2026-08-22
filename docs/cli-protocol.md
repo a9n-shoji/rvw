@@ -375,8 +375,9 @@ update with `resolve: true` resolves it.
 Reviews saved in the selected rvw database. A cursorless invocation emits a `ready` frame anchored at the current event
 position and does not replay existing unresolved comments. Each subsequent `comment-posted` frame
 contains an opaque database-scoped cursor plus `sequence`, `postId`, `commentRef`, `createdAt`,
-`deleted`, and exactly one context: `{kind:"pull-request",pullRequestUrl}` or
-`{kind:"branch",repository}`. A Branch Review never receives fake PR fields. It is a minimal trigger; consumers must
+`deleted`, and exactly one context: `{kind:"pull-request",pullRequestId,pullRequestUrl}` or
+`{kind:"branch",branchReviewId,repository}`. The ID is the stable routing key; URL/repository is a
+display value. A Branch Review never receives fake PR fields. It is a minimal trigger; consumers must
 run `comment get` for complete context. Edits, deletions, resolve, and reopen do not create new events.
 An existing event survives post deletion and is then returned with `deleted: true`.
 
@@ -397,7 +398,7 @@ live head repository, branch, and OID so fork PRs cannot target the base reposit
 Another or unknown author remains code/GitHub read-only. A Branch batch is always
 `investigate-and-reply`, cannot reserve a write key, creates no progress post, and records exactly one
 final idempotent reply without resolving the thread. Its worker result uses
-`{kind:"branch",repository}` rather than a fake Pull Request URL. The final reply uses the operation's
+`{kind:"branch",branchReviewId,repository}` rather than a fake Pull Request URL. The final reply uses the operation's
 stable idempotency key, and lease completion receives the returned post ID as a durable suppression.
 The reply may carry typed references when `relatedCommitOid` is the current or an already retained
 Branch source; an arbitrary commit that merely exists in the local clone is rejected. This evidence

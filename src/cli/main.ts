@@ -850,7 +850,11 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           const service = getRuntime().service;
           const opened = await service.openBranchReview(options.repository);
           return {
-            context: { kind: "branch" as const, repository: opened.branchReview.canonicalName },
+            context: {
+              kind: "branch" as const,
+              branchReviewId: opened.branchReview.id,
+              repository: opened.branchReview.canonicalName,
+            },
             branchReview: opened.branchReview,
             comments: await service.listBranchCommentContexts(opened.branchReview.id, resolved),
           };

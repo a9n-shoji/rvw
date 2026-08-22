@@ -280,7 +280,13 @@ const issueDocumentOutputSchema = z
 const pullRequestCommentGetOutputSchema = z
   .object({
     ok: z.literal(true),
-    context: z.object({ kind: z.literal("pull-request"), pullRequestUrl: z.string() }).strict(),
+    context: z
+      .object({
+        kind: z.literal("pull-request"),
+        pullRequestId: z.string(),
+        pullRequestUrl: z.string(),
+      })
+      .strict(),
     pullRequest: commentPullRequestOutputSchema,
     comment: pullRequestReviewCommentOutputSchema,
     latestHeadOid: z.string(),
@@ -343,7 +349,9 @@ const branchWalkthroughOutputSchema = walkthroughOutputSchema.omit({ pullRequest
 const branchCommentGetOutputSchema = z
   .object({
     ok: z.literal(true),
-    context: z.object({ kind: z.literal("branch"), repository: z.string() }).strict(),
+    context: z
+      .object({ kind: z.literal("branch"), branchReviewId: z.string(), repository: z.string() })
+      .strict(),
     branchReview: z
       .object({
         repository: z.string(),

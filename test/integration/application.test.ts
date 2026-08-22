@@ -199,6 +199,11 @@ describe("RvwService commit workflow", () => {
       target: { kind: "issue", issue: "#142", startLine: 1, endLine: 1 },
       body: "Review this requirement.",
     });
+    const wholeIssueComment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "issue", issue: "#142", startLine: null, endLine: null },
+      body: "Track the requirement as a whole.",
+    });
     await expect(
       service.placeComment(issueComment, {
         kind: "issue-markdown",
@@ -213,6 +218,15 @@ describe("RvwService commit workflow", () => {
         issueId: issue99.id,
       }),
     ).resolves.toEqual({ outdated: true, range: null, path: null });
+
+    fake.issues.set(142, githubIssue(142, "Updated requirement body."));
+    await service.refreshPullRequest(opened.pullRequest.id);
+    await expect(
+      service.placeCommentAtCommit(issueComment, opened.pullRequest.latestHeadOid),
+    ).resolves.toEqual({ outdated: true, range: null, path: "#142" });
+    await expect(
+      service.placeCommentAtCommit(wholeIssueComment, opened.pullRequest.latestHeadOid),
+    ).resolves.toEqual({ outdated: false, range: null, path: "#142" });
 
     fake.pullRequest = { ...fake.pullRequest, body: "References removed from the PR body." };
     await service.refreshPullRequest(opened.pullRequest.id);
@@ -1566,7 +1580,11 @@ describe("RvwService commit workflow", () => {
           event: {
             commentRef: comment.ref,
             postId: reply.id,
-            pullRequestUrl: opened.pullRequest.url,
+            context: {
+              kind: "pull-request",
+              pullRequestId: opened.pullRequest.id,
+              pullRequestUrl: opened.pullRequest.url,
+            },
             deleted: false,
           },
         },

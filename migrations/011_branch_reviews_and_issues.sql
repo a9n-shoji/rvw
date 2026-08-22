@@ -34,33 +34,81 @@ CREATE TABLE github_issues (
   UNIQUE(host, owner, repository, number)
 );
 
-CREATE TABLE review_issues (
-  review_kind TEXT NOT NULL CHECK(review_kind IN ('pull-request', 'branch')),
-  review_id TEXT NOT NULL,
+CREATE TABLE pull_request_issues (
+  pull_request_id TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
   issue_id TEXT NOT NULL REFERENCES github_issues(id),
   added_at TEXT NOT NULL,
-  PRIMARY KEY(review_kind, review_id, issue_id)
+  PRIMARY KEY(pull_request_id, issue_id)
 );
 
-CREATE INDEX review_issues_review ON review_issues(review_kind, review_id);
+CREATE INDEX pull_request_issues_issue ON pull_request_issues(issue_id);
 
--- PR issue comments continue using the established comment lifecycle. This supplementary
--- target owns the Issue identity while the legacy target row remains available to old code.
-CREATE TABLE pull_request_issue_comment_targets (
-  comment_id TEXT PRIMARY KEY REFERENCES comments(id) ON DELETE CASCADE,
+CREATE TABLE branch_review_issues (
+  branch_review_id TEXT NOT NULL REFERENCES branch_reviews(id) ON DELETE CASCADE,
   issue_id TEXT NOT NULL REFERENCES github_issues(id),
-  source_document_hash TEXT NOT NULL,
+  added_at TEXT NOT NULL,
+  PRIMARY KEY(branch_review_id, issue_id)
+);
+
+CREATE INDEX branch_review_issues_issue ON branch_review_issues(issue_id);
+
+CREATE TABLE comment_targets_v5 (
+  comment_id TEXT PRIMARY KEY REFERENCES comments(id) ON DELETE CASCADE,
+  target_kind TEXT NOT NULL CHECK(target_kind IN ('pull_request', 'document', 'walkthrough', 'issue')),
+  document_kind TEXT CHECK(document_kind IN ('pull_request_markdown', 'repository_file')),
+  source_oid TEXT,
+  file_path TEXT,
+  source_document_hash TEXT,
   quoted_text TEXT,
+  walkthrough_id TEXT REFERENCES walkthroughs(id),
+  issue_id TEXT REFERENCES github_issues(id),
   start_line INTEGER,
   end_line INTEGER,
   CHECK(start_line IS NULL OR start_line >= 1),
   CHECK(end_line IS NULL OR end_line >= start_line),
-  CHECK((start_line IS NULL AND end_line IS NULL AND quoted_text IS NULL)
-    OR (start_line IS NOT NULL AND end_line IS NOT NULL AND quoted_text IS NOT NULL))
+  CHECK(
+    (target_kind = 'pull_request' AND document_kind IS NULL AND source_oid IS NULL AND file_path IS NULL AND source_document_hash IS NULL AND quoted_text IS NULL AND walkthrough_id IS NULL AND issue_id IS NULL AND start_line IS NULL AND end_line IS NULL)
+    OR
+    (target_kind = 'document' AND document_kind = 'pull_request_markdown' AND source_oid IS NULL AND file_path IS NULL AND source_document_hash IS NOT NULL AND walkthrough_id IS NULL AND issue_id IS NULL)
+    OR
+    (target_kind = 'document' AND document_kind = 'repository_file' AND source_oid IS NOT NULL AND file_path IS NOT NULL AND source_document_hash IS NULL AND quoted_text IS NULL AND walkthrough_id IS NULL AND issue_id IS NULL)
+    OR
+    (
+      target_kind = 'walkthrough' AND document_kind IS NULL AND source_oid IS NULL AND file_path IS NULL AND walkthrough_id IS NOT NULL AND issue_id IS NULL
+      AND (
+        (start_line IS NULL AND end_line IS NULL AND quoted_text IS NULL)
+        OR
+        (start_line IS NOT NULL AND end_line IS NOT NULL AND source_document_hash IS NOT NULL AND quoted_text IS NOT NULL)
+      )
+    )
+    OR
+    (
+      target_kind = 'issue' AND document_kind IS NULL AND source_oid IS NULL AND file_path IS NULL AND walkthrough_id IS NULL AND issue_id IS NOT NULL AND source_document_hash IS NOT NULL
+      AND (
+        (start_line IS NULL AND end_line IS NULL AND quoted_text IS NULL)
+        OR
+        (start_line IS NOT NULL AND end_line IS NOT NULL AND quoted_text IS NOT NULL)
+      )
+    )
+  ),
+  CHECK((start_line IS NULL AND end_line IS NULL) OR (start_line IS NOT NULL AND end_line IS NOT NULL))
 );
 
-CREATE INDEX pull_request_issue_comment_targets_issue
-  ON pull_request_issue_comment_targets(issue_id);
+INSERT INTO comment_targets_v5(
+  comment_id, target_kind, document_kind, source_oid, file_path, source_document_hash,
+  quoted_text, walkthrough_id, issue_id, start_line, end_line
+)
+SELECT
+  comment_id, target_kind, document_kind, source_oid, file_path, source_document_hash,
+  quoted_text, walkthrough_id, NULL, start_line, end_line
+FROM comment_targets;
+
+DROP TABLE comment_targets;
+ALTER TABLE comment_targets_v5 RENAME TO comment_targets;
+
+CREATE INDEX comment_targets_document ON comment_targets(document_kind, source_oid, file_path);
+CREATE INDEX comment_targets_walkthrough ON comment_targets(walkthrough_id);
+CREATE INDEX comment_targets_issue ON comment_targets(issue_id);
 
 CREATE TABLE branch_walkthroughs (
   id TEXT PRIMARY KEY,
@@ -178,15 +226,24 @@ CREATE TABLE review_comment_post_events (
   post_id TEXT NOT NULL UNIQUE,
   comment_ref TEXT NOT NULL,
   review_kind TEXT NOT NULL CHECK(review_kind IN ('pull-request', 'branch')),
-  context_key TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  review_id TEXT NOT NULL,
+  pull_request_url TEXT,
+  repository TEXT,
+  created_at TEXT NOT NULL,
+  CHECK(
+    (review_kind = 'pull-request' AND pull_request_url IS NOT NULL AND repository IS NULL)
+    OR (review_kind = 'branch' AND pull_request_url IS NULL AND repository IS NOT NULL)
+  )
 );
 
 INSERT INTO review_comment_post_events(
-  sequence, post_id, comment_ref, review_kind, context_key, created_at
+  sequence, post_id, comment_ref, review_kind, review_id, pull_request_url, repository, created_at
 )
-SELECT sequence, post_id, comment_ref, 'pull-request', pull_request_url, created_at
-FROM comment_post_events;
+SELECT e.sequence, e.post_id, e.comment_ref, 'pull-request', pr.id, e.pull_request_url, NULL, e.created_at
+FROM comment_post_events e
+JOIN pull_requests pr ON pr.github_url = e.pull_request_url;
+
+DROP TABLE comment_post_events;
 
 CREATE INDEX review_comment_post_events_context
-  ON review_comment_post_events(review_kind, context_key, sequence);
+  ON review_comment_post_events(review_kind, review_id, sequence);

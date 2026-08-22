@@ -9,6 +9,7 @@ import {
   type ReviewIdentity,
 } from "../review-context.js";
 import type { ThemePreference } from "../theme.js";
+import { reviewQueryKeys } from "../review-query-keys.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
@@ -56,7 +57,12 @@ function CommentCard({
   onDeleted: () => void;
 }) {
   const placement = useQuery({
-    queryKey: ["comment-placement", review.kind, review.id, comment.id, review.sourceOid],
+    queryKey: reviewQueryKeys.commentPlacement(
+      review.kind,
+      review.id,
+      comment.id,
+      review.sourceOid,
+    ),
     queryFn: async () => ({ placement: await loadPlacement(comment) }),
   });
   return (
@@ -175,8 +181,8 @@ export function CommentSidebar({
     onSuccess: async () => {
       setReviewComment("");
       setReviewComposerOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["comments"] });
-      await queryClient.invalidateQueries({ queryKey: ["change-sequence"] });
+      await queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() });
+      await queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() });
     },
   });
 

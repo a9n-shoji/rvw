@@ -24,8 +24,9 @@ from another clone. The
 Issue removal transaction deletes only the selected membership and its owned comments/replies.
 Branch reset deletes Branch comments, Walkthroughs, memberships, and the singleton review before
 releasing only its `refs/rvw/branch/<owner>/<repository>/...` namespace; PR refs and shared Issue cache
-are outside that deletion boundary. The
-browser polls `app_meta.change_sequence`; there is no
+are outside that deletion boundary. The browser polls the active review's
+`app_meta.review_change_sequence:<kind>:<id>` value; the database-wide sequence remains a diagnostic
+and compatibility counter, not the content invalidation boundary. There is no
 persistent daemon or agent session coupling. While a viewer process is running, it exposes a
 user/database-specific Unix socket inside a `0700` temporary directory as an alternate transport for
 the same application service. Agent
@@ -52,7 +53,10 @@ and renderer while adding their document mapping and diagram bindings. Browser s
 Agent sessions never enter the domain model.
 
 New root posts and replies also append a database-wide event sequence with an explicit Pull Request or
-Branch context. A long-running external Agent
+Branch context. Routing uses the stable local Pull Request / Branch Review ID; the GitHub URL or
+canonical repository remains a separate display value. A reset-and-recreate therefore starts a new
+Branch context even when its repository text is identical, while casing changes cannot split one
+context. A long-running external Agent
 task may consume that sequence with an opaque database-scoped cursor through `rvw comment watch`.
 rvw retains minimal event identifiers independently of deletable posts and owns only ordering and
 replay. The bundled Skill's task-local state script atomically owns its cursor, queue, leases, retries,
@@ -103,7 +107,9 @@ The selection boundary resolves to the smallest mapped Markdown leaf, and its co
 into a stable imperative host in normal document flow immediately after the selected block so wrapped
 text is never covered. Issue document identity excludes the Branch source OID: refreshes replace query
 data without remounting the composer. Drafts record the Issue body hash; a changed body preserves text
-and focus but blocks the old range until the human selects a range in the current body.
+and focus but blocks the old range until the human selects a range in the current body. Persisted
+whole-Issue comments remain current across body updates because they target the stable Issue identity;
+persisted range comments become Outdated when that body hash changes.
 Removing an Issue membership invalidates only that Issue's composer generation and deleted threads'
 reply drafts, so a late unmount cannot resurrect them and unrelated document drafts remain available.
 Relative preview and comment images are fetched from their resolved exact commit through a size-limited

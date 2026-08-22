@@ -546,44 +546,29 @@ export class RvwDatabase {
     }
   }
 
-  private hasTable(name: string): boolean {
-    return Boolean(
-      this.database
-        .prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?")
-        .get(name),
-    );
-  }
-
   private insertReviewCommentEvent(
     postId: string,
     commentRef: string,
     context:
-      { kind: "pull-request"; pullRequestUrl: string } | { kind: "branch"; repository: string },
+      | { kind: "pull-request"; pullRequestId: string; pullRequestUrl: string }
+      | { kind: "branch"; branchReviewId: string; repository: string },
     createdAt: string,
   ): void {
-    if (this.hasTable("review_comment_post_events")) {
-      this.database
-        .prepare(
-          `INSERT INTO review_comment_post_events(
-            post_id, comment_ref, review_kind, context_key, created_at
-          ) VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(
-          postId,
-          commentRef,
-          context.kind,
-          context.kind === "pull-request" ? context.pullRequestUrl : context.repository,
-          createdAt,
-        );
-      return;
-    }
-    if (context.kind === "pull-request") {
-      this.database
-        .prepare(
-          "INSERT INTO comment_post_events(post_id, comment_ref, pull_request_url, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .run(postId, commentRef, context.pullRequestUrl, createdAt);
-    }
+    this.database
+      .prepare(
+        `INSERT INTO review_comment_post_events(
+          post_id, comment_ref, review_kind, review_id, pull_request_url, repository, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        postId,
+        commentRef,
+        context.kind,
+        context.kind === "pull-request" ? context.pullRequestId : context.branchReviewId,
+        context.kind === "pull-request" ? context.pullRequestUrl : null,
+        context.kind === "branch" ? context.repository : null,
+        createdAt,
+      );
   }
 
   private incrementGlobalChangeSequence(): void {
@@ -636,38 +621,13 @@ export class RvwDatabase {
   }
 
   getLatestCommentPostEventSequence(): number {
-    const table = this.hasTable("review_comment_post_events")
-      ? "review_comment_post_events"
-      : "comment_post_events";
     const row = this.database
-      .prepare(`SELECT COALESCE(MAX(sequence), 0) AS sequence FROM ${table}`)
+      .prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM review_comment_post_events")
       .get() as DbRow;
     return numberValue(row, "sequence");
   }
 
   listCommentPostEvents(afterSequence: number, limit: number): CommentPostEvent[] {
-    if (!this.hasTable("review_comment_post_events")) {
-      const rows = this.database
-        .prepare(
-          `SELECT e.*, CASE WHEN p.id IS NULL THEN 1 ELSE 0 END AS deleted
-           FROM comment_post_events e
-           LEFT JOIN comment_posts p ON p.id = e.post_id
-           WHERE e.sequence > ? ORDER BY e.sequence ASC LIMIT ?`,
-        )
-        .all(afterSequence, limit) as DbRow[];
-      return rows.map((row) => {
-        const pullRequestUrl = stringValue(row, "pull_request_url");
-        return {
-          sequence: numberValue(row, "sequence"),
-          createdAt: stringValue(row, "created_at"),
-          postId: stringValue(row, "post_id"),
-          commentRef: stringValue(row, "comment_ref"),
-          context: { kind: "pull-request", pullRequestUrl },
-          pullRequestUrl,
-          deleted: numberValue(row, "deleted") === 1,
-        };
-      });
-    }
     const rows = this.database
       .prepare(
         `SELECT e.*, CASE WHEN p.id IS NULL AND bp.id IS NULL THEN 1 ELSE 0 END AS deleted
@@ -686,11 +646,16 @@ export class RvwDatabase {
       commentRef: stringValue(row, "comment_ref"),
       context:
         stringValue(row, "review_kind") === "pull-request"
-          ? { kind: "pull-request", pullRequestUrl: stringValue(row, "context_key") }
-          : { kind: "branch", repository: stringValue(row, "context_key") },
-      ...(stringValue(row, "review_kind") === "pull-request"
-        ? { pullRequestUrl: stringValue(row, "context_key") }
-        : {}),
+          ? {
+              kind: "pull-request",
+              pullRequestId: stringValue(row, "review_id"),
+              pullRequestUrl: stringValue(row, "pull_request_url"),
+            }
+          : {
+              kind: "branch",
+              branchReviewId: stringValue(row, "review_id"),
+              repository: stringValue(row, "repository"),
+            },
       deleted: numberValue(row, "deleted") === 1,
     }));
   }
@@ -936,14 +901,29 @@ export class RvwDatabase {
     return this.writeIssue(issue).issue;
   }
 
+  private issueMembershipStorage(reviewKind: "pull-request" | "branch"): {
+    table: "pull_request_issues" | "branch_review_issues";
+    reviewColumn: "pull_request_id" | "branch_review_id";
+  } {
+    return reviewKind === "pull-request"
+      ? { table: "pull_request_issues", reviewColumn: "pull_request_id" }
+      : { table: "branch_review_issues", reviewColumn: "branch_review_id" };
+  }
+
   private notifyIssueReviewChanges(
     issueId: string,
     exclude?: { kind: "pull-request" | "branch"; reviewId: string },
   ): void {
     const contexts = (
       this.database
-        .prepare("SELECT review_kind, review_id FROM review_issues WHERE issue_id = ?")
-        .all(issueId) as DbRow[]
+        .prepare(
+          `SELECT 'pull-request' AS review_kind, pull_request_id AS review_id
+           FROM pull_request_issues WHERE issue_id = ?
+           UNION ALL
+           SELECT 'branch' AS review_kind, branch_review_id AS review_id
+           FROM branch_review_issues WHERE issue_id = ?`,
+        )
+        .all(issueId, issueId) as DbRow[]
     )
       .map((row) => ({
         kind: stringValue(row, "review_kind") as "pull-request" | "branch",
@@ -981,11 +961,13 @@ export class RvwDatabase {
     return this.immediateTransaction(() => {
       const written = this.writeIssue(issue);
       const cached = written.issue;
+      const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
       const result = this.database
         .prepare(
-          "INSERT INTO review_issues(review_kind, review_id, issue_id, added_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+          `INSERT INTO ${table}(${reviewColumn}, issue_id, added_at)
+           VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
         )
-        .run(reviewKind, reviewId, cached.id, new Date().toISOString());
+        .run(reviewId, cached.id, new Date().toISOString());
       const added = Number(result.changes) === 1;
       if (written.changed && written.previouslyCached) {
         this.notifyIssueReviewChanges(cached.id);
@@ -1002,14 +984,16 @@ export class RvwDatabase {
     issues: GitHubIssue[],
   ): IssueDocument[] {
     const added: IssueDocument[] = [];
+    const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
     for (const issue of issues) {
       const written = this.writeIssue(issue);
       const cached = written.issue;
       const membership = this.database
         .prepare(
-          "INSERT INTO review_issues(review_kind, review_id, issue_id, added_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+          `INSERT INTO ${table}(${reviewColumn}, issue_id, added_at)
+           VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
         )
-        .run(reviewKind, reviewId, cached.id, new Date().toISOString());
+        .run(reviewId, cached.id, new Date().toISOString());
       if (Number(membership.changes) === 1) added.push(cached);
       if (written.changed && written.previouslyCached) {
         this.notifyIssueReviewChanges(cached.id, { kind: reviewKind, reviewId });
@@ -1019,15 +1003,16 @@ export class RvwDatabase {
   }
 
   listReviewIssues(reviewKind: "pull-request" | "branch", reviewId: string): IssueDocument[] {
+    const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
     return (
       this.database
         .prepare(
           `SELECT i.* FROM github_issues i
-           JOIN review_issues ri ON ri.issue_id = i.id
-           WHERE ri.review_kind = ? AND ri.review_id = ?
+           JOIN ${table} ri ON ri.issue_id = i.id
+           WHERE ri.${reviewColumn} = ?
            ORDER BY i.number DESC`,
         )
-        .all(reviewKind, reviewId) as DbRow[]
+        .all(reviewId) as DbRow[]
     ).map(mapIssue);
   }
 
@@ -1036,12 +1021,11 @@ export class RvwDatabase {
     reviewId: string,
     issueId: string,
   ): boolean {
+    const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
     return Boolean(
       this.database
-        .prepare(
-          "SELECT 1 AS found FROM review_issues WHERE review_kind = ? AND review_id = ? AND issue_id = ?",
-        )
-        .get(reviewKind, reviewId, issueId),
+        .prepare(`SELECT 1 AS found FROM ${table} WHERE ${reviewColumn} = ? AND issue_id = ?`)
+        .get(reviewId, issueId),
     );
   }
 
@@ -1052,9 +1036,7 @@ export class RvwDatabase {
   ): IssueRemovalCounts {
     const commentTable = reviewKind === "pull-request" ? "comments" : "branch_comments";
     const targetTable =
-      reviewKind === "pull-request"
-        ? "pull_request_issue_comment_targets"
-        : "branch_comment_targets";
+      reviewKind === "pull-request" ? "comment_targets" : "branch_comment_targets";
     const postTable = reviewKind === "pull-request" ? "comment_posts" : "branch_comment_posts";
     const reviewColumn = reviewKind === "pull-request" ? "pull_request_id" : "branch_review_id";
     const row = this.database
@@ -1066,7 +1048,7 @@ export class RvwDatabase {
          FROM ${commentTable} c
          JOIN ${targetTable} t ON t.comment_id = c.id
          LEFT JOIN ${postTable} p ON p.comment_id = c.id
-         WHERE c.${reviewColumn} = ? AND t.issue_id = ?`,
+         WHERE c.${reviewColumn} = ? AND t.target_kind = 'issue' AND t.issue_id = ?`,
       )
       .get(reviewId, issueId) as DbRow;
     return {
@@ -1093,7 +1075,8 @@ export class RvwDatabase {
           .prepare(
             `DELETE FROM comments
              WHERE pull_request_id = ? AND id IN (
-               SELECT comment_id FROM pull_request_issue_comment_targets WHERE issue_id = ?
+               SELECT comment_id FROM comment_targets
+               WHERE target_kind = 'issue' AND issue_id = ?
              )`,
           )
           .run(reviewId, issueId);
@@ -1108,11 +1091,10 @@ export class RvwDatabase {
           )
           .run(reviewId, issueId);
       }
+      const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
       const membership = this.database
-        .prepare(
-          "DELETE FROM review_issues WHERE review_kind = ? AND review_id = ? AND issue_id = ?",
-        )
-        .run(reviewKind, reviewId, issueId);
+        .prepare(`DELETE FROM ${table} WHERE ${reviewColumn} = ? AND issue_id = ?`)
+        .run(reviewId, issueId);
       if (Number(membership.changes) !== 1) {
         throw new RvwError("DATABASE_ERROR", "Issue membershipを削除できませんでした。");
       }
@@ -1126,7 +1108,7 @@ export class RvwDatabase {
       .prepare(
         `SELECT
           (SELECT count(*) FROM branch_reviews WHERE id = ?) AS branch_review,
-          (SELECT count(*) FROM review_issues WHERE review_kind = 'branch' AND review_id = ?) AS issue_memberships,
+          (SELECT count(*) FROM branch_review_issues WHERE branch_review_id = ?) AS issue_memberships,
           (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'issue') AS issue_comments,
           (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'repository_file') AS code_comments,
           (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'branch') AS review_comments,
@@ -1170,9 +1152,6 @@ export class RvwDatabase {
         .run(branchReviewId);
       this.database
         .prepare("DELETE FROM branch_walkthroughs WHERE branch_review_id = ?")
-        .run(branchReviewId);
-      this.database
-        .prepare("DELETE FROM review_issues WHERE review_kind = 'branch' AND review_id = ?")
         .run(branchReviewId);
       const review = this.database
         .prepare("DELETE FROM branch_reviews WHERE id = ?")
@@ -1319,9 +1298,7 @@ export class RvwDatabase {
 
   getResetCounts(pullRequestId: string, gitRefs: number): ResetCounts {
     const issueMemberships = this.database
-      .prepare(
-        "SELECT count(*) AS count FROM review_issues WHERE review_kind = 'pull-request' AND review_id = ?",
-      )
+      .prepare("SELECT count(*) AS count FROM pull_request_issues WHERE pull_request_id = ?")
       .get(pullRequestId) as DbRow;
     const comments = this.database
       .prepare("SELECT count(*) AS count FROM comments WHERE pull_request_id = ?")
@@ -1372,7 +1349,7 @@ export class RvwDatabase {
     this.database.prepare("DELETE FROM comments WHERE pull_request_id = ?").run(pullRequestId);
     this.database.prepare("DELETE FROM walkthroughs WHERE pull_request_id = ?").run(pullRequestId);
     this.database
-      .prepare("DELETE FROM review_issues WHERE review_kind = 'pull-request' AND review_id = ?")
+      .prepare("DELETE FROM pull_request_issues WHERE pull_request_id = ?")
       .run(pullRequestId);
   }
 
@@ -1694,7 +1671,7 @@ export class RvwDatabase {
       this.insertReviewCommentEvent(
         postId,
         formatCommentUri(id),
-        { kind: "pull-request", pullRequestUrl: pullRequest.url },
+        { kind: "pull-request", pullRequestId: pullRequest.id, pullRequestUrl: pullRequest.url },
         now,
       );
       this.incrementChangeSequence({ kind: "pull-request", reviewId: input.pullRequestId });
@@ -1712,19 +1689,16 @@ export class RvwDatabase {
       return;
     }
     if (target.kind === "issue") {
-      // The supplementary row is authoritative for Issue identity. The legacy row preserves the
-      // established comments table without pretending that the Issue is PR Markdown.
-      this.database
-        .prepare("INSERT INTO comment_targets(comment_id, target_kind) VALUES (?, 'pull_request')")
-        .run(commentId);
       this.database
         .prepare(
-          `INSERT INTO pull_request_issue_comment_targets(
-            comment_id, issue_id, source_document_hash, quoted_text, start_line, end_line
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO comment_targets(
+            comment_id, target_kind, issue_id, source_document_hash, quoted_text,
+            start_line, end_line
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           commentId,
+          "issue",
           target.issueId,
           target.sourceDocumentHash,
           target.quotedText,
@@ -1781,17 +1755,17 @@ export class RvwDatabase {
     const id = stringValue(row, "id");
     const targetKind = stringValue(row, "target_kind");
     let target: CommentTarget;
-    if (row.issue_target_issue_id !== null && row.issue_target_issue_id !== undefined) {
+    if (targetKind === "issue") {
       target = {
         kind: "issue",
-        issueId: stringValue(row, "issue_target_issue_id"),
+        issueId: stringValue(row, "issue_id"),
         issueUrl: stringValue(row, "issue_url"),
         issueNumber: numberValue(row, "issue_number"),
         issueTitle: stringValue(row, "issue_title"),
-        sourceDocumentHash: stringValue(row, "issue_source_document_hash"),
-        quotedText: nullableString(row, "issue_quoted_text"),
-        startLine: nullableNumber(row, "issue_start_line"),
-        endLine: nullableNumber(row, "issue_end_line"),
+        sourceDocumentHash: stringValue(row, "source_document_hash"),
+        quotedText: nullableString(row, "quoted_text"),
+        startLine: nullableNumber(row, "start_line"),
+        endLine: nullableNumber(row, "end_line"),
       };
     } else if (targetKind === "pull_request") {
       target = { kind: "pull-request" };
@@ -1841,40 +1815,18 @@ export class RvwDatabase {
     return { ...comment, posts: this.listCommentPosts(comment.id) };
   }
 
-  private pullRequestIssueTargetColumns(): string {
-    return this.hasTable("pull_request_issue_comment_targets")
-      ? `it.issue_id AS issue_target_issue_id,
-         it.source_document_hash AS issue_source_document_hash,
-         it.quoted_text AS issue_quoted_text,
-         it.start_line AS issue_start_line,
-         it.end_line AS issue_end_line,
-         i.github_url AS issue_url, i.number AS issue_number, i.title AS issue_title`
-      : `NULL AS issue_target_issue_id,
-         NULL AS issue_source_document_hash,
-         NULL AS issue_quoted_text,
-         NULL AS issue_start_line,
-         NULL AS issue_end_line,
-         NULL AS issue_url, NULL AS issue_number, NULL AS issue_title`;
-  }
-
-  private pullRequestIssueTargetJoins(): string {
-    return this.hasTable("pull_request_issue_comment_targets")
-      ? `LEFT JOIN pull_request_issue_comment_targets it ON it.comment_id = c.id
-         LEFT JOIN github_issues i ON i.id = it.issue_id`
-      : "";
-  }
-
   getComment(id: string): ReviewComment | null {
     const row = this.database
       .prepare(
         `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
-          t.source_document_hash, t.quoted_text, t.walkthrough_id, t.start_line, t.end_line,
+          t.source_document_hash, t.quoted_text, t.walkthrough_id, t.issue_id,
+          t.start_line, t.end_line,
           w.title AS walkthrough_title,
-          ${this.pullRequestIssueTargetColumns()}
+          i.github_url AS issue_url, i.number AS issue_number, i.title AS issue_title
         FROM comments c
         JOIN comment_targets t ON t.comment_id = c.id
         LEFT JOIN walkthroughs w ON w.id = t.walkthrough_id
-        ${this.pullRequestIssueTargetJoins()}
+        LEFT JOIN github_issues i ON i.id = t.issue_id
         WHERE c.id = ?`,
       )
       .get(id) as DbRow | undefined;
@@ -1891,13 +1843,14 @@ export class RvwDatabase {
     const rows = this.database
       .prepare(
         `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
-            t.source_document_hash, t.quoted_text, t.walkthrough_id, t.start_line, t.end_line,
+            t.source_document_hash, t.quoted_text, t.walkthrough_id, t.issue_id,
+            t.start_line, t.end_line,
             w.title AS walkthrough_title,
-            ${this.pullRequestIssueTargetColumns()}
+            i.github_url AS issue_url, i.number AS issue_number, i.title AS issue_title
           FROM comments c
           JOIN comment_targets t ON t.comment_id = c.id
           LEFT JOIN walkthroughs w ON w.id = t.walkthrough_id
-          ${this.pullRequestIssueTargetJoins()}
+          LEFT JOIN github_issues i ON i.id = t.issue_id
           WHERE c.pull_request_id = ?${where} ORDER BY c.updated_at DESC`,
       )
       .all(pullRequestId) as DbRow[];
@@ -1931,9 +1884,10 @@ export class RvwDatabase {
       this.database
         .prepare(
           `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
-            t.source_document_hash, t.quoted_text, t.walkthrough_id, t.start_line, t.end_line,
+            t.source_document_hash, t.quoted_text, t.walkthrough_id, t.issue_id,
+            t.start_line, t.end_line,
             w.title AS walkthrough_title,
-            ${this.pullRequestIssueTargetColumns()},
+            i.github_url AS issue_url, i.number AS issue_number, i.title AS issue_title,
             root.id AS root_id, root.body AS root_body,
             root.related_commit_oid AS root_related_commit_oid,
             root.author_label AS root_author_label, root.created_at AS root_created_at,
@@ -1943,7 +1897,7 @@ export class RvwDatabase {
           JOIN comment_targets t ON t.comment_id = c.id
           JOIN comment_posts root ON root.comment_id = c.id AND root.is_root = 1
           LEFT JOIN walkthroughs w ON w.id = t.walkthrough_id
-          ${this.pullRequestIssueTargetJoins()}
+          LEFT JOIN github_issues i ON i.id = t.issue_id
           WHERE c.pull_request_id = ?${where}
           ORDER BY c.updated_at DESC, c.id DESC
           LIMIT ? OFFSET ?`,
@@ -2053,7 +2007,7 @@ export class RvwDatabase {
       this.insertReviewCommentEvent(
         id,
         comment.ref,
-        { kind: "pull-request", pullRequestUrl: pullRequest.url },
+        { kind: "pull-request", pullRequestId: pullRequest.id, pullRequestUrl: pullRequest.url },
         now,
       );
       if (idempotencyKeyHash !== null && idempotencyRequestHash !== null) {
@@ -2568,7 +2522,7 @@ export class RvwDatabase {
       this.insertReviewCommentEvent(
         postId,
         formatCommentUri(id),
-        { kind: "branch", repository: branch.canonicalName },
+        { kind: "branch", branchReviewId: branch.id, repository: branch.canonicalName },
         now,
       );
       this.incrementChangeSequence({ kind: "branch", reviewId: input.branchReviewId });
@@ -2654,7 +2608,7 @@ export class RvwDatabase {
       this.insertReviewCommentEvent(
         id,
         comment.ref,
-        { kind: "branch", repository: branch.canonicalName },
+        { kind: "branch", branchReviewId: branch.id, repository: branch.canonicalName },
         now,
       );
       if (keyHash && requestHash) {

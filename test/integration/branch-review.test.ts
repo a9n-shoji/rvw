@@ -372,6 +372,11 @@ describe("Branch Review", () => {
       target: { kind: "issue", issue: "#142", startLine: 1, endLine: 1 },
       body: "Confirm this requirement against the implementation.",
     });
+    const wholeIssueComment = await service.createBranchComment({
+      branchReviewId: opened.branchReview.id,
+      target: { kind: "issue", issue: "#142", startLine: null, endLine: null },
+      body: "Track this requirement as a whole.",
+    });
     const issue142 = service
       .listBranchIssues(opened.branchReview.id)
       .find(({ number }) => number === 142)!;
@@ -400,15 +405,26 @@ describe("Branch Review", () => {
     const replay = service.listCommentPostEvents(events.startCursor.replace(/:0$/, ":0"), 10);
     expect(replay.events).toEqual([]);
     const databaseEvents = service.database.listCommentPostEvents(0, 10);
-    expect(databaseEvents.at(-1)).toMatchObject({
+    expect(databaseEvents.find((event) => event.commentRef === comment.ref)).toMatchObject({
       commentRef: comment.ref,
-      context: { kind: "branch", repository: "acme/review-repo" },
+      context: {
+        kind: "branch",
+        branchReviewId: opened.branchReview.id,
+        repository: "acme/review-repo",
+      },
     });
 
     github.issues.set(142, issue(142, "Changed requirement\nDetails"));
     await service.syncBranchReview(repositoryPath);
+    expect(
+      service.placeBranchIssueComment(opened.branchReview.id, wholeIssueComment, issue142.id),
+    ).toEqual({ outdated: false, range: null, path: "#142" });
     await expect(service.getAnyCommentReviewContext(comment.ref)).resolves.toMatchObject({
-      context: { kind: "branch", repository: "acme/review-repo" },
+      context: {
+        kind: "branch",
+        branchReviewId: opened.branchReview.id,
+        repository: "acme/review-repo",
+      },
       issue: { number: 142, body: "Changed requirement\nDetails" },
       latestPlacement: { outdated: true },
     });

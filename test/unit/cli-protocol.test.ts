@@ -172,7 +172,7 @@ describe("CLI protocol discovery", () => {
 
     expect(readStdout()).toEqual({
       protocolVersion: 4,
-      appVersion: "0.2.3",
+      appVersion: "0.3.0",
       capabilities: [
         "agent.transport",
         "branchReview.read",
@@ -609,6 +609,7 @@ describe("CLI protocol discovery", () => {
       ok: true,
       context: {
         kind: "pull-request",
+        pullRequestId: pullRequest.id,
         pullRequestUrl: pullRequest.url,
       },
       pullRequest: formattedPullRequest,

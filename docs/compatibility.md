@@ -22,9 +22,10 @@ version番号を再利用せず、breaking changeのたびに単調増加させ�
 現在のmachine contractはprotocol version 4です。Pull Request / Branch Reviewの明示context、Issue
 documents、review kindで判別できるcomment eventを導入したため、version 3 consumerは新しいeventを
 安全に処理できません。同梱する3つのSkillはversion 4と必要capabilityをpreflightで確認します。
-version 4のWalkthrough publish/update成功responseは、direct executionとAgent socketの双方で
+version 4のcomment / watch contextはstableな`pullRequestId`または`branchReviewId`をrouting identity、
+PR URLまたはcanonical repositoryを表示値として別々に返します。Walkthrough publish/update成功responseは、direct executionとAgent socketの双方で
 `walkthrough`と常設の`issuesAdded`配列を返し、後者は同じtransactionで実際に追加したmembershipだけを
-含みます。Branch watcher worker resultは`context.kind = "branch"`とrepositoryを返し、fake Pull Request
+含みます。Branch watcher worker resultは`context.kind = "branch"`、`branchReviewId`、repositoryを返し、fake Pull Request
 URLへfallbackしません。Branch completion helperはlease、context、read-only outcome fieldsをすべて
 必須として、欠落時はreply投稿前に拒否します。
 

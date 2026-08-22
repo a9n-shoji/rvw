@@ -675,7 +675,9 @@ function branchCommentPlacement(target) {
   if (target.kind === "branch") return { outdated: false, range: null, path: null };
   if (target.kind === "issue") {
     const issue = branchIssues.find((candidate) => candidate.id === target.issueId);
-    const current = issue?.bodyHash === target.sourceDocumentHash;
+    const current =
+      issue !== undefined &&
+      (target.startLine === null || issue.bodyHash === target.sourceDocumentHash);
     return current
       ? {
           outdated: false,
@@ -1769,7 +1771,10 @@ app.get("/api/comments/:id/placement", (context) => {
       context.req.query("kind") === "commit" ||
       (context.req.query("kind") === "issue-markdown" &&
         context.req.query("issueId") === comment.target.issueId);
-    const current = destinationMatches && issue?.bodyHash === comment.target.sourceDocumentHash;
+    const current =
+      destinationMatches &&
+      issue !== undefined &&
+      (comment.target.startLine === null || issue.bodyHash === comment.target.sourceDocumentHash);
     return context.json({
       ok: true,
       placement: current

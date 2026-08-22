@@ -12,6 +12,62 @@ const autoAckScript = path.join(scripts, "auto-ack.mjs");
 const completeBranchScript = path.join(scripts, "complete-branch.mjs");
 const driverScript = path.join(scripts, "watch-driver.mjs");
 
+function stableReviewFrame(frame: unknown): unknown {
+  if (!frame || typeof frame !== "object" || !("event" in frame)) return frame;
+  const event = (frame as { event?: Record<string, unknown> }).event;
+  if (!event) return frame;
+  const context = event.context;
+  if (context && typeof context === "object" && "kind" in context) {
+    const review = context as Record<string, unknown>;
+    if (review.kind === "branch" && typeof review.repository === "string") {
+      const hasStableId = typeof review.branchReviewId === "string";
+      event.context = {
+        kind: "branch",
+        branchReviewId: hasStableId
+          ? review.branchReviewId
+          : `branch:${review.repository.toLowerCase()}`,
+        repository: hasStableId ? review.repository : review.repository.toLowerCase(),
+      };
+    }
+    return frame;
+  }
+  if (typeof event.pullRequestUrl === "string") {
+    event.context = {
+      kind: "pull-request",
+      pullRequestId: `pull-request:${event.pullRequestUrl}`,
+      pullRequestUrl: event.pullRequestUrl,
+    };
+    delete event.pullRequestUrl;
+  }
+  return frame;
+}
+
+function stableReviewArgs(command: string, args: string[]): string[] {
+  if (command !== "claim") return args;
+  const pullRequestIndex = args.indexOf("--pull-request");
+  if (pullRequestIndex >= 0) {
+    const display = args[pullRequestIndex + 1]!;
+    return [
+      "--context-kind",
+      "pull-request",
+      "--context-key",
+      `pull-request:${display}`,
+      "--context-display",
+      display,
+      ...args.slice(pullRequestIndex + 2),
+    ];
+  }
+  const kindIndex = args.indexOf("--context-kind");
+  const keyIndex = args.indexOf("--context-key");
+  if (kindIndex < 0 || keyIndex < 0 || args.includes("--context-display")) return args;
+  const kind = args[kindIndex + 1]!;
+  const display = args[keyIndex + 1]!;
+  const result = [...args];
+  result[keyIndex + 1] =
+    kind === "branch" ? `branch:${display.toLowerCase()}` : `pull-request:${display}`;
+  return [...result, "--context-display", display.toLowerCase()];
+}
+
 interface FakeRvwCall {
   args: string[];
   input: unknown;
@@ -26,10 +82,14 @@ function readFakeCalls(log: string): FakeRvwCall[] {
 }
 
 function runState(state: string, command: string, args: string[] = [], input?: unknown) {
-  const result = spawnSync(process.execPath, [stateScript, command, "--state", state, ...args], {
-    encoding: "utf8",
-    ...(input === undefined ? {} : { input: JSON.stringify(input) }),
-  });
+  const result = spawnSync(
+    process.execPath,
+    [stateScript, command, "--state", state, ...stableReviewArgs(command, args)],
+    {
+      encoding: "utf8",
+      ...(input === undefined ? {} : { input: JSON.stringify(stableReviewFrame(input)) }),
+    },
+  );
   if (result.status !== 0) throw new Error(result.stderr);
   return JSON.parse(result.stdout) as Record<string, unknown>;
 }
@@ -85,7 +145,8 @@ if (args[0] === "protocol") {
     process.stdout.write("\u001e" + JSON.stringify({
       type: "comment-posted", cursor: "cursor-1", event: {
         sequence: 1, postId: "human-post", commentRef: "rvw://comment/comment-1",
-        pullRequestUrl: "https://github.com/acme/repo/pull/1",
+        context: { kind: "pull-request", pullRequestId: "pull-request-1",
+          pullRequestUrl: "https://github.com/acme/repo/pull/1" },
         createdAt: "2026-08-20T00:00:00.000Z", deleted: false
       }
     }) + "\n");
@@ -149,7 +210,11 @@ function initializeBranchQueuedState(state: string) {
       sequence: 1,
       postId: "branch-human-post",
       commentRef: "rvw://comment/branch-comment",
-      context: { kind: "branch", repository: "acme/repo" },
+      context: {
+        kind: "branch",
+        branchReviewId: "branch:acme/repo",
+        repository: "acme/repo",
+      },
       createdAt: "2026-08-20T00:00:00.000Z",
       deleted: false,
     },
@@ -231,7 +296,17 @@ describe("rvw-watch-comments bundled scripts", () => {
 
     const result = spawnSync(
       process.execPath,
-      [autoAckScript, "--state", state, "--pull-request", "https://github.com/acme/repo/pull/1"],
+      [
+        autoAckScript,
+        "--state",
+        state,
+        "--context-kind",
+        "pull-request",
+        "--context-key",
+        "pull-request:https://github.com/acme/repo/pull/1",
+        "--context-display",
+        "https://github.com/acme/repo/pull/1",
+      ],
       { encoding: "utf8", env: fakeEnvironment(fake) },
     );
 
@@ -277,7 +352,17 @@ describe("rvw-watch-comments bundled scripts", () => {
     });
     const followUpAcknowledgement = spawnSync(
       process.execPath,
-      [autoAckScript, "--state", state, "--pull-request", "https://github.com/acme/repo/pull/1"],
+      [
+        autoAckScript,
+        "--state",
+        state,
+        "--context-kind",
+        "pull-request",
+        "--context-key",
+        "pull-request:https://github.com/acme/repo/pull/1",
+        "--context-display",
+        "https://github.com/acme/repo/pull/1",
+      ],
       { encoding: "utf8", env: fakeEnvironment(fake) },
     );
     expect(followUpAcknowledgement.status).toBe(0);
@@ -313,12 +398,16 @@ describe("rvw-watch-comments bundled scripts", () => {
     ]);
     const input = {
       leaseId: claimed.leaseId,
-      context: { kind: "branch", repository: "acme/repo" },
+      context: {
+        kind: "branch",
+        branchReviewId: "branch:acme/repo",
+        repository: "acme/repo",
+      },
       outcomes: [
         {
           commentRef: "rvw://comment/branch-comment",
           body: "📝 調査結果\n\nRead [the source policy](rvw-ref:source-policy).",
-          relatedCommitOid: "a".repeat(40),
+          relatedCommitOid: "A".repeat(64),
           references: [
             {
               id: "source-policy",
@@ -352,7 +441,7 @@ describe("rvw-watch-comments bundled scripts", () => {
       (claimed.operations as Array<{ idempotencyKey: string }>)[0]?.idempotencyKey,
     );
     expect(readFakeCalls(fake.log)[0]?.input).toMatchObject({
-      relatedCommitOid: "a".repeat(40),
+      relatedCommitOid: "A".repeat(64),
       references: [{ id: "source-policy", path: "src/application/rvw-service.ts" }],
     });
     expect(runState(state, "list")).toMatchObject({ pending: [] });
@@ -364,12 +453,44 @@ describe("rvw-watch-comments bundled scripts", () => {
           sequence: 2,
           postId: result.replies[0]?.postId,
           commentRef: "rvw://comment/branch-comment",
-          context: { kind: "branch", repository: "acme/repo" },
+          context: {
+            kind: "branch",
+            branchReviewId: "branch:acme/repo",
+            repository: "acme/repo",
+          },
           createdAt: "2026-08-20T00:00:01.000Z",
           deleted: false,
         },
       }),
     ).toMatchObject({ status: "suppressed" });
+  });
+
+  it("rejects Branch Review auto-ack before claiming a lease", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-no-ack-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeBranchQueuedState(state);
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        autoAckScript,
+        "--state",
+        state,
+        "--context-kind",
+        "branch",
+        "--context-key",
+        "branch:acme/repo",
+        "--context-display",
+        "acme/repo",
+      ],
+      { encoding: "utf8", env: fakeEnvironment(fake) },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("auto-ack only accepts Pull Request batches");
+    expect(readFakeCalls(fake.log)).toEqual([]);
+    expect(runState(state, "status")).toMatchObject({ batches: { inFlight: 0 } });
   });
 
   it("reuses the Branch final-reply idempotency key after recovery", () => {
@@ -420,7 +541,11 @@ describe("rvw-watch-comments bundled scripts", () => {
         env: fakeEnvironment(fake),
         input: JSON.stringify({
           leaseId: recoveredClaim.leaseId,
-          context: { kind: "branch", repository: "acme/repo" },
+          context: {
+            kind: "branch",
+            branchReviewId: "branch:acme/repo",
+            repository: "acme/repo",
+          },
           outcomes: [
             {
               commentRef: "rvw://comment/branch-comment",
@@ -463,7 +588,11 @@ describe("rvw-watch-comments bundled scripts", () => {
         env: fakeEnvironment(fake),
         input: JSON.stringify({
           leaseId: claimed.leaseId,
-          context: { kind: "branch", repository: "acme/repo" },
+          context: {
+            kind: "branch",
+            branchReviewId: "branch:acme/repo",
+            repository: "acme/repo",
+          },
           outcomes: [
             {
               commentRef: "rvw://comment/branch-comment",
@@ -503,33 +632,57 @@ describe("rvw-watch-comments bundled scripts", () => {
     };
     const invalidInputs = [
       {
-        context: { kind: "branch", repository: "acme/repo" },
+        context: {
+          kind: "branch",
+          branchReviewId: "branch:acme/repo",
+          repository: "acme/repo",
+        },
         outcomes: [validOutcome],
       },
       { leaseId: claimed.leaseId, outcomes: [validOutcome] },
       {
         leaseId: "different-lease",
-        context: { kind: "branch", repository: "acme/repo" },
+        context: {
+          kind: "branch",
+          branchReviewId: "branch:acme/repo",
+          repository: "acme/repo",
+        },
         outcomes: [validOutcome],
       },
       {
         leaseId: claimed.leaseId,
-        context: { kind: "branch", repository: "acme/other" },
+        context: {
+          kind: "branch",
+          branchReviewId: "branch:acme/other",
+          repository: "acme/other",
+        },
         outcomes: [validOutcome],
       },
       {
         leaseId: claimed.leaseId,
-        context: { kind: "branch", repository: "acme/repo" },
+        context: {
+          kind: "branch",
+          branchReviewId: "branch:acme/repo",
+          repository: "acme/repo",
+        },
         outcomes: [{ ...validOutcome, relatedCommitOid: undefined }],
       },
       {
         leaseId: claimed.leaseId,
-        context: { kind: "branch", repository: "acme/repo" },
+        context: {
+          kind: "branch",
+          branchReviewId: "branch:acme/repo",
+          repository: "acme/repo",
+        },
         outcomes: [{ ...validOutcome, references: undefined }],
       },
       {
         leaseId: claimed.leaseId,
-        context: { kind: "branch", repository: "acme/repo" },
+        context: {
+          kind: "branch",
+          branchReviewId: "branch:acme/repo",
+          repository: "acme/repo",
+        },
         outcomes: [{ ...validOutcome, pushStatus: undefined }],
       },
     ];

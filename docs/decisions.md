@@ -1,5 +1,36 @@
 # Architecture decisions
 
+## 2026-08-22: Use aggregate IDs for watch routing and native owner foreign keys
+
+### Problem
+
+Branch Review initially extended PR storage with a polymorphic Issue-membership table, a supplementary
+PR Issue-target table, and watch keys derived from PR URLs or repository text. Those shapes hid the
+real aggregate owner, required runtime schema probes, and made display-name changes or reset/recreate
+semantics part of durable event routing. Issue placement also treated a whole-document target like a
+body range, so any body edit incorrectly made it Outdated.
+
+### Choice
+
+Because migration 011 and protocol v4 have not been released, rewrite them before release. Store PR
+and Branch Issue memberships in separate tables with real owner foreign keys, and store PR Issue
+comments directly as `comment_targets.target_kind = issue`. The latest application assumes all shipped
+migrations have run and contains no partial-schema runtime fallback.
+
+Route watch events by stable local `pullRequestId` / `branchReviewId`, keeping PR URL and canonical
+repository as separate display fields. Preserve event rows without owner foreign keys so deleted or
+reset reviews remain replayable. Treat whole-Issue comments as attached to the stable Issue identity;
+only range comments depend on the body hash.
+
+### Trade-offs
+
+- Protocol v4 consumers must accept the stable ID in every context; version 3 compatibility remains
+  outside the v4 contract.
+- Resetting and recreating a Branch Review intentionally creates a new watcher context even when the
+  canonical repository display is unchanged.
+- Separate membership tables duplicate a small amount of query selection but make ownership and
+  cascade behavior enforceable by SQLite.
+
 ## 2026-08-22: Extend the review-scoped attachment boundary to Issue documents
 
 ### Problem
@@ -167,7 +198,8 @@ Cache each GitHub Issue once by canonical identity, and store review membership 
 Issue may belong independently to a Pull Request Review and a Branch Review. Issue comments and
 Walkthroughs retain their owning review, while `rvw://comment` and `rvw://walkthrough` references remain
 globally resolvable. Protocol version 4 makes review context explicit and the watcher migrates its
-task-local keys from PR URL alone to `(review_kind, context_key)`.
+task-local keys from PR URL alone to `(review_kind, stable review ID)`, with URL/repository retained as
+display metadata.
 
 Branch watcher batches are always `investigate-and-reply`: they cannot reserve a repository write key,
 receive no progress acknowledgement, create one final idempotent reply, and never commit, push, edit a

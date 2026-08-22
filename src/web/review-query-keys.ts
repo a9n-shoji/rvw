@@ -23,20 +23,38 @@ export const reviewQueryKeys = {
   document: (ref?: ReviewDocumentRef) =>
     ref === undefined ? (["document"] as const) : (["document", ref] as const),
   annotations: () => ["annotations"] as const,
+  allReviews: (kind: ReviewKind) =>
+    kind === "pull-request" ? (["pull-request"] as const) : (["branch-review"] as const),
+  allComments: () => ["comments"] as const,
+  allCommentPlacements: () => ["comment-placement"] as const,
+  allSearches: () => ["search"] as const,
+  allWalkthroughs: () => ["walkthrough"] as const,
   comments: (kind: ReviewKind, reviewId: string | null, changeSequence?: number) =>
     kind === "pull-request"
       ? (["comments", reviewId, ...optionalTail(changeSequence)] as const)
       : (["comments", "branch", reviewId, ...optionalTail(changeSequence)] as const),
-  issues: (reviewId: string | null, changeSequence?: number) =>
-    ["issues", reviewId, ...optionalTail(changeSequence)] as const,
-  commentPlacement: (kind: ReviewKind, reviewId: string) =>
-    ["comment-placement", kind, reviewId] as const,
-  search: (kind: ReviewKind, reviewId: string) =>
-    kind === "pull-request"
-      ? (["search", reviewId] as const)
-      : (["branch-search", reviewId] as const),
+  issues: (kind: ReviewKind, reviewId: string | null, changeSequence?: number) =>
+    ["issues", kind, reviewId, ...optionalTail(changeSequence)] as const,
+  commentPlacement: (kind: ReviewKind, reviewId: string, commentId?: string, sourceOid?: string) =>
+    [
+      "comment-placement",
+      kind,
+      reviewId,
+      ...optionalTail(commentId),
+      ...optionalTail(sourceOid),
+    ] as const,
+  search: (
+    kind: ReviewKind,
+    reviewId: string,
+    sourceOid?: string,
+    query?: string,
+    matchCase?: boolean,
+    wholeWord?: boolean,
+  ) => ["search", kind, reviewId, sourceOid, query, matchCase, wholeWord] as const,
   walkthroughs: (kind: ReviewKind, reviewId: string) =>
-    kind === "pull-request"
-      ? (["walkthroughs", reviewId] as const)
-      : (["walkthrough", "branch", reviewId] as const),
+    ["walkthrough", kind, reviewId, "list"] as const,
+  walkthrough: (kind: ReviewKind, reviewId: string, walkthroughId: string) =>
+    ["walkthrough", kind, reviewId, walkthroughId] as const,
+  changedFiles: (reviewId: string | null, oldOid?: string, newOid?: string) =>
+    ["changed-files", reviewId, oldOid, newOid] as const,
 };

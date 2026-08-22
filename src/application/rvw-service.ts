@@ -164,7 +164,7 @@ export interface CommentExactSource {
 }
 
 export interface CommentReviewContext {
-  context: { kind: "pull-request"; pullRequestUrl: string };
+  context: { kind: "pull-request"; pullRequestId: string; pullRequestUrl: string };
   pullRequest: PullRequest;
   comment: ReviewComment;
   latestPlacement: CommentPlacement;
@@ -179,7 +179,7 @@ export interface CommentReviewContext {
 }
 
 export interface BranchCommentReviewContext {
-  context: { kind: "branch"; repository: string };
+  context: { kind: "branch"; branchReviewId: string; repository: string };
   branchReview: BranchReview;
   comment: BranchReviewComment;
   latestPlacement: CommentPlacement;
@@ -333,6 +333,29 @@ function assertLinePair(startLine: number | null, endLine: number | null): void 
   if ((startLine === null) !== (endLine === null)) {
     throw new RvwError("INVALID_INPUT", "行範囲は開始行と終了行を両方指定してください。");
   }
+}
+
+function placeIssueComment(
+  target: Extract<CommentTarget, { kind: "issue" }>,
+  issue: IssueDocument | null,
+  belongsToReview: boolean,
+): CommentPlacement {
+  const path = `#${target.issueNumber}`;
+  if (
+    !issue ||
+    !belongsToReview ||
+    (target.startLine !== null && issue.bodyHash !== target.sourceDocumentHash)
+  ) {
+    return { outdated: true, range: null, path };
+  }
+  return {
+    outdated: false,
+    range:
+      target.startLine === null || target.endLine === null
+        ? null
+        : { startLine: target.startLine, endLine: target.endLine },
+    path: `#${issue.number}`,
+  };
 }
 
 const codeReferenceIdPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
@@ -2193,17 +2216,11 @@ export class RvwService {
     if (target.kind === "branch") return { outdated: false, range: null, path: null };
     if (target.kind === "issue") {
       const issue = this.database.getIssue(target.issueId);
-      const current = issue?.bodyHash === target.sourceDocumentHash;
-      return current
-        ? {
-            outdated: false,
-            range:
-              target.startLine === null || target.endLine === null
-                ? null
-                : { startLine: target.startLine, endLine: target.endLine },
-            path: `#${target.issueNumber}`,
-          }
-        : { outdated: true, range: null, path: `#${target.issueNumber}` };
+      return placeIssueComment(
+        target,
+        issue,
+        issue !== null && this.database.hasReviewIssue("branch", branchReview.id, target.issueId),
+      );
     }
     if (target.kind === "walkthrough") {
       const walkthrough = this.database.getBranchWalkthrough(target.walkthroughId);
@@ -2314,17 +2331,11 @@ export class RvwService {
       return { outdated: true, range: null, path: null };
     }
     const issue = this.database.getIssue(issueId);
-    if (
-      !issue ||
-      !this.database.hasReviewIssue("branch", branchReviewId, issue.id) ||
-      issue.bodyHash !== comment.target.sourceDocumentHash
-    ) {
-      return { outdated: true, range: null, path: `#${comment.target.issueNumber}` };
-    }
-    return {
-      ...placeMutableDocumentComment(comment.target, issue.body),
-      path: `#${issue.number}`,
-    };
+    return placeIssueComment(
+      comment.target,
+      issue,
+      issue !== null && this.database.hasReviewIssue("branch", branchReviewId, issue.id),
+    );
   }
 
   async getAnyCommentReviewContext(
@@ -2340,7 +2351,11 @@ export class RvwService {
         this.getBranchCommentExactSource(branchReview, branchComment),
       ]);
       return {
-        context: { kind: "branch", repository: branchReview.canonicalName },
+        context: {
+          kind: "branch",
+          branchReviewId: branchReview.id,
+          repository: branchReview.canonicalName,
+        },
         branchReview,
         comment: branchComment,
         latestPlacement,
@@ -2381,7 +2396,11 @@ export class RvwService {
         live.updatedAt !== result.pullRequest.githubUpdatedAt
       : null;
     return {
-      context: { kind: "pull-request", pullRequestUrl: result.pullRequest.url },
+      context: {
+        kind: "pull-request",
+        pullRequestId: result.pullRequest.id,
+        pullRequestUrl: result.pullRequest.url,
+      },
       ...result,
       latestPlacement,
       exactSource,
@@ -3168,17 +3187,12 @@ export class RvwService {
         return { outdated: true, range: null, path: null };
       }
       const issue = this.database.getIssue(comment.target.issueId);
-      if (!issue || issue.bodyHash !== comment.target.sourceDocumentHash) {
-        return { outdated: true, range: null, path: `#${comment.target.issueNumber}` };
-      }
-      return {
-        outdated: false,
-        range:
-          comment.target.startLine === null || comment.target.endLine === null
-            ? null
-            : { startLine: comment.target.startLine, endLine: comment.target.endLine },
-        path: `#${comment.target.issueNumber}`,
-      };
+      return placeIssueComment(
+        comment.target,
+        issue,
+        issue !== null &&
+          this.database.hasReviewIssue("pull-request", comment.pullRequestId, issue.id),
+      );
     }
     const pullRequest = this.getPullRequest(comment.pullRequestId);
     if (comment.target.documentKind === "pull-request-markdown") {
@@ -3217,17 +3231,12 @@ export class RvwService {
     }
     if (comment.target.kind === "issue") {
       const issue = this.database.getIssue(comment.target.issueId);
-      if (!issue || issue.bodyHash !== comment.target.sourceDocumentHash) {
-        return { outdated: true, range: null, path: `#${comment.target.issueNumber}` };
-      }
-      return {
-        outdated: false,
-        range:
-          comment.target.startLine === null || comment.target.endLine === null
-            ? null
-            : { startLine: comment.target.startLine, endLine: comment.target.endLine },
-        path: `#${comment.target.issueNumber}`,
-      };
+      return placeIssueComment(
+        comment.target,
+        issue,
+        issue !== null &&
+          this.database.hasReviewIssue("pull-request", comment.pullRequestId, issue.id),
+      );
     }
     if (comment.target.documentKind === "pull-request-markdown") {
       return this.placePullRequestMarkdownComment(comment, pullRequest);

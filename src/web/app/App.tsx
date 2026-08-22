@@ -623,7 +623,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   };
 
   const treeQuery = useQuery({
-    queryKey: ["tree", pullRequestId, selectedOid],
+    queryKey: reviewQueryKeys.tree("pull-request", pullRequestId!, selectedOid ?? undefined),
     queryFn: async () =>
       await api<TreeResponse>(
         `/api/pull-requests/${pullRequestId}/tree?oid=${encodeURIComponent(selectedOid!)}`,
@@ -631,7 +631,11 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     enabled: Boolean(pullRequestId && selectedOid),
   });
   const changedQuery = useQuery({
-    queryKey: ["changed-files", pullRequestId, effectiveOldOid, selectedOid],
+    queryKey: reviewQueryKeys.changedFiles(
+      pullRequestId,
+      effectiveOldOid ?? undefined,
+      selectedOid ?? undefined,
+    ),
     queryFn: async () =>
       await api<ChangedFilesResponse>(
         `/api/pull-requests/${pullRequestId}/changed-files?oldOid=${encodeURIComponent(effectiveOldOid!)}&newOid=${encodeURIComponent(selectedOid!)}`,
@@ -663,13 +667,12 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     const previousSequence = observedChangeSequence.current;
     observedChangeSequence.current = nextSequence;
     if (previousSequence === null || previousSequence === nextSequence) return;
-    void queryClient.invalidateQueries({ queryKey: ["pull-request"] });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allReviews("pull-request") });
     void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.document() });
     void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() });
-    void queryClient.invalidateQueries({ queryKey: ["comment-placement"] });
-    void queryClient.invalidateQueries({ queryKey: ["search"] });
-    void queryClient.invalidateQueries({ queryKey: ["walkthroughs"] });
-    void queryClient.invalidateQueries({ queryKey: ["walkthrough"] });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allCommentPlacements() });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allSearches() });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allWalkthroughs() });
   }, [changeSequence.data?.reviewChangeSequence, queryClient]);
   const commentsQuery = useQuery({
     queryKey: reviewQueryKeys.comments(
@@ -689,6 +692,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
   const issuesQuery = useQuery({
     queryKey: reviewQueryKeys.issues(
+      "pull-request",
       pullRequestId,
       changeSequence.data?.reviewChangeSequence ?? undefined,
     ),
@@ -706,7 +710,9 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     onSuccess: async () => {
       setIssueReference("");
       setIssueAddOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["issues", pullRequestId] });
+      await queryClient.invalidateQueries({
+        queryKey: reviewQueryKeys.issues("pull-request", pullRequestId),
+      });
     },
   });
   const removeIssueMutation = useMutation({
@@ -756,14 +762,16 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
         if (openIssue) closeDocument(openIssue, paneId);
       }
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["issues", pullRequestId] }),
-        queryClient.invalidateQueries({ queryKey: ["comments"] }),
-        queryClient.invalidateQueries({ queryKey: ["change-sequence"] }),
+        queryClient.invalidateQueries({
+          queryKey: reviewQueryKeys.issues("pull-request", pullRequestId),
+        }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() }),
       ]);
     },
   });
   const walkthroughsQuery = useQuery({
-    queryKey: ["walkthroughs", pullRequestId],
+    queryKey: reviewQueryKeys.walkthroughs("pull-request", pullRequestId!),
     queryFn: async () =>
       await api<WalkthroughsResponse>(`/api/pull-requests/${pullRequestId}/walkthroughs`),
     enabled: Boolean(pullRequestId),
@@ -789,7 +797,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   );
   const walkthroughDetailQueries = useQueries({
     queries: openWalkthroughIds.map((walkthroughId) => ({
-      queryKey: ["walkthrough", pullRequestId, walkthroughId],
+      queryKey: reviewQueryKeys.walkthrough("pull-request", pullRequestId!, walkthroughId),
       queryFn: async () =>
         await api<WalkthroughResponse>(
           `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}`,
@@ -850,14 +858,14 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   }, [fileFilter, files]);
 
   const searchQuery = useQuery({
-    queryKey: [
-      "search",
-      pullRequestId,
-      selectedOid,
+    queryKey: reviewQueryKeys.search(
+      "pull-request",
+      pullRequestId!,
+      selectedOid ?? undefined,
       debouncedSearch,
       searchMatchCase,
       searchWholeWord,
-    ],
+    ),
     queryFn: async ({ signal }) => {
       const parameters = new URLSearchParams({
         oid: selectedOid!,
@@ -901,10 +909,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
         );
       }
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["pull-request"] }),
-        queryClient.invalidateQueries({ queryKey: ["document"] }),
-        queryClient.invalidateQueries({ queryKey: ["annotations"] }),
-        queryClient.invalidateQueries({ queryKey: ["comment-placement"] }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allReviews("pull-request") }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.document() }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allCommentPlacements() }),
       ]);
       if (options.announce) {
         showSyncFeedback(

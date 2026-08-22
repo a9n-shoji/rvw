@@ -296,7 +296,11 @@ export async function dispatchAgentSocketRequest(
       const input = parseOperationInput("branch.comments", request.input);
       const opened = await service.openBranchReview(input.repositoryPath);
       return {
-        context: { kind: "branch", repository: opened.branchReview.canonicalName },
+        context: {
+          kind: "branch",
+          branchReviewId: opened.branchReview.id,
+          repository: opened.branchReview.canonicalName,
+        },
         branchReview: opened.branchReview,
         comments: await service.listBranchCommentContexts(opened.branchReview.id, input.resolved),
       };

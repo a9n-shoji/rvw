@@ -73,9 +73,9 @@ function validatedOutcomes(input, operations) {
     if (
       outcome.relatedCommitOid !== null &&
       (typeof outcome.relatedCommitOid !== "string" ||
-        !/^[0-9a-f]{40}$/.test(outcome.relatedCommitOid))
+        !/^[0-9a-f]{40,64}$/i.test(outcome.relatedCommitOid))
     ) {
-      fail("Branch Review relatedCommitOid must be null or a lowercase 40-hex commit OID");
+      fail("Branch Review relatedCommitOid must be null or a 40-64 character hex commit OID");
     }
     if (!Array.isArray(outcome.references)) {
       fail("Branch Review outcomes must include the complete references array");
@@ -152,12 +152,17 @@ async function main() {
     !input.context ||
     typeof input.context !== "object" ||
     input.context.kind !== "branch" ||
+    typeof input.context.branchReviewId !== "string" ||
+    input.context.branchReviewId.length === 0 ||
     typeof input.context.repository !== "string" ||
     input.context.repository.length === 0
   ) {
     fail("Worker Branch context is required");
   }
-  if (input.context.repository !== batch.context.repository)
+  if (
+    input.context.branchReviewId !== batch.context.branchReviewId ||
+    input.context.repository !== batch.context.repository
+  )
     fail("Worker context does not match the Branch Review lease");
   const pending = validatedOutcomes(input, batch.operations ?? []);
   for (const { operation } of pending) {

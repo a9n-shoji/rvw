@@ -134,6 +134,7 @@ export function formatCommentGetOutput(
     ok: true,
     context: result.context ?? {
       kind: "pull-request",
+      pullRequestId: result.pullRequest.id,
       pullRequestUrl: result.pullRequest.url,
     },
     pullRequest: formatPullRequest(result.pullRequest, {
