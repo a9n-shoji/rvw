@@ -549,6 +549,8 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const comparisonBaseOid = pullRequestQuery.data?.comparisonBaseOid ?? null;
   const latestHeadOid = pullRequestQuery.data?.headOid ?? null;
   const latestPullRequestTitle = pullRequestQuery.data?.pullRequest.latestTitle;
+  const commitSelectionRef = useRef({ selectedOid, rangeStartOid, latestHeadOid });
+  commitSelectionRef.current = { selectedOid, rangeStartOid, latestHeadOid };
 
   useEffect(() => {
     document.title = latestPullRequestTitle ? `rvw: ${latestPullRequestTitle}` : "rvw";
@@ -651,16 +653,21 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     ),
   });
   const changeSequence = useQuery({
-    queryKey: reviewQueryKeys.changeSequence(),
+    queryKey: reviewQueryKeys.changeSequence("pull-request", pullRequestId),
     queryFn: async () =>
-      await api<{ changeSequence: number }>("/api/meta/change-sequence", viewerHeartbeatRequest()),
+      await api<{ changeSequence: number; reviewChangeSequence: number | null }>(
+        pullRequestId
+          ? `/api/meta/change-sequence?reviewKind=pull-request&reviewId=${encodeURIComponent(pullRequestId)}`
+          : "/api/meta/change-sequence",
+        viewerHeartbeatRequest(),
+      ),
     refetchInterval: 1000,
     refetchIntervalInBackground: true,
     networkMode: "always",
   });
   useEffect(() => {
-    const nextSequence = changeSequence.data?.changeSequence;
-    if (nextSequence === undefined) return;
+    const nextSequence = changeSequence.data?.reviewChangeSequence;
+    if (nextSequence === undefined || nextSequence === null) return;
     const previousSequence = observedChangeSequence.current;
     observedChangeSequence.current = nextSequence;
     if (previousSequence === null || previousSequence === nextSequence) return;
@@ -671,12 +678,12 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     void queryClient.invalidateQueries({ queryKey: ["search"] });
     void queryClient.invalidateQueries({ queryKey: ["walkthroughs"] });
     void queryClient.invalidateQueries({ queryKey: ["walkthrough"] });
-  }, [changeSequence.data?.changeSequence, queryClient]);
+  }, [changeSequence.data?.reviewChangeSequence, queryClient]);
   const commentsQuery = useQuery({
     queryKey: reviewQueryKeys.comments(
       "pull-request",
       pullRequestId,
-      changeSequence.data?.changeSequence,
+      changeSequence.data?.reviewChangeSequence ?? undefined,
     ),
     queryFn: async () =>
       await api<CommentsResponse>(`/api/pull-requests/${pullRequestId}/comments?resolved=all`),
@@ -689,7 +696,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const comments = commentsQuery.data?.comments ?? [];
   const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
   const issuesQuery = useQuery({
-    queryKey: reviewQueryKeys.issues(pullRequestId, changeSequence.data?.changeSequence),
+    queryKey: reviewQueryKeys.issues(
+      pullRequestId,
+      changeSequence.data?.reviewChangeSequence ?? undefined,
+    ),
     queryFn: async () =>
       await api<{ issues: IssueDocument[] }>(`/api/pull-requests/${pullRequestId}/issues`),
     enabled: Boolean(pullRequestId),
@@ -927,20 +937,13 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       );
     },
     onSuccess: async (result, options) => {
-      const wasAtLatest = selectedOid === latestHeadOid;
-      const wasSingleCommit = rangeStartOid === selectedOid;
-      const previousStartOid = rangeStartOid;
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["pull-request"] }),
-        queryClient.invalidateQueries({ queryKey: ["document"] }),
-        queryClient.invalidateQueries({ queryKey: ["annotations"] }),
-        queryClient.invalidateQueries({ queryKey: ["comment-placement"] }),
-        queryClient.invalidateQueries({ queryKey: ["search"] }),
-      ]);
-      if (wasAtLatest || !selectedOid) {
+      const selection = commitSelectionRef.current;
+      const wasAtLatest = selection.selectedOid === selection.latestHeadOid;
+      const wasSingleCommit = selection.rangeStartOid === selection.selectedOid;
+      if (wasAtLatest || !selection.selectedOid) {
         setSelectedOid(result.headOid);
         const previousStartStillExists = result.commits.some(
-          (commit) => commit.oid === previousStartOid,
+          (commit) => commit.oid === selection.rangeStartOid,
         );
         setRangeStartOid(
           !commitRangeTouched.current
@@ -948,10 +951,16 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
             : wasSingleCommit
               ? result.headOid
               : previousStartStillExists
-                ? previousStartOid
+                ? selection.rangeStartOid
                 : earliestIncludedCommitOid(result.commits, result.headOid),
         );
       }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["pull-request"] }),
+        queryClient.invalidateQueries({ queryKey: ["document"] }),
+        queryClient.invalidateQueries({ queryKey: ["annotations"] }),
+        queryClient.invalidateQueries({ queryKey: ["comment-placement"] }),
+      ]);
       if (options.announce) {
         setSyncFeedback(
           `GitHubと同期しました · ${new Intl.DateTimeFormat("ja-JP", {

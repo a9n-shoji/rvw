@@ -159,13 +159,21 @@ describe("RvwService commit workflow", () => {
     fake.issues.set(142, githubIssue(142, "Requirement with a nested #77 reference."));
     fake.issues.set(99, githubIssue(99));
     fake.issues.set(88, githubIssue(88));
+    fake.issues.set(66, githubIssue(66));
+    fake.issues.set(55, githubIssue(55));
+    fake.issues.set(44, githubIssue(44));
     fake.pullRequest = {
       ...fake.pullRequest,
       body: [
         "Closes #142.",
         "Also acme/review-repo#99.",
-        "See https://github.com/acme/review-repo/issues/88.",
+        "See [the tracked issue](https://github.com/acme/review-repo/issues/88).",
         "Ignore other/repository#77.",
+        "Inline code is not a relation: `#66`.",
+        "```text",
+        "Closes #55",
+        "```",
+        "<code>#44</code>",
       ].join("\n"),
     };
 

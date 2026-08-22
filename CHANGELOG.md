@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `rvw-watch-comments`のinvestigate-and-reply専用taskで、同じPR／repositoryの後続batchもworker capacity内で
+  並列に調査・返信。保証できる場合は`max-in-flight=8`を目標とし、fix-and-pushを許可したtaskだけ従来の
+  writer排他を維持
+- Branch watcherのread-only境界を保ったまま、current／retained sourceのtyped code referenceを最終replyへ
+  付けられるよう変更
+- Issue同期を認証確認の共有と最大8件のbounded concurrencyへ変更
+- viewerの変更pollをdatabase全体からreview kind／ID単位へ絞り、別reviewの更新による再取得を削減
+
+### Fixed
+
+- Branch Reviewがclone内に存在するだけの未同期local commitをdocumentやcomment evidenceとして受理する問題を修正
+- PR本文のinline/fenced codeやraw HTML内に書かれた`#123`をIssue membershipとして誤検出する問題を修正
+- 初期background refreshの完了が、待機中に人間が選択したhistorical commit rangeを上書きするraceを修正
+
 ## [0.2.3] - 2026-08-21
 
 ### Added

@@ -491,6 +491,20 @@ export class GitClient {
     }
   }
 
+  async verifyBranchCommitRef(
+    cwd: string,
+    owner: string,
+    repository: string,
+    oid: string,
+  ): Promise<boolean> {
+    const ref = this.branchCommitRef(owner, repository, oid);
+    try {
+      return (await runText("git", ["rev-parse", "--verify", ref], { cwd })) === oid;
+    } catch {
+      return false;
+    }
+  }
+
   async listRefsByPrefix(cwd: string, prefix: string): Promise<string[]> {
     const output = await runProcess("git", ["for-each-ref", "--format=%(refname)%00", prefix], {
       cwd,

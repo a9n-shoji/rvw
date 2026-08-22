@@ -772,7 +772,7 @@ app.get("/api/meta/change-sequence", (context) => {
   }
   activeViewers.add(viewerId);
   releasedViewers.delete(viewerId);
-  return context.json({ ok: true, changeSequence });
+  return context.json({ ok: true, changeSequence, reviewChangeSequence: changeSequence });
 });
 
 app.post("/api/meta/viewers/release", async (context) => {

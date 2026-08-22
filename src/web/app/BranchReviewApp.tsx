@@ -174,14 +174,21 @@ export function BranchReviewApp({
     queryFn: async () => await api<BranchReviewResponse>(`/api/branch-reviews/${branchReviewId}`),
   });
   const treeQuery = useQuery({
-    queryKey: reviewQueryKeys.tree("branch", branchReviewId),
+    queryKey: reviewQueryKeys.tree(
+      "branch",
+      branchReviewId,
+      reviewQuery.data?.branchReview.sourceOid,
+    ),
     queryFn: async () =>
       await api<BranchTreeResponse>(`/api/branch-reviews/${branchReviewId}/tree`),
   });
   const changeSequence = useQuery({
-    queryKey: reviewQueryKeys.changeSequence(),
+    queryKey: reviewQueryKeys.changeSequence("branch", branchReviewId),
     queryFn: async () =>
-      await api<{ changeSequence: number }>("/api/meta/change-sequence", viewerHeartbeatRequest()),
+      await api<{ changeSequence: number; reviewChangeSequence: number }>(
+        `/api/meta/change-sequence?reviewKind=branch&reviewId=${encodeURIComponent(branchReviewId)}`,
+        viewerHeartbeatRequest(),
+      ),
     refetchInterval: 1_000,
     refetchIntervalInBackground: true,
     networkMode: "always",
@@ -190,7 +197,7 @@ export function BranchReviewApp({
     queryKey: reviewQueryKeys.comments(
       "branch",
       branchReviewId,
-      changeSequence.data?.changeSequence,
+      changeSequence.data?.reviewChangeSequence,
     ),
     queryFn: async () =>
       await api<BranchCommentsResponse>(
@@ -198,7 +205,14 @@ export function BranchReviewApp({
       ),
   });
   const searchQuery = useQuery({
-    queryKey: ["branch-search", branchReviewId, debouncedSearch, searchMatchCase, searchWholeWord],
+    queryKey: [
+      "branch-search",
+      branchReviewId,
+      reviewQuery.data?.branchReview.sourceOid,
+      debouncedSearch,
+      searchMatchCase,
+      searchWholeWord,
+    ],
     queryFn: async ({ signal }) => {
       const parameters = new URLSearchParams({
         q: debouncedSearch,
@@ -217,10 +231,8 @@ export function BranchReviewApp({
   const refresh = useCallback(async (): Promise<void> => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: reviewQueryKeys.review("branch", branchReviewId) }),
-      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.tree("branch", branchReviewId) }),
       queryClient.invalidateQueries({ queryKey: reviewQueryKeys.document() }),
       queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() }),
-      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.search("branch", branchReviewId) }),
       queryClient.invalidateQueries({
         queryKey: reviewQueryKeys.comments("branch", branchReviewId),
       }),
@@ -234,13 +246,13 @@ export function BranchReviewApp({
   }, [branchReviewId, queryClient]);
 
   useEffect(() => {
-    const nextSequence = changeSequence.data?.changeSequence;
+    const nextSequence = changeSequence.data?.reviewChangeSequence;
     if (nextSequence === undefined) return;
     const previousSequence = observedChangeSequence.current;
     observedChangeSequence.current = nextSequence;
     if (previousSequence === null || previousSequence === nextSequence) return;
     void refresh();
-  }, [changeSequence.data?.changeSequence, refresh]);
+  }, [changeSequence.data?.reviewChangeSequence, refresh]);
 
   const syncMutation = useMutation({
     mutationFn: async () =>

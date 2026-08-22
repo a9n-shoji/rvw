@@ -586,12 +586,21 @@ export class RvwDatabase {
     }
   }
 
-  incrementChangeSequence(): number {
+  incrementChangeSequence(context?: { kind: "pull-request" | "branch"; reviewId: string }): number {
     this.database
       .prepare(
         "UPDATE app_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'change_sequence'",
       )
       .run();
+    if (context) {
+      this.database
+        .prepare(
+          `INSERT INTO app_meta(key, value) VALUES (?, '1')
+           ON CONFLICT(key) DO UPDATE
+           SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`,
+        )
+        .run(`review_change_sequence:${context.kind}:${context.reviewId}`);
+    }
     return this.getChangeSequence();
   }
 
@@ -600,6 +609,13 @@ export class RvwDatabase {
       .prepare("SELECT value FROM app_meta WHERE key = 'change_sequence'")
       .get() as DbRow;
     return Number(stringValue(row, "value"));
+  }
+
+  getReviewChangeSequence(kind: "pull-request" | "branch", reviewId: string): number {
+    const row = this.database
+      .prepare("SELECT value FROM app_meta WHERE key = ?")
+      .get(`review_change_sequence:${kind}:${reviewId}`) as DbRow | undefined;
+    return row ? Number(stringValue(row, "value")) : 0;
   }
 
   getCommentWatchDatabaseId(): string {
@@ -790,7 +806,7 @@ export class RvwDatabase {
           existing?.createdAt ?? now,
           now,
         );
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: id });
     });
     const result = this.findBranchReviewByIdentity(github.owner, github.repository);
     if (!result) throw new RvwError("DATABASE_ERROR", "Branch Reviewを読み出せません。");
@@ -811,7 +827,7 @@ export class RvwDatabase {
       if (Number(result.changes) !== 1) {
         throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
       }
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: id });
     });
     const result = this.getBranchReview(id);
     if (!result) throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
@@ -826,7 +842,7 @@ export class RvwDatabase {
       if (Number(result.changes) !== 1) {
         throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
       }
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: id });
     });
     const review = this.getBranchReview(id);
     if (!review) throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
@@ -912,7 +928,7 @@ export class RvwDatabase {
           "INSERT INTO review_issues(review_kind, review_id, issue_id, added_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
         )
         .run(reviewKind, reviewId, cached.id, new Date().toISOString());
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: reviewKind, reviewId });
       return { issue: cached, added: Number(result.changes) === 1 };
     });
   }
@@ -1033,7 +1049,7 @@ export class RvwDatabase {
       if (Number(membership.changes) !== 1) {
         throw new RvwError("DATABASE_ERROR", "Issue membershipを削除できませんでした。");
       }
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: reviewKind, reviewId });
       return counts;
     });
   }
@@ -1097,7 +1113,7 @@ export class RvwDatabase {
       if (Number(review.changes) !== 1) {
         throw new RvwError("DATABASE_ERROR", "Branch Reviewを削除できませんでした。");
       }
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: branchReviewId });
       return counts;
     });
   }
@@ -1114,7 +1130,7 @@ export class RvwDatabase {
         .run(repository.localRepositoryPath, repository.gitCommonDir, new Date().toISOString(), id);
       if (Number(result.changes) === 0)
         throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "pull-request", reviewId: id });
     });
     const pullRequest = this.getPullRequest(id);
     if (!pullRequest) throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
@@ -1190,7 +1206,7 @@ export class RvwDatabase {
   ): PullRequest {
     const id = this.immediateTransaction(() => {
       const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "pull-request", reviewId: writtenId });
       return writtenId;
     });
     const pullRequest = this.getPullRequest(id);
@@ -1208,7 +1224,7 @@ export class RvwDatabase {
     const id = this.immediateTransaction(() => {
       const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
       this.applyCommentUpdates(updates, github.headOid);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "pull-request", reviewId: writtenId });
       return writtenId;
     });
     const pullRequest = this.getPullRequest(id);
@@ -1225,7 +1241,7 @@ export class RvwDatabase {
     const id = this.immediateTransaction(() => {
       const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
       this.deletePullRequestHistory(writtenId);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "pull-request", reviewId: writtenId });
       return writtenId;
     });
     const pullRequest = this.getPullRequest(id);
@@ -1476,7 +1492,7 @@ export class RvwDatabase {
         );
       this.insertCodeReferences("walkthrough", id, input.references);
       const added = this.writeReviewIssueMemberships("pull-request", input.pullRequestId, issues);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "pull-request", reviewId: input.pullRequestId });
       return added;
     });
     const walkthrough = this.getWalkthrough(id);
@@ -1518,7 +1534,10 @@ export class RvwDatabase {
         walkthrough.pullRequestId,
         issues,
       );
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({
+        kind: "pull-request",
+        reviewId: walkthrough.pullRequestId,
+      });
       return added;
     });
     const walkthrough = this.getWalkthrough(id);
@@ -1565,7 +1584,10 @@ export class RvwDatabase {
         )
         .run(id);
       this.database.prepare("DELETE FROM walkthroughs WHERE id = ?").run(id);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({
+        kind: "pull-request",
+        reviewId: walkthrough.pullRequestId,
+      });
       return {
         id: walkthrough.id,
         ref: walkthrough.ref,
@@ -1608,7 +1630,7 @@ export class RvwDatabase {
         { kind: "pull-request", pullRequestUrl: pullRequest.url },
         now,
       );
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "pull-request", reviewId: input.pullRequestId });
     });
     const comment = this.getComment(id);
     if (!comment) throw new RvwError("DATABASE_ERROR", "保存したコメントを読み出せません。");
@@ -1975,7 +1997,9 @@ export class RvwDatabase {
           .run(idempotencyKeyHash, idempotencyRequestHash, id, now);
       }
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
-      if (incrementSequence) this.incrementChangeSequence();
+      if (incrementSequence) {
+        this.incrementChangeSequence({ kind: "pull-request", reviewId: comment.pullRequestId });
+      }
       result = {
         id,
         commentId,
@@ -2002,6 +2026,8 @@ export class RvwDatabase {
     references?: CodeReference[],
   ): CommentPost {
     const now = new Date().toISOString();
+    const comment = this.getComment(commentId);
+    if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     this.immediateTransaction(() => {
       const result =
         relatedCommitOid === undefined
@@ -2026,7 +2052,7 @@ export class RvwDatabase {
         this.insertCodeReferences("comment-post", postId, references);
       }
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "pull-request", reviewId: comment.pullRequestId });
     });
     const post = this.getCommentPost(postId);
     if (!post) {
@@ -2061,7 +2087,7 @@ export class RvwDatabase {
         .prepare("DELETE FROM comment_posts WHERE id = ? AND comment_id = ?")
         .run(postId, commentId);
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "pull-request", reviewId: comment.pullRequestId });
     });
     return { commentId, postId };
   }
@@ -2072,13 +2098,17 @@ export class RvwDatabase {
     incrementSequence = true,
   ): ReviewComment {
     const now = new Date().toISOString();
+    const current = this.getComment(commentId);
+    if (!current) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     const write = (): void => {
       const result = this.database
         .prepare("UPDATE comments SET resolved_at = ?, updated_at = ? WHERE id = ?")
         .run(resolved ? now : null, now, commentId);
       if (Number(result.changes) === 0)
         throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
-      if (incrementSequence) this.incrementChangeSequence();
+      if (incrementSequence) {
+        this.incrementChangeSequence({ kind: "pull-request", reviewId: current.pullRequestId });
+      }
     };
     if (incrementSequence) this.immediateTransaction(write);
     else write();
@@ -2094,7 +2124,7 @@ export class RvwDatabase {
     }
     this.immediateTransaction(() => {
       this.database.prepare("DELETE FROM comments WHERE id = ?").run(commentId);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "pull-request", reviewId: comment.pullRequestId });
     });
     return { id: comment.id, ref: comment.ref };
   }
@@ -2193,7 +2223,7 @@ export class RvwDatabase {
         );
       this.insertCodeReferences("branch-walkthrough", id, input.references);
       const added = this.writeReviewIssueMemberships("branch", input.branchReviewId, issues);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: input.branchReviewId });
       return added;
     });
     const walkthrough = this.getBranchWalkthrough(id);
@@ -2231,7 +2261,7 @@ export class RvwDatabase {
       const walkthrough = this.getBranchWalkthrough(id);
       if (!walkthrough) throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。");
       const added = this.writeReviewIssueMemberships("branch", walkthrough.branchReviewId, issues);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: walkthrough.branchReviewId });
       return added;
     });
     const walkthrough = this.getBranchWalkthrough(id);
@@ -2277,7 +2307,7 @@ export class RvwDatabase {
         )
         .run(id);
       this.database.prepare("DELETE FROM branch_walkthroughs WHERE id = ?").run(id);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: walkthrough.branchReviewId });
       return {
         id,
         ref: walkthrough.ref,
@@ -2474,7 +2504,7 @@ export class RvwDatabase {
         { kind: "branch", repository: branch.canonicalName },
         now,
       );
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: input.branchReviewId });
     });
     const comment = this.getBranchComment(id);
     if (!comment) throw new RvwError("DATABASE_ERROR", "保存したコメントを読み出せません。");
@@ -2572,7 +2602,7 @@ export class RvwDatabase {
       this.database
         .prepare("UPDATE branch_comments SET updated_at = ? WHERE id = ?")
         .run(now, commentId);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: comment.branchReviewId });
       const post = this.listBranchCommentPosts(commentId).find((candidate) => candidate.id === id);
       if (!post) throw new RvwError("DATABASE_ERROR", "返信を読み出せません。");
       return post;
@@ -2587,6 +2617,8 @@ export class RvwDatabase {
     references?: CodeReference[],
   ): CommentPost {
     const now = new Date().toISOString();
+    const comment = this.getBranchComment(commentId);
+    if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     this.immediateTransaction(() => {
       const result =
         relatedCommitOid === undefined
@@ -2615,7 +2647,7 @@ export class RvwDatabase {
       this.database
         .prepare("UPDATE branch_comments SET updated_at = ? WHERE id = ?")
         .run(now, commentId);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: comment.branchReviewId });
     });
     const post = this.listBranchCommentPosts(commentId).find(
       (candidate) => candidate.id === postId,
@@ -2625,6 +2657,8 @@ export class RvwDatabase {
   }
 
   deleteBranchReply(commentId: string, postId: string): { commentId: string; postId: string } {
+    const comment = this.getBranchComment(commentId);
+    if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     const post = this.listBranchCommentPosts(commentId).find(
       (candidate) => candidate.id === postId,
     );
@@ -2639,12 +2673,14 @@ export class RvwDatabase {
       this.database
         .prepare("UPDATE branch_comments SET updated_at = ? WHERE id = ?")
         .run(new Date().toISOString(), commentId);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: comment.branchReviewId });
     });
     return { commentId, postId };
   }
 
   setBranchCommentResolved(commentId: string, resolved: boolean): BranchReviewComment {
+    const current = this.getBranchComment(commentId);
+    if (!current) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     this.immediateTransaction(() => {
       const now = new Date().toISOString();
       const result = this.database
@@ -2653,7 +2689,7 @@ export class RvwDatabase {
       if (Number(result.changes) !== 1) {
         throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
       }
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: current.branchReviewId });
     });
     const comment = this.getBranchComment(commentId);
     if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
@@ -2665,7 +2701,7 @@ export class RvwDatabase {
     if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     this.immediateTransaction(() => {
       this.database.prepare("DELETE FROM branch_comments WHERE id = ?").run(commentId);
-      this.incrementChangeSequence();
+      this.incrementChangeSequence({ kind: "branch", reviewId: comment.branchReviewId });
     });
     return { id: comment.id, ref: comment.ref };
   }

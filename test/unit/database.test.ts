@@ -248,8 +248,18 @@ describe("RvwDatabase", () => {
       "c".repeat(40),
     );
     expect(database.getChangeSequence()).toBe(1);
+    expect(database.getReviewChangeSequence("pull-request", pullRequest.id)).toBe(1);
+    expect(database.getReviewChangeSequence("branch", pullRequest.id)).toBe(0);
     expect(database.getPullRequest(pullRequest.id)?.latestHeadOid).toBe(github.headOid);
     expect(database.getPullRequest(pullRequest.id)?.latestComparisonBaseOid).toBe("c".repeat(40));
+    const otherPullRequest = database.upsertPullRequest(
+      { ...github, number: github.number + 1, url: "https://github.com/acme/repo/pull/8" },
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    expect(database.getChangeSequence()).toBe(2);
+    expect(database.getReviewChangeSequence("pull-request", pullRequest.id)).toBe(1);
+    expect(database.getReviewChangeSequence("pull-request", otherPullRequest.id)).toBe(1);
     database.close();
   });
 

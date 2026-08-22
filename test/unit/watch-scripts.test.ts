@@ -317,8 +317,18 @@ describe("rvw-watch-comments bundled scripts", () => {
       outcomes: [
         {
           commentRef: "rvw://comment/branch-comment",
-          body: "📝 調査結果\n\nThe Branch review is complete.",
-          relatedCommitOid: null,
+          body: "📝 調査結果\n\nRead [the source policy](rvw-ref:source-policy).",
+          relatedCommitOid: "a".repeat(40),
+          references: [
+            {
+              id: "source-policy",
+              label: "Source policy",
+              path: "src/application/rvw-service.ts",
+              startLine: 1317,
+              endLine: 1330,
+              description: null,
+            },
+          ],
           pushStatus: "not-attempted",
         },
       ],
@@ -341,6 +351,10 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(result.replies[0]?.idempotencyKey).toBe(
       (claimed.operations as Array<{ idempotencyKey: string }>)[0]?.idempotencyKey,
     );
+    expect(readFakeCalls(fake.log)[0]?.input).toMatchObject({
+      relatedCommitOid: "a".repeat(40),
+      references: [{ id: "source-policy", path: "src/application/rvw-service.ts" }],
+    });
     expect(runState(state, "list")).toMatchObject({ pending: [] });
     expect(
       runState(state, "ingest", [], {
@@ -379,6 +393,8 @@ describe("rvw-watch-comments bundled scripts", () => {
         env: fakeEnvironment(fake),
         input: JSON.stringify({
           body: "📝 調査結果\n\nRecovered outcome.",
+          relatedCommitOid: null,
+          references: [],
           idempotencyKey,
         }),
       },
@@ -410,6 +426,7 @@ describe("rvw-watch-comments bundled scripts", () => {
               commentRef: "rvw://comment/branch-comment",
               body: "📝 調査結果\n\nRecovered outcome.",
               relatedCommitOid: null,
+              references: [],
               pushStatus: "not-attempted",
             },
           ],
@@ -452,6 +469,7 @@ describe("rvw-watch-comments bundled scripts", () => {
               commentRef: "rvw://comment/branch-comment",
               body: "This must not be posted.",
               relatedCommitOid: "a".repeat(40),
+              references: [],
               pushStatus: "pushed",
             },
           ],
@@ -460,7 +478,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     );
 
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("relatedCommitOid: null");
+    expect(result.stderr).toContain("pushStatus: not-attempted");
     expect(readFakeCalls(fake.log)).toEqual([]);
     expect(runState(state, "status").inFlightBatches).toHaveLength(1);
   });
@@ -480,6 +498,7 @@ describe("rvw-watch-comments bundled scripts", () => {
       commentRef: "rvw://comment/branch-comment",
       body: "📝 調査結果\n\nNo repository write was attempted.",
       relatedCommitOid: null,
+      references: [],
       pushStatus: "not-attempted",
     };
     const invalidInputs = [
@@ -502,6 +521,11 @@ describe("rvw-watch-comments bundled scripts", () => {
         leaseId: claimed.leaseId,
         context: { kind: "branch", repository: "acme/repo" },
         outcomes: [{ ...validOutcome, relatedCommitOid: undefined }],
+      },
+      {
+        leaseId: claimed.leaseId,
+        context: { kind: "branch", repository: "acme/repo" },
+        outcomes: [{ ...validOutcome, references: undefined }],
       },
       {
         leaseId: claimed.leaseId,
@@ -814,14 +838,14 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(code, stderr).toBe(0);
   });
 
-  it("drains a same-PR follow-up after the preceding lease completes", async () => {
+  it("acknowledges a same-PR follow-up while an investigate-only lease is active", async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-follow-up-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
     initializeQueuedState(state);
     const child = spawn(
       process.execPath,
-      [driverScript, state, "--auto-ack", "--max-in-flight", "1"],
+      [driverScript, state, "--auto-ack", "--max-in-flight", "2"],
       {
         env: { ...fakeEnvironment(fake), RVW_WATCH_AUTO_ACK_POLL_MS: "10" },
         stdio: ["pipe", "pipe", "pipe"],
@@ -854,7 +878,6 @@ describe("rvw-watch-comments bundled scripts", () => {
       batches: { inFlight: 1, unbatchedEvents: 1 },
     });
 
-    runState(state, "complete", ["--lease", String(first.leaseId)], { postIds: [] });
     const followUp = await output.waitFor(
       (message) =>
         message.type === "batch-acknowledged" &&
@@ -866,8 +889,11 @@ describe("rvw-watch-comments bundled scripts", () => {
       operations: [expect.objectContaining({ acknowledgement: "created" })],
     });
     expect(runState(state, "status")).toMatchObject({
-      batches: { inFlight: 1, unbatchedEvents: 0 },
+      batches: { inFlight: 2, unbatchedEvents: 0 },
     });
+
+    runState(state, "complete", ["--lease", String(first.leaseId)], { postIds: [] });
+    runState(state, "complete", ["--lease", String(followUp.leaseId)], { postIds: [] });
 
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve, reject) => {

@@ -68,9 +68,11 @@ direct-database transport; an unavailable selected transport is fatal.
 node '<SKILL_DIR>/scripts/preflight.mjs'
 ```
 
-Before starting intake, reserve a positive number of subagent slots for this task. Use that exact
-number as `<RESERVED_WORKER_SLOTS>`; use `1` when the runtime cannot guarantee more. Start the bundled
-driver with the state path and the matching in-flight limit. `--auto-ack` is the normal mode: it claims
+Before starting intake, target eight concurrent subagent slots for this task. When the runtime can
+guarantee at least eight, reserve exactly eight and set `<RESERVED_WORKER_SLOTS>` to `8`. Otherwise
+reserve the largest positive number it can guarantee and use that exact number; use `1` only when it
+cannot guarantee more than one. Never set the value above reserved capacity. Start the bundled driver
+with the state path and the matching in-flight limit. `--auto-ack` is the normal mode: it claims
 eligible PR batches only while fewer than that limit are in flight, re-reads every thread, creates
 `🔎 確認中です…` (or restores it when retrying that batch), records suppression, and emits one
 `batch-acknowledged` JSON line containing the lease and operations. The first `watch-ready` line
@@ -89,6 +91,10 @@ without an acknowledgement post even when `--auto-ack` is enabled. Claim them wi
 Issue, or Walkthrough needed, and create exactly one final idempotent reply per affected comment. Do
 not create progress replies, edit code, commit, push, open a Pull Request, synchronize a PR, change the
 default branch, update a GitHub Issue, or resolve the thread. `reserve-write` rejects Branch leases.
+
+For an `investigate-and-reply`-only task, prefer the target of eight above whenever capacity permits.
+Do not reduce capacity merely because multiple leases may inspect the same Pull Request or repository:
+those workers are source-read-only and each batch owns a distinct status post.
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-driver.mjs' '<TASK_STATE_DB>' \
@@ -167,8 +173,9 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' reserve-write \
 ```
 
 The unique reservation prevents two leases from writing the same repository. A manually invoked
-`auto-ack` may instead receive `--write-key` when that identity was already verified. Both paths
-reject write reservations unless the task was initialized with `--own-mode fix-and-push`.
+`auto-ack` may instead receive `--write-key` when that identity was already verified and the immutable
+task policy allows `fix-and-push`. An `investigate-and-reply`-only task cannot claim or reserve a write
+key; its leases stay unreserved and may inspect the same repository concurrently.
 
 ## Delegate every acknowledged batch immediately
 
@@ -238,25 +245,35 @@ For a Branch Review, use this context and never invent a Pull Request URL:
   "outcomes": [
     {
       "commentRef": "rvw://comment/uuid",
-      "body": "📝 調査結果\n\nConcise final outcome.",
-      "relatedCommitOid": null,
+      "body": "📝 調査結果\n\nThe conclusion follows from [the source policy](rvw-ref:source-policy).",
+      "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567",
+      "references": [
+        {
+          "id": "source-policy",
+          "label": "Branch source policy",
+          "path": "src/application/branch-source-policy.ts",
+          "startLine": 10,
+          "endLine": 24
+        }
+      ],
       "pushStatus": "not-attempted"
     }
   ]
 }
 ```
 
-`pushStatus` is `not-attempted`, `not-needed`, or `pushed`; `relatedCommitOid` is null unless a
-synchronized Pull Request commit should be attached. For Pull Request outcomes, `relatedCommitOid` is
-the exact available PR commit containing every referenced path and may identify investigation evidence
-even when no change was made. Set it to null only when `references` is empty. `references` is always the
-complete array for that outcome. Branch outcomes always use null, no references, and `not-attempted`.
+`pushStatus` is `not-attempted`, `not-needed`, or `pushed`; Branch outcomes always use
+`not-attempted`. `relatedCommitOid` is the exact available review commit containing every referenced
+path and may identify investigation evidence even when no change was made. For a Branch outcome it
+must be the current or an already retained Branch source commit; never use an arbitrary local branch or
+worktree commit. Set it to null only when `references` is empty and the body does not need that commit
+for repository links or images. `references` is always the complete array for that outcome.
 The worker's completion notification only signals that the file is ready.
 The parent reads and validates the file after that notification and never depends on relayed message
 text for the result. Accept no progress, plans, or partial findings as the final result.
 
-For every concrete claim about code behavior, an implemented change, or relevant test coverage in a
-Pull Request outcome, use typed references by default so the reviewer can open the exact evidence. Select the
+For every concrete claim about code behavior, an implemented change, or relevant test coverage in an
+outcome, use typed references by default so the reviewer can open the exact evidence. Select the
 smallest useful committed range, include a signature plus the relevant body for multi-line behavior,
 link every declaration from `body` as `rvw-ref:<referenceId>`, and keep IDs unique within the post. A
 repository comment target already opens its exact source; do not duplicate it unless a separately
@@ -299,19 +316,26 @@ node '<SKILL_DIR>/scripts/complete-branch.mjs' \
 ```
 
 The helper requires the worker's `leaseId`, Branch `context`, and every outcome's explicit
-`commentRef`, non-empty `body`, `relatedCommitOid: null`, and `pushStatus: "not-attempted"`. It rejects
-the complete input before posting any reply when any field is absent, mismatched, or write-capable.
+`commentRef`, non-empty `body`, `relatedCommitOid`, complete `references` array, and
+`pushStatus: "not-attempted"`. It rejects the complete input before posting any reply when any field is
+absent, mismatched, or write-capable. The rvw service then validates that a non-null commit is current
+or already retained and that every reference resolves within that exact source.
 
 If the process stops after posting but before completion, run `recover`, claim the same Branch batch,
 and invoke the helper with the same outcomes and new lease. The batch retains its operation keys, so
 `comment reply` returns the existing posts and completion suppresses them without duplicate replies.
 Whether each reply event arrives before or after completion, it must not create another pending batch.
 
-An event for a PR with an active lease remains durable but is not eligible for another claim. After
-`complete` releases the current lease, let the driver's state pump claim that PR's newly eligible
-events and immediately delegate the emitted lease under the same rules. After retryable `fail`, let
-the pump wait through the recorded `nextAttemptAt` and dispatch the restored lease when due. Never
-assign a follow-up or retry to the previous subagent.
+In an `investigate-and-reply`-only task, an event for a PR with an active lease becomes a separate
+eligible batch. The driver's state pump may acknowledge and delegate it immediately while reserved
+capacity remains; do not wait for the preceding investigation to complete. Batch-scoped status posts
+keep both final edits independent. When the immutable task policy allows `fix-and-push`, same-PR
+follow-ups remain durable but ineligible until the active lease is released, and repository write
+reservations serialize writers across different PRs. After retryable `fail`, let the pump wait through
+the recorded `nextAttemptAt` and dispatch the restored lease when due. Never assign a follow-up or retry
+to the previous subagent.
+Branch leases are always read-only, so their same-repository follow-ups are likewise eligible while an
+older Branch lease is active and worker capacity remains.
 
 ## Choose the worker mode
 

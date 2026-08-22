@@ -1,5 +1,50 @@
 # Architecture decisions
 
+## 2026-08-22: Keep Branch evidence exact and make synchronization work review-local
+
+### Problem
+
+Branch document and comment-reference reads accepted any commit object that happened to exist in the
+registered clone. A local topic commit could therefore enter a Branch Review even though the product
+defines its source as the synchronized default branch and retained historical evidence. At the same
+time, the Branch watch Skill prohibited typed references entirely, so a read-only investigation could
+not point back to the exact committed evidence required by the product principles.
+
+Issue synchronization also authenticated and fetched every Issue serially, treated Issue-looking text
+inside Markdown code as a relation, and used one database-wide UI sequence to invalidate unrelated
+open reviews. A delayed initial PR refresh could apply selection state captured before the reviewer
+chose a historical commit.
+
+### Choice
+
+Treat `refs/rvw/branch/<owner>/<repository>/commits/oid-<oid>` as the Branch source allowlist. Branch
+reads and typed references require both that exact retained ref and its Git object; arbitrary local
+commits are rejected. Keep Branch workers strictly read-only, but allow their final replies to carry a
+current or already retained evidence OID and validated post-level typed references. `pushStatus`
+remains `not-attempted`, and no code, GitHub, resolve, or default-branch write is added.
+
+Parse PR bodies as Markdown and collect direct Issue references only from prose and link destinations,
+not code spans, fenced code, or raw HTML. Share one successful GitHub authentication check per client
+process and fetch independent Issues with a bounded concurrency of eight while preserving ordered,
+per-Issue success and failure results.
+
+Add a review-local monotonic sequence under `app_meta` beside the existing database-wide sequence.
+Viewer polling keys and invalidation now use `(review kind, review ID)` so a write in one review does
+not refetch another review's documents, search, tree, comments, and Walkthroughs. Exact source OIDs
+remain query keys for Branch tree and search. Read the current commit selection from a render-updated
+ref when refresh completes, and schedule its state update before asynchronous cache invalidation.
+
+### Trade-offs
+
+- A Branch reference cannot cite an unsynchronized local commit even if its object is readable; it must
+  first become the synchronized default-branch source or already be retained by rvw.
+- Eight concurrent Issue requests trade a small bounded burst for substantially lower large-review
+  synchronization latency. Individual failures remain isolated.
+- Review-local sequence keys accumulate small `app_meta` rows after reset; keeping them avoids a new
+  schema and does not affect review identity or artifact ownership.
+- The database-wide sequence remains available for diagnostics and compatibility, but viewers no
+  longer use it as their content invalidation boundary.
+
 ## 2026-08-21: Harden Branch Review lifecycle without widening its product model
 
 ### Problem
@@ -110,6 +155,38 @@ allows reset to recreate that aggregate without overloading a mutable repository
   by the selected review.
 - Branch Reviews intentionally have no arbitrary branch selector, history picker, list screen, or
   automatic attachment to a later Pull Request.
+
+## 2026-08-21: Parallelize investigate-only leases within one Pull Request
+
+### Problem
+
+The watch task serialized every lease for a Pull Request until completion. That protected code writes,
+but also delayed later read-only investigations even when worker capacity was available. Investigation
+workers never modify the repository, and batch-scoped status posts already give concurrent replies
+independent edit targets.
+
+### Choice
+
+When the task's immutable policy is `investigate-and-reply`, allow a newly arrived event to form and
+claim a second batch while another lease for the same Pull Request is active. Keep the driver's
+`max-in-flight` worker-capacity bound, but do not reduce it because leases share a Pull Request or
+repository. Target eight reserved workers and `max-in-flight=8` when the runtime can guarantee that
+capacity; otherwise use the largest guaranteed positive capacity, falling back to one only when
+parallel capacity cannot be guaranteed. Reject repository write reservations under this read-only
+policy.
+
+When the task policy permits `fix-and-push`, retain one active lease per Pull Request and the unique
+head-repository write reservation across Pull Requests. This keeps potentially overlapping code work
+serialized without imposing that restriction on tasks that cannot write code.
+
+### Trade-offs
+
+- Later review feedback can be acknowledged, investigated, and answered without waiting for an older
+  read-only investigation.
+- Two investigations may finish out of order, but each updates only its own batch status post and reads
+  the thread again before the final edit.
+- A fix-enabled task remains conservative even for an individual lease that ultimately falls back to
+  investigation because author and live-head classification happens after acknowledgement.
 
 ## 2026-08-21: Proxy only modern GitHub attachments and render repository images separately
 
@@ -446,8 +523,9 @@ Keep protocol version 2 because both `comment.watch` and `comment.edit` are addi
   This is deliberate: Agent execution state does not enter the rvw product database.
 - PR author cache is null until an old saved PR is synchronized again. The policy fails closed and can
   use the live comment read before considering a write.
-- Multiple independent tasks can consume the same rvw event log. A single task database serializes its
-  own claims and repository writers; users should not intentionally start competing automation tasks
+- Multiple independent tasks can consume the same rvw event log. A single task database serializes
+  same-PR claims and repository writers when fixes are permitted; the newer investigate-only decision
+  allows read-only claims to overlap. Users should not intentionally start competing automation tasks
   with overlapping responsibility.
 - Replacing the status post keeps a thread quiet but rvw does not retain the acknowledgement or an
   earlier Agent outcome as post history; the current result and Git commits remain the intended record.

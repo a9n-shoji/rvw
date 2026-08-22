@@ -97,6 +97,8 @@ export function parseIssueReference(
 }
 
 export class GitHubClient implements GitHubPort {
+  private authentication: Promise<void> | null = null;
+
   constructor(private readonly processRunner: ProcessRunner = runProcess) {}
 
   async doctor(): Promise<{ version: string; authenticated: boolean }> {
@@ -108,14 +110,21 @@ export class GitHubClient implements GitHubPort {
   }
 
   async assertAuthenticated(): Promise<void> {
-    const status = await runProcess("gh", ["auth", "status", "--hostname", "github.com"], {
+    this.authentication ??= this.checkAuthentication().catch((error: unknown) => {
+      this.authentication = null;
+      throw error;
+    });
+    await this.authentication;
+  }
+
+  private async checkAuthentication(): Promise<void> {
+    const status = await this.processRunner("gh", ["auth", "status", "--hostname", "github.com"], {
       allowExitCodes: [1],
     });
-    if (status.exitCode !== 0) {
-      throw new RvwError("GH_NOT_AUTHENTICATED", "GitHub CLIがgithub.comへ認証されていません。", {
-        suggestions: ["gh auth login", "gh auth setup-git"],
-      });
-    }
+    if (status.exitCode === 0) return;
+    throw new RvwError("GH_NOT_AUTHENTICATED", "GitHub CLIがgithub.comへ認証されていません。", {
+      suggestions: ["gh auth login", "gh auth setup-git"],
+    });
   }
 
   async getPullRequest(reference: string | undefined, cwd: string): Promise<GitHubPullRequest> {

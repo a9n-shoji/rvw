@@ -117,14 +117,18 @@ diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分�
 Branch Reviewのidentityはcanonical GitHub repositoryであり、default branch名が変わっても同じrowを
 再利用する。sourceはGitHub repository metadataが返したdefault branch OIDを一時refへfetchして一致を
 検証し、`refs/rvw/branch/<owner>/<repository>/commits/oid-<oid>`へ保持する。checkout、index、worktreeを
-変更しない。保存済みGit common directoryはlocal source bindingの一部とする。同じcommon directoryの
+変更しない。Branch document、Comment、Walkthrough、typed referenceが受理するsource OIDは、このnamespaceの
+currentまたは既存retained refと同じOIDに限り、clone内に存在するだけの任意のlocal commitは認めない。
+保存済みGit common directoryはlocal source bindingの一部とする。同じcommon directoryの
 別worktreeは同じreviewを利用できるが、canonical repositoryが同じ独立cloneは同期前に明示errorとし、
 path、common directory、source、ref、artifactを変更しない。別cloneでの再作成は登録済みreviewの明示
-reset後だけ許可する。同期はIssueを一件ずつ更新し、一件の取得失敗で他のcached文書を失わない。
+reset後だけ許可する。同期はIssueごとの結果と失敗分離を維持しつつ最大8件を並列取得し、一件の取得失敗で
+他のcached文書を失わない。同じGitHub client processでは成功した認証確認を共有する。
 
 Issue cacheはcanonical GitHub identityで共有し、review membershipは別tableで所有する。PR本文からは
 同一repositoryの直接参照だけを一段抽出し、Walkthrough payloadの`issues`は追加だけを保証する。Issue
-本文やWalkthroughから再帰探索せず、参照消失でもmembershipを自動削除しない。Issue本文hashが変わった
+参照抽出はMarkdownのproseとlink destinationだけを対象にし、inline/fenced codeとraw HTML内の見かけ上の
+参照を登録しない。Issue本文やWalkthroughから再帰探索せず、参照消失でもmembershipを自動削除しない。Issue本文hashが変わった
 場合、旧本文range Commentは保守的にOutdatedとし、自動resolveしない。membershipを明示削除した場合は、
 そのIssue文書と削除されるthreadのpage内draftだけを破棄し、別文書のdraftは保持する。
 
@@ -849,9 +853,14 @@ complete前にingest済みならpending rowをcompletedへ移し、後ならinge
 protocol、capability、transport、Nodeを一括検査し、watch driverは
 stateのcursorを自動解決してRFC 7464 frameをatomicにingestする。driverのauto-ack modeは新規batchを
 LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthread contextを一行JSONで通知する。
-親taskは起動前にsubagent slot数を予約し、driverの`max-in-flight`をその数以下に固定する。driverはlimit
-未満だけauto-ackし、task stateを短周期で再確認する。同一PRのactive lease中に到着したeventは先行lease
-解放後に、retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
+親taskは起動前にsubagent slot数を予約する。`max-in-flight`は8を目標とし、runtimeが8枠を保証できれば8、
+それ未満なら保証できる最大の正数、複数枠を保証できなければ1を指定し、予約数を超えない。driverはlimit
+未満だけauto-ackし、task stateを短周期で再確認する。investigate-and-replyだけを許可したtaskでは、同一PRの
+active lease中に到着したeventも別batchとしてcapacity内でauto-ackし、同じPRまたはrepositoryをread-onlyで
+並列調査できる。Branch batchはtask全体のpolicyにかかわらず常にこのread-only並列規則を使う。batchごとの
+status postまたはBranch final replyを使うため結果は衝突しない。fix-and-pushを許可したtaskではPull Requestの
+後続eventを先行lease解放後まで待たせ、repository write reservationにより異なるPR間のwriterも直列化する。
+retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
 state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。rvwはAgentやsubagentを
 起動せず、これらのtask stateも保持しない。
 task起動時に明示された場合だけ、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
@@ -860,7 +869,8 @@ OIDとpush先が一致するPRをfix-and-push候補にできる。他人、不�
 fresh subagentへ必ず委譲し、直接調査・実装しない。subagentを速やかに起動できない場合はleaseをretryable
 failureへ戻し、親taskが代行しない。subagent結果は、最終bodyに加えて`relatedCommitOid`、完全な
 `references`配列、`pushStatus`を持つ。
-code変更がない調査結果でも、具体的なcode上の結論を支える利用可能なPR commitとtyped referenceを返せる。
+code変更がない調査結果でも、具体的なcode上の結論を支える利用可能なreview commitとtyped referenceを返せる。
+Branchではcurrent sourceまたは既存retained refのOIDだけを認め、任意のlocal commitを根拠にしない。
 parentはthreadを再取得してbody、commit、referenceを検証し、同じstatus postの完全置換へすべて渡す。
 fix-and-push後のreferenceは同期済みGitHub headへ固定する。referenceがない結果は空配列を明示し、以前の
 retryやacknowledgementから宣言を引き継がない。
@@ -1022,7 +1032,8 @@ CREATE TABLE app_meta (
   value TEXT NOT NULL
 );
 
--- change_sequence、global theme_preference、comment_watch_database_idを保持する。
+-- database-wide change_sequence、review kind/IDごとのreview_change_sequence、
+-- global theme_preference、comment_watch_database_idを保持する。
 
 CREATE TABLE pull_requests (
   id TEXT PRIMARY KEY,
@@ -1427,9 +1438,13 @@ processが存在しない場合だけ回収する。検知直後に各threadを�
 親taskはintake、dispatch、task state、最終replyだけを所有し、batchの大きさ、mode、変更有無にかかわらず、
 acknowledge済みleaseを同じscheduling turn内で一つのfresh subagentへ必ず委譲する。親taskによる直接調査・
 実装と、複数leaseの後回しの一括委譲を認めない。親taskは起動前にsubagent slot数を予約し、driverの
-`max-in-flight`をその数以下に固定する。driverはlimit未満だけauto-ackし、task stateを短周期で再確認して、
-同一PRのactive lease中に到着したeventを先行lease解放後に、retryable failureを`nextAttemptAt`到達後に、
-新しいwatch eventやreconnectを待たずauto-ackする。subagentを速やかに起動できない場合はleaseをretryable
+`max-in-flight`は8を目標に、8枠を保証できれば8、それ未満なら保証できる最大の正数、複数枠を保証できなければ
+1を指定する。予約数を超えてはならない。driverはlimit未満だけauto-ackし、task stateを短周期で再確認する。
+investigate-and-replyだけを許可したtaskでは同一PRのactive lease中に到着したeventも別leaseとして並列委譲する。
+Branch leaseはtask全体のpolicyにかかわらず常にread-onlyで同一repositoryへ並列委譲できる。fix-and-pushを
+許可したtaskではPull Requestの後続eventを先行lease解放後まで待たせ、repository writerもwrite reservationで
+直列化する。retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
+subagentを速やかに起動できない場合はleaseをretryable
 failureへ戻し、親taskが代行しない。subagentごとに一leaseだけを割り当て、絶対pathのatomic JSON fileを
 唯一の最終結果回収経路にする。Branch batchはacknowledgementを作らず、同じ即時委譲規則で調査し、
 厳格に検証したworker resultから一件のfinal replyを投稿する。subagentの最終結果はbody、

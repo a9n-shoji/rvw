@@ -451,11 +451,13 @@ function listPending(database) {
       ORDER BY first_sequence`,
     )
     .all(now);
+  const blockedStatuses =
+    getMeta(database, "own_mode") === "investigate-and-reply"
+      ? "status = 'pending'"
+      : "status = 'pending' OR (status = 'in_flight' AND review_kind = 'pull-request')";
   const blockedContexts = new Set(
     database
-      .prepare(
-        "SELECT DISTINCT review_kind, context_key FROM batches WHERE status IN ('pending', 'in_flight')",
-      )
+      .prepare(`SELECT DISTINCT review_kind, context_key FROM batches WHERE ${blockedStatuses}`)
       .all()
       .map((row) => `${row.review_kind}:${row.context_key}`),
   );
@@ -597,12 +599,18 @@ function claim(database, context, writeKey) {
   const canonicalWriteKey = writeKey === undefined ? undefined : normalizeWriteKey(writeKey);
   return transaction(database, () => {
     const now = new Date().toISOString();
-    const active = database
-      .prepare(
-        "SELECT id FROM batches WHERE review_kind = ? AND context_key = ? AND status = 'in_flight'",
-      )
-      .get(context.kind, context.key);
-    if (active) fail("Review context already has an in-flight batch");
+    const ownMode = getMeta(database, "own_mode");
+    if (canonicalWriteKey !== undefined && ownMode !== "fix-and-push") {
+      fail("Task policy does not allow repository write reservations");
+    }
+    if (context.kind === "pull-request" && ownMode !== "investigate-and-reply") {
+      const active = database
+        .prepare(
+          "SELECT id FROM batches WHERE review_kind = ? AND context_key = ? AND status = 'in_flight'",
+        )
+        .get(context.kind, context.key);
+      if (active) fail("Pull Request already has an in-flight batch");
+    }
     let batch = database
       .prepare(
         `SELECT * FROM batches
@@ -674,6 +682,9 @@ function claim(database, context, writeKey) {
 function reserveWrite(database, leaseId, writeKey) {
   const canonicalWriteKey = normalizeWriteKey(writeKey);
   return transaction(database, () => {
+    if (getMeta(database, "own_mode") !== "fix-and-push") {
+      fail("Task policy does not allow repository write reservations");
+    }
     const batch = database
       .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
       .get(leaseId);

@@ -8,7 +8,10 @@ function optionalTail(value: unknown): [] | [unknown] {
 }
 
 export const reviewQueryKeys = {
-  changeSequence: () => ["change-sequence"] as const,
+  changeSequence: (kind?: ReviewKind, reviewId?: string | null) =>
+    kind && reviewId
+      ? (["change-sequence", kind, reviewId] as const)
+      : (["change-sequence"] as const),
   review: (kind: ReviewKind, reviewId: string | null) =>
     kind === "pull-request"
       ? (["pull-request", reviewId] as const)
@@ -16,7 +19,7 @@ export const reviewQueryKeys = {
   tree: (kind: ReviewKind, reviewId: string, sourceOid?: string) =>
     kind === "pull-request"
       ? (["tree", reviewId, sourceOid] as const)
-      : (["branch-tree", reviewId] as const),
+      : (["branch-tree", reviewId, sourceOid] as const),
   document: (ref?: ReviewDocumentRef) =>
     ref === undefined ? (["document"] as const) : (["document", ref] as const),
   annotations: () => ["annotations"] as const,

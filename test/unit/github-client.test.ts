@@ -85,3 +85,49 @@ describe("GitHubClient attachment fetching", () => {
     );
   });
 });
+
+describe("GitHubClient authentication", () => {
+  it("shares one successful gh auth check across concurrent and later API operations", async () => {
+    let calls = 0;
+    const runner: typeof runProcess = async () => {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return {
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        exitCode: 0,
+        stdoutTruncated: false,
+      };
+    };
+    const client = new GitHubClient(runner);
+
+    await Promise.all([
+      client.assertAuthenticated(),
+      client.assertAuthenticated(),
+      client.assertAuthenticated(),
+    ]);
+    await client.assertAuthenticated();
+
+    expect(calls).toBe(1);
+  });
+
+  it("allows a failed authentication check to be retried", async () => {
+    let calls = 0;
+    const runner: typeof runProcess = () => {
+      calls += 1;
+      return Promise.resolve({
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        exitCode: calls === 1 ? 1 : 0,
+        stdoutTruncated: false,
+      });
+    };
+    const client = new GitHubClient(runner);
+
+    await expect(client.assertAuthenticated()).rejects.toMatchObject({
+      code: "GH_NOT_AUTHENTICATED",
+    });
+    await expect(client.assertAuthenticated()).resolves.toBeUndefined();
+    expect(calls).toBe(2);
+  });
+});

@@ -80,6 +80,53 @@ describe("rvw-watch-comments task state", () => {
     ).toMatchObject({ status: "suppressed" });
   });
 
+  it("allows concurrent Branch leases even when the task can fix owned Pull Requests", () => {
+    const state = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-parallel-")),
+      "task.db",
+    );
+    run(state, "init", ["--own-mode", "fix-and-push", "--expected-login", "reviewer"]);
+    ingest(state, {
+      type: "ready",
+      databaseId: "11113333555577779999aaaaccccdddd",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "branch-human-post-1",
+        commentRef: "rvw://comment/branch-comment-1",
+        context: { kind: "branch", repository: "acme/repo" },
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+    const first = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-2",
+      event: {
+        sequence: 2,
+        postId: "branch-human-post-2",
+        commentRef: "rvw://comment/branch-comment-2",
+        context: { kind: "branch", repository: "acme/repo" },
+        createdAt: "2026-08-20T00:00:01.000Z",
+        deleted: false,
+      },
+    });
+
+    expect(run(state, "list")).toMatchObject({
+      inFlight: 1,
+      pending: [{ commentRefs: ["rvw://comment/branch-comment-2"] }],
+    });
+    const second = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    expect(second.batchId).not.toBe(first.batchId);
+    expect(run(state, "status")).toMatchObject({ batches: { inFlight: 2 } });
+  });
+
   it("completes an already-ingested Branch final reply when suppression is recorded", () => {
     const state = path.join(
       mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-first-")),
@@ -219,13 +266,13 @@ describe("rvw-watch-comments task state", () => {
     });
   });
 
-  it("rejects Pull Request write reservations under investigate-and-reply policy", () => {
-    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-readonly-")), "task.db");
-    const pullRequest = "https://github.com/acme/repo/pull/10";
+  it("allows concurrent leases for the same PR under an investigate-only policy", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-parallel-")), "task.db");
+    const pullRequest = "https://github.com/acme/repo/pull/9";
     run(state, "init", ["--own-mode", "investigate-and-reply"]);
     ingest(state, {
       type: "ready",
-      databaseId: "aabbccddaabbccddaabbccddaabbccdd",
+      databaseId: "abc123abc123abc123abc123abc123ab",
       cursor: "cursor-0",
       anchoredAtCurrent: true,
     });
@@ -234,21 +281,72 @@ describe("rvw-watch-comments task state", () => {
       cursor: "cursor-1",
       event: {
         sequence: 1,
-        postId: "human-post-readonly",
-        commentRef: "rvw://comment/comment-readonly",
+        postId: "human-post-parallel-1",
+        commentRef: "rvw://comment/comment-parallel-1",
         pullRequestUrl: pullRequest,
         createdAt: "2026-08-20T00:00:00.000Z",
         deleted: false,
       },
     });
+    const first = run(state, "claim", ["--pull-request", pullRequest]);
 
-    expect(() =>
-      run(state, "claim", ["--pull-request", pullRequest, "--write-key", "acme/repo"]),
-    ).toThrow(/investigate-and-reply/);
-    const claimed = run(state, "claim", ["--pull-request", pullRequest]);
-    expect(() =>
-      run(state, "reserve-write", ["--lease", String(claimed.leaseId), "--write-key", "acme/repo"]),
-    ).toThrow(/investigate-and-reply/);
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-2",
+      event: {
+        sequence: 2,
+        postId: "human-post-parallel-2",
+        commentRef: "rvw://comment/comment-parallel-2",
+        pullRequestUrl: pullRequest,
+        createdAt: "2026-08-20T00:00:01.000Z",
+        deleted: false,
+      },
+    });
+    expect(run(state, "list")).toMatchObject({
+      inFlight: 1,
+      pending: [{ pullRequest, commentRefs: ["rvw://comment/comment-parallel-2"] }],
+    });
+
+    const second = run(state, "claim", ["--pull-request", pullRequest]);
+    expect(second).toMatchObject({ pullRequest, attempts: 1, writeKey: null });
+    expect(second.batchId).not.toBe(first.batchId);
+    expect(run(state, "status")).toMatchObject({ batches: { inFlight: 2 } });
+
+    const writeCapableClaim = spawnSync(
+      process.execPath,
+      [
+        script,
+        "claim",
+        "--state",
+        state,
+        "--pull-request",
+        pullRequest,
+        "--write-key",
+        "acme/repo",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(writeCapableClaim.status).toBe(1);
+    expect(writeCapableClaim.stderr).toContain("investigate-and-reply");
+
+    const writeReservation = spawnSync(
+      process.execPath,
+      [
+        script,
+        "reserve-write",
+        "--state",
+        state,
+        "--lease",
+        String(first.leaseId),
+        "--write-key",
+        "acme/repo",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(writeReservation.status).toBe(1);
+    expect(writeReservation.stderr).toContain(
+      "Task policy does not allow repository write reservations",
+    );
   });
 
   it("records a new durable status post for a later batch in the same thread", () => {

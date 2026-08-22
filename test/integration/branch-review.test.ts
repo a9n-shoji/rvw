@@ -19,6 +19,9 @@ import { commitFile, createGitRepository, git } from "../fixtures/git-repository
 
 class BranchGitHub implements GitHubPort {
   repositoryError: Error | null = null;
+  issueFetchDelayMs = 0;
+  activeIssueFetches = 0;
+  maxActiveIssueFetches = 0;
 
   constructor(
     public repository: GitHubRepository,
@@ -39,10 +42,19 @@ class BranchGitHub implements GitHubPort {
     return Promise.resolve(this.repository);
   }
 
-  getIssue(number: number): Promise<GitHubIssue> {
-    const issue = this.issues.get(number);
-    if (!issue) throw new Error(`missing Issue #${number}`);
-    return Promise.resolve(issue);
+  async getIssue(number: number): Promise<GitHubIssue> {
+    this.activeIssueFetches += 1;
+    this.maxActiveIssueFetches = Math.max(this.maxActiveIssueFetches, this.activeIssueFetches);
+    try {
+      if (this.issueFetchDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, this.issueFetchDelayMs));
+      }
+      const issue = this.issues.get(number);
+      if (!issue) throw new Error(`missing Issue #${number}`);
+      return issue;
+    } finally {
+      this.activeIssueFetches -= 1;
+    }
   }
 
   getAttachment() {
@@ -805,7 +817,10 @@ describe("Branch Review", () => {
     );
     github.repository = { ...github.repository, defaultBranchOid: nextHead };
     git(repositoryPath, "reset", "--hard", previousHead);
+    github.maxActiveIssueFetches = 0;
+    github.issueFetchDelayMs = 5;
     const synchronized = await service.syncBranchReview(repositoryPath);
+    expect(github.maxActiveIssueFetches).toBe(8);
     expect(synchronized.branchReview.sourceOid).toBe(nextHead);
     expect(git(repositoryPath, "rev-parse", "HEAD")).toBe(previousHead);
     expect(await service.git.hasObject(repositoryPath, nextHead)).toBe(true);
@@ -826,6 +841,44 @@ describe("Branch Review", () => {
       path: "README.md",
     });
     expect(historicalDocument.text).toContain(previousReadme);
+  });
+
+  it("rejects locally available commits outside the current or retained Branch source", async () => {
+    const { repositoryPath, service } = setup();
+    const opened = await service.openBranchReview(repositoryPath);
+    const unretainedOid = commitFile(
+      repositoryPath,
+      "topic-only.txt",
+      "This commit was never synchronized as the default branch.\n",
+      "local topic commit",
+    );
+    expect(await service.git.hasObject(repositoryPath, unretainedOid)).toBe(true);
+
+    await expect(
+      service.getBranchDocument({
+        kind: "repository-file",
+        branchReviewId: opened.branchReview.id,
+        sourceOid: unretainedOid,
+        path: "topic-only.txt",
+      }),
+    ).rejects.toMatchObject({ code: "COMMIT_NOT_FOUND" });
+
+    await expect(
+      service.createBranchComment({
+        branchReviewId: opened.branchReview.id,
+        target: {
+          kind: "document",
+          documentKind: "repository-file",
+          sourceOid: opened.branchReview.sourceOid,
+          path: "README.md",
+          startLine: 1,
+          endLine: 1,
+        },
+        body: "The local topic commit must not become Branch evidence.",
+        relatedCommitOid: unretainedOid,
+        references: [],
+      }),
+    ).rejects.toMatchObject({ code: "COMMIT_NOT_FOUND" });
   });
 
   it("accepts a reset when Git ref deletion reports an error after applying the transaction", async () => {

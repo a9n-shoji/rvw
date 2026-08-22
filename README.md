@@ -218,13 +218,15 @@ Pull Request batchをclaimすると各threadへ`🔎 確認中です…`をAgent
 queue、retry、batch内のthread単位status post、自己返信抑制をtransactionalに保存します。同じthreadへ
 後から返信が追加された場合は新しいstatus postを返信するため、以前の回答は書き換えません。親taskは
 起動前にsubagent枠を予約し、driverはその枠数までだけbatchをclaimします。acknowledge済みbatchは大小や
-変更有無にかかわらず同じscheduling turnでfresh subagentへ委譲し、親taskは直接処理しません。lease解放後の
-同一PR follow-upと期限到達したretryはdriverがtask stateから自動的に再開します。
+変更有無にかかわらず同じscheduling turnでfresh subagentへ委譲し、親taskは直接処理しません。read-only taskの
+同一PR follow-upと、常にread-onlyなBranch follow-upはcapacity内で並列にclaimし、fix-and-pushを許可したtaskの
+同一PR writerだけをlease解放まで待たせます。期限到達したretryはdriverがtask stateから自動的に再開します。
 調査結果、実装内容、test結果が具体的なcodeに基づく場合、Skillは最終replyからexact commitの有用な
 line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動できるようにします。
 Branch
 Reviewは常にread-only調査で、進捗replyを作らず一件の冪等な最終replyだけを追加し、commit、push、
-GitHub Issue更新、resolveを行いません。最終replyのpost IDはlease完了時にdurableな自己抑止対象へ
+GitHub Issue更新、resolveを行いません。具体的なcode上の結論にはcurrentまたはretained Branch sourceの
+typed referenceを付けられ、任意のlocal commitは根拠として受理されません。最終replyのpost IDはlease完了時にdurableな自己抑止対象へ
 登録されるため、そのreply eventが完了の前後どちらで届いても新しいBranch batchを作りません。
 
 三つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、

@@ -399,6 +399,9 @@ Another or unknown author remains code/GitHub read-only. A Branch batch is alway
 final idempotent reply without resolving the thread. Its worker result uses
 `{kind:"branch",repository}` rather than a fake Pull Request URL. The final reply uses the operation's
 stable idempotency key, and lease completion receives the returned post ID as a durable suppression.
+The reply may carry typed references when `relatedCommitOid` is the current or an already retained
+Branch source; an arbitrary commit that merely exists in the local clone is rejected. This evidence
+does not widen the Branch worker's read-only authority.
 If the reply event was already ingested, completion marks that pending event completed; if it arrives
 later, ingestion suppresses it. A restart retries the same key, recovers the existing reply, and then
 completes without adding a duplicate or a new batch.
@@ -410,9 +413,11 @@ watch exits reconnect from the state cursor with bounded exponential backoff; pr
 and acknowledgement failures have distinct nonzero driver exits. These helpers remain external Skill
 processes and do not move Agent runtime or task state into rvw. Before an initial connection or
 reconnect, the driver drains eligible pending work left between a durable ingest and an interrupted
-acknowledgement. Auto-ack is capped by the subagent capacity reserved by the parent, and a short-period
-task-state pump drains same-PR follow-ups after lease release and retryable batches after their due time
-without waiting for another watch event or reconnect. Before spawning rvw, the driver atomically acquires
+acknowledgement. Auto-ack is capped by the subagent capacity reserved by the parent. A short-period
+task-state pump may claim same-review follow-ups immediately when they are necessarily read-only,
+including every Branch lease and an investigate-only task's PR leases. A task that permits PR fixes
+waits for the active same-PR lease to release. Due retryable batches resume without waiting for another
+watch event or reconnect. Before spawning rvw, the driver atomically acquires
 one process-owner lock beside the canonical task-state path. A concurrent driver for that state exits
 without starting another watcher. The lock is released on graceful shutdown, and a later driver reclaims
 it only when the recorded owner process no longer exists.
@@ -590,7 +595,8 @@ an absolute JSON result path rather than relying on relayed completion text. Sub
 `body`, `relatedCommitOid`, a complete `references` array, and `pushStatus`. The Skill uses typed
 references by default for concrete code behavior, implemented
 changes, and relevant tests when an exact committed range adds navigation value. Investigation-only
-outcomes may cite their evidence commit without claiming that a change was pushed.
+outcomes may cite their evidence commit without claiming that a change was pushed. Branch outcomes keep
+`pushStatus: "not-attempted"` and limit that evidence commit to the current or retained Branch source.
 
 Each rvw-managed installation records the bundled digest. Status distinguishes a clean older bundle
 (`updateAvailable` and `updateRequired`), local customization (`locallyModified`), and a differing

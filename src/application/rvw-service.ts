@@ -352,6 +352,28 @@ interface WalkthroughMarkdownAnalysis {
   mermaidNodeIds: Set<string>;
 }
 
+const ISSUE_FETCH_CONCURRENCY = 8;
+
+async function mapWithConcurrency<T, Result>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<Result>,
+): Promise<Result[]> {
+  const results = new Array<Result>(values.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index]!, index);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, async () => await worker()),
+  );
+  return results;
+}
+
 const mermaidIdentifierPattern = /[A-Za-z][A-Za-z0-9_-]{0,63}/g;
 const mermaidEdgePattern = /[<|o*x]*[-.=~]{2,}[|o*x>]*/g;
 const mermaidKeywords = new Set([
@@ -512,20 +534,78 @@ function directIssueReferences(body: string, owner: string, repository: string):
   const references = new Set<string>();
   const escapedOwner = owner.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const escapedRepository = repository.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const patterns = [
-    new RegExp(
-      `https://github\\.com/${escapedOwner}/${escapedRepository}/issues/(\\d+)(?!\\d)`,
-      "gi",
-    ),
-    new RegExp(`\\b${escapedOwner}/${escapedRepository}#(\\d+)\\b`, "gi"),
-    /(^|[^\w/])#(\d+)\b/gm,
-  ];
-  for (const [index, pattern] of patterns.entries()) {
-    for (const match of body.matchAll(pattern)) {
-      const number = index === 2 ? match[2] : match[1];
-      if (number) references.add(`#${number}`);
+  const collectTextReferences = (value: string): void => {
+    const patterns = [
+      new RegExp(
+        `https://github\\.com/${escapedOwner}/${escapedRepository}/issues/(\\d+)(?!\\d)`,
+        "gi",
+      ),
+      new RegExp(`\\b${escapedOwner}/${escapedRepository}#(\\d+)\\b`, "gi"),
+      /(^|[^\w/])#(\d+)\b/gm,
+    ];
+    for (const [index, pattern] of patterns.entries()) {
+      for (const match of value.matchAll(pattern)) {
+        const number = index === 2 ? match[2] : match[1];
+        if (number) references.add(`#${number}`);
+      }
     }
-  }
+  };
+  const collectUrlReference = (value: string): void => {
+    const pattern = new RegExp(
+      `^https://github\\.com/${escapedOwner}/${escapedRepository}/issues/(\\d+)(?:[/?#].*)?$`,
+      "i",
+    );
+    const number = pattern.exec(value)?.[1];
+    if (number) references.add(`#${number}`);
+  };
+  const root = fromMarkdown(body) as MarkdownNode;
+  const voidHtmlElements = new Set([
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
+  ]);
+  let rawHtmlDepth = 0;
+  const visit = (node: MarkdownNode): void => {
+    if (node.type === "html" && typeof node.value === "string") {
+      const html = node.value.trim();
+      if (/^<\//.test(html)) {
+        rawHtmlDepth = Math.max(0, rawHtmlDepth - 1);
+      } else {
+        const tag = /^<([A-Za-z][A-Za-z0-9-]*)\b[^>]*>$/.exec(html)?.[1]?.toLowerCase();
+        if (
+          tag &&
+          !html.endsWith("/>") &&
+          !html.includes(`</${tag}>`) &&
+          !voidHtmlElements.has(tag)
+        ) {
+          rawHtmlDepth += 1;
+        }
+      }
+      return;
+    }
+    if (rawHtmlDepth === 0 && node.type === "text" && typeof node.value === "string") {
+      collectTextReferences(node.value);
+    } else if (
+      rawHtmlDepth === 0 &&
+      (node.type === "link" || node.type === "definition") &&
+      typeof node.url === "string"
+    ) {
+      collectUrlReference(node.url);
+    }
+    node.children?.forEach(visit);
+  };
+  visit(root);
   return [...references];
 }
 
@@ -793,25 +873,29 @@ export class RvwService {
       if (existing) this.database.setBranchSyncError(existing.id, asRvwError(error).message);
       throw error;
     }
-    const issueResults: BranchSyncResult["issueResults"] = [];
-    for (const issue of this.database.listReviewIssues("branch", branchReview.id)) {
-      try {
-        if (!this.github.getIssue) {
-          throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
+    const issues = this.database.listReviewIssues("branch", branchReview.id);
+    const issueResults = await mapWithConcurrency(
+      issues,
+      ISSUE_FETCH_CONCURRENCY,
+      async (issue): Promise<BranchSyncResult["issueResults"][number]> => {
+        try {
+          if (!this.github.getIssue) {
+            throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
+          }
+          const current = await this.github.getIssue(
+            issue.number,
+            branchReview,
+            repository.worktreePath,
+          );
+          const cached = this.database.addReviewIssue("branch", branchReview.id, current).issue;
+          return { issue: cached, ok: true };
+        } catch (error) {
+          const rvwError = asRvwError(error);
+          const stale = this.database.setIssueSyncError(issue.id, rvwError.message);
+          return { issue: stale, ok: false, error: rvwError.toJSON() };
         }
-        const current = await this.github.getIssue(
-          issue.number,
-          branchReview,
-          repository.worktreePath,
-        );
-        const cached = this.database.addReviewIssue("branch", branchReview.id, current).issue;
-        issueResults.push({ issue: cached, ok: true });
-      } catch (error) {
-        const rvwError = asRvwError(error);
-        const stale = this.database.setIssueSyncError(issue.id, rvwError.message);
-        issueResults.push({ issue: stale, ok: false, error: rvwError.toJSON() });
-      }
-    }
+      },
+    );
     return { ...this.getBranchReviewView(branchReview.id), issueResults };
   }
 
@@ -1081,68 +1165,65 @@ export class RvwService {
           )
         : this.database.upsertPullRequest(github, repositoryLocation, comparisonBaseOid);
     const issueResults: IssueSyncResult[] = [];
-    if (this.github.getIssue) {
+    const getIssue = this.github.getIssue?.bind(this.github);
+    if (getIssue) {
+      const issueRequests: Array<{
+        reference: string;
+        number: number;
+        previous: IssueDocument | null;
+      }> = [];
       const fetchedIssueNumbers = new Set<number>();
       for (const reference of directIssueReferences(github.body, github.owner, github.repository)) {
         const identity = parseIssueReference(reference, pullRequest);
         fetchedIssueNumbers.add(identity.number);
-        try {
-          const issue = await this.github.getIssue(
-            identity.number,
-            {
-              host: "github.com",
-              owner: github.owner,
-              repository: github.repository,
-              canonicalName: `${github.owner}/${github.repository}`,
-            },
-            repository.worktreePath,
-          );
-          const cached = this.database.addReviewIssue("pull-request", pullRequest.id, issue).issue;
-          issueResults.push({ reference, issue: cached, ok: true });
-        } catch (error) {
-          const rvwError = asRvwError(error);
-          const previous = this.database.findIssue(
+        issueRequests.push({
+          reference,
+          number: identity.number,
+          previous: this.database.findIssue(
             pullRequest.owner,
             pullRequest.repository,
             identity.number,
-          );
-          const stale =
-            previous && this.database.hasReviewIssue("pull-request", pullRequest.id, previous.id)
-              ? this.database.setIssueSyncError(previous.id, rvwError.message)
-              : null;
-          issueResults.push({ reference, issue: stale, ok: false, error: rvwError.toJSON() });
-        }
+          ),
+        });
       }
       for (const cached of this.database.listReviewIssues("pull-request", pullRequest.id)) {
         if (fetchedIssueNumbers.has(cached.number)) continue;
-        try {
-          const issue = await this.github.getIssue(
-            cached.number,
-            {
-              host: "github.com",
-              owner: github.owner,
-              repository: github.repository,
-              canonicalName: `${github.owner}/${github.repository}`,
-            },
-            repository.worktreePath,
-          );
-          const refreshed = this.database.addReviewIssue(
-            "pull-request",
-            pullRequest.id,
-            issue,
-          ).issue;
-          issueResults.push({ reference: refreshed.url, issue: refreshed, ok: true });
-        } catch (error) {
-          const rvwError = asRvwError(error);
-          const stale = this.database.setIssueSyncError(cached.id, rvwError.message);
-          issueResults.push({
-            reference: cached.url,
-            issue: stale,
-            ok: false,
-            error: rvwError.toJSON(),
-          });
-        }
+        issueRequests.push({ reference: cached.url, number: cached.number, previous: cached });
       }
+      issueResults.push(
+        ...(await mapWithConcurrency(
+          issueRequests,
+          ISSUE_FETCH_CONCURRENCY,
+          async ({ reference, number, previous }): Promise<IssueSyncResult> => {
+            try {
+              const issue = await getIssue(
+                number,
+                {
+                  host: "github.com",
+                  owner: github.owner,
+                  repository: github.repository,
+                  canonicalName: `${github.owner}/${github.repository}`,
+                },
+                repository.worktreePath,
+              );
+              const cached = this.database.addReviewIssue(
+                "pull-request",
+                pullRequest.id,
+                issue,
+              ).issue;
+              return { reference, issue: cached, ok: true };
+            } catch (error) {
+              const rvwError = asRvwError(error);
+              const stale =
+                previous &&
+                this.database.hasReviewIssue("pull-request", pullRequest.id, previous.id)
+                  ? this.database.setIssueSyncError(previous.id, rvwError.message)
+                  : null;
+              return { reference, issue: stale, ok: false, error: rvwError.toJSON() };
+            }
+          },
+        )),
+      );
     }
     return { pullRequest, issueResults };
   }
@@ -1318,11 +1399,24 @@ export class RvwService {
     branchReview: BranchReview,
     oid: string,
   ): Promise<void> {
-    if (
-      !GIT_OBJECT_ID_PATTERN.test(oid) ||
-      !(await this.git.hasObject(branchReview.localRepositoryPath, oid))
-    ) {
+    if (!GIT_OBJECT_ID_PATTERN.test(oid)) {
       throw new RvwError("COMMIT_NOT_FOUND", `Git commitが見つかりません: ${oid}`, { status: 404 });
+    }
+    const [retained, available] = await Promise.all([
+      this.git.verifyBranchCommitRef(
+        branchReview.localRepositoryPath,
+        branchReview.owner,
+        branchReview.repository,
+        oid,
+      ),
+      this.git.hasObject(branchReview.localRepositoryPath, oid),
+    ]);
+    if (!retained || !available) {
+      throw new RvwError(
+        "COMMIT_NOT_FOUND",
+        `Branch Reviewで保持されているGit commitが見つかりません: ${oid}`,
+        { status: 404 },
+      );
     }
   }
 
@@ -2652,7 +2746,7 @@ export class RvwService {
     if (!this.github.getIssue) {
       throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
     }
-    const issues = new Map<number, GitHubIssue>();
+    const issueNumbers = new Set<number>();
     for (const reference of references) {
       const identity = parseIssueReference(reference, review);
       if (
@@ -2661,23 +2755,23 @@ export class RvwService {
       ) {
         throw new RvwError("INVALID_INPUT", "cross-repository Issueは追加できません。");
       }
-      if (!issues.has(identity.number)) {
-        issues.set(
-          identity.number,
-          await this.github.getIssue(
-            identity.number,
-            {
-              host: "github.com",
-              owner: review.owner,
-              repository: review.repository,
-              canonicalName: `${review.owner}/${review.repository}`,
-            },
-            review.localRepositoryPath,
-          ),
-        );
-      }
+      issueNumbers.add(identity.number);
     }
-    return [...issues.values()];
+    return await mapWithConcurrency(
+      [...issueNumbers],
+      ISSUE_FETCH_CONCURRENCY,
+      async (number) =>
+        await this.github.getIssue!(
+          number,
+          {
+            host: "github.com",
+            owner: review.owner,
+            repository: review.repository,
+            canonicalName: `${review.owner}/${review.repository}`,
+          },
+          review.localRepositoryPath,
+        ),
+    );
   }
 
   async publishWalkthrough(input: WalkthroughPublishRequest): Promise<WalkthroughMutationResult> {

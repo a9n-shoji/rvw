@@ -70,8 +70,55 @@ function validatedOutcomes(input, operations) {
       fail("Each outcome requires commentRef and a non-empty body");
     }
     if (outcomes.has(outcome.commentRef)) fail(`Duplicate outcome: ${outcome.commentRef}`);
-    if (outcome.relatedCommitOid !== null)
-      fail("Branch Review outcomes must use relatedCommitOid: null");
+    if (
+      outcome.relatedCommitOid !== null &&
+      (typeof outcome.relatedCommitOid !== "string" ||
+        !/^[0-9a-f]{40}$/.test(outcome.relatedCommitOid))
+    ) {
+      fail("Branch Review relatedCommitOid must be null or a lowercase 40-hex commit OID");
+    }
+    if (!Array.isArray(outcome.references)) {
+      fail("Branch Review outcomes must include the complete references array");
+    }
+    if (outcome.references.length > 0 && outcome.relatedCommitOid === null) {
+      fail("Branch Review outcomes with references require relatedCommitOid");
+    }
+    const referenceIds = new Set();
+    for (const reference of outcome.references) {
+      if (
+        !reference ||
+        typeof reference !== "object" ||
+        typeof reference.id !== "string" ||
+        reference.id.length === 0 ||
+        referenceIds.has(reference.id) ||
+        typeof reference.label !== "string" ||
+        reference.label.trim().length === 0 ||
+        typeof reference.path !== "string" ||
+        reference.path.length === 0
+      ) {
+        fail(`Invalid Branch Review reference: ${outcome.commentRef}`);
+      }
+      const startLine = reference.startLine ?? null;
+      const endLine = reference.endLine ?? null;
+      if (
+        (startLine === null) !== (endLine === null) ||
+        (startLine !== null &&
+          (!Number.isInteger(startLine) ||
+            !Number.isInteger(endLine) ||
+            startLine < 1 ||
+            endLine < startLine))
+      ) {
+        fail(`Invalid Branch Review reference line range: ${reference.id}`);
+      }
+      if (
+        reference.description !== undefined &&
+        reference.description !== null &&
+        typeof reference.description !== "string"
+      ) {
+        fail(`Invalid Branch Review reference description: ${reference.id}`);
+      }
+      referenceIds.add(reference.id);
+    }
     if (outcome.pushStatus !== "not-attempted")
       fail("Branch Review outcomes must use pushStatus: not-attempted");
     outcomes.set(outcome.commentRef, outcome);
@@ -122,6 +169,8 @@ async function main() {
   for (const { operation, outcome } of pending) {
     const reply = {
       body: outcome.body,
+      relatedCommitOid: outcome.relatedCommitOid,
+      references: outcome.references,
       idempotencyKey: operation.idempotencyKey,
     };
     const result = await runRvw(["comment", "reply", operation.commentRef, "--stdin", "--json"], {

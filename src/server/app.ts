@@ -161,7 +161,22 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     if (rawViewerId !== undefined) {
       options.viewerLifecycle?.heartbeat(viewerIdSchema.parse(rawViewerId));
     }
-    return context.json({ ok: true, changeSequence: service.database.getChangeSequence() });
+    const reviewKind = context.req.query("reviewKind");
+    const reviewId = context.req.query("reviewId");
+    if ((reviewKind === undefined) !== (reviewId === undefined)) {
+      throw new RvwError("INVALID_INPUT", "reviewKindとreviewId queryは同時に指定してください。");
+    }
+    const parsedKind =
+      reviewKind === undefined ? null : z.enum(["pull-request", "branch"]).parse(reviewKind);
+    const parsedReviewId = reviewId === undefined ? null : z.uuid().parse(reviewId);
+    return context.json({
+      ok: true,
+      changeSequence: service.database.getChangeSequence(),
+      reviewChangeSequence:
+        parsedKind && parsedReviewId
+          ? service.database.getReviewChangeSequence(parsedKind, parsedReviewId)
+          : null,
+    });
   });
 
   app.post("/api/meta/viewers/release", async (context) => {

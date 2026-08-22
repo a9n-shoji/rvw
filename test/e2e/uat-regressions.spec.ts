@@ -126,6 +126,72 @@ test("rejects malformed and unknown pull request IDs", async ({ page, request })
   ).toBeVisible();
 });
 
+test("keeps a historical commit selected when the initial background refresh finishes", async ({
+  page,
+}) => {
+  await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      pullRequest: { latestHeadOid: string };
+      headOid: string;
+      commits: Array<{
+        oid: string;
+        parentOids: string[];
+        subject: string;
+        authorName: string;
+        authoredAt: string;
+      }>;
+    };
+    body.pullRequest.latestHeadOid = secondHead;
+    body.headOid = secondHead;
+    body.commits = [
+      {
+        oid: firstHead,
+        parentOids: [comparisonBase],
+        subject: "Add fixture function",
+        authorName: "Fixture Author",
+        authoredAt: "2026-08-08T01:00:00.000Z",
+      },
+      {
+        oid: secondHead,
+        parentOids: [firstHead],
+        subject: "Trim fixture input",
+        authorName: "Fixture Author",
+        authoredAt: "2026-08-08T02:00:00.000Z",
+      },
+    ];
+    await route.fulfill({ response, json: body });
+  });
+  let releaseRefresh!: () => void;
+  const refreshHeld = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const refreshFinished = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    await refreshHeld;
+    await route.continue();
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const commitPicker = page.getByRole("button", { name: /^対象commit:/ });
+  await commitPicker.click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("option", { name: /Add fixture function/ })
+    .click();
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+
+  releaseRefresh();
+  await refreshFinished;
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+});
+
 test("restores focus to the actions button after Quick Open is closed from its menu", async ({
   page,
 }) => {
