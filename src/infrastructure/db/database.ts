@@ -873,7 +873,11 @@ export class RvwDatabase {
     return row ? mapIssue(row) : null;
   }
 
-  private writeIssue(issue: GitHubIssue): { issue: IssueDocument; changed: boolean } {
+  private writeIssue(issue: GitHubIssue): {
+    issue: IssueDocument;
+    changed: boolean;
+    previouslyCached: boolean;
+  } {
     const existing = this.findIssue(issue.owner, issue.repository, issue.number);
     const id = existing?.id ?? randomUUID();
     const fetchedAt = new Date().toISOString();
@@ -915,6 +919,7 @@ export class RvwDatabase {
     if (!result) throw new RvwError("DATABASE_ERROR", "Issue cacheを読み出せません。");
     return {
       issue: result,
+      previouslyCached: existing !== null,
       changed:
         existing === null ||
         existing.canonicalName !== result.canonicalName ||
@@ -982,7 +987,7 @@ export class RvwDatabase {
         )
         .run(reviewKind, reviewId, cached.id, new Date().toISOString());
       const added = Number(result.changes) === 1;
-      if (written.changed) {
+      if (written.changed && written.previouslyCached) {
         this.notifyIssueReviewChanges(cached.id);
       } else if (added) {
         this.incrementChangeSequence({ kind: reviewKind, reviewId });
@@ -1006,7 +1011,7 @@ export class RvwDatabase {
         )
         .run(reviewKind, reviewId, cached.id, new Date().toISOString());
       if (Number(membership.changes) === 1) added.push(cached);
-      if (written.changed) {
+      if (written.changed && written.previouslyCached) {
         this.notifyIssueReviewChanges(cached.id, { kind: reviewKind, reviewId });
       }
     }

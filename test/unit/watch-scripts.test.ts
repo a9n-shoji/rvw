@@ -934,6 +934,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(runState(state, "list")).toMatchObject({ inFlight: 0, pending: [] });
 
     const database = new DatabaseSync(state);
+    database.exec("PRAGMA busy_timeout = 5000;");
     database
       .prepare("UPDATE batches SET next_attempt_at = ? WHERE id = ?")
       .run("2026-08-20T00:00:00.000Z", String(first.batchId));

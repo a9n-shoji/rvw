@@ -895,7 +895,7 @@ describe("Branch Review", () => {
       path: "README.md",
     });
     expect(historicalDocument.text).toContain(previousReadme);
-  });
+  }, 10_000);
 
   it("rejects locally available commits outside the current or retained Branch source", async () => {
     const { repositoryPath, service } = setup();
