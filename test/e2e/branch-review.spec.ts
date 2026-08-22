@@ -169,9 +169,10 @@ test("uses the shared review workspace for the default branch, Issues, code, and
     exact: true,
   });
   await walkthroughButton.click({ modifiers: [modifier] });
-  await expect(page.getByRole("region", { name: "右のコードペイン" })).toBeVisible();
+  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  await expect(rightPane).toBeVisible();
   await expect(
-    page.getByRole("region", { name: "右のコードペイン" }).getByRole("heading", {
+    rightPane.getByRole("heading", {
       level: 1,
       name: "Current request flow",
       exact: true,
@@ -188,7 +189,9 @@ test("uses the shared review workspace for the default branch, Issues, code, and
   await page
     .getByRole("button", { name: /the implementation.*L1–3/ })
     .click({ modifiers: [modifier] });
-  await expect(page.getByRole("button", { name: "fixture.tsを閉じる" })).toBeVisible();
+  await expect(
+    rightPane.getByRole("button", { name: "src/fixture.tsを閉じる", exact: true }),
+  ).toBeVisible();
 
   await page.keyboard.press(`${modifier}+p`);
   const quickOpen = page.getByRole("dialog", { name: "ファイルを開く" });
