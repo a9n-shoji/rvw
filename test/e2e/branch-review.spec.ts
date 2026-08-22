@@ -160,7 +160,18 @@ test("uses the shared review workspace for the default branch, Issues, code, and
   await expect(
     page.getByRole("heading", { name: "Stabilize the request path", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("img", { name: /Remote diagram.*自動読み込み停止/ })).toBeVisible();
+  const issueAttachment = page.getByRole("img", { name: "Issue attachment", exact: true });
+  await expect(issueAttachment).toHaveAttribute(
+    "src",
+    new RegExp(`/api/branch-reviews/${branchReviewId}/github-attachment\\?url=`),
+  );
+  await expect
+    .poll(() => issueAttachment.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBe(320);
+  await expect(page.locator("td").filter({ has: issueAttachment })).toHaveCount(1);
+  await expect(
+    page.getByRole("img", { name: /External planning diagram.*自動読み込み停止/ }),
+  ).toBeVisible();
 
   const walkthroughFolder = page.getByRole("button", { name: "ウォークスルー 1" });
   await walkthroughFolder.click();

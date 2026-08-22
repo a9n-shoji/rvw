@@ -28,6 +28,16 @@ const fixturePng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+const fixtureAttachmentSvg = [
+  '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="160" viewBox="0 0 320 160">',
+  '<rect width="320" height="160" rx="16" fill="#0d1117"/>',
+  '<path d="M52 48h216v64H52z" fill="#1f6feb" opacity=".22"/>',
+  '<circle cx="88" cy="80" r="22" fill="#58a6ff"/>',
+  '<path d="m78 80 7 7 14-16" fill="none" stroke="#0d1117" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<text x="124" y="75" fill="#f0f6fc" font-family="sans-serif" font-size="18" font-weight="600">rvw attachment</text>',
+  '<text x="124" y="98" fill="#8b949e" font-family="sans-serif" font-size="13">authenticated preview</text>',
+  "</svg>",
+].join("");
 const baseOid = repositoryDemo?.baseOid ?? "a".repeat(40);
 const firstHead = repositoryDemo?.commits[0]?.oid ?? "b".repeat(40);
 const secondHead = repositoryDemo?.headOid ?? "c".repeat(40);
@@ -60,7 +70,15 @@ const branchIssueFixtures = [
     number: 142,
     url: "https://github.com/acme/review-repo/issues/142",
     title: "Stabilize the request path",
-    body: "# Stabilize the request path\n\nInspect the default-branch implementation.\n\n![Remote diagram](https://example.com/diagram.png)",
+    body: [
+      "# Stabilize the request path",
+      "",
+      "Inspect the default-branch implementation.",
+      "",
+      "| Authenticated evidence | External reference |",
+      "| --- | --- |",
+      `| ![Issue attachment](${attachmentUrl}) | ![External planning diagram](https://example.com/diagram.png) |`,
+    ].join("\n"),
     state: "OPEN",
     updatedAt: "2026-08-20T00:00:00.000Z",
     bodyHash: "1".repeat(64),
@@ -309,10 +327,13 @@ function currentPullRequest() {
     latestTitle: syncStage > 0 ? "Fixture review updated" : "Fixture review",
     latestBody: [
       body,
-      `![Private attachment](${attachmentUrl})`,
-      `![Broken attachment](${brokenAttachmentUrl})`,
-      `![External PR image](http://${host}:${port}/api/test/external-image)`,
-    ].join("\n\n"),
+      "",
+      "## Visual evidence",
+      "",
+      "| Authenticated attachment | Broken attachment | External reference |",
+      "| --- | --- | --- |",
+      `| ![Private attachment](${attachmentUrl}) | ![Broken attachment](${brokenAttachmentUrl}) | ![External PR image](http://${host}:${port}/api/test/external-image) |`,
+    ].join("\n"),
     latestBaseRefName: "main",
     latestHeadRefName: "feature",
     latestBaseOid: baseOid,
@@ -1460,11 +1481,35 @@ app.get("/api/pull-requests/:id/github-attachment", (context) => {
       502,
     );
   }
-  context.header("content-type", "image/png");
+  context.header("content-type", "image/svg+xml; charset=utf-8");
   context.header("cache-control", "private, max-age=31536000, immutable");
   context.header("x-content-type-options", "nosniff");
+  context.header("content-disposition", "inline");
   context.header("cross-origin-resource-policy", "same-origin");
-  return context.body(fixturePng);
+  context.header(
+    "content-security-policy",
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox",
+  );
+  return context.body(fixtureAttachmentSvg);
+});
+
+app.get("/api/branch-reviews/:id/github-attachment", (context) => {
+  if (context.req.query("url") !== attachmentUrl) {
+    return context.json(
+      { ok: false, error: { code: "GITHUB_ERROR", message: "attachment unavailable" } },
+      502,
+    );
+  }
+  context.header("content-type", "image/svg+xml; charset=utf-8");
+  context.header("cache-control", "private, max-age=31536000, immutable");
+  context.header("x-content-type-options", "nosniff");
+  context.header("content-disposition", "inline");
+  context.header("cross-origin-resource-policy", "same-origin");
+  context.header(
+    "content-security-policy",
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox",
+  );
+  return context.body(fixtureAttachmentSvg);
 });
 
 app.get("/api/pull-requests/:id/diff", (context) => {

@@ -54,6 +54,7 @@ import {
   type PlacementResponse,
 } from "../api.js";
 import {
+  branchGitHubAttachmentAssetUrl,
   branchMarkdownAssetUrl,
   githubAttachmentAssetUrl,
   isExternalMarkdownHref,
@@ -355,6 +356,15 @@ function reviewMarkdownAssetUrl(
     : branchMarkdownAssetUrl(review.id, sourceOid, filePath);
 }
 
+function reviewGitHubAttachmentUrl(
+  review: ReviewIdentity,
+  absoluteUrl: string | undefined,
+): string | null {
+  return review.kind === "pull-request"
+    ? githubAttachmentAssetUrl(review.id, absoluteUrl)
+    : branchGitHubAttachmentAssetUrl(review.id, absoluteUrl);
+}
+
 function markdownNodeText(node: ReactNode): string {
   return Children.toArray(node)
     .map((child) => {
@@ -568,9 +578,8 @@ function renderReviewMarkdown({
         },
         img: ({ src, alt, title, node: _node, ...props }) => {
           const sourceAttributes = markdownSourceDataAttributes(_node);
-          if (sourceRef.kind === "pull-request-markdown") {
-            const attachmentUrl =
-              review.kind === "pull-request" ? githubAttachmentAssetUrl(review.id, src) : null;
+          if (sourceRef.kind === "pull-request-markdown" || sourceRef.kind === "issue-markdown") {
+            const attachmentUrl = reviewGitHubAttachmentUrl(review, src);
             return attachmentUrl ? (
               <MarkdownImage
                 {...props}

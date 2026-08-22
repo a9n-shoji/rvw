@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Pull Request / Branch ReviewのIssue本文に貼り付けたmodern GitHub user attachment画像を、既存の
+  review-scoped localhost proxyと同じ検証・認証・画像判定で表示
+- repository demoのPR本文とIssue本文へ、安全な添付と停止対象の外部画像を並べたMarkdown tableを追加
+
 ### Changed
 
 - `rvw-watch-comments`のinvestigate-and-reply専用taskで、同じPR／repositoryの後続batchもworker capacity内で

@@ -1,5 +1,36 @@
 # Architecture decisions
 
+## 2026-08-22: Extend the review-scoped attachment boundary to Issue documents
+
+### Problem
+
+The shared Markdown viewer rendered modern GitHub user attachments from `Pull Request.md`, but the
+same URL in a registered Issue was always replaced with an external-image placeholder. Branch Review
+also had no attachment endpoint, even though PR and Branch Issues use the same document surface. This
+made the security behavior depend on document kind and left the repository demo unable to exercise the
+supported path from an Issue.
+
+### Choice
+
+Keep the existing canonical URL validator, authenticated GitHub CLI download, byte limit, magic-byte
+image detection, and same-origin response policy. Generalize only the review scope: PR bodies and PR
+Issues use the PR attachment endpoint, while Branch Issues use a symmetric Branch Review endpoint.
+Both service methods verify that their review exists and delegate to one private attachment fetcher.
+
+Continue replacing arbitrary external and legacy GitHub image URLs with an alt/title placeholder
+without sending a browser or server request. Put both a supported attachment and a blocked external
+image in Markdown tables in the deterministic demo so the supported and unsupported paths remain
+visible together.
+
+### Trade-offs
+
+- The endpoint is review-scoped rather than Issue-scoped, matching the existing PR boundary and
+  avoiding a second attachment authorization model. Issue membership still controls access to the
+  Issue document that supplies the URL.
+- Attachments remain uncached in SQLite and require GitHub availability when the browser cache misses.
+- Relative Issue images and legacy GitHub image hosts remain placeholders until a separately verified
+  authenticated retrieval design exists.
+
 ## 2026-08-22: Keep Branch evidence exact and make synchronization work review-local
 
 ### Problem

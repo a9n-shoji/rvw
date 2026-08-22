@@ -427,9 +427,10 @@ empty fileは従来どおり明示的に扱う。
   exact `/user-attachments/assets/<uuid>` pathを共通validatorで検証し、parse後のcanonical URLだけを使う。
   `user-images.githubusercontent.com`と`private-user-images.githubusercontent.com`は安全な認証取得経路を
   確認していないため対象外とする。
-- browserはGitHub attachment hostへ直接接続せず、PRにscopeしたsame-origin GET endpointを使う。
+- PR本文とPull Request / Branch Reviewへ登録したIssue本文のmodern GitHub user attachmentを表示対象とする。
+  browserはGitHub attachment hostへ直接接続せず、対象reviewにscopeしたsame-origin GET endpointを使う。
   endpointは`Sec-Fetch-Site`がある場合に`same-origin`または`none`だけを受理し、`Origin`がある場合は
-  viewer originとの一致も検証する。serverは対象PRの存在を確認してから、shellを使わない
+  viewer originとの一致も検証する。serverは対象Pull Request ReviewまたはBranch Reviewの存在を確認してから、shellを使わない
   `gh api <canonical-url>` argument配列でbinaryを取得する。tokenを抽出、保存、header化せず、認証と
   cross-host redirect処理はGitHub CLIへ委ねる。timeoutは30秒、stdoutは10 MiB、stderrは64 KiBを上限とし、
   process errorのstderrやprivate URLをresponseへ含めない。binaryはSQLiteやpersistent cacheへ保存しない。
@@ -449,18 +450,18 @@ empty fileは従来どおり明示的に扱う。
   exact source targetを保存する。既存commentはtargetと一致するold/new側へ表示する。
 - extensionless repository画像、zoom/pan、pixel diff、画像座標commentはPhase 1の対象外とする。
 
-#### Private PR release前manual smoke
+#### Private review release前manual smoke
 
 private attachmentをCI fixtureへ保存しないため、release前に次を人間が実施する。
 
 1. private repositoryを閲覧できるaccountで`gh auth status --hostname github.com`が成功することを確認する。
-2. そのrepositoryのopen PR本文へ小さなPNGまたはJPEGをpasteし、生成されたmodern
+2. そのrepositoryのopen PR本文または登録対象Issue本文へ小さなPNGまたはJPEGをpasteし、生成されたmodern
    `https://github.com/user-attachments/assets/<uuid>` URLを本文に残す。比較用に任意の外部画像URLも一件置く。
-3. `rvw open <private-pr-url>`でviewerを開き、`Pull Request.md`のPreviewでprivate attachmentが表示され、
-   外部画像はalt/title付きplaceholderのままであることを確認する。
+3. 対象のPull Request ReviewまたはBranch Reviewをviewerで開き、PR本文またはIssue本文のPreviewでprivate
+   attachmentが表示され、外部画像はalt/title付きplaceholderのままであることを確認する。
 4. browser DevToolsのNetworkで、表示画像の`src`とrequest先がlocalhostの
-   `/api/pull-requests/:id/github-attachment`であり、browserから`github.com/user-attachments`や外部画像hostへ
-   直接requestしていないことを確認する。
+   `/api/pull-requests/:id/github-attachment`または`/api/branch-reviews/:id/github-attachment`であり、browserから
+   `github.com/user-attachments`や外部画像hostへ直接requestしていないことを確認する。
 5. localhost responseが検出済みのimage Content-Type、`nosniff`、private immutable cache、same-origin CORPを
    持ち、reload後も画像表示とplaceholderが維持されることを確認する。
 6. private attachment URL、response body、DevTools traceをrepository、issue、CI logへ保存せず、実施結果だけを
@@ -1170,6 +1171,7 @@ GET /api/pull-requests/:id/changed-files?oldOid=<oid>&newOid=<oid>
 GET /api/pull-requests/:id/document?kind=...&sourceOid=...&path=...
 GET|HEAD /api/pull-requests/:id/markdown-asset?sourceOid=...&path=...
 GET /api/pull-requests/:id/github-attachment?url=...
+GET /api/branch-reviews/:id/github-attachment?url=...
 GET /api/pull-requests/:id/diff?oldOid=...&newOid=...&oldPath=...&newPath=...
 GET /api/pull-requests/:id/search?oid=<oid>&q=<query>&matchCase=<bool>&wholeWord=<bool>
 GET /api/pull-requests/:id/walkthroughs

@@ -97,6 +97,21 @@ function setImageResponseHeaders(
   }
 }
 
+function assertSameOriginAttachmentRequest(
+  fetchSite: string | undefined,
+  origin: string | undefined,
+  expectedOrigin: string | null,
+): void {
+  if (
+    (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") ||
+    (origin !== undefined && origin !== expectedOrigin)
+  ) {
+    throw new RvwError("INVALID_ORIGIN", "cross-origin attachment requestは許可されていません。", {
+      status: 403,
+    });
+  }
+}
+
 function documentRefFromQuery(pullRequestId: string, query: Record<string, string>): DocumentRef {
   if (query.kind === "pull-request-markdown") {
     return { kind: "pull-request-markdown", pullRequestId };
@@ -327,20 +342,11 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
   });
 
   app.get("/api/pull-requests/:id/github-attachment", async (context) => {
-    const fetchSite = context.req.header("sec-fetch-site");
-    const origin = context.req.header("origin");
-    if (
-      (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") ||
-      (origin !== undefined && origin !== options.security.expectedOrigin)
-    ) {
-      throw new RvwError(
-        "INVALID_ORIGIN",
-        "cross-origin attachment requestは許可されていません。",
-        {
-          status: 403,
-        },
-      );
-    }
+    assertSameOriginAttachmentRequest(
+      context.req.header("sec-fetch-site"),
+      context.req.header("origin"),
+      options.security.expectedOrigin,
+    );
     const absoluteUrl = requiredQuery(context.req.query("url"), "url");
     const attachment = await service.getGitHubAttachment(context.req.param("id"), absoluteUrl);
     setImageResponseHeaders((name, value) => context.header(name, value), attachment.contentType);
@@ -500,6 +506,21 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     return context.req.method === "HEAD"
       ? context.body(null)
       : context.body(Uint8Array.from(asset.content));
+  });
+
+  app.get("/api/branch-reviews/:id/github-attachment", async (context) => {
+    assertSameOriginAttachmentRequest(
+      context.req.header("sec-fetch-site"),
+      context.req.header("origin"),
+      options.security.expectedOrigin,
+    );
+    const absoluteUrl = requiredQuery(context.req.query("url"), "url");
+    const attachment = await service.getBranchGitHubAttachment(
+      context.req.param("id"),
+      absoluteUrl,
+    );
+    setImageResponseHeaders((name, value) => context.header(name, value), attachment.contentType);
+    return context.body(Uint8Array.from(attachment.content));
   });
 
   app.get("/api/branch-reviews/:id/search", async (context) => {

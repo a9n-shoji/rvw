@@ -97,6 +97,7 @@ viewerはこの流れのために次を提供します。
 
 - `Pull Request.md`、変更ファイル、全ファイル
 - Pull Request Review / Branch Reviewへ明示登録した同一repositoryのGitHub Issue documents
+  （PR本文とIssue本文のmodern GitHub user attachment画像を認証付きlocalhost proxyで表示）
 - 開いた文書を保持するタブ、最大2つの横ペイン、横幅をdrag調整できるsidebar / pane divider
 - タブのdrag & drop、ペインmenu、sidebarからの`Cmd` / `Ctrl`+clickによる右ペイン表示
 - repository内Markdown全文のPreview既定とSource / Preview切り替え（差分がある変更表示は通常のdiff、見出しlinkと同じcommitの相対画像を含む）
@@ -387,7 +388,8 @@ atomicなowner lockを取得した一つのNode processだけがlistenし、owne
 
 ローカルHTTP serverは`127.0.0.1`だけへbindしてHost / Originを検証し、write APIは
 `application/json`だけを受理し、CORSを有効にしません。コメントと返信はUTF-8 GFM Markdown sourceとして
-保存し、raw HTMLをsanitizeします。外部画像は取得せず、repository相対画像だけをexact commitから取得します。
+保存し、raw HTMLをsanitizeします。任意の外部画像は取得せず、repository相対画像はexact commitから、
+PR本文と登録Issue本文のmodern GitHub user attachmentは認証付きlocalhost proxyから取得します。
 CLIとfrontend bundleに含まれる第三者softwareのlicenseはpackage内の
 `dist/cli-THIRD_PARTY_NOTICES.txt`と`dist/web/THIRD_PARTY_NOTICES.txt`へbuild時に収録します。
 

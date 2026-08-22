@@ -24,6 +24,11 @@ describe("repository demo fixture", () => {
     expect(fixture.comments.some((comment) => comment.resolvedAt !== null)).toBe(true);
     expect(fixture.comments.some((comment) => comment.posts.length > 1)).toBe(true);
     expect(fixture.comments.some((comment) => comment.target.kind === "issue")).toBe(true);
+    expect(fixture.pullRequest.latestBody).toContain("| Authenticated GitHub attachment |");
+    expect(fixture.pullRequest.latestBody).toContain("https://github.com/user-attachments/assets/");
+    expect(fixture.issues.find((issue) => issue.number === 142)?.body).toContain(
+      "| Authenticated evidence | External reference |",
+    );
 
     const app = fixture.repositoryDocumentAt(fixture.headOid, "src/web/app/App.tsx");
     expect(app.availability).toBe("available");

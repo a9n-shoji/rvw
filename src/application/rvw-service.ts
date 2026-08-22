@@ -1568,6 +1568,20 @@ export class RvwService {
     absoluteUrl: string,
   ): Promise<{ content: Buffer; byteLength: number; contentType: ImageContentType }> {
     this.getPullRequest(pullRequestId);
+    return await this.fetchGitHubAttachment(absoluteUrl);
+  }
+
+  async getBranchGitHubAttachment(
+    branchReviewId: string,
+    absoluteUrl: string,
+  ): Promise<{ content: Buffer; byteLength: number; contentType: ImageContentType }> {
+    this.getBranchReview(branchReviewId);
+    return await this.fetchGitHubAttachment(absoluteUrl);
+  }
+
+  private async fetchGitHubAttachment(
+    absoluteUrl: string,
+  ): Promise<{ content: Buffer; byteLength: number; contentType: ImageContentType }> {
     const canonicalUrl = canonicalGitHubAttachmentUrl(absoluteUrl);
     if (!canonicalUrl) {
       throw new RvwError("INVALID_INPUT", "GitHub user attachment URLが不正です。");

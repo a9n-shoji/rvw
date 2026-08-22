@@ -15,6 +15,8 @@ import type {
 } from "../src/domain/models.js";
 
 const pullRequestId = "22222222-2222-4222-8222-222222222222";
+const demoAttachmentUrl =
+  "https://github.com/user-attachments/assets/37948111-1227-4cdb-a76d-dc8eb469ae5c";
 const maximumDocumentBytes = 1024 * 1024;
 
 interface RepositoryDocumentSnapshot {
@@ -306,7 +308,9 @@ function createIssues(): IssueDocument[] {
         "| Feedback | Whole-document and range RVW comments |",
         "| Sync | Keep the last successful body when GitHub is unavailable |",
         "",
-        "![External planning diagram](https://example.com/rvw-issue-plan.png)",
+        "| Authenticated evidence | External reference |",
+        "| --- | --- |",
+        `| ![Issue attachment](${demoAttachmentUrl}) | ![External planning diagram](https://example.com/rvw-issue-plan.png) |`,
       ].join("\n"),
       "OPEN",
       "2026-08-20T04:42:00.000Z",
@@ -790,6 +794,12 @@ export function createRepositoryDemoFixture(
     `- Start from ${pullRequestChanges.length} changed files, then follow unchanged implementation, tests, Skills, migrations, and documentation.`,
     "- Exercise commit ranges, full-file reading, search, two panes, seeded review comments, and code-linked Walkthroughs.",
     "- Read three seeded Issue documents beside code, including one Issue range comment and a blocked external image.",
+    "",
+    "## Visual evidence",
+    "",
+    "| Authenticated GitHub attachment | External reference |",
+    "| --- | --- |",
+    `| ![Private attachment](${demoAttachmentUrl}) | ![External PR image](https://example.com/rvw-pr-plan.png) |`,
     "",
     "## Related Issues",
     "",
