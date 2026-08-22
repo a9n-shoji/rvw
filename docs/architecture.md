@@ -1,9 +1,10 @@
 # Architecture
 
-rvw is a human reading environment for the software produced by a pull request. Its primary code
-read model is the repository snapshot at an exact Git commit. Pull Request metadata explains intent;
-commit ranges and diffs are derived lenses that locate change inside that snapshot. Changed files do
-not limit which repository documents can be opened, searched, or commented on.
+rvw is a human reading environment for a software repository. A Pull Request Review reads the exact
+PR head and its commit range; a Branch Review reads the exact current head of the repository's GitHub
+default branch. Pull Request metadata and explicitly registered GitHub Issue documents explain intent.
+Diffs remain derived lenses, and changed files do not limit which repository documents can be opened,
+searched, or commented on.
 
 rvw is a local Node.js application with four boundaries:
 
@@ -12,8 +13,20 @@ rvw is a local Node.js application with four boundaries:
 - `infrastructure`: SQLite, Git, GitHub CLI, filesystem, and subprocess adapters.
 - `server`, `cli`, and `web`: transport and presentation only.
 
-The SQLite database is user-global. Observed PR heads are retained by `refs/rvw/...` in the base
-repository's common Git directory. The browser polls `app_meta.change_sequence`; there is no
+The SQLite database is user-global. One Branch Review is keyed by canonical GitHub repository,
+independent from every Pull Request Review. Issue cache rows are shared by GitHub identity while
+memberships and Issue-target comments belong to exactly one review. Observed PR heads and Branch
+Review sources are retained by `refs/rvw/...` in the base repository's common Git directory. The
+saved Git common directory is therefore part of the Branch Review's source binding: worktrees in that
+common directory may reuse the review, but an independent clone with the same canonical GitHub identity
+fails closed instead of moving the binding. An explicit Branch reset is the boundary for recreating it
+from another clone. The
+Issue removal transaction deletes only the selected membership and its owned comments/replies.
+Branch reset deletes Branch comments, Walkthroughs, memberships, and the singleton review before
+releasing only its `refs/rvw/branch/<owner>/<repository>/...` namespace; PR refs and shared Issue cache
+are outside that deletion boundary. The browser polls the active review's
+`app_meta.review_change_sequence:<kind>:<id>` value; the database-wide sequence remains a diagnostic
+and compatibility counter, not the content invalidation boundary. There is no
 persistent daemon or agent session coupling. While a viewer process is running, it exposes a
 user/database-specific Unix socket inside a `0700` temporary directory as an alternate transport for
 the same application service. Agent
@@ -39,14 +52,24 @@ source-position targets nor Mermaid-node bindings. Walkthroughs reuse the same c
 and renderer while adding their document mapping and diagram bindings. Browser state, prompts, and
 Agent sessions never enter the domain model.
 
-New root posts and replies also append a database-wide event sequence. A long-running external Agent
+New root posts and replies also append a database-wide event sequence with an explicit Pull Request or
+Branch context. Routing uses the stable local Pull Request / Branch Review ID; the GitHub URL or
+canonical repository remains a separate display value. A reset-and-recreate therefore starts a new
+Branch context even when its repository text is identical, while casing changes cannot split one
+context. A long-running external Agent
 task may consume that sequence with an opaque database-scoped cursor through `rvw comment watch`.
 rvw retains minimal event identifiers independently of deletable posts and owns only ordering and
 replay. The bundled Skill's task-local state script atomically owns its cursor, queue, leases, retries,
 per-batch status posts, self-event suppression, and repository-writer serialization. After claim, the
 task creates one immediate acknowledgement per affected thread and later edits that same normal post
 to the final outcome. A retry of that batch restores its acknowledgement, while a later batch for the
-same thread creates a new post and preserves the earlier outcome. The parent reserves subagent capacity
+same thread creates a new post and preserves the earlier outcome. Branch Review batches are always
+read-only investigation: they receive one final idempotent reply, never reserve a repository write key,
+and never auto-resolve. Their worker result carries an explicit Branch context, not a fabricated Pull
+Request URL. The final reply uses the operation's stable idempotency key; its returned post ID is stored
+as a durable suppression before the lease completes. Completion also marks an already-ingested pending
+self-event completed, so either ingest ordering and a retry after process restart avoid a new batch.
+The parent reserves subagent capacity
 before intake; the driver caps in-flight claims to that capacity and polls task state to drain same-PR
 follow-ups after lease release and retries after their due time. Every acknowledged lease is handed to
 one fresh subagent immediately, while the parent retains only intake, state, and final-post ownership.
@@ -56,8 +79,10 @@ reply-idempotency ledger makes an exact caller-payload retry safe without introd
 identity into comments.
 
 Walkthroughs cross the same one-way CLI boundary in the other direction. An Agent can publish a
-Markdown explanation fixed to one commit, with validated file references and optional inclusive line
-ranges, plus optional Mermaid-node bindings. SQLite stores one current explanation per stable Walkthrough
+Markdown explanation to a Pull Request or Branch Review, fixed to one commit with validated file
+references and optional inclusive line ranges, plus optional Mermaid-node bindings. A publish or
+update may explicitly add same-repository Issues without creating a semantic relation. SQLite stores
+one current explanation per stable Walkthrough
 ID without revision history. The CLI can read and replace that value in place; the HTTP API remains read-only except for a
 human-confirmed delete action. Whole-document comments keep targeting the stable ID across updates. Rendered
 Markdown text selection maps parser source positions to inclusive source-line comments; those comments retain a
@@ -68,6 +93,10 @@ include viewer state and cannot navigate a browser. The React viewer treats a
 Walkthrough as another document tab, and only a human action opens the referenced exact Git document.
 Inline references and bound Mermaid nodes remain interactive, but the viewer does not duplicate the
 complete reference set in a side or bottom index.
+Publish and update return an enumerable application result envelope containing the saved Walkthrough
+and an explicit `issuesAdded` array populated from membership rows actually inserted in the same
+transaction. The CLI serializes the same envelope whether it calls the service directly or through the
+Agent socket.
 The browser owns an ephemeral two-pane workspace: every document identity may appear once per pane, tabs
 can move between panes, ordinary document-opening clicks target the left pane, and modifier-click targets
 the right pane regardless of focus or origin. Pane placement never enters SQLite or the Agent protocol. Repository Markdown uses
@@ -75,17 +104,24 @@ the same exact Git document fetch and can switch locally between source and a sa
 The preview preserves native browser text selection while translating parser positions back to source line ranges;
 it never persists DOM or layout coordinates.
 The selection boundary resolves to the smallest mapped Markdown leaf, and its composer is portaled
-into a React-owned declarative slot in normal document flow immediately after the selected block so
-wrapped text is never covered.
+into a stable imperative host in normal document flow immediately after the selected block so wrapped
+text is never covered. Issue document identity excludes the Branch source OID: refreshes replace query
+data without remounting the composer. Drafts record the Issue body hash; a changed body preserves text
+and focus but blocks the old range until the human selects a range in the current body. Persisted
+whole-Issue comments remain current across body updates because they target the stable Issue identity;
+persisted range comments become Outdated when that body hash changes.
+Removing an Issue membership invalidates only that Issue's composer generation and deleted threads'
+reply drafts, so a late unmount cannot resurrect them and unrelated document drafts remain available.
 Relative preview and comment images are fetched from their resolved exact commit through a size-limited
 read-only endpoint. PR Markdown, Walkthrough bodies, external image URLs, and paths that cannot be resolved inside the repository
 render as non-fetching placeholders. Same-origin SVG asset responses carry a restrictive Content Security
 Policy and sandbox so direct navigation cannot execute repository-controlled script under the viewer origin.
 
 The bundled Skills are named by capability rather than Agent host. `rvw` handles review comments and
-synchronization; `rvw-walkthrough` converts the current session's explanation into a validated,
+synchronization and read-only Branch Review investigation; `rvw-walkthrough` converts the current session's explanation into a validated,
 commit-fixed publication without prescribing its document structure; `rvw-watch-comments` keeps an
-external Agent task subscribed to newly created posts and fails closed on PR ownership. Codex and Claude Code receive
+external Agent task subscribed to newly created posts. It fails closed on PR ownership before any
+authorized fix-and-push, and categorically disables remote writes for Branch Reviews. Codex and Claude Code receive
 the same Skill directories under their respective local Skill roots. Platform selection is a packaging
 concern only and does not fork the Agent protocol or workflow instructions. Installer metadata records
 the bundled digest so update availability and local customization are reported separately.

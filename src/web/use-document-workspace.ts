@@ -18,8 +18,11 @@ type DocumentWorkspaceUpdate =
 
 export function useDocumentWorkspace(
   onDocumentNavigation: (paneIds: readonly DocumentPaneId[]) => void,
+  initialDocument?: ActiveDocument | null,
 ) {
-  const [workspace, setWorkspaceState] = useState<DocumentWorkspaceState>(initialDocumentWorkspace);
+  const [workspace, setWorkspaceState] = useState<DocumentWorkspaceState>(() =>
+    initialDocumentWorkspace(initialDocument === undefined ? undefined : initialDocument),
+  );
   const workspaceRef = useRef(workspace);
   const setWorkspace = useCallback((update: DocumentWorkspaceUpdate): void => {
     setWorkspaceState((current) => {

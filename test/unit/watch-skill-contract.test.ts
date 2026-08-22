@@ -36,5 +36,16 @@ describe("rvw-watch-comments delegation contract", () => {
       /immutable task policy allows `fix-and-push`[\s\S]*same-PR\s+follow-ups remain durable but ineligible/,
     );
     expect(skill).toMatch(/repository write\s+reservations serialize writers across different PRs/);
+    expect(skill).toMatch(/Branch leases are always read-only[\s\S]*same-repository follow-ups/);
+  });
+
+  it("keeps Branch outcomes read-only while allowing exact typed evidence", () => {
+    expect(skill).toMatch(
+      /For a Branch outcome it\s+must be the current or an already retained Branch source commit/,
+    );
+    expect(skill).toMatch(
+      /For every concrete claim about code behavior[\s\S]*typed references by default/,
+    );
+    expect(skill).not.toContain("Branch outcomes always use null, no references");
   });
 });

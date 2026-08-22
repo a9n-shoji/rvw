@@ -29,11 +29,12 @@ import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type {
+  BranchDocumentContent,
+  BranchDocumentRef,
   CodeReference,
   CommentPlacement,
   DocumentContent,
   DocumentRef,
-  ReviewComment,
 } from "../../domain/models.js";
 import { isSupportedImagePath } from "../../shared/image-assets.js";
 import {
@@ -53,6 +54,8 @@ import {
   type PlacementResponse,
 } from "../api.js";
 import {
+  branchGitHubAttachmentAssetUrl,
+  branchMarkdownAssetUrl,
   githubAttachmentAssetUrl,
   isExternalMarkdownHref,
   markdownAssetUrl,
@@ -60,6 +63,11 @@ import {
   resolveRepositoryMarkdownPath,
   type PointerPosition,
 } from "../markdown-links.js";
+import {
+  reviewCommentPayload,
+  type AnyReviewComment,
+  type ReviewIdentity,
+} from "../review-context.js";
 import {
   MarkdownSelectionSurface,
   markdownCommentAnchorIds,
@@ -69,6 +77,7 @@ import {
   type MarkdownSourceRange,
 } from "../markdown-source-map.js";
 import type { ThemePreference } from "../theme.js";
+import { reviewQueryKeys } from "../review-query-keys.js";
 import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
@@ -79,11 +88,20 @@ import { PreviewMarkdownTable } from "./MarkdownTable.js";
 import { RepositoryImageViewer } from "./RepositoryImageViewer.js";
 
 type ViewerAnnotation =
-  | { kind: "comment"; comment: ReviewComment; placement: CommentPlacement }
+  | { kind: "comment"; comment: AnyReviewComment; placement: CommentPlacement }
   | { kind: "line-composer" };
+
+type ReviewFileRef = DocumentRef | BranchDocumentRef;
+type ReviewDocumentContent = DocumentContent | BranchDocumentContent;
 
 type CreateCommentTarget =
   | { kind: "pull-request" }
+  | {
+      kind: "issue";
+      issue: string;
+      startLine: number | null;
+      endLine: number | null;
+    }
   | {
       kind: "document";
       documentKind: "pull-request-markdown";
@@ -104,7 +122,7 @@ type OptimisticCommentLocation =
   | { mode: "diff"; side: "additions" | "deletions"; lineNumber: number };
 
 interface OptimisticCommentAnnotation {
-  comment: ReviewComment;
+  comment: AnyReviewComment;
   placement: CommentPlacement;
   location: OptimisticCommentLocation;
 }
@@ -121,6 +139,7 @@ const markdownViewByDocument = new Map<string, "source" | "preview">();
 function markdownViewKey(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "pull-request-markdown";
   if (document.kind === "walkthrough") return `walkthrough:${document.id}`;
+  if (document.kind === "issue") return `issue:${document.id}`;
   return `repository-file:${document.path}`;
 }
 
@@ -293,13 +312,57 @@ function restoreDiffViewportAnchor(surface: HTMLElement | null, anchor: DiffView
   pane.scrollTop += currentOffset - anchor.topOffset;
 }
 
-function params(ref: DocumentRef): string {
-  const search = new URLSearchParams({ kind: ref.kind, pullRequestId: ref.pullRequestId });
+function params(ref: ReviewFileRef): string {
+  const search = new URLSearchParams({
+    kind: ref.kind,
+    ...("pullRequestId" in ref
+      ? { pullRequestId: ref.pullRequestId }
+      : { branchReviewId: ref.branchReviewId }),
+  });
   if (ref.kind === "repository-file") {
     search.set("sourceOid", ref.sourceOid);
     search.set("path", ref.path);
+  } else if (ref.kind === "issue-markdown") {
+    search.set("issueId", ref.issueId);
   }
   return search.toString();
+}
+
+function reviewDocumentUrl(ref: ReviewFileRef): string {
+  if ("pullRequestId" in ref) return documentUrl(ref);
+  const search = new URLSearchParams({ kind: ref.kind });
+  if (ref.kind === "repository-file") {
+    search.set("sourceOid", ref.sourceOid);
+    search.set("path", ref.path);
+  } else {
+    search.set("issueId", ref.issueId);
+  }
+  return `/api/branch-reviews/${ref.branchReviewId}/document?${search.toString()}`;
+}
+
+function reviewDocumentPath(ref: ReviewFileRef, activeDocument: ActiveDocument): string {
+  if (ref.kind === "repository-file") return ref.path;
+  if (ref.kind === "pull-request-markdown") return "Pull Request.md";
+  return activeDocument.kind === "issue" ? `#${activeDocument.number}` : "Issue";
+}
+
+function reviewMarkdownAssetUrl(
+  review: ReviewIdentity,
+  sourceOid: string,
+  filePath: string,
+): string {
+  return review.kind === "pull-request"
+    ? markdownAssetUrl(review.id, sourceOid, filePath)
+    : branchMarkdownAssetUrl(review.id, sourceOid, filePath);
+}
+
+function reviewGitHubAttachmentUrl(
+  review: ReviewIdentity,
+  absoluteUrl: string | undefined,
+): string | null {
+  return review.kind === "pull-request"
+    ? githubAttachmentAssetUrl(review.id, absoluteUrl)
+    : branchGitHubAttachmentAssetUrl(review.id, absoluteUrl);
 }
 
 function markdownNodeText(node: ReactNode): string {
@@ -342,7 +405,7 @@ function markdownFragmentLine(anchor: HTMLAnchorElement, href: string): number |
   return Number.isInteger(line) && line > 0 ? line : null;
 }
 
-function renderRepositoryMarkdown({
+function renderReviewMarkdown({
   text,
   pullRequestMarkdown,
   annotations,
@@ -352,7 +415,7 @@ function renderRepositoryMarkdown({
   markdownDiv,
   sourceRef,
   selectedOid,
-  pullRequestId,
+  review,
   linkPointerStart,
   onOpenRepositoryLink,
   onOpenMarkdownFragment,
@@ -364,9 +427,9 @@ function renderRepositoryMarkdown({
   selectedRange: MarkdownSourceRange | null;
   composerOpen: boolean;
   markdownDiv: NonNullable<Components["div"]>;
-  sourceRef: DocumentRef;
+  sourceRef: ReviewFileRef;
   selectedOid: string;
-  pullRequestId: string;
+  review: ReviewIdentity;
   linkPointerStart: { current: PointerPosition | null };
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onOpenMarkdownFragment: (line: number, hash: string) => void;
@@ -515,8 +578,8 @@ function renderRepositoryMarkdown({
         },
         img: ({ src, alt, title, node: _node, ...props }) => {
           const sourceAttributes = markdownSourceDataAttributes(_node);
-          if (sourceRef.kind === "pull-request-markdown") {
-            const attachmentUrl = githubAttachmentAssetUrl(pullRequestId, src);
+          if (sourceRef.kind === "pull-request-markdown" || sourceRef.kind === "issue-markdown") {
+            const attachmentUrl = reviewGitHubAttachmentUrl(review, src);
             return attachmentUrl ? (
               <MarkdownImage
                 {...props}
@@ -555,7 +618,7 @@ function renderRepositoryMarkdown({
           return (
             <MarkdownImage
               {...props}
-              src={markdownAssetUrl(pullRequestId, sourceRef.sourceOid, repositoryPath)}
+              src={reviewMarkdownAssetUrl(review, sourceRef.sourceOid, repositoryPath)}
               alt={alt}
               title={title}
               sourceAttributes={sourceAttributes}
@@ -569,11 +632,23 @@ function renderRepositoryMarkdown({
   );
 }
 
-function placementUrl(commentId: string, ref: DocumentRef): string {
+function placementUrl(commentId: string, ref: ReviewFileRef): string {
   return `/api/comments/${commentId}/placement?${params(ref)}`;
 }
 
-function fileValue(document: DocumentContent | null, fallbackName: string) {
+function commentCanTargetDocument(comment: AnyReviewComment, ref: ReviewFileRef): boolean {
+  if (ref.kind === "issue-markdown") {
+    return comment.target.kind === "issue" && comment.target.issueId === ref.issueId;
+  }
+  if (ref.kind === "pull-request-markdown") {
+    return (
+      comment.target.kind === "document" && comment.target.documentKind === "pull-request-markdown"
+    );
+  }
+  return comment.target.kind === "document" && comment.target.documentKind === "repository-file";
+}
+
+function fileValue(document: ReviewDocumentContent | null, fallbackName: string) {
   if (!document || document.availability !== "available") return null;
   const file = {
     name: document.ref.kind === "repository-file" ? document.ref.path : fallbackName,
@@ -588,7 +663,7 @@ function Unavailable({
   document,
   fileCommentAction = null,
 }: {
-  document: DocumentContent | null;
+  document: ReviewDocumentContent | null;
   fileCommentAction?: ReactNode;
 }) {
   const message = !document
@@ -608,14 +683,16 @@ function Unavailable({
 }
 
 export function DocumentViewer({
-  pullRequestId,
+  review,
   paneId,
   selectedOid,
   oldOid,
   activeDocument,
+  documentRevision = null,
   displayMode,
   diffStyle,
   comments,
+  commentPlacements,
   activeCommentId,
   fullViewNotice = null,
   fullViewUnavailableMessage = null,
@@ -627,14 +704,16 @@ export function DocumentViewer({
   onOpenCodeReference,
   onOpenRepositoryLink,
 }: {
-  pullRequestId: string;
+  review: ReviewIdentity;
   paneId: DocumentPaneId;
   selectedOid: string;
   oldOid: string | null;
   activeDocument: ActiveDocument;
+  documentRevision?: string | null;
   displayMode: DisplayMode;
   diffStyle: "unified" | "split";
-  comments: ReviewComment[];
+  comments: AnyReviewComment[];
+  commentPlacements?: ReadonlyMap<string, CommentPlacement>;
   activeCommentId: string | null;
   fullViewNotice?: string | null;
   fullViewUnavailableMessage?: string | null;
@@ -651,11 +730,12 @@ export function DocumentViewer({
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
 }) {
   if (activeDocument.kind === "walkthrough") {
-    throw new Error("walkthroughはWalkthroughViewerで表示してください。");
+    throw new Error("この文書は専用viewerで表示してください。");
   }
   const queryClient = useQueryClient();
   const markdownCapable =
     activeDocument.kind === "pull-request-markdown" ||
+    activeDocument.kind === "issue" ||
     activeDocument.path.toLowerCase().endsWith(".md") ||
     activeDocument.path.toLowerCase().endsWith(".markdown");
   const activeMarkdownViewKey = markdownViewKey(activeDocument);
@@ -673,10 +753,15 @@ export function DocumentViewer({
     oldOid,
     displayMode,
   });
-  const commentDraftRevision = useRef(currentCommentDraftRevision(pullRequestId)).current;
-  const initialCommentDraft = readCommentDraft(pullRequestId, commentDraftKey);
+  const commentDraftRevision = useRef(
+    currentCommentDraftRevision(review.id, commentDraftKey),
+  ).current;
+  const initialCommentDraft = readCommentDraft(review.id, commentDraftKey);
   const [selection, setSelection] = useState<SelectedLineRange | null>(
     initialCommentDraft?.selection ?? null,
+  );
+  const [selectionDocumentRevision, setSelectionDocumentRevision] = useState<string | null>(
+    initialCommentDraft?.documentRevision ?? documentRevision,
   );
   const [selectionPreview, setSelectionPreview] = useState<SelectedLineRange | null>(null);
   const [markdownComposerOpen, setMarkdownComposerOpen] = useState(
@@ -692,15 +777,16 @@ export function DocumentViewer({
   useLayoutEffect(() => {
     const persistDraft = (): void => {
       if (fileComposerOpen || markdownComposerOpen || selection) {
-        writeCommentDraft(pullRequestId, commentDraftKey, commentDraftRevision, {
+        writeCommentDraft(review.id, commentDraftKey, commentDraftRevision, {
           body,
           selection,
+          documentRevision: selectionDocumentRevision,
           markdownComposerOpen,
           fileComposerOpen,
         });
         return;
       }
-      deleteCommentDraft(pullRequestId, commentDraftKey, commentDraftRevision);
+      deleteCommentDraft(review.id, commentDraftKey, commentDraftRevision);
     };
     persistDraft();
     return persistDraft;
@@ -710,8 +796,9 @@ export function DocumentViewer({
     commentDraftRevision,
     fileComposerOpen,
     markdownComposerOpen,
-    pullRequestId,
+    review.id,
     selection,
+    selectionDocumentRevision,
   ]);
   const loadedOptimisticCommentId = useRef<string | null>(null);
   const markdownLinkPointerStart = useRef<PointerPosition | null>(null);
@@ -798,24 +885,50 @@ export function DocumentViewer({
     [navigationTarget],
   );
   const effectiveDisplayMode =
-    activeDocument.kind === "pull-request-markdown" ? "full" : displayMode;
+    activeDocument.kind === "pull-request-markdown" || activeDocument.kind === "issue"
+      ? "full"
+      : displayMode;
   const showingMarkdownPreview =
     markdownCapable && effectiveDisplayMode === "full" && markdownView === "preview";
-  const fullRef = useMemo<DocumentRef>(
+  const fullRef = useMemo<ReviewFileRef>(
     () =>
       activeDocument.kind === "pull-request-markdown"
-        ? { kind: "pull-request-markdown", pullRequestId }
-        : {
-            kind: "repository-file",
-            pullRequestId,
-            sourceOid: activeDocument.sourceOid ?? selectedOid,
-            path: activeDocument.path,
-          },
+        ? {
+            kind: "pull-request-markdown",
+            pullRequestId: review.id,
+          }
+        : activeDocument.kind === "issue"
+          ? review.kind === "pull-request"
+            ? {
+                kind: "issue-markdown",
+                pullRequestId: review.id,
+                issueId: activeDocument.id,
+              }
+            : {
+                kind: "issue-markdown",
+                branchReviewId: review.id,
+                issueId: activeDocument.id,
+              }
+          : review.kind === "pull-request"
+            ? {
+                kind: "repository-file",
+                pullRequestId: review.id,
+                sourceOid: activeDocument.sourceOid ?? selectedOid,
+                path: activeDocument.path,
+              }
+            : {
+                kind: "repository-file",
+                branchReviewId: review.id,
+                sourceOid: activeDocument.sourceOid ?? selectedOid,
+                path: activeDocument.path,
+              },
     [
       activeDocument.kind,
+      activeDocument.kind === "issue" ? activeDocument.id : null,
       activeDocument.kind === "repository-file" ? activeDocument.path : null,
       activeDocument.kind === "repository-file" ? activeDocument.sourceOid : null,
-      pullRequestId,
+      review.id,
+      review.kind,
       selectedOid,
     ],
   );
@@ -839,8 +952,13 @@ export function DocumentViewer({
           (oldPath && isSupportedImagePath(oldPath)) || (newPath && isSupportedImagePath(newPath)),
         ));
   const fullQuery = useQuery({
-    queryKey: ["document", fullRef],
-    queryFn: async () => (await api<DocumentResponse>(documentUrl(fullRef))).document,
+    queryKey: reviewQueryKeys.document(fullRef),
+    queryFn: async () =>
+      (
+        await api<DocumentResponse | { document: BranchDocumentContent }>(
+          reviewDocumentUrl(fullRef),
+        )
+      ).document,
     enabled:
       effectiveDisplayMode === "full" &&
       !repositoryImageViewerActive &&
@@ -855,20 +973,22 @@ export function DocumentViewer({
     if (newPath) diffSearch.set("newPath", newPath);
   }
   const diffQuery = useQuery({
-    queryKey: ["diff", pullRequestId, oldOid, selectedOid, activeDocument],
+    queryKey: ["diff", review.kind, review.id, oldOid, selectedOid, activeDocument],
     queryFn: async () =>
-      (await api<DiffResponse>(`/api/pull-requests/${pullRequestId}/diff?${diffSearch.toString()}`))
+      (await api<DiffResponse>(`/api/pull-requests/${review.id}/diff?${diffSearch.toString()}`))
         .diff,
     enabled:
+      review.kind === "pull-request" &&
       effectiveDisplayMode !== "full" &&
       !repositoryImageViewerActive &&
       activeDocument.kind === "repository-file" &&
       Boolean(oldOid) &&
       oldOid !== selectedOid,
   });
+  const documentPath = reviewDocumentPath(fullRef, activeDocument);
   const fullFile = useMemo(
-    () => fileValue(fullQuery.data ?? null, "Pull Request.md"),
-    [fullQuery.data],
+    () => fileValue(fullQuery.data ?? null, documentPath),
+    [documentPath, fullQuery.data],
   );
   const oldFile = useMemo(
     () => fileValue(diffQuery.data?.old ?? null, "Pull Request.md"),
@@ -899,22 +1019,23 @@ export function DocumentViewer({
     }
     return {
       old:
-        oldOid && oldPath
+        review.kind === "pull-request" && oldOid && oldPath
           ? {
               kind: "repository-file" as const,
-              pullRequestId,
+              pullRequestId: review.id,
               sourceOid: oldOid,
               path: oldPath,
             }
           : null,
-      new: newPath
-        ? {
-            kind: "repository-file" as const,
-            pullRequestId,
-            sourceOid: selectedOid,
-            path: newPath,
-          }
-        : null,
+      new:
+        review.kind === "pull-request" && newPath
+          ? {
+              kind: "repository-file" as const,
+              pullRequestId: review.id,
+              sourceOid: selectedOid,
+              path: newPath,
+            }
+          : null,
     };
   }, [
     activeDocument.kind,
@@ -923,7 +1044,8 @@ export function DocumentViewer({
     newPath,
     oldOid,
     oldPath,
-    pullRequestId,
+    review.id,
+    review.kind,
     repositoryImageViewerActive,
     selectedOid,
   ]);
@@ -935,23 +1057,42 @@ export function DocumentViewer({
       new: diffQuery.data?.new?.ref ?? null,
     };
   }, [effectiveDisplayMode, fullRef, diffQuery.data, repositoryImageRefs]);
+  const placementCacheKey = comments.map((comment) => {
+    const placement = commentPlacements?.get(comment.id);
+    return placement
+      ? `${comment.id}:${placement.outdated}:${placement.path ?? ""}:${placement.range?.startLine ?? ""}:${placement.range?.endLine ?? ""}`
+      : `${comment.id}:uncached`;
+  });
+  const loadPlacement = async (
+    comment: AnyReviewComment,
+    ref: ReviewFileRef,
+  ): Promise<CommentPlacement> => {
+    const cachedPlacement =
+      ref.kind === "issue-markdown" ||
+      (ref.kind === "repository-file" && ref.sourceOid === review.sourceOid)
+        ? commentPlacements?.get(comment.id)
+        : undefined;
+    if (cachedPlacement) return cachedPlacement;
+    return (await api<PlacementResponse>(placementUrl(comment.id, ref))).placement;
+  };
   const annotationQuery = useQuery({
     queryKey: [
       "annotations",
       comments.map((comment) => `${comment.id}:${comment.updatedAt}`),
+      placementCacheKey,
       renderedRefs,
-      renderedRefs.new?.kind === "pull-request-markdown" ? fullQuery.data?.text : null,
+      renderedRefs.new?.kind !== "repository-file" ? fullQuery.data?.text : null,
     ],
     queryFn: async () => {
       const fileAnnotations: LineAnnotation<ViewerAnnotation>[] = [];
       const diffAnnotations: DiffLineAnnotation<ViewerAnnotation>[] = [];
       const markdownComments: Array<{
-        comment: ReviewComment;
+        comment: AnyReviewComment;
         placement: CommentPlacement;
       }> = [];
       const imageComments: {
-        old: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
-        new: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+        old: Array<{ comment: AnyReviewComment; placement: CommentPlacement }>;
+        new: Array<{ comment: AnyReviewComment; placement: CommentPlacement }>;
       } = { old: [], new: [] };
       if (repositoryImageRefs) {
         for (const comment of comments) {
@@ -971,10 +1112,8 @@ export function DocumentViewer({
                 { side: "old" as const, ref: repositoryImageRefs.old },
               ] as const);
           for (const candidate of candidates) {
-            if (!candidate.ref) continue;
-            const { placement } = await api<PlacementResponse>(
-              placementUrl(comment.id, candidate.ref),
-            );
+            if (!candidate.ref || !commentCanTargetDocument(comment, candidate.ref)) continue;
+            const placement = await loadPlacement(comment, candidate.ref);
             if (!placement.outdated && placement.path === candidate.ref.path) {
               imageComments[candidate.side].push({ comment, placement });
               break;
@@ -985,16 +1124,11 @@ export function DocumentViewer({
       }
       for (const comment of comments) {
         let added = false;
-        if (renderedRefs.new) {
-          const { placement } = await api<PlacementResponse>(
-            placementUrl(comment.id, renderedRefs.new),
-          );
+        if (renderedRefs.new && commentCanTargetDocument(comment, renderedRefs.new)) {
+          const placement = await loadPlacement(comment, renderedRefs.new);
           if (
             !placement.outdated &&
-            placement.path ===
-              (renderedRefs.new.kind === "repository-file"
-                ? renderedRefs.new.path
-                : "Pull Request.md")
+            placement.path === reviewDocumentPath(renderedRefs.new, activeDocument)
           ) {
             const lineNumber = placement.range?.endLine ?? 0;
             const metadata = { kind: "comment", comment, placement } as const;
@@ -1005,16 +1139,11 @@ export function DocumentViewer({
             added = true;
           }
         }
-        if (!added && renderedRefs.old) {
-          const { placement } = await api<PlacementResponse>(
-            placementUrl(comment.id, renderedRefs.old),
-          );
+        if (!added && renderedRefs.old && commentCanTargetDocument(comment, renderedRefs.old)) {
+          const placement = await loadPlacement(comment, renderedRefs.old);
           if (
             !placement.outdated &&
-            placement.path ===
-              (renderedRefs.old.kind === "repository-file"
-                ? renderedRefs.old.path
-                : "Pull Request.md")
+            placement.path === reviewDocumentPath(renderedRefs.old, activeDocument)
           ) {
             diffAnnotations.push({
               side: "deletions",
@@ -1037,10 +1166,10 @@ export function DocumentViewer({
       target: CreateCommentTarget;
       location: OptimisticCommentLocation;
     }) =>
-      await api<{ comment: ReviewComment }>(
+      await api<{ comment: AnyReviewComment }>(
         "/api/comments",
         jsonRequest({
-          pullRequestId,
+          ...reviewCommentPayload(review),
           target,
           body,
           authorLabel: "You",
@@ -1049,15 +1178,17 @@ export function DocumentViewer({
     onSuccess: async ({ comment }, { target, location }) => {
       window.getSelection()?.removeAllRanges();
       const range =
-        target.kind === "document" && target.startLine !== null && target.endLine !== null
+        target.kind !== "pull-request" && target.startLine !== null && target.endLine !== null
           ? { startLine: target.startLine, endLine: target.endLine }
           : null;
       const path =
-        target.kind !== "document"
+        target.kind === "pull-request"
           ? null
-          : target.documentKind === "pull-request-markdown"
-            ? "Pull Request.md"
-            : target.path;
+          : target.kind === "issue"
+            ? documentPath
+            : target.documentKind === "pull-request-markdown"
+              ? "Pull Request.md"
+              : target.path;
       loadedOptimisticCommentId.current = null;
       setOptimisticComment({
         comment,
@@ -1066,11 +1197,12 @@ export function DocumentViewer({
       });
       setBody("");
       setSelection(null);
+      setSelectionDocumentRevision(null);
       setSelectionPreview(null);
       setMarkdownComposerOpen(false);
       setFileComposerOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["comments"] });
-      await queryClient.invalidateQueries({ queryKey: ["change-sequence"] });
+      await queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() });
+      await queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() });
     },
   });
 
@@ -1079,6 +1211,7 @@ export function DocumentViewer({
     if (navigationRequestId === null) return;
     setBody("");
     setSelection(null);
+    setSelectionDocumentRevision(null);
     setSelectionPreview(null);
     setMarkdownComposerOpen(false);
     setFileComposerOpen(false);
@@ -1127,8 +1260,13 @@ export function DocumentViewer({
         : renderedRefs.new;
   const fileLevelRef =
     effectiveDisplayMode === "full" ? fullRef : (renderedRefs.new ?? renderedRefs.old ?? null);
+  const issueSelectionIsStale =
+    activeDocument.kind === "issue" &&
+    selection !== null &&
+    selectionDocumentRevision !== documentRevision;
   const canSubmitSelection =
     selection !== null &&
+    !issueSelectionIsStale &&
     selectedLineRef !== null &&
     selectedLineRef !== undefined &&
     (!selection.side || !selection.endSide || selection.side === selection.endSide);
@@ -1145,14 +1283,21 @@ export function DocumentViewer({
             startLine,
             endLine,
           }
-        : {
-            kind: "document" as const,
-            documentKind: "repository-file" as const,
-            sourceOid: selectedRef.sourceOid,
-            path: selectedRef.path,
-            startLine,
-            endLine,
-          };
+        : selectedRef.kind === "issue-markdown"
+          ? {
+              kind: "issue" as const,
+              issue: activeDocument.kind === "issue" ? activeDocument.url : "",
+              startLine,
+              endLine,
+            }
+          : {
+              kind: "document" as const,
+              documentKind: "repository-file" as const,
+              sourceOid: selectedRef.sourceOid,
+              path: selectedRef.path,
+              startLine,
+              endLine,
+            };
     const lineNumber = endLine ?? 0;
     const location: OptimisticCommentLocation =
       effectiveDisplayMode === "full"
@@ -1175,6 +1320,7 @@ export function DocumentViewer({
     createMutation.reset();
     setBody("");
     setSelection(null);
+    setSelectionDocumentRevision(null);
     setSelectionPreview(null);
     setMarkdownComposerOpen(false);
     setFileComposerOpen(false);
@@ -1183,7 +1329,9 @@ export function DocumentViewer({
   const handleLineSelectionStart = useCallback(
     (range: SelectedLineRange | null): void => {
       resetCreateMutation();
-      setBody("");
+      if (activeDocument.kind !== "issue" || selectionDocumentRevision === documentRevision) {
+        setBody("");
+      }
       setSelection(null);
       setSelectionPreview(range);
       setMarkdownComposerOpen(false);
@@ -1191,20 +1339,23 @@ export function DocumentViewer({
         setFileComposerOpen(false);
       }
     },
-    [resetCreateMutation],
+    [activeDocument.kind, documentRevision, resetCreateMutation, selectionDocumentRevision],
   );
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null): void => {
       resetCreateMutation();
-      setBody("");
+      if (activeDocument.kind !== "issue" || selectionDocumentRevision === documentRevision) {
+        setBody("");
+      }
       setSelection(range);
+      setSelectionDocumentRevision(range ? documentRevision : null);
       setSelectionPreview(null);
       setMarkdownComposerOpen(false);
       if (range) {
         setFileComposerOpen(false);
       }
     },
-    [resetCreateMutation],
+    [activeDocument.kind, documentRevision, resetCreateMutation, selectionDocumentRevision],
   );
   const { fileAnnotations, diffAnnotations } = useMemo(() => {
     const fileAnnotations = [...(annotationQuery.data?.fileAnnotations ?? [])];
@@ -1263,6 +1414,7 @@ export function DocumentViewer({
     const placed = [...(annotationQuery.data?.markdownComments ?? [])];
     if (
       optimisticComment &&
+      loadedOptimisticCommentId.current !== optimisticComment.comment.id &&
       !placed.some(({ comment }) => comment.id === optimisticComment.comment.id)
     ) {
       placed.push({
@@ -1393,13 +1545,14 @@ export function DocumentViewer({
     ? (markdownSelectedRange?.startLine ?? null)
     : null;
   const composerEndLine = markdownComposerOpen ? (markdownSelectedRange?.endLine ?? null) : null;
-  const renderedRepositoryMarkdown = useMemo(
+  const renderedReviewMarkdown = useMemo(
     () =>
       markdownText === null
         ? null
-        : renderRepositoryMarkdown({
+        : renderReviewMarkdown({
             text: markdownText,
-            pullRequestMarkdown: activeDocument.kind === "pull-request-markdown",
+            pullRequestMarkdown:
+              activeDocument.kind === "pull-request-markdown" || activeDocument.kind === "issue",
             annotations: markdownCommentAnnotations,
             activeCommentId,
             selectedRange:
@@ -1410,7 +1563,7 @@ export function DocumentViewer({
             markdownDiv,
             sourceRef: fullRef,
             selectedOid,
-            pullRequestId,
+            review,
             linkPointerStart: markdownLinkPointerStart,
             onOpenRepositoryLink: openRepositoryLink,
             onOpenMarkdownFragment: openMarkdownFragment,
@@ -1427,7 +1580,7 @@ export function DocumentViewer({
       markdownText,
       openMarkdownFragment,
       openRepositoryLink,
-      pullRequestId,
+      review,
       selectedOid,
     ],
   );
@@ -1437,7 +1590,7 @@ export function DocumentViewer({
       !navigationTarget ||
       navigationTarget.line === null ||
       appliedNavigationRequest.current === navigationTarget.requestId ||
-      renderedRepositoryMarkdown === null
+      renderedReviewMarkdown === null
     ) {
       return;
     }
@@ -1452,15 +1605,17 @@ export function DocumentViewer({
       navigationAppliedRef.current(requestId);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [navigationTarget, renderedRepositoryMarkdown, showingMarkdownPreview]);
+  }, [navigationTarget, renderedReviewMarkdown, showingMarkdownPreview]);
+  const wholeDocumentCommentLabel =
+    activeDocument.kind === "issue" ? "Issue全体へコメント" : "ファイル全体へコメント";
   const activeSelection = fileComposerOpen
     ? null
     : (selectionPreview ?? selection ?? navigationSelection);
   const fileCommentButton = (
     <button
       className="comment-icon-button diff-header-comment-button"
-      aria-label="ファイル全体へコメント"
-      title="ファイル全体へコメント"
+      aria-label={wholeDocumentCommentLabel}
+      title={wholeDocumentCommentLabel}
       aria-pressed={fileComposerOpen}
       disabled={!fileLevelRef}
       onClick={() => {
@@ -1530,8 +1685,9 @@ export function DocumentViewer({
   const selectedRangeLabel = selection
     ? `L${Math.min(selection.start, selection.end)}${selection.start === selection.end ? "" : `–${Math.max(selection.start, selection.end)}`}`
     : null;
-  const selectedPathLabel =
-    selectedLineRef?.kind === "repository-file" ? selectedLineRef.path : "Pull Request.md";
+  const selectedPathLabel = selectedLineRef
+    ? reviewDocumentPath(selectedLineRef, activeDocument)
+    : documentPath;
   const selectedSideLabel =
     effectiveDisplayMode === "full"
       ? null
@@ -1541,6 +1697,11 @@ export function DocumentViewer({
   const selectionLabel = selection
     ? `${[selectedPathLabel, selectedSideLabel, selectedRangeLabel].filter(Boolean).join(" · ")}へコメント`
     : "選択範囲へコメント";
+  const selectionValidationError = issueSelectionIsStale
+    ? "Issue本文が更新されました。draftは保持されています。現在の本文で範囲を選び直してください。"
+    : selection?.side && selection.endSide && selection.side !== selection.endSide
+      ? "old/newをまたぐ選択にはコメントできません。"
+      : undefined;
   const annotationRenderer = (
     annotation: LineAnnotation<ViewerAnnotation> | DiffLineAnnotation<ViewerAnnotation>,
   ) => {
@@ -1570,11 +1731,7 @@ export function DocumentViewer({
         disabled={!canSubmitSelection}
         pending={createMutation.isPending}
         error={createMutation.error}
-        validationError={
-          selection?.side && selection.endSide && selection.side !== selection.endSide
-            ? "old/newをまたぐ選択にはコメントできません。"
-            : undefined
-        }
+        validationError={selectionValidationError}
         placement="line"
         onBodyChange={setBody}
         onCancel={closeComposer}
@@ -1583,7 +1740,11 @@ export function DocumentViewer({
     );
   };
   const markdownPath =
-    activeDocument.kind === "repository-file" ? activeDocument.path : "Pull Request.md";
+    activeDocument.kind === "repository-file"
+      ? activeDocument.path
+      : activeDocument.kind === "issue"
+        ? `#${activeDocument.number} ${activeDocument.title}`
+        : "Pull Request.md";
   const repositoryImageCommentNodes = (
     side: "old" | "new",
     diffSide: "deletions" | "additions" | null,
@@ -1623,8 +1784,8 @@ export function DocumentViewer({
                 sourceUrl:
                   repositoryImageRefs.old?.kind === "repository-file" &&
                   isSupportedImagePath(repositoryImageRefs.old.path)
-                    ? markdownAssetUrl(
-                        pullRequestId,
+                    ? reviewMarkdownAssetUrl(
+                        review,
                         repositoryImageRefs.old.sourceOid,
                         repositoryImageRefs.old.path,
                       )
@@ -1642,8 +1803,8 @@ export function DocumentViewer({
           sourceUrl:
             repositoryImageRefs.new?.kind === "repository-file" &&
             isSupportedImagePath(repositoryImageRefs.new.path)
-              ? markdownAssetUrl(
-                  pullRequestId,
+              ? reviewMarkdownAssetUrl(
+                  review,
                   repositoryImageRefs.new.sourceOid,
                   repositoryImageRefs.new.path,
                 )
@@ -1669,7 +1830,19 @@ export function DocumentViewer({
         <div className="markdown-view-toolbar" aria-label="Markdown表示">
           <span>
             <FileEntryIcon path={markdownPath} kind="file" />
-            <code>{markdownPath}</code>
+            {activeDocument.kind === "issue" ? (
+              <a
+                className="markdown-document-link"
+                href={activeDocument.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="GitHub Issueを開く"
+              >
+                <code>{markdownPath}</code>
+              </a>
+            ) : (
+              <code>{markdownPath}</code>
+            )}
           </span>
           <div className="segmented markdown-view-modes">
             <button
@@ -1692,7 +1865,7 @@ export function DocumentViewer({
       {fileComposerOpen && (
         <InlineCommentComposer
           body={body}
-          label="ファイル全体へコメント"
+          label={wholeDocumentCommentLabel}
           pending={createMutation.isPending}
           error={createMutation.error}
           validationError={undefined}
@@ -1719,8 +1892,17 @@ export function DocumentViewer({
                 composerOpen={markdownComposerOpen}
                 onSelection={(range) => {
                   createMutation.reset();
-                  setBody("");
-                  setSelection(range ? { start: range.startLine, end: range.endLine } : null);
+                  const nextSelection = range
+                    ? { start: range.startLine, end: range.endLine }
+                    : null;
+                  const keepsReselectedDraft =
+                    nextSelection !== null &&
+                    selection !== null &&
+                    nextSelection.start === selection.start &&
+                    nextSelection.end === selection.end;
+                  if (!issueSelectionIsStale && !keepsReselectedDraft) setBody("");
+                  setSelection(nextSelection);
+                  setSelectionDocumentRevision(range ? documentRevision : null);
                   setSelectionPreview(null);
                   setMarkdownComposerOpen(false);
                   if (range) setFileComposerOpen(false);
@@ -1730,9 +1912,10 @@ export function DocumentViewer({
                   <InlineCommentComposer
                     body={body}
                     label={selectionLabel}
+                    disabled={!canSubmitSelection}
                     pending={createMutation.isPending}
                     error={createMutation.error}
-                    validationError={undefined}
+                    validationError={selectionValidationError}
                     placement="line"
                     onBodyChange={setBody}
                     onCancel={closeComposer}
@@ -1740,7 +1923,7 @@ export function DocumentViewer({
                   />
                 }
               >
-                <article>{renderedRepositoryMarkdown}</article>
+                <article>{renderedReviewMarkdown}</article>
               </MarkdownSelectionSurface>
             </div>
           ) : (

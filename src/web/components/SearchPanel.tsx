@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState, type RefObject } from "react";
-import type { ChangeKind, SearchResponse, SearchResult } from "../../domain/models.js";
+import type {
+  BranchSearchResponse,
+  BranchSearchResult,
+  ChangeKind,
+  SearchResponse,
+  SearchResult,
+} from "../../domain/models.js";
 import { ErrorNotice } from "./ErrorNotice.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { ChangeIcon, ExpandCollapseAllIcon } from "./FileTree.js";
@@ -7,9 +13,11 @@ import { ChangeIcon, ExpandCollapseAllIcon } from "./FileTree.js";
 export interface SearchResultGroup {
   key: string;
   path: string;
-  results: SearchResult[];
+  results: AnySearchResult[];
   matchCount: number;
 }
+
+export type AnySearchResult = SearchResult | BranchSearchResult;
 
 export function splitSearchResultPath(path: string): { fileName: string; directory: string } {
   const separatorIndex = path.lastIndexOf("/");
@@ -20,7 +28,7 @@ export function splitSearchResultPath(path: string): { fileName: string; directo
   };
 }
 
-export function groupSearchResults(results: SearchResult[]): SearchResultGroup[] {
+export function groupSearchResults(results: AnySearchResult[]): SearchResultGroup[] {
   const groups = new Map<string, SearchResultGroup>();
   for (const result of results) {
     const key = `${result.document.kind}:${result.path}`;
@@ -55,7 +63,7 @@ function ResultChevron({ expanded }: { expanded: boolean }) {
   );
 }
 
-function HighlightedSearchText({ result }: { result: SearchResult }) {
+function HighlightedSearchText({ result }: { result: AnySearchResult }) {
   const content: React.ReactNode[] = [];
   let offset = 0;
   for (const [index, match] of result.matches.entries()) {
@@ -92,13 +100,13 @@ export function SearchPanel({
   matchCase: boolean;
   wholeWord: boolean;
   changeKindsByPath: ReadonlyMap<string, ChangeKind>;
-  response: SearchResponse | undefined;
+  response: SearchResponse | BranchSearchResponse | undefined;
   isFetching: boolean;
   error: unknown;
   onQueryChange: (query: string) => void;
   onMatchCaseChange: (enabled: boolean) => void;
   onWholeWordChange: (enabled: boolean) => void;
-  onOpenResult: (result: SearchResult, openInRightPane: boolean) => void;
+  onOpenResult: (result: AnySearchResult, openInRightPane: boolean) => void;
 }) {
   const groups = useMemo(() => groupSearchResults(response?.results ?? []), [response?.results]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());

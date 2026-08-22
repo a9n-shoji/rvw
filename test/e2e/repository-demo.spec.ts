@@ -38,8 +38,50 @@ test("opens a repository-scale demo backed by committed Git objects", async ({ p
   await expect(
     page.getByRole("heading", { name: "Demo: review rvw as a medium-sized repository" }),
   ).toBeVisible();
+  const pullRequestAttachment = page.getByRole("img", {
+    name: "Private attachment",
+    exact: true,
+  });
+  await expect(pullRequestAttachment).toHaveAttribute(
+    "src",
+    new RegExp(`/api/pull-requests/${pullRequestId}/github-attachment\\?url=`),
+  );
+  await expect(page.locator("td").filter({ has: pullRequestAttachment })).toHaveCount(1);
+  await expect(
+    page.getByRole("img", { name: /External PR image.*自動読み込み停止/ }),
+  ).toBeVisible();
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await expect(reviewTree.getByRole("button", { name: "Issues 3", exact: true })).toBeVisible();
+  await expect(reviewTree.locator(".review-tree-issue").filter({ hasText: "#98" })).toContainText(
+    "CLOSED",
+  );
   await expect(page.getByRole("button", { name: "ウォークスルー 2", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "コメント 3", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "コメント 4", exact: true })).toBeVisible();
+
+  await reviewTree.getByRole("button", { name: /#156 Read the default branch/ }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Default-branch reading surface",
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".markdown-inline-comments")).toBeVisible();
+  await page.getByRole("button", { name: "コメント 4", exact: true }).click();
+  await page
+    .locator('.comment-sidebar [data-comment-id="90000000-0000-4000-8000-000000000005"]')
+    .getByRole("button", { name: "コメント対象を開く" })
+    .click();
+  await expect(page.locator(".rvw-markdown-commented").first()).toBeVisible();
+
+  await reviewTree.getByRole("button", { name: /#142 Treat GitHub Issues/ }).click();
+  const issueAttachment = page.getByRole("img", { name: "Issue attachment", exact: true });
+  await expect(issueAttachment).toHaveAttribute(
+    "src",
+    new RegExp(`/api/pull-requests/${pullRequestId}/github-attachment\\?url=`),
+  );
+  await expect(page.locator("td").filter({ has: issueAttachment })).toHaveCount(1);
+  await expect(
+    page.getByRole("img", { name: /External planning diagram.*自動読み込み停止/ }),
+  ).toBeVisible();
 
   const commitPicker = page
     .getByRole("region", { name: "レビュー範囲", exact: true })
@@ -49,4 +91,12 @@ test("opens a repository-scale demo backed by committed Git objects", async ({ p
   await expect(
     page.getByRole("dialog", { name: "対象commitを選択" }).getByRole("option"),
   ).toHaveCount(6);
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Issue #98 Keep comment-watch writes context-safe");
+    expect(dialog.message()).toContain("Issue全体コメント 0");
+    await dialog.accept();
+  });
+  await page.getByRole("button", { name: "#98を削除" }).click();
+  await expect(reviewTree.getByRole("button", { name: "Issues 2", exact: true })).toBeVisible();
 });

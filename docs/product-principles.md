@@ -1,8 +1,8 @@
 # Product principles
 
 `rvw`は、AIか人間かに関係なく、実装されたcodeを人間が理解するためのreading interfaceである。
-レビュー対象はdiff単体ではない。Pull Requestの意図、commitの並び、それらが作ったrepository
-snapshotを合わせた、結果として存在するsoftwareである。Agentとの協業はその理解から次の行動へ
+レビュー対象はdiff単体ではない。Pull Requestの意図とcommitが作ったsnapshot、またはdefault branchの
+exact snapshotを、GitHub IssueやWalkthroughと合わせて読む。Agentとの協業はその理解から次の行動へ
 つなぐ一つの経路であって、code reading自体をAI sessionへ従属させない。
 
 ## 解く問題
@@ -52,6 +52,16 @@ diffは二つのcommit間で何のtextが変わったかを答えるが、どの
 
 commitと連続commit rangeが実装の変化を記述する。`rvw`は二つ目のcaptureやversion modelを追加しない。
 exact commit objectを保持し、current PR historyが変わった後も古いcomment sourceを読めるようにする。
+Branch Reviewでもdefault branch名をidentityにせず、canonical repositoryごとに一件だけ保持し、最後に
+同期できたexact sourceを進める。Pull Requestを捏造せず、両reviewのComment、Walkthrough、Issue
+membership、reading stateを混ぜない。
+
+### Issueをworkflowではなく文書として扱う
+
+Issueは要求や前提をcodeと並べて読むための文書であり、project management modelではない。同じrepositoryの
+Issueを人間、PR本文の直接参照、またはWalkthrough payloadから明示的に追加するが、関係、優先度、階層を
+推測せず、linked Issueを再帰探索しない。最新本文のcacheは共有できても、membershipとRVW Commentはreview
+ごとに独立させる。GitHub Issue本体をrvwから編集しない。
 
 ### 人間の判断をdurableかつAgent非依存に保つ
 

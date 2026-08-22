@@ -20,18 +20,16 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import type {
+  BranchReviewComment,
+  BranchWalkthrough,
   CommentPlacement,
   CodeReference,
   ReviewComment,
   Walkthrough,
   WalkthroughReference,
 } from "../../domain/models.js";
-import {
-  api,
-  type DeleteWalkthroughResponse,
-  jsonRequest,
-  type PlacementResponse,
-} from "../api.js";
+import { api, jsonRequest, type PlacementResponse } from "../api.js";
+import { reviewQueryKeys } from "../review-query-keys.js";
 import {
   MarkdownSelectionSurface,
   markdownCommentAnchorIds,
@@ -42,6 +40,13 @@ import {
   type MarkdownSourceRange,
 } from "../markdown-source-map.js";
 import type { ThemePreference } from "../theme.js";
+import {
+  reviewCommentPayload,
+  reviewIdForWalkthrough,
+  reviewKindForWalkthrough,
+  type AnyReviewComment,
+  type AnyWalkthrough,
+} from "../review-context.js";
 import type { ViewerNavigationTarget } from "./DocumentViewer.js";
 import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
@@ -92,6 +97,7 @@ function MermaidDiagram({
   themePreference,
   onOpenReference,
   onCommentRange,
+  diagramCommentEnabled,
   commentComposer,
 }: {
   source: string;
@@ -102,6 +108,7 @@ function MermaidDiagram({
   themePreference: ThemePreference;
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
+  diagramCommentEnabled: boolean;
   commentComposer: ReactNode;
 }) {
   const commentComposerRef = useRef<HTMLDivElement>(null);
@@ -164,7 +171,7 @@ function MermaidDiagram({
       <div className="walkthrough-diagram-toolbar">
         <span>Mermaid diagram</span>
         <span>nodeを選択して開く · Cmd/Ctrlで反対のペイン</span>
-        {sourceRange && (
+        {sourceRange && diagramCommentEnabled && (
           <button
             className="button--quiet walkthrough-diagram-comment"
             onPointerDown={(event) => {
@@ -215,11 +222,15 @@ function MermaidDiagram({
 interface MermaidMarkdownRenderContext {
   diagramBindings: Record<string, string>;
   references: ReadonlyMap<string, WalkthroughReference>;
-  placedComments: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+  placedComments: Array<{
+    comment: ReviewComment | BranchReviewComment;
+    placement: CommentPlacement;
+  }>;
   activeCommentId: string | null;
   diagramCommentRange: MarkdownSourceRange | null;
   themePreference: ThemePreference;
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
+  diagramCommentEnabled: boolean;
   onCommentRange: (range: MarkdownSourceRange) => void;
   diagramCommentPending: boolean;
   diagramCommentError: unknown;
@@ -295,6 +306,7 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
       themePreference={context.themePreference}
       onOpenReference={context.onOpenReference}
       onCommentRange={context.onCommentRange}
+      diagramCommentEnabled={context.diagramCommentEnabled}
       commentComposer={
         sourceRange && sameRange(sourceRange, context.diagramCommentRange) ? (
           <WalkthroughDiagramCommentComposer
@@ -331,11 +343,15 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   diagramCommentError,
   onCancelDiagramComment,
   onSubmitDiagramComment,
+  diagramCommentEnabled = true,
 }: {
   body: string;
   diagramBindings: Record<string, string>;
   references: ReadonlyMap<string, WalkthroughReference>;
-  placedComments: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+  placedComments: Array<{
+    comment: ReviewComment | BranchReviewComment;
+    placement: CommentPlacement;
+  }>;
   activeCommentId: string | null;
   selectedRange: MarkdownSourceRange | null;
   selectionComposerOpen: boolean;
@@ -355,6 +371,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   diagramCommentError: unknown;
   onCancelDiagramComment: () => void;
   onSubmitDiagramComment: (range: MarkdownSourceRange, body: string) => void;
+  diagramCommentEnabled?: boolean;
 }) {
   const annotations = useMemo<MarkdownCommentAnnotation[]>(
     () =>
@@ -413,6 +430,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
         diagramCommentRange,
         themePreference,
         onOpenReference,
+        diagramCommentEnabled,
         onCommentRange,
         diagramCommentPending,
         diagramCommentError,
@@ -469,9 +487,62 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   );
 });
 
+export function WalkthroughReadingSurface({
+  walkthrough,
+  placedComments,
+  themePreference,
+  onOpenReference,
+  onOpenCommentCodeReference,
+  onOpenRepositoryLink,
+}: {
+  walkthrough: Walkthrough | BranchWalkthrough;
+  placedComments: Array<{
+    comment: ReviewComment | BranchReviewComment;
+    placement: CommentPlacement;
+  }>;
+  themePreference: ThemePreference;
+  onOpenReference: (reference: WalkthroughReference, openInOtherPane: boolean) => void;
+  onOpenCommentCodeReference: (
+    sourceOid: string,
+    reference: CodeReference,
+    openInOtherPane: boolean,
+  ) => Promise<string | null>;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInOtherPane: boolean) => void;
+}) {
+  const references = useMemo(
+    () => new Map(walkthrough.references.map((reference) => [reference.id, reference])),
+    [walkthrough.references],
+  );
+  return (
+    <WalkthroughMarkdown
+      body={walkthrough.body}
+      diagramBindings={walkthrough.diagramBindings}
+      references={references}
+      placedComments={placedComments}
+      activeCommentId={null}
+      selectedRange={null}
+      selectionComposerOpen={false}
+      diagramCommentRange={null}
+      markdownSourceOid={walkthrough.sourceOid}
+      themePreference={themePreference}
+      onOpenReference={onOpenReference}
+      onOpenCommentCodeReference={onOpenCommentCodeReference}
+      onOpenRepositoryLink={onOpenRepositoryLink}
+      onCommentActiveChange={() => undefined}
+      onCommentRange={() => undefined}
+      diagramCommentEnabled={false}
+      diagramCommentPending={false}
+      diagramCommentError={null}
+      onCancelDiagramComment={() => undefined}
+      onSubmitDiagramComment={() => undefined}
+    />
+  );
+}
+
 export function WalkthroughViewer({
   walkthrough,
   comments,
+  commentPlacements,
   activeCommentId,
   navigationTarget,
   onNavigationApplied,
@@ -482,15 +553,16 @@ export function WalkthroughViewer({
   onOpenRepositoryLink,
   onDeleted,
 }: {
-  walkthrough: Walkthrough;
-  comments: ReviewComment[];
+  walkthrough: AnyWalkthrough;
+  comments: AnyReviewComment[];
+  commentPlacements?: ReadonlyMap<string, CommentPlacement>;
   activeCommentId: string | null;
   navigationTarget?: ViewerNavigationTarget | null;
   onNavigationApplied: (requestId: number) => void;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onOpenReference: (
-    walkthrough: Walkthrough,
+    walkthrough: AnyWalkthrough,
     reference: WalkthroughReference,
     openInRightPane: boolean,
   ) => Promise<string | null>;
@@ -500,7 +572,7 @@ export function WalkthroughViewer({
     openInRightPane: boolean,
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
-  onDeleted: (walkthrough: Walkthrough) => void;
+  onDeleted: (walkthrough: AnyWalkthrough) => void;
 }) {
   const queryClient = useQueryClient();
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -585,27 +657,37 @@ export function WalkthroughViewer({
     (count, comment) => count + comment.posts.length,
     0,
   );
+  const reviewKind = reviewKindForWalkthrough(walkthrough);
+  const reviewId = reviewIdForWalkthrough(walkthrough);
   const placementQuery = useQuery({
     queryKey: [
       "walkthrough-comment-placements",
       walkthrough.id,
       walkthrough.body,
       walkthroughComments.map((comment) => `${comment.id}:${comment.updatedAt}`),
+      walkthroughComments.map((comment) => {
+        const placement = commentPlacements?.get(comment.id);
+        return placement
+          ? `${comment.id}:${placement.outdated}:${placement.range?.startLine ?? ""}:${placement.range?.endLine ?? ""}`
+          : `${comment.id}:uncached`;
+      }),
     ],
     queryFn: async () => {
       const search = new URLSearchParams({
         kind: "walkthrough",
-        pullRequestId: walkthrough.pullRequestId,
+        [reviewKind === "pull-request" ? "pullRequestId" : "branchReviewId"]: reviewId,
         walkthroughId: walkthrough.id,
       });
       return await Promise.all(
         walkthroughComments.map(async (comment) => ({
           comment,
-          placement: (
-            await api<PlacementResponse>(
-              `/api/comments/${comment.id}/placement?${search.toString()}`,
-            )
-          ).placement,
+          placement:
+            commentPlacements?.get(comment.id) ??
+            (
+              await api<PlacementResponse>(
+                `/api/comments/${comment.id}/placement?${search.toString()}`,
+              )
+            ).placement,
         })),
       );
     },
@@ -630,7 +712,7 @@ export function WalkthroughViewer({
       await api(
         "/api/comments",
         jsonRequest({
-          pullRequestId: walkthrough.pullRequestId,
+          ...reviewCommentPayload({ kind: reviewKind, id: reviewId }),
           target: {
             kind: "walkthrough",
             walkthroughId: walkthrough.id,
@@ -648,14 +730,14 @@ export function WalkthroughViewer({
       setSelectedRange(null);
       setDiagramRange(null);
       setLineComposerPlacement(null);
-      await queryClient.invalidateQueries({ queryKey: ["comments"] });
-      await queryClient.invalidateQueries({ queryKey: ["change-sequence"] });
+      await queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() });
+      await queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() });
     },
   });
   const deleteWalkthrough = useMutation({
     mutationFn: async () =>
-      await api<DeleteWalkthroughResponse>(
-        `/api/pull-requests/${walkthrough.pullRequestId}/walkthroughs/${walkthrough.id}`,
+      await api(
+        `/api/${reviewKind === "pull-request" ? "pull-requests" : "branch-reviews"}/${reviewId}/walkthroughs/${walkthrough.id}`,
         {
           ...jsonRequest({}),
           method: "DELETE",
@@ -664,10 +746,9 @@ export function WalkthroughViewer({
     onSuccess: async () => {
       onDeleted(walkthrough);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["walkthroughs"] }),
-        queryClient.invalidateQueries({ queryKey: ["walkthrough"] }),
-        queryClient.invalidateQueries({ queryKey: ["comments"] }),
-        queryClient.invalidateQueries({ queryKey: ["change-sequence"] }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allWalkthroughs() }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() }),
       ]);
     },
   });

@@ -17,10 +17,18 @@ describe("repository demo fixture", () => {
     expect(totalBytes).toBeGreaterThanOrEqual(1024 * 1024);
     expect(substantiveFiles.length).toBeGreaterThanOrEqual(75);
     expect(changedFiles.length).toBeGreaterThanOrEqual(10);
+    expect(fixture.issues.map((issue) => issue.number)).toEqual([156, 142, 98]);
+    expect(fixture.issues.some((issue) => issue.state === "CLOSED")).toBe(true);
     expect(fixture.walkthroughs).toHaveLength(2);
-    expect(fixture.comments).toHaveLength(4);
+    expect(fixture.comments).toHaveLength(5);
     expect(fixture.comments.some((comment) => comment.resolvedAt !== null)).toBe(true);
     expect(fixture.comments.some((comment) => comment.posts.length > 1)).toBe(true);
+    expect(fixture.comments.some((comment) => comment.target.kind === "issue")).toBe(true);
+    expect(fixture.pullRequest.latestBody).toContain("| Authenticated GitHub attachment |");
+    expect(fixture.pullRequest.latestBody).toContain("https://github.com/user-attachments/assets/");
+    expect(fixture.issues.find((issue) => issue.number === 142)?.body).toContain(
+      "| Authenticated evidence | External reference |",
+    );
 
     const app = fixture.repositoryDocumentAt(fixture.headOid, "src/web/app/App.tsx");
     expect(app.availability).toBe("available");

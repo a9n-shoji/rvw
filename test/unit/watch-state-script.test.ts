@@ -7,20 +7,289 @@ import { describe, expect, it } from "vitest";
 
 const script = path.resolve("skills/rvw-watch-comments/scripts/watch-state.mjs");
 
+function stableReviewArgs(command: string, args: string[]): string[] {
+  if (command !== "claim") return args;
+  const pullRequestIndex = args.indexOf("--pull-request");
+  if (pullRequestIndex >= 0) {
+    const display = args[pullRequestIndex + 1]!;
+    return [
+      ...args.slice(0, pullRequestIndex),
+      "--context-kind",
+      "pull-request",
+      "--context-key",
+      `pull-request:${display}`,
+      "--context-display",
+      display,
+      ...args.slice(pullRequestIndex + 2),
+    ];
+  }
+  const kindIndex = args.indexOf("--context-kind");
+  const keyIndex = args.indexOf("--context-key");
+  if (kindIndex < 0 || keyIndex < 0 || args.includes("--context-display")) return args;
+  const kind = args[kindIndex + 1]!;
+  const display = args[keyIndex + 1]!;
+  const result = [...args];
+  result[keyIndex + 1] =
+    kind === "branch" ? `branch:${display.toLowerCase()}` : `pull-request:${display}`;
+  return [...result, "--context-display", display.toLowerCase()];
+}
+
+function stableReviewFrame(frame: unknown): unknown {
+  if (!frame || typeof frame !== "object" || !("event" in frame)) return frame;
+  const event = (frame as { event?: Record<string, unknown> }).event;
+  if (!event) return frame;
+  const context = event.context;
+  if (context && typeof context === "object" && "kind" in context) {
+    const review = context as Record<string, unknown>;
+    if (review.kind === "branch" && typeof review.repository === "string") {
+      const hasStableId = typeof review.branchReviewId === "string";
+      event.context = {
+        kind: "branch",
+        branchReviewId: hasStableId
+          ? review.branchReviewId
+          : `branch:${review.repository.toLowerCase()}`,
+        repository: hasStableId ? review.repository : review.repository.toLowerCase(),
+      };
+    }
+    return frame;
+  }
+  if (typeof event.pullRequestUrl === "string") {
+    event.context = {
+      kind: "pull-request",
+      pullRequestId: `pull-request:${event.pullRequestUrl}`,
+      pullRequestUrl: event.pullRequestUrl,
+    };
+    delete event.pullRequestUrl;
+  }
+  return frame;
+}
+
 function run(state: string, command: string, args: string[] = [], input?: unknown) {
-  const result = spawnSync(process.execPath, [script, command, "--state", state, ...args], {
-    encoding: "utf8",
-    ...(input === undefined ? {} : { input: JSON.stringify(input) }),
-  });
+  const result = spawnSync(
+    process.execPath,
+    [script, command, "--state", state, ...stableReviewArgs(command, args)],
+    {
+      encoding: "utf8",
+      ...(input === undefined ? {} : { input: JSON.stringify(input) }),
+    },
+  );
   if (result.status !== 0) throw new Error(result.stderr);
   return JSON.parse(result.stdout) as Record<string, unknown>;
 }
 
 function ingest(state: string, frame: unknown) {
-  return run(state, "ingest", [], frame);
+  return run(state, "ingest", [], stableReviewFrame(frame));
 }
 
 describe("rvw-watch-comments task state", () => {
+  it("batches Branch Reviews by repository and rejects write reservations", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-")), "task.db");
+    run(state, "init", ["--own-mode", "fix-and-push"]);
+    ingest(state, {
+      type: "ready",
+      databaseId: "11112222333344445555666677778888",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "branch-human-post",
+        commentRef: "rvw://comment/branch-comment",
+        context: { kind: "branch", repository: "Acme/Repo" },
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+
+    expect(run(state, "list")).toMatchObject({
+      pending: [
+        {
+          context: { kind: "branch", repository: "acme/repo" },
+          repository: "acme/repo",
+          commentRefs: ["rvw://comment/branch-comment"],
+        },
+      ],
+    });
+    const claimed = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    expect(claimed).toMatchObject({
+      context: { kind: "branch", repository: "acme/repo" },
+      writeKey: null,
+      operations: [{ commentRef: "rvw://comment/branch-comment", statusPostId: null }],
+    });
+    expect(() =>
+      run(state, "reserve-write", ["--lease", String(claimed.leaseId), "--write-key", "acme/repo"]),
+    ).toThrow(/investigate-and-reply/);
+    run(state, "complete", ["--lease", String(claimed.leaseId)], {
+      postIds: ["branch-final-reply"],
+    });
+    expect(
+      ingest(state, {
+        type: "comment-posted",
+        cursor: "cursor-2",
+        event: {
+          sequence: 2,
+          postId: "branch-final-reply",
+          commentRef: "rvw://comment/branch-comment",
+          context: { kind: "branch", repository: "acme/repo" },
+          createdAt: "2026-08-20T00:00:01.000Z",
+          deleted: false,
+        },
+      }),
+    ).toMatchObject({ status: "suppressed" });
+  });
+
+  it("groups repository casing by stable ID and keeps a recreated review separate", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-identity-")), "task.db");
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "12121212121212121212121212121212",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    for (const [sequence, branchReviewId, repository] of [
+      [1, "branch-review-1", "Acme/Repo"],
+      [2, "branch-review-1", "acme/repo"],
+      [3, "branch-review-2", "acme/repo"],
+    ] as const) {
+      ingest(state, {
+        type: "comment-posted",
+        cursor: `cursor-${sequence}`,
+        event: {
+          sequence,
+          postId: `branch-post-${sequence}`,
+          commentRef: `rvw://comment/branch-comment-${sequence}`,
+          context: { kind: "branch", branchReviewId, repository },
+          createdAt: `2026-08-20T00:00:0${sequence}.000Z`,
+          deleted: false,
+        },
+      });
+    }
+
+    expect(run(state, "list")).toMatchObject({
+      pending: [
+        {
+          context: {
+            kind: "branch",
+            branchReviewId: "branch-review-1",
+            repository: "acme/repo",
+          },
+          eventCount: 2,
+        },
+        {
+          context: {
+            kind: "branch",
+            branchReviewId: "branch-review-2",
+            repository: "acme/repo",
+          },
+          eventCount: 1,
+        },
+      ],
+    });
+  });
+
+  it("allows concurrent Branch leases even when the task can fix owned Pull Requests", () => {
+    const state = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-parallel-")),
+      "task.db",
+    );
+    run(state, "init", ["--own-mode", "fix-and-push", "--expected-login", "reviewer"]);
+    ingest(state, {
+      type: "ready",
+      databaseId: "11113333555577779999aaaaccccdddd",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "branch-human-post-1",
+        commentRef: "rvw://comment/branch-comment-1",
+        context: { kind: "branch", repository: "acme/repo" },
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+    const first = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-2",
+      event: {
+        sequence: 2,
+        postId: "branch-human-post-2",
+        commentRef: "rvw://comment/branch-comment-2",
+        context: { kind: "branch", repository: "acme/repo" },
+        createdAt: "2026-08-20T00:00:01.000Z",
+        deleted: false,
+      },
+    });
+
+    expect(run(state, "list")).toMatchObject({
+      inFlight: 1,
+      pending: [{ commentRefs: ["rvw://comment/branch-comment-2"] }],
+    });
+    const second = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    expect(second.batchId).not.toBe(first.batchId);
+    expect(run(state, "status")).toMatchObject({ batches: { inFlight: 2 } });
+  });
+
+  it("completes an already-ingested Branch final reply when suppression is recorded", () => {
+    const state = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-first-")),
+      "task.db",
+    );
+    run(state, "init", ["--own-mode", "fix-and-push"]);
+    ingest(state, {
+      type: "ready",
+      databaseId: "99992222333344445555666677778888",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    ingest(state, {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "branch-human-post",
+        commentRef: "rvw://comment/branch-comment",
+        context: { kind: "branch", repository: "acme/repo" },
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+    const claimed = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    expect(
+      ingest(state, {
+        type: "comment-posted",
+        cursor: "cursor-2",
+        event: {
+          sequence: 2,
+          postId: "branch-final-reply",
+          commentRef: "rvw://comment/branch-comment",
+          context: { kind: "branch", repository: "acme/repo" },
+          createdAt: "2026-08-20T00:00:01.000Z",
+          deleted: false,
+        },
+      }),
+    ).toMatchObject({ status: "queued" });
+    expect(run(state, "status")).toMatchObject({
+      batches: { inFlight: 1, unbatchedEvents: 1 },
+    });
+
+    run(state, "complete", ["--lease", String(claimed.leaseId)], {
+      postIds: ["branch-final-reply"],
+    });
+    expect(run(state, "list")).toMatchObject({ pending: [] });
+    expect(run(state, "status")).toMatchObject({
+      batches: { inFlight: 0, unbatchedEvents: 0 },
+    });
+  });
+
   it("waits for the pending set to become non-empty and emits monitor-ready JSON", async () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-wait-")), "task.db");
     run(state, "init");
@@ -73,7 +342,7 @@ describe("rvw-watch-comments task state", () => {
 
   it("can reserve a repository writer after an automatically acknowledged claim", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-reserve-")), "task.db");
-    run(state, "init", ["--own-mode", "fix-and-push"]);
+    run(state, "init", ["--own-mode", "fix-and-push", "--expected-login", "reviewer"]);
     ingest(state, {
       type: "ready",
       databaseId: "abcdefabcdefabcdefabcdefabcdefab",
@@ -161,7 +430,11 @@ describe("rvw-watch-comments task state", () => {
         "claim",
         "--state",
         state,
-        "--pull-request",
+        "--context-kind",
+        "pull-request",
+        "--context-key",
+        `pull-request:${pullRequest}`,
+        "--context-display",
         pullRequest,
         "--write-key",
         "acme/repo",
@@ -169,9 +442,7 @@ describe("rvw-watch-comments task state", () => {
       { encoding: "utf8" },
     );
     expect(writeCapableClaim.status).toBe(1);
-    expect(writeCapableClaim.stderr).toContain(
-      "Task policy does not allow repository write reservations",
-    );
+    expect(writeCapableClaim.stderr).toContain("investigate-and-reply");
 
     const writeReservation = spawnSync(
       process.execPath,
@@ -362,7 +633,7 @@ describe("rvw-watch-comments task state", () => {
 
   it("recovers a lease with the same idempotency key and serializes repository writers", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-state-")), "task.db");
-    run(state, "init", ["--own-mode", "fix-and-push"]);
+    run(state, "init", ["--own-mode", "fix-and-push", "--expected-login", "reviewer"]);
     ingest(state, {
       type: "ready",
       databaseId: "fedcba9876543210fedcba9876543210",

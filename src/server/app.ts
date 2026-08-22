@@ -17,6 +17,8 @@ import {
 import {
   createCommentSchema,
   editCommentPostSchema,
+  issueMutationSchema,
+  openBranchReviewSchema,
   openPullRequestSchema,
   replySchema,
   resetSchema,
@@ -95,9 +97,27 @@ function setImageResponseHeaders(
   }
 }
 
+function assertSameOriginAttachmentRequest(
+  fetchSite: string | undefined,
+  origin: string | undefined,
+  expectedOrigin: string | null,
+): void {
+  if (
+    (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") ||
+    (origin !== undefined && origin !== expectedOrigin)
+  ) {
+    throw new RvwError("INVALID_ORIGIN", "cross-origin attachment requestは許可されていません。", {
+      status: 403,
+    });
+  }
+}
+
 function documentRefFromQuery(pullRequestId: string, query: Record<string, string>): DocumentRef {
   if (query.kind === "pull-request-markdown") {
     return { kind: "pull-request-markdown", pullRequestId };
+  }
+  if (query.kind === "issue-markdown" && query.issueId) {
+    return { kind: "issue-markdown", pullRequestId, issueId: query.issueId };
   }
   if (query.kind === "repository-file" && query.sourceOid && query.path) {
     return {
@@ -156,7 +176,22 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     if (rawViewerId !== undefined) {
       options.viewerLifecycle?.heartbeat(viewerIdSchema.parse(rawViewerId));
     }
-    return context.json({ ok: true, changeSequence: service.database.getChangeSequence() });
+    const reviewKind = context.req.query("reviewKind");
+    const reviewId = context.req.query("reviewId");
+    if ((reviewKind === undefined) !== (reviewId === undefined)) {
+      throw new RvwError("INVALID_INPUT", "reviewKindとreviewId queryは同時に指定してください。");
+    }
+    const parsedKind =
+      reviewKind === undefined ? null : z.enum(["pull-request", "branch"]).parse(reviewKind);
+    const parsedReviewId = reviewId === undefined ? null : z.uuid().parse(reviewId);
+    return context.json({
+      ok: true,
+      changeSequence: service.database.getChangeSequence(),
+      reviewChangeSequence:
+        parsedKind && parsedReviewId
+          ? service.database.getReviewChangeSequence(parsedKind, parsedReviewId)
+          : null,
+    });
   });
 
   app.post("/api/meta/viewers/release", async (context) => {
@@ -180,6 +215,59 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
   app.get("/api/pull-requests/:id", async (context) =>
     context.json({ ok: true, ...(await service.getPullRequestView(context.req.param("id"))) }),
   );
+
+  app.get("/api/pull-requests/:id/issues", (context) =>
+    context.json({ ok: true, issues: service.listPullRequestIssues(context.req.param("id")) }),
+  );
+
+  app.get("/api/pull-requests/:id/issues/:issueId", (context) =>
+    context.json({
+      ok: true,
+      issue: service.getReviewIssue(
+        "pull-request",
+        context.req.param("id"),
+        context.req.param("issueId"),
+      ),
+    }),
+  );
+
+  app.post("/api/pull-requests/:id/issues", async (context) => {
+    const input = issueMutationSchema.parse(await context.req.json());
+    const pullRequest = service.getPullRequest(context.req.param("id"));
+    return context.json({
+      ok: true,
+      ...(await service.addPullRequestIssue(pullRequest.url, input.issue)),
+    });
+  });
+
+  app.delete("/api/pull-requests/:id/issues/:issueId", async (context) => {
+    const input = resetSchema.parse(await context.req.json());
+    const pullRequest = service.getPullRequest(context.req.param("id"));
+    const issue = service.getReviewIssue(
+      "pull-request",
+      pullRequest.id,
+      context.req.param("issueId"),
+    );
+    if (!input.yes) {
+      const preview = service.getIssueRemovalPreview("pull-request", pullRequest.id, issue.url);
+      return context.json(
+        {
+          ok: false,
+          error: {
+            code: "RESET_CONFIRMATION_REQUIRED",
+            message: "Issue削除には明示的な確認が必要です。",
+            suggestions: ["削除対象のコメント・返信件数を確認してyesを指定してください。"],
+          },
+          ...preview,
+        },
+        409,
+      );
+    }
+    return context.json({
+      ok: true,
+      ...service.removePullRequestIssue(pullRequest.url, issue.url),
+    });
+  });
 
   app.post("/api/pull-requests/open", async (context) => {
     const input = openPullRequestSchema.parse(await context.req.json());
@@ -254,20 +342,11 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
   });
 
   app.get("/api/pull-requests/:id/github-attachment", async (context) => {
-    const fetchSite = context.req.header("sec-fetch-site");
-    const origin = context.req.header("origin");
-    if (
-      (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") ||
-      (origin !== undefined && origin !== options.security.expectedOrigin)
-    ) {
-      throw new RvwError(
-        "INVALID_ORIGIN",
-        "cross-origin attachment requestは許可されていません。",
-        {
-          status: 403,
-        },
-      );
-    }
+    assertSameOriginAttachmentRequest(
+      context.req.header("sec-fetch-site"),
+      context.req.header("origin"),
+      options.security.expectedOrigin,
+    );
     const absoluteUrl = requiredQuery(context.req.query("url"), "url");
     const attachment = await service.getGitHubAttachment(context.req.param("id"), absoluteUrl);
     setImageResponseHeaders((name, value) => context.header(name, value), attachment.contentType);
@@ -337,6 +416,209 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }),
   );
 
+  app.get("/api/branch-reviews/:id", (context) =>
+    context.json({ ok: true, ...service.getBranchReviewView(context.req.param("id")) }),
+  );
+
+  app.post("/api/branch-reviews/open", async (context) => {
+    const input = openBranchReviewSchema.parse(await context.req.json());
+    return context.json({ ok: true, ...(await service.openBranchReview(input.cwd)) });
+  });
+
+  app.post("/api/branch-reviews/:id/sync", async (context) => {
+    const branchReview = service.getBranchReview(context.req.param("id"));
+    return context.json({
+      ok: true,
+      ...(await service.syncBranchReview(branchReview.localRepositoryPath)),
+    });
+  });
+
+  app.post("/api/branch-reviews/:id/reset", async (context) => {
+    const input = resetSchema.parse(await context.req.json());
+    const preview = await service.getBranchResetPreview(context.req.param("id"));
+    if (!input.yes) {
+      return context.json(
+        {
+          ok: false,
+          error: {
+            code: "RESET_CONFIRMATION_REQUIRED",
+            message: "resetには明示的な確認が必要です。",
+            suggestions: ["削除件数を確認してyesを指定してください。"],
+          },
+          ...preview,
+        },
+        409,
+      );
+    }
+    return context.json({
+      ok: true,
+      ...(await service.resetBranchReview(context.req.param("id"))),
+    });
+  });
+
+  app.get("/api/branch-reviews/:id/tree", async (context) =>
+    context.json({ ok: true, ...(await service.getBranchTree(context.req.param("id"))) }),
+  );
+
+  app.get("/api/branch-reviews/:id/document", async (context) => {
+    const branchReviewId = context.req.param("id");
+    const query = context.req.query();
+    if (query.kind === "issue-markdown" && query.issueId) {
+      return context.json({
+        ok: true,
+        document: await service.getBranchDocument({
+          kind: "issue-markdown",
+          branchReviewId,
+          issueId: query.issueId,
+        }),
+      });
+    }
+    if (query.kind === "repository-file" && query.sourceOid && query.path) {
+      return context.json({
+        ok: true,
+        document: await service.getBranchDocument({
+          kind: "repository-file",
+          branchReviewId,
+          sourceOid: oidSchema.parse(query.sourceOid),
+          path: query.path,
+        }),
+      });
+    }
+    throw new RvwError("INVALID_INPUT", "Branch document参照queryが不正です。");
+  });
+
+  app.on(["GET", "HEAD"], "/api/branch-reviews/:id/markdown-asset", async (context) => {
+    const sourceOid = oidQuery(context.req.query("sourceOid"), "sourceOid");
+    const filePath = requiredQuery(context.req.query("path"), "path");
+    const asset = await service.getBranchRepositoryAsset(
+      context.req.param("id"),
+      sourceOid,
+      filePath,
+    );
+    const contentType = repositoryAssetContentType(filePath, asset.content);
+    if (contentType) {
+      setImageResponseHeaders((name, value) => context.header(name, value), contentType);
+    } else {
+      context.header("content-type", "application/octet-stream");
+      context.header("cache-control", "private, max-age=31536000, immutable");
+      context.header("x-content-type-options", "nosniff");
+    }
+    return context.req.method === "HEAD"
+      ? context.body(null)
+      : context.body(Uint8Array.from(asset.content));
+  });
+
+  app.get("/api/branch-reviews/:id/github-attachment", async (context) => {
+    assertSameOriginAttachmentRequest(
+      context.req.header("sec-fetch-site"),
+      context.req.header("origin"),
+      options.security.expectedOrigin,
+    );
+    const absoluteUrl = requiredQuery(context.req.query("url"), "url");
+    const attachment = await service.getBranchGitHubAttachment(
+      context.req.param("id"),
+      absoluteUrl,
+    );
+    setImageResponseHeaders((name, value) => context.header(name, value), attachment.contentType);
+    return context.body(Uint8Array.from(attachment.content));
+  });
+
+  app.get("/api/branch-reviews/:id/search", async (context) => {
+    const matchCase = parseBooleanQuery(context.req.query("matchCase"), "matchCase");
+    const wholeWord = parseBooleanQuery(context.req.query("wholeWord"), "wholeWord");
+    return context.json({
+      ok: true,
+      ...(await service.searchBranch(context.req.param("id"), context.req.query("q") ?? "", {
+        matchCase,
+        wholeWord,
+      })),
+    });
+  });
+
+  app.get("/api/branch-reviews/:id/issues", (context) =>
+    context.json({ ok: true, issues: service.listBranchIssues(context.req.param("id")) }),
+  );
+
+  app.get("/api/branch-reviews/:id/issues/:issueId", (context) =>
+    context.json({
+      ok: true,
+      issue: service.getReviewIssue(
+        "branch",
+        context.req.param("id"),
+        context.req.param("issueId"),
+      ),
+    }),
+  );
+
+  app.post("/api/branch-reviews/:id/issues", async (context) => {
+    const input = issueMutationSchema.parse(await context.req.json());
+    const branchReview = service.getBranchReview(context.req.param("id"));
+    return context.json({
+      ok: true,
+      ...(await service.addBranchIssue(branchReview.localRepositoryPath, input.issue)),
+    });
+  });
+
+  app.delete("/api/branch-reviews/:id/issues/:issueId", async (context) => {
+    const input = resetSchema.parse(await context.req.json());
+    const branchReview = service.getBranchReview(context.req.param("id"));
+    const issue = service.getReviewIssue("branch", branchReview.id, context.req.param("issueId"));
+    if (!input.yes) {
+      const preview = service.getIssueRemovalPreview("branch", branchReview.id, issue.url);
+      return context.json(
+        {
+          ok: false,
+          error: {
+            code: "RESET_CONFIRMATION_REQUIRED",
+            message: "Issue削除には明示的な確認が必要です。",
+            suggestions: ["削除対象のコメント・返信件数を確認してyesを指定してください。"],
+          },
+          ...preview,
+        },
+        409,
+      );
+    }
+    return context.json({
+      ok: true,
+      ...(await service.removeBranchIssue(branchReview.localRepositoryPath, issue.url)),
+    });
+  });
+
+  app.get("/api/branch-reviews/:id/comments", async (context) => {
+    const resolved = parseResolved(context.req.query("resolved"));
+    return context.json({
+      ok: true,
+      comments: await service.listBranchCommentContexts(context.req.param("id"), resolved),
+    });
+  });
+
+  app.get("/api/branch-reviews/:id/walkthroughs", (context) =>
+    context.json({
+      ok: true,
+      walkthroughs: service.listBranchWalkthroughs(context.req.param("id")),
+    }),
+  );
+
+  app.get("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) =>
+    context.json({
+      ok: true,
+      walkthrough: service.getBranchWalkthrough(
+        context.req.param("id"),
+        context.req.param("walkthroughId"),
+      ),
+    }),
+  );
+
+  app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) =>
+    context.json({
+      ok: true,
+      deleted: service.deleteBranchWalkthrough(
+        context.req.param("id"),
+        context.req.param("walkthroughId"),
+      ),
+    }),
+  );
+
   app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) =>
     context.json({
       ok: true,
@@ -349,11 +631,9 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
 
   app.post("/api/comments", async (context) => {
     const input = createCommentSchema.parse(await context.req.json());
-    return context.json(
-      {
-        ok: true,
-        comment: await service.createComment({
-          pullRequestId: input.pullRequestId,
+    const comment = input.branchReviewId
+      ? await service.createBranchComment({
+          branchReviewId: input.branchReviewId,
           target: input.target,
           body: input.body,
           ...(input.relatedCommitOid === undefined
@@ -361,7 +641,21 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
             : { relatedCommitOid: input.relatedCommitOid }),
           ...(input.references === undefined ? {} : { references: input.references }),
           ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
-        }),
+        })
+      : await service.createComment({
+          pullRequestId: input.pullRequestId!,
+          target: input.target,
+          body: input.body,
+          ...(input.relatedCommitOid === undefined
+            ? {}
+            : { relatedCommitOid: input.relatedCommitOid }),
+          ...(input.references === undefined ? {} : { references: input.references }),
+          ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+        });
+    return context.json(
+      {
+        ok: true,
+        comment,
       },
       201,
     );
@@ -424,8 +718,54 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
 
   app.get("/api/comments/:id/placement", async (context) => {
     const comment = service.database.getComment(context.req.param("id"));
-    if (!comment)
+    const branchComment = comment
+      ? null
+      : service.database.getBranchComment(context.req.param("id"));
+    if (!comment && !branchComment)
       throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
+    if (branchComment) {
+      const branchReviewId = requiredQuery(context.req.query("branchReviewId"), "branchReviewId");
+      if (branchComment.branchReviewId !== branchReviewId) {
+        return context.json({
+          ok: true,
+          placement: { outdated: true as const, range: null, path: null },
+        });
+      }
+      if (context.req.query("kind") === "walkthrough") {
+        const walkthroughId = requiredQuery(context.req.query("walkthroughId"), "walkthroughId");
+        return context.json({
+          ok: true,
+          placement: service.placeBranchWalkthroughComment(
+            branchReviewId,
+            branchComment,
+            walkthroughId,
+          ),
+        });
+      }
+      if (context.req.query("kind") === "issue-markdown") {
+        const issueId = requiredQuery(context.req.query("issueId"), "issueId");
+        return context.json({
+          ok: true,
+          placement: service.placeBranchIssueComment(branchReviewId, branchComment, issueId),
+        });
+      }
+      const kind = context.req.query("kind");
+      let oid: string;
+      if (kind === "repository-file") {
+        oid = oidQuery(context.req.query("sourceOid"), "sourceOid");
+      } else if (kind === "commit") {
+        oid = oidQuery(context.req.query("oid"), "oid");
+      } else {
+        throw new RvwError("INVALID_INPUT", "Branch配置先queryが不正です。");
+      }
+      return context.json({
+        ok: true,
+        placement: await service.placeBranchCommentAtCommit(branchReviewId, branchComment, oid),
+      });
+    }
+    if (!comment) {
+      throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
+    }
     const pullRequestId = requiredQuery(context.req.query("pullRequestId"), "pullRequestId");
     if (comment.pullRequestId !== pullRequestId) {
       return context.json({

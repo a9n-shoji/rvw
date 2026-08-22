@@ -1301,9 +1301,11 @@ test("keeps virtual review nodes compact and useful height for code navigation",
   const heightByKind = new Map(stackHeights.map((stack) => [stack.kind, stack.height]));
   expect(heightByKind.get("sidebar-stack--code")).toBeGreaterThanOrEqual(260);
   const reviewNodeHeights = await page
-    .locator(".review-tree-items > .review-tree-item")
+    .locator(
+      ".review-tree-items > .review-tree-item, .review-tree-items > .review-tree-directory-row > .review-tree-item",
+    )
     .evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().height)));
-  expect(reviewNodeHeights).toEqual([31, 31]);
+  expect(reviewNodeHeights).toEqual([31, 31, 31]);
 });
 
 test("opens a fuzzy-matched file from Cmd/Ctrl+P in the left pane", async ({ page }) => {

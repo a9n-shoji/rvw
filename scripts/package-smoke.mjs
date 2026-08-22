@@ -253,6 +253,7 @@ try {
     "skills/rvw-watch-comments/SKILL.md",
     "skills/rvw-watch-comments/agents/openai.yaml",
     "skills/rvw-watch-comments/scripts/auto-ack.mjs",
+    "skills/rvw-watch-comments/scripts/complete-branch.mjs",
     "skills/rvw-watch-comments/scripts/preflight.mjs",
     "skills/rvw-watch-comments/scripts/rvw-command.mjs",
     "skills/rvw-watch-comments/scripts/watch-driver.mjs",

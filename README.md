@@ -1,8 +1,8 @@
 # rvw
 
-`rvw`は、AIや人間が実装したGitHub Pull Requestを、差分だけでなく変更後のsoftware全体として
-人間が理解するためのローカルviewerです。PRの意図、Git commit、変更箇所、選択commit時点の
-repository全体を行き来し、PR本文、変更されたコード、変更されていない関連コードへコメントできます。
+`rvw`は、GitHub Pull Requestが作るsoftwareとrepositoryの現在のdefault branchを、差分だけでなく
+software全体として人間が理解するためのローカルviewerです。PRの意図、GitHub Issue、Git commit、
+変更箇所、exact commit時点のrepository全体を行き来し、文書とコードへコメントできます。
 Agentが実装やarchitectureの説明を提示した場合は、説明を独立したtabに残したまま、inline linkや
 Mermaid図から人間が選んだcodeだけを開けます。文書は最大2ペインへ並べられるため、
 説明と実装、callerとdefinition、Markdown previewとcodeを同時に読めます。
@@ -26,6 +26,18 @@ Skill + CLI protocol
     ↓
 Agentが次の実装へ反映
 ```
+
+default branchの現在値を調査するときは、同じcloneでBranch Reviewを開きます。
+
+```bash
+rvw branch open
+```
+
+Branch ReviewはcanonicalなGitHub repositoryごとに一件だけ作られ、GitHubのdefault branch名とexact
+source OIDをheaderへ表示します。default branch名が変わっても同じreviewを再利用し、checkoutやindexを
+変更せずに同期します。同じGit common directoryのworktreeからは同じreviewを利用できますが、同じ
+GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作り直す場合は、登録済みcloneから
+`rvw branch reset`を明示実行します。一度同期したcode、Issue、Walkthrough、Commentはofflineでも読めます。
 
 この考え方とプロダクト境界は[Product principles](docs/product-principles.md)にまとめています。
 
@@ -84,6 +96,8 @@ serverを端末に接続したままにする場合は`rvw open --foreground`を
 viewerはこの流れのために次を提供します。
 
 - `Pull Request.md`、変更ファイル、全ファイル
+- Pull Request Review / Branch Reviewへ明示登録した同一repositoryのGitHub Issue documents
+  （PR本文とIssue本文のmodern GitHub user attachment画像を認証付きlocalhost proxyで表示）
 - 開いた文書を保持するタブ、最大2つの横ペイン、横幅をdrag調整できるsidebar / pane divider
 - タブのdrag & drop、ペインmenu、sidebarからの`Cmd` / `Ctrl`+clickによる右ペイン表示
 - repository内Markdown全文のPreview既定とSource / Preview切り替え（差分がある変更表示は通常のdiff、見出しlinkと同じcommitの相対画像を含む）
@@ -190,21 +204,31 @@ Skillは明示された指示を優先し、未指定の作成判断だけを既
 mental modelを作るための最初の読解経路を構成します。文書の見出しや説明順序は固定せず、commit固定の
 reference付きartifactとして検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、
 現在内容を取得して同じURIを更新し、重複した「改訂版」を追加しません。
+`walkthrough publish`と`walkthrough update`は常に`walkthrough`と、同じtransactionで実際にmembershipへ追加した
+`issuesAdded`（追加がなければ空配列）を返し、viewerのAgent socket経由でもdirect executionでも同じ
+JSON schemaです。
 
-新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRを
+新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRと
+Branch Reviewを
 同梱driverから約1秒間隔で監視し、起動前の既存未解決commentは処理しません。自分のPRのfix-and-pushを起動taskへ
 明示許可した場合だけ、live PR authorと起動時のGitHub loginが一致するPRで修正・test・commit・pushを
 行えます。fork PRではlive head repository、branch、OIDとpush先も一致させます。他人またはauthor不明の
 PRは常にcode/GitHub read-onlyで調査します。同梱driverがcursor resumeとRFC 7464 ingestを行い、
-batchをclaimすると各threadへ`🔎 確認中です…`をAgent往復なしに即時返信し、
+Pull Request batchをclaimすると各threadへ`🔎 確認中です…`をAgent往復なしに即時返信し、
 完了時は同じreplyを最終結果へ編集します。Skill同梱のtask-state toolがrepository外のSQLiteへcursor、
 queue、retry、batch内のthread単位status post、自己返信抑制をtransactionalに保存します。同じthreadへ
 後から返信が追加された場合は新しいstatus postを返信するため、以前の回答は書き換えません。親taskは
 起動前にsubagent枠を予約し、driverはその枠数までだけbatchをclaimします。acknowledge済みbatchは大小や
-変更有無にかかわらず同じscheduling turnでfresh subagentへ委譲し、親taskは直接処理しません。lease解放後の
-同一PR follow-upと期限到達したretryはdriverがtask stateから自動的に再開します。
+変更有無にかかわらず同じscheduling turnでfresh subagentへ委譲し、親taskは直接処理しません。read-only taskの
+同一PR follow-upと、常にread-onlyなBranch follow-upはcapacity内で並列にclaimし、fix-and-pushを許可したtaskの
+同一PR writerだけをlease解放まで待たせます。期限到達したretryはdriverがtask stateから自動的に再開します。
 調査結果、実装内容、test結果が具体的なcodeに基づく場合、Skillは最終replyからexact commitの有用な
 line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動できるようにします。
+Branch
+Reviewは常にread-only調査で、進捗replyを作らず一件の冪等な最終replyだけを追加し、commit、push、
+GitHub Issue更新、resolveを行いません。具体的なcode上の結論にはcurrentまたはretained Branch sourceの
+typed referenceを付けられ、任意のlocal commitは根拠として受理されません。最終replyのpost IDはlease完了時にdurableな自己抑止対象へ
+登録されるため、そのreply eventが完了の前後どちらで届いても新しいBranch batchを作りません。
 
 三つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
 `rvw walkthrough get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`だけを利用します。
@@ -236,6 +260,16 @@ rvw protocol --json
 rvw agent ping --json
 rvw agent status --json
 rvw pr refresh <PR_REF> --json
+rvw branch sync [--repository <PATH>] --json
+rvw branch issue add <ISSUE_REF> [--repository <PATH>] --json
+rvw branch issue remove <ISSUE_REF> [--repository <PATH>] --json
+rvw branch issue remove <ISSUE_REF> [--repository <PATH>] --yes --json
+rvw branch comments [--repository <PATH>] --state unresolved --json
+rvw branch reset [--repository <PATH>] --json
+rvw branch reset [--repository <PATH>] --yes --json
+rvw pr issue add <PR_REF> <ISSUE_REF> --json
+rvw pr issue remove <PR_REF> <ISSUE_REF> --json
+rvw pr issue remove <PR_REF> <ISSUE_REF> --yes --json
 rvw comment create --stdin --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
@@ -255,11 +289,16 @@ rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
 rvw pr attach <PR_REF> --repository <PATH> --json
 ```
 
+Issue削除とBranch Review resetは、`--yes`なしでは対象Issue、コメント、返信、Walkthrough、解放候補ref
+などのpreviewだけを返して終了します。件数を確認して`--yes`を指定した場合だけ、対象reviewが所有する
+artifactを削除します。同じIssueを利用する別reviewのmembership、Comment、共有Issue cacheは残ります。
+
 `--stdin` commandはEOFまでJSONを読みます。改行だけでは終了しないため、processから呼ぶ場合は送信後に
 stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの
 対話commandへJSONと改行だけを送るとEOF待ちになります。
 
-`comment create`は登録済みPR、通常のcomment target、本文、任意のAgent名、投稿単位code referenceをstdin JSONで受け取り、
+`comment create`はPull RequestまたはBranch Reviewの明示context、通常のcomment target、本文、任意の
+Agent名、任意の投稿単位code referenceをstdin JSONで受け取り、
 未解決のroot threadを一件作成します。repository targetはexact commit、path、任意のinclusive line rangeを
 指定し、viewerと同じ文書・行検証を通ります。作成してもbrowserを開かず、tabやcommit選択を変更しません。
 同梱Skillは具体的なcode上のclaimにnavigation価値のある根拠がある場合、Walkthroughと同じくtyped
@@ -270,8 +309,9 @@ root post preview、post件数、最新head時点のOutdated判定を返しま�
 続けて取得し、完全なthreadは`comment get`で読みます。listと通常の`comment get`はPR本文を省略し、
 本文が必要な場合だけ`comment get --include-pr-body`で最新の同期済み本文を取得します。複数threadを
 扱うAgentは同じPR本文を一度だけ取得し、そのPRの全threadで共有します。
-`comment get`は最新PRのtitle、base/head、serviceが導出したplacement、対象commitのbounded source
-excerptを返すため、AgentはOID比較でOutdatedを推測しません。
+`comment get`はcontext discriminatorと、PRなら最新title/base/head、Branch Reviewならcanonical
+repository/default branch/current source、さらにserviceが導出したplacement、Issueまたは対象commitの
+bounded sourceを返すため、AgentはOIDやbody hash比較だけでOutdatedを推測しません。
 
 `comment get --live`はGitHubの現在値とcacheの差をread-onlyで確認し、DBを更新しません。`pr sync`はGitHub上の最新PR状態を取得し、任意の`commentUpdates`を同じSQLite transactionで反映します。保存先がdirtyでも同じrepositoryのcleanなworktreeを`--repository`で選べ、確認済みの未追跡fileだけは`--allow-untracked`で許可できます。local branchがGitHub headより単にbehindな場合や最終同期後にforce-pushされた場合はcheckoutを変更せず同期します。`comment create`は非冪等です。`pr sync`と`comment reply`は任意の冪等keyを受け、`comment edit`は同じpostの完全置換なので安全に再試行できます。
 
@@ -311,7 +351,8 @@ pnpm demo
 
 このデモは小さなE2E fixtureとは分離され、現在のcheckoutにある直近6件のfirst-parent commitを
 一つのsynthetic PRとして表示します。tree、文書、diff、検索はworktreeではなく実際のGit objectから読み、
-100件以上の実在file、複数commit、変更外のtest・document・Skill、初期commentとWalkthroughを含みます。
+100件以上の実在file、複数commit、変更外のtest・document・Skill、3件のIssue document、Issue range
+commentを含む初期comment、Walkthroughを含みます。
 browserを自動で開かない場合は`pnpm demo -- --no-open`、portを変える場合は`RVW_DEMO_PORT`を指定します。
 デモを停止するには起動したterminalでCtrl+Cを押してください。
 
@@ -347,7 +388,8 @@ atomicなowner lockを取得した一つのNode processだけがlistenし、owne
 
 ローカルHTTP serverは`127.0.0.1`だけへbindしてHost / Originを検証し、write APIは
 `application/json`だけを受理し、CORSを有効にしません。コメントと返信はUTF-8 GFM Markdown sourceとして
-保存し、raw HTMLをsanitizeします。外部画像は取得せず、repository相対画像だけをexact commitから取得します。
+保存し、raw HTMLをsanitizeします。任意の外部画像は取得せず、repository相対画像はexact commitから、
+PR本文と登録Issue本文のmodern GitHub user attachmentは認証付きlocalhost proxyから取得します。
 CLIとfrontend bundleに含まれる第三者softwareのlicenseはpackage内の
 `dist/cli-THIRD_PARTY_NOTICES.txt`と`dist/web/THIRD_PARTY_NOTICES.txt`へbuild時に収録します。
 

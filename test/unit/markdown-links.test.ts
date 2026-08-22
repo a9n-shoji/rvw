@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  branchGitHubAttachmentAssetUrl,
   githubAttachmentAssetUrl,
   isExternalMarkdownHref,
   markdownAssetUrl,
@@ -24,11 +25,17 @@ describe("Markdown repository links", () => {
     expect(githubAttachmentAssetUrl("pr-id", attachment)).toBe(
       `/api/pull-requests/pr-id/github-attachment?url=${encodeURIComponent(attachment)}`,
     );
+    expect(branchGitHubAttachmentAssetUrl("branch-id", attachment)).toBe(
+      `/api/branch-reviews/branch-id/github-attachment?url=${encodeURIComponent(attachment)}`,
+    );
     expect(
       githubAttachmentAssetUrl(
         "pr-id",
         "https://github.com.evil.example/user-attachments/assets/37948111-1227-4cdb-a76d-dc8eb469ae5c",
       ),
+    ).toBeNull();
+    expect(
+      branchGitHubAttachmentAssetUrl("branch-id", "https://example.com/diagram.png"),
     ).toBeNull();
   });
 

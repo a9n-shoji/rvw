@@ -34,7 +34,8 @@ test("renders secured attachments and repository image states without text-image
   );
   await expect
     .poll(() => attachment.evaluate((image: HTMLImageElement) => image.naturalWidth))
-    .toBe(1);
+    .toBe(320);
+  await expect(page.locator("td").filter({ has: attachment })).toHaveCount(1);
   await expect(
     page.getByRole("img", { name: "画像: Broken attachment（読み込み失敗）", exact: true }),
   ).toBeVisible();

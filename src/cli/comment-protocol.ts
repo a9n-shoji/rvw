@@ -1,4 +1,5 @@
 import type {
+  BranchCommentReviewContext,
   CommentListContext,
   CommentReviewContext,
   CommentWatchEventContext,
@@ -9,6 +10,7 @@ import {
   commentGetOutputSchema,
   commentListOutputSchema,
   type CommentGetOutput,
+  type PullRequestCommentGetOutput,
   type CommentListOptions,
   type CommentListOutput,
 } from "./schemas.js";
@@ -29,7 +31,7 @@ function truncateUtf8(value: string, maxBytes: number): { value: string; truncat
 function formatPullRequest(
   pullRequest: PullRequest,
   options: { includeBody?: boolean } = {},
-): CommentGetOutput["pullRequest"] {
+): PullRequestCommentGetOutput["pullRequest"] {
   const headRepository =
     pullRequest.latestHeadRepositoryOwner && pullRequest.latestHeadRepositoryName
       ? {
@@ -71,6 +73,16 @@ function formatListTarget(
       endLine: target.endLine,
     };
   }
+  if (target.kind === "issue") {
+    return {
+      kind: "issue",
+      issueUrl: target.issueUrl,
+      issueNumber: target.issueNumber,
+      issueTitle: target.issueTitle,
+      startLine: target.startLine,
+      endLine: target.endLine,
+    };
+  }
   if (target.documentKind === "pull-request-markdown") {
     return {
       kind: target.kind,
@@ -89,11 +101,42 @@ function formatListTarget(
 }
 
 export function formatCommentGetOutput(
-  result: CommentReviewContext,
+  result: CommentReviewContext | BranchCommentReviewContext,
   options: { includePrBody?: boolean } = {},
 ): CommentGetOutput {
+  if ("branchReview" in result) {
+    return commentGetOutputSchema.parse({
+      ok: true,
+      context: result.context,
+      branchReview: {
+        repository: result.branchReview.canonicalName,
+        owner: result.branchReview.owner,
+        name: result.branchReview.repository,
+        localRepositoryPath: result.branchReview.localRepositoryPath,
+        defaultBranchName: result.branchReview.defaultBranchName,
+        currentSourceOid: result.branchReview.sourceOid,
+        githubFetchedAt: result.branchReview.githubFetchedAt,
+        sourceSyncError: result.branchReview.sourceSyncError,
+      },
+      comment: {
+        ...result.comment,
+        resolved: result.comment.resolvedAt !== null,
+      },
+      currentSourceOid: result.branchReview.sourceOid,
+      latestPlacement: result.latestPlacement,
+      exactSource: result.exactSource,
+      walkthrough: result.walkthrough,
+      issue: result.issue,
+      githubState: result.githubState,
+    });
+  }
   return commentGetOutputSchema.parse({
     ok: true,
+    context: result.context ?? {
+      kind: "pull-request",
+      pullRequestId: result.pullRequest.id,
+      pullRequestUrl: result.pullRequest.url,
+    },
     pullRequest: formatPullRequest(result.pullRequest, {
       includeBody: options.includePrBody ?? false,
     }),
@@ -105,6 +148,7 @@ export function formatCommentGetOutput(
     latestPlacement: result.latestPlacement,
     exactSource: result.exactSource,
     walkthrough: result.walkthrough,
+    issue: result.issue ?? null,
     githubState: {
       liveCheckedAt: result.githubState.liveCheckedAt,
       staleAgainstGitHub: result.githubState.staleAgainstGitHub,

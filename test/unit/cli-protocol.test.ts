@@ -171,10 +171,14 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 3,
-      appVersion: "0.2.3",
+      protocolVersion: 4,
+      appVersion: "0.3.0",
       capabilities: [
         "agent.transport",
+        "branchReview.read",
+        "branchReview.sync",
+        "issue.read",
+        "issue.membership",
         "comment.create",
         "comment.list",
         "comment.watch",
@@ -201,6 +205,18 @@ describe("CLI protocol discovery", () => {
         .find((command) => command.name() === "walkthrough")
         ?.commands.map((command) => command.name()),
     ).toEqual(["publish", "get", "update", "delete"]);
+    expect(
+      program.commands
+        .find((command) => command.name() === "pr")
+        ?.commands.find((command) => command.name() === "issue")
+        ?.commands.map((command) => command.name()),
+    ).toEqual(["add", "remove"]);
+    expect(
+      program.commands
+        .find((command) => command.name() === "branch")
+        ?.commands.find((command) => command.name() === "issue")
+        ?.commands.map((command) => command.name()),
+    ).toEqual(["add", "remove"]);
     expect(
       program.commands
         .find((command) => command.name() === "agent")
@@ -591,6 +607,11 @@ describe("CLI protocol discovery", () => {
     expect(getCommentReviewContext).toHaveBeenCalledWith(commentRef, { live: false });
     expect(readStdout()).toEqual({
       ok: true,
+      context: {
+        kind: "pull-request",
+        pullRequestId: pullRequest.id,
+        pullRequestUrl: pullRequest.url,
+      },
       pullRequest: formattedPullRequest,
       comment: {
         ...reviewCommentWithoutPosts,
@@ -617,6 +638,7 @@ describe("CLI protocol discovery", () => {
         },
       },
       walkthrough: null,
+      issue: null,
       githubState: {
         liveCheckedAt: null,
         staleAgainstGitHub: null,
@@ -674,6 +696,50 @@ describe("CLI protocol discovery", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("returns an explicit Walkthrough publish envelope from the CLI", async () => {
+    const uri = "rvw://walkthrough/70000000-0000-4000-8000-000000000003";
+    const input = {
+      review: { kind: "branch" as const, repository: "acme/review-repo" },
+      sourceOid: "b".repeat(40),
+      title: "Branch explanation",
+      body: "Open [the handler](rvw-ref:handler).",
+      references: [
+        {
+          id: "handler",
+          label: "Handler",
+          path: "src/handler.ts",
+          startLine: 1,
+          endLine: 2,
+          description: null,
+        },
+      ],
+      issues: ["#142"],
+    };
+    const publishWalkthrough = vi.fn().mockResolvedValue({
+      walkthrough: { id: "walkthrough-3", ref: uri, branchReviewId: "branch-review-1", ...input },
+      issuesAdded: [{ id: "issue-142", number: 142 }],
+    });
+    const { runtime, close } = mockRuntime({ publishWalkthrough });
+    const readStdout = captureStdout();
+    provideStdin(input);
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "walkthrough",
+      "publish",
+      "--stdin",
+      "--json",
+    ]);
+
+    expect(readStdout()).toMatchObject({
+      ok: true,
+      walkthrough: { ref: uri, branchReviewId: "branch-review-1" },
+      issuesAdded: [{ number: 142 }],
+    });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it("passes a complete Walkthrough replacement from stdin to the service", async () => {
     const uri = "rvw://walkthrough/70000000-0000-4000-8000-000000000001";
     const input = {
@@ -692,9 +758,10 @@ describe("CLI protocol discovery", () => {
         },
       ],
     };
-    const updateWalkthrough = vi
-      .fn()
-      .mockResolvedValue({ id: "walkthrough-1", ref: uri, ...input });
+    const updateWalkthrough = vi.fn().mockResolvedValue({
+      walkthrough: { id: "walkthrough-1", ref: uri, ...input },
+      issuesAdded: [],
+    });
     const { runtime, close } = mockRuntime({ updateWalkthrough });
     const readStdout = captureStdout();
     provideStdin(input);
@@ -713,6 +780,7 @@ describe("CLI protocol discovery", () => {
     expect(readStdout()).toMatchObject({
       ok: true,
       walkthrough: { ref: uri, title: "Improved explanation" },
+      issuesAdded: [],
     });
     expect(close).toHaveBeenCalledOnce();
   });

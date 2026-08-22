@@ -2,6 +2,7 @@ export type DocumentPaneId = "left" | "right";
 
 export type ActiveDocument =
   | { kind: "pull-request-markdown" }
+  | { kind: "issue"; id: string; number: number; title: string; url: string }
   | { kind: "walkthrough"; id: string; title: string; sourceOid: string }
   | {
       kind: "repository-file";
@@ -23,6 +24,7 @@ const initialDocument: ActiveDocument = { kind: "pull-request-markdown" };
 
 export function documentTabKey(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "pull-request-markdown";
+  if (document.kind === "issue") return `issue:${document.id}`;
   if (document.kind === "walkthrough") return `walkthrough:${document.id}`;
   return `file:${document.path}`;
 }
@@ -33,6 +35,7 @@ export function documentPaneTabKey(paneId: DocumentPaneId, document: ActiveDocum
 
 export function documentTabPath(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "Pull Request.md";
+  if (document.kind === "issue") return `#${document.number} ${document.title}`;
   if (document.kind === "walkthrough") return document.title;
   return document.path;
 }
@@ -42,10 +45,20 @@ export function documentTabLabel(document: ActiveDocument): string {
   return path.split("/").at(-1) ?? path;
 }
 
-export function initialDocumentWorkspace(): DocumentWorkspaceState {
+export function initialDocumentWorkspace(
+  initial: ActiveDocument | null = initialDocument,
+): DocumentWorkspaceState {
+  if (!initial) {
+    return {
+      documents: { left: [], right: [] },
+      active: { left: null, right: null },
+      focusedPane: "left",
+      navigationRevision: { left: 0, right: 0 },
+    };
+  }
   return {
-    documents: { left: [initialDocument], right: [] },
-    active: { left: initialDocument, right: null },
+    documents: { left: [initial], right: [] },
+    active: { left: initial, right: null },
     focusedPane: "left",
     navigationRevision: { left: 0, right: 0 },
   };
@@ -215,6 +228,7 @@ export function removeDocumentFromWorkspace(
 
 export function currentCommitDocument(document: ActiveDocument): ActiveDocument {
   if (document.kind === "pull-request-markdown") return { kind: "pull-request-markdown" };
+  if (document.kind === "issue") return document;
   if (document.kind === "walkthrough") return document;
   return { kind: "repository-file", path: document.path };
 }

@@ -155,6 +155,59 @@ describe("Agent socket", () => {
     expect(editCommentPost).toHaveBeenCalledWith(input.uri, input.postId, input.edit);
   });
 
+  it("preserves the enumerable Walkthrough mutation envelope through JSON transport", async () => {
+    const publishResult = {
+      walkthrough: {
+        id: "walkthrough-branch",
+        ref: "rvw://walkthrough/70000000-0000-4000-8000-000000000001",
+        branchReviewId: "branch-review-1",
+      },
+      issuesAdded: [{ id: "issue-142", number: 142 }],
+    };
+    const updateResult = {
+      walkthrough: {
+        id: "walkthrough-pr",
+        ref: "rvw://walkthrough/70000000-0000-4000-8000-000000000002",
+        pullRequestId: "pull-request-1",
+      },
+      issuesAdded: [],
+    };
+    const publishWalkthrough = vi.fn().mockResolvedValue(publishResult);
+    const updateWalkthrough = vi.fn().mockResolvedValue(updateResult);
+    const service = { publishWalkthrough, updateWalkthrough } as unknown as RvwService;
+    const content = {
+      sourceOid: "a".repeat(40),
+      title: "Transport parity",
+      body: "Read [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "Source",
+          path: "README.md",
+          startLine: 1,
+          endLine: 1,
+          description: null,
+        },
+      ],
+    };
+
+    const published = await dispatchAgentSocketRequest(service, {
+      protocolVersion: 1,
+      operation: "walkthrough.publish",
+      input: { review: { kind: "branch", repository: "acme/review-repo" }, ...content },
+    });
+    const updated = await dispatchAgentSocketRequest(service, {
+      protocolVersion: 1,
+      operation: "walkthrough.update",
+      input: { uri: updateResult.walkthrough.ref, content },
+    });
+
+    expect(JSON.parse(JSON.stringify(published))).toEqual(publishResult);
+    expect(JSON.parse(JSON.stringify(updated))).toEqual(updateResult);
+    expect(publishWalkthrough).toHaveBeenCalledOnce();
+    expect(updateWalkthrough).toHaveBeenCalledOnce();
+  });
+
   it("rejects a different explicit database before dispatching the operation", async () => {
     const setCommentResolved = vi.fn();
 
@@ -180,10 +233,16 @@ describe("Agent socket", () => {
 
   it("requires server-side confirmation for destructive operations", async () => {
     const resetPullRequest = vi.fn();
+    const resetBranchReview = vi.fn();
+    const removePullRequestIssue = vi.fn();
+    const removeBranchIssue = vi.fn();
     const deleteWalkthroughByUri = vi.fn();
     const service = {
       resolveStoredPullRequest: vi.fn().mockReturnValue({ id: "pr-1" }),
       resetPullRequest,
+      resetBranchReview,
+      removePullRequestIssue,
+      removeBranchIssue,
       deleteWalkthroughByUri,
     } as unknown as RvwService;
 
@@ -197,11 +256,35 @@ describe("Agent socket", () => {
     await expect(
       dispatchAgentSocketRequest(service, {
         protocolVersion: 1,
+        operation: "pr.issue.remove",
+        input: { reference: "1", issueReference: "#142" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: 1,
+        operation: "branch.issue.remove",
+        input: { repositoryPath: "/repo", issueReference: "#142" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: 1,
+        operation: "branch.reset",
+        input: { repositoryPath: "/repo" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: 1,
         operation: "walkthrough.delete",
         input: { uri: "rvw://walkthrough/10000000-0000-4000-8000-000000000001" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     expect(resetPullRequest).not.toHaveBeenCalled();
+    expect(resetBranchReview).not.toHaveBeenCalled();
+    expect(removePullRequestIssue).not.toHaveBeenCalled();
+    expect(removeBranchIssue).not.toHaveBeenCalled();
     expect(deleteWalkthroughByUri).not.toHaveBeenCalled();
   });
 

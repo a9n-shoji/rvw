@@ -6,12 +6,12 @@ import {
   type ReadingHistoryEntry,
 } from "../../src/web/reading-history.js";
 
-const pullRequestId = "11111111-1111-4111-8111-111111111111";
+const reviewKey = "pull-request:11111111-1111-4111-8111-111111111111";
 
 function entry(overrides: Partial<ReadingHistoryEntry> = {}): ReadingHistoryEntry {
   return {
     version: 1,
-    pullRequestId,
+    reviewKey,
     pane: "left",
     document: { kind: "repository-file", path: "src/fixture.ts" },
     locator: { kind: "scroll", top: 120 },
@@ -28,7 +28,7 @@ describe("reading history", () => {
     const state = readingHistoryState({ unrelated: true }, value);
 
     expect(state.unrelated).toBe(true);
-    expect(parseReadingHistoryEntry(state, pullRequestId)).toEqual(value);
+    expect(parseReadingHistoryEntry(state, reviewKey)).toEqual(value);
   });
 
   it("rejects entries for another Pull Request and malformed locators", () => {
@@ -37,13 +37,13 @@ describe("reading history", () => {
     expect(
       parseReadingHistoryEntry(
         readingHistoryState(null, entry({ locator: { kind: "line", line: 1 } })),
-        pullRequestId,
+        reviewKey,
       ),
     ).not.toBeNull();
 
     const malformed = structuredClone(state) as Record<string, Record<string, unknown>>;
     malformed.rvwReading!.locator = { kind: "scroll", top: -1 };
-    expect(parseReadingHistoryEntry(malformed, pullRequestId)).toBeNull();
+    expect(parseReadingHistoryEntry(malformed, reviewKey)).toBeNull();
   });
 
   it("distinguishes current-range and exact-source readings of the same path", () => {
@@ -57,5 +57,21 @@ describe("reading history", () => {
 
     expect(sameReadingDocument(current, { ...current })).toBe(true);
     expect(sameReadingDocument(current, exact)).toBe(false);
+  });
+
+  it("round-trips an Issue document with the GitHub URL needed for comments", () => {
+    const issueEntry = entry({
+      document: {
+        kind: "issue",
+        id: "70000000-0000-4000-8000-000000000142",
+        number: 142,
+        title: "Treat Issues as documents",
+        url: "https://github.com/acme/review-repo/issues/142",
+      },
+    });
+
+    expect(parseReadingHistoryEntry(readingHistoryState(null, issueEntry), reviewKey)).toEqual(
+      issueEntry,
+    );
   });
 });

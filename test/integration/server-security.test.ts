@@ -53,6 +53,19 @@ function registerPullRequest(database: RvwDatabase): string {
   ).id;
 }
 
+function registerBranchReview(database: RvwDatabase): string {
+  return database.upsertBranchReview(
+    {
+      owner: "acme",
+      repository: "review-repo",
+      canonicalName: "acme/review-repo",
+      defaultBranchName: "main",
+      defaultBranchOid: "b".repeat(40),
+    },
+    { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+  ).id;
+}
+
 describe("local HTTP security", () => {
   it("reads and writes a validated user-wide theme preference", async () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
@@ -175,6 +188,7 @@ describe("local HTTP security", () => {
   it("proxies only validated same-origin GitHub attachment requests", async () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const pullRequestId = registerPullRequest(database);
+    const branchReviewId = registerBranchReview(database);
     const requestedUrls: string[] = [];
     let attachmentContent = png;
     let attachmentError: RvwError | null = null;
@@ -205,6 +219,13 @@ describe("local HTTP security", () => {
     expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
     expect(requestedUrls).toEqual([attachmentUrl]);
 
+    const branchEndpoint = `http://127.0.0.1:4321/api/branch-reviews/${branchReviewId}/github-attachment?url=${encodeURIComponent(attachmentUrl)}`;
+    const branchResponse = await app.request(branchEndpoint, { headers });
+    expect(branchResponse.status).toBe(200);
+    expect(Buffer.from(await branchResponse.arrayBuffer())).toEqual(png);
+    expect(branchResponse.headers.get("content-type")).toBe("image/png");
+    expect(requestedUrls).toEqual([attachmentUrl, attachmentUrl]);
+
     for (const fetchSite of ["same-site", "cross-site"]) {
       const blocked = await app.request(endpoint, {
         headers: { host: "127.0.0.1:4321", "sec-fetch-site": fetchSite },
@@ -215,14 +236,14 @@ describe("local HTTP security", () => {
       headers: { host: "127.0.0.1:4321", origin: "https://evil.example" },
     });
     expect(badOrigin.status).toBe(403);
-    expect(requestedUrls).toHaveLength(1);
+    expect(requestedUrls).toHaveLength(2);
 
     const invalid = await app.request(
       `http://127.0.0.1:4321/api/pull-requests/${pullRequestId}/github-attachment?url=${encodeURIComponent("https://github.com.evil.example/user-attachments/assets/37948111-1227-4cdb-a76d-dc8eb469ae5c")}`,
       { headers },
     );
     expect(invalid.status).toBe(400);
-    expect(requestedUrls).toHaveLength(1);
+    expect(requestedUrls).toHaveLength(2);
 
     attachmentContent = Buffer.from(
       '<?xml version="1.0"?><!-- generated --><svg xmlns="http://www.w3.org/2000/svg"></svg>',
@@ -253,7 +274,12 @@ describe("local HTTP security", () => {
       { headers },
     );
     expect(missing.status).toBe(404);
-    expect(requestedUrls).toHaveLength(4);
+    const missingBranch = await app.request(
+      `http://127.0.0.1:4321/api/branch-reviews/missing/github-attachment?url=${encodeURIComponent(attachmentUrl)}`,
+      { headers },
+    );
+    expect(missingBranch.status).toBe(404);
+    expect(requestedUrls).toHaveLength(5);
     database.close();
   });
 

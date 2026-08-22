@@ -1,0 +1,588 @@
+import { expect, test, type Locator } from "@playwright/test";
+
+const branchReviewId = "33333333-3333-4333-8333-333333333333";
+const modifier = process.platform === "darwin" ? "Meta" : "Control";
+
+async function selectMappedText(locator: Locator): Promise<void> {
+  await expect(locator).toBeVisible();
+  await locator.evaluate((element) => {
+    const text = element.firstChild;
+    if (!(text instanceof Text) || text.data.length === 0) {
+      throw new Error("Expected a non-empty mapped text node.");
+    }
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+  });
+}
+
+test.beforeEach(async ({ request }) => {
+  const response = await request.post("/api/test/reset-branch-review", { data: {} });
+  expect(response.ok()).toBe(true);
+});
+
+test("rejects a malformed Branch Review ID before starting Review queries", async ({
+  page,
+  request,
+}) => {
+  const branchRequests: string[] = [];
+  page.on("request", (browserRequest) => {
+    if (new URL(browserRequest.url()).pathname.startsWith("/api/branch-reviews/")) {
+      branchRequests.push(browserRequest.url());
+    }
+  });
+  await page.goto("/?branchReviewId=not-a-uuid");
+  await expect(page.getByText("Branch Review IDが不正です。", { exact: true })).toBeVisible();
+  expect(branchRequests).toEqual([]);
+  expect((await request.get("/api/branch-reviews/not-a-uuid")).status()).toBe(400);
+});
+
+test("does not let a delayed Branch reference replace newer navigation", async ({ page }) => {
+  let releaseRequest = (): void => undefined;
+  const requestMayContinue = new Promise<void>((resolve) => {
+    releaseRequest = resolve;
+  });
+  let markRequestStarted = (): void => undefined;
+  const requestStarted = new Promise<void>((resolve) => {
+    markRequestStarted = resolve;
+  });
+  await page.route("**/api/branch-reviews/*/document?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("path") !== "src/fixture.ts") {
+      await route.continue();
+      return;
+    }
+    markRequestStarted();
+    await requestMayContinue;
+    await route.continue();
+  });
+
+  try {
+    await page.goto(`/?branchReviewId=${branchReviewId}`);
+    await page.getByRole("button", { name: "ウォークスルー 1" }).click();
+    await page.getByRole("button", { name: "Current request flow", exact: true }).click();
+    await page.getByRole("button", { name: /the implementation.*L1–3/ }).click();
+    await requestStarted;
+
+    await page.getByRole("button", { name: "README.md", exact: true }).click();
+    const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+    await expect(leftPane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    const delayedResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        url.pathname === `/api/branch-reviews/${branchReviewId}/document` &&
+        url.searchParams.get("path") === "src/fixture.ts"
+      );
+    });
+    releaseRequest();
+    await delayedResponse;
+    await page.waitForTimeout(100);
+    await expect(leftPane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  } finally {
+    releaseRequest();
+  }
+});
+
+test("rebinds and removes both pane copies after external Branch Walkthrough changes", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.getByRole("button", { name: "ウォークスルー 1" }).click();
+  const walkthroughButton = page.getByRole("button", {
+    name: "Current request flow",
+    exact: true,
+  });
+  await walkthroughButton.click();
+  await walkthroughButton.click({ modifiers: [modifier] });
+  await expect(page.getByRole("tab", { name: "Current request flow", exact: true })).toHaveCount(2);
+  await page.waitForResponse(
+    (response) => new URL(response.url()).pathname === "/api/meta/change-sequence" && response.ok(),
+  );
+
+  const updatedTitle = "Updated request flow";
+  const update = await request.post("/api/test/update-branch-walkthrough", {
+    data: {
+      title: updatedTitle,
+      body: "# Updated request flow\n\nOpen [the implementation](rvw-ref:implementation).",
+    },
+  });
+  expect(update.ok()).toBe(true);
+  await expect(page.getByRole("tab", { name: updatedTitle, exact: true })).toHaveCount(2);
+  await expect(page.getByRole("tab", { name: "Current request flow", exact: true })).toHaveCount(0);
+
+  const deletion = await request.delete(
+    `/api/branch-reviews/${branchReviewId}/walkthroughs/66666666-6666-4666-8666-666666666666`,
+    { data: {} },
+  );
+  expect(deletion.ok()).toBe(true);
+  await expect(page.getByRole("tab", { name: updatedTitle, exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "ウォークスルー 0" })).toBeVisible();
+});
+
+test("keeps a moved Branch document in its current pane during reading-history restore", async ({
+  page,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.getByRole("button", { name: "src フォルダ", exact: true }).click();
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await page.getByRole("button", { name: "README.md", exact: true }).click();
+
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  await leftPane.getByRole("button", { name: "左ペインの操作" }).click();
+  await leftPane.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
+  await expect(rightPane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  await page.goBack();
+  await expect(leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rightPane.getByRole("tab", { name: "README.md", exact: true })).toHaveCount(1);
+  await page.goForward();
+  await expect(rightPane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(leftPane.getByRole("tab", { name: "README.md", exact: true })).toHaveCount(0);
+});
+
+test("restores the actual Branch pane scroll position after leaving a line jump", async ({
+  page,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.getByRole("button", { name: "コード検索を開く" }).click();
+  await page.getByRole("textbox", { name: "全文検索", exact: true }).fill("dispatcher");
+  await page.getByRole("button", { name: /README\.md \d+行/ }).click();
+
+  const pane = page.getByRole("region", { name: "左のコードペイン" });
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(100);
+  const lineJumpTop = await pane.evaluate((element) => element.scrollTop);
+  await pane.hover();
+  await page.mouse.wheel(0, -300);
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeLessThan(lineJumpTop);
+  const scrolledTop = await pane.evaluate((element) => element.scrollTop);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const locator = (
+          window.history.state as {
+            rvwReading?: { locator?: { kind?: unknown; top?: unknown } };
+          } | null
+        )?.rvwReading?.locator;
+        return locator?.kind === "scroll" ? locator.top : null;
+      }),
+    )
+    .toBe(scrolledTop);
+
+  await page.getByRole("button", { name: "ファイルツリーに戻る" }).click();
+  await page.getByRole("button", { name: "src フォルダ", exact: true }).click();
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await page.goBack();
+  await expect(pane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBe(scrolledTop);
+});
+
+test("uses the shared review workspace for the default branch, Issues, code, and Walkthroughs", async ({
+  page,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+
+  await expect(
+    page.getByRole("heading", { name: /^Branch Review · trunk · [0-9a-f]{8}$/ }),
+  ).toBeVisible();
+  await expect(page.getByText("acme/review-repo", { exact: true })).toBeVisible();
+  await expect(page.locator(".sidebar-stack-toggle")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "エクスプローラー", exact: true })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await expect(page.getByRole("button", { name: "コメント 2", exact: true })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await expect(reviewTree.getByRole("button", { name: "Issues 2", exact: true })).toBeVisible();
+  const issueButtons = reviewTree.locator(".review-tree-issue");
+  await expect(issueButtons).toHaveCount(2);
+  await expect(issueButtons.nth(0)).toContainText("#142");
+  await expect(issueButtons.nth(0)).toContainText("OPEN");
+  await expect(issueButtons.nth(1)).toContainText("#19");
+  await expect(issueButtons.nth(1)).toContainText("CLOSED");
+  await expect(issueButtons.nth(1)).toContainText("stale");
+
+  const commentsToggle = page.getByRole("button", { name: "コメント 2", exact: true });
+  await commentsToggle.click();
+  await expect(page.getByRole("button", { name: "未解決 2", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "解決済み 1", exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Verify the default-branch trimming behavior at its exact source.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  const codeComment = page.locator(".comment-list-item").filter({
+    hasText: "Verify the default-branch trimming behavior at its exact source.",
+  });
+  await codeComment.getByRole("button", { name: "コメント対象を開く" }).click();
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const source = leftPane.locator("diffs-container");
+  await expect(page.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(source).toHaveAttribute("data-search-target-line", "2");
+  await expect(source.locator('[data-line="2"][data-editor-active-line]')).toBeVisible();
+  await expect(
+    leftPane.locator(".comment-thread--inline").filter({
+      hasText: "Verify the default-branch trimming behavior at its exact source.",
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "解決済み 1", exact: true }).click();
+  await expect(
+    page.getByText("The default-branch scope is confirmed.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "未解決 2", exact: true }).click();
+  await commentsToggle.click();
+
+  await issueButtons.nth(0).click();
+  await expect(
+    page.getByRole("heading", { name: "Stabilize the request path", exact: true }),
+  ).toBeVisible();
+  const issueAttachment = page.getByRole("img", { name: "Issue attachment", exact: true });
+  await expect(issueAttachment).toHaveAttribute(
+    "src",
+    new RegExp(`/api/branch-reviews/${branchReviewId}/github-attachment\\?url=`),
+  );
+  await expect
+    .poll(() => issueAttachment.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBe(320);
+  await expect(page.locator("td").filter({ has: issueAttachment })).toHaveCount(1);
+  await expect(
+    page.getByRole("img", { name: /External planning diagram.*自動読み込み停止/ }),
+  ).toBeVisible();
+
+  const walkthroughFolder = page.getByRole("button", { name: "ウォークスルー 1" });
+  await walkthroughFolder.click();
+  const walkthroughButton = page.getByRole("button", {
+    name: "Current request flow",
+    exact: true,
+  });
+  await walkthroughButton.click({ modifiers: [modifier] });
+  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  await expect(rightPane).toBeVisible();
+  await expect(
+    rightPane.getByRole("heading", {
+      level: 1,
+      name: "Current request flow",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page
+      .locator(".walkthrough-markdown")
+      .getByText("Confirm this entry point against the exact default-branch source."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Request implementationをコードで開く" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: /the implementation.*L1–3/ })
+    .click({ modifiers: [modifier] });
+  await expect(
+    rightPane.getByRole("button", { name: "src/fixture.tsを閉じる", exact: true }),
+  ).toBeVisible();
+
+  await page.keyboard.press(`${modifier}+p`);
+  const quickOpen = page.getByRole("dialog", { name: "ファイルを開く" });
+  await expect(quickOpen).toBeVisible();
+  await quickOpen.getByRole("combobox", { name: "ファイル名で検索" }).fill("README.md");
+  await expect(quickOpen.getByRole("option", { name: "README.md" })).toBeVisible();
+  await expect(quickOpen.getByRole("option", { name: "Pull Request.md" })).toHaveCount(0);
+  await quickOpen.getByRole("option", { name: "README.md" }).click();
+  await leftPane.getByRole("button", { name: "Preview", exact: true }).click();
+  await expect(page.getByRole("img", { name: "Order lifecycle" })).toBeVisible();
+
+  await page.getByRole("button", { name: "コード検索を開く" }).click();
+  const searchInput = page.getByRole("textbox", { name: "全文検索" });
+  await expect(searchInput).toBeFocused();
+  await searchInput.fill("fixtureSearchTarget");
+  await expect(page.getByText("1件・1ファイル", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "大文字小文字を区別" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "単語単位で検索" })).toBeVisible();
+  await page.getByRole("button", { name: "src/fixture.ts 13行" }).click();
+  await expect(source).toHaveAttribute("data-search-target-line", "13");
+  await expect(source.locator('[data-line="13"][data-editor-active-line]')).toBeVisible();
+  await page.goBack();
+  await expect(leftPane.locator(".document-tab.active").getByText("README.md")).toBeVisible();
+  await page.goForward();
+  await expect(source.locator('[data-line="13"][data-editor-active-line]')).toBeVisible();
+  await page.getByRole("button", { name: "ファイルツリーに戻る" }).click();
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("紐づくコメント 1件と投稿 1件");
+    await dialog.accept();
+  });
+  await page
+    .getByRole("region", { name: "右のコードペイン" })
+    .getByRole("tab", { name: "Current request flow", exact: true })
+    .click();
+  await page.getByRole("button", { name: "ウォークスルーを削除" }).click();
+  await expect(page.getByRole("button", { name: "ウォークスルー 0" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "コメント 1", exact: true })).toBeVisible();
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Issue #19 Document recovery");
+    expect(dialog.message()).toContain("Issue本文rangeコメント 0");
+    await dialog.accept();
+  });
+  await page.getByRole("button", { name: "#19を削除" }).click();
+  await expect(issueButtons).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "#19を削除" })).toHaveCount(0);
+});
+
+test("keeps Branch mutations isolated and recreates an empty review after reset", async ({
+  page,
+  request,
+}) => {
+  const pullRequestCommentsBefore = (await (
+    await request.get("/api/pull-requests/11111111-1111-4111-8111-111111111111/comments")
+  ).json()) as Record<string, unknown>;
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  const issueButtons = reviewTree.locator(".review-tree-issue");
+  const addIssueButton = reviewTree.getByRole("button", { name: "Issueを追加", exact: true });
+  const issueInput = reviewTree.getByRole("textbox", { name: "Issue番号またはURL" });
+  await expect(issueButtons).toHaveCount(2);
+  await expect(issueInput).toHaveCount(0);
+
+  await addIssueButton.click();
+  await issueInput.fill("#142");
+  await reviewTree.getByRole("button", { name: "追加", exact: true }).click();
+  await expect(issueInput).toHaveCount(0);
+  await expect(issueButtons).toHaveCount(2);
+
+  await addIssueButton.click();
+  await issueInput.fill("#77");
+  await reviewTree.getByRole("button", { name: "追加", exact: true }).click();
+  await expect(issueButtons).toHaveCount(3);
+  await expect(issueButtons.first()).toContainText("#77");
+
+  await issueButtons.filter({ hasText: "#142" }).click();
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  await expect(leftPane.getByRole("button", { name: "Preview", exact: true })).toBeVisible();
+  await expect(leftPane.getByRole("textbox", { name: "Issue全体へコメント" })).toHaveCount(0);
+  await leftPane.getByRole("button", { name: "Issue全体へコメント" }).click();
+  await expect(leftPane.getByRole("textbox", { name: "Issue全体へコメント" })).toBeVisible();
+  await leftPane.getByRole("textbox", { name: "Issue全体へコメント" }).press("Escape");
+  const issueBodyLine = leftPane
+    .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
+    .filter({ hasText: "Inspect the default-branch implementation." });
+  await selectMappedText(issueBodyLine);
+  await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();
+  await leftPane
+    .getByRole("textbox", { name: "#142 · L3へコメント" })
+    .fill("Issue range fixture comment");
+  await leftPane
+    .locator(".markdown-selection-composer-slot")
+    .getByRole("button", { name: "コメント", exact: true })
+    .click();
+  await expect(leftPane.getByText("Issue range fixture comment", { exact: true })).toBeVisible();
+
+  const commentsToggle = page.getByRole("button", { name: "コメント 3", exact: true });
+  await commentsToggle.click();
+  await page.getByRole("button", { name: "＋ Branch全体", exact: true }).click();
+  await page.getByPlaceholder("Branch Review全体へのコメント").fill("Branch whole fixture comment");
+  await page
+    .locator(".review-comment-composer")
+    .getByRole("button", { name: "コメント", exact: true })
+    .click();
+  await expect(page.getByText("Branch whole fixture comment", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "コメント 4", exact: true })).toBeVisible();
+
+  const branchComments = (await (
+    await request.get(`/api/branch-reviews/${branchReviewId}/comments`)
+  ).json()) as { comments: unknown[] };
+  expect(branchComments.comments).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        comment: expect.objectContaining({
+          branchReviewId,
+          target: expect.objectContaining({
+            kind: "issue",
+            issueNumber: 142,
+            issueTitle: "Stabilize the request path",
+            startLine: 3,
+            endLine: 3,
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        comment: expect.objectContaining({
+          branchReviewId,
+          target: { kind: "branch" },
+          resolvedAt: null,
+        }),
+      }),
+    ]),
+  );
+  const pullRequestCommentsAfter = (await (
+    await request.get("/api/pull-requests/11111111-1111-4111-8111-111111111111/comments")
+  ).json()) as Record<string, unknown>;
+  expect(pullRequestCommentsAfter).toEqual(pullRequestCommentsBefore);
+
+  page.once("dialog", async (dialog) => {
+    expect(dialog.message()).toContain("Issue membership 3");
+    expect(dialog.message()).toContain("Issueコメント 1");
+    expect(dialog.message()).toContain("コードコメント 1");
+    expect(dialog.message()).toContain("Branch全体コメント 2");
+    expect(dialog.message()).toContain("Walkthroughコメント 1");
+    await dialog.accept();
+  });
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Branch Reviewを削除して再構築" }).click();
+  await expect(page).not.toHaveURL(`/?branchReviewId=${branchReviewId}`);
+  await expect(page.getByRole("button", { name: "Issues 0", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "ウォークスルー 0" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "コメント 0", exact: true })).toBeVisible();
+});
+
+test("keeps an Issue range composer focused across a same-body Branch refresh", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await reviewTree.locator(".review-tree-issue").filter({ hasText: "#142" }).click();
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const issueBodyLine = leftPane
+    .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
+    .filter({ hasText: "Inspect the default-branch implementation." });
+  await selectMappedText(issueBodyLine);
+  await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();
+  const textarea = leftPane.getByRole("textbox", { name: "#142 · L3へコメント" });
+  await textarea.fill("Background sync must preserve this draft");
+  await textarea.evaluate((element) => {
+    element.dataset.rvwE2eIdentity = "original-textarea";
+  });
+  await expect(textarea).toBeFocused();
+
+  const refresh = await request.post("/api/test/refresh-branch-review", {
+    data: { sourceOid: "b".repeat(40) },
+  });
+  expect(refresh.ok()).toBe(true);
+  await expect(
+    page.getByRole("heading", { name: "Branch Review · trunk · bbbbbbbb" }),
+  ).toBeVisible();
+  await expect(textarea).toHaveValue("Background sync must preserve this draft");
+  await expect(textarea).toHaveAttribute("data-rvw-e2e-identity", "original-textarea");
+  await expect(textarea).toBeFocused();
+
+  await leftPane
+    .locator(".markdown-selection-composer-slot")
+    .getByRole("button", { name: "コメント", exact: true })
+    .click();
+  await expect(
+    leftPane.getByText("Background sync must preserve this draft", { exact: true }),
+  ).toBeVisible();
+});
+
+test("refreshes an open Issue body without silently applying a stale range draft", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await reviewTree.locator(".review-tree-issue").filter({ hasText: "#142" }).click();
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const originalLine = leftPane
+    .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
+    .filter({ hasText: "Inspect the default-branch implementation." });
+
+  await selectMappedText(originalLine);
+  await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();
+  await leftPane
+    .getByRole("textbox", { name: "#142 · L3へコメント" })
+    .fill("Comment that should become outdated");
+  await leftPane
+    .locator(".markdown-selection-composer-slot")
+    .getByRole("button", { name: "コメント", exact: true })
+    .click();
+  await expect(
+    leftPane.getByText("Comment that should become outdated", { exact: true }),
+  ).toBeVisible();
+
+  await selectMappedText(originalLine);
+  await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();
+  const textarea = leftPane.getByRole("textbox", { name: "#142 · L3へコメント" });
+  await textarea.fill("Preserve this unsent draft");
+  await expect(textarea).toBeFocused();
+
+  const updatedBody = [
+    "# Stabilize the request path",
+    "",
+    "Inspect the refreshed default-branch implementation.",
+    "",
+    "The Issue body changed while a reviewer was writing.",
+  ].join("\n");
+  const refresh = await request.post("/api/test/refresh-branch-review", {
+    data: { issueNumber: 142, issueBody: updatedBody },
+  });
+  expect(refresh.ok()).toBe(true);
+  const refreshedLine = leftPane
+    .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
+    .filter({ hasText: "Inspect the refreshed default-branch implementation." });
+  await expect(refreshedLine).toBeVisible();
+  await expect(textarea).toHaveValue("Preserve this unsent draft");
+  await expect(textarea).toBeFocused();
+  await expect(
+    leftPane.getByText(
+      "Issue本文が更新されました。draftは保持されています。現在の本文で範囲を選び直してください。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    leftPane
+      .locator(".markdown-selection-composer-slot")
+      .getByRole("button", { name: "コメント", exact: true }),
+  ).toBeDisabled();
+
+  const commentsToggle = page.getByRole("button", { name: "コメント 3", exact: true });
+  await commentsToggle.click();
+  const outdatedComment = page.locator(".comment-list-item").filter({
+    hasText: "Comment that should become outdated",
+  });
+  await expect(outdatedComment.locator(".badge--outdated")).toBeVisible();
+  await expect(
+    leftPane.locator(".markdown-inline-comments").getByText("Comment that should become outdated"),
+  ).toHaveCount(0);
+  await commentsToggle.click();
+
+  await selectMappedText(refreshedLine);
+  await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();
+  const refreshedTextarea = leftPane.getByRole("textbox", { name: "#142 · L3へコメント" });
+  await expect(refreshedTextarea).toHaveValue("Preserve this unsent draft");
+  await leftPane
+    .locator(".markdown-selection-composer-slot")
+    .getByRole("button", { name: "コメント", exact: true })
+    .click();
+  await expect(leftPane.getByText("Preserve this unsent draft", { exact: true })).toBeVisible();
+});

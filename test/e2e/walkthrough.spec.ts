@@ -1356,6 +1356,27 @@ test("resizes the sidebar and two reading panes with pointer drag", async ({ pag
   expect(rightAfter!.width).toBeLessThan(rightBefore!.width - 60);
 });
 
+test("keeps narrow sidebar separator values aligned with its rendered width", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 700 });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+
+  const sidebar = page.locator(".sidebar");
+  const separator = page.getByRole("separator", { name: "サイドバーの幅を変更" });
+  await expect(separator).toHaveAttribute("aria-valuenow", "330");
+  await expect(separator).toHaveAttribute("aria-valuemax", "560");
+
+  await page.setViewportSize({ width: 800, height: 700 });
+  await expect(separator).toHaveAttribute("aria-valuenow", "280");
+  await expect(separator).toHaveAttribute("aria-valuemax", "280");
+  const before = await sidebar.boundingBox();
+  expect(before).not.toBeNull();
+  await separator.press("ArrowLeft");
+  const after = await sidebar.boundingBox();
+  expect(after).not.toBeNull();
+  expect(after!.width).toBeLessThan(before!.width - 10);
+  await expect(separator).toHaveAttribute("aria-valuenow", "264");
+});
+
 test("keeps readable minimum widths on a narrow viewport", async ({ page }) => {
   await page.setViewportSize({ width: 319, height: 777 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);

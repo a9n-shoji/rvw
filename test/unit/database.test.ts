@@ -138,6 +138,8 @@ describe("RvwDatabase", () => {
       "004_walkthroughs.sql",
       "005_walkthrough_comments.sql",
       "006_theme_preference.sql",
+      "007_file_level_walkthrough_references.sql",
+      "008_walkthrough_line_comments.sql",
       "009_comment_watch.sql",
       "010_comment_post_references.sql",
     ]) {
@@ -156,7 +158,7 @@ describe("RvwDatabase", () => {
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
       "c".repeat(40),
     );
-    const ranged = legacy.createWalkthrough({
+    const { walkthrough: ranged } = legacy.createWalkthrough({
       pullRequestId: pullRequest.id,
       sourceOid: github.headOid,
       title: "Ranged reference",
@@ -173,21 +175,47 @@ describe("RvwDatabase", () => {
         },
       ],
     });
-    const wholeComment = legacy.createComment({
-      pullRequestId: pullRequest.id,
-      createdHeadOid: github.headOid,
-      target: {
-        kind: "walkthrough",
-        walkthroughId: ranged.id,
-        walkthroughTitle: ranged.title,
-        sourceDocumentHash: null,
-        quotedText: null,
-        startLine: null,
-        endLine: null,
-      },
-      body: "Keep this whole-Walkthrough comment.",
-    });
     legacy.close();
+
+    const legacySqlite = new DatabaseSync(filePath);
+    const legacyCommentId = "legacy-walkthrough-comment";
+    const legacyPostId = "legacy-walkthrough-post";
+    const createdAt = new Date().toISOString();
+    legacySqlite
+      .prepare(
+        `INSERT INTO comments(
+          id, pull_request_id, created_head_oid, resolved_at, created_at, updated_at
+        ) VALUES (?, ?, ?, NULL, ?, ?)`,
+      )
+      .run(legacyCommentId, pullRequest.id, github.headOid, createdAt, createdAt);
+    legacySqlite
+      .prepare(
+        `INSERT INTO comment_targets(
+          comment_id, target_kind, walkthrough_id, source_document_hash,
+          quoted_text, start_line, end_line
+        ) VALUES (?, 'walkthrough', ?, NULL, NULL, NULL, NULL)`,
+      )
+      .run(legacyCommentId, ranged.id);
+    legacySqlite
+      .prepare(
+        `INSERT INTO comment_posts(
+          id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at
+        ) VALUES (?, ?, ?, NULL, NULL, 1, ?, ?)`,
+      )
+      .run(
+        legacyPostId,
+        legacyCommentId,
+        "Keep this whole-Walkthrough comment.",
+        createdAt,
+        createdAt,
+      );
+    legacySqlite
+      .prepare(
+        `INSERT INTO comment_post_events(post_id, comment_ref, pull_request_url, created_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(legacyPostId, `rvw://comment/${legacyCommentId}`, pullRequest.url, createdAt);
+    legacySqlite.close();
 
     const migrated = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
     expect(migrated.getWalkthrough(ranged.id)?.references).toEqual([
@@ -200,7 +228,7 @@ describe("RvwDatabase", () => {
         description: null,
       },
     ]);
-    expect(migrated.getComment(wholeComment.id)).toMatchObject({
+    expect(migrated.getComment(legacyCommentId)).toMatchObject({
       target: {
         kind: "walkthrough",
         walkthroughId: ranged.id,
@@ -211,7 +239,38 @@ describe("RvwDatabase", () => {
       },
       posts: [{ body: "Keep this whole-Walkthrough comment." }],
     });
-    const fileLevel = migrated.createWalkthrough({
+    expect(migrated.listCommentPostEvents(0, 10)).toMatchObject([
+      {
+        commentRef: `rvw://comment/${legacyCommentId}`,
+        context: {
+          kind: "pull-request",
+          pullRequestId: pullRequest.id,
+          pullRequestUrl: pullRequest.url,
+        },
+      },
+    ]);
+    const migratedSqlite = new DatabaseSync(filePath, { readOnly: true });
+    expect(
+      migratedSqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('comment_post_events', 'review_issues', 'pull_request_issue_comment_targets')",
+        )
+        .all(),
+    ).toEqual([]);
+    expect(migratedSqlite.prepare("PRAGMA foreign_key_list(pull_request_issues)").all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ table: "pull_requests", from: "pull_request_id" }),
+        expect.objectContaining({ table: "github_issues", from: "issue_id" }),
+      ]),
+    );
+    expect(migratedSqlite.prepare("PRAGMA foreign_key_list(branch_review_issues)").all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ table: "branch_reviews", from: "branch_review_id" }),
+        expect.objectContaining({ table: "github_issues", from: "issue_id" }),
+      ]),
+    );
+    migratedSqlite.close();
+    const { walkthrough: fileLevel } = migrated.createWalkthrough({
       pullRequestId: pullRequest.id,
       sourceOid: github.headOid,
       title: "File reference",
@@ -248,8 +307,18 @@ describe("RvwDatabase", () => {
       "c".repeat(40),
     );
     expect(database.getChangeSequence()).toBe(1);
+    expect(database.getReviewChangeSequence("pull-request", pullRequest.id)).toBe(1);
+    expect(database.getReviewChangeSequence("branch", pullRequest.id)).toBe(0);
     expect(database.getPullRequest(pullRequest.id)?.latestHeadOid).toBe(github.headOid);
     expect(database.getPullRequest(pullRequest.id)?.latestComparisonBaseOid).toBe("c".repeat(40));
+    const otherPullRequest = database.upsertPullRequest(
+      { ...github, number: github.number + 1, url: "https://github.com/acme/repo/pull/8" },
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    expect(database.getChangeSequence()).toBe(2);
+    expect(database.getReviewChangeSequence("pull-request", pullRequest.id)).toBe(1);
+    expect(database.getReviewChangeSequence("pull-request", otherPullRequest.id)).toBe(1);
     database.close();
   });
 
@@ -362,7 +431,11 @@ describe("RvwDatabase", () => {
       {
         sequence: firstCursor,
         commentRef: comment.ref,
-        pullRequestUrl: pullRequest.url,
+        context: {
+          kind: "pull-request",
+          pullRequestId: pullRequest.id,
+          pullRequestUrl: pullRequest.url,
+        },
         deleted: false,
       },
     ]);

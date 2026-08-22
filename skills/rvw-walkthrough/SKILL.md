@@ -18,7 +18,7 @@ Use only the `rvw` CLI protocol. Never access the SQLite database directly or co
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 3, `agent.transport`, and the `walkthrough.read` capability plus every publish, update, or delete capability needed for the task.
+2. Require `protocolVersion` 4, `agent.transport`, and the `walkthrough.read` capability plus every publish, update, or delete capability needed for the task.
 3. Run `rvw agent status --json`. Read `socketPath`, `connectionResult`, `selectedDatabasePath`, `selectedTransport`, and `fallbackReason`. If `selectedTransport` is `unavailable`, stop and report the diagnostic; an explicitly configured `RVW_AGENT_SOCKET_PATH` never falls back to direct database access. Otherwise use the reported transport without overriding it.
 4. Require local access to the saved repository. When a normally launched rvw viewer is running, the
    CLI can route database reads and writes through its user-only Unix socket; otherwise direct rvw data
@@ -33,7 +33,9 @@ For an existing `rvw://walkthrough/<uuid>` reference, run:
 rvw walkthrough get <WALKTHROUGH_URI> --json
 ```
 
-Read the complete current body, source OID, diagram bindings, references, and Pull Request repository location before revising or deleting it. Walkthroughs have one current value and no local revision history.
+Read the complete current body, source OID, diagram bindings, references, and owning Pull Request or
+Branch Review repository location before revising or deleting it. Walkthroughs have one current value
+and no local revision history.
 
 ## Prepare the artifact
 
@@ -59,7 +61,7 @@ Pass exactly one JSON object and close stdin. This shell form closes it at the h
 ```bash
 rvw walkthrough publish --stdin --json <<'RVW_JSON'
 {
-  "pullRequest": "https://github.com/owner/repo/pull/123",
+  "review": { "kind": "pull-request", "pullRequest": "https://github.com/owner/repo/pull/123" },
   "sourceOid": "0123456789abcdef0123456789abcdef01234567",
   "title": "Request flow",
   "body": "Start at [the handler](rvw-ref:handler), then inspect the [composition root](rvw-ref:composition).",
@@ -86,7 +88,19 @@ RVW_JSON
 
 Set the optional `authorLabel` to an accurate current Agent name when known; otherwise omit it.
 
-Parse the successful response and report the returned `rvw://walkthrough/<uuid>` reference. Publication is passive: never claim it opened rvw, activated a document, selected a commit, or changed a tab or scroll position. The human chooses which Walkthrough and code references to open and when.
+For a Branch Review, require `branchReview.read` and publish with
+`"review": { "kind": "branch", "repository": "owner/repository" }`. Use the current default-branch
+source OID returned by RVW. A Branch Walkthrough may support evaluation of an Issue or an architecture
+investigation without an Issue, but must not merely paraphrase Issue text. Optional
+`"issues": ["#98", "#156"]` adds only those same-repository Issues while publishing or updating.
+Do not recursively discover linked Issues; omitting an Issue from a later update does not remove it.
+
+Parse the successful response as `{ "ok": true, "walkthrough": {...}, "issuesAdded": [...] }` and
+report the returned `walkthrough.ref`. `issuesAdded` is always present, including as `[]`, and has the
+same schema through direct database execution and the Agent socket. It contains only memberships
+actually inserted by that mutation; a concurrent or earlier addition is not reported again. Publication is passive: never
+claim it opened rvw, activated a document, selected a commit, or changed a tab or scroll position. The
+human chooses which Walkthrough and code references to open and when.
 
 ## Improve an existing Walkthrough
 
@@ -96,7 +110,10 @@ Use an in-place update when the user or a Walkthrough comment asks for a clearer
 rvw walkthrough update '<WALKTHROUGH_URI>' --stdin --json
 ```
 
-The successful response keeps the same Walkthrough ID and URI. rvw does not create or retain a previous Walkthrough version. Whole-document comments stay attached to the same identity and resolve to the current body and references. Updating is passive and must not be described as browser navigation.
+The successful response is the same `{walkthrough,issuesAdded}` envelope used by publish and keeps the
+same Walkthrough ID and URI. rvw does not create or retain a previous Walkthrough version.
+Whole-document comments stay attached to the same identity and resolve to the current body and
+references. Updating is passive and must not be described as browser navigation.
 
 ## Delete an unnecessary Walkthrough
 
@@ -112,4 +129,6 @@ Only after the user explicitly authorizes deleting that exact Walkthrough and th
 rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
 ```
 
-Never infer deletion authorization from a request to revise, replace, or republish an explanation. Retained Git commit refs may be shared by other review state and remain managed by `rvw pr reset`.
+Never infer deletion authorization from a request to revise, replace, or republish an explanation.
+Retained Git commit refs may be shared by other review state and remain managed by the owning review's
+explicit reset operation.

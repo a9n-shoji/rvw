@@ -28,10 +28,246 @@ const fixturePng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+const fixtureAttachmentSvg = [
+  '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="160" viewBox="0 0 320 160">',
+  '<rect width="320" height="160" rx="16" fill="#0d1117"/>',
+  '<path d="M52 48h216v64H52z" fill="#1f6feb" opacity=".22"/>',
+  '<circle cx="88" cy="80" r="22" fill="#58a6ff"/>',
+  '<path d="m78 80 7 7 14-16" fill="none" stroke="#0d1117" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>',
+  '<text x="124" y="75" fill="#f0f6fc" font-family="sans-serif" font-size="18" font-weight="600">rvw attachment</text>',
+  '<text x="124" y="98" fill="#8b949e" font-family="sans-serif" font-size="13">authenticated preview</text>',
+  "</svg>",
+].join("");
 const baseOid = repositoryDemo?.baseOid ?? "a".repeat(40);
 const firstHead = repositoryDemo?.commits[0]?.oid ?? "b".repeat(40);
 const secondHead = repositoryDemo?.headOid ?? "c".repeat(40);
+const branchReviewId = "33333333-3333-4333-8333-333333333333";
+const branchIssueId = "44444444-4444-4444-8444-444444444444";
+const olderBranchIssueId = "55555555-5555-4555-8555-555555555555";
+const branchWalkthroughId = "66666666-6666-4666-8666-666666666666";
+const branchReviewFixture = {
+  id: branchReviewId,
+  host: "github.com",
+  owner: "acme",
+  repository: "review-repo",
+  canonicalName: "acme/review-repo",
+  localRepositoryPath: "/fixture/review-repo",
+  gitCommonDir: "/fixture/review-repo/.git",
+  defaultBranchName: "trunk",
+  sourceOid: secondHead,
+  githubFetchedAt: "2026-08-20T00:00:00.000Z",
+  sourceSyncError: null,
+  createdAt: "2026-08-20T00:00:00.000Z",
+  updatedAt: "2026-08-20T00:00:00.000Z",
+};
+const branchIssueFixtures = [
+  {
+    id: branchIssueId,
+    host: "github.com",
+    owner: "acme",
+    repository: "review-repo",
+    canonicalName: "acme/review-repo",
+    number: 142,
+    url: "https://github.com/acme/review-repo/issues/142",
+    title: "Stabilize the request path",
+    body: [
+      "# Stabilize the request path",
+      "",
+      "Inspect the default-branch implementation.",
+      "",
+      "| Authenticated evidence | External reference |",
+      "| --- | --- |",
+      `| ![Issue attachment](${attachmentUrl}) | ![External planning diagram](https://example.com/diagram.png) |`,
+    ].join("\n"),
+    state: "OPEN",
+    updatedAt: "2026-08-20T00:00:00.000Z",
+    bodyHash: "1".repeat(64),
+    fetchedAt: "2026-08-20T00:00:00.000Z",
+    syncError: null,
+    stale: false,
+  },
+  {
+    id: olderBranchIssueId,
+    host: "github.com",
+    owner: "acme",
+    repository: "review-repo",
+    canonicalName: "acme/review-repo",
+    number: 19,
+    url: "https://github.com/acme/review-repo/issues/19",
+    title: "Document recovery",
+    body: "# Document recovery\n\nKeep the cached reading surface available offline.",
+    state: "CLOSED",
+    updatedAt: "2026-08-19T00:00:00.000Z",
+    bodyHash: "2".repeat(64),
+    fetchedAt: "2026-08-20T00:00:00.000Z",
+    syncError: "offline fixture",
+    stale: true,
+  },
+  {
+    id: "99999999-9999-4999-8999-999999999999",
+    host: "github.com",
+    owner: "acme",
+    repository: "review-repo",
+    canonicalName: "acme/review-repo",
+    number: 77,
+    url: "https://github.com/acme/review-repo/issues/77",
+    title: "Exercise Branch Review mutations",
+    body: "# Exercise Branch Review mutations\n\nCover Issue additions and reset as durable browser flows.",
+    state: "OPEN",
+    updatedAt: "2026-08-20T00:00:00.000Z",
+    bodyHash: "3".repeat(64),
+    fetchedAt: "2026-08-20T00:00:00.000Z",
+    syncError: null,
+    stale: false,
+  },
+];
+const branchWalkthroughFixture = {
+  id: branchWalkthroughId,
+  ref: `rvw://walkthrough/${branchWalkthroughId}`,
+  branchReviewId,
+  sourceOid: secondHead,
+  title: "Current request flow",
+  body: [
+    "# Current request flow",
+    "",
+    "Start with [the implementation](rvw-ref:implementation).",
+    "",
+    "```mermaid",
+    "flowchart LR",
+    "  implementation[Implementation] --> result[Result]",
+    "```",
+  ].join("\n"),
+  authorLabel: "Fixture Agent",
+  diagramBindings: { implementation: "implementation" },
+  references: [
+    {
+      id: "implementation",
+      label: "Request implementation",
+      path: "src/fixture.ts",
+      startLine: 1,
+      endLine: 3,
+      description: null,
+    },
+  ],
+  createdAt: "2026-08-20T00:00:00.000Z",
+};
+const branchWalkthroughCommentId = "77777777-7777-4777-8777-777777777777";
+const branchWalkthroughCommentFixture = {
+  id: branchWalkthroughCommentId,
+  ref: `rvw://comment/${branchWalkthroughCommentId}`,
+  branchReviewId,
+  createdSourceOid: secondHead,
+  resolvedAt: null,
+  createdAt: "2026-08-20T01:00:00.000Z",
+  updatedAt: "2026-08-20T01:00:00.000Z",
+  target: {
+    kind: "walkthrough",
+    walkthroughId: branchWalkthroughId,
+    walkthroughTitle: branchWalkthroughFixture.title,
+    sourceDocumentHash: createHash("sha256").update(branchWalkthroughFixture.body).digest("hex"),
+    quotedText: "Start with [the implementation](rvw-ref:implementation).",
+    startLine: 3,
+    endLine: 3,
+  },
+  posts: [
+    {
+      id: "88888888-8888-4888-8888-888888888888",
+      commentId: branchWalkthroughCommentId,
+      body: "Confirm this entry point against the exact default-branch source.",
+      relatedCommitOid: null,
+      references: [],
+      authorLabel: "Branch Reviewer",
+      isRoot: true,
+      createdAt: "2026-08-20T01:00:00.000Z",
+      updatedAt: "2026-08-20T01:00:00.000Z",
+    },
+  ],
+};
+const branchCodeCommentFixture = {
+  id: "77777777-7777-4777-8777-777777777778",
+  ref: "rvw://comment/77777777-7777-4777-8777-777777777778",
+  branchReviewId,
+  createdSourceOid: secondHead,
+  resolvedAt: null,
+  createdAt: "2026-08-20T01:10:00.000Z",
+  updatedAt: "2026-08-20T01:10:00.000Z",
+  target: {
+    kind: "document",
+    documentKind: "repository-file",
+    sourceOid: secondHead,
+    path: "src/fixture.ts",
+    startLine: 2,
+    endLine: 2,
+  },
+  posts: [
+    {
+      id: "88888888-8888-4888-8888-888888888889",
+      commentId: "77777777-7777-4777-8777-777777777778",
+      body: "Verify the default-branch trimming behavior at its exact source.",
+      relatedCommitOid: secondHead,
+      references: [],
+      authorLabel: "Branch Reviewer",
+      isRoot: true,
+      createdAt: "2026-08-20T01:10:00.000Z",
+      updatedAt: "2026-08-20T01:10:00.000Z",
+    },
+  ],
+};
+const branchResolvedCommentFixture = {
+  id: "77777777-7777-4777-8777-777777777779",
+  ref: "rvw://comment/77777777-7777-4777-8777-777777777779",
+  branchReviewId,
+  createdSourceOid: secondHead,
+  resolvedAt: "2026-08-20T01:25:00.000Z",
+  createdAt: "2026-08-20T01:20:00.000Z",
+  updatedAt: "2026-08-20T01:25:00.000Z",
+  target: { kind: "branch" },
+  posts: [
+    {
+      id: "88888888-8888-4888-8888-888888888890",
+      commentId: "77777777-7777-4777-8777-777777777779",
+      body: "The default-branch scope is confirmed.",
+      relatedCommitOid: null,
+      references: [],
+      authorLabel: "Branch Reviewer",
+      isRoot: true,
+      createdAt: "2026-08-20T01:20:00.000Z",
+      updatedAt: "2026-08-20T01:20:00.000Z",
+    },
+  ],
+};
+let branchReview;
+let branchIssues;
+let branchWalkthroughs;
+let branchCommentContexts;
+
+function resetBranchFixture() {
+  branchReview = structuredClone(branchReviewFixture);
+  branchIssues = structuredClone(branchIssueFixtures.slice(0, 2));
+  branchWalkthroughs = [structuredClone(branchWalkthroughFixture)];
+  branchCommentContexts = [
+    {
+      comment: structuredClone(branchWalkthroughCommentFixture),
+      latestPlacement: { outdated: false, range: { startLine: 3, endLine: 3 }, path: null },
+    },
+    {
+      comment: structuredClone(branchCodeCommentFixture),
+      latestPlacement: {
+        outdated: false,
+        range: { startLine: 2, endLine: 2 },
+        path: "src/fixture.ts",
+      },
+    },
+    {
+      comment: structuredClone(branchResolvedCommentFixture),
+      latestPlacement: { outdated: false, range: null, path: null },
+    },
+  ];
+}
+
+resetBranchFixture();
 const comments = repositoryDemo ? structuredClone(repositoryDemo.comments) : [];
+const pullRequestIssues = repositoryDemo ? structuredClone(repositoryDemo.issues) : [];
 const activeWalkthroughs = repositoryDemo
   ? structuredClone(repositoryDemo.walkthroughs)
   : walkthroughs;
@@ -91,10 +327,13 @@ function currentPullRequest() {
     latestTitle: syncStage > 0 ? "Fixture review updated" : "Fixture review",
     latestBody: [
       body,
-      `![Private attachment](${attachmentUrl})`,
-      `![Broken attachment](${brokenAttachmentUrl})`,
-      `![External PR image](http://${host}:${port}/api/test/external-image)`,
-    ].join("\n\n"),
+      "",
+      "## Visual evidence",
+      "",
+      "| Authenticated attachment | Broken attachment | External reference |",
+      "| --- | --- | --- |",
+      `| ![Private attachment](${attachmentUrl}) | ![Broken attachment](${brokenAttachmentUrl}) | ![External PR image](http://${host}:${port}/api/test/external-image) |`,
+    ].join("\n"),
     latestBaseRefName: "main",
     latestHeadRefName: "feature",
     latestBaseOid: baseOid,
@@ -324,6 +563,32 @@ function hashDocument(text) {
 }
 
 function enrichCommentTarget(target) {
+  if (target.kind === "issue") {
+    const number = Number(String(target.issue).match(/(?:^#|\/issues\/)(\d+)$/)?.[1]);
+    const issue = pullRequestIssues.find(
+      (candidate) =>
+        candidate.id === target.issue ||
+        candidate.url === target.issue ||
+        candidate.number === number,
+    );
+    if (!issue) return null;
+    const startLine = target.startLine ?? null;
+    const endLine = target.endLine ?? null;
+    return {
+      kind: "issue",
+      issueId: issue.id,
+      issueUrl: issue.url,
+      issueNumber: issue.number,
+      issueTitle: issue.title,
+      sourceDocumentHash: issue.bodyHash,
+      quotedText:
+        startLine === null || endLine === null
+          ? null
+          : selectedLineText(issue.body, startLine, endLine),
+      startLine,
+      endLine,
+    };
+  }
   if (target.kind !== "document" || target.documentKind !== "pull-request-markdown") {
     return target;
   }
@@ -341,6 +606,119 @@ function enrichCommentTarget(target) {
     sourceDocumentHash: hashDocument(markdown),
     quotedText,
   };
+}
+
+function branchWalkthroughSummaries() {
+  return branchWalkthroughs.map((walkthrough) => ({
+    id: walkthrough.id,
+    branchReviewId: branchReview.id,
+    sourceOid: walkthrough.sourceOid,
+    title: walkthrough.title,
+    authorLabel: walkthrough.authorLabel,
+    referenceCount: walkthrough.references.length,
+    createdAt: walkthrough.createdAt,
+  }));
+}
+
+function findBranchIssue(reference) {
+  const number = Number(String(reference).match(/(?:^#|\/issues\/)(\d+)$/)?.[1]);
+  return branchIssues.find(
+    (issue) => issue.id === reference || issue.url === reference || issue.number === number,
+  );
+}
+
+function enrichBranchCommentTarget(target) {
+  const startLine = target.startLine ?? null;
+  const endLine = target.endLine ?? null;
+  if (target.kind === "branch") return target;
+  if (target.kind === "issue") {
+    const issue = findBranchIssue(target.issue);
+    if (!issue) return null;
+    return {
+      kind: "issue",
+      issueId: issue.id,
+      issueUrl: issue.url,
+      issueNumber: issue.number,
+      issueTitle: issue.title,
+      sourceDocumentHash: issue.bodyHash,
+      quotedText:
+        startLine === null || endLine === null
+          ? null
+          : selectedLineText(issue.body, startLine, endLine),
+      startLine,
+      endLine,
+    };
+  }
+  if (target.kind === "walkthrough") {
+    const walkthrough = branchWalkthroughs.find(
+      (candidate) => candidate.id === target.walkthroughId,
+    );
+    if (!walkthrough) return null;
+    const quotedText =
+      startLine === null || endLine === null
+        ? null
+        : selectedLineText(walkthrough.body, startLine, endLine);
+    return {
+      kind: "walkthrough",
+      walkthroughId: walkthrough.id,
+      walkthroughTitle: walkthrough.title,
+      sourceDocumentHash: quotedText === null ? null : hashDocument(walkthrough.body),
+      quotedText,
+      startLine,
+      endLine,
+    };
+  }
+  return { ...target, startLine, endLine };
+}
+
+function branchCommentPlacement(target) {
+  if (target.kind === "branch") return { outdated: false, range: null, path: null };
+  if (target.kind === "issue") {
+    const issue = branchIssues.find((candidate) => candidate.id === target.issueId);
+    const current =
+      issue !== undefined &&
+      (target.startLine === null || issue.bodyHash === target.sourceDocumentHash);
+    return current
+      ? {
+          outdated: false,
+          range:
+            target.startLine === null
+              ? null
+              : { startLine: target.startLine, endLine: target.endLine },
+          path: `#${target.issueNumber}`,
+        }
+      : { outdated: true, range: null, path: `#${target.issueNumber}` };
+  }
+  if (target.kind === "walkthrough") {
+    const walkthrough = branchWalkthroughs.find(
+      (candidate) => candidate.id === target.walkthroughId,
+    );
+    if (!walkthrough) return { outdated: true, range: null, path: null };
+    if (target.startLine === null) return { outdated: false, range: null, path: null };
+    const range =
+      target.sourceDocumentHash === hashDocument(walkthrough.body)
+        ? { startLine: target.startLine, endLine: target.endLine }
+        : findUniqueQuotedLineRange(target.quotedText, walkthrough.body);
+    return range
+      ? { outdated: false, range, path: null }
+      : { outdated: true, range: null, path: null };
+  }
+  return {
+    outdated: target.sourceOid !== branchReview.sourceOid,
+    range:
+      target.sourceOid === branchReview.sourceOid && target.startLine !== null
+        ? { startLine: target.startLine, endLine: target.endLine }
+        : null,
+    path: target.path,
+  };
+}
+
+function findFixtureComment(id) {
+  return (
+    comments.find((comment) => comment.id === id) ??
+    branchCommentContexts.find(({ comment }) => comment.id === id)?.comment ??
+    null
+  );
 }
 
 const app = new Hono();
@@ -386,6 +764,27 @@ app.use("/api/pull-requests/*", async (context, next) => {
   await next();
 });
 
+app.use("/api/branch-reviews/*", async (context, next) => {
+  if (context.req.path === "/api/branch-reviews/open") {
+    await next();
+    return;
+  }
+  const requestedId = context.req.path.match(/^\/api\/branch-reviews\/([^/]+)/)?.[1] ?? "";
+  if (!viewerIdPattern.test(requestedId)) {
+    return context.json(
+      { ok: false, error: { code: "INVALID_INPUT", message: "invalid branch review ID" } },
+      400,
+    );
+  }
+  if (!branchReview || requestedId !== branchReview.id) {
+    return context.json(
+      { ok: false, error: { code: "BRANCH_REVIEW_NOT_FOUND", message: "missing branch review" } },
+      404,
+    );
+  }
+  await next();
+});
+
 app.get("/api/meta/change-sequence", (context) => {
   const viewerId = context.req.header("x-rvw-viewer-id");
   if (!viewerIdPattern.test(viewerId ?? "")) {
@@ -396,7 +795,7 @@ app.get("/api/meta/change-sequence", (context) => {
   }
   activeViewers.add(viewerId);
   releasedViewers.delete(viewerId);
-  return context.json({ ok: true, changeSequence });
+  return context.json({ ok: true, changeSequence, reviewChangeSequence: changeSequence });
 });
 
 app.post("/api/meta/viewers/release", async (context) => {
@@ -443,11 +842,427 @@ app.get("/api/test/external-image-count", (context) =>
   context.json({ ok: true, count: blockedImageRequestCount }),
 );
 
+app.post("/api/test/reset-branch-review", (context) => {
+  resetBranchFixture();
+  changeSequence += 1;
+  return context.json({ ok: true, branchReviewId: branchReview.id });
+});
+
+app.post("/api/test/refresh-branch-review", async (context) => {
+  const input = await context.req.json();
+  if (typeof input.sourceOid === "string") {
+    branchReview.sourceOid = input.sourceOid;
+    branchReview.updatedAt = new Date().toISOString();
+  }
+  if (typeof input.issueNumber === "number" && typeof input.issueBody === "string") {
+    const issue = branchIssues.find((candidate) => candidate.number === input.issueNumber);
+    if (!issue) {
+      return context.json(
+        { ok: false, error: { code: "ISSUE_NOT_FOUND", message: "missing issue" } },
+        404,
+      );
+    }
+    issue.body = input.issueBody;
+    issue.bodyHash = hashDocument(input.issueBody);
+    issue.updatedAt = new Date().toISOString();
+    issue.fetchedAt = issue.updatedAt;
+  }
+  changeSequence += 1;
+  return context.json({ ok: true, branchReview, issues: branchIssues, changeSequence });
+});
+
+app.post("/api/test/update-branch-walkthrough", async (context) => {
+  const input = await context.req.json();
+  const walkthrough = branchWalkthroughs.find(
+    (candidate) => candidate.id === (input.walkthroughId ?? branchWalkthroughId),
+  );
+  if (!walkthrough) {
+    return context.json(
+      { ok: false, error: { code: "WALKTHROUGH_NOT_FOUND", message: "missing walkthrough" } },
+      404,
+    );
+  }
+  if (typeof input.title === "string") walkthrough.title = input.title;
+  if (typeof input.body === "string") walkthrough.body = input.body;
+  if (typeof input.sourceOid === "string") walkthrough.sourceOid = input.sourceOid;
+  changeSequence += 1;
+  return context.json({ ok: true, walkthrough, changeSequence });
+});
+
 app.get("/api/test/image-text-request-count", (context) =>
   context.json({ ok: true, count: imageTextRequestCount }),
 );
 
 app.get("/api/pull-requests/:id", (context) => context.json({ ok: true, ...currentView() }));
+
+app.get("/api/pull-requests/:id/issues", (context) =>
+  context.json({ ok: true, issues: pullRequestIssues }),
+);
+
+app.get("/api/pull-requests/:id/issues/:issueId", (context) => {
+  const issue = pullRequestIssues.find(
+    (candidate) => candidate.id === context.req.param("issueId"),
+  );
+  return issue
+    ? context.json({ ok: true, issue })
+    : context.json(
+        { ok: false, error: { code: "ISSUE_NOT_FOUND", message: "missing issue" } },
+        404,
+      );
+});
+
+app.delete("/api/pull-requests/:id/issues/:issueId", async (context) => {
+  const issueIndex = pullRequestIssues.findIndex(
+    (candidate) => candidate.id === context.req.param("issueId"),
+  );
+  if (issueIndex < 0) {
+    return context.json(
+      { ok: false, error: { code: "ISSUE_NOT_FOUND", message: "missing issue" } },
+      404,
+    );
+  }
+  const issue = pullRequestIssues[issueIndex];
+  const issueComments = comments.filter(
+    (comment) => comment.target.kind === "issue" && comment.target.issueId === issue.id,
+  );
+  const counts = {
+    issueWholeComments: issueComments.filter((comment) => comment.target.startLine === null).length,
+    issueRangeComments: issueComments.filter((comment) => comment.target.startLine !== null).length,
+    replies: issueComments.reduce(
+      (total, comment) => total + comment.posts.filter((post) => !post.isRoot).length,
+      0,
+    ),
+  };
+  const input = await context.req.json();
+  if (!input.yes) {
+    return context.json(
+      {
+        ok: false,
+        error: { code: "RESET_CONFIRMATION_REQUIRED", message: "confirmation required" },
+        issue,
+        counts,
+        confirmationRequired: true,
+      },
+      409,
+    );
+  }
+  pullRequestIssues.splice(issueIndex, 1);
+  for (let index = comments.length - 1; index >= 0; index -= 1) {
+    if (comments[index].target.kind === "issue" && comments[index].target.issueId === issue.id) {
+      comments.splice(index, 1);
+    }
+  }
+  changeSequence += 1;
+  return context.json({ ok: true, issue, deleted: counts });
+});
+
+app.get("/api/branch-reviews/:id", (context) =>
+  context.json({
+    ok: true,
+    branchReview,
+    issues: branchIssues,
+    walkthroughs: branchWalkthroughSummaries(),
+  }),
+);
+
+app.post("/api/branch-reviews/open", (context) => {
+  const fromCache = branchReview !== null;
+  if (!branchReview) {
+    const now = new Date().toISOString();
+    branchReview = {
+      ...structuredClone(branchReviewFixture),
+      id: randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+  return context.json({ ok: true, branchReview, fromCache });
+});
+
+app.post("/api/branch-reviews/:id/sync", (context) =>
+  context.json({ ok: true, branchReview, issues: branchIssues, issueResults: [] }),
+);
+
+app.post("/api/branch-reviews/:id/reset", async (context) => {
+  const retainedRefs = [
+    `refs/rvw/branch/${branchReview.owner}/${branchReview.repository}/commits/${branchReview.sourceOid}`,
+  ];
+  const counts = {
+    branchReview: 1,
+    issueMemberships: branchIssues.length,
+    issueComments: branchCommentContexts.filter(({ comment }) => comment.target.kind === "issue")
+      .length,
+    codeComments: branchCommentContexts.filter(({ comment }) => comment.target.kind === "document")
+      .length,
+    reviewComments: branchCommentContexts.filter(({ comment }) => comment.target.kind === "branch")
+      .length,
+    walkthroughComments: branchCommentContexts.filter(
+      ({ comment }) => comment.target.kind === "walkthrough",
+    ).length,
+    posts: branchCommentContexts.reduce((total, { comment }) => total + comment.posts.length, 0),
+    walkthroughs: branchWalkthroughs.length,
+    gitRefs: retainedRefs.length,
+  };
+  const input = await context.req.json();
+  if (!input.yes) {
+    return context.json(
+      {
+        ok: false,
+        error: { code: "RESET_CONFIRMATION_REQUIRED", message: "confirmation required" },
+        branchReview,
+        counts,
+        retainedRefs,
+        confirmationRequired: true,
+      },
+      409,
+    );
+  }
+  const deletedBranchReview = branchReview;
+  branchReview = null;
+  branchIssues = [];
+  branchWalkthroughs = [];
+  branchCommentContexts = [];
+  changeSequence += 1;
+  return context.json({
+    ok: true,
+    branchReview: deletedBranchReview,
+    deleted: counts,
+    removedRefs: retainedRefs,
+  });
+});
+
+app.post("/api/branch-reviews/:id/issues", async (context) => {
+  const input = await context.req.json();
+  const number = Number(String(input.issue).match(/(?:^#|\/issues\/)(\d+)$/)?.[1]);
+  const fixture = branchIssueFixtures.find((issue) => issue.number === number);
+  if (!fixture) {
+    return context.json(
+      { ok: false, error: { code: "GITHUB_ISSUE_ERROR", message: "missing fixture issue" } },
+      404,
+    );
+  }
+  const existing = branchIssues.find((issue) => issue.id === fixture.id);
+  if (existing) {
+    return context.json({ ok: true, branchReview, issue: existing, added: false });
+  }
+  const issue = structuredClone(fixture);
+  branchIssues.unshift(issue);
+  changeSequence += 1;
+  return context.json({ ok: true, branchReview, issue, added: true });
+});
+
+app.delete("/api/branch-reviews/:id/issues/:issueId", async (context) => {
+  const issueIndex = branchIssues.findIndex(
+    (candidate) => candidate.id === context.req.param("issueId"),
+  );
+  if (issueIndex < 0) {
+    return context.json(
+      { ok: false, error: { code: "ISSUE_NOT_FOUND", message: "missing issue" } },
+      404,
+    );
+  }
+  const issue = branchIssues[issueIndex];
+  const issueComments = branchCommentContexts.filter(
+    ({ comment }) => comment.target.kind === "issue" && comment.target.issueId === issue.id,
+  );
+  const counts = {
+    issueWholeComments: issueComments.filter(({ comment }) => comment.target.startLine === null)
+      .length,
+    issueRangeComments: issueComments.filter(({ comment }) => comment.target.startLine !== null)
+      .length,
+    replies: issueComments.reduce(
+      (total, { comment }) => total + comment.posts.filter((post) => !post.isRoot).length,
+      0,
+    ),
+  };
+  const input = await context.req.json();
+  if (!input.yes) {
+    return context.json(
+      {
+        ok: false,
+        error: { code: "RESET_CONFIRMATION_REQUIRED", message: "confirmation required" },
+        issue,
+        counts,
+        confirmationRequired: true,
+      },
+      409,
+    );
+  }
+  branchIssues.splice(issueIndex, 1);
+  branchCommentContexts = branchCommentContexts.filter(
+    ({ comment }) => comment.target.kind !== "issue" || comment.target.issueId !== issue.id,
+  );
+  changeSequence += 1;
+  return context.json({ ok: true, issue, deleted: counts });
+});
+
+app.get("/api/branch-reviews/:id/tree", (context) =>
+  context.json({
+    ok: true,
+    entries: repositoryPathsAt(secondHead).map((filePath) => ({
+      mode: "100644",
+      type: "blob",
+      oid: "d".repeat(40),
+      size: Buffer.byteLength(repositoryDocumentText(secondHead, filePath), "utf8"),
+      path: filePath,
+      kind: "file",
+    })),
+  }),
+);
+
+app.get("/api/branch-reviews/:id/document", (context) => {
+  const kind = context.req.query("kind");
+  if (kind === "issue-markdown") {
+    const issue = branchIssues.find((candidate) => candidate.id === context.req.query("issueId"));
+    if (!issue) {
+      return context.json(
+        { ok: false, error: { code: "ISSUE_NOT_FOUND", message: "missing issue" } },
+        404,
+      );
+    }
+    return context.json({
+      ok: true,
+      document: {
+        ref: { kind, branchReviewId: branchReview.id, issueId: issue.id },
+        availability: "available",
+        text: issue.body,
+        byteLength: Buffer.byteLength(issue.body, "utf8"),
+        entryKind: "virtual",
+        normalizedLineEndings: false,
+        oid: null,
+      },
+    });
+  }
+  const filePath = context.req.query("path");
+  const text = repositoryDocumentText(secondHead, filePath);
+  return context.json({
+    ok: true,
+    document: {
+      ref: {
+        kind: "repository-file",
+        branchReviewId: branchReview.id,
+        sourceOid: secondHead,
+        path: filePath,
+      },
+      availability: "available",
+      text,
+      byteLength: Buffer.byteLength(text, "utf8"),
+      entryKind: "file",
+      normalizedLineEndings: false,
+      oid: "d".repeat(40),
+    },
+  });
+});
+
+app.get("/api/branch-reviews/:id/markdown-asset", (context) => {
+  if (context.req.query("path") !== "docs/order-lifecycle.svg") {
+    return context.json(
+      { ok: false, error: { code: "DOCUMENT_NOT_FOUND", message: "missing asset" } },
+      404,
+    );
+  }
+  context.header("content-type", "image/svg+xml; charset=utf-8");
+  return context.body(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="60" viewBox="0 0 240 60"><rect width="240" height="60" rx="8" fill="#1f6feb"/><text x="120" y="36" text-anchor="middle" fill="white" font-family="sans-serif" font-size="16">Order lifecycle</text></svg>',
+  );
+});
+
+app.get("/api/branch-reviews/:id/search", (context) => {
+  const query = context.req.query("q") ?? "";
+  const matchCase = context.req.query("matchCase") === "true";
+  const wholeWord = context.req.query("wholeWord") === "true";
+  const results = repositoryPathsAt(secondHead).flatMap((filePath) =>
+    repositoryDocumentText(secondHead, filePath)
+      .split("\n")
+      .flatMap((line, index) => {
+        const matches = fixedStringMatches(line, query, matchCase, wholeWord);
+        return matches.length === 0
+          ? []
+          : [
+              {
+                document: {
+                  kind: "repository-file",
+                  branchReviewId: branchReview.id,
+                  sourceOid: secondHead,
+                  path: filePath,
+                },
+                path: filePath,
+                line: index + 1,
+                text: line,
+                matches,
+              },
+            ];
+      }),
+  );
+  return context.json({
+    ok: true,
+    results,
+    matchCount: results.reduce((total, result) => total + result.matches.length, 0),
+    truncated: false,
+    limits: { queryBytes: 1024, resultCount: 500, stdoutBytes: 8388608 },
+  });
+});
+
+app.get("/api/branch-reviews/:id/comments", (context) =>
+  context.json({
+    ok: true,
+    comments: branchCommentContexts.map(({ comment }) => ({
+      comment,
+      latestPlacement: branchCommentPlacement(comment.target),
+    })),
+  }),
+);
+
+app.get("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
+  const walkthrough = branchWalkthroughs.find(
+    (candidate) => candidate.id === context.req.param("walkthroughId"),
+  );
+  return walkthrough
+    ? context.json({ ok: true, walkthrough })
+    : context.json(
+        { ok: false, error: { code: "WALKTHROUGH_NOT_FOUND", message: "missing walkthrough" } },
+        404,
+      );
+});
+
+app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
+  const walkthroughIndex = branchWalkthroughs.findIndex(
+    (candidate) => candidate.id === context.req.param("walkthroughId"),
+  );
+  if (walkthroughIndex < 0) {
+    return context.json(
+      { ok: false, error: { code: "WALKTHROUGH_NOT_FOUND", message: "missing walkthrough" } },
+      404,
+    );
+  }
+  const [walkthrough] = branchWalkthroughs.splice(walkthroughIndex, 1);
+  const associatedComments = branchCommentContexts.filter(
+    ({ comment }) =>
+      comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id,
+  );
+  const postCount = associatedComments.reduce(
+    (count, { comment }) => count + comment.posts.length,
+    0,
+  );
+  branchCommentContexts = branchCommentContexts.filter(
+    ({ comment }) =>
+      comment.target.kind !== "walkthrough" || comment.target.walkthroughId !== walkthrough.id,
+  );
+  changeSequence += 1;
+  return context.json({
+    ok: true,
+    deleted: {
+      id: walkthrough.id,
+      ref: walkthrough.ref,
+      branchReviewId,
+      counts: {
+        comments: associatedComments.length,
+        posts: postCount,
+        references: walkthrough.references.length,
+      },
+    },
+  });
+});
 
 app.post("/api/pull-requests/:id/refresh", async (context) => {
   await new Promise((resolve) => setTimeout(resolve, 100));
@@ -609,6 +1424,19 @@ app.get("/api/pull-requests/:id/document", (context) => {
       document: document(ref, `# ${pullRequest.latestTitle}\n\n${pullRequest.latestBody}`, true),
     });
   }
+  if (context.req.query("kind") === "issue-markdown") {
+    const issue = pullRequestIssues.find(
+      (candidate) => candidate.id === context.req.query("issueId"),
+    );
+    if (!issue) {
+      return context.json(
+        { ok: false, error: { code: "ISSUE_NOT_FOUND", message: "missing issue" } },
+        404,
+      );
+    }
+    const ref = { kind: "issue-markdown", pullRequestId, issueId: issue.id };
+    return context.json({ ok: true, document: document(ref, issue.body, true) });
+  }
   const sourceOid = context.req.query("sourceOid");
   const filePath = context.req.query("path");
   if (/\.(?:png|jpe?g|gif|webp|avif|svg)$/i.test(filePath ?? "")) {
@@ -673,11 +1501,35 @@ app.get("/api/pull-requests/:id/github-attachment", (context) => {
       502,
     );
   }
-  context.header("content-type", "image/png");
+  context.header("content-type", "image/svg+xml; charset=utf-8");
   context.header("cache-control", "private, max-age=31536000, immutable");
   context.header("x-content-type-options", "nosniff");
+  context.header("content-disposition", "inline");
   context.header("cross-origin-resource-policy", "same-origin");
-  return context.body(fixturePng);
+  context.header(
+    "content-security-policy",
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox",
+  );
+  return context.body(fixtureAttachmentSvg);
+});
+
+app.get("/api/branch-reviews/:id/github-attachment", (context) => {
+  if (context.req.query("url") !== attachmentUrl) {
+    return context.json(
+      { ok: false, error: { code: "GITHUB_ERROR", message: "attachment unavailable" } },
+      502,
+    );
+  }
+  context.header("content-type", "image/svg+xml; charset=utf-8");
+  context.header("cache-control", "private, max-age=31536000, immutable");
+  context.header("x-content-type-options", "nosniff");
+  context.header("content-disposition", "inline");
+  context.header("cross-origin-resource-policy", "same-origin");
+  context.header(
+    "content-security-policy",
+    "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox",
+  );
+  return context.body(fixtureAttachmentSvg);
 });
 
 app.get("/api/pull-requests/:id/diff", (context) => {
@@ -850,12 +1702,41 @@ app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
 });
 
 app.get("/api/comments/:id/placement", (context) => {
-  const comment = comments.find((item) => item.id === context.req.param("id"));
+  const comment = findFixtureComment(context.req.param("id"));
   if (!comment) {
     return context.json(
       { ok: false, error: { code: "COMMENT_NOT_FOUND", message: "missing comment" } },
       404,
     );
+  }
+  if (comment.branchReviewId) {
+    if (context.req.query("branchReviewId") !== comment.branchReviewId) {
+      return context.json({
+        ok: true,
+        placement: { outdated: true, range: null, path: null },
+      });
+    }
+    if (
+      (context.req.query("kind") === "repository-file" && !context.req.query("sourceOid")) ||
+      (context.req.query("kind") === "commit" && !context.req.query("oid"))
+    ) {
+      return context.json(
+        { ok: false, error: { code: "INVALID_INPUT", message: "missing placement source" } },
+        400,
+      );
+    }
+    if (comment.target.kind === "issue" && context.req.query("kind") !== "commit") {
+      const matches =
+        context.req.query("kind") === "issue-markdown" &&
+        context.req.query("issueId") === comment.target.issueId;
+      return context.json({
+        ok: true,
+        placement: matches
+          ? branchCommentPlacement(comment.target)
+          : { outdated: true, range: null, path: null },
+      });
+    }
+    return context.json({ ok: true, placement: branchCommentPlacement(comment.target) });
   }
   if (comment.target.kind === "pull-request") {
     return context.json({ ok: true, placement: { outdated: false, range: null, path: null } });
@@ -882,6 +1763,33 @@ app.get("/api/comments/:id/placement", (context) => {
       placement: range
         ? { outdated: false, range, path: null }
         : { outdated: true, range: null, path: null },
+    });
+  }
+  if (comment.target.kind === "issue") {
+    const issue = pullRequestIssues.find((candidate) => candidate.id === comment.target.issueId);
+    const destinationMatches =
+      context.req.query("kind") === "commit" ||
+      (context.req.query("kind") === "issue-markdown" &&
+        context.req.query("issueId") === comment.target.issueId);
+    const current =
+      destinationMatches &&
+      issue !== undefined &&
+      (comment.target.startLine === null || issue.bodyHash === comment.target.sourceDocumentHash);
+    return context.json({
+      ok: true,
+      placement: current
+        ? {
+            outdated: false,
+            range:
+              comment.target.startLine === null
+                ? null
+                : {
+                    startLine: comment.target.startLine,
+                    endLine: comment.target.endLine,
+                  },
+            path: `#${comment.target.issueNumber}`,
+          }
+        : { outdated: true, range: null, path: `#${comment.target.issueNumber}` },
     });
   }
   const targetPath =
@@ -921,6 +1829,50 @@ app.post("/api/comments", async (context) => {
   const input = await context.req.json();
   const now = new Date().toISOString();
   const id = randomUUID();
+  if (input.branchReviewId) {
+    if (!branchReview || input.branchReviewId !== branchReview.id) {
+      return context.json(
+        {
+          ok: false,
+          error: { code: "BRANCH_REVIEW_NOT_FOUND", message: "missing branch review" },
+        },
+        404,
+      );
+    }
+    const target = enrichBranchCommentTarget(input.target);
+    if (!target) {
+      return context.json(
+        { ok: false, error: { code: "INVALID_INPUT", message: "missing comment target" } },
+        400,
+      );
+    }
+    const comment = {
+      id,
+      ref: `rvw://comment/${id}`,
+      branchReviewId: branchReview.id,
+      createdSourceOid: branchReview.sourceOid,
+      resolvedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      target,
+      posts: [
+        {
+          id: randomUUID(),
+          commentId: id,
+          body: input.body,
+          relatedCommitOid: input.relatedCommitOid ?? null,
+          references: input.references ?? [],
+          authorLabel: input.authorLabel,
+          isRoot: true,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    };
+    branchCommentContexts.push({ comment, latestPlacement: branchCommentPlacement(target) });
+    changeSequence += 1;
+    return context.json({ ok: true, comment }, 201);
+  }
   const target =
     input.target.kind === "walkthrough"
       ? (() => {
@@ -945,6 +1897,12 @@ app.post("/api/comments", async (context) => {
           };
         })()
       : enrichCommentTarget(input.target);
+  if (!target) {
+    return context.json(
+      { ok: false, error: { code: "INVALID_INPUT", message: "missing comment target" } },
+      400,
+    );
+  }
   const comment = {
     id,
     ref: `rvw://comment/${id}`,
@@ -975,7 +1933,13 @@ app.post("/api/comments", async (context) => {
 
 app.post("/api/comments/:id/posts", async (context) => {
   const input = await context.req.json();
-  const comment = comments.find((item) => item.id === context.req.param("id"));
+  const comment = findFixtureComment(context.req.param("id"));
+  if (!comment) {
+    return context.json(
+      { ok: false, error: { code: "COMMENT_NOT_FOUND", message: "missing comment" } },
+      404,
+    );
+  }
   const now = new Date().toISOString();
   const post = {
     id: randomUUID(),
@@ -996,7 +1960,7 @@ app.post("/api/comments/:id/posts", async (context) => {
 
 app.patch("/api/comments/:id/posts/:postId", async (context) => {
   const input = await context.req.json();
-  const comment = comments.find((item) => item.id === context.req.param("id"));
+  const comment = findFixtureComment(context.req.param("id"));
   const post = comment?.posts.find((item) => item.id === context.req.param("postId"));
   if (!post) {
     return context.json(
@@ -1014,7 +1978,7 @@ app.patch("/api/comments/:id/posts/:postId", async (context) => {
 });
 
 app.delete("/api/comments/:id/posts/:postId", (context) => {
-  const comment = comments.find((item) => item.id === context.req.param("id"));
+  const comment = findFixtureComment(context.req.param("id"));
   const postIndex =
     comment?.posts.findIndex((item) => item.id === context.req.param("postId")) ?? -1;
   if (!comment || postIndex < 0) {
@@ -1043,7 +2007,13 @@ app.delete("/api/comments/:id/posts/:postId", (context) => {
 
 for (const action of ["resolve", "reopen"]) {
   app.post(`/api/comments/:id/${action}`, (context) => {
-    const comment = comments.find((item) => item.id === context.req.param("id"));
+    const comment = findFixtureComment(context.req.param("id"));
+    if (!comment) {
+      return context.json(
+        { ok: false, error: { code: "COMMENT_NOT_FOUND", message: "missing comment" } },
+        404,
+      );
+    }
     comment.resolvedAt = action === "resolve" ? new Date().toISOString() : null;
     comment.updatedAt = new Date().toISOString();
     changeSequence += 1;
@@ -1053,14 +2023,19 @@ for (const action of ["resolve", "reopen"]) {
 
 app.delete("/api/comments/:id", (context) => {
   const index = comments.findIndex((item) => item.id === context.req.param("id"));
-  if (index < 0) {
+  const branchIndex = branchCommentContexts.findIndex(
+    ({ comment }) => comment.id === context.req.param("id"),
+  );
+  if (index < 0 && branchIndex < 0) {
     return context.json(
       { ok: false, error: { code: "COMMENT_NOT_FOUND", message: "missing comment" } },
       404,
     );
   }
-  const comment = comments[index];
-  comments.splice(index, 1);
+  const comment =
+    index >= 0
+      ? comments.splice(index, 1)[0]
+      : branchCommentContexts.splice(branchIndex, 1)[0].comment;
   changeSequence += 1;
   return context.json({ ok: true, deleted: { id: comment.id, ref: comment.ref } });
 });

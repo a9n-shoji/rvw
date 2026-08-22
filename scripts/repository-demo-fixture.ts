@@ -7,6 +7,7 @@ import type {
   CodeReference,
   CommitSummary,
   DocumentAvailability,
+  IssueDocument,
   ReviewComment,
   TreeEntry,
   TreeEntryKind,
@@ -14,6 +15,8 @@ import type {
 } from "../src/domain/models.js";
 
 const pullRequestId = "22222222-2222-4222-8222-222222222222";
+const demoAttachmentUrl =
+  "https://github.com/user-attachments/assets/37948111-1227-4cdb-a76d-dc8eb469ae5c";
 const maximumDocumentBytes = 1024 * 1024;
 
 interface RepositoryDocumentSnapshot {
@@ -54,6 +57,7 @@ export interface RepositoryDemoFixture {
     createdAt: string;
     updatedAt: string;
   };
+  issues: IssueDocument[];
   comments: ReviewComment[];
   walkthroughs: Walkthrough[];
   repositoryEntriesAt(oid: string): TreeEntry[];
@@ -242,6 +246,92 @@ function hashDocument(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+function createIssues(): IssueDocument[] {
+  const issue = (
+    id: string,
+    number: number,
+    title: string,
+    body: string,
+    state: "OPEN" | "CLOSED",
+    updatedAt: string,
+  ): IssueDocument => ({
+    id,
+    host: "github.com",
+    owner: "a9n-shoji",
+    repository: "rvw",
+    canonicalName: "a9n-shoji/rvw",
+    number,
+    url: `https://github.com/a9n-shoji/rvw/issues/${number}`,
+    title,
+    body,
+    state,
+    updatedAt,
+    bodyHash: hashDocument(body),
+    fetchedAt: "2026-08-20T05:00:00.000Z",
+    syncError: null,
+    stale: false,
+  });
+  return [
+    issue(
+      "70000000-0000-4000-8000-000000000156",
+      156,
+      "Read the default branch without changing the checkout",
+      [
+        "# Default-branch reading surface",
+        "",
+        "Add a repository-scoped review that always reads an exact commit from GitHub's current default branch.",
+        "",
+        "## Acceptance notes",
+        "",
+        "- Do not assume that the branch is named `main`.",
+        "- Keep the checkout, index, and worktree unchanged.",
+        "- Preserve older source commits used by comments and Walkthroughs.",
+        "- Keep Branch Review artifacts independent from Pull Request artifacts.",
+        "",
+        "Issue #160 is intentionally mentioned here; the demo review must not recursively add it.",
+      ].join("\n"),
+      "OPEN",
+      "2026-08-20T04:56:00.000Z",
+    ),
+    issue(
+      "70000000-0000-4000-8000-000000000142",
+      142,
+      "Treat GitHub Issues as review documents",
+      [
+        "# Issue documents",
+        "",
+        "Reviewers need the latest Issue body beside code and Walkthroughs without turning rvw into an Issue editor.",
+        "",
+        "| Surface | Expected behavior |",
+        "| --- | --- |",
+        "| Reading | Safe Markdown preview and source lines |",
+        "| Feedback | Whole-document and range RVW comments |",
+        "| Sync | Keep the last successful body when GitHub is unavailable |",
+        "",
+        "| Authenticated evidence | External reference |",
+        "| --- | --- |",
+        `| ![Issue attachment](${demoAttachmentUrl}) | ![External planning diagram](https://example.com/rvw-issue-plan.png) |`,
+      ].join("\n"),
+      "OPEN",
+      "2026-08-20T04:42:00.000Z",
+    ),
+    issue(
+      "70000000-0000-4000-8000-000000000098",
+      98,
+      "Keep comment-watch writes context-safe",
+      [
+        "# Comment watch safety",
+        "",
+        "Pull Request batches may use an explicitly authorized fix-and-push policy. Branch Review batches are always investigate-and-reply and must never mutate the repository or GitHub.",
+        "",
+        "A final reply stays idempotent across restart, replay, lease recovery, and self-event suppression.",
+      ].join("\n"),
+      "CLOSED",
+      "2026-08-20T04:18:00.000Z",
+    ),
+  ];
+}
+
 function lineReference(
   readText: (filePath: string) => string,
   id: string,
@@ -416,6 +506,7 @@ function createComments(
   headOid: string,
   readText: (filePath: string) => string,
   walkthroughs: Walkthrough[],
+  issues: IssueDocument[],
 ): ReviewComment[] {
   const appReference = lineReference(
     readText,
@@ -509,6 +600,8 @@ function createComments(
 
   const walkthrough = walkthroughs[0];
   if (!walkthrough) throw new Error("demo walkthrough is missing");
+  const issue = issues[0];
+  if (!issue) throw new Error("demo issue is missing");
   const walkthroughLines = walkthrough.body.split("\n");
   const quotedLine = walkthroughLines[2];
   if (!quotedLine) throw new Error("demo walkthrough comment target is missing");
@@ -570,6 +663,24 @@ function createComments(
         endLine: 3,
       },
       "最初にどの変更ファイルから読むと、この説明の流れへ入りやすいかも一文あると助かります。",
+    ),
+    thread(
+      5,
+      {
+        kind: "issue",
+        issueId: issue.id,
+        issueUrl: issue.url,
+        issueNumber: issue.number,
+        issueTitle: issue.title,
+        sourceDocumentHash: issue.bodyHash,
+        quotedText: issue.body.split("\n").slice(4, 9).join("\n"),
+        startLine: 5,
+        endLine: 9,
+      },
+      "default branchが進んだ後も、ここに挙げた古いsourceの読解証跡を失わないことを確認したいです。",
+      {
+        reply: "current sourceと作成時sourceを分けて確認できる保持経路を追っています。",
+      },
     ),
   ];
 }
@@ -670,7 +781,8 @@ export function createRepositoryDemoFixture(
   const headEntries = repositoryEntriesAt(latestCommit.oid);
   const pullRequestChanges = changedFiles(baseOid, latestCommit.oid);
   const walkthroughs = createWalkthroughs(latestCommit.oid, readHeadText);
-  const comments = createComments(latestCommit.oid, readHeadText, walkthroughs);
+  const issues = createIssues();
+  const comments = createComments(latestCommit.oid, readHeadText, walkthroughs, issues);
   const gitCommonDirValue = gitText(resolvedRoot, ["rev-parse", "--git-common-dir"]).trim();
   const gitCommonDir = path.resolve(resolvedRoot, gitCommonDirValue);
   const latestBody = [
@@ -681,6 +793,19 @@ export function createRepositoryDemoFixture(
     `- Browse ${headEntries.length} committed repository files instead of a shallow placeholder tree.`,
     `- Start from ${pullRequestChanges.length} changed files, then follow unchanged implementation, tests, Skills, migrations, and documentation.`,
     "- Exercise commit ranges, full-file reading, search, two panes, seeded review comments, and code-linked Walkthroughs.",
+    "- Read three seeded Issue documents beside code, including one Issue range comment and a blocked external image.",
+    "",
+    "## Visual evidence",
+    "",
+    "| Authenticated GitHub attachment | External reference |",
+    "| --- | --- |",
+    `| ![Private attachment](${demoAttachmentUrl}) | ![External PR image](https://example.com/rvw-pr-plan.png) |`,
+    "",
+    "## Related Issues",
+    "",
+    "- Closes #142",
+    "- Related to #98",
+    "- See https://github.com/a9n-shoji/rvw/issues/156",
     "",
     "## Suggested review route",
     "",
@@ -688,7 +813,8 @@ export function createRepositoryDemoFixture(
     "2. Open a changed web or application file in changes mode.",
     "3. Switch to all files and follow its tests or infrastructure dependencies.",
     "4. Open a Walkthrough beside the referenced source.",
-    "5. Inspect the seeded unresolved and resolved comment threads.",
+    "5. Open an Issue beside code and inspect its seeded range comment.",
+    "6. Inspect the remaining unresolved and resolved comment threads.",
     "",
     "> Demo metadata is synthetic; every repository document and commit shown comes from committed Git objects in this checkout.",
   ].join("\n");
@@ -703,7 +829,7 @@ export function createRepositoryDemoFixture(
       owner: "a9n-shoji",
       repository: "rvw",
       number: 999,
-      url: "https://github.com/a9n-shoji/rvw/pulls",
+      url: "https://github.com/a9n-shoji/rvw/pull/999",
       latestAuthorLogin: "a9n-shoji",
       latestHeadRepositoryOwner: "a9n-shoji",
       latestHeadRepositoryName: "rvw",
@@ -721,6 +847,7 @@ export function createRepositoryDemoFixture(
       createdAt: firstCommit.authoredAt,
       updatedAt: latestCommit.authoredAt,
     },
+    issues,
     comments,
     walkthroughs,
     repositoryEntriesAt,

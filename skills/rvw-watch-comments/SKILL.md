@@ -1,6 +1,6 @@
 ---
 name: rvw-watch-comments
-description: Continuously watch all Pull Requests saved in the local rvw database for new root comments and replies, durably queue them, acknowledge them within reserved worker capacity, immediately delegate every acknowledged batch to a fresh subagent, and replace the acknowledgement with a final rvw reply. Use when a user asks an Agent task to monitor, watch, poll, or continuously address new rvw review comments, optionally allowing fixes and pushes only for Pull Requests authored by the authenticated GitHub user.
+description: Continuously watch saved Pull Request Reviews and Branch Reviews for new RVW comments and replies, durably queue them, dispatch work within reserved subagent capacity, and publish the final RVW reply. Preserve explicitly authorized fix-and-push only for verified owned Pull Requests; Branch Reviews are always investigate-and-reply.
 ---
 
 # Watch rvw comments
@@ -59,9 +59,9 @@ prevents an interrupted third attempt from leaving `確認中` indefinitely.
 ## Start or resume intake
 
 Run the single preflight command. It concurrently detects `rvw` and verifies Node `>=24.15.0`.
-Require `protocolVersion` 3 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
-`comment.edit`, `comment.codeReferences`, and `pullRequest.sync`, and report agent status and ping in
-one JSON value. Stop when `ok` is false. A disconnected ping is diagnostic when status safely selects
+Require `protocolVersion` 4 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
+`comment.edit`, `comment.codeReferences`, `pullRequest.sync`, and `branchReview.read`, and report agent
+status and ping in one JSON value. Stop when `ok` is false. A disconnected ping is diagnostic when status safely selects
 direct-database transport; an unavailable selected transport is fatal.
 
 ```bash
@@ -82,6 +82,16 @@ the exact durable cursor. Before each initial connection or reconnect, it auto-a
 durable work up to the same capacity. The driver atomically owns one lock beside the canonical state
 path before spawning rvw. A second driver for the same state exits immediately; a later restart
 removes a stale lock only when its recorded owner process no longer exists.
+
+Events and batches carry either `{kind:"pull-request",pullRequestId,pullRequestUrl}` or
+`{kind:"branch",branchReviewId,repository}`. The stable review ID is the routing identity; URL and
+repository are display values. Never combine those context kinds. Branch Review events remain queued
+without an acknowledgement post even when `--auto-ack` is enabled. Claim them with
+`--context-kind branch --context-key <branchReviewId> --context-display owner/repository`; their mode is always
+`investigate-and-reply`. Read each thread with `rvw comment get`, inspect only the exact/current source,
+Issue, or Walkthrough needed, and create exactly one final idempotent reply per affected comment. Do
+not create progress replies, edit code, commit, push, open a Pull Request, synchronize a PR, change the
+default branch, update a GitHub Issue, or resolve the thread. `reserve-write` rejects Branch leases.
 
 For an `investigate-and-reply`-only task, prefer the target of eight above whenever capacity permits.
 Do not reduce capacity merely because multiple leases may inspect the same Pull Request or repository:
@@ -124,7 +134,8 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' wait --state '<TASK_STATE_DB>'
 ```
 
 `wait` immediately returns existing eligible work or waits for the pending set to change from empty
-to non-empty, then prints one JSON line with `pullRequests` and `pending`. Add `--follow` to emit every
+to non-empty, then prints one JSON line with `contexts`, the PR-only compatibility projection
+`pullRequests`, and `pending`. Add `--follow` to emit every
 later empty-to-non-empty transition. The driver and `ingest` commit each event and cursor atomically;
 a crash before that commit causes rvw to replay it. Never construct or edit cursors.
 
@@ -138,7 +149,9 @@ acknowledged. If intake runs without auto-ack, invoke the same complete fast pat
 ```bash
 node '<SKILL_DIR>/scripts/auto-ack.mjs' \
   --state '<TASK_STATE_DB>' \
-  --pull-request '<PR_URL>'
+  --context-kind pull-request \
+  --context-key '<PULL_REQUEST_ID>' \
+  --context-display '<PR_URL>'
 ```
 
 For a null `statusPostId`, auto-ack sends exactly `{ "body": "🔎 確認中です…",
@@ -202,7 +215,11 @@ shape:
 ```json
 {
   "leaseId": "<LEASE_ID>",
-  "pullRequest": "https://github.com/owner/repository/pull/123",
+  "context": {
+    "kind": "pull-request",
+    "pullRequestId": "<PULL_REQUEST_ID>",
+    "pullRequestUrl": "https://github.com/owner/repository/pull/123"
+  },
   "outcomes": [
     {
       "commentRef": "rvw://comment/uuid",
@@ -223,44 +240,99 @@ shape:
 }
 ```
 
-`pushStatus` is `not-attempted`, `not-needed`, or `pushed`. `relatedCommitOid` is the exact available PR
-commit containing every referenced path and may identify investigation evidence even when no change
-was made. Set it to null only when `references` is empty. `references` is always the complete array for
-that outcome. The subagent's completion notification only signals that the file is ready. The parent
-reads and validates the file after that notification and never depends on relayed message text for the
-result. Accept no progress, plans, or partial findings as the final result.
+For a Branch Review, use this context and never invent a Pull Request URL:
 
-For every concrete claim about code behavior, an implemented change, or relevant test coverage, use
-typed references by default so the reviewer can open the exact evidence. Select the smallest useful
-committed range, include a signature plus the relevant body for multi-line behavior, link every
-declaration from `body` as `rvw-ref:<referenceId>`, and keep IDs unique within the post. A repository
-comment target already opens its exact source; do not duplicate it unless a separately labeled range
-adds navigation value. Omit references only for outcomes without useful code evidence, uncommitted
-evidence, terminal errors, or target-only evidence where another link would not help navigation.
+```json
+{
+  "leaseId": "<LEASE_ID>",
+  "context": {
+    "kind": "branch",
+    "branchReviewId": "<BRANCH_REVIEW_ID>",
+    "repository": "owner/repository"
+  },
+  "outcomes": [
+    {
+      "commentRef": "rvw://comment/uuid",
+      "body": "📝 調査結果\n\nThe conclusion follows from [the source policy](rvw-ref:source-policy).",
+      "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567",
+      "references": [
+        {
+          "id": "source-policy",
+          "label": "Branch source policy",
+          "path": "src/application/branch-source-policy.ts",
+          "startLine": 10,
+          "endLine": 24
+        }
+      ],
+      "pushStatus": "not-attempted"
+    }
+  ]
+}
+```
 
-Re-read each extant thread immediately before applying the file result. Replace its recorded
-status post with exactly one final outcome:
+`pushStatus` is `not-attempted`, `not-needed`, or `pushed`; Branch outcomes always use
+`not-attempted`. `relatedCommitOid` is the exact available review commit containing every referenced
+path and may identify investigation evidence even when no change was made. For a Branch outcome it
+must be the current or an already retained Branch source commit; never use an arbitrary local branch or
+worktree commit. Set it to null only when `references` is empty and the body does not need that commit
+for repository links or images. `references` is always the complete array for that outcome.
+The worker's completion notification only signals that the file is ready.
+The parent reads and validates the file after that notification and never depends on relayed message
+text for the result. Accept no progress, plans, or partial findings as the final result.
+
+For every concrete claim about code behavior, an implemented change, or relevant test coverage in an
+outcome, use typed references by default so the reviewer can open the exact evidence. Select the
+smallest useful committed range, include a signature plus the relevant body for multi-line behavior,
+link every declaration from `body` as `rvw-ref:<referenceId>`, and keep IDs unique within the post. A
+repository comment target already opens its exact source; do not duplicate it unless a separately
+labeled range adds navigation value. Omit references only for outcomes without useful code evidence,
+uncommitted evidence, terminal errors, or target-only evidence where another link would not help
+navigation.
+
+Re-read each extant thread immediately before applying a file result. For a Pull Request,
+replace its recorded status post with exactly one final outcome. For a Branch Review, use the same
+outcome body as the one final reply posted by `complete-branch.mjs`:
 
 - `✅ 対応しました` followed by the change, commit, and test result.
 - `📝 調査結果` followed by the conclusion when no code change was made.
 - `⚠️ 対応を継続できませんでした` followed by the terminal reason.
 
-Validate the outcome's body, `relatedCommitOid`, and complete `references` array against the freshly
-read thread, then pass all three fields to `rvw comment edit`. A result without references must send
-`references: []`; set `relatedCommitOid` to null unless the post needs that commit for repository links
-or images. Never leave references from the acknowledgement or a previous retry on the status post.
-
-Finish the lease only after every required final edit succeeds:
+For a Pull Request, validate the outcome's body, `relatedCommitOid`, and complete `references` array
+against the freshly read thread, then pass all three fields to `rvw comment edit`. A result without
+references must send `references: []`; set `relatedCommitOid` to null unless the post needs that commit
+for repository links or images. Never leave references from the acknowledgement or a previous retry on
+the status post. Finish the lease only after every required final status-post edit succeeds:
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-state.mjs' complete \
   --state '<TASK_STATE_DB>' --lease '<LEASE_ID>'
 ```
 
-Pass `{ "postIds": [] }` over closed stdin. The field remains available to suppress exceptional
-additional task-created posts. If a thread or its recorded status post disappeared during work,
+Pass `{ "postIds": [] }` over closed stdin for this Pull Request status-edit path. The field remains
+available to suppress exceptional additional task-created posts. If a thread or its recorded status post disappeared during work,
 complete it without creating a replacement and report it as gone. Comment and reply bodies are UTF-8
 GFM Markdown up to 64 KiB, not 4 KiB; a 4093-byte result is within the contract.
+
+For a Branch Review, do not use the empty `postIds` example. Pass the validated worker result to the
+bundled completion helper. It posts exactly one final reply per operation with that operation's stable
+idempotency key, captures every returned post ID, durably records those IDs for suppression, and only
+then completes the lease:
+
+```bash
+node '<SKILL_DIR>/scripts/complete-branch.mjs' \
+  --state '<TASK_STATE_DB>' --lease '<LEASE_ID>' < '<WORKER_RESULT_JSON>'
+```
+
+The helper requires the worker's `leaseId`, Branch `context`, and every outcome's explicit
+`commentRef`, non-empty `body`, `relatedCommitOid`, complete `references` array, and
+`pushStatus: "not-attempted"`. It rejects the complete input before posting any reply when any field is
+absent, mismatched, or write-capable. The rvw service then validates that a non-null commit is current
+or already retained and that every reference resolves within that exact source.
+
+If the process stops after posting but before completion, run `recover`, claim the same Branch batch,
+and invoke the helper with the same outcomes and new lease. The batch retains its operation keys, so
+`comment reply` returns the existing posts and completion suppresses them without duplicate replies.
+Whether each reply event arrives before or after completion, it must not create another pending batch.
 
 In an `investigate-and-reply`-only task, an event for a PR with an active lease becomes a separate
 eligible batch. The driver's state pump may acknowledge and delegate it immediately while reserved
@@ -270,6 +342,8 @@ follow-ups remain durable but ineligible until the active lease is released, and
 reservations serialize writers across different PRs. After retryable `fail`, let the pump wait through
 the recorded `nextAttemptAt` and dispatch the restored lease when due. Never assign a follow-up or retry
 to the previous subagent.
+Branch leases are always read-only, so their same-repository follow-ups are likewise eligible while an
+older Branch lease is active and worker capacity remains.
 
 ## Choose the worker mode
 
@@ -289,9 +363,11 @@ branch name alone, local Git author, remote name, or rvw `authorLabel`.
 ### Investigate and reply
 
 Inspect exact and surrounding source read-only and produce one concise final outcome per affected
-comment. Use the exact commit that supports the conclusion as `relatedCommitOid` and follow the code
-evidence defaults above even though no commit was pushed. The parent edits the recorded status post;
-do not add another final reply.
+comment. For a Pull Request, use the exact commit that supports the conclusion as `relatedCommitOid`
+and follow the code evidence defaults above even though no commit was pushed. The parent edits the
+recorded status post; do not add another final reply. For a Branch Review there is no
+acknowledgement/status post, so use `complete-branch.mjs` to create the one final reply and suppress its
+self-event.
 
 ### Fix and push an owned PR
 
@@ -315,7 +391,7 @@ The state tool retains the same batch, status posts, and idempotency keys, retri
 seconds and then 1 minute, and quarantines it after the third failed attempt. Leave
 `🔎 確認中です…` unchanged for a scheduled retry. Before a non-retryable failure or the third failed
 attempt, edit every extant status post to the terminal warning form, then call `fail`. On a recovered
-retry, auto-ack restores the acknowledgement before work. Continue unrelated PRs.
+retry, auto-ack restores the acknowledgement before work. Continue unrelated review contexts.
 
 On graceful stop, stop dispatching, let active writes reach a safe boundary, terminate the driver,
 and report `status`. The driver releases its owner lock after the rvw child exits. Resume with the
@@ -328,19 +404,19 @@ and the long-lived driver, which write one object per transition. State-command 
 fatal errors write JSON to stderr with a nonzero exit; auto-ack returns its structured failure on
 stdout with a nonzero exit. Commands marked with stdin read one complete JSON object through EOF.
 
-| Command         | Arguments                                                                                | stdin JSON                                             | Success JSON                                                                                                         |
-| --------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `init`          | `--state PATH [--expected-login LOGIN] [--own-mode investigate-and-reply\|fix-and-push]` | none                                                   | `{ok,state,taskId,databaseId,cursor,expectedGitHubLogin,ownPullRequests,batches,inFlightBatches,quarantinedBatches}` |
-| `ingest`        | `--state PATH`                                                                           | `ready`, `comment-posted`, or `stopped` frame from rvw | `{ok,status,cursor[,sequence]}`; event and cursor commit atomically                                                  |
-| `list`          | `--state PATH`                                                                           | none                                                   | `{ok,inFlight,pending:[{pullRequest,batchId,eventCount,firstSequence,commentRefs}]}`                                 |
-| `wait`          | `--state PATH [--interval-ms N] [--follow]`                                              | none                                                   | `{ok,type:"pending",pullRequests,pending}` on empty-to-non-empty                                                     |
-| `claim`         | `--state PATH --pull-request URL [--write-key owner/repo]`                               | none                                                   | `{ok,leaseId,batchId,pullRequest,attempts,writeKey,events,operations}`                                               |
-| `reserve-write` | `--state PATH --lease ID --write-key owner/repo`                                         | none                                                   | `{ok,leaseId,batchId,pullRequest,writeKey,status}`                                                                   |
-| `ack`           | `--state PATH --lease ID`                                                                | `{commentRef,postId}`                                  | `{ok,batchId,commentRef,statusPostId,status}`                                                                        |
-| `complete`      | `--state PATH --lease ID`                                                                | `{postIds:string[]}`                                   | `{ok,batchId,status:"completed",suppressedPostIds}`                                                                  |
-| `fail`          | `--state PATH --lease ID`                                                                | `{error:string,retryable:boolean}`                     | `{ok,batchId,status,attempts,nextAttemptAt[,operations]}`                                                            |
-| `recover`       | `--state PATH`                                                                           | none                                                   | `{ok,recovered,pending,quarantined,quarantinedBatches}`                                                              |
-| `status`        | `--state PATH`                                                                           | none                                                   | task policy, cursor, batch counts, `inFlightBatches`, and `quarantinedBatches`                                       |
+| Command         | Arguments                                                                                                               | stdin JSON                                             | Success JSON                                                                                                         |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `init`          | `--state PATH [--expected-login LOGIN] [--own-mode investigate-and-reply\|fix-and-push]`                                | none                                                   | `{ok,state,taskId,databaseId,cursor,expectedGitHubLogin,ownPullRequests,batches,inFlightBatches,quarantinedBatches}` |
+| `ingest`        | `--state PATH`                                                                                                          | `ready`, `comment-posted`, or `stopped` frame from rvw | `{ok,status,cursor,context[,sequence]}`; event and cursor commit atomically                                          |
+| `list`          | `--state PATH`                                                                                                          | none                                                   | `{ok,inFlight,pending:[{context,batchId,eventCount,firstSequence,commentRefs}]}`                                     |
+| `wait`          | `--state PATH [--interval-ms N] [--follow]`                                                                             | none                                                   | `{ok,type:"pending",contexts,pullRequests,pending}` on empty-to-non-empty                                            |
+| `claim`         | `--state PATH --context-kind KIND --context-key REVIEW_ID --context-display URL_OR_REPOSITORY [--write-key owner/repo]` | none                                                   | `{ok,leaseId,batchId,context,attempts,writeKey,events,operations}`                                                   |
+| `reserve-write` | `--state PATH --lease ID --write-key owner/repo`                                                                        | none                                                   | `{ok,leaseId,batchId,context,writeKey,status}`                                                                       |
+| `ack`           | `--state PATH --lease ID`                                                                                               | `{commentRef,postId}`                                  | `{ok,batchId,commentRef,statusPostId,status}`                                                                        |
+| `complete`      | `--state PATH --lease ID`                                                                                               | `{postIds:string[]}`                                   | `{ok,batchId,status:"completed",suppressedPostIds}`                                                                  |
+| `fail`          | `--state PATH --lease ID`                                                                                               | `{error:string,retryable:boolean}`                     | `{ok,batchId,status,attempts,nextAttemptAt[,operations]}`                                                            |
+| `recover`       | `--state PATH`                                                                                                          | none                                                   | `{ok,recovered,pending,quarantined,quarantinedBatches}`                                                              |
+| `status`        | `--state PATH`                                                                                                          | none                                                   | task policy, cursor, batch counts, `inFlightBatches`, and `quarantinedBatches`                                       |
 
 Frame schemas accepted by `ingest`:
 
@@ -356,20 +432,28 @@ Frame schemas accepted by `ingest`:
     "sequence": 1,
     "postId": "id",
     "commentRef": "rvw://comment/uuid",
-    "pullRequestUrl": "https://github.com/owner/repo/pull/123",
+    "context": {
+      "kind": "pull-request",
+      "pullRequestId": "<PULL_REQUEST_ID>",
+      "pullRequestUrl": "https://github.com/owner/repo/pull/123"
+    },
     "createdAt": "ISO-8601",
     "deleted": false
   }
 }
 ```
 
-Claim `operations` are `{commentRef,idempotencyKey,statusPostId}`. Claim `events` are
-`{sequence,postId,commentRef,pullRequestUrl}`. State schema additions are created with
-idempotent local migrations; existing state databases remain readable and retain their cursors,
-leases, and unfinished batch keys and status posts.
+For a Branch Review the event context is
+`{kind:"branch",branchReviewId:"<id>",repository:"owner/repo"}`. Claim
+`operations` are `{commentRef,idempotencyKey,statusPostId}`. Claim `events` are
+`{sequence,postId,commentRef,context}`. Startup migrates existing state rows to the explicit
+`review_kind` plus stable-ID `context_key` and display-only `context_display`, rebuilds the context
+indexes, and preserves cursors,
+leases, unfinished batch keys, batch-scoped status posts, and PR compatibility fields.
 
-| Script    | Invocation                                                                            | Output                                                                                        |
-| --------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Preflight | `node scripts/preflight.mjs`                                                          | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                     |
-| Driver    | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N]`                  | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
-| Auto-ack  | `node scripts/auto-ack.mjs --state STATE --pull-request URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`. |
+| Script            | Invocation                                                                                                                            | Output                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Preflight         | `node scripts/preflight.mjs`                                                                                                          | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                     |
+| Driver            | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N]`                                                                  | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
+| Auto-ack          | `node scripts/auto-ack.mjs --state STATE --context-kind pull-request --context-key ID --context-display URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`. |
+| Branch completion | `node scripts/complete-branch.mjs --state STATE --lease ID < RESULT.json`                                                             | Posts idempotent final replies, records their post IDs, and completes the Branch lease.       |

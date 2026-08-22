@@ -34,6 +34,12 @@ function required(options, key) {
   return value;
 }
 
+function reviewContext(kind, key, display) {
+  return kind === "branch"
+    ? { kind: "branch", branchReviewId: key, repository: display }
+    : { kind: "pull-request", pullRequestId: key, pullRequestUrl: display };
+}
+
 function positiveIntegerOption(options, key, defaultValue) {
   const raw = options[key];
   if (raw === undefined) return defaultValue;
@@ -161,6 +167,34 @@ function tableExists(database, tableName) {
 }
 
 function migrateStateSchema(database) {
+  const ensureColumn = (table, name, definition) => {
+    const columns = database.prepare(`PRAGMA table_info(${table})`).all();
+    if (!columns.some((column) => column.name === name)) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+    }
+  };
+  ensureColumn("events", "review_kind", "TEXT");
+  ensureColumn("events", "context_key", "TEXT");
+  ensureColumn("events", "context_display", "TEXT");
+  ensureColumn("batches", "review_kind", "TEXT");
+  ensureColumn("batches", "context_key", "TEXT");
+  ensureColumn("batches", "context_display", "TEXT");
+  database.exec(`
+    UPDATE events
+    SET review_kind = COALESCE(review_kind, 'pull-request'),
+      context_key = COALESCE(context_key, pull_request_url),
+      context_display = COALESCE(context_display, pull_request_url)
+    WHERE review_kind IS NULL OR context_key IS NULL OR context_display IS NULL;
+    UPDATE batches
+    SET review_kind = COALESCE(review_kind, 'pull-request'),
+      context_key = COALESCE(context_key, pull_request_url),
+      context_display = COALESCE(context_display, pull_request_url)
+    WHERE review_kind IS NULL OR context_key IS NULL OR context_display IS NULL;
+    CREATE INDEX IF NOT EXISTS events_pending_context
+      ON events(status, review_kind, context_key, sequence);
+    CREATE INDEX IF NOT EXISTS batches_pending_context
+      ON batches(status, review_kind, context_key, next_attempt_at, created_at);
+  `);
   const operationColumns = database.prepare("PRAGMA table_info(operations)").all();
   if (
     operationColumns.some((column) => column.name === "post_id") &&
@@ -246,12 +280,13 @@ function ensureBatchOperations(database, batchId) {
 function batchStatusOperations(database, batchId) {
   return database
     .prepare(
-      `SELECT comment_ref, post_id FROM operations
+      `SELECT comment_ref, idempotency_key, post_id FROM operations
       WHERE batch_id = ? ORDER BY comment_ref`,
     )
     .all(batchId)
     .map((operation) => ({
       commentRef: operation.comment_ref,
+      idempotencyKey: operation.idempotency_key,
       statusPostId: operation.post_id ?? null,
     }));
 }
@@ -259,17 +294,22 @@ function batchStatusOperations(database, batchId) {
 function quarantinedBatches(database) {
   return database
     .prepare(
-      `SELECT id, pull_request_url, attempts, last_error
+      `SELECT id, review_kind, context_key, context_display, attempts, last_error
       FROM batches WHERE status = 'quarantined' ORDER BY created_at`,
     )
     .all()
-    .map((batch) => ({
-      batchId: batch.id,
-      pullRequest: batch.pull_request_url,
-      attempts: Number(batch.attempts),
-      error: batch.last_error,
-      operations: batchStatusOperations(database, batch.id),
-    }));
+    .map((batch) => {
+      const context = reviewContext(batch.review_kind, batch.context_key, batch.context_display);
+      return {
+        batchId: batch.id,
+        context,
+        ...(context.kind === "pull-request" ? { pullRequest: context.pullRequestUrl } : {}),
+        ...(context.kind === "branch" ? { repository: context.repository } : {}),
+        attempts: Number(batch.attempts),
+        error: batch.last_error,
+        operations: batchStatusOperations(database, batch.id),
+      };
+    });
 }
 
 function initialize(database, options) {
@@ -321,6 +361,28 @@ function ingestReady(database, frame) {
 
 function ingestEvent(database, frame) {
   const event = frame.event;
+  const context =
+    event?.context?.kind === "pull-request" &&
+    typeof event.context.pullRequestId === "string" &&
+    event.context.pullRequestId.length > 0 &&
+    typeof event.context.pullRequestUrl === "string" &&
+    event.context.pullRequestUrl.length > 0
+      ? {
+          kind: "pull-request",
+          key: event.context.pullRequestId,
+          display: event.context.pullRequestUrl,
+        }
+      : event?.context?.kind === "branch" &&
+          typeof event.context.branchReviewId === "string" &&
+          event.context.branchReviewId.length > 0 &&
+          typeof event.context.repository === "string" &&
+          event.context.repository.length > 0
+        ? {
+            kind: "branch",
+            key: event.context.branchReviewId,
+            display: event.context.repository,
+          }
+        : null;
   if (
     typeof frame.cursor !== "string" ||
     !event ||
@@ -328,7 +390,7 @@ function ingestEvent(database, frame) {
     event.sequence < 1 ||
     typeof event.postId !== "string" ||
     typeof event.commentRef !== "string" ||
-    typeof event.pullRequestUrl !== "string" ||
+    !context ||
     typeof event.deleted !== "boolean"
   ) {
     fail("Invalid comment-posted frame");
@@ -355,19 +417,22 @@ function ingestEvent(database, frame) {
       .prepare(
         `INSERT INTO events(
           sequence, cursor, post_id, comment_ref, pull_request_url, deleted,
-          status, batch_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+          status, batch_id, created_at, updated_at, review_kind, context_key, context_display
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
       )
       .run(
         event.sequence,
         frame.cursor,
         event.postId,
         event.commentRef,
-        event.pullRequestUrl,
+        context.display,
         event.deleted ? 1 : 0,
         status,
         now,
         now,
+        context.kind,
+        context.key,
+        context.display,
       );
     if (event.deleted) {
       const operations = database
@@ -392,6 +457,7 @@ function ingestEvent(database, frame) {
       status: event.deleted ? "deleted" : suppressed ? "suppressed" : "queued",
       sequence: event.sequence,
       cursor: frame.cursor,
+      context: reviewContext(context.kind, context.key, context.display),
     };
   });
 }
@@ -400,7 +466,8 @@ function listPending(database) {
   const now = new Date().toISOString();
   const batches = database
     .prepare(
-      `SELECT b.pull_request_url, b.id AS batch_id, count(e.sequence) AS event_count,
+      `SELECT b.review_kind, b.context_key, b.context_display,
+        b.id AS batch_id, count(e.sequence) AS event_count,
         min(e.sequence) AS first_sequence
       FROM batches b
       JOIN events e ON e.batch_id = b.id AND e.status = 'pending'
@@ -412,24 +479,25 @@ function listPending(database) {
   const blockedStatuses =
     getMeta(database, "own_mode") === "investigate-and-reply"
       ? "status = 'pending'"
-      : "status IN ('pending', 'in_flight')";
-  const blockedPullRequests = new Set(
+      : "status = 'pending' OR (status = 'in_flight' AND review_kind = 'pull-request')";
+  const blockedContexts = new Set(
     database
-      .prepare(`SELECT DISTINCT pull_request_url FROM batches WHERE ${blockedStatuses}`)
+      .prepare(`SELECT DISTINCT review_kind, context_key FROM batches WHERE ${blockedStatuses}`)
       .all()
-      .map((row) => row.pull_request_url),
+      .map((row) => `${row.review_kind}:${row.context_key}`),
   );
   const unbatched = database
     .prepare(
-      `SELECT pull_request_url, NULL AS batch_id, count(*) AS event_count,
+      `SELECT review_kind, context_key, max(context_display) AS context_display,
+        NULL AS batch_id, count(*) AS event_count,
         min(sequence) AS first_sequence
       FROM events
       WHERE status = 'pending' AND batch_id IS NULL
-      GROUP BY pull_request_url
+      GROUP BY review_kind, context_key
       ORDER BY first_sequence`,
     )
     .all()
-    .filter((row) => !blockedPullRequests.has(row.pull_request_url));
+    .filter((row) => !blockedContexts.has(`${row.review_kind}:${row.context_key}`));
   return [...batches, ...unbatched]
     .sort((left, right) => Number(left.first_sequence) - Number(right.first_sequence))
     .map((row) => {
@@ -443,13 +511,16 @@ function listPending(database) {
         : database
             .prepare(
               `SELECT DISTINCT comment_ref FROM events
-              WHERE pull_request_url = ? AND status = 'pending' AND batch_id IS NULL
+              WHERE review_kind = ? AND context_key = ? AND status = 'pending' AND batch_id IS NULL
               ORDER BY comment_ref`,
             )
-            .all(row.pull_request_url)
+            .all(row.review_kind, row.context_key)
             .map((item) => item.comment_ref);
+      const context = reviewContext(row.review_kind, row.context_key, row.context_display);
       return {
-        pullRequest: row.pull_request_url,
+        context,
+        ...(context.kind === "pull-request" ? { pullRequest: context.pullRequestUrl } : {}),
+        ...(context.kind === "branch" ? { repository: context.repository } : {}),
         batchId: row.batch_id ?? null,
         eventCount: Number(row.event_count),
         firstSequence: Number(row.first_sequence),
@@ -479,7 +550,10 @@ async function waitForPending(database, options) {
       write({
         ok: true,
         type: "pending",
-        pullRequests: pending.map((batch) => batch.pullRequest),
+        contexts: pending.map((batch) => batch.context),
+        pullRequests: pending.flatMap((batch) =>
+          batch.context.kind === "pull-request" ? [batch.context.pullRequestUrl] : [],
+        ),
         pending,
       });
       if (!follow) return;
@@ -496,34 +570,53 @@ function normalizeWriteKey(writeKey) {
   return writeKey.toLowerCase();
 }
 
-function createBatch(database, pullRequestUrl, now) {
+function reviewContextFromOptions(options) {
+  const kind = required(options, "context-kind");
+  const key = required(options, "context-key");
+  const display = required(options, "context-display");
+  if (kind !== "pull-request" && kind !== "branch") {
+    fail("--context-kind must be pull-request or branch");
+  }
+  if (kind === "branch" && !/^[^/\s]+\/[^/\s]+$/.test(display)) {
+    fail("Branch --context-display must be owner/repository");
+  }
+  return { kind, key, display };
+}
+
+function createBatch(database, context, now) {
   const batchId = randomUUID();
   const events = database
     .prepare(
       `SELECT sequence, comment_ref FROM events
-      WHERE pull_request_url = ? AND status = 'pending' AND batch_id IS NULL
+      WHERE review_kind = ? AND context_key = ? AND status = 'pending' AND batch_id IS NULL
       ORDER BY sequence`,
     )
-    .all(pullRequestUrl);
-  if (events.length === 0) fail("No pending events for Pull Request");
+    .all(context.kind, context.key);
+  if (events.length === 0) fail("No pending events for review context");
   database
     .prepare(
       `INSERT INTO batches(
         id, pull_request_url, status, attempts, next_attempt_at, lease_id,
-        write_key, last_error, created_at, updated_at
-      ) VALUES (?, ?, 'pending', 0, NULL, NULL, NULL, NULL, ?, ?)`,
+        write_key, last_error, created_at, updated_at, review_kind, context_key, context_display
+      ) VALUES (?, ?, 'pending', 0, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?)`,
     )
-    .run(batchId, pullRequestUrl, now, now);
+    .run(batchId, context.display, now, now, context.kind, context.key, context.display);
   database
     .prepare(
-      "UPDATE events SET batch_id = ?, updated_at = ? WHERE pull_request_url = ? AND status = 'pending' AND batch_id IS NULL",
+      "UPDATE events SET batch_id = ?, updated_at = ? WHERE review_kind = ? AND context_key = ? AND status = 'pending' AND batch_id IS NULL",
     )
-    .run(batchId, now, pullRequestUrl);
+    .run(batchId, now, context.kind, context.key);
   ensureBatchOperations(database, batchId);
   return batchId;
 }
 
-function claim(database, pullRequestUrl, writeKey) {
+function claim(database, context, writeKey) {
+  if (context.kind === "branch" && writeKey !== undefined) {
+    fail("Branch Review batches are read-only and cannot reserve a write key");
+  }
+  if (writeKey !== undefined && getMeta(database, "own_mode") !== "fix-and-push") {
+    fail("Task policy is investigate-and-reply and cannot reserve a write key");
+  }
   const canonicalWriteKey = writeKey === undefined ? undefined : normalizeWriteKey(writeKey);
   return transaction(database, () => {
     const now = new Date().toISOString();
@@ -531,21 +624,23 @@ function claim(database, pullRequestUrl, writeKey) {
     if (canonicalWriteKey !== undefined && ownMode !== "fix-and-push") {
       fail("Task policy does not allow repository write reservations");
     }
-    if (ownMode !== "investigate-and-reply") {
+    if (context.kind === "pull-request" && ownMode !== "investigate-and-reply") {
       const active = database
-        .prepare("SELECT id FROM batches WHERE pull_request_url = ? AND status = 'in_flight'")
-        .get(pullRequestUrl);
+        .prepare(
+          "SELECT id FROM batches WHERE review_kind = ? AND context_key = ? AND status = 'in_flight'",
+        )
+        .get(context.kind, context.key);
       if (active) fail("Pull Request already has an in-flight batch");
     }
     let batch = database
       .prepare(
         `SELECT * FROM batches
-        WHERE pull_request_url = ? AND status = 'pending'
+        WHERE review_kind = ? AND context_key = ? AND status = 'pending'
         ORDER BY created_at LIMIT 1`,
       )
-      .get(pullRequestUrl);
+      .get(context.kind, context.key);
     if (batch?.next_attempt_at && batch.next_attempt_at > now) fail("Batch retry is not due yet");
-    const batchId = batch?.id ?? createBatch(database, pullRequestUrl, now);
+    const batchId = batch?.id ?? createBatch(database, context, now);
     batch = database.prepare("SELECT * FROM batches WHERE id = ?").get(batchId);
     const leaseId = randomUUID();
     try {
@@ -563,7 +658,7 @@ function claim(database, pullRequestUrl, writeKey) {
     }
     const events = database
       .prepare(
-        `SELECT sequence, post_id, comment_ref, pull_request_url
+        `SELECT sequence, post_id, comment_ref, review_kind, context_key, context_display
         FROM events WHERE batch_id = ? AND status = 'pending' ORDER BY sequence`,
       )
       .all(batchId)
@@ -571,7 +666,7 @@ function claim(database, pullRequestUrl, writeKey) {
         sequence: Number(event.sequence),
         postId: event.post_id,
         commentRef: event.comment_ref,
-        pullRequestUrl: event.pull_request_url,
+        context: reviewContext(event.review_kind, event.context_key, event.context_display),
       }));
     ensureBatchOperations(database, batchId);
     const operations = database
@@ -588,7 +683,9 @@ function claim(database, pullRequestUrl, writeKey) {
     return {
       leaseId,
       batchId,
-      pullRequest: pullRequestUrl,
+      context: reviewContext(context.kind, context.key, context.display),
+      ...(context.kind === "pull-request" ? { pullRequest: context.display } : {}),
+      ...(context.kind === "branch" ? { repository: context.display } : {}),
       attempts: Number(batch.attempts) + 1,
       writeKey: canonicalWriteKey ?? null,
       events,
@@ -607,6 +704,12 @@ function reserveWrite(database, leaseId, writeKey) {
       .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
       .get(leaseId);
     if (!batch) fail("Active lease was not found");
+    if (batch.review_kind === "branch") {
+      fail("Branch Review batches are investigate-and-reply only");
+    }
+    if (getMeta(database, "own_mode") !== "fix-and-push") {
+      fail("Task policy is investigate-and-reply and cannot reserve a write key");
+    }
     if (batch.write_key !== null && batch.write_key !== canonicalWriteKey) {
       fail(`Active lease already owns repository ${batch.write_key}`);
     }
@@ -623,7 +726,7 @@ function reserveWrite(database, leaseId, writeKey) {
     return {
       leaseId,
       batchId: batch.id,
-      pullRequest: batch.pull_request_url,
+      context: reviewContext(batch.review_kind, batch.context_key, batch.context_display),
       writeKey: canonicalWriteKey,
       status: batch.write_key === canonicalWriteKey ? "existing" : "reserved",
     };
@@ -785,14 +888,17 @@ function status(database) {
     .get();
   const inFlightBatches = database
     .prepare(
-      `SELECT id, pull_request_url, attempts, lease_id, write_key, updated_at
+      `SELECT id, review_kind, context_key, context_display,
+        attempts, lease_id, write_key, updated_at
       FROM batches WHERE status = 'in_flight' ORDER BY created_at`,
     )
     .all()
     .map((batch) => ({
       batchId: batch.id,
       leaseId: batch.lease_id,
-      pullRequest: batch.pull_request_url,
+      context: reviewContext(batch.review_kind, batch.context_key, batch.context_display),
+      ...(batch.review_kind === "pull-request" ? { pullRequest: batch.context_display } : {}),
+      ...(batch.review_kind === "branch" ? { repository: batch.context_display } : {}),
       attempts: Number(batch.attempts),
       writeKey: batch.write_key,
       updatedAt: batch.updated_at,
@@ -852,9 +958,10 @@ async function main() {
       return;
     }
     if (command === "claim") {
+      const context = reviewContextFromOptions(options);
       write({
         ok: true,
-        ...claim(database, required(options, "pull-request"), options["write-key"]),
+        ...claim(database, context, options["write-key"]),
       });
       return;
     }

@@ -1,4 +1,4 @@
-# CLI protocol v3
+# CLI protocol v4
 
 Version 1 is the first public compatibility contract. Pre-public internal version numbers were not
 released or supported; after the first public release, protocol versions only increase for breaking
@@ -8,6 +8,11 @@ references to comment create, reply, edit, get, and synchronized replies, and ad
 `comment.codeReferences`. It also keeps the additive
 `agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
 idempotency keys are additive fields and do not change existing callers.
+
+Version 4 introduces explicit Pull Request and Branch Review contexts, Issue documents, and a
+discriminated comment event context. Branch Reviews are keyed by canonical `owner/repository` and
+never masquerade as Pull Requests. The capabilities `branchReview.read`, `branchReview.sync`,
+`issue.read`, and `issue.membership` advertise these surfaces.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
@@ -103,6 +108,46 @@ To update only the saved worktree without launching a viewer, use:
 rvw pr attach <PULL_REQUEST> --repository <PATH> --json
 ```
 
+## Branch Review and Issue membership
+
+```bash
+rvw branch open [--repository <PATH>] [--foreground] [--no-open]
+rvw branch sync [--repository <PATH>] --json
+rvw branch issue add <ISSUE_REF> [--repository <PATH>] --json
+rvw branch issue remove <ISSUE_REF> [--repository <PATH>] [--yes] --json
+rvw branch comments [--repository <PATH>] --state unresolved --json
+rvw branch reset [--repository <PATH>] --json
+rvw branch reset [--repository <PATH>] --yes --json
+rvw pr issue add <PULL_REQUEST> <ISSUE_REF> --json
+rvw pr issue remove <PULL_REQUEST> <ISSUE_REF> [--yes] --json
+```
+
+Issue removal and `branch reset` without `--yes` return a count/ref preview with
+`RESET_CONFIRMATION_REQUIRED`. After the caller presents the Issue title/number and owned artifact
+counts to a human, the same command with `--yes` deletes only the selected review's membership,
+Issue comments, replies, or Branch Review artifacts. Shared Issue cache and artifacts owned by another
+review remain intact. Branch reset removes only its repository-scoped Branch retained refs; PR refs
+and objects retained by other refs remain reachable.
+
+Branch commands resolve the canonical GitHub base repository and Git common directory from the
+current directory or `--repository`; callers never pass an internal Branch Review ID. There is one
+durable Branch Review per repository. A worktree in the saved Git common directory may reuse it and
+refresh the usable local path. An independent clone of the same canonical repository fails with an
+actionable repository-mismatch error before changing the saved path, common directory, source OID,
+retained refs, or artifacts. After an explicit `branch reset` in the registered clone, opening from the
+other clone creates a new review. `branch sync` resolves GitHub's current default branch and OID,
+fetches and verifies that exact object without changing checkout or index, advances the cached source,
+and refreshes every registered Issue independently. A previously synchronized review remains readable
+offline. `branch comments` returns the explicit Branch context and full comments for the selected state.
+`branch sync`の`issueResults`は各cached Issueの成功またはstale errorを別々に返す。`pr refresh`と
+`pr sync`も、PR本文から直接見つけた候補と既存membershipの結果を`issueResults`へ返し、一件の失敗を
+他のIssue同期やPR metadata更新の失敗として扱わない。
+
+An Issue reference is `#142`, `owner/repository#142`, or a canonical GitHub Issue URL. Only an actual
+Issue in the review repository is accepted; a Pull Request or cross-repository reference fails. Adding
+an existing membership is idempotent. Issue cache rows are shared by GitHub identity, while membership,
+comments, and Walkthrough ownership remain review-specific.
+
 ## Comment commands
 
 ```bash
@@ -118,11 +163,15 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-`comment create` records one new unresolved thread for a registered Pull Request. Its stdin value is:
+`comment create` records one new unresolved thread for an explicit Pull Request or Branch Review. Its
+stdin value is:
 
 ```json
 {
-  "pullRequest": "https://github.com/owner/repository/pull/123",
+  "review": {
+    "kind": "pull-request",
+    "pullRequest": "https://github.com/owner/repository/pull/123"
+  },
   "target": {
     "kind": "document",
     "documentKind": "repository-file",
@@ -147,9 +196,10 @@ rvw comment reopen <COMMENT_URI> --json
 }
 ```
 
-`pullRequest`, `target`, and `body` are required. `authorLabel`, `relatedCommitOid`, and `references`
+`review`, `target`, and `body` are required. A Branch Review uses
+`{"kind":"branch","repository":"owner/repository"}`. `authorLabel`, `relatedCommitOid`, and `references`
 are optional. `authorLabel` and `relatedCommitOid` may be `null`.
-`pullRequest` is a saved PR's full URL or a number that is unique across saved PRs. `body` is non-blank
+The PR reference is a saved PR's full URL or a number that is unique across saved PRs. `body` is non-blank
 UTF-8 GFM Markdown source of at most 64 KiB. The viewer sanitizes raw HTML, preserves soft line
 breaks, and supports repository-relative links and images plus display-only Mermaid. A comment post
 may use `rvw-ref:<referenceId>` links backed by its own typed `references`; Mermaid node bindings and
@@ -157,6 +207,19 @@ Markdown source-range targets remain Walkthrough-only. The target is one of:
 
 ```json
 { "kind": "pull-request" }
+```
+
+```json
+{ "kind": "branch" }
+```
+
+```json
+{
+  "kind": "issue",
+  "issue": "#142",
+  "startLine": 5,
+  "endLine": 8
+}
 ```
 
 ```json
@@ -190,7 +253,9 @@ Markdown source-range targets remain Walkthrough-only. The target is one of:
 
 Omitting both line fields creates a whole-document target and normalizes both values to `null`.
 Supplying only one line, reversing the range, selecting a line outside the document, naming an
-unavailable commit or path, or selecting a Walkthrough from another PR is rejected. File-wide
+unavailable commit or path, or selecting an Issue/Walkthrough from another review is rejected. A
+`pull-request` target is valid only in a Pull Request context and a `branch` target only in a Branch
+context. File-wide
 comments are accepted for binary and oversized entries, but line comments require displayable text.
 PR-Markdown hashes and quoted lines, Walkthrough titles and quoted lines, and the creation head are
 derived by the same application service used by the viewer; callers do not supply those persisted
@@ -222,15 +287,18 @@ bytes with `bodyTruncated`. Repository target summaries omit the source OID, and
 omit the source hash and quoted text. The list does not load or return replies or source excerpts;
 consumers read every URI they inspect or address with `comment get`.
 
-Both list and get return the latest successfully synchronized PR URL, owner, repository, number,
+PR `comment list` and PR `comment get` return the latest successfully synchronized PR URL, owner, repository, number,
 nullable author login, title, base branch/OID, comparison base OID, head branch/OID, GitHub update/fetch times, and local
 repository path. This metadata is cached and does not require a GitHub refresh. Neither the list nor
 the default get response contains `pullRequest.body`. A consumer that needs the latest successfully
 synchronized PR body requests it with `comment get --include-pr-body`; only that response adds the
 `pullRequest.body` string.
 
-`comment get` returns the same top-level `comment` and `latestPlacement` keys with the complete comment
-target and posts, `createdHeadOid`, and the PR's `latestHeadOid`. Each complete post includes its
+`comment get` always returns a top-level `context` discriminator. For Pull Requests it returns the
+same top-level `comment` and `latestPlacement` keys with the complete comment target and posts,
+`createdHeadOid`, and the PR's `latestHeadOid`. For Branch Reviews it returns the canonical repository,
+local path, current default branch/source OID, comment creation source OID, current Issue or Walkthrough
+when targeted, exact source excerpt for code, and authoritative Outdated placement. Each complete post includes its
 `relatedCommitOid` and `references`. `latestPlacement` is rvw's
 authoritative derived placement at the latest head. Consumers must not treat unequal creation/latest
 OIDs as Outdated: rvw accounts for unchanged lines, renames, deletion, and PR-Markdown quoted-text
@@ -303,11 +371,13 @@ update with `resolve: true` resolves it.
 
 ### Continuous watch
 
-`rvw comment watch --json-seq` watches new root comments and replies across all PRs saved in the
-selected rvw database. A cursorless invocation emits a `ready` frame anchored at the current event
+`rvw comment watch --json-seq` watches new root comments and replies across all Pull Request and Branch
+Reviews saved in the selected rvw database. A cursorless invocation emits a `ready` frame anchored at the current event
 position and does not replay existing unresolved comments. Each subsequent `comment-posted` frame
-contains an opaque database-scoped cursor plus `sequence`, `postId`, `commentRef`, `pullRequestUrl`,
-`createdAt`, and `deleted`. It is a minimal trigger; consumers must
+contains an opaque database-scoped cursor plus `sequence`, `postId`, `commentRef`, `createdAt`,
+`deleted`, and exactly one context: `{kind:"pull-request",pullRequestId,pullRequestUrl}` or
+`{kind:"branch",branchReviewId,repository}`. The ID is the stable routing key; URL/repository is a
+display value. A Branch Review never receives fake PR fields. It is a minimal trigger; consumers must
 run `comment get` for complete context. Edits, deletions, resolve, and reopen do not create new events.
 An existing event survives post deletion and is then returned with `deleted: true`.
 
@@ -318,14 +388,24 @@ for protocol tests and recovery tools. Independent tasks may consume the log wit
 
 rvw does not start an Agent, store its queue, or authorize code changes. The external task owns
 batching, retries, and self-event suppression. The bundled `rvw-watch-comments` Skill supplies a
-task-local SQLite state tool for atomic cursor ingestion, batch leases, and one status post per affected
-comment URI in each batch. After a claim and successful thread read, it immediately creates
-`🔎 確認中です…`, suppresses that reply's watch event, and edits the same post to the final outcome.
-A retry of the same batch restores that post; a later batch for the same thread creates a new one and
-leaves the earlier outcome unchanged. It requires explicit
+task-local SQLite state tool for atomic cursor ingestion, context-keyed batch leases, and one status post
+per affected comment URI in each batch. For a Pull Request, after a claim and successful thread read, it
+immediately creates `🔎 確認中です…`, suppresses that reply's watch event, and edits the same post to the
+final outcome. A retry of the same batch restores that post; a later batch for the same thread creates a
+new one and leaves the earlier outcome unchanged. It requires explicit
 startup authorization before an authenticated user's own PR can be fixed and pushed, and verifies the
 live head repository, branch, and OID so fork PRs cannot target the base repository accidentally.
-Another or unknown author remains code/GitHub read-only.
+Another or unknown author remains code/GitHub read-only. A Branch batch is always
+`investigate-and-reply`, cannot reserve a write key, creates no progress post, and records exactly one
+final idempotent reply without resolving the thread. Its worker result uses
+`{kind:"branch",branchReviewId,repository}` rather than a fake Pull Request URL. The final reply uses the operation's
+stable idempotency key, and lease completion receives the returned post ID as a durable suppression.
+The reply may carry typed references when `relatedCommitOid` is the current or an already retained
+Branch source; an arbitrary commit that merely exists in the local clone is rejected. This evidence
+does not widen the Branch worker's read-only authority.
+If the reply event was already ingested, completion marks that pending event completed; if it arrives
+later, ingestion suppresses it. A restart retries the same key, recovers the existing reply, and then
+completes without adding a duplicate or a new batch.
 
 The Skill also bundles one aggregate preflight, a cursor-resolving RFC 7464 driver, an empty-to-non-empty
 pending waiter, and an auto-ack command. The normal driver polls once per second and invokes auto-ack
@@ -334,9 +414,11 @@ watch exits reconnect from the state cursor with bounded exponential backoff; pr
 and acknowledgement failures have distinct nonzero driver exits. These helpers remain external Skill
 processes and do not move Agent runtime or task state into rvw. Before an initial connection or
 reconnect, the driver drains eligible pending work left between a durable ingest and an interrupted
-acknowledgement. Auto-ack is capped by the subagent capacity reserved by the parent, and a short-period
-task-state pump drains same-PR follow-ups after lease release and retryable batches after their due time
-without waiting for another watch event or reconnect. Before spawning rvw, the driver atomically acquires
+acknowledgement. Auto-ack is capped by the subagent capacity reserved by the parent. A short-period
+task-state pump may claim same-review follow-ups immediately when they are necessarily read-only,
+including every Branch lease and an investigate-only task's PR leases. A task that permits PR fixes
+waits for the active same-PR lease to release. Due retryable batches resume without waiting for another
+watch event or reconnect. Before spawning rvw, the driver atomically acquires
 one process-owner lock beside the canonical task-state path. A concurrent driver for that state exits
 without starting another watcher. The lock is released on graceful shutdown, and a later driver reclaims
 it only when the recorded owner process no longer exists.
@@ -354,8 +436,8 @@ Read an existing Walkthrough before updating or deleting it:
 rvw walkthrough get <WALKTHROUGH_URI> --json
 ```
 
-The response contains the complete current Walkthrough and its Pull Request, including the local
-repository path needed to inspect referenced code.
+The response contains the complete current Walkthrough and its Pull Request or Branch Review context,
+including the local repository path needed to inspect referenced code.
 
 ### Publish
 
@@ -367,9 +449,13 @@ The stdin value is:
 
 ```json
 {
-  "pullRequest": "https://github.com/owner/repository/pull/123",
+  "review": {
+    "kind": "pull-request",
+    "pullRequest": "https://github.com/owner/repository/pull/123"
+  },
   "sourceOid": "0123456789abcdef0123456789abcdef01234567",
   "title": "Request flow",
+  "issues": ["#142"],
   "body": "Start at [the handler](rvw-ref:handler), then inspect the [composition root](rvw-ref:composition).",
   "authorLabel": "Agent name",
   "diagramBindings": {
@@ -403,7 +489,10 @@ The stdin value is:
 }
 ```
 
-`pullRequest`, `sourceOid`, `title`, `body`, and one or more references are required. `sourceOid`
+`review`, `sourceOid`, `title`, `body`, and one or more references are required. Branch publication
+uses `{"kind":"branch","repository":"owner/repository"}`. Optional `issues` explicitly ensures
+same-repository Issue memberships; it only adds, never removes, relates, or recursively discovers.
+`sourceOid`
 must be a 40–64 digit hex commit available to the saved pull request. Reference IDs and Mermaid node
 IDs use `[A-Za-z][A-Za-z0-9_-]{0,63}`. Every repository-relative path must be an available UTF-8
 document at that commit. A reference may omit both `startLine` and `endLine` to target the whole file;
@@ -416,7 +505,10 @@ phantom-bound references are rejected because the viewer has no separate referen
 
 The body is limited to 256 KiB, and a publication may contain at most 200 references. A successful
 publication protects `sourceOid` with rvw's immutable commit ref. The response contains the saved
-Walkthrough and its `rvw://walkthrough/<uuid>` reference. Publication is
+Walkthrough and its `rvw://walkthrough/<uuid>` reference under `walkthrough`, plus every Issue
+membership actually inserted by this mutation's SQLite transaction under `issuesAdded`. The array is
+present and empty when nothing was added, including when a concurrent mutation inserted the same
+membership first. Publication is
 not a viewer command: it does not open a browser, activate a document, choose a commit, or change any
 tab or scroll position. The human later chooses which inline reference or bound diagram node to open;
 the viewer does not duplicate all references in a side or bottom index.
@@ -428,12 +520,14 @@ rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
 ```
 
 Update accepts the same `sourceOid`, `title`, `body`, `diagramBindings`, and `references` fields as
-publication, but does not accept `pullRequest`: the stable URI already identifies it. The input is a
+publication, but does not accept `review`: the stable URI already identifies it. It may include
+additional `issues` under the same add-only rules. The input is a
 complete replacement rather than a patch. Omitting `authorLabel` preserves the current value; a string
 or `null` replaces it. Commit, document, line, Markdown-link, and diagram-binding validation is identical
 to publication.
 
-Success returns the updated Walkthrough with the same ID, URI, and `createdAt`. No previous body,
+Success returns the updated Walkthrough under `walkthrough`, with the same ID, URI, and `createdAt`,
+and an explicit `issuesAdded` array under the same rules as publish. No previous body,
 reference set, source OID, or update revision is retained. Existing whole-Walkthrough comments resolve
 to the current body and references; line comments are re-anchored from their bounded quoted text or reported
 Outdated. Updating remains passive and does not control a viewer.
@@ -473,6 +567,8 @@ The non-JSON output shows the same diagnostic fields. Multiple viewer processes 
 coexist, but an atomic owner lock ensures only one Node process can own a socket path at a time; a
 follower acquires the lock and socket only after the owner exits. CLI stdin and socket
 request/response frames are capped at 40 MiB.
+Walkthrough publish/update use the same enumerable application result envelope through direct database
+execution and Agent socket execution; JSON serialization cannot omit `issuesAdded`.
 
 The default database directory and file are created with modes `0700` and `0600`. Existing paths are
 checked with `stat`; rvw does not chmod them when owner and mode are already safe. A failed chmod on a
@@ -500,7 +596,8 @@ an absolute JSON result path rather than relying on relayed completion text. Sub
 `body`, `relatedCommitOid`, a complete `references` array, and `pushStatus`. The Skill uses typed
 references by default for concrete code behavior, implemented
 changes, and relevant tests when an exact committed range adds navigation value. Investigation-only
-outcomes may cite their evidence commit without claiming that a change was pushed.
+outcomes may cite their evidence commit without claiming that a change was pushed. Branch outcomes keep
+`pushStatus: "not-attempted"` and limit that evidence commit to the current or retained Branch source.
 
 Each rvw-managed installation records the bundled digest. Status distinguishes a clean older bundle
 (`updateAvailable` and `updateRequired`), local customization (`locallyModified`), and a differing
@@ -520,10 +617,14 @@ current `walkthrough` object. This gives the Agent the explanation body and exac
 discussed without relying on rendered browser positions. If the Walkthrough is updated, the same
 comment URI subsequently returns the updated current object.
 
-`rvw protocol --json` returns `protocolVersion: 3`, the application version, and these capabilities:
+`rvw protocol --json` returns `protocolVersion: 4`, the application version, and these capabilities:
 
 ```text
 agent.transport
+branchReview.read
+branchReview.sync
+issue.read
+issue.membership
 comment.create
 comment.list
 comment.watch

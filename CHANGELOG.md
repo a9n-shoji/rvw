@@ -5,11 +5,53 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-22
+
+### Added
+
+- GitHub repositoryごとに一件だけ保持し、default branchのexact commitを読むBranch Review
+- Pull Request ReviewとBranch Reviewで、GitHub Issue本文を通常文書として読む・コメントするsurface
+- Branch Reviewのcomment eventをcontext別にbatchし、read-only調査と冪等な最終replyを行うwatcher mode
+- 件数previewと明示確認を伴うPR / Branch Issue membership削除、およびBranch Review reset
+- Pull Request / Branch ReviewのIssue本文に貼り付けたmodern GitHub user attachment画像を、既存の
+  review-scoped localhost proxyと同じ検証・認証・画像判定で表示
+- repository demoのPR本文とIssue本文へ、安全な添付と停止対象の外部画像を並べたMarkdown tableを追加
+
 ### Changed
 
+- comment、Walkthrough、watch eventをPull Request / Branch Reviewの明示contextで扱うprotocol v4
+- watch eventのrouting identityを表示用URL／repository名から安定したreview IDへ変更
+- Issue cacheをGitHub identityで共有しつつ、membershipとreview artifactを各reviewへ分離
+- Branch ReviewをPR Reviewと同じExplorer / Search / Comments、document tab、最大二pane、theme、
+  comment操作へ統一し、PR固有controlだけを省略
+- IssueをPR本文・Walkthroughと同列のreview文書nodeへ統合し、追加formを必要時だけ開くUIと、共通Markdown
+  viewerからのIssue全体／本文選択コメントへ変更
+- Walkthrough publish/update responseを、transportに依存しない`walkthrough` + `issuesAdded` envelopeへ変更
+- watcher worker resultをPull Request URL前提からreview contextのdiscriminated unionへ変更
 - `rvw-watch-comments`のinvestigate-and-reply専用taskで、同じPR／repositoryの後続batchもworker capacity内で
   並列に調査・返信。保証できる場合は`max-in-flight=8`を目標とし、fix-and-pushを許可したtaskだけ従来の
   writer排他を維持
+- Branch watcherのread-only境界を保ったまま、current／retained sourceのtyped code referenceを最終replyへ
+  付けられるよう変更
+- Issue同期を認証確認の共有と最大8件のbounded concurrencyへ変更
+- viewerの変更pollをdatabase全体からreview kind／ID単位へ絞り、別reviewの更新による再取得を削減
+
+### Fixed
+
+- Issue本文が更新された後も全体コメントはcurrentのまま維持し、rangeコメントだけをoutdatedにするよう修正
+- Branch Review resetでGit ref削除が適用済みなら、終了statusだけを根拠に不整合errorを返さないよう修正
+- `investigate-and-reply`で開始したwatch taskがPull Requestのwrite reservationを取得できる抜け道を修正
+- Branch Issue本文の同期でviewerをremountせず、入力中のrange comment draft、selection、focusを保持するよう修正
+- Branch syncが共通document queryを正しく更新し、Issue本文とOutdated placementを最新化するよう修正
+- 同じGitHub repositoryの独立cloneから既存Branch Reviewを開いても、保存済みGit common directoryを
+  暗黙に再bindしないよう修正
+- Branch watcherの最終reply post IDをdurableにself-suppressし、event ingest順序や再起動による自己loopを修正
+- Walkthroughの`issuesAdded`をtransaction外のsnapshot差分ではなく、実際に追加したmembershipから返すよう修正
+- Branch completion helperがworker contextとread-only outcome fieldsの省略を投稿前に拒否するよう修正
+- Issue membership削除後に対象Issueの未送信draftだけが復活し得る問題を修正
+- Branch Reviewがclone内に存在するだけの未同期local commitをdocumentやcomment evidenceとして受理する問題を修正
+- PR本文のinline/fenced codeやraw HTML内に書かれた`#123`をIssue membershipとして誤検出する問題を修正
+- 初期background refreshの完了が、待機中に人間が選択したhistorical commit rangeを上書きするraceを修正
 
 ## [0.2.3] - 2026-08-21
 

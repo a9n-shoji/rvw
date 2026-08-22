@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { validateReleaseMetadata } from "../../scripts/verify-release.js";
+import { APP_VERSION } from "../../src/shared/constants.js";
 
 const manifest = {
   name: "@a9n-shoji/rvw",
@@ -19,6 +21,18 @@ const manifest = {
 };
 
 describe("release metadata", () => {
+  it("keeps the current package, app constant, and changelog aligned", () => {
+    const currentManifest = JSON.parse(readFileSync("package.json", "utf8")) as typeof manifest;
+    expect(() =>
+      validateReleaseMetadata({
+        appVersion: APP_VERSION,
+        changelog: readFileSync("CHANGELOG.md", "utf8"),
+        manifest: currentManifest,
+        tag: `v${currentManifest.version}`,
+      }),
+    ).not.toThrow();
+  });
+
   it("accepts an aligned stable release", () => {
     expect(() =>
       validateReleaseMetadata({

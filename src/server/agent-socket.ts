@@ -252,6 +252,59 @@ export async function dispatchAgentSocketRequest(
       const pullRequest = service.resolveStoredPullRequest(input.reference);
       return await service.resetPullRequest(pullRequest.id);
     }
+    case "pr.issue.add": {
+      const input = parseOperationInput("pr.issue.add", request.input);
+      return await service.addPullRequestIssue(input.reference, input.issueReference);
+    }
+    case "pr.issue.remove.preview": {
+      const input = parseOperationInput("pr.issue.remove.preview", request.input);
+      const pullRequest = service.resolveStoredPullRequest(input.reference);
+      return service.getIssueRemovalPreview("pull-request", pullRequest.id, input.issueReference);
+    }
+    case "pr.issue.remove": {
+      const input = parseOperationInput("pr.issue.remove", request.input);
+      return service.removePullRequestIssue(input.reference, input.issueReference);
+    }
+    case "branch.sync": {
+      const input = parseOperationInput("branch.sync", request.input);
+      return await service.syncBranchReview(input.repositoryPath);
+    }
+    case "branch.issue.add": {
+      const input = parseOperationInput("branch.issue.add", request.input);
+      return await service.addBranchIssue(input.repositoryPath, input.issueReference);
+    }
+    case "branch.issue.remove.preview": {
+      const input = parseOperationInput("branch.issue.remove.preview", request.input);
+      const opened = await service.openBranchReview(input.repositoryPath);
+      return service.getIssueRemovalPreview("branch", opened.branchReview.id, input.issueReference);
+    }
+    case "branch.issue.remove": {
+      const input = parseOperationInput("branch.issue.remove", request.input);
+      return await service.removeBranchIssue(input.repositoryPath, input.issueReference);
+    }
+    case "branch.reset.preview": {
+      const input = parseOperationInput("branch.reset.preview", request.input);
+      const opened = await service.openBranchReview(input.repositoryPath);
+      return await service.getBranchResetPreview(opened.branchReview.id);
+    }
+    case "branch.reset": {
+      const input = parseOperationInput("branch.reset", request.input);
+      const opened = await service.openBranchReview(input.repositoryPath);
+      return await service.resetBranchReview(opened.branchReview.id);
+    }
+    case "branch.comments": {
+      const input = parseOperationInput("branch.comments", request.input);
+      const opened = await service.openBranchReview(input.repositoryPath);
+      return {
+        context: {
+          kind: "branch",
+          branchReviewId: opened.branchReview.id,
+          repository: opened.branchReview.canonicalName,
+        },
+        branchReview: opened.branchReview,
+        comments: await service.listBranchCommentContexts(opened.branchReview.id, input.resolved),
+      };
+    }
     case "comment.list": {
       const input = parseOperationInput("comment.list", request.input);
       return await service.listCommentReviewContexts(input.reference, input.resolved, {
@@ -271,7 +324,7 @@ export async function dispatchAgentSocketRequest(
     }
     case "comment.get": {
       const input = parseOperationInput("comment.get", request.input);
-      return await service.getCommentReviewContext(input.uri, { live: input.live });
+      return await service.getAnyCommentReviewContext(input.uri, { live: input.live });
     }
     case "comment.reply": {
       const input = parseOperationInput("comment.reply", request.input);
@@ -300,7 +353,7 @@ export async function dispatchAgentSocketRequest(
     }
     case "walkthrough.get": {
       const input = parseOperationInput("walkthrough.get", request.input);
-      return service.getWalkthroughByUri(input.uri);
+      return service.getAnyWalkthroughByUri(input.uri);
     }
     case "walkthrough.publish": {
       const input = parseOperationInput("walkthrough.publish", request.input);

@@ -1,11 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import type {
-  CodeReference,
-  CommentPlacement,
-  CommentPost,
-  ReviewComment,
-} from "../../domain/models.js";
+import type { CodeReference, CommentPlacement, CommentPost } from "../../domain/models.js";
 import { api, jsonRequest } from "../api.js";
 import {
   deleteCommentReplyDraftsForComment,
@@ -14,6 +9,8 @@ import {
   writeCommentReplyDraft,
 } from "../comment-draft-store.js";
 import type { ThemePreference } from "../theme.js";
+import { reviewIdForComment, type AnyReviewComment } from "../review-context.js";
+import { reviewQueryKeys } from "../review-query-keys.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
 import { CommentMarkdown } from "./CommentMarkdown.js";
 import { ErrorNotice } from "./ErrorNotice.js";
@@ -37,8 +34,13 @@ const inlineExpansionByComment = new Map<string, StoredInlineExpansion>();
 const pendingInlineScrollByComment = new Set<string>();
 const referenceNoticeDurationMs = 2400;
 
-function rangeLabel(comment: ReviewComment, placement: CommentPlacement | null): string | null {
-  if (comment.target.kind === "pull-request" || comment.target.startLine === null) return null;
+function rangeLabel(comment: AnyReviewComment, placement: CommentPlacement | null): string | null {
+  if (
+    comment.target.kind === "pull-request" ||
+    comment.target.kind === "branch" ||
+    comment.target.startLine === null
+  )
+    return null;
   const range = placement && !placement.outdated ? placement.range : null;
   const start = range?.startLine ?? comment.target.startLine;
   const end = range?.endLine ?? comment.target.endLine ?? start;
@@ -46,15 +48,22 @@ function rangeLabel(comment: ReviewComment, placement: CommentPlacement | null):
 }
 
 function targetLabel(
-  comment: ReviewComment,
+  comment: AnyReviewComment,
   placement: CommentPlacement | null,
   side: DiffSide,
 ): string {
   if (comment.target.kind === "pull-request") return "Pull Request全体";
+  if (comment.target.kind === "branch") return "Branch Review全体";
   if (comment.target.kind === "walkthrough") {
     return [
       comment.target.walkthroughTitle,
       rangeLabel(comment, placement) ?? "ウォークスルー全体",
+    ].join(" · ");
+  }
+  if (comment.target.kind === "issue") {
+    return [
+      `#${comment.target.issueNumber} ${comment.target.issueTitle}`,
+      rangeLabel(comment, placement) ?? "Issue全体",
     ].join(" · ");
   }
   const path =
@@ -69,13 +78,17 @@ function targetLabel(
 }
 
 function inlineTargetLabel(
-  comment: ReviewComment,
+  comment: AnyReviewComment,
   placement: CommentPlacement | null,
   side: DiffSide,
 ): string {
   if (comment.target.kind === "pull-request") return "Pull Request全体";
+  if (comment.target.kind === "branch") return "Branch Review全体";
   if (comment.target.kind === "walkthrough") {
     return rangeLabel(comment, placement) ?? "ウォークスルー全体";
+  }
+  if (comment.target.kind === "issue") {
+    return rangeLabel(comment, placement) ?? "Issue全体";
   }
   const range = rangeLabel(comment, placement);
   const level =
@@ -84,7 +97,7 @@ function inlineTargetLabel(
   return side === "deletions" ? `変更前 · ${level}` : level;
 }
 
-function navigationLabel(comment: ReviewComment): string {
+function navigationLabel(comment: AnyReviewComment): string {
   return comment.target.kind === "pull-request" ? "Pull Request.mdを開く" : "コメント対象を開く";
 }
 
@@ -107,7 +120,7 @@ function CommentPostMarkdown({
   onOpenCodeReference,
   onOpenRepositoryLink,
 }: {
-  comment: ReviewComment;
+  comment: AnyReviewComment;
   post: CommentPost;
   markdownSourceOid?: string | undefined;
   themePreference: ThemePreference;
@@ -131,7 +144,7 @@ function CommentPostMarkdown({
     post.relatedCommitOid ??
     repositoryTarget?.sourceOid ??
     markdownSourceOid ??
-    comment.createdHeadOid;
+    ("createdHeadOid" in comment ? comment.createdHeadOid : comment.createdSourceOid);
   useEffect(
     () => () => {
       if (referenceNoticeTimeout.current !== null) {
@@ -160,7 +173,9 @@ function CommentPostMarkdown({
     <>
       <CommentMarkdown
         body={post.body}
-        pullRequestId={comment.pullRequestId}
+        {...("pullRequestId" in comment
+          ? { pullRequestId: comment.pullRequestId }
+          : { branchReviewId: comment.branchReviewId })}
         sourceOid={sourceOid}
         sourcePath={repositoryTarget?.path ?? null}
         references={post.references}
@@ -192,7 +207,7 @@ export function CommentThread({
   onDeleted,
   onActiveChange,
 }: {
-  comment: ReviewComment;
+  comment: AnyReviewComment;
   variant?: CommentThreadVariant;
   placement?: CommentPlacement | null;
   side?: DiffSide;
@@ -212,11 +227,12 @@ export function CommentThread({
   onActiveChange?: (commentId: string, active: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const reviewId = reviewIdForComment(comment);
   const replyDraftKey = `${variant}:${comment.id}`;
   const replyDraft = useSyncExternalStore(
     subscribeCommentReplyDrafts,
-    () => readCommentReplyDraft(comment.pullRequestId, replyDraftKey),
-    () => readCommentReplyDraft(comment.pullRequestId, replyDraftKey),
+    () => readCommentReplyDraft(reviewId, replyDraftKey),
+    () => readCommentReplyDraft(reviewId, replyDraftKey),
   );
   const reply = replyDraft.body;
   const replyInputRef = useRef<HTMLTextAreaElement>(null);
@@ -384,10 +400,10 @@ export function CommentThread({
 
   const invalidate = async (): Promise<void> => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["comments"] }),
-      queryClient.invalidateQueries({ queryKey: ["change-sequence"] }),
-      queryClient.invalidateQueries({ queryKey: ["annotations"] }),
-      queryClient.invalidateQueries({ queryKey: ["comment-placement"] }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() }),
+      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allCommentPlacements() }),
     ]);
   };
   const replyMutation = useMutation({
@@ -397,8 +413,8 @@ export function CommentThread({
         jsonRequest({ body: reply, authorLabel: "You", relatedCommitOid: null }),
       ),
     onSuccess: async () => {
-      const currentReplyDraft = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
-      writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+      const currentReplyDraft = readCommentReplyDraft(reviewId, replyDraftKey);
+      writeCommentReplyDraft(reviewId, replyDraftKey, {
         revision: currentReplyDraft.revision,
         body: "",
         focused: currentReplyDraft.focused,
@@ -445,7 +461,7 @@ export function CommentThread({
         method: "DELETE",
       }),
     onSuccess: async () => {
-      deleteCommentReplyDraftsForComment(comment.pullRequestId, comment.id);
+      deleteCommentReplyDraftsForComment(reviewId, comment.id);
       onDeleted?.();
       await invalidate();
     },
@@ -653,7 +669,8 @@ export function CommentThread({
           )}
           {((comment.target.kind === "document" &&
             comment.target.documentKind === "pull-request-markdown") ||
-            comment.target.kind === "walkthrough") &&
+            comment.target.kind === "walkthrough" ||
+            comment.target.kind === "issue") &&
             comment.target.quotedText &&
             placementOutdated && (
               <div className="comment-source-quote">
@@ -730,22 +747,22 @@ export function CommentThread({
               ref={replyInputRef}
               value={reply}
               onChange={(event) => {
-                const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
-                writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+                const current = readCommentReplyDraft(reviewId, replyDraftKey);
+                writeCommentReplyDraft(reviewId, replyDraftKey, {
                   ...current,
                   body: event.target.value,
                 });
               }}
               onFocus={() => {
-                const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
-                writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+                const current = readCommentReplyDraft(reviewId, replyDraftKey);
+                writeCommentReplyDraft(reviewId, replyDraftKey, {
                   ...current,
                   focused: true,
                 });
               }}
               onBlur={() => {
-                const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
-                writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+                const current = readCommentReplyDraft(reviewId, replyDraftKey);
+                writeCommentReplyDraft(reviewId, replyDraftKey, {
                   ...current,
                   focused: false,
                 });

@@ -5,12 +5,9 @@ import {
   Suspense,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { changedFilePath } from "../../domain/changed-file.js";
@@ -19,44 +16,43 @@ import type {
   ChangeKind,
   CodeReference,
   CommentPlacement,
-  DocumentRef,
-  ReviewComment,
-  SearchResult,
+  IssueDocument,
   Walkthrough,
   WalkthroughReference,
-  WalkthroughSummary,
 } from "../../domain/models.js";
 import {
   api,
   ApiError,
   type ChangedFilesResponse,
   type CommentsResponse,
-  documentUrl,
-  type DocumentResponse,
   jsonRequest,
   type PullRequestResponse,
   type SearchResponse,
-  type ThemePreferenceResponse,
   type TreeResponse,
   type WalkthroughResponse,
   type WalkthroughsResponse,
 } from "../api.js";
 import { CommentSidebar } from "../components/CommentSidebar.js";
-import { DocumentTabs } from "../components/DocumentTabs.js";
 import { ErrorNotice } from "../components/ErrorNotice.js";
 import {
   decorateAllFilesWithChanges,
   FileTree,
   type FileTreeFile,
 } from "../components/FileTree.js";
-import { FileEntryIcon } from "../components/FileIcon.js";
 import { LazyLoadBoundary } from "../components/LazyLoadBoundary.js";
+import { ReviewActionsMenu } from "../components/ReviewActionsMenu.js";
+import { ReviewDocumentPane } from "../components/ReviewDocumentPane.js";
+import { ReviewSidebar } from "../components/ReviewSidebar.js";
+import { ReviewWorkspace } from "../components/ReviewWorkspace.js";
 import type { DisplayMode, ViewerNavigationTarget } from "../components/DocumentViewer.js";
 import { SearchPanel } from "../components/SearchPanel.js";
+import type { AnySearchResult } from "../components/SearchPanel.js";
 import { QuickOpenPalette } from "../components/QuickOpenPalette.js";
-import { applyThemePreference, storeThemePreference, type ThemePreference } from "../theme.js";
+import type { ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
+import type { AnyReviewComment, AnyWalkthrough, AnyWalkthroughSummary } from "../review-context.js";
+import { reviewQueryKeys } from "../review-query-keys.js";
 import {
   commitRangeOldOid,
   earliestIncludedCommitOid,
@@ -65,25 +61,27 @@ import {
 } from "../commit-range.js";
 import {
   currentCommitDocument,
-  documentPaneIds,
-  documentPaneTabKey,
   documentTabKey,
   initialDocumentWorkspace,
-  normalizeDocumentPanes,
-  preferredDocumentPane,
   type ActiveDocument,
   type DocumentPaneId,
 } from "../document-workspace.js";
-import { clearCommentDraftsForPullRequest } from "../comment-draft-store.js";
+import {
+  clearCommentDraftsForReview,
+  deleteCommentDraftForIssue,
+  deleteCommentReplyDraftsForComment,
+} from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
-import {
-  parseReadingHistoryEntry,
-  readingHistoryState,
-  sameReadingDocument,
-  type ReadingHistoryEntry,
-  type ReadingLocator,
-} from "../reading-history.js";
+import { useDebouncedValue } from "../use-debounced-value.js";
+import { useThemePreference } from "../use-theme-preference.js";
+import { useReviewSidebarSearch } from "../use-review-sidebar-search.js";
+import { useQuickOpenShortcut } from "../use-quick-open-shortcut.js";
+import { useReviewReadingHistory } from "../use-review-reading-history.js";
+import { parseReviewId } from "../review-id.js";
+import { useExactCodeReferenceNavigation } from "../use-exact-code-reference-navigation.js";
+import { useWalkthroughDocumentReconciliation } from "../use-walkthrough-document-reconciliation.js";
+import { useTemporaryFeedback } from "../use-temporary-feedback.js";
 const DocumentViewer = lazy(async () => {
   const module = await import("../components/DocumentViewer.js");
   return { default: module.DocumentViewer };
@@ -91,6 +89,10 @@ const DocumentViewer = lazy(async () => {
 const WalkthroughViewer = lazy(async () => {
   const module = await import("../components/WalkthroughViewer.js");
   return { default: module.WalkthroughViewer };
+});
+const BranchReviewApp = lazy(async () => {
+  const module = await import("./BranchReviewApp.js");
+  return { default: module.BranchReviewApp };
 });
 
 function changePath(change: ChangedFile): string {
@@ -101,98 +103,7 @@ function shortOid(oid: string): string {
   return oid.slice(0, 8);
 }
 
-const DEFAULT_SIDEBAR_WIDTH = 330;
-const MIN_SIDEBAR_WIDTH = 240;
-const MAX_SIDEBAR_WIDTH = 560;
-const MIN_MAIN_VIEW_WIDTH = 500;
-const DEFAULT_PANE_SPLIT = 50;
-const MIN_PANE_WIDTH = 280;
-
-function clamp(value: number, minimum: number, maximum: number): number {
-  return Math.min(maximum, Math.max(minimum, value));
-}
-
-function initialSidebarWidth(): number {
-  return window.innerWidth <= 850 ? 280 : DEFAULT_SIDEBAR_WIDTH;
-}
-
-function useDebouncedValue<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setDebouncedValue(value), delay);
-    return () => window.clearTimeout(timeout);
-  }, [delay, value]);
-  return debouncedValue;
-}
-
 type DocumentDisplayMode = "full" | "diff";
-
-interface AppliedLineNavigation {
-  requestId: number;
-  documentKey: string;
-  pane: DocumentPaneId;
-  top: number;
-}
-
-function SidebarCommentIcon() {
-  return (
-    <svg className="sidebar-stack-icon" aria-hidden="true" viewBox="0 0 16 16">
-      <path
-        fill="currentColor"
-        d="M1.75 2.5A1.75 1.75 0 0 1 3.5.75h9a1.75 1.75 0 0 1 1.75 1.75v7a1.75 1.75 0 0 1-1.75 1.75H7.06l-3.88 3.1A.75.75 0 0 1 2 13.77v-2.7A1.75 1.75 0 0 1 1.75 9.5v-7Zm1.75-.25a.25.25 0 0 0-.25.25v7c0 .14.11.25.25.25V12.2l3.03-2.42a.75.75 0 0 1 .47-.17h5.5a.25.25 0 0 0 .25-.25V2.5a.25.25 0 0 0-.25-.25h-9Z"
-      />
-    </svg>
-  );
-}
-
-function SidebarChevron({ expanded }: { expanded: boolean }) {
-  return (
-    <svg className="sidebar-stack-chevron" aria-hidden="true" viewBox="0 0 16 16">
-      <path
-        fill="currentColor"
-        d={
-          expanded
-            ? "M3.72 5.97a.75.75 0 0 1 1.06 0L8 9.19l3.22-3.22a.75.75 0 1 1 1.06 1.06l-3.75 3.75a.75.75 0 0 1-1.06 0L3.72 7.03a.75.75 0 0 1 0-1.06Z"
-            : "M5.97 3.72a.75.75 0 0 1 1.06 0l3.75 3.75a.75.75 0 0 1 0 1.06l-3.75 3.75a.75.75 0 1 1-1.06-1.06L9.19 8 5.97 4.78a.75.75 0 0 1 0-1.06Z"
-        }
-      />
-    </svg>
-  );
-}
-
-function SidebarSearchIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16">
-      <circle cx="7" cy="7" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <path d="m10.5 10.5 3.25 3.25" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function SidebarBackIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16">
-      <path
-        d="M9.75 3.25 5 8l4.75 4.75"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.5"
-      />
-    </svg>
-  );
-}
-
-function MoreActionsIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16">
-      <circle cx="3" cy="8" r="1.4" fill="currentColor" />
-      <circle cx="8" cy="8" r="1.4" fill="currentColor" />
-      <circle cx="13" cy="8" r="1.4" fill="currentColor" />
-    </svg>
-  );
-}
 
 function CommitRangePicker({
   commits,
@@ -486,13 +397,6 @@ function ReviewScopeBar({
   );
 }
 
-const themeOptions: { preference: ThemePreference; label: string }[] = [
-  { preference: "light", label: "ライトモード" },
-  { preference: "dark", label: "ダークモード" },
-  { preference: "system", label: "システム" },
-];
-const SYNC_FEEDBACK_DURATION_MS = 3_000;
-
 function pullRequestLoadErrorMessage(error: unknown): string {
   if (error instanceof ApiError && error.code === "PULL_REQUEST_NOT_FOUND") {
     return "Pull Requestが見つかりません。`rvw open`から起動し直してください。";
@@ -500,16 +404,11 @@ function pullRequestLoadErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "PR commitがありません。";
 }
 
-export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
+function PullRequestApp({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
   const queryClient = useQueryClient();
   const pullRequestIdParameter = new URL(window.location.href).searchParams.get("pullRequestId");
-  const pullRequestIdValid = Boolean(
-    pullRequestIdParameter &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
-      pullRequestIdParameter,
-    ),
-  );
-  const pullRequestId = pullRequestIdValid ? pullRequestIdParameter : null;
+  const pullRequestId = parseReviewId(pullRequestIdParameter);
+  const reviewHistoryKey = pullRequestId ? `pull-request:${pullRequestId}` : null;
   const [selectedOid, setSelectedOid] = useState<string | null>(null);
   const [rangeStartOid, setRangeStartOid] = useState<string | null>(null);
   const [documentDisplayMode, setDocumentDisplayMode] = useState<DocumentDisplayMode>("full");
@@ -522,17 +421,12 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     Record<DocumentPaneId, ViewerNavigationTarget | null>
   >({ left: null, right: null });
   const viewerNavigationTargetsRef = useRef(viewerNavigationTargets);
-  const appliedLineNavigation = useRef<Record<DocumentPaneId, AppliedLineNavigation | null>>({
-    left: null,
-    right: null,
-  });
   viewerNavigationTargetsRef.current = viewerNavigationTargets;
   const resetViewerNavigation = useCallback((paneIds: readonly DocumentPaneId[]): void => {
     const uniquePaneIds = [...new Set(paneIds)];
     const nextTargets = { ...viewerNavigationTargetsRef.current };
     for (const paneId of uniquePaneIds) {
       nextTargets[paneId] = null;
-      appliedLineNavigation.current[paneId] = null;
     }
     viewerNavigationTargetsRef.current = nextTargets;
     setViewerNavigationTargets((current) => {
@@ -551,9 +445,6 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     moveDocument,
     dropDocument: dropWorkspaceDocument,
   } = useDocumentWorkspace(resetViewerNavigation);
-  const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
-  const [paneSplit, setPaneSplit] = useState(DEFAULT_PANE_SPLIT);
-  const [resizingSurface, setResizingSurface] = useState<"sidebar" | "panes" | null>(null);
   const [draggedDocumentKey, setDraggedDocumentKey] = useState<string | null>(null);
   const [fileFilter, setFileFilter] = useState("");
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
@@ -561,10 +452,20 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [searchText, setSearchText] = useState("");
   const [searchMatchCase, setSearchMatchCase] = useState(false);
   const [searchWholeWord, setSearchWholeWord] = useState(false);
-  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [issueReference, setIssueReference] = useState("");
+  const [issueAddOpen, setIssueAddOpen] = useState(false);
   const [reviewStateRevision, setReviewStateRevision] = useState(0);
-  const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
-  const [themePreference, setThemePreference] = useState<ThemePreference>(initialThemePreference);
+  const {
+    feedback: syncFeedback,
+    showFeedback: showSyncFeedback,
+    clearFeedback: clearSyncFeedback,
+  } = useTemporaryFeedback();
+  const {
+    themePreference,
+    selectThemePreference,
+    query: themePreferenceQuery,
+    mutation: themePreferenceMutation,
+  } = useThemePreference(initialThemePreference);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const handleCommentActiveChange = useCallback((commentId: string, active: boolean): void => {
     setActiveCommentId((current) => (active ? commentId : current === commentId ? null : current));
@@ -573,15 +474,13 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const commitRangeTouched = useRef(false);
   const observedLatestHead = useRef<string | null>(null);
   const observedChangeSequence = useRef<number | null>(null);
-  const actionsMenuRef = useRef<HTMLDivElement>(null);
-  const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const searchNavigationSequence = useRef(0);
-  const codeReferenceRequestSequence = useRef<Record<DocumentPaneId, number>>({
-    left: 0,
-    right: 0,
-  });
   const debouncedSearch = useDebouncedValue(searchText.trim(), 250);
+  const openSidebarSearch = useReviewSidebarSearch({
+    searchInputRef,
+    onCodeExpandedChange: setCodeExpanded,
+    onModeChange: setCodeNavigationMode,
+  });
   const openDocuments = useMemo(
     () => [...documentWorkspace.documents.left, ...documentWorkspace.documents.right],
     [documentWorkspace.documents.left, documentWorkspace.documents.right],
@@ -593,264 +492,37 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     right: null,
   });
   const documentScrollPositions = useRef(new Map<string, number>());
-  const readingHistoryReady = useRef(false);
-  const readingHistoryScrollTimeout = useRef<number | null>(null);
-  const leftActiveDocumentKey = documentWorkspace.active.left
-    ? documentPaneTabKey("left", documentWorkspace.active.left)
-    : null;
-  const rightActiveDocumentKey = documentWorkspace.active.right
-    ? documentPaneTabKey("right", documentWorkspace.active.right)
-    : null;
-  const previousDocumentWorkspace = useRef(documentWorkspace);
-
-  useLayoutEffect(() => {
-    const previous = previousDocumentWorkspace.current;
-    for (const sourcePane of ["left", "right"] as const) {
-      const targetPane = sourcePane === "left" ? "right" : "left";
-      for (const document of previous.documents[sourcePane]) {
-        const key = documentTabKey(document);
-        const remainedInSource = documentWorkspace.documents[sourcePane].some(
-          (candidate) => documentTabKey(candidate) === key,
-        );
-        const alreadyExistedInTarget = previous.documents[targetPane].some(
-          (candidate) => documentTabKey(candidate) === key,
-        );
-        const movedToTarget = documentWorkspace.documents[targetPane].some(
-          (candidate) => documentTabKey(candidate) === key,
-        );
-        if (remainedInSource || alreadyExistedInTarget || !movedToTarget) continue;
-        const sourceKey = documentPaneTabKey(sourcePane, document);
-        const sourceTop = documentScrollPositions.current.get(sourceKey);
-        if (sourceTop !== undefined) {
-          documentScrollPositions.current.set(documentPaneTabKey(targetPane, document), sourceTop);
-        }
-      }
-    }
-    previousDocumentWorkspace.current = documentWorkspace;
-  }, [documentWorkspace]);
-
-  useLayoutEffect(() => {
-    const pane = paneElements.current.left;
-    if (!pane || !leftActiveDocumentKey) return;
-    pane.scrollTop = documentScrollPositions.current.get(leftActiveDocumentKey) ?? 0;
-  }, [leftActiveDocumentKey, reviewStateRevision]);
-  useLayoutEffect(() => {
-    const pane = paneElements.current.right;
-    if (!pane || !rightActiveDocumentKey) return;
-    pane.scrollTop = documentScrollPositions.current.get(rightActiveDocumentKey) ?? 0;
-  }, [reviewStateRevision, rightActiveDocumentKey]);
-
-  const currentReadingHistoryEntry = useCallback((): ReadingHistoryEntry | null => {
-    if (!pullRequestId) return null;
-    const workspace = documentWorkspaceRef.current;
-    const pane = workspace.focusedPane;
-    const document = workspace.active[pane];
-    if (!document) return null;
-    const documentKey = documentTabKey(document);
-    const paneDocumentKey = documentPaneTabKey(pane, document);
-    const navigationTarget = viewerNavigationTargetsRef.current[pane];
-    const scrollTop =
-      paneElements.current[pane]?.scrollTop ??
-      documentScrollPositions.current.get(paneDocumentKey) ??
-      0;
-    const lineNavigation = appliedLineNavigation.current[pane];
-    const lineNavigationStillAnchored = Boolean(
-      navigationTarget?.pane === pane &&
-      navigationTarget.documentKey === documentKey &&
-      (!lineNavigation ||
-        lineNavigation.requestId !== navigationTarget.requestId ||
-        lineNavigation.documentKey !== documentKey ||
-        lineNavigation.pane !== pane ||
-        Math.abs(lineNavigation.top - scrollTop) <= 1),
-    );
-    const locator: ReadingLocator =
-      navigationTarget?.documentKey === documentKey && lineNavigationStillAnchored
-        ? {
-            kind: "line",
-            line: navigationTarget.line,
-            ...(navigationTarget.endLine === undefined
-              ? {}
-              : { endLine: navigationTarget.endLine }),
-          }
-        : {
-            kind: "scroll",
-            top: scrollTop,
-          };
-    return {
-      version: 1,
-      pullRequestId,
-      pane,
-      document,
-      locator,
-    };
-  }, [pullRequestId]);
-
-  const markLineNavigationApplied = useCallback(
-    (pane: DocumentPaneId, requestId: number): void => {
-      const navigationTarget = viewerNavigationTargetsRef.current[pane];
-      const workspace = documentWorkspaceRef.current;
-      const document = workspace.active[pane];
-      if (
-        !navigationTarget ||
-        navigationTarget.requestId !== requestId ||
-        navigationTarget.pane !== pane ||
-        !document ||
-        documentTabKey(document) !== navigationTarget.documentKey
-      ) {
-        return;
-      }
-      appliedLineNavigation.current[pane] = {
-        requestId,
-        documentKey: navigationTarget.documentKey,
-        pane,
-        top:
-          paneElements.current[pane]?.scrollTop ??
-          documentScrollPositions.current.get(documentPaneTabKey(pane, document)) ??
-          0,
-      };
-    },
-    [documentWorkspaceRef],
-  );
-
-  const cancelReadingHistoryScrollSnapshot = useCallback((): void => {
-    if (readingHistoryScrollTimeout.current === null) return;
-    window.clearTimeout(readingHistoryScrollTimeout.current);
-    readingHistoryScrollTimeout.current = null;
-  }, []);
-
-  const replaceCurrentReadingHistory = useCallback((): void => {
-    if (!readingHistoryReady.current) return;
-    const entry = currentReadingHistoryEntry();
-    if (!entry) return;
-    window.history.replaceState(readingHistoryState(window.history.state, entry), "");
-  }, [currentReadingHistoryEntry]);
-
-  const scheduleReadingHistoryScrollSnapshot = useCallback((): void => {
-    if (!readingHistoryReady.current) return;
-    cancelReadingHistoryScrollSnapshot();
-    readingHistoryScrollTimeout.current = window.setTimeout(() => {
-      readingHistoryScrollTimeout.current = null;
-      replaceCurrentReadingHistory();
-    }, 150);
-  }, [cancelReadingHistoryScrollSnapshot, replaceCurrentReadingHistory]);
-
-  const pushReadingHistory = useCallback(
-    (
-      document: ActiveDocument,
-      pane: DocumentPaneId,
-      locator: ReadingLocator,
-      hash?: string,
-    ): void => {
-      if (!pullRequestId || !readingHistoryReady.current) return;
-      cancelReadingHistoryScrollSnapshot();
-      const currentWorkspace = documentWorkspaceRef.current;
-      const currentDocument = currentWorkspace.active[currentWorkspace.focusedPane];
-      replaceCurrentReadingHistory();
-      const destination: ReadingHistoryEntry = {
-        version: 1,
-        pullRequestId,
-        pane,
-        document,
-        locator,
-      };
-      if (
-        locator.kind === "scroll" &&
-        currentDocument &&
-        currentWorkspace.focusedPane === pane &&
-        sameReadingDocument(currentDocument, document)
-      ) {
-        window.history.replaceState(readingHistoryState(window.history.state, destination), "");
-        return;
-      }
-      const url = new URL(window.location.href);
-      url.hash = hash ?? "";
-      window.history.pushState(readingHistoryState(window.history.state, destination), "", url);
-    },
-    [cancelReadingHistoryScrollSnapshot, pullRequestId, replaceCurrentReadingHistory],
-  );
-
-  const requestLineNavigation = useCallback(
-    (
-      documentKey: string,
-      pane: DocumentPaneId,
-      locator: Extract<ReadingLocator, { kind: "line" }>,
-      resetHorizontal: boolean,
-    ) => {
-      searchNavigationSequence.current += 1;
-      const target: ViewerNavigationTarget = {
-        documentKey,
-        pane,
-        line: locator.line,
-        ...(locator.endLine === undefined ? {} : { endLine: locator.endLine }),
-        requestId: searchNavigationSequence.current,
-        resetHorizontal,
-      };
-      appliedLineNavigation.current[pane] = null;
-      const nextTargets = { ...viewerNavigationTargetsRef.current, [pane]: target };
-      viewerNavigationTargetsRef.current = nextTargets;
-      setViewerNavigationTargets(nextTargets);
-    },
-    [],
-  );
-
-  const navigateToDocument = useCallback(
-    (
-      document: ActiveDocument,
-      targetPane?: DocumentPaneId,
-      locator?: ReadingLocator,
-      resetHorizontal = true,
-    ): void => {
-      const documentKey = documentTabKey(document);
-      const pane = targetPane ?? "left";
-      const destinationLocator =
-        locator ??
-        ({
-          kind: "scroll",
-          top: documentScrollPositions.current.get(documentPaneTabKey(pane, document)) ?? 0,
-        } satisfies ReadingLocator);
-      pushReadingHistory(document, pane, destinationLocator);
-      openWorkspaceDocument(document, pane);
-      if (destinationLocator.kind === "line") {
-        requestLineNavigation(documentKey, pane, destinationLocator, resetHorizontal);
-      }
-    },
-    [openWorkspaceDocument, pushReadingHistory, requestLineNavigation],
-  );
-
-  const navigateToMarkdownFragment = useCallback(
-    (document: ActiveDocument, pane: DocumentPaneId, line: number, hash: string): void => {
-      const documentKey = documentTabKey(document);
-      const locator = { kind: "line", line } satisfies ReadingLocator;
-      pushReadingHistory(document, pane, locator, hash);
-      requestLineNavigation(documentKey, pane, locator, true);
-    },
-    [pushReadingHistory, requestLineNavigation],
-  );
+  const {
+    activateDocument,
+    initializeReadingHistory,
+    markLineNavigationApplied,
+    navigateToDocument,
+    navigateToMarkdownFragment,
+    recordPaneScroll,
+  } = useReviewReadingHistory({
+    reviewKey: reviewHistoryKey,
+    workspace: documentWorkspace,
+    workspaceRef: documentWorkspaceRef,
+    paneElements,
+    documentScrollPositions,
+    viewerNavigationTargets,
+    setViewerNavigationTargets,
+    openWorkspaceDocument,
+    activateWorkspaceDocument,
+    scrollRevision: reviewStateRevision,
+  });
+  const openCodeReference = useExactCodeReferenceNavigation({
+    reviewKind: "pull-request",
+    reviewId: pullRequestId,
+    workspaceRef: documentWorkspaceRef,
+    navigateToDocument,
+  });
 
   const openDocument = useCallback(
     (document: ActiveDocument, targetPane?: DocumentPaneId): void =>
       navigateToDocument(document, targetPane),
     [navigateToDocument],
   );
-
-  const activateDocument = useCallback(
-    (document: ActiveDocument, pane?: DocumentPaneId): void => {
-      const workspace = documentWorkspaceRef.current;
-      const targetPane = pane ?? preferredDocumentPane(workspace, document);
-      pushReadingHistory(document, targetPane, {
-        kind: "scroll",
-        top: documentScrollPositions.current.get(documentPaneTabKey(targetPane, document)) ?? 0,
-      });
-      activateWorkspaceDocument(document, targetPane);
-    },
-    [activateWorkspaceDocument, pushReadingHistory],
-  );
-
-  useEffect(() => {
-    if (!syncFeedback) return;
-    const timeoutId = window.setTimeout(() => setSyncFeedback(null), SYNC_FEEDBACK_DURATION_MS);
-    return () => window.clearTimeout(timeoutId);
-  }, [syncFeedback]);
 
   const dropDocument = useCallback(
     (documentKey: string, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
@@ -860,58 +532,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     [dropWorkspaceDocument],
   );
 
-  const updateSidebarWidth = (clientX: number, workspace: HTMLElement): void => {
-    const bounds = workspace.getBoundingClientRect();
-    const dynamicMaximum = Math.max(
-      MIN_SIDEBAR_WIDTH,
-      Math.min(MAX_SIDEBAR_WIDTH, bounds.width - MIN_MAIN_VIEW_WIDTH),
-    );
-    setSidebarWidth(clamp(clientX - bounds.left, MIN_SIDEBAR_WIDTH, dynamicMaximum));
-  };
-  const updatePaneSplit = (clientX: number, mainView: HTMLElement): void => {
-    const bounds = mainView.getBoundingClientRect();
-    const minimumWidth = Math.min(MIN_PANE_WIDTH, Math.max(160, (bounds.width - 48) / 2));
-    const minimumPercent = (minimumWidth / bounds.width) * 100;
-    const nextPercent = ((clientX - bounds.left) / bounds.width) * 100;
-    setPaneSplit(clamp(nextPercent, minimumPercent, 100 - minimumPercent));
-  };
-  const finishResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    setResizingSurface(null);
-  };
-
-  const themePreferenceQuery = useQuery({
-    queryKey: ["theme-preference"],
-    queryFn: async () => await api<ThemePreferenceResponse>("/api/preferences/theme"),
-  });
-  useEffect(() => {
-    const preference = themePreferenceQuery.data?.themePreference;
-    if (!preference) return;
-    setThemePreference(preference);
-    applyThemePreference(preference);
-    storeThemePreference(preference);
-  }, [themePreferenceQuery.data?.themePreference]);
-  const themePreferenceMutation = useMutation({
-    mutationFn: async (preference: ThemePreference) =>
-      await api<ThemePreferenceResponse>(
-        "/api/preferences/theme",
-        jsonRequest({ themePreference: preference }),
-      ),
-    onSuccess: (response) => {
-      queryClient.setQueryData(["theme-preference"], response);
-    },
-  });
-  const selectThemePreference = (preference: ThemePreference): void => {
-    setThemePreference(preference);
-    applyThemePreference(preference);
-    storeThemePreference(preference);
-    themePreferenceMutation.mutate(preference);
-  };
-
   const pullRequestQuery = useQuery({
-    queryKey: ["pull-request", pullRequestId],
+    queryKey: reviewQueryKeys.review("pull-request", pullRequestId),
     queryFn: async () => await api<PullRequestResponse>(`/api/pull-requests/${pullRequestId}`),
     enabled: Boolean(pullRequestId),
   });
@@ -919,6 +541,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const comparisonBaseOid = pullRequestQuery.data?.comparisonBaseOid ?? null;
   const latestHeadOid = pullRequestQuery.data?.headOid ?? null;
   const latestPullRequestTitle = pullRequestQuery.data?.pullRequest.latestTitle;
+  const commitSelectionRef = useRef({ selectedOid, rangeStartOid, latestHeadOid });
+  commitSelectionRef.current = { selectedOid, rangeStartOid, latestHeadOid };
 
   useEffect(() => {
     document.title = latestPullRequestTitle ? `rvw: ${latestPullRequestTitle}` : "rvw";
@@ -959,70 +583,10 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const displayMode: DisplayMode =
     documentDisplayMode === "full" ? "full" : rangeStartIndex === 0 ? "pull-request" : "range";
 
-  const restoreReadingHistory = useCallback(
-    (entry: ReadingHistoryEntry): void => {
-      cancelReadingHistoryScrollSnapshot();
-      const workspace = documentWorkspaceRef.current;
-      const documentKey = documentTabKey(entry.document);
-      const openPanes = documentPaneIds(workspace, entry.document);
-      const pane = openPanes.includes(entry.pane) ? entry.pane : (openPanes[0] ?? entry.pane);
-      if (entry.locator.kind === "scroll") {
-        documentScrollPositions.current.set(
-          documentPaneTabKey(pane, entry.document),
-          entry.locator.top,
-        );
-      }
-      openWorkspaceDocument(entry.document, pane);
-      if (entry.locator.kind === "line") {
-        requestLineNavigation(documentKey, pane, entry.locator, true);
-        return;
-      }
-      const scrollTop = entry.locator.top;
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => {
-          const paneElement = paneElements.current[pane];
-          if (paneElement) paneElement.scrollTop = scrollTop;
-        });
-      });
-    },
-    [cancelReadingHistoryScrollSnapshot, openWorkspaceDocument, requestLineNavigation],
-  );
-
   useEffect(() => {
-    const previousScrollRestoration = window.history.scrollRestoration;
-    window.history.scrollRestoration = "manual";
-    return () => {
-      cancelReadingHistoryScrollSnapshot();
-      window.history.scrollRestoration = previousScrollRestoration;
-    };
-  }, [cancelReadingHistoryScrollSnapshot]);
-
-  useEffect(() => {
-    if (!pullRequestId) return;
-    const restoreFromPopState = (event: PopStateEvent): void => {
-      const entry = parseReadingHistoryEntry(event.state, pullRequestId);
-      if (entry) restoreReadingHistory(entry);
-    };
-    window.addEventListener("popstate", restoreFromPopState);
-    return () => window.removeEventListener("popstate", restoreFromPopState);
-  }, [pullRequestId, restoreReadingHistory]);
-
-  useEffect(() => {
-    if (
-      !pullRequestId ||
-      !pullRequestQuery.isSuccess ||
-      !selectedOid ||
-      readingHistoryReady.current
-    ) {
-      return;
-    }
-    readingHistoryReady.current = true;
-    const entry = currentReadingHistoryEntry();
-    if (!entry) return;
-    const url = new URL(window.location.href);
-    url.hash = "";
-    window.history.replaceState(readingHistoryState(window.history.state, entry), "", url);
-  }, [currentReadingHistoryEntry, pullRequestId, pullRequestQuery.isSuccess, selectedOid]);
+    if (!pullRequestId || !pullRequestQuery.isSuccess || !selectedOid) return;
+    initializeReadingHistory();
+  }, [initializeReadingHistory, pullRequestId, pullRequestQuery.isSuccess, selectedOid]);
 
   useEffect(() => {
     const warnBeforeBrowserClose = (event: BeforeUnloadEvent): void => {
@@ -1032,82 +596,10 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     window.addEventListener("beforeunload", warnBeforeBrowserClose);
     return () => window.removeEventListener("beforeunload", warnBeforeBrowserClose);
   }, []);
-  useEffect(() => {
-    const openQuickOpen = (event: KeyboardEvent): void => {
-      if (
-        !(event.metaKey || event.ctrlKey) ||
-        event.shiftKey ||
-        event.altKey ||
-        event.key.toLowerCase() !== "p"
-      ) {
-        return;
-      }
-      event.preventDefault();
-      setActionsMenuOpen(false);
-      setQuickOpenReturnFocus(null);
-      setQuickOpenVisible(true);
-    };
-    document.addEventListener("keydown", openQuickOpen);
-    return () => document.removeEventListener("keydown", openQuickOpen);
-  }, []);
-  useEffect(() => {
-    const focusFullTextSearch = (event: KeyboardEvent): void => {
-      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== "f") {
-        return;
-      }
-      event.preventDefault();
-      setCodeExpanded(true);
-      setCodeNavigationMode("search");
-      window.requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-        searchInputRef.current?.select();
-      });
-    };
-    document.addEventListener("keydown", focusFullTextSearch);
-    return () => document.removeEventListener("keydown", focusFullTextSearch);
-  }, []);
-  useLayoutEffect(() => {
-    if (!actionsMenuOpen) return;
-    actionsMenuRef.current
-      ?.querySelector<HTMLButtonElement>('[role^="menuitem"]:not(:disabled)')
-      ?.focus();
-  }, [actionsMenuOpen]);
-  useEffect(() => {
-    if (!actionsMenuOpen) return;
-    const closeOnOutsidePointer = (event: PointerEvent): void => {
-      if (!actionsMenuRef.current?.contains(event.target as Node)) {
-        setActionsMenuOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
-      setActionsMenuOpen(false);
-      actionsMenuButtonRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [actionsMenuOpen]);
-  const handleActionsMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    const items = [
-      ...event.currentTarget.querySelectorAll<HTMLButtonElement>(
-        '[role^="menuitem"]:not(:disabled)',
-      ),
-    ];
-    if (items.length === 0) return;
-    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-    let nextIndex: number | null = null;
-    if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % items.length;
-    if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + items.length) % items.length;
-    if (event.key === "Home") nextIndex = 0;
-    if (event.key === "End") nextIndex = items.length - 1;
-    if (nextIndex === null) return;
-    event.preventDefault();
-    items[nextIndex]?.focus();
-  };
+  useQuickOpenShortcut(() => {
+    setQuickOpenReturnFocus(null);
+    setQuickOpenVisible(true);
+  });
   const selectCommitRange = (startOid: string, endOid: string): void => {
     const range = normalizedCommitRange(commits, startOid, endOid);
     if (!range) return;
@@ -1131,7 +623,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   };
 
   const treeQuery = useQuery({
-    queryKey: ["tree", pullRequestId, selectedOid],
+    queryKey: reviewQueryKeys.tree("pull-request", pullRequestId!, selectedOid ?? undefined),
     queryFn: async () =>
       await api<TreeResponse>(
         `/api/pull-requests/${pullRequestId}/tree?oid=${encodeURIComponent(selectedOid!)}`,
@@ -1139,7 +631,11 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     enabled: Boolean(pullRequestId && selectedOid),
   });
   const changedQuery = useQuery({
-    queryKey: ["changed-files", pullRequestId, effectiveOldOid, selectedOid],
+    queryKey: reviewQueryKeys.changedFiles(
+      pullRequestId,
+      effectiveOldOid ?? undefined,
+      selectedOid ?? undefined,
+    ),
     queryFn: async () =>
       await api<ChangedFilesResponse>(
         `/api/pull-requests/${pullRequestId}/changed-files?oldOid=${encodeURIComponent(effectiveOldOid!)}&newOid=${encodeURIComponent(selectedOid!)}`,
@@ -1153,29 +649,37 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     ),
   });
   const changeSequence = useQuery({
-    queryKey: ["change-sequence"],
+    queryKey: reviewQueryKeys.changeSequence("pull-request", pullRequestId),
     queryFn: async () =>
-      await api<{ changeSequence: number }>("/api/meta/change-sequence", viewerHeartbeatRequest()),
+      await api<{ changeSequence: number; reviewChangeSequence: number | null }>(
+        pullRequestId
+          ? `/api/meta/change-sequence?reviewKind=pull-request&reviewId=${encodeURIComponent(pullRequestId)}`
+          : "/api/meta/change-sequence",
+        viewerHeartbeatRequest(),
+      ),
     refetchInterval: 1000,
     refetchIntervalInBackground: true,
     networkMode: "always",
   });
   useEffect(() => {
-    const nextSequence = changeSequence.data?.changeSequence;
-    if (nextSequence === undefined) return;
+    const nextSequence = changeSequence.data?.reviewChangeSequence;
+    if (nextSequence === undefined || nextSequence === null) return;
     const previousSequence = observedChangeSequence.current;
     observedChangeSequence.current = nextSequence;
     if (previousSequence === null || previousSequence === nextSequence) return;
-    void queryClient.invalidateQueries({ queryKey: ["pull-request"] });
-    void queryClient.invalidateQueries({ queryKey: ["document"] });
-    void queryClient.invalidateQueries({ queryKey: ["annotations"] });
-    void queryClient.invalidateQueries({ queryKey: ["comment-placement"] });
-    void queryClient.invalidateQueries({ queryKey: ["search"] });
-    void queryClient.invalidateQueries({ queryKey: ["walkthroughs"] });
-    void queryClient.invalidateQueries({ queryKey: ["walkthrough"] });
-  }, [changeSequence.data?.changeSequence, queryClient]);
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allReviews("pull-request") });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.document() });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allCommentPlacements() });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allSearches() });
+    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allWalkthroughs() });
+  }, [changeSequence.data?.reviewChangeSequence, queryClient]);
   const commentsQuery = useQuery({
-    queryKey: ["comments", pullRequestId, changeSequence.data?.changeSequence],
+    queryKey: reviewQueryKeys.comments(
+      "pull-request",
+      pullRequestId,
+      changeSequence.data?.reviewChangeSequence ?? undefined,
+    ),
     queryFn: async () =>
       await api<CommentsResponse>(`/api/pull-requests/${pullRequestId}/comments?resolved=all`),
     enabled: Boolean(pullRequestId),
@@ -1186,65 +690,98 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   });
   const comments = commentsQuery.data?.comments ?? [];
   const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
+  const issuesQuery = useQuery({
+    queryKey: reviewQueryKeys.issues(
+      "pull-request",
+      pullRequestId,
+      changeSequence.data?.reviewChangeSequence ?? undefined,
+    ),
+    queryFn: async () =>
+      await api<{ issues: IssueDocument[] }>(`/api/pull-requests/${pullRequestId}/issues`),
+    enabled: Boolean(pullRequestId),
+  });
+  const issues = issuesQuery.data?.issues ?? [];
+  const addIssueMutation = useMutation({
+    mutationFn: async () =>
+      await api(
+        `/api/pull-requests/${pullRequestId}/issues`,
+        jsonRequest({ issue: issueReference }),
+      ),
+    onSuccess: async () => {
+      setIssueReference("");
+      setIssueAddOpen(false);
+      await queryClient.invalidateQueries({
+        queryKey: reviewQueryKeys.issues("pull-request", pullRequestId),
+      });
+    },
+  });
+  const removeIssueMutation = useMutation({
+    mutationFn: async (issue: IssueDocument) => {
+      const endpoint = `/api/pull-requests/${pullRequestId}/issues/${issue.id}`;
+      const response = await fetch(endpoint, {
+        ...jsonRequest({ yes: false }),
+        method: "DELETE",
+      });
+      const preview = (await response.json()) as {
+        counts?: {
+          issueWholeComments: number;
+          issueRangeComments: number;
+          replies: number;
+        };
+        error?: { code: string; message: string; details?: unknown; suggestions?: string[] };
+      };
+      if (response.status !== 409 || !preview.counts) {
+        throw new ApiError(
+          preview.error?.message ?? `HTTP ${response.status}`,
+          preview.error?.code ?? "HTTP_ERROR",
+          preview.error?.details,
+          preview.error?.suggestions ?? [],
+        );
+      }
+      const confirmed = window.confirm(
+        `Issue #${issue.number} ${issue.title} をこのPull Request Reviewから削除します。\n\nIssue全体コメント ${preview.counts.issueWholeComments}\nIssue本文rangeコメント ${preview.counts.issueRangeComments}\n返信 ${preview.counts.replies}\n\nこの操作は元に戻せません。`,
+      );
+      if (!confirmed) return null;
+      return await api(endpoint, {
+        ...jsonRequest({ yes: true }),
+        method: "DELETE",
+      });
+    },
+    onSuccess: async (result, issue) => {
+      if (!result || !pullRequestId) return;
+      deleteCommentDraftForIssue(pullRequestId, issue.id);
+      for (const comment of comments) {
+        if (comment.target.kind === "issue" && comment.target.issueId === issue.id) {
+          deleteCommentReplyDraftsForComment(pullRequestId, comment.id);
+        }
+      }
+      for (const paneId of ["left", "right"] as const) {
+        const openIssue = documentWorkspaceRef.current.documents[paneId].find(
+          (document) => document.kind === "issue" && document.id === issue.id,
+        );
+        if (openIssue) closeDocument(openIssue, paneId);
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: reviewQueryKeys.issues("pull-request", pullRequestId),
+        }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() }),
+      ]);
+    },
+  });
   const walkthroughsQuery = useQuery({
-    queryKey: ["walkthroughs", pullRequestId],
+    queryKey: reviewQueryKeys.walkthroughs("pull-request", pullRequestId!),
     queryFn: async () =>
       await api<WalkthroughsResponse>(`/api/pull-requests/${pullRequestId}/walkthroughs`),
     enabled: Boolean(pullRequestId),
   });
   const walkthroughs = walkthroughsQuery.data?.walkthroughs ?? [];
-  useEffect(() => {
-    if (!walkthroughsQuery.isSuccess) return;
-    const summaries = new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough]));
-    setDocumentWorkspace((current) => {
-      const rebind = (document: ActiveDocument | null): ActiveDocument | null => {
-        if (document?.kind !== "walkthrough") return document;
-        const summary = summaries.get(document.id);
-        return summary
-          ? {
-              kind: "walkthrough",
-              id: summary.id,
-              title: summary.title,
-              sourceOid: summary.sourceOid,
-            }
-          : null;
-      };
-      const documents = {
-        left: current.documents.left
-          .map(rebind)
-          .filter((document): document is ActiveDocument => document !== null),
-        right: current.documents.right
-          .map(rebind)
-          .filter((document): document is ActiveDocument => document !== null),
-      };
-      const activeDocument = (
-        paneId: DocumentPaneId,
-        document: ActiveDocument | null,
-      ): ActiveDocument | null => {
-        const rebound = rebind(document);
-        if (
-          rebound &&
-          documents[paneId].some(
-            (candidate) => documentTabKey(candidate) === documentTabKey(rebound),
-          )
-        ) {
-          return rebound;
-        }
-        return documents[paneId][0] ?? null;
-      };
-      return normalizeDocumentPanes({
-        ...current,
-        documents: {
-          left: documents.left,
-          right: documents.right,
-        },
-        active: {
-          left: activeDocument("left", current.active.left),
-          right: activeDocument("right", current.active.right),
-        },
-      });
-    });
-  }, [walkthroughsQuery.data?.walkthroughs, walkthroughsQuery.isSuccess]);
+  useWalkthroughDocumentReconciliation({
+    walkthroughs,
+    enabled: walkthroughsQuery.isSuccess,
+    setWorkspace: setDocumentWorkspace,
+  });
   const openWalkthroughIds = useMemo(
     () => [
       ...new Set(
@@ -1260,7 +797,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   );
   const walkthroughDetailQueries = useQueries({
     queries: openWalkthroughIds.map((walkthroughId) => ({
-      queryKey: ["walkthrough", pullRequestId, walkthroughId],
+      queryKey: reviewQueryKeys.walkthrough("pull-request", pullRequestId!, walkthroughId),
       queryFn: async () =>
         await api<WalkthroughResponse>(
           `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}`,
@@ -1321,14 +858,14 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   }, [fileFilter, files]);
 
   const searchQuery = useQuery({
-    queryKey: [
-      "search",
-      pullRequestId,
-      selectedOid,
+    queryKey: reviewQueryKeys.search(
+      "pull-request",
+      pullRequestId!,
+      selectedOid ?? undefined,
       debouncedSearch,
       searchMatchCase,
       searchWholeWord,
-    ],
+    ),
     queryFn: async ({ signal }) => {
       const parameters = new URLSearchParams({
         oid: selectedOid!,
@@ -1353,20 +890,13 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       );
     },
     onSuccess: async (result, options) => {
-      const wasAtLatest = selectedOid === latestHeadOid;
-      const wasSingleCommit = rangeStartOid === selectedOid;
-      const previousStartOid = rangeStartOid;
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["pull-request"] }),
-        queryClient.invalidateQueries({ queryKey: ["document"] }),
-        queryClient.invalidateQueries({ queryKey: ["annotations"] }),
-        queryClient.invalidateQueries({ queryKey: ["comment-placement"] }),
-        queryClient.invalidateQueries({ queryKey: ["search"] }),
-      ]);
-      if (wasAtLatest || !selectedOid) {
+      const selection = commitSelectionRef.current;
+      const wasAtLatest = selection.selectedOid === selection.latestHeadOid;
+      const wasSingleCommit = selection.rangeStartOid === selection.selectedOid;
+      if (wasAtLatest || !selection.selectedOid) {
         setSelectedOid(result.headOid);
         const previousStartStillExists = result.commits.some(
-          (commit) => commit.oid === previousStartOid,
+          (commit) => commit.oid === selection.rangeStartOid,
         );
         setRangeStartOid(
           !commitRangeTouched.current
@@ -1374,12 +904,18 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
             : wasSingleCommit
               ? result.headOid
               : previousStartStillExists
-                ? previousStartOid
+                ? selection.rangeStartOid
                 : earliestIncludedCommitOid(result.commits, result.headOid),
         );
       }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allReviews("pull-request") }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.document() }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() }),
+        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allCommentPlacements() }),
+      ]);
       if (options.announce) {
-        setSyncFeedback(
+        showSyncFeedback(
           `GitHubと同期しました · ${new Intl.DateTimeFormat("ja-JP", {
             hour: "2-digit",
             minute: "2-digit",
@@ -1414,7 +950,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       }
       const counts = preview.counts;
       const confirmed = window.confirm(
-        `ローカルレビュー状態を削除して再構築します。\n\nコメント ${counts.comments ?? 0}\n返信 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\n対象 ${counts.targets ?? 0}\nウォークスルー ${counts.walkthroughs ?? 0}\nウォークスルーコード参照 ${counts.walkthroughReferences ?? 0}\nGit ref ${counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
+        `ローカルレビュー状態を削除して再構築します。\n\nIssue membership ${counts.issueMemberships ?? 0}\nコメント ${counts.comments ?? 0}\n返信 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\n対象 ${counts.targets ?? 0}\nウォークスルー ${counts.walkthroughs ?? 0}\nウォークスルーコード参照 ${counts.walkthroughReferences ?? 0}\nGit ref ${counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
       );
       if (!confirmed) return null;
       return await api<{
@@ -1424,7 +960,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     },
     onSuccess: async (result) => {
       if (!result) return;
-      clearCommentDraftsForPullRequest(result.pullRequest.id);
+      clearCommentDraftsForReview(result.pullRequest.id);
       documentScrollPositions.current.clear();
       setReviewStateRevision((revision) => revision + 1);
       setDocumentWorkspace(initialDocumentWorkspace());
@@ -1469,7 +1005,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       openRepositoryMarkdownLink(filePath, sourceOid, openInRightPane ? "right" : "left"),
     [openRepositoryMarkdownLink],
   );
-  const openSearchResult = (result: SearchResult, openInRightPane = false): void => {
+  const openSearchResult = (result: AnySearchResult, openInRightPane = false): void => {
+    if ("branchReviewId" in result.document) return;
     const requestedDocument: ActiveDocument =
       result.document.kind === "pull-request-markdown"
         ? { kind: "pull-request-markdown" }
@@ -1491,10 +1028,11 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     navigateToDocument(document, targetPane, { kind: "line", line: result.line }, resetHorizontal);
   };
   const openCommentTarget = (
-    comment: ReviewComment,
+    comment: AnyReviewComment,
     placement: CommentPlacement | null,
     openInRightPane: boolean,
   ): void => {
+    if ("branchReviewId" in comment) return;
     const target = comment.target;
     const targetPane: DocumentPaneId = openInRightPane ? "right" : "left";
     const navigate = (
@@ -1530,6 +1068,17 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       }
       return;
     }
+    if (target.kind === "issue") {
+      const issue = issues.find((candidate) => candidate.id === target.issueId);
+      if (issue) {
+        navigate(
+          { kind: "issue", id: issue.id, number: issue.number, title: issue.title, url: issue.url },
+          startLine,
+          endLine,
+        );
+      }
+      return;
+    }
     if (target.documentKind === "pull-request-markdown") {
       const document: ActiveDocument = { kind: "pull-request-markdown" };
       navigate(document, startLine, endLine);
@@ -1544,7 +1093,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     navigate(document, startLine, endLine);
   };
   const openWalkthrough = useCallback(
-    (walkthrough: WalkthroughSummary, openInRightPane = false): void => {
+    (walkthrough: AnyWalkthroughSummary, openInRightPane = false): void => {
       openDocument(
         {
           kind: "walkthrough",
@@ -1557,84 +1106,21 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     },
     [openDocument],
   );
-  const openCodeReference = useCallback(
-    async (
-      pullRequestId: string,
-      sourceOid: string,
-      reference: CodeReference,
-      targetPane: DocumentPaneId,
-      comparisonPolicy: "exact-source" | "selected-range",
-    ): Promise<string | null> => {
-      codeReferenceRequestSequence.current[targetPane] += 1;
-      const requestSequence = codeReferenceRequestSequence.current[targetPane];
-      const targetNavigationRevision = documentWorkspaceRef.current.navigationRevision[targetPane];
-      const requestIsCurrent = (): boolean =>
-        requestSequence === codeReferenceRequestSequence.current[targetPane] &&
-        documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
-      const ref: DocumentRef = {
-        kind: "repository-file",
-        pullRequestId,
-        sourceOid,
-        path: reference.path,
-      };
-      try {
-        const referencedDocument = await queryClient.fetchQuery({
-          queryKey: ["document", ref],
-          queryFn: async () => (await api<DocumentResponse>(documentUrl(ref))).document,
-        });
-        if (!requestIsCurrent()) return null;
-        if (referencedDocument.availability !== "available") {
-          return referencedDocument.availability === "missing"
-            ? `リンク切れ · ${reference.path}`
-            : `参照先を表示できません · ${reference.path}`;
-        }
-      } catch (error) {
-        if (!requestIsCurrent()) return null;
-        return error instanceof ApiError &&
-          ["COMMIT_NOT_FOUND", "DOCUMENT_NOT_FOUND", "NOT_FOUND"].includes(error.code)
-          ? `リンク切れ · ${reference.path}`
-          : `参照先を開けません · ${reference.path}`;
-      }
-      const document: ActiveDocument = {
-        kind: "repository-file",
-        path: reference.path,
-        sourceOid,
-        comparisonPolicy,
-      };
-      const documentKey = documentTabKey(document);
-      const activeTarget = documentWorkspaceRef.current.active[targetPane];
-      const resetHorizontal = !activeTarget || documentTabKey(activeTarget) !== documentKey;
-      navigateToDocument(
-        document,
-        targetPane,
-        {
-          kind: "line",
-          line: reference.startLine,
-          ...(reference.endLine === null ? {} : { endLine: reference.endLine }),
-        },
-        resetHorizontal,
-      );
-      return null;
-    },
-    [navigateToDocument, queryClient],
-  );
   const openWalkthroughReference = useCallback(
     (
-      walkthrough: Walkthrough,
+      walkthrough: AnyWalkthrough,
       reference: WalkthroughReference,
       targetPane: DocumentPaneId,
-    ): Promise<string | null> =>
-      openCodeReference(
-        walkthrough.pullRequestId,
-        walkthrough.sourceOid,
-        reference,
-        targetPane,
-        "selected-range",
-      ),
+    ): Promise<string | null> => {
+      if (!("pullRequestId" in walkthrough)) {
+        return Promise.resolve(`参照先を開けません · ${reference.path}`);
+      }
+      return openCodeReference(walkthrough.sourceOid, reference, targetPane, "selected-range");
+    },
     [openCodeReference],
   );
   const openWalkthroughReferenceFromInteraction = useCallback(
-    (walkthrough: Walkthrough, reference: WalkthroughReference, openInRightPane: boolean) =>
+    (walkthrough: AnyWalkthrough, reference: WalkthroughReference, openInRightPane: boolean) =>
       openWalkthroughReference(walkthrough, reference, openInRightPane ? "right" : "left"),
     [openWalkthroughReference],
   );
@@ -1647,7 +1133,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       if (!pullRequestId) {
         return Promise.resolve(`参照先を開けません · ${reference.path}`);
       }
-      return openCodeReference(pullRequestId, sourceOid, reference, targetPane, "exact-source");
+      return openCodeReference(sourceOid, reference, targetPane, "exact-source");
     },
     [openCodeReference, pullRequestId],
   );
@@ -1665,7 +1151,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       </main>
     );
   }
-  if (!pullRequestIdValid || !pullRequestId) {
+  if (!pullRequestId) {
     return (
       <main className="fatal-state">
         <h1>rvw</h1>
@@ -1733,123 +1219,118 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     const paneDocument = documentWorkspace.active[paneId];
     const paneViewerState = paneViewerStates[paneId];
     const paneViewerDocument = paneViewerState.viewerDocument;
+    const content =
+      paneViewerDocument?.kind === "walkthrough" && paneViewerState.walkthrough ? (
+        <LazyLoadBoundary label="ウォークスルー">
+          <Suspense
+            fallback={<div className="viewer-loading">ウォークスルーを準備しています…</div>}
+          >
+            <WalkthroughViewer
+              walkthrough={paneViewerState.walkthrough}
+              comments={comments}
+              activeCommentId={activeCommentId}
+              navigationTarget={
+                viewerNavigationTargets[paneId]?.documentKey === documentTabKey(paneViewerDocument)
+                  ? viewerNavigationTargets[paneId]
+                  : null
+              }
+              onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
+              themePreference={themePreference}
+              onCommentActiveChange={handleCommentActiveChange}
+              onOpenReference={openWalkthroughReferenceFromInteraction}
+              onOpenCommentCodeReference={openCommentCodeReferenceFromInteraction}
+              onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
+              onDeleted={() => closeDocument(paneViewerDocument, paneId)}
+            />
+          </Suspense>
+        </LazyLoadBoundary>
+      ) : paneViewerDocument?.kind === "walkthrough" ? (
+        <div className="empty-document-viewer">
+          <strong>
+            {paneViewerState.walkthroughLoading
+              ? "ウォークスルーを読み込んでいます…"
+              : "ウォークスルーを読み込めませんでした。"}
+          </strong>
+          {!paneViewerState.walkthroughLoading && (
+            <span>サイドバーからもう一度開いてください。</span>
+          )}
+        </div>
+      ) : paneViewerDocument ? (
+        <LazyLoadBoundary label="文書ビューアー">
+          <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
+            <DocumentViewer
+              key={
+                paneViewerDocument.kind === "issue"
+                  ? `${reviewStateRevision}:${paneId}:pull-request:${pullRequest.id}:issue:${paneViewerDocument.id}`
+                  : `${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`
+              }
+              review={{ kind: "pull-request", id: pullRequest.id, sourceOid: selectedOid }}
+              paneId={paneId}
+              selectedOid={selectedOid}
+              oldOid={effectiveOldOid}
+              activeDocument={paneViewerDocument}
+              documentRevision={
+                paneViewerDocument.kind === "issue"
+                  ? (issues.find((issue) => issue.id === paneViewerDocument.id)?.bodyHash ?? null)
+                  : null
+              }
+              displayMode={paneViewerState.effectiveDisplayMode}
+              diffStyle={diffStyle}
+              comments={comments}
+              activeCommentId={activeCommentId}
+              fullViewNotice={
+                paneViewerDocument.kind === "issue" &&
+                issues.find((issue) => issue.id === paneViewerDocument.id)?.syncError
+                  ? "Issue同期失敗 · 最終取得本文"
+                  : paneViewerState.fullViewNotice
+              }
+              fullViewUnavailableMessage={paneViewerState.fullViewUnavailableMessage}
+              themePreference={themePreference}
+              onCommentActiveChange={handleCommentActiveChange}
+              navigationTarget={
+                viewerNavigationTargets[paneId]?.documentKey === documentTabKey(paneViewerDocument)
+                  ? viewerNavigationTargets[paneId]
+                  : null
+              }
+              onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
+              onOpenMarkdownFragment={(line, hash) =>
+                navigateToMarkdownFragment(paneViewerDocument, paneId, line, hash)
+              }
+              onOpenCodeReference={openCommentCodeReferenceFromInteraction}
+              onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
+            />
+          </Suspense>
+        </LazyLoadBoundary>
+      ) : null;
     return (
-      <section
-        ref={(element) => {
+      <ReviewDocumentPane
+        paneId={paneId}
+        documents={paneDocuments}
+        activeDocument={paneDocument}
+        focusedPane={activePane}
+        changeKindsByPath={tabChangeKinds}
+        draggedDocumentKey={draggedDocumentKey}
+        content={content}
+        onPaneRef={(element) => {
           paneElements.current[paneId] = element;
         }}
-        onScroll={(event) => {
-          if (paneViewerDocument) {
-            documentScrollPositions.current.set(
-              documentPaneTabKey(paneId, paneViewerDocument),
-              event.currentTarget.scrollTop,
-            );
-            if (documentWorkspaceRef.current.focusedPane === paneId) {
-              scheduleReadingHistoryScrollSnapshot();
-            }
-          }
+        onScroll={(scrollTop) => {
+          recordPaneScroll(paneId, paneViewerDocument, scrollTop);
         }}
-        className={`document-pane${activePane === paneId ? " active" : ""}${paneDocuments.length === 0 ? " empty" : ""}`}
-        data-pane={paneId}
-        aria-label={`${paneId === "left" ? "左" : "右"}のコードペイン`}
-        onPointerDown={() =>
+        onFocus={() =>
           setDocumentWorkspace((current) =>
             current.focusedPane === paneId ? current : { ...current, focusedPane: paneId },
           )
         }
-      >
-        <DocumentTabs
-          paneId={paneId}
-          documents={paneDocuments}
-          activeDocument={paneDocument}
-          changeKindsByPath={tabChangeKinds}
-          onActivate={(document) => activateDocument(document, paneId)}
-          onClose={(document) => closeDocument(document, paneId)}
-          onCloseOthers={(document) => closePaneDocuments(paneId, document)}
-          onCloseAll={() => closePaneDocuments(paneId)}
-          onMove={(document, targetPane) => moveDocument(document, paneId, targetPane)}
-          onDropDocument={dropDocument}
-          onDragStartDocument={setDraggedDocumentKey}
-          onDragEndDocument={() => setDraggedDocumentKey(null)}
-        />
-        {paneViewerDocument?.kind === "walkthrough" && paneViewerState.walkthrough ? (
-          <LazyLoadBoundary label="ウォークスルー">
-            <Suspense
-              fallback={<div className="viewer-loading">ウォークスルーを準備しています…</div>}
-            >
-              <WalkthroughViewer
-                walkthrough={paneViewerState.walkthrough}
-                comments={comments}
-                activeCommentId={activeCommentId}
-                navigationTarget={
-                  viewerNavigationTargets[paneId]?.documentKey ===
-                  documentTabKey(paneViewerDocument)
-                    ? viewerNavigationTargets[paneId]
-                    : null
-                }
-                onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
-                themePreference={themePreference}
-                onCommentActiveChange={handleCommentActiveChange}
-                onOpenReference={openWalkthroughReferenceFromInteraction}
-                onOpenCommentCodeReference={openCommentCodeReferenceFromInteraction}
-                onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
-                onDeleted={() => closeDocument(paneViewerDocument, paneId)}
-              />
-            </Suspense>
-          </LazyLoadBoundary>
-        ) : paneViewerDocument?.kind === "walkthrough" ? (
-          <div className="empty-document-viewer">
-            <strong>
-              {paneViewerState.walkthroughLoading
-                ? "ウォークスルーを読み込んでいます…"
-                : "ウォークスルーを読み込めませんでした。"}
-            </strong>
-            {!paneViewerState.walkthroughLoading && (
-              <span>サイドバーからもう一度開いてください。</span>
-            )}
-          </div>
-        ) : paneViewerDocument ? (
-          <LazyLoadBoundary label="文書ビューアー">
-            <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
-              <DocumentViewer
-                key={`${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`}
-                pullRequestId={pullRequest.id}
-                paneId={paneId}
-                selectedOid={selectedOid}
-                oldOid={effectiveOldOid}
-                activeDocument={paneViewerDocument}
-                displayMode={paneViewerState.effectiveDisplayMode}
-                diffStyle={diffStyle}
-                comments={comments}
-                activeCommentId={activeCommentId}
-                fullViewNotice={paneViewerState.fullViewNotice}
-                fullViewUnavailableMessage={paneViewerState.fullViewUnavailableMessage}
-                themePreference={themePreference}
-                onCommentActiveChange={handleCommentActiveChange}
-                navigationTarget={
-                  viewerNavigationTargets[paneId]?.documentKey ===
-                  documentTabKey(paneViewerDocument)
-                    ? viewerNavigationTargets[paneId]
-                    : null
-                }
-                onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
-                onOpenMarkdownFragment={(line, hash) =>
-                  navigateToMarkdownFragment(paneViewerDocument, paneId, line, hash)
-                }
-                onOpenCodeReference={openCommentCodeReferenceFromInteraction}
-                onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
-              />
-            </Suspense>
-          </LazyLoadBoundary>
-        ) : (
-          <div className="empty-document-viewer document-pane-drop-target">
-            <strong>
-              {draggedDocumentKey ? "ここへドロップ" : `${paneId === "left" ? "左" : "右"}ペイン`}
-            </strong>
-            <span>タブを移動するか、Cmd/Ctrl+クリックで文書を開けます。</span>
-          </div>
-        )}
-      </section>
+        onActivate={(document) => activateDocument(document, paneId)}
+        onClose={(document) => closeDocument(document, paneId)}
+        onCloseOthers={(document) => closePaneDocuments(paneId, document)}
+        onCloseAll={() => closePaneDocuments(paneId)}
+        onMove={(document, targetPane) => moveDocument(document, paneId, targetPane)}
+        onDropDocument={dropDocument}
+        onDragStartDocument={setDraggedDocumentKey}
+        onDragEndDocument={() => setDraggedDocumentKey(null)}
+      />
     );
   };
 
@@ -1863,7 +1344,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           <span className="brand-mark">r</span>
           <strong>rvw</strong>
         </div>
-        <div className="pr-heading">
+        <div className="review-heading">
           <span>
             {pullRequest.owner}/{pullRequest.repository} · #{pullRequest.number}
           </span>
@@ -1890,76 +1371,22 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           onDisplayModeChange={setDocumentDisplayMode}
           onDiffStyleChange={setDiffStyle}
         />
-        <div className="topbar-menu" ref={actionsMenuRef}>
-          <button
-            ref={actionsMenuButtonRef}
-            className="topbar-menu-toggle"
-            aria-label="その他の操作"
-            aria-haspopup="menu"
-            aria-expanded={actionsMenuOpen}
-            onClick={() => setActionsMenuOpen((open) => !open)}
-          >
-            <MoreActionsIcon />
-          </button>
-          {actionsMenuOpen && (
-            <div className="topbar-menu-popover" role="menu" onKeyDown={handleActionsMenuKeyDown}>
-              <button
-                role="menuitem"
-                className="topbar-menu-command"
-                onClick={() => {
-                  setActionsMenuOpen(false);
-                  setQuickOpenReturnFocus(actionsMenuButtonRef.current);
-                  setQuickOpenVisible(true);
-                }}
-              >
-                <span>ファイルを開く…</span>
-                <kbd>⌘ / Ctrl P</kbd>
-              </button>
-              <button
-                role="menuitem"
-                onClick={() => {
-                  setActionsMenuOpen(false);
-                  setSyncFeedback(null);
-                  refreshMutation.mutate({ announce: true });
-                }}
-                disabled={refreshMutation.isPending}
-              >
-                GitHubと同期
-              </button>
-              <div className="topbar-menu-section" role="group" aria-label="UIテーマ">
-                <span className="topbar-menu-section-label">UIテーマ</span>
-                {themeOptions.map((option) => (
-                  <button
-                    key={option.preference}
-                    role="menuitemradio"
-                    aria-checked={themePreference === option.preference}
-                    disabled={themePreferenceMutation.isPending}
-                    onClick={() => {
-                      selectThemePreference(option.preference);
-                      setActionsMenuOpen(false);
-                    }}
-                  >
-                    <span>{option.label}</span>
-                    <span className="topbar-menu-check" aria-hidden="true">
-                      {themePreference === option.preference ? "✓" : ""}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <button
-                className="topbar-menu-danger"
-                role="menuitem"
-                onClick={() => {
-                  setActionsMenuOpen(false);
-                  resetMutation.mutate();
-                }}
-                disabled={resetMutation.isPending}
-              >
-                ローカル状態を削除して再構築
-              </button>
-            </div>
-          )}
-        </div>
+        <ReviewActionsMenu
+          themePreference={themePreference}
+          themePending={themePreferenceMutation.isPending}
+          syncPending={refreshMutation.isPending}
+          resetPending={resetMutation.isPending}
+          onOpenQuickOpen={(returnFocusElement) => {
+            setQuickOpenReturnFocus(returnFocusElement);
+            setQuickOpenVisible(true);
+          }}
+          onSync={() => {
+            clearSyncFeedback();
+            refreshMutation.mutate({ announce: true });
+          }}
+          onThemeChange={selectThemePreference}
+          onReset={() => resetMutation.mutate()}
+        />
       </header>
       {quickOpenVisible && (
         <QuickOpenPalette
@@ -1982,70 +1409,56 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           {syncFeedback}
         </div>
       )}
-      <div
-        className={`workspace${resizingSurface ? " is-resizing" : ""}`}
-        style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
-      >
-        <aside className="sidebar" aria-label="レビューサイドバー">
-          <section
-            className={`sidebar-stack sidebar-stack--code${codeExpanded ? " is-expanded" : ""}`}
-          >
-            <div className="sidebar-stack-header">
-              <button
-                className="sidebar-stack-toggle"
-                aria-expanded={codeExpanded}
-                onClick={() => setCodeExpanded((expanded) => !expanded)}
-              >
-                <FileEntryIcon kind="file" />
-                <span>{codeNavigationMode === "search" ? "コード検索" : "エクスプローラー"}</span>
-                <SidebarChevron expanded={codeExpanded} />
-              </button>
-              <button
-                type="button"
-                className={`sidebar-stack-action${codeNavigationMode === "search" ? " active" : ""}`}
-                aria-label={
-                  codeNavigationMode === "search" ? "ファイルツリーに戻る" : "コード検索を開く"
-                }
-                aria-pressed={codeNavigationMode === "search"}
-                title={
-                  codeNavigationMode === "search"
-                    ? "ファイルツリーに戻る"
-                    : "コード検索 (⌘ / Ctrl Shift F)"
-                }
-                onClick={() => {
-                  if (codeNavigationMode === "search") {
-                    setCodeNavigationMode("files");
-                    return;
-                  }
-                  setCodeExpanded(true);
-                  setCodeNavigationMode("search");
-                  window.requestAnimationFrame(() => {
-                    searchInputRef.current?.focus();
-                    searchInputRef.current?.select();
-                  });
-                }}
-              >
-                {codeNavigationMode === "search" ? <SidebarBackIcon /> : <SidebarSearchIcon />}
-              </button>
-            </div>
-            <div
-              className="sidebar-stack-body sidebar-code-body"
-              hidden={!codeExpanded || codeNavigationMode !== "files"}
-            >
+      <ReviewWorkspace
+        sidebar={
+          <ReviewSidebar
+            codeExpanded={codeExpanded}
+            commentsExpanded={commentsExpanded}
+            mode={codeNavigationMode}
+            unresolvedCommentCount={unresolvedCommentCount}
+            onOpenSearch={openSidebarSearch}
+            onCodeExpandedChange={setCodeExpanded}
+            onCommentsExpandedChange={setCommentsExpanded}
+            onModeChange={setCodeNavigationMode}
+            explorer={
               <div className="file-panel">
                 <ReviewTreeItems
+                  issues={issues}
                   walkthroughs={walkthroughs}
+                  activeIssueId={activeDocument?.kind === "issue" ? activeDocument.id : null}
                   pullRequestActive={activeDocument?.kind === "pull-request-markdown"}
                   activeWalkthroughId={
                     activeDocument?.kind === "walkthrough" ? activeDocument.id : null
                   }
-                  onOpenPullRequest={(openInRightPane) => {
-                    if (openInRightPane) {
-                      openDocument({ kind: "pull-request-markdown" }, "right");
-                      return;
-                    }
-                    openDocument({ kind: "pull-request-markdown" });
-                  }}
+                  issueReference={issueReference}
+                  issueAddOpen={issueAddOpen}
+                  issueAdding={addIssueMutation.isPending}
+                  removingIssueId={removeIssueMutation.variables?.id ?? null}
+                  issueError={
+                    issuesQuery.error ?? addIssueMutation.error ?? removeIssueMutation.error
+                  }
+                  onIssueReferenceChange={setIssueReference}
+                  onIssueAddOpenChange={setIssueAddOpen}
+                  onIssueAdd={() => addIssueMutation.mutate()}
+                  onOpenIssue={(issue, openInRightPane) =>
+                    openDocument(
+                      {
+                        kind: "issue",
+                        id: issue.id,
+                        number: issue.number,
+                        title: issue.title,
+                        url: issue.url,
+                      },
+                      openInRightPane ? "right" : "left",
+                    )
+                  }
+                  onRemoveIssue={(issue) => removeIssueMutation.mutate(issue)}
+                  onOpenPullRequest={(openInRightPane) =>
+                    openDocument(
+                      { kind: "pull-request-markdown" },
+                      openInRightPane ? "right" : "left",
+                    )
+                  }
                   onOpen={openWalkthrough}
                 />
                 <ErrorNotice error={walkthroughsQuery.error} />
@@ -2078,11 +1491,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                   />
                 </nav>
               </div>
-            </div>
-            <div
-              className="sidebar-stack-body sidebar-code-body"
-              hidden={!codeExpanded || codeNavigationMode !== "search"}
-            >
+            }
+            search={
               <SearchPanel
                 inputRef={searchInputRef}
                 query={searchText}
@@ -2097,123 +1507,45 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 onWholeWordChange={setSearchWholeWord}
                 onOpenResult={openSearchResult}
               />
-            </div>
-          </section>
-          <section
-            className={`sidebar-stack sidebar-stack--comments${commentsExpanded ? " is-expanded" : ""}`}
-          >
-            <button
-              className="sidebar-stack-toggle"
-              aria-expanded={commentsExpanded}
-              onClick={() => setCommentsExpanded((expanded) => !expanded)}
-            >
-              <SidebarCommentIcon />
-              <span>コメント</span>
-              <span className="sidebar-stack-count">{unresolvedCommentCount}</span>
-              <SidebarChevron expanded={commentsExpanded} />
-            </button>
-            <div className="sidebar-stack-body" hidden={!commentsExpanded}>
-              <ErrorNotice error={commentsQuery.error} />
-              <CommentSidebar
-                comments={comments}
-                walkthroughs={walkthroughs}
-                pullRequestId={pullRequest.id}
-                selectedOid={selectedOid}
-                themePreference={themePreference}
-                onCommentActiveChange={handleCommentActiveChange}
-                onOpenCodeReference={openCommentCodeReferenceFromInteraction}
-                onOpenTarget={openCommentTarget}
-                onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
-              />
-            </div>
-          </section>
-        </aside>
-        <div
-          className={`horizontal-resize-handle sidebar-resize-handle${resizingSurface === "sidebar" ? " active" : ""}`}
-          role="separator"
-          aria-label="サイドバーの幅を変更"
-          aria-orientation="vertical"
-          aria-valuemin={MIN_SIDEBAR_WIDTH}
-          aria-valuemax={MAX_SIDEBAR_WIDTH}
-          aria-valuenow={Math.round(sidebarWidth)}
-          tabIndex={0}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return;
-            event.preventDefault();
-            event.currentTarget.setPointerCapture(event.pointerId);
-            setResizingSurface("sidebar");
-            updateSidebarWidth(event.clientX, event.currentTarget.parentElement!);
-          }}
-          onPointerMove={(event) => {
-            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-            updateSidebarWidth(event.clientX, event.currentTarget.parentElement!);
-          }}
-          onPointerUp={finishResize}
-          onPointerCancel={finishResize}
-          onLostPointerCapture={() => setResizingSurface(null)}
-          onDoubleClick={() => setSidebarWidth(initialSidebarWidth())}
-          onKeyDown={(event) => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            event.preventDefault();
-            setSidebarWidth((width) =>
-              clamp(
-                width + (event.key === "ArrowLeft" ? -16 : 16),
-                MIN_SIDEBAR_WIDTH,
-                MAX_SIDEBAR_WIDTH,
-              ),
-            );
-          }}
-        />
-        <section
-          id="review-main-content"
-          tabIndex={-1}
-          className={`main-view${rightPaneVisible ? " two-pane" : ""}${resizingSurface === "panes" ? " is-resizing" : ""}`}
-          style={
-            rightPaneVisible
-              ? {
-                  gridTemplateColumns: `minmax(${MIN_PANE_WIDTH}px, ${paneSplit}fr) 6px minmax(${MIN_PANE_WIDTH}px, ${100 - paneSplit}fr)`,
-                }
-              : undefined
-          }
-        >
-          {renderDocumentPane("left")}
-          {rightPaneVisible && (
-            <div
-              className={`horizontal-resize-handle pane-resize-handle${resizingSurface === "panes" ? " active" : ""}`}
-              role="separator"
-              aria-label="左右ペインの幅を変更"
-              aria-orientation="vertical"
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={Math.round(paneSplit)}
-              tabIndex={0}
-              onPointerDown={(event) => {
-                if (event.button !== 0) return;
-                event.preventDefault();
-                event.currentTarget.setPointerCapture(event.pointerId);
-                setResizingSurface("panes");
-                updatePaneSplit(event.clientX, event.currentTarget.parentElement!);
-              }}
-              onPointerMove={(event) => {
-                if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
-                updatePaneSplit(event.clientX, event.currentTarget.parentElement!);
-              }}
-              onPointerUp={finishResize}
-              onPointerCancel={finishResize}
-              onLostPointerCapture={() => setResizingSurface(null)}
-              onDoubleClick={() => setPaneSplit(DEFAULT_PANE_SPLIT)}
-              onKeyDown={(event) => {
-                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-                event.preventDefault();
-                setPaneSplit((split) =>
-                  clamp(split + (event.key === "ArrowLeft" ? -2 : 2), 20, 80),
-                );
-              }}
-            />
-          )}
-          {rightPaneVisible && renderDocumentPane("right")}
-        </section>
-      </div>
+            }
+            comments={
+              <>
+                <ErrorNotice error={commentsQuery.error} />
+                <CommentSidebar
+                  comments={comments}
+                  walkthroughs={walkthroughs}
+                  review={{ kind: "pull-request", id: pullRequest.id, sourceOid: selectedOid }}
+                  themePreference={themePreference}
+                  onCommentActiveChange={handleCommentActiveChange}
+                  onOpenCodeReference={openCommentCodeReferenceFromInteraction}
+                  onOpenTarget={openCommentTarget}
+                  onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
+                />
+              </>
+            }
+          />
+        }
+        leftPane={renderDocumentPane("left")}
+        {...(rightPaneVisible ? { rightPane: renderDocumentPane("right") } : {})}
+      />
     </main>
+  );
+}
+
+export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
+  const branchReviewIdParameter = new URLSearchParams(window.location.search).get("branchReviewId");
+  const branchReviewId = parseReviewId(branchReviewIdParameter);
+  if (branchReviewIdParameter && !branchReviewId) {
+    return <main className="fatal-state">Branch Review IDが不正です。</main>;
+  }
+  return branchReviewId ? (
+    <Suspense fallback={<main className="fatal-state">Branch Reviewを準備しています…</main>}>
+      <BranchReviewApp
+        branchReviewId={branchReviewId}
+        initialThemePreference={initialThemePreference}
+      />
+    </Suspense>
+  ) : (
+    <PullRequestApp initialThemePreference={initialThemePreference} />
   );
 }

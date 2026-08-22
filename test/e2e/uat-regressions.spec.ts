@@ -126,6 +126,72 @@ test("rejects malformed and unknown pull request IDs", async ({ page, request })
   ).toBeVisible();
 });
 
+test("keeps a historical commit selected when the initial background refresh finishes", async ({
+  page,
+}) => {
+  await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      pullRequest: { latestHeadOid: string };
+      headOid: string;
+      commits: Array<{
+        oid: string;
+        parentOids: string[];
+        subject: string;
+        authorName: string;
+        authoredAt: string;
+      }>;
+    };
+    body.pullRequest.latestHeadOid = secondHead;
+    body.headOid = secondHead;
+    body.commits = [
+      {
+        oid: firstHead,
+        parentOids: [comparisonBase],
+        subject: "Add fixture function",
+        authorName: "Fixture Author",
+        authoredAt: "2026-08-08T01:00:00.000Z",
+      },
+      {
+        oid: secondHead,
+        parentOids: [firstHead],
+        subject: "Trim fixture input",
+        authorName: "Fixture Author",
+        authoredAt: "2026-08-08T02:00:00.000Z",
+      },
+    ];
+    await route.fulfill({ response, json: body });
+  });
+  let releaseRefresh!: () => void;
+  const refreshHeld = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  const refreshFinished = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    await refreshHeld;
+    await route.continue();
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const commitPicker = page.getByRole("button", { name: /^対象commit:/ });
+  await commitPicker.click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("option", { name: /Add fixture function/ })
+    .click();
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+
+  releaseRefresh();
+  await refreshFinished;
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+});
+
 test("restores focus to the actions button after Quick Open is closed from its menu", async ({
   page,
 }) => {
@@ -196,7 +262,7 @@ test("supports keyboard navigation and dismissal in a document pane menu", async
 
   await toggle.click();
   await expect(menu).toBeVisible();
-  await page.locator(".pr-heading").click();
+  await page.locator(".review-heading").click();
   await expect(menu).toBeHidden();
 });
 
@@ -301,7 +367,7 @@ test("makes reset destructive intent explicit and honors confirmation cancellati
   await expect.poll(() => previewRequests).toBe(1);
   expect(confirmedRequests).toBe(0);
   await expect(
-    page.locator(".pr-heading").getByRole("heading", { name: /Fixture review/ }),
+    page.locator(".review-heading").getByRole("heading", { name: /Fixture review/ }),
   ).toBeVisible();
 });
 
@@ -659,7 +725,7 @@ test("keeps cached review content and explains how to recover from server loss",
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  const pullRequestTitle = page.locator(".pr-heading h1");
+  const pullRequestTitle = page.locator(".review-heading h1");
   await expect(pullRequestTitle).toBeVisible();
   const title = await pullRequestTitle.textContent();
   await page.route("**/api/pull-requests/*/refresh", (route) => route.abort("connectionrefused"));

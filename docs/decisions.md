@@ -1,5 +1,224 @@
 # Architecture decisions
 
+## 2026-08-22: Use aggregate IDs for watch routing and native owner foreign keys
+
+### Problem
+
+Branch Review initially extended PR storage with a polymorphic Issue-membership table, a supplementary
+PR Issue-target table, and watch keys derived from PR URLs or repository text. Those shapes hid the
+real aggregate owner, required runtime schema probes, and made display-name changes or reset/recreate
+semantics part of durable event routing. Issue placement also treated a whole-document target like a
+body range, so any body edit incorrectly made it Outdated.
+
+### Choice
+
+Because migration 011 and protocol v4 have not been released, rewrite them before release. Store PR
+and Branch Issue memberships in separate tables with real owner foreign keys, and store PR Issue
+comments directly as `comment_targets.target_kind = issue`. The latest application assumes all shipped
+migrations have run and contains no partial-schema runtime fallback.
+
+Route watch events by stable local `pullRequestId` / `branchReviewId`, keeping PR URL and canonical
+repository as separate display fields. Preserve event rows without owner foreign keys so deleted or
+reset reviews remain replayable. Treat whole-Issue comments as attached to the stable Issue identity;
+only range comments depend on the body hash.
+
+### Trade-offs
+
+- Protocol v4 consumers must accept the stable ID in every context; version 3 compatibility remains
+  outside the v4 contract.
+- Resetting and recreating a Branch Review intentionally creates a new watcher context even when the
+  canonical repository display is unchanged.
+- Separate membership tables duplicate a small amount of query selection but make ownership and
+  cascade behavior enforceable by SQLite.
+
+## 2026-08-22: Extend the review-scoped attachment boundary to Issue documents
+
+### Problem
+
+The shared Markdown viewer rendered modern GitHub user attachments from `Pull Request.md`, but the
+same URL in a registered Issue was always replaced with an external-image placeholder. Branch Review
+also had no attachment endpoint, even though PR and Branch Issues use the same document surface. This
+made the security behavior depend on document kind and left the repository demo unable to exercise the
+supported path from an Issue.
+
+### Choice
+
+Keep the existing canonical URL validator, authenticated GitHub CLI download, byte limit, magic-byte
+image detection, and same-origin response policy. Generalize only the review scope: PR bodies and PR
+Issues use the PR attachment endpoint, while Branch Issues use a symmetric Branch Review endpoint.
+Both service methods verify that their review exists and delegate to one private attachment fetcher.
+
+Continue replacing arbitrary external and legacy GitHub image URLs with an alt/title placeholder
+without sending a browser or server request. Put both a supported attachment and a blocked external
+image in Markdown tables in the deterministic demo so the supported and unsupported paths remain
+visible together.
+
+### Trade-offs
+
+- The endpoint is review-scoped rather than Issue-scoped, matching the existing PR boundary and
+  avoiding a second attachment authorization model. Issue membership still controls access to the
+  Issue document that supplies the URL.
+- Attachments remain uncached in SQLite and require GitHub availability when the browser cache misses.
+- Relative Issue images and legacy GitHub image hosts remain placeholders until a separately verified
+  authenticated retrieval design exists.
+
+## 2026-08-22: Keep Branch evidence exact and make synchronization work review-local
+
+### Problem
+
+Branch document and comment-reference reads accepted any commit object that happened to exist in the
+registered clone. A local topic commit could therefore enter a Branch Review even though the product
+defines its source as the synchronized default branch and retained historical evidence. At the same
+time, the Branch watch Skill prohibited typed references entirely, so a read-only investigation could
+not point back to the exact committed evidence required by the product principles.
+
+Issue synchronization also authenticated and fetched every Issue serially, treated Issue-looking text
+inside Markdown code as a relation, and used one database-wide UI sequence to invalidate unrelated
+open reviews. A delayed initial PR refresh could apply selection state captured before the reviewer
+chose a historical commit.
+
+### Choice
+
+Treat `refs/rvw/branch/<owner>/<repository>/commits/oid-<oid>` as the Branch source allowlist. Branch
+reads and typed references require both that exact retained ref and its Git object; arbitrary local
+commits are rejected. Keep Branch workers strictly read-only, but allow their final replies to carry a
+current or already retained evidence OID and validated post-level typed references. `pushStatus`
+remains `not-attempted`, and no code, GitHub, resolve, or default-branch write is added.
+
+Parse PR bodies as Markdown and collect direct Issue references only from prose and link destinations,
+not code spans, fenced code, or raw HTML. Share one successful GitHub authentication check per client
+process and fetch independent Issues with a bounded concurrency of eight while preserving ordered,
+per-Issue success and failure results.
+
+Add a review-local monotonic sequence under `app_meta` beside the existing database-wide sequence.
+Viewer polling keys and invalidation now use `(review kind, review ID)` so a write in one review does
+not refetch another review's documents, search, tree, comments, and Walkthroughs. Exact source OIDs
+remain query keys for Branch tree and search. Read the current commit selection from a render-updated
+ref when refresh completes, and schedule its state update before asynchronous cache invalidation.
+
+### Trade-offs
+
+- A Branch reference cannot cite an unsynchronized local commit even if its object is readable; it must
+  first become the synchronized default-branch source or already be retained by rvw.
+- Eight concurrent Issue requests trade a small bounded burst for substantially lower large-review
+  synchronization latency. Individual failures remain isolated.
+- Review-local sequence keys accumulate small `app_meta` rows after reset; keeping them avoids a new
+  schema and does not affect review identity or artifact ownership.
+- The database-wide sequence remains available for diagnostics and compatibility, but viewers no
+  longer use it as their content invalidation boundary.
+
+## 2026-08-21: Harden Branch Review lifecycle without widening its product model
+
+### Problem
+
+Branch source synchronization crossed several transient and transport boundaries that were not explicit
+enough. A source OID refresh remounted an open Issue composer, Branch invalidation missed the common
+document query, canonical repository matching could silently replace an independent clone binding,
+Walkthrough Issue additions were attached as a non-enumerable property, and a Branch watcher's final
+reply was not required to enter durable self-suppression.
+
+### Choice
+
+Keep the existing repository-singleton Branch Review and make each boundary explicit. Issue component
+identity is `(review kind, review ID, Issue ID)`, independent of Branch source OID, while repository
+documents remain exact-source identities. Common query-key helpers connect refresh to the queries the
+shared viewer actually reads. Issue drafts retain the body hash and block a stale range after a real
+body change until the reviewer reselects it.
+
+Treat the saved Git common directory as the local source binding. Another worktree from that directory
+may refresh the usable worktree path; an independent clone fails before source, refs, or review state are
+mutated. Moving clones remains an explicit reset-and-recreate operation.
+
+Return Walkthrough mutations as an enumerable `{walkthrough, issuesAdded}` result for every review kind
+and transport, with `issuesAdded` taken from successful membership inserts inside the Walkthrough
+transaction rather than a before/after snapshot. Branch watcher workers return a discriminated Branch
+context, post exactly one final reply with the operation's stable idempotency key, and complete the lease
+with that reply's post ID so self-events are suppressed whether they are ingested before or after
+completion. The Branch completion helper validates the complete read-only worker schema before posting.
+Issue membership removal invalidates only the removed Issue's in-memory composer generation and reply
+drafts belonging to comments deleted with that Issue.
+
+### Trade-offs
+
+- A changed Issue body requires human reselection instead of attempting semantic range migration.
+- An unavailable registered clone is not automatically replaced by another clone of the same GitHub
+  repository; reset is intentionally required.
+- The query-key helper stays limited to the shared review data currently invalidated rather than becoming
+  a generic cache framework.
+
+## 2026-08-21: Share one review workspace across Pull Requests and Branch Reviews
+
+### Problem
+
+The first Branch Review UI duplicated the PR review's sidebar, document tabs, panes, Markdown and
+source renderers, search form, comments, theme menu, and resize behavior. Those copies had fewer
+features and different interaction labels even though both review kinds expose the same repository,
+Issue, Walkthrough, comment, and document-reading concepts. Fixes to the mature PR workspace would
+therefore keep widening an accidental product split.
+
+### Choice
+
+Use shared review-level components for the two-stack Explorer / Search / Comments sidebar, tabs,
+document viewers, comments, actions menu, theme preference, reading history, and resizable
+one-or-two-pane workspace. `Pull Request.md`, Issues, and Walkthroughs are sibling review-document
+nodes in Explorer; Issue addition is a temporary form opened from the Issues folder action. Issue
+bodies use the same Source / Preview Markdown viewer, source mapping, whole-document comment action,
+and text-selection comment flow as other Markdown documents instead of a dedicated Issue panel or
+renderer. Pass a discriminated Pull Request or Branch Review identity only where an API route or
+persisted target actually differs. Branch Review omits PR-only controls and documents: commit range,
+changes mode, diff style, and `Pull Request.md`. It does not replace those controls with Branch-specific
+variants.
+
+### Trade-offs
+
+- Shared components accept the union of review-owned comments and walkthroughs, but invalid PR-only
+  operations remain excluded by the review identity rather than nullable UI flags.
+- Branch Review inherits the established PR review interactions and accessibility behavior; future
+  divergence requires a product-semantic reason instead of a separate implementation by default.
+
+## 2026-08-21: Add repository-scoped Branch Reviews without fabricating Pull Requests
+
+### Problem
+
+The existing reading substrate assumed that every exact Git snapshot and durable review artifact
+belonged to a GitHub Pull Request. Reviewing a repository's current default branch and the GitHub
+Issues that describe future work needs the same document, comment, Walkthrough, and watch machinery,
+but a default branch has no PR number, author, head repository, or base/head comparison semantics.
+
+### Choice
+
+Store one `branch_reviews` row per canonical GitHub repository and advance its exact source OID when
+GitHub's default branch advances. Keep Pull Request and Branch Review tables and foreign keys explicit;
+application operations use a discriminated review context at shared CLI, comment, Walkthrough, and
+event boundaries. Never insert a synthetic Pull Request. Branch code reading uses the existing exact
+Git object adapters with a repository-wide tree and an internally empty comparison only where a shared
+reader requires one.
+
+Cache each GitHub Issue once by canonical identity, and store review membership separately. The same
+Issue may belong independently to a Pull Request Review and a Branch Review. Issue comments and
+Walkthroughs retain their owning review, while `rvw://comment` and `rvw://walkthrough` references remain
+globally resolvable. Protocol version 4 makes review context explicit and the watcher migrates its
+task-local keys from PR URL alone to `(review_kind, stable review ID)`, with URL/repository retained as
+display metadata.
+
+Branch watcher batches are always `investigate-and-reply`: they cannot reserve a repository write key,
+receive no progress acknowledgement, create one final idempotent reply, and never commit, push, edit a
+GitHub Issue, change the default branch, or resolve the thread.
+
+Keep `branchReviewId` as the internal and route-level identity even though repository identity is
+unique. “One Branch Review” means one per canonical repository, not one process-wide; the ID scopes
+comments, Issue memberships, Walkthroughs, watch cursors, reset ownership, and retained Git refs, and
+allows reset to recreate that aggregate without overloading a mutable repository path or display name.
+
+### Trade-offs
+
+- Some storage and application methods remain context-specific instead of hiding invalid PR-only
+  operations behind nullable fields.
+- Issue content is shared cache state, but removal and reset must count and delete only artifacts owned
+  by the selected review.
+- Branch Reviews intentionally have no arbitrary branch selector, history picker, list screen, or
+  automatic attachment to a later Pull Request.
+
 ## 2026-08-21: Parallelize investigate-only leases within one Pull Request
 
 ### Problem

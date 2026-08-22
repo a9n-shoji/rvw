@@ -11,6 +11,42 @@ import {
 import { MAX_COMMENT_BODY_BYTES } from "../../src/shared/constants.js";
 
 describe("CLI input schemas", () => {
+  it("accepts explicit Branch Review, Issue, and add-only Walkthrough Issue inputs", () => {
+    expect(
+      commentCreateInputSchema.parse({
+        review: { kind: "branch", repository: "acme/review-repo" },
+        target: { kind: "issue", issue: "#142", startLine: 2, endLine: 4 },
+        body: "Check the current implementation against this requirement.",
+      }),
+    ).toMatchObject({
+      review: { kind: "branch", repository: "acme/review-repo" },
+      target: { kind: "issue", issue: "#142", startLine: 2, endLine: 4 },
+    });
+
+    expect(
+      walkthroughPublishInputSchema.parse({
+        review: { kind: "branch", repository: "acme/review-repo" },
+        sourceOid: "a".repeat(40),
+        title: "Current request flow",
+        body: "Open [the handler](rvw-ref:handler).",
+        references: [
+          {
+            id: "handler",
+            label: "Handler",
+            path: "src/handler.ts",
+            startLine: 1,
+            endLine: 3,
+            description: null,
+          },
+        ],
+        issues: ["#142", "https://github.com/acme/review-repo/issues/19"],
+      }),
+    ).toMatchObject({
+      review: { kind: "branch" },
+      issues: ["#142", "https://github.com/acme/review-repo/issues/19"],
+    });
+  });
+
   it("accepts an exact repository comment target and normalizes omitted lines", () => {
     expect(
       commentCreateInputSchema.parse({

@@ -154,13 +154,18 @@ export function buildQuickOpenCandidates(
   files: QuickOpenFile[],
   openDocuments: ActiveDocument[],
   activeDocument: ActiveDocument | null,
+  includePullRequestDocument = true,
 ): QuickOpenCandidate[] {
   const pullRequestDocument: ActiveDocument = { kind: "pull-request-markdown" };
   const sources: Array<{ document: ActiveDocument; file: QuickOpenFile }> = [
-    {
-      document: pullRequestDocument,
-      file: { path: "Pull Request.md", entryKind: "file" },
-    },
+    ...(includePullRequestDocument
+      ? [
+          {
+            document: pullRequestDocument,
+            file: { path: "Pull Request.md", entryKind: "file" as const },
+          },
+        ]
+      : []),
     ...files.map((file) => ({
       document: { kind: "repository-file" as const, path: file.path },
       file,
@@ -190,6 +195,7 @@ export function QuickOpenPalette({
   activeDocument,
   loading,
   error,
+  includePullRequestDocument = true,
   onClose,
   onOpen,
 }: {
@@ -200,6 +206,7 @@ export function QuickOpenPalette({
   activeDocument: ActiveDocument | null;
   loading: boolean;
   error: Error | null;
+  includePullRequestDocument?: boolean;
   onClose: () => void;
   onOpen: (document: ActiveDocument, openInRightPane: boolean) => void;
 }) {
@@ -209,8 +216,9 @@ export function QuickOpenPalette({
   const selectedResultRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const candidates = useMemo(
-    () => buildQuickOpenCandidates(files, openDocuments, activeDocument),
-    [activeDocument, files, openDocuments],
+    () =>
+      buildQuickOpenCandidates(files, openDocuments, activeDocument, includePullRequestDocument),
+    [activeDocument, files, includePullRequestDocument, openDocuments],
   );
   const results = useMemo(() => rankQuickOpenCandidates(candidates, query), [candidates, query]);
   const selectedResult = results[activeIndex] ?? null;

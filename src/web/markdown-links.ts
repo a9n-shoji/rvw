@@ -16,14 +16,38 @@ export function markdownAssetUrl(
   return `/api/pull-requests/${pullRequestId}/markdown-asset?${search.toString()}`;
 }
 
+export function branchMarkdownAssetUrl(
+  branchReviewId: string,
+  sourceOid: string,
+  filePath: string,
+): string {
+  const search = new URLSearchParams({ sourceOid, path: filePath });
+  return `/api/branch-reviews/${branchReviewId}/markdown-asset?${search.toString()}`;
+}
+
 export function githubAttachmentAssetUrl(
   pullRequestId: string,
+  absoluteUrl: string | undefined,
+): string | null {
+  return reviewGitHubAttachmentAssetUrl("pull-requests", pullRequestId, absoluteUrl);
+}
+
+export function branchGitHubAttachmentAssetUrl(
+  branchReviewId: string,
+  absoluteUrl: string | undefined,
+): string | null {
+  return reviewGitHubAttachmentAssetUrl("branch-reviews", branchReviewId, absoluteUrl);
+}
+
+function reviewGitHubAttachmentAssetUrl(
+  reviewPath: "pull-requests" | "branch-reviews",
+  reviewId: string,
   absoluteUrl: string | undefined,
 ): string | null {
   const canonicalUrl = canonicalGitHubAttachmentUrl(absoluteUrl);
   if (!canonicalUrl) return null;
   const search = new URLSearchParams({ url: canonicalUrl });
-  return `/api/pull-requests/${pullRequestId}/github-attachment?${search.toString()}`;
+  return `/api/${reviewPath}/${reviewId}/github-attachment?${search.toString()}`;
 }
 
 export function markdownLinkWasDragged(

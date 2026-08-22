@@ -101,11 +101,25 @@ const repositoryCommentTargetOutputSchema = z
     endLine: z.number().int().nullable(),
   })
   .strict();
+const issueCommentTargetOutputSchema = z
+  .object({
+    kind: z.literal("issue"),
+    issueId: z.string(),
+    issueUrl: z.string(),
+    issueNumber: z.number().int().positive(),
+    issueTitle: z.string(),
+    sourceDocumentHash: z.string(),
+    quotedText: z.string().nullable(),
+    startLine: z.number().int().nullable(),
+    endLine: z.number().int().nullable(),
+  })
+  .strict();
 const commentTargetOutputSchema = z.union([
   pullRequestCommentTargetOutputSchema,
   walkthroughCommentTargetOutputSchema,
   pullRequestMarkdownCommentTargetOutputSchema,
   repositoryCommentTargetOutputSchema,
+  issueCommentTargetOutputSchema,
 ]);
 
 const commentListTargetOutputSchema = z.union([
@@ -132,6 +146,16 @@ const commentListTargetOutputSchema = z.union([
       kind: z.literal("document"),
       documentKind: z.literal("repository-file"),
       path: z.string(),
+      startLine: z.number().int().nullable(),
+      endLine: z.number().int().nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("issue"),
+      issueUrl: z.string(),
+      issueNumber: z.number().int().positive(),
+      issueTitle: z.string(),
       startLine: z.number().int().nullable(),
       endLine: z.number().int().nullable(),
     })
@@ -183,7 +207,7 @@ const commentPostOutputSchema = z
   })
   .strict();
 
-const reviewCommentOutputSchema = z
+const pullRequestReviewCommentOutputSchema = z
   .object({
     id: z.string(),
     ref: z.string(),
@@ -233,15 +257,43 @@ const exactSourceOutputSchema = z
   })
   .strict();
 
-export const commentGetOutputSchema = z
+const issueDocumentOutputSchema = z
+  .object({
+    id: z.string(),
+    host: z.literal("github.com"),
+    owner: z.string(),
+    repository: z.string(),
+    canonicalName: z.string(),
+    number: z.number().int().positive(),
+    url: z.string(),
+    title: z.string(),
+    body: z.string(),
+    state: z.enum(["OPEN", "CLOSED"]),
+    updatedAt: z.string(),
+    bodyHash: z.string(),
+    fetchedAt: z.string(),
+    syncError: z.string().nullable(),
+    stale: z.boolean(),
+  })
+  .strict();
+
+const pullRequestCommentGetOutputSchema = z
   .object({
     ok: z.literal(true),
+    context: z
+      .object({
+        kind: z.literal("pull-request"),
+        pullRequestId: z.string(),
+        pullRequestUrl: z.string(),
+      })
+      .strict(),
     pullRequest: commentPullRequestOutputSchema,
-    comment: reviewCommentOutputSchema,
+    comment: pullRequestReviewCommentOutputSchema,
     latestHeadOid: z.string(),
     latestPlacement: commentPlacementOutputSchema,
     exactSource: exactSourceOutputSchema.nullable(),
     walkthrough: walkthroughOutputSchema.nullable(),
+    issue: issueDocumentOutputSchema.nullable(),
     githubState: z
       .object({
         liveCheckedAt: z.string().nullable(),
@@ -267,6 +319,71 @@ export const commentGetOutputSchema = z
       .strict(),
   })
   .strict();
+
+const branchCommentTargetOutputSchema = z.union([
+  z.object({ kind: z.literal("branch") }).strict(),
+  walkthroughCommentTargetOutputSchema,
+  repositoryCommentTargetOutputSchema,
+  issueCommentTargetOutputSchema,
+]);
+
+const branchReviewCommentOutputSchema = z
+  .object({
+    id: z.string(),
+    ref: z.string(),
+    branchReviewId: z.string(),
+    createdSourceOid: z.string(),
+    resolvedAt: z.string().nullable(),
+    resolved: z.boolean(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+    target: branchCommentTargetOutputSchema,
+    posts: z.array(commentPostOutputSchema),
+  })
+  .strict();
+
+const branchWalkthroughOutputSchema = walkthroughOutputSchema.omit({ pullRequestId: true }).extend({
+  branchReviewId: z.string(),
+});
+
+const branchCommentGetOutputSchema = z
+  .object({
+    ok: z.literal(true),
+    context: z
+      .object({ kind: z.literal("branch"), branchReviewId: z.string(), repository: z.string() })
+      .strict(),
+    branchReview: z
+      .object({
+        repository: z.string(),
+        owner: z.string(),
+        name: z.string(),
+        localRepositoryPath: z.string(),
+        defaultBranchName: z.string(),
+        currentSourceOid: z.string(),
+        githubFetchedAt: z.string(),
+        sourceSyncError: z.string().nullable(),
+      })
+      .strict(),
+    comment: branchReviewCommentOutputSchema,
+    currentSourceOid: z.string(),
+    latestPlacement: commentPlacementOutputSchema,
+    exactSource: exactSourceOutputSchema.nullable(),
+    walkthrough: branchWalkthroughOutputSchema.nullable(),
+    issue: issueDocumentOutputSchema.nullable(),
+    githubState: z
+      .object({
+        liveCheckedAt: z.null(),
+        staleAgainstGitHub: z.null(),
+        live: z.null(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const commentGetOutputSchema = z.union([
+  pullRequestCommentGetOutputSchema,
+  branchCommentGetOutputSchema,
+]);
 
 export const commentListOutputSchema = z
   .object({
@@ -315,4 +432,5 @@ export const commentListOutputSchema = z
 
 export type CommentListOptions = z.infer<typeof commentListOptionsSchema>;
 export type CommentGetOutput = z.infer<typeof commentGetOutputSchema>;
+export type PullRequestCommentGetOutput = z.infer<typeof pullRequestCommentGetOutputSchema>;
 export type CommentListOutput = z.infer<typeof commentListOutputSchema>;

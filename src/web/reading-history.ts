@@ -7,7 +7,7 @@ export type ReadingLocator =
 
 export interface ReadingHistoryEntry {
   version: 1;
-  pullRequestId: string;
+  reviewKey: string;
   pane: DocumentPaneId;
   document: ActiveDocument;
   locator: ReadingLocator;
@@ -17,6 +17,9 @@ export function sameReadingDocument(left: ActiveDocument, right: ActiveDocument)
   if (left.kind !== right.kind) return false;
   if (left.kind === "pull-request-markdown" || right.kind === "pull-request-markdown") {
     return left.kind === right.kind;
+  }
+  if (left.kind === "issue" || right.kind === "issue") {
+    return left.kind === "issue" && right.kind === "issue" && left.id === right.id;
   }
   if (left.kind === "walkthrough" || right.kind === "walkthrough") {
     return left.kind === "walkthrough" && right.kind === "walkthrough" && left.id === right.id;
@@ -43,6 +46,14 @@ function optionalNullableString(value: unknown): value is string | null | undefi
 function parseDocument(value: unknown): ActiveDocument | null {
   if (!isRecord(value) || typeof value.kind !== "string") return null;
   if (value.kind === "pull-request-markdown") return { kind: "pull-request-markdown" };
+  if (value.kind === "issue") {
+    return typeof value.id === "string" &&
+      typeof value.number === "number" &&
+      typeof value.title === "string" &&
+      typeof value.url === "string"
+      ? { kind: "issue", id: value.id, number: value.number, title: value.title, url: value.url }
+      : null;
+  }
   if (value.kind === "walkthrough") {
     return typeof value.id === "string" &&
       typeof value.title === "string" &&
@@ -112,14 +123,14 @@ export function readingHistoryState(
 
 export function parseReadingHistoryEntry(
   state: unknown,
-  pullRequestId: string,
+  reviewKey: string,
 ): ReadingHistoryEntry | null {
   if (!isRecord(state)) return null;
   const value = state[READING_HISTORY_STATE_KEY];
   if (
     !isRecord(value) ||
     value.version !== 1 ||
-    value.pullRequestId !== pullRequestId ||
+    value.reviewKey !== reviewKey ||
     (value.pane !== "left" && value.pane !== "right")
   ) {
     return null;
@@ -129,7 +140,7 @@ export function parseReadingHistoryEntry(
   if (!document || !locator) return null;
   return {
     version: 1,
-    pullRequestId,
+    reviewKey,
     pane: value.pane,
     document,
     locator,
