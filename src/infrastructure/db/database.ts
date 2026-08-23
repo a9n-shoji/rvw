@@ -42,10 +42,6 @@ import { formatCommentUri } from "../../domain/comment-uri.js";
 import { hashDocument, normalizeLf } from "../../domain/pr-markdown.js";
 import { formatWalkthroughUri } from "../../domain/walkthrough-uri.js";
 import { RvwError } from "../../shared/errors.js";
-import {
-  BRANCH_REVIEW_INITIALIZATION_FAILED,
-  BRANCH_REVIEW_INITIALIZATION_PENDING,
-} from "../../shared/constants.js";
 import { isThemePreference, type ThemePreference } from "../../shared/preferences.js";
 
 type DbRow = Record<string, SQLInputValue>;
@@ -136,6 +132,10 @@ function mapPullRequest(row: DbRow): PullRequest {
 }
 
 function mapBranchReview(row: DbRow): BranchReview {
+  const initializationState = stringValue(row, "initialization_state");
+  if (!(["pending", "ready", "failed"] as const).includes(initializationState as never)) {
+    throw new RvwError("DATABASE_ERROR", "Branch Reviewの初期化状態が不正です。");
+  }
   return {
     id: stringValue(row, "id"),
     host: "github.com",
@@ -148,12 +148,16 @@ function mapBranchReview(row: DbRow): BranchReview {
     sourceOid: stringValue(row, "source_oid"),
     githubFetchedAt: stringValue(row, "github_fetched_at"),
     sourceSyncError: nullableString(row, "source_sync_error"),
+    initializationState: initializationState as BranchReview["initializationState"],
     createdAt: stringValue(row, "created_at"),
     updatedAt: stringValue(row, "updated_at"),
   };
 }
 
 function mapIssue(row: DbRow): IssueDocument {
+  const syncError = Object.hasOwn(row, "membership_sync_error")
+    ? nullableString(row, "membership_sync_error")
+    : null;
   return {
     id: stringValue(row, "id"),
     host: "github.com",
@@ -168,8 +172,8 @@ function mapIssue(row: DbRow): IssueDocument {
     updatedAt: stringValue(row, "github_updated_at"),
     bodyHash: stringValue(row, "body_hash"),
     fetchedAt: stringValue(row, "fetched_at"),
-    syncError: nullableString(row, "sync_error"),
-    stale: nullableString(row, "sync_error") !== null,
+    syncError,
+    stale: syncError !== null,
   };
 }
 
@@ -616,6 +620,41 @@ export class RvwDatabase {
     return row ? Number(stringValue(row, "value")) : 0;
   }
 
+  private assertReviewChangeSequence(
+    kind: "pull-request" | "branch",
+    reviewId: string,
+    expected: number,
+  ): void {
+    const current = this.getReviewChangeSequence(kind, reviewId);
+    if (current !== expected) {
+      throw new RvwError(
+        "DESTRUCTIVE_PREVIEW_STALE",
+        "確認後にreview stateが変更されました。最新の削除previewを確認してください。",
+        {
+          status: 409,
+          details: {
+            reviewKind: kind,
+            reviewId,
+            expectedReviewChangeSequence: expected,
+            currentReviewChangeSequence: current,
+          },
+        },
+      );
+    }
+  }
+
+  private deleteOrphanIssue(issueId: string): boolean {
+    const deleted = this.database
+      .prepare(
+        `DELETE FROM github_issues
+         WHERE id = ?
+           AND NOT EXISTS (SELECT 1 FROM pull_request_issues WHERE issue_id = github_issues.id)
+           AND NOT EXISTS (SELECT 1 FROM branch_review_issues WHERE issue_id = github_issues.id)`,
+      )
+      .run(issueId);
+    return Number(deleted.changes) === 1;
+  }
+
   getCommentWatchDatabaseId(): string {
     const row = this.database
       .prepare("SELECT value FROM app_meta WHERE key = 'comment_watch_database_id'")
@@ -919,11 +958,8 @@ export class RvwDatabase {
           return { id: existing.id, created: false, published: false };
         }
         const selectedId = existing?.id ?? randomUUID();
-        const nextSourceSyncError = existing
-          ? null
-          : options.createOnlyInitialization
-            ? BRANCH_REVIEW_INITIALIZATION_PENDING
-            : null;
+        const nextSourceSyncError = null;
+        const nextInitializationState = options.createOnlyInitialization ? "pending" : "ready";
         const reviewChanged =
           !existing ||
           existing.owner !== github.owner ||
@@ -934,14 +970,15 @@ export class RvwDatabase {
           path.resolve(existing.gitCommonDir) !== path.resolve(repositoryLocation.gitCommonDir) ||
           existing.defaultBranchName !== github.defaultBranchName ||
           existing.sourceOid !== github.defaultBranchOid ||
-          existing.sourceSyncError !== nextSourceSyncError;
+          existing.sourceSyncError !== nextSourceSyncError ||
+          existing.initializationState !== nextInitializationState;
         if (existing) {
           this.database
             .prepare(
               `UPDATE branch_reviews SET
                 owner = ?, repository = ?, canonical_name = ?, local_repository_path = ?,
                 git_common_dir = ?, default_branch_name = ?, source_oid = ?, github_fetched_at = ?,
-                source_sync_error = ?, updated_at = ?
+                source_sync_error = ?, initialization_state = ?, updated_at = ?
                WHERE id = ?`,
             )
             .run(
@@ -954,6 +991,7 @@ export class RvwDatabase {
               github.defaultBranchOid,
               now,
               nextSourceSyncError,
+              nextInitializationState,
               now,
               selectedId,
             );
@@ -962,8 +1000,9 @@ export class RvwDatabase {
             .prepare(
               `INSERT INTO branch_reviews(
                 id, host, owner, repository, canonical_name, local_repository_path, git_common_dir,
-                default_branch_name, source_oid, github_fetched_at, source_sync_error, created_at, updated_at
-              ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                default_branch_name, source_oid, github_fetched_at, source_sync_error,
+                initialization_state, created_at, updated_at
+              ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(
               selectedId,
@@ -976,6 +1015,7 @@ export class RvwDatabase {
               github.defaultBranchOid,
               now,
               nextSourceSyncError,
+              nextInitializationState,
               now,
               now,
             );
@@ -1013,9 +1053,7 @@ export class RvwDatabase {
           status: 404,
         });
       }
-      const initializing =
-        current.sourceSyncError === BRANCH_REVIEW_INITIALIZATION_PENDING ||
-        current.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED);
+      const initializing = current.initializationState !== "ready";
       // Another opener may already have completed initialization and a later source sync may have
       // advanced the aggregate. Completion is idempotent once the marker is gone: the delayed
       // initializer must not treat the newer source as inconsistent or compensate its historical
@@ -1037,7 +1075,8 @@ export class RvwDatabase {
       }
       this.database
         .prepare(
-          "UPDATE branch_reviews SET source_sync_error = NULL, updated_at = ? WHERE id = ? AND source_oid = ?",
+          `UPDATE branch_reviews SET source_sync_error = NULL, initialization_state = 'ready',
+            updated_at = ? WHERE id = ? AND source_oid = ?`,
         )
         .run(new Date().toISOString(), id, sourceOid);
     });
@@ -1072,10 +1111,11 @@ export class RvwDatabase {
           },
         );
       }
-      if (current.sourceSyncError !== BRANCH_REVIEW_INITIALIZATION_PENDING) return;
+      if (current.initializationState !== "pending") return;
       this.database
         .prepare(
-          "UPDATE branch_reviews SET source_sync_error = ?, updated_at = ? WHERE id = ? AND source_oid = ?",
+          `UPDATE branch_reviews SET source_sync_error = ?, initialization_state = 'failed',
+            updated_at = ? WHERE id = ? AND source_oid = ?`,
         )
         .run(message, new Date().toISOString(), id, sourceOid);
     });
@@ -1147,6 +1187,23 @@ export class RvwDatabase {
   getIssue(id: string): IssueDocument | null {
     const row = this.database.prepare("SELECT * FROM github_issues WHERE id = ?").get(id) as
       DbRow | undefined;
+    return row ? mapIssue(row) : null;
+  }
+
+  getReviewIssue(
+    reviewKind: "pull-request" | "branch",
+    reviewId: string,
+    issueId: string,
+  ): IssueDocument | null {
+    const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
+    const row = this.database
+      .prepare(
+        `SELECT i.*, ri.sync_error AS membership_sync_error
+         FROM github_issues i
+         JOIN ${table} ri ON ri.issue_id = i.id
+         WHERE ri.${reviewColumn} = ? AND i.id = ?`,
+      )
+      .get(reviewId, issueId) as DbRow | undefined;
     return row ? mapIssue(row) : null;
   }
 
@@ -1225,8 +1282,8 @@ export class RvwDatabase {
       .prepare(
         `INSERT INTO github_issues(
           id, host, owner, repository, canonical_name, number, github_url, title, body, state,
-          github_updated_at, body_hash, fetched_at, sync_error, cache_generation
-        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)
+          github_updated_at, body_hash, fetched_at, cache_generation
+        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT(id) DO UPDATE SET
           owner = excluded.owner,
           repository = excluded.repository,
@@ -1238,7 +1295,6 @@ export class RvwDatabase {
           github_updated_at = excluded.github_updated_at,
           body_hash = excluded.body_hash,
           fetched_at = excluded.fetched_at,
-          sync_error = NULL,
           cache_generation = github_issues.cache_generation + 1`,
       )
       .run(
@@ -1268,8 +1324,7 @@ export class RvwDatabase {
         existing.title !== result.title ||
         existing.bodyHash !== result.bodyHash ||
         existing.state !== result.state ||
-        existing.updatedAt !== result.updatedAt ||
-        existing.syncError !== result.syncError,
+        existing.updatedAt !== result.updatedAt,
     };
   }
 
@@ -1346,14 +1401,22 @@ export class RvwDatabase {
       if (this.getIssueCacheGeneration(issueId) !== expectedCacheGeneration) {
         return { issue: current, updated: false, skipped: "newer-attempt" };
       }
-      if (current.syncError === message) {
-        return { issue: current, updated: false, skipped: null };
+      const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
+      const membership = this.database
+        .prepare(`SELECT sync_error FROM ${table} WHERE ${reviewColumn} = ? AND issue_id = ?`)
+        .get(reviewId, issueId) as DbRow;
+      if (nullableString(membership, "sync_error") === message) {
+        return {
+          issue: { ...current, syncError: message, stale: true },
+          updated: false,
+          skipped: null,
+        };
       }
       this.database
-        .prepare("UPDATE github_issues SET sync_error = ? WHERE id = ?")
-        .run(message, issueId);
-      this.notifyIssueReviewChanges(issueId);
-      const issue = this.getIssue(issueId);
+        .prepare(`UPDATE ${table} SET sync_error = ? WHERE ${reviewColumn} = ? AND issue_id = ?`)
+        .run(message, reviewId, issueId);
+      this.incrementChangeSequence({ kind: reviewKind, reviewId });
+      const issue = this.getReviewIssue(reviewKind, reviewId, issueId);
       if (!issue) throw new RvwError("ISSUE_NOT_FOUND", "Issueが見つかりません。");
       return { issue, updated: true, skipped: null };
     });
@@ -1417,14 +1480,101 @@ export class RvwDatabase {
           },
         );
       }
+      const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
+      const cleared = this.database
+        .prepare(
+          `UPDATE ${table} SET sync_error = NULL
+           WHERE ${reviewColumn} = ? AND issue_id = ? AND sync_error IS NOT NULL`,
+        )
+        .run(reviewId, issueId);
       if (written.changed && written.previouslyCached) {
         this.notifyIssueReviewChanges(issueId);
+      } else if (Number(cleared.changes) === 1) {
+        this.incrementChangeSequence({ kind: reviewKind, reviewId });
       }
       return {
-        issue: written.issue,
+        issue: { ...written.issue, syncError: null, stale: false },
         refreshed: written.skipped === null,
         skipped: written.skipped,
       };
+    });
+  }
+
+  forceRepairReviewIssue(
+    reviewKind: "pull-request" | "branch",
+    reviewId: string,
+    issueId: string,
+    expectedCacheGeneration: number,
+    fetchedIssue: GitHubIssue,
+  ): IssueDocument {
+    return this.immediateTransaction(() => {
+      this.assertReviewExists(reviewKind, reviewId);
+      const current = this.getReviewIssue(reviewKind, reviewId, issueId);
+      if (!current) {
+        throw new RvwError("ISSUE_NOT_FOUND", "このreviewにIssueが登録されていません。", {
+          status: 404,
+        });
+      }
+      if (this.getIssueCacheGeneration(issueId) !== expectedCacheGeneration) {
+        throw new RvwError(
+          "GITHUB_ISSUE_ERROR",
+          "repair中に新しいIssue cacheが保存されたため、古いsnapshotでのrepairを中止しました。",
+          {
+            status: 409,
+            details: { reason: "ISSUE_REPAIR_STALE", issueId },
+          },
+        );
+      }
+      if (
+        current.owner.toLowerCase() !== fetchedIssue.owner.toLowerCase() ||
+        current.repository.toLowerCase() !== fetchedIssue.repository.toLowerCase() ||
+        current.number !== fetchedIssue.number
+      ) {
+        throw new RvwError("GITHUB_ISSUE_ERROR", "repair対象のIssue identityが一致しません。");
+      }
+      if (Date.parse(fetchedIssue.updatedAt) < Date.parse(current.updatedAt)) {
+        throw new RvwError(
+          "GITHUB_ISSUE_ERROR",
+          "repair snapshotが現在のIssue cacheより古いため更新を拒否しました。",
+          {
+            status: 409,
+            details: {
+              reason: "ISSUE_REPAIR_OLDER_SNAPSHOT",
+              currentUpdatedAt: current.updatedAt,
+              fetchedUpdatedAt: fetchedIssue.updatedAt,
+            },
+          },
+        );
+      }
+      const body = normalizeLf(fetchedIssue.body);
+      this.database
+        .prepare(
+          `UPDATE github_issues SET owner = ?, repository = ?, canonical_name = ?, github_url = ?,
+            title = ?, body = ?, state = ?, github_updated_at = ?, body_hash = ?, fetched_at = ?,
+            cache_generation = cache_generation + 1
+           WHERE id = ?`,
+        )
+        .run(
+          fetchedIssue.owner,
+          fetchedIssue.repository,
+          fetchedIssue.canonicalName,
+          fetchedIssue.url,
+          fetchedIssue.title,
+          body,
+          fetchedIssue.state,
+          fetchedIssue.updatedAt,
+          hashDocument(body),
+          new Date().toISOString(),
+          issueId,
+        );
+      const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
+      this.database
+        .prepare(`UPDATE ${table} SET sync_error = NULL WHERE ${reviewColumn} = ? AND issue_id = ?`)
+        .run(reviewId, issueId);
+      this.notifyIssueReviewChanges(issueId);
+      const repaired = this.getReviewIssue(reviewKind, reviewId, issueId);
+      if (!repaired) throw new RvwError("ISSUE_NOT_FOUND", "repairしたIssueを読み出せません。");
+      return repaired;
     });
   }
 
@@ -1440,17 +1590,27 @@ export class RvwDatabase {
       const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
       const result = this.database
         .prepare(
-          `INSERT INTO ${table}(${reviewColumn}, issue_id, added_at)
-           VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+          `INSERT INTO ${table}(${reviewColumn}, issue_id, added_at, sync_error)
+           VALUES (?, ?, ?, NULL) ON CONFLICT DO NOTHING`,
         )
         .run(reviewId, cached.id, new Date().toISOString());
       const added = Number(result.changes) === 1;
+      const cleared = added
+        ? false
+        : Number(
+            this.database
+              .prepare(
+                `UPDATE ${table} SET sync_error = NULL
+                 WHERE ${reviewColumn} = ? AND issue_id = ? AND sync_error IS NOT NULL`,
+              )
+              .run(reviewId, cached.id).changes,
+          ) === 1;
       if (written.changed && written.previouslyCached) {
         this.notifyIssueReviewChanges(cached.id);
-      } else if (added) {
+      } else if (added || cleared) {
         this.incrementChangeSequence({ kind: reviewKind, reviewId });
       }
-      return { issue: cached, added };
+      return { issue: { ...cached, syncError: null, stale: false }, added };
     });
   }
 
@@ -1466,8 +1626,8 @@ export class RvwDatabase {
       const cached = written.issue;
       const membership = this.database
         .prepare(
-          `INSERT INTO ${table}(${reviewColumn}, issue_id, added_at)
-           VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+          `INSERT INTO ${table}(${reviewColumn}, issue_id, added_at, sync_error)
+           VALUES (?, ?, ?, NULL) ON CONFLICT DO NOTHING`,
         )
         .run(reviewId, cached.id, new Date().toISOString());
       if (Number(membership.changes) === 1) added.push(cached);
@@ -1483,7 +1643,7 @@ export class RvwDatabase {
     return (
       this.database
         .prepare(
-          `SELECT i.* FROM github_issues i
+          `SELECT i.*, ri.sync_error AS membership_sync_error FROM github_issues i
            JOIN ${table} ri ON ri.issue_id = i.id
            WHERE ri.${reviewColumn} = ?
            ORDER BY i.number DESC`,
@@ -1538,6 +1698,7 @@ export class RvwDatabase {
     reviewKind: "pull-request" | "branch",
     reviewId: string,
     issueId: string,
+    expectedReviewChangeSequence: number,
   ): IssueRemovalCounts {
     return this.immediateTransaction(() => {
       if (reviewKind === "branch" && !this.getBranchReview(reviewId)) {
@@ -1553,6 +1714,7 @@ export class RvwDatabase {
           status: 404,
         });
       }
+      this.assertReviewChangeSequence(reviewKind, reviewId, expectedReviewChangeSequence);
       const counts = this.getIssueRemovalCounts(reviewKind, reviewId, issueId);
       if (reviewKind === "pull-request") {
         this.database
@@ -1582,6 +1744,7 @@ export class RvwDatabase {
       if (Number(membership.changes) !== 1) {
         throw new RvwError("DATABASE_ERROR", "Issue membershipを削除できませんでした。");
       }
+      this.deleteOrphanIssue(issueId);
       this.incrementChangeSequence({ kind: reviewKind, reviewId });
       return counts;
     });
@@ -1593,14 +1756,22 @@ export class RvwDatabase {
         `SELECT
           (SELECT count(*) FROM branch_reviews WHERE id = ?) AS branch_review,
           (SELECT count(*) FROM branch_review_issues WHERE branch_review_id = ?) AS issue_memberships,
+          (SELECT count(*) FROM branch_comments WHERE branch_review_id = ?) AS comments,
           (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'issue') AS issue_comments,
           (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'repository_file') AS code_comments,
           (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'branch') AS review_comments,
           (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'walkthrough') AS walkthrough_comments,
           (SELECT count(*) FROM branch_comment_posts p JOIN branch_comments c ON c.id = p.comment_id WHERE c.branch_review_id = ?) AS posts,
-          (SELECT count(*) FROM branch_walkthroughs WHERE branch_review_id = ?) AS walkthroughs`,
+          (SELECT count(*) FROM branch_comment_post_references r JOIN branch_comment_posts p ON p.id = r.post_id JOIN branch_comments c ON c.id = p.comment_id WHERE c.branch_review_id = ?) AS comment_references,
+          (SELECT count(*) FROM branch_comment_targets t JOIN branch_comments c ON c.id = t.comment_id WHERE c.branch_review_id = ?) AS targets,
+          (SELECT count(*) FROM branch_walkthroughs WHERE branch_review_id = ?) AS walkthroughs,
+          (SELECT count(*) FROM branch_walkthrough_references r JOIN branch_walkthroughs w ON w.id = r.walkthrough_id WHERE w.branch_review_id = ?) AS walkthrough_references`,
       )
       .get(
+        branchReviewId,
+        branchReviewId,
+        branchReviewId,
+        branchReviewId,
         branchReviewId,
         branchReviewId,
         branchReviewId,
@@ -1613,24 +1784,60 @@ export class RvwDatabase {
     return {
       branchReview: numberValue(row, "branch_review"),
       issueMemberships: numberValue(row, "issue_memberships"),
+      comments: numberValue(row, "comments"),
       issueComments: numberValue(row, "issue_comments"),
       codeComments: numberValue(row, "code_comments"),
       reviewComments: numberValue(row, "review_comments"),
       walkthroughComments: numberValue(row, "walkthrough_comments"),
       posts: numberValue(row, "posts"),
+      commentReferences: numberValue(row, "comment_references"),
+      targets: numberValue(row, "targets"),
       walkthroughs: numberValue(row, "walkthroughs"),
+      walkthroughReferences: numberValue(row, "walkthrough_references"),
       gitRefs,
     };
   }
 
-  resetBranchReview(branchReviewId: string, gitRefs: number): BranchResetCounts {
+  listBranchEvidenceOids(branchReviewId: string): string[] {
+    const rows = this.database
+      .prepare(
+        `SELECT source_oid AS oid FROM branch_reviews WHERE id = ?
+         UNION SELECT created_source_oid AS oid FROM branch_comments WHERE branch_review_id = ?
+         UNION SELECT t.source_oid AS oid
+           FROM branch_comment_targets t JOIN branch_comments c ON c.id = t.comment_id
+           WHERE c.branch_review_id = ? AND t.source_oid IS NOT NULL
+         UNION SELECT p.related_commit_oid AS oid
+           FROM branch_comment_posts p JOIN branch_comments c ON c.id = p.comment_id
+           WHERE c.branch_review_id = ? AND p.related_commit_oid IS NOT NULL
+         UNION SELECT source_oid AS oid FROM branch_walkthroughs WHERE branch_review_id = ?`,
+      )
+      .all(
+        branchReviewId,
+        branchReviewId,
+        branchReviewId,
+        branchReviewId,
+        branchReviewId,
+      ) as DbRow[];
+    return rows.map((row) => stringValue(row, "oid"));
+  }
+
+  resetBranchReview(
+    branchReviewId: string,
+    gitRefs: number,
+    expectedReviewChangeSequence: number,
+  ): BranchResetCounts {
     return this.immediateTransaction(() => {
       if (!this.getBranchReview(branchReviewId)) {
         throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
           status: 404,
         });
       }
+      this.assertReviewChangeSequence("branch", branchReviewId, expectedReviewChangeSequence);
       const counts = this.getBranchResetCounts(branchReviewId, gitRefs);
+      const issueIds = this.database
+        .prepare("SELECT issue_id FROM branch_review_issues WHERE branch_review_id = ?")
+        .all(branchReviewId)
+        .map((row) => stringValue(row as DbRow, "issue_id"));
       this.database
         .prepare("DELETE FROM branch_comments WHERE branch_review_id = ?")
         .run(branchReviewId);
@@ -1643,6 +1850,7 @@ export class RvwDatabase {
       if (Number(review.changes) !== 1) {
         throw new RvwError("DATABASE_ERROR", "Branch Reviewを削除できませんでした。");
       }
+      for (const issueId of issueIds) this.deleteOrphanIssue(issueId);
       this.incrementChangeSequence({ kind: "branch", reviewId: branchReviewId });
       return counts;
     });
@@ -1767,9 +1975,11 @@ export class RvwDatabase {
     github: GitHubPullRequest,
     repository: { localRepositoryPath: string; gitCommonDir: string },
     comparisonBaseOid: string,
+    expectedReviewChangeSequence: number,
   ): PullRequest {
     const id = this.immediateTransaction(() => {
       const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
+      this.assertReviewChangeSequence("pull-request", writtenId, expectedReviewChangeSequence);
       this.deletePullRequestHistory(writtenId);
       this.incrementChangeSequence({ kind: "pull-request", reviewId: writtenId });
       return writtenId;
@@ -1830,11 +2040,16 @@ export class RvwDatabase {
   }
 
   deletePullRequestHistory(pullRequestId: string): void {
+    const issueIds = this.database
+      .prepare("SELECT issue_id FROM pull_request_issues WHERE pull_request_id = ?")
+      .all(pullRequestId)
+      .map((row) => stringValue(row as DbRow, "issue_id"));
     this.database.prepare("DELETE FROM comments WHERE pull_request_id = ?").run(pullRequestId);
     this.database.prepare("DELETE FROM walkthroughs WHERE pull_request_id = ?").run(pullRequestId);
     this.database
       .prepare("DELETE FROM pull_request_issues WHERE pull_request_id = ?")
       .run(pullRequestId);
+    for (const issueId of issueIds) this.deleteOrphanIssue(issueId);
   }
 
   private codeReferenceStorage(
@@ -2098,12 +2313,17 @@ export class RvwDatabase {
     };
   }
 
-  deleteWalkthrough(id: string): DeletedWalkthrough {
+  deleteWalkthrough(id: string, expectedReviewChangeSequence: number): DeletedWalkthrough {
     return this.immediateTransaction(() => {
       const walkthrough = this.getWalkthrough(id);
       if (!walkthrough) {
         throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
       }
+      this.assertReviewChangeSequence(
+        "pull-request",
+        walkthrough.pullRequestId,
+        expectedReviewChangeSequence,
+      );
       const counts = this.getWalkthroughDeleteCounts(id);
       this.database
         .prepare(
@@ -2804,12 +3024,20 @@ export class RvwDatabase {
     };
   }
 
-  deleteBranchWalkthrough(id: string): DeletedBranchWalkthrough {
+  deleteBranchWalkthrough(
+    id: string,
+    expectedReviewChangeSequence: number,
+  ): DeletedBranchWalkthrough {
     return this.immediateTransaction(() => {
       const walkthrough = this.getBranchWalkthrough(id);
       if (!walkthrough) {
         throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
       }
+      this.assertReviewChangeSequence(
+        "branch",
+        walkthrough.branchReviewId,
+        expectedReviewChangeSequence,
+      );
       const counts = this.getBranchWalkthroughDeleteCounts(id);
       this.database
         .prepare(

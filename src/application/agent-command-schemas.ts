@@ -16,6 +16,7 @@ import {
 } from "../shared/constants.js";
 
 const nonEmptyString = z.string().min(1);
+const confirmationToken = z.string().regex(/^[0-9a-f]{64}$/);
 const commentUri = z.string().regex(/^rvw:\/\/comment\//);
 const walkthroughUri = z.string().regex(/^rvw:\/\/walkthrough\//);
 const nullableCommentLine = z.number().int().positive().nullable().optional().default(null);
@@ -225,7 +226,7 @@ const walkthroughContentInputSchema = z
     authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
     diagramBindings: z.record(z.string(), z.string()).optional(),
     references: z.array(codeReferenceInputSchema).min(1).max(MAX_CODE_REFERENCES),
-    issues: z.array(nonEmptyString).optional(),
+    issuesToAdd: z.array(nonEmptyString).optional(),
   })
   .strict();
 
@@ -252,8 +253,13 @@ export const agentCommandInputSchemas = {
   }),
   "pr.attach": z.object({ reference: nonEmptyString, repositoryPath: nonEmptyString }).strict(),
   "pr.reset.preview": z.object({ reference: nonEmptyString }).strict(),
-  "pr.reset": z.object({ reference: nonEmptyString, confirmed: z.literal(true) }).strict(),
+  "pr.reset": z
+    .object({ reference: nonEmptyString, confirmed: z.literal(true), confirmationToken })
+    .strict(),
   "pr.issue.add": z.object({ reference: nonEmptyString, issueReference: nonEmptyString }).strict(),
+  "pr.issue.refresh": z
+    .object({ reference: nonEmptyString, issueReference: nonEmptyString, force: z.literal(true) })
+    .strict(),
   "pr.issue.remove.preview": z
     .object({ reference: nonEmptyString, issueReference: nonEmptyString })
     .strict(),
@@ -262,11 +268,19 @@ export const agentCommandInputSchemas = {
       reference: nonEmptyString,
       issueReference: nonEmptyString,
       confirmed: z.literal(true),
+      confirmationToken,
     })
     .strict(),
   "branch.sync": z.object({ repositoryPath: nonEmptyString }).strict(),
   "branch.issue.add": z
     .object({ repositoryPath: nonEmptyString, issueReference: nonEmptyString })
+    .strict(),
+  "branch.issue.refresh": z
+    .object({
+      repositoryPath: nonEmptyString,
+      issueReference: nonEmptyString,
+      force: z.literal(true),
+    })
     .strict(),
   "branch.issue.remove.preview": z
     .object({ repositoryPath: nonEmptyString, issueReference: nonEmptyString })
@@ -276,10 +290,13 @@ export const agentCommandInputSchemas = {
       repositoryPath: nonEmptyString,
       issueReference: nonEmptyString,
       confirmed: z.literal(true),
+      confirmationToken,
     })
     .strict(),
   "branch.reset.preview": z.object({ repositoryPath: nonEmptyString }).strict(),
-  "branch.reset": z.object({ repositoryPath: nonEmptyString, confirmed: z.literal(true) }).strict(),
+  "branch.reset": z
+    .object({ repositoryPath: nonEmptyString, confirmed: z.literal(true), confirmationToken })
+    .strict(),
   "branch.comments": z
     .object({
       repositoryPath: nonEmptyString,
@@ -319,7 +336,9 @@ export const agentCommandInputSchemas = {
     .object({ uri: walkthroughUri, content: walkthroughUpdateInputSchema })
     .strict(),
   "walkthrough.delete.preview": z.object({ uri: walkthroughUri }).strict(),
-  "walkthrough.delete": z.object({ uri: walkthroughUri, confirmed: z.literal(true) }).strict(),
+  "walkthrough.delete": z
+    .object({ uri: walkthroughUri, confirmed: z.literal(true), confirmationToken })
+    .strict(),
 } as const;
 
 export type AgentCommandOperation = keyof typeof agentCommandInputSchemas;

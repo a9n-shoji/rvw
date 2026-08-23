@@ -1681,7 +1681,9 @@ test("deletes an unnecessary walkthrough and its whole-document feedback after c
   await expect(page.locator(".document-pane.active").getByText(feedback)).toBeVisible();
 
   page.once("dialog", (dialog) => {
-    expect(dialog.message()).toContain("紐づくコメント 1件と投稿 1件も削除されます。");
+    expect(dialog.message()).toContain(
+      "紐づくコメント 1件、投稿 1件、コード参照 7件も削除されます。",
+    );
     void dialog.accept();
   });
   await page.getByRole("button", { name: "ウォークスルーを削除" }).click();
@@ -1710,10 +1712,13 @@ test("removes both pane copies when a walkthrough is deleted externally", async 
   await expect(leftPane.getByRole("tab", { name: title })).toBeVisible();
   await expect(rightPane.getByRole("tab", { name: title })).toBeVisible();
 
-  const response = await request.delete(
-    `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}`,
-    { data: {} },
-  );
+  const deletionEndpoint = `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}`;
+  const preview = await request.delete(deletionEndpoint, { data: { yes: false } });
+  expect(preview.status()).toBe(409);
+  const { confirmationToken } = (await preview.json()) as { confirmationToken: string };
+  const response = await request.delete(deletionEndpoint, {
+    data: { yes: true, confirmationToken },
+  });
   expect(response.ok()).toBe(true);
   await expect(page.getByRole("tab", { name: title })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();

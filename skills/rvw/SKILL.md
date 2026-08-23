@@ -105,7 +105,13 @@ Removal is destructive because Issue-target RVW comments and replies owned by th
 with the membership. First run `rvw pr issue remove ... --json` or
 `rvw branch issue remove ... --json` without `--yes`, report the returned Issue number/title and whole,
 range, and reply counts, and stop unless the human explicitly authorizes those exact deletions. Only
-then repeat with `--yes`. These commands never edit or close the GitHub Issue itself.
+then repeat with `--yes --confirmation-token <PREVIEW_TOKEN>`. If the token is stale, present the new
+preview and obtain authorization again. These commands never edit or close the GitHub Issue itself.
+
+If an owned Issue cache is stuck on an equal-version content conflict, use `rvw pr issue refresh ...
+--force --json` or `rvw branch issue refresh ... --force --json` only after reporting that this is an
+explicit local-cache repair. Require the `issue.cacheRepair` capability first. rvw accepts the repair
+only when two consecutive GitHub reads have the same canonical identity and content snapshot.
 
 A Branch Review stays bound to one Git common directory. Another worktree from that same clone may
 reuse it and become the current local path. An independent clone of the same canonical GitHub
@@ -119,8 +125,9 @@ boundary from the original binding. Do not retry a `REPOSITORY_MISMATCH` as a sy
 Branch reset and Issue-removal previews/execution, `branch comments`, and `branch sync` are
 existing-only. `BRANCH_REVIEW_NOT_FOUND` means they created no review row or retained ref. Only
 `branch open` and an explicit `branch issue add` may create the singleton. Branch evidence belongs to
-the returned Branch Review ID, not only to owner/repository. If reset reports that SQLite deletion
-succeeded but review-owned refs remain, report the orphan prefix and repair details; creating a new
+the returned Branch Review ID, not only to owner/repository. Use the preview's confirmation token for
+reset execution. If reset returns `completed-with-orphan-refs`, treat the Review as deleted and report
+the isolated orphan prefix and cleanup details; creating a new
 review neither cleans nor inherits those refs.
 
 ## Read comments
@@ -332,4 +339,6 @@ tracked changes. A clean local PR branch that is merely behind GitHub is accepta
 move its checkout. To change only the saved worktree path without starting a viewer, use
 `rvw pr attach <PULL_REQUEST> --repository <PATH> --json`.
 
-If rvw reports `LOCAL_STATE_INCONSISTENT`, report its reset guidance and deletion counts. Never run `rvw pr reset ... --yes` without explicit authorization because it permanently removes local comments, Walkthroughs, and retained rvw refs.
+If rvw reports `LOCAL_STATE_INCONSISTENT`, report its reset guidance and deletion counts. Never run
+`rvw pr reset ... --yes --confirmation-token <PREVIEW_TOKEN>` without explicit authorization because
+it permanently removes local comments, Walkthroughs, and retained rvw refs.

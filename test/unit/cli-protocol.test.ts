@@ -179,6 +179,7 @@ describe("CLI protocol discovery", () => {
         "branchReview.sync",
         "issue.read",
         "issue.membership",
+        "issue.cacheRepair",
         "comment.create",
         "comment.list",
         "comment.watch",
@@ -210,13 +211,13 @@ describe("CLI protocol discovery", () => {
         .find((command) => command.name() === "pr")
         ?.commands.find((command) => command.name() === "issue")
         ?.commands.map((command) => command.name()),
-    ).toEqual(["add", "remove"]);
+    ).toEqual(["add", "refresh", "remove"]);
     expect(
       program.commands
         .find((command) => command.name() === "branch")
         ?.commands.find((command) => command.name() === "issue")
         ?.commands.map((command) => command.name()),
-    ).toEqual(["add", "remove"]);
+    ).toEqual(["add", "refresh", "remove"]);
     expect(
       program.commands
         .find((command) => command.name() === "agent")
@@ -250,6 +251,7 @@ describe("CLI protocol discovery", () => {
       branchReview: { id: "branch-review-1" },
       counts: { branchReview: 1, gitRefs: 2 },
       retainedRefs: ["refs/rvw/branch/branch-review-1/commits/oid-abc"],
+      confirmationToken: "a".repeat(64),
       confirmationRequired: true,
     });
     const { runtime } = mockRuntime({ getBranchResetPreviewAtPath });
@@ -272,7 +274,16 @@ describe("CLI protocol discovery", () => {
         code: "RESET_CONFIRMATION_REQUIRED",
         details: {
           command: "rvw",
-          arguments: ["branch", "reset", "--repository", repositoryPath, "--yes", "--json"],
+          arguments: [
+            "branch",
+            "reset",
+            "--repository",
+            repositoryPath,
+            "--yes",
+            "--confirmation-token",
+            "a".repeat(64),
+            "--json",
+          ],
         },
       },
       branchReview: { id: "branch-review-1" },
@@ -284,6 +295,7 @@ describe("CLI protocol discovery", () => {
     const getBranchIssueRemovalPreview = vi.fn().mockResolvedValue({
       issue: { id: "issue-142", number: 142, title: "Existing Issue" },
       counts: { issueWholeComments: 1, issueRangeComments: 2, replies: 3 },
+      confirmationToken: "b".repeat(64),
       confirmationRequired: true,
     });
     const { runtime } = mockRuntime({ getBranchIssueRemovalPreview });
@@ -315,6 +327,8 @@ describe("CLI protocol discovery", () => {
             "--repository",
             "/review repo",
             "--yes",
+            "--confirmation-token",
+            "b".repeat(64),
             "--json",
           ],
         },
@@ -801,7 +815,7 @@ describe("CLI protocol discovery", () => {
           description: null,
         },
       ],
-      issues: ["#142"],
+      issuesToAdd: ["#142"],
     };
     const publishWalkthrough = vi.fn().mockResolvedValue({
       walkthrough: { id: "walkthrough-3", ref: uri, branchReviewId: "branch-review-1", ...input },
@@ -878,6 +892,7 @@ describe("CLI protocol discovery", () => {
     const getWalkthroughDeletePreview = vi.fn().mockReturnValue({
       walkthrough: { id: "walkthrough-1", ref: uri, title: "Temporary explanation" },
       counts: { comments: 1, posts: 2, references: 3 },
+      confirmationToken: "c".repeat(64),
       confirmationRequired: true,
     });
     const deleteWalkthroughByUri = vi.fn();
@@ -930,11 +945,13 @@ describe("CLI protocol discovery", () => {
       "delete",
       uri,
       "--yes",
+      "--confirmation-token",
+      "d".repeat(64),
       "--json",
     ]);
 
     expect(getWalkthroughDeletePreview).not.toHaveBeenCalled();
-    expect(deleteWalkthroughByUri).toHaveBeenCalledWith(uri);
+    expect(deleteWalkthroughByUri).toHaveBeenCalledWith(uri, "d".repeat(64));
     expect(process.exitCode).toBeUndefined();
     expect(readStdout()).toMatchObject({
       ok: true,

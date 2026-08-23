@@ -1,5 +1,32 @@
 # Architecture decisions
 
+## 2026-08-23: Keep the Branch Review product boundary and use narrow shared contracts
+
+### Choice
+
+Keep the user-facing and protocol name **Branch Review**. Its reading target is specifically the
+GitHub default branch's exact named commit, and the viewer always shows that branch name and OID.
+“Repository Review” would suggest arbitrary branches, the worktree/index, or a repository-wide review
+mode that this product intentionally does not provide. Keep `reset` because the operation returns local
+review state to a reconstructible starting point; for Branch Review that requires deleting the old
+aggregate and giving a later open a new ID, while PR reset reconstructs the existing GitHub-PR identity.
+
+Keep Pull Request Review and Branch Review as separate root aggregates and separate persistence stacks.
+Share only contracts that have the same meaning: code references, Issue content cache, confirmation
+tokens, query invalidation, warning formatting, and parity tests. Do not introduce a nullable generic
+Review aggregate or `ReviewApp<T>` that would make PR commit ranges and Branch single-source lifecycle
+optional variants of one model. Keep explicit SQL because the required immediate transactions, NOCASE
+uniqueness, conditional generations, and cascade boundaries would remain raw operations behind an ORM.
+Keep retain-before-publish plus compensation instead of a Git/SQLite two-phase protocol, and keep
+doctor/explicit commands read-driven rather than adding a repair daemon.
+
+### Consequences
+
+- “Branch Review” documentation must say “GitHub default branch” and must not imply an arbitrary branch selector.
+- Reset results must distinguish full completion, ref-cleanup partial success, and reopen failure without renaming the command.
+- Shared behavior is enforced by small helpers and contract matrices; controller or table consolidation is not a goal.
+- Orphan evidence remains review-ID isolated and observable in doctor; cleanup is explicit, never a background mutation.
+
 ## 2026-08-23: Bind Branch lifecycle, evidence, and cache identity to one aggregate
 
 ### Problem
@@ -41,15 +68,16 @@ currently registered at that path. A stale HTTP request never falls through to a
 aggregate. A remote-less cached open may update the usable worktree path only when common directory,
 owned source ref, and object all agree; existing-only previews do not persist that update.
 
-Write a dedicated incomplete-initialization marker in the first aggregate transaction, before creating
-the owned ref. Normal evidence reads remain strict, but explicit reset may delete a marked, ref-less row
-after verifying its binding. When the ref exists but marker clear was interrupted, a verified cached
+Write an explicit `initialization_state = pending | ready | failed` in the first aggregate transaction,
+before creating the owned ref, and keep ordinary `source_sync_error` independent. Normal evidence reads
+remain strict, but explicit reset may delete a non-ready, ref-less row after verifying its binding.
+When the ref exists but ready publication was interrupted, a verified cached
 open completes initialization. Make that transaction create-only: a concurrent winner's existing row
 is returned unchanged. The loser verifies the winner's owned source, discards the GitHub snapshot it
 fetched before learning that aggregate's identity, allocates a generation, and fetches fresh metadata
 before retain-before-publish with the winner's expected ID. A completion that discovers reset removed
 the aggregate best-effort deletes only the exact ref that attempt created. This is the sole missing-ref
-exception. After the marker has been cleared, delayed completion is idempotent even when a later sync
+exception. After the state is `ready`, delayed completion is idempotent even when a later sync
 has advanced the source. Create exact refs with Git compare-and-swap and compensate only when the
 aggregate ID is gone; never delete historical evidence merely because the current source changed.
 Remove the unrestricted Branch upsert entry point so existing source publication cannot
@@ -59,26 +87,39 @@ port boundary before any cache or membership write.
 
 Separate explicit Issue membership addition from background refresh. Refresh and sync-error writes
 recheck the originating review and membership in one immediate transaction and skip all shared-cache
-and sequence changes if either owner disappeared. PR-body direct references remain additions and may
-be registered again by a later refresh. A late fetch failure after membership removal is reported as
-`membership-removed`, not as a stale warning.
+and sequence changes if either owner disappeared. Persist sync errors on the originating membership,
+not the shared Issue content row. Collect an orphan cache row after the last membership is removed;
+when another Review still owns a conflicted row, permit explicit force repair only after two matching
+GitHub identity/content reads. PR-body direct references remain additions and may be registered again
+by a later refresh. A late fetch failure after membership removal is reported as `membership-removed`,
+not as a stale warning.
+
+Fence reset, Issue removal, and Walkthrough deletion with a preview sequence and content-bound
+confirmation token, rechecked in the final SQLite transaction. A stale token returns 409 plus the
+current preview. Treat Branch DB deletion plus ref cleanup failure as a typed partial success so every
+transport discards the deleted aggregate while reporting its isolated orphan prefix.
 
 Order every existing Branch source attempt with an internal generation allocated before network I/O.
 After retaining a candidate, its source metadata and any failure are compare-and-set with the same
-generation; late attempts may return or fail but cannot roll back the aggregate. Distinguish the exact
-pending initialization marker from a failed marker, waiting up to five seconds only for pending work.
+generation; late attempts may return or fail but cannot roll back the aggregate. Distinguish explicit
+pending initialization state from failed state, waiting up to five seconds only for pending work.
 Treat a default branch move between metadata and fetch as a remote snapshot race and retry the metadata
 and OID pair once.
 
 Use GitHub Issue `updatedAt` as the shared cache content version. Ignore older successes, reject equal
 versions with conflicting title/body/state, and increment an internal cache generation for every
-accepted success. Compare a failure's originating generation before setting the global cache error;
-wall-clock `fetchedAt` is observability data, not a CAS token. The error therefore describes the health
-of the current shared cache, not a membership-specific failure. Surface per-Issue failures in both PR
+accepted success. Compare a failure's originating generation before setting the membership error;
+wall-clock `fetchedAt` is observability data, not a CAS token. Surface per-Issue failures in both PR
 and Branch viewers, limiting top-bar detail to three Issues plus the remaining count. Use the existing
 durable reply ledger as one database-wide public idempotency-key namespace for both review kinds,
 but preserve the published 0.2.x PR request-hash shape so an exact retry can reuse its durable result.
 Include the review kind in the unreleased Branch request hash rather than adding a second Branch ledger.
+
+Canonicalize worktree and common-directory paths with filesystem realpath. Expose the selected GitHub
+remote in open/viewer/doctor diagnostics and classify retained Branch refs in doctor without automatic
+cleanup. Re-key v3 watcher rows from the legacy PR URL to the first observed protocol-v4 PR UUID in the
+same ingest transaction; merge pending duplicates and quarantine conflicting active leases. Name the
+Walkthrough side-effect input `issuesToAdd` so it cannot be mistaken for replaceable Walkthrough content.
 
 ### Trade-offs
 

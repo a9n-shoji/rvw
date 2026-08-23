@@ -359,6 +359,110 @@ function ingestReady(database, frame) {
   });
 }
 
+function mergePendingPullRequestBatches(database, contextKey) {
+  const batches = database
+    .prepare(
+      `SELECT id FROM batches
+      WHERE review_kind = 'pull-request' AND context_key = ? AND status = 'pending'
+      ORDER BY created_at, id`,
+    )
+    .all(contextKey);
+  const primary = batches[0];
+  if (!primary) return;
+  for (const duplicate of batches.slice(1)) {
+    const operations = database
+      .prepare(
+        `SELECT comment_ref, idempotency_key, post_id FROM operations
+        WHERE batch_id = ? ORDER BY comment_ref`,
+      )
+      .all(duplicate.id);
+    for (const operation of operations) {
+      const existing = database
+        .prepare("SELECT 1 AS present FROM operations WHERE batch_id = ? AND comment_ref = ?")
+        .get(primary.id, operation.comment_ref);
+      if (existing) {
+        database
+          .prepare("DELETE FROM operations WHERE batch_id = ? AND comment_ref = ?")
+          .run(duplicate.id, operation.comment_ref);
+      } else {
+        database
+          .prepare("UPDATE operations SET batch_id = ? WHERE batch_id = ? AND comment_ref = ?")
+          .run(primary.id, duplicate.id, operation.comment_ref);
+      }
+    }
+    database
+      .prepare("UPDATE events SET batch_id = ? WHERE batch_id = ?")
+      .run(primary.id, duplicate.id);
+    database.prepare("DELETE FROM batches WHERE id = ?").run(duplicate.id);
+  }
+}
+
+function rekeyLegacyPullRequestContext(database, context) {
+  if (context.kind !== "pull-request") return;
+  const legacyBatches = database
+    .prepare(
+      `SELECT id, status FROM batches
+      WHERE review_kind = 'pull-request'
+        AND lower(pull_request_url) = lower(?)
+        AND context_key = pull_request_url
+        AND context_display = pull_request_url
+        AND context_key != ?`,
+    )
+    .all(context.display, context.key);
+  const legacyEvents = database
+    .prepare(
+      `SELECT count(*) AS count FROM events
+      WHERE review_kind = 'pull-request'
+        AND lower(pull_request_url) = lower(?)
+        AND context_key = pull_request_url
+        AND context_display = pull_request_url
+        AND context_key != ?`,
+    )
+    .get(context.display, context.key);
+  if (legacyBatches.length === 0 && Number(legacyEvents.count) === 0) return;
+
+  const stableInFlight = database
+    .prepare(
+      `SELECT id FROM batches
+      WHERE review_kind = 'pull-request' AND context_key = ? AND status = 'in_flight'`,
+    )
+    .all(context.key);
+  if (stableInFlight.length > 0) {
+    const now = new Date().toISOString();
+    for (const legacy of legacyBatches.filter((batch) => batch.status === "in_flight")) {
+      database
+        .prepare(
+          `UPDATE batches SET status = 'quarantined', lease_id = NULL, write_key = NULL,
+            next_attempt_at = NULL, last_error = ?, updated_at = ? WHERE id = ?`,
+        )
+        .run(
+          "Legacy PR context conflicted with an active stable-ID lease during protocol v4 migration",
+          now,
+          legacy.id,
+        );
+    }
+  }
+  database
+    .prepare(
+      `UPDATE events SET context_key = ?, context_display = ?
+      WHERE review_kind = 'pull-request'
+        AND lower(pull_request_url) = lower(?)
+        AND context_key = pull_request_url
+        AND context_display = pull_request_url`,
+    )
+    .run(context.key, context.display, context.display);
+  database
+    .prepare(
+      `UPDATE batches SET context_key = ?, context_display = ?, pull_request_url = ?
+      WHERE review_kind = 'pull-request'
+        AND lower(pull_request_url) = lower(?)
+        AND context_key = pull_request_url
+        AND context_display = pull_request_url`,
+    )
+    .run(context.key, context.display, context.display, context.display);
+  mergePendingPullRequestBatches(database, context.key);
+}
+
 function ingestEvent(database, frame) {
   const event = frame.event;
   const context =
@@ -397,6 +501,7 @@ function ingestEvent(database, frame) {
   }
   return transaction(database, () => {
     if (!getMeta(database, "database_id")) fail("Ingest a ready frame before events");
+    rekeyLegacyPullRequestContext(database, context);
     const existing = database
       .prepare("SELECT * FROM events WHERE sequence = ?")
       .get(event.sequence);

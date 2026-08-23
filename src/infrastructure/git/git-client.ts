@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { TextDecoder } from "node:util";
 import type {
@@ -188,7 +189,11 @@ function parseGithubRemote(remote: string): { owner: string; repository: string 
 }
 
 export class GitClient {
-  async doctor(cwd: string): Promise<{ version: string; repository: RepositoryContext | null }> {
+  async doctor(cwd: string): Promise<{
+    version: string;
+    repository: RepositoryContext | null;
+    selectedRemote: Awaited<ReturnType<GitClient["tryBaseRepositoryIdentity"]>>;
+  }> {
     const version = await runText("git", ["--version"]);
     let repository: RepositoryContext | null = null;
     try {
@@ -196,7 +201,10 @@ export class GitClient {
     } catch (error) {
       if (!(error instanceof RvwError) || error.code !== "NOT_IN_GIT_REPOSITORY") throw error;
     }
-    return { version, repository };
+    const selectedRemote = repository
+      ? await this.tryBaseRepositoryIdentity(repository.worktreePath)
+      : null;
+    return { version, repository, selectedRemote };
   }
 
   async repositoryContext(cwd: string): Promise<RepositoryContext> {
@@ -205,12 +213,13 @@ export class GitClient {
         runText("git", ["rev-parse", "--show-toplevel"], { cwd }),
         runText("git", ["rev-parse", "--git-common-dir"], { cwd }),
       ]);
-      const worktreePath = path.resolve(cwd, rootValue);
+      const worktreePath = await realpath(path.resolve(cwd, rootValue));
+      const resolvedCommonDir = path.isAbsolute(commonValue)
+        ? path.resolve(commonValue)
+        : path.resolve(worktreePath, commonValue);
       return {
         worktreePath,
-        gitCommonDir: path.isAbsolute(commonValue)
-          ? path.resolve(commonValue)
-          : path.resolve(worktreePath, commonValue),
+        gitCommonDir: await realpath(resolvedCommonDir),
       };
     } catch (error) {
       if (error instanceof RvwError && error.code === "PROCESS_FAILED") {
@@ -256,6 +265,7 @@ export class GitClient {
   async baseRepositoryIdentity(cwd: string): Promise<{
     owner: string;
     repository: string;
+    remoteName: string;
     remoteUrl: string;
   }> {
     const identity = await this.tryBaseRepositoryIdentity(cwd);
@@ -270,6 +280,7 @@ export class GitClient {
   async tryBaseRepositoryIdentity(cwd: string): Promise<{
     owner: string;
     repository: string;
+    remoteName: string;
     remoteUrl: string;
   } | null> {
     const remoteNames = (await runText("git", ["remote"], { cwd }))
@@ -287,7 +298,7 @@ export class GitClient {
         .filter(Boolean);
       for (const remoteUrl of urls) {
         const parsed = parseGithubRemote(remoteUrl);
-        if (parsed) return { ...parsed, remoteUrl };
+        if (parsed) return { ...parsed, remoteName, remoteUrl };
       }
     }
     return null;

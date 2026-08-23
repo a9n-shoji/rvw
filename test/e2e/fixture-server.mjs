@@ -42,6 +42,7 @@ const baseOid = repositoryDemo?.baseOid ?? "a".repeat(40);
 const firstHead = repositoryDemo?.commits[0]?.oid ?? "b".repeat(40);
 const secondHead = repositoryDemo?.headOid ?? "c".repeat(40);
 const branchReviewId = "33333333-3333-4333-8333-333333333333";
+const destructiveConfirmationToken = "f".repeat(64);
 const branchIssueId = "44444444-4444-4444-8444-444444444444";
 const olderBranchIssueId = "55555555-5555-4555-8555-555555555555";
 const branchWalkthroughId = "66666666-6666-4666-8666-666666666666";
@@ -947,6 +948,7 @@ app.delete("/api/pull-requests/:id/issues/:issueId", async (context) => {
         issue,
         counts,
         confirmationRequired: true,
+        confirmationToken: destructiveConfirmationToken,
       },
       409,
     );
@@ -967,6 +969,10 @@ app.get("/api/branch-reviews/:id", (context) =>
     branchReview,
     issues: branchIssues,
     walkthroughs: branchWalkthroughSummaries(),
+    selectedRemote: {
+      name: "origin",
+      url: "https://github.com/acme/review-repo.git",
+    },
   }),
 );
 
@@ -981,11 +987,28 @@ app.post("/api/branch-reviews/open", (context) => {
       updatedAt: now,
     };
   }
-  return context.json({ ok: true, branchReview, fromCache });
+  return context.json({
+    ok: true,
+    branchReview,
+    fromCache,
+    selectedRemote: {
+      name: "origin",
+      url: "https://github.com/acme/review-repo.git",
+    },
+  });
 });
 
 app.post("/api/branch-reviews/:id/sync", (context) =>
-  context.json({ ok: true, branchReview, issues: branchIssues, issueResults: [] }),
+  context.json({
+    ok: true,
+    branchReview,
+    issues: branchIssues,
+    issueResults: [],
+    selectedRemote: {
+      name: "origin",
+      url: "https://github.com/acme/review-repo.git",
+    },
+  }),
 );
 
 app.post("/api/branch-reviews/:id/reset", async (context) => {
@@ -1016,6 +1039,7 @@ app.post("/api/branch-reviews/:id/reset", async (context) => {
         counts,
         retainedRefs,
         confirmationRequired: true,
+        confirmationToken: destructiveConfirmationToken,
       },
       409,
     );
@@ -1031,6 +1055,7 @@ app.post("/api/branch-reviews/:id/reset", async (context) => {
     branchReview: deletedBranchReview,
     deleted: counts,
     removedRefs: retainedRefs,
+    outcome: { kind: "completed" },
   });
 });
 
@@ -1087,6 +1112,7 @@ app.delete("/api/branch-reviews/:id/issues/:issueId", async (context) => {
         issue,
         counts,
         confirmationRequired: true,
+        confirmationToken: destructiveConfirmationToken,
       },
       409,
     );
@@ -1228,7 +1254,7 @@ app.get("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
       );
 });
 
-app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
+app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", async (context) => {
   const walkthroughIndex = branchWalkthroughs.findIndex(
     (candidate) => candidate.id === context.req.param("walkthroughId"),
   );
@@ -1238,7 +1264,7 @@ app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
       404,
     );
   }
-  const [walkthrough] = branchWalkthroughs.splice(walkthroughIndex, 1);
+  const walkthrough = branchWalkthroughs[walkthroughIndex];
   const associatedComments = branchCommentContexts.filter(
     ({ comment }) =>
       comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id,
@@ -1247,6 +1273,28 @@ app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
     (count, { comment }) => count + comment.posts.length,
     0,
   );
+  const counts = {
+    comments: associatedComments.length,
+    posts: postCount,
+    references: walkthrough.references.length,
+  };
+  const input = await context.req.json();
+  if (!input.yes) {
+    return context.json(
+      {
+        ok: false,
+        error: {
+          code: "WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED",
+          message: "confirmation required",
+        },
+        counts,
+        confirmationRequired: true,
+        confirmationToken: destructiveConfirmationToken,
+      },
+      409,
+    );
+  }
+  branchWalkthroughs.splice(walkthroughIndex, 1);
   branchCommentContexts = branchCommentContexts.filter(
     ({ comment }) =>
       comment.target.kind !== "walkthrough" || comment.target.walkthroughId !== walkthrough.id,
@@ -1258,11 +1306,7 @@ app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
       id: walkthrough.id,
       ref: walkthrough.ref,
       branchReviewId,
-      counts: {
-        comments: associatedComments.length,
-        posts: postCount,
-        references: walkthrough.references.length,
-      },
+      counts,
     },
   });
 });
@@ -1696,7 +1740,7 @@ app.post("/api/fixture/walkthroughs/:walkthroughId/reset", (context) => {
   return context.json({ ok: true, walkthrough });
 });
 
-app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
+app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", async (context) => {
   const walkthroughIndex = activeWalkthroughs.findIndex(
     (candidate) => candidate.id === context.req.param("walkthroughId"),
   );
@@ -1706,13 +1750,35 @@ app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
       404,
     );
   }
-  const [walkthrough] = activeWalkthroughs.splice(walkthroughIndex, 1);
+  const walkthrough = activeWalkthroughs[walkthroughIndex];
   const associatedComments = comments.filter(
     (comment) =>
       comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id,
   );
   const associatedCommentIds = new Set(associatedComments.map((comment) => comment.id));
   const postCount = associatedComments.reduce((count, comment) => count + comment.posts.length, 0);
+  const counts = {
+    comments: associatedComments.length,
+    posts: postCount,
+    references: walkthrough.references.length,
+  };
+  const input = await context.req.json();
+  if (!input.yes) {
+    return context.json(
+      {
+        ok: false,
+        error: {
+          code: "WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED",
+          message: "confirmation required",
+        },
+        counts,
+        confirmationRequired: true,
+        confirmationToken: destructiveConfirmationToken,
+      },
+      409,
+    );
+  }
+  activeWalkthroughs.splice(walkthroughIndex, 1);
   for (let index = comments.length - 1; index >= 0; index -= 1) {
     if (associatedCommentIds.has(comments[index].id)) comments.splice(index, 1);
   }
@@ -1723,11 +1789,7 @@ app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
       id: walkthrough.id,
       ref: walkthrough.ref,
       pullRequestId,
-      counts: {
-        comments: associatedComments.length,
-        posts: postCount,
-        references: walkthrough.references.length,
-      },
+      counts,
     },
   });
 });

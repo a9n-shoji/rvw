@@ -3,18 +3,12 @@ import type { BranchReview, GitHubRepository, RepositoryIdentity } from "../doma
 import { RvwDatabase } from "../infrastructure/db/database.js";
 import { GitClient, type RepositoryContext } from "../infrastructure/git/git-client.js";
 import type { GitHubPort } from "../infrastructure/github/github-client.js";
-import {
-  BRANCH_REVIEW_INITIALIZATION_FAILED,
-  BRANCH_REVIEW_INITIALIZATION_PENDING,
-} from "../shared/constants.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 
-export type BranchReviewLifecyclePolicy =
-  | "open-or-create"
-  | "open-cached"
-  | "resolve-existing"
-  | "synchronize-existing"
-  | "destructive-existing";
+export type BranchReviewResolutionPolicy =
+  | { kind: "read" }
+  | { kind: "synchronize" }
+  | { kind: "destructive"; allowMissingInitialRef: boolean };
 
 export interface ResolvedBranchReview {
   branchReview: BranchReview;
@@ -22,6 +16,7 @@ export interface ResolvedBranchReview {
   remoteIdentity: {
     owner: string;
     repository: string;
+    remoteName: string;
     remoteUrl: string;
   } | null;
 }
@@ -29,6 +24,7 @@ export interface ResolvedBranchReview {
 export interface BranchReviewOpenResult {
   branchReview: BranchReview;
   fromCache: boolean;
+  selectedRemote: { name: string; url: string } | null;
 }
 
 function sameRepositoryIdentity(
@@ -38,13 +34,6 @@ function sameRepositoryIdentity(
   return (
     left.owner.toLowerCase() === right.owner.toLowerCase() &&
     left.repository.toLowerCase() === right.repository.toLowerCase()
-  );
-}
-
-function isInitializationMarker(message: string | null): boolean {
-  return (
-    message === BRANCH_REVIEW_INITIALIZATION_PENDING ||
-    message?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED) === true
   );
 }
 
@@ -127,10 +116,7 @@ export class BranchReviewLifecycle {
       ) {
         return current;
       }
-      if (
-        current.sourceSyncError !== BRANCH_REVIEW_INITIALIZATION_PENDING ||
-        Date.now() >= deadline
-      ) {
+      if (current.initializationState !== "pending" || Date.now() >= deadline) {
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -153,12 +139,12 @@ export class BranchReviewLifecycle {
           sourceOid: current.sourceOid,
           retainedRefAvailable: false,
           initializationStatus:
-            current.sourceSyncError === BRANCH_REVIEW_INITIALIZATION_PENDING
+            current.initializationState === "pending"
               ? "pending-timeout"
-              : current.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED)
+              : current.initializationState === "failed"
                 ? "failed"
                 : "not-initializing",
-          retryable: current.sourceSyncError === BRANCH_REVIEW_INITIALIZATION_PENDING,
+          retryable: current.initializationState === "pending",
         },
       },
     );
@@ -167,10 +153,9 @@ export class BranchReviewLifecycle {
   async resolveExistingAtPath(
     repositoryPath: string,
     options: {
-      policy: Exclude<BranchReviewLifecyclePolicy, "open-or-create" | "open-cached">;
+      policy: BranchReviewResolutionPolicy;
       expectedBranchReviewId?: string;
-      allowUninitializedReset?: boolean;
-    } = { policy: "resolve-existing" },
+    } = { policy: { kind: "read" } },
   ): Promise<ResolvedBranchReview> {
     const repository = await this.git.repositoryContext(repositoryPath);
     const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
@@ -218,16 +203,20 @@ export class BranchReviewLifecycle {
       branchReview.id,
       branchReview.sourceOid,
     );
-    if (!ownedSourceAvailable && options.allowUninitializedReset) {
+    if (
+      !ownedSourceAvailable &&
+      options.policy.kind === "destructive" &&
+      options.policy.allowMissingInitialRef
+    ) {
       const prefix = `refs/rvw/branch/${branchReview.id.toLowerCase()}/commits/`;
       const retainedRefs = await this.git.listRefsByPrefix(repository.worktreePath, prefix);
-      if (!isInitializationMarker(branchReview.sourceSyncError) || retainedRefs.length !== 0) {
+      if (branchReview.initializationState === "ready" || retainedRefs.length !== 0) {
         branchReview = await this.assertOwnedSourceRef(branchReview, repository);
       }
     } else if (!ownedSourceAvailable) {
       branchReview = await this.assertOwnedSourceRef(branchReview, repository);
     }
-    if (options.policy === "synchronize-existing" && !remoteIdentity) {
+    if (options.policy.kind === "synchronize" && !remoteIdentity) {
       throw this.repositoryMismatch(
         branchReview,
         repository,
@@ -281,7 +270,7 @@ export class BranchReviewLifecycle {
         // source. First finish observing that initializer, then allocate the generation before
         // taking a fresh GitHub snapshot.
         let concurrent = await this.assertOwnedSourceRef(initialization.branchReview, repository);
-        if (isInitializationMarker(concurrent.sourceSyncError)) {
+        if (concurrent.initializationState !== "ready") {
           concurrent = this.database.completeBranchReviewInitialization(
             concurrent.id,
             concurrent.sourceOid,
@@ -321,13 +310,13 @@ export class BranchReviewLifecycle {
             github.defaultBranchOid,
           );
         }
-        const initializationError = `${BRANCH_REVIEW_INITIALIZATION_FAILED} ${rvwError.message}`;
+        const initializationError = rvwError.message;
         const failed = this.database.recordBranchReviewInitializationFailure(
           branchReview.id,
           github.defaultBranchOid,
           initializationError,
         );
-        if (failed.sourceSyncError === null) {
+        if (failed.initializationState === "ready") {
           const retainedAfterConcurrentCompletion = await this.git.verifyBranchCommitRef(
             repository.worktreePath,
             failed.id,
@@ -362,7 +351,7 @@ export class BranchReviewLifecycle {
               repositoryPath: repository.worktreePath,
             },
             suggestions: [
-              "対象repository pathを指定した rvw branch reset --yes で未初期化bindingを削除してから再実行してください。",
+              "details.repositoryPathを対象にbranch reset previewを取得し、返された確認tokenで未初期化bindingを削除してください。",
             ],
           },
         );
@@ -499,9 +488,10 @@ export class BranchReviewLifecycle {
       stored = await this.assertOwnedSourceRef(stored, repository);
       const available = await this.git.hasObject(repository.worktreePath, stored.sourceOid);
       if (available) {
-        const initialized = isInitializationMarker(stored.sourceSyncError)
-          ? this.database.completeBranchReviewInitialization(stored.id, stored.sourceOid)
-          : stored;
+        const initialized =
+          stored.initializationState !== "ready"
+            ? this.database.completeBranchReviewInitialization(stored.id, stored.sourceOid)
+            : stored;
         const locationChanged =
           path.resolve(initialized.localRepositoryPath) !== path.resolve(repository.worktreePath);
         return {
@@ -512,6 +502,9 @@ export class BranchReviewLifecycle {
               })
             : initialized,
           fromCache: true,
+          selectedRemote: remoteIdentity
+            ? { name: remoteIdentity.remoteName, url: remoteIdentity.remoteUrl }
+            : null,
         };
       }
       if (!remoteIdentity) {
@@ -530,7 +523,11 @@ export class BranchReviewLifecycle {
         );
       }
       const branchReview = await this.synchronizeSource(repository, remoteIdentity, stored);
-      return { branchReview, fromCache: false };
+      return {
+        branchReview,
+        fromCache: false,
+        selectedRemote: { name: remoteIdentity.remoteName, url: remoteIdentity.remoteUrl },
+      };
     }
 
     if (!remoteIdentity) {
@@ -546,7 +543,11 @@ export class BranchReviewLifecycle {
     );
     if (sameIdentity) this.assertGitCommonDir(sameIdentity, repository);
     const branchReview = await this.synchronizeSource(repository, remoteIdentity, sameIdentity);
-    return { branchReview, fromCache: false };
+    return {
+      branchReview,
+      fromCache: false,
+      selectedRemote: { name: remoteIdentity.remoteName, url: remoteIdentity.remoteUrl },
+    };
   }
 
   async openForExplicitMutation(repositoryPath: string): Promise<BranchReview> {
@@ -583,7 +584,7 @@ export class BranchReviewLifecycle {
     expectedBranchReviewId?: string,
   ): Promise<BranchReview> {
     const resolved = await this.resolveExistingAtPath(repositoryPath, {
-      policy: "synchronize-existing",
+      policy: { kind: "synchronize" },
       ...(expectedBranchReviewId ? { expectedBranchReviewId } : {}),
     });
     return await this.synchronizeSource(

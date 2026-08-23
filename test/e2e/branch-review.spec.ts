@@ -247,10 +247,15 @@ test("refreshes both pane details without losing unrelated UI state after an ext
   await expect(unrelatedDraft).toBeFocused();
   await expect(rightPane).toBeVisible();
 
-  const deletion = await request.delete(
-    `/api/branch-reviews/${branchReviewId}/walkthroughs/66666666-6666-4666-8666-666666666666`,
-    { data: {} },
-  );
+  const deletionEndpoint = `/api/branch-reviews/${branchReviewId}/walkthroughs/66666666-6666-4666-8666-666666666666`;
+  const deletionPreview = await request.delete(deletionEndpoint, { data: { yes: false } });
+  expect(deletionPreview.status()).toBe(409);
+  const { confirmationToken } = (await deletionPreview.json()) as {
+    confirmationToken: string;
+  };
+  const deletion = await request.delete(deletionEndpoint, {
+    data: { yes: true, confirmationToken },
+  });
   expect(deletion.ok()).toBe(true);
   await expect(page.getByRole("tab", { name: updatedTitle, exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "ウォークスルー 0" })).toBeVisible();
@@ -334,7 +339,10 @@ test("uses the shared review workspace for the default branch, Issues, code, and
   await expect(
     page.getByRole("heading", { name: /^Branch Review · trunk · [0-9a-f]{8}$/ }),
   ).toBeVisible();
-  await expect(page.getByText("acme/review-repo", { exact: true })).toBeVisible();
+  await expect(page.getByText("acme/review-repo · remote origin", { exact: true })).toHaveAttribute(
+    "title",
+    "https://github.com/acme/review-repo.git",
+  );
   await expect(page.locator(".sidebar-stack-toggle")).toHaveCount(2);
   await expect(page.getByRole("button", { name: "エクスプローラー", exact: true })).toHaveAttribute(
     "aria-expanded",
@@ -463,7 +471,7 @@ test("uses the shared review workspace for the default branch, Issues, code, and
   await page.getByRole("button", { name: "ファイルツリーに戻る" }).click();
 
   page.once("dialog", async (dialog) => {
-    expect(dialog.message()).toContain("紐づくコメント 1件と投稿 1件");
+    expect(dialog.message()).toContain("紐づくコメント 1件、投稿 1件、コード参照 1件");
     await dialog.accept();
   });
   await page
@@ -611,6 +619,7 @@ test("distinguishes a completed Branch reset from a failed reopen", async ({ pag
             gitRefs: 0,
           },
           retainedRefs: [],
+          confirmationToken: "e".repeat(64),
         },
       });
       return;
@@ -621,6 +630,7 @@ test("distinguishes a completed Branch reset from a failed reopen", async ({ pag
         branchReview: { id: branchReviewId },
         deleted: { branchReview: 1 },
         removedRefs: [],
+        outcome: { kind: "completed" },
       },
     });
   });
@@ -650,6 +660,68 @@ test("distinguishes a completed Branch reset from a failed reopen", async ({ pag
     page.getByText("default branchを取得できませんでした。", { exact: true }),
   ).toBeVisible();
   await expect(page).toHaveURL(`/?branchReviewId=${branchReviewId}`);
+});
+
+test("clears deleted Branch state after reset leaves isolated orphan refs", async ({ page }) => {
+  let reopenRequests = 0;
+  await page.route(`**/api/branch-reviews/${branchReviewId}/reset`, async (route) => {
+    const input = route.request().postDataJSON() as { yes: boolean };
+    if (!input.yes) {
+      await route.fulfill({
+        status: 409,
+        json: {
+          ok: false,
+          error: { code: "RESET_CONFIRMATION_REQUIRED", message: "reset confirmation required" },
+          counts: {
+            issueMemberships: 0,
+            issueComments: 0,
+            codeComments: 0,
+            reviewComments: 0,
+            walkthroughComments: 0,
+            posts: 0,
+            walkthroughs: 0,
+            gitRefs: 1,
+          },
+          retainedRefs: [`refs/rvw/branch/${branchReviewId}/commits/oid-${"c".repeat(40)}`],
+          confirmationToken: "d".repeat(64),
+        },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        ok: true,
+        branchReview: { id: branchReviewId },
+        deleted: { branchReview: 1, gitRefs: 0 },
+        removedRefs: [],
+        outcome: {
+          kind: "completed-with-orphan-refs",
+          branchReviewDeleted: true,
+          remainingRefs: [`refs/rvw/branch/${branchReviewId}/commits/oid-${"c".repeat(40)}`],
+          refPrefix: `refs/rvw/branch/${branchReviewId}/commits/`,
+          repositoryPath: "/fixture/review-repo",
+          repairableByExplicitCleanup: true,
+        },
+      },
+    });
+  });
+  await page.route("**/api/branch-reviews/open", async (route) => {
+    reopenRequests += 1;
+    await route.abort();
+  });
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+
+  page.once("dialog", async (dialog) => await dialog.accept());
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Branch Reviewを削除して再構築" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Branch Reviewのresetは完了しました" }),
+  ).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("新しいReviewから隔離されています");
+  await expect(page.getByRole("alert")).toContainText(`refs/rvw/branch/${branchReviewId}/commits/`);
+  await expect(page.getByText(/rvw branch open/)).toBeVisible();
+  expect(reopenRequests).toBe(0);
 });
 
 test("keeps an Issue range composer focused across a same-body Branch refresh", async ({

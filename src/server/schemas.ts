@@ -51,7 +51,11 @@ export const issueMutationSchema = z.object({
   yes: z.boolean().optional(),
 });
 
-export const resetSchema = z.object({ yes: z.boolean() });
+const confirmationTokenSchema = z.string().regex(/^[0-9a-f]{64}$/);
+export const resetSchema = z.discriminatedUnion("yes", [
+  z.object({ yes: z.literal(false) }).strict(),
+  z.object({ yes: z.literal(true), confirmationToken: confirmationTokenSchema }).strict(),
+]);
 
 export const viewerIdSchema = z.uuid();
 export const viewerReleaseSchema = z.object({ viewerId: viewerIdSchema });

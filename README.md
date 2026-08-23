@@ -34,7 +34,7 @@ rvw branch open
 ```
 
 Branch ReviewはcanonicalなGitHub repositoryごとに一件だけ作られ、GitHubのdefault branch名とexact
-source OIDをheaderへ表示します。default branch名が変わっても同じreviewを再利用し、checkoutやindexを
+source OID、選択したGitHub remote名／URLをheaderへ表示します。default branch名が変わっても同じreviewを再利用し、checkoutやindexを
 変更せずに同期します。同じGit common directoryのworktreeからは同じreviewを利用できますが、同じ
 GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作り直す場合は、登録済みcloneから
 `rvw branch reset`を明示実行します。local remoteを別owner/repositoryへ変更した場合はcache hitでも
@@ -241,14 +241,15 @@ typed referenceを付けられ、任意のlocal commitは根拠として受理�
 
 ## 復旧
 
-まず`rvw doctor --json`でGit、GitHub CLI認証、現在のrepository、DB pathを確認してください。初回登録や
+まず`rvw doctor --json`でGit、選択remote、GitHub CLI認証、現在のrealpath済みrepository／Git common
+directory、DB path、Branch retained refのcurrent／referenced／unreferenced／orphan状態を確認してください。初回登録や
 同期だけが失敗する場合は`gh auth status`とnetworkを確認します。登録済みPRはofflineでも開けます。
 
 force-push前に観測したhead commitはimmutable refで保持するため、旧コメントの参照元として読めます。Git refとSQLiteの不整合は部分修復せず、削除件数を確認後、正式な復旧手段としてresetします。
 
 ```bash
 rvw pr reset https://github.com/owner/repository/pull/123 --json
-rvw pr reset https://github.com/owner/repository/pull/123 --yes --json
+rvw pr reset https://github.com/owner/repository/pull/123 --yes --confirmation-token <PREVIEW_TOKEN> --json
 ```
 
 resetは対象PRのコメント、返信、コメント対象、コメント投稿とWalkthroughのcode reference、
@@ -267,14 +268,16 @@ rvw agent status --json
 rvw pr refresh <PR_REF> --json
 rvw branch sync [--repository <PATH>] --json
 rvw branch issue add <ISSUE_REF> [--repository <PATH>] --json
+rvw branch issue refresh <ISSUE_REF> [--repository <PATH>] --force --json
 rvw branch issue remove <ISSUE_REF> [--repository <PATH>] --json
-rvw branch issue remove <ISSUE_REF> [--repository <PATH>] --yes --json
+rvw branch issue remove <ISSUE_REF> [--repository <PATH>] --yes --confirmation-token <TOKEN> --json
 rvw branch comments [--repository <PATH>] --state unresolved --json
 rvw branch reset [--repository <PATH>] --json
-rvw branch reset [--repository <PATH>] --yes --json
+rvw branch reset [--repository <PATH>] --yes --confirmation-token <TOKEN> --json
 rvw pr issue add <PR_REF> <ISSUE_REF> --json
+rvw pr issue refresh <PR_REF> <ISSUE_REF> --force --json
 rvw pr issue remove <PR_REF> <ISSUE_REF> --json
-rvw pr issue remove <PR_REF> <ISSUE_REF> --yes --json
+rvw pr issue remove <PR_REF> <ISSUE_REF> --yes --confirmation-token <TOKEN> --json
 rvw comment create --stdin --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
@@ -289,31 +292,41 @@ rvw walkthrough get <WALKTHROUGH_URI> --json
 rvw walkthrough publish --stdin --json
 rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
 rvw walkthrough delete <WALKTHROUGH_URI> --json
-rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
+rvw walkthrough delete <WALKTHROUGH_URI> --yes --confirmation-token <TOKEN> --json
 rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
 rvw pr attach <PR_REF> --repository <PATH> --json
 ```
 
-Issue削除とBranch Review resetは、`--yes`なしでは対象Issue、コメント、返信、Walkthrough、解放候補ref
-などのpreviewだけを返して終了します。件数を確認して`--yes`を指定した場合だけ、対象reviewが所有する
+PR／Branch reset、Issue削除、Walkthrough削除は、確認tokenなしでは対象Issue、コメント、返信、Walkthrough、
+解放候補refなどのpreviewだけを返して終了します。返却された構造化`details.arguments`を使い、同じ
+`reviewChangeSequence`と`confirmationToken`を`--yes`とともに返した場合だけ、対象reviewが所有する
 artifactを削除します。同じIssueを利用する別reviewのmembership、Comment、共有Issue cacheは残ります。
+確認後にartifactが変わった場合は`DESTRUCTIVE_PREVIEW_STALE` (409)と最新previewを返し、再確認を要求します。
+最後のmembershipまたはresetでownerがなくなった共有Issue cache rowは同じtransactionでGCします。ほかのReviewが
+所有しているcacheの同一version競合は、`issue.cacheRepair` capabilityを確認した上で、
+`pr issue refresh --force`または`branch issue refresh --force`がGitHubから
+二回連続で同じidentity／snapshotを確認した場合だけ明示repairできます。同期失敗は共有content rowではなく
+各review membershipへ保存されます。repair開始後に別の同期がcache generationを進めた場合は、古いrepairを
+409で拒否します。
 これらのBranch preview／削除、`branch comments`、`branch sync`はexisting-onlyで、未登録repositoryに
 Branch Review、DB row、retained refを暗黙作成しません。作成を許すのは`branch open`と明示的な
 `branch issue add`だけです。
 
 Branch retained refは`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`に属します。reset後のref削除が
-失敗した場合、errorはDB削除済みか、残存prefix／ref、明示repair可能性を返します。新しいBranch Reviewを
+失敗した場合、`completed-with-orphan-refs`という部分成功outcomeがDB削除済み、残存prefix／ref、明示cleanup
+可能性を返します。browserも削除済みreviewのdraft／workspaceを破棄してcleanup warningを表示します。新しいBranch Reviewを
 作ってもorphan refはcleanupされませんが、新reviewは別IDのnamespaceだけを証拠として使うため旧sourceを
 継承せず、旧resetも新reviewのrefを削除しません。
 
 初回openはSQLite rowをreview-owned source ref作成前から初期化未完了として記録します。ref作成前にprocessが
-停止した場合は、同じlocal bindingから明示的な`branch reset --yes`でrowを安全にcleanupできます。ref作成後、
-marker clear前に停止した場合は、次回openがowned refとsource objectを確認して初期化を完了します。通常のread／syncは
-pending markerだけを最大5秒待ち、明示的な初期化失敗や通常rowのrefなし状態は直ちに
+停止した場合は、同じlocal bindingからpreview token付きの明示的な`branch reset --yes`でrowを安全にcleanupできます。ref作成後、
+初期化完了前に停止した場合は、次回openがowned refとsource objectを確認して初期化を完了します。状態は
+`initialization_state = pending | ready | failed`として通常の`source_sync_error`と分離します。通常のread／syncは
+`pending`だけを最大5秒待ち、明示的な`failed`や通常rowのrefなし状態は直ちに
 `LOCAL_STATE_INCONSISTENT`としてfail closedします。同時初回openで別processが
 先にrowを作成した場合、後続processはそのrowを更新しません。後続processがaggregate発見前に取得したsnapshotは破棄し、
 winnerのowned refを確認してgenerationを確保した後にGitHub metadataを再取得し、expected review ID付きでsourceを
-進めます。initialization markerが既に消えた後の遅延completionは、sourceが進んでいても冪等です。
+進めます。初期化が既に`ready`になった後の遅延completionは、sourceが進んでいても冪等です。
 retained refの初回作成はGit compare-and-swapで単一のcreatorだけを記録します。補償削除は対象aggregateが
 消えた場合のexact refに限定し、sourceが進んだだけでhistorical evidenceを削除しません。
 既存reviewのsource同期は開始時にgenerationを確保し、ref作成後も同じgenerationのときだけsourceまたはsync errorを
@@ -326,7 +339,8 @@ requestと照合し、rename、transfer、redirect相当のidentity不一致をc
 再作成しません。削除後に遅れてfetchが失敗した場合も`membership-removed`としてskipし、消えたIssueのwarningを残しません。
 共有Issue cacheはGitHub `updatedAt`より古いresponseを無視し、同じ`updatedAt`で本文、title、stateが異なるresponseを
 `GITHUB_ISSUE_ERROR`として拒否します。accepted successごとに内部cache generationを増やし、成功後に遅れた失敗は
-取得開始時のgenerationが変わっていればcacheをstaleに戻しません。実在するmembershipのIssueごとの部分失敗は
+取得開始時のgenerationが変わっていれば現在membershipをstaleに戻しません。Issue本文cacheは共有しますが、
+`syncError`は同期を実行したreview membershipだけに属します。実在するmembershipのIssueごとの部分失敗は
 CLI／HTTP responseに加え、PR／Branch viewerの同期結果にもwarningとして表示し、top barでは先頭3件と残件数に省略します。
 comment replyのidempotency keyはReview種別をまたぐdatabase-wide keyspaceです。未公開のBranch replyは
 request hashにReview種別を含めますが、PR replyは公開済み0.2.xの永続ledgerをexact retryできるよう従来のhash形式を

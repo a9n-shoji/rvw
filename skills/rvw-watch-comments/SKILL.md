@@ -447,9 +447,11 @@ For a Branch Review the event context is
 `{kind:"branch",branchReviewId:"<id>",repository:"owner/repo"}`. Claim
 `operations` are `{commentRef,idempotencyKey,statusPostId}`. Claim `events` are
 `{sequence,postId,commentRef,context}`. Startup migrates existing state rows to the explicit
-`review_kind` plus stable-ID `context_key` and display-only `context_display`, rebuilds the context
-indexes, and preserves cursors,
-leases, unfinished batch keys, batch-scoped status posts, and PR compatibility fields.
+`review_kind`, `context_key`, and display-only `context_display`, then the first matching protocol-v4
+PR event transactionally re-keys legacy URL contexts to its actual stable PR ID. Pending duplicates
+merge; conflicting in-flight leases are quarantined rather than double-claimed. The migration rebuilds
+the context indexes and preserves cursors, leases, unfinished batch keys, batch-scoped status posts,
+and PR compatibility fields.
 
 | Script            | Invocation                                                                                                                            | Output                                                                                        |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |

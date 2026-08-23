@@ -13,6 +13,8 @@
 - Pull Request ReviewとBranch Reviewで、GitHub Issue本文を通常文書として読む・コメントするsurface
 - Branch Reviewのcomment eventをcontext別にbatchし、read-only調査と冪等な最終replyを行うwatcher mode
 - 件数previewと明示確認を伴うPR / Branch Issue membership削除、およびBranch Review reset
+- `issue.cacheRepair` capabilityで検出でき、二回連続の一致するGitHub snapshotでowned Issue cacheを再構築する明示`issue refresh --force`
+- selected GitHub remoteとBranch retained ref ownershipを表示するread-only doctor診断
 - Pull Request / Branch ReviewのIssue本文に貼り付けたmodern GitHub user attachment画像を、既存の
   review-scoped localhost proxyと同じ検証・認証・画像判定で表示
 - repository demoのPR本文とIssue本文へ、安全な添付と停止対象の外部画像を並べたMarkdown tableを追加
@@ -38,6 +40,10 @@
 - Branch retained refをrepository名ではなくBranch Review ID単位で所有し、reset/recreate後のevidenceを分離
 - Branch lifecycleのcreate、existing-only、sync、destructive binding policyをapplication層へ集約
 - migration 011のcanonical repository一意性をcase-insensitiveにし、protocol v4の全transportを最新service前提へ統一
+- Walkthroughの追加専用Issue入力をreplace型contentと区別できる`issuesToAdd`へ変更
+- Branch初期化状態を通常のsync error文字列から`pending | ready | failed`列へ分離
+- Issue sync errorを共有content cacheからreview membershipへ移し、最後のowner削除時にorphan cacheをGC
+- worktreeとGit common directoryをfilesystem realpathへ正規化し、選択remoteをviewerでも表示
 
 ### Fixed
 
@@ -85,6 +91,11 @@
 - 初期化完了後にsourceが進んでも、遅延initializerがhistorical retained refを削除しないよう修正
 - retained refの初回作成をGit compare-and-swapにし、同時作成の所有判定を1件に限定
 - Branch comment replyのrequest hashへReview種別を追加しつつ、公開済み0.2.xのPR reply hashを維持
+- protocol v3 watcher stateのURL-keyed PR contextを最初のv4 eventでstable PR IDへ再キー化し、二重claimを防止
+- Branch resetのDB削除後にref cleanupだけが失敗した場合をtyped partial successとして扱い、browserの削除済みstateを破棄
+- reset、Issue removal、Walkthrough deletionをreview sequenceに結び付いたconfirmation tokenでfenceし、stale previewを409で拒否
+- PR resetがGitHub I/O待機中にreview stateが変わった場合、ref置換前にstale tokenを拒否
+- Branch reset previewのComment post/reference/targetとWalkthrough reference件数をPR側と同じ粒度へ統一
 
 ## [0.2.3] - 2026-08-21
 

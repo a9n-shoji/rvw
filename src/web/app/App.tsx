@@ -728,9 +728,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           issueRangeComments: number;
           replies: number;
         };
+        confirmationToken?: string;
         error?: { code: string; message: string; details?: unknown; suggestions?: string[] };
       };
-      if (response.status !== 409 || !preview.counts) {
+      if (response.status !== 409 || !preview.counts || !preview.confirmationToken) {
         throw new ApiError(
           preview.error?.message ?? `HTTP ${response.status}`,
           preview.error?.code ?? "HTTP_ERROR",
@@ -743,7 +744,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       );
       if (!confirmed) return null;
       return await api(endpoint, {
-        ...jsonRequest({ yes: true }),
+        ...jsonRequest({ yes: true, confirmationToken: preview.confirmationToken }),
         method: "DELETE",
       });
     },
@@ -940,9 +941,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       );
       const preview = (await response.json()) as {
         counts?: Record<string, number>;
+        confirmationToken?: string;
         error?: { code: string; message: string; details?: unknown; suggestions?: string[] };
       };
-      if (response.status !== 409 || !preview.counts) {
+      if (response.status !== 409 || !preview.counts || !preview.confirmationToken) {
         throw new ApiError(
           preview.error?.message ?? `HTTP ${response.status}`,
           preview.error?.code ?? "HTTP_ERROR",
@@ -958,7 +960,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       return await api<{
         pullRequest: PullRequestResponse["pullRequest"];
         commits: PullRequestResponse["commits"];
-      }>(`/api/pull-requests/${pullRequestId}/reset`, jsonRequest({ yes: true }));
+      }>(
+        `/api/pull-requests/${pullRequestId}/reset`,
+        jsonRequest({ yes: true, confirmationToken: preview.confirmationToken }),
+      );
     },
     onSuccess: async (result) => {
       if (!result) return;

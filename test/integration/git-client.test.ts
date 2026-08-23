@@ -13,6 +13,18 @@ import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import { createGitRepository, git } from "../fixtures/git-repository.js";
 
 describe("GitClient with real git", () => {
+  it("canonicalizes worktree and Git common-directory paths through realpath", async () => {
+    const repository = createGitRepository("rvw-realpath-");
+    const links = mkdtempSync(path.join(os.tmpdir(), "rvw-realpath-link-"));
+    const linkedRepository = path.join(links, "repository-link");
+    symlinkSync(repository, linkedRepository, "dir");
+
+    await expect(new GitClient().repositoryContext(linkedRepository)).resolves.toEqual({
+      worktreePath: realpathSync(repository),
+      gitCommonDir: realpathSync(path.join(repository, ".git")),
+    });
+  });
+
   it("gives exactly one concurrent creator ownership of an exact retained ref", async () => {
     const repository = createGitRepository("rvw-ref-cas-");
     const oid = git(repository, "rev-parse", "HEAD");

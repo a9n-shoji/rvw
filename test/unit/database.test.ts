@@ -637,6 +637,104 @@ describe("RvwDatabase", () => {
     }
   });
 
+  it("scopes Issue sync errors to memberships and garbage-collects the last shared cache owner", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const initialization = database.beginBranchReviewInitialization(
+      {
+        owner: github.owner,
+        repository: github.repository,
+        canonicalName: `${github.owner}/${github.repository}`,
+        defaultBranchName: "main",
+        defaultBranchOid: github.headOid,
+      },
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+    ).branchReview;
+    const branchReview = database.completeBranchReviewInitialization(
+      initialization.id,
+      initialization.sourceOid,
+    );
+    const issue = {
+      host: "github.com" as const,
+      owner: github.owner,
+      repository: github.repository,
+      canonicalName: `${github.owner}/${github.repository}`,
+      number: 144,
+      url: `https://github.com/${github.owner}/${github.repository}/issues/144`,
+      title: "Shared",
+      body: "Shared body",
+      state: "OPEN" as const,
+      updatedAt: "2026-08-08T05:00:00.000Z",
+    };
+    const cached = database.addReviewIssue("pull-request", pullRequest.id, issue).issue;
+    database.addReviewIssue("branch", branchReview.id, issue);
+    const branchSequence = database.getReviewChangeSequence("branch", branchReview.id);
+    const generation = database.getIssueCacheGeneration(cached.id);
+
+    expect(
+      database.setReviewIssueSyncError(
+        "pull-request",
+        pullRequest.id,
+        cached.id,
+        generation,
+        "PR-only failure",
+      ),
+    ).toMatchObject({ updated: true, issue: { syncError: "PR-only failure", stale: true } });
+    expect(database.listReviewIssues("pull-request", pullRequest.id)[0]).toMatchObject({
+      syncError: "PR-only failure",
+      stale: true,
+    });
+    expect(database.listReviewIssues("branch", branchReview.id)[0]).toMatchObject({
+      syncError: null,
+      stale: false,
+    });
+    expect(database.getReviewChangeSequence("branch", branchReview.id)).toBe(branchSequence);
+
+    database.removeReviewIssue(
+      "pull-request",
+      pullRequest.id,
+      cached.id,
+      database.getReviewChangeSequence("pull-request", pullRequest.id),
+    );
+    expect(database.getIssue(cached.id)).not.toBeNull();
+    database.removeReviewIssue(
+      "branch",
+      branchReview.id,
+      cached.id,
+      database.getReviewChangeSequence("branch", branchReview.id),
+    );
+    expect(database.getIssue(cached.id)).toBeNull();
+
+    const resetCached = database.addReviewIssue("pull-request", pullRequest.id, {
+      ...issue,
+      number: 145,
+      url: `https://github.com/${github.owner}/${github.repository}/issues/145`,
+    }).issue;
+    database.addReviewIssue("branch", branchReview.id, {
+      ...issue,
+      number: 145,
+      url: `https://github.com/${github.owner}/${github.repository}/issues/145`,
+    });
+    database.resetPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+      database.getReviewChangeSequence("pull-request", pullRequest.id),
+    );
+    expect(database.getIssue(resetCached.id)).not.toBeNull();
+    database.resetBranchReview(
+      branchReview.id,
+      0,
+      database.getReviewChangeSequence("branch", branchReview.id),
+    );
+    expect(database.getIssue(resetCached.id)).toBeNull();
+    database.close();
+  });
+
   it("persists post-level code references and removes them with their posts", () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const pullRequest = database.upsertPullRequest(

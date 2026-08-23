@@ -77,11 +77,287 @@ function run(state: string, command: string, args: string[] = [], input?: unknow
   return JSON.parse(result.stdout) as Record<string, unknown>;
 }
 
+function runRaw(state: string, command: string, args: string[] = [], input?: unknown) {
+  const result = spawnSync(process.execPath, [script, command, "--state", state, ...args], {
+    encoding: "utf8",
+    ...(input === undefined ? {} : { input: JSON.stringify(input) }),
+  });
+  if (result.status !== 0) throw new Error(result.stderr);
+  return JSON.parse(result.stdout) as Record<string, unknown>;
+}
+
 function ingest(state: string, frame: unknown) {
   return run(state, "ingest", [], stableReviewFrame(frame));
 }
 
 describe("rvw-watch-comments task state", () => {
+  it("re-keys a real v3 pending PR context to its protocol v4 stable ID", () => {
+    const state = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-watch-v3-context-")),
+      "task.db",
+    );
+    const pullRequestUrl = "https://github.com/Acme/Repo/pull/23";
+    const createdAt = "2026-08-20T00:00:00.000Z";
+    const legacy = new DatabaseSync(state);
+    legacy.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE events (
+        sequence INTEGER PRIMARY KEY, cursor TEXT NOT NULL, post_id TEXT NOT NULL,
+        comment_ref TEXT NOT NULL, pull_request_url TEXT NOT NULL, deleted INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'completed')), batch_id TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE batches (
+        id TEXT PRIMARY KEY, pull_request_url TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'in_flight', 'completed', 'quarantined')),
+        attempts INTEGER NOT NULL, next_attempt_at TEXT, lease_id TEXT, write_key TEXT,
+        last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE operations (
+        batch_id TEXT NOT NULL, comment_ref TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE, post_id TEXT,
+        PRIMARY KEY(batch_id, comment_ref)
+      );
+      CREATE TABLE suppressed_posts (post_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+    `);
+    const insertMeta = legacy.prepare("INSERT INTO meta(key, value) VALUES (?, ?)");
+    for (const [key, value] of [
+      ["task_id", "legacy-task"],
+      ["database_id", "11112222333344445555666677778888"],
+      ["cursor", "cursor-1"],
+      ["last_sequence", "1"],
+      ["own_mode", "fix-and-push"],
+      ["expected_login", "reviewer"],
+      ["batch_scoped_status_posts", "1"],
+    ] as const) {
+      insertMeta.run(key, value);
+    }
+    legacy
+      .prepare(
+        `INSERT INTO events(
+          sequence, cursor, post_id, comment_ref, pull_request_url, deleted,
+          status, batch_id, created_at, updated_at
+        ) VALUES (1, 'cursor-1', 'legacy-post', 'rvw://comment/legacy', ?, 0,
+          'pending', 'legacy-batch', ?, ?)`,
+      )
+      .run(pullRequestUrl, createdAt, createdAt);
+    legacy
+      .prepare(
+        `INSERT INTO batches(
+          id, pull_request_url, status, attempts, next_attempt_at, lease_id,
+          write_key, last_error, created_at, updated_at
+        ) VALUES ('legacy-batch', ?, 'pending', 0, NULL, NULL, NULL, NULL, ?, ?)`,
+      )
+      .run(pullRequestUrl, createdAt, createdAt);
+    legacy
+      .prepare(
+        `INSERT INTO operations(batch_id, comment_ref, idempotency_key, post_id)
+        VALUES ('legacy-batch', 'rvw://comment/legacy', 'legacy-operation', NULL)`,
+      )
+      .run();
+    legacy.close();
+
+    expect(
+      runRaw(state, "ingest", [], {
+        type: "comment-posted",
+        cursor: "cursor-2",
+        event: {
+          sequence: 2,
+          postId: "v4-post",
+          commentRef: "rvw://comment/v4",
+          context: {
+            kind: "pull-request",
+            pullRequestId: "pull-request-uuid-23",
+            pullRequestUrl: "https://github.com/acme/repo/pull/23",
+          },
+          createdAt: "2026-08-20T00:00:01.000Z",
+          deleted: false,
+        },
+      }),
+    ).toMatchObject({ status: "queued" });
+
+    expect(runRaw(state, "list").pending).toEqual([
+      expect.objectContaining({
+        context: {
+          kind: "pull-request",
+          pullRequestId: "pull-request-uuid-23",
+          pullRequestUrl: "https://github.com/acme/repo/pull/23",
+        },
+        batchId: "legacy-batch",
+      }),
+    ]);
+    const claimed = runRaw(state, "claim", [
+      "--context-kind",
+      "pull-request",
+      "--context-key",
+      "pull-request-uuid-23",
+      "--context-display",
+      "https://github.com/acme/repo/pull/23",
+      "--write-key",
+      "acme/repo",
+    ]);
+    expect(claimed).toMatchObject({
+      batchId: "legacy-batch",
+      context: { kind: "pull-request", pullRequestId: "pull-request-uuid-23" },
+    });
+    expect(runRaw(state, "list")).toMatchObject({ pending: [] });
+    expect(() =>
+      runRaw(state, "claim", [
+        "--context-kind",
+        "pull-request",
+        "--context-key",
+        "pull-request-uuid-23",
+        "--context-display",
+        "https://github.com/acme/repo/pull/23",
+        "--write-key",
+        "acme/repo",
+      ]),
+    ).toThrow(/in-flight|owns repository/);
+    expect(runRaw(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
+    expect(
+      runRaw(state, "claim", [
+        "--context-kind",
+        "pull-request",
+        "--context-key",
+        "pull-request-uuid-23",
+        "--context-display",
+        "https://github.com/acme/repo/pull/23",
+        "--write-key",
+        "acme/repo",
+      ]),
+    ).toMatchObject({ batchId: "legacy-batch", attempts: 2 });
+  });
+
+  it("re-keys and recovers a real v3 in-flight PR lease without a second stable-ID claim", () => {
+    const state = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-watch-v3-in-flight-context-")),
+      "task.db",
+    );
+    const pullRequestUrl = "https://github.com/Acme/Repo/pull/23";
+    const createdAt = "2026-08-20T00:00:00.000Z";
+    const legacy = new DatabaseSync(state);
+    legacy.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE events (
+        sequence INTEGER PRIMARY KEY, cursor TEXT NOT NULL, post_id TEXT NOT NULL,
+        comment_ref TEXT NOT NULL, pull_request_url TEXT NOT NULL, deleted INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'completed')), batch_id TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE batches (
+        id TEXT PRIMARY KEY, pull_request_url TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending', 'in_flight', 'completed', 'quarantined')),
+        attempts INTEGER NOT NULL, next_attempt_at TEXT, lease_id TEXT, write_key TEXT,
+        last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+      CREATE TABLE operations (
+        batch_id TEXT NOT NULL, comment_ref TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL UNIQUE, post_id TEXT,
+        PRIMARY KEY(batch_id, comment_ref)
+      );
+      CREATE TABLE suppressed_posts (post_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
+    `);
+    const insertMeta = legacy.prepare("INSERT INTO meta(key, value) VALUES (?, ?)");
+    for (const [key, value] of [
+      ["task_id", "legacy-in-flight-task"],
+      ["database_id", "11112222333344445555666677778888"],
+      ["cursor", "cursor-1"],
+      ["last_sequence", "1"],
+      ["own_mode", "fix-and-push"],
+      ["expected_login", "reviewer"],
+      ["batch_scoped_status_posts", "1"],
+    ] as const) {
+      insertMeta.run(key, value);
+    }
+    legacy
+      .prepare(
+        `INSERT INTO events(
+          sequence, cursor, post_id, comment_ref, pull_request_url, deleted,
+          status, batch_id, created_at, updated_at
+        ) VALUES (1, 'cursor-1', 'legacy-post', 'rvw://comment/legacy-in-flight', ?, 0,
+          'pending', 'legacy-in-flight-batch', ?, ?)`,
+      )
+      .run(pullRequestUrl, createdAt, createdAt);
+    legacy
+      .prepare(
+        `INSERT INTO batches(
+          id, pull_request_url, status, attempts, next_attempt_at, lease_id,
+          write_key, last_error, created_at, updated_at
+        ) VALUES ('legacy-in-flight-batch', ?, 'in_flight', 1, NULL, 'legacy-lease',
+          'acme/repo', NULL, ?, ?)`,
+      )
+      .run(pullRequestUrl, createdAt, createdAt);
+    legacy
+      .prepare(
+        `INSERT INTO operations(batch_id, comment_ref, idempotency_key, post_id)
+        VALUES ('legacy-in-flight-batch', 'rvw://comment/legacy-in-flight',
+          'legacy-in-flight-operation', NULL)`,
+      )
+      .run();
+    legacy.close();
+
+    expect(
+      runRaw(state, "ingest", [], {
+        type: "comment-posted",
+        cursor: "cursor-2",
+        event: {
+          sequence: 2,
+          postId: "v4-post",
+          commentRef: "rvw://comment/v4-after-crash",
+          context: {
+            kind: "pull-request",
+            pullRequestId: "pull-request-uuid-23",
+            pullRequestUrl: "https://github.com/acme/repo/pull/23",
+          },
+          createdAt: "2026-08-20T00:00:01.000Z",
+          deleted: false,
+        },
+      }),
+    ).toMatchObject({ status: "queued" });
+    expect(runRaw(state, "list")).toMatchObject({ inFlight: 1, pending: [] });
+    expect(() =>
+      runRaw(state, "claim", [
+        "--context-kind",
+        "pull-request",
+        "--context-key",
+        "pull-request-uuid-23",
+        "--context-display",
+        "https://github.com/acme/repo/pull/23",
+        "--write-key",
+        "acme/repo",
+      ]),
+    ).toThrow(/in-flight/);
+
+    expect(runRaw(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
+    const recovered = runRaw(state, "claim", [
+      "--context-kind",
+      "pull-request",
+      "--context-key",
+      "pull-request-uuid-23",
+      "--context-display",
+      "https://github.com/acme/repo/pull/23",
+      "--write-key",
+      "acme/repo",
+    ]);
+    expect(recovered).toMatchObject({
+      batchId: "legacy-in-flight-batch",
+      attempts: 2,
+      context: { kind: "pull-request", pullRequestId: "pull-request-uuid-23" },
+    });
+    expect(() =>
+      runRaw(state, "claim", [
+        "--context-kind",
+        "pull-request",
+        "--context-key",
+        "pull-request-uuid-23",
+        "--context-display",
+        "https://github.com/acme/repo/pull/23",
+        "--write-key",
+        "acme/repo",
+      ]),
+    ).toThrow(/in-flight/);
+  });
+
   it("batches Branch Reviews by repository and rejects write reservations", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-")), "task.db");
     run(state, "init", ["--own-mode", "fix-and-push"]);

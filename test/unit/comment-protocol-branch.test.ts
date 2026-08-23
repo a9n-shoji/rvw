@@ -41,6 +41,7 @@ describe("Branch Review comment protocol", () => {
         sourceOid,
         githubFetchedAt: createdAt,
         sourceSyncError: null,
+        initializationState: "ready",
         createdAt,
         updatedAt: createdAt,
       },

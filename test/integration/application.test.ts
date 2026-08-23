@@ -18,6 +18,30 @@ import { startAgentSocket, tryAgentSocketRequest } from "../../src/server/agent-
 import { RvwError } from "../../src/shared/errors.js";
 import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
 
+async function resetPullRequest(service: RvwService, pullRequestId: string) {
+  const preview = await service.getResetPreview(pullRequestId);
+  return await service.resetPullRequest(pullRequestId, preview.confirmationToken);
+}
+
+function removePullRequestIssue(
+  service: RvwService,
+  pullRequestReference: string,
+  issueReference: string,
+) {
+  const pullRequest = service.resolveStoredPullRequest(pullRequestReference);
+  const preview = service.getIssueRemovalPreview("pull-request", pullRequest.id, issueReference);
+  return service.removePullRequestIssue(
+    pullRequestReference,
+    issueReference,
+    preview.confirmationToken,
+  );
+}
+
+function deleteWalkthrough(service: RvwService, uri: string) {
+  const preview = service.getWalkthroughDeletePreview(uri);
+  return service.deleteWalkthroughByUri(uri, preview.confirmationToken);
+}
+
 class OneShotBarrier {
   private blocked: Promise<void>;
   private markBlocked!: () => void;
@@ -58,6 +82,7 @@ class FakeGitHub implements GitHubPort {
   readonly issues = new Map<number, GitHubIssue>();
   readonly pullRequestIssueNumbers = new Set<number>();
   issueBarrier: OneShotBarrier | null = null;
+  pullRequestBarrier: OneShotBarrier | null = null;
 
   constructor(public pullRequest: GitHubPullRequest) {}
 
@@ -65,8 +90,9 @@ class FakeGitHub implements GitHubPort {
     return Promise.resolve({ version: "gh fake", authenticated: true });
   }
 
-  getPullRequest() {
-    return Promise.resolve(this.pullRequest);
+  async getPullRequest() {
+    await this.pullRequestBarrier?.blockOnce();
+    return this.pullRequest;
   }
 
   async getIssue(number: number, repository: RepositoryIdentity): Promise<GitHubIssue> {
@@ -332,7 +358,7 @@ describe("RvwService commit workflow", () => {
 
     const refresh = service.refreshPullRequest(opened.pullRequest.id);
     await barrier.waitUntilBlocked();
-    service.removePullRequestIssue(opened.pullRequest.url, "#142");
+    removePullRequestIssue(service, opened.pullRequest.url, "#142");
     const cacheAfterRemoval = database.getIssue(added.issue.id);
     barrier.release();
 
@@ -350,6 +376,89 @@ describe("RvwService commit workflow", () => {
     ]);
   });
 
+  it("repairs an equal-version Issue cache conflict only after two matching GitHub reads", async () => {
+    const { repository, fake, database, service } = setup("rvw-pr-issue-force-repair-");
+    const initial = githubIssue(142, "Initial body", "2026-08-20T01:00:00.000Z");
+    fake.issues.set(142, initial);
+    const opened = await service.openPullRequest(undefined, repository);
+    const added = await service.addPullRequestIssue(opened.pullRequest.url, "#142");
+    fake.issues.set(142, {
+      ...initial,
+      title: "Corrected title",
+      body: "Corrected body at the same GitHub updatedAt",
+    });
+
+    await expect(service.refreshPullRequest(opened.pullRequest.id)).resolves.toMatchObject({
+      issueResults: [expect.objectContaining({ ok: false })],
+    });
+    expect(database.getIssue(added.issue.id)).toMatchObject({
+      title: initial.title,
+      body: initial.body,
+    });
+    await expect(
+      service.forceRepairPullRequestIssue(opened.pullRequest.url, "#142"),
+    ).resolves.toMatchObject({
+      repaired: true,
+      verifiedReads: 2,
+      issue: {
+        title: "Corrected title",
+        body: "Corrected body at the same GitHub updatedAt",
+      },
+    });
+  });
+
+  it("does not force-repair an Issue cache from two different GitHub snapshots", async () => {
+    const { repository, fake, database, service } = setup("rvw-pr-issue-unstable-repair-");
+    const initial = githubIssue(142, "Initial body", "2026-08-20T01:00:00.000Z");
+    fake.issues.set(142, initial);
+    const opened = await service.openPullRequest(undefined, repository);
+    const added = await service.addPullRequestIssue(opened.pullRequest.url, "#142");
+    const before = database.getIssue(added.issue.id);
+    vi.spyOn(fake, "getIssue")
+      .mockResolvedValueOnce({ ...initial, body: "First repair read" })
+      .mockResolvedValueOnce({ ...initial, body: "Second repair read" });
+
+    await expect(
+      service.forceRepairPullRequestIssue(opened.pullRequest.url, "#142"),
+    ).rejects.toMatchObject({
+      code: "GITHUB_ISSUE_ERROR",
+      details: { reason: "ISSUE_REPAIR_SNAPSHOT_UNSTABLE", number: 142 },
+    });
+    expect(database.getIssue(added.issue.id)).toEqual(before);
+  });
+
+  it("does not let force repair overwrite a cache accepted after its two-read attempt began", async () => {
+    const { repository, fake, database, service } = setup("rvw-pr-issue-stale-repair-");
+    const initial = githubIssue(142, "Initial body", "2026-08-20T01:00:00.000Z");
+    fake.issues.set(142, initial);
+    const opened = await service.openPullRequest(undefined, repository);
+    const added = await service.addPullRequestIssue(opened.pullRequest.url, "#142");
+    fake.issues.set(142, {
+      ...initial,
+      body: "Stable but stale repair candidate",
+    });
+    const barrier = new OneShotBarrier();
+    barrier.arm();
+    fake.issueBarrier = barrier;
+
+    const repair = service.forceRepairPullRequestIssue(opened.pullRequest.url, "#142");
+    await barrier.waitUntilBlocked();
+    const newer = githubIssue(142, "Newer accepted body", "2026-08-20T02:00:00.000Z");
+    expect(
+      database.refreshReviewIssue("pull-request", opened.pullRequest.id, added.issue.id, newer),
+    ).toMatchObject({ refreshed: true, issue: { body: "Newer accepted body" } });
+    barrier.release();
+
+    await expect(repair).rejects.toMatchObject({
+      code: "GITHUB_ISSUE_ERROR",
+      details: { reason: "ISSUE_REPAIR_STALE", issueId: added.issue.id },
+    });
+    expect(database.getIssue(added.issue.id)).toMatchObject({
+      body: "Newer accepted body",
+      updatedAt: newer.updatedAt,
+    });
+  });
+
   it("does not report a failed PR Issue refresh after its membership was removed", async () => {
     const { repository, fake, database, service } = setup("rvw-pr-issue-failure-removal-race-");
     fake.issues.set(142, githubIssue(142));
@@ -361,7 +470,7 @@ describe("RvwService commit workflow", () => {
 
     const refresh = service.refreshPullRequest(opened.pullRequest.id);
     await barrier.waitUntilBlocked();
-    service.removePullRequestIssue(opened.pullRequest.url, "#142");
+    removePullRequestIssue(service, opened.pullRequest.url, "#142");
     fake.issues.delete(142);
     const cacheAfterRemoval = database.getIssue(added.issue.id);
     const sequenceAfterRemoval = database.getReviewChangeSequence(
@@ -469,7 +578,7 @@ describe("RvwService commit workflow", () => {
       targets: 1,
       gitRefs: 2,
     });
-    const reset = await service.resetPullRequest(opened.pullRequest.id);
+    const reset = await resetPullRequest(service, opened.pullRequest.id);
     expect(reset.pullRequest.latestComparisonBaseOid).toBe(base);
     expect(reset.commits.map(({ oid }) => oid)).toEqual([firstHead, secondHead]);
     expect(service.listComments(opened.pullRequest.id)).toHaveLength(0);
@@ -487,6 +596,92 @@ describe("RvwService commit workflow", () => {
     expect(reopened.fromCache).toBe(true);
     expect(reopened.pullRequest.id).toBe(opened.pullRequest.id);
     expect(reopened.pullRequest.localRepositoryPath).toBe(opened.pullRequest.localRepositoryPath);
+  });
+
+  it("rejects stale destructive previews before Pull Request artifacts are deleted", async () => {
+    const { repository, fake, database, service } = setup("rvw-pr-destructive-token-");
+    const opened = await service.openPullRequest(undefined, repository);
+    fake.issues.set(142, githubIssue(142));
+    const added = await service.addPullRequestIssue(opened.pullRequest.url, "#142");
+    const walkthrough = (
+      await service.publishWalkthrough({
+        review: { kind: "pull-request", pullRequest: opened.pullRequest.url },
+        sourceOid: opened.pullRequest.latestHeadOid,
+        title: "Destructive preview",
+        body: "Read [the source](rvw-ref:source).",
+        references: [
+          {
+            id: "source",
+            label: "Source",
+            path: "README.md",
+            startLine: 1,
+            endLine: 1,
+            description: null,
+          },
+        ],
+      })
+    ).walkthrough;
+    const resetPreview = await service.getResetPreview(opened.pullRequest.id);
+    const issuePreview = service.getIssueRemovalPreview(
+      "pull-request",
+      opened.pullRequest.id,
+      "#142",
+    );
+    const walkthroughPreview = service.getWalkthroughDeletePreview(walkthrough.ref);
+    await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "pull-request" },
+      body: "Added after all previews.",
+    });
+
+    await expect(
+      service.resetPullRequest(opened.pullRequest.id, resetPreview.confirmationToken),
+    ).rejects.toMatchObject({ code: "DESTRUCTIVE_PREVIEW_STALE", status: 409 });
+    expect(() =>
+      service.removePullRequestIssue(
+        opened.pullRequest.url,
+        "#142",
+        issuePreview.confirmationToken,
+      ),
+    ).toThrowError(expect.objectContaining({ code: "DESTRUCTIVE_PREVIEW_STALE", status: 409 }));
+    expect(() =>
+      service.deleteWalkthroughByUri(walkthrough.ref, walkthroughPreview.confirmationToken),
+    ).toThrowError(expect.objectContaining({ code: "DESTRUCTIVE_PREVIEW_STALE", status: 409 }));
+    expect(database.hasReviewIssue("pull-request", opened.pullRequest.id, added.issue.id)).toBe(
+      true,
+    );
+    expect(database.getWalkthrough(walkthrough.id)).not.toBeNull();
+  });
+
+  it("rechecks a Pull Request reset token after GitHub I/O and before replacing refs", async () => {
+    const { repository, fake, database, service } = setup("rvw-pr-reset-network-race-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const preview = await service.getResetPreview(opened.pullRequest.id);
+    const refsBefore = await service.git.listRefsByPrefix(
+      repository,
+      `refs/rvw/pr/${opened.pullRequest.number}/`,
+    );
+    const barrier = new OneShotBarrier();
+    barrier.arm();
+    fake.pullRequestBarrier = barrier;
+
+    const reset = service.resetPullRequest(opened.pullRequest.id, preview.confirmationToken);
+    await barrier.waitUntilBlocked();
+    const comment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "pull-request" },
+      body: "Created while reset was fetching GitHub state.",
+    });
+    barrier.release();
+
+    await expect(reset).rejects.toMatchObject({
+      code: "DESTRUCTIVE_PREVIEW_STALE",
+      status: 409,
+    });
+    expect(database.getComment(comment.id)).not.toBeNull();
+    await expect(
+      service.git.listRefsByPrefix(repository, `refs/rvw/pr/${opened.pullRequest.number}/`),
+    ).resolves.toEqual(refsBefore);
   });
 
   it("keeps a numeric PR reference scoped to the current repository", async () => {
@@ -1173,7 +1368,7 @@ describe("RvwService commit workflow", () => {
       ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     }
 
-    await service.resetPullRequest(opened.pullRequest.id);
+    await resetPullRequest(service, opened.pullRequest.id);
     expect(service.listWalkthroughs(opened.pullRequest.id)).toEqual([]);
     expect(service.listComments(opened.pullRequest.id)).toEqual([]);
   });
@@ -1203,12 +1398,12 @@ describe("RvwService commit workflow", () => {
     const directPublish = await service.publishWalkthrough({
       review: { kind: "pull-request", pullRequest: opened.pullRequest.url },
       ...content,
-      issues: ["#142"],
+      issuesToAdd: ["#142"],
     });
     const directUpdate = await service.updateWalkthrough(directPublish.walkthrough.ref, {
       ...content,
       title: "Direct update",
-      issues: ["#142"],
+      issuesToAdd: ["#142"],
     });
     expect(JSON.parse(JSON.stringify(directPublish))).toMatchObject({
       walkthrough: { ref: directPublish.walkthrough.ref },
@@ -1238,7 +1433,7 @@ describe("RvwService commit workflow", () => {
           review: { kind: "pull-request", pullRequest: opened.pullRequest.url },
           ...content,
           title: "Socket transport",
-          issues: ["#143"],
+          issuesToAdd: ["#143"],
         },
         { expectedDatabasePath: database.filePath },
       );
@@ -1248,7 +1443,7 @@ describe("RvwService commit workflow", () => {
         "walkthrough.update",
         {
           uri: socketPublish.walkthrough.ref,
-          content: { ...content, title: "Socket update", issues: ["#143"] },
+          content: { ...content, title: "Socket update", issuesToAdd: ["#143"] },
         },
         { expectedDatabasePath: database.filePath },
       );
@@ -1298,7 +1493,7 @@ describe("RvwService commit workflow", () => {
           description: null,
         },
       ],
-      issues: ["#142"],
+      issuesToAdd: ["#142"],
     };
     gitClient.armRetainBarrier();
 
@@ -1481,7 +1676,7 @@ describe("RvwService commit workflow", () => {
       counts: { comments: 1, posts: 2, references: 1 },
       confirmationRequired: true,
     });
-    expect(service.deleteWalkthroughByUri(walkthrough.ref)).toEqual({
+    expect(deleteWalkthrough(service, walkthrough.ref)).toEqual({
       id: walkthrough.id,
       ref: walkthrough.ref,
       pullRequestId: opened.pullRequest.id,

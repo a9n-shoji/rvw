@@ -97,7 +97,7 @@ For a Branch Review, require `branchReview.read` and publish with
 `"review": { "kind": "branch", "repository": "owner/repository" }`. Use the current default-branch
 source OID returned by RVW. A Branch Walkthrough may support evaluation of an Issue or an architecture
 investigation without an Issue, but must not merely paraphrase Issue text. Optional
-`"issues": ["#98", "#156"]` adds only those same-repository Issues while publishing or updating.
+`"issuesToAdd": ["#98", "#156"]` adds only those same-repository Issues while publishing or updating.
 Do not recursively discover linked Issues; omitting an Issue from a later update does not remove it.
 
 Parse the successful response as `{ "ok": true, "walkthrough": {...}, "issuesAdded": [...] }` and
@@ -131,8 +131,11 @@ rvw walkthrough delete <WALKTHROUGH_URI> --json
 Only after the user explicitly authorizes deleting that exact Walkthrough and the reported associated feedback, run:
 
 ```bash
-rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
+rvw walkthrough delete <WALKTHROUGH_URI> --yes --confirmation-token <PREVIEW_TOKEN> --json
 ```
+
+Use exactly the token returned by that preview. If rvw reports `DESTRUCTIVE_PREVIEW_STALE`, present the
+new preview and obtain authorization again; never reuse the old token.
 
 Never infer deletion authorization from a request to revise, replace, or republish an explanation.
 Retained Git commit refs may be shared by other review state and remain managed by the owning review's

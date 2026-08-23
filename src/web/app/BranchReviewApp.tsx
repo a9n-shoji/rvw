@@ -29,7 +29,12 @@ import {
   deleteCommentDraftForIssue,
   deleteCommentReplyDraftsForComment,
 } from "../comment-draft-store.js";
-import { documentTabKey, type ActiveDocument, type DocumentPaneId } from "../document-workspace.js";
+import {
+  documentTabKey,
+  initialDocumentWorkspace,
+  type ActiveDocument,
+  type DocumentPaneId,
+} from "../document-workspace.js";
 import type { AnyReviewComment } from "../review-context.js";
 import type { ReadingLocator } from "../reading-history.js";
 import { invalidateReviewScope } from "../review-query-invalidation.js";
@@ -60,6 +65,7 @@ interface BranchReviewResponse {
   branchReview: BranchReview;
   issues: IssueDocument[];
   walkthroughs: BranchWalkthroughSummary[];
+  selectedRemote: { name: string; url: string } | null;
 }
 
 interface BranchSyncResponse extends BranchReviewResponse {
@@ -130,6 +136,10 @@ export function BranchReviewApp({
   const [resetRecovery, setResetRecovery] = useState<{
     repositoryPath: string;
     reopenError: unknown;
+    orphanRefs: {
+      remainingRefs: string[] | null;
+      refPrefix: string;
+    } | null;
   } | null>(null);
   const {
     feedback: syncFeedback,
@@ -318,9 +328,10 @@ export function BranchReviewApp({
           issueRangeComments: number;
           replies: number;
         };
+        confirmationToken?: string;
         error?: { code: string; message: string; details?: unknown; suggestions?: string[] };
       };
-      if (response.status !== 409 || !preview.counts) {
+      if (response.status !== 409 || !preview.counts || !preview.confirmationToken) {
         throw new ApiError(
           preview.error?.message ?? `HTTP ${response.status}`,
           preview.error?.code ?? "HTTP_ERROR",
@@ -333,7 +344,7 @@ export function BranchReviewApp({
       );
       if (!confirmed) return null;
       return await api(endpoint, {
-        ...jsonRequest({ yes: true }),
+        ...jsonRequest({ yes: true, confirmationToken: preview.confirmationToken }),
         method: "DELETE",
       });
     },
@@ -363,9 +374,10 @@ export function BranchReviewApp({
       const preview = (await response.json()) as {
         counts?: Record<string, number>;
         retainedRefs?: string[];
+        confirmationToken?: string;
         error?: { code: string; message: string; details?: unknown; suggestions?: string[] };
       };
-      if (response.status !== 409 || !preview.counts) {
+      if (response.status !== 409 || !preview.counts || !preview.confirmationToken) {
         throw new ApiError(
           preview.error?.message ?? `HTTP ${response.status}`,
           preview.error?.code ?? "HTTP_ERROR",
@@ -375,10 +387,26 @@ export function BranchReviewApp({
       }
       const counts = preview.counts;
       const confirmed = window.confirm(
-        `Branch Reviewを削除します。\n\nIssue membership ${counts.issueMemberships ?? 0}\nIssueコメント ${counts.issueComments ?? 0}\nコードコメント ${counts.codeComments ?? 0}\nBranch全体コメント ${counts.reviewComments ?? 0}\nWalkthroughコメント ${counts.walkthroughComments ?? 0}\n投稿 ${counts.posts ?? 0}\nWalkthrough ${counts.walkthroughs ?? 0}\n解放候補Git ref ${preview.retainedRefs?.length ?? counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
+        `Branch Reviewを削除します。\n\nIssue membership ${counts.issueMemberships ?? 0}\nコメント合計 ${counts.comments ?? 0}\nIssueコメント ${counts.issueComments ?? 0}\nコードコメント ${counts.codeComments ?? 0}\nBranch全体コメント ${counts.reviewComments ?? 0}\nWalkthroughコメント ${counts.walkthroughComments ?? 0}\n投稿 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\nコメント対象 ${counts.targets ?? 0}\nWalkthrough ${counts.walkthroughs ?? 0}\nWalkthroughコード参照 ${counts.walkthroughReferences ?? 0}\n解放候補Git ref ${preview.retainedRefs?.length ?? counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
       );
       if (!confirmed) return null;
-      await api(endpoint, jsonRequest({ yes: true }));
+      const reset = await api<{
+        outcome:
+          | { kind: "completed" }
+          | {
+              kind: "completed-with-orphan-refs";
+              remainingRefs: string[] | null;
+              refPrefix: string;
+            };
+      }>(endpoint, jsonRequest({ yes: true, confirmationToken: preview.confirmationToken }));
+      if (reset.outcome.kind === "completed-with-orphan-refs") {
+        return {
+          kind: "reset-complete" as const,
+          repositoryPath: branchReview.localRepositoryPath,
+          reopenError: null,
+          orphanRefs: reset.outcome,
+        };
+      }
       try {
         const reopened = await api<{ branchReview: BranchReview }>(
           "/api/branch-reviews/open",
@@ -390,12 +418,16 @@ export function BranchReviewApp({
           kind: "reset-complete" as const,
           repositoryPath: branchReview.localRepositoryPath,
           reopenError,
+          orphanRefs: null,
         };
       }
     },
     onSuccess: (result) => {
       if (!result) return;
       clearCommentDraftsForReview(branchReviewId);
+      documentScrollPositions.current.clear();
+      setWorkspace(initialDocumentWorkspace());
+      resetViewerNavigation(["left", "right"]);
       if (result.kind === "reset-complete") {
         setResetRecovery(result);
         return;
@@ -484,12 +516,23 @@ export function BranchReviewApp({
     return (
       <main className="fatal-state">
         <h1>Branch Reviewのresetは完了しました</h1>
+        {resetRecovery.orphanRefs && (
+          <div role="alert">
+            <p>
+              review-owned Git
+              refの一部を削除できませんでした。残存refは新しいReviewから隔離されています。
+              cleanup対象prefix: <code>{resetRecovery.orphanRefs.refPrefix}</code>
+            </p>
+            {resetRecovery.orphanRefs.remainingRefs !== null && (
+              <p>残存ref: {resetRecovery.orphanRefs.remainingRefs.join(", ") || "なし"}</p>
+            )}
+          </div>
+        )}
         <p>
-          ローカル状態の初期化後にBranch Reviewを再作成できませんでした。repository{" "}
-          <code>{resetRecovery.repositoryPath}</code> で <code>rvw branch open</code>
-          を再実行してください。
+          repository <code>{resetRecovery.repositoryPath}</code> で <code>rvw branch open</code>
+          を実行してBranch Reviewを再作成してください。
         </p>
-        <ErrorNotice error={resetRecovery.reopenError} />
+        {resetRecovery.reopenError !== null && <ErrorNotice error={resetRecovery.reopenError} />}
       </main>
     );
   }
@@ -784,7 +827,12 @@ export function BranchReviewApp({
           <strong>rvw</strong>
         </div>
         <div className="review-heading">
-          <span>{branchReview.canonicalName}</span>
+          <span title={reviewQuery.data.selectedRemote?.url}>
+            {branchReview.canonicalName}
+            {reviewQuery.data.selectedRemote
+              ? ` · remote ${reviewQuery.data.selectedRemote.name}`
+              : " · remote unavailable"}
+          </span>
           <h1>
             Branch Review · {branchReview.defaultBranchName} · {shortOid(branchReview.sourceOid)}
           </h1>

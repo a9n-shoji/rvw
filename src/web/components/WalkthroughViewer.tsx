@@ -28,7 +28,7 @@ import type {
   Walkthrough,
   WalkthroughReference,
 } from "../../domain/models.js";
-import { api, jsonRequest, type PlacementResponse } from "../api.js";
+import { api, ApiError, jsonRequest, type PlacementResponse } from "../api.js";
 import { reviewQueryKeys } from "../review-query-keys.js";
 import {
   MarkdownSelectionSurface,
@@ -653,10 +653,6 @@ export function WalkthroughViewer({
     (comment) =>
       comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id,
   );
-  const associatedPostCount = walkthroughComments.reduce(
-    (count, comment) => count + comment.posts.length,
-    0,
-  );
   const reviewKind = reviewKindForWalkthrough(walkthrough);
   const reviewId = reviewIdForWalkthrough(walkthrough);
   const placementQuery = useQuery({
@@ -735,15 +731,36 @@ export function WalkthroughViewer({
     },
   });
   const deleteWalkthrough = useMutation({
-    mutationFn: async () =>
-      await api(
-        `/api/${reviewKind === "pull-request" ? "pull-requests" : "branch-reviews"}/${reviewId}/walkthroughs/${walkthrough.id}`,
-        {
-          ...jsonRequest({}),
-          method: "DELETE",
-        },
-      ),
-    onSuccess: async () => {
+    mutationFn: async () => {
+      const endpoint = `/api/${reviewKind === "pull-request" ? "pull-requests" : "branch-reviews"}/${reviewId}/walkthroughs/${walkthrough.id}`;
+      const response = await fetch(endpoint, {
+        ...jsonRequest({ yes: false }),
+        method: "DELETE",
+      });
+      const preview = (await response.json()) as {
+        counts?: { comments: number; posts: number; references: number };
+        confirmationToken?: string;
+        error?: { code: string; message: string; details?: unknown; suggestions?: string[] };
+      };
+      if (response.status !== 409 || !preview.counts || !preview.confirmationToken) {
+        throw new ApiError(
+          preview.error?.message ?? `HTTP ${response.status}`,
+          preview.error?.code ?? "HTTP_ERROR",
+          preview.error?.details,
+          preview.error?.suggestions ?? [],
+        );
+      }
+      const confirmed = window.confirm(
+        `このウォークスルーを削除します。\n紐づくコメント ${preview.counts.comments}件、投稿 ${preview.counts.posts}件、コード参照 ${preview.counts.references}件も削除されます。\nコピー済みの参照は無効になります。\n\nこの操作は元に戻せません。`,
+      );
+      if (!confirmed) return null;
+      return await api(endpoint, {
+        ...jsonRequest({ yes: true, confirmationToken: preview.confirmationToken }),
+        method: "DELETE",
+      });
+    },
+    onSuccess: async (result) => {
+      if (!result) return;
       onDeleted(walkthrough);
       await Promise.all([
         queryClient.invalidateQueries({
@@ -758,14 +775,7 @@ export function WalkthroughViewer({
     (comment) => comment.resolvedAt === null,
   ).length;
   const confirmDelete = (): void => {
-    const associatedState =
-      walkthroughComments.length === 0
-        ? "紐づくコメントはありません。"
-        : `紐づくコメント ${walkthroughComments.length}件と投稿 ${associatedPostCount}件も削除されます。`;
-    const confirmed = window.confirm(
-      `このウォークスルーを削除します。\n${associatedState}\nコピー済みの参照は無効になります。\n\nこの操作は元に戻せません。`,
-    );
-    if (confirmed) deleteWalkthrough.mutate();
+    deleteWalkthrough.mutate();
   };
   const selectedRangeLabel = selectedRange
     ? selectedRange.startLine === selectedRange.endLine

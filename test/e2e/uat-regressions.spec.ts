@@ -349,6 +349,7 @@ test("makes reset destructive intent explicit and honors confirmation cancellati
           walkthroughReferences: 7,
           gitRefs: 4,
         },
+        confirmationToken: "b".repeat(64),
       },
     });
   });
@@ -404,6 +405,7 @@ test("discards in-memory comment drafts after a confirmed reset", async ({ page,
             walkthroughReferences: 0,
             gitRefs: 1,
           },
+          confirmationToken: "a".repeat(64),
         },
       });
       return;

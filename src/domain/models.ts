@@ -61,6 +61,7 @@ export interface BranchReview extends RepositoryIdentity {
   sourceOid: string;
   githubFetchedAt: string;
   sourceSyncError: string | null;
+  initializationState: "pending" | "ready" | "failed";
   createdAt: string;
   updatedAt: string;
 }
@@ -404,12 +405,16 @@ export interface ResetCounts {
 export interface BranchResetCounts {
   branchReview: number;
   issueMemberships: number;
+  comments: number;
   issueComments: number;
   codeComments: number;
   reviewComments: number;
   walkthroughComments: number;
   posts: number;
+  commentReferences: number;
+  targets: number;
   walkthroughs: number;
+  walkthroughReferences: number;
   gitRefs: number;
 }
 

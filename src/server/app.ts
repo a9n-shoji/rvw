@@ -256,7 +256,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
           error: {
             code: "RESET_CONFIRMATION_REQUIRED",
             message: "Issue削除には明示的な確認が必要です。",
-            suggestions: ["削除対象のコメント・返信件数を確認してyesを指定してください。"],
+            suggestions: ["削除対象を確認し、返されたconfirmationTokenとyesを指定してください。"],
           },
           ...preview,
         },
@@ -265,7 +265,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }
     return context.json({
       ok: true,
-      ...service.removePullRequestIssue(pullRequest.url, issue.url),
+      ...service.removePullRequestIssue(pullRequest.url, issue.url, input.confirmationToken),
     });
   });
 
@@ -291,14 +291,17 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
           error: {
             code: "RESET_CONFIRMATION_REQUIRED",
             message: "resetには明示的な確認が必要です。",
-            suggestions: ["削除件数を確認してyesを指定してください。"],
+            suggestions: ["削除件数を確認し、返されたconfirmationTokenとyesを指定してください。"],
           },
           ...preview,
         },
         409,
       );
     }
-    return context.json({ ok: true, ...(await service.resetPullRequest(context.req.param("id"))) });
+    return context.json({
+      ok: true,
+      ...(await service.resetPullRequest(context.req.param("id"), input.confirmationToken)),
+    });
   });
 
   app.get("/api/pull-requests/:id/commits", async (context) =>
@@ -416,8 +419,11 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }),
   );
 
-  app.get("/api/branch-reviews/:id", (context) =>
-    context.json({ ok: true, ...service.getBranchReviewView(context.req.param("id")) }),
+  app.get("/api/branch-reviews/:id", async (context) =>
+    context.json({
+      ok: true,
+      ...(await service.getBoundBranchReviewView(context.req.param("id"))),
+    }),
   );
 
   app.post("/api/branch-reviews/open", async (context) => {
@@ -442,7 +448,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
           error: {
             code: "RESET_CONFIRMATION_REQUIRED",
             message: "resetには明示的な確認が必要です。",
-            suggestions: ["削除件数を確認してyesを指定してください。"],
+            suggestions: ["削除件数を確認し、返されたconfirmationTokenとyesを指定してください。"],
           },
           ...preview,
         },
@@ -451,7 +457,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }
     return context.json({
       ok: true,
-      ...(await service.resetBranchReview(context.req.param("id"))),
+      ...(await service.resetBranchReview(context.req.param("id"), input.confirmationToken)),
     });
   });
 
@@ -569,7 +575,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
           error: {
             code: "RESET_CONFIRMATION_REQUIRED",
             message: "Issue削除には明示的な確認が必要です。",
-            suggestions: ["削除対象のコメント・返信件数を確認してyesを指定してください。"],
+            suggestions: ["削除対象を確認し、返されたconfirmationTokenとyesを指定してください。"],
           },
           ...preview,
         },
@@ -578,7 +584,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }
     return context.json({
       ok: true,
-      ...(await service.removeBranchIssueById(branchReview.id, issue.url)),
+      ...(await service.removeBranchIssueById(branchReview.id, issue.url, input.confirmationToken)),
     });
   });
 
@@ -608,25 +614,63 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }),
   );
 
-  app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) =>
-    context.json({
+  app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", async (context) => {
+    const input = resetSchema.parse(await context.req.json());
+    const walkthrough = service.getBranchWalkthrough(
+      context.req.param("id"),
+      context.req.param("walkthroughId"),
+    );
+    if (!input.yes) {
+      return context.json(
+        {
+          ok: false,
+          error: {
+            code: "WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED",
+            message: "Walkthrough削除には明示的な確認が必要です。",
+          },
+          ...service.getWalkthroughDeletePreview(walkthrough.ref),
+        },
+        409,
+      );
+    }
+    return context.json({
       ok: true,
       deleted: service.deleteBranchWalkthrough(
         context.req.param("id"),
         context.req.param("walkthroughId"),
+        input.confirmationToken,
       ),
-    }),
-  );
+    });
+  });
 
-  app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) =>
-    context.json({
+  app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", async (context) => {
+    const input = resetSchema.parse(await context.req.json());
+    const walkthrough = service.getWalkthrough(
+      context.req.param("id"),
+      context.req.param("walkthroughId"),
+    );
+    if (!input.yes) {
+      return context.json(
+        {
+          ok: false,
+          error: {
+            code: "WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED",
+            message: "Walkthrough削除には明示的な確認が必要です。",
+          },
+          ...service.getWalkthroughDeletePreview(walkthrough.ref),
+        },
+        409,
+      );
+    }
+    return context.json({
       ok: true,
       deleted: service.deleteWalkthrough(
         context.req.param("id"),
         context.req.param("walkthroughId"),
+        input.confirmationToken,
       ),
-    }),
-  );
+    });
+  });
 
   app.post("/api/comments", async (context) => {
     const input = createCommentSchema.parse(await context.req.json());

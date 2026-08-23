@@ -250,11 +250,15 @@ export async function dispatchAgentSocketRequest(
     case "pr.reset": {
       const input = parseOperationInput("pr.reset", request.input);
       const pullRequest = service.resolveStoredPullRequest(input.reference);
-      return await service.resetPullRequest(pullRequest.id);
+      return await service.resetPullRequest(pullRequest.id, input.confirmationToken);
     }
     case "pr.issue.add": {
       const input = parseOperationInput("pr.issue.add", request.input);
       return await service.addPullRequestIssue(input.reference, input.issueReference);
+    }
+    case "pr.issue.refresh": {
+      const input = parseOperationInput("pr.issue.refresh", request.input);
+      return await service.forceRepairPullRequestIssue(input.reference, input.issueReference);
     }
     case "pr.issue.remove.preview": {
       const input = parseOperationInput("pr.issue.remove.preview", request.input);
@@ -263,7 +267,11 @@ export async function dispatchAgentSocketRequest(
     }
     case "pr.issue.remove": {
       const input = parseOperationInput("pr.issue.remove", request.input);
-      return service.removePullRequestIssue(input.reference, input.issueReference);
+      return service.removePullRequestIssue(
+        input.reference,
+        input.issueReference,
+        input.confirmationToken,
+      );
     }
     case "branch.sync": {
       const input = parseOperationInput("branch.sync", request.input);
@@ -273,13 +281,21 @@ export async function dispatchAgentSocketRequest(
       const input = parseOperationInput("branch.issue.add", request.input);
       return await service.addBranchIssue(input.repositoryPath, input.issueReference);
     }
+    case "branch.issue.refresh": {
+      const input = parseOperationInput("branch.issue.refresh", request.input);
+      return await service.forceRepairBranchIssue(input.repositoryPath, input.issueReference);
+    }
     case "branch.issue.remove.preview": {
       const input = parseOperationInput("branch.issue.remove.preview", request.input);
       return await service.getBranchIssueRemovalPreview(input.repositoryPath, input.issueReference);
     }
     case "branch.issue.remove": {
       const input = parseOperationInput("branch.issue.remove", request.input);
-      return await service.removeBranchIssue(input.repositoryPath, input.issueReference);
+      return await service.removeBranchIssue(
+        input.repositoryPath,
+        input.issueReference,
+        input.confirmationToken,
+      );
     }
     case "branch.reset.preview": {
       const input = parseOperationInput("branch.reset.preview", request.input);
@@ -287,7 +303,7 @@ export async function dispatchAgentSocketRequest(
     }
     case "branch.reset": {
       const input = parseOperationInput("branch.reset", request.input);
-      return await service.resetBranchReviewAtPath(input.repositoryPath);
+      return await service.resetBranchReviewAtPath(input.repositoryPath, input.confirmationToken);
     }
     case "branch.comments": {
       const input = parseOperationInput("branch.comments", request.input);
@@ -362,7 +378,7 @@ export async function dispatchAgentSocketRequest(
     }
     case "walkthrough.delete": {
       const input = parseOperationInput("walkthrough.delete", request.input);
-      return service.deleteWalkthroughByUri(input.uri);
+      return service.deleteWalkthroughByUri(input.uri, input.confirmationToken);
     }
   }
 }

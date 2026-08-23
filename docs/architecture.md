@@ -23,16 +23,21 @@ from local GitHub remotes with the saved identity before any GitHub request, fet
 mutation. Worktrees in that common directory may reuse the review, but an independent clone, a changed
 canonical remote, or a replacement repository at the saved path fails closed instead of moving the
 binding. Repository rename and transfer are not followed automatically; an explicit Branch reset at
-the original binding is the boundary for recreating the aggregate. The
+the original binding is the boundary for recreating the aggregate. Worktree and common-directory paths
+are filesystem-realpath canonicalized. The chosen GitHub remote (`origin`, then name order) is exposed
+by open, the viewer header, and doctor; doctor also classifies Branch refs as current, artifact-referenced,
+unreferenced, or orphan without mutating them. The
 Issue removal transaction deletes only the selected membership and its owned comments/replies.
 Background Issue refresh is separate from membership addition: after the GitHub fetch, one immediate
 transaction rechecks the originating review and membership, updates only an existing shared cache row,
 and cannot reinsert a membership removed while the request was in flight. Sync-error writes use the
-same review-scoped guard, so a deleted review cannot make a replacement or another owner stale.
+same review-scoped guard and persist on that membership rather than the shared content row, so a
+deleted review cannot make a replacement or another owner stale.
 Branch reset deletes Branch comments, Walkthroughs, memberships, and the singleton review before
-releasing only its `refs/rvw/branch/<branchReviewId>/...` namespace; PR refs, another Branch Review ID,
-and shared Issue cache are outside that deletion boundary. If ref deletion fails after DB deletion,
-the error reports both outcomes and the orphan prefix. A replacement review gets a new ID, so it cannot
+releasing only its `refs/rvw/branch/<branchReviewId>/...` namespace; PR refs and another Branch Review ID
+are outside that deletion boundary, while now-unowned Issue cache rows are transactionally collected.
+If ref deletion fails after DB deletion, a typed partial-success outcome reports both outcomes and the
+orphan prefix. A replacement review gets a new ID, so it cannot
 read or delete the orphan evidence. The browser polls the active review's
 `app_meta.review_change_sequence:<kind>:<id>` value; the database-wide sequence remains a diagnostic
 and compatibility counter, not the content invalidation boundary. Walkthrough invalidation uses the
@@ -51,7 +56,8 @@ socket, connection, database identity, selected transport, and fallback reason. 
 a rollback-only write transaction instead of inferring writeability from Unix modes.
 
 `BranchReviewLifecycle` is the application boundary shared by CLI, HTTP, and Agent socket. It separates
-open-or-create, cached/existing reads, synchronize-existing, and destructive-existing policies. Only
+open-or-create from discriminated read, synchronize, and destructive resolution policies; only reset's
+destructive policy can admit a missing initial ref. Only
 `branch open` and the explicit Issue-add operation may create a Branch Review. Reset, Issue removal,
 comments, and synchronization require an existing aggregate; preview failures are read-only. Matching
 local binding plus a network-only GitHub failure preserves cached reads. If no GitHub remote can be
@@ -64,17 +70,18 @@ that move. HTTP routes whose URL contains a Branch Review ID keep that expected 
 resolution and the final SQLite transaction. Deleting and recreating a review at the same path therefore
 produces `BRANCH_REVIEW_NOT_FOUND` for the stale request instead of mutating the replacement.
 
-The first aggregate insert records a dedicated incomplete-initialization marker before creating its
-owned ref. A crash before ref creation can therefore be recovered by explicit Branch reset when the
-binding matches and the review namespace has no refs. A crash after ref creation but before marker
-clear is completed by the next cached open after verifying the owned ref and Git object. Normal reads
-wait only for the exact pending marker, for at most five seconds; a failed or otherwise unowned source
+The first aggregate insert records `initialization_state = pending` before creating its owned ref;
+this lifecycle state is separate from `source_sync_error`. A crash before ref creation can therefore be
+recovered by explicit Branch reset when the binding matches and the review namespace has no refs. A
+crash after ref creation but before ready publication is completed by the next cached open after
+verifying the owned ref and Git object. Normal reads wait only for the exact pending state, for at most
+five seconds; a failed or otherwise unowned source
 fails immediately. Initialization is create-only: when its immediate
 transaction discovers a concurrently created row, it returns that row unchanged. The caller verifies
 the winner's owned source, discards metadata fetched before discovering that aggregate, allocates a
 generation, and only then fetches a fresh snapshot for retain-before-publish. If reset wins while initial ref creation is paused, a
 later completion failure removes only the exact ref created by that attempt on a best-effort basis.
-Once another opener has cleared the initialization marker, a delayed completion is idempotent even if
+Once another opener has moved initialization to `ready`, a delayed completion is idempotent even if
 the aggregate source has advanced. Exact ref creation uses Git compare-and-swap so only one concurrent
 creator reports ownership. Compensation removes that ref only when the aggregate ID no longer exists;
 a source mismatch alone never deletes historical evidence that comments or walkthroughs may reference.
@@ -86,13 +93,20 @@ GitHub Issue responses are checked in both the concrete client and application b
 owner, repository, number, canonical name, and URL mismatch fail before cache or membership writes.
 The shared cache accepts only a non-decreasing GitHub `updatedAt`; equal versions with conflicting
 title/body/state fail closed. Every accepted success increments an internal cache generation, even
-when wall-clock timestamps are equal; a failure may mark the cache stale only if its originating
-generation is still current. PR and Branch sync return per-Issue failures separately; both viewers
+when wall-clock timestamps are equal; a failure may mark only its originating membership stale when
+the cache generation is still current. The last membership removal collects the now-unowned shared row;
+an explicit force refresh repairs an owned equal-version conflict only after two matching GitHub reads
+and only while the cache generation captured before those reads remains current.
+PR and Branch sync return per-Issue failures separately; both viewers
 report a warning alongside the successfully synchronized review source instead of presenting the
 entire operation as clean, limiting the top-bar detail to three Issues plus the remaining count.
 A fetch failure whose originating membership was already removed is a skip, not a stale warning.
-When browser reset succeeds but the following open fails, the viewer reports reset as complete and
+Destructive previews carry the active review sequence and a content-bound confirmation token. Reset,
+Issue removal, and Walkthrough deletion recheck that sequence in their SQLite mutation; stale previews
+return 409 with the current preview instead of deleting newly added artifacts. When browser reset succeeds
+but the following open fails, the viewer reports reset as complete and
 gives an explicit `rvw branch open` recovery action instead of presenting the reset itself as failed.
+The same deleted-review state is used when ref cleanup returns a partial-success orphan outcome.
 
 The viewer reads committed Git objects rather than the worktree or index. That keeps the human's
 reading context stable while an external Agent edits, tests, commits, and pushes. Comments bridge the
@@ -111,7 +125,9 @@ New root posts and replies also append a database-wide event sequence with an ex
 Branch context. Routing uses the stable local Pull Request / Branch Review ID; the GitHub URL or
 canonical repository remains a separate display value. A reset-and-recreate therefore starts a new
 Branch context even when its repository text is identical, while casing changes cannot split one
-context. A long-running external Agent
+context. When the first protocol-v4 PR event opens a v3 task database, legacy URL-keyed rows for that
+same URL are transactionally re-keyed to the actual PR UUID; pending batches merge, while conflicting
+in-flight leases are quarantined rather than double-claimed. A long-running external Agent
 task may consume that sequence with an opaque database-scoped cursor through `rvw comment watch`.
 rvw retains minimal event identifiers independently of deletable posts and owns only ordering and
 replay. The bundled Skill's task-local state script atomically owns its cursor, queue, leases, retries,
@@ -136,7 +152,8 @@ Reusing a public key for another review kind or payload is a conflict.
 Walkthroughs cross the same one-way CLI boundary in the other direction. An Agent can publish a
 Markdown explanation to a Pull Request or Branch Review, fixed to one commit with validated file
 references and optional inclusive line ranges, plus optional Mermaid-node bindings. A publish or
-update may explicitly add same-repository Issues without creating a semantic relation. SQLite stores
+update may explicitly add same-repository Issues through the addition-only `issuesToAdd` field without
+creating a semantic relation. SQLite stores
 one current explanation per stable Walkthrough
 ID without revision history. The CLI can read and replace that value in place; the HTTP API remains read-only except for a
 human-confirmed delete action. Whole-document comments keep targeting the stable ID across updates. Rendered

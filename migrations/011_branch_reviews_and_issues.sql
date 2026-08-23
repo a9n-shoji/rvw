@@ -10,6 +10,7 @@ CREATE TABLE branch_reviews (
   source_oid TEXT NOT NULL,
   github_fetched_at TEXT NOT NULL,
   source_sync_error TEXT,
+  initialization_state TEXT NOT NULL CHECK(initialization_state IN ('pending', 'ready', 'failed')),
   source_sync_generation INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -31,7 +32,6 @@ CREATE TABLE github_issues (
   github_updated_at TEXT NOT NULL,
   body_hash TEXT NOT NULL,
   fetched_at TEXT NOT NULL,
-  sync_error TEXT,
   cache_generation INTEGER NOT NULL DEFAULT 0,
   UNIQUE(host, owner, repository, number)
 );
@@ -40,6 +40,7 @@ CREATE TABLE pull_request_issues (
   pull_request_id TEXT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
   issue_id TEXT NOT NULL REFERENCES github_issues(id),
   added_at TEXT NOT NULL,
+  sync_error TEXT,
   PRIMARY KEY(pull_request_id, issue_id)
 );
 
@@ -49,6 +50,7 @@ CREATE TABLE branch_review_issues (
   branch_review_id TEXT NOT NULL REFERENCES branch_reviews(id) ON DELETE CASCADE,
   issue_id TEXT NOT NULL REFERENCES github_issues(id),
   added_at TEXT NOT NULL,
+  sync_error TEXT,
   PRIMARY KEY(branch_review_id, issue_id)
 );
 

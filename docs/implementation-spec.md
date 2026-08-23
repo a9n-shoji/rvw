@@ -120,6 +120,10 @@ Branch Reviewのidentityはcanonical GitHub repositoryであり、default branch
 場合は`REPOSITORY_MISMATCH`でfail closedし、GitHub API、fetch、DB更新、location更新、ref作成、Issue同期
 より前に停止する。GitHub repositoryのrename / organization transferは自動追従せず、元のbindingで明示
 resetして新しいaggregateを作る。default branchのrenameはidentityを変えない。
+worktree pathとGit common directoryは保存・比較前にfilesystem `realpath`へ正規化する。複数GitHub remoteは
+`origin`、その後remote名順で選択し、選択したname／URLを`branch open`、viewer header、`doctor`で観測可能にする。
+`doctor`はreview-owned Branch refをcurrent、artifact referenced、unreferenced、deleted-review orphanへ分類する
+read-only reportを返し、自動削除しない。
 
 sourceはGitHub repository metadataが返したdefault branch OIDを一時refへfetchして一致を検証し、
 `refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`へ保持する。checkout、index、worktreeを変更しない。
@@ -141,7 +145,7 @@ Issue追加は拒否する。同期はIssueごとの結果と失敗分離を維�
 取得失敗で他のcached文書を失わない。同じGitHub client processでは成功した認証確認を共有する。
 
 Issue cacheはcanonical GitHub identityで共有し、review membershipは別tableで所有する。PR本文からは
-同一repositoryの直接参照だけを一段抽出し、Walkthrough payloadの`issues`は追加だけを保証する。Issue
+同一repositoryの直接参照だけを一段抽出し、Walkthrough payloadの`issuesToAdd`は追加だけを保証する。Issue
 参照抽出はMarkdownのproseとlink destinationだけを対象にし、inline/fenced codeとraw HTML内の見かけ上の
 参照を登録しない。Issue本文やWalkthroughから再帰探索せず、参照消失でもmembershipを自動削除しない。Issue本文hashが変わった
 場合、旧本文range Commentは保守的にOutdatedとし、自動resolveしない。membershipを明示削除した場合は、
@@ -151,10 +155,13 @@ GitHub Issue responseはclientで`html_url`のowner／repository／numberとresp
 case-insensitiveな同一identityだけを許し、不一致は`GITHUB_ISSUE_ERROR`としてcache、membership、sequenceを
 変更せずfail closedする。repository rename／transferへは自動追従しない。
 共有cacheのcontent versionはGitHub `updatedAt`とする。古いresponseは書き込まず、同一versionでtitle、body、
-stateが異なるresponseはcorruptionとして`GITHUB_ISSUE_ERROR`にする。同期失敗はfetch開始時に読んだ
-内部`cache_generation`がtransaction内でも同じ場合だけ共有`sync_error`へ保存し、新しい成功後の古い失敗はskipする。
+stateが異なるresponseはcorruptionとして`GITHUB_ISSUE_ERROR`にする。同期失敗は共有content rowではなく、
+同期を実行した`pull_request_issues`または`branch_review_issues`の`sync_error`へ保存する。fetch開始時に読んだ
+内部`cache_generation`がtransaction内でも同じ場合だけerrorを書き、新しい成功後の古い失敗はskipする。
 accepted successは同一millisecondでもgenerationを必ず増やし、`fetchedAt`をCAS tokenとして使用しない。
-この`sync_error`はcurrent共有cacheの取得状態であり、review membership固有の状態ではない。
+最後のmembership削除またはresetはownerのなくなった`github_issues` rowを同じtransactionでGCする。ほかの
+Reviewが所有していてGCできない同一version conflictは、明示`issue refresh --force`がidentityと二回連続の
+一致snapshotを確認し、取得開始前のcache generationがまだcurrentな場合だけ共有cacheを再構築する。
 
 ### 3.1 Commit選択
 
@@ -755,7 +762,7 @@ rvw walkthrough get <WALKTHROUGH_URI> --json
 rvw walkthrough publish --stdin --json
 rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
 rvw walkthrough delete <WALKTHROUGH_URI> --json
-rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
+rvw walkthrough delete <WALKTHROUGH_URI> --yes --confirmation-token <TOKEN> --json
 rvw comment create --stdin --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
@@ -774,6 +781,11 @@ changeのたびに単調増加させる。capabilityは次を含む。
 
 ```text
 agent.transport
+branchReview.read
+branchReview.sync
+issue.read
+issue.membership
+issue.cacheRepair
 comment.create
 comment.list
 comment.watch
@@ -1012,13 +1024,13 @@ passiveであり、browserを開かずnavigationも変更しない。
 
 ```bash
 rvw walkthrough delete <WALKTHROUGH_URI> --json
-rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
+rvw walkthrough delete <WALKTHROUGH_URI> --yes --confirmation-token <TOKEN> --json
 ```
 
-`--yes`なしは`WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED`と対象Walkthrough、reference、comment、postの
-削除件数を返してexit 2とする。明示authorization後の`--yes`だけがWalkthrough、reference、対象comment、
-postを一つのSQLite transactionで物理削除し、change sequenceを更新する。この削除はretained commit refを
-削除しない。
+確認tokenなしは`WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED`と対象Walkthrough、reference、comment、postの
+削除件数、review sequence、confirmation tokenを返してexit 2とする。明示authorization後、同じtokenを
+`--yes`と返した場合だけWalkthrough、reference、対象comment、postを一つのSQLite transactionで物理削除し、
+change sequenceを更新する。この削除はretained commit refを削除しない。
 
 ### 7.5 JSON transport contract
 
@@ -1224,8 +1236,9 @@ Branch ReviewとIssue追加migrationは、canonical Issue cacheの`github_issues
 `pull_request_issues` / `branch_review_issues`、nativeなPR `comment_targets.target_kind = issue`、repository
 singletonの`branch_reviews`、およびBranch専用のWalkthrough、Comment、post、typed reference tableを追加する。
 PRとBranchのartifact ownershipとcascade境界は分離し、
-共有Issue cacheの表示内容または同期errorが変わった場合だけ、そのIssueを所有する全Reviewの
-`review_change_sequence`を同じtransactionで更新する。単なる`fetched_at`更新では他Reviewをinvalidateしない。
+共有Issue cacheの表示内容が変わった場合だけ、そのIssueを所有する全Reviewの
+`review_change_sequence`を同じtransactionで更新する。membership固有の同期errorはそのReviewだけを更新し、
+単なる`fetched_at`更新では他Reviewをinvalidateしない。
 cache更新はGitHub `updatedAt`の非減少を保証し、同一versionのcontent conflictを拒否する。sync error更新は
 元fetchの内部`cache_generation`がcurrentの場合だけ許可する。accepted successはgenerationを増やすため、
 同じmillisecondに保存された新しいcacheへ古いfailureがerrorを付与できない。
@@ -1295,13 +1308,14 @@ GET  /api/comments/:id/placement?...
 
 HTTP/CLIは同じapplication serviceを使用し、transportへbusiness logicを書かない。
 
-Branch Review lifecycleはapplication層で次のpolicyへ分類し、CLI、Agent socket、HTTPが同じuse caseを
-呼ぶ。
+Branch Review lifecycleはapplication層でopen-or-createと、次のdiscriminated resolution policyへ分類し、
+CLI、Agent socket、HTTPが同じuse caseを呼ぶ。
 
 - `open-or-create`: `branch open`。保存済みbindingを検証してcacheを開き、未登録時だけGitHub同期後に作成する。
-- `resolve-existing`: `branch comments`と保存済みartifact read。row、ref、fetch、locationを作らない。
-- `synchronize-existing`: `branch sync`。保存済みaggregateとlocal remoteを検証してからだけ同期する。
-- `destructive-existing`: resetとBranch Issue removalのpreview／実行。未登録なら
+- `{ kind: "read" }`: `branch comments`と保存済みartifact read。row、ref、fetch、locationを作らない。
+- `{ kind: "synchronize" }`: `branch sync`。保存済みaggregateとlocal remoteを検証してからだけ同期する。
+- `{ kind: "destructive", allowMissingInitialRef }`: resetとBranch Issue removalのpreview／実行。missing
+  initial ref例外を型上resetへ限定する。未登録なら
   `BRANCH_REVIEW_NOT_FOUND`で、previewを含めsequence、DB、refを一切変更しない。
 - 明示的追加: `branch issue add`だけは未登録reviewを作成できるが、remote identityを解決・検証できない
   状態では実行しない。
@@ -1311,6 +1325,11 @@ HTTPの`/api/branch-reviews/:id`配下から始まるsync、Issue add/remove、c
 transactionまで保持し、待機中に対象IDがreset/recreateされた場合は旧IDへ
 `BRANCH_REVIEW_NOT_FOUND`を返す。replacement aggregateのsource、membership、Comment、sequence、refは変更しない。
 CLIとAgent socketのpath-based use caseは、指定pathに現在bindingされるreviewを対象とする。
+
+PR／Branch reset、Issue removal、Walkthrough deletionのpreviewはreview change sequenceと、review ID、
+対象ID、件数、review-owned refを含むconfirmation tokenを返す。実行は同じtokenを必須とし、SQLiteの
+mutation transactionでもexpected sequenceを再検証する。変更済みなら`DESTRUCTIVE_PREVIEW_STALE` (409)の
+detailsへ最新previewを返し、利用者へ再確認を要求する。PR resetはGitHub I/O後、ref置換前にもtokenを再検証する。
 
 canonical identity検索、Git common directory検索、conflict判定、ID決定、insert/update、review change
 sequence更新は一つの`BEGIN IMMEDIATE`内で行う。canonical owner/repositoryのSQLite一意性も`NOCASE`とし、
@@ -1371,23 +1390,24 @@ CLIによる同一ID更新はpoll後に開いているtabへ反映する。viewe
 
 ## 11. Reset
 
-`rvw pr reset <PR> --yes`は対象PRのlocal comments、posts、targets、Walkthrough、code reference、
+`rvw pr reset <PR> --yes --confirmation-token <TOKEN>`は対象PRのlocal comments、posts、targets、Walkthrough、code reference、
 `refs/rvw/pr/<n>/...`
 を削除し、現在のGitHub状態を同期してcurrent head refを作り直す。削除件数を事前表示し、
-CLIは`--yes`必須とする。不可逆であり、明示的な利用者authorizationなしにAgentが実行しない。
+CLIはpreviewのconfirmation tokenと`--yes`を必須とする。不可逆であり、明示的な利用者authorizationなしにAgentが実行しない。
 
-`rvw branch reset --repository <PATH> --yes --json`はexisting-onlyでbindingを検証し、対象review ID配下の
-`refs/rvw/branch/<branchReviewId>/...`だけをpreview／削除する。DB削除後にref削除が失敗した場合は
-`LOCAL_STATE_INCONSISTENT`へDB削除済みか、review ID、ref prefix、残存ref、明示repair可能性を含める。
+`rvw branch reset --repository <PATH> --yes --confirmation-token <TOKEN> --json`はexisting-onlyでbindingを検証し、対象review ID配下の
+`refs/rvw/branch/<branchReviewId>/...`だけをpreview／削除する。DB削除後にref削除が失敗した場合は例外で
+削除済みreviewを保持せず、`completed-with-orphan-refs`というtyped success outcomeへDB削除済み、review ID、
+ref prefix、残存ref、明示cleanup可能性を含める。
 残存refはorphanとして新しいreview IDから隔離され、新reviewは旧evidenceを受理せず、旧reset retryも
 新reviewのrefを削除しない。「再作成すればorphan cleanupされる」とは案内しない。保存pathが削除・置換され、
 Git common directoryとreview-owned source refを検証できない場合はDB rowを削除しない。
-初回rowはsource ref作成前から専用の初期化未完了markerを保存する。ref作成前にprocessが停止した場合は、通常
+初回rowはsource ref作成前から`initialization_state = pending`を保存し、`source_sync_error`と分離する。ref作成前にprocessが停止した場合は、通常
 read／syncを`LOCAL_STATE_INCONSISTENT`のまま扱い、明示resetに限りexpected review ID、Git common directory、
-canonical remote（またはremoteなし）、marker、review ID配下のrefが0件であることを検証してrowを削除できる。
-通常readはexact pending markerだけを最大5秒pollし、failed markerまたはmarkerなしのmissing refは即時に拒否する。
-ref作成後、marker clear前に停止した場合は、次回openがexpected ID／source OID、owned ref、Git objectを検証して
-markerをclearする。初回lookupではrowがなくても、初期化用immediate transactionが既存rowを発見した場合は
+canonical remote（またはremoteなし）、非ready state、review ID配下のrefが0件であることを検証してrowを削除できる。
+通常readは`pending`だけを最大5秒pollし、`failed`または`ready`のmissing refは即時に拒否する。
+ref作成後、ready化前に停止した場合は、次回openがexpected ID／source OID、owned ref、Git objectを検証して
+`ready`へ進める。初回lookupではrowがなくても、初期化用immediate transactionが既存rowを発見した場合は
 source OID、default branch、location、sync errorを変更せず`created: false`を返す。呼び出し側はwinnerのowned
 sourceを検証し、aggregate発見前に取得したsnapshotを破棄する。その後generationを確保し、GitHub metadataを
 再取得してからretainし、expected Branch Review ID付きtransactionでだけ既存sourceを更新する。generationなしで
@@ -1398,7 +1418,7 @@ Issue removalその他のdestructive操作へ広げない。
 sync error保存はexpected review IDと同じgenerationを一つのimmediate transactionで再検証し、古い試行は新しい
 source、location、error、change sequenceを変更しない。
 初期retained ref作成はall-zero old OIDを指定したGit `update-ref`のcompare-and-swapで行い、
-同時作成時には1件だけが`created: true`を得る。initialization marker clear後のcompletionは冪等とし、
+同時作成時には1件だけが`created: true`を得る。`initialization_state = ready`後のcompletionは冪等とし、
 後続syncでsourceが進んでいても失敗にしない。補償削除はexpected aggregate IDが存在しない場合だけとし、
 source不一致を根拠にhistorical evidenceを削除しない。
 
@@ -1635,11 +1655,12 @@ Functional:
 - Pull Request / Branch Reviewへ同一repository Issueを追加し、番号降順で通常文書として二ペイン表示、
   全体・source range Comment、Outdated追跡を利用できる。
 - Issue番号/titleとowned Comment/reply件数をpreviewした明示確認後、選択reviewのmembershipとIssue feedback
-  だけを削除でき、別reviewの同じIssueは残る。
+  だけを削除でき、別reviewの同じIssueは残る。preview後のsequence変更はtoken不一致で削除せず再確認する。
 - Branch Review resetはIssue、Comment、Walkthrough、review recordとBranch専用retained ref候補をpreviewし、
   `--yes`後にBranch固有状態とそのreview IDのrefだけを削除する。再openは新しいIDの空reviewを作り、失敗した
   旧resetのorphan refを証拠として継承しない。browserでreset成功後の再openだけが失敗した場合はreset完了と
-  再作成失敗を分けて表示し、repository pathと`rvw branch open`による復旧を案内する。
+  再作成失敗を分けて表示し、repository pathと`rvw branch open`による復旧を案内する。DB削除後のref cleanup
+  失敗もtyped partial successとして同じ削除済みUI stateへ移り、隔離されたprefixを表示する。
 - Branch Review WalkthroughとCommentを既存URI/CLIで扱い、watcherは明示contextでbatchしてread-only調査後の
   最終replyだけを冪等に記録し、そのpost eventをdurableにself-suppressできる。
 - Branch Issue range comment draftはbackground sync中も本文とfocusを保持し、Issue本文変更時はdraftを失わず

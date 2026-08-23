@@ -39,11 +39,11 @@ describe("CLI input schemas", () => {
             description: null,
           },
         ],
-        issues: ["#142", "https://github.com/acme/review-repo/issues/19"],
+        issuesToAdd: ["#142", "https://github.com/acme/review-repo/issues/19"],
       }),
     ).toMatchObject({
       review: { kind: "branch" },
-      issues: ["#142", "https://github.com/acme/review-repo/issues/19"],
+      issuesToAdd: ["#142", "https://github.com/acme/review-repo/issues/19"],
     });
   });
 

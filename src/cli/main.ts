@@ -633,6 +633,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "branchReview.sync",
           "issue.read",
           "issue.membership",
+          "issue.cacheRepair",
           "comment.create",
           "comment.list",
           "comment.watch",
@@ -794,55 +795,88 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     });
 
   branchIssue
+    .command("refresh")
+    .argument("<issue-ref>")
+    .option("--repository <path>", "対象repository", process.cwd())
+    .requiredOption("--force", "連続した二回の一致するGitHub snapshotでcacheを修復")
+    .requiredOption("--json", "JSONで出力")
+    .action(async (issueReference: string, options: { repository: string }) => {
+      const result = await callService(
+        "branch.issue.refresh",
+        { repositoryPath: options.repository, issueReference, force: true },
+        async () =>
+          await getRuntime().service.forceRepairBranchIssue(options.repository, issueReference),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
+  branchIssue
     .command("remove")
     .argument("<issue-ref>")
     .option("--repository <path>", "対象repository", process.cwd())
     .option("--yes", "不可逆な削除を確認")
+    .option("--confirmation-token <token>", "previewが返した確認token")
     .requiredOption("--json", "JSONで出力")
-    .action(async (issueReference: string, options: { repository: string; yes?: boolean }) => {
-      if (!options.yes) {
-        const preview = await callService(
-          "branch.issue.remove.preview",
-          { repositoryPath: options.repository, issueReference },
+    .action(
+      async (
+        issueReference: string,
+        options: { repository: string; yes?: boolean; confirmationToken?: string },
+      ) => {
+        if (!options.yes || !options.confirmationToken) {
+          const preview = await callService(
+            "branch.issue.remove.preview",
+            { repositoryPath: options.repository, issueReference },
+            async () =>
+              await getRuntime().service.getBranchIssueRemovalPreview(
+                options.repository,
+                issueReference,
+              ),
+          );
+          writeJson({
+            ok: false,
+            error: {
+              code: "RESET_CONFIRMATION_REQUIRED",
+              message: "Issue削除には--yesが必要です。",
+              suggestions: ["details.argumentsの同じ対象・確認tokenで再実行してください。"],
+              details: {
+                command: "rvw",
+                arguments: [
+                  "branch",
+                  "issue",
+                  "remove",
+                  issueReference,
+                  "--repository",
+                  options.repository,
+                  "--yes",
+                  "--confirmation-token",
+                  preview.confirmationToken,
+                  "--json",
+                ],
+              },
+            },
+            ...preview,
+          });
+          process.exitCode = 2;
+          return;
+        }
+        const result = await callService(
+          "branch.issue.remove",
+          {
+            repositoryPath: options.repository,
+            issueReference,
+            confirmed: true,
+            confirmationToken: options.confirmationToken,
+          },
           async () =>
-            await getRuntime().service.getBranchIssueRemovalPreview(
+            await getRuntime().service.removeBranchIssue(
               options.repository,
               issueReference,
+              options.confirmationToken!,
             ),
         );
-        writeJson({
-          ok: false,
-          error: {
-            code: "RESET_CONFIRMATION_REQUIRED",
-            message: "Issue削除には--yesが必要です。",
-            suggestions: ["削除件数を確認し、同じ引数へ--yesを追加して再実行してください。"],
-            details: {
-              command: "rvw",
-              arguments: [
-                "branch",
-                "issue",
-                "remove",
-                issueReference,
-                "--repository",
-                options.repository,
-                "--yes",
-                "--json",
-              ],
-            },
-          },
-          ...preview,
-        });
-        process.exitCode = 2;
-        return;
-      }
-      const result = await callService(
-        "branch.issue.remove",
-        { repositoryPath: options.repository, issueReference, confirmed: true },
-        async () =>
-          await getRuntime().service.removeBranchIssue(options.repository, issueReference),
-      );
-      writeJson({ ok: true, ...result });
-    });
+        writeJson({ ok: true, ...result });
+      },
+    );
 
   branch
     .command("comments")
@@ -867,9 +901,10 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .command("reset")
     .option("--repository <path>", "対象repository", process.cwd())
     .option("--yes", "不可逆な削除を確認")
+    .option("--confirmation-token <token>", "previewが返した確認token")
     .requiredOption("--json", "JSONで出力")
-    .action(async (options: { repository: string; yes?: boolean }) => {
-      if (!options.yes) {
+    .action(async (options: { repository: string; yes?: boolean; confirmationToken?: string }) => {
+      if (!options.yes || !options.confirmationToken) {
         const preview = await callService(
           "branch.reset.preview",
           { repositoryPath: options.repository },
@@ -880,10 +915,19 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           error: {
             code: "RESET_CONFIRMATION_REQUIRED",
             message: "resetには--yesが必要です。",
-            suggestions: ["削除件数を確認し、同じrepositoryへ--yesを追加して再実行してください。"],
+            suggestions: ["details.argumentsの同じrepository・確認tokenで再実行してください。"],
             details: {
               command: "rvw",
-              arguments: ["branch", "reset", "--repository", options.repository, "--yes", "--json"],
+              arguments: [
+                "branch",
+                "reset",
+                "--repository",
+                options.repository,
+                "--yes",
+                "--confirmation-token",
+                preview.confirmationToken,
+                "--json",
+              ],
             },
           },
           ...preview,
@@ -893,8 +937,16 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       }
       const result = await callService(
         "branch.reset",
-        { repositoryPath: options.repository, confirmed: true },
-        async () => await getRuntime().service.resetBranchReviewAtPath(options.repository),
+        {
+          repositoryPath: options.repository,
+          confirmed: true,
+          confirmationToken: options.confirmationToken,
+        },
+        async () =>
+          await getRuntime().service.resetBranchReviewAtPath(
+            options.repository,
+            options.confirmationToken!,
+          ),
       );
       writeJson({ ok: true, ...result });
     });
@@ -971,81 +1023,154 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     });
 
   prIssue
-    .command("remove")
+    .command("refresh")
     .argument("<pull-request>", "登録済みPR URLまたは番号")
     .argument("<issue-ref>")
-    .option("--yes", "不可逆な削除を確認")
+    .requiredOption("--force", "連続した二回の一致するGitHub snapshotでcacheを修復")
     .requiredOption("--json", "JSONで出力")
-    .action(async (reference: string, issueReference: string, options: { yes?: boolean }) => {
-      if (!options.yes) {
-        const preview = await callService(
-          "pr.issue.remove.preview",
-          { reference, issueReference },
-          () => {
-            const service = getRuntime().service;
-            const pullRequest = service.resolveStoredPullRequest(reference);
-            return service.getIssueRemovalPreview("pull-request", pullRequest.id, issueReference);
-          },
-        );
-        writeJson({
-          ok: false,
-          error: {
-            code: "RESET_CONFIRMATION_REQUIRED",
-            message: "Issue削除には--yesが必要です。",
-            suggestions: [`rvw pr issue remove ${reference} ${issueReference} --yes --json`],
-          },
-          ...preview,
-        });
-        process.exitCode = 2;
-        return;
-      }
+    .action(async (reference: string, issueReference: string) => {
       const result = await callService(
-        "pr.issue.remove",
-        { reference, issueReference, confirmed: true },
-        () => getRuntime().service.removePullRequestIssue(reference, issueReference),
+        "pr.issue.refresh",
+        { reference, issueReference, force: true },
+        async () =>
+          await getRuntime().service.forceRepairPullRequestIssue(reference, issueReference),
       );
       writeJson({ ok: true, ...result });
     });
 
+  prIssue
+    .command("remove")
+    .argument("<pull-request>", "登録済みPR URLまたは番号")
+    .argument("<issue-ref>")
+    .option("--yes", "不可逆な削除を確認")
+    .option("--confirmation-token <token>", "previewが返した確認token")
+    .requiredOption("--json", "JSONで出力")
+    .action(
+      async (
+        reference: string,
+        issueReference: string,
+        options: { yes?: boolean; confirmationToken?: string },
+      ) => {
+        if (!options.yes || !options.confirmationToken) {
+          const preview = await callService(
+            "pr.issue.remove.preview",
+            { reference, issueReference },
+            () => {
+              const service = getRuntime().service;
+              const pullRequest = service.resolveStoredPullRequest(reference);
+              return service.getIssueRemovalPreview("pull-request", pullRequest.id, issueReference);
+            },
+          );
+          writeJson({
+            ok: false,
+            error: {
+              code: "RESET_CONFIRMATION_REQUIRED",
+              message: "Issue削除には--yesが必要です。",
+              suggestions: ["details.argumentsの同じ対象・確認tokenで再実行してください。"],
+              details: {
+                command: "rvw",
+                arguments: [
+                  "pr",
+                  "issue",
+                  "remove",
+                  reference,
+                  issueReference,
+                  "--yes",
+                  "--confirmation-token",
+                  preview.confirmationToken,
+                  "--json",
+                ],
+              },
+            },
+            ...preview,
+          });
+          process.exitCode = 2;
+          return;
+        }
+        const result = await callService(
+          "pr.issue.remove",
+          {
+            reference,
+            issueReference,
+            confirmed: true,
+            confirmationToken: options.confirmationToken,
+          },
+          () =>
+            getRuntime().service.removePullRequestIssue(
+              reference,
+              issueReference,
+              options.confirmationToken!,
+            ),
+        );
+        writeJson({ ok: true, ...result });
+      },
+    );
+
   pr.command("reset")
     .argument("<pull-request>", "登録済みPR URLまたは番号")
     .option("--yes", "不可逆な削除を確認")
+    .option("--confirmation-token <token>", "previewが返した確認token")
     .option("--json", "JSONで出力")
-    .action(async (reference: string, options: OutputOptions & { yes?: boolean }) => {
-      if (!options.yes) {
-        const preview = await callService("pr.reset.preview", { reference }, async () => {
-          const service = getRuntime().service;
-          const pullRequest = service.resolveStoredPullRequest(reference);
-          return await service.getResetPreview(pullRequest.id);
-        });
-        const result = {
-          ok: false,
-          error: {
-            code: "RESET_CONFIRMATION_REQUIRED",
-            message: "resetには--yesが必要です。",
-            suggestions: [`rvw pr reset ${reference} --yes`],
+    .action(
+      async (
+        reference: string,
+        options: OutputOptions & { yes?: boolean; confirmationToken?: string },
+      ) => {
+        if (!options.yes || !options.confirmationToken) {
+          const preview = await callService("pr.reset.preview", { reference }, async () => {
+            const service = getRuntime().service;
+            const pullRequest = service.resolveStoredPullRequest(reference);
+            return await service.getResetPreview(pullRequest.id);
+          });
+          const result = {
+            ok: false,
+            error: {
+              code: "RESET_CONFIRMATION_REQUIRED",
+              message: "resetには--yesが必要です。",
+              suggestions: ["details.argumentsの同じ対象・確認tokenで再実行してください。"],
+              details: {
+                command: "rvw",
+                arguments: [
+                  "pr",
+                  "reset",
+                  reference,
+                  "--yes",
+                  "--confirmation-token",
+                  preview.confirmationToken,
+                  ...(options.json ? ["--json"] : []),
+                ],
+              },
+            },
+            ...preview,
+          };
+          writeOutput(
+            options,
+            result,
+            `削除対象: Issue membership${preview.counts.issueMemberships}、コメント${preview.counts.comments}、返信${preview.counts.posts}、コメント内コード参照${preview.counts.commentReferences}、対象${preview.counts.targets}、Walkthrough${preview.counts.walkthroughs}、Walkthroughコード参照${preview.counts.walkthroughReferences}、Git ref${preview.counts.gitRefs}\n続行するには返された確認tokenと --yes を指定してください。`,
+          );
+          process.exitCode = 2;
+          return;
+        }
+        const result = await callService(
+          "pr.reset",
+          {
+            reference,
+            confirmed: true,
+            confirmationToken: options.confirmationToken,
           },
-          ...preview,
-        };
+          async () => {
+            const service = getRuntime().service;
+            const pullRequest = service.resolveStoredPullRequest(reference);
+            return await service.resetPullRequest(pullRequest.id, options.confirmationToken!);
+          },
+        );
         writeOutput(
           options,
-          result,
-          `削除対象: Issue membership${preview.counts.issueMemberships}、コメント${preview.counts.comments}、返信${preview.counts.posts}、コメント内コード参照${preview.counts.commentReferences}、対象${preview.counts.targets}、Walkthrough${preview.counts.walkthroughs}、Walkthroughコード参照${preview.counts.walkthroughReferences}、Git ref${preview.counts.gitRefs}\n続行するには --yes を指定してください。`,
+          { ok: true, ...result },
+          `${result.pullRequest.latestHeadOid.slice(0, 12)}を最新headとして再構築しました。`,
         );
-        process.exitCode = 2;
-        return;
-      }
-      const result = await callService("pr.reset", { reference, confirmed: true }, async () => {
-        const service = getRuntime().service;
-        const pullRequest = service.resolveStoredPullRequest(reference);
-        return await service.resetPullRequest(pullRequest.id);
-      });
-      writeOutput(
-        options,
-        { ok: true, ...result },
-        `${result.pullRequest.latestHeadOid.slice(0, 12)}を最新headとして再構築しました。`,
-      );
-    });
+      },
+    );
 
   const comment = program.command("comment").description("保存済みコメントを操作");
 
@@ -1064,7 +1189,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         title: input.title,
         body: input.body,
         references: input.references,
-        ...(input.issues === undefined ? {} : { issues: input.issues }),
+        ...(input.issuesToAdd === undefined ? {} : { issuesToAdd: input.issuesToAdd }),
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.diagramBindings === undefined ? {} : { diagramBindings: input.diagramBindings }),
       };
@@ -1101,7 +1226,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         title: input.title,
         body: input.body,
         references: input.references,
-        ...(input.issues === undefined ? {} : { issues: input.issues }),
+        ...(input.issuesToAdd === undefined ? {} : { issuesToAdd: input.issuesToAdd }),
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.diagramBindings === undefined ? {} : { diagramBindings: input.diagramBindings }),
       };
@@ -1117,30 +1242,50 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .command("delete")
     .argument("<walkthrough-uri>")
     .option("--yes", "不可逆な削除を確認")
+    .option("--confirmation-token <token>", "previewが返した確認token")
     .requiredOption("--json", "JSONで出力")
     .description("walkthroughと紐づくコメントを削除")
-    .action(async (uri: string, options: OutputOptions & { yes?: boolean }) => {
-      if (!options.yes) {
-        const preview = await callService("walkthrough.delete.preview", { uri }, () =>
-          getRuntime().service.getWalkthroughDeletePreview(uri),
+    .action(
+      async (
+        uri: string,
+        options: OutputOptions & { yes?: boolean; confirmationToken?: string },
+      ) => {
+        if (!options.yes || !options.confirmationToken) {
+          const preview = await callService("walkthrough.delete.preview", { uri }, () =>
+            getRuntime().service.getWalkthroughDeletePreview(uri),
+          );
+          writeJson({
+            ok: false,
+            error: {
+              code: "WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED",
+              message: "walkthrough deleteには--yesが必要です。",
+              suggestions: ["details.argumentsの確認tokenで再実行してください。"],
+              details: {
+                command: "rvw",
+                arguments: [
+                  "walkthrough",
+                  "delete",
+                  uri,
+                  "--yes",
+                  "--confirmation-token",
+                  preview.confirmationToken,
+                  "--json",
+                ],
+              },
+            },
+            ...preview,
+          });
+          process.exitCode = 2;
+          return;
+        }
+        const deleted = await callService(
+          "walkthrough.delete",
+          { uri, confirmed: true, confirmationToken: options.confirmationToken },
+          () => getRuntime().service.deleteWalkthroughByUri(uri, options.confirmationToken!),
         );
-        writeJson({
-          ok: false,
-          error: {
-            code: "WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED",
-            message: "walkthrough deleteには--yesが必要です。",
-            suggestions: [`rvw walkthrough delete ${uri} --yes --json`],
-          },
-          ...preview,
-        });
-        process.exitCode = 2;
-        return;
-      }
-      const deleted = await callService("walkthrough.delete", { uri, confirmed: true }, () =>
-        getRuntime().service.deleteWalkthroughByUri(uri),
-      );
-      writeJson({ ok: true, deleted });
-    });
+        writeJson({ ok: true, deleted });
+      },
+    );
 
   comment
     .command("watch")
