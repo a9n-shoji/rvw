@@ -41,7 +41,9 @@ GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作�
 `REPOSITORY_MISMATCH`となり、状態を更新しません。repository rename／organization transferには自動追従せず、
 元のbindingでresetして作り直します。一度同期したcode、Issue、Walkthrough、CommentはGitHub networkが
 offlineでも読めます。remote自体がない場合も、保存済みGit common directoryとreview-owned source refが
-一致すればcached readとlocal cleanupは可能ですが、syncとIssue追加はremoteを復元するまで拒否されます。
+一致し、source objectが存在すればcached readとlocal cleanupは可能です。同じcommon directoryの別worktreeで
+`branch open`した場合は、保存locationをそのworktreeへ更新しますが、existing-only previewはlocationもsequenceも
+更新しません。syncとIssue追加はremoteを復元するまで拒否されます。
 
 この考え方とプロダクト境界は[Product principles](docs/product-principles.md)にまとめています。
 
@@ -303,6 +305,13 @@ Branch retained refは`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`に属
 失敗した場合、errorはDB削除済みか、残存prefix／ref、明示repair可能性を返します。新しいBranch Reviewを
 作ってもorphan refはcleanupされませんが、新reviewは別IDのnamespaceだけを証拠として使うため旧sourceを
 継承せず、旧resetも新reviewのrefを削除しません。
+
+初回openでSQLite row作成後にreview-owned source refを作れなかった場合は
+`LOCAL_STATE_INCONSISTENT`となり、通常のread／syncは引き続きfail closedします。この専用の未初期化状態だけは、
+同じlocal bindingから明示的な`branch reset --yes`でrowを安全にcleanupでき、手動SQLite編集は不要です。
+HTTPの`/api/branch-reviews/:id/...`操作はURLのstable IDを実処理まで保持し、reset後に同じpathへ別reviewが
+作られてもreplacementへフォールスルーしません。GitHub Issue取得はresponseのowner、repository、number、URLを
+requestと照合し、rename、transfer、redirect相当のidentity不一致をcache／membership書き込み前に拒否します。
 
 `--stdin` commandはEOFまでJSONを読みます。改行だけでは終了しないため、processから呼ぶ場合は送信後に
 stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの

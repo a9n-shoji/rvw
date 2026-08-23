@@ -426,10 +426,9 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
   });
 
   app.post("/api/branch-reviews/:id/sync", async (context) => {
-    const branchReview = service.getBranchReview(context.req.param("id"));
     return context.json({
       ok: true,
-      ...(await service.syncBranchReview(branchReview.localRepositoryPath)),
+      ...(await service.syncBranchReviewById(context.req.param("id"))),
     });
   });
 
@@ -552,10 +551,9 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
 
   app.post("/api/branch-reviews/:id/issues", async (context) => {
     const input = issueMutationSchema.parse(await context.req.json());
-    const branchReview = service.getBranchReview(context.req.param("id"));
     return context.json({
       ok: true,
-      ...(await service.addBranchIssue(branchReview.localRepositoryPath, input.issue)),
+      ...(await service.addBranchIssueById(context.req.param("id"), input.issue)),
     });
   });
 
@@ -564,10 +562,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     const branchReview = service.getBranchReview(context.req.param("id"));
     const issue = service.getReviewIssue("branch", branchReview.id, context.req.param("issueId"));
     if (!input.yes) {
-      const preview = await service.getBranchIssueRemovalPreview(
-        branchReview.localRepositoryPath,
-        issue.url,
-      );
+      const preview = await service.getBranchIssueRemovalPreviewById(branchReview.id, issue.url);
       return context.json(
         {
           ok: false,
@@ -583,20 +578,16 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }
     return context.json({
       ok: true,
-      ...(await service.removeBranchIssue(branchReview.localRepositoryPath, issue.url)),
+      ...(await service.removeBranchIssueById(branchReview.id, issue.url)),
     });
   });
 
   app.get("/api/branch-reviews/:id/comments", async (context) => {
     const resolved = parseResolved(context.req.query("resolved"));
-    const branchReview = service.getBranchReview(context.req.param("id"));
-    const result = await service.listBranchCommentContextsAtPath(
-      branchReview.localRepositoryPath,
-      resolved,
-    );
+    const comments = await service.listBranchCommentContextsById(context.req.param("id"), resolved);
     return context.json({
       ok: true,
-      comments: result.comments,
+      comments,
     });
   });
 

@@ -54,6 +54,19 @@ local binding plus a network-only GitHub failure preserves cached reads. If no G
 resolved, cached reads and local cleanup remain available when the common directory and owned ref
 still prove the binding, while synchronization and Issue addition are rejected.
 
+On a verified remote-less cached open, the lifecycle may move `localRepositoryPath` to the current
+worktree in that common directory; existing-only previews use the resolved worktree without persisting
+that move. HTTP routes whose URL contains a Branch Review ID keep that expected ID through application
+resolution and the final SQLite transaction. Deleting and recreating a review at the same path therefore
+produces `BRANCH_REVIEW_NOT_FOUND` for the stale request instead of mutating the replacement.
+
+If the first aggregate insert succeeds but its initial owned ref cannot be created, the row records a
+dedicated initialization-failure marker. Normal reads and synchronization still require the ref. Only
+explicit Branch reset accepts that marker when the common-directory/canonical binding matches and the
+review namespace has no refs, providing a supported cleanup path without weakening normal evidence
+validation. GitHub Issue responses are checked in both the concrete client and application boundary;
+owner, repository, number, canonical name, and URL mismatch fail before cache or membership writes.
+
 The viewer reads committed Git objects rather than the worktree or index. That keeps the human's
 reading context stable while an external Agent edits, tests, commits, and pushes. Comments bridge the
 two processes through stable references and the JSON CLI protocol: an authorized Agent can create an

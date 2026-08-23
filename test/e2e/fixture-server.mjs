@@ -268,6 +268,7 @@ function resetBranchFixture() {
 resetBranchFixture();
 const comments = repositoryDemo ? structuredClone(repositoryDemo.comments) : [];
 const pullRequestIssues = repositoryDemo ? structuredClone(repositoryDemo.issues) : [];
+const originalWalkthroughs = structuredClone(walkthroughs);
 const activeWalkthroughs = repositoryDemo
   ? structuredClone(repositoryDemo.walkthroughs)
   : walkthroughs;
@@ -1658,6 +1659,29 @@ app.post("/api/fixture/walkthroughs/:walkthroughId/update", async (context) => {
   walkthrough.title = input.title;
   walkthrough.body = input.body;
   walkthrough.references[0].label = input.referenceLabel;
+  for (const comment of comments) {
+    if (comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id) {
+      comment.target.walkthroughTitle = walkthrough.title;
+    }
+  }
+  changeSequence += 1;
+  return context.json({ ok: true, walkthrough });
+});
+
+app.post("/api/fixture/walkthroughs/:walkthroughId/reset", (context) => {
+  const walkthrough = activeWalkthroughs.find(
+    (candidate) => candidate.id === context.req.param("walkthroughId"),
+  );
+  const original = originalWalkthroughs.find(
+    (candidate) => candidate.id === context.req.param("walkthroughId"),
+  );
+  if (!walkthrough || !original) {
+    return context.json(
+      { ok: false, error: { code: "NOT_FOUND", message: "missing walkthrough" } },
+      404,
+    );
+  }
+  Object.assign(walkthrough, structuredClone(original));
   for (const comment of comments) {
     if (comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id) {
       comment.target.walkthroughTitle = walkthrough.title;

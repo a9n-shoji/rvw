@@ -43,6 +43,11 @@ Branch Reviewのlocal source bindingはGit common directory単位です。同じ
 remoteを解決できなくても、保存済みGit common directoryとreview-owned source refが一致すればcached read、
 comments、Issue removal、resetは利用できます。syncとIssue addはremote identityを安全に確認できるまで拒否します。
 reset、Issue removal、comments、syncは未登録reviewを暗黙作成しません。
+同じcommon directoryの別worktreeからremoteなしでcached openした場合、owned refとGit objectの一致を条件に
+保存locationを現在worktreeへ更新します。previewだけでは更新しません。HTTPのstable Branch Review IDは
+reset/recreate後のreplacementへフォールスルーしません。初回retained-ref作成失敗は、専用markerとref 0件を
+確認する明示resetでcleanupできます。GitHub Issue response identity不一致はprotocol共通の
+`GITHUB_ISSUE_ERROR`であり、rename／transferへ自動追従しません。
 
 次はpublic APIではありません。
 

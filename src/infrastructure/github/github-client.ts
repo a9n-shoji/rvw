@@ -12,6 +12,11 @@ import {
   MAX_GITHUB_ATTACHMENT_STDERR_BYTES,
 } from "../../shared/constants.js";
 import { RvwError } from "../../shared/errors.js";
+import {
+  assertFetchedIssueIdentity,
+  isIssueIdentityMismatch,
+  parseGitHubIssueUrl,
+} from "../../shared/github-issue-identity.js";
 import { canonicalGitHubAttachmentUrl } from "../../shared/image-assets.js";
 import { runProcess, runText } from "../process/run-process.js";
 
@@ -238,11 +243,13 @@ export class GitHubClient implements GitHubPort {
     try {
       const data = ghIssueSchema.parse(
         JSON.parse(
-          await runText(
-            "gh",
-            ["api", `repos/${identity.owner}/${identity.repository}/issues/${number}`],
-            { cwd, timeoutMs: 60_000 },
-          ),
+          (
+            await this.processRunner(
+              "gh",
+              ["api", `repos/${identity.owner}/${identity.repository}/issues/${number}`],
+              { cwd, timeoutMs: 60_000 },
+            )
+          ).stdout.toString("utf8"),
         ),
       );
       if (data.pull_request !== undefined) {
@@ -251,20 +258,43 @@ export class GitHubClient implements GitHubPort {
           `#${number}はIssueではなくPull Requestです。`,
         );
       }
-      return {
-        host: "github.com",
-        owner: identity.owner,
-        repository: identity.repository,
-        canonicalName: `${identity.owner}/${identity.repository}`,
-        number: data.number,
-        url: data.html_url,
-        title: data.title,
-        body: data.body ?? "",
-        state: data.state === "open" ? "OPEN" : "CLOSED",
-        updatedAt: data.updated_at,
-      };
+      const responseIdentity = parseGitHubIssueUrl(data.html_url);
+      if (data.number !== number || responseIdentity.number !== number) {
+        throw new RvwError(
+          "GITHUB_ISSUE_ERROR",
+          "GitHub Issue responseのIssue番号がrequestと一致しません。",
+          {
+            status: 502,
+            details: {
+              reason: "ISSUE_IDENTITY_MISMATCH",
+              expected: { ...identity, number },
+              actual: { number: data.number, url: data.html_url },
+            },
+          },
+        );
+      }
+      return assertFetchedIssueIdentity(
+        { owner: identity.owner, repository: identity.repository, number },
+        {
+          host: "github.com",
+          owner: identity.owner,
+          repository: identity.repository,
+          canonicalName: `${identity.owner}/${identity.repository}`,
+          number: data.number,
+          url: data.html_url,
+          title: data.title,
+          body: data.body ?? "",
+          state: data.state === "open" ? "OPEN" : "CLOSED",
+          updatedAt: data.updated_at,
+        },
+      );
     } catch (error) {
-      if (error instanceof RvwError && error.code === "GITHUB_ISSUE_IS_PULL_REQUEST") throw error;
+      if (
+        error instanceof RvwError &&
+        (error.code === "GITHUB_ISSUE_IS_PULL_REQUEST" || isIssueIdentityMismatch(error))
+      ) {
+        throw error;
+      }
       throw new RvwError("GITHUB_ISSUE_ERROR", `GitHub Issue #${number}を取得できませんでした。`, {
         cause: error,
       });

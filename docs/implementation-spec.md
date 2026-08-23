@@ -132,8 +132,10 @@ source、ref、artifactを変更しない。別cloneでの再作成は登録済�
 
 local remote identityが一致し、GitHub networkだけが失敗した場合は、一度保持したsource、Issue、Comment、
 Walkthroughをcacheから読める。remoteを解決できない場合も、同じGit common directoryとreview-owned source
-refが一致するcached read、comment discovery、Issue removal、resetというlocal operationは許可するが、
-GitHub同期とIssue追加は拒否する。同期はIssueごとの結果と失敗分離を維持しつつ最大8件を並列取得し、一件の
+refおよびGit objectが一致するcached read、comment discovery、Issue removal、resetというlocal operationは
+許可する。`branch open`のcache hitだけは現在の同一common-directory worktreeへ`localRepositoryPath`を更新する。
+existing-only previewは実際のGit readに現在pathを使うが、locationとsequenceを更新しない。GitHub同期と
+Issue追加は拒否する。同期はIssueごとの結果と失敗分離を維持しつつ最大8件を並列取得し、一件の
 取得失敗で他のcached文書を失わない。同じGitHub client processでは成功した認証確認を共有する。
 
 Issue cacheはcanonical GitHub identityで共有し、review membershipは別tableで所有する。PR本文からは
@@ -142,6 +144,10 @@ Issue cacheはcanonical GitHub identityで共有し、review membershipは別tab
 参照を登録しない。Issue本文やWalkthroughから再帰探索せず、参照消失でもmembershipを自動削除しない。Issue本文hashが変わった
 場合、旧本文range Commentは保守的にOutdatedとし、自動resolveしない。membershipを明示削除した場合は、
 そのIssue文書と削除されるthreadのpage内draftだけを破棄し、別文書のdraftは保持する。
+GitHub Issue responseはclientで`html_url`のowner／repository／numberとresponse numberをrequestへ照合し、
+差し替え可能なGitHub portに対してapplication層でも返却identity、canonical name、URLを再検証する。
+case-insensitiveな同一identityだけを許し、不一致は`GITHUB_ISSUE_ERROR`としてcache、membership、sequenceを
+変更せずfail closedする。repository rename／transferへは自動追従しない。
 
 ### 3.1 Commit選択
 
@@ -1279,6 +1285,12 @@ Branch Review lifecycleはapplication層で次のpolicyへ分類し、CLI、Agen
 - 明示的追加: `branch issue add`だけは未登録reviewを作成できるが、remote identityを解決・検証できない
   状態では実行しない。
 
+HTTPの`/api/branch-reviews/:id`配下から始まるsync、Issue add/remove、comments readは、routeで保存pathへ
+変換してpath-based use caseへ渡さない。`expectedBranchReviewId`をbinding resolverからDB upsert／membership
+transactionまで保持し、待機中に対象IDがreset/recreateされた場合は旧IDへ
+`BRANCH_REVIEW_NOT_FOUND`を返す。replacement aggregateのsource、membership、Comment、sequence、refは変更しない。
+CLIとAgent socketのpath-based use caseは、指定pathに現在bindingされるreviewを対象とする。
+
 canonical identity検索、Git common directory検索、conflict判定、ID決定、insert/update、review change
 sequence更新は一つの`BEGIN IMMEDIATE`内で行う。canonical owner/repositoryのSQLite一意性も`NOCASE`とし、
 同じidentity・同じcommon directoryの同時初回openは同じIDを再利用する。identityとcommon directoryの
@@ -1349,6 +1361,10 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 残存refはorphanとして新しいreview IDから隔離され、新reviewは旧evidenceを受理せず、旧reset retryも
 新reviewのrefを削除しない。「再作成すればorphan cleanupされる」とは案内しない。保存pathが削除・置換され、
 Git common directoryとreview-owned source refを検証できない場合はDB rowを削除しない。
+初回row作成後のsource ref作成だけが失敗した場合は専用の初期化失敗markerを保存し、通常read／syncでは
+`LOCAL_STATE_INCONSISTENT`のまま扱う。明示resetに限り、expected review ID、Git common directory、canonical
+remote（またはremoteなし）、marker、review ID配下のrefが0件であることを検証してrowを削除できる。この例外を
+Issue removalその他のdestructive操作へ広げない。
 
 ## 12. Server / security
 

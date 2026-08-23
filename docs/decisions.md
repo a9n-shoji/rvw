@@ -35,6 +35,18 @@ GitHub releases and npm contained versions only through 0.2.x. Therefore update 
 v4 contract directly and require the latest schema/service instead of adding partial-schema runtime
 fallbacks.
 
+Keep HTTP Branch routes ID-bound: their expected aggregate ID is rechecked in lifecycle resolution and
+inside source/membership transactions, while CLI and Agent socket remain path-bound to the review
+currently registered at that path. A stale HTTP request never falls through to a reset-and-recreated
+aggregate. A remote-less cached open may update the usable worktree path only when common directory,
+owned source ref, and object all agree; existing-only previews do not persist that update.
+
+Represent an initial owned-ref failure with a dedicated initialization marker. Normal evidence reads
+remain strict, but explicit reset may delete that marked row after verifying its binding and an empty
+review-owned ref namespace. This is the sole missing-ref exception. Validate fetched GitHub Issue
+owner/repository/number/canonical URL both in the concrete client and at the replaceable application
+port boundary before any cache or membership write.
+
 ### Trade-offs
 
 - A missing owned source ref fails closed, including when the saved path has been replaced by another
@@ -44,6 +56,8 @@ fallbacks.
   detectable and non-contaminating without introducing two-phase commit or a repair daemon.
 - Remote-less local cleanup is deliberately available only when the common directory and owned ref
   still prove the saved aggregate.
+- The initial-ref recovery does not add a repair daemon or make Issue removal tolerant of missing refs;
+  it provides only an explicit aggregate deletion path.
 - Persisting GitHub repository numeric IDs and automatic rename/transfer following remain out of scope.
 
 ## 2026-08-22: Use aggregate IDs for watch routing and native owner foreign keys

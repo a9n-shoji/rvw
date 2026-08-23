@@ -245,6 +245,22 @@ export function CommentThread({
   });
   const previousCommentUpdatedAt = useRef(comment.updatedAt);
   const threadRef = useRef<HTMLElement>(null);
+  const activeChangeRef = useRef(onActiveChange);
+  activeChangeRef.current = onActiveChange;
+  const pointerActiveRef = useRef(false);
+  const focusActiveRef = useRef(false);
+  const activeNotifiedRef = useRef(false);
+  const notifyActive = (active: boolean): void => {
+    if (activeNotifiedRef.current === active) return;
+    activeNotifiedRef.current = active;
+    activeChangeRef.current?.(comment.id, active);
+  };
+  useEffect(
+    () => () => {
+      if (activeNotifiedRef.current) activeChangeRef.current?.(comment.id, false);
+    },
+    [comment.id],
+  );
   const [openMenuPostId, setOpenMenuPostId] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState<CommentMenuPosition | null>(null);
   const [editingPostId, setEditingPostId] = useState<string | null>(null);
@@ -601,21 +617,27 @@ export function CommentThread({
       ref={threadRef}
       className={`comment-thread comment-thread--${variant}${showThread ? " is-expanded" : " is-collapsed"}`}
       data-comment-id={comment.id}
-      onPointerEnter={() => onActiveChange?.(comment.id, true)}
-      onPointerLeave={(event) => {
-        if (!event.currentTarget.contains(document.activeElement)) {
-          onActiveChange?.(comment.id, false);
-        }
+      onPointerMove={() => {
+        pointerActiveRef.current = true;
+        notifyActive(true);
       }}
-      onFocusCapture={() => onActiveChange?.(comment.id, true)}
+      onPointerLeave={() => {
+        pointerActiveRef.current = false;
+        notifyActive(focusActiveRef.current);
+      }}
+      onPointerCancel={() => {
+        pointerActiveRef.current = false;
+        notifyActive(focusActiveRef.current);
+      }}
+      onFocusCapture={() => {
+        focusActiveRef.current = true;
+        notifyActive(true);
+      }}
       onBlurCapture={(event) => {
         const nextTarget = event.relatedTarget;
-        if (
-          (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) &&
-          !event.currentTarget.matches(":hover")
-        ) {
-          onActiveChange?.(comment.id, false);
-        }
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
+        focusActiveRef.current = false;
+        notifyActive(pointerActiveRef.current);
       }}
     >
       <header className="comment-thread-header">

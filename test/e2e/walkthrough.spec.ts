@@ -1523,11 +1523,10 @@ test("comments on selected walkthrough lines and marks them Outdated after repla
   });
   await expect(inlineLineComment).toBeVisible();
   await expect(inlineLineComment.getByText("L5", { exact: true })).toBeVisible();
-  const neutralHoverTarget = page.getByRole("heading", { name: "注文作成フローの全体像" });
-  await neutralHoverTarget.hover();
   await expect(explanationLine).not.toHaveClass(/rvw-markdown-commented/);
   await inlineLineComment.locator(".comment-thread").hover();
   await expect(explanationLine).toHaveClass(/rvw-markdown-commented/);
+  const neutralHoverTarget = page.getByRole("heading", { name: "注文作成フローの全体像" });
   await neutralHoverTarget.hover();
   await expect(explanationLine).not.toHaveClass(/rvw-markdown-commented/);
 
@@ -1538,7 +1537,12 @@ test("comments on selected walkthrough lines and marks them Outdated after repla
   const stableInlineComment = page.locator(
     `.walkthrough-markdown [data-comment-id="${inlineCommentId}"]`,
   );
-  await stableInlineComment.locator(".comment-thread-toggle").click();
+  const inlineThreadToggle = stableInlineComment.locator(".comment-thread-toggle");
+  await inlineThreadToggle.focus();
+  await expect(explanationLine).toHaveClass(/rvw-markdown-commented/);
+  await inlineThreadToggle.evaluate((element) => element.blur());
+  await expect(explanationLine).not.toHaveClass(/rvw-markdown-commented/);
+  await inlineThreadToggle.click();
   await expect(stableInlineComment).toHaveClass(/is-collapsed/);
   const collapsedBoxBeforeCopy = await stableInlineComment.boundingBox();
   await stableInlineComment.getByRole("button", { name: "コメントのその他の操作" }).click();
@@ -1590,6 +1594,8 @@ test("comments on selected walkthrough lines and marks them Outdated after repla
   const diagramComment = page.locator(".markdown-inline-comments .comment-thread").filter({
     hasText: "この図全体の境界を確認してください。",
   });
+  const diagramCommentId = await diagramComment.getAttribute("data-comment-id");
+  expect(diagramCommentId).not.toBeNull();
   await diagramComment.hover();
   await expect(page.locator(".walkthrough-diagram-shell.has-comment")).toBeVisible();
   await page.getByRole("heading", { name: "注文作成フローの全体像" }).hover();
@@ -1635,6 +1641,7 @@ test("comments on selected walkthrough lines and marks them Outdated after repla
     "aria-selected",
     "true",
   );
+  await expect(page.locator(".walkthrough-markdown .rvw-markdown-commented")).toHaveCount(0);
   const sidebarLineComment = page.locator(".comment-list-item").filter({
     hasText: "この責務の説明をもう少し具体化してください。",
   });
@@ -1649,6 +1656,15 @@ test("comments on selected walkthrough lines and marks them Outdated after repla
   await expect(
     page.locator(`.document-pane[data-pane="left"] [data-comment-id="${inlineCommentId}"]`),
   ).toBeInViewport();
+  for (const commentId of [inlineCommentId, diagramCommentId]) {
+    const deleteResponse = await request.delete(`/api/comments/${commentId}`, { data: {} });
+    expect(deleteResponse.ok()).toBe(true);
+  }
+  const resetResponse = await request.post(
+    "/api/fixture/walkthroughs/70000000-0000-4000-8000-000000000001/reset",
+    { data: {} },
+  );
+  expect(resetResponse.ok()).toBe(true);
 });
 
 test("deletes an unnecessary walkthrough and its whole-document feedback after confirmation", async ({

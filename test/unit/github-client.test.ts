@@ -131,3 +131,58 @@ describe("GitHubClient authentication", () => {
     expect(calls).toBe(2);
   });
 });
+
+describe("GitHubClient Issue identity", () => {
+  const identity = {
+    host: "github.com" as const,
+    owner: "acme",
+    repository: "repo",
+    canonicalName: "acme/repo",
+  };
+
+  function issueRunner(response: { number: number; html_url: string }): typeof runProcess {
+    return (_executable, args) =>
+      Promise.resolve({
+        stdout:
+          args[0] === "auth"
+            ? Buffer.alloc(0)
+            : Buffer.from(
+                JSON.stringify({
+                  ...response,
+                  title: "Issue",
+                  body: "Body",
+                  state: "open",
+                  updated_at: "2026-08-23T00:00:00.000Z",
+                }),
+              ),
+        stderr: Buffer.alloc(0),
+        exitCode: 0,
+        stdoutTruncated: false,
+      });
+  }
+
+  it.each([
+    { number: 142, html_url: "https://github.com/other/repo/issues/142" },
+    { number: 143, html_url: "https://github.com/acme/repo/issues/143" },
+  ])("rejects a mismatched GitHub Issue response before returning it", async (response) => {
+    await expect(
+      new GitHubClient(issueRunner(response)).getIssue(142, identity, "/tmp"),
+    ).rejects.toMatchObject({
+      code: "GITHUB_ISSUE_ERROR",
+      status: 502,
+      details: { reason: "ISSUE_IDENTITY_MISMATCH" },
+    });
+  });
+
+  it("accepts casing-only differences in the response URL", async () => {
+    await expect(
+      new GitHubClient(
+        issueRunner({ number: 142, html_url: "https://github.com/Acme/Repo/issues/142" }),
+      ).getIssue(142, identity, "/tmp"),
+    ).resolves.toMatchObject({
+      owner: "acme",
+      repository: "repo",
+      number: 142,
+    });
+  });
+});

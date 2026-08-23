@@ -27,6 +27,8 @@ export interface BranchReviewOpenResult {
   fromCache: boolean;
 }
 
+export const BRANCH_REVIEW_INITIALIZATION_FAILED = "BRANCH_REVIEW_INITIALIZATION_FAILED:";
+
 function sameRepositoryIdentity(
   left: Pick<RepositoryIdentity, "owner" | "repository">,
   right: Pick<RepositoryIdentity, "owner" | "repository">,
@@ -117,13 +119,17 @@ export class BranchReviewLifecycle {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
     }
-    throw this.repositoryMismatch(
-      branchReview,
-      repository,
-      "candidate repositoryにBranch Review所有のsource refがなく、保存済みbindingを確認できません。",
+    throw new RvwError(
+      "LOCAL_STATE_INCONSISTENT",
+      "Branch Review所有のsource refがなく、保存済みGit evidenceを確認できません。",
       {
-        sourceOid: branchReview.sourceOid,
-        retainedRefAvailable: false,
+        status: 409,
+        details: {
+          branchReviewId: branchReview.id,
+          repositoryPath: repository.worktreePath,
+          sourceOid: branchReview.sourceOid,
+          retainedRefAvailable: false,
+        },
       },
     );
   }
@@ -133,6 +139,7 @@ export class BranchReviewLifecycle {
     options: {
       policy: Exclude<BranchReviewLifecyclePolicy, "open-or-create" | "open-cached">;
       expectedBranchReviewId?: string;
+      allowUninitializedReset?: boolean;
     } = { policy: "resolve-existing" },
   ): Promise<ResolvedBranchReview> {
     const repository = await this.git.repositoryContext(repositoryPath);
@@ -176,7 +183,23 @@ export class BranchReviewLifecycle {
 
     this.assertGitCommonDir(branchReview, repository);
     this.assertCanonicalRemote(branchReview, repository, remoteIdentity);
-    await this.assertOwnedSourceRef(branchReview, repository);
+    const ownedSourceAvailable = await this.git.verifyBranchCommitRef(
+      repository.worktreePath,
+      branchReview.id,
+      branchReview.sourceOid,
+    );
+    if (!ownedSourceAvailable && options.allowUninitializedReset) {
+      const prefix = `refs/rvw/branch/${branchReview.id.toLowerCase()}/commits/`;
+      const retainedRefs = await this.git.listRefsByPrefix(repository.worktreePath, prefix);
+      if (
+        !branchReview.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED) ||
+        retainedRefs.length !== 0
+      ) {
+        await this.assertOwnedSourceRef(branchReview, repository);
+      }
+    } else if (!ownedSourceAvailable) {
+      await this.assertOwnedSourceRef(branchReview, repository);
+    }
     if (options.policy === "synchronize-existing" && !remoteIdentity) {
       throw this.repositoryMismatch(
         branchReview,
@@ -246,10 +269,14 @@ export class BranchReviewLifecycle {
       : null;
     let branchReview: BranchReview;
     try {
-      branchReview = this.database.upsertBranchReview(github, {
-        localRepositoryPath: repository.worktreePath,
-        gitCommonDir: repository.gitCommonDir,
-      });
+      branchReview = this.database.upsertBranchReview(
+        github,
+        {
+          localRepositoryPath: repository.worktreePath,
+          gitCommonDir: repository.gitCommonDir,
+        },
+        existing ? { expectedBranchReviewId: existing.id } : {},
+      );
     } catch (error) {
       if (retainedBeforeUpdate?.created && existing) {
         await this.git
@@ -268,20 +295,29 @@ export class BranchReviewLifecycle {
       );
     } catch (error) {
       const rvwError = asRvwError(error);
-      this.database.setBranchSyncError(branchReview.id, rvwError.message);
+      const retainedByConcurrentOpen = await this.git.verifyBranchCommitRef(
+        repository.worktreePath,
+        branchReview.id,
+        github.defaultBranchOid,
+      );
+      if (retainedByConcurrentOpen) return branchReview;
+      const initializationError = `${BRANCH_REVIEW_INITIALIZATION_FAILED} ${rvwError.message}`;
+      this.database.setBranchSyncError(branchReview.id, initializationError);
       throw new RvwError(
         "LOCAL_STATE_INCONSISTENT",
         "Branch sourceは保存されましたが、review-owned retained refを作成できませんでした。",
         {
           cause: error,
+          status: 409,
           details: {
             branchReviewId: branchReview.id,
             databaseUpdated: true,
             retainedRefCreated: false,
-            repairableByExplicitReset: false,
+            repairableByExplicitReset: true,
+            repositoryPath: repository.worktreePath,
           },
           suggestions: [
-            "repositoryとGit refの状態を修復してください。refのないbindingは安全のため自動resetされません。",
+            "対象repository pathを指定した rvw branch reset --yes で未初期化bindingを削除してから再実行してください。",
           ],
         },
       );
@@ -301,13 +337,12 @@ export class BranchReviewLifecycle {
         const locationChanged =
           path.resolve(stored.localRepositoryPath) !== path.resolve(repository.worktreePath);
         return {
-          branchReview:
-            locationChanged && remoteIdentity
-              ? this.database.updateBranchRepositoryLocation(stored.id, {
-                  localRepositoryPath: repository.worktreePath,
-                  gitCommonDir: repository.gitCommonDir,
-                })
-              : stored,
+          branchReview: locationChanged
+            ? this.database.updateBranchRepositoryLocation(stored.id, {
+                localRepositoryPath: repository.worktreePath,
+                gitCommonDir: repository.gitCommonDir,
+              })
+            : stored,
           fromCache: true,
         };
       }
@@ -375,9 +410,13 @@ export class BranchReviewLifecycle {
     return await this.synchronizeSource(repository, remoteIdentity, sameIdentity);
   }
 
-  async synchronizeExisting(repositoryPath: string): Promise<BranchReview> {
+  async synchronizeExisting(
+    repositoryPath: string,
+    expectedBranchReviewId?: string,
+  ): Promise<BranchReview> {
     const resolved = await this.resolveExistingAtPath(repositoryPath, {
       policy: "synchronize-existing",
+      ...(expectedBranchReviewId ? { expectedBranchReviewId } : {}),
     });
     return await this.synchronizeSource(
       resolved.repository,

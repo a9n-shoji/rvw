@@ -71,6 +71,10 @@ import {
 import { findFixedStringMatches } from "../domain/search.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 import {
+  assertFetchedIssueIdentity,
+  isIssueIdentityMismatch,
+} from "../shared/github-issue-identity.js";
+import {
   canonicalGitHubAttachmentUrl,
   detectImageContentType,
   type ImageContentType,
@@ -819,16 +823,22 @@ export class RvwService {
     };
   }
 
-  async syncBranchReview(repositoryPath: string): Promise<BranchSyncResult> {
-    const existing = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
-      policy: "synchronize-existing",
-    });
+  private async synchronizeResolvedBranchReview(
+    existing: ResolvedBranchReview,
+  ): Promise<BranchSyncResult> {
     let branchReview: BranchReview;
     try {
-      branchReview = await this.branchLifecycle.synchronizeExisting(repositoryPath);
+      branchReview = await this.branchLifecycle.synchronizeExisting(
+        existing.repository.worktreePath,
+        existing.branchReview.id,
+      );
     } catch (error) {
       const rvwError = asRvwError(error);
-      if (rvwError.code !== "REPOSITORY_MISMATCH") {
+      if (
+        rvwError.code !== "REPOSITORY_MISMATCH" &&
+        rvwError.code !== "BRANCH_REVIEW_NOT_FOUND" &&
+        this.database.getBranchReview(existing.branchReview.id)
+      ) {
         this.database.setBranchSyncError(existing.branchReview.id, rvwError.message);
       }
       throw error;
@@ -842,21 +852,50 @@ export class RvwService {
           if (!this.github.getIssue) {
             throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
           }
-          const current = await this.github.getIssue(
-            issue.number,
-            branchReview,
-            existing.repository.worktreePath,
+          const current = assertFetchedIssueIdentity(
+            {
+              owner: branchReview.owner,
+              repository: branchReview.repository,
+              number: issue.number,
+            },
+            await this.github.getIssue(
+              issue.number,
+              branchReview,
+              existing.repository.worktreePath,
+            ),
           );
           const cached = this.database.addReviewIssue("branch", branchReview.id, current).issue;
           return { issue: cached, ok: true };
         } catch (error) {
           const rvwError = asRvwError(error);
-          const stale = this.database.setIssueSyncError(issue.id, rvwError.message);
+          if (rvwError.code === "BRANCH_REVIEW_NOT_FOUND") throw rvwError;
+          const stale = isIssueIdentityMismatch(rvwError)
+            ? issue
+            : this.database.setIssueSyncError(issue.id, rvwError.message);
           return { issue: stale, ok: false, error: rvwError.toJSON() };
         }
       },
     );
     return { ...this.getBranchReviewView(branchReview.id), issueResults };
+  }
+
+  async syncBranchReview(repositoryPath: string): Promise<BranchSyncResult> {
+    const existing = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+      policy: "synchronize-existing",
+    });
+    return await this.synchronizeResolvedBranchReview(existing);
+  }
+
+  async syncBranchReviewById(branchReviewId: string): Promise<BranchSyncResult> {
+    const branchReview = this.getBranchReview(branchReviewId);
+    const existing = await this.branchLifecycle.resolveExistingAtPath(
+      branchReview.localRepositoryPath,
+      {
+        policy: "synchronize-existing",
+        expectedBranchReviewId: branchReviewId,
+      },
+    );
+    return await this.synchronizeResolvedBranchReview(existing);
   }
 
   private async addIssueToContext(
@@ -873,15 +912,18 @@ export class RvwService {
     if (!this.github.getIssue) {
       throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
     }
-    const issue = await this.github.getIssue(
-      identity.number,
-      {
-        host: "github.com",
-        owner: review.value.owner,
-        repository: review.value.repository,
-        canonicalName: `${review.value.owner}/${review.value.repository}`,
-      },
-      review.value.localRepositoryPath,
+    const issue = assertFetchedIssueIdentity(
+      identity,
+      await this.github.getIssue(
+        identity.number,
+        {
+          host: "github.com",
+          owner: review.value.owner,
+          repository: review.value.repository,
+          canonicalName: `${review.value.owner}/${review.value.repository}`,
+        },
+        review.value.localRepositoryPath,
+      ),
     );
     return this.database.addReviewIssue(review.kind, review.value.id, issue);
   }
@@ -906,6 +948,25 @@ export class RvwService {
       issueReference,
     );
     return { branchReview, ...result };
+  }
+
+  async addBranchIssueById(
+    branchReviewId: string,
+    issueReference: string,
+  ): Promise<{ branchReview: BranchReview; issue: IssueDocument; added: boolean }> {
+    const stored = this.getBranchReview(branchReviewId);
+    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(
+      stored.localRepositoryPath,
+      {
+        policy: "synchronize-existing",
+        expectedBranchReviewId: branchReviewId,
+      },
+    );
+    const result = await this.addIssueToContext(
+      { kind: "branch", value: branchReview },
+      issueReference,
+    );
+    return { branchReview: this.getBranchReview(branchReviewId), ...result };
   }
 
   listPullRequestIssues(pullRequestId: string): IssueDocument[] {
@@ -991,6 +1052,27 @@ export class RvwService {
     };
   }
 
+  async removeBranchIssueById(
+    branchReviewId: string,
+    issueReference: string,
+  ): Promise<{
+    branchReview: BranchReview;
+    issue: IssueDocument;
+    deleted: IssueRemovalCounts;
+  }> {
+    const stored = this.getBranchReview(branchReviewId);
+    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(
+      stored.localRepositoryPath,
+      {
+        policy: "destructive-existing",
+        expectedBranchReviewId: branchReviewId,
+      },
+    );
+    const preview = this.getIssueRemovalPreview("branch", branchReview.id, issueReference);
+    const deleted = this.database.removeReviewIssue("branch", branchReview.id, preview.issue.id);
+    return { branchReview: this.getBranchReview(branchReviewId), issue: preview.issue, deleted };
+  }
+
   async getBranchIssueRemovalPreview(
     repositoryPath: string,
     issueReference: string,
@@ -998,6 +1080,21 @@ export class RvwService {
     const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
       policy: "destructive-existing",
     });
+    return this.getIssueRemovalPreview("branch", branchReview.id, issueReference);
+  }
+
+  async getBranchIssueRemovalPreviewById(
+    branchReviewId: string,
+    issueReference: string,
+  ): Promise<{ issue: IssueDocument; counts: IssueRemovalCounts; confirmationRequired: true }> {
+    const stored = this.getBranchReview(branchReviewId);
+    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(
+      stored.localRepositoryPath,
+      {
+        policy: "destructive-existing",
+        expectedBranchReviewId: branchReviewId,
+      },
+    );
     return this.getIssueRemovalPreview("branch", branchReview.id, issueReference);
   }
 
@@ -1021,6 +1118,20 @@ export class RvwService {
       branchReview,
       comments: await this.listBranchCommentContexts(branchReview.id, resolved),
     };
+  }
+
+  async listBranchCommentContextsById(
+    branchReviewId: string,
+    resolved?: boolean,
+  ): Promise<Array<{ comment: BranchReviewComment; latestPlacement: CommentPlacement }>> {
+    const stored = this.getBranchReview(branchReviewId);
+    await this.branchLifecycle.resolveExistingAtPath(stored.localRepositoryPath, {
+      policy: "resolve-existing",
+      expectedBranchReviewId: branchReviewId,
+    });
+    const comments = await this.listBranchCommentContexts(branchReviewId, resolved);
+    this.getBranchReview(branchReviewId);
+    return comments;
   }
 
   getPullRequest(id: string): PullRequest {
@@ -1190,15 +1301,18 @@ export class RvwService {
           ISSUE_FETCH_CONCURRENCY,
           async ({ reference, number, previous }): Promise<IssueSyncResult> => {
             try {
-              const issue = await getIssue(
-                number,
-                {
-                  host: "github.com",
-                  owner: github.owner,
-                  repository: github.repository,
-                  canonicalName: `${github.owner}/${github.repository}`,
-                },
-                repository.worktreePath,
+              const issue = assertFetchedIssueIdentity(
+                { owner: github.owner, repository: github.repository, number },
+                await getIssue(
+                  number,
+                  {
+                    host: "github.com",
+                    owner: github.owner,
+                    repository: github.repository,
+                    canonicalName: `${github.owner}/${github.repository}`,
+                  },
+                  repository.worktreePath,
+                ),
               );
               const cached = this.database.addReviewIssue(
                 "pull-request",
@@ -1211,7 +1325,9 @@ export class RvwService {
               const stale =
                 previous &&
                 this.database.hasReviewIssue("pull-request", pullRequest.id, previous.id)
-                  ? this.database.setIssueSyncError(previous.id, rvwError.message)
+                  ? isIssueIdentityMismatch(rvwError)
+                    ? previous
+                    : this.database.setIssueSyncError(previous.id, rvwError.message)
                   : null;
               return { reference, issue: stale, ok: false, error: rvwError.toJSON() };
             }
@@ -2534,6 +2650,7 @@ export class RvwService {
       {
         policy: "destructive-existing",
         expectedBranchReviewId: branchReview.id,
+        allowUninitializedReset: true,
       },
     );
     return await this.getResolvedBranchResetPreview(resolved);
@@ -2547,6 +2664,7 @@ export class RvwService {
   }> {
     const resolved = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
       policy: "destructive-existing",
+      allowUninitializedReset: true,
     });
     return await this.getResolvedBranchResetPreview(resolved);
   }
@@ -2579,6 +2697,7 @@ export class RvwService {
       {
         policy: "destructive-existing",
         expectedBranchReviewId: branchReview.id,
+        allowUninitializedReset: true,
       },
     );
     return await this.resetResolvedBranchReview(resolved);
@@ -2591,6 +2710,7 @@ export class RvwService {
   }> {
     const resolved = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
       policy: "destructive-existing",
+      allowUninitializedReset: true,
     });
     return await this.resetResolvedBranchReview(resolved);
   }
@@ -2823,10 +2943,9 @@ export class RvwService {
       }
       issueNumbers.add(identity.number);
     }
-    return await mapWithConcurrency(
-      [...issueNumbers],
-      ISSUE_FETCH_CONCURRENCY,
-      async (number) =>
+    return await mapWithConcurrency([...issueNumbers], ISSUE_FETCH_CONCURRENCY, async (number) =>
+      assertFetchedIssueIdentity(
+        { owner: review.owner, repository: review.repository, number },
         await this.github.getIssue!(
           number,
           {
@@ -2837,6 +2956,7 @@ export class RvwService {
           },
           review.localRepositoryPath,
         ),
+      ),
     );
   }
 

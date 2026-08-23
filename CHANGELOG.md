@@ -60,6 +60,11 @@
 - resetのref削除失敗で残った旧review refを、新reviewのdocument、Comment、Walkthrough evidenceとして受理しないよう修正
 - concurrent first openのidentity lookupとID決定を一つのimmediate transactionへ移し、raw unique constraint raceを修正
 - 外部Branch Walkthrough更新時にsummaryだけでなく左右paneのdetail本文、reference、diagram bindingも再取得し、draft、focus、scrollを保持
+- HTTPのBranch Review ID-bound操作がreset/recreate後の同一pathにあるreplacement reviewへフォールスルーするraceを修正
+- remoteなしでも同じGit common directoryの別worktreeからowned sourceを読み、cached open時だけ保存pathを安全に更新
+- 初回Branch retained ref作成失敗を、専用markerを検証する明示resetで手動DB編集なしに復旧可能に変更
+- GitHub Issue responseと差し替え可能なGitHub portのcanonical identityを二層検証し、cache／membership書き込み前に拒否
+- 新規Comment threadが静止pointer直下へ挿入されただけでMarkdown行をactive highlightする問題を修正
 
 ## [0.2.3] - 2026-08-21
 

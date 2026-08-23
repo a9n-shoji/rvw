@@ -744,6 +744,7 @@ export class RvwDatabase {
       defaultBranchOid: string;
     },
     repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
+    options: { expectedBranchReviewId?: string } = {},
   ): BranchReview {
     const now = new Date().toISOString();
     let id: string;
@@ -751,6 +752,34 @@ export class RvwDatabase {
       id = this.immediateTransaction(() => {
         const byIdentity = this.findBranchReviewByIdentity(github.owner, github.repository);
         const byGitCommonDir = this.findBranchReviewByGitCommonDir(repositoryLocation.gitCommonDir);
+        const expected = options.expectedBranchReviewId
+          ? this.getBranchReview(options.expectedBranchReviewId)
+          : null;
+        if (options.expectedBranchReviewId && !expected) {
+          throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+            status: 404,
+          });
+        }
+        if (
+          expected &&
+          (path.resolve(expected.gitCommonDir) !== path.resolve(repositoryLocation.gitCommonDir) ||
+            expected.owner.toLowerCase() !== github.owner.toLowerCase() ||
+            expected.repository.toLowerCase() !== github.repository.toLowerCase())
+        ) {
+          throw new RvwError(
+            "REPOSITORY_MISMATCH",
+            "expected Branch Reviewと現在のrepository bindingが一致しません。",
+            {
+              details: {
+                expectedBranchReviewId: expected.id,
+                registeredRepository: expected.canonicalName,
+                registeredGitCommonDir: expected.gitCommonDir,
+                currentRepository: github.canonicalName,
+                currentGitCommonDir: repositoryLocation.gitCommonDir,
+              },
+            },
+          );
+        }
         if (byIdentity && byGitCommonDir && byIdentity.id !== byGitCommonDir.id) {
           throw new RvwError(
             "REPOSITORY_MISMATCH",
@@ -797,8 +826,36 @@ export class RvwDatabase {
           );
         }
 
-        const existing = byIdentity ?? byGitCommonDir;
+        const existing = expected ?? byIdentity ?? byGitCommonDir;
+        if (
+          expected &&
+          ((byIdentity && byIdentity.id !== expected.id) ||
+            (byGitCommonDir && byGitCommonDir.id !== expected.id))
+        ) {
+          throw new RvwError(
+            "REPOSITORY_MISMATCH",
+            "expected Branch Reviewは現在のrepository bindingを所有していません。",
+            {
+              details: {
+                expectedBranchReviewId: expected.id,
+                canonicalBranchReviewId: byIdentity?.id ?? null,
+                localBranchReviewId: byGitCommonDir?.id ?? null,
+              },
+            },
+          );
+        }
         const selectedId = existing?.id ?? randomUUID();
+        const reviewChanged =
+          !existing ||
+          existing.owner !== github.owner ||
+          existing.repository !== github.repository ||
+          existing.canonicalName !== github.canonicalName ||
+          path.resolve(existing.localRepositoryPath) !==
+            path.resolve(repositoryLocation.localRepositoryPath) ||
+          path.resolve(existing.gitCommonDir) !== path.resolve(repositoryLocation.gitCommonDir) ||
+          existing.defaultBranchName !== github.defaultBranchName ||
+          existing.sourceOid !== github.defaultBranchOid ||
+          existing.sourceSyncError !== null;
         if (existing) {
           this.database
             .prepare(
@@ -842,7 +899,9 @@ export class RvwDatabase {
               now,
             );
         }
-        this.incrementChangeSequence({ kind: "branch", reviewId: selectedId });
+        if (reviewChanged) {
+          this.incrementChangeSequence({ kind: "branch", reviewId: selectedId });
+        }
         return selectedId;
       });
     } catch (error) {
@@ -1033,6 +1092,14 @@ export class RvwDatabase {
     issue: GitHubIssue,
   ): { issue: IssueDocument; added: boolean } {
     return this.immediateTransaction(() => {
+      if (reviewKind === "branch" && !this.getBranchReview(reviewId)) {
+        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+          status: 404,
+        });
+      }
+      if (reviewKind === "pull-request" && !this.getPullRequest(reviewId)) {
+        throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。", { status: 404 });
+      }
       const written = this.writeIssue(issue);
       const cached = written.issue;
       const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
@@ -1138,6 +1205,14 @@ export class RvwDatabase {
     issueId: string,
   ): IssueRemovalCounts {
     return this.immediateTransaction(() => {
+      if (reviewKind === "branch" && !this.getBranchReview(reviewId)) {
+        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+          status: 404,
+        });
+      }
+      if (reviewKind === "pull-request" && !this.getPullRequest(reviewId)) {
+        throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。", { status: 404 });
+      }
       if (!this.hasReviewIssue(reviewKind, reviewId, issueId)) {
         throw new RvwError("ISSUE_NOT_FOUND", "このreviewにIssueが登録されていません。", {
           status: 404,
@@ -2300,6 +2375,11 @@ export class RvwDatabase {
   ): { walkthrough: BranchWalkthrough; issuesAdded: IssueDocument[] } {
     const id = randomUUID();
     const issuesAdded = this.immediateTransaction(() => {
+      if (!this.getBranchReview(input.branchReviewId)) {
+        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+          status: 404,
+        });
+      }
       this.database
         .prepare(
           `INSERT INTO branch_walkthroughs(
@@ -2563,12 +2643,16 @@ export class RvwDatabase {
   }
 
   createBranchComment(input: NewBranchCommentInput): BranchReviewComment {
-    const branch = this.getBranchReview(input.branchReviewId);
-    if (!branch) throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
     const id = randomUUID();
     const postId = randomUUID();
     const now = new Date().toISOString();
     this.immediateTransaction(() => {
+      const branch = this.getBranchReview(input.branchReviewId);
+      if (!branch) {
+        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+          status: 404,
+        });
+      }
       this.database
         .prepare(
           `INSERT INTO branch_comments(

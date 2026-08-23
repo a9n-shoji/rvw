@@ -143,7 +143,9 @@ other clone creates a new review ID. `branch sync` resolves GitHub's current def
 fetches and verifies that exact object without changing checkout or index, advances the cached source,
 and refreshes every registered Issue independently. A previously synchronized review remains readable
 offline. If the local remote is missing, matching common-directory and review-owned-ref evidence permits
-cached reads, `branch comments`, Issue removal, and reset; sync and Issue addition fail closed.
+cached reads, `branch comments`, Issue removal, and reset; the owned object must also exist. A cached
+`branch open` from another worktree in that common directory updates the saved usable path, while
+existing-only previews use the current path without persisting it. Sync and Issue addition fail closed.
 `branch comments` returns the explicit Branch context and full comments for the selected state.
 `branch sync`, `branch comments`, reset preview/execution, and Issue-removal preview/execution are
 existing-only. A missing review returns `BRANCH_REVIEW_NOT_FOUND` without calling GitHub, fetching,
@@ -155,6 +157,11 @@ identifies the deleted row outcome, review ID, ref prefix, remaining refs, and e
 Creating another review does not clean the orphan. The new review ID cannot accept or delete that old
 evidence. Confirmation errors return the original repository path as structured command arguments so
 paths containing whitespace or shell metacharacters are not interpolated into a command string.
+An initial owned-ref creation failure returns `LOCAL_STATE_INCONSISTENT` with
+`repairableByExplicitReset: true`. Normal reads still reject the missing ref; explicit reset alone may
+delete the marked, ref-less row after validating its local binding. HTTP ID-bound operations keep the
+URL's expected Branch Review ID through their final database access and return
+`BRANCH_REVIEW_NOT_FOUND` rather than falling through to a replacement review at the same path.
 `branch sync`の`issueResults`は各cached Issueの成功またはstale errorを別々に返す。`pr refresh`と
 `pr sync`も、PR本文から直接見つけた候補と既存membershipの結果を`issueResults`へ返し、一件の失敗を
 他のIssue同期やPR metadata更新の失敗として扱わない。
@@ -163,6 +170,9 @@ An Issue reference is `#142`, `owner/repository#142`, or a canonical GitHub Issu
 Issue in the review repository is accepted; a Pull Request or cross-repository reference fails. Adding
 an existing membership is idempotent. Issue cache rows are shared by GitHub identity, while membership,
 comments, and Walkthrough ownership remain review-specific.
+The GitHub client and application service both compare the fetched Issue owner/repository/number and
+canonical `html_url` with the request, case-insensitively for repository names. An identity mismatch is
+`GITHUB_ISSUE_ERROR` and is never written into the shared cache or a review membership.
 
 ## Comment commands
 
