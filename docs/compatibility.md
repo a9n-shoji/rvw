@@ -47,14 +47,16 @@ reset、Issue removal、comments、syncは未登録reviewを暗黙作成しま�
 保存locationを現在worktreeへ更新します。previewだけでは更新しません。HTTPのstable Branch Review IDは
 reset/recreate後のreplacementへフォールスルーしません。初回retained-ref作成失敗は、専用markerとref 0件を
 確認する明示resetでcleanupできます。markerはref作成前に保存され、ref作成後の未clear markerは次回cached openで
-完了されます。同時初回openのloserは既存rowを変更せず、owned candidate refを作成してからexpected ID付きで更新します。
+完了されます。同時初回openのloserは既存rowを変更せず、winnerのowned sourceを確認します。aggregate発見前に
+取得したsnapshotは破棄し、generation取得後にGitHub metadataを再取得してからexpected ID付きで更新します。
 reset後に遅れて作成された初期refはexact ref単位でbest-effort cleanupされます。既存Issue refreshは削除済みmembershipを
 復活させず、削除済みreviewのerrorを共有cacheへ書かず、削除後のfetch失敗もwarningではなくskipします。
 pending初期化だけを最大5秒待ち、failed markerは直ちにfail closedします。既存source同期はmigration 011の内部generationで
 新しい開始順を守り、古いOIDやerrorを公開しません。metadata取得後にdefault branchが進んだ場合は一度だけsnapshotを
 取り直します。共有Issue cacheはGitHub `updatedAt`をversionとして古い成功を無視し、取得snapshotの変わった古い失敗も
-無視します。同じversionで内容が異なるresponseは`GITHUB_ISSUE_ERROR`です。reply idempotency keyはPR／Branch共通の
-database-wide keyspaceです。
+無視します。失敗CASはmillisecond時刻ではなくaccepted successごとに増える内部generationを使います。
+同じversionで内容が異なるresponseは`GITHUB_ISSUE_ERROR`です。reply idempotency keyはPR／Branch共通の
+database-wide keyspaceで、request hashにもReview種別を含めます。
 GitHub Issue response identity不一致はprotocol共通の
 `GITHUB_ISSUE_ERROR`であり、rename／transferへ自動追従しません。
 

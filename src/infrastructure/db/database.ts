@@ -739,20 +739,6 @@ export class RvwDatabase {
     return row ? mapBranchReview(row) : null;
   }
 
-  upsertBranchReview(
-    github: {
-      owner: string;
-      repository: string;
-      canonicalName: string;
-      defaultBranchName: string;
-      defaultBranchOid: string;
-    },
-    repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
-    options: { expectedBranchReviewId?: string } = {},
-  ): BranchReview {
-    return this.writeBranchReview(github, repositoryLocation, options).branchReview;
-  }
-
   beginBranchSourceSync(id: string): number {
     return this.immediateTransaction(() => {
       if (!this.getBranchReview(id)) {
@@ -1171,6 +1157,14 @@ export class RvwDatabase {
     return row ? mapIssue(row) : null;
   }
 
+  getIssueCacheGeneration(id: string): number {
+    const row = this.database
+      .prepare("SELECT cache_generation FROM github_issues WHERE id = ?")
+      .get(id) as DbRow | undefined;
+    if (!row) throw new RvwError("ISSUE_NOT_FOUND", "Issueが見つかりません。");
+    return numberValue(row, "cache_generation");
+  }
+
   private writeIssue(issue: GitHubIssue): {
     issue: IssueDocument;
     changed: boolean;
@@ -1229,8 +1223,8 @@ export class RvwDatabase {
       .prepare(
         `INSERT INTO github_issues(
           id, host, owner, repository, canonical_name, number, github_url, title, body, state,
-          github_updated_at, body_hash, fetched_at, sync_error
-        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+          github_updated_at, body_hash, fetched_at, sync_error, cache_generation
+        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 1)
         ON CONFLICT(id) DO UPDATE SET
           owner = excluded.owner,
           repository = excluded.repository,
@@ -1242,7 +1236,8 @@ export class RvwDatabase {
           github_updated_at = excluded.github_updated_at,
           body_hash = excluded.body_hash,
           fetched_at = excluded.fetched_at,
-          sync_error = NULL`,
+          sync_error = NULL,
+          cache_generation = github_issues.cache_generation + 1`,
       )
       .run(
         id,
@@ -1332,7 +1327,7 @@ export class RvwDatabase {
     reviewKind: "pull-request" | "branch",
     reviewId: string,
     issueId: string,
-    expectedFetchedAt: string,
+    expectedCacheGeneration: number,
     message: string,
   ): {
     issue: IssueDocument | null;
@@ -1346,7 +1341,7 @@ export class RvwDatabase {
       }
       const current = this.getIssue(issueId);
       if (!current) throw new RvwError("ISSUE_NOT_FOUND", "Issueが見つかりません。");
-      if (current.fetchedAt !== expectedFetchedAt) {
+      if (this.getIssueCacheGeneration(issueId) !== expectedCacheGeneration) {
         return { issue: current, updated: false, skipped: "newer-attempt" };
       }
       if (current.syncError === message) {
@@ -2452,6 +2447,7 @@ export class RvwDatabase {
             hashIdempotencyKey(
               JSON.stringify({
                 operation: "comment.reply",
+                reviewKind: "pull-request",
                 commentId,
                 body: input.body,
                 relatedCommitOid,
@@ -3050,6 +3046,7 @@ export class RvwDatabase {
           hashIdempotencyKey(
             JSON.stringify({
               operation: "comment.reply",
+              reviewKind: "branch",
               commentId,
               body: input.body,
               relatedCommitOid: input.relatedCommitOid ?? null,

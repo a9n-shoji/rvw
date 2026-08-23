@@ -54,7 +54,7 @@ function registerPullRequest(database: RvwDatabase): string {
 }
 
 function registerBranchReview(database: RvwDatabase): string {
-  return database.upsertBranchReview(
+  const initialized = database.beginBranchReviewInitialization(
     {
       owner: "acme",
       repository: "review-repo",
@@ -63,7 +63,8 @@ function registerBranchReview(database: RvwDatabase): string {
       defaultBranchOid: "b".repeat(40),
     },
     { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
-  ).id;
+  ).branchReview;
+  return database.completeBranchReviewInitialization(initialized.id, initialized.sourceOid).id;
 }
 
 describe("local HTTP security", () => {

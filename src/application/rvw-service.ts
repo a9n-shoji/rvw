@@ -844,6 +844,7 @@ export class RvwService {
       issues,
       ISSUE_FETCH_CONCURRENCY,
       async (issue): Promise<BranchSyncResult["issueResults"][number]> => {
+        const expectedCacheGeneration = this.database.getIssueCacheGeneration(issue.id);
         try {
           if (!this.github.getIssue) {
             throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
@@ -882,7 +883,7 @@ export class RvwService {
             "branch",
             branchReview.id,
             issue.id,
-            issue.fetchedAt,
+            expectedCacheGeneration,
             rvwError.message,
           );
           if (syncError.skipped) {
@@ -1225,6 +1226,7 @@ export class RvwService {
           : {
               idempotencyRequestHash: idempotencyRequestHash({
                 operation: "pr.sync.comment-update",
+                reviewKind: "pull-request",
                 commentId,
                 reply: update.reply,
                 resolve: update.resolve,
@@ -1324,6 +1326,9 @@ export class RvwService {
           issueRequests,
           ISSUE_FETCH_CONCURRENCY,
           async ({ reference, number, previous, operation }): Promise<IssueSyncResult> => {
+            const expectedCacheGeneration = previous
+              ? this.database.getIssueCacheGeneration(previous.id)
+              : null;
             try {
               const issue = assertFetchedIssueIdentity(
                 { owner: github.owner, repository: github.repository, number },
@@ -1384,7 +1389,7 @@ export class RvwService {
                     "pull-request",
                     pullRequest.id,
                     previous.id,
-                    previous.fetchedAt,
+                    expectedCacheGeneration!,
                     rvwError.message,
                   );
                   if (operation === "refresh" && result.skipped) {
@@ -3159,6 +3164,7 @@ export class RvwService {
             : {
                 idempotencyRequestHash: idempotencyRequestHash({
                   operation: "comment.reply",
+                  reviewKind: "branch",
                   commentId: id,
                   body,
                   relatedCommitOid: input.relatedCommitOid ?? null,
@@ -3188,6 +3194,7 @@ export class RvwService {
           : {
               idempotencyRequestHash: idempotencyRequestHash({
                 operation: "comment.reply",
+                reviewKind: "pull-request",
                 commentId: id,
                 body,
                 relatedCommitOid: input.relatedCommitOid ?? null,

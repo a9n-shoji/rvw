@@ -188,6 +188,19 @@ class PauseBranchRefForOidGitClient extends GitClient {
   }
 }
 
+class PauseAfterBranchObjectForOidGitClient extends GitClient {
+  readonly barrier = new OneShotBarrier();
+
+  constructor(private readonly pausedOid: string) {
+    super();
+  }
+
+  override async ensureBranchObject(input: Parameters<GitClient["ensureBranchObject"]>[0]) {
+    await super.ensureBranchObject(input);
+    if (input.oid === this.pausedOid) await this.barrier.blockOnce();
+  }
+}
+
 class RemoteMoveOnceGitClient extends GitClient {
   ensureAttempts = 0;
 
@@ -2067,7 +2080,7 @@ describe("Branch Review", () => {
       first.branchReview.id,
     );
     expect(() =>
-      firstDatabase.upsertBranchReview(
+      firstDatabase.beginBranchReviewInitialization(
         {
           ...repository,
           owner: "other-owner",
@@ -2081,11 +2094,64 @@ describe("Branch Review", () => {
       ),
     ).toThrowError(expect.objectContaining({ code: "REPOSITORY_MISMATCH" }));
     expect(() =>
-      firstDatabase.upsertBranchReview(repository, {
+      firstDatabase.beginBranchReviewInitialization(repository, {
         localRepositoryPath: "/independent-clone",
         gitCommonDir: "/independent-clone/.git",
       }),
     ).toThrowError(expect.objectContaining({ code: "REPOSITORY_MISMATCH" }));
+  });
+
+  it("discards a pre-aggregate snapshot before joining a concurrent first-open winner", async () => {
+    const repositoryPath = createGitRepository("rvw-branch-pre-aggregate-snapshot-");
+    const sourceX = git(repositoryPath, "rev-parse", "HEAD");
+    const sourceY = commitFile(repositoryPath, "newer-source.txt", "newer\n", "newer source");
+    const baseRepository = {
+      host: "github.com" as const,
+      owner: "acme",
+      repository: "review-repo",
+      canonicalName: "acme/review-repo",
+      defaultBranchName: "main",
+    };
+    const filePath = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-branch-pre-aggregate-db-")),
+      "rvw.db",
+    );
+    const staleDatabase = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    const winnerDatabase = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    databases.push(staleDatabase, winnerDatabase);
+    const staleGithub = new BranchGitHub({ ...baseRepository, defaultBranchOid: sourceX });
+    const staleGit = new PauseAfterBranchObjectForOidGitClient(sourceX);
+    staleGit.barrier.arm();
+    const staleService = new RvwService(staleDatabase, staleGit, staleGithub);
+    const winnerService = new RvwService(
+      winnerDatabase,
+      new GitClient(),
+      new BranchGitHub({ ...baseRepository, defaultBranchOid: sourceY }),
+    );
+
+    const staleOpen = staleService.openBranchReview(repositoryPath);
+    await staleGit.barrier.waitUntilBlocked();
+    expect(staleDatabase.findBranchReviewByIdentity("acme", "review-repo")).toBeNull();
+
+    const winner = await winnerService.openBranchReview(repositoryPath);
+    expect(winner.branchReview.sourceOid).toBe(sourceY);
+    staleGithub.repository = { ...baseRepository, defaultBranchOid: sourceY };
+    staleGit.barrier.release();
+
+    await expect(staleOpen).resolves.toMatchObject({
+      branchReview: { id: winner.branchReview.id, sourceOid: sourceY },
+    });
+    expect(staleGithub.repositoryRequests).toBe(2);
+    expect(staleDatabase.getBranchReview(winner.branchReview.id)).toMatchObject({
+      sourceOid: sourceY,
+      sourceSyncError: null,
+    });
+    await expect(
+      staleGit.verifyBranchCommitRef(repositoryPath, winner.branchReview.id, sourceX),
+    ).resolves.toBe(false);
+    await expect(
+      staleGit.verifyBranchCommitRef(repositoryPath, winner.branchReview.id, sourceY),
+    ).resolves.toBe(true);
   });
 
   it("publishes only the newest started Branch source sync", async () => {

@@ -165,8 +165,10 @@ most five seconds; a failed marker does not wait. A creation failure returns
 `LOCAL_STATE_INCONSISTENT` with `repairableByExplicitReset: true`; a process stop before ref creation
 can use the same marked-row reset, while a verified cached open clears a marker left after successful
 ref creation. A concurrent initializer that finds an existing row leaves it unchanged, retains its
-candidate source, then updates with the expected aggregate ID. If reset deletes the row before that
-attempt completes, only the exact ref newly created by the delayed attempt is best-effort removed.
+winner-owned source, and discards the snapshot fetched before discovering the aggregate. It then
+allocates a source generation, fetches fresh GitHub metadata, and publishes with the expected aggregate
+ID. If reset deletes the row before an initial attempt completes, only the exact ref newly created by
+the delayed attempt is best-effort removed.
 Normal reads still reject a missing ref. Existing-source attempts allocate a generation before network
 access and publish the retained OID or error only when that generation is current. A default branch
 move detected between metadata and fetch retries the metadata/OID snapshot once. HTTP ID-bound operations keep the
@@ -188,7 +190,9 @@ The GitHub client and application service both compare the fetched Issue owner/r
 canonical `html_url` with the request, case-insensitively for repository names. An identity mismatch is
 `GITHUB_ISSUE_ERROR` and is never written into the shared cache or a review membership.
 The shared cache ignores responses older than its GitHub `updatedAt`, rejects conflicting content at
-the same version, and ignores a late failure after the originating `fetchedAt` snapshot changed.
+the same version, and increments an internal cache generation for every accepted success. A late
+failure is ignored after its originating generation changes, even when two writes share the same
+millisecond `fetchedAt` value.
 
 ## Comment commands
 

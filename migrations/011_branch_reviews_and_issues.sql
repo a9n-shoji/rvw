@@ -32,6 +32,7 @@ CREATE TABLE github_issues (
   body_hash TEXT NOT NULL,
   fetched_at TEXT NOT NULL,
   sync_error TEXT,
+  cache_generation INTEGER NOT NULL DEFAULT 0,
   UNIQUE(host, owner, repository, number)
 );
 

@@ -78,6 +78,11 @@
 - 共有Issue cacheをGitHub `updatedAt`と取得snapshotで順序付けし、古い成功／失敗と同一version内容競合をfail closed
 - comment reply idempotency keyをPR／Branch共通のdatabase-wide keyspaceへ統一
 - PR viewerもIssue同期の部分失敗をreview source成功と分けてwarning表示
+- 同時初回openのloserがaggregate発見前のGitHub snapshotを新しいgenerationで公開し、sourceを巻き戻すraceを修正
+- Issue failure CASをmillisecond `fetchedAt`から内部cache generationへ変更し、同時刻の新しい成功をstale化しないよう修正
+- browser reset成功後に再openだけが失敗した場合、reset失敗と区別して明示的な`rvw branch open`復旧を表示
+- PR／Branch viewerのIssue同期warningを先頭3件と残件数に省略し、top barの肥大化を防止
+- comment reply idempotency request hashへReview種別を追加
 
 ## [0.2.3] - 2026-08-21
 

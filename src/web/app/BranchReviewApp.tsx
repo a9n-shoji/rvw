@@ -127,6 +127,10 @@ export function BranchReviewApp({
   viewerNavigationTargetsRef.current = viewerNavigationTargets;
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [syncFeedbackWarning, setSyncFeedbackWarning] = useState(false);
+  const [resetRecovery, setResetRecovery] = useState<{
+    repositoryPath: string;
+    reopenError: unknown;
+  } | null>(null);
   const {
     feedback: syncFeedback,
     showFeedback: showSyncFeedback,
@@ -375,14 +379,27 @@ export function BranchReviewApp({
       );
       if (!confirmed) return null;
       await api(endpoint, jsonRequest({ yes: true }));
-      return await api<{ branchReview: BranchReview }>(
-        "/api/branch-reviews/open",
-        jsonRequest({ cwd: branchReview.localRepositoryPath }),
-      );
+      try {
+        const reopened = await api<{ branchReview: BranchReview }>(
+          "/api/branch-reviews/open",
+          jsonRequest({ cwd: branchReview.localRepositoryPath }),
+        );
+        return { kind: "reopened" as const, branchReview: reopened.branchReview };
+      } catch (reopenError) {
+        return {
+          kind: "reset-complete" as const,
+          repositoryPath: branchReview.localRepositoryPath,
+          reopenError,
+        };
+      }
     },
     onSuccess: (result) => {
       if (!result) return;
       clearCommentDraftsForReview(branchReviewId);
+      if (result.kind === "reset-complete") {
+        setResetRecovery(result);
+        return;
+      }
       const next = new URL(window.location.href);
       next.search = `?branchReviewId=${encodeURIComponent(result.branchReview.id)}`;
       window.location.replace(next.toString());
@@ -463,6 +480,19 @@ export function BranchReviewApp({
     setWorkspace,
   });
 
+  if (resetRecovery) {
+    return (
+      <main className="fatal-state">
+        <h1>Branch Reviewのresetは完了しました</h1>
+        <p>
+          ローカル状態の初期化後にBranch Reviewを再作成できませんでした。repository{" "}
+          <code>{resetRecovery.repositoryPath}</code> で <code>rvw branch open</code>
+          を再実行してください。
+        </p>
+        <ErrorNotice error={resetRecovery.reopenError} />
+      </main>
+    );
+  }
   if (reviewQuery.isPending) {
     return <main className="fatal-state">Branch Reviewを読み込んでいます…</main>;
   }

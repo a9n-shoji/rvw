@@ -311,7 +311,8 @@ Branch retained refは`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`に属
 marker clear前に停止した場合は、次回openがowned refとsource objectを確認して初期化を完了します。通常のread／syncは
 pending markerだけを最大5秒待ち、明示的な初期化失敗や通常rowのrefなし状態は直ちに
 `LOCAL_STATE_INCONSISTENT`としてfail closedします。同時初回openで別processが
-先にrowを作成した場合、後続processはそのrowを更新せず、candidate refを作成してからexpected review ID付きでsourceを
+先にrowを作成した場合、後続processはそのrowを更新しません。後続processがaggregate発見前に取得したsnapshotは破棄し、
+winnerのowned refを確認してgenerationを確保した後にGitHub metadataを再取得し、expected review ID付きでsourceを
 進めます。reset中の初期化processが遅れて作成したrefは、そのaggregateが消えていればexact refだけをbest-effortで削除します。
 既存reviewのsource同期は開始時にgenerationを確保し、ref作成後も同じgenerationのときだけsourceまたはsync errorを
 公開します。古い同期responseは新しい同期済みsourceを巻き戻しません。GitHub metadata取得後のfetch中にdefault branchが
@@ -322,9 +323,11 @@ requestと照合し、rename、transfer、redirect相当のidentity不一致をc
 既存Issueのbackground refreshは、fetch後のtransactionで元reviewとmembershipを再確認し、明示削除済みmembershipを
 再作成しません。削除後に遅れてfetchが失敗した場合も`membership-removed`としてskipし、消えたIssueのwarningを残しません。
 共有Issue cacheはGitHub `updatedAt`より古いresponseを無視し、同じ`updatedAt`で本文、title、stateが異なるresponseを
-`GITHUB_ISSUE_ERROR`として拒否します。成功後に遅れた失敗も取得snapshotが変わっていればcacheをstaleに戻しません。
-実在するmembershipのIssueごとの部分失敗はCLI／HTTP responseに加え、PR／Branch viewerの同期結果にもwarningとして表示します。
-comment replyのidempotency keyはReview種別をまたぐdatabase-wide keyspaceであり、別のPR／Branch payloadへの再利用を拒否します。
+`GITHUB_ISSUE_ERROR`として拒否します。accepted successごとに内部cache generationを増やし、成功後に遅れた失敗は
+取得開始時のgenerationが変わっていればcacheをstaleに戻しません。実在するmembershipのIssueごとの部分失敗は
+CLI／HTTP responseに加え、PR／Branch viewerの同期結果にもwarningとして表示し、top barでは先頭3件と残件数に省略します。
+comment replyのidempotency keyはReview種別をまたぐdatabase-wide keyspaceであり、request hashにもReview種別を含めて
+別のPR／Branch payloadへの再利用を拒否します。
 
 `--stdin` commandはEOFまでJSONを読みます。改行だけでは終了しないため、processから呼ぶ場合は送信後に
 stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの

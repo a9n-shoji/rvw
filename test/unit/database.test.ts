@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 
 function openDatabaseInChildProcess(
@@ -469,7 +469,7 @@ describe("RvwDatabase", () => {
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
       "c".repeat(40),
     );
-    const branchReview = database.upsertBranchReview(
+    const branchInitialization = database.beginBranchReviewInitialization(
       {
         owner: github.owner,
         repository: github.repository,
@@ -478,6 +478,10 @@ describe("RvwDatabase", () => {
         defaultBranchOid: github.headOid,
       },
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+    ).branchReview;
+    const branchReview = database.completeBranchReviewInitialization(
+      branchInitialization.id,
+      branchInitialization.sourceOid,
     );
     const pullRequestComment = database.createComment({
       pullRequestId: pullRequest.id,
@@ -513,7 +517,7 @@ describe("RvwDatabase", () => {
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
       "c".repeat(40),
     );
-    const branchReview = database.upsertBranchReview(
+    const branchInitialization = database.beginBranchReviewInitialization(
       {
         owner: github.owner,
         repository: github.repository,
@@ -522,6 +526,10 @@ describe("RvwDatabase", () => {
         defaultBranchOid: github.headOid,
       },
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+    ).branchReview;
+    const branchReview = database.completeBranchReviewInitialization(
+      branchInitialization.id,
+      branchInitialization.sourceOid,
     );
     const initialIssue = {
       host: "github.com" as const,
@@ -537,6 +545,7 @@ describe("RvwDatabase", () => {
     };
     const cached = database.addReviewIssue("pull-request", pullRequest.id, initialIssue).issue;
     database.addReviewIssue("branch", branchReview.id, initialIssue);
+    const initialCacheGeneration = database.getIssueCacheGeneration(cached.id);
     const newer = {
       ...initialIssue,
       title: "Newest title",
@@ -561,7 +570,7 @@ describe("RvwDatabase", () => {
         "pull-request",
         pullRequest.id,
         cached.id,
-        "stale-fetched-at",
+        initialCacheGeneration,
         "late failure",
       ),
     ).toMatchObject({ updated: false, skipped: "newer-attempt", issue: newestSnapshot });
@@ -577,6 +586,55 @@ describe("RvwDatabase", () => {
       pullRequestSequence,
     );
     database.close();
+  });
+
+  it("uses Issue cache generation instead of millisecond timestamps as the failure CAS token", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-08T04:00:00.000Z"));
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    try {
+      const pullRequest = database.upsertPullRequest(
+        github,
+        { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+        "c".repeat(40),
+      );
+      const initial = {
+        host: "github.com" as const,
+        owner: github.owner,
+        repository: github.repository,
+        canonicalName: `${github.owner}/${github.repository}`,
+        number: 143,
+        url: `https://github.com/${github.owner}/${github.repository}/issues/143`,
+        title: "Initial",
+        body: "Initial body",
+        state: "OPEN" as const,
+        updatedAt: "2026-08-08T03:00:00.000Z",
+      };
+      const cached = database.addReviewIssue("pull-request", pullRequest.id, initial).issue;
+      const oldGeneration = database.getIssueCacheGeneration(cached.id);
+      const refreshed = database.refreshReviewIssue("pull-request", pullRequest.id, cached.id, {
+        ...initial,
+        title: "Newer",
+        body: "Newer body",
+        updatedAt: "2026-08-08T04:00:00.000Z",
+      }).issue!;
+
+      expect(refreshed.fetchedAt).toBe(cached.fetchedAt);
+      expect(database.getIssueCacheGeneration(cached.id)).toBe(oldGeneration + 1);
+      expect(
+        database.setReviewIssueSyncError(
+          "pull-request",
+          pullRequest.id,
+          cached.id,
+          oldGeneration,
+          "late failure in the same millisecond",
+        ),
+      ).toMatchObject({ updated: false, skipped: "newer-attempt" });
+      expect(database.getIssue(cached.id)?.syncError).toBeNull();
+    } finally {
+      database.close();
+      vi.useRealTimers();
+    }
   });
 
   it("persists post-level code references and removes them with their posts", () => {

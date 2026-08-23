@@ -269,21 +269,33 @@ export class BranchReviewLifecycle {
       }
 
       // Initial creation is deliberately create-only. If another process committed the aggregate
-      // after our first lookup, this transaction returns that row unchanged; the candidate source
-      // then follows the normal retain-before-publish path below.
+      // after our first lookup, this transaction returns that row unchanged. The pre-aggregate
+      // snapshot is then discarded before the normal generated source-sync path starts below.
       const initialization = this.database.beginBranchReviewInitialization(github, {
         localRepositoryPath: repository.worktreePath,
         gitCommonDir: repository.gitCommonDir,
       });
       if (!initialization.created) {
+        // The first snapshot was observed before this aggregate existed. It must not be assigned a
+        // generation after the fact: a concurrent initializer may already have published a newer
+        // source. First finish observing that initializer, then allocate the generation before
+        // taking a fresh GitHub snapshot.
+        let concurrent = await this.assertOwnedSourceRef(initialization.branchReview, repository);
+        if (isInitializationMarker(concurrent.sourceSyncError)) {
+          concurrent = this.database.completeBranchReviewInitialization(
+            concurrent.id,
+            concurrent.sourceOid,
+          );
+        }
         sourceAttempt = {
-          branchReviewId: initialization.branchReview.id,
-          generation: this.database.beginBranchSourceSync(initialization.branchReview.id),
+          branchReviewId: concurrent.id,
+          generation: this.database.beginBranchSourceSync(concurrent.id),
         };
+        const latest = await this.fetchAndEnsureSource(repository, identity, concurrent);
         return await this.publishExistingSource(
           repository,
-          github,
-          initialization.branchReview.id,
+          latest,
+          concurrent.id,
           sourceAttempt.generation,
         );
       }

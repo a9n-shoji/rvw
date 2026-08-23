@@ -70,8 +70,9 @@ binding matches and the review namespace has no refs. A crash after ref creation
 clear is completed by the next cached open after verifying the owned ref and Git object. Normal reads
 wait only for the exact pending marker, for at most five seconds; a failed or otherwise unowned source
 fails immediately. Initialization is create-only: when its immediate
-transaction discovers a concurrently created row, it returns that row unchanged and the caller retains
-the candidate OID before an expected-ID update. If reset wins while initial ref creation is paused, a
+transaction discovers a concurrently created row, it returns that row unchanged. The caller verifies
+the winner's owned source, discards metadata fetched before discovering that aggregate, allocates a
+generation, and only then fetches a fresh snapshot for retain-before-publish. If reset wins while initial ref creation is paused, a
 later completion failure removes only the exact ref created by that attempt on a best-effort basis.
 Every existing-source attempt allocates a monotonically increasing generation before network access.
 Only that generation may publish its retained OID or sync error, so an older response cannot roll back
@@ -80,11 +81,14 @@ a remote snapshot race, not reported as local-state corruption.
 GitHub Issue responses are checked in both the concrete client and application boundary;
 owner, repository, number, canonical name, and URL mismatch fail before cache or membership writes.
 The shared cache accepts only a non-decreasing GitHub `updatedAt`; equal versions with conflicting
-title/body/state fail closed, and a failure may mark the cache stale only if its original `fetchedAt`
-snapshot is still current. PR and Branch sync return per-Issue failures separately; both viewers report
-a warning alongside the successfully synchronized review source instead of presenting the entire
-operation as clean.
+title/body/state fail closed. Every accepted success increments an internal cache generation, even
+when wall-clock timestamps are equal; a failure may mark the cache stale only if its originating
+generation is still current. PR and Branch sync return per-Issue failures separately; both viewers
+report a warning alongside the successfully synchronized review source instead of presenting the
+entire operation as clean, limiting the top-bar detail to three Issues plus the remaining count.
 A fetch failure whose originating membership was already removed is a skip, not a stale warning.
+When browser reset succeeds but the following open fails, the viewer reports reset as complete and
+gives an explicit `rvw branch open` recovery action instead of presenting the reset itself as failed.
 
 The viewer reads committed Git objects rather than the worktree or index. That keeps the human's
 reading context stable while an external Agent edits, tests, commits, and pushes. Comments bridge the

@@ -45,9 +45,12 @@ Write a dedicated incomplete-initialization marker in the first aggregate transa
 the owned ref. Normal evidence reads remain strict, but explicit reset may delete a marked, ref-less row
 after verifying its binding. When the ref exists but marker clear was interrupted, a verified cached
 open completes initialization. Make that transaction create-only: a concurrent winner's existing row
-is returned unchanged, then the loser uses retain-before-publish with the winner's expected aggregate
-ID. A completion that discovers reset removed the aggregate best-effort deletes only the exact ref that
-attempt created. This is the sole missing-ref exception. Validate fetched GitHub Issue
+is returned unchanged. The loser verifies the winner's owned source, discards the GitHub snapshot it
+fetched before learning that aggregate's identity, allocates a generation, and fetches fresh metadata
+before retain-before-publish with the winner's expected ID. A completion that discovers reset removed
+the aggregate best-effort deletes only the exact ref that attempt created. This is the sole missing-ref
+exception. Remove the unrestricted Branch upsert entry point so existing source publication cannot
+bypass the generation boundary. Validate fetched GitHub Issue
 owner/repository/number/canonical URL both in the concrete client and at the replaceable application
 port boundary before any cache or membership write.
 
@@ -65,11 +68,13 @@ Treat a default branch move between metadata and fetch as a remote snapshot race
 and OID pair once.
 
 Use GitHub Issue `updatedAt` as the shared cache content version. Ignore older successes, reject equal
-versions with conflicting title/body/state, and compare the failure's original `fetchedAt` before
-setting the global cache error. The error therefore describes the health of the current shared cache,
-not a membership-specific failure. Surface per-Issue failures in both PR and Branch viewers. Use the
-existing durable reply ledger as one database-wide public idempotency-key namespace for both review
-kinds rather than adding a second Branch ledger.
+versions with conflicting title/body/state, and increment an internal cache generation for every
+accepted success. Compare a failure's originating generation before setting the global cache error;
+wall-clock `fetchedAt` is observability data, not a CAS token. The error therefore describes the health
+of the current shared cache, not a membership-specific failure. Surface per-Issue failures in both PR
+and Branch viewers, limiting top-bar detail to three Issues plus the remaining count. Use the existing
+durable reply ledger as one database-wide public idempotency-key namespace for both review kinds,
+including the review kind in its request hash, rather than adding a second Branch ledger.
 
 ### Trade-offs
 

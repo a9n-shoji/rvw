@@ -591,6 +591,67 @@ test("keeps Branch mutations isolated and recreates an empty review after reset"
   await expect(page.getByRole("button", { name: "コメント 0", exact: true })).toBeVisible();
 });
 
+test("distinguishes a completed Branch reset from a failed reopen", async ({ page }) => {
+  await page.route(`**/api/branch-reviews/${branchReviewId}/reset`, async (route) => {
+    const input = route.request().postDataJSON() as { yes: boolean };
+    if (!input.yes) {
+      await route.fulfill({
+        status: 409,
+        json: {
+          ok: false,
+          error: { code: "RESET_CONFIRMATION_REQUIRED", message: "reset confirmation required" },
+          counts: {
+            issueMemberships: 0,
+            issueComments: 0,
+            codeComments: 0,
+            reviewComments: 0,
+            walkthroughComments: 0,
+            posts: 0,
+            walkthroughs: 0,
+            gitRefs: 0,
+          },
+          retainedRefs: [],
+        },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        ok: true,
+        branchReview: { id: branchReviewId },
+        deleted: { branchReview: 1 },
+        removedRefs: [],
+      },
+    });
+  });
+  await page.route("**/api/branch-reviews/open", async (route) => {
+    await route.fulfill({
+      status: 502,
+      json: {
+        ok: false,
+        error: {
+          code: "GITHUB_REPOSITORY_ERROR",
+          message: "default branchを取得できませんでした。",
+        },
+      },
+    });
+  });
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+
+  page.once("dialog", async (dialog) => await dialog.accept());
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Branch Reviewを削除して再構築" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "Branch Reviewのresetは完了しました" }),
+  ).toBeVisible();
+  await expect(page.getByText(/rvw branch open/)).toBeVisible();
+  await expect(
+    page.getByText("default branchを取得できませんでした。", { exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(`/?branchReviewId=${branchReviewId}`);
+});
+
 test("keeps an Issue range composer focused across a same-body Branch refresh", async ({
   page,
   request,

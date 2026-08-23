@@ -152,7 +152,8 @@ case-insensitiveな同一identityだけを許し、不一致は`GITHUB_ISSUE_ERR
 変更せずfail closedする。repository rename／transferへは自動追従しない。
 共有cacheのcontent versionはGitHub `updatedAt`とする。古いresponseは書き込まず、同一versionでtitle、body、
 stateが異なるresponseはcorruptionとして`GITHUB_ISSUE_ERROR`にする。同期失敗はfetch開始時に読んだ
-`fetchedAt`がtransaction内でも同じ場合だけ共有`sync_error`へ保存し、新しい成功後の古い失敗はskipする。
+内部`cache_generation`がtransaction内でも同じ場合だけ共有`sync_error`へ保存し、新しい成功後の古い失敗はskipする。
+accepted successは同一millisecondでもgenerationを必ず増やし、`fetchedAt`をCAS tokenとして使用しない。
 この`sync_error`はcurrent共有cacheの取得状態であり、review membership固有の状態ではない。
 
 ### 3.1 Commit選択
@@ -1224,11 +1225,13 @@ PRとBranchのartifact ownershipとcascade境界は分離し、
 共有Issue cacheの表示内容または同期errorが変わった場合だけ、そのIssueを所有する全Reviewの
 `review_change_sequence`を同じtransactionで更新する。単なる`fetched_at`更新では他Reviewをinvalidateしない。
 cache更新はGitHub `updatedAt`の非減少を保証し、同一versionのcontent conflictを拒否する。sync error更新は
-元fetchの`fetched_at` snapshotがcurrentの場合だけ許可する。
+元fetchの内部`cache_generation`がcurrentの場合だけ許可する。accepted successはgenerationを増やすため、
+同じmillisecondに保存された新しいcacheへ古いfailureがerrorを付与できない。
 Issue membership追加と既存membershipのrefreshは別操作とする。refresh成功／失敗はGitHub fetch後のimmediate
 transactionで元reviewとmembershipの存続を再確認し、削除済みならcache、membership、全Reviewのsequenceを変更しない。
 PR本文に現在も直接含まれるIssueだけは追加操作として扱い、次回refreshで再登録できる。PR／Branch viewerはreview
 sourceの同期成功とIssueごとの部分失敗を区別し、`issueResults`の失敗をresponse-local warningとして表示する。
+top barのdetailは先頭3件と残件数に省略する。
 
 commit table、review version table、PR revision tableは持たない。既存Phase 1 DBはmigrationで
 version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元できない場合Outdatedとして残す。
@@ -1383,8 +1386,10 @@ canonical remote（またはremoteなし）、marker、review ID配下のrefが0
 通常readはexact pending markerだけを最大5秒pollし、failed markerまたはmarkerなしのmissing refは即時に拒否する。
 ref作成後、marker clear前に停止した場合は、次回openがexpected ID／source OID、owned ref、Git objectを検証して
 markerをclearする。初回lookupではrowがなくても、初期化用immediate transactionが既存rowを発見した場合は
-source OID、default branch、location、sync errorを変更せず`created: false`を返す。呼び出し側はcandidate refを
-先に作成し、expected Branch Review ID付きtransactionでだけ既存sourceを更新する。初期ref作成とresetが競合し、
+source OID、default branch、location、sync errorを変更せず`created: false`を返す。呼び出し側はwinnerのowned
+sourceを検証し、aggregate発見前に取得したsnapshotを破棄する。その後generationを確保し、GitHub metadataを
+再取得してからretainし、expected Branch Review ID付きtransactionでだけ既存sourceを更新する。generationなしで
+既存Branch sourceを変更できるunrestricted upsertはapplicationへ公開しない。初期ref作成とresetが競合し、
 aggregate削除後にrefが作成された場合は、そのattemptが作ったexact refだけをbest-effortで削除する。この例外を
 Issue removalその他のdestructive操作へ広げない。
 既存aggregateのsource同期はGitHubアクセス前に`source_sync_generation`を増やす。candidate ref作成後のsource公開と
@@ -1627,7 +1632,8 @@ Functional:
   だけを削除でき、別reviewの同じIssueは残る。
 - Branch Review resetはIssue、Comment、Walkthrough、review recordとBranch専用retained ref候補をpreviewし、
   `--yes`後にBranch固有状態とそのreview IDのrefだけを削除する。再openは新しいIDの空reviewを作り、失敗した
-  旧resetのorphan refを証拠として継承しない。
+  旧resetのorphan refを証拠として継承しない。browserでreset成功後の再openだけが失敗した場合はreset完了と
+  再作成失敗を分けて表示し、repository pathと`rvw branch open`による復旧を案内する。
 - Branch Review WalkthroughとCommentを既存URI/CLIで扱い、watcherは明示contextでbatchしてread-only調査後の
   最終replyだけを冪等に記録し、そのpost eventをdurableにself-suppressできる。
 - Branch Issue range comment draftはbackground sync中も本文とfocusを保持し、Issue本文変更時はdraftを失わず
