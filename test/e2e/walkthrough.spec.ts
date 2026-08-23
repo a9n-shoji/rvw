@@ -1523,10 +1523,12 @@ test("comments on selected walkthrough lines and marks them Outdated after repla
   });
   await expect(inlineLineComment).toBeVisible();
   await expect(inlineLineComment.getByText("L5", { exact: true })).toBeVisible();
+  const neutralHoverTarget = page.getByRole("heading", { name: "注文作成フローの全体像" });
+  await neutralHoverTarget.hover();
   await expect(explanationLine).not.toHaveClass(/rvw-markdown-commented/);
   await inlineLineComment.locator(".comment-thread").hover();
   await expect(explanationLine).toHaveClass(/rvw-markdown-commented/);
-  await page.getByRole("heading", { name: "注文作成フローの全体像" }).hover();
+  await neutralHoverTarget.hover();
   await expect(explanationLine).not.toHaveClass(/rvw-markdown-commented/);
 
   const inlineCommentId = await inlineLineComment
