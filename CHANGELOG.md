@@ -106,6 +106,14 @@
 - PR resetの返却用commit一覧を破壊的SQLite transaction前に取得し、後続Git read失敗をreset失敗と誤報しないよう修正
 - final SQLite CASでstaleになったBranch reset previewが古いReview metadataを返す問題を修正
 
+## [0.2.4] - 2026-08-24
+
+### Changed
+
+- `rvw-watch-comments`のinvestigate-and-reply専用taskで、同じPR／repositoryの後続batchもworker capacity内で
+  並列に調査・返信。保証できる場合は`max-in-flight=8`を目標とし、fix-and-pushを許可したtaskだけ従来の
+  writer排他を維持
+
 ## [0.2.3] - 2026-08-21
 
 ### Added
