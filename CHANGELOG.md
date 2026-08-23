@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-08-24
+
 ### Changed
 
 - `rvw-watch-comments`のinvestigate-and-reply専用taskで、同じPR／repositoryの後続batchもworker capacity内で
