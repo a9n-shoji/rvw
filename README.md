@@ -313,7 +313,9 @@ pending markerだけを最大5秒待ち、明示的な初期化失敗や通常ro
 `LOCAL_STATE_INCONSISTENT`としてfail closedします。同時初回openで別processが
 先にrowを作成した場合、後続processはそのrowを更新しません。後続processがaggregate発見前に取得したsnapshotは破棄し、
 winnerのowned refを確認してgenerationを確保した後にGitHub metadataを再取得し、expected review ID付きでsourceを
-進めます。reset中の初期化processが遅れて作成したrefは、そのaggregateが消えていればexact refだけをbest-effortで削除します。
+進めます。initialization markerが既に消えた後の遅延completionは、sourceが進んでいても冪等です。
+retained refの初回作成はGit compare-and-swapで単一のcreatorだけを記録します。補償削除は対象aggregateが
+消えた場合のexact refに限定し、sourceが進んだだけでhistorical evidenceを削除しません。
 既存reviewのsource同期は開始時にgenerationを確保し、ref作成後も同じgenerationのときだけsourceまたはsync errorを
 公開します。古い同期responseは新しい同期済みsourceを巻き戻しません。GitHub metadata取得後のfetch中にdefault branchが
 進んだ場合はlocal corruptionとせず、metadataとOIDの組を一度だけ再取得します。
@@ -326,8 +328,9 @@ requestと照合し、rename、transfer、redirect相当のidentity不一致をc
 `GITHUB_ISSUE_ERROR`として拒否します。accepted successごとに内部cache generationを増やし、成功後に遅れた失敗は
 取得開始時のgenerationが変わっていればcacheをstaleに戻しません。実在するmembershipのIssueごとの部分失敗は
 CLI／HTTP responseに加え、PR／Branch viewerの同期結果にもwarningとして表示し、top barでは先頭3件と残件数に省略します。
-comment replyのidempotency keyはReview種別をまたぐdatabase-wide keyspaceであり、request hashにもReview種別を含めて
-別のPR／Branch payloadへの再利用を拒否します。
+comment replyのidempotency keyはReview種別をまたぐdatabase-wide keyspaceです。未公開のBranch replyは
+request hashにReview種別を含めますが、PR replyは公開済み0.2.xの永続ledgerをexact retryできるよう従来のhash形式を
+維持します。同じkeyを別payloadや別Reviewで再利用すると`IDEMPOTENCY_CONFLICT`で拒否します。
 
 `--stdin` commandはEOFまでJSONを読みます。改行だけでは終了しないため、processから呼ぶ場合は送信後に
 stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの

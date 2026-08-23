@@ -74,6 +74,10 @@ transaction discovers a concurrently created row, it returns that row unchanged.
 the winner's owned source, discards metadata fetched before discovering that aggregate, allocates a
 generation, and only then fetches a fresh snapshot for retain-before-publish. If reset wins while initial ref creation is paused, a
 later completion failure removes only the exact ref created by that attempt on a best-effort basis.
+Once another opener has cleared the initialization marker, a delayed completion is idempotent even if
+the aggregate source has advanced. Exact ref creation uses Git compare-and-swap so only one concurrent
+creator reports ownership. Compensation removes that ref only when the aggregate ID no longer exists;
+a source mismatch alone never deletes historical evidence that comments or walkthroughs may reference.
 Every existing-source attempt allocates a monotonically increasing generation before network access.
 Only that generation may publish its retained OID or sync error, so an older response cannot roll back
 a newer success. A default branch that moves between repository metadata and fetch is retried once as

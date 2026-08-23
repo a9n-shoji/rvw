@@ -374,7 +374,11 @@ export class BranchReviewLifecycle {
         );
       } catch (error) {
         const current = this.database.getBranchReview(branchReview.id);
-        if (retained.created && (!current || current.sourceOid !== github.defaultBranchOid)) {
+        // `created` only describes this Git command. Once the aggregate still exists, another
+        // opener or a later artifact may already rely on this exact historical source. Source
+        // advancement is therefore never a reason to compensate the ref; only aggregate removal
+        // makes this initializer-owned namespace orphaned.
+        if (retained.created && !current) {
           await this.git
             .deleteRef(repository.worktreePath, retained.ref, github.defaultBranchOid)
             .catch(() => undefined);
@@ -474,7 +478,10 @@ export class BranchReviewLifecycle {
         { expectedBranchReviewId, expectedSourceSyncGeneration },
       ).branchReview;
     } catch (error) {
-      if (retained.created) {
+      // A stale source attempt may have created a ref that a concurrent artifact now references.
+      // Keep all evidence while this aggregate exists; compensate only after the expected
+      // aggregate itself disappeared (for example, a concurrent reset).
+      if (retained.created && !this.database.getBranchReview(expectedBranchReviewId)) {
         await this.git
           .deleteRef(repository.worktreePath, retained.ref, github.defaultBranchOid)
           .catch(() => undefined);

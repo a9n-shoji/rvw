@@ -456,41 +456,62 @@ export class GitClient {
     return `refs/rvw/branch/${branchReviewId.toLowerCase()}/commits/oid-${oid.toLowerCase()}`;
   }
 
+  private async ensureExactCommitRef(
+    cwd: string,
+    ref: string,
+    oid: string,
+  ): Promise<EnsuredCommitRef> {
+    const readRef = async () => {
+      const result = await runProcess("git", ["show-ref", "--verify", "--hash", ref], {
+        cwd,
+        allowExitCodes: [1, 128],
+      });
+      return result.exitCode === 0 ? result.stdout.toString("utf8").trim() : null;
+    };
+    const existing = await readRef();
+    if (existing !== null) {
+      if (existing !== oid) {
+        throw new RvwError("LOCAL_STATE_INCONSISTENT", `Git ref ${ref} のOIDが不正です。`);
+      }
+      return { ref, created: false };
+    }
+
+    // Supplying the all-zero old value makes creation compare-and-swap atomic. Concurrent
+    // creators can no longer both claim ownership of the same ref for later compensation.
+    const created = await runProcess("git", ["update-ref", ref, oid, "0".repeat(oid.length)], {
+      cwd,
+      allowExitCodes: [1, 128],
+    });
+    if (created.exitCode === 0) return { ref, created: true };
+
+    const raced = await readRef();
+    if (raced === oid) return { ref, created: false };
+    if (raced !== null) {
+      throw new RvwError("LOCAL_STATE_INCONSISTENT", `Git ref ${ref} のOIDが不正です。`);
+    }
+    throw new RvwError("PROCESS_FAILED", `Git ref ${ref} を作成できませんでした。`, {
+      status: 500,
+      details: {
+        ref,
+        oid,
+        exitCode: created.exitCode,
+        stderr: created.stderr.toString("utf8").trim(),
+      },
+    });
+  }
+
   async ensureBranchCommitRef(
     cwd: string,
     branchReviewId: string,
     oid: string,
   ): Promise<EnsuredCommitRef> {
     const ref = this.branchCommitRef(branchReviewId, oid);
-    const existing = await runProcess("git", ["show-ref", "--verify", "--hash", ref], {
-      cwd,
-      allowExitCodes: [1, 128],
-    });
-    if (existing.exitCode === 0) {
-      if (existing.stdout.toString("utf8").trim() !== oid) {
-        throw new RvwError("LOCAL_STATE_INCONSISTENT", `Git ref ${ref} のOIDが不正です。`);
-      }
-      return { ref, created: false };
-    }
-    await runProcess("git", ["update-ref", ref, oid], { cwd });
-    return { ref, created: true };
+    return await this.ensureExactCommitRef(cwd, ref, oid);
   }
 
   async ensureCommitRef(cwd: string, number: number, oid: string): Promise<EnsuredCommitRef> {
     const ref = this.commitRef(number, oid);
-    const existing = await runProcess("git", ["show-ref", "--verify", "--hash", ref], {
-      cwd,
-      allowExitCodes: [1, 128],
-    });
-    if (existing.exitCode === 0) {
-      const value = existing.stdout.toString("utf8").trim();
-      if (value !== oid) {
-        throw new RvwError("LOCAL_STATE_INCONSISTENT", `Git ref ${ref} のOIDが不正です。`);
-      }
-      return { ref, created: false };
-    }
-    await runProcess("git", ["update-ref", ref, oid], { cwd });
-    return { ref, created: true };
+    return await this.ensureExactCommitRef(cwd, ref, oid);
   }
 
   async deleteRef(cwd: string, ref: string, expectedOid: string): Promise<void> {

@@ -1,6 +1,8 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RvwService } from "../../src/application/rvw-service.js";
 import { formatCommentWatchCursor } from "../../src/domain/comment-watch-cursor.js";
@@ -1716,6 +1718,155 @@ describe("RvwService commit workflow", () => {
         idempotencyKey: "watch-task:comment-1",
       }),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_RESULT_DELETED" });
+  });
+
+  it("reuses durable 0.2.x PR reply idempotency hashes after migration", async () => {
+    const repository = createGitRepository("rvw-pr-idempotency-migration-");
+    const base = git(repository, "rev-parse", "HEAD");
+    git(repository, "switch", "-c", "feature");
+    const firstHead = commitFile(repository, "src.txt", "migration\n", "migration fixture");
+    const fake = new FakeGitHub(openPr(base, firstHead));
+    const fixtureDirectory = mkdtempSync(path.join(os.tmpdir(), "rvw-pr-legacy-ledger-"));
+    const legacyMigrationsDirectory = path.join(fixtureDirectory, "migrations");
+    mkdirSync(legacyMigrationsDirectory);
+    const migrationFiles = [
+      "001_initial.sql",
+      "002_commit_model.sql",
+      "003_editable_comment_posts.sql",
+      "004_walkthroughs.sql",
+      "005_walkthrough_comments.sql",
+      "006_theme_preference.sql",
+      "007_file_level_walkthrough_references.sql",
+      "008_walkthrough_line_comments.sql",
+      "009_comment_watch.sql",
+      "010_comment_post_references.sql",
+    ];
+    for (const filename of migrationFiles) {
+      writeFileSync(
+        path.join(legacyMigrationsDirectory, filename),
+        readFileSync(path.join("migrations", filename)),
+      );
+    }
+    const dbFile = path.join(fixtureDirectory, "rvw.db");
+    const legacyDatabase = new RvwDatabase({
+      filePath: dbFile,
+      migrationsDirectory: legacyMigrationsDirectory,
+    });
+    const repositoryContext = await new GitClient().repositoryContext(repository);
+    const pullRequest = legacyDatabase.upsertPullRequest(
+      fake.pullRequest,
+      {
+        localRepositoryPath: repositoryContext.worktreePath,
+        gitCommonDir: repositoryContext.gitCommonDir,
+      },
+      base,
+    );
+    legacyDatabase.close();
+
+    const directCommentId = "11111111-1111-4111-8111-111111111111";
+    const syncCommentId = "22222222-2222-4222-8222-222222222222";
+    const directReplyId = "33333333-3333-4333-8333-333333333333";
+    const syncReplyId = "44444444-4444-4444-8444-444444444444";
+    const directBody = "Durable direct reply";
+    const syncBody = "Durable sync reply";
+    const directKey = "released-0.2.x-direct-key";
+    const syncKey = "released-0.2.x-sync-key";
+    const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+    const now = "2026-08-20T00:00:00.000Z";
+    const raw = new DatabaseSync(dbFile);
+    const insertComment = raw.prepare(
+      `INSERT INTO comments(
+        id, pull_request_id, created_head_oid, resolved_at, created_at, updated_at
+      ) VALUES (?, ?, ?, NULL, ?, ?)`,
+    );
+    const insertPost = raw.prepare(
+      `INSERT INTO comment_posts(
+        id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const legacyComments: Array<[string, string, string]> = [
+      [directCommentId, "55555555-5555-4555-8555-555555555555", "Direct retry target"],
+      [syncCommentId, "66666666-6666-4666-8666-666666666666", "Sync retry target"],
+    ];
+    for (const [commentId, rootId, rootBody] of legacyComments) {
+      insertComment.run(commentId, pullRequest.id, firstHead, now, now);
+      raw
+        .prepare("INSERT INTO comment_targets(comment_id, target_kind) VALUES (?, ?)")
+        .run(commentId, "pull_request");
+      insertPost.run(rootId, commentId, rootBody, null, null, 1, now, now);
+    }
+    insertPost.run(directReplyId, directCommentId, directBody, null, null, 0, now, now);
+    insertPost.run(syncReplyId, syncCommentId, syncBody, firstHead, "Codex", 0, now, now);
+    const insertEvent = raw.prepare(
+      `INSERT INTO comment_post_events(post_id, comment_ref, pull_request_url, created_at)
+       VALUES (?, ?, ?, ?)`,
+    );
+    insertEvent.run(directReplyId, `rvw://comment/${directCommentId}`, pullRequest.url, now);
+    insertEvent.run(syncReplyId, `rvw://comment/${syncCommentId}`, pullRequest.url, now);
+    const insertLedger = raw.prepare(
+      "INSERT INTO comment_reply_idempotency(key_hash, request_hash, post_id, created_at) VALUES (?, ?, ?, ?)",
+    );
+    insertLedger.run(
+      sha256(directKey),
+      sha256(
+        JSON.stringify({
+          operation: "comment.reply",
+          commentId: directCommentId,
+          body: directBody,
+          relatedCommitOid: null,
+          authorLabel: null,
+          references: [],
+        }),
+      ),
+      directReplyId,
+      now,
+    );
+    insertLedger.run(
+      sha256(syncKey),
+      sha256(
+        JSON.stringify({
+          operation: "pr.sync.comment-update",
+          commentId: syncCommentId,
+          reply: syncBody,
+          resolve: false,
+          authorLabel: "Codex",
+          references: [],
+        }),
+      ),
+      syncReplyId,
+      now,
+    );
+    raw.close();
+
+    const database = new RvwDatabase({ filePath: dbFile, migrationsDirectory: "./migrations" });
+    databases.push(database);
+    const service = new RvwService(database, new GitClient(), fake);
+    const eventSequence = database.getLatestCommentPostEventSequence();
+
+    await expect(
+      service.replyToComment(`rvw://comment/${directCommentId}`, {
+        body: directBody,
+        idempotencyKey: directKey,
+      }),
+    ).resolves.toMatchObject({ id: directReplyId });
+    const synced = await service.syncPullRequest({
+      pullRequest: fake.pullRequest.url,
+      commentUpdates: [
+        {
+          commentRef: `rvw://comment/${syncCommentId}`,
+          reply: syncBody,
+          resolve: false,
+          authorLabel: "Codex",
+          idempotencyKey: syncKey,
+        },
+      ],
+    });
+
+    expect(synced.commentUpdatesApplied).toBe(1);
+    expect(database.listCommentPosts(directCommentId)).toHaveLength(2);
+    expect(database.listCommentPosts(syncCommentId)).toHaveLength(2);
+    expect(database.listCommentPosts(syncCommentId)[1]).toMatchObject({ id: syncReplyId });
+    expect(database.getLatestCommentPostEventSequence()).toBe(eventSequence);
   });
 
   it("keeps only latest PR markdown and repositions a unique quoted selection", async () => {

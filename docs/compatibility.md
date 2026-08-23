@@ -51,12 +51,15 @@ reset/recreate後のreplacementへフォールスルーしません。初回reta
 取得したsnapshotは破棄し、generation取得後にGitHub metadataを再取得してからexpected ID付きで更新します。
 reset後に遅れて作成された初期refはexact ref単位でbest-effort cleanupされます。既存Issue refreshは削除済みmembershipを
 復活させず、削除済みreviewのerrorを共有cacheへ書かず、削除後のfetch失敗もwarningではなくskipします。
+initialization marker clear後の遅延completionはsource進行後も冪等で、aggregateが存続する限りhistorical refを
+補償削除しません。ref初回作成はGit compare-and-swapで単一creatorだけが所有を返します。
 pending初期化だけを最大5秒待ち、failed markerは直ちにfail closedします。既存source同期はmigration 011の内部generationで
 新しい開始順を守り、古いOIDやerrorを公開しません。metadata取得後にdefault branchが進んだ場合は一度だけsnapshotを
 取り直します。共有Issue cacheはGitHub `updatedAt`をversionとして古い成功を無視し、取得snapshotの変わった古い失敗も
 無視します。失敗CASはmillisecond時刻ではなくaccepted successごとに増える内部generationを使います。
 同じversionで内容が異なるresponseは`GITHUB_ISSUE_ERROR`です。reply idempotency keyはPR／Branch共通の
-database-wide keyspaceで、request hashにもReview種別を含めます。
+database-wide keyspaceです。Branchのrequest hashはReview種別を含み、PRは公開済み0.2.xの永続ledgerと
+exact retry互換のある従来hash形式を維持します。
 GitHub Issue response identity不一致はprotocol共通の
 `GITHUB_ISSUE_ERROR`であり、rename／transferへ自動追従しません。
 

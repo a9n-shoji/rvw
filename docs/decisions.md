@@ -49,7 +49,10 @@ is returned unchanged. The loser verifies the winner's owned source, discards th
 fetched before learning that aggregate's identity, allocates a generation, and fetches fresh metadata
 before retain-before-publish with the winner's expected ID. A completion that discovers reset removed
 the aggregate best-effort deletes only the exact ref that attempt created. This is the sole missing-ref
-exception. Remove the unrestricted Branch upsert entry point so existing source publication cannot
+exception. After the marker has been cleared, delayed completion is idempotent even when a later sync
+has advanced the source. Create exact refs with Git compare-and-swap and compensate only when the
+aggregate ID is gone; never delete historical evidence merely because the current source changed.
+Remove the unrestricted Branch upsert entry point so existing source publication cannot
 bypass the generation boundary. Validate fetched GitHub Issue
 owner/repository/number/canonical URL both in the concrete client and at the replaceable application
 port boundary before any cache or membership write.
@@ -74,7 +77,8 @@ wall-clock `fetchedAt` is observability data, not a CAS token. The error therefo
 of the current shared cache, not a membership-specific failure. Surface per-Issue failures in both PR
 and Branch viewers, limiting top-bar detail to three Issues plus the remaining count. Use the existing
 durable reply ledger as one database-wide public idempotency-key namespace for both review kinds,
-including the review kind in its request hash, rather than adding a second Branch ledger.
+but preserve the published 0.2.x PR request-hash shape so an exact retry can reuse its durable result.
+Include the review kind in the unreleased Branch request hash rather than adding a second Branch ledger.
 
 ### Trade-offs
 

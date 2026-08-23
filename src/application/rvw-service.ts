@@ -1226,7 +1226,6 @@ export class RvwService {
           : {
               idempotencyRequestHash: idempotencyRequestHash({
                 operation: "pr.sync.comment-update",
-                reviewKind: "pull-request",
                 commentId,
                 reply: update.reply,
                 resolve: update.resolve,
@@ -3194,7 +3193,6 @@ export class RvwService {
           : {
               idempotencyRequestHash: idempotencyRequestHash({
                 operation: "comment.reply",
-                reviewKind: "pull-request",
                 commentId: id,
                 body,
                 relatedCommitOid: input.relatedCommitOid ?? null,

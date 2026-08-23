@@ -169,6 +169,9 @@ winner-owned source, and discards the snapshot fetched before discovering the ag
 allocates a source generation, fetches fresh GitHub metadata, and publishes with the expected aggregate
 ID. If reset deletes the row before an initial attempt completes, only the exact ref newly created by
 the delayed attempt is best-effort removed.
+After another opener clears the initialization marker, delayed completion is idempotent even when a
+newer sync has advanced the source. Exact ref creation uses Git compare-and-swap; compensation deletes
+only when the aggregate ID is absent, never merely because its current source differs.
 Normal reads still reject a missing ref. Existing-source attempts allocate a generation before network
 access and publish the retained OID or error only when that generation is current. A default branch
 move detected between metadata and fetch retries the metadata/OID snapshot once. HTTP ID-bound operations keep the

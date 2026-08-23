@@ -82,7 +82,9 @@
 - Issue failure CASをmillisecond `fetchedAt`から内部cache generationへ変更し、同時刻の新しい成功をstale化しないよう修正
 - browser reset成功後に再openだけが失敗した場合、reset失敗と区別して明示的な`rvw branch open`復旧を表示
 - PR／Branch viewerのIssue同期warningを先頭3件と残件数に省略し、top barの肥大化を防止
-- comment reply idempotency request hashへReview種別を追加
+- 初期化完了後にsourceが進んでも、遅延initializerがhistorical retained refを削除しないよう修正
+- retained refの初回作成をGit compare-and-swapにし、同時作成の所有判定を1件に限定
+- Branch comment replyのrequest hashへReview種別を追加しつつ、公開済み0.2.xのPR reply hashを維持
 
 ## [0.2.3] - 2026-08-21
 

@@ -2154,6 +2154,90 @@ describe("Branch Review", () => {
     ).resolves.toBe(true);
   });
 
+  it("keeps historical evidence when a delayed initializer finishes after source advancement", async () => {
+    const repositoryPath = createGitRepository("rvw-branch-delayed-initializer-");
+    const sourceX = git(repositoryPath, "rev-parse", "HEAD");
+    const sourceY = commitFile(repositoryPath, "later.txt", "later\n", "advance source");
+    const baseRepository = {
+      host: "github.com" as const,
+      owner: "acme",
+      repository: "review-repo",
+      canonicalName: "acme/review-repo",
+      defaultBranchName: "main",
+    };
+    const filePath = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-branch-delayed-initializer-db-")),
+      "rvw.db",
+    );
+    const delayedDatabase = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    const currentDatabase = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    databases.push(delayedDatabase, currentDatabase);
+    const delayedGit = new PauseBranchRefForOidGitClient(sourceX);
+    delayedGit.barrier.arm();
+    const delayedService = new RvwService(
+      delayedDatabase,
+      delayedGit,
+      new BranchGitHub({ ...baseRepository, defaultBranchOid: sourceX }),
+    );
+    const currentGithub = new BranchGitHub({ ...baseRepository, defaultBranchOid: sourceX });
+    const currentService = new RvwService(currentDatabase, new GitClient(), currentGithub);
+
+    const delayedOpen = delayedService.openBranchReview(repositoryPath);
+    await delayedGit.barrier.waitUntilBlocked();
+    const pending = delayedDatabase.findBranchReviewByIdentity("acme", "review-repo");
+    expect(pending).toMatchObject({
+      sourceOid: sourceX,
+      sourceSyncError: BRANCH_REVIEW_INITIALIZATION_PENDING,
+    });
+
+    const initialized = await currentService.openBranchReview(repositoryPath);
+    expect(initialized.branchReview).toMatchObject({
+      id: pending!.id,
+      sourceOid: sourceX,
+      sourceSyncError: null,
+    });
+    const comment = await currentService.createBranchComment({
+      branchReviewId: initialized.branchReview.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: sourceX,
+        path: "README.md",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "This thread owns the initial exact source.",
+    });
+
+    currentGithub.repository = { ...baseRepository, defaultBranchOid: sourceY };
+    await expect(currentService.syncBranchReview(repositoryPath)).resolves.toMatchObject({
+      branchReview: { id: initialized.branchReview.id, sourceOid: sourceY },
+    });
+    delayedGit.barrier.release();
+
+    await expect(delayedOpen).resolves.toMatchObject({
+      branchReview: { id: initialized.branchReview.id, sourceOid: sourceY },
+    });
+    await expect(
+      delayedGit.verifyBranchCommitRef(repositoryPath, initialized.branchReview.id, sourceX),
+    ).resolves.toBe(true);
+    await expect(
+      delayedGit.verifyBranchCommitRef(repositoryPath, initialized.branchReview.id, sourceY),
+    ).resolves.toBe(true);
+    await expect(currentService.getAnyCommentReviewContext(comment.ref)).resolves.toMatchObject({
+      context: { kind: "branch", branchReviewId: initialized.branchReview.id },
+      exactSource: { sourceOid: sourceX, availability: "available" },
+    });
+    await expect(
+      currentService.getBranchDocument({
+        kind: "repository-file",
+        branchReviewId: initialized.branchReview.id,
+        sourceOid: sourceX,
+        path: "README.md",
+      }),
+    ).resolves.toMatchObject({ availability: "available" });
+  });
+
   it("publishes only the newest started Branch source sync", async () => {
     const { repositoryPath, github, database, service } = setup();
     const opened = await service.openBranchReview(repositoryPath);

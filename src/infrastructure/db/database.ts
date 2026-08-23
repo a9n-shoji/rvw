@@ -1013,6 +1013,14 @@ export class RvwDatabase {
           status: 404,
         });
       }
+      const initializing =
+        current.sourceSyncError === BRANCH_REVIEW_INITIALIZATION_PENDING ||
+        current.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED);
+      // Another opener may already have completed initialization and a later source sync may have
+      // advanced the aggregate. Completion is idempotent once the marker is gone: the delayed
+      // initializer must not treat the newer source as inconsistent or compensate its historical
+      // retained ref away.
+      if (!initializing) return;
       if (current.sourceOid !== sourceOid) {
         throw new RvwError(
           "LOCAL_STATE_INCONSISTENT",
@@ -1026,12 +1034,6 @@ export class RvwDatabase {
             },
           },
         );
-      }
-      if (
-        current.sourceSyncError !== BRANCH_REVIEW_INITIALIZATION_PENDING &&
-        !current.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED)
-      ) {
-        return;
       }
       this.database
         .prepare(
@@ -2447,7 +2449,6 @@ export class RvwDatabase {
             hashIdempotencyKey(
               JSON.stringify({
                 operation: "comment.reply",
-                reviewKind: "pull-request",
                 commentId,
                 body: input.body,
                 relatedCommitOid,

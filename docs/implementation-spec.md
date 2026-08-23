@@ -1217,6 +1217,8 @@ CREATE TABLE walkthrough_references (
 
 `comment_reply_idempotency`というtable名はmigration 009由来だが、このledgerはprotocol v4で
 Pull Request／Branch Review replyの双方が共有するdatabase-wide keyspaceである。
+Branch replyのrequest hashはreview kindを含む。PR replyは公開済み0.2.xが保存した
+`comment.reply`と`pr.sync.comment-update`のhash形式を維持し、migration後もexact retryで既存postを返す。
 
 Branch ReviewとIssue追加migrationは、canonical Issue cacheの`github_issues`、実owner FKを持つ
 `pull_request_issues` / `branch_review_issues`、nativeなPR `comment_targets.target_kind = issue`、repository
@@ -1395,6 +1397,10 @@ Issue removalその他のdestructive操作へ広げない。
 既存aggregateのsource同期はGitHubアクセス前に`source_sync_generation`を増やす。candidate ref作成後のsource公開と
 sync error保存はexpected review IDと同じgenerationを一つのimmediate transactionで再検証し、古い試行は新しい
 source、location、error、change sequenceを変更しない。
+初期retained ref作成はall-zero old OIDを指定したGit `update-ref`のcompare-and-swapで行い、
+同時作成時には1件だけが`created: true`を得る。initialization marker clear後のcompletionは冪等とし、
+後続syncでsourceが進んでいても失敗にしない。補償削除はexpected aggregate IDが存在しない場合だけとし、
+source不一致を根拠にhistorical evidenceを削除しない。
 
 ## 12. Server / security
 
