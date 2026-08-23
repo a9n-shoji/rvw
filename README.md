@@ -305,12 +305,17 @@ evidenceの情報であり、削除対象ではありません。返却された
 artifactを削除します。同じIssueを利用する別reviewのmembership、Comment、共有Issue cacheは残ります。
 確認後にartifactが変わった場合は、service確認と最終SQLite CASのどちらで競合を検出しても
 `DESTRUCTIVE_PREVIEW_STALE` (409)と最新previewを返し、再確認を要求します。
+Branch resetの最新previewはReview metadataもDBから読み直します。PR resetは返却用commit一覧をSQLite削除前に読み、
+そのGit readが失敗した場合はartifactを保持します。
 最後のmembershipまたはresetでownerがなくなった共有Issue cache rowは同じtransactionでGCします。ほかのReviewが
 所有しているcacheの同一version競合は、`issue.cacheRepair` capabilityを確認した上で、
 `pr issue refresh --force`または`branch issue refresh --force`がGitHubから
 二回連続で同じidentity／snapshotを確認した場合だけ明示repairできます。同期失敗は共有content rowではなく
 各review membershipへ保存されます。repair開始後に別の同期がcache generationを進めた場合は、古いrepairを
 409で拒否します。
+IssueへのComment作成はtarget検証後にもSQLite transaction内で対象Reviewのmembershipを再確認します。並行して
+membershipが削除された場合は、別Reviewが共有Issue cacheを保持していても`ISSUE_NOT_FOUND` (404)となり、遅延した
+Comment、post、watch eventを保存しません。
 これらのBranch preview／削除、`branch comments`、`branch sync`はexisting-onlyで、未登録repositoryに
 Branch Review、DB row、retained refを暗黙作成しません。作成を許すのは`branch open`と明示的な
 `branch issue add`だけです。

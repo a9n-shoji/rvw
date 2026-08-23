@@ -210,6 +210,9 @@ All reset, Issue-removal, and Walkthrough-deletion executions recheck the previe
 SQLite mutation. A changed review returns `DESTRUCTIVE_PREVIEW_STALE` (409) with the current preview and
 does not delete newly added artifacts. This response shape is identical when the service-layer check
 passes but the final SQLite sequence CAS detects the race.
+The returned current Branch reset preview is rebuilt from the latest aggregate metadata. PR reset
+reads its response commit list before the destructive SQLite transaction; a Git-read failure leaves
+the reviewed artifacts unchanged rather than reporting a post-commit reset failure.
 
 An Issue reference is `#142`, `owner/repository#142`, or a canonical GitHub Issue URL. Only an actual
 Issue in the review repository is accepted; a Pull Request or cross-repository reference fails. Adding
@@ -238,8 +241,11 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-`comment create` records one new unresolved thread for an explicit Pull Request or Branch Review. Its
-stdin value is:
+`comment create` records one new unresolved thread for an explicit Pull Request or Branch Review. An
+Issue target must still belong to that Review when the SQLite write begins. If membership removal wins
+after target validation, creation returns `ISSUE_NOT_FOUND` (404) and inserts no Comment, post, target,
+watch event, or sequence change, even when another Review keeps the shared Issue cache alive. Its stdin
+value is:
 
 ```json
 {

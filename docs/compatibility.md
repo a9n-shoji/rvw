@@ -77,6 +77,9 @@ confirmation tokenを必須とします。stale tokenは`DESTRUCTIVE_PREVIEW_STA
 最終SQLite CASで検出した競合でも同じshapeを維持し、新しいartifactを削除しません。PR resetは既存
 historical refsを削除せずpreserved情報として返します。Branch DB deletion後のref cleanup失敗はtyped partial successで、削除済み
 aggregateへ戻らず隔離prefixを報告します。
+Issue-target Commentは作成transactionでもReview membershipを再確認し、並行削除後は共有cacheが別Reviewに
+残っていても`ISSUE_NOT_FOUND` (404)となります。PR resetは返却用commit一覧をSQLite削除前に読み、Git read失敗時は
+artifactを削除しません。最終CASでstaleになったBranch resetのcurrent previewは最新のReview metadataも返します。
 
 Issue本文cacheとmembership固有sync stateは別型／別getterです。`comment get`は所有membershipのstale状態を
 返し、Walkthrough `issuesToAdd`の正常取得は既存membershipのsync errorをclearします。

@@ -3077,11 +3077,13 @@ export class RvwService {
     confirmationToken: string;
     confirmationRequired: true;
   }> {
-    const { branchReview, repository } = resolved;
-    const prefix = `refs/rvw/branch/${branchReview.id.toLowerCase()}/commits/`;
+    const branchReviewId = resolved.branchReview.id;
+    const { repository } = resolved;
+    const prefix = `refs/rvw/branch/${branchReviewId.toLowerCase()}/commits/`;
     const retainedRefs = await this.git.listRefsByPrefix(repository.worktreePath, prefix);
-    const counts = this.database.getBranchResetCounts(branchReview.id, retainedRefs.length);
-    const reviewChangeSequence = this.database.getReviewChangeSequence("branch", branchReview.id);
+    const branchReview = this.getBranchReview(branchReviewId);
+    const counts = this.database.getBranchResetCounts(branchReviewId, retainedRefs.length);
+    const reviewChangeSequence = this.database.getReviewChangeSequence("branch", branchReviewId);
     return {
       branchReview,
       counts,
@@ -4001,6 +4003,11 @@ export class RvwService {
     const currentPreview = await this.getResetPreview(pullRequestId);
     assertDestructiveConfirmation(confirmationToken, currentPreview);
     await this.git.ensureCommitRef(repository.worktreePath, github.number, github.headOid);
+    const commits = await this.git.commits(
+      repository.worktreePath,
+      comparisonBaseOid,
+      github.headOid,
+    );
     try {
       const pullRequest = this.database.resetPullRequest(
         github,
@@ -4013,7 +4020,7 @@ export class RvwService {
       );
       return {
         pullRequest,
-        commits: await this.git.commits(repository.worktreePath, comparisonBaseOid, github.headOid),
+        commits,
         deleted: preview.counts,
       };
     } catch (error) {

@@ -2370,9 +2370,12 @@ export class RvwDatabase {
     const now = new Date().toISOString();
     const id = randomUUID();
     const postId = randomUUID();
-    const pullRequest = this.getPullRequest(input.pullRequestId);
-    if (!pullRequest) throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
     this.immediateTransaction(() => {
+      const pullRequest = this.getPullRequest(input.pullRequestId);
+      if (!pullRequest) {
+        throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。", { status: 404 });
+      }
+      this.assertReviewOwnsCommentTargetIssue("pull-request", pullRequest.id, input.target);
       this.database
         .prepare(
           "INSERT INTO comments(id, pull_request_id, created_head_oid, resolved_at, created_at, updated_at) VALUES (?, ?, ?, NULL, ?, ?)",
@@ -2404,6 +2407,18 @@ export class RvwDatabase {
     const comment = this.getComment(id);
     if (!comment) throw new RvwError("DATABASE_ERROR", "保存したコメントを読み出せません。");
     return comment;
+  }
+
+  private assertReviewOwnsCommentTargetIssue(
+    reviewKind: "pull-request" | "branch",
+    reviewId: string,
+    target: CommentTarget | BranchCommentTarget,
+  ): void {
+    if (target.kind !== "issue") return;
+    if (this.hasReviewIssue(reviewKind, reviewId, target.issueId)) return;
+    throw new RvwError("ISSUE_NOT_FOUND", "このreviewにIssueが登録されていません。", {
+      status: 404,
+    });
   }
 
   private insertCommentTarget(commentId: string, target: CommentTarget): void {
@@ -3237,6 +3252,7 @@ export class RvwDatabase {
           status: 404,
         });
       }
+      this.assertReviewOwnsCommentTargetIssue("branch", branch.id, input.target);
       this.database
         .prepare(
           `INSERT INTO branch_comments(

@@ -158,6 +158,20 @@ class PausePullRequestRefGitClient extends GitClient {
   }
 }
 
+class FailNextCommitsGitClient extends GitClient {
+  failNextCommits = false;
+
+  override async commits(cwd: string, oldOid: string, newOid: string) {
+    if (this.failNextCommits) {
+      this.failNextCommits = false;
+      throw new RvwError("PROCESS_FAILED", "injected git log failure before reset", {
+        status: 500,
+      });
+    }
+    return await super.commits(cwd, oldOid, newOid);
+  }
+}
+
 function githubIssue(
   number: number,
   body = `Issue ${number} body`,
@@ -548,6 +562,66 @@ describe("RvwService commit workflow", () => {
     );
   });
 
+  it("does not create a PR Issue comment after its membership is concurrently removed", async () => {
+    const { repository, base, fake, database, service } = setup(
+      "rvw-pr-issue-comment-membership-race-",
+    );
+    const fetchedIssue = githubIssue(142);
+    fake.issues.set(142, fetchedIssue);
+    const opened = await service.openPullRequest(undefined, repository);
+    const added = await service.addPullRequestIssue(opened.pullRequest.url, "#142");
+    const otherPullRequest = database.upsertPullRequest(
+      {
+        ...fake.pullRequest,
+        number: 8,
+        url: "https://github.com/acme/review-repo/pull/8",
+        title: "Other Issue owner",
+      },
+      {
+        localRepositoryPath: repository,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      base,
+    );
+    database.addReviewIssue("pull-request", otherPullRequest.id, fetchedIssue);
+    const eventSequence = database.getLatestCommentPostEventSequence();
+    let sequenceAfterRemoval = -1;
+    const createComment = database.createComment.bind(database);
+    vi.spyOn(database, "createComment").mockImplementationOnce(
+      (...args: Parameters<RvwDatabase["createComment"]>) => {
+        database.removeReviewIssue(
+          "pull-request",
+          opened.pullRequest.id,
+          added.issue.id,
+          database.getReviewChangeSequence("pull-request", opened.pullRequest.id),
+        );
+        sequenceAfterRemoval = database.getReviewChangeSequence(
+          "pull-request",
+          opened.pullRequest.id,
+        );
+        return createComment(...args);
+      },
+    );
+
+    await expect(
+      service.createComment({
+        pullRequestId: opened.pullRequest.id,
+        target: { kind: "issue", issue: "#142", startLine: null, endLine: null },
+        body: "Must not outlive the membership checked by the application layer.",
+      }),
+    ).rejects.toMatchObject({ code: "ISSUE_NOT_FOUND", status: 404 });
+    expect(database.hasReviewIssue("pull-request", opened.pullRequest.id, added.issue.id)).toBe(
+      false,
+    );
+    expect(database.hasReviewIssue("pull-request", otherPullRequest.id, added.issue.id)).toBe(true);
+    expect(database.getIssue(added.issue.id)).not.toBeNull();
+    expect(database.listComments(opened.pullRequest.id)).toEqual([]);
+    expect(database.listCommentPostEvents(eventSequence, 10)).toEqual([]);
+    expect(database.getReviewChangeSequence("pull-request", opened.pullRequest.id)).toBe(
+      sequenceAfterRemoval,
+    );
+  });
+
   it("uses commits as history, keeps PR markdown latest, syncs comment updates, and resets", async () => {
     const { repository, base, firstHead, fake, service } = setup();
     const opened = await service.openPullRequest(undefined, repository);
@@ -876,6 +950,34 @@ describe("RvwService commit workflow", () => {
     await expect(
       service.git.listRefsByPrefix(repository, `refs/rvw/pr/${opened.pullRequest.number}/`),
     ).resolves.toEqual(refsBefore);
+  });
+
+  it("reads the replacement commit list before applying the destructive PR reset transaction", async () => {
+    const gitClient = new FailNextCommitsGitClient();
+    const { repository, database, service } = setup("rvw-pr-reset-commit-read-failure-", gitClient);
+    const opened = await service.openPullRequest(undefined, repository);
+    const comment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "pull-request" },
+      body: "This state must survive a preflight git log failure.",
+    });
+    const preview = await service.getResetPreview(opened.pullRequest.id);
+    const sequenceBeforeReset = database.getReviewChangeSequence(
+      "pull-request",
+      opened.pullRequest.id,
+    );
+    gitClient.failNextCommits = true;
+
+    await expect(
+      service.resetPullRequest(opened.pullRequest.id, preview.confirmationToken),
+    ).rejects.toMatchObject({
+      code: "PROCESS_FAILED",
+      message: "injected git log failure before reset",
+    });
+    expect(database.getComment(comment.id)).not.toBeNull();
+    expect(database.getReviewChangeSequence("pull-request", opened.pullRequest.id)).toBe(
+      sequenceBeforeReset,
+    );
   });
 
   it("keeps historical PR evidence available to a writer linearized after reset", async () => {

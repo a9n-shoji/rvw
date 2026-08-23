@@ -95,6 +95,9 @@ when another Review still owns a conflicted row, permit explicit force repair on
 GitHub identity/content reads. PR-body direct references remain additions and may be registered again
 by a later refresh. A late fetch failure after membership removal is reported as `membership-removed`,
 not as a stale warning.
+Treat an Issue-target Comment write as another membership-owned mutation: repeat the membership check
+inside the same immediate transaction that inserts the Comment, root post, target, watch event, and
+sequence. A shared cache row retained by another Review is content availability, not ownership.
 
 Fence reset, Issue removal, and Walkthrough deletion with a preview sequence and content-bound
 confirmation token, rechecked in the final SQLite transaction. A stale token returns 409 plus the
@@ -107,6 +110,9 @@ Deleting refs before or after that CAS would either damage a rejected reset or l
 artifact without evidence. Reset therefore ensures the new head ref, performs only the sequence-fenced
 SQLite reset, and exposes existing refs as preserved diagnostics. An eventual GC needs an explicit
 exclusive review-scoped boundary; no background cleanup or two-phase commit is introduced here.
+Read the replacement commit list before the destructive PR SQLite transaction, so a successful reset
+cannot be followed by a Git-read exception reported as an unapplied reset. Rebuild a final-CAS Branch
+stale preview from the current aggregate row rather than the resolver's earlier metadata snapshot.
 
 Order every existing Branch source attempt with an internal generation allocated before network I/O.
 After retaining a candidate, its source metadata and any failure are compare-and-set with the same

@@ -29,6 +29,10 @@ verified cached open. One ordered resolver chooses the GitHub remote (`origin`, 
 both display and fetch, and exposes it through open, the viewer header, and doctor. Doctor classifies
 40-64 digit Branch refs as current, artifact-referenced, unreferenced, or orphan without mutating them. The
 Issue removal transaction deletes only the selected membership and its owned comments/replies.
+Issue-target Comment creation performs the display/range checks in the application layer, then
+rechecks that the same Review still owns the membership inside the Comment insertion transaction.
+Removing a membership between those boundaries therefore wins with `ISSUE_NOT_FOUND`; the shared
+cache remaining for another Review is never sufficient authorization to create the late Comment.
 Background Issue refresh is separate from membership addition: after the GitHub fetch, one immediate
 transaction rechecks the originating review and membership, updates only an existing shared cache row,
 and cannot reinsert a membership removed while the request was in flight. Sync-error writes use the
@@ -108,8 +112,10 @@ that membership's previous error without pretending it was newly added.
 Destructive previews carry the active review sequence and a content-bound confirmation token. Reset,
 Issue removal, and Walkthrough deletion recheck that sequence in their SQLite mutation; stale previews
 return 409 with the current preview even when the final transaction, rather than the preceding service
-check, detects the conflict. PR reset non-destructively ensures the latest head ref, clears SQLite-owned
-artifacts with that CAS, and preserves all historical PR refs. Physical PR-ref reclamation requires a
+check, detects the conflict. The rebuilt Branch preview rereads the current aggregate row as well as
+its sequence, counts, and refs. PR reset non-destructively ensures the latest head ref and reads the
+replacement commit list before its destructive SQLite transaction, then clears SQLite-owned artifacts
+with that CAS and performs no fallible Git reads after it. It preserves all historical PR refs. Physical PR-ref reclamation requires a
 future explicit exclusive GC; reset never races a Comment or Walkthrough writer by deleting evidence.
 When browser reset succeeds
 but the following open fails, the viewer reports reset as complete and

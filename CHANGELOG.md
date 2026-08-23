@@ -102,6 +102,9 @@
 - Walkthrough `issuesToAdd`の正常取得で既存PR／Branch membershipのsync errorをclear
 - doctorで40〜64桁Branch OIDを診断し、review単位のevidence lookupを一回へ集約
 - 表示remoteとGit fetchのorigin-first選択を共通化し、legacy保存pathをverified cached openでrealpathへ更新
+- Issue membership確認後に並行削除されたPR／Branch Issue Commentを、共有cacheのFKだけで作成できるraceを修正
+- PR resetの返却用commit一覧を破壊的SQLite transaction前に取得し、後続Git read失敗をreset失敗と誤報しないよう修正
+- final SQLite CASでstaleになったBranch reset previewが古いReview metadataを返す問題を修正
 
 ## [0.2.3] - 2026-08-21
 

@@ -1245,6 +1245,9 @@ cache更新はGitHub `updatedAt`の非減少を保証し、同一versionのconte
 同じmillisecondに保存された新しいcacheへ古いfailureがerrorを付与できない。
 Issue membership追加と既存membershipのrefreshは別操作とする。refresh成功／失敗はGitHub fetch後のimmediate
 transactionで元reviewとmembershipの存続を再確認し、削除済みならcache、membership、全Reviewのsequenceを変更しない。
+Issue targetのComment作成もapplication層の本文／range検証後、Comment、target、root post、event、sequenceを
+書く同じimmediate transaction内で対象Reviewのmembershipを再確認する。確認後にmembershipが削除されていれば
+`ISSUE_NOT_FOUND` (404)とし、別Reviewが共有cacheを保持していてもCommentを作成しない。
 PR本文に現在も直接含まれるIssueだけは追加操作として扱い、次回refreshで再登録できる。PR／Branch viewerはreview
 sourceの同期成功とIssueごとの部分失敗を区別し、`issueResults`の失敗をresponse-local warningとして表示する。
 top barのdetailは先頭3件と残件数に省略する。
@@ -1332,7 +1335,9 @@ PR／Branch reset、Issue removal、Walkthrough deletionのpreviewはreview chan
 preserved情報として返し、削除件数やtoken対象へ含めない。実行は同じtokenを必須とし、SQLiteの
 mutation transactionでもexpected sequenceを再検証する。変更済みなら`DESTRUCTIVE_PREVIEW_STALE` (409)の
 detailsへ最新previewを返し、利用者へ再確認を要求する。最終SQLite CASで競合を検出した場合もservice層で
-previewを再構築し、同じerror shapeを返す。PR resetはGitHub I/O後、head ref確保前にもtokenを再検証する。
+previewを再構築し、Branch Review metadataを含む同じerror shapeをcurrent rowから返す。PR resetはGitHub I/O後、
+head ref確保前にもtokenを再検証し、commit一覧をSQLite mutation前に取得して、成功したDB reset後へ失敗可能な
+Git readを残さない。
 
 canonical identity検索、Git common directory検索、conflict判定、ID決定、insert/update、review change
 sequence更新は一つの`BEGIN IMMEDIATE`内で行う。canonical owner/repositoryのSQLite一意性も`NOCASE`とし、
@@ -1395,6 +1400,7 @@ CLIによる同一ID更新はpoll後に開いているtabへ反映する。viewe
 
 `rvw pr reset <PR> --yes --confirmation-token <TOKEN>`は対象PRのlocal comments、posts、targets、Issue membership、
 Walkthrough、code referenceを削除し、現在のGitHub状態を同期してcurrent head refをnon-destructiveに確保する。
+再構築後に返すcommit一覧は削除transactionより前に読み、Git readに失敗した場合はSQLite artifactを保持する。
 `refs/rvw/pr/<n>/...`のhistorical refsはimmutable evidenceとして保持し、`counts.gitRefs = 0`とする。削除件数を事前表示し、
 CLIはpreviewのconfirmation tokenと`--yes`を必須とする。不可逆であり、明示的な利用者authorizationなしにAgentが実行しない。
 

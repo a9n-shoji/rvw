@@ -967,6 +967,72 @@ describe("Branch Review", () => {
     );
   });
 
+  it("does not create a Branch Issue comment after its membership is concurrently removed", async () => {
+    const { repositoryPath, sourceOid, github, database, service } = setup();
+    const fetchedIssue = issue(142);
+    github.issues.set(142, fetchedIssue);
+    const opened = await service.openBranchReview(repositoryPath);
+    const added = await service.addBranchIssue(repositoryPath, "#142");
+    const otherPullRequest = database.upsertPullRequest(
+      {
+        host: "github.com",
+        owner: "acme",
+        repository: "review-repo",
+        number: 7,
+        url: "https://github.com/acme/review-repo/pull/7",
+        authorLogin: "reviewer",
+        headRepositoryOwner: "acme",
+        headRepositoryName: "review-repo",
+        title: "Other Issue owner",
+        body: "Review #142.",
+        baseRefName: "main",
+        baseOid: sourceOid,
+        headRefName: "feature",
+        headOid: sourceOid,
+        updatedAt: "2026-08-20T00:00:00.000Z",
+        state: "OPEN",
+        isDraft: false,
+      },
+      {
+        localRepositoryPath: repositoryPath,
+        gitCommonDir: opened.branchReview.gitCommonDir,
+      },
+      sourceOid,
+    );
+    database.addReviewIssue("pull-request", otherPullRequest.id, fetchedIssue);
+    const eventSequence = database.getLatestCommentPostEventSequence();
+    let sequenceAfterRemoval = -1;
+    const createBranchComment = database.createBranchComment.bind(database);
+    vi.spyOn(database, "createBranchComment").mockImplementationOnce(
+      (...args: Parameters<RvwDatabase["createBranchComment"]>) => {
+        database.removeReviewIssue(
+          "branch",
+          opened.branchReview.id,
+          added.issue.id,
+          database.getReviewChangeSequence("branch", opened.branchReview.id),
+        );
+        sequenceAfterRemoval = database.getReviewChangeSequence("branch", opened.branchReview.id);
+        return createBranchComment(...args);
+      },
+    );
+
+    await expect(
+      service.createBranchComment({
+        branchReviewId: opened.branchReview.id,
+        target: { kind: "issue", issue: "#142", startLine: null, endLine: null },
+        body: "Must not outlive the membership checked by the application layer.",
+      }),
+    ).rejects.toMatchObject({ code: "ISSUE_NOT_FOUND", status: 404 });
+    expect(database.hasReviewIssue("branch", opened.branchReview.id, added.issue.id)).toBe(false);
+    expect(database.hasReviewIssue("pull-request", otherPullRequest.id, added.issue.id)).toBe(true);
+    expect(database.getIssue(added.issue.id)).not.toBeNull();
+    expect(database.listBranchComments(opened.branchReview.id)).toEqual([]);
+    expect(database.listCommentPostEvents(eventSequence, 10)).toEqual([]);
+    expect(database.getReviewChangeSequence("branch", opened.branchReview.id)).toBe(
+      sequenceAfterRemoval,
+    );
+  });
+
   it("does not let a deleted Branch Review issue failure update replacement or shared owners", async () => {
     const { repositoryPath, sourceOid, github, database, service } = setup();
     github.issues.set(142, issue(142));
@@ -1465,6 +1531,49 @@ describe("Branch Review", () => {
       if (previousSocketPath === undefined) delete process.env.RVW_AGENT_SOCKET_PATH;
       else process.env.RVW_AGENT_SOCKET_PATH = previousSocketPath;
     }
+  });
+
+  it("returns current Branch metadata when the final reset CAS detects a concurrent sync", async () => {
+    const { repositoryPath, database, service } = setup();
+    const opened = await service.openBranchReview(repositoryPath);
+    const preview = await service.getBranchResetPreview(opened.branchReview.id);
+    const resetBranchReviewInDatabase = database.resetBranchReview.bind(database);
+    vi.spyOn(database, "resetBranchReview").mockImplementationOnce(
+      (...args: Parameters<RvwDatabase["resetBranchReview"]>) => {
+        database.setBranchSyncError(
+          opened.branchReview.id,
+          database.getBranchSourceSyncGeneration(opened.branchReview.id),
+          "Concurrent synchronization failed.",
+        );
+        return resetBranchReviewInDatabase(...args);
+      },
+    );
+
+    const error = (await service
+      .resetBranchReview(opened.branchReview.id, preview.confirmationToken)
+      .catch((caught: unknown) => caught)) as RvwError;
+    expect(error).toMatchObject({ code: "DESTRUCTIVE_PREVIEW_STALE", status: 409 });
+    expect(
+      (
+        error.details as {
+          currentPreview: {
+            branchReview: { sourceSyncError: string | null };
+            reviewChangeSequence: number;
+            confirmationToken: string;
+          };
+        }
+      ).currentPreview,
+    ).toMatchObject({
+      branchReview: { sourceSyncError: "Concurrent synchronization failed." },
+      reviewChangeSequence: database.getReviewChangeSequence("branch", opened.branchReview.id),
+    });
+    expect(
+      (
+        error.details as {
+          currentPreview: { confirmationToken: string };
+        }
+      ).currentPreview.confirmationToken,
+    ).not.toBe(preview.confirmationToken);
   });
 
   it("reports a concurrently requested Branch Issue in exactly one Walkthrough update", async () => {
