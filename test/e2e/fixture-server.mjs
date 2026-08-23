@@ -1271,7 +1271,12 @@ app.post("/api/pull-requests/:id/refresh", async (context) => {
   await new Promise((resolve) => setTimeout(resolve, 100));
   if (!repositoryDemo) syncStage = Math.min(syncStage + 1, 2);
   changeSequence += 1;
-  return context.json({ ok: true, ...currentView(), commentUpdatesApplied: 0 });
+  return context.json({
+    ok: true,
+    ...currentView(),
+    commentUpdatesApplied: 0,
+    issueResults: [],
+  });
 });
 
 app.get("/api/pull-requests/:id/tree", (context) => {

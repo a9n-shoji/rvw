@@ -86,9 +86,12 @@ an rvw ref, validates every reply reference against that exact synchronized head
 comment updates in one SQLite transaction. Created replies and their references are linked to the
 synchronized head commit. A successful response includes the current pull request, comparison
 base, head OID, commit summaries, and `commentUpdatesApplied`.
+PR and Branch synchronization also return per-Issue results. A review source may succeed while one or
+more Issue refreshes fail; both viewers show that response-local partial failure as a warning.
 
 An exact retry of an update carrying the same idempotency key returns its existing reply. Reusing the
-key for another comment or caller payload fails. The derived synchronized head is not part of that
+key for another comment, review kind, or caller payload fails. PR and Branch replies share one
+database-wide public keyspace. The derived synchronized head is not part of that
 caller payload, so a concurrent head advance does not invalidate an exact retry. If the original post
 was deleted, retry fails without recreating it. An update without a key remains non-idempotent; after
 an uncertain result, re-read the affected comment before retrying.
@@ -157,13 +160,16 @@ identifies the deleted row outcome, review ID, ref prefix, remaining refs, and e
 Creating another review does not clean the orphan. The new review ID cannot accept or delete that old
 evidence. Confirmation errors return the original repository path as structured command arguments so
 paths containing whitespace or shell metacharacters are not interpolated into a command string.
-The initial row is marked incomplete before owned-ref creation. A creation failure returns
+The initial row is marked pending before owned-ref creation. Reads poll only that exact marker for at
+most five seconds; a failed marker does not wait. A creation failure returns
 `LOCAL_STATE_INCONSISTENT` with `repairableByExplicitReset: true`; a process stop before ref creation
 can use the same marked-row reset, while a verified cached open clears a marker left after successful
 ref creation. A concurrent initializer that finds an existing row leaves it unchanged, retains its
 candidate source, then updates with the expected aggregate ID. If reset deletes the row before that
 attempt completes, only the exact ref newly created by the delayed attempt is best-effort removed.
-Normal reads still reject a missing ref. HTTP ID-bound operations keep the
+Normal reads still reject a missing ref. Existing-source attempts allocate a generation before network
+access and publish the retained OID or error only when that generation is current. A default branch
+move detected between metadata and fetch retries the metadata/OID snapshot once. HTTP ID-bound operations keep the
 URL's expected Branch Review ID through their final database access and return
 `BRANCH_REVIEW_NOT_FOUND` rather than falling through to a replacement review at the same path.
 `branch sync`の`issueResults`は各cached Issueの成功またはstale errorを別々に返す。`pr refresh`と
@@ -172,7 +178,7 @@ URL's expected Branch Review ID through their final database access and return
 既存membershipのbackground refreshはfetch後にも元reviewとmembershipを再確認し、明示削除済みmembershipを
 再追加せず、削除済みreview由来の失敗を共有cacheへ保存しない。membership削除後にfetchが失敗した場合も
 `ok: true, skipped: "membership-removed"`として返し、stale warningには含めない。PR本文に現在も直接あるIssueは追加候補のままとする。
-Branch viewerはdefault branch同期成功と`issueResults`の部分失敗を同じstatus warningで区別して表示する。
+PR／Branch viewerはreview source同期成功と`issueResults`の部分失敗を同じstatus warningで区別して表示する。
 
 An Issue reference is `#142`, `owner/repository#142`, or a canonical GitHub Issue URL. Only an actual
 Issue in the review repository is accepted; a Pull Request or cross-repository reference fails. Adding
@@ -181,6 +187,8 @@ comments, and Walkthrough ownership remain review-specific.
 The GitHub client and application service both compare the fetched Issue owner/repository/number and
 canonical `html_url` with the request, case-insensitively for repository names. An identity mismatch is
 `GITHUB_ISSUE_ERROR` and is never written into the shared cache or a review membership.
+The shared cache ignores responses older than its GitHub `updatedAt`, rejects conflicting content at
+the same version, and ignores a late failure after the originating `fetchedAt` snapshot changed.
 
 ## Comment commands
 

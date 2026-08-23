@@ -113,7 +113,11 @@ class PullRequestRetainBarrierGitClient extends GitClient {
   }
 }
 
-function githubIssue(number: number, body = `Issue ${number} body`): GitHubIssue {
+function githubIssue(
+  number: number,
+  body = `Issue ${number} body`,
+  updatedAt = "2026-08-20T00:00:00.000Z",
+): GitHubIssue {
   return {
     host: "github.com",
     owner: "acme",
@@ -124,7 +128,7 @@ function githubIssue(number: number, body = `Issue ${number} body`): GitHubIssue
     title: `Issue ${number}`,
     body,
     state: "OPEN",
-    updatedAt: "2026-08-20T00:00:00.000Z",
+    updatedAt,
   };
 }
 
@@ -257,7 +261,7 @@ describe("RvwService commit workflow", () => {
       }),
     ).resolves.toEqual({ outdated: true, range: null, path: null });
 
-    fake.issues.set(142, githubIssue(142, "Updated requirement body."));
+    fake.issues.set(142, githubIssue(142, "Updated requirement body.", "2026-08-20T01:00:00.000Z"));
     await service.refreshPullRequest(opened.pullRequest.id);
     await expect(
       service.placeCommentAtCommit(issueComment, opened.pullRequest.latestHeadOid),
@@ -316,7 +320,10 @@ describe("RvwService commit workflow", () => {
     fake.issues.set(142, githubIssue(142));
     const opened = await service.openPullRequest(undefined, repository);
     const added = await service.addPullRequestIssue(opened.pullRequest.url, "#142");
-    fake.issues.set(142, githubIssue(142, "Fetched after explicit removal"));
+    fake.issues.set(
+      142,
+      githubIssue(142, "Fetched after explicit removal", "2026-08-20T01:00:00.000Z"),
+    );
     const barrier = new OneShotBarrier();
     barrier.arm();
     fake.issueBarrier = barrier;

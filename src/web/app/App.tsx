@@ -27,6 +27,7 @@ import {
   type CommentsResponse,
   jsonRequest,
   type PullRequestResponse,
+  type PullRequestSyncResponse,
   type SearchResponse,
   type TreeResponse,
   type WalkthroughResponse,
@@ -83,6 +84,7 @@ import { parseReviewId } from "../review-id.js";
 import { useExactCodeReferenceNavigation } from "../use-exact-code-reference-navigation.js";
 import { useWalkthroughDocumentReconciliation } from "../use-walkthrough-document-reconciliation.js";
 import { useTemporaryFeedback } from "../use-temporary-feedback.js";
+import { issueSyncFailureFeedback } from "../review-sync-feedback.js";
 const DocumentViewer = lazy(async () => {
   const module = await import("../components/DocumentViewer.js");
   return { default: module.DocumentViewer };
@@ -461,6 +463,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     showFeedback: showSyncFeedback,
     clearFeedback: clearSyncFeedback,
   } = useTemporaryFeedback();
+  const [syncFeedbackWarning, setSyncFeedbackWarning] = useState(false);
   const {
     themePreference,
     selectThemePreference,
@@ -881,12 +884,15 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const refreshMutation = useMutation({
     mutationFn: async (options: { announce: boolean }) => {
       void options;
-      return await api<PullRequestResponse>(
+      return await api<PullRequestSyncResponse>(
         `/api/pull-requests/${pullRequestId}/refresh`,
         jsonRequest({}),
       );
     },
     onSuccess: async (result, options) => {
+      const failures = result.issueResults.filter((issueResult) => !issueResult.ok);
+      const issueFeedback = issueSyncFailureFeedback(failures);
+      setSyncFeedbackWarning(issueFeedback !== null);
       const selection = commitSelectionRef.current;
       const wasAtLatest = selection.selectedOid === selection.latestHeadOid;
       const wasSingleCommit = selection.rangeStartOid === selection.selectedOid;
@@ -905,20 +911,19 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
                 : earliestIncludedCommitOid(result.commits, result.headOid),
         );
       }
+      if (options.announce || issueFeedback) {
+        const sourceFeedback = `GitHubと同期しました · ${new Intl.DateTimeFormat("ja-JP", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }).format(new Date())}`;
+        showSyncFeedback(issueFeedback ? `${sourceFeedback} ${issueFeedback}` : sourceFeedback);
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allReviews("pull-request") }),
         queryClient.invalidateQueries({ queryKey: reviewQueryKeys.document() }),
         queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() }),
         queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allCommentPlacements() }),
       ]);
-      if (options.announce) {
-        showSyncFeedback(
-          `GitHubと同期しました · ${new Intl.DateTimeFormat("ja-JP", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }).format(new Date())}`,
-        );
-      }
     },
   });
   useEffect(() => {
@@ -1402,7 +1407,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       )}
       <ErrorNotice error={actionError} />
       {syncFeedback && (
-        <div className="sync-feedback" role="status">
+        <div
+          className={`sync-feedback${syncFeedbackWarning ? " sync-feedback-warning" : ""}`}
+          role="status"
+        >
           {syncFeedback}
         </div>
       )}

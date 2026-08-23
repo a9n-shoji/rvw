@@ -462,6 +462,123 @@ describe("RvwDatabase", () => {
     database.close();
   });
 
+  it("uses one database-wide idempotency keyspace for PR and Branch replies", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const branchReview = database.upsertBranchReview(
+      {
+        owner: github.owner,
+        repository: github.repository,
+        canonicalName: `${github.owner}/${github.repository}`,
+        defaultBranchName: "main",
+        defaultBranchOid: github.headOid,
+      },
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+    );
+    const pullRequestComment = database.createComment({
+      pullRequestId: pullRequest.id,
+      createdHeadOid: github.headOid,
+      target: { kind: "pull-request" },
+      body: "PR question",
+    });
+    const branchComment = database.createBranchComment({
+      branchReviewId: branchReview.id,
+      createdSourceOid: branchReview.sourceOid,
+      target: { kind: "branch" },
+      body: "Branch question",
+    });
+    database.insertReply(pullRequestComment.id, {
+      body: "PR answer",
+      idempotencyKey: "shared-public-key",
+    });
+
+    expect(() =>
+      database.insertBranchReply(branchComment.id, {
+        body: "Branch answer",
+        idempotencyKey: "shared-public-key",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+    expect(database.listBranchCommentPosts(branchComment.id)).toHaveLength(1);
+    database.close();
+  });
+
+  it("keeps the shared Issue cache monotonic across review refreshes", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const branchReview = database.upsertBranchReview(
+      {
+        owner: github.owner,
+        repository: github.repository,
+        canonicalName: `${github.owner}/${github.repository}`,
+        defaultBranchName: "main",
+        defaultBranchOid: github.headOid,
+      },
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+    );
+    const initialIssue = {
+      host: "github.com" as const,
+      owner: github.owner,
+      repository: github.repository,
+      canonicalName: `${github.owner}/${github.repository}`,
+      number: 142,
+      url: `https://github.com/${github.owner}/${github.repository}/issues/142`,
+      title: "Initial title",
+      body: "Initial body",
+      state: "OPEN" as const,
+      updatedAt: "2026-08-08T01:00:00.000Z",
+    };
+    const cached = database.addReviewIssue("pull-request", pullRequest.id, initialIssue).issue;
+    database.addReviewIssue("branch", branchReview.id, initialIssue);
+    const newer = {
+      ...initialIssue,
+      title: "Newest title",
+      body: "Newest body",
+      updatedAt: "2026-08-08T03:00:00.000Z",
+    };
+    database.refreshReviewIssue("branch", branchReview.id, cached.id, newer);
+    const newestSnapshot = database.getIssue(cached.id);
+    const branchSequence = database.getReviewChangeSequence("branch", branchReview.id);
+    const pullRequestSequence = database.getReviewChangeSequence("pull-request", pullRequest.id);
+
+    expect(
+      database.refreshReviewIssue("pull-request", pullRequest.id, cached.id, {
+        ...initialIssue,
+        title: "Older title",
+        body: "Older body",
+        updatedAt: "2026-08-08T02:00:00.000Z",
+      }),
+    ).toMatchObject({ refreshed: false, skipped: "older-response", issue: newestSnapshot });
+    expect(
+      database.setReviewIssueSyncError(
+        "pull-request",
+        pullRequest.id,
+        cached.id,
+        "stale-fetched-at",
+        "late failure",
+      ),
+    ).toMatchObject({ updated: false, skipped: "newer-attempt", issue: newestSnapshot });
+    expect(() =>
+      database.refreshReviewIssue("branch", branchReview.id, cached.id, {
+        ...newer,
+        body: "Conflicting body at same timestamp",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "GITHUB_ISSUE_ERROR" }));
+    expect(database.getIssue(cached.id)).toEqual(newestSnapshot);
+    expect(database.getReviewChangeSequence("branch", branchReview.id)).toBe(branchSequence);
+    expect(database.getReviewChangeSequence("pull-request", pullRequest.id)).toBe(
+      pullRequestSequence,
+    );
+    database.close();
+  });
+
   it("persists post-level code references and removes them with their posts", () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const pullRequest = database.upsertPullRequest(

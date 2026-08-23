@@ -391,9 +391,15 @@ export class GitClient {
         const fetched = await runText("git", ["rev-parse", temporaryRef], { cwd: input.cwd });
         if (fetched !== input.oid) {
           throw new RvwError(
-            "LOCAL_STATE_INCONSISTENT",
+            "GITHUB_REPOSITORY_ERROR",
             "取得したdefault branch headがGitHubのOIDと一致しません。",
-            { details: { expected: input.oid, actual: fetched } },
+            {
+              details: {
+                reason: "REMOTE_MOVED_DURING_SYNC",
+                expected: input.oid,
+                actual: fetched,
+              },
+            },
           );
         }
       }

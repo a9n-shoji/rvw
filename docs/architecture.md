@@ -68,14 +68,22 @@ The first aggregate insert records a dedicated incomplete-initialization marker 
 owned ref. A crash before ref creation can therefore be recovered by explicit Branch reset when the
 binding matches and the review namespace has no refs. A crash after ref creation but before marker
 clear is completed by the next cached open after verifying the owned ref and Git object. Normal reads
-and synchronization still require that evidence. Initialization is create-only: when its immediate
+wait only for the exact pending marker, for at most five seconds; a failed or otherwise unowned source
+fails immediately. Initialization is create-only: when its immediate
 transaction discovers a concurrently created row, it returns that row unchanged and the caller retains
 the candidate OID before an expected-ID update. If reset wins while initial ref creation is paused, a
 later completion failure removes only the exact ref created by that attempt on a best-effort basis.
+Every existing-source attempt allocates a monotonically increasing generation before network access.
+Only that generation may publish its retained OID or sync error, so an older response cannot roll back
+a newer success. A default branch that moves between repository metadata and fetch is retried once as
+a remote snapshot race, not reported as local-state corruption.
 GitHub Issue responses are checked in both the concrete client and application boundary;
 owner, repository, number, canonical name, and URL mismatch fail before cache or membership writes.
-Branch sync returns those per-Issue failures separately; the viewer reports a warning alongside the
-successfully synchronized default-branch source instead of presenting the entire operation as clean.
+The shared cache accepts only a non-decreasing GitHub `updatedAt`; equal versions with conflicting
+title/body/state fail closed, and a failure may mark the cache stale only if its original `fetchedAt`
+snapshot is still current. PR and Branch sync return per-Issue failures separately; both viewers report
+a warning alongside the successfully synchronized review source instead of presenting the entire
+operation as clean.
 A fetch failure whose originating membership was already removed is a skip, not a stale warning.
 
 The viewer reads committed Git objects rather than the worktree or index. That keeps the human's
@@ -113,9 +121,9 @@ before intake; the driver caps in-flight claims to that capacity and polls task 
 follow-ups after lease release and retries after their due time. Every acknowledged lease is handed to
 one fresh subagent immediately, while the parent retains only intake, state, and final-post ownership.
 Separate tasks may consume the same log with separate state. This terminal-bound consumer is not a daemon
-and rvw never starts it. A durable
-reply-idempotency ledger makes an exact caller-payload retry safe without introducing Agent session
-identity into comments.
+and rvw never starts it. A durable database-wide reply-idempotency ledger shared by PR and Branch posts
+makes an exact caller-payload retry safe without introducing Agent session identity into comments.
+Reusing a public key for another review kind or payload is a conflict.
 
 Walkthroughs cross the same one-way CLI boundary in the other direction. An Agent can publish a
 Markdown explanation to a Pull Request or Branch Review, fixed to one commit with validated file

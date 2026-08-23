@@ -55,8 +55,21 @@ Separate explicit Issue membership addition from background refresh. Refresh and
 recheck the originating review and membership in one immediate transaction and skip all shared-cache
 and sequence changes if either owner disappeared. PR-body direct references remain additions and may
 be registered again by a later refresh. A late fetch failure after membership removal is reported as
-`membership-removed`, not as a stale warning. Surface per-Issue Branch sync failures in the viewer without
-discarding the successfully synchronized default-branch source.
+`membership-removed`, not as a stale warning.
+
+Order every existing Branch source attempt with an internal generation allocated before network I/O.
+After retaining a candidate, its source metadata and any failure are compare-and-set with the same
+generation; late attempts may return or fail but cannot roll back the aggregate. Distinguish the exact
+pending initialization marker from a failed marker, waiting up to five seconds only for pending work.
+Treat a default branch move between metadata and fetch as a remote snapshot race and retry the metadata
+and OID pair once.
+
+Use GitHub Issue `updatedAt` as the shared cache content version. Ignore older successes, reject equal
+versions with conflicting title/body/state, and compare the failure's original `fetchedAt` before
+setting the global cache error. The error therefore describes the health of the current shared cache,
+not a membership-specific failure. Surface per-Issue failures in both PR and Branch viewers. Use the
+existing durable reply ledger as one database-wide public idempotency-key namespace for both review
+kinds rather than adding a second Branch ledger.
 
 ### Trade-offs
 

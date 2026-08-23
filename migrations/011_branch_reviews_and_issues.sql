@@ -10,6 +10,7 @@ CREATE TABLE branch_reviews (
   source_oid TEXT NOT NULL,
   github_fetched_at TEXT NOT NULL,
   source_sync_error TEXT,
+  source_sync_generation INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(host, owner, repository),
@@ -201,13 +202,6 @@ CREATE TABLE branch_comment_post_references (
   CHECK(end_line IS NULL OR end_line >= start_line),
   CHECK((start_line IS NULL AND end_line IS NULL) OR (start_line IS NOT NULL AND end_line IS NOT NULL)),
   PRIMARY KEY(post_id, reference_id)
-);
-
-CREATE TABLE branch_comment_reply_idempotency (
-  key_hash TEXT PRIMARY KEY,
-  request_hash TEXT NOT NULL,
-  post_id TEXT NOT NULL,
-  created_at TEXT NOT NULL
 );
 
 CREATE INDEX branch_comments_review_state_updated

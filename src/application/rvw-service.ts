@@ -110,7 +110,11 @@ export interface BranchReviewView {
 
 export interface BranchSyncResult extends BranchReviewView {
   issueResults: Array<
-    | { issue: IssueDocument; ok: true; skipped?: "membership-removed" }
+    | {
+        issue: IssueDocument;
+        ok: true;
+        skipped?: "membership-removed" | "older-response" | "newer-attempt";
+      }
     | { issue: IssueDocument; ok: false; error: ReturnType<RvwError["toJSON"]> }
   >;
 }
@@ -127,7 +131,7 @@ export type IssueSyncResult =
       reference: string;
       issue: IssueDocument;
       ok: true;
-      skipped?: "membership-removed";
+      skipped?: "membership-removed" | "older-response" | "newer-attempt";
     }
   | {
       reference: string;
@@ -831,23 +835,10 @@ export class RvwService {
   private async synchronizeResolvedBranchReview(
     existing: ResolvedBranchReview,
   ): Promise<BranchSyncResult> {
-    let branchReview: BranchReview;
-    try {
-      branchReview = await this.branchLifecycle.synchronizeExisting(
-        existing.repository.worktreePath,
-        existing.branchReview.id,
-      );
-    } catch (error) {
-      const rvwError = asRvwError(error);
-      if (
-        rvwError.code !== "REPOSITORY_MISMATCH" &&
-        rvwError.code !== "BRANCH_REVIEW_NOT_FOUND" &&
-        this.database.getBranchReview(existing.branchReview.id)
-      ) {
-        this.database.setBranchSyncError(existing.branchReview.id, rvwError.message);
-      }
-      throw error;
-    }
+    const branchReview = await this.branchLifecycle.synchronizeExisting(
+      existing.repository.worktreePath,
+      existing.branchReview.id,
+    );
     const issues = this.database.listReviewIssues("branch", branchReview.id);
     const issueResults = await mapWithConcurrency(
       issues,
@@ -876,7 +867,7 @@ export class RvwService {
             current,
           );
           return refreshed.skipped
-            ? { issue, ok: true, skipped: refreshed.skipped }
+            ? { issue: refreshed.issue ?? issue, ok: true, skipped: refreshed.skipped }
             : { issue: refreshed.issue!, ok: true };
         } catch (error) {
           const rvwError = asRvwError(error);
@@ -891,10 +882,11 @@ export class RvwService {
             "branch",
             branchReview.id,
             issue.id,
+            issue.fetchedAt,
             rvwError.message,
           );
           if (syncError.skipped) {
-            return { issue, ok: true, skipped: syncError.skipped };
+            return { issue: syncError.issue ?? issue, ok: true, skipped: syncError.skipped };
           }
           const stale = syncError.issue ?? issue;
           return { issue: stale, ok: false, error: rvwError.toJSON() };
@@ -1361,7 +1353,12 @@ export class RvwService {
                 issue,
               );
               return refreshed.skipped
-                ? { reference, issue: previous!, ok: true, skipped: refreshed.skipped }
+                ? {
+                    reference,
+                    issue: refreshed.issue ?? previous!,
+                    ok: true,
+                    skipped: refreshed.skipped,
+                  }
                 : { reference, issue: refreshed.issue!, ok: true };
             } catch (error) {
               const rvwError = asRvwError(error);
@@ -1387,12 +1384,13 @@ export class RvwService {
                     "pull-request",
                     pullRequest.id,
                     previous.id,
+                    previous.fetchedAt,
                     rvwError.message,
                   );
                   if (operation === "refresh" && result.skipped) {
                     return {
                       reference,
-                      issue: previous,
+                      issue: result.issue ?? previous,
                       ok: true,
                       skipped: result.skipped,
                     };

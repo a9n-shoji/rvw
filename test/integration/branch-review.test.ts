@@ -19,6 +19,8 @@ import {
   tryAgentSocketRequest,
 } from "../../src/server/agent-socket.js";
 import { createApp } from "../../src/server/app.js";
+import { BRANCH_REVIEW_INITIALIZATION_PENDING } from "../../src/shared/constants.js";
+import { RvwError } from "../../src/shared/errors.js";
 import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
 
 class OneShotBarrier {
@@ -168,6 +170,40 @@ class PauseBeforeInitialBranchRefGitClient extends GitClient {
   }
 }
 
+class PauseBranchRefForOidGitClient extends GitClient {
+  readonly barrier = new OneShotBarrier();
+  failAfterRelease = false;
+
+  constructor(private readonly pausedOid: string) {
+    super();
+  }
+
+  override async ensureBranchCommitRef(cwd: string, branchReviewId: string, oid: string) {
+    const retained = await super.ensureBranchCommitRef(cwd, branchReviewId, oid);
+    if (oid === this.pausedOid) {
+      await this.barrier.blockOnce();
+      if (this.failAfterRelease) throw new Error(`late retained-ref failure for ${oid}`);
+    }
+    return retained;
+  }
+}
+
+class RemoteMoveOnceGitClient extends GitClient {
+  ensureAttempts = 0;
+
+  override async ensureBranchObject(input: Parameters<GitClient["ensureBranchObject"]>[0]) {
+    this.ensureAttempts += 1;
+    if (this.ensureAttempts === 1) {
+      throw new RvwError(
+        "GITHUB_REPOSITORY_ERROR",
+        "取得中にdefault branch headが更新されました。",
+        { details: { reason: "REMOTE_MOVED_DURING_SYNC" } },
+      );
+    }
+    return await super.ensureBranchObject(input);
+  }
+}
+
 class BranchRetainBarrierGitClient extends GitClient {
   private barrier: Promise<void> | null = null;
   private releaseBarrier: (() => void) | null = null;
@@ -195,7 +231,11 @@ class BranchRetainBarrierGitClient extends GitClient {
   }
 }
 
-function issue(number: number, body = `Requirement ${number}\nDetails`): GitHubIssue {
+function issue(
+  number: number,
+  body = `Requirement ${number}\nDetails`,
+  updatedAt = "2026-08-20T00:00:00.000Z",
+): GitHubIssue {
   return {
     host: "github.com",
     owner: "acme",
@@ -206,7 +246,7 @@ function issue(number: number, body = `Requirement ${number}\nDetails`): GitHubI
     title: `Issue ${number}`,
     body,
     state: "OPEN",
-    updatedAt: "2026-08-20T00:00:00.000Z",
+    updatedAt,
   };
 }
 
@@ -951,7 +991,7 @@ describe("Branch Review", () => {
       canonicalName: "Acme/Review-Repo",
     };
     github.issues.set(142, {
-      ...issue(142, "Canonical casing updated"),
+      ...issue(142, "Canonical casing updated", "2026-08-20T01:00:00.000Z"),
       owner: "Acme",
       repository: "Review-Repo",
       canonicalName: "Acme/Review-Repo",
@@ -1049,7 +1089,7 @@ describe("Branch Review", () => {
       },
     });
 
-    github.issues.set(142, issue(142, "Changed requirement\nDetails"));
+    github.issues.set(142, issue(142, "Changed requirement\nDetails", "2026-08-20T01:00:00.000Z"));
     await service.syncBranchReview(repositoryPath);
     expect(
       service.placeBranchIssueComment(opened.branchReview.id, wholeIssueComment, issue142.id),
@@ -1445,10 +1485,7 @@ describe("Branch Review", () => {
       localRepositoryPath: repository.worktreePath,
       gitCommonDir: repository.gitCommonDir,
     }).branchReview;
-    expect(beforeRef.sourceSyncError).toContain("BRANCH_REVIEW_INITIALIZATION_FAILED:");
-    await expect(service.openBranchReview(repositoryPath)).rejects.toMatchObject({
-      code: "LOCAL_STATE_INCONSISTENT",
-    });
+    expect(beforeRef.sourceSyncError).toBe(BRANCH_REVIEW_INITIALIZATION_PENDING);
     await expect(service.resetBranchReviewAtPath(repositoryPath)).resolves.toMatchObject({
       branchReview: { id: beforeRef.id },
       deleted: { branchReview: 1, gitRefs: 0 },
@@ -1463,6 +1500,29 @@ describe("Branch Review", () => {
     expect(recovered).toMatchObject({
       fromCache: true,
       branchReview: { id: afterRef.id, sourceSyncError: null },
+    });
+  });
+
+  it("waits for an explicitly pending concurrent initialization beyond the old heuristic", async () => {
+    const gitClient = new PauseBeforeInitialBranchRefGitClient();
+    gitClient.barrier.arm();
+    const { repositoryPath, database, service } = setup(gitClient);
+
+    const firstOpen = service.openBranchReview(repositoryPath);
+    await gitClient.barrier.waitUntilBlocked();
+    expect(database.findBranchReviewByIdentity("acme", "review-repo")?.sourceSyncError).toBe(
+      BRANCH_REVIEW_INITIALIZATION_PENDING,
+    );
+    const startedAt = Date.now();
+    const secondOpen = service.openBranchReview(repositoryPath);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    gitClient.barrier.release();
+
+    const [first, second] = await Promise.all([firstOpen, secondOpen]);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(200);
+    expect(second).toMatchObject({
+      fromCache: true,
+      branchReview: { id: first.branchReview.id, sourceSyncError: null },
     });
   });
 
@@ -1515,7 +1575,7 @@ describe("Branch Review", () => {
     const opening = service.openBranchReview(repositoryPath);
     await gitClient.barrier.waitUntilBlocked();
     const pending = database.findBranchReviewByIdentity("acme", "review-repo");
-    expect(pending?.sourceSyncError).toContain("BRANCH_REVIEW_INITIALIZATION_FAILED:");
+    expect(pending?.sourceSyncError).toBe(BRANCH_REVIEW_INITIALIZATION_PENDING);
     await expect(service.resetBranchReviewAtPath(repositoryPath)).resolves.toMatchObject({
       branchReview: { id: pending!.id },
       deleted: { branchReview: 1, gitRefs: 0 },
@@ -1710,7 +1770,10 @@ describe("Branch Review", () => {
       unchangedPullRequestSequence,
     );
 
-    github.issues.set(142, issue(142, "Requirement 142\nUpdated shared evidence"));
+    github.issues.set(
+      142,
+      issue(142, "Requirement 142\nUpdated shared evidence", "2026-08-20T01:00:00.000Z"),
+    );
     const branchSequence = database.getReviewChangeSequence("branch", opened.branchReview.id);
     await service.syncBranchReview(repositoryPath);
 
@@ -2025,6 +2088,89 @@ describe("Branch Review", () => {
     ).toThrowError(expect.objectContaining({ code: "REPOSITORY_MISMATCH" }));
   });
 
+  it("publishes only the newest started Branch source sync", async () => {
+    const { repositoryPath, github, database, service } = setup();
+    const opened = await service.openBranchReview(repositoryPath);
+    const sourceX = commitFile(repositoryPath, "source-x.txt", "x\n", "source X");
+    const sourceY = commitFile(repositoryPath, "source-y.txt", "y\n", "source Y");
+    const gitClient = new PauseBranchRefForOidGitClient(sourceX);
+    const orderedService = new RvwService(database, gitClient, github);
+    github.repository = { ...github.repository, defaultBranchOid: sourceX };
+    gitClient.barrier.arm();
+
+    const olderSync = orderedService.syncBranchReview(repositoryPath);
+    await gitClient.barrier.waitUntilBlocked();
+    github.repository = { ...github.repository, defaultBranchOid: sourceY };
+    const newerSync = await orderedService.syncBranchReview(repositoryPath);
+    expect(newerSync.branchReview).toMatchObject({
+      id: opened.branchReview.id,
+      sourceOid: sourceY,
+    });
+
+    gitClient.barrier.release();
+    await expect(olderSync).resolves.toMatchObject({
+      branchReview: { id: opened.branchReview.id, sourceOid: sourceY },
+    });
+    expect(database.getBranchReview(opened.branchReview.id)).toMatchObject({
+      sourceOid: sourceY,
+      sourceSyncError: null,
+    });
+  });
+
+  it("does not let an older Branch source failure mark a newer success stale", async () => {
+    const { repositoryPath, github, database, service } = setup();
+    const opened = await service.openBranchReview(repositoryPath);
+    const sourceX = commitFile(repositoryPath, "failing-x.txt", "x\n", "failing source X");
+    const sourceY = commitFile(repositoryPath, "successful-y.txt", "y\n", "successful source Y");
+    const gitClient = new PauseBranchRefForOidGitClient(sourceX);
+    gitClient.failAfterRelease = true;
+    const orderedService = new RvwService(database, gitClient, github);
+    github.repository = { ...github.repository, defaultBranchOid: sourceX };
+    gitClient.barrier.arm();
+
+    const olderSync = orderedService.syncBranchReview(repositoryPath);
+    await gitClient.barrier.waitUntilBlocked();
+    github.repository = { ...github.repository, defaultBranchOid: sourceY };
+    await orderedService.syncBranchReview(repositoryPath);
+    const sequenceAfterNewerSuccess = database.getReviewChangeSequence(
+      "branch",
+      opened.branchReview.id,
+    );
+
+    gitClient.barrier.release();
+    await expect(olderSync).rejects.toThrow(`late retained-ref failure for ${sourceX}`);
+    expect(database.getBranchReview(opened.branchReview.id)).toMatchObject({
+      sourceOid: sourceY,
+      sourceSyncError: null,
+    });
+    expect(database.getReviewChangeSequence("branch", opened.branchReview.id)).toBe(
+      sequenceAfterNewerSuccess,
+    );
+  });
+
+  it("re-reads GitHub repository metadata once when the default branch moves during fetch", async () => {
+    const gitClient = new RemoteMoveOnceGitClient();
+    const { repositoryPath, github, service } = setup(gitClient);
+    const firstSnapshot = { ...github.repository };
+    const secondSource = commitFile(
+      repositoryPath,
+      "moved-during-fetch.txt",
+      "new head\n",
+      "move during fetch",
+    );
+    const secondSnapshot = { ...github.repository, defaultBranchOid: secondSource };
+    let metadataRequests = 0;
+    github.getRepository = () => {
+      metadataRequests += 1;
+      return Promise.resolve(metadataRequests === 1 ? firstSnapshot : secondSnapshot);
+    };
+
+    const opened = await service.openBranchReview(repositoryPath);
+    expect(opened.branchReview.sourceOid).toBe(secondSource);
+    expect(metadataRequests).toBe(2);
+    expect(gitClient.ensureAttempts).toBe(2);
+  });
+
   it("does not publish a concurrent first-open source before its owned ref exists", async () => {
     const repositoryPath = createGitRepository("rvw-branch-concurrent-oid-");
     const sourceX = git(repositoryPath, "rev-parse", "HEAD");
@@ -2073,9 +2219,13 @@ describe("Branch Review", () => {
     repositoryBarrier.release();
     await expect(secondOpen).rejects.toThrow(`injected retained-ref failure for ${sourceY}`);
 
-    expect(secondDatabase.getBranchReview(firstOpen.branchReview.id)).toEqual(firstSnapshot);
+    expect(secondDatabase.getBranchReview(firstOpen.branchReview.id)).toMatchObject({
+      id: firstOpen.branchReview.id,
+      sourceOid: sourceX,
+      sourceSyncError: `injected retained-ref failure for ${sourceY}`,
+    });
     expect(secondDatabase.getReviewChangeSequence("branch", firstOpen.branchReview.id)).toBe(
-      sequence,
+      sequence + 1,
     );
     await expect(
       secondService.git.verifyBranchCommitRef(repositoryPath, firstOpen.branchReview.id, sourceY),

@@ -123,6 +123,8 @@ resetして新しいaggregateを作る。default branchのrenameはidentityを�
 
 sourceはGitHub repository metadataが返したdefault branch OIDを一時refへfetchして一致を検証し、
 `refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`へ保持する。checkout、index、worktreeを変更しない。
+metadata取得後、fetchしたdefault branch tipが進んでいた場合は`GITHUB_REPOSITORY_ERROR`のremote snapshot
+競合としてmetadataとOIDを一度だけ再取得し、`LOCAL_STATE_INCONSISTENT`としてresetを案内しない。
 Branch document、Comment、Walkthrough、typed referenceが受理するsource OIDは、そのBranch Review IDの
 namespaceにあるcurrentまたは既存retained refと同じOIDに限り、clone内や別Branch Review namespaceに
 存在するだけのcommitは認めない。保存済みGit common directoryとreview-owned current source refはlocal
@@ -148,6 +150,10 @@ GitHub Issue responseはclientで`html_url`のowner／repository／numberとresp
 差し替え可能なGitHub portに対してapplication層でも返却identity、canonical name、URLを再検証する。
 case-insensitiveな同一identityだけを許し、不一致は`GITHUB_ISSUE_ERROR`としてcache、membership、sequenceを
 変更せずfail closedする。repository rename／transferへは自動追従しない。
+共有cacheのcontent versionはGitHub `updatedAt`とする。古いresponseは書き込まず、同一versionでtitle、body、
+stateが異なるresponseはcorruptionとして`GITHUB_ISSUE_ERROR`にする。同期失敗はfetch開始時に読んだ
+`fetchedAt`がtransaction内でも同じ場合だけ共有`sync_error`へ保存し、新しい成功後の古い失敗はskipする。
+この`sync_error`はcurrent共有cacheの取得状態であり、review membership固有の状態ではない。
 
 ### 3.1 Commit選択
 
@@ -882,7 +888,8 @@ fetchするが、behindなworktreeのcheckoutやbranch refは変更しない。
 
 `comment create`は非冪等である。`pr sync`と`comment reply`のreplyは任意のidempotency keyを受け、
 同じcaller payloadのretryは元のpostを返す。syncが内部で関連付けるGitHub head OIDはcaller payload
-fingerprintへ含めない。keyのreuseは拒否し、元postが削除済みなら再作成せず明示errorにする。
+fingerprintへ含めない。keyspaceはdatabase全体でPR／Branch replyに共通とし、別kindを含む別payloadへの
+key reuseは拒否する。元postが削除済みなら再作成せず明示errorにする。
 
 ### 7.3 comment watch
 
@@ -1207,15 +1214,20 @@ CREATE TABLE walkthrough_references (
 );
 ```
 
+`comment_reply_idempotency`というtable名はmigration 009由来だが、このledgerはprotocol v4で
+Pull Request／Branch Review replyの双方が共有するdatabase-wide keyspaceである。
+
 Branch ReviewとIssue追加migrationは、canonical Issue cacheの`github_issues`、実owner FKを持つ
 `pull_request_issues` / `branch_review_issues`、nativeなPR `comment_targets.target_kind = issue`、repository
 singletonの`branch_reviews`、およびBranch専用のWalkthrough、Comment、post、typed reference tableを追加する。
 PRとBranchのartifact ownershipとcascade境界は分離し、
 共有Issue cacheの表示内容または同期errorが変わった場合だけ、そのIssueを所有する全Reviewの
 `review_change_sequence`を同じtransactionで更新する。単なる`fetched_at`更新では他Reviewをinvalidateしない。
+cache更新はGitHub `updatedAt`の非減少を保証し、同一versionのcontent conflictを拒否する。sync error更新は
+元fetchの`fetched_at` snapshotがcurrentの場合だけ許可する。
 Issue membership追加と既存membershipのrefreshは別操作とする。refresh成功／失敗はGitHub fetch後のimmediate
 transactionで元reviewとmembershipの存続を再確認し、削除済みならcache、membership、全Reviewのsequenceを変更しない。
-PR本文に現在も直接含まれるIssueだけは追加操作として扱い、次回refreshで再登録できる。Branch viewerはdefault branch
+PR本文に現在も直接含まれるIssueだけは追加操作として扱い、次回refreshで再登録できる。PR／Branch viewerはreview
 sourceの同期成功とIssueごとの部分失敗を区別し、`issueResults`の失敗をresponse-local warningとして表示する。
 
 commit table、review version table、PR revision tableは持たない。既存Phase 1 DBはmigrationで
@@ -1368,12 +1380,16 @@ Git common directoryとreview-owned source refを検証できない場合はDB r
 初回rowはsource ref作成前から専用の初期化未完了markerを保存する。ref作成前にprocessが停止した場合は、通常
 read／syncを`LOCAL_STATE_INCONSISTENT`のまま扱い、明示resetに限りexpected review ID、Git common directory、
 canonical remote（またはremoteなし）、marker、review ID配下のrefが0件であることを検証してrowを削除できる。
+通常readはexact pending markerだけを最大5秒pollし、failed markerまたはmarkerなしのmissing refは即時に拒否する。
 ref作成後、marker clear前に停止した場合は、次回openがexpected ID／source OID、owned ref、Git objectを検証して
 markerをclearする。初回lookupではrowがなくても、初期化用immediate transactionが既存rowを発見した場合は
 source OID、default branch、location、sync errorを変更せず`created: false`を返す。呼び出し側はcandidate refを
 先に作成し、expected Branch Review ID付きtransactionでだけ既存sourceを更新する。初期ref作成とresetが競合し、
 aggregate削除後にrefが作成された場合は、そのattemptが作ったexact refだけをbest-effortで削除する。この例外を
 Issue removalその他のdestructive操作へ広げない。
+既存aggregateのsource同期はGitHubアクセス前に`source_sync_generation`を増やす。candidate ref作成後のsource公開と
+sync error保存はexpected review IDと同じgenerationを一つのimmediate transactionで再検証し、古い試行は新しい
+source、location、error、change sequenceを変更しない。
 
 ## 12. Server / security
 

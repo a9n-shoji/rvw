@@ -90,6 +90,23 @@ export interface PullRequestResponse {
   commits: CommitSummary[];
 }
 
+export interface PullRequestSyncResponse extends PullRequestResponse {
+  issueResults: Array<
+    | {
+        reference: string;
+        issue: { number: number };
+        ok: true;
+        skipped?: "membership-removed" | "older-response" | "newer-attempt";
+      }
+    | {
+        reference: string;
+        issue: { number: number } | null;
+        ok: false;
+        error: { code: string; message: string; details?: unknown; suggestions: string[] };
+      }
+  >;
+}
+
 export interface ThemePreferenceResponse {
   themePreference: ThemePreference;
 }

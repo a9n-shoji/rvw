@@ -2,6 +2,45 @@ import { expect, test } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 
+test("shows Issue refresh failures without reporting the whole PR sync as clean", async ({
+  page,
+  request,
+}) => {
+  const currentResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  expect(currentResponse.ok()).toBe(true);
+  const current = (await currentResponse.json()) as Record<string, unknown>;
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      json: {
+        ...current,
+        commentUpdatesApplied: 0,
+        issueResults: [
+          {
+            reference: "#404",
+            issue: null,
+            ok: false,
+            error: {
+              code: "GITHUB_ISSUE_ERROR",
+              message: "GitHub Issue responseのrepository identityがrequestと一致しません。",
+              details: { reason: "ISSUE_IDENTITY_MISMATCH" },
+              suggestions: [],
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const feedback = page.getByRole("status");
+  await expect(feedback).toContainText("GitHubと同期しました");
+  await expect(feedback).toContainText("Issue 1件の更新に失敗しました");
+  await expect(feedback).toContainText("#404");
+  await expect(feedback).toHaveClass(/sync-feedback-warning/);
+});
+
 test("reviews a line across commits, preserves the tabbed UI, and resolves it", async ({
   context,
   page,

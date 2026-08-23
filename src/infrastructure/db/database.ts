@@ -42,7 +42,10 @@ import { formatCommentUri } from "../../domain/comment-uri.js";
 import { hashDocument, normalizeLf } from "../../domain/pr-markdown.js";
 import { formatWalkthroughUri } from "../../domain/walkthrough-uri.js";
 import { RvwError } from "../../shared/errors.js";
-import { BRANCH_REVIEW_INITIALIZATION_FAILED } from "../../shared/constants.js";
+import {
+  BRANCH_REVIEW_INITIALIZATION_FAILED,
+  BRANCH_REVIEW_INITIALIZATION_PENDING,
+} from "../../shared/constants.js";
 import { isThemePreference, type ThemePreference } from "../../shared/preferences.js";
 
 type DbRow = Record<string, SQLInputValue>;
@@ -750,6 +753,49 @@ export class RvwDatabase {
     return this.writeBranchReview(github, repositoryLocation, options).branchReview;
   }
 
+  beginBranchSourceSync(id: string): number {
+    return this.immediateTransaction(() => {
+      if (!this.getBranchReview(id)) {
+        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+          status: 404,
+        });
+      }
+      this.database
+        .prepare(
+          "UPDATE branch_reviews SET source_sync_generation = source_sync_generation + 1 WHERE id = ?",
+        )
+        .run(id);
+      return this.getBranchSourceSyncGeneration(id);
+    });
+  }
+
+  getBranchSourceSyncGeneration(id: string): number {
+    const row = this.database
+      .prepare("SELECT source_sync_generation FROM branch_reviews WHERE id = ?")
+      .get(id) as DbRow | undefined;
+    if (!row) {
+      throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+        status: 404,
+      });
+    }
+    return numberValue(row, "source_sync_generation");
+  }
+
+  publishBranchReviewSource(
+    github: {
+      owner: string;
+      repository: string;
+      canonicalName: string;
+      defaultBranchName: string;
+      defaultBranchOid: string;
+    },
+    repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
+    options: { expectedBranchReviewId: string; expectedSourceSyncGeneration: number },
+  ): { branchReview: BranchReview; published: boolean } {
+    const result = this.writeBranchReview(github, repositoryLocation, options);
+    return { branchReview: result.branchReview, published: result.published };
+  }
+
   beginBranchReviewInitialization(
     github: {
       owner: string;
@@ -772,10 +818,14 @@ export class RvwDatabase {
       defaultBranchOid: string;
     },
     repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
-    options: { expectedBranchReviewId?: string; createOnlyInitialization?: boolean },
-  ): { branchReview: BranchReview; created: boolean } {
+    options: {
+      expectedBranchReviewId?: string;
+      expectedSourceSyncGeneration?: number;
+      createOnlyInitialization?: boolean;
+    },
+  ): { branchReview: BranchReview; created: boolean; published: boolean } {
     const now = new Date().toISOString();
-    let written: { id: string; created: boolean };
+    let written: { id: string; created: boolean; published: boolean };
     try {
       written = this.immediateTransaction(() => {
         const byIdentity = this.findBranchReviewByIdentity(github.owner, github.repository);
@@ -873,14 +923,20 @@ export class RvwDatabase {
           );
         }
         if (options.createOnlyInitialization && existing) {
-          return { id: existing.id, created: false };
+          return { id: existing.id, created: false, published: false };
+        }
+        if (
+          existing &&
+          options.expectedSourceSyncGeneration !== undefined &&
+          this.getBranchSourceSyncGeneration(existing.id) !== options.expectedSourceSyncGeneration
+        ) {
+          return { id: existing.id, created: false, published: false };
         }
         const selectedId = existing?.id ?? randomUUID();
-        const initializationPending = `${BRANCH_REVIEW_INITIALIZATION_FAILED} retained ref initialization is incomplete.`;
         const nextSourceSyncError = existing
           ? null
           : options.createOnlyInitialization
-            ? initializationPending
+            ? BRANCH_REVIEW_INITIALIZATION_PENDING
             : null;
         const reviewChanged =
           !existing ||
@@ -941,7 +997,7 @@ export class RvwDatabase {
         if (reviewChanged) {
           this.incrementChangeSequence({ kind: "branch", reviewId: selectedId });
         }
-        return { id: selectedId, created: !existing };
+        return { id: selectedId, created: !existing, published: true };
       });
     } catch (error) {
       if (error instanceof RvwError) throw error;
@@ -956,7 +1012,11 @@ export class RvwDatabase {
     }
     const result = this.getBranchReview(written.id);
     if (!result) throw new RvwError("DATABASE_ERROR", "Branch Reviewを読み出せません。");
-    return { branchReview: result, created: written.created };
+    return {
+      branchReview: result,
+      created: written.created,
+      published: written.published,
+    };
   }
 
   completeBranchReviewInitialization(id: string, sourceOid: string): BranchReview {
@@ -981,7 +1041,12 @@ export class RvwDatabase {
           },
         );
       }
-      if (!current.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED)) return;
+      if (
+        current.sourceSyncError !== BRANCH_REVIEW_INITIALIZATION_PENDING &&
+        !current.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED)
+      ) {
+        return;
+      }
       this.database
         .prepare(
           "UPDATE branch_reviews SET source_sync_error = NULL, updated_at = ? WHERE id = ? AND source_oid = ?",
@@ -1019,7 +1084,7 @@ export class RvwDatabase {
           },
         );
       }
-      if (!current.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED)) return;
+      if (current.sourceSyncError !== BRANCH_REVIEW_INITIALIZATION_PENDING) return;
       this.database
         .prepare(
           "UPDATE branch_reviews SET source_sync_error = ?, updated_at = ? WHERE id = ? AND source_oid = ?",
@@ -1052,19 +1117,43 @@ export class RvwDatabase {
     return result;
   }
 
-  setBranchSyncError(id: string, message: string): BranchReview {
-    this.immediateTransaction(() => {
+  setBranchSyncError(
+    id: string,
+    expectedSourceSyncGeneration: number,
+    message: string,
+  ): { branchReview: BranchReview; updated: boolean; skipped: "newer-attempt" | null } {
+    const outcome = this.immediateTransaction(() => {
+      const current = this.getBranchReview(id);
+      if (!current) {
+        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+          status: 404,
+        });
+      }
+      if (this.getBranchSourceSyncGeneration(id) !== expectedSourceSyncGeneration) {
+        return { updated: false, skipped: "newer-attempt" as const };
+      }
+      if (current.sourceSyncError === message) {
+        return { updated: false, skipped: null };
+      }
       const result = this.database
-        .prepare("UPDATE branch_reviews SET source_sync_error = ?, updated_at = ? WHERE id = ?")
-        .run(message, new Date().toISOString(), id);
+        .prepare(
+          `UPDATE branch_reviews SET source_sync_error = ?, updated_at = ?
+           WHERE id = ? AND source_sync_generation = ?`,
+        )
+        .run(message, new Date().toISOString(), id, expectedSourceSyncGeneration);
       if (Number(result.changes) !== 1) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
+        return { updated: false, skipped: "newer-attempt" as const };
       }
       this.incrementChangeSequence({ kind: "branch", reviewId: id });
+      return { updated: true, skipped: null };
     });
-    const review = this.getBranchReview(id);
-    if (!review) throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
-    return review;
+    const branchReview = this.getBranchReview(id);
+    if (!branchReview) {
+      throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+        status: 404,
+      });
+    }
+    return { branchReview, ...outcome };
   }
 
   getIssue(id: string): IssueDocument | null {
@@ -1086,11 +1175,56 @@ export class RvwDatabase {
     issue: IssueDocument;
     changed: boolean;
     previouslyCached: boolean;
+    skipped: "older-response" | null;
   } {
     const existing = this.findIssue(issue.owner, issue.repository, issue.number);
     const id = existing?.id ?? randomUUID();
     const fetchedAt = new Date().toISOString();
     const body = normalizeLf(issue.body);
+    const bodyHash = hashDocument(body);
+    const incomingUpdatedAt = Date.parse(issue.updatedAt);
+    if (!Number.isFinite(incomingUpdatedAt)) {
+      throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub IssueのupdatedAtが不正です。", {
+        details: { reason: "ISSUE_VERSION_INVALID", updatedAt: issue.updatedAt },
+      });
+    }
+    if (existing) {
+      const cachedUpdatedAt = Date.parse(existing.updatedAt);
+      if (!Number.isFinite(cachedUpdatedAt)) {
+        throw new RvwError("LOCAL_STATE_INCONSISTENT", "Issue cacheのupdatedAtが不正です。", {
+          status: 409,
+          details: { issueId: existing.id, updatedAt: existing.updatedAt },
+        });
+      }
+      if (incomingUpdatedAt < cachedUpdatedAt) {
+        return {
+          issue: existing,
+          changed: false,
+          previouslyCached: true,
+          skipped: "older-response",
+        };
+      }
+      if (
+        incomingUpdatedAt === cachedUpdatedAt &&
+        (existing.title !== issue.title ||
+          existing.bodyHash !== bodyHash ||
+          existing.state !== issue.state)
+      ) {
+        throw new RvwError(
+          "GITHUB_ISSUE_ERROR",
+          "同じupdatedAtを持つGitHub Issue responseの内容が一致しません。",
+          {
+            details: {
+              reason: "ISSUE_VERSION_CONFLICT",
+              issueId: existing.id,
+              canonicalName: existing.canonicalName,
+              number: existing.number,
+              updatedAt: issue.updatedAt,
+            },
+          },
+        );
+      }
+    }
     this.database
       .prepare(
         `INSERT INTO github_issues(
@@ -1121,7 +1255,7 @@ export class RvwDatabase {
         body,
         issue.state,
         issue.updatedAt,
-        hashDocument(body),
+        bodyHash,
         fetchedAt,
       );
     const result = this.findIssue(issue.owner, issue.repository, issue.number);
@@ -1129,6 +1263,7 @@ export class RvwDatabase {
     return {
       issue: result,
       previouslyCached: existing !== null,
+      skipped: null,
       changed:
         existing === null ||
         existing.canonicalName !== result.canonicalName ||
@@ -1197,8 +1332,13 @@ export class RvwDatabase {
     reviewKind: "pull-request" | "branch",
     reviewId: string,
     issueId: string,
+    expectedFetchedAt: string,
     message: string,
-  ): { issue: IssueDocument | null; updated: boolean; skipped: "membership-removed" | null } {
+  ): {
+    issue: IssueDocument | null;
+    updated: boolean;
+    skipped: "membership-removed" | "newer-attempt" | null;
+  } {
     return this.immediateTransaction(() => {
       this.assertReviewExists(reviewKind, reviewId);
       if (!this.hasReviewIssue(reviewKind, reviewId, issueId)) {
@@ -1206,6 +1346,9 @@ export class RvwDatabase {
       }
       const current = this.getIssue(issueId);
       if (!current) throw new RvwError("ISSUE_NOT_FOUND", "Issueが見つかりません。");
+      if (current.fetchedAt !== expectedFetchedAt) {
+        return { issue: current, updated: false, skipped: "newer-attempt" };
+      }
       if (current.syncError === message) {
         return { issue: current, updated: false, skipped: null };
       }
@@ -1224,7 +1367,11 @@ export class RvwDatabase {
     reviewId: string,
     issueId: string,
     fetchedIssue: GitHubIssue,
-  ): { issue: IssueDocument | null; refreshed: boolean; skipped: "membership-removed" | null } {
+  ): {
+    issue: IssueDocument | null;
+    refreshed: boolean;
+    skipped: "membership-removed" | "older-response" | null;
+  } {
     return this.immediateTransaction(() => {
       this.assertReviewExists(reviewKind, reviewId);
       if (!this.hasReviewIssue(reviewKind, reviewId, issueId)) {
@@ -1276,7 +1423,11 @@ export class RvwDatabase {
       if (written.changed && written.previouslyCached) {
         this.notifyIssueReviewChanges(issueId);
       }
-      return { issue: written.issue, refreshed: true, skipped: null };
+      return {
+        issue: written.issue,
+        refreshed: written.skipped === null,
+        skipped: written.skipped,
+      };
     });
   }
 
@@ -2909,7 +3060,7 @@ export class RvwDatabase {
         : null;
       if (keyHash) {
         const existing = this.database
-          .prepare("SELECT * FROM branch_comment_reply_idempotency WHERE key_hash = ?")
+          .prepare("SELECT * FROM comment_reply_idempotency WHERE key_hash = ?")
           .get(keyHash) as DbRow | undefined;
         if (existing) {
           if (stringValue(existing, "request_hash") !== requestHash) {
@@ -2959,7 +3110,7 @@ export class RvwDatabase {
       if (keyHash && requestHash) {
         this.database
           .prepare(
-            `INSERT INTO branch_comment_reply_idempotency(
+            `INSERT INTO comment_reply_idempotency(
               key_hash, request_hash, post_id, created_at
             ) VALUES (?, ?, ?, ?)`,
           )

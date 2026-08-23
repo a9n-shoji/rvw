@@ -34,6 +34,7 @@ import type { AnyReviewComment } from "../review-context.js";
 import type { ReadingLocator } from "../reading-history.js";
 import { invalidateReviewScope } from "../review-query-invalidation.js";
 import { reviewQueryKeys } from "../review-query-keys.js";
+import { issueSyncFailureFeedback } from "../review-sync-feedback.js";
 import type { ThemePreference } from "../theme.js";
 import { useDebouncedValue } from "../use-debounced-value.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
@@ -63,7 +64,11 @@ interface BranchReviewResponse {
 
 interface BranchSyncResponse extends BranchReviewResponse {
   issueResults: Array<
-    | { issue: IssueDocument; ok: true; skipped?: "membership-removed" }
+    | {
+        issue: IssueDocument;
+        ok: true;
+        skipped?: "membership-removed" | "older-response" | "newer-attempt";
+      }
     | {
         issue: IssueDocument;
         ok: false;
@@ -272,14 +277,8 @@ export function BranchReviewApp({
       const failures = issueResults.filter((result) => !result.ok);
       setSyncFeedbackWarning(failures.length > 0);
       const sourceFeedback = `${branchReview.defaultBranchName} · ${shortOid(branchReview.sourceOid)} に同期しました。`;
-      const issueFeedback = failures
-        .map(({ issue, error }) => `#${issue.number}: ${error.message}`)
-        .join(" / ");
-      showSyncFeedback(
-        failures.length === 0
-          ? sourceFeedback
-          : `${sourceFeedback} Issue ${failures.length}件の更新に失敗しました（${issueFeedback}）。`,
-      );
+      const issueFeedback = issueSyncFailureFeedback(failures);
+      showSyncFeedback(issueFeedback ? `${sourceFeedback} ${issueFeedback}` : sourceFeedback);
       await refresh();
     },
     onError: async () => await refresh(),

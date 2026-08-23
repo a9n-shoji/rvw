@@ -72,6 +72,12 @@
 - 異なるsource OIDを返す同時初回openで、loserがretained ref作成前に既存aggregateのsourceを公開するraceを修正
 - reset完了後に遅延作成された初期retained refをexact ref単位でbest-effort cleanup
 - Issue削除後に遅れて失敗したPR／Branch refreshをwarningではなく`membership-removed`としてskip
+- Branch source同期をgeneration付きretain-before-publishへ変更し、古い成功／失敗が新しいOIDやerrorを巻き戻すraceを修正
+- 初期化pendingとfailed markerを分離し、pendingだけを最大5秒待つことで長い同時初回openと即時failureを区別
+- GitHub metadata取得後にdefault branchが進んだ場合、local corruptionではなくremote snapshotを一度再取得
+- 共有Issue cacheをGitHub `updatedAt`と取得snapshotで順序付けし、古い成功／失敗と同一version内容競合をfail closed
+- comment reply idempotency keyをPR／Branch共通のdatabase-wide keyspaceへ統一
+- PR viewerもIssue同期の部分失敗をreview source成功と分けてwarning表示
 
 ## [0.2.3] - 2026-08-21
 
