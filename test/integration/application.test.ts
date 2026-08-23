@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -141,6 +148,16 @@ class PullRequestRetainBarrierGitClient extends GitClient {
   }
 }
 
+class PausePullRequestRefGitClient extends GitClient {
+  readonly barrier = new OneShotBarrier();
+
+  override async ensureCommitRef(cwd: string, number: number, oid: string) {
+    const retained = await super.ensureCommitRef(cwd, number, oid);
+    await this.barrier.blockOnce();
+    return retained;
+  }
+}
+
 function githubIssue(
   number: number,
   body = `Issue ${number} body`,
@@ -222,6 +239,21 @@ describe("RvwService commit workflow", () => {
       databaseWriteProbe: { ok: true, error: null },
     });
     expect(database.getChangeSequence()).toBe(changeSequence);
+  });
+
+  it("reports 64-character Branch retained-ref OIDs instead of silently dropping them", async () => {
+    const { repository, service } = setup("rvw-doctor-sha256-ref-");
+    const oid = "a".repeat(64);
+    const reviewId = "11111111-1111-4111-8111-111111111111";
+    vi.spyOn(service.git, "listRefsByPrefix").mockResolvedValue([
+      `refs/rvw/branch/${reviewId}/commits/oid-${oid}`,
+    ]);
+
+    await expect(service.doctor(repository)).resolves.toMatchObject({
+      branchRetainedRefs: {
+        refs: [{ reviewId, oid, status: "orphan-review" }],
+      },
+    });
   });
 
   it("adds only direct same-repository Issue references from the PR body and never removes them", async () => {
@@ -340,6 +372,32 @@ describe("RvwService commit workflow", () => {
     expect(staleResults[0]).toMatchObject({
       ok: false,
       issue: { number: 142, syncError: "missing Issue #142" },
+    });
+    await expect(service.getAnyCommentReviewContext(issueComment.ref)).resolves.toMatchObject({
+      issue: { number: 142, syncError: "missing Issue #142", stale: true },
+    });
+
+    fake.issues.set(142, githubIssue(142, "Requirement with a nested #77 reference."));
+    const ensured = await service.publishWalkthrough({
+      review: { kind: "pull-request", pullRequest: opened.pullRequest.url },
+      sourceOid: opened.pullRequest.latestHeadOid,
+      title: "Issue recovery",
+      body: "Read [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "Source",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 1,
+          description: null,
+        },
+      ],
+      issuesToAdd: ["#142"],
+    });
+    expect(ensured.issuesAdded).toEqual([]);
+    await expect(service.getAnyCommentReviewContext(issueComment.ref)).resolves.toMatchObject({
+      issue: { number: 142, syncError: null, stale: false },
     });
   });
 
@@ -576,14 +634,18 @@ describe("RvwService commit workflow", () => {
       comments: 1,
       posts: 2,
       targets: 1,
-      gitRefs: 2,
+      gitRefs: 0,
     });
+    expect(preview.retainedRefs).toHaveLength(2);
+    expect(preview.retainedRefsPreserved).toBe(true);
     const reset = await resetPullRequest(service, opened.pullRequest.id);
     expect(reset.pullRequest.latestComparisonBaseOid).toBe(base);
     expect(reset.commits.map(({ oid }) => oid)).toEqual([firstHead, secondHead]);
     expect(service.listComments(opened.pullRequest.id)).toHaveLength(0);
     expect(service.listPullRequestIssues(opened.pullRequest.id)).toHaveLength(0);
-    expect((await service.getResetPreview(opened.pullRequest.id)).counts.gitRefs).toBe(1);
+    const afterResetPreview = await service.getResetPreview(opened.pullRequest.id);
+    expect(afterResetPreview.counts.gitRefs).toBe(0);
+    expect(afterResetPreview.retainedRefs).toHaveLength(2);
   });
 
   it("reopens an explicitly registered PR outside a repository", async () => {
@@ -596,6 +658,42 @@ describe("RvwService commit workflow", () => {
     expect(reopened.fromCache).toBe(true);
     expect(reopened.pullRequest.id).toBe(opened.pullRequest.id);
     expect(reopened.pullRequest.localRepositoryPath).toBe(opened.pullRequest.localRepositoryPath);
+  });
+
+  it("uses the saved binding for an explicit PR opened from an unrelated repository", async () => {
+    const { repository, fake, service } = setup("rvw-open-unrelated-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const unrelatedRepository = createGitRepository("rvw-unrelated-repository-");
+
+    const reopened = await service.openPullRequest(fake.pullRequest.url, unrelatedRepository);
+
+    expect(reopened.fromCache).toBe(true);
+    expect(reopened.pullRequest.id).toBe(opened.pullRequest.id);
+    expect(reopened.pullRequest.localRepositoryPath).toBe(opened.pullRequest.localRepositoryPath);
+  });
+
+  it("upgrades a released DB's symlinked PR binding to real paths on cached open", async () => {
+    const { repository, fake, database, service } = setup("rvw-pr-legacy-symlink-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const links = mkdtempSync(path.join(os.tmpdir(), "rvw-pr-legacy-link-"));
+    const linkedRepository = path.join(links, "repository");
+    symlinkSync(repository, linkedRepository, "dir");
+    const raw = new DatabaseSync(database.filePath);
+    raw
+      .prepare(
+        "UPDATE pull_requests SET local_repository_path = ?, git_common_dir = ? WHERE id = ?",
+      )
+      .run(linkedRepository, path.join(linkedRepository, ".git"), opened.pullRequest.id);
+    raw.close();
+
+    const reopened = await service.openPullRequest(fake.pullRequest.url, repository);
+
+    expect(reopened.fromCache).toBe(true);
+    expect(reopened.pullRequest).toMatchObject({
+      id: opened.pullRequest.id,
+      localRepositoryPath: realpathSync(repository),
+      gitCommonDir: realpathSync(path.join(repository, ".git")),
+    });
   });
 
   it("rejects stale destructive previews before Pull Request artifacts are deleted", async () => {
@@ -653,32 +751,170 @@ describe("RvwService commit workflow", () => {
     expect(database.getWalkthrough(walkthrough.id)).not.toBeNull();
   });
 
-  it("rechecks a Pull Request reset token after GitHub I/O and before replacing refs", async () => {
-    const { repository, fake, database, service } = setup("rvw-pr-reset-network-race-");
+  it("returns a fresh preview when the final SQLite destructive CAS detects a race", async () => {
+    const { repository, fake, database, service } = setup("rvw-final-cas-preview-");
+    const opened = await service.openPullRequest(undefined, repository);
+    fake.issues.set(142, githubIssue(142));
+    const added = await service.addPullRequestIssue(opened.pullRequest.url, "#142");
+    const issuePreview = service.getIssueRemovalPreview(
+      "pull-request",
+      opened.pullRequest.id,
+      "#142",
+    );
+    const removeReviewIssue = database.removeReviewIssue.bind(database);
+    const removeSpy = vi
+      .spyOn(database, "removeReviewIssue")
+      .mockImplementationOnce((...args: Parameters<RvwDatabase["removeReviewIssue"]>) => {
+        database.incrementChangeSequence({
+          kind: "pull-request",
+          reviewId: opened.pullRequest.id,
+        });
+        return removeReviewIssue(...args);
+      });
+
+    const issueError = (() => {
+      try {
+        service.removePullRequestIssue(
+          opened.pullRequest.url,
+          "#142",
+          issuePreview.confirmationToken,
+        );
+        return null;
+      } catch (error) {
+        return error as RvwError;
+      }
+    })();
+    expect(issueError?.code).toBe("DESTRUCTIVE_PREVIEW_STALE");
+    expect(issueError?.status).toBe(409);
+    const currentIssuePreview = (
+      issueError?.details as {
+        currentPreview: { issue: { id: string }; confirmationToken: string };
+      }
+    ).currentPreview;
+    expect(currentIssuePreview.issue.id).toBe(added.issue.id);
+    expect(typeof currentIssuePreview.confirmationToken).toBe("string");
+    removeSpy.mockRestore();
+
+    const walkthrough = (
+      await service.publishWalkthrough({
+        review: { kind: "pull-request", pullRequest: opened.pullRequest.url },
+        sourceOid: opened.pullRequest.latestHeadOid,
+        title: "Final CAS",
+        body: "Read [the source](rvw-ref:source).",
+        references: [
+          {
+            id: "source",
+            label: "Source",
+            path: "src.txt",
+            startLine: 1,
+            endLine: 1,
+            description: null,
+          },
+        ],
+      })
+    ).walkthrough;
+    const walkthroughPreview = service.getWalkthroughDeletePreview(walkthrough.ref);
+    const deleteWalkthrough = database.deleteWalkthrough.bind(database);
+    vi.spyOn(database, "deleteWalkthrough").mockImplementationOnce(
+      (...args: Parameters<RvwDatabase["deleteWalkthrough"]>) => {
+        database.incrementChangeSequence({
+          kind: "pull-request",
+          reviewId: opened.pullRequest.id,
+        });
+        return deleteWalkthrough(...args);
+      },
+    );
+
+    const walkthroughError = (() => {
+      try {
+        service.deleteWalkthroughByUri(walkthrough.ref, walkthroughPreview.confirmationToken);
+        return null;
+      } catch (error) {
+        return error as RvwError;
+      }
+    })();
+    expect(walkthroughError?.code).toBe("DESTRUCTIVE_PREVIEW_STALE");
+    expect(walkthroughError?.status).toBe(409);
+    const currentWalkthroughPreview = (
+      walkthroughError?.details as { currentPreview: { confirmationToken: string } }
+    ).currentPreview;
+    expect(typeof currentWalkthroughPreview.confirmationToken).toBe("string");
+  });
+
+  it("preserves PR refs when a concurrent writer wins the final reset sequence CAS", async () => {
+    const gitClient = new PausePullRequestRefGitClient();
+    const { repository, database, service } = setup("rvw-pr-reset-ref-race-", gitClient);
     const opened = await service.openPullRequest(undefined, repository);
     const preview = await service.getResetPreview(opened.pullRequest.id);
     const refsBefore = await service.git.listRefsByPrefix(
       repository,
       `refs/rvw/pr/${opened.pullRequest.number}/`,
     );
-    const barrier = new OneShotBarrier();
-    barrier.arm();
-    fake.pullRequestBarrier = barrier;
+    gitClient.barrier.arm();
 
     const reset = service.resetPullRequest(opened.pullRequest.id, preview.confirmationToken);
-    await barrier.waitUntilBlocked();
+    await gitClient.barrier.waitUntilBlocked();
     const comment = await service.createComment({
       pullRequestId: opened.pullRequest.id,
       target: { kind: "pull-request" },
-      body: "Created while reset was fetching GitHub state.",
+      body: "Created after reset retained its head and before its SQLite CAS.",
     });
-    barrier.release();
+    gitClient.barrier.release();
 
-    await expect(reset).rejects.toMatchObject({
-      code: "DESTRUCTIVE_PREVIEW_STALE",
-      status: 409,
-    });
+    const stale = (await reset.catch((error: unknown) => error)) as RvwError;
+    expect(stale.code).toBe("DESTRUCTIVE_PREVIEW_STALE");
+    expect(stale.status).toBe(409);
+    const currentResetPreview = (
+      stale.details as {
+        currentPreview: { reviewChangeSequence: number; confirmationToken: string };
+      }
+    ).currentPreview;
+    expect(typeof currentResetPreview.reviewChangeSequence).toBe("number");
+    expect(typeof currentResetPreview.confirmationToken).toBe("string");
+    expect(currentResetPreview.confirmationToken).not.toBe(preview.confirmationToken);
     expect(database.getComment(comment.id)).not.toBeNull();
+    await expect(
+      service.git.listRefsByPrefix(repository, `refs/rvw/pr/${opened.pullRequest.number}/`),
+    ).resolves.toEqual(refsBefore);
+  });
+
+  it("keeps historical PR evidence available to a writer linearized after reset", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-pr-reset-writer-after-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const secondHead = commitFile(repository, "src.txt", "first\nsecond\nthird\n", "advance");
+    fake.pullRequest = {
+      ...fake.pullRequest,
+      headOid: secondHead,
+      updatedAt: "2026-08-24T00:00:00.000Z",
+    };
+    await service.refreshPullRequest(opened.pullRequest.id);
+    const refsBefore = await service.git.listRefsByPrefix(
+      repository,
+      `refs/rvw/pr/${opened.pullRequest.number}/`,
+    );
+    expect(refsBefore).toHaveLength(2);
+
+    const preview = await service.getResetPreview(opened.pullRequest.id);
+    expect(preview).toMatchObject({
+      counts: { gitRefs: 0 },
+      retainedRefs: refsBefore,
+      retainedRefsPreserved: true,
+    });
+    await service.resetPullRequest(opened.pullRequest.id, preview.confirmationToken);
+
+    const historical = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Created after reset against retained historical evidence.",
+    });
+    expect(historical.target).toMatchObject({ sourceOid: firstHead });
     await expect(
       service.git.listRefsByPrefix(repository, `refs/rvw/pr/${opened.pullRequest.number}/`),
     ).resolves.toEqual(refsBefore);

@@ -94,8 +94,14 @@
 - protocol v3 watcher stateのURL-keyed PR contextを最初のv4 eventでstable PR IDへ再キー化し、二重claimを防止
 - Branch resetのDB削除後にref cleanupだけが失敗した場合をtyped partial successとして扱い、browserの削除済みstateを破棄
 - reset、Issue removal、Walkthrough deletionをreview sequenceに結び付いたconfirmation tokenでfenceし、stale previewを409で拒否
-- PR resetがGitHub I/O待機中にreview stateが変わった場合、ref置換前にstale tokenを拒否
+- PR resetがGitHub I/O待機中にreview stateが変わった場合、head ref確保前にstale tokenを拒否
 - Branch reset previewのComment post/reference/targetとWalkthrough reference件数をPR側と同じ粒度へ統一
+- PR resetが最終SQLite CASより前にhistorical refsを削除し得たraceをなくし、既存PR refをimmutable evidenceとして保持
+- final SQLite CASでstaleになったreset／Issue removal／Walkthrough deletionにも最新previewを返すよう統一
+- `comment get`が共有Issue cacheではなく所有membershipのsync error／stale状態を返すよう修正
+- Walkthrough `issuesToAdd`の正常取得で既存PR／Branch membershipのsync errorをclear
+- doctorで40〜64桁Branch OIDを診断し、review単位のevidence lookupを一回へ集約
+- 表示remoteとGit fetchのorigin-first選択を共通化し、legacy保存pathをverified cached openでrealpathへ更新
 
 ## [0.2.3] - 2026-08-21
 

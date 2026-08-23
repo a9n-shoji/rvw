@@ -127,7 +127,8 @@ existing-only. `BRANCH_REVIEW_NOT_FOUND` means they created no review row or ret
 `branch open` and an explicit `branch issue add` may create the singleton. Branch evidence belongs to
 the returned Branch Review ID, not only to owner/repository. Use the preview's confirmation token for
 reset execution. If reset returns `completed-with-orphan-refs`, treat the Review as deleted and report
-the isolated orphan prefix and cleanup details; creating a new
+the isolated orphan prefix and manual-cleanup details. This release has no rvw-managed orphan-ref
+cleanup command; do not imply that recreation or an automatic repair removes it. Creating a new
 review neither cleans nor inherits those refs.
 
 ## Read comments
@@ -341,4 +342,5 @@ move its checkout. To change only the saved worktree path without starting a vie
 
 If rvw reports `LOCAL_STATE_INCONSISTENT`, report its reset guidance and deletion counts. Never run
 `rvw pr reset ... --yes --confirmation-token <PREVIEW_TOKEN>` without explicit authorization because
-it permanently removes local comments, Walkthroughs, and retained rvw refs.
+it permanently removes local comments, Issue memberships, and Walkthroughs. PR reset preserves
+historical rvw refs as immutable evidence.

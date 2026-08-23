@@ -941,6 +941,8 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       );
       const preview = (await response.json()) as {
         counts?: Record<string, number>;
+        retainedRefs?: string[];
+        retainedRefsPreserved?: boolean;
         confirmationToken?: string;
         error?: { code: string; message: string; details?: unknown; suggestions?: string[] };
       };
@@ -954,7 +956,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       }
       const counts = preview.counts;
       const confirmed = window.confirm(
-        `ローカルレビュー状態を削除して再構築します。\n\nIssue membership ${counts.issueMemberships ?? 0}\nコメント ${counts.comments ?? 0}\n返信 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\n対象 ${counts.targets ?? 0}\nウォークスルー ${counts.walkthroughs ?? 0}\nウォークスルーコード参照 ${counts.walkthroughReferences ?? 0}\nGit ref ${counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
+        `ローカルレビュー状態を削除して再構築します。\n\nIssue membership ${counts.issueMemberships ?? 0}\nコメント ${counts.comments ?? 0}\n返信 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\n対象 ${counts.targets ?? 0}\nウォークスルー ${counts.walkthroughs ?? 0}\nウォークスルーコード参照 ${counts.walkthroughReferences ?? 0}\n保持するhistorical Git ref ${preview.retainedRefs?.length ?? 0}\n\nこの操作は元に戻せません。`,
       );
       if (!confirmed) return null;
       return await api<{

@@ -45,10 +45,13 @@ export interface GitHubIssue extends GitHubIssueIdentity {
   updatedAt: string;
 }
 
-export interface IssueDocument extends GitHubIssue {
+export interface CachedIssueDocument extends GitHubIssue {
   id: string;
   bodyHash: string;
   fetchedAt: string;
+}
+
+export interface IssueDocument extends CachedIssueDocument {
   syncError: string | null;
   stale: boolean;
 }

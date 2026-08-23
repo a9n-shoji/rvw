@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, renameSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RvwService } from "../../src/application/rvw-service.js";
 import type {
   GitHubIssue,
@@ -367,6 +367,29 @@ describe("Branch Review", () => {
       ),
     };
   }
+
+  it("loads Branch evidence once per review while classifying multiple retained refs", async () => {
+    const { repositoryPath, database, service } = setup();
+    const opened = await service.openBranchReview(repositoryPath);
+    const historicalOid = commitFile(
+      repositoryPath,
+      "historical.txt",
+      "historical\n",
+      "historical evidence",
+    );
+    await service.git.ensureBranchCommitRef(repositoryPath, opened.branchReview.id, historicalOid);
+    const evidence = vi.spyOn(database, "listBranchEvidenceOids");
+
+    const report = await service.doctor(repositoryPath);
+
+    expect(report.branchRetainedRefs?.refs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ oid: opened.branchReview.sourceOid, status: "current" }),
+        expect.objectContaining({ oid: historicalOid, status: "unreferenced" }),
+      ]),
+    );
+    expect(evidence).toHaveBeenCalledTimes(1);
+  });
 
   it("reuses one repository review across worktrees and survives a default branch rename", async () => {
     const { repositoryPath, sourceOid, github, service } = setup();
@@ -1210,6 +1233,50 @@ describe("Branch Review", () => {
         body: "Canonical casing updated",
       }),
     ]);
+  });
+
+  it("keeps Branch membership stale state in comment context and clears it through issuesToAdd", async () => {
+    const { repositoryPath, github, database, service } = setup();
+    github.issues.set(142, issue(142));
+    const opened = await service.openBranchReview(repositoryPath);
+    const added = await service.addBranchIssue(repositoryPath, "#142");
+    const comment = await service.createBranchComment({
+      branchReviewId: opened.branchReview.id,
+      target: { kind: "issue", issue: "#142", startLine: 1, endLine: 1 },
+      body: "Report the membership-specific stale state.",
+    });
+    database.setReviewIssueSyncError(
+      "branch",
+      opened.branchReview.id,
+      added.issue.id,
+      database.getIssueCacheGeneration(added.issue.id),
+      "Branch-only refresh failure",
+    );
+
+    await expect(service.getAnyCommentReviewContext(comment.ref)).resolves.toMatchObject({
+      issue: { number: 142, syncError: "Branch-only refresh failure", stale: true },
+    });
+    const ensured = await service.publishWalkthrough({
+      review: { kind: "branch", repository: "acme/review-repo" },
+      sourceOid: opened.branchReview.sourceOid,
+      title: "Issue recovery",
+      body: "Read [the repository](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "Repository",
+          path: "README.md",
+          startLine: 1,
+          endLine: 1,
+          description: null,
+        },
+      ],
+      issuesToAdd: ["#142"],
+    });
+    expect(ensured.issuesAdded).toEqual([]);
+    await expect(service.getAnyCommentReviewContext(comment.ref)).resolves.toMatchObject({
+      issue: { number: 142, syncError: null, stale: false },
+    });
   });
 
   it("keeps exact source comments, syncs Issue bodies, and emits Branch watch events", async () => {

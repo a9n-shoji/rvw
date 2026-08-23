@@ -245,16 +245,17 @@ typed referenceを付けられ、任意のlocal commitは根拠として受理�
 directory、DB path、Branch retained refのcurrent／referenced／unreferenced／orphan状態を確認してください。初回登録や
 同期だけが失敗する場合は`gh auth status`とnetworkを確認します。登録済みPRはofflineでも開けます。
 
-force-push前に観測したhead commitはimmutable refで保持するため、旧コメントの参照元として読めます。Git refとSQLiteの不整合は部分修復せず、削除件数を確認後、正式な復旧手段としてresetします。
+force-push前に観測したhead commitはimmutable refで保持するため、旧コメントの参照元として読めます。Git refとSQLiteの不整合は部分修復せず、まず`rvw doctor --json`で診断します。PR resetはSQLite上のreview artifactを初期化しますが、並行writerが確保したexact evidenceを壊さないよう既存PR refは削除しません。
 
 ```bash
 rvw pr reset https://github.com/owner/repository/pull/123 --json
 rvw pr reset https://github.com/owner/repository/pull/123 --yes --confirmation-token <PREVIEW_TOKEN> --json
 ```
 
-resetは対象PRのコメント、返信、コメント対象、コメント投稿とWalkthroughのcode reference、
-`refs/rvw/pr/<number>/...`を削除し、現在のGitHub状態からcacheとhead refを再構築します。
-バックアップや旧コメント移行は行わず、元に戻せません。
+resetは対象PRのコメント、返信、コメント対象、コメント投稿、Issue membership、Walkthroughとcode referenceを
+削除し、現在のGitHub状態からcacheとhead refを再構築します。`refs/rvw/pr/<number>/...`にある既存の
+historical refは削除件数へ含めず、そのまま保持します。バックアップや旧コメント移行は行わず、SQLite上の
+artifact削除は元に戻せません。
 
 ## CLI protocol
 
@@ -298,10 +299,12 @@ rvw pr attach <PR_REF> --repository <PATH> --json
 ```
 
 PR／Branch reset、Issue削除、Walkthrough削除は、確認tokenなしでは対象Issue、コメント、返信、Walkthrough、
-解放候補refなどのpreviewだけを返して終了します。返却された構造化`details.arguments`を使い、同じ
+Branchの解放候補refなどのpreviewだけを返して終了します。PR reset previewの`retainedRefs`は保持される
+evidenceの情報であり、削除対象ではありません。返却された構造化`details.arguments`を使い、同じ
 `reviewChangeSequence`と`confirmationToken`を`--yes`とともに返した場合だけ、対象reviewが所有する
 artifactを削除します。同じIssueを利用する別reviewのmembership、Comment、共有Issue cacheは残ります。
-確認後にartifactが変わった場合は`DESTRUCTIVE_PREVIEW_STALE` (409)と最新previewを返し、再確認を要求します。
+確認後にartifactが変わった場合は、service確認と最終SQLite CASのどちらで競合を検出しても
+`DESTRUCTIVE_PREVIEW_STALE` (409)と最新previewを返し、再確認を要求します。
 最後のmembershipまたはresetでownerがなくなった共有Issue cache rowは同じtransactionでGCします。ほかのReviewが
 所有しているcacheの同一version競合は、`issue.cacheRepair` capabilityを確認した上で、
 `pr issue refresh --force`または`branch issue refresh --force`がGitHubから
@@ -313,8 +316,9 @@ Branch Review、DB row、retained refを暗黙作成しません。作成を許�
 `branch issue add`だけです。
 
 Branch retained refは`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`に属します。reset後のref削除が
-失敗した場合、`completed-with-orphan-refs`という部分成功outcomeがDB削除済み、残存prefix／ref、明示cleanup
-可能性を返します。browserも削除済みreviewのdraft／workspaceを破棄してcleanup warningを表示します。新しいBranch Reviewを
+失敗した場合、`completed-with-orphan-refs`という部分成功outcomeがDB削除済み、残存prefix／ref、manual
+cleanupの可否を返します。現時点にrvw管理下のcleanup commandはなく、browserは削除済みreviewの
+draft／workspaceを破棄してwarningを表示します。新しいBranch Reviewを
 作ってもorphan refはcleanupされませんが、新reviewは別IDのnamespaceだけを証拠として使うため旧sourceを
 継承せず、旧resetも新reviewのrefを削除しません。
 
@@ -340,7 +344,9 @@ requestと照合し、rename、transfer、redirect相当のidentity不一致をc
 共有Issue cacheはGitHub `updatedAt`より古いresponseを無視し、同じ`updatedAt`で本文、title、stateが異なるresponseを
 `GITHUB_ISSUE_ERROR`として拒否します。accepted successごとに内部cache generationを増やし、成功後に遅れた失敗は
 取得開始時のgenerationが変わっていれば現在membershipをstaleに戻しません。Issue本文cacheは共有しますが、
-`syncError`は同期を実行したreview membershipだけに属します。実在するmembershipのIssueごとの部分失敗は
+`syncError`は同期を実行したreview membershipだけに属し、`comment get`もCommentの所有Reviewにある
+membership stateを返します。Walkthroughの`issuesToAdd`が同じIssueを正常取得した場合は、既存membershipの
+sync errorもclearします。実在するmembershipのIssueごとの部分失敗は
 CLI／HTTP responseに加え、PR／Branch viewerの同期結果にもwarningとして表示し、top barでは先頭3件と残件数に省略します。
 comment replyのidempotency keyはReview種別をまたぐdatabase-wide keyspaceです。未公開のBranch replyは
 request hashにReview種別を含めますが、PR replyは公開済み0.2.xの永続ledgerをexact retryできるよう従来のhash形式を

@@ -700,7 +700,7 @@ test("clears deleted Branch state after reset leaves isolated orphan refs", asyn
           remainingRefs: [`refs/rvw/branch/${branchReviewId}/commits/oid-${"c".repeat(40)}`],
           refPrefix: `refs/rvw/branch/${branchReviewId}/commits/`,
           repositoryPath: "/fixture/review-repo",
-          repairableByExplicitCleanup: true,
+          manualCleanupPossible: true,
         },
       },
     });

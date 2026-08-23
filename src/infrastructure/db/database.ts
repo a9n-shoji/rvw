@@ -20,6 +20,7 @@ import type {
   BranchReviewComment,
   BranchWalkthrough,
   BranchWalkthroughSummary,
+  CachedIssueDocument,
   CodeReference,
   CommentPost,
   CommentPostEvent,
@@ -154,10 +155,7 @@ function mapBranchReview(row: DbRow): BranchReview {
   };
 }
 
-function mapIssue(row: DbRow): IssueDocument {
-  const syncError = Object.hasOwn(row, "membership_sync_error")
-    ? nullableString(row, "membership_sync_error")
-    : null;
+function mapCachedIssue(row: DbRow): CachedIssueDocument {
   return {
     id: stringValue(row, "id"),
     host: "github.com",
@@ -172,9 +170,18 @@ function mapIssue(row: DbRow): IssueDocument {
     updatedAt: stringValue(row, "github_updated_at"),
     bodyHash: stringValue(row, "body_hash"),
     fetchedAt: stringValue(row, "fetched_at"),
-    syncError,
-    stale: syncError !== null,
   };
+}
+
+function mapReviewIssue(row: DbRow): IssueDocument {
+  if (!Object.hasOwn(row, "membership_sync_error")) {
+    throw new RvwError(
+      "DATABASE_ERROR",
+      "Review Issue documentにmembership sync stateが含まれていません。",
+    );
+  }
+  const syncError = nullableString(row, "membership_sync_error");
+  return { ...mapCachedIssue(row), syncError, stale: syncError !== null };
 }
 
 function mapCodeReference(row: DbRow): CodeReference {
@@ -1184,10 +1191,10 @@ export class RvwDatabase {
     return { branchReview, ...outcome };
   }
 
-  getIssue(id: string): IssueDocument | null {
+  getIssue(id: string): CachedIssueDocument | null {
     const row = this.database.prepare("SELECT * FROM github_issues WHERE id = ?").get(id) as
       DbRow | undefined;
-    return row ? mapIssue(row) : null;
+    return row ? mapCachedIssue(row) : null;
   }
 
   getReviewIssue(
@@ -1204,16 +1211,16 @@ export class RvwDatabase {
          WHERE ri.${reviewColumn} = ? AND i.id = ?`,
       )
       .get(reviewId, issueId) as DbRow | undefined;
-    return row ? mapIssue(row) : null;
+    return row ? mapReviewIssue(row) : null;
   }
 
-  findIssue(owner: string, repository: string, number: number): IssueDocument | null {
+  findIssue(owner: string, repository: string, number: number): CachedIssueDocument | null {
     const row = this.database
       .prepare(
         "SELECT * FROM github_issues WHERE host = 'github.com' AND lower(owner) = lower(?) AND lower(repository) = lower(?) AND number = ?",
       )
       .get(owner, repository, number) as DbRow | undefined;
-    return row ? mapIssue(row) : null;
+    return row ? mapCachedIssue(row) : null;
   }
 
   getIssueCacheGeneration(id: string): number {
@@ -1225,7 +1232,7 @@ export class RvwDatabase {
   }
 
   private writeIssue(issue: GitHubIssue): {
-    issue: IssueDocument;
+    issue: CachedIssueDocument;
     changed: boolean;
     previouslyCached: boolean;
     skipped: "older-response" | null;
@@ -1328,7 +1335,7 @@ export class RvwDatabase {
     };
   }
 
-  upsertIssue(issue: GitHubIssue): IssueDocument {
+  upsertIssue(issue: GitHubIssue): CachedIssueDocument {
     return this.writeIssue(issue).issue;
   }
 
@@ -1394,12 +1401,16 @@ export class RvwDatabase {
     return this.immediateTransaction(() => {
       this.assertReviewExists(reviewKind, reviewId);
       if (!this.hasReviewIssue(reviewKind, reviewId, issueId)) {
-        return { issue: this.getIssue(issueId), updated: false, skipped: "membership-removed" };
+        return { issue: null, updated: false, skipped: "membership-removed" };
       }
       const current = this.getIssue(issueId);
       if (!current) throw new RvwError("ISSUE_NOT_FOUND", "Issueが見つかりません。");
       if (this.getIssueCacheGeneration(issueId) !== expectedCacheGeneration) {
-        return { issue: current, updated: false, skipped: "newer-attempt" };
+        return {
+          issue: this.getReviewIssue(reviewKind, reviewId, issueId),
+          updated: false,
+          skipped: "newer-attempt",
+        };
       }
       const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
       const membership = this.database
@@ -1435,7 +1446,7 @@ export class RvwDatabase {
     return this.immediateTransaction(() => {
       this.assertReviewExists(reviewKind, reviewId);
       if (!this.hasReviewIssue(reviewKind, reviewId, issueId)) {
-        return { issue: this.getIssue(issueId), refreshed: false, skipped: "membership-removed" };
+        return { issue: null, refreshed: false, skipped: "membership-removed" };
       }
       const current = this.getIssue(issueId);
       if (
@@ -1614,7 +1625,7 @@ export class RvwDatabase {
     });
   }
 
-  private writeReviewIssueMemberships(
+  private ensureReviewIssueMemberships(
     reviewKind: "pull-request" | "branch",
     reviewId: string,
     issues: GitHubIssue[],
@@ -1630,7 +1641,17 @@ export class RvwDatabase {
            VALUES (?, ?, ?, NULL) ON CONFLICT DO NOTHING`,
         )
         .run(reviewId, cached.id, new Date().toISOString());
-      if (Number(membership.changes) === 1) added.push(cached);
+      const membershipAdded = Number(membership.changes) === 1;
+      if (membershipAdded) {
+        added.push({ ...cached, syncError: null, stale: false });
+      } else {
+        this.database
+          .prepare(
+            `UPDATE ${table} SET sync_error = NULL
+             WHERE ${reviewColumn} = ? AND issue_id = ? AND sync_error IS NOT NULL`,
+          )
+          .run(reviewId, cached.id);
+      }
       if (written.changed && written.previouslyCached) {
         this.notifyIssueReviewChanges(cached.id, { kind: reviewKind, reviewId });
       }
@@ -1649,7 +1670,7 @@ export class RvwDatabase {
            ORDER BY i.number DESC`,
         )
         .all(reviewId) as DbRow[]
-    ).map(mapIssue);
+    ).map(mapReviewIssue);
   }
 
   hasReviewIssue(
@@ -2234,7 +2255,7 @@ export class RvwDatabase {
           now,
         );
       this.insertCodeReferences("walkthrough", id, input.references);
-      const added = this.writeReviewIssueMemberships("pull-request", input.pullRequestId, issues);
+      const added = this.ensureReviewIssueMemberships("pull-request", input.pullRequestId, issues);
       this.incrementChangeSequence({ kind: "pull-request", reviewId: input.pullRequestId });
       return added;
     });
@@ -2272,7 +2293,7 @@ export class RvwDatabase {
       this.insertCodeReferences("walkthrough", id, input.references);
       const walkthrough = this.getWalkthrough(id);
       if (!walkthrough) throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。");
-      const added = this.writeReviewIssueMemberships(
+      const added = this.ensureReviewIssueMemberships(
         "pull-request",
         walkthrough.pullRequestId,
         issues,
@@ -2952,7 +2973,7 @@ export class RvwDatabase {
           new Date().toISOString(),
         );
       this.insertCodeReferences("branch-walkthrough", id, input.references);
-      const added = this.writeReviewIssueMemberships("branch", input.branchReviewId, issues);
+      const added = this.ensureReviewIssueMemberships("branch", input.branchReviewId, issues);
       this.incrementChangeSequence({ kind: "branch", reviewId: input.branchReviewId });
       return added;
     });
@@ -2990,7 +3011,7 @@ export class RvwDatabase {
       this.insertCodeReferences("branch-walkthrough", id, input.references);
       const walkthrough = this.getBranchWalkthrough(id);
       if (!walkthrough) throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。");
-      const added = this.writeReviewIssueMemberships("branch", walkthrough.branchReviewId, issues);
+      const added = this.ensureReviewIssueMemberships("branch", walkthrough.branchReviewId, issues);
       this.incrementChangeSequence({ kind: "branch", reviewId: walkthrough.branchReviewId });
       return added;
     });

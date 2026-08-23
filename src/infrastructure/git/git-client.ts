@@ -231,26 +231,48 @@ export class GitClient {
     }
   }
 
-  async assertBaseRepository(cwd: string, owner: string, repository: string): Promise<string> {
+  private async orderedGitHubRemotes(cwd: string): Promise<
+    Array<{
+      owner: string;
+      repository: string;
+      remoteName: string;
+      remoteUrl: string;
+    }>
+  > {
     const remoteNames = (await runText("git", ["remote"], { cwd }))
       .split("\n")
       .map((value) => value.trim())
       .filter(Boolean);
-    for (const remoteName of remoteNames) {
+    const ordered = [...remoteNames].sort((left, right) => {
+      if (left === "origin") return -1;
+      if (right === "origin") return 1;
+      return left.localeCompare(right);
+    });
+    const remotes: Array<{
+      owner: string;
+      repository: string;
+      remoteName: string;
+      remoteUrl: string;
+    }> = [];
+    for (const remoteName of ordered) {
       const urls = (await runText("git", ["remote", "get-url", "--all", remoteName], { cwd }))
         .split("\n")
         .filter(Boolean);
-      for (const url of urls) {
-        const parsed = parseGithubRemote(url);
-        if (
-          parsed &&
-          parsed.owner.toLowerCase() === owner.toLowerCase() &&
-          parsed.repository.toLowerCase() === repository.toLowerCase()
-        ) {
-          return url;
-        }
+      for (const remoteUrl of urls) {
+        const parsed = parseGithubRemote(remoteUrl);
+        if (parsed) remotes.push({ ...parsed, remoteName, remoteUrl });
       }
     }
+    return remotes;
+  }
+
+  async assertBaseRepository(cwd: string, owner: string, repository: string): Promise<string> {
+    const selected = (await this.orderedGitHubRemotes(cwd)).find(
+      (remote) =>
+        remote.owner.toLowerCase() === owner.toLowerCase() &&
+        remote.repository.toLowerCase() === repository.toLowerCase(),
+    );
+    if (selected) return selected.remoteUrl;
     throw new RvwError(
       "REPOSITORY_MISMATCH",
       `現在のrepositoryは ${owner}/${repository} のbase repository cloneではありません。`,
@@ -283,25 +305,7 @@ export class GitClient {
     remoteName: string;
     remoteUrl: string;
   } | null> {
-    const remoteNames = (await runText("git", ["remote"], { cwd }))
-      .split("\n")
-      .map((value) => value.trim())
-      .filter(Boolean);
-    const ordered = [...remoteNames].sort((left, right) => {
-      if (left === "origin") return -1;
-      if (right === "origin") return 1;
-      return left.localeCompare(right);
-    });
-    for (const remoteName of ordered) {
-      const urls = (await runText("git", ["remote", "get-url", "--all", remoteName], { cwd }))
-        .split("\n")
-        .filter(Boolean);
-      for (const remoteUrl of urls) {
-        const parsed = parseGithubRemote(remoteUrl);
-        if (parsed) return { ...parsed, remoteName, remoteUrl };
-      }
-    }
-    return null;
+    return (await this.orderedGitHubRemotes(cwd))[0] ?? null;
   }
 
   async hasObject(cwd: string, oid: string): Promise<boolean> {
@@ -343,7 +347,7 @@ export class GitClient {
             "取得したPR headがGitHubのOIDと一致しません。",
             {
               details: { expected: input.headOid, actual: fetched },
-              suggestions: [`rvw pr reset https://github.com/.../pull/${input.number} --yes`],
+              suggestions: [`rvw pr reset https://github.com/.../pull/${input.number} --json`],
             },
           );
         }
@@ -368,7 +372,7 @@ export class GitClient {
             "取得したbase tipがGitHubのOIDと一致しません。",
             {
               details: { expected: input.baseOid, actual: fetched },
-              suggestions: [`rvw pr reset https://github.com/.../pull/${input.number} --yes`],
+              suggestions: [`rvw pr reset https://github.com/.../pull/${input.number} --json`],
             },
           );
         }
@@ -566,28 +570,6 @@ export class GitClient {
     );
     await runProcess("git", ["update-ref", "--stdin"], { cwd, input });
     return refs.length;
-  }
-
-  async replacePullRequestRefsForReset(
-    cwd: string,
-    number: number,
-    headOid: string,
-  ): Promise<{ ref: string; removedCount: number }> {
-    const prefix = `refs/rvw/pr/${number}/`;
-    const existing = await this.listRefsByPrefix(cwd, prefix);
-    const ref = this.commitRef(number, headOid);
-    const commands: string[] = ["start"];
-    for (const ref of existing) {
-      if (ref !== this.commitRef(number, headOid)) commands.push(`delete ${ref}`);
-    }
-    commands.push(
-      existing.includes(ref) ? `update ${ref} ${headOid}` : `create ${ref} ${headOid}`,
-      "prepare",
-      "commit",
-      "",
-    );
-    await runProcess("git", ["update-ref", "--stdin"], { cwd, input: commands.join("\n") });
-    return { ref, removedCount: existing.length };
   }
 
   async commits(cwd: string, oldOid: string, newOid: string): Promise<CommitSummary[]> {

@@ -24,9 +24,10 @@ mutation. Worktrees in that common directory may reuse the review, but an indepe
 canonical remote, or a replacement repository at the saved path fails closed instead of moving the
 binding. Repository rename and transfer are not followed automatically; an explicit Branch reset at
 the original binding is the boundary for recreating the aggregate. Worktree and common-directory paths
-are filesystem-realpath canonicalized. The chosen GitHub remote (`origin`, then name order) is exposed
-by open, the viewer header, and doctor; doctor also classifies Branch refs as current, artifact-referenced,
-unreferenced, or orphan without mutating them. The
+are filesystem-realpath canonicalized. Legacy saved path spellings are upgraded to realpaths on a
+verified cached open. One ordered resolver chooses the GitHub remote (`origin`, then name order) for
+both display and fetch, and exposes it through open, the viewer header, and doctor. Doctor classifies
+40-64 digit Branch refs as current, artifact-referenced, unreferenced, or orphan without mutating them. The
 Issue removal transaction deletes only the selected membership and its owned comments/replies.
 Background Issue refresh is separate from membership addition: after the GitHub fetch, one immediate
 transaction rechecks the originating review and membership, updates only an existing shared cache row,
@@ -101,9 +102,16 @@ PR and Branch sync return per-Issue failures separately; both viewers
 report a warning alongside the successfully synchronized review source instead of presenting the
 entire operation as clean, limiting the top-bar detail to three Issues plus the remaining count.
 A fetch failure whose originating membership was already removed is a skip, not a stale warning.
+Shared Issue getters expose only cached content; membership-aware getters add `syncError` and `stale`.
+Comment context reads use the owning membership, and successful `issuesToAdd` ensure operations clear
+that membership's previous error without pretending it was newly added.
 Destructive previews carry the active review sequence and a content-bound confirmation token. Reset,
 Issue removal, and Walkthrough deletion recheck that sequence in their SQLite mutation; stale previews
-return 409 with the current preview instead of deleting newly added artifacts. When browser reset succeeds
+return 409 with the current preview even when the final transaction, rather than the preceding service
+check, detects the conflict. PR reset non-destructively ensures the latest head ref, clears SQLite-owned
+artifacts with that CAS, and preserves all historical PR refs. Physical PR-ref reclamation requires a
+future explicit exclusive GC; reset never races a Comment or Walkthrough writer by deleting evidence.
+When browser reset succeeds
 but the following open fails, the viewer reports reset as complete and
 gives an explicit `rvw branch open` recovery action instead of presenting the reset itself as failed.
 The same deleted-review state is used when ref cleanup returns a partial-success orphan outcome.

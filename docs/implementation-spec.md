@@ -578,7 +578,8 @@ interface Walkthrough {
   publishと同じ規則で再検証する。
 - 人間はviewerから、Agentは明示authorizationを受けたCLIから、不要なWalkthroughを削除できる。削除前に
   reference、対象comment、postの件数を示し、確認後はそれらを一つのtransactionで削除する。共有され得る
-  retained Git commit refは個別削除せずresetまで保持する。
+  retained Git commit refは個別削除しない。Branch refはそのaggregateのresetまで、PR refは将来の明示的・
+  排他的GCまでhistorical evidenceとして保持する。
 - raw HTMLやscriptは実行しない。本文は256 KiB、referenceは200件を上限とする。
 - Phase 1は作成、閲覧、同一ID更新、確認付き削除を扱い、更新履歴、AI chat、自動navigationは扱わない。
 
@@ -1250,8 +1251,8 @@ top barのdetailは先頭3件と残件数に省略する。
 
 commit table、review version table、PR revision tableは持たない。既存Phase 1 DBはmigrationで
 version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元できない場合Outdatedとして残す。
-既存の`refs/rvw/pr/<n>/version/...`は旧comment source objectを失わないようresetまで保持し、
-以後の同期だけがcommit ref形式を使う。
+既存の`refs/rvw/pr/<n>/version/...`は旧comment source objectを失わないよう保持し、resetでも削除しない。
+以後の同期だけがcommit ref形式を使う。将来の明示的・排他的GCまでhistorical evidenceとして残す。
 
 ## 9. Application / API
 
@@ -1327,9 +1328,11 @@ transactionまで保持し、待機中に対象IDがreset/recreateされた場�
 CLIとAgent socketのpath-based use caseは、指定pathに現在bindingされるreviewを対象とする。
 
 PR／Branch reset、Issue removal、Walkthrough deletionのpreviewはreview change sequenceと、review ID、
-対象ID、件数、review-owned refを含むconfirmation tokenを返す。実行は同じtokenを必須とし、SQLiteの
+対象ID、件数、削除対象のreview-owned refを含むconfirmation tokenを返す。PR resetのretained refsは
+preserved情報として返し、削除件数やtoken対象へ含めない。実行は同じtokenを必須とし、SQLiteの
 mutation transactionでもexpected sequenceを再検証する。変更済みなら`DESTRUCTIVE_PREVIEW_STALE` (409)の
-detailsへ最新previewを返し、利用者へ再確認を要求する。PR resetはGitHub I/O後、ref置換前にもtokenを再検証する。
+detailsへ最新previewを返し、利用者へ再確認を要求する。最終SQLite CASで競合を検出した場合もservice層で
+previewを再構築し、同じerror shapeを返す。PR resetはGitHub I/O後、head ref確保前にもtokenを再検証する。
 
 canonical identity検索、Git common directory検索、conflict判定、ID決定、insert/update、review change
 sequence更新は一つの`BEGIN IMMEDIATE`内で行う。canonical owner/repositoryのSQLite一意性も`NOCASE`とし、
@@ -1390,15 +1393,15 @@ CLIによる同一ID更新はpoll後に開いているtabへ反映する。viewe
 
 ## 11. Reset
 
-`rvw pr reset <PR> --yes --confirmation-token <TOKEN>`は対象PRのlocal comments、posts、targets、Walkthrough、code reference、
-`refs/rvw/pr/<n>/...`
-を削除し、現在のGitHub状態を同期してcurrent head refを作り直す。削除件数を事前表示し、
+`rvw pr reset <PR> --yes --confirmation-token <TOKEN>`は対象PRのlocal comments、posts、targets、Issue membership、
+Walkthrough、code referenceを削除し、現在のGitHub状態を同期してcurrent head refをnon-destructiveに確保する。
+`refs/rvw/pr/<n>/...`のhistorical refsはimmutable evidenceとして保持し、`counts.gitRefs = 0`とする。削除件数を事前表示し、
 CLIはpreviewのconfirmation tokenと`--yes`を必須とする。不可逆であり、明示的な利用者authorizationなしにAgentが実行しない。
 
 `rvw branch reset --repository <PATH> --yes --confirmation-token <TOKEN> --json`はexisting-onlyでbindingを検証し、対象review ID配下の
 `refs/rvw/branch/<branchReviewId>/...`だけをpreview／削除する。DB削除後にref削除が失敗した場合は例外で
 削除済みreviewを保持せず、`completed-with-orphan-refs`というtyped success outcomeへDB削除済み、review ID、
-ref prefix、残存ref、明示cleanup可能性を含める。
+ref prefix、残存ref、manual cleanup可能性を含める。0.3.0にはrvw管理下のorphan-ref cleanup commandを追加しない。
 残存refはorphanとして新しいreview IDから隔離され、新reviewは旧evidenceを受理せず、旧reset retryも
 新reviewのrefを削除しない。「再作成すればorphan cleanupされる」とは案内しない。保存pathが削除・置換され、
 Git common directoryとreview-owned source refを検証できない場合はDB rowを削除しない。
@@ -1656,6 +1659,9 @@ Functional:
   全体・source range Comment、Outdated追跡を利用できる。
 - Issue番号/titleとowned Comment/reply件数をpreviewした明示確認後、選択reviewのmembershipとIssue feedback
   だけを削除でき、別reviewの同じIssueは残る。preview後のsequence変更はtoken不一致で削除せず再確認する。
+- 共有Issue cache documentとreview membership documentを型で分け、後者だけが`syncError`／`stale`を持つ。
+  `comment get`はComment所有Reviewのmembership-aware getterを使う。Walkthrough `issuesToAdd`による正常な
+  membership ensureは、既存membershipなら追加扱いにせず、そのReviewのsync errorだけをclearする。
 - Branch Review resetはIssue、Comment、Walkthrough、review recordとBranch専用retained ref候補をpreviewし、
   `--yes`後にBranch固有状態とそのreview IDのrefだけを削除する。再openは新しいIDの空reviewを作り、失敗した
   旧resetのorphan refを証拠として継承しない。browserでreset成功後の再openだけが失敗した場合はreset完了と

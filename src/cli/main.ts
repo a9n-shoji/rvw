@@ -1146,7 +1146,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           writeOutput(
             options,
             result,
-            `削除対象: Issue membership${preview.counts.issueMemberships}、コメント${preview.counts.comments}、返信${preview.counts.posts}、コメント内コード参照${preview.counts.commentReferences}、対象${preview.counts.targets}、Walkthrough${preview.counts.walkthroughs}、Walkthroughコード参照${preview.counts.walkthroughReferences}、Git ref${preview.counts.gitRefs}\n続行するには返された確認tokenと --yes を指定してください。`,
+            `削除対象: Issue membership${preview.counts.issueMemberships}、コメント${preview.counts.comments}、返信${preview.counts.posts}、コメント内コード参照${preview.counts.commentReferences}、対象${preview.counts.targets}、Walkthrough${preview.counts.walkthroughs}、Walkthroughコード参照${preview.counts.walkthroughReferences}。historical Git ref ${preview.retainedRefs.length}件は保持します。\n続行するには返された確認tokenと --yes を指定してください。`,
           );
           process.exitCode = 2;
           return;

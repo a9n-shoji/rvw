@@ -347,8 +347,10 @@ test("makes reset destructive intent explicit and honors confirmation cancellati
           targets: 3,
           walkthroughs: 2,
           walkthroughReferences: 7,
-          gitRefs: 4,
+          gitRefs: 0,
         },
+        retainedRefs: Array.from({ length: 4 }, (_, index) => `refs/rvw/pr/7/oid-${index}`),
+        retainedRefsPreserved: true,
         confirmationToken: "b".repeat(64),
       },
     });
@@ -357,6 +359,7 @@ test("makes reset destructive intent explicit and honors confirmation cancellati
     expect(dialog.message()).toContain("ローカルレビュー状態を削除して再構築します。");
     expect(dialog.message()).toContain("コメント 3");
     expect(dialog.message()).toContain("返信 5");
+    expect(dialog.message()).toContain("保持するhistorical Git ref 4");
     expect(dialog.message()).toContain("この操作は元に戻せません。");
     await dialog.dismiss();
   });
@@ -403,8 +406,10 @@ test("discards in-memory comment drafts after a confirmed reset", async ({ page,
             targets: 0,
             walkthroughs: 0,
             walkthroughReferences: 0,
-            gitRefs: 1,
+            gitRefs: 0,
           },
+          retainedRefs: ["refs/rvw/pr/7/commits/oid-retained"],
+          retainedRefsPreserved: true,
           confirmationToken: "a".repeat(64),
         },
       });

@@ -24,6 +24,8 @@ doctor/explicit commands read-driven rather than adding a repair daemon.
 
 - “Branch Review” documentation must say “GitHub default branch” and must not imply an arbitrary branch selector.
 - Reset results must distinguish full completion, ref-cleanup partial success, and reopen failure without renaming the command.
+- PR reset preserves immutable historical refs and reports them separately from deletion counts. Ref
+  reclamation is deferred to a future explicit exclusive GC rather than racing cross-process writers.
 - Shared behavior is enforced by small helpers and contract matrices; controller or table consolidation is not a goal.
 - Orphan evidence remains review-ID isolated and observable in doctor; cleanup is explicit, never a background mutation.
 
@@ -99,6 +101,13 @@ confirmation token, rechecked in the final SQLite transaction. A stale token ret
 current preview. Treat Branch DB deletion plus ref cleanup failure as a typed partial success so every
 transport discards the deleted aggregate while reporting its isolated orphan prefix.
 
+Do not delete PR retained refs during reset. The PR aggregate ID survives reset, so a writer can retain
+an exact source before the final SQLite write and commit its artifact after another process's reset.
+Deleting refs before or after that CAS would either damage a rejected reset or leave a valid concurrent
+artifact without evidence. Reset therefore ensures the new head ref, performs only the sequence-fenced
+SQLite reset, and exposes existing refs as preserved diagnostics. An eventual GC needs an explicit
+exclusive review-scoped boundary; no background cleanup or two-phase commit is introduced here.
+
 Order every existing Branch source attempt with an internal generation allocated before network I/O.
 After retaining a candidate, its source metadata and any failure are compare-and-set with the same
 generation; late attempts may return or fail but cannot roll back the aggregate. Distinguish explicit
@@ -116,10 +125,16 @@ but preserve the published 0.2.x PR request-hash shape so an exact retry can reu
 Include the review kind in the unreleased Branch request hash rather than adding a second Branch ledger.
 
 Canonicalize worktree and common-directory paths with filesystem realpath. Expose the selected GitHub
-remote in open/viewer/doctor diagnostics and classify retained Branch refs in doctor without automatic
+remote in open/viewer/doctor diagnostics, use that same origin-first ordering for fetch, upgrade verified
+legacy path spellings on cached open, and classify 40-64 digit retained Branch refs in doctor without automatic
 cleanup. Re-key v3 watcher rows from the legacy PR URL to the first observed protocol-v4 PR UUID in the
 same ingest transaction; merge pending duplicates and quarantine conflicting active leases. Name the
 Walkthrough side-effect input `issuesToAdd` so it cannot be mistaken for replaceable Walkthrough content.
+
+Separate global cached Issue documents from Review membership documents in the application type
+boundary. The latter alone carries `syncError` and `stale`; comment contexts must use it. A successful
+membership ensure, including Walkthrough `issuesToAdd`, clears that Review's previous sync error while
+returning `issuesAdded` only for an actual insert.
 
 ### Trade-offs
 

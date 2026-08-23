@@ -630,7 +630,9 @@ describe("RvwDatabase", () => {
           "late failure in the same millisecond",
         ),
       ).toMatchObject({ updated: false, skipped: "newer-attempt" });
-      expect(database.getIssue(cached.id)?.syncError).toBeNull();
+      expect(
+        database.getReviewIssue("pull-request", pullRequest.id, cached.id)?.syncError,
+      ).toBeNull();
     } finally {
       database.close();
       vi.useRealTimers();

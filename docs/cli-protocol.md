@@ -134,7 +134,9 @@ presents the Issue title/number and owned artifact counts to a human, the same s
 with `--yes --confirmation-token <TOKEN>` delete only the selected review's membership,
 Issue comments, replies, or Branch Review artifacts. Shared Issue cache and artifacts owned by another
 review remain intact. Branch reset removes only its review-owned Branch retained refs; PR refs
-and objects retained by other refs remain reachable. Its namespace is
+and objects retained by other refs remain reachable. PR reset clears SQLite-owned review artifacts but
+preserves every existing `refs/rvw/pr/<number>/...` ref as immutable evidence; its preview exposes
+those refs as preserved information and reports `counts.gitRefs = 0`. The Branch namespace is
 `refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`; preview and deletion never count another Branch
 Review ID's refs.
 
@@ -161,7 +163,8 @@ explicit Issue-add operation may create the singleton.
 
 If reset deletes SQLite state but cannot delete its Git refs, the successful
 `completed-with-orphan-refs` outcome identifies the deleted row, review ID, ref prefix, remaining refs,
-and explicit cleanup boundary.
+and whether manual cleanup is possible. No rvw-managed orphan-ref cleanup command exists in this
+release.
 Creating another review does not clean the orphan. The new review ID cannot accept or delete that old
 evidence. Confirmation errors return the original repository path as structured command arguments so
 paths containing whitespace or shell metacharacters are not interpolated into a command string.
@@ -194,11 +197,19 @@ Sync errors belong to the originating membership, while title/body/state remain 
 last membership or resetting its last owner garbage-collects the cache row. If another Review still
 owns an equal-version conflict, explicit `issue refresh --force` repairs it only after two identical
 GitHub identity/content reads. Worktree/common-directory values are realpath-canonicalized; Branch
-open/viewer/doctor expose the selected remote and doctor reports retained-ref ownership without cleanup.
+open/viewer/doctor expose the same origin-first selected remote that Git fetch uses, and doctor reports
+40-64 digit retained-ref ownership without cleanup. Cached open upgrades legacy stored path spellings
+to their filesystem realpaths after the binding is verified.
+
+`comment get` resolves Issue content through the owning PR/Branch membership, so membership-specific
+`syncError` and `stale` are not lost by reading the shared cache directly. A successful Walkthrough
+publish/update with an existing Issue in `issuesToAdd` clears that Review membership's previous sync
+error even though `issuesAdded` remains empty.
 
 All reset, Issue-removal, and Walkthrough-deletion executions recheck the preview sequence in their
 SQLite mutation. A changed review returns `DESTRUCTIVE_PREVIEW_STALE` (409) with the current preview and
-does not delete newly added artifacts.
+does not delete newly added artifacts. This response shape is identical when the service-layer check
+passes but the final SQLite sequence CAS detects the race.
 
 An Issue reference is `#142`, `owner/repository#142`, or a canonical GitHub Issue URL. Only an actual
 Issue in the review repository is accepted; a Pull Request or cross-repository reference fails. Adding
@@ -606,8 +617,9 @@ rvw walkthrough delete <WALKTHROUGH_URI> --yes --confirmation-token <TOKEN> --js
 The first form returns `WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED`, the current Walkthrough, counts,
 review sequence, and confirmation token. The confirmed form must return that token and permanently deletes the
 Walkthrough, its references, and those comments and posts. Copied Walkthrough and comment URIs stop
-resolving. Deletion does not remove the retained Git commit ref because other review state may share it;
-`rvw pr reset` remains the ref cleanup boundary.
+resolving. Deletion does not remove the retained Git commit ref because other review state may share it.
+PR reset also preserves historical refs. A future explicit, exclusive GC may remove only proven
+unreferenced evidence; this release has no implicit ref-cleanup boundary.
 
 ## Local transport and database path
 

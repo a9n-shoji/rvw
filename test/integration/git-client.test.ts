@@ -25,6 +25,24 @@ describe("GitClient with real git", () => {
     });
   });
 
+  it("uses the same origin-first remote ordering for display and fetch selection", async () => {
+    const repository = createGitRepository("rvw-remote-order-");
+    const originUrl = "git@github.com:acme/review-repo.git";
+    git(repository, "remote", "set-url", "origin", originUrl);
+    git(repository, "remote", "add", "aaa", "https://github.com/acme/review-repo.git");
+
+    const client = new GitClient();
+    await expect(client.tryBaseRepositoryIdentity(repository)).resolves.toEqual({
+      owner: "acme",
+      repository: "review-repo",
+      remoteName: "origin",
+      remoteUrl: originUrl,
+    });
+    await expect(client.assertBaseRepository(repository, "acme", "review-repo")).resolves.toBe(
+      originUrl,
+    );
+  });
+
   it("gives exactly one concurrent creator ownership of an exact retained ref", async () => {
     const repository = createGitRepository("rvw-ref-cas-");
     const oid = git(repository, "rev-parse", "HEAD");

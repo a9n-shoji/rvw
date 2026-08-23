@@ -43,8 +43,9 @@ Branch Reviewのlocal source bindingはGit common directory単位です。同じ
 独立clone、remote変更、repository rename／organization transferへの自動移動は互換性契約に含めません。
 元のbindingで既存reviewを明示resetしてから作り直すことが移動境界です。retained Branch refは
 `refs/rvw/branch/<branchReviewId>/...`が所有し、reset後の新しいIDは旧orphan refを認識しません。
-worktreeとGit common directoryはfilesystem realpathへ正規化します。選択remote名／URLとretained ref分類は
-open／viewer／doctorの診断surfaceであり、doctorはrefを自動修復・削除しません。
+worktreeとGit common directoryはfilesystem realpathへ正規化し、verified cached openは公開済み0.2.x DBの
+非canonical path表記もrealpathへ更新します。選択remote名／URLはorigin-firstの同じresolverを表示とfetchで
+使います。retained ref分類はopen／viewer／doctorの診断surfaceであり、doctorは40-64桁OIDを扱いrefを自動修復・削除しません。
 
 remoteを解決できなくても、保存済みGit common directoryとreview-owned source refが一致すればcached read、
 comments、Issue removal、resetは利用できます。syncとIssue addはremote identityを安全に確認できるまで拒否します。
@@ -73,8 +74,12 @@ GitHub Issue response identity不一致はprotocol共通の
 `GITHUB_ISSUE_ERROR`であり、rename／transferへ自動追従しません。
 PR／Branch reset、Issue removal、Walkthrough deletionの実行はpreviewのchange sequenceへ結び付いた
 confirmation tokenを必須とします。stale tokenは`DESTRUCTIVE_PREVIEW_STALE` (409)とcurrent previewを返し、
-新しいartifactを削除しません。Branch DB deletion後のref cleanup失敗はtyped partial successで、削除済み
+最終SQLite CASで検出した競合でも同じshapeを維持し、新しいartifactを削除しません。PR resetは既存
+historical refsを削除せずpreserved情報として返します。Branch DB deletion後のref cleanup失敗はtyped partial successで、削除済み
 aggregateへ戻らず隔離prefixを報告します。
+
+Issue本文cacheとmembership固有sync stateは別型／別getterです。`comment get`は所有membershipのstale状態を
+返し、Walkthrough `issuesToAdd`の正常取得は既存membershipのsync errorをclearします。
 
 次はpublic APIではありません。
 
@@ -84,4 +89,5 @@ aggregateへ戻らず隔離prefixを報告します。
 - `refs/rvw/`を利用者が直接編集すること
 
 SQLiteとGit refはrvwが管理します。downgrade互換や、手作業で変更したDB/refの修復は保証しません。
-正式な復旧経路はREADMEとCLIが案内する`rvw pr reset`と`rvw branch reset`です。
+SQLite上のreview stateにはREADMEとCLIが案内する`rvw pr reset`と`rvw branch reset`を使います。PR resetは
+historical refsを削除せず、Branch orphan refsにもこのreleaseのrvw管理下cleanup commandはありません。
