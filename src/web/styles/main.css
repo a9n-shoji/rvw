@@ -1408,6 +1408,7 @@ code {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none;
   background: var(--bg);
 }
 .pane-resize-handle {

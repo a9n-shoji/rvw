@@ -1,5 +1,51 @@
 # Architecture decisions
 
+## 2026-08-23: Bind Branch lifecycle, evidence, and cache identity to one aggregate
+
+### Problem
+
+Branch commands composed `openBranchReview()` independently. As a result, reset and Issue-removal
+previews could create the object they intended to inspect; a cache hit trusted only the Git common
+directory and object availability after a remote changed identity; and repository-scoped retained refs
+could leak discarded evidence into a reset-and-recreated review. Branch upsert also selected a random
+ID outside its write transaction, while the viewer invalidated Walkthrough summaries but not active
+detail queries.
+
+### Choice
+
+Centralize the application policy as open-or-create, resolve-existing, synchronize-existing, and
+destructive-existing use cases shared by direct CLI, Agent socket, and HTTP. Existing-only resolution
+checks the current Git common directory, local GitHub remote identity when available, and the saved
+review-owned source ref before any network request or state change. A resolvable remote mismatch is
+always `REPOSITORY_MISMATCH` and is never recorded as `source_sync_error`. Missing remotes permit
+verified cached reads and local Issue removal/reset, but not sync or Issue addition. Repository rename
+and transfer are not auto-followed; reset at the original binding and recreation is explicit.
+
+Own retained Branch evidence under
+`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`. Reset previews and deletion use only that prefix.
+If DB deletion succeeds and ref deletion fails, report the two outcomes, remaining refs, and explicit
+repair boundary. A new aggregate receives a new ID and cannot see the orphan namespace.
+
+Move both identity lookups, binding conflict checks, ID selection, insert/update, and sequence update
+inside one `BEGIN IMMEDIATE`, and make the unreleased migration 011 identity columns `NOCASE`. Use
+`["walkthrough", kind, reviewId]` as the React Query invalidation prefix for both list and detail.
+
+Migration 011, protocol v4, and package 0.3.0 were still unpublished when this decision was made:
+GitHub releases and npm contained versions only through 0.2.x. Therefore update migration 011 and the
+v4 contract directly and require the latest schema/service instead of adding partial-schema runtime
+fallbacks.
+
+### Trade-offs
+
+- A missing owned source ref fails closed, including when the saved path has been replaced by another
+  repository with the same remote. A concurrent first opener briefly rechecks the winner's ref rather
+  than creating one from an arbitrary local object.
+- SQLite and Git refs remain separate transactions. Review-ID ownership makes partial failure
+  detectable and non-contaminating without introducing two-phase commit or a repair daemon.
+- Remote-less local cleanup is deliberately available only when the common directory and owned ref
+  still prove the saved aggregate.
+- Persisting GitHub repository numeric IDs and automatic rename/transfer following remain out of scope.
+
 ## 2026-08-22: Use aggregate IDs for watch routing and native owner foreign keys
 
 ### Problem
@@ -79,7 +125,7 @@ chose a historical commit.
 
 ### Choice
 
-Treat `refs/rvw/branch/<owner>/<repository>/commits/oid-<oid>` as the Branch source allowlist. Branch
+Treat `refs/rvw/branch/<branchReviewId>/commits/oid-<oid>` as the Branch source allowlist. Branch
 reads and typed references require both that exact retained ref and its Git object; arbitrary local
 commits are rejected. Keep Branch workers strictly read-only, but allow their final replies to carry a
 current or already retained evidence OID and validated post-level typed references. `pushStatus`

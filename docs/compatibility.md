@@ -29,9 +29,20 @@ PR URLまたはcanonical repositoryを表示値として別々に返します。
 URLへfallbackしません。Branch completion helperはlease、context、read-only outcome fieldsをすべて
 必須として、欠落時はreply投稿前に拒否します。
 
+2026-08-23時点でpackage 0.3.0、protocol v4、migration 011はpublic release／npm packageとして未公開です。
+そのため011のcanonical owner/repository collationとv4のBranch operation契約はrelease前の最終形へ直接更新し、
+旧011とのpartial-schema/runtime fallbackは提供しません。0.3.0以降は適用済みmigrationを書き換えずforward
+migrationと新しいprotocol versionで互換性を扱います。
+
 Branch Reviewのlocal source bindingはGit common directory単位です。同じcommon directoryのworktreeは
-互換ですが、独立cloneへの自動移動は互換性契約に含めません。既存reviewを明示resetしてから別cloneで
-作り直すことが移動境界です。
+互換ですが、local GitHub remoteが解決できる場合は保存済みcanonical identityも一致する必要があります。
+独立clone、remote変更、repository rename／organization transferへの自動移動は互換性契約に含めません。
+元のbindingで既存reviewを明示resetしてから作り直すことが移動境界です。retained Branch refは
+`refs/rvw/branch/<branchReviewId>/...`が所有し、reset後の新しいIDは旧orphan refを認識しません。
+
+remoteを解決できなくても、保存済みGit common directoryとreview-owned source refが一致すればcached read、
+comments、Issue removal、resetは利用できます。syncとIssue addはremote identityを安全に確認できるまで拒否します。
+reset、Issue removal、comments、syncは未登録reviewを暗黙作成しません。
 
 次はpublic APIではありません。
 

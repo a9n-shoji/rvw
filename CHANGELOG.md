@@ -35,6 +35,9 @@
   付けられるよう変更
 - Issue同期を認証確認の共有と最大8件のbounded concurrencyへ変更
 - viewerの変更pollをdatabase全体からreview kind／ID単位へ絞り、別reviewの更新による再取得を削減
+- Branch retained refをrepository名ではなくBranch Review ID単位で所有し、reset/recreate後のevidenceを分離
+- Branch lifecycleのcreate、existing-only、sync、destructive binding policyをapplication層へ集約
+- migration 011のcanonical repository一意性をcase-insensitiveにし、protocol v4の全transportを最新service前提へ統一
 
 ### Fixed
 
@@ -52,6 +55,11 @@
 - Branch Reviewがclone内に存在するだけの未同期local commitをdocumentやcomment evidenceとして受理する問題を修正
 - PR本文のinline/fenced codeやraw HTML内に書かれた`#123`をIssue membershipとして誤検出する問題を修正
 - 初期background refreshの完了が、待機中に人間が選択したhistorical commit rangeを上書きするraceを修正
+- reset／Issue removal preview、comments、syncが未登録Branch Reviewを暗黙作成する問題を修正
+- cache hitを含む全path-based Branch操作でlocal remote identityを検証し、remote変更後の取り違えをmutation前に拒否
+- resetのref削除失敗で残った旧review refを、新reviewのdocument、Comment、Walkthrough evidenceとして受理しないよう修正
+- concurrent first openのidentity lookupとID決定を一つのimmediate transactionへ移し、raw unique constraint raceを修正
+- 外部Branch Walkthrough更新時にsummaryだけでなく左右paneのdetail本文、reference、diagram bindingも再取得し、draft、focus、scrollを保持
 
 ## [0.2.3] - 2026-08-21
 

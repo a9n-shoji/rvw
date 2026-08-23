@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,12 +13,17 @@ import { hashDocument } from "../../src/domain/pr-markdown.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
-import { startAgentSocket, tryAgentSocketRequest } from "../../src/server/agent-socket.js";
+import {
+  dispatchAgentSocketRequest,
+  startAgentSocket,
+  tryAgentSocketRequest,
+} from "../../src/server/agent-socket.js";
 import { createApp } from "../../src/server/app.js";
 import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
 
 class BranchGitHub implements GitHubPort {
   repositoryError: Error | null = null;
+  repositoryRequests = 0;
   issueFetchDelayMs = 0;
   activeIssueFetches = 0;
   maxActiveIssueFetches = 0;
@@ -37,6 +42,7 @@ class BranchGitHub implements GitHubPort {
   }
 
   getRepository(identity: RepositoryIdentity): Promise<GitHubRepository> {
+    this.repositoryRequests += 1;
     expect(identity.canonicalName).toBe("acme/review-repo");
     if (this.repositoryError) throw this.repositoryError;
     return Promise.resolve(this.repository);
@@ -87,13 +93,8 @@ class BranchRetainBarrierGitClient extends GitClient {
     });
   }
 
-  override async ensureBranchCommitRef(
-    cwd: string,
-    owner: string,
-    repository: string,
-    oid: string,
-  ) {
-    const retained = await super.ensureBranchCommitRef(cwd, owner, repository, oid);
+  override async ensureBranchCommitRef(cwd: string, branchReviewId: string, oid: string) {
+    const retained = await super.ensureBranchCommitRef(cwd, branchReviewId, oid);
     const barrier = this.barrier;
     if (!barrier) return retained;
     this.arrivals += 1;
@@ -183,6 +184,84 @@ describe("Branch Review", () => {
     });
   });
 
+  it("keeps destructive previews existing-only across direct, Agent socket, and HTTP boundaries", async () => {
+    const { repositoryPath, github, database, service } = setup();
+    github.repositoryError = new Error("existing-only operations must not call GitHub");
+    const sequence = database.getChangeSequence();
+    const refs = await service.git.listRefsByPrefix(repositoryPath, "refs/rvw/branch/");
+
+    await expect(service.getBranchResetPreviewAtPath(repositoryPath)).rejects.toMatchObject({
+      code: "BRANCH_REVIEW_NOT_FOUND",
+    });
+    await expect(service.resetBranchReviewAtPath(repositoryPath)).rejects.toMatchObject({
+      code: "BRANCH_REVIEW_NOT_FOUND",
+    });
+    await expect(
+      service.getBranchIssueRemovalPreview(repositoryPath, "#142"),
+    ).rejects.toMatchObject({ code: "BRANCH_REVIEW_NOT_FOUND" });
+    await expect(service.removeBranchIssue(repositoryPath, "#142")).rejects.toMatchObject({
+      code: "BRANCH_REVIEW_NOT_FOUND",
+    });
+    await expect(service.syncBranchReview(repositoryPath)).rejects.toMatchObject({
+      code: "BRANCH_REVIEW_NOT_FOUND",
+    });
+    await expect(service.listBranchCommentContextsAtPath(repositoryPath)).rejects.toMatchObject({
+      code: "BRANCH_REVIEW_NOT_FOUND",
+    });
+
+    for (const [operation, input] of [
+      ["branch.reset.preview", { repositoryPath }],
+      ["branch.reset", { repositoryPath, confirmed: true }],
+      ["branch.issue.remove.preview", { repositoryPath, issueReference: "#142" }],
+      ["branch.issue.remove", { repositoryPath, issueReference: "#142", confirmed: true }],
+    ] as const) {
+      await expect(
+        dispatchAgentSocketRequest(service, {
+          protocolVersion: 1,
+          operation,
+          input,
+        }),
+      ).rejects.toMatchObject({ code: "BRANCH_REVIEW_NOT_FOUND" });
+    }
+
+    const app = createApp(service, {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+    const resetResponse = await app.request(
+      "http://127.0.0.1:4321/api/branch-reviews/00000000-0000-4000-8000-000000000000/reset",
+      {
+        method: "POST",
+        headers: { host: "127.0.0.1:4321", "content-type": "application/json" },
+        body: JSON.stringify({ yes: false }),
+      },
+    );
+    expect(resetResponse.status).toBe(404);
+    expect(await resetResponse.json()).toMatchObject({
+      ok: false,
+      error: { code: "BRANCH_REVIEW_NOT_FOUND" },
+    });
+    const issueResponse = await app.request(
+      "http://127.0.0.1:4321/api/branch-reviews/00000000-0000-4000-8000-000000000000/issues/issue-142",
+      {
+        method: "DELETE",
+        headers: { host: "127.0.0.1:4321", "content-type": "application/json" },
+        body: JSON.stringify({ yes: false }),
+      },
+    );
+    expect(issueResponse.status).toBe(404);
+    expect(await issueResponse.json()).toMatchObject({
+      ok: false,
+      error: { code: "BRANCH_REVIEW_NOT_FOUND" },
+    });
+
+    expect(github.repositoryRequests).toBe(0);
+    expect(database.findBranchReviewByIdentity("acme", "review-repo")).toBeNull();
+    expect(database.getChangeSequence()).toBe(sequence);
+    await expect(service.git.listRefsByPrefix(repositoryPath, "refs/rvw/branch/")).resolves.toEqual(
+      refs,
+    );
+  });
+
   it("places Branch repository comments through the document-reference HTTP contract", async () => {
     const { repositoryPath, sourceOid, service } = setup();
     const opened = await service.openBranchReview(repositoryPath);
@@ -262,7 +341,7 @@ describe("Branch Review", () => {
     const registered = database.getBranchReview(opened.branchReview.id);
     const retainedRefs = await service.git.listRefsByPrefix(
       repositoryPath,
-      "refs/rvw/branch/acme/review-repo/commits/",
+      `refs/rvw/branch/${opened.branchReview.id}/commits/`,
     );
     const independentClone = createGitRepository("rvw-branch-independent-clone-");
     const independentContext = await service.git.repositoryContext(independentClone);
@@ -270,13 +349,24 @@ describe("Branch Review", () => {
     await expect(service.openBranchReview(independentClone)).rejects.toMatchObject({
       code: "REPOSITORY_MISMATCH",
       details: {
-        registered: registered?.localRepositoryPath,
-        current: independentContext.worktreePath,
+        registeredPath: registered?.localRepositoryPath,
+        currentPath: independentContext.worktreePath,
       },
     });
+    for (const operation of [
+      () => service.syncBranchReview(independentClone),
+      () => service.addBranchIssue(independentClone, "#142"),
+      () => service.getBranchResetPreviewAtPath(independentClone),
+      () => service.resetBranchReviewAtPath(independentClone),
+    ]) {
+      await expect(operation()).rejects.toMatchObject({ code: "REPOSITORY_MISMATCH" });
+    }
     expect(database.getBranchReview(opened.branchReview.id)).toEqual(registered);
     await expect(
-      service.git.listRefsByPrefix(repositoryPath, "refs/rvw/branch/acme/review-repo/commits/"),
+      service.git.listRefsByPrefix(
+        repositoryPath,
+        `refs/rvw/branch/${opened.branchReview.id}/commits/`,
+      ),
     ).resolves.toEqual(retainedRefs);
     await expect(
       service.getBranchDocument({
@@ -301,6 +391,76 @@ describe("Branch Review", () => {
       },
     });
     expect(recreated.branchReview.id).not.toBe(opened.branchReview.id);
+  });
+
+  it("fails closed before every mutation when the same clone remote changes identity", async () => {
+    const { repositoryPath, github, database, service } = setup();
+    github.issues.set(142, issue(142));
+    github.issues.set(143, issue(143));
+    const opened = await service.openBranchReview(repositoryPath);
+    await service.addBranchIssue(repositoryPath, "#142");
+    const saved = database.getBranchReview(opened.branchReview.id);
+    const sequence = database.getChangeSequence();
+    const refs = await service.git.listRefsByPrefix(
+      repositoryPath,
+      `refs/rvw/branch/${opened.branchReview.id}/commits/`,
+    );
+    const githubRequests = github.repositoryRequests;
+    git(repositoryPath, "remote", "set-url", "origin", "git@github.com:other-owner/other-repo.git");
+
+    for (const operation of [
+      () => service.openBranchReview(repositoryPath),
+      () => service.syncBranchReview(repositoryPath),
+      () => service.addBranchIssue(repositoryPath, "#143"),
+      () => service.getBranchIssueRemovalPreview(repositoryPath, "#142"),
+      () => service.removeBranchIssue(repositoryPath, "#142"),
+      () => service.getBranchResetPreviewAtPath(repositoryPath),
+      () => service.resetBranchReviewAtPath(repositoryPath),
+      () => service.listBranchCommentContextsAtPath(repositoryPath),
+    ]) {
+      await expect(operation()).rejects.toMatchObject({ code: "REPOSITORY_MISMATCH" });
+    }
+    for (const [operation, input] of [
+      ["branch.sync", { repositoryPath }],
+      ["branch.issue.add", { repositoryPath, issueReference: "#143" }],
+      ["branch.issue.remove", { repositoryPath, issueReference: "#142", confirmed: true }],
+      ["branch.reset.preview", { repositoryPath }],
+      ["branch.reset", { repositoryPath, confirmed: true }],
+      ["branch.comments", { repositoryPath }],
+    ] as const) {
+      await expect(
+        dispatchAgentSocketRequest(service, { protocolVersion: 1, operation, input }),
+      ).rejects.toMatchObject({ code: "REPOSITORY_MISMATCH" });
+    }
+
+    const app = createApp(service, {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+    for (const endpoint of ["sync", "reset"]) {
+      const response = await app.request(
+        `http://127.0.0.1:4321/api/branch-reviews/${opened.branchReview.id}/${endpoint}`,
+        {
+          method: "POST",
+          headers: { host: "127.0.0.1:4321", "content-type": "application/json" },
+          body: endpoint === "reset" ? JSON.stringify({ yes: false }) : JSON.stringify({}),
+        },
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        error: { code: "REPOSITORY_MISMATCH" },
+      });
+    }
+
+    expect(github.repositoryRequests).toBe(githubRequests);
+    expect(database.getBranchReview(opened.branchReview.id)).toEqual(saved);
+    expect(database.getChangeSequence()).toBe(sequence);
+    await expect(
+      service.git.listRefsByPrefix(
+        repositoryPath,
+        `refs/rvw/branch/${opened.branchReview.id}/commits/`,
+      ),
+    ).resolves.toEqual(refs);
   });
 
   it("preserves canonical identities when GitHub changes repository casing", async () => {
@@ -645,6 +805,11 @@ describe("Branch Review", () => {
     const opened = await service.openBranchReview(repositoryPath);
     github.repositoryError = new Error("repository metadata unavailable");
 
+    await expect(service.openBranchReview(repositoryPath)).resolves.toMatchObject({
+      fromCache: true,
+      branchReview: { id: opened.branchReview.id, sourceOid },
+    });
+
     await expect(service.syncBranchReview(repositoryPath)).rejects.toThrow(
       "repository metadata unavailable",
     );
@@ -660,6 +825,46 @@ describe("Branch Review", () => {
         path: "README.md",
       }),
     ).resolves.toMatchObject({ availability: "available" });
+  });
+
+  it("allows bound cached reads and local cleanup when the GitHub remote is unavailable", async () => {
+    const { repositoryPath, sourceOid, github, database, service } = setup();
+    github.issues.set(142, issue(142));
+    const opened = await service.openBranchReview(repositoryPath);
+    await service.addBranchIssue(repositoryPath, "#142");
+    const repositoryRequests = github.repositoryRequests;
+    git(repositoryPath, "remote", "remove", "origin");
+
+    await expect(service.openBranchReview(repositoryPath)).resolves.toMatchObject({
+      fromCache: true,
+      branchReview: { id: opened.branchReview.id },
+    });
+    await expect(
+      service.getBranchDocument({
+        kind: "repository-file",
+        branchReviewId: opened.branchReview.id,
+        sourceOid,
+        path: "README.md",
+      }),
+    ).resolves.toMatchObject({ availability: "available" });
+    await expect(service.listBranchCommentContextsAtPath(repositoryPath)).resolves.toMatchObject({
+      branchReview: { id: opened.branchReview.id },
+    });
+    await expect(service.syncBranchReview(repositoryPath)).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+    });
+    await expect(service.addBranchIssue(repositoryPath, "#142")).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+    });
+    expect(github.repositoryRequests).toBe(repositoryRequests);
+    expect(database.getBranchReview(opened.branchReview.id)?.sourceSyncError).toBeNull();
+
+    await expect(service.removeBranchIssue(repositoryPath, "#142")).resolves.toMatchObject({
+      branchReview: { id: opened.branchReview.id },
+    });
+    await expect(service.resetBranchReviewAtPath(repositoryPath)).resolves.toMatchObject({
+      branchReview: { id: opened.branchReview.id },
+    });
   });
 
   it("removes only owned Issue artifacts and resets only the Branch Review", async () => {
@@ -770,6 +975,8 @@ describe("Branch Review", () => {
         },
       ],
     });
+    const unrelatedBranchRef = `refs/rvw/branch/00000000-0000-4000-8000-000000000099/commits/oid-${sourceOid}`;
+    git(repositoryPath, "update-ref", unrelatedBranchRef, sourceOid);
     const preview = await service.getBranchResetPreview(opened.branchReview.id);
     expect(preview).toMatchObject({
       counts: {
@@ -781,6 +988,8 @@ describe("Branch Review", () => {
       confirmationRequired: true,
     });
     expect(preview.retainedRefs.length).toBeGreaterThan(0);
+    expect(preview.retainedRefs).not.toContain(unrelatedBranchRef);
+    expect(preview.counts.gitRefs).toBe(preview.retainedRefs.length);
 
     const reset = await service.resetBranchReview(opened.branchReview.id);
     expect(reset.deleted.gitRefs).toBe(preview.retainedRefs.length);
@@ -788,8 +997,12 @@ describe("Branch Review", () => {
     expect(service.listPullRequestIssues(pullRequest.id)).toHaveLength(1);
     expect(database.getComment(retainedPullRequestIssueComment.id)).not.toBeNull();
     await expect(
-      service.git.listRefsByPrefix(repositoryPath, "refs/rvw/branch/acme/review-repo/commits/"),
+      service.git.listRefsByPrefix(
+        repositoryPath,
+        `refs/rvw/branch/${opened.branchReview.id}/commits/`,
+      ),
     ).resolves.toEqual([]);
+    expect(git(repositoryPath, "rev-parse", "--verify", unrelatedBranchRef)).toBe(sourceOid);
 
     const recreated = await service.openBranchReview(repositoryPath);
     expect(recreated.branchReview.id).not.toBe(opened.branchReview.id);
@@ -963,7 +1176,10 @@ describe("Branch Review", () => {
     });
     expect(database.getBranchReview(opened.branchReview.id)).toBeNull();
     await expect(
-      service.git.listRefsByPrefix(repositoryPath, "refs/rvw/branch/acme/review-repo/commits/"),
+      service.git.listRefsByPrefix(
+        repositoryPath,
+        `refs/rvw/branch/${opened.branchReview.id}/commits/`,
+      ),
     ).resolves.toEqual([]);
   });
 
@@ -980,5 +1196,170 @@ describe("Branch Review", () => {
         remainingRefs: preview.retainedRefs,
       },
     });
+  });
+
+  it("isolates orphan refs from a replacement Branch Review after reset failure", async () => {
+    const { repositoryPath, github, database, service } = setup(new ThrowBeforeDeleteGitClient());
+    const old = await service.openBranchReview(repositoryPath);
+    const oldOid = old.branchReview.sourceOid;
+    const nextOid = commitFile(repositoryPath, "README.md", "# Replacement\n", "replace source");
+    github.repository = { ...github.repository, defaultBranchOid: nextOid };
+    const oldPrefix = `refs/rvw/branch/${old.branchReview.id}/commits/`;
+    const oldPreview = await service.getBranchResetPreview(old.branchReview.id);
+
+    await expect(service.resetBranchReview(old.branchReview.id)).rejects.toMatchObject({
+      code: "LOCAL_STATE_INCONSISTENT",
+      details: {
+        branchReviewDeleted: true,
+        databaseDeletionCompleted: true,
+        refDeletionCompleted: false,
+        refPrefix: oldPrefix,
+        remainingRefs: oldPreview.retainedRefs,
+        repair: { orphanRefsAreIsolatedFromNewReviews: true },
+      },
+    });
+    expect(database.getBranchReview(old.branchReview.id)).toBeNull();
+    await expect(service.git.listRefsByPrefix(repositoryPath, oldPrefix)).resolves.toEqual(
+      oldPreview.retainedRefs,
+    );
+
+    const replacement = await service.openBranchReview(repositoryPath);
+    const newPrefix = `refs/rvw/branch/${replacement.branchReview.id}/commits/`;
+    expect(replacement.branchReview.id).not.toBe(old.branchReview.id);
+    expect(newPrefix).not.toBe(oldPrefix);
+    await expect(service.git.listRefsByPrefix(repositoryPath, newPrefix)).resolves.toEqual([
+      expect.stringContaining(`oid-${nextOid}`),
+    ]);
+    await expect(
+      service.git.verifyBranchCommitRef(repositoryPath, replacement.branchReview.id, oldOid),
+    ).resolves.toBe(false);
+    await expect(
+      service.getBranchDocument({
+        kind: "repository-file",
+        branchReviewId: replacement.branchReview.id,
+        sourceOid: oldOid,
+        path: "README.md",
+      }),
+    ).rejects.toMatchObject({ code: "COMMIT_NOT_FOUND" });
+    await expect(
+      service.createBranchComment({
+        branchReviewId: replacement.branchReview.id,
+        target: {
+          kind: "document",
+          documentKind: "repository-file",
+          sourceOid: nextOid,
+          path: "README.md",
+          startLine: 1,
+          endLine: 1,
+        },
+        body: "Do not inherit the discarded aggregate evidence.",
+        relatedCommitOid: oldOid,
+      }),
+    ).rejects.toMatchObject({ code: "COMMIT_NOT_FOUND" });
+    await expect(
+      service.publishWalkthrough({
+        review: { kind: "branch", repository: "acme/review-repo" },
+        sourceOid: oldOid,
+        title: "Discarded source",
+        body: "Read [the old source](rvw-ref:old).",
+        references: [
+          {
+            id: "old",
+            label: "Old source",
+            path: "README.md",
+            startLine: 1,
+            endLine: 1,
+            description: null,
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+    const newRefs = await service.git.listRefsByPrefix(repositoryPath, newPrefix);
+    await expect(service.resetBranchReview(old.branchReview.id)).rejects.toMatchObject({
+      code: "BRANCH_REVIEW_NOT_FOUND",
+    });
+    await expect(service.git.listRefsByPrefix(repositoryPath, newPrefix)).resolves.toEqual(newRefs);
+  });
+
+  it("validates a stored repository path before deleting its Branch Review row", async () => {
+    const { repositoryPath, database, service } = setup();
+    const opened = await service.openBranchReview(repositoryPath);
+    const saved = database.getBranchReview(opened.branchReview.id);
+    const sequence = database.getChangeSequence();
+    const archivedPath = `${repositoryPath}-original`;
+    renameSync(repositoryPath, archivedPath);
+    mkdirSync(repositoryPath);
+    git(repositoryPath, "init", "-b", "main");
+    git(repositoryPath, "remote", "add", "origin", "https://github.com/acme/review-repo.git");
+
+    await expect(service.resetBranchReview(opened.branchReview.id)).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+    });
+    expect(database.getBranchReview(opened.branchReview.id)).toEqual(saved);
+    expect(database.getChangeSequence()).toBe(sequence);
+  });
+
+  it("serializes concurrent first opens across independent database connections", async () => {
+    const repositoryPath = createGitRepository("rvw-branch-concurrent-open-");
+    const sourceOid = git(repositoryPath, "rev-parse", "HEAD");
+    const repository = {
+      host: "github.com" as const,
+      owner: "acme",
+      repository: "review-repo",
+      canonicalName: "acme/review-repo",
+      defaultBranchName: "main",
+      defaultBranchOid: sourceOid,
+    };
+    const filePath = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-branch-concurrent-db-")),
+      "rvw.db",
+    );
+    const firstDatabase = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    const secondDatabase = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    databases.push(firstDatabase, secondDatabase);
+    const firstService = new RvwService(
+      firstDatabase,
+      new GitClient(),
+      new BranchGitHub(repository),
+    );
+    const secondService = new RvwService(
+      secondDatabase,
+      new GitClient(),
+      new BranchGitHub(repository),
+    );
+
+    const [first, second] = await Promise.all([
+      firstService.openBranchReview(repositoryPath),
+      secondService.openBranchReview(repositoryPath),
+    ]);
+
+    expect(first.branchReview.id).toBe(second.branchReview.id);
+    expect(firstDatabase.findBranchReviewByIdentity("ACME", "REVIEW-REPO")?.id).toBe(
+      first.branchReview.id,
+    );
+    expect(secondDatabase.findBranchReviewByGitCommonDir(first.branchReview.gitCommonDir)?.id).toBe(
+      first.branchReview.id,
+    );
+    expect(() =>
+      firstDatabase.upsertBranchReview(
+        {
+          ...repository,
+          owner: "other-owner",
+          repository: "other-repo",
+          canonicalName: "other-owner/other-repo",
+        },
+        {
+          localRepositoryPath: repositoryPath,
+          gitCommonDir: first.branchReview.gitCommonDir,
+        },
+      ),
+    ).toThrowError(expect.objectContaining({ code: "REPOSITORY_MISMATCH" }));
+    expect(() =>
+      firstDatabase.upsertBranchReview(repository, {
+        localRepositoryPath: "/independent-clone",
+        gitCommonDir: "/independent-clone/.git",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "REPOSITORY_MISMATCH" }));
   });
 });

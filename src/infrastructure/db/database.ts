@@ -745,44 +745,118 @@ export class RvwDatabase {
     },
     repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
   ): BranchReview {
-    const existing = this.findBranchReviewByIdentity(github.owner, github.repository);
-    const id = existing?.id ?? randomUUID();
     const now = new Date().toISOString();
-    this.immediateTransaction(() => {
-      this.database
-        .prepare(
-          `INSERT INTO branch_reviews(
-            id, host, owner, repository, canonical_name, local_repository_path, git_common_dir,
-            default_branch_name, source_oid, github_fetched_at, source_sync_error, created_at, updated_at
-          ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            owner = excluded.owner,
-            repository = excluded.repository,
-            canonical_name = excluded.canonical_name,
-            local_repository_path = excluded.local_repository_path,
-            git_common_dir = excluded.git_common_dir,
-            default_branch_name = excluded.default_branch_name,
-            source_oid = excluded.source_oid,
-            github_fetched_at = excluded.github_fetched_at,
-            source_sync_error = NULL,
-            updated_at = excluded.updated_at`,
-        )
-        .run(
-          id,
-          github.owner,
-          github.repository,
-          github.canonicalName,
-          repositoryLocation.localRepositoryPath,
-          repositoryLocation.gitCommonDir,
-          github.defaultBranchName,
-          github.defaultBranchOid,
-          now,
-          existing?.createdAt ?? now,
-          now,
+    let id: string;
+    try {
+      id = this.immediateTransaction(() => {
+        const byIdentity = this.findBranchReviewByIdentity(github.owner, github.repository);
+        const byGitCommonDir = this.findBranchReviewByGitCommonDir(repositoryLocation.gitCommonDir);
+        if (byIdentity && byGitCommonDir && byIdentity.id !== byGitCommonDir.id) {
+          throw new RvwError(
+            "REPOSITORY_MISMATCH",
+            "canonical repositoryとGit common directoryが異なるBranch Reviewへ登録されています。",
+            {
+              details: {
+                canonicalBranchReviewId: byIdentity.id,
+                localBranchReviewId: byGitCommonDir.id,
+              },
+            },
+          );
+        }
+        if (
+          byIdentity &&
+          path.resolve(byIdentity.gitCommonDir) !== path.resolve(repositoryLocation.gitCommonDir)
+        ) {
+          throw new RvwError(
+            "REPOSITORY_MISMATCH",
+            "このcanonical repositoryのBranch Reviewは別の独立cloneへ登録されています。",
+            {
+              details: {
+                branchReviewId: byIdentity.id,
+                registeredGitCommonDir: byIdentity.gitCommonDir,
+                currentGitCommonDir: repositoryLocation.gitCommonDir,
+              },
+            },
+          );
+        }
+        if (
+          byGitCommonDir &&
+          (byGitCommonDir.owner.toLowerCase() !== github.owner.toLowerCase() ||
+            byGitCommonDir.repository.toLowerCase() !== github.repository.toLowerCase())
+        ) {
+          throw new RvwError(
+            "REPOSITORY_MISMATCH",
+            "このGit common directoryは別のcanonical repositoryへ登録されています。",
+            {
+              details: {
+                branchReviewId: byGitCommonDir.id,
+                registeredRepository: byGitCommonDir.canonicalName,
+                currentRepository: github.canonicalName,
+              },
+            },
+          );
+        }
+
+        const existing = byIdentity ?? byGitCommonDir;
+        const selectedId = existing?.id ?? randomUUID();
+        if (existing) {
+          this.database
+            .prepare(
+              `UPDATE branch_reviews SET
+                owner = ?, repository = ?, canonical_name = ?, local_repository_path = ?,
+                git_common_dir = ?, default_branch_name = ?, source_oid = ?, github_fetched_at = ?,
+                source_sync_error = NULL, updated_at = ?
+               WHERE id = ?`,
+            )
+            .run(
+              github.owner,
+              github.repository,
+              github.canonicalName,
+              repositoryLocation.localRepositoryPath,
+              repositoryLocation.gitCommonDir,
+              github.defaultBranchName,
+              github.defaultBranchOid,
+              now,
+              now,
+              selectedId,
+            );
+        } else {
+          this.database
+            .prepare(
+              `INSERT INTO branch_reviews(
+                id, host, owner, repository, canonical_name, local_repository_path, git_common_dir,
+                default_branch_name, source_oid, github_fetched_at, source_sync_error, created_at, updated_at
+              ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+            )
+            .run(
+              selectedId,
+              github.owner,
+              github.repository,
+              github.canonicalName,
+              repositoryLocation.localRepositoryPath,
+              repositoryLocation.gitCommonDir,
+              github.defaultBranchName,
+              github.defaultBranchOid,
+              now,
+              now,
+              now,
+            );
+        }
+        this.incrementChangeSequence({ kind: "branch", reviewId: selectedId });
+        return selectedId;
+      });
+    } catch (error) {
+      if (error instanceof RvwError) throw error;
+      if (/constraint/i.test(error instanceof Error ? error.message : String(error))) {
+        throw new RvwError(
+          "DATABASE_ERROR",
+          "Branch Review identityを一意に保存できませんでした。",
+          { cause: error },
         );
-      this.incrementChangeSequence({ kind: "branch", reviewId: id });
-    });
-    const result = this.findBranchReviewByIdentity(github.owner, github.repository);
+      }
+      throw error;
+    }
+    const result = this.getBranchReview(id);
     if (!result) throw new RvwError("DATABASE_ERROR", "Branch Reviewを読み出せません。");
     return result;
   }

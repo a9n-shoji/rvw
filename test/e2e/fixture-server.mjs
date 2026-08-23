@@ -885,6 +885,10 @@ app.post("/api/test/update-branch-walkthrough", async (context) => {
   if (typeof input.title === "string") walkthrough.title = input.title;
   if (typeof input.body === "string") walkthrough.body = input.body;
   if (typeof input.sourceOid === "string") walkthrough.sourceOid = input.sourceOid;
+  if (Array.isArray(input.references)) walkthrough.references = structuredClone(input.references);
+  if (input.diagramBindings && typeof input.diagramBindings === "object") {
+    walkthrough.diagramBindings = structuredClone(input.diagramBindings);
+  }
   changeSequence += 1;
   return context.json({ ok: true, walkthrough, changeSequence });
 });
@@ -984,9 +988,7 @@ app.post("/api/branch-reviews/:id/sync", (context) =>
 );
 
 app.post("/api/branch-reviews/:id/reset", async (context) => {
-  const retainedRefs = [
-    `refs/rvw/branch/${branchReview.owner}/${branchReview.repository}/commits/${branchReview.sourceOid}`,
-  ];
+  const retainedRefs = [`refs/rvw/branch/${branchReview.id}/commits/oid-${branchReview.sourceOid}`];
   const counts = {
     branchReview: 1,
     issueMemberships: branchIssues.length,

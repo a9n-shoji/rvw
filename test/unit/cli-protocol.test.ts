@@ -233,6 +233,94 @@ describe("CLI protocol discovery", () => {
         .visibleCommands(program)
         .map((command) => command.name()),
     ).not.toContain("__open-worker");
+    const commentCommands = program.commands.find(
+      (command) => command.name() === "comment",
+    )?.commands;
+    expect(commentCommands?.find((command) => command.name() === "watch")?.description()).toBe(
+      "全登録Reviewで起動後に作成されたroot commentとreplyを監視",
+    );
+    expect(commentCommands?.find((command) => command.name() === "create")?.description()).toBe(
+      "登録済みReviewへ未解決コメントを一件作成",
+    );
+  });
+
+  it("uses the existing-only Branch reset preview and preserves the exact repository argument", async () => {
+    const repositoryPath = "/tmp/review repo/owner's $(literal)";
+    const getBranchResetPreviewAtPath = vi.fn().mockResolvedValue({
+      branchReview: { id: "branch-review-1" },
+      counts: { branchReview: 1, gitRefs: 2 },
+      retainedRefs: ["refs/rvw/branch/branch-review-1/commits/oid-abc"],
+      confirmationRequired: true,
+    });
+    const { runtime } = mockRuntime({ getBranchResetPreviewAtPath });
+    const readStdout = captureStdout();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "branch",
+      "reset",
+      "--repository",
+      repositoryPath,
+      "--json",
+    ]);
+
+    expect(getBranchResetPreviewAtPath).toHaveBeenCalledWith(repositoryPath);
+    expect(readStdout()).toMatchObject({
+      ok: false,
+      error: {
+        code: "RESET_CONFIRMATION_REQUIRED",
+        details: {
+          command: "rvw",
+          arguments: ["branch", "reset", "--repository", repositoryPath, "--yes", "--json"],
+        },
+      },
+      branchReview: { id: "branch-review-1" },
+      confirmationRequired: true,
+    });
+  });
+
+  it("uses the existing-only Branch Issue-removal preview", async () => {
+    const getBranchIssueRemovalPreview = vi.fn().mockResolvedValue({
+      issue: { id: "issue-142", number: 142, title: "Existing Issue" },
+      counts: { issueWholeComments: 1, issueRangeComments: 2, replies: 3 },
+      confirmationRequired: true,
+    });
+    const { runtime } = mockRuntime({ getBranchIssueRemovalPreview });
+    const readStdout = captureStdout();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "branch",
+      "issue",
+      "remove",
+      "#142",
+      "--repository",
+      "/review repo",
+      "--json",
+    ]);
+
+    expect(getBranchIssueRemovalPreview).toHaveBeenCalledWith("/review repo", "#142");
+    expect(readStdout()).toMatchObject({
+      ok: false,
+      error: {
+        code: "RESET_CONFIRMATION_REQUIRED",
+        details: {
+          arguments: [
+            "branch",
+            "issue",
+            "remove",
+            "#142",
+            "--repository",
+            "/review repo",
+            "--yes",
+            "--json",
+          ],
+        },
+      },
+      issue: { number: 142 },
+    });
   });
 
   it("streams a resumable comment watch as an RFC 7464 sequence", async () => {
@@ -591,8 +679,8 @@ describe("CLI protocol discovery", () => {
   });
 
   it("gets PR metadata without the body, derived placement, and bounded exact source", async () => {
-    const getCommentReviewContext = vi.fn().mockResolvedValue(commentReviewContext);
-    const { runtime } = mockRuntime({ getCommentReviewContext });
+    const getAnyCommentReviewContext = vi.fn().mockResolvedValue(commentReviewContext);
+    const { runtime } = mockRuntime({ getAnyCommentReviewContext });
     const readStdout = captureStdout();
 
     await createProgram(() => runtime).parseAsync([
@@ -604,7 +692,7 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
 
-    expect(getCommentReviewContext).toHaveBeenCalledWith(commentRef, { live: false });
+    expect(getAnyCommentReviewContext).toHaveBeenCalledWith(commentRef, { live: false });
     expect(readStdout()).toEqual({
       ok: true,
       context: {
@@ -648,8 +736,8 @@ describe("CLI protocol discovery", () => {
   });
 
   it("includes the PR body in comment get only when requested", async () => {
-    const getCommentReviewContext = vi.fn().mockResolvedValue(commentReviewContext);
-    const { runtime } = mockRuntime({ getCommentReviewContext });
+    const getAnyCommentReviewContext = vi.fn().mockResolvedValue(commentReviewContext);
+    const { runtime } = mockRuntime({ getAnyCommentReviewContext });
     const readStdout = captureStdout();
 
     await createProgram(() => runtime).parseAsync([
@@ -662,7 +750,7 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
 
-    expect(getCommentReviewContext).toHaveBeenCalledWith(commentRef, { live: false });
+    expect(getAnyCommentReviewContext).toHaveBeenCalledWith(commentRef, { live: false });
     expect(readStdout()).toMatchObject({
       ok: true,
       pullRequest: formattedPullRequestWithBody,
@@ -671,11 +759,11 @@ describe("CLI protocol discovery", () => {
 
   it("reads the current Walkthrough through the CLI", async () => {
     const uri = "rvw://walkthrough/70000000-0000-4000-8000-000000000001";
-    const getWalkthroughByUri = vi.fn().mockReturnValue({
+    const getAnyWalkthroughByUri = vi.fn().mockReturnValue({
       pullRequest: { id: "pull-request-1", localRepositoryPath: "/review-repo" },
       walkthrough: { id: "70000000-0000-4000-8000-000000000001", ref: uri },
     });
-    const { runtime, close } = mockRuntime({ getWalkthroughByUri });
+    const { runtime, close } = mockRuntime({ getAnyWalkthroughByUri });
     const readStdout = captureStdout();
 
     await createProgram(() => runtime).parseAsync([
@@ -687,7 +775,7 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
 
-    expect(getWalkthroughByUri).toHaveBeenCalledWith(uri);
+    expect(getAnyWalkthroughByUri).toHaveBeenCalledWith(uri);
     expect(readStdout()).toMatchObject({
       ok: true,
       pullRequest: { id: "pull-request-1" },

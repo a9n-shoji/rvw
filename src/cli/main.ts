@@ -804,20 +804,31 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         const preview = await callService(
           "branch.issue.remove.preview",
           { repositoryPath: options.repository, issueReference },
-          async () => {
-            const service = getRuntime().service;
-            const opened = await service.openBranchReview(options.repository);
-            return service.getIssueRemovalPreview("branch", opened.branchReview.id, issueReference);
-          },
+          async () =>
+            await getRuntime().service.getBranchIssueRemovalPreview(
+              options.repository,
+              issueReference,
+            ),
         );
         writeJson({
           ok: false,
           error: {
             code: "RESET_CONFIRMATION_REQUIRED",
             message: "Issue削除には--yesが必要です。",
-            suggestions: [
-              `rvw branch issue remove ${issueReference} --repository ${options.repository} --yes --json`,
-            ],
+            suggestions: ["削除件数を確認し、同じ引数へ--yesを追加して再実行してください。"],
+            details: {
+              command: "rvw",
+              arguments: [
+                "branch",
+                "issue",
+                "remove",
+                issueReference,
+                "--repository",
+                options.repository,
+                "--yes",
+                "--json",
+              ],
+            },
           },
           ...preview,
         });
@@ -846,19 +857,8 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       const result = await callService(
         "branch.comments",
         { repositoryPath: options.repository, resolved },
-        async () => {
-          const service = getRuntime().service;
-          const opened = await service.openBranchReview(options.repository);
-          return {
-            context: {
-              kind: "branch" as const,
-              branchReviewId: opened.branchReview.id,
-              repository: opened.branchReview.canonicalName,
-            },
-            branchReview: opened.branchReview,
-            comments: await service.listBranchCommentContexts(opened.branchReview.id, resolved),
-          };
-        },
+        async () =>
+          await getRuntime().service.listBranchCommentContextsAtPath(options.repository, resolved),
       );
       writeJson({ ok: true, ...result });
     });
@@ -873,18 +873,18 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         const preview = await callService(
           "branch.reset.preview",
           { repositoryPath: options.repository },
-          async () => {
-            const service = getRuntime().service;
-            const opened = await service.openBranchReview(options.repository);
-            return await service.getBranchResetPreview(opened.branchReview.id);
-          },
+          async () => await getRuntime().service.getBranchResetPreviewAtPath(options.repository),
         );
         writeJson({
           ok: false,
           error: {
             code: "RESET_CONFIRMATION_REQUIRED",
             message: "resetには--yesが必要です。",
-            suggestions: ["rvw branch reset --yes --json"],
+            suggestions: ["削除件数を確認し、同じrepositoryへ--yesを追加して再実行してください。"],
+            details: {
+              command: "rvw",
+              arguments: ["branch", "reset", "--repository", options.repository, "--yes", "--json"],
+            },
           },
           ...preview,
         });
@@ -894,11 +894,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       const result = await callService(
         "branch.reset",
         { repositoryPath: options.repository, confirmed: true },
-        async () => {
-          const service = getRuntime().service;
-          const opened = await service.openBranchReview(options.repository);
-          return await service.resetBranchReview(opened.branchReview.id);
-        },
+        async () => await getRuntime().service.resetBranchReviewAtPath(options.repository),
       );
       writeJson({ ok: true, ...result });
     });
@@ -1086,12 +1082,9 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .requiredOption("--json", "JSONで出力")
     .description("walkthroughの現在内容を取得")
     .action(async (uri: string) => {
-      const result = await callService("walkthrough.get", { uri }, () => {
-        const service = getRuntime().service;
-        return typeof service.getAnyWalkthroughByUri === "function"
-          ? service.getAnyWalkthroughByUri(uri)
-          : service.getWalkthroughByUri(uri);
-      });
+      const result = await callService("walkthrough.get", { uri }, () =>
+        getRuntime().service.getAnyWalkthroughByUri(uri),
+      );
       writeJson({ ok: true, ...result });
     });
 
@@ -1151,7 +1144,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
 
   comment
     .command("watch")
-    .description("全登録PRで起動後に作成されたroot commentとreplyを監視")
+    .description("全登録Reviewで起動後に作成されたroot commentとreplyを監視")
     .option("--after <cursor>", "以前のwatch cursorから再開")
     .option(
       "--interval <seconds>",
@@ -1214,7 +1207,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .command("create")
     .requiredOption("--stdin", "stdinからJSONを読む")
     .requiredOption("--json", "JSONで出力")
-    .description("登録済みPRへ未解決コメントを一件作成")
+    .description("登録済みReviewへ未解決コメントを一件作成")
     .action(async () => {
       const input = commentCreateInputSchema.parse(await readStdinJson());
       const request = {
@@ -1272,12 +1265,10 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       const result = await callService(
         "comment.get",
         { uri, live: options.live ?? false },
-        async () => {
-          const service = getRuntime().service;
-          return typeof service.getAnyCommentReviewContext === "function"
-            ? await service.getAnyCommentReviewContext(uri, { live: options.live ?? false })
-            : await service.getCommentReviewContext(uri, { live: options.live ?? false });
-        },
+        async () =>
+          await getRuntime().service.getAnyCommentReviewContext(uri, {
+            live: options.live ?? false,
+          }),
       );
       writeJson(formatCommentGetOutput(result, { includePrBody: options.includePrBody ?? false }));
     });

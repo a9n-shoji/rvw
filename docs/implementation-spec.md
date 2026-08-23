@@ -115,15 +115,26 @@ diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分�
 列挙するindexは表示しない。
 
 Branch Reviewのidentityはcanonical GitHub repositoryであり、default branch名が変わっても同じrowを
-再利用する。sourceはGitHub repository metadataが返したdefault branch OIDを一時refへfetchして一致を
-検証し、`refs/rvw/branch/<owner>/<repository>/commits/oid-<oid>`へ保持する。checkout、index、worktreeを
-変更しない。Branch document、Comment、Walkthrough、typed referenceが受理するsource OIDは、このnamespaceの
-currentまたは既存retained refと同じOIDに限り、clone内に存在するだけの任意のlocal commitは認めない。
-保存済みGit common directoryはlocal source bindingの一部とする。同じcommon directoryの
-別worktreeは同じreviewを利用できるが、canonical repositoryが同じ独立cloneは同期前に明示errorとし、
-path、common directory、source、ref、artifactを変更しない。別cloneでの再作成は登録済みreviewの明示
-reset後だけ許可する。同期はIssueごとの結果と失敗分離を維持しつつ最大8件を並列取得し、一件の取得失敗で
-他のcached文書を失わない。同じGitHub client processでは成功した認証確認を共有する。
+再利用する。pathから解決するたびに、保存済みGit common directoryと、localの`git remote get-url`から
+得たcanonical GitHub repository identityをcase-insensitiveに検証する。remote identityを解決できて異なる
+場合は`REPOSITORY_MISMATCH`でfail closedし、GitHub API、fetch、DB更新、location更新、ref作成、Issue同期
+より前に停止する。GitHub repositoryのrename / organization transferは自動追従せず、元のbindingで明示
+resetして新しいaggregateを作る。default branchのrenameはidentityを変えない。
+
+sourceはGitHub repository metadataが返したdefault branch OIDを一時refへfetchして一致を検証し、
+`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`へ保持する。checkout、index、worktreeを変更しない。
+Branch document、Comment、Walkthrough、typed referenceが受理するsource OIDは、そのBranch Review IDの
+namespaceにあるcurrentまたは既存retained refと同じOIDに限り、clone内や別Branch Review namespaceに
+存在するだけのcommitは認めない。保存済みGit common directoryとreview-owned current source refはlocal
+bindingの証明とする。同じcommon directoryの別worktreeは同じreviewを利用できるが、canonical repositoryが
+同じ独立cloneや保存pathを置換した別repositoryは同期・削除前に明示errorとし、path、common directory、
+source、ref、artifactを変更しない。別cloneでの再作成は登録済みreviewの明示reset後だけ許可する。
+
+local remote identityが一致し、GitHub networkだけが失敗した場合は、一度保持したsource、Issue、Comment、
+Walkthroughをcacheから読める。remoteを解決できない場合も、同じGit common directoryとreview-owned source
+refが一致するcached read、comment discovery、Issue removal、resetというlocal operationは許可するが、
+GitHub同期とIssue追加は拒否する。同期はIssueごとの結果と失敗分離を維持しつつ最大8件を並列取得し、一件の
+取得失敗で他のcached文書を失わない。同じGitHub client processでは成功した認証確認を共有する。
 
 Issue cacheはcanonical GitHub identityで共有し、review membershipは別tableで所有する。PR本文からは
 同一repositoryの直接参照だけを一段抽出し、Walkthrough payloadの`issues`は追加だけを保証する。Issue
@@ -362,6 +373,9 @@ empty fileは従来どおり明示的に扱う。
   `review_change_sequence`更新は共通DocumentViewerが
   実際に読むqueryをinvalidateする。Issue documentのcomponent identityはreview kind、review ID、Issue IDとし、
   Branch source OIDを含めない。repository documentだけはpathとsource policy / exact OIDをidentityへ含める。
+- Walkthroughのreview scope keyは`["walkthrough", kind, reviewId]`とし、外部更新pollではこのprefixを
+  invalidateしてsummary/listと開いているdetailを同時に再取得する。detail更新でpaneをremountせず、左右の
+  同一Walkthrough、本文、reference、diagram bindingを揃え、無関係なdraft、focus、pane、scrollを保持する。
 - Issue range composerは同一本文のquery refresh中もopen状態、本文、selection、focus、pane、documentを保持する。
   draftは対象body hashを保存し、本文hashが変わった場合は本文とplacementを最新化しつつdraftを残す。古い
   rangeの送信は拒否し、現在本文での明示的な再選択後だけ許可する。semantic range migrationは行わない。
@@ -1254,6 +1268,22 @@ GET  /api/comments/:id/placement?...
 
 HTTP/CLIは同じapplication serviceを使用し、transportへbusiness logicを書かない。
 
+Branch Review lifecycleはapplication層で次のpolicyへ分類し、CLI、Agent socket、HTTPが同じuse caseを
+呼ぶ。
+
+- `open-or-create`: `branch open`。保存済みbindingを検証してcacheを開き、未登録時だけGitHub同期後に作成する。
+- `resolve-existing`: `branch comments`と保存済みartifact read。row、ref、fetch、locationを作らない。
+- `synchronize-existing`: `branch sync`。保存済みaggregateとlocal remoteを検証してからだけ同期する。
+- `destructive-existing`: resetとBranch Issue removalのpreview／実行。未登録なら
+  `BRANCH_REVIEW_NOT_FOUND`で、previewを含めsequence、DB、refを一切変更しない。
+- 明示的追加: `branch issue add`だけは未登録reviewを作成できるが、remote identityを解決・検証できない
+  状態では実行しない。
+
+canonical identity検索、Git common directory検索、conflict判定、ID決定、insert/update、review change
+sequence更新は一つの`BEGIN IMMEDIATE`内で行う。canonical owner/repositoryのSQLite一意性も`NOCASE`とし、
+同じidentity・同じcommon directoryの同時初回openは同じIDを再利用する。identityとcommon directoryの
+片方だけが一致する場合はraw SQLite constraint errorではなく`REPOSITORY_MISMATCH`を返す。
+
 ## 10. Viewer UX
 
 Viewerの最優先目的は、選択commitが作るrepositoryの状態を利用者が見失わずに読み進めることである。
@@ -1313,6 +1343,13 @@ CLIによる同一ID更新はpoll後に開いているtabへ反映する。viewe
 を削除し、現在のGitHub状態を同期してcurrent head refを作り直す。削除件数を事前表示し、
 CLIは`--yes`必須とする。不可逆であり、明示的な利用者authorizationなしにAgentが実行しない。
 
+`rvw branch reset --repository <PATH> --yes --json`はexisting-onlyでbindingを検証し、対象review ID配下の
+`refs/rvw/branch/<branchReviewId>/...`だけをpreview／削除する。DB削除後にref削除が失敗した場合は
+`LOCAL_STATE_INCONSISTENT`へDB削除済みか、review ID、ref prefix、残存ref、明示repair可能性を含める。
+残存refはorphanとして新しいreview IDから隔離され、新reviewは旧evidenceを受理せず、旧reset retryも
+新reviewのrefを削除しない。「再作成すればorphan cleanupされる」とは案内しない。保存pathが削除・置換され、
+Git common directoryとreview-owned source refを検証できない場合はDB rowを削除しない。
+
 ## 12. Server / security
 
 - Node 24 LTS、Hono、React/Vite、TypeScript strict、pnpm 11
@@ -1331,9 +1368,10 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - `--foreground`と`--no-open`はsignal管理
 - SQLiteはWALでserver processを扱い、Agent CLIの書き込みは可能ならuser専用Unix socketを経由する
 
-同一PRを複数viewer/processで開くことは許容する。SQLite writeは`BEGIN IMMEDIATE`を使う。
+同一Reviewを複数viewer/processで開くことは許容する。SQLite writeは`BEGIN IMMEDIATE`を使う。
 Phase 1ではDBとGit refを単一transactionにできないため、失敗時の補償削除と起動・同期時の
-invariant検証を行う。refとSQLiteの不整合を検出した場合は部分的に自動修復せずresetを案内する。
+invariant検証を行う。refとSQLiteの不整合を検出した場合は部分的に自動修復せず、error detailsに安全な
+明示repair境界を返す。
 
 ## 13. Error方針
 
@@ -1539,17 +1577,23 @@ Functional:
 - `rvw branch open`でrepository singletonのBranch Reviewを開き、default branch名とsource OIDを表示し、
   同じGit common directoryのworktreeとoffline openから同じreviewを再利用できる。独立cloneからはbindingを
   変更せず失敗し、明示reset後にだけそのcloneで作り直せる。
+- 未登録repositoryのBranch reset／Issue removal previewと実行、comments、syncはreviewを暗黙作成せず、
+  `BRANCH_REVIEW_NOT_FOUND`後もDB row、retained ref、change sequenceを変更しない。remote mismatchは全transportで
+  mutation前に拒否し、`source_sync_error`へ記録しない。
 - Pull Request / Branch Reviewへ同一repository Issueを追加し、番号降順で通常文書として二ペイン表示、
   全体・source range Comment、Outdated追跡を利用できる。
 - Issue番号/titleとowned Comment/reply件数をpreviewした明示確認後、選択reviewのmembershipとIssue feedback
   だけを削除でき、別reviewの同じIssueは残る。
 - Branch Review resetはIssue、Comment、Walkthrough、review recordとBranch専用retained ref候補をpreviewし、
-  `--yes`後にBranch固有状態だけを削除する。再openは新しい空reviewを作る。
+  `--yes`後にBranch固有状態とそのreview IDのrefだけを削除する。再openは新しいIDの空reviewを作り、失敗した
+  旧resetのorphan refを証拠として継承しない。
 - Branch Review WalkthroughとCommentを既存URI/CLIで扱い、watcherは明示contextでbatchしてread-only調査後の
   最終replyだけを冪等に記録し、そのpost eventをdurableにself-suppressできる。
 - Branch Issue range comment draftはbackground sync中も本文とfocusを保持し、Issue本文変更時はdraftを失わず
   古いrangeの送信を拒否する。同期後の本文、inline placement、sidebar Outdated表示は一致する。
 - Walkthrough publish/updateはreview kindとtransportによらず`walkthrough`と`issuesAdded`を返す。
+- 外部Branch Walkthrough更新はreloadなしにlist/detail、左右pane、本文、reference、diagram bindingへ反映し、
+  無関係なcomment draft、focus、pane配置、scrollを失わない。
 - destination commit選択、PR全体diff、複数commit range、changed/all tree、全文、検索を利用できる。
 - `Pull Request.md`は常に最後に成功した同期の最新内容だけを表示する。
 - Agentがcommit固定WalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の

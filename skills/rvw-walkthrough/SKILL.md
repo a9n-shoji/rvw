@@ -37,6 +37,11 @@ Read the complete current body, source OID, diagram bindings, references, and ow
 Branch Review repository location before revising or deleting it. Walkthroughs have one current value
 and no local revision history.
 
+For a Branch Walkthrough, let RVW validate the saved Git common directory, current local remote
+identity when available, and that Branch Review ID's retained source ref. Do not work around
+`REPOSITORY_MISMATCH` by changing a path or treating another clone/ref namespace as equivalent. A
+repository rename or transfer requires an explicit Branch reset/recreate outside this authoring flow.
+
 ## Prepare the artifact
 
 1. Inspect the explicit instructions and relevant committed repository state. Determine whether the request explains a change or a standalone implementation, flow, or architecture subject. Use available Pull Request context when it contains authoring directions or establishes purpose.

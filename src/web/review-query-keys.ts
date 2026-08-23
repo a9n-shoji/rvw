@@ -27,8 +27,6 @@ export const reviewQueryKeys = {
     kind === "pull-request" ? (["pull-request"] as const) : (["branch-review"] as const),
   allComments: () => ["comments"] as const,
   allCommentPlacements: () => ["comment-placement"] as const,
-  allSearches: () => ["search"] as const,
-  allWalkthroughs: () => ["walkthrough"] as const,
   comments: (kind: ReviewKind, reviewId: string | null, changeSequence?: number) =>
     kind === "pull-request"
       ? (["comments", reviewId, ...optionalTail(changeSequence)] as const)
@@ -51,6 +49,9 @@ export const reviewQueryKeys = {
     matchCase?: boolean,
     wholeWord?: boolean,
   ) => ["search", kind, reviewId, sourceOid, query, matchCase, wholeWord] as const,
+  searchScope: (kind: ReviewKind, reviewId: string) => ["search", kind, reviewId] as const,
+  walkthroughScope: (kind: ReviewKind, reviewId: string) =>
+    ["walkthrough", kind, reviewId] as const,
   walkthroughs: (kind: ReviewKind, reviewId: string) =>
     ["walkthrough", kind, reviewId, "list"] as const,
   walkthrough: (kind: ReviewKind, reviewId: string, walkthroughId: string) =>

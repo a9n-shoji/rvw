@@ -258,6 +258,20 @@ export class GitClient {
     repository: string;
     remoteUrl: string;
   }> {
+    const identity = await this.tryBaseRepositoryIdentity(cwd);
+    if (identity) return identity;
+    throw new RvwError(
+      "REPOSITORY_MISMATCH",
+      "github.comのbase repository remoteを解決できません。",
+      { suggestions: ["対象repositoryのorigin remoteを確認してください。"] },
+    );
+  }
+
+  async tryBaseRepositoryIdentity(cwd: string): Promise<{
+    owner: string;
+    repository: string;
+    remoteUrl: string;
+  } | null> {
     const remoteNames = (await runText("git", ["remote"], { cwd }))
       .split("\n")
       .map((value) => value.trim())
@@ -276,11 +290,7 @@ export class GitClient {
         if (parsed) return { ...parsed, remoteUrl };
       }
     }
-    throw new RvwError(
-      "REPOSITORY_MISMATCH",
-      "github.comのbase repository remoteを解決できません。",
-      { suggestions: ["対象repositoryのorigin remoteを確認してください。"] },
-    );
+    return null;
   }
 
   async hasObject(cwd: string, oid: string): Promise<boolean> {
@@ -436,17 +446,16 @@ export class GitClient {
     return `refs/rvw/pr/${number}/commits/oid-${oid.toLowerCase()}`;
   }
 
-  branchCommitRef(owner: string, repository: string, oid: string): string {
-    return `refs/rvw/branch/${owner.toLowerCase()}/${repository.toLowerCase()}/commits/oid-${oid.toLowerCase()}`;
+  branchCommitRef(branchReviewId: string, oid: string): string {
+    return `refs/rvw/branch/${branchReviewId.toLowerCase()}/commits/oid-${oid.toLowerCase()}`;
   }
 
   async ensureBranchCommitRef(
     cwd: string,
-    owner: string,
-    repository: string,
+    branchReviewId: string,
     oid: string,
   ): Promise<EnsuredCommitRef> {
-    const ref = this.branchCommitRef(owner, repository, oid);
+    const ref = this.branchCommitRef(branchReviewId, oid);
     const existing = await runProcess("git", ["show-ref", "--verify", "--hash", ref], {
       cwd,
       allowExitCodes: [1, 128],
@@ -491,13 +500,8 @@ export class GitClient {
     }
   }
 
-  async verifyBranchCommitRef(
-    cwd: string,
-    owner: string,
-    repository: string,
-    oid: string,
-  ): Promise<boolean> {
-    const ref = this.branchCommitRef(owner, repository, oid);
+  async verifyBranchCommitRef(cwd: string, branchReviewId: string, oid: string): Promise<boolean> {
+    const ref = this.branchCommitRef(branchReviewId, oid);
     try {
       return (await runText("git", ["rev-parse", "--verify", ref], { cwd })) === oid;
     } catch {

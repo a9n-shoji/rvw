@@ -52,6 +52,7 @@ import type { ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
 import type { AnyReviewComment, AnyWalkthrough, AnyWalkthroughSummary } from "../review-context.js";
+import { invalidateReviewScope } from "../review-query-invalidation.js";
 import { reviewQueryKeys } from "../review-query-keys.js";
 import {
   commitRangeOldOid,
@@ -667,13 +668,9 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     const previousSequence = observedChangeSequence.current;
     observedChangeSequence.current = nextSequence;
     if (previousSequence === null || previousSequence === nextSequence) return;
-    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allReviews("pull-request") });
-    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.document() });
-    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() });
-    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allCommentPlacements() });
-    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allSearches() });
-    void queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allWalkthroughs() });
-  }, [changeSequence.data?.reviewChangeSequence, queryClient]);
+    if (!pullRequestId) return;
+    void invalidateReviewScope(queryClient, "pull-request", pullRequestId);
+  }, [changeSequence.data?.reviewChangeSequence, pullRequestId, queryClient]);
   const commentsQuery = useQuery({
     queryKey: reviewQueryKeys.comments(
       "pull-request",

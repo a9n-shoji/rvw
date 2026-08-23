@@ -564,7 +564,10 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     const branchReview = service.getBranchReview(context.req.param("id"));
     const issue = service.getReviewIssue("branch", branchReview.id, context.req.param("issueId"));
     if (!input.yes) {
-      const preview = service.getIssueRemovalPreview("branch", branchReview.id, issue.url);
+      const preview = await service.getBranchIssueRemovalPreview(
+        branchReview.localRepositoryPath,
+        issue.url,
+      );
       return context.json(
         {
           ok: false,
@@ -586,9 +589,14 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
 
   app.get("/api/branch-reviews/:id/comments", async (context) => {
     const resolved = parseResolved(context.req.query("resolved"));
+    const branchReview = service.getBranchReview(context.req.param("id"));
+    const result = await service.listBranchCommentContextsAtPath(
+      branchReview.localRepositoryPath,
+      resolved,
+    );
     return context.json({
       ok: true,
-      comments: await service.listBranchCommentContexts(context.req.param("id"), resolved),
+      comments: result.comments,
     });
   });
 

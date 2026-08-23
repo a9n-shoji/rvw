@@ -112,6 +112,16 @@ reuse it and become the current local path. An independent clone of the same can
 repository is rejected rather than silently replacing the saved path and retained-object store. To
 use that independent clone, first obtain explicit authorization for the destructive Branch Review
 reset, inspect its deletion preview, reset it, and then open the Branch Review from the new clone.
+The local GitHub remote must also match the saved canonical repository. A remote change, repository
+rename, or organization transfer is not followed automatically; use the same explicit reset/recreate
+boundary from the original binding. Do not retry a `REPOSITORY_MISMATCH` as a sync failure.
+
+Branch reset and Issue-removal previews/execution, `branch comments`, and `branch sync` are
+existing-only. `BRANCH_REVIEW_NOT_FOUND` means they created no review row or retained ref. Only
+`branch open` and an explicit `branch issue add` may create the singleton. Branch evidence belongs to
+the returned Branch Review ID, not only to owner/repository. If reset reports that SQLite deletion
+succeeded but review-owned refs remain, report the orphan prefix and repair details; creating a new
+review neither cleans nor inherits those refs.
 
 ## Read comments
 

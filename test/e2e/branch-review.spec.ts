@@ -93,7 +93,7 @@ test("does not let a delayed Branch reference replace newer navigation", async (
   }
 });
 
-test("rebinds and removes both pane copies after external Branch Walkthrough changes", async ({
+test("refreshes both pane details without losing unrelated UI state after an external Branch Walkthrough update", async ({
   page,
   request,
 }) => {
@@ -106,20 +106,105 @@ test("rebinds and removes both pane copies after external Branch Walkthrough cha
   await walkthroughButton.click();
   await walkthroughButton.click({ modifiers: [modifier] });
   await expect(page.getByRole("tab", { name: "Current request flow", exact: true })).toHaveCount(2);
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  for (const pane of [leftPane, rightPane]) {
+    await expect(
+      pane.getByRole("heading", { level: 1, name: "Current request flow", exact: true }),
+    ).toBeVisible();
+    await expect(
+      pane.locator(".walkthrough-inline-reference").filter({ hasText: "the implementation" }),
+    ).toHaveAttribute("title", "src/fixture.ts:L1–3");
+    await expect(
+      pane.getByRole("button", { name: "Request implementationをコードで開く" }),
+    ).toBeVisible();
+  }
+
+  const commentsToggle = page.getByRole("button", { name: "コメント 2", exact: true });
+  await commentsToggle.click();
+  await page.getByRole("button", { name: "＋ Branch全体", exact: true }).click();
+  const unrelatedDraft = page.getByPlaceholder("Branch Review全体へのコメント");
+  await unrelatedDraft.fill("External Walkthrough refresh must preserve this draft");
+  await unrelatedDraft.evaluate((element) => {
+    element.dataset.rvwE2eIdentity = "unrelated-branch-draft";
+  });
+  await expect(unrelatedDraft).toBeFocused();
+
+  const paneScroll = await Promise.all(
+    [leftPane, rightPane].map(
+      async (pane) =>
+        await pane.evaluate((element) => {
+          element.style.height = "120px";
+          element.style.overflow = "auto";
+          element.scrollTop = 40;
+          return element.scrollTop;
+        }),
+    ),
+  );
   await page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/api/meta/change-sequence" && response.ok(),
   );
 
   const updatedTitle = "Updated request flow";
+  const updatedBody = [
+    "# Updated request flow",
+    "",
+    "The external agent replaced the Markdown body.",
+    "",
+    "Open [the replacement](rvw-ref:replacement).",
+    "",
+    "```mermaid",
+    "flowchart LR",
+    "  replacement[Replacement] --> complete[Complete]",
+    "```",
+  ].join("\n");
   const update = await request.post("/api/test/update-branch-walkthrough", {
     data: {
       title: updatedTitle,
-      body: "# Updated request flow\n\nOpen [the implementation](rvw-ref:implementation).",
+      body: updatedBody,
+      references: [
+        {
+          id: "replacement",
+          label: "Replacement handler",
+          path: "README.md",
+          startLine: 2,
+          endLine: 4,
+          description: "Updated external binding",
+        },
+      ],
+      diagramBindings: { replacement: "replacement" },
     },
   });
   expect(update.ok()).toBe(true);
   await expect(page.getByRole("tab", { name: updatedTitle, exact: true })).toHaveCount(2);
   await expect(page.getByRole("tab", { name: "Current request flow", exact: true })).toHaveCount(0);
+  for (const [index, pane] of [leftPane, rightPane].entries()) {
+    await expect(
+      pane.getByRole("heading", { level: 1, name: updatedTitle, exact: true }),
+    ).toBeVisible();
+    await expect(
+      pane.getByText("The external agent replaced the Markdown body.", { exact: true }),
+    ).toBeVisible();
+    const replacementReference = pane
+      .locator(".walkthrough-inline-reference")
+      .filter({ hasText: "the replacement" });
+    await expect(replacementReference).toHaveAttribute("title", "README.md:L2–4");
+    await expect(replacementReference).toContainText("L2–4");
+    await expect(
+      pane.getByRole("button", { name: "Replacement handlerをコードで開く" }),
+    ).toBeVisible();
+    await expect(
+      pane.getByRole("button", { name: "Request implementationをコードで開く" }),
+    ).toHaveCount(0);
+    await expect(
+      pane.locator(".walkthrough-inline-reference").filter({ hasText: "the implementation" }),
+    ).toHaveCount(0);
+    await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBe(paneScroll[index]);
+  }
+  await expect(unrelatedDraft).toHaveValue("External Walkthrough refresh must preserve this draft");
+  await expect(unrelatedDraft).toHaveAttribute("data-rvw-e2e-identity", "unrelated-branch-draft");
+  await expect(unrelatedDraft).toBeFocused();
+  await expect(rightPane).toBeVisible();
 
   const deletion = await request.delete(
     `/api/branch-reviews/${branchReviewId}/walkthroughs/66666666-6666-4666-8666-666666666666`,
@@ -529,6 +614,9 @@ test("refreshes an open Issue body without silently applying a stale range draft
   await expect(
     leftPane.getByText("Comment that should become outdated", { exact: true }),
   ).toBeVisible();
+  // Let the sequence-driven comment/document refresh settle before creating the next range.
+  // Otherwise the just-opened selection menu can correctly disappear with the replaced DOM.
+  await expect(page.getByRole("button", { name: "コメント 3", exact: true })).toBeVisible();
 
   await selectMappedText(originalLine);
   await leftPane.getByRole("button", { name: "L3へコメント", exact: true }).click();

@@ -126,19 +126,35 @@ Issue removal and `branch reset` without `--yes` return a count/ref preview with
 `RESET_CONFIRMATION_REQUIRED`. After the caller presents the Issue title/number and owned artifact
 counts to a human, the same command with `--yes` deletes only the selected review's membership,
 Issue comments, replies, or Branch Review artifacts. Shared Issue cache and artifacts owned by another
-review remain intact. Branch reset removes only its repository-scoped Branch retained refs; PR refs
-and objects retained by other refs remain reachable.
+review remain intact. Branch reset removes only its review-owned Branch retained refs; PR refs
+and objects retained by other refs remain reachable. Its namespace is
+`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`; preview and deletion never count another Branch
+Review ID's refs.
 
 Branch commands resolve the canonical GitHub base repository and Git common directory from the
 current directory or `--repository`; callers never pass an internal Branch Review ID. There is one
 durable Branch Review per repository. A worktree in the saved Git common directory may reuse it and
 refresh the usable local path. An independent clone of the same canonical repository fails with an
 actionable repository-mismatch error before changing the saved path, common directory, source OID,
-retained refs, or artifacts. After an explicit `branch reset` in the registered clone, opening from the
-other clone creates a new review. `branch sync` resolves GitHub's current default branch and OID,
+retained refs, or artifacts. A local remote that resolves to another owner/repository fails at the same
+boundary, including cache hits, and does not update `sourceSyncError`. Repository rename or transfer is
+not auto-followed. After an explicit `branch reset` at the original binding, opening the new identity or
+other clone creates a new review ID. `branch sync` resolves GitHub's current default branch and OID,
 fetches and verifies that exact object without changing checkout or index, advances the cached source,
 and refreshes every registered Issue independently. A previously synchronized review remains readable
-offline. `branch comments` returns the explicit Branch context and full comments for the selected state.
+offline. If the local remote is missing, matching common-directory and review-owned-ref evidence permits
+cached reads, `branch comments`, Issue removal, and reset; sync and Issue addition fail closed.
+`branch comments` returns the explicit Branch context and full comments for the selected state.
+`branch sync`, `branch comments`, reset preview/execution, and Issue-removal preview/execution are
+existing-only. A missing review returns `BRANCH_REVIEW_NOT_FOUND` without calling GitHub, fetching,
+creating a row/ref, updating location, or advancing either change sequence. Only `branch open` and an
+explicit Issue-add operation may create the singleton.
+
+If reset deletes SQLite state but cannot delete its Git refs, `LOCAL_STATE_INCONSISTENT.details`
+identifies the deleted row outcome, review ID, ref prefix, remaining refs, and explicit repairability.
+Creating another review does not clean the orphan. The new review ID cannot accept or delete that old
+evidence. Confirmation errors return the original repository path as structured command arguments so
+paths containing whitespace or shell metacharacters are not interpolated into a command string.
 `branch sync`の`issueResults`は各cached Issueの成功またはstale errorを別々に返す。`pr refresh`と
 `pr sync`も、PR本文から直接見つけた候補と既存membershipの結果を`issueResults`へ返し、一件の失敗を
 他のIssue同期やPR metadata更新の失敗として扱わない。

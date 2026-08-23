@@ -56,6 +56,11 @@ Branch Reviewでもdefault branch名をidentityにせず、canonical repository�
 同期できたexact sourceを進める。Pull Requestを捏造せず、両reviewのComment、Walkthrough、Issue
 membership、reading stateを混ぜない。
 
+canonical repository名だけでlocal evidenceを再bindしない。保存済みGit common directory、local remote
+identity、Branch Review IDが所有するretained refを同じaggregate境界として検証する。resetして作り直した
+reviewは新しいIDを持ち、旧reviewの残存refやartifactを暗黙に継承しない。削除対象を確認するpreviewや
+既存reviewを読む操作が、そのreview自体を作成してはならない。
+
 ### Issueをworkflowではなく文書として扱う
 
 Issueは要求や前提をcodeと並べて読むための文書であり、project management modelではない。同じrepositoryの

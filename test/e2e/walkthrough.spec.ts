@@ -1775,6 +1775,9 @@ test("opens a comment reference to the same file in the right pane", async ({ pa
     "2",
   );
   await expect(leftPane.locator("diffs-container")).toHaveAttribute("data-search-target-line", "1");
+
+  const cleanup = await request.delete(`/api/comments/${comment.id}`, { data: {} });
+  expect(cleanup.ok()).toBe(true);
 });
 
 test("renders safe context-bound Markdown in sidebar and inline comment posts", async ({

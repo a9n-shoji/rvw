@@ -840,6 +840,9 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await deletableFileThread.getByRole("menuitem", { name: "削除", exact: true }).click();
   await expect(deletableFileThread).toHaveCount(0);
   await expect(page.getByRole("button", { name: "コメント 1", exact: true })).toBeVisible();
+
+  const cleanup = await request.delete(`/api/comments/${lineCommentId}`, { data: {} });
+  expect(cleanup.ok()).toBe(true);
 });
 
 test("keeps a comment on the current PR body placed with its saved hash and quote", async ({

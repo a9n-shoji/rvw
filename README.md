@@ -37,7 +37,11 @@ Branch ReviewはcanonicalなGitHub repositoryごとに一件だけ作られ、Gi
 source OIDをheaderへ表示します。default branch名が変わっても同じreviewを再利用し、checkoutやindexを
 変更せずに同期します。同じGit common directoryのworktreeからは同じreviewを利用できますが、同じ
 GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作り直す場合は、登録済みcloneから
-`rvw branch reset`を明示実行します。一度同期したcode、Issue、Walkthrough、Commentはofflineでも読めます。
+`rvw branch reset`を明示実行します。local remoteを別owner/repositoryへ変更した場合はcache hitでも
+`REPOSITORY_MISMATCH`となり、状態を更新しません。repository rename／organization transferには自動追従せず、
+元のbindingでresetして作り直します。一度同期したcode、Issue、Walkthrough、CommentはGitHub networkが
+offlineでも読めます。remote自体がない場合も、保存済みGit common directoryとreview-owned source refが
+一致すればcached readとlocal cleanupは可能ですが、syncとIssue追加はremoteを復元するまで拒否されます。
 
 この考え方とプロダクト境界は[Product principles](docs/product-principles.md)にまとめています。
 
@@ -208,8 +212,7 @@ reference付きartifactとして検証してpublishします。Walkthrough全体
 `issuesAdded`（追加がなければ空配列）を返し、viewerのAgent socket経由でもdirect executionでも同じ
 JSON schemaです。
 
-新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRと
-Branch Reviewを
+新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録Reviewを
 同梱driverから約1秒間隔で監視し、起動前の既存未解決commentは処理しません。自分のPRのfix-and-pushを起動taskへ
 明示許可した場合だけ、live PR authorと起動時のGitHub loginが一致するPRで修正・test・commit・pushを
 行えます。fork PRではlive head repository、branch、OIDとpush先も一致させます。他人またはauthor不明の
@@ -292,6 +295,14 @@ rvw pr attach <PR_REF> --repository <PATH> --json
 Issue削除とBranch Review resetは、`--yes`なしでは対象Issue、コメント、返信、Walkthrough、解放候補ref
 などのpreviewだけを返して終了します。件数を確認して`--yes`を指定した場合だけ、対象reviewが所有する
 artifactを削除します。同じIssueを利用する別reviewのmembership、Comment、共有Issue cacheは残ります。
+これらのBranch preview／削除、`branch comments`、`branch sync`はexisting-onlyで、未登録repositoryに
+Branch Review、DB row、retained refを暗黙作成しません。作成を許すのは`branch open`と明示的な
+`branch issue add`だけです。
+
+Branch retained refは`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`に属します。reset後のref削除が
+失敗した場合、errorはDB削除済みか、残存prefix／ref、明示repair可能性を返します。新しいBranch Reviewを
+作ってもorphan refはcleanupされませんが、新reviewは別IDのnamespaceだけを証拠として使うため旧sourceを
+継承せず、旧resetも新reviewのrefを削除しません。
 
 `--stdin` commandはEOFまでJSONを読みます。改行だけでは終了しないため、processから呼ぶ場合は送信後に
 stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの

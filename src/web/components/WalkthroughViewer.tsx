@@ -746,7 +746,9 @@ export function WalkthroughViewer({
     onSuccess: async () => {
       onDeleted(walkthrough);
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allWalkthroughs() }),
+        queryClient.invalidateQueries({
+          queryKey: reviewQueryKeys.walkthroughScope(reviewKind, reviewId),
+        }),
         queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allComments() }),
         queryClient.invalidateQueries({ queryKey: reviewQueryKeys.changeSequence() }),
       ]);

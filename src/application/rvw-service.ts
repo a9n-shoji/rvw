@@ -86,6 +86,7 @@ import {
   parsePullRequestUrl,
   type GitHubPort,
 } from "../infrastructure/github/github-client.js";
+import { BranchReviewLifecycle, type ResolvedBranchReview } from "./branch-review-lifecycle.js";
 
 export interface OpenResult {
   pullRequest: PullRequest;
@@ -633,11 +634,15 @@ function directIssueReferences(body: string, owner: string, repository: string):
 }
 
 export class RvwService {
+  private readonly branchLifecycle: BranchReviewLifecycle;
+
   constructor(
     readonly database: RvwDatabase,
     readonly git: GitClient,
     readonly github: GitHubPort,
-  ) {}
+  ) {
+    this.branchLifecycle = new BranchReviewLifecycle(database, git, github);
+  }
 
   async doctor(cwd: string): Promise<{
     ok: boolean;
@@ -786,95 +791,23 @@ export class RvwService {
     return review;
   }
 
-  private assertBranchRepositoryMatch(
-    branchReview: BranchReview,
-    repository: RepositoryContext,
-  ): void {
-    if (path.resolve(branchReview.gitCommonDir) !== path.resolve(repository.gitCommonDir)) {
-      throw new RvwError(
-        "REPOSITORY_MISMATCH",
-        "このBranch Reviewは別の独立cloneへすでに登録されています。",
-        {
-          details: {
-            registered: branchReview.localRepositoryPath,
-            current: repository.worktreePath,
-          },
-          suggestions: [
-            `${branchReview.localRepositoryPath} または同じcloneのworktreeから開いてください。`,
-            "別cloneで作り直す場合は、登録済みのBranch Reviewを明示的にresetしてから開いてください。",
-          ],
-        },
-      );
-    }
-  }
-
   private async branchRepositoryFor(branchReview: BranchReview): Promise<RepositoryContext> {
-    const repository = await this.git.repositoryContext(branchReview.localRepositoryPath);
-    this.assertBranchRepositoryMatch(branchReview, repository);
-    return repository;
-  }
-
-  private async synchronizeBranchSource(repository: RepositoryContext): Promise<BranchReview> {
-    if (!this.github.getRepository) {
-      throw new RvwError("GITHUB_REPOSITORY_ERROR", "GitHub repository取得が利用できません。");
-    }
-    const remote = await this.git.baseRepositoryIdentity(repository.worktreePath);
-    const existing = this.database.findBranchReviewByIdentity(remote.owner, remote.repository);
-    if (existing) this.assertBranchRepositoryMatch(existing, repository);
-    const identity = {
-      host: "github.com" as const,
-      owner: remote.owner,
-      repository: remote.repository,
-      canonicalName: `${remote.owner}/${remote.repository}`,
-    };
-    const github = await this.github.getRepository(identity, repository.worktreePath);
-    const remoteUrl = await this.git.assertBaseRepository(
-      repository.worktreePath,
-      github.owner,
-      github.repository,
-    );
-    await this.git.ensureBranchObject({
-      cwd: repository.worktreePath,
-      remoteUrl,
-      branchName: github.defaultBranchName,
-      oid: github.defaultBranchOid,
-    });
-    await this.git.ensureBranchCommitRef(
-      repository.worktreePath,
-      github.owner,
-      github.repository,
-      github.defaultBranchOid,
-    );
-    return this.database.upsertBranchReview(github, {
-      localRepositoryPath: repository.worktreePath,
-      gitCommonDir: repository.gitCommonDir,
-    });
+    return (
+      await this.branchLifecycle.resolveExistingAtPath(branchReview.localRepositoryPath, {
+        policy: "resolve-existing",
+        expectedBranchReviewId: branchReview.id,
+      })
+    ).repository;
   }
 
   async openBranchReview(cwd: string): Promise<OpenBranchResult> {
-    const repository = await this.git.repositoryContext(cwd);
-    const stored = this.database.findBranchReviewByGitCommonDir(repository.gitCommonDir);
-    if (stored && (await this.git.hasObject(repository.worktreePath, stored.sourceOid))) {
-      await this.git.ensureBranchCommitRef(
-        repository.worktreePath,
-        stored.owner,
-        stored.repository,
-        stored.sourceOid,
-      );
-      const locationChanged =
-        path.resolve(stored.localRepositoryPath) !== path.resolve(repository.worktreePath);
-      return {
-        branchReview: locationChanged
-          ? this.database.updateBranchRepositoryLocation(stored.id, {
-              localRepositoryPath: repository.worktreePath,
-              gitCommonDir: repository.gitCommonDir,
-            })
-          : stored,
-        fromCache: true,
-      };
-    }
-    const branchReview = await this.synchronizeBranchSource(repository);
-    return { branchReview, fromCache: false };
+    return await this.branchLifecycle.openAtPath(cwd);
+  }
+
+  async resolveExistingBranchReviewAtPath(repositoryPath: string): Promise<ResolvedBranchReview> {
+    return await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+      policy: "resolve-existing",
+    });
   }
 
   getBranchReviewView(id: string): BranchReviewView {
@@ -887,13 +820,17 @@ export class RvwService {
   }
 
   async syncBranchReview(repositoryPath: string): Promise<BranchSyncResult> {
-    const repository = await this.git.repositoryContext(repositoryPath);
-    const existing = this.database.findBranchReviewByGitCommonDir(repository.gitCommonDir);
+    const existing = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+      policy: "synchronize-existing",
+    });
     let branchReview: BranchReview;
     try {
-      branchReview = await this.synchronizeBranchSource(repository);
+      branchReview = await this.branchLifecycle.synchronizeExisting(repositoryPath);
     } catch (error) {
-      if (existing) this.database.setBranchSyncError(existing.id, asRvwError(error).message);
+      const rvwError = asRvwError(error);
+      if (rvwError.code !== "REPOSITORY_MISMATCH") {
+        this.database.setBranchSyncError(existing.branchReview.id, rvwError.message);
+      }
       throw error;
     }
     const issues = this.database.listReviewIssues("branch", branchReview.id);
@@ -908,7 +845,7 @@ export class RvwService {
           const current = await this.github.getIssue(
             issue.number,
             branchReview,
-            repository.worktreePath,
+            existing.repository.worktreePath,
           );
           const cached = this.database.addReviewIssue("branch", branchReview.id, current).issue;
           return { issue: cached, ok: true };
@@ -963,7 +900,7 @@ export class RvwService {
     repositoryPath: string,
     issueReference: string,
   ): Promise<{ branchReview: BranchReview; issue: IssueDocument; added: boolean }> {
-    const { branchReview } = await this.openBranchReview(repositoryPath);
+    const branchReview = await this.branchLifecycle.openForExplicitMutation(repositoryPath);
     const result = await this.addIssueToContext(
       { kind: "branch", value: branchReview },
       issueReference,
@@ -1043,12 +980,46 @@ export class RvwService {
     issue: IssueDocument;
     deleted: IssueRemovalCounts;
   }> {
-    const { branchReview } = await this.openBranchReview(repositoryPath);
+    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+      policy: "destructive-existing",
+    });
     const preview = this.getIssueRemovalPreview("branch", branchReview.id, issueReference);
     return {
       branchReview,
       issue: preview.issue,
       deleted: this.database.removeReviewIssue("branch", branchReview.id, preview.issue.id),
+    };
+  }
+
+  async getBranchIssueRemovalPreview(
+    repositoryPath: string,
+    issueReference: string,
+  ): Promise<{ issue: IssueDocument; counts: IssueRemovalCounts; confirmationRequired: true }> {
+    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+      policy: "destructive-existing",
+    });
+    return this.getIssueRemovalPreview("branch", branchReview.id, issueReference);
+  }
+
+  async listBranchCommentContextsAtPath(
+    repositoryPath: string,
+    resolved?: boolean,
+  ): Promise<{
+    context: { kind: "branch"; branchReviewId: string; repository: string };
+    branchReview: BranchReview;
+    comments: Array<{ comment: BranchReviewComment; latestPlacement: CommentPlacement }>;
+  }> {
+    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+      policy: "resolve-existing",
+    });
+    return {
+      context: {
+        kind: "branch",
+        branchReviewId: branchReview.id,
+        repository: branchReview.canonicalName,
+      },
+      branchReview,
+      comments: await this.listBranchCommentContexts(branchReview.id, resolved),
     };
   }
 
@@ -1425,14 +1396,10 @@ export class RvwService {
     if (!GIT_OBJECT_ID_PATTERN.test(oid)) {
       throw new RvwError("COMMIT_NOT_FOUND", `Git commitが見つかりません: ${oid}`, { status: 404 });
     }
+    const repository = await this.branchRepositoryFor(branchReview);
     const [retained, available] = await Promise.all([
-      this.git.verifyBranchCommitRef(
-        branchReview.localRepositoryPath,
-        branchReview.owner,
-        branchReview.repository,
-        oid,
-      ),
-      this.git.hasObject(branchReview.localRepositoryPath, oid),
+      this.git.verifyBranchCommitRef(repository.worktreePath, branchReview.id, oid),
+      this.git.hasObject(repository.worktreePath, oid),
     ]);
     if (!retained || !available) {
       throw new RvwError(
@@ -2057,8 +2024,7 @@ export class RvwService {
   ): Promise<T> {
     const commitRef = await this.git.ensureBranchCommitRef(
       branchReview.localRepositoryPath,
-      branchReview.owner,
-      branchReview.repository,
+      branchReview.id,
       sourceOid,
     );
     try {
@@ -2082,6 +2048,7 @@ export class RvwService {
     references?: CodeReference[];
   }): Promise<BranchReviewComment> {
     const branchReview = this.getBranchReview(input.branchReviewId);
+    await this.branchRepositoryFor(branchReview);
     const target = await this.prepareBranchCommentTarget(branchReview, input.target);
     const body = assertTextBody(input.body);
     assertAuthorLabel(input.authorLabel);
@@ -2346,6 +2313,7 @@ export class RvwService {
     const branchComment = this.database.getBranchComment(id);
     if (branchComment) {
       const branchReview = this.getBranchReview(branchComment.branchReviewId);
+      await this.branchRepositoryFor(branchReview);
       const [latestPlacement, exactSource] = await Promise.all([
         this.placeBranchCommentAtSource(branchReview, branchComment, branchReview.sourceOid),
         this.getBranchCommentExactSource(branchReview, branchComment),
@@ -2561,8 +2529,37 @@ export class RvwService {
     confirmationRequired: true;
   }> {
     const branchReview = this.getBranchReview(branchReviewId);
-    const prefix = `refs/rvw/branch/${branchReview.owner.toLowerCase()}/${branchReview.repository.toLowerCase()}/commits/`;
-    const retainedRefs = await this.git.listRefsByPrefix(branchReview.localRepositoryPath, prefix);
+    const resolved = await this.branchLifecycle.resolveExistingAtPath(
+      branchReview.localRepositoryPath,
+      {
+        policy: "destructive-existing",
+        expectedBranchReviewId: branchReview.id,
+      },
+    );
+    return await this.getResolvedBranchResetPreview(resolved);
+  }
+
+  async getBranchResetPreviewAtPath(repositoryPath: string): Promise<{
+    branchReview: BranchReview;
+    counts: BranchResetCounts;
+    retainedRefs: string[];
+    confirmationRequired: true;
+  }> {
+    const resolved = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+      policy: "destructive-existing",
+    });
+    return await this.getResolvedBranchResetPreview(resolved);
+  }
+
+  private async getResolvedBranchResetPreview(resolved: ResolvedBranchReview): Promise<{
+    branchReview: BranchReview;
+    counts: BranchResetCounts;
+    retainedRefs: string[];
+    confirmationRequired: true;
+  }> {
+    const { branchReview, repository } = resolved;
+    const prefix = `refs/rvw/branch/${branchReview.id.toLowerCase()}/commits/`;
+    const retainedRefs = await this.git.listRefsByPrefix(repository.worktreePath, prefix);
     return {
       branchReview,
       counts: this.database.getBranchResetCounts(branchReview.id, retainedRefs.length),
@@ -2576,22 +2573,46 @@ export class RvwService {
     deleted: BranchResetCounts;
     removedRefs: string[];
   }> {
-    const preview = await this.getBranchResetPreview(branchReviewId);
-    const prefix = `refs/rvw/branch/${preview.branchReview.owner.toLowerCase()}/${preview.branchReview.repository.toLowerCase()}/commits/`;
-    const deleted = this.database.resetBranchReview(branchReviewId, preview.retainedRefs.length);
+    const branchReview = this.getBranchReview(branchReviewId);
+    const resolved = await this.branchLifecycle.resolveExistingAtPath(
+      branchReview.localRepositoryPath,
+      {
+        policy: "destructive-existing",
+        expectedBranchReviewId: branchReview.id,
+      },
+    );
+    return await this.resetResolvedBranchReview(resolved);
+  }
+
+  async resetBranchReviewAtPath(repositoryPath: string): Promise<{
+    branchReview: BranchReview;
+    deleted: BranchResetCounts;
+    removedRefs: string[];
+  }> {
+    const resolved = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+      policy: "destructive-existing",
+    });
+    return await this.resetResolvedBranchReview(resolved);
+  }
+
+  private async resetResolvedBranchReview(resolved: ResolvedBranchReview): Promise<{
+    branchReview: BranchReview;
+    deleted: BranchResetCounts;
+    removedRefs: string[];
+  }> {
+    const preview = await this.getResolvedBranchResetPreview(resolved);
+    const prefix = `refs/rvw/branch/${preview.branchReview.id.toLowerCase()}/commits/`;
+    const deleted = this.database.resetBranchReview(
+      preview.branchReview.id,
+      preview.retainedRefs.length,
+    );
     let removedCount: number;
     try {
-      removedCount = await this.git.deleteRefsByPrefix(
-        preview.branchReview.localRepositoryPath,
-        prefix,
-      );
+      removedCount = await this.git.deleteRefsByPrefix(resolved.repository.worktreePath, prefix);
     } catch (error) {
       let remainingRefs: string[] | null = null;
       try {
-        remainingRefs = await this.git.listRefsByPrefix(
-          preview.branchReview.localRepositoryPath,
-          prefix,
-        );
+        remainingRefs = await this.git.listRefsByPrefix(resolved.repository.worktreePath, prefix);
       } catch {
         // Preserve the deletion error when the uncertain outcome cannot be inspected.
       }
@@ -2605,10 +2626,22 @@ export class RvwService {
             cause: error,
             details: {
               branchReviewDeleted: true,
+              branchReviewId: preview.branchReview.id,
+              databaseDeletionCompleted: true,
+              refDeletionCompleted: false,
+              repositoryPath: resolved.repository.worktreePath,
+              refPrefix: prefix,
               retainedRefs: preview.retainedRefs,
               ...(remainingRefs === null ? {} : { remainingRefs }),
+              repair: {
+                possible: true,
+                orphanRefsAreIsolatedFromNewReviews: true,
+                requiresExplicitRefCleanup: true,
+              },
             },
-            suggestions: ["rvw branch openで新しいBranch Reviewを作成できます。"],
+            suggestions: [
+              "残存refは新しいBranch Reviewから隔離されていますが、作り直してもcleanupされません。refPrefixを確認して明示的に修復してください。",
+            ],
           },
         );
       }
@@ -2920,6 +2953,7 @@ export class RvwService {
         throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
       }
       const branchReview = this.getBranchReview(branchComment.branchReviewId);
+      await this.branchRepositoryFor(branchReview);
       await this.validateCodeReferences(branchReview, {
         sourceOid: input.relatedCommitOid ?? null,
         body,
@@ -3034,6 +3068,7 @@ export class RvwService {
     const review = comment
       ? this.getPullRequest(comment.pullRequestId)
       : this.getBranchReview(branchComment!.branchReviewId);
+    if (branchComment) await this.branchRepositoryFor(review as BranchReview);
     await this.validateCodeReferences(review, {
       sourceOid: relatedCommitOid,
       body,

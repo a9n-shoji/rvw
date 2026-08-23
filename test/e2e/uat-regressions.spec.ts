@@ -1239,6 +1239,9 @@ test("reopens an inline thread consistently after it changes while unmounted", a
   await page.getByRole("button", { name: /^未解決/ }).click();
   await page.getByRole("tab", { name: "src/fixture.ts" }).click();
   await expect(inline).toHaveClass(/is-expanded/);
+
+  const cleanup = await request.delete(`/api/comments/${commentId}`, { data: {} });
+  expect(cleanup.ok()).toBe(true);
 });
 
 test("explains that full view is unavailable for a deleted file", async ({ page }) => {

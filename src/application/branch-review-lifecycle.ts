@@ -1,0 +1,388 @@
+import path from "node:path";
+import type { BranchReview, RepositoryIdentity } from "../domain/models.js";
+import { RvwDatabase } from "../infrastructure/db/database.js";
+import { GitClient, type RepositoryContext } from "../infrastructure/git/git-client.js";
+import type { GitHubPort } from "../infrastructure/github/github-client.js";
+import { asRvwError, RvwError } from "../shared/errors.js";
+
+export type BranchReviewLifecyclePolicy =
+  | "open-or-create"
+  | "open-cached"
+  | "resolve-existing"
+  | "synchronize-existing"
+  | "destructive-existing";
+
+export interface ResolvedBranchReview {
+  branchReview: BranchReview;
+  repository: RepositoryContext;
+  remoteIdentity: {
+    owner: string;
+    repository: string;
+    remoteUrl: string;
+  } | null;
+}
+
+export interface BranchReviewOpenResult {
+  branchReview: BranchReview;
+  fromCache: boolean;
+}
+
+function sameRepositoryIdentity(
+  left: Pick<RepositoryIdentity, "owner" | "repository">,
+  right: Pick<RepositoryIdentity, "owner" | "repository">,
+): boolean {
+  return (
+    left.owner.toLowerCase() === right.owner.toLowerCase() &&
+    left.repository.toLowerCase() === right.repository.toLowerCase()
+  );
+}
+
+export class BranchReviewLifecycle {
+  constructor(
+    private readonly database: RvwDatabase,
+    private readonly git: GitClient,
+    private readonly github: GitHubPort,
+  ) {}
+
+  private repositoryMismatch(
+    branchReview: BranchReview,
+    repository: RepositoryContext,
+    message: string,
+    details: Record<string, unknown> = {},
+  ): RvwError {
+    return new RvwError("REPOSITORY_MISMATCH", message, {
+      details: {
+        branchReviewId: branchReview.id,
+        registeredRepository: branchReview.canonicalName,
+        registeredPath: branchReview.localRepositoryPath,
+        registeredGitCommonDir: branchReview.gitCommonDir,
+        currentPath: repository.worktreePath,
+        currentGitCommonDir: repository.gitCommonDir,
+        ...details,
+      },
+      suggestions: [
+        `${branchReview.localRepositoryPath} または同じcloneのworktreeから実行してください。`,
+        "repositoryのrename / transferまたはremote変更後は、元のbindingでBranch Reviewを明示resetしてから作り直してください。",
+      ],
+    });
+  }
+
+  private assertGitCommonDir(branchReview: BranchReview, repository: RepositoryContext): void {
+    if (path.resolve(branchReview.gitCommonDir) !== path.resolve(repository.gitCommonDir)) {
+      throw this.repositoryMismatch(
+        branchReview,
+        repository,
+        "このBranch Reviewは別の独立cloneへすでに登録されています。",
+      );
+    }
+  }
+
+  private assertCanonicalRemote(
+    branchReview: BranchReview,
+    repository: RepositoryContext,
+    remoteIdentity: { owner: string; repository: string } | null,
+  ): void {
+    if (remoteIdentity && !sameRepositoryIdentity(branchReview, remoteIdentity)) {
+      throw this.repositoryMismatch(
+        branchReview,
+        repository,
+        "現在のGitHub remoteは保存済みBranch Reviewのrepositoryと一致しません。",
+        {
+          currentRepository: `${remoteIdentity.owner}/${remoteIdentity.repository}`,
+        },
+      );
+    }
+  }
+
+  private async assertOwnedSourceRef(
+    branchReview: BranchReview,
+    repository: RepositoryContext,
+  ): Promise<void> {
+    // A concurrent first open may observe the committed DB row just before the winning process
+    // creates the aggregate-owned ref. Recheck that narrow initialization window without ever
+    // creating or fetching from an existing-only path.
+    const recentlyCreated = Date.now() - Date.parse(branchReview.createdAt) < 5_000;
+    const attempts = recentlyCreated ? 10 : 1;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (
+        await this.git.verifyBranchCommitRef(
+          repository.worktreePath,
+          branchReview.id,
+          branchReview.sourceOid,
+        )
+      ) {
+        return;
+      }
+      if (attempt + 1 < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    throw this.repositoryMismatch(
+      branchReview,
+      repository,
+      "candidate repositoryにBranch Review所有のsource refがなく、保存済みbindingを確認できません。",
+      {
+        sourceOid: branchReview.sourceOid,
+        retainedRefAvailable: false,
+      },
+    );
+  }
+
+  async resolveExistingAtPath(
+    repositoryPath: string,
+    options: {
+      policy: Exclude<BranchReviewLifecyclePolicy, "open-or-create" | "open-cached">;
+      expectedBranchReviewId?: string;
+    } = { policy: "resolve-existing" },
+  ): Promise<ResolvedBranchReview> {
+    const repository = await this.git.repositoryContext(repositoryPath);
+    const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
+    const byCommonDir = this.database.findBranchReviewByGitCommonDir(repository.gitCommonDir);
+    const byIdentity = remoteIdentity
+      ? this.database.findBranchReviewByIdentity(remoteIdentity.owner, remoteIdentity.repository)
+      : null;
+    const expected = options.expectedBranchReviewId
+      ? this.database.getBranchReview(options.expectedBranchReviewId)
+      : null;
+
+    if (options.expectedBranchReviewId && !expected) {
+      throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+        status: 404,
+      });
+    }
+    if (byCommonDir && byIdentity && byCommonDir.id !== byIdentity.id) {
+      throw this.repositoryMismatch(
+        byCommonDir,
+        repository,
+        "Git common directoryとcanonical repositoryが異なるBranch Reviewを指しています。",
+        { canonicalBranchReviewId: byIdentity.id },
+      );
+    }
+
+    const branchReview = expected ?? byCommonDir ?? byIdentity;
+    if (!branchReview) {
+      throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "保存済みBranch Reviewが見つかりません。", {
+        status: 404,
+        details: {
+          repositoryPath: repository.worktreePath,
+          gitCommonDir: repository.gitCommonDir,
+          ...(remoteIdentity
+            ? { currentRepository: `${remoteIdentity.owner}/${remoteIdentity.repository}` }
+            : {}),
+        },
+        suggestions: ["対象repositoryで rvw branch open を実行してください。"],
+      });
+    }
+
+    this.assertGitCommonDir(branchReview, repository);
+    this.assertCanonicalRemote(branchReview, repository, remoteIdentity);
+    await this.assertOwnedSourceRef(branchReview, repository);
+    if (options.policy === "synchronize-existing" && !remoteIdentity) {
+      throw this.repositoryMismatch(
+        branchReview,
+        repository,
+        "Branch Reviewの同期に必要なGitHub remote identityを解決できません。",
+      );
+    }
+    return { branchReview, repository, remoteIdentity };
+  }
+
+  private async synchronizeSource(
+    repository: RepositoryContext,
+    remoteIdentity: { owner: string; repository: string; remoteUrl: string },
+    existing: BranchReview | null,
+  ): Promise<BranchReview> {
+    if (!this.github.getRepository) {
+      throw new RvwError("GITHUB_REPOSITORY_ERROR", "GitHub repository取得が利用できません。");
+    }
+    const identity = {
+      host: "github.com" as const,
+      owner: remoteIdentity.owner,
+      repository: remoteIdentity.repository,
+      canonicalName: `${remoteIdentity.owner}/${remoteIdentity.repository}`,
+    };
+    const github = await this.github.getRepository(identity, repository.worktreePath);
+    if (!sameRepositoryIdentity(identity, github)) {
+      const bound =
+        existing ?? this.database.findBranchReviewByIdentity(identity.owner, identity.repository);
+      if (bound) {
+        throw this.repositoryMismatch(
+          bound,
+          repository,
+          "GitHub repositoryのrename / transferはBranch Reviewへ自動追従しません。",
+          { githubRepository: github.canonicalName },
+        );
+      }
+      throw new RvwError(
+        "REPOSITORY_MISMATCH",
+        "local remoteとGitHub repository metadataのidentityが一致しません。",
+        {
+          details: {
+            currentRepository: identity.canonicalName,
+            githubRepository: github.canonicalName,
+          },
+        },
+      );
+    }
+    const remoteUrl = await this.git.assertBaseRepository(
+      repository.worktreePath,
+      github.owner,
+      github.repository,
+    );
+    await this.git.ensureBranchObject({
+      cwd: repository.worktreePath,
+      remoteUrl,
+      branchName: github.defaultBranchName,
+      oid: github.defaultBranchOid,
+    });
+    // For an existing aggregate, retain the candidate source before publishing it in SQLite.
+    // This keeps readers from observing a new sourceOid without its aggregate-owned evidence.
+    const retainedBeforeUpdate = existing
+      ? await this.git.ensureBranchCommitRef(
+          repository.worktreePath,
+          existing.id,
+          github.defaultBranchOid,
+        )
+      : null;
+    let branchReview: BranchReview;
+    try {
+      branchReview = this.database.upsertBranchReview(github, {
+        localRepositoryPath: repository.worktreePath,
+        gitCommonDir: repository.gitCommonDir,
+      });
+    } catch (error) {
+      if (retainedBeforeUpdate?.created && existing) {
+        await this.git
+          .deleteRef(repository.worktreePath, retainedBeforeUpdate.ref, github.defaultBranchOid)
+          .catch(() => undefined);
+      }
+      throw error;
+    }
+    if (retainedBeforeUpdate) return branchReview;
+
+    try {
+      await this.git.ensureBranchCommitRef(
+        repository.worktreePath,
+        branchReview.id,
+        github.defaultBranchOid,
+      );
+    } catch (error) {
+      const rvwError = asRvwError(error);
+      this.database.setBranchSyncError(branchReview.id, rvwError.message);
+      throw new RvwError(
+        "LOCAL_STATE_INCONSISTENT",
+        "Branch sourceは保存されましたが、review-owned retained refを作成できませんでした。",
+        {
+          cause: error,
+          details: {
+            branchReviewId: branchReview.id,
+            databaseUpdated: true,
+            retainedRefCreated: false,
+            repairableByExplicitReset: false,
+          },
+          suggestions: [
+            "repositoryとGit refの状態を修復してください。refのないbindingは安全のため自動resetされません。",
+          ],
+        },
+      );
+    }
+    return branchReview;
+  }
+
+  async openAtPath(repositoryPath: string): Promise<BranchReviewOpenResult> {
+    const repository = await this.git.repositoryContext(repositoryPath);
+    const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
+    const stored = this.database.findBranchReviewByGitCommonDir(repository.gitCommonDir);
+    if (stored) {
+      this.assertCanonicalRemote(stored, repository, remoteIdentity);
+      await this.assertOwnedSourceRef(stored, repository);
+      const available = await this.git.hasObject(repository.worktreePath, stored.sourceOid);
+      if (available) {
+        const locationChanged =
+          path.resolve(stored.localRepositoryPath) !== path.resolve(repository.worktreePath);
+        return {
+          branchReview:
+            locationChanged && remoteIdentity
+              ? this.database.updateBranchRepositoryLocation(stored.id, {
+                  localRepositoryPath: repository.worktreePath,
+                  gitCommonDir: repository.gitCommonDir,
+                })
+              : stored,
+          fromCache: true,
+        };
+      }
+      if (!remoteIdentity) {
+        throw new RvwError(
+          "LOCAL_STATE_INCONSISTENT",
+          "cached Branch source objectを確認できません。",
+          {
+            details: {
+              branchReviewId: stored.id,
+              sourceOid: stored.sourceOid,
+              gitObjectAvailable: available,
+              retainedRefAvailable: true,
+            },
+            suggestions: ["GitHub remoteを復元し、Branch Reviewを明示resetしてください。"],
+          },
+        );
+      }
+      const branchReview = await this.synchronizeSource(repository, remoteIdentity, stored);
+      return { branchReview, fromCache: false };
+    }
+
+    if (!remoteIdentity) {
+      throw new RvwError(
+        "REPOSITORY_MISMATCH",
+        "Branch Reviewの作成に必要なGitHub remote identityを解決できません。",
+        { suggestions: ["対象repositoryのorigin remoteを確認してください。"] },
+      );
+    }
+    const sameIdentity = this.database.findBranchReviewByIdentity(
+      remoteIdentity.owner,
+      remoteIdentity.repository,
+    );
+    if (sameIdentity) this.assertGitCommonDir(sameIdentity, repository);
+    const branchReview = await this.synchronizeSource(repository, remoteIdentity, sameIdentity);
+    return { branchReview, fromCache: false };
+  }
+
+  async openForExplicitMutation(repositoryPath: string): Promise<BranchReview> {
+    const repository = await this.git.repositoryContext(repositoryPath);
+    const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
+    if (!remoteIdentity) {
+      throw new RvwError(
+        "REPOSITORY_MISMATCH",
+        "Branch Reviewの追加操作に必要なGitHub remote identityを解決できません。",
+        { suggestions: ["対象repositoryのorigin remoteを確認してください。"] },
+      );
+    }
+    const stored = this.database.findBranchReviewByGitCommonDir(repository.gitCommonDir);
+    if (stored) {
+      this.assertCanonicalRemote(stored, repository, remoteIdentity);
+      await this.assertOwnedSourceRef(stored, repository);
+      return path.resolve(stored.localRepositoryPath) === path.resolve(repository.worktreePath)
+        ? stored
+        : this.database.updateBranchRepositoryLocation(stored.id, {
+            localRepositoryPath: repository.worktreePath,
+            gitCommonDir: repository.gitCommonDir,
+          });
+    }
+    const sameIdentity = this.database.findBranchReviewByIdentity(
+      remoteIdentity.owner,
+      remoteIdentity.repository,
+    );
+    if (sameIdentity) this.assertGitCommonDir(sameIdentity, repository);
+    return await this.synchronizeSource(repository, remoteIdentity, sameIdentity);
+  }
+
+  async synchronizeExisting(repositoryPath: string): Promise<BranchReview> {
+    const resolved = await this.resolveExistingAtPath(repositoryPath, {
+      policy: "synchronize-existing",
+    });
+    return await this.synchronizeSource(
+      resolved.repository,
+      resolved.remoteIdentity!,
+      resolved.branchReview,
+    );
+  }
+}

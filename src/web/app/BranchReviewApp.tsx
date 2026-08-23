@@ -32,6 +32,7 @@ import {
 import { documentTabKey, type ActiveDocument, type DocumentPaneId } from "../document-workspace.js";
 import type { AnyReviewComment } from "../review-context.js";
 import type { ReadingLocator } from "../reading-history.js";
+import { invalidateReviewScope } from "../review-query-invalidation.js";
 import { reviewQueryKeys } from "../review-query-keys.js";
 import type { ThemePreference } from "../theme.js";
 import { useDebouncedValue } from "../use-debounced-value.js";
@@ -240,20 +241,7 @@ export function BranchReviewApp({
   });
 
   const refresh = useCallback(async (): Promise<void> => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.review("branch", branchReviewId) }),
-      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.document() }),
-      queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() }),
-      queryClient.invalidateQueries({
-        queryKey: reviewQueryKeys.comments("branch", branchReviewId),
-      }),
-      queryClient.invalidateQueries({
-        queryKey: reviewQueryKeys.commentPlacement("branch", branchReviewId),
-      }),
-      queryClient.invalidateQueries({
-        queryKey: reviewQueryKeys.walkthroughs("branch", branchReviewId),
-      }),
-    ]);
+    await invalidateReviewScope(queryClient, "branch", branchReviewId);
   }, [branchReviewId, queryClient]);
 
   useEffect(() => {

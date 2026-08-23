@@ -275,8 +275,7 @@ export async function dispatchAgentSocketRequest(
     }
     case "branch.issue.remove.preview": {
       const input = parseOperationInput("branch.issue.remove.preview", request.input);
-      const opened = await service.openBranchReview(input.repositoryPath);
-      return service.getIssueRemovalPreview("branch", opened.branchReview.id, input.issueReference);
+      return await service.getBranchIssueRemovalPreview(input.repositoryPath, input.issueReference);
     }
     case "branch.issue.remove": {
       const input = parseOperationInput("branch.issue.remove", request.input);
@@ -284,26 +283,15 @@ export async function dispatchAgentSocketRequest(
     }
     case "branch.reset.preview": {
       const input = parseOperationInput("branch.reset.preview", request.input);
-      const opened = await service.openBranchReview(input.repositoryPath);
-      return await service.getBranchResetPreview(opened.branchReview.id);
+      return await service.getBranchResetPreviewAtPath(input.repositoryPath);
     }
     case "branch.reset": {
       const input = parseOperationInput("branch.reset", request.input);
-      const opened = await service.openBranchReview(input.repositoryPath);
-      return await service.resetBranchReview(opened.branchReview.id);
+      return await service.resetBranchReviewAtPath(input.repositoryPath);
     }
     case "branch.comments": {
       const input = parseOperationInput("branch.comments", request.input);
-      const opened = await service.openBranchReview(input.repositoryPath);
-      return {
-        context: {
-          kind: "branch",
-          branchReviewId: opened.branchReview.id,
-          repository: opened.branchReview.canonicalName,
-        },
-        branchReview: opened.branchReview,
-        comments: await service.listBranchCommentContexts(opened.branchReview.id, input.resolved),
-      };
+      return await service.listBranchCommentContextsAtPath(input.repositoryPath, input.resolved);
     }
     case "comment.list": {
       const input = parseOperationInput("comment.list", request.input);

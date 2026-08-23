@@ -1,8 +1,8 @@
 CREATE TABLE branch_reviews (
   id TEXT PRIMARY KEY,
   host TEXT NOT NULL CHECK(host = 'github.com'),
-  owner TEXT NOT NULL,
-  repository TEXT NOT NULL,
+  owner TEXT NOT NULL COLLATE NOCASE,
+  repository TEXT NOT NULL COLLATE NOCASE,
   canonical_name TEXT NOT NULL,
   local_repository_path TEXT NOT NULL,
   git_common_dir TEXT NOT NULL,
@@ -19,8 +19,8 @@ CREATE TABLE branch_reviews (
 CREATE TABLE github_issues (
   id TEXT PRIMARY KEY,
   host TEXT NOT NULL CHECK(host = 'github.com'),
-  owner TEXT NOT NULL,
-  repository TEXT NOT NULL,
+  owner TEXT NOT NULL COLLATE NOCASE,
+  repository TEXT NOT NULL COLLATE NOCASE,
   canonical_name TEXT NOT NULL,
   number INTEGER NOT NULL CHECK(number > 0),
   github_url TEXT NOT NULL,

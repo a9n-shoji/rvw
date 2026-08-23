@@ -17,16 +17,23 @@ The SQLite database is user-global. One Branch Review is keyed by canonical GitH
 independent from every Pull Request Review. Issue cache rows are shared by GitHub identity while
 memberships and Issue-target comments belong to exactly one review. Observed PR heads and Branch
 Review sources are retained by `refs/rvw/...` in the base repository's common Git directory. The
-saved Git common directory is therefore part of the Branch Review's source binding: worktrees in that
-common directory may reuse the review, but an independent clone with the same canonical GitHub identity
-fails closed instead of moving the binding. An explicit Branch reset is the boundary for recreating it
-from another clone. The
+saved Git common directory and aggregate-owned current source ref are the local Branch binding. Every
+path-based use case compares that common directory and, when available, the canonical identity parsed
+from local GitHub remotes with the saved identity before any GitHub request, fetch, location update, or
+mutation. Worktrees in that common directory may reuse the review, but an independent clone, a changed
+canonical remote, or a replacement repository at the saved path fails closed instead of moving the
+binding. Repository rename and transfer are not followed automatically; an explicit Branch reset at
+the original binding is the boundary for recreating the aggregate. The
 Issue removal transaction deletes only the selected membership and its owned comments/replies.
 Branch reset deletes Branch comments, Walkthroughs, memberships, and the singleton review before
-releasing only its `refs/rvw/branch/<owner>/<repository>/...` namespace; PR refs and shared Issue cache
-are outside that deletion boundary. The browser polls the active review's
+releasing only its `refs/rvw/branch/<branchReviewId>/...` namespace; PR refs, another Branch Review ID,
+and shared Issue cache are outside that deletion boundary. If ref deletion fails after DB deletion,
+the error reports both outcomes and the orphan prefix. A replacement review gets a new ID, so it cannot
+read or delete the orphan evidence. The browser polls the active review's
 `app_meta.review_change_sequence:<kind>:<id>` value; the database-wide sequence remains a diagnostic
-and compatibility counter, not the content invalidation boundary. There is no
+and compatibility counter, not the content invalidation boundary. Walkthrough invalidation uses the
+exact review prefix `['walkthrough', kind, reviewId]`, which covers both summaries and all active
+details without remounting pane state. There is no
 persistent daemon or agent session coupling. While a viewer process is running, it exposes a
 user/database-specific Unix socket inside a `0700` temporary directory as an alternate transport for
 the same application service. Agent
@@ -38,6 +45,14 @@ database acquire an atomic filesystem owner lock before listening, so one socket
 Node process; a follower takes over only after that owner exits. Transport diagnostics report the
 socket, connection, database identity, selected transport, and fallback reason. Doctor also executes
 a rollback-only write transaction instead of inferring writeability from Unix modes.
+
+`BranchReviewLifecycle` is the application boundary shared by CLI, HTTP, and Agent socket. It separates
+open-or-create, cached/existing reads, synchronize-existing, and destructive-existing policies. Only
+`branch open` and the explicit Issue-add operation may create a Branch Review. Reset, Issue removal,
+comments, and synchronization require an existing aggregate; preview failures are read-only. Matching
+local binding plus a network-only GitHub failure preserves cached reads. If no GitHub remote can be
+resolved, cached reads and local cleanup remain available when the common directory and owned ref
+still prove the binding, while synchronization and Issue addition are rejected.
 
 The viewer reads committed Git objects rather than the worktree or index. That keeps the human's
 reading context stable while an external Agent edits, tests, commits, and pushes. Comments bridge the
