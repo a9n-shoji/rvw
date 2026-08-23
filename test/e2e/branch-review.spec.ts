@@ -40,6 +40,47 @@ test("rejects a malformed Branch Review ID before starting Review queries", asyn
   expect((await request.get("/api/branch-reviews/not-a-uuid")).status()).toBe(400);
 });
 
+test("shows Issue refresh failures without reporting the whole Branch sync as clean", async ({
+  page,
+}) => {
+  await page.route(`**/api/branch-reviews/${branchReviewId}/sync`, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const body = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        issueResults: [
+          {
+            issue: {
+              id: "44444444-4444-4444-8444-444444444444",
+              number: 142,
+            },
+            ok: false,
+            error: {
+              code: "GITHUB_ISSUE_ERROR",
+              message: "GitHub Issue responseのrepository identityがrequestと一致しません。",
+              details: { reason: "ISSUE_IDENTITY_MISMATCH" },
+              suggestions: [],
+            },
+          },
+        ],
+      },
+    });
+  });
+
+  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  const feedback = page.getByRole("status");
+  await expect(feedback).toContainText("trunk · cccccccc に同期しました。");
+  await expect(feedback).toContainText("Issue 1件の更新に失敗しました");
+  await expect(feedback).toContainText("#142");
+  await expect(feedback).toHaveClass(/sync-feedback-warning/);
+});
+
 test("does not let a delayed Branch reference replace newer navigation", async ({ page }) => {
   let releaseRequest = (): void => undefined;
   const requestMayContinue = new Promise<void>((resolve) => {

@@ -157,14 +157,18 @@ identifies the deleted row outcome, review ID, ref prefix, remaining refs, and e
 Creating another review does not clean the orphan. The new review ID cannot accept or delete that old
 evidence. Confirmation errors return the original repository path as structured command arguments so
 paths containing whitespace or shell metacharacters are not interpolated into a command string.
-An initial owned-ref creation failure returns `LOCAL_STATE_INCONSISTENT` with
-`repairableByExplicitReset: true`. Normal reads still reject the missing ref; explicit reset alone may
-delete the marked, ref-less row after validating its local binding. HTTP ID-bound operations keep the
+The initial row is marked incomplete before owned-ref creation. A creation failure returns
+`LOCAL_STATE_INCONSISTENT` with `repairableByExplicitReset: true`; a process stop before ref creation
+can use the same marked-row reset, while a verified cached open clears a marker left after successful
+ref creation. Normal reads still reject a missing ref. HTTP ID-bound operations keep the
 URL's expected Branch Review ID through their final database access and return
 `BRANCH_REVIEW_NOT_FOUND` rather than falling through to a replacement review at the same path.
 `branch sync`の`issueResults`は各cached Issueの成功またはstale errorを別々に返す。`pr refresh`と
 `pr sync`も、PR本文から直接見つけた候補と既存membershipの結果を`issueResults`へ返し、一件の失敗を
 他のIssue同期やPR metadata更新の失敗として扱わない。
+既存membershipのbackground refreshはfetch後にも元reviewとmembershipを再確認し、明示削除済みmembershipを
+再追加せず、削除済みreview由来の失敗を共有cacheへ保存しない。PR本文に現在も直接あるIssueは追加候補のままとする。
+Branch viewerはdefault branch同期成功と`issueResults`の部分失敗を同じstatus warningで区別して表示する。
 
 An Issue reference is `#142`, `owner/repository#142`, or a canonical GitHub Issue URL. Only an actual
 Issue in the review repository is accepted; a Pull Request or cross-repository reference fails. Adding

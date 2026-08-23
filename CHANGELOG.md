@@ -65,6 +65,10 @@
 - 初回Branch retained ref作成失敗を、専用markerを検証する明示resetで手動DB編集なしに復旧可能に変更
 - GitHub Issue responseと差し替え可能なGitHub portのcanonical identityを二層検証し、cache／membership書き込み前に拒否
 - 新規Comment threadが静止pointer直下へ挿入されただけでMarkdown行をactive highlightする問題を修正
+- background Issue refreshが同期中に明示削除されたPR／Branch membershipを再作成するraceを修正
+- 削除済みreview由来のIssue sync errorがreplacementや別ownerの共有cache／sequenceを更新するraceを修正
+- Branch初期化markerをretained ref作成前に保存し、process停止位置に応じて明示resetまたは次回openで復旧
+- Branch viewerがIssue identity mismatchなどの部分失敗を同期成功だけでなくwarningとして表示
 
 ## [0.2.3] - 2026-08-21
 

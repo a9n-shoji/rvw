@@ -110,7 +110,7 @@ export interface BranchReviewView {
 
 export interface BranchSyncResult extends BranchReviewView {
   issueResults: Array<
-    | { issue: IssueDocument; ok: true }
+    | { issue: IssueDocument; ok: true; skipped?: "membership-removed" }
     | { issue: IssueDocument; ok: false; error: ReturnType<RvwError["toJSON"]> }
   >;
 }
@@ -123,7 +123,12 @@ export interface PullRequestView {
 }
 
 export type IssueSyncResult =
-  | { reference: string; issue: IssueDocument; ok: true }
+  | {
+      reference: string;
+      issue: IssueDocument;
+      ok: true;
+      skipped?: "membership-removed";
+    }
   | {
       reference: string;
       issue: IssueDocument | null;
@@ -864,14 +869,26 @@ export class RvwService {
               existing.repository.worktreePath,
             ),
           );
-          const cached = this.database.addReviewIssue("branch", branchReview.id, current).issue;
-          return { issue: cached, ok: true };
+          const refreshed = this.database.refreshReviewIssue(
+            "branch",
+            branchReview.id,
+            issue.id,
+            current,
+          );
+          return refreshed.skipped
+            ? { issue, ok: true, skipped: refreshed.skipped }
+            : { issue: refreshed.issue!, ok: true };
         } catch (error) {
           const rvwError = asRvwError(error);
           if (rvwError.code === "BRANCH_REVIEW_NOT_FOUND") throw rvwError;
           const stale = isIssueIdentityMismatch(rvwError)
             ? issue
-            : this.database.setIssueSyncError(issue.id, rvwError.message);
+            : (this.database.setReviewIssueSyncError(
+                "branch",
+                branchReview.id,
+                issue.id,
+                rvwError.message,
+              ).issue ?? issue);
           return { issue: stale, ok: false, error: rvwError.toJSON() };
         }
       },
@@ -1276,6 +1293,7 @@ export class RvwService {
         reference: string;
         number: number;
         previous: IssueDocument | null;
+        operation: "add" | "refresh";
       }> = [];
       const fetchedIssueNumbers = new Set<number>();
       for (const reference of directIssueReferences(github.body, github.owner, github.repository)) {
@@ -1289,17 +1307,23 @@ export class RvwService {
             pullRequest.repository,
             identity.number,
           ),
+          operation: "add",
         });
       }
       for (const cached of this.database.listReviewIssues("pull-request", pullRequest.id)) {
         if (fetchedIssueNumbers.has(cached.number)) continue;
-        issueRequests.push({ reference: cached.url, number: cached.number, previous: cached });
+        issueRequests.push({
+          reference: cached.url,
+          number: cached.number,
+          previous: cached,
+          operation: "refresh",
+        });
       }
       issueResults.push(
         ...(await mapWithConcurrency(
           issueRequests,
           ISSUE_FETCH_CONCURRENCY,
-          async ({ reference, number, previous }): Promise<IssueSyncResult> => {
+          async ({ reference, number, previous, operation }): Promise<IssueSyncResult> => {
             try {
               const issue = assertFetchedIssueIdentity(
                 { owner: github.owner, repository: github.repository, number },
@@ -1314,21 +1338,41 @@ export class RvwService {
                   repository.worktreePath,
                 ),
               );
-              const cached = this.database.addReviewIssue(
+              if (operation === "add") {
+                const cached = this.database.addReviewIssue(
+                  "pull-request",
+                  pullRequest.id,
+                  issue,
+                ).issue;
+                return { reference, issue: cached, ok: true };
+              }
+              const refreshed = this.database.refreshReviewIssue(
                 "pull-request",
                 pullRequest.id,
+                previous!.id,
                 issue,
-              ).issue;
-              return { reference, issue: cached, ok: true };
+              );
+              return refreshed.skipped
+                ? { reference, issue: previous!, ok: true, skipped: refreshed.skipped }
+                : { reference, issue: refreshed.issue!, ok: true };
             } catch (error) {
               const rvwError = asRvwError(error);
-              const stale =
-                previous &&
-                this.database.hasReviewIssue("pull-request", pullRequest.id, previous.id)
-                  ? isIssueIdentityMismatch(rvwError)
+              let stale: IssueDocument | null = null;
+              if (previous) {
+                if (isIssueIdentityMismatch(rvwError)) {
+                  stale = this.database.hasReviewIssue("pull-request", pullRequest.id, previous.id)
                     ? previous
-                    : this.database.setIssueSyncError(previous.id, rvwError.message)
-                  : null;
+                    : null;
+                } else {
+                  const result = this.database.setReviewIssueSyncError(
+                    "pull-request",
+                    pullRequest.id,
+                    previous.id,
+                    rvwError.message,
+                  );
+                  stale = result.skipped ? null : result.issue;
+                }
+              }
               return { reference, issue: stale, ok: false, error: rvwError.toJSON() };
             }
           },

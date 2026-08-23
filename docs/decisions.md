@@ -41,11 +41,18 @@ currently registered at that path. A stale HTTP request never falls through to a
 aggregate. A remote-less cached open may update the usable worktree path only when common directory,
 owned source ref, and object all agree; existing-only previews do not persist that update.
 
-Represent an initial owned-ref failure with a dedicated initialization marker. Normal evidence reads
-remain strict, but explicit reset may delete that marked row after verifying its binding and an empty
-review-owned ref namespace. This is the sole missing-ref exception. Validate fetched GitHub Issue
+Write a dedicated incomplete-initialization marker in the first aggregate transaction, before creating
+the owned ref. Normal evidence reads remain strict, but explicit reset may delete a marked, ref-less row
+after verifying its binding. When the ref exists but marker clear was interrupted, a verified cached
+open completes initialization. This is the sole missing-ref exception. Validate fetched GitHub Issue
 owner/repository/number/canonical URL both in the concrete client and at the replaceable application
 port boundary before any cache or membership write.
+
+Separate explicit Issue membership addition from background refresh. Refresh and sync-error writes
+recheck the originating review and membership in one immediate transaction and skip all shared-cache
+and sequence changes if either owner disappeared. PR-body direct references remain additions and may
+be registered again by a later refresh. Surface per-Issue Branch sync failures in the viewer without
+discarding the successfully synchronized default-branch source.
 
 ### Trade-offs
 
@@ -57,7 +64,7 @@ port boundary before any cache or membership write.
 - Remote-less local cleanup is deliberately available only when the common directory and owned ref
   still prove the saved aggregate.
 - The initial-ref recovery does not add a repair daemon or make Issue removal tolerant of missing refs;
-  it provides only an explicit aggregate deletion path.
+  it provides explicit deletion before ref creation and verified completion after ref creation.
 - Persisting GitHub repository numeric IDs and automatic rename/transfer following remain out of scope.
 
 ## 2026-08-22: Use aggregate IDs for watch routing and native owner foreign keys

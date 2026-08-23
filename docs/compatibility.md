@@ -46,7 +46,9 @@ reset、Issue removal、comments、syncは未登録reviewを暗黙作成しま�
 同じcommon directoryの別worktreeからremoteなしでcached openした場合、owned refとGit objectの一致を条件に
 保存locationを現在worktreeへ更新します。previewだけでは更新しません。HTTPのstable Branch Review IDは
 reset/recreate後のreplacementへフォールスルーしません。初回retained-ref作成失敗は、専用markerとref 0件を
-確認する明示resetでcleanupできます。GitHub Issue response identity不一致はprotocol共通の
+確認する明示resetでcleanupできます。markerはref作成前に保存され、ref作成後の未clear markerは次回cached openで
+完了されます。既存Issue refreshは削除済みmembershipを復活させず、削除済みreviewのerrorを共有cacheへ書きません。
+GitHub Issue response identity不一致はprotocol共通の
 `GITHUB_ISSUE_ERROR`であり、rename／transferへ自動追従しません。
 
 次はpublic APIではありません。

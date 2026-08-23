@@ -3,6 +3,7 @@ import type { BranchReview, RepositoryIdentity } from "../domain/models.js";
 import { RvwDatabase } from "../infrastructure/db/database.js";
 import { GitClient, type RepositoryContext } from "../infrastructure/git/git-client.js";
 import type { GitHubPort } from "../infrastructure/github/github-client.js";
+import { BRANCH_REVIEW_INITIALIZATION_FAILED } from "../shared/constants.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 
 export type BranchReviewLifecyclePolicy =
@@ -26,8 +27,6 @@ export interface BranchReviewOpenResult {
   branchReview: BranchReview;
   fromCache: boolean;
 }
-
-export const BRANCH_REVIEW_INITIALIZATION_FAILED = "BRANCH_REVIEW_INITIALIZATION_FAILED:";
 
 function sameRepositoryIdentity(
   left: Pick<RepositoryIdentity, "owner" | "repository">,
@@ -275,7 +274,7 @@ export class BranchReviewLifecycle {
           localRepositoryPath: repository.worktreePath,
           gitCommonDir: repository.gitCommonDir,
         },
-        existing ? { expectedBranchReviewId: existing.id } : {},
+        existing ? { expectedBranchReviewId: existing.id } : { initializeRetainedRef: true },
       );
     } catch (error) {
       if (retainedBeforeUpdate?.created && existing) {
@@ -300,9 +299,19 @@ export class BranchReviewLifecycle {
         branchReview.id,
         github.defaultBranchOid,
       );
-      if (retainedByConcurrentOpen) return branchReview;
+      if (retainedByConcurrentOpen) {
+        return this.database.completeBranchReviewInitialization(
+          branchReview.id,
+          github.defaultBranchOid,
+        );
+      }
       const initializationError = `${BRANCH_REVIEW_INITIALIZATION_FAILED} ${rvwError.message}`;
-      this.database.setBranchSyncError(branchReview.id, initializationError);
+      const failed = this.database.recordBranchReviewInitializationFailure(
+        branchReview.id,
+        github.defaultBranchOid,
+        initializationError,
+      );
+      if (failed.sourceSyncError === null) return failed;
       throw new RvwError(
         "LOCAL_STATE_INCONSISTENT",
         "Branch sourceは保存されましたが、review-owned retained refを作成できませんでした。",
@@ -322,7 +331,10 @@ export class BranchReviewLifecycle {
         },
       );
     }
-    return branchReview;
+    return this.database.completeBranchReviewInitialization(
+      branchReview.id,
+      github.defaultBranchOid,
+    );
   }
 
   async openAtPath(repositoryPath: string): Promise<BranchReviewOpenResult> {
@@ -334,15 +346,18 @@ export class BranchReviewLifecycle {
       await this.assertOwnedSourceRef(stored, repository);
       const available = await this.git.hasObject(repository.worktreePath, stored.sourceOid);
       if (available) {
+        const initialized = stored.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED)
+          ? this.database.completeBranchReviewInitialization(stored.id, stored.sourceOid)
+          : stored;
         const locationChanged =
-          path.resolve(stored.localRepositoryPath) !== path.resolve(repository.worktreePath);
+          path.resolve(initialized.localRepositoryPath) !== path.resolve(repository.worktreePath);
         return {
           branchReview: locationChanged
-            ? this.database.updateBranchRepositoryLocation(stored.id, {
+            ? this.database.updateBranchRepositoryLocation(initialized.id, {
                 localRepositoryPath: repository.worktreePath,
                 gitCommonDir: repository.gitCommonDir,
               })
-            : stored,
+            : initialized,
           fromCache: true,
         };
       }

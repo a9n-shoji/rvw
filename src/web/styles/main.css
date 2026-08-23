@@ -807,6 +807,11 @@ code {
   font-size: 11px;
   text-align: right;
 }
+.sync-feedback-warning {
+  border-bottom-color: var(--warning-line);
+  background: var(--warning);
+  color: var(--warning-text);
+}
 .viewer-error {
   display: grid;
   place-items: center;

@@ -42,6 +42,7 @@ import { formatCommentUri } from "../../domain/comment-uri.js";
 import { hashDocument, normalizeLf } from "../../domain/pr-markdown.js";
 import { formatWalkthroughUri } from "../../domain/walkthrough-uri.js";
 import { RvwError } from "../../shared/errors.js";
+import { BRANCH_REVIEW_INITIALIZATION_FAILED } from "../../shared/constants.js";
 import { isThemePreference, type ThemePreference } from "../../shared/preferences.js";
 
 type DbRow = Record<string, SQLInputValue>;
@@ -744,7 +745,7 @@ export class RvwDatabase {
       defaultBranchOid: string;
     },
     repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
-    options: { expectedBranchReviewId?: string } = {},
+    options: { expectedBranchReviewId?: string; initializeRetainedRef?: boolean } = {},
   ): BranchReview {
     const now = new Date().toISOString();
     let id: string;
@@ -845,6 +846,15 @@ export class RvwDatabase {
           );
         }
         const selectedId = existing?.id ?? randomUUID();
+        const initializationPending = `${BRANCH_REVIEW_INITIALIZATION_FAILED} retained ref initialization is incomplete.`;
+        const preserveConcurrentSyncState = options.initializeRetainedRef === true && !!existing;
+        const nextSourceSyncError = preserveConcurrentSyncState
+          ? existing.sourceSyncError
+          : existing
+            ? null
+            : options.initializeRetainedRef
+              ? initializationPending
+              : null;
         const reviewChanged =
           !existing ||
           existing.owner !== github.owner ||
@@ -855,14 +865,14 @@ export class RvwDatabase {
           path.resolve(existing.gitCommonDir) !== path.resolve(repositoryLocation.gitCommonDir) ||
           existing.defaultBranchName !== github.defaultBranchName ||
           existing.sourceOid !== github.defaultBranchOid ||
-          existing.sourceSyncError !== null;
+          existing.sourceSyncError !== nextSourceSyncError;
         if (existing) {
           this.database
             .prepare(
               `UPDATE branch_reviews SET
                 owner = ?, repository = ?, canonical_name = ?, local_repository_path = ?,
                 git_common_dir = ?, default_branch_name = ?, source_oid = ?, github_fetched_at = ?,
-                source_sync_error = NULL, updated_at = ?
+                source_sync_error = ?, updated_at = ?
                WHERE id = ?`,
             )
             .run(
@@ -874,6 +884,7 @@ export class RvwDatabase {
               github.defaultBranchName,
               github.defaultBranchOid,
               now,
+              nextSourceSyncError,
               now,
               selectedId,
             );
@@ -883,7 +894,7 @@ export class RvwDatabase {
               `INSERT INTO branch_reviews(
                 id, host, owner, repository, canonical_name, local_repository_path, git_common_dir,
                 default_branch_name, source_oid, github_fetched_at, source_sync_error, created_at, updated_at
-              ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+              ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(
               selectedId,
@@ -895,6 +906,7 @@ export class RvwDatabase {
               github.defaultBranchName,
               github.defaultBranchOid,
               now,
+              nextSourceSyncError,
               now,
               now,
             );
@@ -917,6 +929,78 @@ export class RvwDatabase {
     }
     const result = this.getBranchReview(id);
     if (!result) throw new RvwError("DATABASE_ERROR", "Branch Reviewを読み出せません。");
+    return result;
+  }
+
+  completeBranchReviewInitialization(id: string, sourceOid: string): BranchReview {
+    this.immediateTransaction(() => {
+      const current = this.getBranchReview(id);
+      if (!current) {
+        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+          status: 404,
+        });
+      }
+      if (current.sourceOid !== sourceOid) {
+        throw new RvwError(
+          "LOCAL_STATE_INCONSISTENT",
+          "初期化対象のBranch sourceが保存済みsourceと一致しません。",
+          {
+            status: 409,
+            details: {
+              branchReviewId: id,
+              expectedSourceOid: sourceOid,
+              sourceOid: current.sourceOid,
+            },
+          },
+        );
+      }
+      if (!current.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED)) return;
+      this.database
+        .prepare(
+          "UPDATE branch_reviews SET source_sync_error = NULL, updated_at = ? WHERE id = ? AND source_oid = ?",
+        )
+        .run(new Date().toISOString(), id, sourceOid);
+    });
+    const result = this.getBranchReview(id);
+    if (!result) throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
+    return result;
+  }
+
+  recordBranchReviewInitializationFailure(
+    id: string,
+    sourceOid: string,
+    message: string,
+  ): BranchReview {
+    this.immediateTransaction(() => {
+      const current = this.getBranchReview(id);
+      if (!current) {
+        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+          status: 404,
+        });
+      }
+      if (current.sourceOid !== sourceOid) {
+        throw new RvwError(
+          "LOCAL_STATE_INCONSISTENT",
+          "初期化失敗対象のBranch sourceが保存済みsourceと一致しません。",
+          {
+            status: 409,
+            details: {
+              branchReviewId: id,
+              expectedSourceOid: sourceOid,
+              sourceOid: current.sourceOid,
+            },
+          },
+        );
+      }
+      if (!current.sourceSyncError?.startsWith(BRANCH_REVIEW_INITIALIZATION_FAILED)) return;
+      this.database
+        .prepare(
+          "UPDATE branch_reviews SET source_sync_error = ?, updated_at = ? WHERE id = ? AND source_oid = ?",
+        )
+        .run(message, new Date().toISOString(), id, sourceOid);
+    });
+    const result = this.getBranchReview(id);
+    if (!result) throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
     return result;
   }
 
@@ -1043,6 +1127,17 @@ export class RvwDatabase {
       : { table: "branch_review_issues", reviewColumn: "branch_review_id" };
   }
 
+  private assertReviewExists(reviewKind: "pull-request" | "branch", reviewId: string): void {
+    if (reviewKind === "branch" && !this.getBranchReview(reviewId)) {
+      throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+        status: 404,
+      });
+    }
+    if (reviewKind === "pull-request" && !this.getPullRequest(reviewId)) {
+      throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。", { status: 404 });
+    }
+  }
+
   private notifyIssueReviewChanges(
     issueId: string,
     exclude?: { kind: "pull-request" | "branch"; reviewId: string },
@@ -1071,18 +1166,90 @@ export class RvwDatabase {
     for (const context of contexts) this.incrementReviewChangeSequence(context);
   }
 
-  setIssueSyncError(issueId: string, message: string): IssueDocument {
+  setReviewIssueSyncError(
+    reviewKind: "pull-request" | "branch",
+    reviewId: string,
+    issueId: string,
+    message: string,
+  ): { issue: IssueDocument | null; updated: boolean; skipped: "membership-removed" | null } {
     return this.immediateTransaction(() => {
+      this.assertReviewExists(reviewKind, reviewId);
+      if (!this.hasReviewIssue(reviewKind, reviewId, issueId)) {
+        return { issue: this.getIssue(issueId), updated: false, skipped: "membership-removed" };
+      }
       const current = this.getIssue(issueId);
       if (!current) throw new RvwError("ISSUE_NOT_FOUND", "Issueが見つかりません。");
-      if (current.syncError === message) return current;
+      if (current.syncError === message) {
+        return { issue: current, updated: false, skipped: null };
+      }
       this.database
         .prepare("UPDATE github_issues SET sync_error = ? WHERE id = ?")
         .run(message, issueId);
       this.notifyIssueReviewChanges(issueId);
       const issue = this.getIssue(issueId);
       if (!issue) throw new RvwError("ISSUE_NOT_FOUND", "Issueが見つかりません。");
-      return issue;
+      return { issue, updated: true, skipped: null };
+    });
+  }
+
+  refreshReviewIssue(
+    reviewKind: "pull-request" | "branch",
+    reviewId: string,
+    issueId: string,
+    fetchedIssue: GitHubIssue,
+  ): { issue: IssueDocument | null; refreshed: boolean; skipped: "membership-removed" | null } {
+    return this.immediateTransaction(() => {
+      this.assertReviewExists(reviewKind, reviewId);
+      if (!this.hasReviewIssue(reviewKind, reviewId, issueId)) {
+        return { issue: this.getIssue(issueId), refreshed: false, skipped: "membership-removed" };
+      }
+      const current = this.getIssue(issueId);
+      if (
+        !current ||
+        current.owner.toLowerCase() !== fetchedIssue.owner.toLowerCase() ||
+        current.repository.toLowerCase() !== fetchedIssue.repository.toLowerCase() ||
+        current.number !== fetchedIssue.number
+      ) {
+        throw new RvwError(
+          "LOCAL_STATE_INCONSISTENT",
+          "同期対象のIssue identityがmembershipと一致しません。",
+          {
+            status: 409,
+            details: {
+              reviewKind,
+              reviewId,
+              issueId,
+              currentIdentity: current
+                ? {
+                    owner: current.owner,
+                    repository: current.repository,
+                    number: current.number,
+                  }
+                : null,
+              fetchedIdentity: {
+                owner: fetchedIssue.owner,
+                repository: fetchedIssue.repository,
+                number: fetchedIssue.number,
+              },
+            },
+          },
+        );
+      }
+      const written = this.writeIssue(fetchedIssue);
+      if (written.issue.id !== issueId) {
+        throw new RvwError(
+          "LOCAL_STATE_INCONSISTENT",
+          "同期対象のIssue cache identityがmembershipと一致しません。",
+          {
+            status: 409,
+            details: { reviewKind, reviewId, issueId, fetchedIssueId: written.issue.id },
+          },
+        );
+      }
+      if (written.changed && written.previouslyCached) {
+        this.notifyIssueReviewChanges(issueId);
+      }
+      return { issue: written.issue, refreshed: true, skipped: null };
     });
   }
 
@@ -1092,14 +1259,7 @@ export class RvwDatabase {
     issue: GitHubIssue,
   ): { issue: IssueDocument; added: boolean } {
     return this.immediateTransaction(() => {
-      if (reviewKind === "branch" && !this.getBranchReview(reviewId)) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
-          status: 404,
-        });
-      }
-      if (reviewKind === "pull-request" && !this.getPullRequest(reviewId)) {
-        throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。", { status: 404 });
-      }
+      this.assertReviewExists(reviewKind, reviewId);
       const written = this.writeIssue(issue);
       const cached = written.issue;
       const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);

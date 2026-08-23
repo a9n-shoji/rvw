@@ -16,9 +16,46 @@ import { startAgentSocket, tryAgentSocketRequest } from "../../src/server/agent-
 import { RvwError } from "../../src/shared/errors.js";
 import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
 
+class OneShotBarrier {
+  private blocked: Promise<void>;
+  private markBlocked!: () => void;
+  private releasePromise: Promise<void>;
+  private releaseBlocked!: () => void;
+  private armed = false;
+
+  constructor() {
+    this.blocked = new Promise((resolve) => {
+      this.markBlocked = resolve;
+    });
+    this.releasePromise = new Promise((resolve) => {
+      this.releaseBlocked = resolve;
+    });
+  }
+
+  arm(): void {
+    this.armed = true;
+  }
+
+  async blockOnce(): Promise<void> {
+    if (!this.armed) return;
+    this.armed = false;
+    this.markBlocked();
+    await this.releasePromise;
+  }
+
+  async waitUntilBlocked(): Promise<void> {
+    await this.blocked;
+  }
+
+  release(): void {
+    this.releaseBlocked();
+  }
+}
+
 class FakeGitHub implements GitHubPort {
   readonly issues = new Map<number, GitHubIssue>();
   readonly pullRequestIssueNumbers = new Set<number>();
+  issueBarrier: OneShotBarrier | null = null;
 
   constructor(public pullRequest: GitHubPullRequest) {}
 
@@ -30,8 +67,9 @@ class FakeGitHub implements GitHubPort {
     return Promise.resolve(this.pullRequest);
   }
 
-  getIssue(number: number, repository: RepositoryIdentity): Promise<GitHubIssue> {
+  async getIssue(number: number, repository: RepositoryIdentity): Promise<GitHubIssue> {
     expect(repository.canonicalName).toBe("acme/review-repo");
+    await this.issueBarrier?.blockOnce();
     if (this.pullRequestIssueNumbers.has(number)) {
       throw new RvwError(
         "GITHUB_ISSUE_IS_PULL_REQUEST",
@@ -40,7 +78,7 @@ class FakeGitHub implements GitHubPort {
     }
     const issue = this.issues.get(number);
     if (!issue) throw new Error(`missing Issue #${number}`);
-    return Promise.resolve(issue);
+    return issue;
   }
 
   getAttachment() {
@@ -271,6 +309,36 @@ describe("RvwService commit workflow", () => {
       ok: false,
       issue: { number: 142, syncError: "missing Issue #142" },
     });
+  });
+
+  it("does not recreate removed manual PR Issue memberships while refreshing them", async () => {
+    const { repository, fake, database, service } = setup("rvw-pr-issue-removal-race-");
+    fake.issues.set(142, githubIssue(142));
+    const opened = await service.openPullRequest(undefined, repository);
+    const added = await service.addPullRequestIssue(opened.pullRequest.url, "#142");
+    fake.issues.set(142, githubIssue(142, "Fetched after explicit removal"));
+    const barrier = new OneShotBarrier();
+    barrier.arm();
+    fake.issueBarrier = barrier;
+
+    const refresh = service.refreshPullRequest(opened.pullRequest.id);
+    await barrier.waitUntilBlocked();
+    service.removePullRequestIssue(opened.pullRequest.url, "#142");
+    const cacheAfterRemoval = database.getIssue(added.issue.id);
+    barrier.release();
+
+    const refreshed = await refresh;
+    expect(refreshed.issueResults).toEqual([
+      expect.objectContaining({ ok: true, skipped: "membership-removed" }),
+    ]);
+    expect(service.listPullRequestIssues(opened.pullRequest.id)).toEqual([]);
+    expect(database.getIssue(added.issue.id)).toEqual(cacheAfterRemoval);
+
+    fake.pullRequest = { ...fake.pullRequest, body: "Closes #142" };
+    await service.refreshPullRequest(opened.pullRequest.id);
+    expect(service.listPullRequestIssues(opened.pullRequest.id)).toEqual([
+      expect.objectContaining({ number: 142, body: "Fetched after explicit removal" }),
+    ]);
   });
 
   it("uses commits as history, keeps PR markdown latest, syncs comment updates, and resets", async () => {

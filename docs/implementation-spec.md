@@ -1213,6 +1213,10 @@ singletonの`branch_reviews`、およびBranch専用のWalkthrough、Comment、p
 PRとBranchのartifact ownershipとcascade境界は分離し、
 共有Issue cacheの表示内容または同期errorが変わった場合だけ、そのIssueを所有する全Reviewの
 `review_change_sequence`を同じtransactionで更新する。単なる`fetched_at`更新では他Reviewをinvalidateしない。
+Issue membership追加と既存membershipのrefreshは別操作とする。refresh成功／失敗はGitHub fetch後のimmediate
+transactionで元reviewとmembershipの存続を再確認し、削除済みならcache、membership、全Reviewのsequenceを変更しない。
+PR本文に現在も直接含まれるIssueだけは追加操作として扱い、次回refreshで再登録できる。Branch viewerはdefault branch
+sourceの同期成功とIssueごとの部分失敗を区別し、`issueResults`の失敗をresponse-local warningとして表示する。
 
 commit table、review version table、PR revision tableは持たない。既存Phase 1 DBはmigrationで
 version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元できない場合Outdatedとして残す。
@@ -1361,10 +1365,11 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 残存refはorphanとして新しいreview IDから隔離され、新reviewは旧evidenceを受理せず、旧reset retryも
 新reviewのrefを削除しない。「再作成すればorphan cleanupされる」とは案内しない。保存pathが削除・置換され、
 Git common directoryとreview-owned source refを検証できない場合はDB rowを削除しない。
-初回row作成後のsource ref作成だけが失敗した場合は専用の初期化失敗markerを保存し、通常read／syncでは
-`LOCAL_STATE_INCONSISTENT`のまま扱う。明示resetに限り、expected review ID、Git common directory、canonical
-remote（またはremoteなし）、marker、review ID配下のrefが0件であることを検証してrowを削除できる。この例外を
-Issue removalその他のdestructive操作へ広げない。
+初回rowはsource ref作成前から専用の初期化未完了markerを保存する。ref作成前にprocessが停止した場合は、通常
+read／syncを`LOCAL_STATE_INCONSISTENT`のまま扱い、明示resetに限りexpected review ID、Git common directory、
+canonical remote（またはremoteなし）、marker、review ID配下のrefが0件であることを検証してrowを削除できる。
+ref作成後、marker clear前に停止した場合は、次回openがexpected ID／source OID、owned ref、Git objectを検証して
+markerをclearする。この例外をIssue removalその他のdestructive操作へ広げない。
 
 ## 12. Server / security
 

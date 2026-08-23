@@ -61,6 +61,17 @@ interface BranchReviewResponse {
   walkthroughs: BranchWalkthroughSummary[];
 }
 
+interface BranchSyncResponse extends BranchReviewResponse {
+  issueResults: Array<
+    | { issue: IssueDocument; ok: true; skipped?: "membership-removed" }
+    | {
+        issue: IssueDocument;
+        ok: false;
+        error: { code: string; message: string; details?: unknown; suggestions: string[] };
+      }
+  >;
+}
+
 interface BranchTreeResponse {
   entries: TreeEntry[];
 }
@@ -110,6 +121,7 @@ export function BranchReviewApp({
   const viewerNavigationTargetsRef = useRef(viewerNavigationTargets);
   viewerNavigationTargetsRef.current = viewerNavigationTargets;
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const [syncFeedbackWarning, setSyncFeedbackWarning] = useState(false);
   const {
     feedback: syncFeedback,
     showFeedback: showSyncFeedback,
@@ -255,13 +267,18 @@ export function BranchReviewApp({
 
   const syncMutation = useMutation({
     mutationFn: async () =>
-      await api<{ branchReview: BranchReview }>(
-        `/api/branch-reviews/${branchReviewId}/sync`,
-        jsonRequest({}),
-      ),
-    onSuccess: async ({ branchReview }) => {
+      await api<BranchSyncResponse>(`/api/branch-reviews/${branchReviewId}/sync`, jsonRequest({})),
+    onSuccess: async ({ branchReview, issueResults }) => {
+      const failures = issueResults.filter((result) => !result.ok);
+      setSyncFeedbackWarning(failures.length > 0);
+      const sourceFeedback = `${branchReview.defaultBranchName} · ${shortOid(branchReview.sourceOid)} に同期しました。`;
+      const issueFeedback = failures
+        .map(({ issue, error }) => `#${issue.number}: ${error.message}`)
+        .join(" / ");
       showSyncFeedback(
-        `${branchReview.defaultBranchName} · ${shortOid(branchReview.sourceOid)} に同期しました。`,
+        failures.length === 0
+          ? sourceFeedback
+          : `${sourceFeedback} Issue ${failures.length}件の更新に失敗しました（${issueFeedback}）。`,
       );
       await refresh();
     },
@@ -755,6 +772,7 @@ export function BranchReviewApp({
             setQuickOpenVisible(true);
           }}
           onSync={() => {
+            setSyncFeedbackWarning(false);
             clearSyncFeedback();
             syncMutation.mutate();
           }}
@@ -780,7 +798,10 @@ export function BranchReviewApp({
       )}
       <ErrorNotice error={actionError} />
       {syncFeedback && (
-        <div className="sync-feedback" role="status">
+        <div
+          className={`sync-feedback${syncFeedbackWarning ? " sync-feedback-warning" : ""}`}
+          role="status"
+        >
           {syncFeedback}
         </div>
       )}

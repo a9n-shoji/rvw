@@ -25,6 +25,10 @@ canonical remote, or a replacement repository at the saved path fails closed ins
 binding. Repository rename and transfer are not followed automatically; an explicit Branch reset at
 the original binding is the boundary for recreating the aggregate. The
 Issue removal transaction deletes only the selected membership and its owned comments/replies.
+Background Issue refresh is separate from membership addition: after the GitHub fetch, one immediate
+transaction rechecks the originating review and membership, updates only an existing shared cache row,
+and cannot reinsert a membership removed while the request was in flight. Sync-error writes use the
+same review-scoped guard, so a deleted review cannot make a replacement or another owner stale.
 Branch reset deletes Branch comments, Walkthroughs, memberships, and the singleton review before
 releasing only its `refs/rvw/branch/<branchReviewId>/...` namespace; PR refs, another Branch Review ID,
 and shared Issue cache are outside that deletion boundary. If ref deletion fails after DB deletion,
@@ -60,12 +64,14 @@ that move. HTTP routes whose URL contains a Branch Review ID keep that expected 
 resolution and the final SQLite transaction. Deleting and recreating a review at the same path therefore
 produces `BRANCH_REVIEW_NOT_FOUND` for the stale request instead of mutating the replacement.
 
-If the first aggregate insert succeeds but its initial owned ref cannot be created, the row records a
-dedicated initialization-failure marker. Normal reads and synchronization still require the ref. Only
-explicit Branch reset accepts that marker when the common-directory/canonical binding matches and the
-review namespace has no refs, providing a supported cleanup path without weakening normal evidence
-validation. GitHub Issue responses are checked in both the concrete client and application boundary;
+The first aggregate insert records a dedicated incomplete-initialization marker before creating its
+owned ref. A crash before ref creation can therefore be recovered by explicit Branch reset when the
+binding matches and the review namespace has no refs. A crash after ref creation but before marker
+clear is completed by the next cached open after verifying the owned ref and Git object. Normal reads
+and synchronization still require that evidence. GitHub Issue responses are checked in both the concrete client and application boundary;
 owner, repository, number, canonical name, and URL mismatch fail before cache or membership writes.
+Branch sync returns those per-Issue failures separately; the viewer reports a warning alongside the
+successfully synchronized default-branch source instead of presenting the entire operation as clean.
 
 The viewer reads committed Git objects rather than the worktree or index. That keeps the human's
 reading context stable while an external Agent edits, tests, commits, and pushes. Comments bridge the
