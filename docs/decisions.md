@@ -44,14 +44,18 @@ owned source ref, and object all agree; existing-only previews do not persist th
 Write a dedicated incomplete-initialization marker in the first aggregate transaction, before creating
 the owned ref. Normal evidence reads remain strict, but explicit reset may delete a marked, ref-less row
 after verifying its binding. When the ref exists but marker clear was interrupted, a verified cached
-open completes initialization. This is the sole missing-ref exception. Validate fetched GitHub Issue
+open completes initialization. Make that transaction create-only: a concurrent winner's existing row
+is returned unchanged, then the loser uses retain-before-publish with the winner's expected aggregate
+ID. A completion that discovers reset removed the aggregate best-effort deletes only the exact ref that
+attempt created. This is the sole missing-ref exception. Validate fetched GitHub Issue
 owner/repository/number/canonical URL both in the concrete client and at the replaceable application
 port boundary before any cache or membership write.
 
 Separate explicit Issue membership addition from background refresh. Refresh and sync-error writes
 recheck the originating review and membership in one immediate transaction and skip all shared-cache
 and sequence changes if either owner disappeared. PR-body direct references remain additions and may
-be registered again by a later refresh. Surface per-Issue Branch sync failures in the viewer without
+be registered again by a later refresh. A late fetch failure after membership removal is reported as
+`membership-removed`, not as a stale warning. Surface per-Issue Branch sync failures in the viewer without
 discarding the successfully synchronized default-branch source.
 
 ### Trade-offs

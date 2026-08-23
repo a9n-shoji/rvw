@@ -1369,7 +1369,11 @@ Git common directoryとreview-owned source refを検証できない場合はDB r
 read／syncを`LOCAL_STATE_INCONSISTENT`のまま扱い、明示resetに限りexpected review ID、Git common directory、
 canonical remote（またはremoteなし）、marker、review ID配下のrefが0件であることを検証してrowを削除できる。
 ref作成後、marker clear前に停止した場合は、次回openがexpected ID／source OID、owned ref、Git objectを検証して
-markerをclearする。この例外をIssue removalその他のdestructive操作へ広げない。
+markerをclearする。初回lookupではrowがなくても、初期化用immediate transactionが既存rowを発見した場合は
+source OID、default branch、location、sync errorを変更せず`created: false`を返す。呼び出し側はcandidate refを
+先に作成し、expected Branch Review ID付きtransactionでだけ既存sourceを更新する。初期ref作成とresetが競合し、
+aggregate削除後にrefが作成された場合は、そのattemptが作ったexact refだけをbest-effortで削除する。この例外を
+Issue removalその他のdestructive操作へ広げない。
 
 ## 12. Server / security
 

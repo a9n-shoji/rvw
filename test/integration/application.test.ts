@@ -341,6 +341,37 @@ describe("RvwService commit workflow", () => {
     ]);
   });
 
+  it("does not report a failed PR Issue refresh after its membership was removed", async () => {
+    const { repository, fake, database, service } = setup("rvw-pr-issue-failure-removal-race-");
+    fake.issues.set(142, githubIssue(142));
+    const opened = await service.openPullRequest(undefined, repository);
+    const added = await service.addPullRequestIssue(opened.pullRequest.url, "#142");
+    const barrier = new OneShotBarrier();
+    barrier.arm();
+    fake.issueBarrier = barrier;
+
+    const refresh = service.refreshPullRequest(opened.pullRequest.id);
+    await barrier.waitUntilBlocked();
+    service.removePullRequestIssue(opened.pullRequest.url, "#142");
+    fake.issues.delete(142);
+    const cacheAfterRemoval = database.getIssue(added.issue.id);
+    const sequenceAfterRemoval = database.getReviewChangeSequence(
+      "pull-request",
+      opened.pullRequest.id,
+    );
+    barrier.release();
+
+    const refreshed = await refresh;
+    expect(refreshed.issueResults).toEqual([
+      expect.objectContaining({ ok: true, skipped: "membership-removed" }),
+    ]);
+    expect(service.listPullRequestIssues(opened.pullRequest.id)).toEqual([]);
+    expect(database.getIssue(added.issue.id)).toEqual(cacheAfterRemoval);
+    expect(database.getReviewChangeSequence("pull-request", opened.pullRequest.id)).toBe(
+      sequenceAfterRemoval,
+    );
+  });
+
   it("uses commits as history, keeps PR markdown latest, syncs comment updates, and resets", async () => {
     const { repository, base, firstHead, fake, service } = setup();
     const opened = await service.openPullRequest(undefined, repository);

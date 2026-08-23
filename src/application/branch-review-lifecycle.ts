@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { BranchReview, RepositoryIdentity } from "../domain/models.js";
+import type { BranchReview, GitHubRepository, RepositoryIdentity } from "../domain/models.js";
 import { RvwDatabase } from "../infrastructure/db/database.js";
 import { GitClient, type RepositoryContext } from "../infrastructure/git/git-client.js";
 import type { GitHubPort } from "../infrastructure/github/github-client.js";
@@ -257,37 +257,25 @@ export class BranchReviewLifecycle {
       branchName: github.defaultBranchName,
       oid: github.defaultBranchOid,
     });
-    // For an existing aggregate, retain the candidate source before publishing it in SQLite.
-    // This keeps readers from observing a new sourceOid without its aggregate-owned evidence.
-    const retainedBeforeUpdate = existing
-      ? await this.git.ensureBranchCommitRef(
-          repository.worktreePath,
-          existing.id,
-          github.defaultBranchOid,
-        )
-      : null;
-    let branchReview: BranchReview;
-    try {
-      branchReview = this.database.upsertBranchReview(
-        github,
-        {
-          localRepositoryPath: repository.worktreePath,
-          gitCommonDir: repository.gitCommonDir,
-        },
-        existing ? { expectedBranchReviewId: existing.id } : { initializeRetainedRef: true },
-      );
-    } catch (error) {
-      if (retainedBeforeUpdate?.created && existing) {
-        await this.git
-          .deleteRef(repository.worktreePath, retainedBeforeUpdate.ref, github.defaultBranchOid)
-          .catch(() => undefined);
-      }
-      throw error;
+    if (existing) {
+      return await this.publishExistingSource(repository, github, existing.id);
     }
-    if (retainedBeforeUpdate) return branchReview;
 
+    // Initial creation is deliberately create-only. If another process committed the aggregate
+    // after our first lookup, this transaction returns that row unchanged; the candidate source
+    // then follows the normal retain-before-publish path below.
+    const initialization = this.database.beginBranchReviewInitialization(github, {
+      localRepositoryPath: repository.worktreePath,
+      gitCommonDir: repository.gitCommonDir,
+    });
+    if (!initialization.created) {
+      return await this.publishExistingSource(repository, github, initialization.branchReview.id);
+    }
+    const branchReview = initialization.branchReview;
+
+    let retained: Awaited<ReturnType<GitClient["ensureBranchCommitRef"]>>;
     try {
-      await this.git.ensureBranchCommitRef(
+      retained = await this.git.ensureBranchCommitRef(
         repository.worktreePath,
         branchReview.id,
         github.defaultBranchOid,
@@ -311,7 +299,27 @@ export class BranchReviewLifecycle {
         github.defaultBranchOid,
         initializationError,
       );
-      if (failed.sourceSyncError === null) return failed;
+      if (failed.sourceSyncError === null) {
+        const retainedAfterConcurrentCompletion = await this.git.verifyBranchCommitRef(
+          repository.worktreePath,
+          failed.id,
+          github.defaultBranchOid,
+        );
+        if (retainedAfterConcurrentCompletion) return failed;
+        throw new RvwError(
+          "LOCAL_STATE_INCONSISTENT",
+          "Branch Review初期化は完了扱いですが、review-owned retained refがありません。",
+          {
+            cause: error,
+            status: 409,
+            details: {
+              branchReviewId: failed.id,
+              sourceOid: github.defaultBranchOid,
+              retainedRefCreated: false,
+            },
+          },
+        );
+      }
       throw new RvwError(
         "LOCAL_STATE_INCONSISTENT",
         "Branch sourceは保存されましたが、review-owned retained refを作成できませんでした。",
@@ -331,10 +339,50 @@ export class BranchReviewLifecycle {
         },
       );
     }
-    return this.database.completeBranchReviewInitialization(
-      branchReview.id,
+    try {
+      return this.database.completeBranchReviewInitialization(
+        branchReview.id,
+        github.defaultBranchOid,
+      );
+    } catch (error) {
+      const current = this.database.getBranchReview(branchReview.id);
+      if (retained.created && (!current || current.sourceOid !== github.defaultBranchOid)) {
+        await this.git
+          .deleteRef(repository.worktreePath, retained.ref, github.defaultBranchOid)
+          .catch(() => undefined);
+      }
+      throw error;
+    }
+  }
+
+  private async publishExistingSource(
+    repository: RepositoryContext,
+    github: GitHubRepository,
+    expectedBranchReviewId: string,
+  ): Promise<BranchReview> {
+    // Existing aggregates publish a source only after the same aggregate owns its exact ref.
+    const retained = await this.git.ensureBranchCommitRef(
+      repository.worktreePath,
+      expectedBranchReviewId,
       github.defaultBranchOid,
     );
+    try {
+      return this.database.upsertBranchReview(
+        github,
+        {
+          localRepositoryPath: repository.worktreePath,
+          gitCommonDir: repository.gitCommonDir,
+        },
+        { expectedBranchReviewId },
+      );
+    } catch (error) {
+      if (retained.created) {
+        await this.git
+          .deleteRef(repository.worktreePath, retained.ref, github.defaultBranchOid)
+          .catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
   async openAtPath(repositoryPath: string): Promise<BranchReviewOpenResult> {

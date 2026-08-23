@@ -68,10 +68,15 @@ The first aggregate insert records a dedicated incomplete-initialization marker 
 owned ref. A crash before ref creation can therefore be recovered by explicit Branch reset when the
 binding matches and the review namespace has no refs. A crash after ref creation but before marker
 clear is completed by the next cached open after verifying the owned ref and Git object. Normal reads
-and synchronization still require that evidence. GitHub Issue responses are checked in both the concrete client and application boundary;
+and synchronization still require that evidence. Initialization is create-only: when its immediate
+transaction discovers a concurrently created row, it returns that row unchanged and the caller retains
+the candidate OID before an expected-ID update. If reset wins while initial ref creation is paused, a
+later completion failure removes only the exact ref created by that attempt on a best-effort basis.
+GitHub Issue responses are checked in both the concrete client and application boundary;
 owner, repository, number, canonical name, and URL mismatch fail before cache or membership writes.
 Branch sync returns those per-Issue failures separately; the viewer reports a warning alongside the
 successfully synchronized default-branch source instead of presenting the entire operation as clean.
+A fetch failure whose originating membership was already removed is a skip, not a stale warning.
 
 The viewer reads committed Git objects rather than the worktree or index. That keeps the human's
 reading context stable while an external Agent edits, tests, commits, and pushes. Comments bridge the

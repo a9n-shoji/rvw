@@ -148,6 +148,26 @@ class FailInitialBranchRefGitClient extends GitClient {
   }
 }
 
+class FailBranchRefForOidGitClient extends GitClient {
+  constructor(private readonly rejectedOid: string) {
+    super();
+  }
+
+  override async ensureBranchCommitRef(cwd: string, branchReviewId: string, oid: string) {
+    if (oid === this.rejectedOid) throw new Error(`injected retained-ref failure for ${oid}`);
+    return await super.ensureBranchCommitRef(cwd, branchReviewId, oid);
+  }
+}
+
+class PauseBeforeInitialBranchRefGitClient extends GitClient {
+  readonly barrier = new OneShotBarrier();
+
+  override async ensureBranchCommitRef(cwd: string, branchReviewId: string, oid: string) {
+    await this.barrier.blockOnce();
+    return await super.ensureBranchCommitRef(cwd, branchReviewId, oid);
+  }
+}
+
 class BranchRetainBarrierGitClient extends GitClient {
   private barrier: Promise<void> | null = null;
   private releaseBarrier: (() => void) | null = null;
@@ -651,6 +671,34 @@ describe("Branch Review", () => {
     await service.removeBranchIssue(repositoryPath, "#142");
     const sequenceAfterRemoval = database.getReviewChangeSequence("branch", opened.branchReview.id);
     const cacheAfterRemoval = database.getIssue(added.issue.id);
+    barrier.release();
+
+    const synchronized = await synchronization;
+    expect(synchronized.issueResults).toEqual([
+      expect.objectContaining({ ok: true, skipped: "membership-removed" }),
+    ]);
+    expect(service.listBranchIssues(opened.branchReview.id)).toEqual([]);
+    expect(database.getIssue(added.issue.id)).toEqual(cacheAfterRemoval);
+    expect(database.getReviewChangeSequence("branch", opened.branchReview.id)).toBe(
+      sequenceAfterRemoval,
+    );
+  });
+
+  it("does not warn when a Branch Issue fetch fails after its membership was removed", async () => {
+    const { repositoryPath, github, database, service } = setup();
+    github.issues.set(142, issue(142));
+    const opened = await service.openBranchReview(repositoryPath);
+    const added = await service.addBranchIssue(repositoryPath, "#142");
+    const barrier = new OneShotBarrier();
+    barrier.arm();
+    github.issueBarrier = barrier;
+    github.issueFailureAfterBarrier = new Error("late GitHub failure");
+
+    const synchronization = service.syncBranchReview(repositoryPath);
+    await barrier.waitUntilBlocked();
+    await service.removeBranchIssue(repositoryPath, "#142");
+    const cacheAfterRemoval = database.getIssue(added.issue.id);
+    const sequenceAfterRemoval = database.getReviewChangeSequence("branch", opened.branchReview.id);
     barrier.release();
 
     const synchronized = await synchronization;
@@ -1393,14 +1441,10 @@ describe("Branch Review", () => {
   it("recovers process crashes before and after initial retained-ref creation", async () => {
     const { repositoryPath, github, database, service } = setup();
     const repository = await service.git.repositoryContext(repositoryPath);
-    const beforeRef = database.upsertBranchReview(
-      github.repository,
-      {
-        localRepositoryPath: repository.worktreePath,
-        gitCommonDir: repository.gitCommonDir,
-      },
-      { initializeRetainedRef: true },
-    );
+    const beforeRef = database.beginBranchReviewInitialization(github.repository, {
+      localRepositoryPath: repository.worktreePath,
+      gitCommonDir: repository.gitCommonDir,
+    }).branchReview;
     expect(beforeRef.sourceSyncError).toContain("BRANCH_REVIEW_INITIALIZATION_FAILED:");
     await expect(service.openBranchReview(repositoryPath)).rejects.toMatchObject({
       code: "LOCAL_STATE_INCONSISTENT",
@@ -1410,14 +1454,10 @@ describe("Branch Review", () => {
       deleted: { branchReview: 1, gitRefs: 0 },
     });
 
-    const afterRef = database.upsertBranchReview(
-      github.repository,
-      {
-        localRepositoryPath: repository.worktreePath,
-        gitCommonDir: repository.gitCommonDir,
-      },
-      { initializeRetainedRef: true },
-    );
+    const afterRef = database.beginBranchReviewInitialization(github.repository, {
+      localRepositoryPath: repository.worktreePath,
+      gitCommonDir: repository.gitCommonDir,
+    }).branchReview;
     await service.git.ensureBranchCommitRef(repositoryPath, afterRef.id, afterRef.sourceOid);
     const recovered = await service.openBranchReview(repositoryPath);
     expect(recovered).toMatchObject({
@@ -1465,6 +1505,28 @@ describe("Branch Review", () => {
         recovered.branchReview.sourceOid,
       ),
     ).resolves.toBe(true);
+  });
+
+  it("cleans a delayed initial ref created after reset deleted its aggregate", async () => {
+    const gitClient = new PauseBeforeInitialBranchRefGitClient();
+    gitClient.barrier.arm();
+    const { repositoryPath, database, service } = setup(gitClient);
+
+    const opening = service.openBranchReview(repositoryPath);
+    await gitClient.barrier.waitUntilBlocked();
+    const pending = database.findBranchReviewByIdentity("acme", "review-repo");
+    expect(pending?.sourceSyncError).toContain("BRANCH_REVIEW_INITIALIZATION_FAILED:");
+    await expect(service.resetBranchReviewAtPath(repositoryPath)).resolves.toMatchObject({
+      branchReview: { id: pending!.id },
+      deleted: { branchReview: 1, gitRefs: 0 },
+    });
+
+    gitClient.barrier.release();
+    await expect(opening).rejects.toMatchObject({ code: "BRANCH_REVIEW_NOT_FOUND" });
+    expect(database.getBranchReview(pending!.id)).toBeNull();
+    await expect(
+      service.git.listRefsByPrefix(repositoryPath, `refs/rvw/branch/${pending!.id}/commits/`),
+    ).resolves.toEqual([]);
   });
 
   it("removes only owned Issue artifacts and resets only the Branch Review", async () => {
@@ -1961,5 +2023,66 @@ describe("Branch Review", () => {
         gitCommonDir: "/independent-clone/.git",
       }),
     ).toThrowError(expect.objectContaining({ code: "REPOSITORY_MISMATCH" }));
+  });
+
+  it("does not publish a concurrent first-open source before its owned ref exists", async () => {
+    const repositoryPath = createGitRepository("rvw-branch-concurrent-oid-");
+    const sourceX = git(repositoryPath, "rev-parse", "HEAD");
+    const sourceY = commitFile(repositoryPath, "later.txt", "later\n", "advance default branch");
+    const baseRepository = {
+      host: "github.com" as const,
+      owner: "acme",
+      repository: "review-repo",
+      canonicalName: "acme/review-repo",
+      defaultBranchName: "main",
+    };
+    const filePath = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-branch-concurrent-oid-db-")),
+      "rvw.db",
+    );
+    const firstDatabase = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    const secondDatabase = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    databases.push(firstDatabase, secondDatabase);
+    const firstService = new RvwService(
+      firstDatabase,
+      new GitClient(),
+      new BranchGitHub({ ...baseRepository, defaultBranchOid: sourceX }),
+    );
+    const secondGithub = new BranchGitHub({ ...baseRepository, defaultBranchOid: sourceY });
+    const repositoryBarrier = new OneShotBarrier();
+    repositoryBarrier.arm();
+    secondGithub.repositoryBarrier = repositoryBarrier;
+    const secondService = new RvwService(
+      secondDatabase,
+      new FailBranchRefForOidGitClient(sourceY),
+      secondGithub,
+    );
+
+    const secondOpen = secondService.openBranchReview(repositoryPath);
+    await repositoryBarrier.waitUntilBlocked();
+    expect(secondDatabase.findBranchReviewByIdentity("acme", "review-repo")).toBeNull();
+
+    const firstOpen = await firstService.openBranchReview(repositoryPath);
+    const firstSnapshot = firstDatabase.getBranchReview(firstOpen.branchReview.id);
+    const sequence = firstDatabase.getReviewChangeSequence("branch", firstOpen.branchReview.id);
+    expect(firstSnapshot).toMatchObject({ sourceOid: sourceX, sourceSyncError: null });
+    await expect(
+      firstService.git.verifyBranchCommitRef(repositoryPath, firstOpen.branchReview.id, sourceX),
+    ).resolves.toBe(true);
+
+    repositoryBarrier.release();
+    await expect(secondOpen).rejects.toThrow(`injected retained-ref failure for ${sourceY}`);
+
+    expect(secondDatabase.getBranchReview(firstOpen.branchReview.id)).toEqual(firstSnapshot);
+    expect(secondDatabase.getReviewChangeSequence("branch", firstOpen.branchReview.id)).toBe(
+      sequence,
+    );
+    await expect(
+      secondService.git.verifyBranchCommitRef(repositoryPath, firstOpen.branchReview.id, sourceY),
+    ).resolves.toBe(false);
+    await expect(firstService.openBranchReview(repositoryPath)).resolves.toMatchObject({
+      fromCache: true,
+      branchReview: { id: firstOpen.branchReview.id, sourceOid: sourceX },
+    });
   });
 });

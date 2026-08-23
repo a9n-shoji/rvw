@@ -881,14 +881,22 @@ export class RvwService {
         } catch (error) {
           const rvwError = asRvwError(error);
           if (rvwError.code === "BRANCH_REVIEW_NOT_FOUND") throw rvwError;
-          const stale = isIssueIdentityMismatch(rvwError)
-            ? issue
-            : (this.database.setReviewIssueSyncError(
-                "branch",
-                branchReview.id,
-                issue.id,
-                rvwError.message,
-              ).issue ?? issue);
+          if (isIssueIdentityMismatch(rvwError)) {
+            if (!this.database.hasReviewIssue("branch", branchReview.id, issue.id)) {
+              return { issue, ok: true, skipped: "membership-removed" };
+            }
+            return { issue, ok: false, error: rvwError.toJSON() };
+          }
+          const syncError = this.database.setReviewIssueSyncError(
+            "branch",
+            branchReview.id,
+            issue.id,
+            rvwError.message,
+          );
+          if (syncError.skipped) {
+            return { issue, ok: true, skipped: syncError.skipped };
+          }
+          const stale = syncError.issue ?? issue;
           return { issue: stale, ok: false, error: rvwError.toJSON() };
         }
       },
@@ -1360,9 +1368,20 @@ export class RvwService {
               let stale: IssueDocument | null = null;
               if (previous) {
                 if (isIssueIdentityMismatch(rvwError)) {
-                  stale = this.database.hasReviewIssue("pull-request", pullRequest.id, previous.id)
-                    ? previous
-                    : null;
+                  const membershipExists = this.database.hasReviewIssue(
+                    "pull-request",
+                    pullRequest.id,
+                    previous.id,
+                  );
+                  if (operation === "refresh" && !membershipExists) {
+                    return {
+                      reference,
+                      issue: previous,
+                      ok: true,
+                      skipped: "membership-removed",
+                    };
+                  }
+                  stale = membershipExists ? previous : null;
                 } else {
                   const result = this.database.setReviewIssueSyncError(
                     "pull-request",
@@ -1370,6 +1389,14 @@ export class RvwService {
                     previous.id,
                     rvwError.message,
                   );
+                  if (operation === "refresh" && result.skipped) {
+                    return {
+                      reference,
+                      issue: previous,
+                      ok: true,
+                      skipped: result.skipped,
+                    };
+                  }
                   stale = result.skipped ? null : result.issue;
                 }
               }

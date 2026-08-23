@@ -745,12 +745,39 @@ export class RvwDatabase {
       defaultBranchOid: string;
     },
     repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
-    options: { expectedBranchReviewId?: string; initializeRetainedRef?: boolean } = {},
+    options: { expectedBranchReviewId?: string } = {},
   ): BranchReview {
+    return this.writeBranchReview(github, repositoryLocation, options).branchReview;
+  }
+
+  beginBranchReviewInitialization(
+    github: {
+      owner: string;
+      repository: string;
+      canonicalName: string;
+      defaultBranchName: string;
+      defaultBranchOid: string;
+    },
+    repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
+  ): { branchReview: BranchReview; created: boolean } {
+    return this.writeBranchReview(github, repositoryLocation, { createOnlyInitialization: true });
+  }
+
+  private writeBranchReview(
+    github: {
+      owner: string;
+      repository: string;
+      canonicalName: string;
+      defaultBranchName: string;
+      defaultBranchOid: string;
+    },
+    repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
+    options: { expectedBranchReviewId?: string; createOnlyInitialization?: boolean },
+  ): { branchReview: BranchReview; created: boolean } {
     const now = new Date().toISOString();
-    let id: string;
+    let written: { id: string; created: boolean };
     try {
-      id = this.immediateTransaction(() => {
+      written = this.immediateTransaction(() => {
         const byIdentity = this.findBranchReviewByIdentity(github.owner, github.repository);
         const byGitCommonDir = this.findBranchReviewByGitCommonDir(repositoryLocation.gitCommonDir);
         const expected = options.expectedBranchReviewId
@@ -845,16 +872,16 @@ export class RvwDatabase {
             },
           );
         }
+        if (options.createOnlyInitialization && existing) {
+          return { id: existing.id, created: false };
+        }
         const selectedId = existing?.id ?? randomUUID();
         const initializationPending = `${BRANCH_REVIEW_INITIALIZATION_FAILED} retained ref initialization is incomplete.`;
-        const preserveConcurrentSyncState = options.initializeRetainedRef === true && !!existing;
-        const nextSourceSyncError = preserveConcurrentSyncState
-          ? existing.sourceSyncError
-          : existing
-            ? null
-            : options.initializeRetainedRef
-              ? initializationPending
-              : null;
+        const nextSourceSyncError = existing
+          ? null
+          : options.createOnlyInitialization
+            ? initializationPending
+            : null;
         const reviewChanged =
           !existing ||
           existing.owner !== github.owner ||
@@ -914,7 +941,7 @@ export class RvwDatabase {
         if (reviewChanged) {
           this.incrementChangeSequence({ kind: "branch", reviewId: selectedId });
         }
-        return selectedId;
+        return { id: selectedId, created: !existing };
       });
     } catch (error) {
       if (error instanceof RvwError) throw error;
@@ -927,9 +954,9 @@ export class RvwDatabase {
       }
       throw error;
     }
-    const result = this.getBranchReview(id);
+    const result = this.getBranchReview(written.id);
     if (!result) throw new RvwError("DATABASE_ERROR", "Branch Reviewを読み出せません。");
-    return result;
+    return { branchReview: result, created: written.created };
   }
 
   completeBranchReviewInitialization(id: string, sourceOid: string): BranchReview {

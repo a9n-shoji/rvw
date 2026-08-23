@@ -69,6 +69,9 @@
 - 削除済みreview由来のIssue sync errorがreplacementや別ownerの共有cache／sequenceを更新するraceを修正
 - Branch初期化markerをretained ref作成前に保存し、process停止位置に応じて明示resetまたは次回openで復旧
 - Branch viewerがIssue identity mismatchなどの部分失敗を同期成功だけでなくwarningとして表示
+- 異なるsource OIDを返す同時初回openで、loserがretained ref作成前に既存aggregateのsourceを公開するraceを修正
+- reset完了後に遅延作成された初期retained refをexact ref単位でbest-effort cleanup
+- Issue削除後に遅れて失敗したPR／Branch refreshをwarningではなく`membership-removed`としてskip
 
 ## [0.2.3] - 2026-08-21
 
