@@ -63,23 +63,17 @@ import {
 } from "../commit-range.js";
 import {
   currentCommitDocument,
-  documentPaneTransitions,
   documentTabKey,
   initialDocumentWorkspace,
-  moveDocumentToPane,
-  removeDocumentFromWorkspace,
   type ActiveDocument,
   type DocumentPaneId,
-  type DocumentWorkspaceState,
 } from "../document-workspace.js";
 import {
   clearCommentDraftsForReview,
   deleteCommentDraftForIssue,
   deleteCommentReplyDraftsForComment,
-  moveCommentDraftsForWorkspaceTransition,
 } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
-import { useDocumentWorkspace } from "../use-document-workspace.js";
 import { useDebouncedValue } from "../use-debounced-value.js";
 import { useThemePreference } from "../use-theme-preference.js";
 import { useReviewSidebarSearch } from "../use-review-sidebar-search.js";
@@ -90,13 +84,8 @@ import { useExactCodeReferenceNavigation } from "../use-exact-code-reference-nav
 import { useWalkthroughDocumentReconciliation } from "../use-walkthrough-document-reconciliation.js";
 import { useTemporaryFeedback } from "../use-temporary-feedback.js";
 import { issueSyncFailureFeedback } from "../review-sync-feedback.js";
-import {
-  agentNotificationBody,
-  browserNotificationPermission,
-  readAgentNotificationsEnabled,
-  scanAgentPostNotifications,
-  storeAgentNotificationsEnabled,
-} from "../agent-notifications.js";
+import { useAgentPostNotifications } from "../use-agent-post-notifications.js";
+import { useDraftAwareDocumentWorkspace } from "../use-draft-aware-document-workspace.js";
 const DocumentViewer = lazy(async () => {
   const module = await import("../components/DocumentViewer.js");
   return { default: module.DocumentViewer };
@@ -449,14 +438,43 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       return { ...current, ...Object.fromEntries(uniquePaneIds.map((paneId) => [paneId, null])) };
     });
   }, []);
+  const [syncFeedbackWarning, setSyncFeedbackWarning] = useState(false);
+  const {
+    feedback: syncFeedback,
+    showFeedback: showSyncFeedback,
+    clearFeedback: clearSyncFeedback,
+  } = useTemporaryFeedback();
+  const showDraftConflict = useCallback(
+    (message: string): void => {
+      setSyncFeedbackWarning(true);
+      showSyncFeedback(message);
+    },
+    [showSyncFeedback],
+  );
   const {
     workspace: documentWorkspace,
     workspaceRef: documentWorkspaceRef,
     setWorkspace: setDocumentWorkspace,
     activateDocument: activateWorkspaceDocument,
     openDocument: openWorkspaceDocument,
-  } = useDocumentWorkspace(resetViewerNavigation);
+    closeDocument: closeDocumentWithDrafts,
+    closePaneDocuments: closePaneDocumentsWithDrafts,
+    moveDocument: moveDocumentWithDrafts,
+    dropDocument: dropDocumentWithDrafts,
+    draftWorkspaceRevision,
+  } = useDraftAwareDocumentWorkspace({
+    reviewId: pullRequestId,
+    onDocumentNavigation: resetViewerNavigation,
+    onDraftConflict: showDraftConflict,
+  });
   const [draggedDocumentKey, setDraggedDocumentKey] = useState<string | null>(null);
+  const dropDocument = useCallback(
+    (documentKey: string, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
+      dropDocumentWithDrafts(documentKey, sourcePane, targetPane);
+      setDraggedDocumentKey(null);
+    },
+    [dropDocumentWithDrafts],
+  );
   const [fileFilter, setFileFilter] = useState("");
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenReturnFocus, setQuickOpenReturnFocus] = useState<HTMLElement | null>(null);
@@ -466,16 +484,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const [issueReference, setIssueReference] = useState("");
   const [issueAddOpen, setIssueAddOpen] = useState(false);
   const [reviewStateRevision, setReviewStateRevision] = useState(0);
-  const [draftWorkspaceRevision, setDraftWorkspaceRevision] = useState(0);
-  const {
-    feedback: syncFeedback,
-    showFeedback: showSyncFeedback,
-    clearFeedback: clearSyncFeedback,
-  } = useTemporaryFeedback();
-  const [syncFeedbackWarning, setSyncFeedbackWarning] = useState(false);
-  const [agentNotificationsEnabled, setAgentNotificationsEnabled] = useState(
-    readAgentNotificationsEnabled,
-  );
   const {
     themePreference,
     selectThemePreference,
@@ -493,8 +501,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const commitRangeInteractionHeadOid = useRef<string | null>(null);
   const observedLatestHead = useRef<string | null>(null);
   const observedChangeSequence = useRef<number | null>(null);
-  const observedAgentPostPullRequestId = useRef<string | null>(null);
-  const observedAgentPostSnapshot = useRef<Map<string, string> | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const debouncedSearch = useDebouncedValue(searchText.trim(), 250);
   const openSidebarSearch = useReviewSidebarSearch({
@@ -544,143 +550,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
       navigateToDocument(document, targetPane),
     [navigateToDocument],
   );
-
-  const applyDocumentWorkspaceTransition = useCallback(
-    (
-      nextWorkspace: DocumentWorkspaceState,
-      navigationPanes: readonly DocumentPaneId[] = [],
-    ): boolean => {
-      const previousWorkspace = documentWorkspaceRef.current;
-      if (nextWorkspace === previousWorkspace) return true;
-      const paneTransitions = documentPaneTransitions(previousWorkspace, nextWorkspace);
-      if (pullRequestId) {
-        const result = moveCommentDraftsForWorkspaceTransition(
-          pullRequestId,
-          previousWorkspace,
-          nextWorkspace,
-        );
-        if (result.status === "conflict") {
-          setSyncFeedbackWarning(true);
-          showSyncFeedback(
-            "移動先にも入力中のコメントまたは返信があります。どちらかを送信または消去してから移動してください。",
-          );
-          return false;
-        }
-        if (result.commentDraftsMoved) setDraftWorkspaceRevision((revision) => revision + 1);
-      }
-      resetViewerNavigation([
-        ...new Set([
-          ...navigationPanes,
-          ...paneTransitions.flatMap(({ sourcePane, targetPane }) => [sourcePane, targetPane]),
-        ]),
-      ]);
-      documentWorkspaceRef.current = nextWorkspace;
-      setDocumentWorkspace(() => nextWorkspace);
-      return true;
-    },
-    [
-      documentWorkspaceRef,
-      pullRequestId,
-      resetViewerNavigation,
-      setDocumentWorkspace,
-      showSyncFeedback,
-    ],
-  );
-
-  const closeDocumentWithDrafts = useCallback(
-    (document: ActiveDocument, paneId?: DocumentPaneId): void => {
-      const current = documentWorkspaceRef.current;
-      applyDocumentWorkspaceTransition(
-        removeDocumentFromWorkspace(current, document, paneId),
-        paneId ? [paneId] : ["left", "right"],
-      );
-    },
-    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
-  );
-
-  const closePaneDocumentsWithDrafts = useCallback(
-    (paneId: DocumentPaneId, keepDocument: ActiveDocument | null = null): void => {
-      const current = documentWorkspaceRef.current;
-      const keepKey = keepDocument ? documentTabKey(keepDocument) : null;
-      const nextWorkspace = current.documents[paneId]
-        .filter((document) => documentTabKey(document) !== keepKey)
-        .reduce(
-          (workspace, document) => removeDocumentFromWorkspace(workspace, document, paneId),
-          current,
-        );
-      applyDocumentWorkspaceTransition(nextWorkspace, [paneId]);
-    },
-    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
-  );
-
-  const moveDocumentWithDrafts = useCallback(
-    (document: ActiveDocument, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
-      const nextWorkspace = moveDocumentToPane(
-        documentWorkspaceRef.current,
-        document,
-        sourcePane,
-        targetPane,
-      );
-      if (nextWorkspace === documentWorkspaceRef.current) return;
-      applyDocumentWorkspaceTransition(nextWorkspace, [sourcePane, targetPane]);
-    },
-    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
-  );
-
-  const dropDocument = useCallback(
-    (documentKey: string, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
-      const document = documentWorkspaceRef.current.documents[sourcePane].find(
-        (candidate) => documentTabKey(candidate) === documentKey,
-      );
-      if (document) moveDocumentWithDrafts(document, sourcePane, targetPane);
-      setDraggedDocumentKey(null);
-    },
-    [documentWorkspaceRef, moveDocumentWithDrafts],
-  );
-
-  const notificationPermission = browserNotificationPermission();
-  const agentNotificationsActive =
-    agentNotificationsEnabled && notificationPermission === "granted";
-  const toggleAgentNotifications = async (): Promise<void> => {
-    setSyncFeedbackWarning(false);
-    if (agentNotificationsActive) {
-      storeAgentNotificationsEnabled(false);
-      setAgentNotificationsEnabled(false);
-      showSyncFeedback("Agentのコメント通知をオフにしました。");
-      return;
-    }
-    if (notificationPermission === "unsupported") {
-      storeAgentNotificationsEnabled(false);
-      setAgentNotificationsEnabled(false);
-      showSyncFeedback("このブラウザはBrowser Notificationに対応していません。");
-      return;
-    }
-    if (notificationPermission === "denied") {
-      storeAgentNotificationsEnabled(false);
-      setAgentNotificationsEnabled(false);
-      showSyncFeedback("ブラウザのサイト設定で通知を許可してください。");
-      return;
-    }
-    let permission: NotificationPermission;
-    try {
-      permission =
-        notificationPermission === "granted" ? "granted" : await Notification.requestPermission();
-    } catch (error) {
-      console.warn("ブラウザへ通知permissionを要求できませんでした。", error);
-      storeAgentNotificationsEnabled(false);
-      setAgentNotificationsEnabled(false);
-      showSyncFeedback("通知permissionを要求できませんでした。ブラウザの設定を確認してください。");
-      return;
-    }
-    const enabled = permission === "granted";
-    storeAgentNotificationsEnabled(enabled);
-    setAgentNotificationsEnabled(enabled);
-    showSyncFeedback(
-      enabled
-        ? "Agentのコメントをブラウザ通知します。"
-        : "通知は許可されませんでした。ブラウザのサイト設定から変更できます。",
-    );
-  };
 
   const pullRequestQuery = useQuery({
     queryKey: reviewQueryKeys.review("pull-request", pullRequestId),
@@ -852,33 +721,13 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
         : undefined,
   });
   const comments = commentsQuery.data?.comments ?? [];
-  useEffect(() => {
-    if (!commentsQuery.isSuccess || !commentsQuery.data || !pullRequestId) return;
-    if (observedAgentPostPullRequestId.current !== pullRequestId) {
-      observedAgentPostPullRequestId.current = pullRequestId;
-      observedAgentPostSnapshot.current = null;
-    }
-    const scan = scanAgentPostNotifications(
-      observedAgentPostSnapshot.current,
-      commentsQuery.data.comments,
-    );
-    observedAgentPostSnapshot.current = scan.snapshot;
-    if (!agentNotificationsEnabled || browserNotificationPermission() !== "granted") return;
-    for (const { post } of scan.notifications) {
-      try {
-        const notification = new Notification(`rvw · ${post.authorLabel}`, {
-          body: agentNotificationBody(post.body),
-          tag: `rvw-agent-post:${pullRequestId}:${post.id}`,
-        });
-        notification.onclick = () => {
-          window.focus();
-          notification.close();
-        };
-      } catch (error) {
-        console.warn("Agentのコメントをブラウザ通知できませんでした。", error);
-      }
-    }
-  }, [agentNotificationsEnabled, commentsQuery.data, commentsQuery.isSuccess, pullRequestId]);
+  const agentPostNotifications = useAgentPostNotifications({
+    reviewKind: "pull-request",
+    reviewId: pullRequestId,
+    comments,
+    commentsReady: commentsQuery.isSuccess,
+    showFeedback: showSyncFeedback,
+  });
   const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
   const issuesQuery = useQuery({
     queryKey: reviewQueryKeys.issues(
@@ -968,21 +817,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     enabled: Boolean(pullRequestId),
   });
   const walkthroughs = walkthroughsQuery.data?.walkthroughs ?? [];
-  const setDocumentWorkspaceWithDrafts = useCallback(
-    (
-      update:
-        DocumentWorkspaceState | ((current: DocumentWorkspaceState) => DocumentWorkspaceState),
-    ): void => {
-      const current = documentWorkspaceRef.current;
-      const next = typeof update === "function" ? update(current) : update;
-      applyDocumentWorkspaceTransition(next);
-    },
-    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
-  );
   useWalkthroughDocumentReconciliation({
     walkthroughs,
     enabled: walkthroughsQuery.isSuccess,
-    setWorkspace: setDocumentWorkspaceWithDrafts,
+    setWorkspace: setDocumentWorkspace,
   });
   const openWalkthroughIds = useMemo(
     () => [
@@ -1607,15 +1445,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           themePending={themePreferenceMutation.isPending}
           syncPending={refreshMutation.isPending}
           resetPending={resetMutation.isPending}
-          agentNotificationStatus={
-            agentNotificationsActive
-              ? "active"
-              : notificationPermission === "denied"
-                ? "denied"
-                : notificationPermission === "unsupported"
-                  ? "unsupported"
-                  : "inactive"
-          }
+          agentNotificationStatus={agentPostNotifications.status}
           onOpenQuickOpen={(returnFocusElement) => {
             setQuickOpenReturnFocus(returnFocusElement);
             setQuickOpenVisible(true);
@@ -1625,7 +1455,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
             refreshMutation.mutate({ announce: true });
           }}
           onThemeChange={selectThemePreference}
-          onToggleAgentNotifications={() => void toggleAgentNotifications()}
+          onToggleAgentNotifications={() => {
+            setSyncFeedbackWarning(false);
+            void agentPostNotifications.toggle();
+          }}
           onReset={() => resetMutation.mutate()}
         />
       </header>

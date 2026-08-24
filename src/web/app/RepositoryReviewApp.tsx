@@ -48,7 +48,6 @@ import { reviewQueryKeys } from "../review-query-keys.js";
 import { issueSyncFailureFeedback } from "../review-sync-feedback.js";
 import type { ThemePreference } from "../theme.js";
 import { useDebouncedValue } from "../use-debounced-value.js";
-import { useDocumentWorkspace } from "../use-document-workspace.js";
 import { useThemePreference } from "../use-theme-preference.js";
 import { useReviewSidebarSearch } from "../use-review-sidebar-search.js";
 import { useQuickOpenShortcut } from "../use-quick-open-shortcut.js";
@@ -56,6 +55,8 @@ import { useReviewReadingHistory } from "../use-review-reading-history.js";
 import { useExactCodeReferenceNavigation } from "../use-exact-code-reference-navigation.js";
 import { useWalkthroughDocumentReconciliation } from "../use-walkthrough-document-reconciliation.js";
 import { useTemporaryFeedback } from "../use-temporary-feedback.js";
+import { useAgentPostNotifications } from "../use-agent-post-notifications.js";
+import { useDraftAwareDocumentWorkspace } from "../use-draft-aware-document-workspace.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 
 const DocumentViewer = lazy(async () => {
@@ -122,6 +123,13 @@ export function RepositoryReviewApp({
     showFeedback: showSyncFeedback,
     clearFeedback: clearSyncFeedback,
   } = useTemporaryFeedback();
+  const showDraftConflict = useCallback(
+    (message: string): void => {
+      setSyncFeedbackWarning(true);
+      showSyncFeedback(message);
+    },
+    [showSyncFeedback],
+  );
   const searchInputRef = useRef<HTMLInputElement>(null);
   const attemptedInitialSync = useRef(false);
   const observedChangeSequence = useRef<number | null>(null);
@@ -150,8 +158,21 @@ export function RepositoryReviewApp({
     closeDocument,
     closePaneDocuments,
     moveDocument,
-    dropDocument,
-  } = useDocumentWorkspace(resetViewerNavigation, null);
+    dropDocument: dropDocumentWithDrafts,
+    draftWorkspaceRevision,
+  } = useDraftAwareDocumentWorkspace({
+    reviewId: repositoryReviewId,
+    onDocumentNavigation: resetViewerNavigation,
+    onDraftConflict: showDraftConflict,
+    initialDocument: null,
+  });
+  const dropDocument = useCallback(
+    (documentKey: string, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
+      dropDocumentWithDrafts(documentKey, sourcePane, targetPane);
+      setDraggedDocumentKey(null);
+    },
+    [dropDocumentWithDrafts],
+  );
   const {
     activateDocument,
     initializeReadingHistory,
@@ -224,6 +245,21 @@ export function RepositoryReviewApp({
       await api<RepositoryCommentsResponse>(
         `/api/repository-reviews/${repositoryReviewId}/comments?resolved=all`,
       ),
+  });
+  const commentsWithPlacement = useMemo(
+    () => commentsQuery.data?.comments ?? [],
+    [commentsQuery.data?.comments],
+  );
+  const comments = useMemo(
+    () => commentsWithPlacement.map(({ comment }) => comment),
+    [commentsWithPlacement],
+  );
+  const agentPostNotifications = useAgentPostNotifications({
+    reviewKind: "repository",
+    reviewId: repositoryReviewId,
+    comments,
+    commentsReady: commentsQuery.isSuccess,
+    showFeedback: showSyncFeedback,
   });
   const searchQuery = useQuery({
     queryKey: reviewQueryKeys.search(
@@ -534,8 +570,6 @@ export function RepositoryReviewApp({
     id: repositoryReview.id,
     sourceOid: repositoryReview.sourceOid,
   };
-  const commentsWithPlacement = commentsQuery.data?.comments ?? [];
-  const comments = commentsWithPlacement.map(({ comment }) => comment);
   const placements = new Map(
     commentsWithPlacement.map(({ comment, latestPlacement }) => [comment.id, latestPlacement]),
   );
@@ -712,8 +746,8 @@ export function RepositoryReviewApp({
             <DocumentViewer
               key={
                 paneDocument.kind === "issue"
-                  ? `${paneId}:repository:${repositoryReview.id}:issue:${paneDocument.id}`
-                  : `${paneId}:repository:${repositoryReview.id}:repository-file:${paneDocument.path}:${paneDocument.sourceOid ?? repositoryReview.sourceOid}:${paneDocument.comparisonPolicy ?? ""}`
+                  ? `${draftWorkspaceRevision}:${paneId}:repository:${repositoryReview.id}:issue:${paneDocument.id}`
+                  : `${draftWorkspaceRevision}:${paneId}:repository:${repositoryReview.id}:repository-file:${paneDocument.path}:${paneDocument.sourceOid ?? repositoryReview.sourceOid}:${paneDocument.comparisonPolicy ?? ""}`
               }
               review={review}
               paneId={paneId}
@@ -826,6 +860,7 @@ export function RepositoryReviewApp({
           themePending={themeMutation.isPending}
           syncPending={syncMutation.isPending}
           resetPending={resetMutation.isPending}
+          agentNotificationStatus={agentPostNotifications.status}
           resetLabel="Repository Reviewを削除して再構築"
           onOpenQuickOpen={(returnFocusElement) => {
             setQuickOpenReturnFocus(returnFocusElement);
@@ -837,6 +872,10 @@ export function RepositoryReviewApp({
             syncMutation.mutate();
           }}
           onThemeChange={selectThemePreference}
+          onToggleAgentNotifications={() => {
+            setSyncFeedbackWarning(false);
+            void agentPostNotifications.toggle();
+          }}
           onReset={() => resetMutation.mutate()}
         />
       </header>

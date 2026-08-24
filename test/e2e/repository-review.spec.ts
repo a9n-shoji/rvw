@@ -494,6 +494,170 @@ test("uses the shared review workspace for the default branch, Issues, code, and
   await expect(page.getByRole("button", { name: "#19を削除" })).toHaveCount(0);
 });
 
+test("moves a Repository Review comment draft with a dragged file tab", async ({ page }) => {
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
+  await page.getByRole("button", { name: "src フォルダ", exact: true }).click();
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  const readme = page.getByRole("button", { name: "README.md", exact: true });
+  await readme.click();
+  await readme.click({ modifiers: [modifier] });
+
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  await leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true }).click();
+  await leftPane.getByRole("button", { name: "ファイル全体へコメント" }).click();
+  await leftPane
+    .getByRole("textbox", { name: "ファイル全体へコメント" })
+    .fill("Repository Reviewのタブと一緒に移動するdraft");
+
+  await leftPane
+    .getByRole("tab", { name: "src/fixture.ts", exact: true })
+    .dragTo(page.locator('.document-tabs-shell[data-pane="right"]'));
+
+  await expect(leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true })).toHaveCount(0);
+  await expect(rightPane.getByRole("textbox", { name: "ファイル全体へコメント" })).toHaveValue(
+    "Repository Reviewのタブと一緒に移動するdraft",
+  );
+});
+
+test("rejects a Repository Review pane merge when both file replies have drafts", async ({
+  page,
+}) => {
+  const commentId = "77777777-7777-4777-8777-777777777778";
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
+  await page.getByRole("button", { name: "src フォルダ", exact: true }).click();
+  const file = page.getByRole("button", { name: "src/fixture.ts", exact: true });
+  await file.click();
+  await file.click({ modifiers: [modifier] });
+
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  const leftReply = leftPane
+    .locator(`[data-comment-id="${commentId}"]`)
+    .getByPlaceholder("返信を入力");
+  const rightReply = rightPane
+    .locator(`[data-comment-id="${commentId}"]`)
+    .getByPlaceholder("返信を入力");
+  await leftReply.fill("左のRepository Review reply draft");
+  await rightReply.fill("右のRepository Review reply draft");
+  await leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true }).click();
+  await leftPane.getByRole("button", { name: "左ペインの操作" }).click();
+  await page.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
+
+  await expect(page.getByText(/移動先にも入力中のコメントまたは返信があります/)).toBeVisible();
+  await expect(leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true })).toBeVisible();
+  await expect(rightPane.getByRole("tab", { name: "src/fixture.ts", exact: true })).toBeVisible();
+  await expect(leftReply).toHaveValue("左のRepository Review reply draft");
+  await expect(rightReply).toHaveValue("右のRepository Review reply draft");
+});
+
+test("moves a Repository Walkthrough reply draft when closing the left tab normalizes panes", async ({
+  page,
+}) => {
+  const commentId = "77777777-7777-4777-8777-777777777777";
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
+  await page.getByRole("button", { name: "ウォークスルー 1" }).click();
+  const walkthrough = page.getByRole("button", { name: "Current request flow", exact: true });
+  await walkthrough.click();
+  await walkthrough.click({ modifiers: [modifier] });
+
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  const rightReply = rightPane
+    .locator(`[data-comment-id="${commentId}"]`)
+    .getByPlaceholder("返信を入力");
+  await rightReply.fill("Repository Walkthroughと一緒に移動するreply");
+  await leftPane.getByRole("button", { name: "Current request flowを閉じる", exact: true }).click();
+
+  await expect(rightPane).toHaveCount(0);
+  await expect(
+    leftPane.locator(`[data-comment-id="${commentId}"]`).getByPlaceholder("返信を入力"),
+  ).toHaveValue("Repository Walkthroughと一緒に移動するreply");
+});
+
+test("notifies for an unlabeled Agent reply in a Repository Review", async ({ page, request }) => {
+  await page.addInitScript(() => {
+    type NotificationRecord = { title: string; options?: NotificationOptions };
+    class MockNotification {
+      static permission: NotificationPermission = "default";
+      static requestPermission(): Promise<NotificationPermission> {
+        MockNotification.permission = "granted";
+        return Promise.resolve(MockNotification.permission);
+      }
+
+      onclick: (() => void) | null = null;
+
+      constructor(title: string, options?: NotificationOptions) {
+        const state = window as typeof window & { rvwNotifications?: NotificationRecord[] };
+        state.rvwNotifications ??= [];
+        state.rvwNotifications.push(options === undefined ? { title } : { title, options });
+      }
+
+      close(): void {}
+    }
+
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: MockNotification,
+    });
+  });
+
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  const notificationToggle = page
+    .getByRole("menu")
+    .getByRole("menuitemcheckbox", { name: "Agentのコメントを通知" });
+  await expect(notificationToggle).toHaveAttribute("aria-checked", "false");
+  await notificationToggle.click();
+  await expect(page.getByRole("status")).toHaveText("Agentのコメントをブラウザ通知します。");
+
+  let commentId: string | null = null;
+  try {
+    const humanResponse = await request.post("/api/comments", {
+      data: {
+        repositoryReviewId,
+        target: { kind: "repository" },
+        body: "Repository reviewer question",
+        authorLabel: "You",
+      },
+    });
+    expect(humanResponse.ok()).toBe(true);
+    const human = (await humanResponse.json()) as { comment: { id: string } };
+    commentId = human.comment.id;
+
+    const agentResponse = await request.post(`/api/comments/${commentId}/posts`, {
+      headers: { "x-rvw-fixture-modifier": "agent" },
+      data: { body: "Unlabeled Repository Agent answer", relatedCommitOid: null },
+    });
+    expect(agentResponse.ok()).toBe(true);
+    const agent = (await agentResponse.json()) as { post: { id: string } };
+
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate(
+            () =>
+              (
+                window as typeof window & {
+                  rvwNotifications?: Array<{ title: string; options?: NotificationOptions }>;
+                }
+              ).rvwNotifications ?? [],
+          ),
+      )
+      .toEqual([
+        {
+          title: "rvw · Agent",
+          options: expect.objectContaining({
+            body: "Unlabeled Repository Agent answer",
+            tag: `rvw-agent-post:repository:${repositoryReviewId}:${agent.post.id}`,
+          }),
+        },
+      ]);
+  } finally {
+    if (commentId) await request.delete(`/api/comments/${commentId}`, { data: {} });
+  }
+});
+
 test("keeps Repository Review mutations isolated and recreates an empty review after reset", async ({
   page,
   request,

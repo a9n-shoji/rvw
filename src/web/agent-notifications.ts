@@ -1,4 +1,5 @@
-import type { CommentPost, ReviewComment } from "../domain/models.js";
+import type { CommentPost } from "../domain/models.js";
+import type { AnyReviewComment } from "./review-context.js";
 
 export const agentNotificationStorageKey = "rvw.agentNotifications";
 export const agentAcknowledgementBody = "🔎 確認中です…";
@@ -34,14 +35,12 @@ export function browserNotificationPermission(): NotificationPermission | "unsup
 }
 
 export function isNotifiableAgentPost(post: CommentPost): boolean {
+  return post.lastModifiedBy === "agent" && post.body.trim() !== agentAcknowledgementBody;
+}
+
+export function agentNotificationAuthor(post: CommentPost): string {
   const authorLabel = post.authorLabel?.trim();
-  return Boolean(
-    post.lastModifiedBy === "agent" &&
-    authorLabel &&
-    authorLabel !== "You" &&
-    authorLabel !== "Unknown" &&
-    post.body.trim() !== agentAcknowledgementBody,
-  );
+  return authorLabel && authorLabel !== "You" && authorLabel !== "Unknown" ? authorLabel : "Agent";
 }
 
 function postFingerprint(post: CommentPost): string {
@@ -56,7 +55,7 @@ function postFingerprint(post: CommentPost): string {
 
 export function scanAgentPostNotifications(
   previousSnapshot: ReadonlyMap<string, string> | null,
-  comments: ReviewComment[],
+  comments: AnyReviewComment[],
 ): AgentPostNotificationScan {
   const snapshot = new Map<string, string>();
   const notifications: AgentPostNotification[] = [];

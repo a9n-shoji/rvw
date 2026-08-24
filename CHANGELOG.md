@@ -43,9 +43,15 @@
 - Repository Review Comment placementを最大8件のbounded concurrencyへ変更
 - Repository Review relocation previewを、DB参照中のcurrent／historical exact source全件のref／object検証と
   必須・検証済み・欠損件数を含むconfirmation tokenへ拡張
+- Agent browser notificationをPull Request / Repository Reviewで共有し、任意の`authorLabel`ではなく
+  trustedな`lastModifiedBy`を通知判定に使用
 
 ### Fixed
 
+- Repository Reviewのtab移動、drag & drop、close正規化、Walkthrough reconcileでpane単位のcomment／reply
+  draftが取り残される問題と、移動先draftを暗黙に隠す競合を修正
+- Repository ReviewのAgent replyがbrowser通知されず、`authorLabel`を省略した正規Agent writeも通知対象外に
+  なっていた問題を修正
 - Issue本文が更新された後も全体コメントはcurrentのまま維持し、rangeコメントだけをoutdatedにするよう修正
 - Repository Review resetでGit ref削除が適用済みなら、終了statusだけを根拠に不整合errorを返さないよう修正
 - `investigate-and-reply`で開始したwatch taskがPull Requestのwrite reservationを取得できる抜け道を修正

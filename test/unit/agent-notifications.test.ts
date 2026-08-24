@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CommentPost, ReviewComment } from "../../src/domain/models.js";
 import {
   agentAcknowledgementBody,
+  agentNotificationAuthor,
   agentNotificationBody,
   isNotifiableAgentPost,
   scanAgentPostNotifications,
@@ -50,37 +51,46 @@ describe("Agent browser notifications", () => {
     expect(initial.snapshot.has("root")).toBe(true);
   });
 
-  it("notifies only labeled Agent posts and ignores human, Unknown, and acknowledgement posts", () => {
-    const initial = scanAgentPostNotifications(null, [comment([post("root", "You", "Question")])]);
+  it("trusts the write channel, falls back unlabeled authors, and ignores human and acknowledgement posts", () => {
+    const initial = scanAgentPostNotifications(null, [
+      comment([post("root", "You", "Question", undefined, "human")]),
+    ]);
     const agent = post("agent", "Codex", "Implemented the fix.");
-    const human = post("human", "You", "Thanks");
-    const unknown = post("unknown", null, "Unattributed post");
-    const labeledUnknown = post("labeled-unknown", "Unknown", "Unattributed post");
+    const human = post("human", "You", "Thanks", undefined, "human");
+    const unlabeled = post("unlabeled", null, "Unlabeled Agent post");
+    const labeledUnknown = post("labeled-unknown", "Unknown", "Unknown Agent post");
+    const labeledYou = post("labeled-you", "You", "Mislabeled Agent post");
     const humanEdit = post("human-edit", "Codex", "Edited in the browser", undefined, "human");
     const legacy = post("legacy", "Codex", "Legacy post", undefined, null);
     const acknowledgement = post("ack", "Codex", agentAcknowledgementBody);
 
     expect(isNotifiableAgentPost(agent)).toBe(true);
     expect(isNotifiableAgentPost(human)).toBe(false);
-    expect(isNotifiableAgentPost(unknown)).toBe(false);
-    expect(isNotifiableAgentPost(labeledUnknown)).toBe(false);
+    expect(isNotifiableAgentPost(unlabeled)).toBe(true);
+    expect(isNotifiableAgentPost(labeledUnknown)).toBe(true);
+    expect(isNotifiableAgentPost(labeledYou)).toBe(true);
     expect(isNotifiableAgentPost(humanEdit)).toBe(false);
     expect(isNotifiableAgentPost(legacy)).toBe(false);
     expect(isNotifiableAgentPost(acknowledgement)).toBe(false);
+    expect(agentNotificationAuthor(agent)).toBe("Codex");
+    expect(agentNotificationAuthor(unlabeled)).toBe("Agent");
+    expect(agentNotificationAuthor(labeledUnknown)).toBe("Agent");
+    expect(agentNotificationAuthor(labeledYou)).toBe("Agent");
     expect(
       scanAgentPostNotifications(initial.snapshot, [
         comment([
-          post("root", "You", "Question"),
+          post("root", "You", "Question", undefined, "human"),
           agent,
           human,
-          unknown,
+          unlabeled,
           labeledUnknown,
+          labeledYou,
           humanEdit,
           legacy,
           acknowledgement,
         ]),
       ]).notifications.map(({ post: candidate }) => candidate.id),
-    ).toEqual(["agent"]);
+    ).toEqual(["agent", "unlabeled", "labeled-unknown", "labeled-you"]);
   });
 
   it("notifies when an acknowledgement is edited into the Agent's final answer", () => {

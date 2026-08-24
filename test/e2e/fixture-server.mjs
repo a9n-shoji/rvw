@@ -1971,6 +1971,8 @@ app.post("/api/comments", async (context) => {
           relatedCommitOid: input.relatedCommitOid ?? null,
           references: input.references ?? [],
           authorLabel: input.authorLabel,
+          lastModifiedBy:
+            context.req.header("x-rvw-fixture-modifier") === "agent" ? "agent" : "human",
           isRoot: true,
           createdAt: now,
           updatedAt: now,

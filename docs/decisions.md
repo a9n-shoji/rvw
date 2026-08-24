@@ -1,5 +1,31 @@
 # Architecture decisions
 
+## 2026-08-24: Share review UI capabilities without merging review aggregates
+
+### Problem
+
+Pull Request Review and Repository Review intentionally have separate page composition and aggregate-specific
+controls. Draft-aware pane transitions and Agent browser notifications were first implemented only in the Pull
+Request page, however, so Repository Review could strand pane-scoped drafts and never exposed notifications for
+Agent replies. Notification filtering also required `authorLabel` even though the trusted write-channel decision
+explicitly keeps that label optional.
+
+### Choice
+
+Keep the two review applications and their domain aggregates separate, while extracting two narrow shared UI
+capabilities: draft-aware document workspace transitions and Agent-post notifications. Every tab move, drag/drop,
+close normalization, and document reconciliation first moves pane-scoped comment and reply drafts atomically; a
+target-key conflict rejects the workspace transition. Both review kinds establish an initial comment baseline and
+then notify posts whose trusted `lastModifiedBy` is `agent`, excluding only the acknowledgement body. An absent or
+generic display label renders as `Agent`, and notification tags include review kind, review ID, and post ID.
+
+### Consequences
+
+- Repository Review now preserves or explicitly rejects draft movement with the same rules as Pull Requests.
+- Unlabeled watcher operation remains observable without treating display text as provenance.
+- Shared behavior stays in capability hooks; aggregate queries, synchronization, and PR-only controls remain
+  separate rather than introducing a generic `ReviewApp<T>`.
+
 ## 2026-08-24: Compose comment provenance with the Repository Review schema
 
 ### Problem
@@ -2245,7 +2271,8 @@ Persist nullable `lastModifiedBy` on each comment post. Viewer HTTP writes set `
 Agent socket, and synchronized Agent replies set `agent`; migrated rows remain null. The field is
 derived from rvw's trusted local entry point, is output-only, and is used to gate browser notifications.
 It does not identify a person or runtime, authorize a write, add Agent-only lifecycle state, or change
-the unresolved/resolved comment model. `authorLabel` remains the optional display name.
+the unresolved/resolved comment model. `authorLabel` remains the optional display name and does not gate
+notification; missing or generic labels use `Agent` in the notification title.
 
 ### Trade-offs
 

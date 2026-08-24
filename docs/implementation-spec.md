@@ -426,10 +426,12 @@ empty fileは従来どおり明示的に扱う。
   light / dark / systemから選べる。選択はOS user data directoryの共通DBへ保存し、異なるPRや
   自動割り当てportで新しく起動したviewerにも引き継ぐ。browser storageは初期表示用cacheに限る。
   systemはOS設定へ追従する。
-- その他menuからbrowser origin（portを含む）単位でAgentコメント通知を明示的に有効化できる。初回のcomment読込は通知せず、
-  以後に追加または編集されたpostのうち、最終変更経路が`agent`で、空でない`authorLabel`があり`You`ではないものだけを対象とする。
-  `Unknown`と`🔎 確認中です…`は通知せず、watcherが同じpostを最終回答へ編集した時に通知する。
-  通知permissionと設定が有効な場合だけBrowser Notificationを作り、クリック時はviewerをfocusする。
+- Pull Request / Repository Reviewのその他menuからbrowser origin（portを含む）単位でAgentコメント通知を
+  明示的に有効化できる。初回のcomment読込は通知せず、以後に追加または編集されたpostのうち、最終変更経路が
+  `agent`のものを対象とする。`authorLabel`は任意の表示名であり通知可否には使わず、空、`You`、`Unknown`なら
+  通知上は`Agent`と表示する。`🔎 確認中です…`は通知せず、watcherが同じpostを最終回答へ編集した時に通知する。
+  通知permissionと設定が有効な場合だけBrowser Notificationを作り、review kind、review ID、post IDをtagへ含め、
+  クリック時はviewerをfocusする。
 
 ### 5.3 File tree、検索、diff rendering
 
