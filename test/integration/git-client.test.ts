@@ -43,6 +43,22 @@ describe("GitClient with real git", () => {
     );
   });
 
+  it("finds an existing repository identity through a non-origin remote", async () => {
+    const repository = createGitRepository("rvw-existing-remote-");
+    git(repository, "remote", "set-url", "origin", "git@github.com:reviewer/review-repo.git");
+    const upstreamUrl = "https://github.com/acme/review-repo.git";
+    git(repository, "remote", "add", "upstream", upstreamUrl);
+
+    await expect(
+      new GitClient().findBaseRepositoryIdentity(repository, "acme", "review-repo"),
+    ).resolves.toEqual({
+      owner: "acme",
+      repository: "review-repo",
+      remoteName: "upstream",
+      remoteUrl: upstreamUrl,
+    });
+  });
+
   it("gives exactly one concurrent creator ownership of an exact retained ref", async () => {
     const repository = createGitRepository("rvw-ref-cas-");
     const oid = git(repository, "rev-parse", "HEAD");

@@ -70,7 +70,7 @@ const github = {
 };
 
 describe("RvwDatabase", () => {
-  it("upgrades development databases that used Repository Review migration 011", () => {
+  it("rejects a partial legacy Repository Review 011 schema without recording migration 012", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-repository-migration-011-"));
     const filePath = path.join(directory, "rvw.db");
     const legacyMigrationsDirectory = path.join(directory, "legacy-migrations");
@@ -106,21 +106,24 @@ describe("RvwDatabase", () => {
 
     const legacy = new RvwDatabase({ filePath, migrationsDirectory: legacyMigrationsDirectory });
     legacy.close();
-    const upgraded = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
-    upgraded.close();
+
+    const partial = new DatabaseSync(filePath);
+    partial.exec("DROP TABLE repository_walkthrough_references");
+    partial.close();
+
+    expect(() => new RvwDatabase({ filePath, migrationsDirectory: "./migrations" })).toThrowError(
+      /migration 011/,
+    );
 
     const inspected = new DatabaseSync(filePath, { readOnly: true });
     expect(
-      inspected.prepare("SELECT version FROM schema_migrations ORDER BY version DESC").all(),
-    ).toEqual(expect.arrayContaining([{ version: 11 }, { version: 12 }]));
-    const commentColumns = inspected.prepare("PRAGMA table_info(comment_posts)").all() as Array<{
-      name: string;
-    }>;
-    const repositoryCommentColumns = inspected
-      .prepare("PRAGMA table_info(repository_comment_posts)")
-      .all() as Array<{ name: string }>;
-    expect(commentColumns.map(({ name }) => name)).toContain("last_modified_by");
-    expect(repositoryCommentColumns.map(({ name }) => name)).toContain("last_modified_by");
+      inspected.prepare("SELECT version FROM schema_migrations WHERE version = 12").get(),
+    ).toBe(undefined);
+    expect(
+      inspected
+        .prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get("repository_walkthrough_references"),
+    ).toBeUndefined();
     inspected.close();
   });
 

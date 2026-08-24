@@ -515,57 +515,41 @@ export class RvwDatabase {
       }
     }
     // The unreleased Repository Review branch originally used migration 011 while main assigned
-    // that version to comment-post provenance. Upgrade those development databases in place before
-    // the Repository Review schema moves to 012; normal databases use the ordinary 011 -> 012 path.
+    // that version to comment-post provenance. Those development databases cannot safely replay 012:
+    // fail closed before any DDL instead of guessing whether a partially applied schema is compatible.
     const tableExists = (table: string): boolean =>
       this.database
         .prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?")
         .get(table) !== undefined;
-    const tableHasColumn = (table: string, column: string): boolean =>
-      (this.database.prepare(`PRAGMA table_info(${table})`).all() as DbRow[]).some(
-        (row) => stringValue(row, "name") === column,
+    const unreleasedRepositoryReviewTables = [
+      "repository_reviews",
+      "github_issues",
+      "pull_request_issues",
+      "repository_review_issues",
+      "comment_targets_v5",
+      "repository_walkthroughs",
+      "repository_walkthrough_references",
+      "repository_comments",
+      "repository_comment_targets",
+      "repository_comment_posts",
+      "repository_comment_post_references",
+      "review_comment_post_events",
+    ];
+    const existingUnreleasedTables =
+      applied.has(11) && !applied.has(12)
+        ? unreleasedRepositoryReviewTables.filter(tableExists)
+        : [];
+    if (existingUnreleasedTables.length > 0) {
+      throw new RvwError(
+        "DATABASE_ERROR",
+        "未公開版のRepository Review migration 011を使用したdevelopment DBは自動移行できません。",
+        {
+          details: { existingUnreleasedTables },
+          suggestions: [
+            "必要なreview内容を退避したうえでdevelopment DBを削除し、現在版で再作成してください。",
+          ],
+        },
       );
-    const legacyRepositoryReviewMigration =
-      applied.has(11) &&
-      !applied.has(12) &&
-      tableExists("repository_reviews") &&
-      tableExists("repository_comment_posts") &&
-      tableExists("review_comment_post_events");
-    if (legacyRepositoryReviewMigration) {
-      try {
-        this.database.exec("BEGIN IMMEDIATE");
-        const upgradedByAnotherProcess =
-          this.database.prepare("SELECT 1 FROM schema_migrations WHERE version = 12").get() !==
-          undefined;
-        if (!upgradedByAnotherProcess) {
-          if (!tableHasColumn("comment_posts", "last_modified_by")) {
-            this.database.exec(
-              "ALTER TABLE comment_posts ADD COLUMN last_modified_by TEXT CHECK(last_modified_by IS NULL OR last_modified_by IN ('human', 'agent'))",
-            );
-          }
-          if (!tableHasColumn("repository_comment_posts", "last_modified_by")) {
-            this.database.exec(
-              "ALTER TABLE repository_comment_posts ADD COLUMN last_modified_by TEXT CHECK(last_modified_by IS NULL OR last_modified_by IN ('human', 'agent'))",
-            );
-          }
-          this.database
-            .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (12, ?)")
-            .run(new Date().toISOString());
-        }
-        this.database.exec("COMMIT");
-        applied.add(12);
-      } catch (error) {
-        try {
-          this.database.exec("ROLLBACK");
-        } catch {
-          // Preserve the compatibility migration error.
-        }
-        throw new RvwError(
-          "DATABASE_ERROR",
-          "旧Repository Review migration 011の互換upgradeに失敗しました。",
-          { cause: error },
-        );
-      }
     }
     const migrations = readdirSync(directory)
       .filter((name) => /^\d+_.*\.sql$/.test(name))

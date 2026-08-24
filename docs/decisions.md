@@ -18,6 +18,9 @@ close normalization, and document reconciliation first moves pane-scoped comment
 target-key conflict rejects the workspace transition. Both review kinds establish an initial comment baseline and
 then notify posts whose trusted `lastModifiedBy` is `agent`, excluding only the acknowledgement body. An absent or
 generic display label renders as `Agent`, and notification tags include review kind, review ID, and post ID.
+Keep a current Repository Review file draft stable by pane and path while recording the source OID as its document
+revision. A source refresh preserves the body and composer but requires a fresh line selection. Replacing a current
+file tab with an exact-source variant is rejected while the source tab owns a draft instead of hiding it.
 
 ### Consequences
 
@@ -41,15 +44,14 @@ unreleased feature branch had already recorded version 011 with the Repository R
 Keep `011_comment_post_modifier.sql` at version 011 and move the Repository Review schema to
 `012_repository_reviews_and_issues.sql`. Include the same trusted `last_modified_by` provenance column in
 Repository Review comment posts, and carry it through human and Agent write paths. For development databases
-that contain the old Repository Review-shaped version 011, detect that exact table shape, add both provenance
-columns when absent, and record version 012 in one concurrency-safe transaction. Normal databases continue
-through 011 and 012 in order.
+that contain any table from the old Repository Review-shaped version 011, fail closed before running migration
+012 and require the unreleased database to be recreated. Normal databases continue through 011 and 012 in order.
 
 ### Consequences
 
 - A fresh or main-derived database applies both changes deterministically.
-- Unreleased branch-development data upgrades without replaying the Repository Review DDL.
-- The compatibility bridge is deliberately schema-shape-specific and is not a general partial-schema fallback.
+- A partial development schema can never be marked as migration 012 or fail later at feature use time.
+- Unreleased branch-development data must be exported if needed and the development database recreated.
 
 ## 2026-08-24: Recover explicit Repository Review relocation and close historical evidence reads
 
@@ -95,8 +97,9 @@ Comment bodies are explicitly DB-only archive reads.
 - Changing or removing a moved clone's remote cannot create a second live Review beside its existing namespace.
 - A locally reachable historical object without its Review-owned ref cannot be read through Comment paths.
 - `repository comments --repository <PATH>` reads from that verified worktree without persisting it.
-- Fork clones remain origin-first in this phase; the selected remote is visible before follow-up work, and an
-  explicit `--remote` selector remains out of scope.
+- New reviews in fork clones remain origin-first in this phase, while an existing review searches all remotes for
+  its saved identity. The selected remote is visible before follow-up work, and an explicit `--remote` selector
+  remains out of scope.
 
 ## 2026-08-24: Name the repository-scoped aggregate Repository Review
 

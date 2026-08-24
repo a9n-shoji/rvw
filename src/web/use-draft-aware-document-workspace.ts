@@ -16,6 +16,8 @@ type DocumentWorkspaceUpdate =
 
 export const commentDraftTransitionConflictMessage =
   "移動先にも入力中のコメントまたは返信があります。どちらかを送信または消去してから移動してください。";
+export const commentDraftReplacementConflictMessage =
+  "このタブには入力中のコメントがあります。送信または消去してから別のsourceへ切り替えてください。";
 
 export function useDraftAwareDocumentWorkspace({
   reviewId,
@@ -52,7 +54,11 @@ export function useDraftAwareDocumentWorkspace({
           nextWorkspace,
         );
         if (result.status === "conflict") {
-          onDraftConflict(commentDraftTransitionConflictMessage);
+          onDraftConflict(
+            result.reason === "document-replacement"
+              ? commentDraftReplacementConflictMessage
+              : commentDraftTransitionConflictMessage,
+          );
           return false;
         }
         if (result.commentDraftsMoved) setDraftWorkspaceRevision((revision) => revision + 1);

@@ -267,11 +267,7 @@ export class GitClient {
   }
 
   async assertBaseRepository(cwd: string, owner: string, repository: string): Promise<string> {
-    const selected = (await this.orderedGitHubRemotes(cwd)).find(
-      (remote) =>
-        remote.owner.toLowerCase() === owner.toLowerCase() &&
-        remote.repository.toLowerCase() === repository.toLowerCase(),
-    );
+    const selected = await this.findBaseRepositoryIdentity(cwd, owner, repository);
     if (selected) return selected.remoteUrl;
     throw new RvwError(
       "REPOSITORY_MISMATCH",
@@ -281,6 +277,25 @@ export class GitClient {
           `${owner}/${repository} をcloneしたrepositoryまたはそのworktreeから実行してください。`,
         ],
       },
+    );
+  }
+
+  async findBaseRepositoryIdentity(
+    cwd: string,
+    owner: string,
+    repository: string,
+  ): Promise<{
+    owner: string;
+    repository: string;
+    remoteName: string;
+    remoteUrl: string;
+  } | null> {
+    return (
+      (await this.orderedGitHubRemotes(cwd)).find(
+        (remote) =>
+          remote.owner.toLowerCase() === owner.toLowerCase() &&
+          remote.repository.toLowerCase() === repository.toLowerCase(),
+      ) ?? null
     );
   }
 

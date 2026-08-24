@@ -87,6 +87,18 @@ export class RepositoryReviewLifecycle {
     private readonly github: GitHubPort,
   ) {}
 
+  private async remoteIdentityForExisting(
+    repositoryReview: RepositoryReview,
+    repository: RepositoryContext,
+  ): Promise<ResolvedRepositoryReview["remoteIdentity"]> {
+    const matching = await this.git.findBaseRepositoryIdentity(
+      repository.worktreePath,
+      repositoryReview.owner,
+      repositoryReview.repository,
+    );
+    return matching ?? (await this.git.tryBaseRepositoryIdentity(repository.worktreePath));
+  }
+
   private repositoryMismatch(
     repositoryReview: RepositoryReview,
     repository: RepositoryContext,
@@ -299,23 +311,25 @@ export class RepositoryReviewLifecycle {
     } = { policy: { kind: "read" } },
   ): Promise<ResolvedRepositoryReview> {
     const repository = await this.git.repositoryContext(repositoryPath);
-    const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
     const byCommonDir = this.database.findRepositoryReviewByGitCommonDir(repository.gitCommonDir);
+    const expected = options.expectedRepositoryReviewId
+      ? this.database.getRepositoryReview(options.expectedRepositoryReviewId)
+      : null;
+    if (options.expectedRepositoryReviewId && !expected) {
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
+        status: 404,
+      });
+    }
+    const bound = expected ?? byCommonDir;
+    const remoteIdentity = bound
+      ? await this.remoteIdentityForExisting(bound, repository)
+      : await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
     const byIdentity = remoteIdentity
       ? this.database.findRepositoryReviewByIdentity(
           remoteIdentity.owner,
           remoteIdentity.repository,
         )
       : null;
-    const expected = options.expectedRepositoryReviewId
-      ? this.database.getRepositoryReview(options.expectedRepositoryReviewId)
-      : null;
-
-    if (options.expectedRepositoryReviewId && !expected) {
-      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
-        status: 404,
-      });
-    }
     if (byCommonDir && byIdentity && byCommonDir.id !== byIdentity.id) {
       throw this.repositoryMismatch(
         byCommonDir,
@@ -744,9 +758,9 @@ export class RepositoryReviewLifecycle {
 
   async openAtPath(repositoryPath: string): Promise<RepositoryReviewOpenResult> {
     const repository = await this.git.repositoryContext(repositoryPath);
-    const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
     let stored = this.database.findRepositoryReviewByGitCommonDir(repository.gitCommonDir);
     if (stored) {
+      const remoteIdentity = await this.remoteIdentityForExisting(stored, repository);
       this.assertCanonicalRemote(stored, repository, remoteIdentity);
       stored = await this.assertOwnedSourceRef(stored, repository);
       const available = await this.git.hasObject(repository.worktreePath, stored.sourceOid);
@@ -793,6 +807,7 @@ export class RepositoryReviewLifecycle {
       };
     }
 
+    const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
     if (!remoteIdentity) {
       await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
       throw new RvwError(
@@ -817,6 +832,25 @@ export class RepositoryReviewLifecycle {
 
   async openForExplicitMutation(repositoryPath: string): Promise<RepositoryReview> {
     const repository = await this.git.repositoryContext(repositoryPath);
+    let stored = this.database.findRepositoryReviewByGitCommonDir(repository.gitCommonDir);
+    if (stored) {
+      const remoteIdentity = await this.remoteIdentityForExisting(stored, repository);
+      this.assertCanonicalRemote(stored, repository, remoteIdentity);
+      if (!remoteIdentity) {
+        throw this.repositoryMismatch(
+          stored,
+          repository,
+          "Repository Reviewの追加操作に必要なGitHub remote identityを解決できません。",
+        );
+      }
+      stored = await this.assertOwnedSourceRef(stored, repository);
+      return path.resolve(stored.localRepositoryPath) === path.resolve(repository.worktreePath)
+        ? stored
+        : this.database.updateRepositoryReviewLocation(stored.id, {
+            localRepositoryPath: repository.worktreePath,
+            gitCommonDir: repository.gitCommonDir,
+          });
+    }
     const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
     if (!remoteIdentity) {
       await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
@@ -825,17 +859,6 @@ export class RepositoryReviewLifecycle {
         "Repository Reviewの追加操作に必要なGitHub remote identityを解決できません。",
         { suggestions: ["対象repositoryのorigin remoteを確認してください。"] },
       );
-    }
-    let stored = this.database.findRepositoryReviewByGitCommonDir(repository.gitCommonDir);
-    if (stored) {
-      this.assertCanonicalRemote(stored, repository, remoteIdentity);
-      stored = await this.assertOwnedSourceRef(stored, repository);
-      return path.resolve(stored.localRepositoryPath) === path.resolve(repository.worktreePath)
-        ? stored
-        : this.database.updateRepositoryReviewLocation(stored.id, {
-            localRepositoryPath: repository.worktreePath,
-            gitCommonDir: repository.gitCommonDir,
-          });
     }
     await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
     const sameIdentity = this.database.findRepositoryReviewByIdentity(

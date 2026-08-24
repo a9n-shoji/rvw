@@ -13,6 +13,7 @@ import {
   type CommentDraftState,
 } from "../../src/web/comment-draft-store.js";
 import {
+  assignDocumentToPane,
   moveDocumentToPane,
   removeDocumentFromWorkspace,
   type ActiveDocument,
@@ -28,8 +29,13 @@ const draft: CommentDraftState = {
   fileComposerOpen: true,
 };
 
-function contextKey(activeDocument: ActiveDocument, pane: "left" | "right" = "left"): string {
+function contextKey(
+  activeDocument: ActiveDocument,
+  pane: "left" | "right" = "left",
+  reviewKind: "pull-request" | "repository" = "pull-request",
+): string {
   return commentDraftContextKey({
+    reviewKind,
     activeDocument,
     pane,
     selectedOid: "c".repeat(40),
@@ -78,6 +84,7 @@ describe("comment draft store", () => {
     };
     const first = contextKey(issue);
     const refreshed = commentDraftContextKey({
+      reviewKind: "pull-request",
       activeDocument: issue,
       pane: "left",
       selectedOid: "d".repeat(40),
@@ -86,6 +93,50 @@ describe("comment draft store", () => {
     });
 
     expect(refreshed).toBe(first);
+  });
+
+  it("keeps a current Repository Review file draft key stable across source refreshes", () => {
+    const document: ActiveDocument = { kind: "repository-file", path: "src/example.ts" };
+    const first = contextKey(document, "left", "repository");
+    const refreshed = commentDraftContextKey({
+      reviewKind: "repository",
+      activeDocument: document,
+      pane: "left",
+      selectedOid: "d".repeat(40),
+      oldOid: null,
+      displayMode: "full",
+    });
+    const exact = contextKey(
+      {
+        ...document,
+        sourceOid: "d".repeat(40),
+        comparisonPolicy: "exact-source",
+      },
+      "left",
+      "repository",
+    );
+
+    expect(refreshed).toBe(first);
+    expect(exact).not.toBe(first);
+  });
+
+  it("rejects replacing a current file with an exact-source variant while its draft is open", () => {
+    const current: ActiveDocument = { kind: "repository-file", path: "src/example.ts" };
+    const exact: ActiveDocument = {
+      ...current,
+      sourceOid: "a".repeat(40),
+      comparisonPolicy: "exact-source",
+    };
+    const previous = workspace([current], []);
+    const next = assignDocumentToPane(previous, exact, "left");
+    const key = contextKey(current, "left", "repository");
+    writeCommentDraft(pullRequestId, key, currentCommentDraftRevision(pullRequestId, key), draft);
+
+    expect(moveCommentDraftsForWorkspaceTransition(pullRequestId, previous, next)).toEqual({
+      status: "conflict",
+      reason: "document-replacement",
+    });
+    expect(readCommentDraft(pullRequestId, key)).toEqual(draft);
   });
 
   it("isolates the same document by pane", () => {
@@ -262,6 +313,7 @@ describe("comment draft store", () => {
 
     expect(moveCommentDraftsForWorkspaceTransition(pullRequestId, previous, next)).toEqual({
       status: "conflict",
+      reason: "destination",
     });
     expect(readCommentReplyDraft(pullRequestId, sourceKey).body).toBe("移動元の返信");
     expect(readCommentReplyDraft(pullRequestId, targetKey).body).toBe("移動先の返信");

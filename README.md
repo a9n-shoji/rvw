@@ -42,8 +42,9 @@ GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作�
 current sourceだけでなくComment、reply、Walkthroughが参照するhistorical sourceまでpreviewで全件確認し、返された
 tokenで`rvw repository relocate --yes`を実行すると、artifactを削除せずbindingだけを復旧できます。移動と同時に
 remoteが変更または削除されても、残存するlive Review namespaceを検出して二件目を作らずfail closedします。
-複数のGitHub remoteがある場合は`origin`、続いてremote名順の最初を対象にします。典型的なfork cloneでは
-`origin = user/project`がRepository Review対象で、`upstream`を明示選択するoptionはありません。
+新しいRepository Reviewを作るとき、複数のGitHub remoteがある場合は`origin`、続いてremote名順の最初を対象にします。
+既存Reviewでは保存済みcanonical repositoryに一致するremoteを全remoteから探すため、後から`origin`をforkへ
+変更しても一致する`upstream`が残っていればReviewを継続できます。新規作成時に`upstream`を明示選択するoptionはありません。
 local remoteを別owner/repositoryへ変更した場合はcache hitでも
 `REPOSITORY_MISMATCH`となり、状態を更新しません。repository rename／organization transferには自動追従せず、
 元のbindingでresetして作り直します。一度同期したcode、Issue、Walkthrough、CommentはGitHub networkが

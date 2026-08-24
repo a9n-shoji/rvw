@@ -7,6 +7,7 @@ import {
   type DocumentPaneId,
   type DocumentWorkspaceState,
 } from "./document-workspace.js";
+import type { ReviewKind } from "./review-context.js";
 
 export interface CommentDraftState {
   body: string;
@@ -17,6 +18,7 @@ export interface CommentDraftState {
 }
 
 export interface CommentDraftContext {
+  reviewKind: ReviewKind;
   activeDocument: ActiveDocument;
   pane: DocumentPaneId;
   selectedOid: string;
@@ -31,7 +33,8 @@ export interface CommentReplyDraftSnapshot {
 }
 
 export type CommentDraftWorkspaceTransitionResult =
-  { status: "applied"; commentDraftsMoved: boolean } | { status: "conflict" };
+  | { status: "applied"; commentDraftsMoved: boolean }
+  | { status: "conflict"; reason: "destination" | "document-replacement" };
 
 const draftsByReview = new Map<string, Map<string, CommentDraftState>>();
 const replyDraftsByReview = new Map<string, Map<string, CommentReplyDraftSnapshot>>();
@@ -77,13 +80,67 @@ export function commentDraftContextKey(context: CommentDraftContext): string {
   if (context.activeDocument.kind === "issue") {
     return JSON.stringify([documentIdentity(context.activeDocument)]);
   }
+  const currentRepositoryFile =
+    context.reviewKind === "repository" &&
+    context.activeDocument.kind === "repository-file" &&
+    context.activeDocument.sourceOid === undefined;
   return JSON.stringify([
     context.pane,
     documentIdentity(context.activeDocument),
-    context.selectedOid,
-    context.oldOid,
-    context.displayMode,
+    currentRepositoryFile ? null : context.selectedOid,
+    currentRepositoryFile ? null : context.oldOid,
+    currentRepositoryFile ? "current" : context.displayMode,
   ]);
+}
+
+function hasCommentDraftForDocument(
+  reviewId: string,
+  document: ActiveDocument,
+  pane: DocumentPaneId,
+): boolean {
+  const drafts = draftsByReview.get(reviewId);
+  if (!drafts) return false;
+  const identity = JSON.stringify(documentIdentity(document));
+  for (const contextKey of drafts.keys()) {
+    let context: unknown;
+    try {
+      context = JSON.parse(contextKey);
+    } catch {
+      continue;
+    }
+    if (
+      Array.isArray(context) &&
+      context.length === 5 &&
+      context[0] === pane &&
+      JSON.stringify(context[1]) === identity
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function replacesDraftOwningDocument(
+  reviewId: string,
+  previous: DocumentWorkspaceState,
+  next: DocumentWorkspaceState,
+): boolean {
+  for (const pane of ["left", "right"] as const) {
+    for (const sourceDocument of previous.documents[pane]) {
+      const targetDocument = next.documents[pane].find(
+        (candidate) => documentTabKey(candidate) === documentTabKey(sourceDocument),
+      );
+      if (
+        targetDocument &&
+        JSON.stringify(documentIdentity(targetDocument)) !==
+          JSON.stringify(documentIdentity(sourceDocument)) &&
+        hasCommentDraftForDocument(reviewId, sourceDocument, pane)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 export function currentCommentDraftRevision(reviewId: string, contextKey?: string): number {
@@ -180,6 +237,9 @@ export function moveCommentDraftsForWorkspaceTransition(
   previous: DocumentWorkspaceState,
   next: DocumentWorkspaceState,
 ): CommentDraftWorkspaceTransitionResult {
+  if (replacesDraftOwningDocument(reviewId, previous, next)) {
+    return { status: "conflict", reason: "document-replacement" };
+  }
   const replyMoves: Array<{
     sourceKey: string;
     targetKey: string;
@@ -216,7 +276,7 @@ export function moveCommentDraftsForWorkspaceTransition(
     replyMoves.some(({ targetKey }) => replyDrafts?.has(targetKey)) ||
     commentMoves.some(({ targetKey }) => commentDrafts?.has(targetKey))
   ) {
-    return { status: "conflict" };
+    return { status: "conflict", reason: "destination" };
   }
 
   for (const { sourceKey } of replyMoves) replyDrafts?.delete(sourceKey);

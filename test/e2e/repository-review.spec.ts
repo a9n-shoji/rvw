@@ -940,6 +940,62 @@ test("keeps an Issue range composer focused across a same-body Repository Review
   ).toBeVisible();
 });
 
+test("preserves a current repository-file draft body across source synchronization", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
+  await page.getByRole("button", { name: "README.md", exact: true }).click();
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  await leftPane.getByRole("button", { name: "ファイル全体へコメント" }).click();
+  const textarea = leftPane.getByRole("textbox", { name: "ファイル全体へコメント" });
+  await textarea.fill("Preserve this current-source file draft");
+
+  const refresh = await request.post("/api/test/refresh-repository-review", {
+    data: { sourceOid: "b".repeat(40) },
+  });
+  expect(refresh.ok()).toBe(true);
+
+  await expect(
+    page.getByRole("heading", { name: "Repository Review · trunk · bbbbbbbb" }),
+  ).toBeVisible();
+  await expect(textarea).toHaveValue("Preserve this current-source file draft");
+});
+
+test("requires a fresh line selection when the current repository source changes", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
+  await page.getByRole("button", { name: "README.md", exact: true }).click();
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const sourceLine = leftPane
+    .locator('[data-rvw-source-start-line="5"][data-rvw-source-leaf="true"]')
+    .filter({ hasText: "Repository documentation updated." });
+  await selectMappedText(sourceLine);
+  await leftPane.getByRole("button", { name: "L5へコメント", exact: true }).click();
+  const textarea = leftPane.getByRole("textbox", { name: "README.md · L5へコメント" });
+  await textarea.fill("Preserve this line draft but reselect its source");
+
+  const refresh = await request.post("/api/test/refresh-repository-review", {
+    data: { sourceOid: "b".repeat(40) },
+  });
+  expect(refresh.ok()).toBe(true);
+
+  await expect(
+    leftPane.getByText(
+      "Repository sourceが更新されました。draftは保持されています。現在のsourceで範囲を選び直してください。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(textarea).toHaveValue("Preserve this line draft but reselect its source");
+  await expect(
+    leftPane
+      .locator(".markdown-selection-composer-slot")
+      .getByRole("button", { name: "コメント", exact: true }),
+  ).toBeDisabled();
+});
+
 test("refreshes an open Issue body without silently applying a stale range draft", async ({
   page,
   request,

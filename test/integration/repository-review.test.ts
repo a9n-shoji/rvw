@@ -497,6 +497,24 @@ describe("Repository Review", () => {
     });
   });
 
+  it("opens and synchronizes an existing review through its matching non-origin remote", async () => {
+    const { repositoryPath, service } = setup();
+    const first = await service.openRepositoryReview(repositoryPath);
+    git(repositoryPath, "remote", "set-url", "origin", "git@github.com:reviewer/review-repo.git");
+    const upstreamUrl = "https://github.com/acme/review-repo.git";
+    git(repositoryPath, "remote", "add", "upstream", upstreamUrl);
+
+    await expect(service.openRepositoryReview(repositoryPath)).resolves.toMatchObject({
+      fromCache: true,
+      repositoryReview: { id: first.repositoryReview.id },
+      selectedRemote: { name: "upstream", url: upstreamUrl },
+    });
+    await expect(service.syncRepositoryReview(repositoryPath)).resolves.toMatchObject({
+      repositoryReview: { id: first.repositoryReview.id },
+      selectedRemote: { name: "upstream", url: upstreamUrl },
+    });
+  });
+
   it("keeps destructive previews existing-only across direct, Agent socket, and HTTP boundaries", async () => {
     const { repositoryPath, github, database, service } = setup();
     github.repositoryError = new Error("existing-only operations must not call GitHub");

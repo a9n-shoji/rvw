@@ -747,7 +747,7 @@ export function RepositoryReviewApp({
               key={
                 paneDocument.kind === "issue"
                   ? `${draftWorkspaceRevision}:${paneId}:repository:${repositoryReview.id}:issue:${paneDocument.id}`
-                  : `${draftWorkspaceRevision}:${paneId}:repository:${repositoryReview.id}:repository-file:${paneDocument.path}:${paneDocument.sourceOid ?? repositoryReview.sourceOid}:${paneDocument.comparisonPolicy ?? ""}`
+                  : `${draftWorkspaceRevision}:${paneId}:repository:${repositoryReview.id}:repository-file:${paneDocument.path}:${paneDocument.sourceOid ?? "current"}:${paneDocument.comparisonPolicy ?? ""}`
               }
               review={review}
               paneId={paneId}
@@ -757,7 +757,7 @@ export function RepositoryReviewApp({
               documentRevision={
                 paneDocument.kind === "issue"
                   ? (issues.find((issue) => issue.id === paneDocument.id)?.bodyHash ?? null)
-                  : null
+                  : (paneDocument.sourceOid ?? repositoryReview.sourceOid)
               }
               displayMode="full"
               diffStyle="unified"

@@ -1178,14 +1178,15 @@ app.get("/api/repository-reviews/:id/document", (context) => {
     });
   }
   const filePath = context.req.query("path");
-  const text = repositoryDocumentText(secondHead, filePath);
+  const sourceOid = context.req.query("sourceOid") ?? repositoryReview.sourceOid;
+  const text = repositoryDocumentText(sourceOid, filePath);
   return context.json({
     ok: true,
     document: {
       ref: {
         kind: "repository-file",
         repositoryReviewId: repositoryReview.id,
-        sourceOid: secondHead,
+        sourceOid,
         path: filePath,
       },
       availability: "available",

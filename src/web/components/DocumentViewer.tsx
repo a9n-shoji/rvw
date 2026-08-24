@@ -755,6 +755,7 @@ export function DocumentViewer({
     setMarkdownViewState(view);
   };
   const commentDraftKey = commentDraftContextKey({
+    reviewKind: review.kind,
     activeDocument,
     pane: paneId,
     selectedOid,
@@ -1269,13 +1270,16 @@ export function DocumentViewer({
         : renderedRefs.new;
   const fileLevelRef =
     effectiveDisplayMode === "full" ? fullRef : (renderedRefs.new ?? renderedRefs.old ?? null);
-  const issueSelectionIsStale =
-    activeDocument.kind === "issue" &&
-    selection !== null &&
-    selectionDocumentRevision !== documentRevision;
+  const revisionBoundSelection =
+    activeDocument.kind === "issue" ||
+    (review.kind === "repository" &&
+      activeDocument.kind === "repository-file" &&
+      activeDocument.sourceOid === undefined);
+  const selectionIsStale =
+    revisionBoundSelection && selection !== null && selectionDocumentRevision !== documentRevision;
   const canSubmitSelection =
     selection !== null &&
-    !issueSelectionIsStale &&
+    !selectionIsStale &&
     selectedLineRef !== null &&
     selectedLineRef !== undefined &&
     (!selection.side || !selection.endSide || selection.side === selection.endSide);
@@ -1338,7 +1342,7 @@ export function DocumentViewer({
   const handleLineSelectionStart = useCallback(
     (range: SelectedLineRange | null): void => {
       resetCreateMutation();
-      if (activeDocument.kind !== "issue" || selectionDocumentRevision === documentRevision) {
+      if (!revisionBoundSelection || selectionDocumentRevision === documentRevision) {
         setBody("");
       }
       setSelection(null);
@@ -1348,12 +1352,12 @@ export function DocumentViewer({
         setFileComposerOpen(false);
       }
     },
-    [activeDocument.kind, documentRevision, resetCreateMutation, selectionDocumentRevision],
+    [documentRevision, resetCreateMutation, revisionBoundSelection, selectionDocumentRevision],
   );
   const handleLineSelectionEnd = useCallback(
     (range: SelectedLineRange | null): void => {
       resetCreateMutation();
-      if (activeDocument.kind !== "issue" || selectionDocumentRevision === documentRevision) {
+      if (!revisionBoundSelection || selectionDocumentRevision === documentRevision) {
         setBody("");
       }
       setSelection(range);
@@ -1364,7 +1368,7 @@ export function DocumentViewer({
         setFileComposerOpen(false);
       }
     },
-    [activeDocument.kind, documentRevision, resetCreateMutation, selectionDocumentRevision],
+    [documentRevision, resetCreateMutation, revisionBoundSelection, selectionDocumentRevision],
   );
   const { fileAnnotations, diffAnnotations } = useMemo(() => {
     const fileAnnotations = [...(annotationQuery.data?.fileAnnotations ?? [])];
@@ -1712,8 +1716,10 @@ export function DocumentViewer({
   const selectionLabel = selection
     ? `${[selectedPathLabel, selectedSideLabel, selectedRangeLabel].filter(Boolean).join(" · ")}へコメント`
     : "選択範囲へコメント";
-  const selectionValidationError = issueSelectionIsStale
-    ? "Issue本文が更新されました。draftは保持されています。現在の本文で範囲を選び直してください。"
+  const selectionValidationError = selectionIsStale
+    ? activeDocument.kind === "issue"
+      ? "Issue本文が更新されました。draftは保持されています。現在の本文で範囲を選び直してください。"
+      : "Repository sourceが更新されました。draftは保持されています。現在のsourceで範囲を選び直してください。"
     : selection?.side && selection.endSide && selection.side !== selection.endSide
       ? "old/newをまたぐ選択にはコメントできません。"
       : undefined;
@@ -1917,7 +1923,7 @@ export function DocumentViewer({
                     selection !== null &&
                     nextSelection.start === selection.start &&
                     nextSelection.end === selection.end;
-                  if (!issueSelectionIsStale && !keepsReselectedDraft) setBody("");
+                  if (!selectionIsStale && !keepsReselectedDraft) setBody("");
                   setSelection(nextSelection);
                   setSelectionDocumentRevision(range ? documentRevision : null);
                   setSelectionPreview(null);

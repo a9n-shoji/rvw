@@ -129,8 +129,9 @@ commit objectをpreviewと実行時に検証する。previewは必須／検証�
 旧／新worktree path、旧／新common directory、source OID、全証跡検証結果を含むconfirmation tokenと`--yes`を
 受けた場合だけ保存locationを更新する。source、artifact、retained refは変更しない。全owned refまたはobjectを
 持たない独立cloneはrelocation候補にせず、従来どおり`REPOSITORY_MISMATCH`にする。
-worktree pathとGit common directoryは保存・比較前にfilesystem `realpath`へ正規化する。複数GitHub remoteは
-`origin`、その後remote名順で選択し、選択したname／URLを`repository open`、viewer header、`doctor`で観測可能にする。
+worktree pathとGit common directoryは保存・比較前にfilesystem `realpath`へ正規化する。新規作成時の複数GitHub remoteは
+`origin`、その後remote名順で選択する。既存Reviewは保存済みcanonical identityに一致するremoteを同じ順序の全remoteから
+検索し、無関係な`origin`だけを理由に拒否しない。実際に選択したname／URLを`repository open`、viewer header、`doctor`で観測可能にする。
 `doctor`はreview-owned Repository Review refをcurrent、artifact referenced、unreferenced、deleted-review orphanへ分類する
 read-only reportを返し、自動削除しない。
 
@@ -415,6 +416,10 @@ empty fileは従来どおり明示的に扱う。
   rangeの送信は拒否し、現在本文での明示的な再選択後だけ許可する。semantic range migrationは行わない。
   保存済みのIssue全体コメントはstable Issue identityを対象にするため本文更新後もcurrent、rangeコメントだけは
   作成時body hashと異なればOutdatedとする。
+- Repository Reviewのcurrent repository file draftはpaneとpathをstable scopeとし、source OIDは
+  `documentRevision`として別に保持する。source同期後もcomposerと本文を復元するが、旧revisionの行選択は送信不可として
+  現在sourceでの再選択を要求する。`exact-source` fileはOIDをdraft scopeへ含め、同じpathのcurrent / exact-sourceを
+  置換すると入力中draftが非表示になる場合はworkspace変更を明示的に拒否する。
 - commit範囲切り替え時はopen pathとglobal表示modeを保ち、latest側commitが変わった場合だけ文書を
   そのcommitへ結び直す。exact source commentから開いた文書は
   通常の選択commit文書へ結び直す。current PR commit列外のexact sourceを開く場合はfull viewだけにする。
@@ -1265,6 +1270,9 @@ Repository Review replyのrequest hashはreview kindを含む。PR replyは公�
 Repository ReviewとIssue追加migrationは、canonical Issue cacheの`github_issues`、実owner FKを持つ
 `pull_request_issues` / `repository_review_issues`、nativeなPR `comment_targets.target_kind = issue`、repository
 singletonの`repository_reviews`、およびRepository Review専用のWalkthrough、Comment、post、typed reference tableを追加する。
+Repository Review schemaをversion 011として記録した未公開development DBは自動upgradeせず、関連tableを一つでも
+検出した場合は012を記録する前にfail closedしてDBの退避・再作成を要求する。公開済み0.2.x DBだけが通常の
+011 comment provenanceから012へ進む。
 PRとRepository Reviewのartifact ownershipとcascade境界は分離し、
 共有Issue cacheの表示内容が変わった場合だけ、そのIssueを所有する全Reviewの
 `review_change_sequence`を同じtransactionで更新する。membership固有の同期errorはそのReviewだけを更新し、
