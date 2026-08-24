@@ -423,7 +423,8 @@ empty fileは従来どおり明示的に扱う。
   `documentRevision`として別に保持する。source同期後もcomposerと本文を復元するが、旧revisionの行選択は送信不可として
   現在sourceでの再選択を要求する。`exact-source` fileはOIDをdraft scopeへ含め、同じpathのcurrent / exact-sourceを
   置換すると入力中の新規commentまたはinline reply draftが非表示になる場合は、同一pane置換だけでなくcross-pane移動後の
-  pane正規化も含めてworkspace変更を明示的に拒否する。
+  pane正規化も含めてworkspace変更を明示的に拒否する。元documentと同じidentityが別paneに残っていても、draftを所有するpaneの
+  tab slotが別identityへ置換される場合は自動移送せず拒否する。
 - commit範囲切り替え時はopen pathとglobal表示modeを保ち、latest側commitが変わった場合だけ文書を
   そのcommitへ結び直す。exact source commentから開いた文書は
   通常の選択commit文書へ結び直す。current PR commit列外のexact sourceを開く場合はfull viewだけにする。

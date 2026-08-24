@@ -21,7 +21,8 @@ generic display label renders as `Agent`, and notification tags include review k
 Keep a current Repository Review file draft stable by pane and path while recording the source OID as its document
 revision. A source refresh preserves the body and composer but requires a fresh line selection. Replacing a current
 file tab with an exact-source variant is rejected while the source tab owns a new-comment or inline-reply draft
-instead of hiding it, including when a cross-pane move normalizes the surviving tab back to the left pane.
+instead of hiding it, including when a cross-pane move normalizes the surviving tab back to the left pane or the
+original document identity remains open in the other pane but does not own the pane-scoped draft.
 
 ### Consequences
 

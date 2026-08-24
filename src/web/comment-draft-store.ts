@@ -146,10 +146,17 @@ function replacesDraftOwningDocument(
       const ownsDraft =
         hasCommentDraftForDocument(reviewId, sourceDocument, sourcePane) ||
         hasCommentReplyDraftForDocument(reviewId, sourceDocument, sourcePane);
-      if (
-        !ownsDraft ||
-        nextDocuments.some((candidate) => sameDocumentIdentity(candidate, sourceDocument))
-      ) {
+      if (!ownsDraft) {
+        continue;
+      }
+      const samePaneDocument = next.documents[sourcePane].find(
+        (candidate) => documentTabKey(candidate) === documentTabKey(sourceDocument),
+      );
+      if (samePaneDocument) {
+        if (!sameDocumentIdentity(samePaneDocument, sourceDocument)) return true;
+        continue;
+      }
+      if (nextDocuments.some((candidate) => sameDocumentIdentity(candidate, sourceDocument))) {
         continue;
       }
       if (

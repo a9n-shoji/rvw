@@ -139,6 +139,25 @@ describe("comment draft store", () => {
     expect(readCommentDraft(pullRequestId, key)).toEqual(draft);
   });
 
+  it("rejects replacing one pane's current source when it survives in the other pane", () => {
+    const current: ActiveDocument = { kind: "repository-file", path: "src/example.ts" };
+    const exact: ActiveDocument = {
+      ...current,
+      sourceOid: "a".repeat(40),
+      comparisonPolicy: "exact-source",
+    };
+    const previous = workspace([current], [current]);
+    const next = assignDocumentToPane(previous, exact, "left");
+    const key = contextKey(current, "left", "repository");
+    writeCommentDraft(pullRequestId, key, currentCommentDraftRevision(pullRequestId, key), draft);
+
+    expect(moveCommentDraftsForWorkspaceTransition(pullRequestId, previous, next)).toEqual({
+      status: "conflict",
+      reason: "document-replacement",
+    });
+    expect(readCommentDraft(pullRequestId, key)).toEqual(draft);
+  });
+
   it("rejects a cross-pane current/exact-source replacement after pane normalization", () => {
     const current: ActiveDocument = { kind: "repository-file", path: "src/example.ts" };
     const exact: ActiveDocument = {
