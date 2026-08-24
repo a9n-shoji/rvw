@@ -23,6 +23,7 @@ import type {
   CachedIssueDocument,
   CodeReference,
   CommentPost,
+  CommentPostModifier,
   CommentPostEvent,
   CommentTarget,
   DeletedRepositoryWalkthrough,
@@ -86,6 +87,12 @@ function nullableNumber(row: DbRow, key: string): number | null {
     throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
   }
   return Number(value);
+}
+
+function nullableCommentPostModifier(row: DbRow, key: string): CommentPostModifier | null {
+  const value = nullableString(row, key);
+  if (value === null || value === "human" || value === "agent") return value;
+  throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
 }
 
 function stringRecordValue(row: DbRow, key: string): Record<string, string> {
@@ -203,6 +210,7 @@ function mapCommentPost(row: DbRow, references: CodeReference[] = []): CommentPo
     relatedCommitOid: nullableString(row, "related_commit_oid"),
     references,
     authorLabel: nullableString(row, "author_label"),
+    lastModifiedBy: nullableCommentPostModifier(row, "last_modified_by"),
     isRoot: numberValue(row, "is_root") === 1,
     createdAt: stringValue(row, "created_at"),
     updatedAt: stringValue(row, "updated_at"),
@@ -353,6 +361,7 @@ export interface NewCommentInput {
   relatedCommitOid?: string | null;
   references?: CodeReference[];
   authorLabel?: string | null;
+  lastModifiedBy?: CommentPostModifier;
 }
 
 export interface CommentUpdateInput {
@@ -360,6 +369,7 @@ export interface CommentUpdateInput {
   reply: string;
   resolve: boolean;
   authorLabel?: string | null;
+  lastModifiedBy?: CommentPostModifier;
   references?: CodeReference[];
   idempotencyKey?: string;
   idempotencyRequestHash?: string;
@@ -383,6 +393,7 @@ export interface NewRepositoryCommentInput {
   relatedCommitOid?: string | null;
   references?: CodeReference[];
   authorLabel?: string | null;
+  lastModifiedBy?: CommentPostModifier;
 }
 
 export interface NewRepositoryWalkthroughInput {
@@ -501,6 +512,59 @@ export class RvwDatabase {
         .prepare("SELECT version FROM schema_migrations")
         .all() as DbRow[]) {
         applied.add(numberValue(row, "version"));
+      }
+    }
+    // The unreleased Repository Review branch originally used migration 011 while main assigned
+    // that version to comment-post provenance. Upgrade those development databases in place before
+    // the Repository Review schema moves to 012; normal databases use the ordinary 011 -> 012 path.
+    const tableExists = (table: string): boolean =>
+      this.database
+        .prepare("SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = ?")
+        .get(table) !== undefined;
+    const tableHasColumn = (table: string, column: string): boolean =>
+      (this.database.prepare(`PRAGMA table_info(${table})`).all() as DbRow[]).some(
+        (row) => stringValue(row, "name") === column,
+      );
+    const legacyRepositoryReviewMigration =
+      applied.has(11) &&
+      !applied.has(12) &&
+      tableExists("repository_reviews") &&
+      tableExists("repository_comment_posts") &&
+      tableExists("review_comment_post_events");
+    if (legacyRepositoryReviewMigration) {
+      try {
+        this.database.exec("BEGIN IMMEDIATE");
+        const upgradedByAnotherProcess =
+          this.database.prepare("SELECT 1 FROM schema_migrations WHERE version = 12").get() !==
+          undefined;
+        if (!upgradedByAnotherProcess) {
+          if (!tableHasColumn("comment_posts", "last_modified_by")) {
+            this.database.exec(
+              "ALTER TABLE comment_posts ADD COLUMN last_modified_by TEXT CHECK(last_modified_by IS NULL OR last_modified_by IN ('human', 'agent'))",
+            );
+          }
+          if (!tableHasColumn("repository_comment_posts", "last_modified_by")) {
+            this.database.exec(
+              "ALTER TABLE repository_comment_posts ADD COLUMN last_modified_by TEXT CHECK(last_modified_by IS NULL OR last_modified_by IN ('human', 'agent'))",
+            );
+          }
+          this.database
+            .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (12, ?)")
+            .run(new Date().toISOString());
+        }
+        this.database.exec("COMMIT");
+        applied.add(12);
+      } catch (error) {
+        try {
+          this.database.exec("ROLLBACK");
+        } catch {
+          // Preserve the compatibility migration error.
+        }
+        throw new RvwError(
+          "DATABASE_ERROR",
+          "旧Repository Review migration 011の互換upgradeに失敗しました。",
+          { cause: error },
+        );
       }
     }
     const migrations = readdirSync(directory)
@@ -2471,7 +2535,7 @@ export class RvwDatabase {
       this.insertCommentTarget(id, input.target);
       this.database
         .prepare(
-          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, last_modified_by, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
         )
         .run(
           postId,
@@ -2479,6 +2543,7 @@ export class RvwDatabase {
           input.body,
           input.relatedCommitOid ?? null,
           input.authorLabel ?? null,
+          input.lastModifiedBy ?? null,
           now,
           now,
         );
@@ -2717,7 +2782,8 @@ export class RvwDatabase {
             i.github_url AS issue_url, i.number AS issue_number, i.title AS issue_title,
             root.id AS root_id, root.body AS root_body,
             root.related_commit_oid AS root_related_commit_oid,
-            root.author_label AS root_author_label, root.created_at AS root_created_at,
+            root.author_label AS root_author_label,
+            root.last_modified_by AS root_last_modified_by, root.created_at AS root_created_at,
             root.updated_at AS root_updated_at,
             (SELECT COUNT(*) FROM comment_posts p WHERE p.comment_id = c.id) AS post_count
           FROM comments c
@@ -2741,6 +2807,7 @@ export class RvwDatabase {
           relatedCommitOid: nullableString(row, "root_related_commit_oid"),
           references: [],
           authorLabel: nullableString(row, "root_author_label"),
+          lastModifiedBy: nullableCommentPostModifier(row, "root_last_modified_by"),
           isRoot: true,
           createdAt: stringValue(row, "root_created_at"),
           updatedAt: stringValue(row, "root_updated_at"),
@@ -2767,6 +2834,7 @@ export class RvwDatabase {
       body: string;
       relatedCommitOid?: string | null;
       authorLabel?: string | null;
+      lastModifiedBy?: CommentPostModifier;
       references?: CodeReference[];
       idempotencyKey?: string;
       idempotencyRequestHash?: string;
@@ -2827,9 +2895,18 @@ export class RvwDatabase {
       const now = new Date().toISOString();
       this.database
         .prepare(
-          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, last_modified_by, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
         )
-        .run(id, commentId, input.body, relatedCommitOid, authorLabel, now, now);
+        .run(
+          id,
+          commentId,
+          input.body,
+          relatedCommitOid,
+          authorLabel,
+          input.lastModifiedBy ?? null,
+          now,
+          now,
+        );
       this.insertCodeReferences("comment-post", id, input.references ?? []);
       this.insertReviewCommentEvent(
         id,
@@ -2855,6 +2932,7 @@ export class RvwDatabase {
         relatedCommitOid,
         references: input.references ?? [],
         authorLabel,
+        lastModifiedBy: input.lastModifiedBy ?? null,
         isRoot: false,
         createdAt: now,
         updatedAt: now,
@@ -2870,35 +2948,28 @@ export class RvwDatabase {
     commentId: string,
     postId: string,
     body: string,
-    relatedCommitOid?: string | null,
-    references?: CodeReference[],
+    relatedCommitOid: string | null,
+    references: CodeReference[],
+    lastModifiedBy: CommentPostModifier | null,
   ): CommentPost {
     const now = new Date().toISOString();
     const comment = this.getComment(commentId);
     if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     this.immediateTransaction(() => {
-      const result =
-        relatedCommitOid === undefined
-          ? this.database
-              .prepare(
-                "UPDATE comment_posts SET body = ?, updated_at = ? WHERE id = ? AND comment_id = ?",
-              )
-              .run(body, now, postId, commentId)
-          : this.database
-              .prepare(
-                `UPDATE comment_posts SET body = ?, related_commit_oid = ?, updated_at = ?
-                WHERE id = ? AND comment_id = ?`,
-              )
-              .run(body, relatedCommitOid, now, postId, commentId);
+      const result = this.database
+        .prepare(
+          `UPDATE comment_posts
+           SET body = ?, related_commit_oid = ?, last_modified_by = ?, updated_at = ?
+           WHERE id = ? AND comment_id = ?`,
+        )
+        .run(body, relatedCommitOid, lastModifiedBy, now, postId, commentId);
       if (Number(result.changes) === 0) {
         throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
           status: 404,
         });
       }
-      if (references !== undefined) {
-        this.database.prepare("DELETE FROM comment_post_references WHERE post_id = ?").run(postId);
-        this.insertCodeReferences("comment-post", postId, references);
-      }
+      this.database.prepare("DELETE FROM comment_post_references WHERE post_id = ?").run(postId);
+      this.insertCodeReferences("comment-post", postId, references);
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
       this.incrementChangeSequence({ kind: "pull-request", reviewId: comment.pullRequestId });
     });
@@ -2987,6 +3058,7 @@ export class RvwDatabase {
             relatedCommitOid,
             references: update.references ?? [],
             authorLabel: update.authorLabel ?? "Agent",
+            lastModifiedBy: update.lastModifiedBy ?? "agent",
             ...(update.idempotencyKey === undefined
               ? {}
               : { idempotencyKey: update.idempotencyKey }),
@@ -3374,8 +3446,9 @@ export class RvwDatabase {
       this.database
         .prepare(
           `INSERT INTO repository_comment_posts(
-            id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+            id, comment_id, body, related_commit_oid, author_label, last_modified_by, is_root,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
         )
         .run(
           postId,
@@ -3383,6 +3456,7 @@ export class RvwDatabase {
           input.body,
           input.relatedCommitOid ?? null,
           input.authorLabel ?? null,
+          input.lastModifiedBy ?? null,
           now,
           now,
         );
@@ -3413,6 +3487,7 @@ export class RvwDatabase {
       references?: CodeReference[];
       idempotencyKey?: string;
       idempotencyRequestHash?: string;
+      lastModifiedBy?: CommentPostModifier;
     },
   ): CommentPost {
     return this.immediateTransaction(() => {
@@ -3467,8 +3542,9 @@ export class RvwDatabase {
       this.database
         .prepare(
           `INSERT INTO repository_comment_posts(
-            id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+            id, comment_id, body, related_commit_oid, author_label, last_modified_by, is_root,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         )
         .run(
           id,
@@ -3476,6 +3552,7 @@ export class RvwDatabase {
           input.body,
           input.relatedCommitOid ?? null,
           input.authorLabel ?? null,
+          input.lastModifiedBy ?? null,
           now,
           now,
         );
@@ -3517,13 +3594,14 @@ export class RvwDatabase {
     body: string,
     relatedCommitOid?: string | null,
     references?: CodeReference[],
+    lastModifiedBy?: CommentPostModifier | null,
   ): CommentPost {
     const now = new Date().toISOString();
     const comment = this.getRepositoryComment(commentId);
     if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     this.immediateTransaction(() => {
       const result =
-        relatedCommitOid === undefined
+        relatedCommitOid === undefined && lastModifiedBy === undefined
           ? this.database
               .prepare(
                 "UPDATE repository_comment_posts SET body = ?, updated_at = ? WHERE id = ? AND comment_id = ?",
@@ -3531,10 +3609,11 @@ export class RvwDatabase {
               .run(body, now, postId, commentId)
           : this.database
               .prepare(
-                `UPDATE repository_comment_posts SET body = ?, related_commit_oid = ?, updated_at = ?
+                `UPDATE repository_comment_posts
+                 SET body = ?, related_commit_oid = ?, last_modified_by = ?, updated_at = ?
                  WHERE id = ? AND comment_id = ?`,
               )
-              .run(body, relatedCommitOid, now, postId, commentId);
+              .run(body, relatedCommitOid ?? null, lastModifiedBy ?? null, now, postId, commentId);
       if (Number(result.changes) !== 1) {
         throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
           status: 404,

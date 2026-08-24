@@ -72,6 +72,7 @@ describe("Repository Review comment protocol", () => {
             relatedCommitOid: null,
             references: [],
             authorLabel: "Reviewer",
+            lastModifiedBy: null,
             isRoot: true,
             createdAt,
             updatedAt: createdAt,

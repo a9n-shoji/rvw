@@ -321,6 +321,8 @@ describe("rvw-watch-comments bundled scripts", () => {
         "pull-request:https://github.com/acme/repo/pull/1",
         "--context-display",
         "https://github.com/acme/repo/pull/1",
+        "--author-label",
+        "Codex",
       ],
       { encoding: "utf8", env: fakeEnvironment(fake) },
     );
@@ -349,7 +351,7 @@ describe("rvw-watch-comments bundled scripts", () => {
       ],
     });
     const replyCall = readFakeCalls(fake.log).find((call) => call.args[1] === "reply");
-    expect(replyCall?.input).toMatchObject({ body: "🔎 確認中です…" });
+    expect(replyCall?.input).toMatchObject({ body: "🔎 確認中です…", authorLabel: "Codex" });
     expect(typeof (replyCall?.input as { idempotencyKey?: unknown }).idempotencyKey).toBe("string");
 
     runState(state, "complete", ["--lease", firstAcknowledgement.leaseId], { postIds: [] });
@@ -377,6 +379,8 @@ describe("rvw-watch-comments bundled scripts", () => {
         "pull-request:https://github.com/acme/repo/pull/1",
         "--context-display",
         "https://github.com/acme/repo/pull/1",
+        "--author-label",
+        "Codex",
       ],
       { encoding: "utf8", env: fakeEnvironment(fake) },
     );
@@ -398,6 +402,122 @@ describe("rvw-watch-comments bundled scripts", () => {
     const calls = readFakeCalls(fake.log);
     expect(calls.filter((call) => call.args[1] === "reply")).toHaveLength(2);
     expect(calls.some((call) => call.args[1] === "edit")).toBe(false);
+  });
+
+  it("pins the acknowledgement author before reply and rejects a changed or omitted restart label", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-auto-ack-author-recovery-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeQueuedState(state);
+    const contextArguments = [
+      "--context-kind",
+      "pull-request",
+      "--context-key",
+      "pull-request:https://github.com/acme/repo/pull/1",
+      "--context-display",
+      "https://github.com/acme/repo/pull/1",
+    ];
+    const claimed = runState(state, "claim", [...contextArguments, "--author-label", "Codex"]) as {
+      operations: Array<{ commentRef: string; idempotencyKey: string }>;
+    };
+    const operation = claimed.operations[0];
+    expect(operation).toBeDefined();
+    expect(runState(state, "status")).toMatchObject({
+      authorLabel: "Codex",
+      authorLabelBound: true,
+    });
+
+    const firstReply = spawnSync(
+      process.execPath,
+      [fake.script, "comment", "reply", operation!.commentRef, "--stdin", "--json"],
+      {
+        encoding: "utf8",
+        env: fakeEnvironment(fake),
+        input: JSON.stringify({
+          body: "🔎 確認中です…",
+          idempotencyKey: operation!.idempotencyKey,
+          authorLabel: "Codex",
+        }),
+      },
+    );
+    expect(firstReply.status).toBe(0);
+    expect(JSON.parse(firstReply.stdout)).toMatchObject({ post: { id: "status-post-1" } });
+    expect(runState(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
+
+    for (const restartArguments of [
+      [...contextArguments, "--author-label", "Claude Code"],
+      contextArguments,
+    ]) {
+      const restart = spawnSync(
+        process.execPath,
+        [autoAckScript, "--state", state, ...restartArguments],
+        { encoding: "utf8", env: fakeEnvironment(fake) },
+      );
+      expect(restart.status).toBe(1);
+      expect(JSON.parse(restart.stdout)).toMatchObject({
+        ok: false,
+        error: "watch-state claim failed",
+      });
+      expect(readFakeCalls(fake.log)).toHaveLength(1);
+    }
+
+    const resumed = spawnSync(
+      process.execPath,
+      [autoAckScript, "--state", state, ...contextArguments, "--author-label", "Codex"],
+      { encoding: "utf8", env: fakeEnvironment(fake) },
+    );
+    expect(resumed.status).toBe(0);
+    expect(JSON.parse(resumed.stdout)).toMatchObject({
+      ok: true,
+      attempts: 2,
+      operations: [{ statusPostId: "status-post-1", acknowledgement: "created" }],
+    });
+    const replyCalls = readFakeCalls(fake.log).filter(
+      (call) => call.args[0] === "comment" && call.args[1] === "reply",
+    );
+    expect(replyCalls).toHaveLength(2);
+    expect(replyCalls[0]?.input).toEqual(replyCalls[1]?.input);
+  });
+
+  it("rejects a changed author label before an empty watcher starts", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-driver-author-startup-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeQueuedState(state);
+    const claimed = runState(state, "claim", [
+      "--context-kind",
+      "pull-request",
+      "--context-key",
+      "pull-request:https://github.com/acme/repo/pull/1",
+      "--context-display",
+      "https://github.com/acme/repo/pull/1",
+      "--author-label",
+      "Codex",
+    ]) as { leaseId: string };
+    runState(state, "complete", ["--lease", claimed.leaseId], { postIds: [] });
+    expect(runState(state, "status")).toMatchObject({
+      authorLabel: "Codex",
+      authorLabelBound: true,
+      batches: { pending: 0, inFlight: 0, completed: 1 },
+    });
+
+    for (const args of [
+      [driverScript, state, "--auto-ack", "--author-label", "Claude Code"],
+      [driverScript, state, "--auto-ack"],
+    ]) {
+      const result = spawnSync(process.execPath, args, {
+        encoding: "utf8",
+        env: fakeEnvironment(fake),
+      });
+      expect(result.status).toBe(23);
+      expect(result.stdout).toBe("");
+      const failure = JSON.parse(result.stderr) as { error?: unknown };
+      expect(failure).toMatchObject({ ok: false, exitCode: 23 });
+      expect(failure.error).toEqual(
+        expect.stringContaining("Existing task author label Codex does not match"),
+      );
+    }
+    expect(existsSync(fake.log)).toBe(false);
   });
 
   it("posts one Repository Review final reply and durably suppresses its later event", () => {

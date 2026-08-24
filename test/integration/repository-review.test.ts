@@ -14,6 +14,7 @@ import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
 import {
+  AGENT_SOCKET_PROTOCOL_VERSION,
   dispatchAgentSocketRequest,
   startAgentSocket,
   tryAgentSocketRequest,
@@ -547,7 +548,7 @@ describe("Repository Review", () => {
     ] as const) {
       await expect(
         dispatchAgentSocketRequest(service, {
-          protocolVersion: 1,
+          protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
           operation,
           input,
         }),
@@ -865,7 +866,7 @@ describe("Repository Review", () => {
           : { repositoryPath };
       await expect(
         dispatchAgentSocketRequest(service, {
-          protocolVersion: 1,
+          protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
           operation: operation === "remove" ? "repository.issue.remove" : "repository.comments",
           input: socketInput,
         }),
@@ -912,6 +913,31 @@ describe("Repository Review", () => {
         path: "README.md",
       },
     });
+  });
+
+  it("persists the trusted modifier channel on Repository Review comment posts", async () => {
+    const { repositoryPath, service } = setup();
+    await service.openRepositoryReview(repositoryPath);
+    const created = await service.createCommentForReference({
+      review: { kind: "repository", repository: "acme/review-repo" },
+      target: { kind: "repository" },
+      body: "Agent-created Repository Review post",
+      authorLabel: "Codex",
+    });
+    expect(created.posts[0]).toMatchObject({ lastModifiedBy: "agent" });
+
+    const reply = await service.replyToComment(created.ref, {
+      body: "Agent reply",
+      authorLabel: "Codex",
+      lastModifiedBy: "agent",
+    });
+    expect(reply).toMatchObject({ lastModifiedBy: "agent" });
+
+    const edited = await service.editCommentPost(created.ref, reply.id, {
+      body: "Human correction",
+      lastModifiedBy: "human",
+    });
+    expect(edited).toMatchObject({ authorLabel: "Codex", lastModifiedBy: "human" });
   });
 
   it("normalizes Issue bodies before hashing, displaying, and placing comments", async () => {
@@ -1356,7 +1382,7 @@ describe("Repository Review", () => {
     });
     const currentPreview = await service.getRepositoryRelocationPreview(movedPath);
     const relocated = await dispatchAgentSocketRequest(service, {
-      protocolVersion: 1,
+      protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
       operation: "repository.relocate",
       input: {
         repositoryPath: movedPath,
@@ -1683,7 +1709,11 @@ describe("Repository Review", () => {
       ],
     ] as const) {
       await expect(
-        dispatchAgentSocketRequest(service, { protocolVersion: 1, operation, input }),
+        dispatchAgentSocketRequest(service, {
+          protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+          operation,
+          input,
+        }),
       ).rejects.toMatchObject({ code: "REPOSITORY_MISMATCH" });
     }
 

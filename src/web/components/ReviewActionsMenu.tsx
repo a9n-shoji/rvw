@@ -28,20 +28,24 @@ export function ReviewActionsMenu({
   themePending,
   syncPending,
   resetPending,
+  agentNotificationStatus,
   resetLabel = "ローカル状態を削除して再構築",
   onOpenQuickOpen,
   onSync,
   onThemeChange,
+  onToggleAgentNotifications,
   onReset,
 }: {
   themePreference: ThemePreference;
   themePending: boolean;
   syncPending: boolean;
   resetPending: boolean;
+  agentNotificationStatus?: "active" | "inactive" | "denied" | "unsupported";
   resetLabel?: string;
   onOpenQuickOpen: (returnFocusElement: HTMLElement | null) => void;
   onSync: () => void;
   onThemeChange: (preference: ThemePreference) => void;
+  onToggleAgentNotifications?: () => void;
   onReset: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -121,6 +125,30 @@ export function ReviewActionsMenu({
           >
             GitHubと同期
           </button>
+          {onToggleAgentNotifications && agentNotificationStatus && (
+            <div className="topbar-menu-section" role="group" aria-label="通知">
+              <span className="topbar-menu-section-label">通知</span>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={agentNotificationStatus === "active"}
+                onClick={() => {
+                  setOpen(false);
+                  onToggleAgentNotifications();
+                }}
+              >
+                <span>Agentのコメントを通知</span>
+                <span className="topbar-menu-check" aria-hidden="true">
+                  {agentNotificationStatus === "active"
+                    ? "✓"
+                    : agentNotificationStatus === "denied"
+                      ? "拒否"
+                      : agentNotificationStatus === "unsupported"
+                        ? "未対応"
+                        : ""}
+                </span>
+              </button>
+            </div>
+          )}
           <div className="topbar-menu-section" role="group" aria-label="UIテーマ">
             <span className="topbar-menu-section-label">UIテーマ</span>
             {themeOptions.map((option) => (

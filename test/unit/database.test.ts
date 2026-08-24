@@ -70,6 +70,60 @@ const github = {
 };
 
 describe("RvwDatabase", () => {
+  it("upgrades development databases that used Repository Review migration 011", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-repository-migration-011-"));
+    const filePath = path.join(directory, "rvw.db");
+    const legacyMigrationsDirectory = path.join(directory, "legacy-migrations");
+    mkdirSync(legacyMigrationsDirectory);
+    for (const migration of [
+      "001_initial.sql",
+      "002_commit_model.sql",
+      "003_editable_comment_posts.sql",
+      "004_walkthroughs.sql",
+      "005_walkthrough_comments.sql",
+      "006_theme_preference.sql",
+      "007_file_level_walkthrough_references.sql",
+      "008_walkthrough_line_comments.sql",
+      "009_comment_watch.sql",
+      "010_comment_post_references.sql",
+    ]) {
+      writeFileSync(
+        path.join(legacyMigrationsDirectory, migration),
+        readFileSync(path.join("migrations", migration)),
+      );
+    }
+    const legacyRepositoryMigration = readFileSync(
+      path.join("migrations", "012_repository_reviews_and_issues.sql"),
+      "utf8",
+    ).replace(
+      "  last_modified_by TEXT CHECK(last_modified_by IS NULL OR last_modified_by IN ('human', 'agent')),\n",
+      "",
+    );
+    writeFileSync(
+      path.join(legacyMigrationsDirectory, "011_repository_reviews_and_issues.sql"),
+      legacyRepositoryMigration,
+    );
+
+    const legacy = new RvwDatabase({ filePath, migrationsDirectory: legacyMigrationsDirectory });
+    legacy.close();
+    const upgraded = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    upgraded.close();
+
+    const inspected = new DatabaseSync(filePath, { readOnly: true });
+    expect(
+      inspected.prepare("SELECT version FROM schema_migrations ORDER BY version DESC").all(),
+    ).toEqual(expect.arrayContaining([{ version: 11 }, { version: 12 }]));
+    const commentColumns = inspected.prepare("PRAGMA table_info(comment_posts)").all() as Array<{
+      name: string;
+    }>;
+    const repositoryCommentColumns = inspected
+      .prepare("PRAGMA table_info(repository_comment_posts)")
+      .all() as Array<{ name: string }>;
+    expect(commentColumns.map(({ name }) => name)).toContain("last_modified_by");
+    expect(repositoryCommentColumns.map(({ name }) => name)).toContain("last_modified_by");
+    inspected.close();
+  });
+
   it("serializes the same pending migration across concurrent processes", async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-concurrent-migration-"));
     const migrationsDirectory = path.join(directory, "migrations");
@@ -142,6 +196,7 @@ describe("RvwDatabase", () => {
       "008_walkthrough_line_comments.sql",
       "009_comment_watch.sql",
       "010_comment_post_references.sql",
+      "011_comment_post_modifier.sql",
     ]) {
       writeFileSync(
         path.join(legacyMigrationsDirectory, migration),
@@ -237,7 +292,7 @@ describe("RvwDatabase", () => {
         startLine: null,
         endLine: null,
       },
-      posts: [{ body: "Keep this whole-Walkthrough comment." }],
+      posts: [{ body: "Keep this whole-Walkthrough comment.", lastModifiedBy: null }],
     });
     expect(migrated.listCommentPostEvents(0, 10)).toMatchObject([
       {
@@ -335,7 +390,7 @@ describe("RvwDatabase", () => {
     legacySqlite.close();
 
     expect(() => new RvwDatabase({ filePath, migrationsDirectory: "./migrations" })).toThrowError(
-      /011_repository_reviews_and_issues\.sql/,
+      /012_repository_reviews_and_issues\.sql/,
     );
 
     const inspected = new DatabaseSync(filePath, { readOnly: true });
@@ -356,7 +411,7 @@ describe("RvwDatabase", () => {
     ).toBeUndefined();
     expect(
       inspected.prepare("SELECT version FROM schema_migrations WHERE version = 11").get(),
-    ).toBeUndefined();
+    ).toEqual({ version: 11 });
     inspected.close();
   });
 
@@ -473,7 +528,14 @@ describe("RvwDatabase", () => {
         sourceDocumentHash: `legacy:${versionId}`,
         quotedText: null,
       },
-      posts: [{ relatedCommitOid: github.headOid, createdAt: now, updatedAt: now }],
+      posts: [
+        {
+          relatedCommitOid: github.headOid,
+          lastModifiedBy: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
     });
     database.close();
   });
@@ -852,7 +914,14 @@ describe("RvwDatabase", () => {
     ]);
     expect(database.getResetCounts(pullRequest.id, 0).commentReferences).toBe(2);
 
-    database.updateCommentPost(comment.id, reply.id, "Reference removed.", undefined, []);
+    database.updateCommentPost(
+      comment.id,
+      reply.id,
+      "Reference removed.",
+      reply.relatedCommitOid,
+      [],
+      reply.lastModifiedBy,
+    );
     expect(database.getResetCounts(pullRequest.id, 0).commentReferences).toBe(1);
     database.deleteComment(comment.id);
     expect(database.getResetCounts(pullRequest.id, 0).commentReferences).toBe(0);

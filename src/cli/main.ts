@@ -1511,7 +1511,11 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       const post = await callService(
         "comment.reply",
         { uri, reply },
-        async () => await getRuntime().service.replyToComment(uri, reply),
+        async () =>
+          await getRuntime().service.replyToComment(uri, {
+            ...reply,
+            lastModifiedBy: "agent",
+          }),
       );
       writeJson({ ok: true, post });
     });
@@ -1534,7 +1538,11 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       const post = await callService(
         "comment.edit",
         { uri, postId: options.post, edit },
-        async () => await getRuntime().service.editCommentPost(uri, options.post, edit),
+        async () =>
+          await getRuntime().service.editCommentPost(uri, options.post, {
+            ...edit,
+            lastModifiedBy: "agent",
+          }),
       );
       writeJson({ ok: true, post });
     });

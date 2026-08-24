@@ -35,9 +35,11 @@ acknowledgement投稿と`batch-acknowledged`出力より前にそのactive lease
 ただしclaimした全commentが既に削除済みなら、stable IDへre-keyする根拠もworkerへ渡す対象もないため、
 acknowledgementを投稿せず旧keyのままbatchをcompleteし、`batch-discarded`を出して監視を継続します。
 
-2026-08-23時点でpackage 0.3.0、protocol v4、migration 011はpublic release／npm packageとして未公開です。
-そのため011のcanonical owner/repository collationとv4のRepository Review operation契約はrelease前の最終形へ直接更新し、
-旧011とのpartial-schema/runtime fallbackは提供しません。0.3.0以降は適用済みmigrationを書き換えずforward
+2026-08-24時点でpackage 0.3.0、protocol v4、Repository Review migration 012はpublic release／npm packageとして未公開です。
+そのため012のcanonical owner/repository collationとv4のRepository Review operation契約はrelease前の最終形へ直接更新します。
+統合前branchがRepository Review schemaをversion 011として記録したdevelopment databaseだけは、table shapeを厳密に確認して
+011のcomment provenanceと012の適用済み状態へtransactionally移行します。それ以外のpartial-schema/runtime fallbackは提供しません。
+0.3.0以降は適用済みmigrationを書き換えずforward
 migrationと新しいprotocol versionで互換性を扱います。
 0.3.0の変更は実際の公開まで`CHANGELOG.md`の`Unreleased`に置き、公開時にだけ実際の日付を持つsectionへ
 移します。`verify-release`はrelease tagに対してdated sectionを要求します。公開判定はGit tag、GitHub release、
@@ -68,7 +70,7 @@ ready化後の遅延completionはsource進行後も冪等で、aggregateが存�
 補償削除しません。ref初回作成はGit compare-and-swapで単一creatorだけが所有を返します。
 PR／Repository ReviewのComment、reply、Walkthrough writeも、同じrefへ別processが既に依存し得るためSQLite失敗時に
 補償削除しません。未参照refはdoctorで診断し、暗黙GCは行いません。
-pending初期化だけを最大5秒待ち、failed stateは直ちにfail closedします。既存source同期はmigration 011の内部generationで
+pending初期化だけを最大5秒待ち、failed stateは直ちにfail closedします。既存source同期はmigration 012の内部generationで
 新しい開始順を守り、古いOIDやerrorを公開しません。metadata取得後にdefault branchが進んだ場合は一度だけsnapshotを
 取り直します。共有Issue cacheはGitHub `updatedAt`をversionとして古い成功を無視し、取得snapshotの変わった古い失敗も
 無視します。失敗CASはmillisecond時刻ではなくaccepted successごとに増える内部generationを使い、

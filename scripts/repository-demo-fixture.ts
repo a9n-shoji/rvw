@@ -5,6 +5,7 @@ import path from "node:path";
 import type {
   ChangedFile,
   CodeReference,
+  CommentPost,
   CommitSummary,
   DocumentAvailability,
   IssueDocument,
@@ -557,7 +558,7 @@ function createComments(
   ): ReviewComment => {
     const id = `90000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
     const createdAt = `2026-08-20T02:${String(index).padStart(2, "0")}:00.000Z`;
-    const posts = [
+    const posts: CommentPost[] = [
       {
         id: `91000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
         commentId: id,
@@ -565,6 +566,7 @@ function createComments(
         relatedCommitOid: options.relatedCommitOid ?? null,
         references: options.references ?? [],
         authorLabel: "Reviewer",
+        lastModifiedBy: "human",
         isRoot: true,
         createdAt,
         updatedAt: createdAt,
@@ -578,6 +580,7 @@ function createComments(
         relatedCommitOid: headOid,
         references: [],
         authorLabel: "Demo Agent",
+        lastModifiedBy: "agent",
         isRoot: false,
         createdAt: `2026-08-20T03:${String(index).padStart(2, "0")}:00.000Z`,
         updatedAt: `2026-08-20T03:${String(index).padStart(2, "0")}:00.000Z`,

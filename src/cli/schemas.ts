@@ -201,6 +201,7 @@ const commentPostOutputSchema = z
     relatedCommitOid: z.string().nullable(),
     references: z.array(codeReferenceOutputSchema),
     authorLabel: z.string().nullable(),
+    lastModifiedBy: z.enum(["human", "agent"]).nullable(),
     isRoot: z.boolean(),
     createdAt: z.string(),
     updatedAt: z.string(),

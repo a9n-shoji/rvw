@@ -10,6 +10,7 @@ import {
 import type { ViewerNavigationTarget } from "./components/DocumentViewer.js";
 import {
   documentPaneIds,
+  documentPaneTransitions,
   documentPaneTabKey,
   documentTabKey,
   preferredDocumentPane,
@@ -82,26 +83,22 @@ export function useReviewReadingHistory({
 
   useLayoutEffect(() => {
     const previous = previousWorkspace.current;
-    for (const sourcePane of ["left", "right"] as const) {
-      const targetPane = sourcePane === "left" ? "right" : "left";
-      for (const document of previous.documents[sourcePane]) {
-        const documentKey = documentTabKey(document);
-        const remainedInSource = workspace.documents[sourcePane].some(
-          (candidate) => documentTabKey(candidate) === documentKey,
+    for (const transition of documentPaneTransitions(previous, workspace)) {
+      if (
+        previous.documents[transition.targetPane].some(
+          (document) => documentTabKey(document) === documentTabKey(transition.targetDocument),
+        )
+      ) {
+        continue;
+      }
+      const sourceTop = documentScrollPositions.current?.get(
+        documentPaneTabKey(transition.sourcePane, transition.sourceDocument),
+      );
+      if (sourceTop !== undefined) {
+        documentScrollPositions.current?.set(
+          documentPaneTabKey(transition.targetPane, transition.targetDocument),
+          sourceTop,
         );
-        const alreadyExistedInTarget = previous.documents[targetPane].some(
-          (candidate) => documentTabKey(candidate) === documentKey,
-        );
-        const movedToTarget = workspace.documents[targetPane].some(
-          (candidate) => documentTabKey(candidate) === documentKey,
-        );
-        if (remainedInSource || alreadyExistedInTarget || !movedToTarget) continue;
-        const sourceTop = documentScrollPositions.current?.get(
-          documentPaneTabKey(sourcePane, document),
-        );
-        if (sourceTop !== undefined) {
-          documentScrollPositions.current?.set(documentPaneTabKey(targetPane, document), sourceTop);
-        }
       }
     }
     previousWorkspace.current = workspace;

@@ -172,6 +172,42 @@ describe("Markdown preview source mapping", () => {
     });
   });
 
+  it("uses the comment underline for a navigated Markdown reference range", () => {
+    const tree = {
+      type: "root",
+      children: [
+        {
+          type: "element",
+          tagName: "p",
+          properties: {},
+          position: { start: { line: 6 }, end: { line: 7 } },
+          children: [
+            {
+              type: "text",
+              value: "first\nsecond",
+              position: { start: { line: 6 }, end: { line: 7 } },
+            },
+          ],
+        },
+      ],
+    };
+
+    rehypeRvwSourceMap({ navigationRange: { startLine: 6, endLine: 7 } })(tree);
+
+    expect(tree.children[0]?.children).toMatchObject([
+      {
+        properties: { className: ["rvw-markdown-commented"] },
+        children: [{ value: "first" }],
+      },
+      { type: "text", value: "\n" },
+      {
+        properties: { className: ["rvw-markdown-commented"] },
+        children: [{ value: "second" }],
+      },
+    ]);
+    expect(tree.children).toHaveLength(1);
+  });
+
   it("maps individual lines inside fenced code without changing its text", () => {
     const tree = {
       type: "root",

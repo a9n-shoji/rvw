@@ -1416,6 +1416,31 @@ describe("RvwService commit workflow", () => {
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
+  it("persists the trusted modifier channel on comment posts", async () => {
+    const { repository, service } = setup("rvw-comment-modifier-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const created = await service.createCommentForReference({
+      pullRequest: opened.pullRequest.url,
+      target: { kind: "pull-request" },
+      body: "Agent-created root post",
+      authorLabel: "Codex",
+    });
+    expect(created.posts[0]).toMatchObject({ lastModifiedBy: "agent" });
+
+    const reply = await service.replyToComment(created.ref, {
+      body: "Agent reply",
+      authorLabel: "Codex",
+      lastModifiedBy: "agent",
+    });
+    expect(reply).toMatchObject({ lastModifiedBy: "agent" });
+
+    const edited = await service.editCommentPost(created.ref, reply.id, {
+      body: "Human correction",
+      lastModifiedBy: "human",
+    });
+    expect(edited).toMatchObject({ authorLabel: "Codex", lastModifiedBy: "human" });
+  });
+
   it("returns Agent-ready comment context and keeps resolved replies resolved", async () => {
     const { repository, firstHead, fake, service } = setup("rvw-comment-context-");
     const opened = await service.openPullRequest(undefined, repository);

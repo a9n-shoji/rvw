@@ -35,7 +35,7 @@
 - viewerの変更pollをdatabase全体からreview kind／ID単位へ絞り、別reviewの更新による再取得を削減
 - Repository Review retained refをrepository名ではなくRepository Review ID単位で所有し、reset/recreate後のevidenceを分離
 - Repository Review lifecycleのcreate、existing-only、sync、destructive binding policyをapplication層へ集約
-- migration 011のcanonical repository一意性をcase-insensitiveにし、protocol v4の全transportを最新service前提へ統一
+- migration 012のcanonical repository一意性をcase-insensitiveにし、protocol v4の全transportを最新service前提へ統一
 - Walkthroughの追加専用Issue入力をreplace型contentと区別できる`issuesToAdd`へ変更
 - Repository Review初期化状態を通常のsync error文字列から`pending | ready | failed`列へ分離
 - Issue sync errorを共有content cacheからreview membershipへ移し、最後のowner削除時にorphan cacheをGC

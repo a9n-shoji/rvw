@@ -63,15 +63,20 @@ import {
 } from "../commit-range.js";
 import {
   currentCommitDocument,
+  documentPaneTransitions,
   documentTabKey,
   initialDocumentWorkspace,
+  moveDocumentToPane,
+  removeDocumentFromWorkspace,
   type ActiveDocument,
   type DocumentPaneId,
+  type DocumentWorkspaceState,
 } from "../document-workspace.js";
 import {
   clearCommentDraftsForReview,
   deleteCommentDraftForIssue,
   deleteCommentReplyDraftsForComment,
+  moveCommentDraftsForWorkspaceTransition,
 } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
@@ -85,6 +90,13 @@ import { useExactCodeReferenceNavigation } from "../use-exact-code-reference-nav
 import { useWalkthroughDocumentReconciliation } from "../use-walkthrough-document-reconciliation.js";
 import { useTemporaryFeedback } from "../use-temporary-feedback.js";
 import { issueSyncFailureFeedback } from "../review-sync-feedback.js";
+import {
+  agentNotificationBody,
+  browserNotificationPermission,
+  readAgentNotificationsEnabled,
+  scanAgentPostNotifications,
+  storeAgentNotificationsEnabled,
+} from "../agent-notifications.js";
 const DocumentViewer = lazy(async () => {
   const module = await import("../components/DocumentViewer.js");
   return { default: module.DocumentViewer };
@@ -443,10 +455,6 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     setWorkspace: setDocumentWorkspace,
     activateDocument: activateWorkspaceDocument,
     openDocument: openWorkspaceDocument,
-    closeDocument,
-    closePaneDocuments,
-    moveDocument,
-    dropDocument: dropWorkspaceDocument,
   } = useDocumentWorkspace(resetViewerNavigation);
   const [draggedDocumentKey, setDraggedDocumentKey] = useState<string | null>(null);
   const [fileFilter, setFileFilter] = useState("");
@@ -458,12 +466,16 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const [issueReference, setIssueReference] = useState("");
   const [issueAddOpen, setIssueAddOpen] = useState(false);
   const [reviewStateRevision, setReviewStateRevision] = useState(0);
+  const [draftWorkspaceRevision, setDraftWorkspaceRevision] = useState(0);
   const {
     feedback: syncFeedback,
     showFeedback: showSyncFeedback,
     clearFeedback: clearSyncFeedback,
   } = useTemporaryFeedback();
   const [syncFeedbackWarning, setSyncFeedbackWarning] = useState(false);
+  const [agentNotificationsEnabled, setAgentNotificationsEnabled] = useState(
+    readAgentNotificationsEnabled,
+  );
   const {
     themePreference,
     selectThemePreference,
@@ -476,8 +488,13 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   }, []);
   const attemptedInitialRefresh = useRef(false);
   const commitRangeTouched = useRef(false);
+  const commitRangeInteractionRevision = useRef(0);
+  const refreshInFlight = useRef(false);
+  const commitRangeInteractionHeadOid = useRef<string | null>(null);
   const observedLatestHead = useRef<string | null>(null);
   const observedChangeSequence = useRef<number | null>(null);
+  const observedAgentPostPullRequestId = useRef<string | null>(null);
+  const observedAgentPostSnapshot = useRef<Map<string, string> | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const debouncedSearch = useDebouncedValue(searchText.trim(), 250);
   const openSidebarSearch = useReviewSidebarSearch({
@@ -528,13 +545,142 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     [navigateToDocument],
   );
 
+  const applyDocumentWorkspaceTransition = useCallback(
+    (
+      nextWorkspace: DocumentWorkspaceState,
+      navigationPanes: readonly DocumentPaneId[] = [],
+    ): boolean => {
+      const previousWorkspace = documentWorkspaceRef.current;
+      if (nextWorkspace === previousWorkspace) return true;
+      const paneTransitions = documentPaneTransitions(previousWorkspace, nextWorkspace);
+      if (pullRequestId) {
+        const result = moveCommentDraftsForWorkspaceTransition(
+          pullRequestId,
+          previousWorkspace,
+          nextWorkspace,
+        );
+        if (result.status === "conflict") {
+          setSyncFeedbackWarning(true);
+          showSyncFeedback(
+            "移動先にも入力中のコメントまたは返信があります。どちらかを送信または消去してから移動してください。",
+          );
+          return false;
+        }
+        if (result.commentDraftsMoved) setDraftWorkspaceRevision((revision) => revision + 1);
+      }
+      resetViewerNavigation([
+        ...new Set([
+          ...navigationPanes,
+          ...paneTransitions.flatMap(({ sourcePane, targetPane }) => [sourcePane, targetPane]),
+        ]),
+      ]);
+      documentWorkspaceRef.current = nextWorkspace;
+      setDocumentWorkspace(() => nextWorkspace);
+      return true;
+    },
+    [
+      documentWorkspaceRef,
+      pullRequestId,
+      resetViewerNavigation,
+      setDocumentWorkspace,
+      showSyncFeedback,
+    ],
+  );
+
+  const closeDocumentWithDrafts = useCallback(
+    (document: ActiveDocument, paneId?: DocumentPaneId): void => {
+      const current = documentWorkspaceRef.current;
+      applyDocumentWorkspaceTransition(
+        removeDocumentFromWorkspace(current, document, paneId),
+        paneId ? [paneId] : ["left", "right"],
+      );
+    },
+    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
+  );
+
+  const closePaneDocumentsWithDrafts = useCallback(
+    (paneId: DocumentPaneId, keepDocument: ActiveDocument | null = null): void => {
+      const current = documentWorkspaceRef.current;
+      const keepKey = keepDocument ? documentTabKey(keepDocument) : null;
+      const nextWorkspace = current.documents[paneId]
+        .filter((document) => documentTabKey(document) !== keepKey)
+        .reduce(
+          (workspace, document) => removeDocumentFromWorkspace(workspace, document, paneId),
+          current,
+        );
+      applyDocumentWorkspaceTransition(nextWorkspace, [paneId]);
+    },
+    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
+  );
+
+  const moveDocumentWithDrafts = useCallback(
+    (document: ActiveDocument, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
+      const nextWorkspace = moveDocumentToPane(
+        documentWorkspaceRef.current,
+        document,
+        sourcePane,
+        targetPane,
+      );
+      if (nextWorkspace === documentWorkspaceRef.current) return;
+      applyDocumentWorkspaceTransition(nextWorkspace, [sourcePane, targetPane]);
+    },
+    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
+  );
+
   const dropDocument = useCallback(
     (documentKey: string, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
-      dropWorkspaceDocument(documentKey, sourcePane, targetPane);
+      const document = documentWorkspaceRef.current.documents[sourcePane].find(
+        (candidate) => documentTabKey(candidate) === documentKey,
+      );
+      if (document) moveDocumentWithDrafts(document, sourcePane, targetPane);
       setDraggedDocumentKey(null);
     },
-    [dropWorkspaceDocument],
+    [documentWorkspaceRef, moveDocumentWithDrafts],
   );
+
+  const notificationPermission = browserNotificationPermission();
+  const agentNotificationsActive =
+    agentNotificationsEnabled && notificationPermission === "granted";
+  const toggleAgentNotifications = async (): Promise<void> => {
+    setSyncFeedbackWarning(false);
+    if (agentNotificationsActive) {
+      storeAgentNotificationsEnabled(false);
+      setAgentNotificationsEnabled(false);
+      showSyncFeedback("Agentのコメント通知をオフにしました。");
+      return;
+    }
+    if (notificationPermission === "unsupported") {
+      storeAgentNotificationsEnabled(false);
+      setAgentNotificationsEnabled(false);
+      showSyncFeedback("このブラウザはBrowser Notificationに対応していません。");
+      return;
+    }
+    if (notificationPermission === "denied") {
+      storeAgentNotificationsEnabled(false);
+      setAgentNotificationsEnabled(false);
+      showSyncFeedback("ブラウザのサイト設定で通知を許可してください。");
+      return;
+    }
+    let permission: NotificationPermission;
+    try {
+      permission =
+        notificationPermission === "granted" ? "granted" : await Notification.requestPermission();
+    } catch (error) {
+      console.warn("ブラウザへ通知permissionを要求できませんでした。", error);
+      storeAgentNotificationsEnabled(false);
+      setAgentNotificationsEnabled(false);
+      showSyncFeedback("通知permissionを要求できませんでした。ブラウザの設定を確認してください。");
+      return;
+    }
+    const enabled = permission === "granted";
+    storeAgentNotificationsEnabled(enabled);
+    setAgentNotificationsEnabled(enabled);
+    showSyncFeedback(
+      enabled
+        ? "Agentのコメントをブラウザ通知します。"
+        : "通知は許可されませんでした。ブラウザのサイト設定から変更できます。",
+    );
+  };
 
   const pullRequestQuery = useQuery({
     queryKey: reviewQueryKeys.review("pull-request", pullRequestId),
@@ -560,7 +706,22 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const effectiveOldOid = commitRangeOldOid(commits, comparisonBaseOid, rangeStartOid);
   useEffect(() => {
     const previousLatest = observedLatestHead.current;
-    if (latestHeadOid && (!selectedOid || selectedOid === previousLatest)) {
+    const suppressRefreshHeadFollow = Boolean(
+      previousLatest &&
+      latestHeadOid !== previousLatest &&
+      commitRangeInteractionHeadOid.current === previousLatest,
+    );
+    if (
+      latestHeadOid !== previousLatest &&
+      commitRangeInteractionHeadOid.current === previousLatest
+    ) {
+      commitRangeInteractionHeadOid.current = null;
+    }
+    if (
+      latestHeadOid &&
+      !suppressRefreshHeadFollow &&
+      (!selectedOid || selectedOid === previousLatest)
+    ) {
       const shouldKeepSingleCommit = Boolean(
         commitRangeTouched.current && selectedOid && rangeStartOid === selectedOid,
       );
@@ -607,6 +768,8 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   const selectCommitRange = (startOid: string, endOid: string): void => {
     const range = normalizedCommitRange(commits, startOid, endOid);
     if (!range) return;
+    commitRangeInteractionRevision.current += 1;
+    if (refreshInFlight.current) commitRangeInteractionHeadOid.current = latestHeadOid;
     commitRangeTouched.current = true;
     setRangeStartOid(range.startOid);
     setSelectedOid(range.endOid);
@@ -689,6 +852,33 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
         : undefined,
   });
   const comments = commentsQuery.data?.comments ?? [];
+  useEffect(() => {
+    if (!commentsQuery.isSuccess || !commentsQuery.data || !pullRequestId) return;
+    if (observedAgentPostPullRequestId.current !== pullRequestId) {
+      observedAgentPostPullRequestId.current = pullRequestId;
+      observedAgentPostSnapshot.current = null;
+    }
+    const scan = scanAgentPostNotifications(
+      observedAgentPostSnapshot.current,
+      commentsQuery.data.comments,
+    );
+    observedAgentPostSnapshot.current = scan.snapshot;
+    if (!agentNotificationsEnabled || browserNotificationPermission() !== "granted") return;
+    for (const { post } of scan.notifications) {
+      try {
+        const notification = new Notification(`rvw · ${post.authorLabel}`, {
+          body: agentNotificationBody(post.body),
+          tag: `rvw-agent-post:${pullRequestId}:${post.id}`,
+        });
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+        };
+      } catch (error) {
+        console.warn("Agentのコメントをブラウザ通知できませんでした。", error);
+      }
+    }
+  }, [agentNotificationsEnabled, commentsQuery.data, commentsQuery.isSuccess, pullRequestId]);
   const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
   const issuesQuery = useQuery({
     queryKey: reviewQueryKeys.issues(
@@ -760,7 +950,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
         const openIssue = documentWorkspaceRef.current.documents[paneId].find(
           (document) => document.kind === "issue" && document.id === issue.id,
         );
-        if (openIssue) closeDocument(openIssue, paneId);
+        if (openIssue) closeDocumentWithDrafts(openIssue, paneId);
       }
       await Promise.all([
         queryClient.invalidateQueries({
@@ -778,10 +968,21 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     enabled: Boolean(pullRequestId),
   });
   const walkthroughs = walkthroughsQuery.data?.walkthroughs ?? [];
+  const setDocumentWorkspaceWithDrafts = useCallback(
+    (
+      update:
+        DocumentWorkspaceState | ((current: DocumentWorkspaceState) => DocumentWorkspaceState),
+    ): void => {
+      const current = documentWorkspaceRef.current;
+      const next = typeof update === "function" ? update(current) : update;
+      applyDocumentWorkspaceTransition(next);
+    },
+    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
+  );
   useWalkthroughDocumentReconciliation({
     walkthroughs,
     enabled: walkthroughsQuery.isSuccess,
-    setWorkspace: setDocumentWorkspace,
+    setWorkspace: setDocumentWorkspaceWithDrafts,
   });
   const openWalkthroughIds = useMemo(
     () => [
@@ -890,25 +1091,32 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
         jsonRequest({}),
       );
     },
-    onSuccess: async (result, options) => {
+    onMutate: () => {
+      refreshInFlight.current = true;
+      return {
+        commitRangeInteractionRevision: commitRangeInteractionRevision.current,
+        ...commitSelectionRef.current,
+      };
+    },
+    onSuccess: async (result, options, refreshStart) => {
       const failures = result.issueResults.filter((issueResult) => !issueResult.ok);
       const issueFeedback = issueSyncFailureFeedback(failures);
       setSyncFeedbackWarning(issueFeedback !== null);
-      const selection = commitSelectionRef.current;
-      const wasAtLatest = selection.selectedOid === selection.latestHeadOid;
-      const wasSingleCommit = selection.rangeStartOid === selection.selectedOid;
-      if (wasAtLatest || !selection.selectedOid) {
+      const commitRangeUnchanged =
+        refreshStart.commitRangeInteractionRevision === commitRangeInteractionRevision.current;
+      const wasAtLatest = refreshStart.selectedOid === refreshStart.latestHeadOid;
+      if (commitRangeUnchanged && (wasAtLatest || !refreshStart.selectedOid)) {
         setSelectedOid(result.headOid);
         const previousStartStillExists = result.commits.some(
-          (commit) => commit.oid === selection.rangeStartOid,
+          (commit) => commit.oid === refreshStart.rangeStartOid,
         );
         setRangeStartOid(
           !commitRangeTouched.current
             ? pullRequestRangeStartOid(result.commits, result.headOid)
-            : wasSingleCommit
+            : refreshStart.rangeStartOid === refreshStart.selectedOid
               ? result.headOid
               : previousStartStillExists
-                ? selection.rangeStartOid
+                ? refreshStart.rangeStartOid
                 : earliestIncludedCommitOid(result.commits, result.headOid),
         );
       }
@@ -925,6 +1133,19 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
         queryClient.invalidateQueries({ queryKey: reviewQueryKeys.annotations() }),
         queryClient.invalidateQueries({ queryKey: reviewQueryKeys.allCommentPlacements() }),
       ]);
+    },
+    onError: () => {
+      commitRangeInteractionHeadOid.current = null;
+    },
+    onSettled: (result) => {
+      refreshInFlight.current = false;
+      if (
+        result &&
+        commitRangeInteractionHeadOid.current === result.headOid &&
+        observedLatestHead.current === result.headOid
+      ) {
+        commitRangeInteractionHeadOid.current = null;
+      }
     },
   });
   useEffect(() => {
@@ -1236,6 +1457,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           >
             <WalkthroughViewer
               walkthrough={paneViewerState.walkthrough}
+              paneId={paneId}
               comments={comments}
               activeCommentId={activeCommentId}
               navigationTarget={
@@ -1249,7 +1471,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
               onOpenReference={openWalkthroughReferenceFromInteraction}
               onOpenCommentCodeReference={openCommentCodeReferenceFromInteraction}
               onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
-              onDeleted={() => closeDocument(paneViewerDocument, paneId)}
+              onDeleted={() => closeDocumentWithDrafts(paneViewerDocument, paneId)}
             />
           </Suspense>
         </LazyLoadBoundary>
@@ -1270,8 +1492,8 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
             <DocumentViewer
               key={
                 paneViewerDocument.kind === "issue"
-                  ? `${reviewStateRevision}:${paneId}:pull-request:${pullRequest.id}:issue:${paneViewerDocument.id}`
-                  : `${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`
+                  ? `${reviewStateRevision}:${draftWorkspaceRevision}:${paneId}:pull-request:${pullRequest.id}:issue:${paneViewerDocument.id}`
+                  : `${reviewStateRevision}:${draftWorkspaceRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`
               }
               review={{ kind: "pull-request", id: pullRequest.id, sourceOid: selectedOid }}
               paneId={paneId}
@@ -1332,10 +1554,10 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           )
         }
         onActivate={(document) => activateDocument(document, paneId)}
-        onClose={(document) => closeDocument(document, paneId)}
-        onCloseOthers={(document) => closePaneDocuments(paneId, document)}
-        onCloseAll={() => closePaneDocuments(paneId)}
-        onMove={(document, targetPane) => moveDocument(document, paneId, targetPane)}
+        onClose={(document) => closeDocumentWithDrafts(document, paneId)}
+        onCloseOthers={(document) => closePaneDocumentsWithDrafts(paneId, document)}
+        onCloseAll={() => closePaneDocumentsWithDrafts(paneId)}
+        onMove={(document, targetPane) => moveDocumentWithDrafts(document, paneId, targetPane)}
         onDropDocument={dropDocument}
         onDragStartDocument={setDraggedDocumentKey}
         onDragEndDocument={() => setDraggedDocumentKey(null)}
@@ -1385,6 +1607,15 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
           themePending={themePreferenceMutation.isPending}
           syncPending={refreshMutation.isPending}
           resetPending={resetMutation.isPending}
+          agentNotificationStatus={
+            agentNotificationsActive
+              ? "active"
+              : notificationPermission === "denied"
+                ? "denied"
+                : notificationPermission === "unsupported"
+                  ? "unsupported"
+                  : "inactive"
+          }
           onOpenQuickOpen={(returnFocusElement) => {
             setQuickOpenReturnFocus(returnFocusElement);
             setQuickOpenVisible(true);
@@ -1394,6 +1625,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
             refreshMutation.mutate({ announce: true });
           }}
           onThemeChange={selectThemePreference}
+          onToggleAgentNotifications={() => void toggleAgentNotifications()}
           onReset={() => resetMutation.mutate()}
         />
       </header>

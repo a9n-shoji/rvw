@@ -38,6 +38,7 @@ import type {
 } from "../../domain/models.js";
 import { isSupportedImagePath } from "../../shared/image-assets.js";
 import {
+  commentReplyDraftScope,
   commentDraftContextKey,
   currentCommentDraftRevision,
   deleteCommentDraft,
@@ -45,6 +46,7 @@ import {
   writeCommentDraft,
 } from "../comment-draft-store.js";
 import type { ActiveDocument, DocumentPaneId } from "../document-workspace.js";
+import { fileContentsForRenderer } from "../file-rendering.js";
 import {
   api,
   documentUrl,
@@ -411,6 +413,7 @@ function renderReviewMarkdown({
   annotations,
   activeCommentId,
   selectedRange,
+  navigationRange,
   composerOpen,
   markdownDiv,
   sourceRef,
@@ -425,6 +428,7 @@ function renderReviewMarkdown({
   annotations: MarkdownCommentAnnotation[];
   activeCommentId: string | null;
   selectedRange: MarkdownSourceRange | null;
+  navigationRange: MarkdownSourceRange | null;
   composerOpen: boolean;
   markdownDiv: NonNullable<Components["div"]>;
   sourceRef: ReviewFileRef;
@@ -440,7 +444,10 @@ function renderReviewMarkdown({
       rehypePlugins={[
         rehypeRaw,
         rehypeSanitize,
-        [rehypeRvwSourceMap, { annotations, activeCommentId, selectedRange, composerOpen }],
+        [
+          rehypeRvwSourceMap,
+          { annotations, activeCommentId, selectedRange, navigationRange, composerOpen },
+        ],
       ]}
       remarkPlugins={pullRequestMarkdown ? [remarkGfm, remarkBreaks] : [remarkGfm]}
       components={{
@@ -650,13 +657,14 @@ function commentCanTargetDocument(comment: AnyReviewComment, ref: ReviewFileRef)
 
 function fileValue(document: ReviewDocumentContent | null, fallbackName: string) {
   if (!document || document.availability !== "available") return null;
-  const file = {
-    name: document.ref.kind === "repository-file" ? document.ref.path : fallbackName,
-    contents: document.text ?? "",
-  };
-  return document.ref.kind === "repository-file"
-    ? { ...file, cacheKey: `${document.ref.sourceOid}:${document.ref.path}` }
-    : file;
+  const name = document.ref.kind === "repository-file" ? document.ref.path : fallbackName;
+  return fileContentsForRenderer(
+    name,
+    document.text ?? "",
+    document.ref.kind === "repository-file"
+      ? `${document.ref.sourceOid}:${document.ref.path}`
+      : undefined,
+  );
 }
 
 function Unavailable({
@@ -753,6 +761,7 @@ export function DocumentViewer({
     oldOid,
     displayMode,
   });
+  const replyDraftScope = commentReplyDraftScope(paneId, activeDocument);
   const commentDraftRevision = useRef(
     currentCommentDraftRevision(review.id, commentDraftKey),
   ).current;
@@ -1476,6 +1485,7 @@ export function DocumentViewer({
                 key={commentId}
                 comment={annotation.comment}
                 variant="inline"
+                draftScope={replyDraftScope}
                 placement={annotation.placement}
                 themePreference={themePreference}
                 onActiveChange={onCommentActiveChange}
@@ -1496,6 +1506,7 @@ export function DocumentViewer({
       onOpenCodeReference,
       openRepositoryLink,
       optimisticCommentId,
+      replyDraftScope,
       themePreference,
     ],
   );
@@ -1559,6 +1570,9 @@ export function DocumentViewer({
               composerStartLine === null || composerEndLine === null
                 ? null
                 : { startLine: composerStartLine, endLine: composerEndLine },
+            navigationRange: navigationSelection
+              ? { startLine: navigationSelection.start, endLine: navigationSelection.end }
+              : null,
             composerOpen: markdownComposerOpen,
             markdownDiv,
             sourceRef: fullRef,
@@ -1578,6 +1592,7 @@ export function DocumentViewer({
       markdownComposerOpen,
       markdownDiv,
       markdownText,
+      navigationSelection,
       openMarkdownFragment,
       openRepositoryLink,
       review,
@@ -1712,6 +1727,7 @@ export function DocumentViewer({
         <CommentThread
           comment={annotation.metadata.comment}
           variant="inline"
+          draftScope={replyDraftScope}
           placement={annotation.metadata.placement}
           side={side ?? null}
           themePreference={themePreference}
@@ -1757,6 +1773,7 @@ export function DocumentViewer({
             key={comment.id}
             comment={comment}
             variant="inline"
+            draftScope={replyDraftScope}
             placement={placement}
             side={diffSide}
             themePreference={themePreference}

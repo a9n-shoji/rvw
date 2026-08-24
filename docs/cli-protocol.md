@@ -7,7 +7,9 @@ must be reachable from its Markdown body or Mermaid bindings. Version 3 adds pos
 references to comment create, reply, edit, get, and synchronized replies, and advertises
 `comment.codeReferences`. It also keeps the additive
 `agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
-idempotency keys are additive fields and do not change existing callers.
+idempotency keys are additive fields and do not change existing callers. Version 4 adds required
+nullable `lastModifiedBy` provenance to comment-post output so consumers can distinguish trusted
+Agent and human write channels.
 
 Version 4 introduces explicit Pull Request and Repository Review contexts, Issue documents, and a
 discriminated comment event context. Repository Reviews are keyed by canonical `owner/repository` and
@@ -392,7 +394,9 @@ same top-level `comment` and `latestPlacement` keys with the complete comment ta
 `createdHeadOid`, and the PR's `latestHeadOid`. For Repository Reviews it returns the canonical repository,
 local path, current default branch/source OID, comment creation source OID, current Issue or Walkthrough
 when targeted, exact source excerpt for code, and authoritative Outdated placement. Each complete post includes its
-`relatedCommitOid` and `references`. `latestPlacement` is rvw's
+`relatedCommitOid`, `references`, and nullable `lastModifiedBy` (`human` or `agent`). The value records
+the trusted local entry point of the latest write and is output-only; callers do not supply it.
+`latestPlacement` is rvw's
 authoritative derived placement at the latest head. Consumers must not treat unequal creation/latest
 OIDs as Outdated: rvw accounts for unchanged lines, renames, deletion, and PR-Markdown quoted-text
 placement.
@@ -692,7 +696,8 @@ the current Agent may supply an accurate optional `authorLabel`.
 
 `rvw-watch-comments` documents the complete state-script stdin/stdout contract. Its driver derives
 `--after` from task state, its auto-ack reuses each batch operation's idempotency key and status post
-only when that batch is retried, and it hands every acknowledged lease to one fresh subagent in the
+only when that batch is retried, accepts the current runtime's accurate `--author-label` for the
+acknowledgement/final post, and hands every acknowledged lease to one fresh subagent in the
 same parent scheduling turn. The parent never substitutes direct processing. Each subagent handoff uses
 an absolute JSON result path rather than relying on relayed completion text. Subagent outcomes carry
 `body`, `relatedCommitOid`, a complete `references` array, and `pushStatus`. The Skill uses typed

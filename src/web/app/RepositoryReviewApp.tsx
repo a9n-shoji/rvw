@@ -659,6 +659,7 @@ export function RepositoryReviewApp({
           >
             <WalkthroughViewer
               walkthrough={walkthroughDetails.get(paneDocument.id)!}
+              paneId={paneId}
               comments={comments}
               commentPlacements={placements}
               activeCommentId={activeCommentId}

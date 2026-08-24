@@ -1,5 +1,12 @@
 import type { SelectedLineRange } from "@pierre/diffs/react";
-import type { ActiveDocument, DocumentPaneId } from "./document-workspace.js";
+import {
+  documentPaneTransitions,
+  documentPaneTabKey,
+  documentTabKey,
+  type ActiveDocument,
+  type DocumentPaneId,
+  type DocumentWorkspaceState,
+} from "./document-workspace.js";
 
 export interface CommentDraftState {
   body: string;
@@ -22,6 +29,9 @@ export interface CommentReplyDraftSnapshot {
   body: string;
   focused: boolean;
 }
+
+export type CommentDraftWorkspaceTransitionResult =
+  { status: "applied"; commentDraftsMoved: boolean } | { status: "conflict" };
 
 const draftsByReview = new Map<string, Map<string, CommentDraftState>>();
 const replyDraftsByReview = new Map<string, Map<string, CommentReplyDraftSnapshot>>();
@@ -49,6 +59,18 @@ function documentIdentity(document: ActiveDocument): unknown[] {
     document.sourceOid ?? null,
     document.comparisonPolicy ?? null,
   ];
+}
+
+function documentIdentityTabKey(identity: unknown): string | null {
+  if (!Array.isArray(identity)) return null;
+  if (identity[0] === "pull-request-markdown") return "pull-request-markdown";
+  if (identity[0] === "walkthrough" && typeof identity[1] === "string") {
+    return `walkthrough:${identity[1]}`;
+  }
+  if (identity[0] === "repository-file" && typeof identity[1] === "string") {
+    return `file:${identity[1]}`;
+  }
+  return null;
 }
 
 export function commentDraftContextKey(context: CommentDraftContext): string {
@@ -86,6 +108,123 @@ function notifyReplyDraftListeners(): void {
 export function subscribeCommentReplyDrafts(listener: () => void): () => void {
   replyDraftListeners.add(listener);
   return () => replyDraftListeners.delete(listener);
+}
+
+export function commentReplyDraftScope(pane: DocumentPaneId, document: ActiveDocument): string {
+  return documentPaneTabKey(pane, document);
+}
+
+function commentReplyDraftMovesForDocument(
+  reviewId: string,
+  sourceDocument: ActiveDocument,
+  targetDocument: ActiveDocument,
+  sourcePane: DocumentPaneId,
+  targetPane: DocumentPaneId,
+): Array<{
+  sourceKey: string;
+  targetKey: string;
+  draft: CommentReplyDraftSnapshot;
+}> {
+  if (sourcePane === targetPane) return [];
+  const drafts = replyDraftsByReview.get(reviewId);
+  if (!drafts) return [];
+  const sourcePrefix = `inline:${commentReplyDraftScope(sourcePane, sourceDocument)}:`;
+  const targetPrefix = `inline:${commentReplyDraftScope(targetPane, targetDocument)}:`;
+  return [...drafts.entries()]
+    .filter(([key]) => key.startsWith(sourcePrefix))
+    .map(([sourceKey, draft]) => ({
+      sourceKey,
+      targetKey: `${targetPrefix}${sourceKey.slice(sourcePrefix.length)}`,
+      draft,
+    }));
+}
+
+function commentDraftMovesForDocument(
+  reviewId: string,
+  sourceDocument: ActiveDocument,
+  sourcePane: DocumentPaneId,
+  targetPane: DocumentPaneId,
+): Array<{ sourceKey: string; targetKey: string; draft: CommentDraftState }> {
+  if (sourcePane === targetPane) return [];
+  const commentDrafts = draftsByReview.get(reviewId);
+  if (!commentDrafts) return [];
+  const sourceTabKey = documentTabKey(sourceDocument);
+  const moves: Array<{ sourceKey: string; targetKey: string; draft: CommentDraftState }> = [];
+  for (const [sourceKey, draft] of commentDrafts) {
+    let context: unknown;
+    try {
+      context = JSON.parse(sourceKey);
+    } catch {
+      continue;
+    }
+    if (
+      !Array.isArray(context) ||
+      context.length !== 5 ||
+      context[0] !== sourcePane ||
+      documentIdentityTabKey(context[1]) !== sourceTabKey
+    ) {
+      continue;
+    }
+    const contextValues = context as unknown[];
+    moves.push({
+      sourceKey,
+      targetKey: JSON.stringify([targetPane, ...contextValues.slice(1)]),
+      draft,
+    });
+  }
+  return moves;
+}
+
+export function moveCommentDraftsForWorkspaceTransition(
+  reviewId: string,
+  previous: DocumentWorkspaceState,
+  next: DocumentWorkspaceState,
+): CommentDraftWorkspaceTransitionResult {
+  const replyMoves: Array<{
+    sourceKey: string;
+    targetKey: string;
+    draft: CommentReplyDraftSnapshot;
+  }> = [];
+  const commentMoves: Array<{
+    sourceKey: string;
+    targetKey: string;
+    draft: CommentDraftState;
+  }> = [];
+  for (const transition of documentPaneTransitions(previous, next)) {
+    replyMoves.push(
+      ...commentReplyDraftMovesForDocument(
+        reviewId,
+        transition.sourceDocument,
+        transition.targetDocument,
+        transition.sourcePane,
+        transition.targetPane,
+      ),
+    );
+    commentMoves.push(
+      ...commentDraftMovesForDocument(
+        reviewId,
+        transition.sourceDocument,
+        transition.sourcePane,
+        transition.targetPane,
+      ),
+    );
+  }
+
+  const replyDrafts = replyDraftsByReview.get(reviewId);
+  const commentDrafts = draftsByReview.get(reviewId);
+  if (
+    replyMoves.some(({ targetKey }) => replyDrafts?.has(targetKey)) ||
+    commentMoves.some(({ targetKey }) => commentDrafts?.has(targetKey))
+  ) {
+    return { status: "conflict" };
+  }
+
+  for (const { sourceKey } of replyMoves) replyDrafts?.delete(sourceKey);
+  for (const { targetKey, draft } of replyMoves) replyDrafts?.set(targetKey, draft);
+  for (const { sourceKey } of commentMoves) commentDrafts?.delete(sourceKey);
+  for (const { targetKey, draft } of commentMoves) commentDrafts?.set(targetKey, draft);
+  if (replyMoves.length > 0) notifyReplyDraftListeners();
+  return { status: "applied", commentDraftsMoved: commentMoves.length > 0 };
 }
 
 export function readCommentReplyDraft(

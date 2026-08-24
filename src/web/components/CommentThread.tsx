@@ -197,6 +197,7 @@ function CommentPostMarkdown({
 export function CommentThread({
   comment,
   variant = "sidebar",
+  draftScope,
   placement = null,
   side = null,
   markdownSourceOid,
@@ -209,6 +210,7 @@ export function CommentThread({
 }: {
   comment: AnyReviewComment;
   variant?: CommentThreadVariant;
+  draftScope?: string;
   placement?: CommentPlacement | null;
   side?: DiffSide;
   markdownSourceOid?: string | undefined;
@@ -228,7 +230,7 @@ export function CommentThread({
 }) {
   const queryClient = useQueryClient();
   const reviewId = reviewIdForComment(comment);
-  const replyDraftKey = `${variant}:${comment.id}`;
+  const replyDraftKey = [variant, draftScope, comment.id].filter(Boolean).join(":");
   const replyDraft = useSyncExternalStore(
     subscribeCommentReplyDrafts,
     () => readCommentReplyDraft(reviewId, replyDraftKey),

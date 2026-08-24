@@ -23,6 +23,7 @@ const EXIT_AUTO_ACK = 23;
 const EXIT_ALREADY_RUNNING = 24;
 const DEFAULT_MAX_IN_FLIGHT = 1;
 const DEFAULT_AUTO_ACK_POLL_MS = 250;
+const MAX_AUTHOR_LABEL_CHARACTERS = 100;
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const stateScript = path.join(scriptDirectory, "watch-state.mjs");
 const autoAckScript = path.join(scriptDirectory, "auto-ack.mjs");
@@ -41,6 +42,7 @@ function parseArguments(values) {
   let autoAck = false;
   let maxInFlight = DEFAULT_MAX_IN_FLIGHT;
   let maxInFlightProvided = false;
+  let authorLabel = null;
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--auto-ack") {
@@ -57,6 +59,18 @@ function parseArguments(values) {
       if (!Number.isSafeInteger(maxInFlight) || maxInFlight < 1 || maxInFlight > 64) {
         throw new DriverError("--max-in-flight must be an integer from 1 through 64", EXIT_WATCH);
       }
+      index += 1;
+      continue;
+    }
+    if (value === "--author-label") {
+      const next = values[index + 1];
+      if (!next || next.startsWith("--") || next.length > MAX_AUTHOR_LABEL_CHARACTERS) {
+        throw new DriverError(
+          `--author-label must contain 1 through ${MAX_AUTHOR_LABEL_CHARACTERS} characters`,
+          EXIT_WATCH,
+        );
+      }
+      authorLabel = next;
       index += 1;
       continue;
     }
@@ -79,7 +93,10 @@ function parseArguments(values) {
   if (!autoAck && maxInFlightProvided) {
     throw new DriverError("--max-in-flight requires --auto-ack", EXIT_WATCH);
   }
-  return { state: path.resolve(state), autoAck, maxInFlight };
+  if (!autoAck && authorLabel !== null) {
+    throw new DriverError("--author-label requires --auto-ack", EXIT_WATCH);
+  }
+  return { state: path.resolve(state), autoAck, maxInFlight, authorLabel };
 }
 
 async function runNodeScript(script, args, input) {
@@ -219,14 +236,14 @@ function releaseDriverLock(lock) {
   unlinkIfOwned(lock.path, lock.identity);
 }
 
-async function dispatchAutoAck(state, context) {
+async function dispatchAutoAck(state, context, authorLabel) {
   if (context.kind !== "pull-request") {
     throw new DriverError("Repository Review batches cannot be auto-acknowledged", EXIT_AUTO_ACK, {
       context,
     });
   }
   const pullRequest = context.pullRequestUrl;
-  const result = await runNodeScript(autoAckScript, [
+  const args = [
     "--state",
     state,
     "--context-kind",
@@ -235,7 +252,9 @@ async function dispatchAutoAck(state, context) {
     context.pullRequestId,
     "--context-display",
     context.pullRequestUrl,
-  ]);
+  ];
+  if (authorLabel !== null) args.push("--author-label", authorLabel);
+  const result = await runNodeScript(autoAckScript, args);
   if (result.code !== 0 || !result.json?.ok) {
     throw new DriverError(`auto-ack failed for ${pullRequest}`, EXIT_AUTO_ACK, result);
   }
@@ -249,7 +268,7 @@ async function dispatchAutoAck(state, context) {
   return type;
 }
 
-async function dispatchPendingAutoAcks(state, maxInFlight, notifiedRepositoryBatches) {
+async function dispatchPendingAutoAcks(state, maxInFlight, authorLabel, notifiedRepositoryBatches) {
   const work = await stateCommand(state, "list");
   const inFlight = Number(work.inFlight);
   if (!Number.isSafeInteger(inFlight) || inFlight < 0 || !Array.isArray(work.pending)) {
@@ -273,12 +292,26 @@ async function dispatchPendingAutoAcks(state, maxInFlight, notifiedRepositoryBat
       continue;
     }
     if (available === 0) continue;
-    const resultType = await dispatchAutoAck(state, batch.context);
+    const resultType = await dispatchAutoAck(state, batch.context, authorLabel);
     if (resultType === "batch-acknowledged") available -= 1;
   }
 }
 
-async function processFrame(state, frame, autoAck, maxInFlight) {
+async function assertTaskAuthorLabel(state, authorLabel) {
+  const current = await stateCommand(state, "status");
+  if (!current.authorLabelBound || current.authorLabel === authorLabel) return;
+  throw new DriverError(
+    `Existing task author label ${current.authorLabel ?? "(unlabeled)"} does not match ${authorLabel ?? "(unlabeled)"}`,
+    EXIT_AUTO_ACK,
+    {
+      state,
+      expectedAuthorLabel: current.authorLabel,
+      receivedAuthorLabel: authorLabel,
+    },
+  );
+}
+
+async function processFrame(state, frame, autoAck, maxInFlight, authorLabel) {
   if (!frame || typeof frame !== "object" || typeof frame.type !== "string") {
     throw new DriverError("Invalid RFC 7464 frame", EXIT_SEQUENCE, frame);
   }
@@ -295,6 +328,7 @@ async function processFrame(state, frame, autoAck, maxInFlight) {
       anchoredAtCurrent: frame.anchoredAtCurrent,
       autoAck,
       maxInFlight: autoAck ? maxInFlight : null,
+      authorLabel: autoAck ? authorLabel : null,
     });
   } else if (frame.type === "comment-posted" && ingested.status === "queued") {
     const context = frame.event.context;
@@ -321,7 +355,14 @@ function autoAckPollMilliseconds() {
     : DEFAULT_AUTO_ACK_POLL_MS;
 }
 
-async function runWatchOnce(state, autoAck, maxInFlight, stopping, notifiedRepositoryBatches) {
+async function runWatchOnce(
+  state,
+  autoAck,
+  maxInFlight,
+  authorLabel,
+  stopping,
+  notifiedRepositoryBatches,
+) {
   const current = await stateCommand(state, "status");
   const args = ["comment", "watch"];
   if (current.cursor) args.push("--after", current.cursor);
@@ -344,7 +385,12 @@ async function runWatchOnce(state, autoAck, maxInFlight, stopping, notifiedRepos
   const pumpAutoAcks = async () => {
     if (!autoAck || stopping.requested) return;
     if (autoAckPump) return autoAckPump;
-    autoAckPump = dispatchPendingAutoAcks(state, maxInFlight, notifiedRepositoryBatches);
+    autoAckPump = dispatchPendingAutoAcks(
+      state,
+      maxInFlight,
+      authorLabel,
+      notifiedRepositoryBatches,
+    );
     try {
       await autoAckPump;
     } catch (error) {
@@ -380,7 +426,7 @@ async function runWatchOnce(state, autoAck, maxInFlight, stopping, notifiedRepos
         }
         readySeen ||= frame.type === "ready";
         stoppedSeen ||= frame.type === "stopped";
-        await processFrame(state, frame, autoAck, maxInFlight);
+        await processFrame(state, frame, autoAck, maxInFlight, authorLabel);
       }
       await pumpAutoAcks();
     }
@@ -418,9 +464,10 @@ function delay(milliseconds) {
 }
 
 async function main() {
-  const { state, autoAck, maxInFlight } = parseArguments(process.argv.slice(2));
+  const { state, autoAck, maxInFlight, authorLabel } = parseArguments(process.argv.slice(2));
   const driverLock = acquireDriverLock(state);
   try {
+    if (autoAck) await assertTaskAuthorLabel(state, authorLabel);
     const stopping = { requested: false, child: null };
     const stop = () => {
       stopping.requested = true;
@@ -435,12 +482,13 @@ async function main() {
       while (!stopping.requested) {
         const startedAt = Date.now();
         if (autoAck) {
-          await dispatchPendingAutoAcks(state, maxInFlight, notifiedRepositoryBatches);
+          await dispatchPendingAutoAcks(state, maxInFlight, authorLabel, notifiedRepositoryBatches);
         }
         const result = await runWatchOnce(
           state,
           autoAck,
           maxInFlight,
+          authorLabel,
           stopping,
           notifiedRepositoryBatches,
         );

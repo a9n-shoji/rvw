@@ -300,10 +300,13 @@ export interface CommentPost {
   relatedCommitOid: string | null;
   references: CodeReference[];
   authorLabel: string | null;
+  lastModifiedBy: CommentPostModifier | null;
   isRoot: boolean;
   createdAt: string;
   updatedAt: string;
 }
+
+export type CommentPostModifier = "human" | "agent";
 
 export interface CommentPostEvent {
   sequence: number;

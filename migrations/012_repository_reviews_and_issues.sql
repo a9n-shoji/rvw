@@ -187,6 +187,7 @@ CREATE TABLE repository_comment_posts (
   body TEXT NOT NULL CHECK(length(body) > 0),
   related_commit_oid TEXT,
   author_label TEXT,
+  last_modified_by TEXT CHECK(last_modified_by IS NULL OR last_modified_by IN ('human', 'agent')),
   is_root INTEGER NOT NULL CHECK(is_root IN (0, 1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
