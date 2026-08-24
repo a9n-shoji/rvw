@@ -151,8 +151,11 @@ retained refs, or artifacts. A local remote that resolves to another owner/repos
 boundary, including cache hits, and does not update `sourceSyncError`. Repository rename or transfer is
 not auto-followed. When the same clone directory is physically moved, open reports
 `REPOSITORY_RELOCATION_REQUIRED`; `repository relocate` requires the matching canonical identity, the
-existing Review ID's exact current source ref, the commit object, and a sequence-bound confirmation token
-before updating only the saved location. After an explicit `repository reset` at the original binding, opening the new identity or
+existing Review ID's exact refs and commit objects for every current or historical source referenced by the
+database, and a sequence-bound confirmation token before updating only the saved location. Its preview returns
+`requiredEvidenceCount`, `verifiedEvidenceCount`, and `missingEvidence`; those fields are token-bound and are
+rebuilt in `currentPreview` if the final SQLite CAS becomes stale. A moved clone that changes or loses its remote
+cannot create a second aggregate while its live Review namespace remains. After an explicit `repository reset` at the original binding, opening the new identity or
 other clone creates a new review ID. `repository sync` resolves GitHub's current default branch and OID,
 fetches and verifies that exact object without changing checkout or index, advances the cached source,
 and refreshes every registered Issue independently. A previously synchronized review remains readable
@@ -161,6 +164,8 @@ cached reads, `repository comments`, Issue removal, and reset; the owned object 
 `repository open` from another worktree in that common directory updates the saved usable path, while
 existing-only previews use the current path without persisting it. Sync and Issue addition fail closed.
 `repository comments` returns the explicit Repository Review context and full comments for the selected state.
+When `--repository` selects another verified worktree, evidence and placement reads use that worktree without
+persisting its path or advancing the review sequence.
 `repository sync`, `repository comments`, reset preview/execution, and Issue-removal preview/execution are
 existing-only. A missing review returns `REPOSITORY_REVIEW_NOT_FOUND` without calling GitHub, fetching,
 creating a row/ref, updating location, or advancing either change sequence. Only `repository open` and an

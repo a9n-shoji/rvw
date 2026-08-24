@@ -39,7 +39,9 @@ source OID、選択したGitHub remote名／URLをheaderへ表示します。def
 GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作り直す場合は、登録済みcloneから
 `rvw repository reset`を明示実行します。同じcloneのdirectoryを移動した場合、通常openは
 `REPOSITORY_RELOCATION_REQUIRED`を返します。移動した`.git`内のreview-owned exact source refとobjectを
-previewで確認し、返されたtokenで`rvw repository relocate --yes`を実行すると、artifactを削除せずbindingだけを復旧できます。
+current sourceだけでなくComment、reply、Walkthroughが参照するhistorical sourceまでpreviewで全件確認し、返された
+tokenで`rvw repository relocate --yes`を実行すると、artifactを削除せずbindingだけを復旧できます。移動と同時に
+remoteが変更または削除されても、残存するlive Review namespaceを検出して二件目を作らずfail closedします。
 複数のGitHub remoteがある場合は`origin`、続いてremote名順の最初を対象にします。典型的なfork cloneでは
 `origin = user/project`がRepository Review対象で、`upstream`を明示選択するoptionはありません。
 local remoteを別owner/repositoryへ変更した場合はcache hitでも

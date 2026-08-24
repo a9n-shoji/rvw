@@ -1333,6 +1333,9 @@ describe("Repository Review", () => {
         gitCommonDir: movedContext.gitCommonDir,
       },
       sourceOid,
+      requiredEvidenceCount: 1,
+      verifiedEvidenceCount: 1,
+      missingEvidence: [],
       confirmationRequired: true,
     });
     database.incrementChangeSequence({
@@ -1401,6 +1404,186 @@ describe("Repository Review", () => {
       outcome: { kind: "completed" },
     });
     expect(database.getRepositoryReview(opened.repositoryReview.id)).toBeNull();
+  });
+
+  it("does not create a second Review when a moved clone also changes remote identity", async () => {
+    const { repositoryPath, database, github, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const before = await repositorySnapshot(
+      service,
+      database,
+      repositoryPath,
+      opened.repositoryReview.id,
+    );
+    const sequence = database.getChangeSequence();
+    const repositoryRequests = github.repositoryRequests;
+    const movedPath = `${repositoryPath}-moved-remote`;
+    renameSync(repositoryPath, movedPath);
+    git(movedPath, "remote", "set-url", "origin", "git@github.com:other-owner/other-repo.git");
+
+    for (const operation of [
+      () => service.openRepositoryReview(movedPath),
+      () => service.addRepositoryIssue(movedPath, "#142"),
+    ]) {
+      await expect(operation()).rejects.toMatchObject({
+        code: "REPOSITORY_MISMATCH",
+        details: {
+          repositoryReviewId: opened.repositoryReview.id,
+          currentRepository: "other-owner/other-repo",
+        },
+      });
+    }
+    expect(github.repositoryRequests).toBe(repositoryRequests);
+    expect(database.findRepositoryReviewByIdentity("other-owner", "other-repo")).toBeNull();
+    expect(database.getChangeSequence()).toBe(sequence);
+    await expect(
+      repositorySnapshot(service, database, movedPath, opened.repositoryReview.id),
+    ).resolves.toEqual(before);
+  });
+
+  it("does not create a second Review when a moved clone loses its remote", async () => {
+    const { repositoryPath, database, github, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const before = await repositorySnapshot(
+      service,
+      database,
+      repositoryPath,
+      opened.repositoryReview.id,
+    );
+    const sequence = database.getChangeSequence();
+    const repositoryRequests = github.repositoryRequests;
+    const movedPath = `${repositoryPath}-moved-offline`;
+    renameSync(repositoryPath, movedPath);
+    git(movedPath, "remote", "remove", "origin");
+
+    await expect(service.openRepositoryReview(movedPath)).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+      details: {
+        repositoryReviewId: opened.repositoryReview.id,
+        currentRepository: null,
+      },
+    });
+    await expect(service.getRepositoryRelocationPreview(movedPath)).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+    });
+    expect(github.repositoryRequests).toBe(repositoryRequests);
+    expect(database.getChangeSequence()).toBe(sequence);
+    await expect(
+      repositorySnapshot(service, database, movedPath, opened.repositoryReview.id),
+    ).resolves.toEqual(before);
+  });
+
+  it("rejects relocation when any DB-referenced historical evidence is missing", async () => {
+    const { repositoryPath, sourceOid, github, database, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    await service.createRepositoryComment({
+      repositoryReviewId: opened.repositoryReview.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid,
+        path: "README.md",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Retain the historical source.",
+    });
+    await service.publishWalkthrough({
+      review: { kind: "repository", repository: "acme/review-repo" },
+      sourceOid,
+      title: "Historical relocation evidence",
+      body: "Read [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "Source",
+          path: "README.md",
+          startLine: 1,
+          endLine: 1,
+          description: null,
+        },
+      ],
+    });
+    const nextOid = commitFile(repositoryPath, "README.md", "# Fixture\n\nNext.\n", "next");
+    github.repository = { ...github.repository, defaultBranchOid: nextOid };
+    await service.syncRepositoryReview(repositoryPath);
+    const saved = database.getRepositoryReview(opened.repositoryReview.id);
+    const sequence = database.getChangeSequence();
+    const movedPath = `${repositoryPath}-incomplete-evidence`;
+    renameSync(repositoryPath, movedPath);
+    git(
+      movedPath,
+      "update-ref",
+      "-d",
+      service.git.repositoryReviewCommitRef(opened.repositoryReview.id, sourceOid),
+    );
+    expect(await service.git.hasObject(movedPath, sourceOid)).toBe(true);
+
+    await expect(service.openRepositoryReview(movedPath)).rejects.toMatchObject({
+      code: "REPOSITORY_RELOCATION_REQUIRED",
+    });
+    await expect(service.getRepositoryRelocationPreview(movedPath)).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+      details: {
+        requiredEvidenceCount: 2,
+        verifiedEvidenceCount: 1,
+        missingEvidence: [
+          {
+            sourceOid,
+            retainedRefAvailable: false,
+            gitObjectAvailable: true,
+          },
+        ],
+      },
+    });
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toEqual(saved);
+    expect(database.getChangeSequence()).toBe(sequence);
+  });
+
+  it("returns a current relocation preview when the final SQLite CAS loses a race", async () => {
+    const { repositoryPath, database, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const movedPath = `${repositoryPath}-relocation-cas`;
+    renameSync(repositoryPath, movedPath);
+    const preview = await service.getRepositoryRelocationPreview(movedPath);
+    const relocateInDatabase = database.relocateRepositoryReview.bind(database);
+    vi.spyOn(database, "relocateRepositoryReview").mockImplementationOnce(
+      (...args: Parameters<RvwDatabase["relocateRepositoryReview"]>) => {
+        database.incrementChangeSequence({
+          kind: "repository",
+          reviewId: opened.repositoryReview.id,
+        });
+        return relocateInDatabase(...args);
+      },
+    );
+
+    const error = (await service
+      .relocateRepositoryReviewAtPath(movedPath, preview.confirmationToken)
+      .catch((caught: unknown) => caught)) as RvwError;
+    expect(error).toMatchObject({ code: "DESTRUCTIVE_PREVIEW_STALE", status: 409 });
+    const currentPreview = (
+      error.details as {
+        currentPreview: {
+          repositoryReview: { id: string };
+          reviewChangeSequence: number;
+          requiredEvidenceCount: number;
+          verifiedEvidenceCount: number;
+          missingEvidence: unknown[];
+          confirmationToken: string;
+        };
+      }
+    ).currentPreview;
+    expect(currentPreview).toMatchObject({
+      repositoryReview: { id: opened.repositoryReview.id },
+      reviewChangeSequence: database.getReviewChangeSequence(
+        "repository",
+        opened.repositoryReview.id,
+      ),
+      requiredEvidenceCount: 1,
+      verifiedEvidenceCount: 1,
+      missingEvidence: [],
+    });
+    expect(currentPreview.confirmationToken).not.toBe(preview.confirmationToken);
   });
 
   it("fails closed before every mutation when the same clone remote changes identity", async () => {
@@ -2296,6 +2479,49 @@ describe("Repository Review", () => {
     await expect(resetRepositoryReviewAtPath(service, worktreeB)).resolves.toMatchObject({
       repositoryReview: { id: opened.repositoryReview.id },
     });
+  });
+
+  it("uses the resolved worktree for path-based comments without persisting its location", async () => {
+    const { repositoryPath, sourceOid, database, service } = setup();
+    const worktreeA = `${repositoryPath}-comments-a`;
+    const worktreeB = `${repositoryPath}-comments-b`;
+    git(repositoryPath, "worktree", "add", "--detach", worktreeA, sourceOid);
+    git(repositoryPath, "worktree", "add", "--detach", worktreeB, sourceOid);
+    const opened = await service.openRepositoryReview(worktreeA);
+    const comment = await service.createRepositoryComment({
+      repositoryReviewId: opened.repositoryReview.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid,
+        path: "README.md",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Place this from the explicitly resolved worktree.",
+    });
+    const saved = database.getRepositoryReview(opened.repositoryReview.id);
+    const sequence = database.getReviewChangeSequence("repository", opened.repositoryReview.id);
+    git(repositoryPath, "remote", "remove", "origin");
+    git(repositoryPath, "worktree", "remove", "--force", worktreeA);
+
+    await expect(service.listRepositoryCommentContextsAtPath(worktreeB)).resolves.toMatchObject({
+      repositoryReview: { id: opened.repositoryReview.id },
+      comments: [
+        {
+          comment: { id: comment.id },
+          latestPlacement: {
+            outdated: false,
+            range: { startLine: 1, endLine: 1 },
+            path: "README.md",
+          },
+        },
+      ],
+    });
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toEqual(saved);
+    expect(database.getReviewChangeSequence("repository", opened.repositoryReview.id)).toBe(
+      sequence,
+    );
   });
 
   it("recovers process crashes before and after initial retained-ref creation", async () => {

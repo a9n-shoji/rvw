@@ -41,6 +41,8 @@
 - Issue sync errorを共有content cacheからreview membershipへ移し、最後のowner削除時にorphan cacheをGC
 - worktreeとGit common directoryをfilesystem realpathへ正規化し、選択remoteをviewerでも表示
 - Repository Review Comment placementを最大8件のbounded concurrencyへ変更
+- Repository Review relocation previewを、DB参照中のcurrent／historical exact source全件のref／object検証と
+  必須・検証済み・欠損件数を含むconfirmation tokenへ拡張
 
 ### Fixed
 
@@ -104,6 +106,9 @@
 - Issue membership確認後に並行削除されたPR／Repository Issue Commentを、共有cacheのFKだけで作成できるraceを修正
 - PR resetの返却用commit一覧を破壊的SQLite transaction前に取得し、後続Git read失敗をreset失敗と誤報しないよう修正
 - final SQLite CASでstaleになったRepository Review reset previewが古いReview metadataを返す問題を修正
+- directory移動とremote変更／削除が重なったcloneで、残存live Review namespaceを無視して二件目を作成できる問題を修正
+- `repository comments --repository`が検証済みworktreeを捨て、削除済みの保存pathからevidenceを読もうとする問題を修正
+- relocationの最終SQLite CAS競合で最新previewを返さない問題を修正
 - 失敗したPR／Repository Review artifact writerが、同じretained refを共有して正常保存された別artifactのexact evidenceを
   補償削除できるraceを修正
 

@@ -3,6 +3,7 @@ import type { RepositoryReview, GitHubRepository, RepositoryIdentity } from "../
 import { RvwDatabase } from "../infrastructure/db/database.js";
 import { GitClient, type RepositoryContext } from "../infrastructure/git/git-client.js";
 import type { GitHubPort } from "../infrastructure/github/github-client.js";
+import { GIT_OBJECT_ID_PATTERN } from "../shared/constants.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 
 export type RepositoryReviewResolutionPolicy =
@@ -19,6 +20,20 @@ export interface ResolvedRepositoryReview {
     remoteName: string;
     remoteUrl: string;
   } | null;
+}
+
+export interface RepositoryRelocationEvidenceStatus {
+  requiredEvidenceCount: number;
+  verifiedEvidenceCount: number;
+  missingEvidence: Array<{
+    sourceOid: string;
+    retainedRefAvailable: boolean;
+    gitObjectAvailable: boolean;
+  }>;
+}
+
+export interface ResolvedRepositoryRelocation extends ResolvedRepositoryReview {
+  relocationEvidence: RepositoryRelocationEvidenceStatus;
 }
 
 export interface RepositoryReviewOpenResult {
@@ -43,6 +58,26 @@ function isRemoteMovedDuringSync(error: unknown): boolean {
     rvwError.code === "GITHUB_REPOSITORY_ERROR" &&
     (rvwError.details as { reason?: unknown } | undefined)?.reason === "REMOTE_MOVED_DURING_SYNC"
   );
+}
+
+async function mapWithConcurrency<T, Result>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<Result>,
+): Promise<Result[]> {
+  const results = new Array<Result>(values.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (nextIndex < values.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(values[index]!);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, async () => await worker()),
+  );
+  return results;
 }
 
 export class RepositoryReviewLifecycle {
@@ -70,9 +105,70 @@ export class RepositoryReviewLifecycle {
       },
       suggestions: [
         `${repositoryReview.localRepositoryPath} または同じcloneのworktreeから実行してください。`,
+        "cloneのdirectory移動とremote変更が重なった場合は、remoteを保存済みrepositoryへ戻してからrelocateしてください。",
         "repositoryのrename / transferまたはremote変更後は、元のbindingでRepository Reviewを明示resetしてから作り直してください。",
       ],
     });
+  }
+
+  private async liveRepositoryReviewNamespaces(
+    repository: RepositoryContext,
+  ): Promise<Array<{ repositoryReview: RepositoryReview; refs: string[] }>> {
+    const refs = await this.git.listRefsByPrefix(repository.worktreePath, "refs/rvw/repository/");
+    const refsByReviewId = new Map<string, string[]>();
+    for (const ref of refs) {
+      const match = /^refs\/rvw\/repository\/([^/]+)\//i.exec(ref);
+      const reviewId = match?.[1]?.toLowerCase();
+      if (!reviewId) continue;
+      const owned = refsByReviewId.get(reviewId) ?? [];
+      owned.push(ref);
+      refsByReviewId.set(reviewId, owned);
+    }
+    const live: Array<{ repositoryReview: RepositoryReview; refs: string[] }> = [];
+    for (const [reviewId, ownedRefs] of refsByReviewId) {
+      const repositoryReview = this.database.getRepositoryReview(reviewId);
+      if (repositoryReview) live.push({ repositoryReview, refs: ownedRefs });
+    }
+    return live;
+  }
+
+  private async assertRepositoryReviewNamespaceAvailableForCreation(
+    repository: RepositoryContext,
+    remoteIdentity: { owner: string; repository: string } | null,
+  ): Promise<void> {
+    const liveNamespaces = await this.liveRepositoryReviewNamespaces(repository);
+    if (liveNamespaces.length === 0) return;
+    if (liveNamespaces.length > 1) {
+      throw new RvwError(
+        "LOCAL_STATE_INCONSISTENT",
+        "candidate cloneに複数のlive Repository Review namespaceがあります。",
+        {
+          status: 409,
+          details: {
+            candidatePath: repository.worktreePath,
+            candidateGitCommonDir: repository.gitCommonDir,
+            liveRepositoryReviewIds: liveNamespaces.map(
+              ({ repositoryReview }) => repositoryReview.id,
+            ),
+          },
+        },
+      );
+    }
+    const { repositoryReview, refs } = liveNamespaces[0]!;
+    if (remoteIdentity && sameRepositoryIdentity(repositoryReview, remoteIdentity)) {
+      await this.assertGitCommonDir(repositoryReview, repository, remoteIdentity);
+    }
+    throw this.repositoryMismatch(
+      repositoryReview,
+      repository,
+      "candidate cloneには別bindingのlive Repository Review namespaceが残っています。",
+      {
+        liveRepositoryReviewRefs: refs,
+        ...(remoteIdentity
+          ? { currentRepository: `${remoteIdentity.owner}/${remoteIdentity.repository}` }
+          : { currentRepository: null }),
+      },
+    );
   }
 
   private async assertGitCommonDir(
@@ -278,7 +374,43 @@ export class RepositoryReviewLifecycle {
     return { repositoryReview, repository, remoteIdentity };
   }
 
-  async resolveRelocationCandidate(repositoryPath: string): Promise<ResolvedRepositoryReview> {
+  private async repositoryRelocationEvidenceStatus(
+    repositoryReview: RepositoryReview,
+    repository: RepositoryContext,
+  ): Promise<RepositoryRelocationEvidenceStatus> {
+    const requiredEvidenceOids = this.database.listRepositoryReviewEvidenceOids(
+      repositoryReview.id,
+    );
+    const statuses = await mapWithConcurrency(requiredEvidenceOids, 8, async (sourceOid) => {
+      if (!GIT_OBJECT_ID_PATTERN.test(sourceOid)) {
+        return {
+          sourceOid,
+          retainedRefAvailable: false,
+          gitObjectAvailable: false,
+        };
+      }
+      const [retainedRefAvailable, gitObjectAvailable] = await Promise.all([
+        this.git.verifyRepositoryReviewCommitRef(
+          repository.worktreePath,
+          repositoryReview.id,
+          sourceOid,
+        ),
+        this.git.hasObject(repository.worktreePath, sourceOid),
+      ]);
+      return { sourceOid, retainedRefAvailable, gitObjectAvailable };
+    });
+    const missingEvidence = statuses.filter(
+      ({ retainedRefAvailable, gitObjectAvailable }) =>
+        !retainedRefAvailable || !gitObjectAvailable,
+    );
+    return {
+      requiredEvidenceCount: statuses.length,
+      verifiedEvidenceCount: statuses.length - missingEvidence.length,
+      missingEvidence,
+    };
+  }
+
+  async resolveRelocationCandidate(repositoryPath: string): Promise<ResolvedRepositoryRelocation> {
     const repository = await this.git.repositoryContext(repositoryPath);
     const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
     if (!remoteIdentity) {
@@ -338,23 +470,19 @@ export class RepositoryReviewLifecycle {
         },
       );
     }
-    const [retainedSourceAvailable, sourceObjectAvailable] = await Promise.all([
-      this.git.verifyRepositoryReviewCommitRef(
-        repository.worktreePath,
-        repositoryReview.id,
-        repositoryReview.sourceOid,
-      ),
-      this.git.hasObject(repository.worktreePath, repositoryReview.sourceOid),
-    ]);
-    if (!retainedSourceAvailable || !sourceObjectAvailable) {
+    const relocationEvidence = await this.repositoryRelocationEvidenceStatus(
+      repositoryReview,
+      repository,
+    );
+    if (relocationEvidence.missingEvidence.length > 0) {
       throw this.repositoryMismatch(
         repositoryReview,
         repository,
-        "移動先cloneでRepository Review所有のexact source evidenceを確認できません。",
-        { retainedSourceAvailable, sourceObjectAvailable },
+        "移動先cloneでRepository Reviewが参照する全exact source evidenceを確認できません。",
+        { ...relocationEvidence },
       );
     }
-    return { repositoryReview, repository, remoteIdentity };
+    return { repositoryReview, repository, remoteIdentity, relocationEvidence };
   }
 
   private async synchronizeSource(
@@ -666,12 +794,14 @@ export class RepositoryReviewLifecycle {
     }
 
     if (!remoteIdentity) {
+      await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
       throw new RvwError(
         "REPOSITORY_MISMATCH",
         "Repository Reviewの作成に必要なGitHub remote identityを解決できません。",
         { suggestions: ["対象repositoryのorigin remoteを確認してください。"] },
       );
     }
+    await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
     const sameIdentity = this.database.findRepositoryReviewByIdentity(
       remoteIdentity.owner,
       remoteIdentity.repository,
@@ -689,6 +819,7 @@ export class RepositoryReviewLifecycle {
     const repository = await this.git.repositoryContext(repositoryPath);
     const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
     if (!remoteIdentity) {
+      await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
       throw new RvwError(
         "REPOSITORY_MISMATCH",
         "Repository Reviewの追加操作に必要なGitHub remote identityを解決できません。",
@@ -706,6 +837,7 @@ export class RepositoryReviewLifecycle {
             gitCommonDir: repository.gitCommonDir,
           });
     }
+    await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
     const sameIdentity = this.database.findRepositoryReviewByIdentity(
       remoteIdentity.owner,
       remoteIdentity.repository,

@@ -121,11 +121,14 @@ Repository Reviewのidentityはcanonical GitHub repositoryであり、default br
 より前に停止する。GitHub repositoryのrename / organization transferは自動追従せず、元のbindingで明示
 resetして新しいaggregateを作る。default branchのrenameはidentityを変えない。
 保存済みGit common directoryと異なるpathでも、canonical identityが一致し、candidate clone内の
-`refs/rvw/repository/<repositoryReviewId>/commits/oid-<sourceOid>`がexact OIDを指し、そのcommit objectが
-存在する場合は、通常openを`REPOSITORY_RELOCATION_REQUIRED`で停止する。`repository relocate`は同じ条件を
-previewと実行時に検証し、review change sequence、旧／新worktree path、旧／新common directory、source OIDを
-含むconfirmation tokenと`--yes`を受けた場合だけ保存locationを更新する。source、artifact、retained refは変更しない。
-owned refまたはobjectを持たない独立cloneはrelocation候補にせず、従来どおり`REPOSITORY_MISMATCH`にする。
+`refs/rvw/repository/<repositoryReviewId>/` namespaceが存在し、そのIDのlive DB rowがある場合は、新しい
+aggregateを作成しない。canonical identityも一致する場合は通常openを`REPOSITORY_RELOCATION_REQUIRED`で停止し、
+remoteが変更または削除されている場合も`REPOSITORY_MISMATCH`でfail closedする。`repository relocate`は
+canonical identityに加え、DBが参照するcurrent／historical source OIDの全件について、そのReview IDのexact refと
+commit objectをpreviewと実行時に検証する。previewは必須／検証済み件数と欠損明細を返し、review change sequence、
+旧／新worktree path、旧／新common directory、source OID、全証跡検証結果を含むconfirmation tokenと`--yes`を
+受けた場合だけ保存locationを更新する。source、artifact、retained refは変更しない。全owned refまたはobjectを
+持たない独立cloneはrelocation候補にせず、従来どおり`REPOSITORY_MISMATCH`にする。
 worktree pathとGit common directoryは保存・比較前にfilesystem `realpath`へ正規化する。複数GitHub remoteは
 `origin`、その後remote名順で選択し、選択したname／URLを`repository open`、viewer header、`doctor`で観測可能にする。
 `doctor`はreview-owned Repository Review refをcurrent、artifact referenced、unreferenced、deleted-review orphanへ分類する
@@ -1332,8 +1335,8 @@ Repository Review lifecycleはapplication層でopen-or-createと、次のdiscrim
 CLI、Agent socket、HTTPが同じuse caseを呼ぶ。
 
 - `open-or-create`: `repository open`。保存済みbindingを検証してcacheを開き、未登録時だけGitHub同期後に作成する。
-- relocation: `repository relocate`。canonical identity、review-owned current source ref、source objectを検証し、
-  sequence付きpreviewの明示確認後だけ同じaggregateの保存locationを移動先cloneへ更新する。
+- relocation: `repository relocate`。canonical identityとDB参照中の全review-owned source ref／objectを検証し、
+  evidence件数を含むsequence付きpreviewの明示確認後だけ同じaggregateの保存locationを移動先cloneへ更新する。
 - `{ kind: "read" }`: `repository comments`と保存済みartifact read。row、ref、fetch、locationを作らない。
 - `{ kind: "synchronize" }`: `repository sync`。保存済みaggregateとlocal remoteを検証してからだけ同期する。
 - `{ kind: "destructive", allowMissingInitialRef }`: resetとRepository Issue removalのpreview／実行。missing
@@ -1356,16 +1359,19 @@ Repository Review read routeは次の契約へ分ける。
 | aggregate-bound read       | Review本体、同期、Comment一覧                                                                   | 保存path、Git common directory、解決可能なcanonical remote、current owned ref     |
 | source-evidence-bound read | tree、repository document／asset／search、exact comment source、placement、typed code reference | aggregate bindingに加え、利用する全source OIDのreview-owned exact refとGit object |
 
-Comment一覧のsource evidenceはOIDをunique化して先に検証し、配置計算は最大8件を並列処理する。一件でも
+path-based Comment一覧はresolverが検証した指定worktreeをevidence確認、document read、diffへ一貫して渡し、
+保存済みworktree pathへ戻さず、readによってlocationやsequenceを更新しない。source evidenceはOIDをunique化して
+先に検証し、配置計算は最大8件を並列処理する。一件でも
 historical owned refまたはobjectが欠損した場合は、document readと同じ`COMMIT_NOT_FOUND`で一覧全体を
 fail closedし、偶然別refから到達できるobjectをRepository Review evidenceとして読まない。
 
 PR／Repository Review reset、Issue removal、Walkthrough deletionのpreviewはreview change sequenceと、review ID、
 対象ID、件数、削除対象のreview-owned refを含むconfirmation tokenを返す。PR resetのretained refsは
 preserved情報として返し、削除件数やtoken対象へ含めない。実行は同じtokenを必須とし、SQLiteの
-mutation transactionでもexpected sequenceを再検証する。変更済みなら`DESTRUCTIVE_PREVIEW_STALE` (409)の
+mutation transactionでもexpected sequenceを再検証する。relocationも全evidence状態をtokenへ含め、変更済みなら
+`DESTRUCTIVE_PREVIEW_STALE` (409)の
 detailsへ最新previewを返し、利用者へ再確認を要求する。最終SQLite CASで競合を検出した場合もservice層で
-previewを再構築し、Repository Review metadataを含む同じerror shapeをcurrent rowから返す。PR resetはGitHub I/O後、
+previewを再構築し、relocationを含めRepository Review metadataを含む同じerror shapeをcurrent rowから返す。PR resetはGitHub I/O後、
 head ref確保前にもtokenを再検証し、commit一覧をSQLite mutation前に取得して、成功したDB reset後へ失敗可能な
 Git readを残さない。
 
@@ -1688,7 +1694,7 @@ Functional:
 - `rvw repository open`でrepository singletonのRepository Reviewを開き、default branch名とsource OIDを表示し、
   同じGit common directoryのworktreeとoffline openから同じreviewを再利用できる。独立cloneからはbindingを
   変更せず失敗し、明示reset後にだけそのcloneで作り直せる。同じcloneのdirectory移動は通常openで暗黙rebindせず、
-  exact owned source evidenceを検証したpreview token付きの`repository relocate --yes`後にopen、sync、Comment、resetを再利用できる。
+  DB参照中の全exact owned source evidenceを検証したpreview token付きの`repository relocate --yes`後にopen、sync、Comment、resetを再利用できる。
 - 未登録repositoryのRepository Review reset／Issue removal previewと実行、comments、syncはreviewを暗黙作成せず、
   `REPOSITORY_REVIEW_NOT_FOUND`後もDB row、retained ref、change sequenceを変更しない。remote mismatchは全transportで
   mutation前に拒否し、`source_sync_error`へ記録しない。

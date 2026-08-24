@@ -96,6 +96,8 @@ import {
 } from "../infrastructure/github/github-client.js";
 import {
   RepositoryReviewLifecycle,
+  type RepositoryRelocationEvidenceStatus,
+  type ResolvedRepositoryRelocation,
   type ResolvedRepositoryReview,
 } from "./repository-review-lifecycle.js";
 
@@ -110,7 +112,7 @@ export interface OpenRepositoryResult {
   selectedRemote: { name: string; url: string } | null;
 }
 
-export interface RepositoryRelocationPreview {
+export interface RepositoryRelocationPreview extends RepositoryRelocationEvidenceStatus {
   repositoryReview: RepositoryReview;
   previousLocation: { localRepositoryPath: string; gitCommonDir: string };
   candidateLocation: { localRepositoryPath: string; gitCommonDir: string };
@@ -1041,9 +1043,9 @@ export class RvwService {
   }
 
   private repositoryRelocationPreview(
-    resolved: ResolvedRepositoryReview,
+    resolved: ResolvedRepositoryRelocation,
   ): RepositoryRelocationPreview {
-    const { repositoryReview, repository, remoteIdentity } = resolved;
+    const { repositoryReview, repository, remoteIdentity, relocationEvidence } = resolved;
     if (!remoteIdentity) {
       throw new RvwError("REPOSITORY_MISMATCH", "relocation remote identityを確認できません。");
     }
@@ -1065,13 +1067,19 @@ export class RvwService {
       candidateLocation,
       selectedRemote: { name: remoteIdentity.remoteName, url: remoteIdentity.remoteUrl },
       sourceOid: repositoryReview.sourceOid,
+      ...relocationEvidence,
       reviewChangeSequence,
       confirmationToken: destructiveConfirmationToken({
         operation: "repository-relocate",
         reviewKind: "repository",
         reviewId: repositoryReview.id,
         reviewChangeSequence,
-        counts: { previousLocation, candidateLocation, sourceOid: repositoryReview.sourceOid },
+        counts: {
+          previousLocation,
+          candidateLocation,
+          sourceOid: repositoryReview.sourceOid,
+          ...relocationEvidence,
+        },
       }),
       confirmationRequired: true,
     };
@@ -1089,14 +1097,32 @@ export class RvwService {
     const resolved = await this.repositoryLifecycle.resolveRelocationCandidate(repositoryPath);
     const preview = this.repositoryRelocationPreview(resolved);
     assertDestructiveConfirmation(confirmationToken, preview);
-    const repositoryReview = this.database.relocateRepositoryReview(
-      preview.repositoryReview.id,
-      {
-        ...preview.previousLocation,
-        reviewChangeSequence: preview.reviewChangeSequence,
-      },
-      preview.candidateLocation,
-    );
+    let repositoryReview: RepositoryReview;
+    try {
+      repositoryReview = this.database.relocateRepositoryReview(
+        preview.repositoryReview.id,
+        {
+          ...preview.previousLocation,
+          reviewChangeSequence: preview.reviewChangeSequence,
+        },
+        preview.candidateLocation,
+      );
+    } catch (error) {
+      if (asRvwError(error).code === "DESTRUCTIVE_PREVIEW_STALE") {
+        let currentPreview: RepositoryRelocationPreview | null = null;
+        try {
+          currentPreview = this.repositoryRelocationPreview(
+            await this.repositoryLifecycle.resolveRelocationCandidate(repositoryPath),
+          );
+        } catch {
+          // Preserve the final-CAS error when the candidate binding changed too far to preview.
+        }
+        if (currentPreview) {
+          throw destructiveStaleErrorWithCurrentPreview(error, currentPreview);
+        }
+      }
+      throw error;
+    }
     return {
       repositoryReview,
       previousLocation: preview.previousLocation,
@@ -1592,7 +1618,7 @@ export class RvwService {
     repositoryReview: RepositoryReview;
     comments: Array<{ comment: RepositoryReviewComment; latestPlacement: CommentPlacement }>;
   }> {
-    const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
+    const { repositoryReview, repository } = await this.repositoryLifecycle.resolveExistingAtPath(
       repositoryPath,
       {
         policy: { kind: "read" },
@@ -1605,7 +1631,7 @@ export class RvwService {
         repository: repositoryReview.canonicalName,
       },
       repositoryReview,
-      comments: await this.listRepositoryCommentContexts(repositoryReview.id, resolved),
+      comments: await this.listRepositoryCommentContexts(repositoryReview.id, resolved, repository),
     };
   }
 
@@ -1614,11 +1640,18 @@ export class RvwService {
     resolved?: boolean,
   ): Promise<Array<{ comment: RepositoryReviewComment; latestPlacement: CommentPlacement }>> {
     const stored = this.getRepositoryReview(repositoryReviewId);
-    await this.repositoryLifecycle.resolveExistingAtPath(stored.localRepositoryPath, {
-      policy: { kind: "read" },
-      expectedRepositoryReviewId: repositoryReviewId,
-    });
-    const comments = await this.listRepositoryCommentContexts(repositoryReviewId, resolved);
+    const { repository } = await this.repositoryLifecycle.resolveExistingAtPath(
+      stored.localRepositoryPath,
+      {
+        policy: { kind: "read" },
+        expectedRepositoryReviewId: repositoryReviewId,
+      },
+    );
+    const comments = await this.listRepositoryCommentContexts(
+      repositoryReviewId,
+      resolved,
+      repository,
+    );
     this.getRepositoryReview(repositoryReviewId);
     return comments;
   }
@@ -2055,6 +2088,7 @@ export class RvwService {
   private async assertRepositoryReviewEvidenceAvailable(
     repositoryReview: RepositoryReview,
     sourceOids: readonly string[],
+    repositoryContext?: RepositoryContext,
   ): Promise<void> {
     const uniqueSourceOids = [...new Set(sourceOids)];
     const invalidOid = uniqueSourceOids.find((oid) => !GIT_OBJECT_ID_PATTERN.test(oid));
@@ -2063,7 +2097,7 @@ export class RvwService {
         status: 404,
       });
     }
-    const repository = await this.repositoryContextFor(repositoryReview);
+    const repository = repositoryContext ?? (await this.repositoryContextFor(repositoryReview));
     await mapWithConcurrency(
       uniqueSourceOids,
       REPOSITORY_COMMENT_PLACEMENT_CONCURRENCY,
@@ -2864,14 +2898,19 @@ export class RvwService {
     repositoryReview: RepositoryReview,
     comment: RepositoryReviewComment,
     evidenceVerified = false,
+    repositoryContext?: RepositoryContext,
   ): Promise<CommentExactSource | null> {
     if (comment.target.kind !== "document") return null;
     const target = comment.target;
     if (!evidenceVerified) {
-      await this.assertRepositoryReviewEvidenceAvailable(repositoryReview, [target.sourceOid]);
+      await this.assertRepositoryReviewEvidenceAvailable(
+        repositoryReview,
+        [target.sourceOid],
+        repositoryContext,
+      );
     }
     const content = await this.git.readDocument(
-      repositoryReview.localRepositoryPath,
+      repositoryContext?.worktreePath ?? repositoryReview.localRepositoryPath,
       target.sourceOid,
       target.path,
     );
@@ -2892,6 +2931,7 @@ export class RvwService {
     destinationOid: string,
     cache?: RepositoryPlacementCache,
     evidenceVerified = false,
+    repositoryContext?: RepositoryContext,
   ): Promise<CommentPlacement> {
     const target = comment.target;
     if (target.kind === "repository") return { outdated: false, range: null, path: null };
@@ -2913,11 +2953,13 @@ export class RvwService {
       return { ...placeMutableDocumentComment(target, walkthrough.body), path: null };
     }
     if (!evidenceVerified) {
-      await this.assertRepositoryReviewEvidenceAvailable(repositoryReview, [
-        target.sourceOid,
-        destinationOid,
-      ]);
+      await this.assertRepositoryReviewEvidenceAvailable(
+        repositoryReview,
+        [target.sourceOid, destinationOid],
+        repositoryContext,
+      );
     }
+    const repositoryPath = repositoryContext?.worktreePath ?? repositoryReview.localRepositoryPath;
     const resolved =
       target.sourceOid === destinationOid
         ? { path: target.path, deleted: false }
@@ -2926,7 +2968,7 @@ export class RvwService {
             let changesPromise = cache?.changedFiles.get(cacheKey);
             if (!changesPromise) {
               changesPromise = this.git.changedFiles(
-                repositoryReview.localRepositoryPath,
+                repositoryPath,
                 target.sourceOid,
                 destinationOid,
               );
@@ -2945,11 +2987,7 @@ export class RvwService {
       const cacheKey = `${oid}:${filePath}`;
       let documentPromise = cache?.documents.get(cacheKey);
       if (!documentPromise) {
-        documentPromise = this.git.readDocument(
-          repositoryReview.localRepositoryPath,
-          oid,
-          filePath,
-        );
+        documentPromise = this.git.readDocument(repositoryPath, oid, filePath);
         cache?.documents.set(cacheKey, documentPromise);
       }
       return documentPromise;
@@ -3145,6 +3183,7 @@ export class RvwService {
   async listRepositoryCommentContexts(
     repositoryReviewId: string,
     resolved?: boolean,
+    repositoryContext?: RepositoryContext,
   ): Promise<Array<{ comment: RepositoryReviewComment; latestPlacement: CommentPlacement }>> {
     const repositoryReview = this.getRepositoryReview(repositoryReviewId);
     const cache: RepositoryPlacementCache = {
@@ -3158,7 +3197,11 @@ export class RvwService {
         : [],
     );
     if (sourceOids.length > 0) {
-      await this.assertRepositoryReviewEvidenceAvailable(repositoryReview, sourceOids);
+      await this.assertRepositoryReviewEvidenceAvailable(
+        repositoryReview,
+        sourceOids,
+        repositoryContext,
+      );
     }
     return await mapWithConcurrency(
       comments,
@@ -3171,6 +3214,7 @@ export class RvwService {
           repositoryReview.sourceOid,
           cache,
           comment.target.kind === "document",
+          repositoryContext,
         ),
       }),
     );
