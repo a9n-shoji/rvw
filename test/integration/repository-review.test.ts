@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, renameSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -175,6 +175,27 @@ class DeleteThenThrowGitClient extends GitClient {
 class ThrowBeforeDeleteGitClient extends GitClient {
   override deleteRefsByPrefix(): Promise<number> {
     return Promise.reject(new Error("git update-ref failed before applying the transaction"));
+  }
+}
+
+class CountingRepositoryDocumentGitClient extends GitClient {
+  activeDocumentReads = 0;
+  maxActiveDocumentReads = 0;
+
+  resetDocumentReadCounts(): void {
+    this.activeDocumentReads = 0;
+    this.maxActiveDocumentReads = 0;
+  }
+
+  override async readDocument(...args: Parameters<GitClient["readDocument"]>) {
+    this.activeDocumentReads += 1;
+    this.maxActiveDocumentReads = Math.max(this.maxActiveDocumentReads, this.activeDocumentReads);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return await super.readDocument(...args);
+    } finally {
+      this.activeDocumentReads -= 1;
+    }
   }
 }
 
@@ -496,6 +517,9 @@ describe("Repository Review", () => {
     await expect(service.syncRepositoryReview(repositoryPath)).rejects.toMatchObject({
       code: "REPOSITORY_REVIEW_NOT_FOUND",
     });
+    await expect(service.getRepositoryRelocationPreview(repositoryPath)).rejects.toMatchObject({
+      code: "REPOSITORY_REVIEW_NOT_FOUND",
+    });
     await expect(service.listRepositoryCommentContextsAtPath(repositoryPath)).rejects.toMatchObject(
       {
         code: "REPOSITORY_REVIEW_NOT_FOUND",
@@ -503,6 +527,11 @@ describe("Repository Review", () => {
     );
 
     for (const [operation, input] of [
+      ["repository.relocate.preview", { repositoryPath }],
+      [
+        "repository.relocate",
+        { repositoryPath, confirmed: true, confirmationToken: "a".repeat(64) },
+      ],
       ["repository.reset.preview", { repositoryPath }],
       ["repository.reset", { repositoryPath, confirmed: true, confirmationToken: "a".repeat(64) }],
       ["repository.issue.remove.preview", { repositoryPath, issueReference: "#142" }],
@@ -1236,6 +1265,7 @@ describe("Repository Review", () => {
     for (const operation of [
       () => service.syncRepositoryReview(independentClone),
       () => service.addRepositoryIssue(independentClone, "#142"),
+      () => service.getRepositoryRelocationPreview(independentClone),
       () => service.getRepositoryResetPreviewAtPath(independentClone),
       () => resetRepositoryReviewAtPath(service, independentClone),
     ]) {
@@ -1271,6 +1301,106 @@ describe("Repository Review", () => {
       },
     });
     expect(recreated.repositoryReview.id).not.toBe(opened.repositoryReview.id);
+  });
+
+  it("requires explicit relocation after a clone directory move and restores every bound operation", async () => {
+    const { repositoryPath, sourceOid, database, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const movedPath = `${repositoryPath}-moved`;
+    renameSync(repositoryPath, movedPath);
+    const movedContext = await service.git.repositoryContext(movedPath);
+
+    await expect(service.openRepositoryReview(movedPath)).rejects.toMatchObject({
+      code: "REPOSITORY_RELOCATION_REQUIRED",
+      details: {
+        repositoryReviewId: opened.repositoryReview.id,
+        candidatePath: movedContext.worktreePath,
+        candidateGitCommonDir: movedContext.gitCommonDir,
+        retainedSourceAvailable: true,
+        sourceObjectAvailable: true,
+      },
+    });
+
+    const preview = await service.getRepositoryRelocationPreview(movedPath);
+    expect(preview).toMatchObject({
+      repositoryReview: { id: opened.repositoryReview.id },
+      previousLocation: {
+        localRepositoryPath: opened.repositoryReview.localRepositoryPath,
+        gitCommonDir: opened.repositoryReview.gitCommonDir,
+      },
+      candidateLocation: {
+        localRepositoryPath: movedContext.worktreePath,
+        gitCommonDir: movedContext.gitCommonDir,
+      },
+      sourceOid,
+      confirmationRequired: true,
+    });
+    database.incrementChangeSequence({
+      kind: "repository",
+      reviewId: opened.repositoryReview.id,
+    });
+    await expect(
+      service.relocateRepositoryReviewAtPath(movedPath, preview.confirmationToken),
+    ).rejects.toMatchObject({
+      code: "DESTRUCTIVE_PREVIEW_STALE",
+      status: 409,
+      details: {
+        currentPreview: {
+          repositoryReview: { id: opened.repositoryReview.id },
+          candidateLocation: { gitCommonDir: movedContext.gitCommonDir },
+        },
+      },
+    });
+    const currentPreview = await service.getRepositoryRelocationPreview(movedPath);
+    const relocated = await dispatchAgentSocketRequest(service, {
+      protocolVersion: 1,
+      operation: "repository.relocate",
+      input: {
+        repositoryPath: movedPath,
+        confirmed: true,
+        confirmationToken: currentPreview.confirmationToken,
+      },
+    });
+    expect(relocated).toMatchObject({
+      repositoryReview: {
+        id: opened.repositoryReview.id,
+        localRepositoryPath: movedContext.worktreePath,
+        gitCommonDir: movedContext.gitCommonDir,
+      },
+    });
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toMatchObject({
+      localRepositoryPath: movedContext.worktreePath,
+      gitCommonDir: movedContext.gitCommonDir,
+      sourceOid,
+    });
+
+    await expect(service.openRepositoryReview(movedPath)).resolves.toMatchObject({
+      fromCache: true,
+      repositoryReview: { id: opened.repositoryReview.id },
+    });
+    await expect(service.syncRepositoryReview(movedPath)).resolves.toMatchObject({
+      repositoryReview: { id: opened.repositoryReview.id, sourceOid },
+    });
+    const comment = await service.createRepositoryComment({
+      repositoryReviewId: opened.repositoryReview.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid,
+        path: "README.md",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "The relocated clone remains reviewable.",
+    });
+    await expect(service.listRepositoryCommentContextsAtPath(movedPath)).resolves.toMatchObject({
+      comments: [{ comment: { id: comment.id } }],
+    });
+    await expect(resetRepositoryReviewAtPath(service, movedPath)).resolves.toMatchObject({
+      repositoryReview: { id: opened.repositoryReview.id },
+      outcome: { kind: "completed" },
+    });
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toBeNull();
   });
 
   it("fails closed before every mutation when the same clone remote changes identity", async () => {
@@ -1344,6 +1474,7 @@ describe("Repository Review", () => {
     }
     for (const [operation, input] of [
       ["repository.sync", { repositoryPath }],
+      ["repository.relocate.preview", { repositoryPath }],
       ["repository.issue.add", { repositoryPath, issueReference: "#143" }],
       [
         "repository.issue.remove",
@@ -2595,6 +2726,107 @@ describe("Repository Review", () => {
         references: [],
       }),
     ).rejects.toMatchObject({ code: "COMMIT_NOT_FOUND" });
+  });
+
+  it("rejects historical Comment reads when the review-owned ref is missing but the object remains", async () => {
+    const { repositoryPath, sourceOid, github, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const comment = await service.createRepositoryComment({
+      repositoryReviewId: opened.repositoryReview.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid,
+        path: "README.md",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "This historical source must remain allowlisted.",
+    });
+    const nextOid = commitFile(repositoryPath, "README.md", "# Fixture\n\nNext source.\n", "next");
+    github.repository = { ...github.repository, defaultBranchOid: nextOid };
+    await service.syncRepositoryReview(repositoryPath);
+    const historicalRef = service.git.repositoryReviewCommitRef(
+      opened.repositoryReview.id,
+      sourceOid,
+    );
+    git(repositoryPath, "update-ref", "-d", historicalRef);
+    expect(await service.git.hasObject(repositoryPath, sourceOid)).toBe(true);
+
+    await expect(
+      service.getRepositoryReviewDocument({
+        kind: "repository-file",
+        repositoryReviewId: opened.repositoryReview.id,
+        sourceOid,
+        path: "README.md",
+      }),
+    ).rejects.toMatchObject({
+      code: "COMMIT_NOT_FOUND",
+      details: { sourceOid, retainedRefAvailable: false, gitObjectAvailable: true },
+    });
+    await expect(
+      service.placeRepositoryCommentAtCommit(opened.repositoryReview.id, comment, nextOid),
+    ).rejects.toMatchObject({ code: "COMMIT_NOT_FOUND", details: { sourceOid } });
+    await expect(service.getAnyCommentReviewContext(comment.ref)).rejects.toMatchObject({
+      code: "COMMIT_NOT_FOUND",
+      details: { sourceOid },
+    });
+    await expect(
+      service.listRepositoryCommentContextsById(opened.repositoryReview.id, false),
+    ).rejects.toMatchObject({ code: "COMMIT_NOT_FOUND", details: { sourceOid } });
+
+    const app = httpApp(service);
+    const placement = await app.request(
+      `http://127.0.0.1:4321/api/comments/${comment.id}/placement?${new URLSearchParams({
+        kind: "repository-file",
+        repositoryReviewId: opened.repositoryReview.id,
+        sourceOid: nextOid,
+        path: "README.md",
+      }).toString()}`,
+      { headers: { host: "127.0.0.1:4321" } },
+    );
+    expect(placement.status).toBe(404);
+    await expect(placement.json()).resolves.toMatchObject({
+      ok: false,
+      error: { code: "COMMIT_NOT_FOUND", details: { sourceOid } },
+    });
+  });
+
+  it("bounds Repository Review Comment placement Git reads", async () => {
+    const gitClient = new CountingRepositoryDocumentGitClient();
+    const { repositoryPath, github, service } = setup(gitClient);
+    for (let index = 0; index < 12; index += 1) {
+      writeFileSync(path.join(repositoryPath, `file-${index}.txt`), `line ${index}\n`, "utf8");
+    }
+    git(repositoryPath, "add", ".");
+    git(repositoryPath, "commit", "-m", "add placement fixtures");
+    const sourceOid = git(repositoryPath, "rev-parse", "HEAD");
+    github.repository = { ...github.repository, defaultBranchOid: sourceOid };
+    const opened = await service.openRepositoryReview(repositoryPath);
+    for (let index = 0; index < 12; index += 1) {
+      await service.createRepositoryComment({
+        repositoryReviewId: opened.repositoryReview.id,
+        target: {
+          kind: "document",
+          documentKind: "repository-file",
+          sourceOid,
+          path: `file-${index}.txt`,
+          startLine: 1,
+          endLine: 1,
+        },
+        body: `Comment ${index}`,
+      });
+    }
+    const nextOid = commitFile(repositoryPath, "README.md", "# Fixture\n\nAdvance.\n", "advance");
+    github.repository = { ...github.repository, defaultBranchOid: nextOid };
+    await service.syncRepositoryReview(repositoryPath);
+    gitClient.resetDocumentReadCounts();
+
+    await expect(
+      service.listRepositoryCommentContextsById(opened.repositoryReview.id),
+    ).resolves.toHaveLength(12);
+    expect(gitClient.maxActiveDocumentReads).toBeGreaterThan(1);
+    expect(gitClient.maxActiveDocumentReads).toBeLessThanOrEqual(8);
   });
 
   it("accepts a reset when Git ref deletion reports an error after applying the transaction", async () => {

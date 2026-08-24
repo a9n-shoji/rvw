@@ -117,6 +117,7 @@ rvw pr attach <PULL_REQUEST> --repository <PATH> --json
 ```bash
 rvw repository open [--repository <PATH>] [--foreground] [--no-open]
 rvw repository sync [--repository <PATH>] --json
+rvw repository relocate [--repository <MOVED_PATH>] [--yes --confirmation-token <TOKEN>] --json
 rvw repository issue add <ISSUE_REF> [--repository <PATH>] --json
 rvw repository issue refresh <ISSUE_REF> [--repository <PATH>] --force --json
 rvw repository issue remove <ISSUE_REF> [--repository <PATH>] [--yes --confirmation-token <TOKEN>] --json
@@ -128,8 +129,9 @@ rvw pr issue refresh <PULL_REQUEST> <ISSUE_REF> --force --json
 rvw pr issue remove <PULL_REQUEST> <ISSUE_REF> [--yes --confirmation-token <TOKEN>] --json
 ```
 
-Issue removal and reset without a confirmation token return a count/ref preview with
-`RESET_CONFIRMATION_REQUIRED`, `reviewChangeSequence`, and `confirmationToken`. After the caller
+Relocation, Issue removal, and reset without a confirmation token return a binding or count/ref preview with
+`REPOSITORY_RELOCATION_CONFIRMATION_REQUIRED` or `RESET_CONFIRMATION_REQUIRED`,
+`reviewChangeSequence`, and `confirmationToken`. After the caller
 presents the Issue title/number and owned artifact counts to a human, the same structured arguments
 with `--yes --confirmation-token <TOKEN>` delete only the selected review's membership,
 Issue comments, replies, or Repository Review artifacts. Shared Issue cache and artifacts owned by another
@@ -147,7 +149,10 @@ refresh the usable local path. An independent clone of the same canonical reposi
 actionable repository-mismatch error before changing the saved path, common directory, source OID,
 retained refs, or artifacts. A local remote that resolves to another owner/repository fails at the same
 boundary, including cache hits, and does not update `sourceSyncError`. Repository rename or transfer is
-not auto-followed. After an explicit `repository reset` at the original binding, opening the new identity or
+not auto-followed. When the same clone directory is physically moved, open reports
+`REPOSITORY_RELOCATION_REQUIRED`; `repository relocate` requires the matching canonical identity, the
+existing Review ID's exact current source ref, the commit object, and a sequence-bound confirmation token
+before updating only the saved location. After an explicit `repository reset` at the original binding, opening the new identity or
 other clone creates a new review ID. `repository sync` resolves GitHub's current default branch and OID,
 fetches and verifies that exact object without changing checkout or index, advances the cached source,
 and refreshes every registered Issue independently. A previously synchronized review remains readable

@@ -791,6 +791,61 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       writeJson({ ok: true, ...result });
     });
 
+  repositoryReview
+    .command("relocate")
+    .option("--repository <path>", "移動後の対象repository", process.cwd())
+    .option("--yes", "Repository Review bindingの変更を確認")
+    .option("--confirmation-token <token>", "previewが返した確認token")
+    .requiredOption("--json", "JSONで出力")
+    .description("移動後の同じcloneへRepository Review bindingを付け替える")
+    .action(async (options: { repository: string; yes?: boolean; confirmationToken?: string }) => {
+      if (!options.yes || !options.confirmationToken) {
+        const preview = await callService(
+          "repository.relocate.preview",
+          { repositoryPath: options.repository },
+          async () => await getRuntime().service.getRepositoryRelocationPreview(options.repository),
+        );
+        writeJson({
+          ok: false,
+          error: {
+            code: "REPOSITORY_RELOCATION_CONFIRMATION_REQUIRED",
+            message: "relocationには--yesが必要です。",
+            suggestions: ["details.argumentsの同じ移動先・確認tokenで再実行してください。"],
+            details: {
+              command: "rvw",
+              arguments: [
+                "repository",
+                "relocate",
+                "--repository",
+                options.repository,
+                "--yes",
+                "--confirmation-token",
+                preview.confirmationToken,
+                "--json",
+              ],
+            },
+          },
+          ...preview,
+        });
+        process.exitCode = 2;
+        return;
+      }
+      const result = await callService(
+        "repository.relocate",
+        {
+          repositoryPath: options.repository,
+          confirmed: true,
+          confirmationToken: options.confirmationToken,
+        },
+        async () =>
+          await getRuntime().service.relocateRepositoryReviewAtPath(
+            options.repository,
+            options.confirmationToken!,
+          ),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
   const repositoryIssue = repositoryReview
     .command("issue")
     .description("Repository ReviewのIssueを管理");

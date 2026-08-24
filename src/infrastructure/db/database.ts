@@ -1163,6 +1163,78 @@ export class RvwDatabase {
     return result;
   }
 
+  relocateRepositoryReview(
+    id: string,
+    expected: {
+      localRepositoryPath: string;
+      gitCommonDir: string;
+      reviewChangeSequence: number;
+    },
+    candidate: { localRepositoryPath: string; gitCommonDir: string },
+  ): RepositoryReview {
+    const now = new Date().toISOString();
+    this.immediateTransaction(() => {
+      const current = this.getRepositoryReview(id);
+      if (!current) {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
+          status: 404,
+        });
+      }
+      this.assertReviewChangeSequence("repository", id, expected.reviewChangeSequence);
+      if (
+        path.resolve(current.localRepositoryPath) !== path.resolve(expected.localRepositoryPath) ||
+        path.resolve(current.gitCommonDir) !== path.resolve(expected.gitCommonDir)
+      ) {
+        throw new RvwError(
+          "DESTRUCTIVE_PREVIEW_STALE",
+          "確認後にRepository Review bindingが変更されました。最新のrelocation previewを確認してください。",
+          {
+            status: 409,
+            details: {
+              repositoryReviewId: id,
+              expectedPath: expected.localRepositoryPath,
+              expectedGitCommonDir: expected.gitCommonDir,
+              currentPath: current.localRepositoryPath,
+              currentGitCommonDir: current.gitCommonDir,
+            },
+          },
+        );
+      }
+      const candidateOwner = this.findRepositoryReviewByGitCommonDir(candidate.gitCommonDir);
+      if (candidateOwner && candidateOwner.id !== id) {
+        throw new RvwError(
+          "REPOSITORY_MISMATCH",
+          "移動先Git common directoryは別のRepository Reviewへ登録されています。",
+          {
+            details: {
+              repositoryReviewId: id,
+              candidateRepositoryReviewId: candidateOwner.id,
+              candidateGitCommonDir: candidate.gitCommonDir,
+            },
+          },
+        );
+      }
+      const updated = this.database
+        .prepare(
+          "UPDATE repository_reviews SET local_repository_path = ?, git_common_dir = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(candidate.localRepositoryPath, candidate.gitCommonDir, now, id);
+      if (Number(updated.changes) !== 1) {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
+          status: 404,
+        });
+      }
+      this.incrementChangeSequence({ kind: "repository", reviewId: id });
+    });
+    const relocated = this.getRepositoryReview(id);
+    if (!relocated) {
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
+        status: 404,
+      });
+    }
+    return relocated;
+  }
+
   setRepositorySyncError(
     id: string,
     expectedSourceSyncGeneration: number,

@@ -277,6 +277,17 @@ export async function dispatchAgentSocketRequest(
       const input = parseOperationInput("repository.sync", request.input);
       return await service.syncRepositoryReview(input.repositoryPath);
     }
+    case "repository.relocate.preview": {
+      const input = parseOperationInput("repository.relocate.preview", request.input);
+      return await service.getRepositoryRelocationPreview(input.repositoryPath);
+    }
+    case "repository.relocate": {
+      const input = parseOperationInput("repository.relocate", request.input);
+      return await service.relocateRepositoryReviewAtPath(
+        input.repositoryPath,
+        input.confirmationToken,
+      );
+    }
     case "repository.issue.add": {
       const input = parseOperationInput("repository.issue.add", request.input);
       return await service.addRepositoryIssue(input.repositoryPath, input.issueReference);

@@ -277,6 +277,10 @@ export const agentCommandInputSchemas = {
     })
     .strict(),
   "repository.sync": z.object({ repositoryPath: nonEmptyString }).strict(),
+  "repository.relocate.preview": z.object({ repositoryPath: nonEmptyString }).strict(),
+  "repository.relocate": z
+    .object({ repositoryPath: nonEmptyString, confirmed: z.literal(true), confirmationToken })
+    .strict(),
   "repository.issue.add": z
     .object({ repositoryPath: nonEmptyString, issueReference: nonEmptyString })
     .strict(),

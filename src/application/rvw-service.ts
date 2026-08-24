@@ -110,6 +110,17 @@ export interface OpenRepositoryResult {
   selectedRemote: { name: string; url: string } | null;
 }
 
+export interface RepositoryRelocationPreview {
+  repositoryReview: RepositoryReview;
+  previousLocation: { localRepositoryPath: string; gitCommonDir: string };
+  candidateLocation: { localRepositoryPath: string; gitCommonDir: string };
+  selectedRemote: { name: string; url: string };
+  sourceOid: string;
+  reviewChangeSequence: number;
+  confirmationToken: string;
+  confirmationRequired: true;
+}
+
 export interface RepositoryReviewView {
   repositoryReview: RepositoryReview;
   issues: IssueDocument[];
@@ -399,7 +410,7 @@ function assertDestructiveConfirmation(
   if (providedToken === current.confirmationToken) return;
   throw new RvwError(
     "DESTRUCTIVE_PREVIEW_STALE",
-    "確認後にreview stateが変更されました。最新の削除previewを確認してください。",
+    "確認後にreview stateが変更されました。最新のpreviewを確認してください。",
     {
       status: 409,
       details: {
@@ -489,6 +500,7 @@ interface WalkthroughMarkdownAnalysis {
 }
 
 const ISSUE_FETCH_CONCURRENCY = 8;
+const REPOSITORY_COMMENT_PLACEMENT_CONCURRENCY = 8;
 
 async function mapWithConcurrency<T, Result>(
   values: readonly T[],
@@ -1019,6 +1031,78 @@ export class RvwService {
 
   async openRepositoryReview(cwd: string): Promise<OpenRepositoryResult> {
     return await this.repositoryLifecycle.openAtPath(cwd);
+  }
+
+  async getRepositoryRelocationPreview(
+    repositoryPath: string,
+  ): Promise<RepositoryRelocationPreview> {
+    const resolved = await this.repositoryLifecycle.resolveRelocationCandidate(repositoryPath);
+    return this.repositoryRelocationPreview(resolved);
+  }
+
+  private repositoryRelocationPreview(
+    resolved: ResolvedRepositoryReview,
+  ): RepositoryRelocationPreview {
+    const { repositoryReview, repository, remoteIdentity } = resolved;
+    if (!remoteIdentity) {
+      throw new RvwError("REPOSITORY_MISMATCH", "relocation remote identityを確認できません。");
+    }
+    const reviewChangeSequence = this.database.getReviewChangeSequence(
+      "repository",
+      repositoryReview.id,
+    );
+    const previousLocation = {
+      localRepositoryPath: repositoryReview.localRepositoryPath,
+      gitCommonDir: repositoryReview.gitCommonDir,
+    };
+    const candidateLocation = {
+      localRepositoryPath: repository.worktreePath,
+      gitCommonDir: repository.gitCommonDir,
+    };
+    return {
+      repositoryReview,
+      previousLocation,
+      candidateLocation,
+      selectedRemote: { name: remoteIdentity.remoteName, url: remoteIdentity.remoteUrl },
+      sourceOid: repositoryReview.sourceOid,
+      reviewChangeSequence,
+      confirmationToken: destructiveConfirmationToken({
+        operation: "repository-relocate",
+        reviewKind: "repository",
+        reviewId: repositoryReview.id,
+        reviewChangeSequence,
+        counts: { previousLocation, candidateLocation, sourceOid: repositoryReview.sourceOid },
+      }),
+      confirmationRequired: true,
+    };
+  }
+
+  async relocateRepositoryReviewAtPath(
+    repositoryPath: string,
+    confirmationToken: string,
+  ): Promise<{
+    repositoryReview: RepositoryReview;
+    previousLocation: RepositoryRelocationPreview["previousLocation"];
+    candidateLocation: RepositoryRelocationPreview["candidateLocation"];
+    selectedRemote: RepositoryRelocationPreview["selectedRemote"];
+  }> {
+    const resolved = await this.repositoryLifecycle.resolveRelocationCandidate(repositoryPath);
+    const preview = this.repositoryRelocationPreview(resolved);
+    assertDestructiveConfirmation(confirmationToken, preview);
+    const repositoryReview = this.database.relocateRepositoryReview(
+      preview.repositoryReview.id,
+      {
+        ...preview.previousLocation,
+        reviewChangeSequence: preview.reviewChangeSequence,
+      },
+      preview.candidateLocation,
+    );
+    return {
+      repositoryReview,
+      previousLocation: preview.previousLocation,
+      candidateLocation: preview.candidateLocation,
+      selectedRemote: preview.selectedRemote,
+    };
   }
 
   async resolveExistingRepositoryReviewAtPath(
@@ -1968,25 +2052,54 @@ export class RvwService {
     };
   }
 
+  private async assertRepositoryReviewEvidenceAvailable(
+    repositoryReview: RepositoryReview,
+    sourceOids: readonly string[],
+  ): Promise<void> {
+    const uniqueSourceOids = [...new Set(sourceOids)];
+    const invalidOid = uniqueSourceOids.find((oid) => !GIT_OBJECT_ID_PATTERN.test(oid));
+    if (invalidOid) {
+      throw new RvwError("COMMIT_NOT_FOUND", `Git commitが見つかりません: ${invalidOid}`, {
+        status: 404,
+      });
+    }
+    const repository = await this.repositoryContextFor(repositoryReview);
+    await mapWithConcurrency(
+      uniqueSourceOids,
+      REPOSITORY_COMMENT_PLACEMENT_CONCURRENCY,
+      async (oid) => {
+        const [retained, available] = await Promise.all([
+          this.git.verifyRepositoryReviewCommitRef(
+            repository.worktreePath,
+            repositoryReview.id,
+            oid,
+          ),
+          this.git.hasObject(repository.worktreePath, oid),
+        ]);
+        if (!retained || !available) {
+          throw new RvwError(
+            "COMMIT_NOT_FOUND",
+            `Repository Reviewで保持されているGit commitが見つかりません: ${oid}`,
+            {
+              status: 404,
+              details: {
+                repositoryReviewId: repositoryReview.id,
+                sourceOid: oid,
+                retainedRefAvailable: retained,
+                gitObjectAvailable: available,
+              },
+            },
+          );
+        }
+      },
+    );
+  }
+
   private async assertRepositoryReviewCommitAvailable(
     repositoryReview: RepositoryReview,
     oid: string,
   ): Promise<void> {
-    if (!GIT_OBJECT_ID_PATTERN.test(oid)) {
-      throw new RvwError("COMMIT_NOT_FOUND", `Git commitが見つかりません: ${oid}`, { status: 404 });
-    }
-    const repository = await this.repositoryContextFor(repositoryReview);
-    const [retained, available] = await Promise.all([
-      this.git.verifyRepositoryReviewCommitRef(repository.worktreePath, repositoryReview.id, oid),
-      this.git.hasObject(repository.worktreePath, oid),
-    ]);
-    if (!retained || !available) {
-      throw new RvwError(
-        "COMMIT_NOT_FOUND",
-        `Repository Reviewで保持されているGit commitが見つかりません: ${oid}`,
-        { status: 404 },
-      );
-    }
+    await this.assertRepositoryReviewEvidenceAvailable(repositoryReview, [oid]);
   }
 
   async getRepositoryTree(repositoryReviewId: string): Promise<{ entries: TreeEntry[] }> {
@@ -2750,9 +2863,13 @@ export class RvwService {
   private async getRepositoryCommentExactSource(
     repositoryReview: RepositoryReview,
     comment: RepositoryReviewComment,
+    evidenceVerified = false,
   ): Promise<CommentExactSource | null> {
     if (comment.target.kind !== "document") return null;
     const target = comment.target;
+    if (!evidenceVerified) {
+      await this.assertRepositoryReviewEvidenceAvailable(repositoryReview, [target.sourceOid]);
+    }
     const content = await this.git.readDocument(
       repositoryReview.localRepositoryPath,
       target.sourceOid,
@@ -2774,6 +2891,7 @@ export class RvwService {
     comment: RepositoryReviewComment,
     destinationOid: string,
     cache?: RepositoryPlacementCache,
+    evidenceVerified = false,
   ): Promise<CommentPlacement> {
     const target = comment.target;
     if (target.kind === "repository") return { outdated: false, range: null, path: null };
@@ -2793,6 +2911,12 @@ export class RvwService {
         return { outdated: false, range: null, path: null };
       }
       return { ...placeMutableDocumentComment(target, walkthrough.body), path: null };
+    }
+    if (!evidenceVerified) {
+      await this.assertRepositoryReviewEvidenceAvailable(repositoryReview, [
+        target.sourceOid,
+        destinationOid,
+      ]);
     }
     const resolved =
       target.sourceOid === destinationOid
@@ -2860,8 +2984,19 @@ export class RvwService {
     if (comment.repositoryReviewId !== repositoryReview.id) {
       return { outdated: true, range: null, path: null };
     }
-    await this.assertRepositoryReviewCommitAvailable(repositoryReview, destinationOid);
-    return await this.placeRepositoryCommentAtSource(repositoryReview, comment, destinationOid);
+    await this.assertRepositoryReviewEvidenceAvailable(
+      repositoryReview,
+      comment.target.kind === "document"
+        ? [comment.target.sourceOid, destinationOid]
+        : [destinationOid],
+    );
+    return await this.placeRepositoryCommentAtSource(
+      repositoryReview,
+      comment,
+      destinationOid,
+      undefined,
+      comment.target.kind === "document",
+    );
   }
 
   placeRepositoryWalkthroughComment(
@@ -2915,13 +3050,22 @@ export class RvwService {
     if (repositoryComment) {
       const repositoryReview = this.getRepositoryReview(repositoryComment.repositoryReviewId);
       await this.repositoryContextFor(repositoryReview);
+      const evidenceVerified = repositoryComment.target.kind === "document";
+      if (repositoryComment.target.kind === "document") {
+        await this.assertRepositoryReviewEvidenceAvailable(repositoryReview, [
+          repositoryComment.target.sourceOid,
+          repositoryReview.sourceOid,
+        ]);
+      }
       const [latestPlacement, exactSource] = await Promise.all([
         this.placeRepositoryCommentAtSource(
           repositoryReview,
           repositoryComment,
           repositoryReview.sourceOid,
+          undefined,
+          evidenceVerified,
         ),
-        this.getRepositoryCommentExactSource(repositoryReview, repositoryComment),
+        this.getRepositoryCommentExactSource(repositoryReview, repositoryComment, evidenceVerified),
       ]);
       return {
         context: {
@@ -3007,16 +3151,28 @@ export class RvwService {
       changedFiles: new Map(),
       documents: new Map(),
     };
-    return await Promise.all(
-      this.database.listRepositoryComments(repositoryReviewId, resolved).map(async (comment) => ({
+    const comments = this.database.listRepositoryComments(repositoryReviewId, resolved);
+    const sourceOids = comments.flatMap((comment) =>
+      comment.target.kind === "document"
+        ? [comment.target.sourceOid, repositoryReview.sourceOid]
+        : [],
+    );
+    if (sourceOids.length > 0) {
+      await this.assertRepositoryReviewEvidenceAvailable(repositoryReview, sourceOids);
+    }
+    return await mapWithConcurrency(
+      comments,
+      REPOSITORY_COMMENT_PLACEMENT_CONCURRENCY,
+      async (comment) => ({
         comment,
         latestPlacement: await this.placeRepositoryCommentAtSource(
           repositoryReview,
           comment,
           repositoryReview.sourceOid,
           cache,
+          comment.target.kind === "document",
         ),
-      })),
+      }),
     );
   }
 

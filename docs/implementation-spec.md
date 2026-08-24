@@ -120,6 +120,12 @@ Repository Reviewのidentityはcanonical GitHub repositoryであり、default br
 場合は`REPOSITORY_MISMATCH`でfail closedし、GitHub API、fetch、DB更新、location更新、ref作成、Issue同期
 より前に停止する。GitHub repositoryのrename / organization transferは自動追従せず、元のbindingで明示
 resetして新しいaggregateを作る。default branchのrenameはidentityを変えない。
+保存済みGit common directoryと異なるpathでも、canonical identityが一致し、candidate clone内の
+`refs/rvw/repository/<repositoryReviewId>/commits/oid-<sourceOid>`がexact OIDを指し、そのcommit objectが
+存在する場合は、通常openを`REPOSITORY_RELOCATION_REQUIRED`で停止する。`repository relocate`は同じ条件を
+previewと実行時に検証し、review change sequence、旧／新worktree path、旧／新common directory、source OIDを
+含むconfirmation tokenと`--yes`を受けた場合だけ保存locationを更新する。source、artifact、retained refは変更しない。
+owned refまたはobjectを持たない独立cloneはrelocation候補にせず、従来どおり`REPOSITORY_MISMATCH`にする。
 worktree pathとGit common directoryは保存・比較前にfilesystem `realpath`へ正規化する。複数GitHub remoteは
 `origin`、その後remote名順で選択し、選択したname／URLを`repository open`、viewer header、`doctor`で観測可能にする。
 `doctor`はreview-owned Repository Review refをcurrent、artifact referenced、unreferenced、deleted-review orphanへ分類する
@@ -1326,6 +1332,8 @@ Repository Review lifecycleはapplication層でopen-or-createと、次のdiscrim
 CLI、Agent socket、HTTPが同じuse caseを呼ぶ。
 
 - `open-or-create`: `repository open`。保存済みbindingを検証してcacheを開き、未登録時だけGitHub同期後に作成する。
+- relocation: `repository relocate`。canonical identity、review-owned current source ref、source objectを検証し、
+  sequence付きpreviewの明示確認後だけ同じaggregateの保存locationを移動先cloneへ更新する。
 - `{ kind: "read" }`: `repository comments`と保存済みartifact read。row、ref、fetch、locationを作らない。
 - `{ kind: "synchronize" }`: `repository sync`。保存済みaggregateとlocal remoteを検証してからだけ同期する。
 - `{ kind: "destructive", allowMissingInitialRef }`: resetとRepository Issue removalのpreview／実行。missing
@@ -1339,6 +1347,18 @@ HTTPの`/api/repository-reviews/:id`配下から始まるsync、Issue add/remove
 transactionまで保持し、待機中に対象IDがreset/recreateされた場合は旧IDへ
 `REPOSITORY_REVIEW_NOT_FOUND`を返す。replacement aggregateのsource、membership、Comment、sequence、refは変更しない。
 CLIとAgent socketのpath-based use caseは、指定pathに現在bindingされるreviewを対象とする。
+
+Repository Review read routeは次の契約へ分ける。
+
+| read境界                   | 対象                                                                                            | 必須検証                                                                          |
+| -------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| DB-only archive read       | Issue本文、Walkthrough本文、Comment本文                                                         | owning review row／membership／artifact owner                                     |
+| aggregate-bound read       | Review本体、同期、Comment一覧                                                                   | 保存path、Git common directory、解決可能なcanonical remote、current owned ref     |
+| source-evidence-bound read | tree、repository document／asset／search、exact comment source、placement、typed code reference | aggregate bindingに加え、利用する全source OIDのreview-owned exact refとGit object |
+
+Comment一覧のsource evidenceはOIDをunique化して先に検証し、配置計算は最大8件を並列処理する。一件でも
+historical owned refまたはobjectが欠損した場合は、document readと同じ`COMMIT_NOT_FOUND`で一覧全体を
+fail closedし、偶然別refから到達できるobjectをRepository Review evidenceとして読まない。
 
 PR／Repository Review reset、Issue removal、Walkthrough deletionのpreviewはreview change sequenceと、review ID、
 対象ID、件数、削除対象のreview-owned refを含むconfirmation tokenを返す。PR resetのretained refsは
@@ -1667,7 +1687,8 @@ Functional:
 - URLまたはcurrent branchからopen/draft PRを開き、登録済みPRはofflineでも再表示できる。
 - `rvw repository open`でrepository singletonのRepository Reviewを開き、default branch名とsource OIDを表示し、
   同じGit common directoryのworktreeとoffline openから同じreviewを再利用できる。独立cloneからはbindingを
-  変更せず失敗し、明示reset後にだけそのcloneで作り直せる。
+  変更せず失敗し、明示reset後にだけそのcloneで作り直せる。同じcloneのdirectory移動は通常openで暗黙rebindせず、
+  exact owned source evidenceを検証したpreview token付きの`repository relocate --yes`後にopen、sync、Comment、resetを再利用できる。
 - 未登録repositoryのRepository Review reset／Issue removal previewと実行、comments、syncはreviewを暗黙作成せず、
   `REPOSITORY_REVIEW_NOT_FOUND`後もDB row、retained ref、change sequenceを変更しない。remote mismatchは全transportで
   mutation前に拒否し、`source_sync_error`へ記録しない。

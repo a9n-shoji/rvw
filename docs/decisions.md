@@ -1,5 +1,38 @@
 # Architecture decisions
 
+## 2026-08-24: Recover explicit Repository Review relocation and close historical evidence reads
+
+### Problem
+
+A physical rename of a registered clone changed its absolute Git common-directory path, so normal open
+correctly refused an implicit rebind but reset could no longer reach either the old or new binding. The
+moved `.git` directory still carried the aggregate-owned exact source ref, yet there was no authorized
+operation that could use that evidence. Separately, Repository Review document reads enforced the owned-ref
+allowlist while historical Comment exact-source and placement paths read locally reachable objects directly.
+Comment lists also launched placement work without a concurrency bound.
+
+### Choice
+
+Keep normal open fail-closed and add an explicit `repository relocate` preview/confirmation operation.
+Relocation requires the same canonical GitHub identity, the exact current source under the existing Review
+ID's ref namespace, and the source commit object in the candidate clone. It updates only normalized worktree
+and common-directory locations under the Review change-sequence CAS; source metadata, artifacts, and refs do
+not change. A clone without all three proofs remains an independent-clone mismatch.
+
+Centralize Repository Review evidence validation for every Git-backed Comment exact-source and placement
+read. Comment lists unique their source OIDs before validation, fail closed with the same missing-commit
+policy as document reads, and calculate placement with at most eight concurrent workers. Document, asset,
+search, Comment, placement, and typed-reference reads remain source-evidence-bound; Issue, Walkthrough, and
+Comment bodies are explicitly DB-only archive reads.
+
+### Consequences
+
+- Moving a clone no longer requires restoring its old directory name or editing SQLite manually.
+- Copying only ordinary Git history is insufficient to relocate; the existing Review ID's exact ref must move too.
+- A locally reachable historical object without its Review-owned ref cannot be read through Comment paths.
+- Fork clones remain origin-first in this phase; the selected remote is visible before follow-up work, and an
+  explicit `--remote` selector remains out of scope.
+
 ## 2026-08-24: Name the repository-scoped aggregate Repository Review
 
 ### Choice

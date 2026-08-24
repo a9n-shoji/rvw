@@ -3,15 +3,21 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   RepositoryReview,
-  RepositoryReviewComment,
   RepositoryReviewSearchResponse,
   RepositoryWalkthrough,
   RepositoryWalkthroughSummary,
   CommentPlacement,
   IssueDocument,
-  TreeEntry,
 } from "../../domain/models.js";
-import { api, ApiError, jsonRequest } from "../api.js";
+import {
+  api,
+  ApiError,
+  jsonRequest,
+  type RepositoryCommentsResponse,
+  type RepositoryReviewResponse,
+  type RepositorySyncResponse,
+  type RepositoryTreeResponse,
+} from "../api.js";
 import { CommentSidebar } from "../components/CommentSidebar.js";
 import type { ViewerNavigationTarget } from "../components/DocumentViewer.js";
 import { ErrorNotice } from "../components/ErrorNotice.js";
@@ -60,36 +66,6 @@ const WalkthroughViewer = lazy(async () => {
   const module = await import("../components/WalkthroughViewer.js");
   return { default: module.WalkthroughViewer };
 });
-
-interface RepositoryReviewResponse {
-  repositoryReview: RepositoryReview;
-  issues: IssueDocument[];
-  walkthroughs: RepositoryWalkthroughSummary[];
-  selectedRemote: { name: string; url: string } | null;
-}
-
-interface RepositorySyncResponse extends RepositoryReviewResponse {
-  issueResults: Array<
-    | {
-        issue: IssueDocument;
-        ok: true;
-        skipped?: "membership-removed" | "older-response" | "newer-attempt";
-      }
-    | {
-        issue: IssueDocument;
-        ok: false;
-        error: { code: string; message: string; details?: unknown; suggestions: string[] };
-      }
-  >;
-}
-
-interface RepositoryTreeResponse {
-  entries: TreeEntry[];
-}
-
-interface RepositoryCommentsResponse {
-  comments: Array<{ comment: RepositoryReviewComment; latestPlacement: CommentPlacement }>;
-}
 
 function shortOid(oid: string): string {
   return oid.slice(0, 8);
@@ -225,6 +201,7 @@ export function RepositoryReviewApp({
     ),
     queryFn: async () =>
       await api<RepositoryTreeResponse>(`/api/repository-reviews/${repositoryReviewId}/tree`),
+    enabled: Boolean(reviewQuery.data),
   });
   const changeSequence = useQuery({
     queryKey: reviewQueryKeys.changeSequence("repository", repositoryReviewId),

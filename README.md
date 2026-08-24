@@ -37,7 +37,12 @@ Repository ReviewはcanonicalなGitHub repositoryごとに一件だけ作られ�
 source OID、選択したGitHub remote名／URLをheaderへ表示します。default branch名が変わっても同じreviewを再利用し、checkoutやindexを
 変更せずに同期します。同じGit common directoryのworktreeからは同じreviewを利用できますが、同じ
 GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作り直す場合は、登録済みcloneから
-`rvw repository reset`を明示実行します。local remoteを別owner/repositoryへ変更した場合はcache hitでも
+`rvw repository reset`を明示実行します。同じcloneのdirectoryを移動した場合、通常openは
+`REPOSITORY_RELOCATION_REQUIRED`を返します。移動した`.git`内のreview-owned exact source refとobjectを
+previewで確認し、返されたtokenで`rvw repository relocate --yes`を実行すると、artifactを削除せずbindingだけを復旧できます。
+複数のGitHub remoteがある場合は`origin`、続いてremote名順の最初を対象にします。典型的なfork cloneでは
+`origin = user/project`がRepository Review対象で、`upstream`を明示選択するoptionはありません。
+local remoteを別owner/repositoryへ変更した場合はcache hitでも
 `REPOSITORY_MISMATCH`となり、状態を更新しません。repository rename／organization transferには自動追従せず、
 元のbindingでresetして作り直します。一度同期したcode、Issue、Walkthrough、CommentはGitHub networkが
 offlineでも読めます。remote自体がない場合も、保存済みGit common directoryとreview-owned source refが
@@ -268,6 +273,8 @@ rvw agent ping --json
 rvw agent status --json
 rvw pr refresh <PR_REF> --json
 rvw repository sync [--repository <PATH>] --json
+rvw repository relocate [--repository <MOVED_PATH>] --json
+rvw repository relocate [--repository <MOVED_PATH>] --yes --confirmation-token <TOKEN> --json
 rvw repository issue add <ISSUE_REF> [--repository <PATH>] --json
 rvw repository issue refresh <ISSUE_REF> [--repository <PATH>] --force --json
 rvw repository issue remove <ISSUE_REF> [--repository <PATH>] --json
@@ -298,7 +305,7 @@ rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
 rvw pr attach <PR_REF> --repository <PATH> --json
 ```
 
-PR／Repository Review reset、Issue削除、Walkthrough削除は、確認tokenなしでは対象Issue、コメント、返信、Walkthrough、
+Repository Review relocationと、PR／Repository Review reset、Issue削除、Walkthrough削除は、確認tokenなしでは移動先bindingまたは対象Issue、コメント、返信、Walkthrough、
 Repository Reviewの解放候補refなどのpreviewだけを返して終了します。PR reset previewの`retainedRefs`は保持される
 evidenceの情報であり、削除対象ではありません。返却された構造化`details.arguments`を使い、同じ
 `reviewChangeSequence`と`confirmationToken`を`--yes`とともに返した場合だけ、対象reviewが所有する

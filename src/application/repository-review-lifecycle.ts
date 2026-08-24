@@ -75,17 +75,55 @@ export class RepositoryReviewLifecycle {
     });
   }
 
-  private assertGitCommonDir(
+  private async assertGitCommonDir(
     repositoryReview: RepositoryReview,
     repository: RepositoryContext,
-  ): void {
-    if (path.resolve(repositoryReview.gitCommonDir) !== path.resolve(repository.gitCommonDir)) {
-      throw this.repositoryMismatch(
-        repositoryReview,
-        repository,
-        "このRepository Reviewは別の独立cloneへすでに登録されています。",
+    remoteIdentity: { owner: string; repository: string } | null,
+  ): Promise<void> {
+    if (path.resolve(repositoryReview.gitCommonDir) === path.resolve(repository.gitCommonDir)) {
+      return;
+    }
+    const sameCanonicalRepository =
+      remoteIdentity !== null && sameRepositoryIdentity(repositoryReview, remoteIdentity);
+    const [retainedSourceAvailable, sourceObjectAvailable] = sameCanonicalRepository
+      ? await Promise.all([
+          this.git.verifyRepositoryReviewCommitRef(
+            repository.worktreePath,
+            repositoryReview.id,
+            repositoryReview.sourceOid,
+          ),
+          this.git.hasObject(repository.worktreePath, repositoryReview.sourceOid),
+        ])
+      : [false, false];
+    if (retainedSourceAvailable && sourceObjectAvailable) {
+      throw new RvwError(
+        "REPOSITORY_RELOCATION_REQUIRED",
+        "同じRepository Review evidenceを持つ移動後のcloneを検出しました。明示relocateが必要です。",
+        {
+          status: 409,
+          details: {
+            repositoryReviewId: repositoryReview.id,
+            registeredRepository: repositoryReview.canonicalName,
+            registeredPath: repositoryReview.localRepositoryPath,
+            registeredGitCommonDir: repositoryReview.gitCommonDir,
+            candidatePath: repository.worktreePath,
+            candidateGitCommonDir: repository.gitCommonDir,
+            sourceOid: repositoryReview.sourceOid,
+            retainedSourceAvailable,
+            sourceObjectAvailable,
+          },
+          suggestions: [
+            "rvw repository relocate --repository <moved-path> --json で移動先bindingを確認してください。",
+          ],
+        },
       );
     }
+    throw this.repositoryMismatch(
+      repositoryReview,
+      repository,
+      "このRepository Reviewは別の独立cloneへすでに登録されています。",
+      { retainedSourceAvailable, sourceObjectAvailable },
+    );
   }
 
   private assertCanonicalRemote(
@@ -210,7 +248,7 @@ export class RepositoryReviewLifecycle {
       );
     }
 
-    this.assertGitCommonDir(repositoryReview, repository);
+    await this.assertGitCommonDir(repositoryReview, repository, remoteIdentity);
     this.assertCanonicalRemote(repositoryReview, repository, remoteIdentity);
     const ownedSourceAvailable = await this.git.verifyRepositoryReviewCommitRef(
       repository.worktreePath,
@@ -235,6 +273,85 @@ export class RepositoryReviewLifecycle {
         repositoryReview,
         repository,
         "Repository Reviewの同期に必要なGitHub remote identityを解決できません。",
+      );
+    }
+    return { repositoryReview, repository, remoteIdentity };
+  }
+
+  async resolveRelocationCandidate(repositoryPath: string): Promise<ResolvedRepositoryReview> {
+    const repository = await this.git.repositoryContext(repositoryPath);
+    const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
+    if (!remoteIdentity) {
+      throw new RvwError(
+        "REPOSITORY_MISMATCH",
+        "relocationにはcanonical GitHub remote identityが必要です。",
+        {
+          details: {
+            candidatePath: repository.worktreePath,
+            candidateGitCommonDir: repository.gitCommonDir,
+          },
+        },
+      );
+    }
+    const byIdentity = this.database.findRepositoryReviewByIdentity(
+      remoteIdentity.owner,
+      remoteIdentity.repository,
+    );
+    const boundAtCandidate = this.database.findRepositoryReviewByGitCommonDir(
+      repository.gitCommonDir,
+    );
+    if (byIdentity && boundAtCandidate && byIdentity.id !== boundAtCandidate.id) {
+      throw this.repositoryMismatch(
+        boundAtCandidate,
+        repository,
+        "移動先Git common directoryとcanonical repositoryが異なるRepository Reviewを指しています。",
+        { canonicalRepositoryReviewId: byIdentity.id },
+      );
+    }
+    const repositoryReview = byIdentity ?? boundAtCandidate;
+    if (!repositoryReview) {
+      throw new RvwError(
+        "REPOSITORY_REVIEW_NOT_FOUND",
+        "移動対象のRepository Reviewが見つかりません。",
+        { status: 404 },
+      );
+    }
+    if (boundAtCandidate && boundAtCandidate.id !== repositoryReview.id) {
+      throw this.repositoryMismatch(
+        boundAtCandidate,
+        repository,
+        "移動先Git common directoryは別のRepository Reviewへ登録されています。",
+        { canonicalRepositoryReviewId: repositoryReview.id },
+      );
+    }
+    this.assertCanonicalRemote(repositoryReview, repository, remoteIdentity);
+    if (path.resolve(repositoryReview.gitCommonDir) === path.resolve(repository.gitCommonDir)) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        "Repository Reviewはすでにこのcloneへ登録されています。",
+        {
+          details: {
+            repositoryReviewId: repositoryReview.id,
+            repositoryPath: repository.worktreePath,
+            gitCommonDir: repository.gitCommonDir,
+          },
+        },
+      );
+    }
+    const [retainedSourceAvailable, sourceObjectAvailable] = await Promise.all([
+      this.git.verifyRepositoryReviewCommitRef(
+        repository.worktreePath,
+        repositoryReview.id,
+        repositoryReview.sourceOid,
+      ),
+      this.git.hasObject(repository.worktreePath, repositoryReview.sourceOid),
+    ]);
+    if (!retainedSourceAvailable || !sourceObjectAvailable) {
+      throw this.repositoryMismatch(
+        repositoryReview,
+        repository,
+        "移動先cloneでRepository Review所有のexact source evidenceを確認できません。",
+        { retainedSourceAvailable, sourceObjectAvailable },
       );
     }
     return { repositoryReview, repository, remoteIdentity };
@@ -559,7 +676,7 @@ export class RepositoryReviewLifecycle {
       remoteIdentity.owner,
       remoteIdentity.repository,
     );
-    if (sameIdentity) this.assertGitCommonDir(sameIdentity, repository);
+    if (sameIdentity) await this.assertGitCommonDir(sameIdentity, repository, remoteIdentity);
     const repositoryReview = await this.synchronizeSource(repository, remoteIdentity, sameIdentity);
     return {
       repositoryReview,
@@ -593,7 +710,7 @@ export class RepositoryReviewLifecycle {
       remoteIdentity.owner,
       remoteIdentity.repository,
     );
-    if (sameIdentity) this.assertGitCommonDir(sameIdentity, repository);
+    if (sameIdentity) await this.assertGitCommonDir(sameIdentity, repository, remoteIdentity);
     return await this.synchronizeSource(repository, remoteIdentity, sameIdentity);
   }
 

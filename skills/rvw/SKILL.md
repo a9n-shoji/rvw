@@ -118,6 +118,10 @@ reuse it and become the current local path. An independent clone of the same can
 repository is rejected rather than silently replacing the saved path and retained-object store. To
 use that independent clone, first obtain explicit authorization for the destructive Repository Review
 reset, inspect its deletion preview, reset it, and then open the Repository Review from the new clone.
+If `repository open` returns `REPOSITORY_RELOCATION_REQUIRED` after the same clone directory was moved,
+run `rvw repository relocate --repository <MOVED_PATH> --json`, report the old/new binding and exact source,
+and use the returned token with `--yes` only after explicit authorization. Relocation preserves the Review
+ID, artifacts, and refs; do not substitute reset for this recoverable move.
 The local GitHub remote must also match the saved canonical repository. A remote change, repository
 rename, or organization transfer is not followed automatically; use the same explicit reset/recreate
 boundary from the original binding. Do not retry a `REPOSITORY_MISMATCH` as a sync failure.

@@ -7,11 +7,15 @@ import type {
   DocumentContent,
   DocumentRef,
   PullRequest,
+  RepositoryReview,
+  RepositoryReviewComment,
+  RepositoryWalkthroughSummary,
   ReviewComment,
   SearchResponse,
   TreeEntry,
   Walkthrough,
   WalkthroughSummary,
+  IssueDocument,
 } from "../domain/models.js";
 import type { ThemePreference } from "../shared/preferences.js";
 
@@ -105,6 +109,36 @@ export interface PullRequestSyncResponse extends PullRequestResponse {
         error: { code: string; message: string; details?: unknown; suggestions: string[] };
       }
   >;
+}
+
+export interface RepositoryReviewResponse {
+  repositoryReview: RepositoryReview;
+  issues: IssueDocument[];
+  walkthroughs: RepositoryWalkthroughSummary[];
+  selectedRemote: { name: string; url: string } | null;
+}
+
+export interface RepositorySyncResponse extends RepositoryReviewResponse {
+  issueResults: Array<
+    | {
+        issue: IssueDocument;
+        ok: true;
+        skipped?: "membership-removed" | "older-response" | "newer-attempt";
+      }
+    | {
+        issue: IssueDocument;
+        ok: false;
+        error: { code: string; message: string; details?: unknown; suggestions: string[] };
+      }
+  >;
+}
+
+export interface RepositoryTreeResponse {
+  entries: TreeEntry[];
+}
+
+export interface RepositoryCommentsResponse {
+  comments: Array<{ comment: RepositoryReviewComment; latestPlacement: CommentPlacement }>;
 }
 
 export interface ThemePreferenceResponse {

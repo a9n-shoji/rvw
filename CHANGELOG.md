@@ -13,6 +13,7 @@
 - 件数previewと明示確認を伴うPR / Repository Issue membership削除、およびRepository Review reset
 - `issue.cacheRepair` capabilityで検出でき、二回連続の一致するGitHub snapshotでowned Issue cacheを再構築する明示`issue refresh --force`
 - selected GitHub remoteとRepository Review retained ref ownershipを表示するread-only doctor診断
+- 同じcloneのdirectory移動をexact owned sourceと確認tokenで復旧する`rvw repository relocate`
 - Pull Request / Repository ReviewのIssue本文に貼り付けたmodern GitHub user attachment画像を、既存の
   review-scoped localhost proxyと同じ検証・認証・画像判定で表示
 - repository demoのPR本文とIssue本文へ、安全な添付と停止対象の外部画像を並べたMarkdown tableを追加
@@ -39,6 +40,7 @@
 - Repository Review初期化状態を通常のsync error文字列から`pending | ready | failed`列へ分離
 - Issue sync errorを共有content cacheからreview membershipへ移し、最後のowner削除時にorphan cacheをGC
 - worktreeとGit common directoryをfilesystem realpathへ正規化し、選択remoteをviewerでも表示
+- Repository Review Comment placementを最大8件のbounded concurrencyへ変更
 
 ### Fixed
 
@@ -54,6 +56,8 @@
 - Repository Review completion helperがworker contextとread-only outcome fieldsの省略を投稿前に拒否するよう修正
 - Issue membership削除後に対象Issueの未送信draftだけが復活し得る問題を修正
 - Repository Reviewがclone内に存在するだけの未同期local commitをdocumentやcomment evidenceとして受理する問題を修正
+- historical Repository Review Commentのexact source／placementが、review-owned refなしでもlocal objectを読めた抜け道を修正
+- Repository Review取得前にtree queryが開始され、source OID確定後に二重取得され得る問題を修正
 - PR本文のinline/fenced codeやraw HTML内に書かれた`#123`をIssue membershipとして誤検出する問題を修正
 - 初期background refreshの完了が、待機中に人間が選択したhistorical commit rangeを上書きするraceを修正
 - reset／Issue removal preview、comments、syncが未登録Repository Reviewを暗黙作成する問題を修正
