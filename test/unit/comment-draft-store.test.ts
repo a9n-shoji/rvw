@@ -139,6 +139,50 @@ describe("comment draft store", () => {
     expect(readCommentDraft(pullRequestId, key)).toEqual(draft);
   });
 
+  it("rejects a cross-pane current/exact-source replacement after pane normalization", () => {
+    const current: ActiveDocument = { kind: "repository-file", path: "src/example.ts" };
+    const exact: ActiveDocument = {
+      ...current,
+      sourceOid: "a".repeat(40),
+      comparisonPolicy: "exact-source",
+    };
+    const previous = workspace([current], [exact]);
+    const next = moveDocumentToPane(previous, current, "left", "right");
+    const key = contextKey(exact, "right", "repository");
+    writeCommentDraft(pullRequestId, key, currentCommentDraftRevision(pullRequestId, key), draft);
+
+    expect(next).toMatchObject({
+      documents: { left: [current], right: [] },
+    });
+    expect(moveCommentDraftsForWorkspaceTransition(pullRequestId, previous, next)).toEqual({
+      status: "conflict",
+      reason: "document-replacement",
+    });
+    expect(readCommentDraft(pullRequestId, key)).toEqual(draft);
+  });
+
+  it("rejects replacing an exact-source document that owns only an inline reply draft", () => {
+    const current: ActiveDocument = { kind: "repository-file", path: "src/example.ts" };
+    const exact: ActiveDocument = {
+      ...current,
+      sourceOid: "a".repeat(40),
+      comparisonPolicy: "exact-source",
+    };
+    const previous = workspace([current], [exact]);
+    const next = moveDocumentToPane(previous, current, "left", "right");
+    const replyKey = `inline:${commentReplyDraftScope("right", exact)}:comment-1`;
+    writeCommentReplyDraft(pullRequestId, replyKey, {
+      ...readCommentReplyDraft(pullRequestId, replyKey),
+      body: "置換で隠してはいけない返信",
+    });
+
+    expect(moveCommentDraftsForWorkspaceTransition(pullRequestId, previous, next)).toEqual({
+      status: "conflict",
+      reason: "document-replacement",
+    });
+    expect(readCommentReplyDraft(pullRequestId, replyKey).body).toBe("置換で隠してはいけない返信");
+  });
+
   it("isolates the same document by pane", () => {
     const document: ActiveDocument = { kind: "repository-file", path: "src/example.ts" };
 

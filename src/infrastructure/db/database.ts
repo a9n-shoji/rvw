@@ -539,7 +539,16 @@ export class RvwDatabase {
       applied.has(11) && !applied.has(12)
         ? unreleasedRepositoryReviewTables.filter(tableExists)
         : [];
-    if (existingUnreleasedTables.length > 0) {
+    // The table inspection and the initial version snapshot are separate read transactions. A
+    // concurrent process may commit migration 012 between them, so re-check the authoritative
+    // migration row before classifying the schema as an unreleased development database.
+    const migration12AppliedAfterInspection =
+      existingUnreleasedTables.length > 0 &&
+      this.database.prepare("SELECT 1 FROM schema_migrations WHERE version = 12").get() !==
+        undefined;
+    if (migration12AppliedAfterInspection) {
+      applied.add(12);
+    } else if (existingUnreleasedTables.length > 0) {
       throw new RvwError(
         "DATABASE_ERROR",
         "未公開版のRepository Review migration 011を使用したdevelopment DBは自動移行できません。",

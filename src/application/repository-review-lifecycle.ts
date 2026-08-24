@@ -146,7 +146,6 @@ export class RepositoryReviewLifecycle {
 
   private async assertRepositoryReviewNamespaceAvailableForCreation(
     repository: RepositoryContext,
-    remoteIdentity: { owner: string; repository: string } | null,
   ): Promise<void> {
     const liveNamespaces = await this.liveRepositoryReviewNamespaces(repository);
     if (liveNamespaces.length === 0) return;
@@ -167,8 +166,15 @@ export class RepositoryReviewLifecycle {
       );
     }
     const { repositoryReview, refs } = liveNamespaces[0]!;
-    if (remoteIdentity && sameRepositoryIdentity(repositoryReview, remoteIdentity)) {
-      await this.assertGitCommonDir(repositoryReview, repository, remoteIdentity);
+    const existingRemoteIdentity = await this.remoteIdentityForExisting(
+      repositoryReview,
+      repository,
+    );
+    if (
+      existingRemoteIdentity &&
+      sameRepositoryIdentity(repositoryReview, existingRemoteIdentity)
+    ) {
+      await this.assertGitCommonDir(repositoryReview, repository, existingRemoteIdentity);
     }
     throw this.repositoryMismatch(
       repositoryReview,
@@ -176,8 +182,10 @@ export class RepositoryReviewLifecycle {
       "candidate cloneには別bindingのlive Repository Review namespaceが残っています。",
       {
         liveRepositoryReviewRefs: refs,
-        ...(remoteIdentity
-          ? { currentRepository: `${remoteIdentity.owner}/${remoteIdentity.repository}` }
+        ...(existingRemoteIdentity
+          ? {
+              currentRepository: `${existingRemoteIdentity.owner}/${existingRemoteIdentity.repository}`,
+            }
           : { currentRepository: null }),
       },
     );
@@ -426,48 +434,66 @@ export class RepositoryReviewLifecycle {
 
   async resolveRelocationCandidate(repositoryPath: string): Promise<ResolvedRepositoryRelocation> {
     const repository = await this.git.repositoryContext(repositoryPath);
-    const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
+    const boundAtCandidate = this.database.findRepositoryReviewByGitCommonDir(
+      repository.gitCommonDir,
+    );
+    const liveNamespaces = await this.liveRepositoryReviewNamespaces(repository);
+    if (liveNamespaces.length > 1) {
+      throw new RvwError(
+        "LOCAL_STATE_INCONSISTENT",
+        "candidate cloneに複数のlive Repository Review namespaceがあります。",
+        {
+          status: 409,
+          details: {
+            candidatePath: repository.worktreePath,
+            candidateGitCommonDir: repository.gitCommonDir,
+            liveRepositoryReviewIds: liveNamespaces.map(
+              ({ repositoryReview }) => repositoryReview.id,
+            ),
+          },
+        },
+      );
+    }
+    const byNamespace = liveNamespaces[0]?.repositoryReview ?? null;
+    if (byNamespace && boundAtCandidate && byNamespace.id !== boundAtCandidate.id) {
+      throw this.repositoryMismatch(
+        boundAtCandidate,
+        repository,
+        "移動先Git common directoryとlive namespaceが異なるRepository Reviewを指しています。",
+        { namespaceRepositoryReviewId: byNamespace.id },
+      );
+    }
+    let repositoryReview = byNamespace ?? boundAtCandidate;
+    let remoteIdentity: ResolvedRepositoryReview["remoteIdentity"];
+    if (repositoryReview) {
+      remoteIdentity = await this.remoteIdentityForExisting(repositoryReview, repository);
+    } else {
+      remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
+      repositoryReview = remoteIdentity
+        ? this.database.findRepositoryReviewByIdentity(
+            remoteIdentity.owner,
+            remoteIdentity.repository,
+          )
+        : null;
+    }
     if (!remoteIdentity) {
       throw new RvwError(
         "REPOSITORY_MISMATCH",
         "relocationにはcanonical GitHub remote identityが必要です。",
         {
           details: {
+            ...(repositoryReview ? { repositoryReviewId: repositoryReview.id } : {}),
             candidatePath: repository.worktreePath,
             candidateGitCommonDir: repository.gitCommonDir,
           },
         },
       );
     }
-    const byIdentity = this.database.findRepositoryReviewByIdentity(
-      remoteIdentity.owner,
-      remoteIdentity.repository,
-    );
-    const boundAtCandidate = this.database.findRepositoryReviewByGitCommonDir(
-      repository.gitCommonDir,
-    );
-    if (byIdentity && boundAtCandidate && byIdentity.id !== boundAtCandidate.id) {
-      throw this.repositoryMismatch(
-        boundAtCandidate,
-        repository,
-        "移動先Git common directoryとcanonical repositoryが異なるRepository Reviewを指しています。",
-        { canonicalRepositoryReviewId: byIdentity.id },
-      );
-    }
-    const repositoryReview = byIdentity ?? boundAtCandidate;
     if (!repositoryReview) {
       throw new RvwError(
         "REPOSITORY_REVIEW_NOT_FOUND",
         "移動対象のRepository Reviewが見つかりません。",
         { status: 404 },
-      );
-    }
-    if (boundAtCandidate && boundAtCandidate.id !== repositoryReview.id) {
-      throw this.repositoryMismatch(
-        boundAtCandidate,
-        repository,
-        "移動先Git common directoryは別のRepository Reviewへ登録されています。",
-        { canonicalRepositoryReviewId: repositoryReview.id },
       );
     }
     this.assertCanonicalRemote(repositoryReview, repository, remoteIdentity);
@@ -809,14 +835,14 @@ export class RepositoryReviewLifecycle {
 
     const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
     if (!remoteIdentity) {
-      await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
+      await this.assertRepositoryReviewNamespaceAvailableForCreation(repository);
       throw new RvwError(
         "REPOSITORY_MISMATCH",
         "Repository Reviewの作成に必要なGitHub remote identityを解決できません。",
         { suggestions: ["対象repositoryのorigin remoteを確認してください。"] },
       );
     }
-    await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
+    await this.assertRepositoryReviewNamespaceAvailableForCreation(repository);
     const sameIdentity = this.database.findRepositoryReviewByIdentity(
       remoteIdentity.owner,
       remoteIdentity.repository,
@@ -853,14 +879,14 @@ export class RepositoryReviewLifecycle {
     }
     const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
     if (!remoteIdentity) {
-      await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
+      await this.assertRepositoryReviewNamespaceAvailableForCreation(repository);
       throw new RvwError(
         "REPOSITORY_MISMATCH",
         "Repository Reviewの追加操作に必要なGitHub remote identityを解決できません。",
         { suggestions: ["対象repositoryのorigin remoteを確認してください。"] },
       );
     }
-    await this.assertRepositoryReviewNamespaceAvailableForCreation(repository, remoteIdentity);
+    await this.assertRepositoryReviewNamespaceAvailableForCreation(repository);
     const sameIdentity = this.database.findRepositoryReviewByIdentity(
       remoteIdentity.owner,
       remoteIdentity.repository,

@@ -513,6 +513,16 @@ describe("Repository Review", () => {
       repositoryReview: { id: first.repositoryReview.id },
       selectedRemote: { name: "upstream", url: upstreamUrl },
     });
+    await expect(service.doctor(repositoryPath)).resolves.toMatchObject({
+      git: {
+        selectedRemote: {
+          owner: "acme",
+          repository: "review-repo",
+          remoteName: "upstream",
+          remoteUrl: upstreamUrl,
+        },
+      },
+    });
   });
 
   it("keeps destructive previews existing-only across direct, Agent socket, and HTTP boundaries", async () => {
@@ -1448,6 +1458,44 @@ describe("Repository Review", () => {
       outcome: { kind: "completed" },
     });
     expect(database.getRepositoryReview(opened.repositoryReview.id)).toBeNull();
+  });
+
+  it("relocates a moved review through its matching non-origin remote", async () => {
+    const { repositoryPath, database, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const movedPath = `${repositoryPath}-moved-fork`;
+    renameSync(repositoryPath, movedPath);
+    git(movedPath, "remote", "set-url", "origin", "git@github.com:reviewer/review-repo.git");
+    const upstreamUrl = "https://github.com/acme/review-repo.git";
+    git(movedPath, "remote", "add", "upstream", upstreamUrl);
+    const movedContext = await service.git.repositoryContext(movedPath);
+
+    await expect(service.openRepositoryReview(movedPath)).rejects.toMatchObject({
+      code: "REPOSITORY_RELOCATION_REQUIRED",
+      details: {
+        repositoryReviewId: opened.repositoryReview.id,
+        candidateGitCommonDir: movedContext.gitCommonDir,
+      },
+    });
+
+    const preview = await service.getRepositoryRelocationPreview(movedPath);
+    expect(preview).toMatchObject({
+      repositoryReview: { id: opened.repositoryReview.id },
+      selectedRemote: { name: "upstream", url: upstreamUrl },
+      missingEvidence: [],
+    });
+    await expect(
+      service.relocateRepositoryReviewAtPath(movedPath, preview.confirmationToken),
+    ).resolves.toMatchObject({
+      repositoryReview: {
+        id: opened.repositoryReview.id,
+        gitCommonDir: movedContext.gitCommonDir,
+      },
+      selectedRemote: { name: "upstream", url: upstreamUrl },
+    });
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toMatchObject({
+      gitCommonDir: movedContext.gitCommonDir,
+    });
   });
 
   it("does not create a second Review when a moved clone also changes remote identity", async () => {

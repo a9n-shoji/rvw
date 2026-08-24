@@ -20,7 +20,8 @@ then notify posts whose trusted `lastModifiedBy` is `agent`, excluding only the 
 generic display label renders as `Agent`, and notification tags include review kind, review ID, and post ID.
 Keep a current Repository Review file draft stable by pane and path while recording the source OID as its document
 revision. A source refresh preserves the body and composer but requires a fresh line selection. Replacing a current
-file tab with an exact-source variant is rejected while the source tab owns a draft instead of hiding it.
+file tab with an exact-source variant is rejected while the source tab owns a new-comment or inline-reply draft
+instead of hiding it, including when a cross-pane move normalizes the surviving tab back to the left pane.
 
 ### Consequences
 
@@ -45,12 +46,15 @@ Keep `011_comment_post_modifier.sql` at version 011 and move the Repository Revi
 `012_repository_reviews_and_issues.sql`. Include the same trusted `last_modified_by` provenance column in
 Repository Review comment posts, and carry it through human and Agent write paths. For development databases
 that contain any table from the old Repository Review-shaped version 011, fail closed before running migration
-012 and require the unreleased database to be recreated. Normal databases continue through 011 and 012 in order.
+012 and require the unreleased database to be recreated. Because the initial version snapshot and table inspection
+are separate reads, re-check version 12 before rejecting so a concurrently completed normal migration wins.
+Normal databases continue through 011 and 012 in order.
 
 ### Consequences
 
 - A fresh or main-derived database applies both changes deterministically.
 - A partial development schema can never be marked as migration 012 or fail later at feature use time.
+- Two processes can still serialize normal migration 012 without the later reader misclassifying the committed schema.
 - Unreleased branch-development data must be exported if needed and the development database recreated.
 
 ## 2026-08-24: Recover explicit Repository Review relocation and close historical evidence reads
@@ -72,7 +76,9 @@ current source, not historical OIDs still referenced by comments, replies, and W
 Keep normal open fail-closed and add an explicit `repository relocate` preview/confirmation operation.
 Before creating an aggregate, inspect the candidate clone's Repository Review namespaces and map them back to
 live DB rows. A live namespace blocks creation even when the remote identity changed or disappeared; matching
-identity enters the explicit relocation boundary. Orphan namespaces without a live row remain isolated and do
+identity from any configured remote enters the explicit relocation boundary. Relocation resolves the Review from
+that namespace before selecting its matching remote, rather than letting an unrelated `origin` hide a valid
+`upstream`. Orphan namespaces without a live row remain isolated and do
 not prevent a reset/recreate flow.
 
 Relocation requires the same canonical GitHub identity and every current or historical source OID referenced by
@@ -98,8 +104,8 @@ Comment bodies are explicitly DB-only archive reads.
 - A locally reachable historical object without its Review-owned ref cannot be read through Comment paths.
 - `repository comments --repository <PATH>` reads from that verified worktree without persisting it.
 - New reviews in fork clones remain origin-first in this phase, while an existing review searches all remotes for
-  its saved identity. The selected remote is visible before follow-up work, and an explicit `--remote` selector
-  remains out of scope.
+  its saved identity across normal open, relocation, and bound-review doctor diagnostics. The selected remote is
+  visible before follow-up work, and an explicit `--remote` selector remains out of scope.
 
 ## 2026-08-24: Name the repository-scoped aggregate Repository Review
 

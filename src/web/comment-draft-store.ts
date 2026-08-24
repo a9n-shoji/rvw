@@ -120,21 +120,44 @@ function hasCommentDraftForDocument(
   return false;
 }
 
+function hasCommentReplyDraftForDocument(
+  reviewId: string,
+  document: ActiveDocument,
+  pane: DocumentPaneId,
+): boolean {
+  const drafts = replyDraftsByReview.get(reviewId);
+  if (!drafts) return false;
+  const prefix = `inline:${commentReplyDraftScope(pane, document)}:`;
+  return [...drafts.keys()].some((key) => key.startsWith(prefix));
+}
+
+function sameDocumentIdentity(left: ActiveDocument, right: ActiveDocument): boolean {
+  return JSON.stringify(documentIdentity(left)) === JSON.stringify(documentIdentity(right));
+}
+
 function replacesDraftOwningDocument(
   reviewId: string,
   previous: DocumentWorkspaceState,
   next: DocumentWorkspaceState,
 ): boolean {
-  for (const pane of ["left", "right"] as const) {
-    for (const sourceDocument of previous.documents[pane]) {
-      const targetDocument = next.documents[pane].find(
-        (candidate) => documentTabKey(candidate) === documentTabKey(sourceDocument),
-      );
+  const nextDocuments = [...next.documents.left, ...next.documents.right];
+  for (const sourcePane of ["left", "right"] as const) {
+    for (const sourceDocument of previous.documents[sourcePane]) {
+      const ownsDraft =
+        hasCommentDraftForDocument(reviewId, sourceDocument, sourcePane) ||
+        hasCommentReplyDraftForDocument(reviewId, sourceDocument, sourcePane);
       if (
-        targetDocument &&
-        JSON.stringify(documentIdentity(targetDocument)) !==
-          JSON.stringify(documentIdentity(sourceDocument)) &&
-        hasCommentDraftForDocument(reviewId, sourceDocument, pane)
+        !ownsDraft ||
+        nextDocuments.some((candidate) => sameDocumentIdentity(candidate, sourceDocument))
+      ) {
+        continue;
+      }
+      if (
+        nextDocuments.some(
+          (candidate) =>
+            documentTabKey(candidate) === documentTabKey(sourceDocument) &&
+            !sameDocumentIdentity(candidate, sourceDocument),
+        )
       ) {
         return true;
       }

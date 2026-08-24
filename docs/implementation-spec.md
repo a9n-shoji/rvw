@@ -123,7 +123,9 @@ resetして新しいaggregateを作る。default branchのrenameはidentityを�
 保存済みGit common directoryと異なるpathでも、canonical identityが一致し、candidate clone内の
 `refs/rvw/repository/<repositoryReviewId>/` namespaceが存在し、そのIDのlive DB rowがある場合は、新しい
 aggregateを作成しない。canonical identityも一致する場合は通常openを`REPOSITORY_RELOCATION_REQUIRED`で停止し、
-remoteが変更または削除されている場合も`REPOSITORY_MISMATCH`でfail closedする。`repository relocate`は
+`origin`が変更されても別remoteが保存identityと一致すれば同じrelocation境界へ入り、一致remoteがなければ
+`REPOSITORY_MISMATCH`でfail closedする。`repository relocate`はlive namespaceのReview IDから保存identityを解決して
+全remoteを検索し、
 canonical identityに加え、DBが参照するcurrent／historical source OIDの全件について、そのReview IDのexact refと
 commit objectをpreviewと実行時に検証する。previewは必須／検証済み件数と欠損明細を返し、review change sequence、
 旧／新worktree path、旧／新common directory、source OID、全証跡検証結果を含むconfirmation tokenと`--yes`を
@@ -132,6 +134,7 @@ commit objectをpreviewと実行時に検証する。previewは必須／検証�
 worktree pathとGit common directoryは保存・比較前にfilesystem `realpath`へ正規化する。新規作成時の複数GitHub remoteは
 `origin`、その後remote名順で選択する。既存Reviewは保存済みcanonical identityに一致するremoteを同じ順序の全remoteから
 検索し、無関係な`origin`だけを理由に拒否しない。実際に選択したname／URLを`repository open`、viewer header、`doctor`で観測可能にする。
+`doctor`は現在のGit common directoryにbound Reviewがあれば同じ保存identity基準でremoteを選ぶ。
 `doctor`はreview-owned Repository Review refをcurrent、artifact referenced、unreferenced、deleted-review orphanへ分類する
 read-only reportを返し、自動削除しない。
 
@@ -419,7 +422,8 @@ empty fileは従来どおり明示的に扱う。
 - Repository Reviewのcurrent repository file draftはpaneとpathをstable scopeとし、source OIDは
   `documentRevision`として別に保持する。source同期後もcomposerと本文を復元するが、旧revisionの行選択は送信不可として
   現在sourceでの再選択を要求する。`exact-source` fileはOIDをdraft scopeへ含め、同じpathのcurrent / exact-sourceを
-  置換すると入力中draftが非表示になる場合はworkspace変更を明示的に拒否する。
+  置換すると入力中の新規commentまたはinline reply draftが非表示になる場合は、同一pane置換だけでなくcross-pane移動後の
+  pane正規化も含めてworkspace変更を明示的に拒否する。
 - commit範囲切り替え時はopen pathとglobal表示modeを保ち、latest側commitが変わった場合だけ文書を
   そのcommitへ結び直す。exact source commentから開いた文書は
   通常の選択commit文書へ結び直す。current PR commit列外のexact sourceを開く場合はfull viewだけにする。
@@ -1272,7 +1276,8 @@ Repository ReviewとIssue追加migrationは、canonical Issue cacheの`github_is
 singletonの`repository_reviews`、およびRepository Review専用のWalkthrough、Comment、post、typed reference tableを追加する。
 Repository Review schemaをversion 011として記録した未公開development DBは自動upgradeせず、関連tableを一つでも
 検出した場合は012を記録する前にfail closedしてDBの退避・再作成を要求する。公開済み0.2.x DBだけが通常の
-011 comment provenanceから012へ進む。
+011 comment provenanceから012へ進む。初期version snapshot後のtable検査で関連tableを検出した場合はversion 12を
+再確認し、別processが同じtransactionで正常にDDLとversion記録をcommit済みならfail closedせずその結果を採用する。
 PRとRepository Reviewのartifact ownershipとcascade境界は分離し、
 共有Issue cacheの表示内容が変わった場合だけ、そのIssueを所有する全Reviewの
 `review_change_sequence`を同じtransactionで更新する。membership固有の同期errorはそのReviewだけを更新し、

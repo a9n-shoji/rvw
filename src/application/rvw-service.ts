@@ -820,6 +820,19 @@ export class RvwService {
     } | null;
   }> {
     const [git, github] = await Promise.all([this.git.doctor(cwd), this.github.doctor()]);
+    if (git.repository) {
+      const repositoryReview = this.database.findRepositoryReviewByGitCommonDir(
+        git.repository.gitCommonDir,
+      );
+      if (repositoryReview) {
+        const matchingRemote = await this.git.findBaseRepositoryIdentity(
+          git.repository.worktreePath,
+          repositoryReview.owner,
+          repositoryReview.repository,
+        );
+        if (matchingRemote) git.selectedRemote = matchingRemote;
+      }
+    }
     const databaseWriteProbe = this.database.writeProbe();
     let repositoryReviewRetainedRefs: Awaited<
       ReturnType<RvwService["doctor"]>

@@ -127,6 +127,83 @@ describe("RvwDatabase", () => {
     inspected.close();
   });
 
+  it("does not reject migration 012 committed after the initial applied-version snapshot", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-migration-012-snapshot-race-"));
+    const filePath = path.join(directory, "rvw.db");
+    const migrationsDirectory = path.join(directory, "migrations");
+    mkdirSync(migrationsDirectory);
+    for (const migration of [
+      "001_initial.sql",
+      "002_commit_model.sql",
+      "003_editable_comment_posts.sql",
+      "004_walkthroughs.sql",
+      "005_walkthrough_comments.sql",
+      "006_theme_preference.sql",
+      "007_file_level_walkthrough_references.sql",
+      "008_walkthrough_line_comments.sql",
+      "009_comment_watch.sql",
+      "010_comment_post_references.sql",
+      "011_comment_post_modifier.sql",
+    ]) {
+      writeFileSync(
+        path.join(migrationsDirectory, migration),
+        readFileSync(path.join("migrations", migration)),
+      );
+    }
+    const initial = new RvwDatabase({ filePath, migrationsDirectory });
+    initial.close();
+
+    // Preserve the native method so the spy can inject a commit between two constructor reads.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const originalPrepare = DatabaseSync.prototype.prepare;
+    let snapshotIntercepted = false;
+    const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (
+      this: DatabaseSync,
+      sql: string,
+    ) {
+      const statement = originalPrepare.call(this, sql);
+      if (sql !== "SELECT version FROM schema_migrations" || snapshotIntercepted) {
+        return statement;
+      }
+      snapshotIntercepted = true;
+      const readSnapshot = statement.all.bind(statement);
+      Object.defineProperty(statement, "all", {
+        configurable: true,
+        value: () => {
+          const snapshot = readSnapshot();
+          const concurrent = new RvwDatabase({
+            filePath,
+            migrationsDirectory: "./migrations",
+          });
+          concurrent.close();
+          return snapshot;
+        },
+      });
+      return statement;
+    });
+
+    try {
+      const reopened = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+      reopened.close();
+    } finally {
+      prepareSpy.mockRestore();
+    }
+
+    expect(snapshotIntercepted).toBe(true);
+    const verified = new DatabaseSync(filePath);
+    expect(
+      verified.prepare("SELECT count(*) AS count FROM schema_migrations WHERE version = 12").get(),
+    ).toEqual({ count: 1 });
+    expect(
+      verified
+        .prepare(
+          "SELECT 1 AS found FROM sqlite_master WHERE type = 'table' AND name = 'repository_reviews'",
+        )
+        .get(),
+    ).toEqual({ found: 1 });
+    verified.close();
+  });
+
   it("serializes the same pending migration across concurrent processes", async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-concurrent-migration-"));
     const migrationsDirectory = path.join(directory, "migrations");

@@ -39,6 +39,7 @@ acknowledgementを投稿せず旧keyのままbatchをcompleteし、`batch-discar
 そのため012のcanonical owner/repository collationとv4のRepository Review operation契約はrelease前の最終形へ直接更新します。
 統合前branchがRepository Review schemaをversion 011として記録したdevelopment databaseは自動移行しません。
 Repository Review tableの一部でも検出した場合は012を記録せずfail closedし、development DBの退避・再作成を案内します。
+ただしtable検査後にversion 12を再確認し、別processが正常な012 migrationをcommit済みならその結果を採用します。
 公開済み0.2.x databaseは通常どおり011のcomment provenance、012のRepository Review schemaを順に適用します。
 0.3.0以降は適用済みmigrationを書き換えずforward
 migrationと新しいprotocol versionで互換性を扱います。
@@ -53,7 +54,8 @@ Repository Reviewのlocal source bindingはGit common directory単位です。�
 `refs/rvw/repository/<repositoryReviewId>/...`が所有し、reset後の新しいIDは旧orphan refを認識しません。
 worktreeとGit common directoryはfilesystem realpathへ正規化し、verified cached openは公開済み0.2.x DBの
 非canonical path表記もrealpathへ更新します。新規作成はorigin-first、既存Reviewは保存identityに一致するremoteを
-全remoteから選び、選択した同じname／URLを表示とfetchで使います。retained ref分類はopen／viewer／doctorの診断surfaceであり、doctorは40-64桁OIDを扱いrefを自動修復・削除しません。
+全remoteから選び、通常open、live namespaceから解決するrelocation、bound Reviewのdoctorで同じname／URLを
+表示とfetchに使います。retained ref分類はopen／viewer／doctorの診断surfaceであり、doctorは40-64桁OIDを扱いrefを自動修復・削除しません。
 
 remoteを解決できなくても、保存済みGit common directoryとreview-owned source refが一致すればcached read、
 comments、Issue removal、resetは利用できます。syncとIssue addはremote identityを安全に確認できるまで拒否します。

@@ -31,7 +31,9 @@ the original binding is the boundary for recreating the aggregate. Worktree and 
 are filesystem-realpath canonicalized. Legacy saved path spellings are upgraded to realpaths on a
 verified cached open. Creation selects a GitHub remote origin-first; an existing review searches all
 ordered remotes for its saved canonical identity, so an unrelated origin does not hide a matching upstream.
-The selected remote is used for both display and fetch and is exposed through open, the viewer header, and doctor. Doctor classifies
+Moved clones resolve the Review from its live namespace before applying the same policy, and doctor applies it to
+the Review bound at the current common directory. The selected remote is used for both display and fetch and is
+exposed through open, the viewer header, and doctor. Doctor classifies
 40-64 digit Repository Review refs as current, artifact-referenced, unreferenced, or orphan without mutating them. The
 Issue removal transaction deletes only the selected membership and its owned comments/replies.
 Issue-target Comment creation performs the display/range checks in the application layer, then
