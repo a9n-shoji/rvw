@@ -16,8 +16,12 @@ rvw is a local Node.js application with four boundaries:
 The SQLite database is user-global. One Branch Review is keyed by canonical GitHub repository,
 independent from every Pull Request Review. Issue cache rows are shared by GitHub identity while
 memberships and Issue-target comments belong to exactly one review. Observed PR heads and Branch
-Review sources are retained by `refs/rvw/...` in the base repository's common Git directory. The
-saved Git common directory and aggregate-owned current source ref are the local Branch binding. Every
+Review sources are retained by `refs/rvw/...` in the base repository's common Git directory.
+Comments, replies, and Walkthroughs retain their exact source before the SQLite write. A failed artifact
+write does not compensate that ref: PR/OID and Branch Review/OID refs are shared evidence, and the
+process that created a ref cannot know that a concurrent successful artifact has not begun relying on
+it. Unreferenced refs remain diagnostic data until a future explicit, exclusive GC.
+The saved Git common directory and aggregate-owned current source ref are the local Branch binding. Every
 path-based use case compares that common directory and, when available, the canonical identity parsed
 from local GitHub remotes with the saved identity before any GitHub request, fetch, location update, or
 mutation. Worktrees in that common directory may reuse the review, but an independent clone, a changed

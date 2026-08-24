@@ -245,7 +245,7 @@ typed referenceを付けられ、任意のlocal commitは根拠として受理�
 directory、DB path、Branch retained refのcurrent／referenced／unreferenced／orphan状態を確認してください。初回登録や
 同期だけが失敗する場合は`gh auth status`とnetworkを確認します。登録済みPRはofflineでも開けます。
 
-force-push前に観測したhead commitはimmutable refで保持するため、旧コメントの参照元として読めます。Git refとSQLiteの不整合は部分修復せず、まず`rvw doctor --json`で診断します。PR resetはSQLite上のreview artifactを初期化しますが、並行writerが確保したexact evidenceを壊さないよう既存PR refは削除しません。
+force-push前に観測したhead commitはimmutable refで保持するため、旧コメントの参照元として読めます。Git refとSQLiteの不整合は部分修復せず、まず`rvw doctor --json`で診断します。PR resetはSQLite上のreview artifactを初期化しますが、並行writerが確保したexact evidenceを壊さないよう既存PR refは削除しません。Comment、reply、WalkthroughのSQLite書き込みが失敗した場合も、その直前に作成したPR／Branch refを削除しません。`created`は一回のGit commandの結果であり、同じOIDを使う別processのartifactが既に依存していないことを保証しないためです。
 
 ```bash
 rvw pr reset https://github.com/owner/repository/pull/123 --json

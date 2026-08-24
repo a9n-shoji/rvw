@@ -5,8 +5,6 @@
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-08-22
-
 ### Added
 
 - GitHub repositoryごとに一件だけ保持し、default branchのexact commitを読むBranch Review
@@ -30,9 +28,6 @@
   viewerからのIssue全体／本文選択コメントへ変更
 - Walkthrough publish/update responseを、transportに依存しない`walkthrough` + `issuesAdded` envelopeへ変更
 - watcher worker resultをPull Request URL前提からreview contextのdiscriminated unionへ変更
-- `rvw-watch-comments`のinvestigate-and-reply専用taskで、同じPR／repositoryの後続batchもworker capacity内で
-  並列に調査・返信。保証できる場合は`max-in-flight=8`を目標とし、fix-and-pushを許可したtaskだけ従来の
-  writer排他を維持
 - Branch watcherのread-only境界を保ったまま、current／retained sourceのtyped code referenceを最終replyへ
   付けられるよう変更
 - Issue同期を認証確認の共有と最大8件のbounded concurrencyへ変更
@@ -105,6 +100,8 @@
 - Issue membership確認後に並行削除されたPR／Branch Issue Commentを、共有cacheのFKだけで作成できるraceを修正
 - PR resetの返却用commit一覧を破壊的SQLite transaction前に取得し、後続Git read失敗をreset失敗と誤報しないよう修正
 - final SQLite CASでstaleになったBranch reset previewが古いReview metadataを返す問題を修正
+- 失敗したPR／Branch artifact writerが、同じretained refを共有して正常保存された別artifactのexact evidenceを
+  補償削除できるraceを修正
 
 ## [0.2.4] - 2026-08-24
 

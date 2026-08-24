@@ -1256,6 +1256,10 @@ commit table、review version table、PR revision tableは持たない。既存P
 version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元できない場合Outdatedとして残す。
 既存の`refs/rvw/pr/<n>/version/...`は旧comment source objectを失わないよう保持し、resetでも削除しない。
 以後の同期だけがcommit ref形式を使う。将来の明示的・排他的GCまでhistorical evidenceとして残す。
+Comment、reply、Walkthroughはexact source refをSQLite書き込み前に確保するが、書き込み失敗時にそのrefを
+補償削除しない。refの`created`はそのGit commandが初回作成したことだけを示し、同じPR／Branch ReviewとOIDを
+共有する別processの正常なartifactが依存していないことを証明しない。未参照refの回収は将来の明示的かつ
+review-scopedな排他的GCへ委ねる。
 
 ## 9. Application / API
 

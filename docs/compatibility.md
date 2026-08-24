@@ -35,8 +35,9 @@ re-keyします。pending duplicateは統合し、同時にactiveな旧／新lea
 そのため011のcanonical owner/repository collationとv4のBranch operation契約はrelease前の最終形へ直接更新し、
 旧011とのpartial-schema/runtime fallbackは提供しません。0.3.0以降は適用済みmigrationを書き換えずforward
 migrationと新しいprotocol versionで互換性を扱います。
-`CHANGELOG.md`のdated 0.3.0 sectionは`verify-release`が要求するrelease-candidate metadataであり、それ自体を
-npm公開済みの根拠にはしません。公開判定はGit tag、GitHub release、npm registryを合わせて行います。
+0.3.0の変更は実際の公開まで`CHANGELOG.md`の`Unreleased`に置き、公開時にだけ実際の日付を持つsectionへ
+移します。`verify-release`はrelease tagに対してdated sectionを要求します。公開判定はGit tag、GitHub release、
+npm registryを合わせて行います。
 
 Branch Reviewのlocal source bindingはGit common directory単位です。同じcommon directoryのworktreeは
 互換ですが、local GitHub remoteが解決できる場合は保存済みcanonical identityも一致する必要があります。
@@ -61,6 +62,8 @@ reset後に遅れて作成された初期refはexact ref単位でbest-effort cle
 復活させず、削除済みreviewのerrorを共有cacheへ書かず、削除後のfetch失敗もwarningではなくskipします。
 ready化後の遅延completionはsource進行後も冪等で、aggregateが存続する限りhistorical refを
 補償削除しません。ref初回作成はGit compare-and-swapで単一creatorだけが所有を返します。
+PR／BranchのComment、reply、Walkthrough writeも、同じrefへ別processが既に依存し得るためSQLite失敗時に
+補償削除しません。未参照refはdoctorで診断し、暗黙GCは行いません。
 pending初期化だけを最大5秒待ち、failed stateは直ちにfail closedします。既存source同期はmigration 011の内部generationで
 新しい開始順を守り、古いOIDやerrorを公開しません。metadata取得後にdefault branchが進んだ場合は一度だけsnapshotを
 取り直します。共有Issue cacheはGitHub `updatedAt`をversionとして古い成功を無視し、取得snapshotの変わった古い失敗も

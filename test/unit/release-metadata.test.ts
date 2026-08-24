@@ -21,16 +21,18 @@ const manifest = {
 };
 
 describe("release metadata", () => {
-  it("keeps the current package, app constant, and changelog aligned", () => {
+  it("keeps current development metadata under Unreleased until publication", () => {
     const currentManifest = JSON.parse(readFileSync("package.json", "utf8")) as typeof manifest;
-    expect(() =>
-      validateReleaseMetadata({
-        appVersion: APP_VERSION,
-        changelog: readFileSync("CHANGELOG.md", "utf8"),
-        manifest: currentManifest,
-        tag: `v${currentManifest.version}`,
-      }),
-    ).not.toThrow();
+    const changelog = readFileSync("CHANGELOG.md", "utf8");
+
+    expect(APP_VERSION).toBe(currentManifest.version);
+    expect(changelog).toMatch(/^## \[Unreleased\]\n\n### (?:Added|Changed|Fixed)$/mu);
+    expect(changelog).not.toMatch(
+      new RegExp(
+        `^## \\[${currentManifest.version.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}$`,
+        "mu",
+      ),
+    );
   });
 
   it("accepts an aligned stable release", () => {

@@ -17,7 +17,7 @@ tokens, query invalidation, warning formatting, and parity tests. Do not introdu
 Review aggregate or `ReviewApp<T>` that would make PR commit ranges and Branch single-source lifecycle
 optional variants of one model. Keep explicit SQL because the required immediate transactions, NOCASE
 uniqueness, conditional generations, and cascade boundaries would remain raw operations behind an ORM.
-Keep retain-before-publish plus compensation instead of a Git/SQLite two-phase protocol, and keep
+Keep retain-before-publish plus narrow source-lifecycle compensation instead of a Git/SQLite two-phase protocol, and keep
 doctor/explicit commands read-driven rather than adding a repair daemon.
 
 ### Consequences
@@ -113,6 +113,12 @@ exclusive review-scoped boundary; no background cleanup or two-phase commit is i
 Read the replacement commit list before the destructive PR SQLite transaction, so a successful reset
 cannot be followed by a Git-read exception reported as an unapplied reset. Rebuild a final-CAS Branch
 stale preview from the current aggregate row rather than the resolver's earlier metadata snapshot.
+Apply the same shared-evidence rule to Comment, reply, and Walkthrough writes. Once a PR/OID or Branch
+Review/OID ref has been created, another process may retain it with `created: false` and commit an
+artifact before the creator's SQLite write fails. Artifact failures therefore never compensate refs;
+unreferenced evidence is left for a future explicit, exclusive GC. Aggregate-removal compensation in
+the Branch source initializer remains the narrow exception because the whole review-owned namespace
+has lost its owner.
 
 Order every existing Branch source attempt with an internal generation allocated before network I/O.
 After retaining a candidate, its source metadata and any failure are compare-and-set with the same

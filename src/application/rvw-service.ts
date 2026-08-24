@@ -2434,7 +2434,7 @@ export class RvwService {
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
       });
     return input.relatedCommitOid
-      ? await this.writeWithRetainedCommit(pullRequest, input.relatedCommitOid, "comment", write)
+      ? await this.writeWithRetainedCommit(pullRequest, input.relatedCommitOid, write)
       : write();
   }
 
@@ -2532,21 +2532,12 @@ export class RvwService {
     sourceOid: string,
     write: () => T,
   ): Promise<T> {
-    const commitRef = await this.git.ensureBranchCommitRef(
+    await this.git.ensureBranchCommitRef(
       branchReview.localRepositoryPath,
       branchReview.id,
       sourceOid,
     );
-    try {
-      return write();
-    } catch (error) {
-      if (commitRef.created) {
-        await this.git
-          .deleteRef(branchReview.localRepositoryPath, commitRef.ref, sourceOid)
-          .catch(() => undefined);
-      }
-      throw error;
-    }
+    return write();
   }
 
   async createBranchComment(input: {
@@ -3363,30 +3354,10 @@ export class RvwService {
   private async writeWithRetainedCommit<T>(
     pullRequest: PullRequest,
     sourceOid: string,
-    subject: "comment" | "Walkthrough",
     write: () => T,
   ): Promise<T> {
-    const commitRef = await this.git.ensureCommitRef(
-      pullRequest.localRepositoryPath,
-      pullRequest.number,
-      sourceOid,
-    );
-    try {
-      return write();
-    } catch (error) {
-      if (commitRef.created) {
-        try {
-          await this.git.deleteRef(pullRequest.localRepositoryPath, commitRef.ref, sourceOid);
-        } catch (cleanupError) {
-          throw new RvwError(
-            "LOCAL_STATE_INCONSISTENT",
-            `${subject}の書き込み失敗後にGit refを復元できませんでした。`,
-            { cause: cleanupError },
-          );
-        }
-      }
-      throw error;
-    }
+    await this.git.ensureCommitRef(pullRequest.localRepositoryPath, pullRequest.number, sourceOid);
+    return write();
   }
 
   private async fetchRequestedIssues(
@@ -3452,7 +3423,7 @@ export class RvwService {
     const pullRequest = this.resolveStoredPullRequest(target.pullRequest);
     const content = await this.validateWalkthroughContent(pullRequest, input);
     const issues = await this.fetchRequestedIssues(pullRequest, input.issuesToAdd ?? []);
-    return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, "Walkthrough", () =>
+    return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, () =>
       this.database.createWalkthrough({ pullRequestId: pullRequest.id, ...content }, issues),
     );
   }
@@ -3473,11 +3444,8 @@ export class RvwService {
     });
     const issues = await this.fetchRequestedIssues(review, input.issuesToAdd ?? []);
     return current.context.kind === "pull-request"
-      ? await this.writeWithRetainedCommit(
-          current.context.pullRequest,
-          content.sourceOid,
-          "Walkthrough",
-          () => this.database.updateWalkthrough(current.walkthrough.id, content, issues),
+      ? await this.writeWithRetainedCommit(current.context.pullRequest, content.sourceOid, () =>
+          this.database.updateWalkthrough(current.walkthrough.id, content, issues),
         )
       : await this.writeWithBranchRetainedCommit(
           current.context.branchReview,
@@ -3657,7 +3625,7 @@ export class RvwService {
             }),
       });
     return input.relatedCommitOid
-      ? await this.writeWithRetainedCommit(pullRequest, input.relatedCommitOid, "comment", write)
+      ? await this.writeWithRetainedCommit(pullRequest, input.relatedCommitOid, write)
       : write();
   }
 
@@ -3742,12 +3710,7 @@ export class RvwService {
           );
     if (!relatedCommitOid) return write();
     return comment
-      ? await this.writeWithRetainedCommit(
-          review as PullRequest,
-          relatedCommitOid,
-          "comment",
-          write,
-        )
+      ? await this.writeWithRetainedCommit(review as PullRequest, relatedCommitOid, write)
       : await this.writeWithBranchRetainedCommit(review as BranchReview, relatedCommitOid, write);
   }
 

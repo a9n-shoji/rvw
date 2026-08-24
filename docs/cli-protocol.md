@@ -348,7 +348,9 @@ reference. A post may declare at most 200 references. Every declared reference m
 that post's Markdown body, and every `rvw-ref:` link must name a declaration. Paths and line ranges are
 validated as displayable UTF-8 documents at `relatedCommitOid`; therefore a non-empty `references`
 array requires a non-null related commit. The commit is retained by rvw. References belong to one
-post, not its thread, and do not inherit from another root or reply.
+post, not its thread, and do not inherit from another root or reply. If the following SQLite artifact
+write fails, rvw keeps the retained ref because a concurrent successful artifact may already share it;
+only a future explicit, exclusive GC may reclaim proven-unreferenced evidence.
 
 Success returns `{ "ok": true, "comment": ... }`, including the root post and stable
 `rvw://comment/<uuid>` reference. Creation is passive: it does not open or navigate a viewer. The

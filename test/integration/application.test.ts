@@ -622,6 +622,53 @@ describe("RvwService commit workflow", () => {
     );
   });
 
+  it("keeps a retained PR ref when its creator fails after another writer commits against it", async () => {
+    const gitClient = new PausePullRequestRefGitClient();
+    const { repository, fake, database, service } = setup(
+      "rvw-pr-shared-ref-failed-creator-",
+      gitClient,
+    );
+    fake.issues.set(142, githubIssue(142));
+    const opened = await service.openPullRequest(undefined, repository);
+    await service.addPullRequestIssue(opened.pullRequest.url, "#142");
+    const sharedOid = commitFile(
+      repository,
+      "src.txt",
+      "first\nsecond\nshared evidence\n",
+      "shared evidence",
+    );
+    await expect(service.git.verifyCommitRef(repository, 7, sharedOid)).resolves.toBe(false);
+
+    const secondDatabase = new RvwDatabase({
+      filePath: database.filePath,
+      migrationsDirectory: "./migrations",
+    });
+    databases.push(secondDatabase);
+    const secondService = new RvwService(secondDatabase, new GitClient(), fake);
+    gitClient.barrier.arm();
+
+    const failedCreator = service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "issue", issue: "#142", startLine: null, endLine: null },
+      body: "This delayed writer must lose its removed membership.",
+      relatedCommitOid: sharedOid,
+    });
+    await gitClient.barrier.waitUntilBlocked();
+
+    const successful = await secondService.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: { kind: "pull-request" },
+      body: "This committed writer now owns the shared exact evidence.",
+      relatedCommitOid: sharedOid,
+    });
+    removePullRequestIssue(secondService, opened.pullRequest.url, "#142");
+    gitClient.barrier.release();
+
+    await expect(failedCreator).rejects.toMatchObject({ code: "ISSUE_NOT_FOUND", status: 404 });
+    expect(secondDatabase.getComment(successful.id)).not.toBeNull();
+    await expect(service.git.verifyCommitRef(repository, 7, sharedOid)).resolves.toBe(true);
+  });
+
   it("uses commits as history, keeps PR markdown latest, syncs comment updates, and resets", async () => {
     const { repository, base, firstHead, fake, service } = setup();
     const opened = await service.openPullRequest(undefined, repository);
@@ -2028,7 +2075,7 @@ describe("RvwService commit workflow", () => {
     await expect(service.git.verifyCommitRef(repository, 7, firstHead)).resolves.toBe(true);
   });
 
-  it("removes a newly-created commit ref when walkthrough persistence fails", async () => {
+  it("keeps a newly-created commit ref when walkthrough persistence fails", async () => {
     const { repository, firstHead, database, service } = setup("rvw-walkthrough-rollback-");
     const opened = await service.openPullRequest(undefined, repository);
     const secondHead = commitFile(repository, "src.txt", "first\nsecond\nthird\n", "second change");
@@ -2054,7 +2101,7 @@ describe("RvwService commit workflow", () => {
         ],
       }),
     ).rejects.toThrow("database write failed");
-    await expect(service.git.verifyCommitRef(repository, 7, secondHead)).resolves.toBe(false);
+    await expect(service.git.verifyCommitRef(repository, 7, secondHead)).resolves.toBe(true);
     await expect(service.git.verifyCommitRef(repository, 7, firstHead)).resolves.toBe(true);
   });
 
