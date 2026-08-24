@@ -43,6 +43,7 @@ import {
 } from "../markdown-source-map.js";
 import type { ThemePreference } from "../theme.js";
 import type { DocumentPaneId } from "../document-workspace.js";
+import { commentReplyDraftScope } from "../comment-draft-store.js";
 import type { ViewerNavigationTarget } from "./DocumentViewer.js";
 import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
@@ -510,6 +511,12 @@ export function WalkthroughViewer({
   onDeleted: (walkthrough: Walkthrough) => void;
 }) {
   const queryClient = useQueryClient();
+  const replyDraftScope = commentReplyDraftScope(paneId, {
+    kind: "walkthrough",
+    id: walkthrough.id,
+    title: walkthrough.title,
+    sourceOid: walkthrough.sourceOid,
+  });
   const viewerRef = useRef<HTMLDivElement>(null);
   const appliedNavigationRequest = useRef<number | null>(null);
   const navigationAppliedRef = useRef(onNavigationApplied);
@@ -736,7 +743,7 @@ export function WalkthroughViewer({
       selectionComposerOpen={lineComposerPlacement === "selection"}
       diagramCommentRange={diagramRange}
       markdownSourceOid={walkthrough.sourceOid}
-      draftScope={paneId}
+      draftScope={replyDraftScope}
       themePreference={themePreference}
       onOpenReference={openReference}
       onOpenCommentCodeReference={onOpenCommentCodeReference}
@@ -826,7 +833,7 @@ export function WalkthroughViewer({
               key={comment.id}
               comment={comment}
               variant="inline"
-              draftScope={paneId}
+              draftScope={replyDraftScope}
               placement={placement}
               markdownSourceOid={walkthrough.sourceOid}
               themePreference={themePreference}

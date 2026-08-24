@@ -18,7 +18,7 @@ Use only the `rvw` CLI protocol. Never access the SQLite database directly or co
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 3, `agent.transport`, and the `walkthrough.read` capability plus every publish, update, or delete capability needed for the task.
+2. Require `protocolVersion` 4, `agent.transport`, and the `walkthrough.read` capability plus every publish, update, or delete capability needed for the task.
 3. Run `rvw agent status --json`. Read `socketPath`, `connectionResult`, `selectedDatabasePath`, `selectedTransport`, and `fallbackReason`. If `selectedTransport` is `unavailable`, stop and report the diagnostic; an explicitly configured `RVW_AGENT_SOCKET_PATH` never falls back to direct database access. Otherwise use the reported transport without overriding it.
 4. Require local access to the saved repository. When a normally launched rvw viewer is running, the
    CLI can route database reads and writes through its user-only Unix socket; otherwise direct rvw data

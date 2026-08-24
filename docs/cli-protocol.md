@@ -1,4 +1,4 @@
-# CLI protocol v3
+# CLI protocol v4
 
 Version 1 is the first public compatibility contract. Pre-public internal version numbers were not
 released or supported; after the first public release, protocol versions only increase for breaking
@@ -523,7 +523,7 @@ current `walkthrough` object. This gives the Agent the explanation body and exac
 discussed without relying on rendered browser positions. If the Walkthrough is updated, the same
 comment URI subsequently returns the updated current object.
 
-`rvw protocol --json` returns `protocolVersion: 3`, the application version, and these capabilities:
+`rvw protocol --json` returns `protocolVersion: 4`, the application version, and these capabilities:
 
 ```text
 agent.transport

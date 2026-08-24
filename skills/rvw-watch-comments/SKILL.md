@@ -45,7 +45,8 @@ Omit `--expected-login` and force `investigate-and-reply` when identity is unava
 Initialization rejects a policy change for an existing task.
 
 On restart, run `recover`, then `status`. Both expose `quarantinedBatches`; `status` also exposes
-recoverable `inFlightBatches` with lease IDs and status posts.
+recoverable `inFlightBatches` with lease IDs and status posts, plus the task's bound acknowledgement
+`authorLabel` after the first auto-ack claim.
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-state.mjs' recover --state '<TASK_STATE_DB>'
@@ -59,7 +60,7 @@ prevents an interrupted third attempt from leaving `確認中` indefinitely.
 ## Start or resume intake
 
 Run the single preflight command. It concurrently detects `rvw` and verifies Node `>=24.15.0`.
-Require `protocolVersion` 3 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
+Require `protocolVersion` 4 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
 `comment.edit`, `comment.codeReferences`, and `pullRequest.sync`, and report agent status and ping in
 one JSON value. Stop when `ok` is false. A disconnected ping is diagnostic when status safely selects
 direct-database transport; an unavailable selected transport is fatal.
@@ -96,7 +97,10 @@ node '<SKILL_DIR>/scripts/watch-driver.mjs' '<TASK_STATE_DB>' \
 Set `<CURRENT_AGENT_NAME>` to the accurate product/runtime name of the task that owns the watcher,
 such as `Codex` or `Claude Code`. This label is stored on the acknowledgement post and remains when
 that post is replaced with the final outcome. Omit `--author-label` only when the current runtime
-identity genuinely cannot be determined; those posts intentionally remain unlabeled.
+identity genuinely cannot be determined; those posts intentionally remain unlabeled. The first
+auto-ack claim durably binds either the supplied label or that deliberate absence to the task before
+calling rvw. Every restart must use the same value. A changed, added, or removed label is rejected
+before rvw reads or writes, so an acknowledgement retry keeps the original idempotency payload.
 
 Launch the driver through the runtime's long-lived streaming-process facility. Yield stdout to the
 parent as soon as lines arrive; never wait for the driver to exit or buffer a group of lines before
@@ -148,10 +152,12 @@ node '<SKILL_DIR>/scripts/auto-ack.mjs' \
   --author-label '<CURRENT_AGENT_NAME>'
 ```
 
-For a null `statusPostId`, auto-ack sends exactly `{ "body": "🔎 確認中です…",
+For a null `statusPostId`, auto-ack first binds the task's immutable acknowledgement label, then sends
+exactly `{ "body": "🔎 確認中です…",
 "idempotencyKey": "<BATCH_OPERATION_KEY>", "authorLabel": "<CURRENT_AGENT_NAME>" }` to
 `rvw comment reply`, then records the returned post. It omits `relatedCommitOid`, so an uncertain
-retry has the identical payload. When `--author-label` is omitted, `authorLabel` is omitted too. For an existing
+retry has the identical payload. When `--author-label` is omitted, the task records that explicit
+unlabeled choice and `authorLabel` is omitted too. For an existing
 status post in the same retried batch it sends
 `{ "body": "🔎 確認中です…", "relatedCommitOid": null }` to `comment edit`; editing preserves the
 label already stored when the post was created. A later batch for the

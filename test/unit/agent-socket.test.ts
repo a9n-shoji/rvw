@@ -1,10 +1,12 @@
 import { chmodSync, existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { fork, type ChildProcess } from "node:child_process";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RvwService } from "../../src/application/rvw-service.js";
 import {
+  AGENT_SOCKET_PROTOCOL_VERSION,
   dispatchAgentSocketRequest,
   inspectAgentTransport,
   startAgentSocket,
@@ -82,7 +84,7 @@ describe("Agent socket", () => {
     const result = await dispatchAgentSocketRequest(
       { setCommentResolved } as unknown as RvwService,
       {
-        protocolVersion: 1,
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
         operation: "comment.resolve",
         input: { uri: "rvw://comment/10000000-0000-4000-8000-000000000001" },
       },
@@ -115,7 +117,7 @@ describe("Agent socket", () => {
 
     await expect(
       dispatchAgentSocketRequest({ createCommentForReference } as unknown as RvwService, {
-        protocolVersion: 1,
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
         operation: "comment.create",
         input,
       }),
@@ -126,7 +128,7 @@ describe("Agent socket", () => {
 
     await expect(
       dispatchAgentSocketRequest({ createCommentForReference } as unknown as RvwService, {
-        protocolVersion: 1,
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
         operation: "comment.create",
         input: {
           ...input,
@@ -147,7 +149,7 @@ describe("Agent socket", () => {
 
     await expect(
       dispatchAgentSocketRequest({ editCommentPost } as unknown as RvwService, {
-        protocolVersion: 1,
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
         operation: "comment.edit",
         input,
       }),
@@ -156,6 +158,68 @@ describe("Agent socket", () => {
       ...input.edit,
       lastModifiedBy: "agent",
     });
+  });
+
+  it("rejects mixed socket protocol versions and tells the caller to restart the viewer", async () => {
+    const setCommentResolved = vi.fn();
+    await expect(
+      dispatchAgentSocketRequest({ setCommentResolved } as unknown as RvwService, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION - 1,
+        operation: "comment.resolve",
+        input: { uri: "rvw://comment/10000000-0000-4000-8000-000000000001" },
+      }),
+    ).rejects.toMatchObject({
+      code: "STALE_PROTOCOL",
+      details: {
+        expectedProtocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        receivedProtocolVersion: AGENT_SOCKET_PROTOCOL_VERSION - 1,
+      },
+      suggestions: [expect.stringMatching(/viewer.*再起動/)],
+    });
+    expect(setCommentResolved).not.toHaveBeenCalled();
+
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-agent-old-protocol-"));
+    const socketPath = path.join(directory, "agent.sock");
+    let receivedProtocolVersion: number | null = null;
+    const server = net.createServer((socket) => {
+      let request = "";
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk: string) => {
+        request += chunk;
+        if (!request.includes("\n")) return;
+        receivedProtocolVersion = (JSON.parse(request) as { protocolVersion: number })
+          .protocolVersion;
+        socket.end(
+          `${JSON.stringify({
+            ok: false,
+            error: {
+              code: "STALE_PROTOCOL",
+              message: "Agent socket protocol versionが一致しません。",
+              suggestions: [],
+            },
+          })}\n`,
+        );
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    try {
+      await expect(
+        tryAgentSocketRequest(
+          "comment.get",
+          { uri: "rvw://comment/10000000-0000-4000-8000-000000000001", live: false },
+          { socketPath, requireSocket: true },
+        ),
+      ).rejects.toMatchObject({
+        code: "STALE_PROTOCOL",
+        suggestions: [expect.stringMatching(/viewer.*再起動/)],
+      });
+      expect(receivedProtocolVersion).toBe(AGENT_SOCKET_PROTOCOL_VERSION);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("rejects a different explicit database before dispatching the operation", async () => {
@@ -168,7 +232,7 @@ describe("Agent socket", () => {
           setCommentResolved,
         } as unknown as RvwService,
         {
-          protocolVersion: 1,
+          protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
           operation: "comment.resolve",
           input: { uri: "rvw://comment/10000000-0000-4000-8000-000000000003" },
           expectedDatabasePath: "/data/other.db",
@@ -192,14 +256,14 @@ describe("Agent socket", () => {
 
     await expect(
       dispatchAgentSocketRequest(service, {
-        protocolVersion: 1,
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
         operation: "pr.reset",
         input: { reference: "1" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(
       dispatchAgentSocketRequest(service, {
-        protocolVersion: 1,
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
         operation: "walkthrough.delete",
         input: { uri: "rvw://walkthrough/10000000-0000-4000-8000-000000000001" },
       }),
@@ -211,7 +275,7 @@ describe("Agent socket", () => {
   it("rejects inherited object property names as unsupported operations", async () => {
     await expect(
       dispatchAgentSocketRequest({} as RvwService, {
-        protocolVersion: 1,
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
         operation: "toString",
         input: {},
       }),

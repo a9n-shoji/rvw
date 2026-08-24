@@ -168,6 +168,8 @@ async function main() {
   try {
     const claimArgs = ["--pull-request", pullRequest];
     if (options["write-key"]) claimArgs.push("--write-key", options["write-key"]);
+    if (authorLabel === null) claimArgs.push("--no-author-label");
+    else claimArgs.push("--author-label", authorLabel);
     claimed = await runState(state, "claim", claimArgs);
     const threadResults = await Promise.all(
       claimed.operations.map((operation) =>
@@ -180,7 +182,7 @@ async function main() {
         await acknowledgeOperation(
           state,
           claimed.leaseId,
-          { ...claimed.operations[index], authorLabel },
+          { ...claimed.operations[index], authorLabel: claimed.authorLabel },
           threadResults[index],
         ),
       );

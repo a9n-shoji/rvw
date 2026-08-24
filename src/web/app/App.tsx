@@ -69,12 +69,16 @@ import {
   documentPaneTabKey,
   documentTabKey,
   initialDocumentWorkspace,
+  moveDocumentToPane,
   normalizeDocumentPanes,
   preferredDocumentPane,
   type ActiveDocument,
   type DocumentPaneId,
 } from "../document-workspace.js";
-import { clearCommentDraftsForPullRequest } from "../comment-draft-store.js";
+import {
+  clearCommentDraftsForPullRequest,
+  moveCommentReplyDraftsForDocument,
+} from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
 import {
@@ -556,7 +560,6 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     closeDocument,
     closePaneDocuments,
     moveDocument,
-    dropDocument: dropWorkspaceDocument,
   } = useDocumentWorkspace(resetViewerNavigation);
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
   const [paneSplit, setPaneSplit] = useState(DEFAULT_PANE_SPLIT);
@@ -582,6 +585,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const attemptedInitialRefresh = useRef(false);
   const commitRangeTouched = useRef(false);
   const commitRangeInteractionRevision = useRef(0);
+  const refreshInFlight = useRef(false);
+  const commitRangeInteractionHeadOid = useRef<string | null>(null);
   const observedLatestHead = useRef<string | null>(null);
   const observedChangeSequence = useRef<number | null>(null);
   const observedAgentPostPullRequestId = useRef<string | null>(null);
@@ -865,12 +870,41 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     return () => window.clearTimeout(timeoutId);
   }, [syncFeedback]);
 
+  const moveDocumentWithDrafts = useCallback(
+    (document: ActiveDocument, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
+      const nextWorkspace = moveDocumentToPane(
+        documentWorkspaceRef.current,
+        document,
+        sourcePane,
+        targetPane,
+      );
+      if (nextWorkspace === documentWorkspaceRef.current) return;
+      const actualTargetPane = documentPaneIds(nextWorkspace, document).includes(targetPane)
+        ? targetPane
+        : sourcePane;
+      if (
+        pullRequestId &&
+        !moveCommentReplyDraftsForDocument(pullRequestId, document, sourcePane, actualTargetPane)
+      ) {
+        setSyncFeedback(
+          "移動先にも入力中の返信があります。どちらかを送信または消去してから移動してください。",
+        );
+        return;
+      }
+      moveDocument(document, sourcePane, targetPane);
+    },
+    [documentWorkspaceRef, moveDocument, pullRequestId],
+  );
+
   const dropDocument = useCallback(
     (documentKey: string, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
-      dropWorkspaceDocument(documentKey, sourcePane, targetPane);
+      const document = documentWorkspaceRef.current.documents[sourcePane].find(
+        (candidate) => documentTabKey(candidate) === documentKey,
+      );
+      if (document) moveDocumentWithDrafts(document, sourcePane, targetPane);
       setDraggedDocumentKey(null);
     },
-    [dropWorkspaceDocument],
+    [documentWorkspaceRef, moveDocumentWithDrafts],
   );
 
   const updateSidebarWidth = (clientX: number, workspace: HTMLElement): void => {
@@ -988,7 +1022,22 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const effectiveOldOid = commitRangeOldOid(commits, comparisonBaseOid, rangeStartOid);
   useEffect(() => {
     const previousLatest = observedLatestHead.current;
-    if (latestHeadOid && (!selectedOid || selectedOid === previousLatest)) {
+    const suppressRefreshHeadFollow = Boolean(
+      previousLatest &&
+      latestHeadOid !== previousLatest &&
+      commitRangeInteractionHeadOid.current === previousLatest,
+    );
+    if (
+      latestHeadOid !== previousLatest &&
+      commitRangeInteractionHeadOid.current === previousLatest
+    ) {
+      commitRangeInteractionHeadOid.current = null;
+    }
+    if (
+      latestHeadOid &&
+      !suppressRefreshHeadFollow &&
+      (!selectedOid || selectedOid === previousLatest)
+    ) {
       const shouldKeepSingleCommit = Boolean(
         commitRangeTouched.current && selectedOid && rangeStartOid === selectedOid,
       );
@@ -1168,6 +1217,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     const range = normalizedCommitRange(commits, startOid, endOid);
     if (!range) return;
     commitRangeInteractionRevision.current += 1;
+    if (refreshInFlight.current) commitRangeInteractionHeadOid.current = latestHeadOid;
     commitRangeTouched.current = true;
     setRangeStartOid(range.startOid);
     setSelectedOid(range.endOid);
@@ -1436,12 +1486,15 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         jsonRequest({}),
       );
     },
-    onMutate: () => ({
-      commitRangeInteractionRevision: commitRangeInteractionRevision.current,
-      selectedOid,
-      latestHeadOid,
-      rangeStartOid,
-    }),
+    onMutate: () => {
+      refreshInFlight.current = true;
+      return {
+        commitRangeInteractionRevision: commitRangeInteractionRevision.current,
+        selectedOid,
+        latestHeadOid,
+        rangeStartOid,
+      };
+    },
     onSuccess: async (result, options, refreshStart) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["pull-request"] }),
@@ -1475,6 +1528,19 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
             minute: "2-digit",
           }).format(new Date())}`,
         );
+      }
+    },
+    onError: () => {
+      commitRangeInteractionHeadOid.current = null;
+    },
+    onSettled: (result) => {
+      refreshInFlight.current = false;
+      if (
+        result &&
+        commitRangeInteractionHeadOid.current === result.headOid &&
+        observedLatestHead.current === result.headOid
+      ) {
+        commitRangeInteractionHeadOid.current = null;
       }
     },
   });
@@ -1857,7 +1923,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           onClose={(document) => closeDocument(document, paneId)}
           onCloseOthers={(document) => closePaneDocuments(paneId, document)}
           onCloseAll={() => closePaneDocuments(paneId)}
-          onMove={(document, targetPane) => moveDocument(document, paneId, targetPane)}
+          onMove={(document, targetPane) => moveDocumentWithDrafts(document, paneId, targetPane)}
           onDropDocument={dropDocument}
           onDragStartDocument={setDraggedDocumentKey}
           onDragEndDocument={() => setDraggedDocumentKey(null)}

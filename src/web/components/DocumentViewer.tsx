@@ -37,6 +37,7 @@ import type {
 } from "../../domain/models.js";
 import { isSupportedImagePath } from "../../shared/image-assets.js";
 import {
+  commentReplyDraftScope,
   commentDraftContextKey,
   currentCommentDraftRevision,
   deleteCommentDraft,
@@ -680,6 +681,7 @@ export function DocumentViewer({
     oldOid,
     displayMode,
   });
+  const replyDraftScope = commentReplyDraftScope(paneId, activeDocument);
   const commentDraftRevision = useRef(currentCommentDraftRevision(pullRequestId)).current;
   const initialCommentDraft = readCommentDraft(pullRequestId, commentDraftKey);
   const [selection, setSelection] = useState<SelectedLineRange | null>(
@@ -1331,7 +1333,7 @@ export function DocumentViewer({
                 key={commentId}
                 comment={annotation.comment}
                 variant="inline"
-                draftScope={paneId}
+                draftScope={replyDraftScope}
                 placement={annotation.placement}
                 themePreference={themePreference}
                 onActiveChange={onCommentActiveChange}
@@ -1352,7 +1354,7 @@ export function DocumentViewer({
       onOpenCodeReference,
       openRepositoryLink,
       optimisticCommentId,
-      paneId,
+      replyDraftScope,
       themePreference,
     ],
   );
@@ -1564,7 +1566,7 @@ export function DocumentViewer({
         <CommentThread
           comment={annotation.metadata.comment}
           variant="inline"
-          draftScope={paneId}
+          draftScope={replyDraftScope}
           placement={annotation.metadata.placement}
           side={side ?? null}
           themePreference={themePreference}
@@ -1610,7 +1612,7 @@ export function DocumentViewer({
             key={comment.id}
             comment={comment}
             variant="inline"
-            draftScope={paneId}
+            draftScope={replyDraftScope}
             placement={placement}
             side={diffSide}
             themePreference={themePreference}

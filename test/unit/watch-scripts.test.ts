@@ -51,7 +51,7 @@ const json = (value, code = 0) => {
   process.exitCode = code;
 };
 if (args[0] === "protocol") {
-  json({ protocolVersion: 3, appVersion: "9.9.9", capabilities: [
+  json({ protocolVersion: 4, appVersion: "9.9.9", capabilities: [
     "agent.transport", "comment.watch", "comment.read", "comment.reply",
     "comment.edit", "comment.codeReferences", "pullRequest.sync"
   ] });
@@ -62,8 +62,12 @@ if (args[0] === "protocol") {
 } else if (args[0] === "comment" && args[1] === "get") {
   json({ ok: true, pullRequest: { url: "https://github.com/acme/repo/pull/1" }, comment: { ref: args[2], posts: [] } });
 } else if (args[0] === "comment" && args[1] === "reply") {
-  const replyCount = priorCalls.filter((call) => call.args[0] === "comment" && call.args[1] === "reply").length + 1;
-  json({ ok: true, post: { id: "status-post-" + replyCount, body: parsedInput.body } });
+  const priorReplies = priorCalls.filter((call) => call.args[0] === "comment" && call.args[1] === "reply");
+  const replayIndex = priorReplies.findIndex(
+    (call) => call.input?.idempotencyKey === parsedInput?.idempotencyKey
+  );
+  const replyNumber = replayIndex >= 0 ? replayIndex + 1 : priorReplies.length + 1;
+  json({ ok: true, post: { id: "status-post-" + replyNumber, body: parsedInput.body } });
 } else if (args[0] === "comment" && args[1] === "edit") {
   json({ ok: true, post: { id: args[4], body: parsedInput.body } });
 } else if (args[0] === "comment" && args[1] === "watch") {
@@ -180,7 +184,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       ok: true,
       node: { ok: true },
-      rvw: { appVersion: "9.9.9", protocolVersion: 3, missingCapabilities: [] },
+      rvw: { appVersion: "9.9.9", protocolVersion: 4, missingCapabilities: [] },
       checks: { agentStatus: true, agentPingConnected: true },
     });
     const calls = readFakeCalls(fake.log).map((call) => call.args);
@@ -255,7 +259,15 @@ describe("rvw-watch-comments bundled scripts", () => {
     });
     const followUpAcknowledgement = spawnSync(
       process.execPath,
-      [autoAckScript, "--state", state, "--pull-request", "https://github.com/acme/repo/pull/1"],
+      [
+        autoAckScript,
+        "--state",
+        state,
+        "--pull-request",
+        "https://github.com/acme/repo/pull/1",
+        "--author-label",
+        "Codex",
+      ],
       { encoding: "utf8", env: fakeEnvironment(fake) },
     );
     expect(followUpAcknowledgement.status).toBe(0);
@@ -276,6 +288,99 @@ describe("rvw-watch-comments bundled scripts", () => {
     const calls = readFakeCalls(fake.log);
     expect(calls.filter((call) => call.args[1] === "reply")).toHaveLength(2);
     expect(calls.some((call) => call.args[1] === "edit")).toBe(false);
+  });
+
+  it("pins the acknowledgement author before reply and rejects a changed or omitted restart label", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-auto-ack-author-recovery-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeQueuedState(state);
+    const pullRequest = "https://github.com/acme/repo/pull/1";
+    const claimed = runState(state, "claim", [
+      "--pull-request",
+      pullRequest,
+      "--author-label",
+      "Codex",
+    ]) as {
+      operations: Array<{ commentRef: string; idempotencyKey: string }>;
+    };
+    const operation = claimed.operations[0];
+    expect(operation).toBeDefined();
+    expect(runState(state, "status")).toMatchObject({
+      authorLabel: "Codex",
+      authorLabelBound: true,
+    });
+
+    const firstReply = spawnSync(
+      process.execPath,
+      [fake.script, "comment", "reply", operation!.commentRef, "--stdin", "--json"],
+      {
+        encoding: "utf8",
+        env: fakeEnvironment(fake),
+        input: JSON.stringify({
+          body: "🔎 確認中です…",
+          idempotencyKey: operation!.idempotencyKey,
+          authorLabel: "Codex",
+        }),
+      },
+    );
+    expect(firstReply.status).toBe(0);
+    expect(JSON.parse(firstReply.stdout)).toMatchObject({ post: { id: "status-post-1" } });
+    expect(runState(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
+
+    const mismatchedRestart = spawnSync(
+      process.execPath,
+      [
+        autoAckScript,
+        "--state",
+        state,
+        "--pull-request",
+        pullRequest,
+        "--author-label",
+        "Claude Code",
+      ],
+      { encoding: "utf8", env: fakeEnvironment(fake) },
+    );
+    expect(mismatchedRestart.status).toBe(1);
+    expect(JSON.parse(mismatchedRestart.stdout)).toMatchObject({
+      ok: false,
+      error: "watch-state claim failed",
+    });
+    expect(readFakeCalls(fake.log)).toHaveLength(1);
+
+    const unlabeledRestart = spawnSync(
+      process.execPath,
+      [autoAckScript, "--state", state, "--pull-request", pullRequest],
+      { encoding: "utf8", env: fakeEnvironment(fake) },
+    );
+    expect(unlabeledRestart.status).toBe(1);
+    expect(JSON.parse(unlabeledRestart.stdout)).toMatchObject({
+      ok: false,
+      error: "watch-state claim failed",
+    });
+    expect(readFakeCalls(fake.log)).toHaveLength(1);
+
+    const resumed = spawnSync(
+      process.execPath,
+      [autoAckScript, "--state", state, "--pull-request", pullRequest, "--author-label", "Codex"],
+      { encoding: "utf8", env: fakeEnvironment(fake) },
+    );
+    expect(resumed.status).toBe(0);
+    expect(JSON.parse(resumed.stdout)).toMatchObject({
+      ok: true,
+      attempts: 2,
+      operations: [
+        {
+          statusPostId: "status-post-1",
+          acknowledgement: "created",
+        },
+      ],
+    });
+    const replyCalls = readFakeCalls(fake.log).filter(
+      (call) => call.args[0] === "comment" && call.args[1] === "reply",
+    );
+    expect(replyCalls).toHaveLength(2);
+    expect(replyCalls[0]?.input).toEqual(replyCalls[1]?.input);
   });
 
   it("drives RFC 7464 intake and auto-ack without an Agent shell round trip", async () => {

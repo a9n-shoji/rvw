@@ -1792,3 +1792,49 @@ the unresolved/resolved comment model. `authorLabel` remains the optional displa
 - Existing posts stay on the safe side and do not notify until a known entry point modifies them.
 - The database gains one small provenance column, but avoids authenticated identities, session links,
   and notification-specific event tables.
+
+## 2026-08-24: Advance protocols for comment-post modifier provenance
+
+### Problem
+
+Adding required nullable `lastModifiedBy` to the strict comment-post output changes both the public
+CLI result and Agent socket response. Leaving their versions unchanged would let a newly installed
+CLI select an already-running old viewer, or an old CLI call a new viewer, only to fail later while
+parsing an otherwise successful `comment get` response.
+
+### Choice
+
+Advance the public machine protocol from 3 to 4 and the Agent socket protocol from 1 to 2. Keep the
+socket handshake strict in both directions and include a concrete instruction to restart the viewer
+when a stale peer is detected. Update the bundled Skills and preflight requirement with the public
+version so incompatibility is rejected before comment processing.
+
+### Trade-offs
+
+- Updating rvw now requires restarting an already-running viewer before Agent commands can use it.
+- The explicit break avoids maintaining version-specific post DTOs while the local protocol is still
+  evolving.
+- Mixed-version tests protect both the old-socket/new-client and new-socket/old-client directions.
+
+## 2026-08-24: Pin the watcher acknowledgement author before mutation
+
+### Problem
+
+Acknowledgement idempotency includes the optional display author in its request hash. The task state
+previously persisted the key and returned post ID but not that author, so a process crash after a
+successful reply and before recording the post could turn a restart with a different label into an
+idempotency conflict.
+
+### Choice
+
+Bind the supplied author label, including an explicit unlabeled choice, as immutable task metadata in
+the same transaction that first claims auto-ack work and before any rvw read or write. Reuse the bound
+value for every acknowledgement. Reject a changed, added, or removed label during claim, before
+calling rvw.
+
+### Trade-offs
+
+- A long-lived watcher task cannot be relabeled; changing the displayed Agent requires a new task
+  state.
+- Existing task databases bind lazily on their first auto-ack claim, so no migration guess is needed.
+- The retry payload remains identical across the reply-success/state-save crash window.

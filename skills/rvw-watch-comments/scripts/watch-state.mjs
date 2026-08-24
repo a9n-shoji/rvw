@@ -11,7 +11,7 @@ function fail(message) {
 
 function parseOptions(values) {
   const result = {};
-  const flags = new Set(["follow"]);
+  const flags = new Set(["follow", "no-author-label"]);
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
     if (!key?.startsWith("--")) fail(`Unexpected argument: ${key ?? ""}`);
@@ -150,6 +150,32 @@ function setMeta(database, key, value) {
       "INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     )
     .run(key, value);
+}
+
+function taskAuthorLabel(database) {
+  const stored = getMeta(database, "author_label");
+  return stored === null || stored === "" ? null : stored;
+}
+
+function bindTaskAuthorLabel(database, authorLabel) {
+  if (
+    authorLabel !== null &&
+    (typeof authorLabel !== "string" || authorLabel.length === 0 || authorLabel.length > 100)
+  ) {
+    fail("authorLabel must contain 1 through 100 characters or be null");
+  }
+  const encoded = authorLabel ?? "";
+  const stored = getMeta(database, "author_label");
+  if (stored === null) {
+    setMeta(database, "author_label", encoded);
+    return authorLabel;
+  }
+  if (stored !== encoded) {
+    fail(
+      `Existing task author label ${stored || "(unlabeled)"} does not match ${encoded || "(unlabeled)"}`,
+    );
+  }
+  return taskAuthorLabel(database);
 }
 
 function tableExists(database, tableName) {
@@ -523,9 +549,13 @@ function createBatch(database, pullRequestUrl, now) {
   return batchId;
 }
 
-function claim(database, pullRequestUrl, writeKey) {
+function claim(database, pullRequestUrl, writeKey, requestedAuthorLabel) {
   const canonicalWriteKey = writeKey === undefined ? undefined : normalizeWriteKey(writeKey);
   return transaction(database, () => {
+    const authorLabel =
+      requestedAuthorLabel === undefined
+        ? taskAuthorLabel(database)
+        : bindTaskAuthorLabel(database, requestedAuthorLabel);
     const now = new Date().toISOString();
     const ownMode = getMeta(database, "own_mode");
     if (canonicalWriteKey !== undefined && ownMode !== "fix-and-push") {
@@ -591,6 +621,7 @@ function claim(database, pullRequestUrl, writeKey) {
       pullRequest: pullRequestUrl,
       attempts: Number(batch.attempts) + 1,
       writeKey: canonicalWriteKey ?? null,
+      authorLabel,
       events,
       operations,
     };
@@ -802,6 +833,8 @@ function status(database) {
     taskId: getMeta(database, "task_id"),
     databaseId: getMeta(database, "database_id"),
     cursor: getMeta(database, "cursor"),
+    authorLabel: taskAuthorLabel(database),
+    authorLabelBound: getMeta(database, "author_label") !== null,
     expectedGitHubLogin: getMeta(database, "expected_login") || null,
     ownPullRequests: getMeta(database, "own_mode"),
     otherPullRequests: "investigate-and-reply",
@@ -852,9 +885,23 @@ async function main() {
       return;
     }
     if (command === "claim") {
+      if (options["author-label"] !== undefined && options["no-author-label"] === true) {
+        fail("Pass either --author-label or --no-author-label, not both");
+      }
+      const requestedAuthorLabel =
+        options["author-label"] !== undefined
+          ? options["author-label"]
+          : options["no-author-label"] === true
+            ? null
+            : undefined;
       write({
         ok: true,
-        ...claim(database, required(options, "pull-request"), options["write-key"]),
+        ...claim(
+          database,
+          required(options, "pull-request"),
+          options["write-key"],
+          requestedAuthorLabel,
+        ),
       });
       return;
     }

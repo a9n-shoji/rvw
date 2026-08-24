@@ -1,5 +1,9 @@
 import type { SelectedLineRange } from "@pierre/diffs/react";
-import type { ActiveDocument, DocumentPaneId } from "./document-workspace.js";
+import {
+  documentPaneTabKey,
+  type ActiveDocument,
+  type DocumentPaneId,
+} from "./document-workspace.js";
 
 export interface CommentDraftState {
   body: string;
@@ -73,6 +77,53 @@ function notifyReplyDraftListeners(): void {
 export function subscribeCommentReplyDrafts(listener: () => void): () => void {
   replyDraftListeners.add(listener);
   return () => replyDraftListeners.delete(listener);
+}
+
+export function commentReplyDraftScope(pane: DocumentPaneId, document: ActiveDocument): string {
+  return documentPaneTabKey(pane, document);
+}
+
+function commentReplyDraftMovesForDocument(
+  pullRequestId: string,
+  document: ActiveDocument,
+  sourcePane: DocumentPaneId,
+  targetPane: DocumentPaneId,
+): Array<{
+  sourceKey: string;
+  targetKey: string;
+  draft: CommentReplyDraftSnapshot;
+}> {
+  if (sourcePane === targetPane) return [];
+  const drafts = replyDraftsByPullRequest.get(pullRequestId);
+  if (!drafts) return [];
+  const sourcePrefix = `inline:${commentReplyDraftScope(sourcePane, document)}:`;
+  const targetPrefix = `inline:${commentReplyDraftScope(targetPane, document)}:`;
+  return [...drafts.entries()]
+    .filter(([key]) => key.startsWith(sourcePrefix))
+    .map(([sourceKey, draft]) => ({
+      sourceKey,
+      targetKey: `${targetPrefix}${sourceKey.slice(sourcePrefix.length)}`,
+      draft,
+    }));
+}
+
+export function moveCommentReplyDraftsForDocument(
+  pullRequestId: string,
+  document: ActiveDocument,
+  sourcePane: DocumentPaneId,
+  targetPane: DocumentPaneId,
+): boolean {
+  if (sourcePane === targetPane) return true;
+  const drafts = replyDraftsByPullRequest.get(pullRequestId);
+  if (!drafts) return true;
+  const moves = commentReplyDraftMovesForDocument(pullRequestId, document, sourcePane, targetPane);
+  if (moves.some(({ targetKey }) => drafts.has(targetKey))) return false;
+  for (const { sourceKey, targetKey, draft } of moves) {
+    drafts.delete(sourceKey);
+    drafts.set(targetKey, draft);
+  }
+  if (moves.length > 0) notifyReplyDraftListeners();
+  return true;
 }
 
 export function readCommentReplyDraft(

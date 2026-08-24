@@ -172,7 +172,7 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 3,
+      protocolVersion: 4,
       appVersion: "0.2.4",
       capabilities: [
         "agent.transport",

@@ -1680,7 +1680,10 @@ test("removes both pane copies when a walkthrough is deleted externally", async 
   await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
 });
 
-test("keeps same-Walkthrough inline reply input isolated by pane", async ({ page, request }) => {
+test("keeps same-Walkthrough reply input isolated by pane and moves it with the tab", async ({
+  page,
+  request,
+}) => {
   const walkthroughId = "70000000-0000-4000-8000-000000000001";
   const walkthroughsResponse = await request.get(
     `/api/pull-requests/${pullRequestId}/walkthroughs`,
@@ -1725,6 +1728,14 @@ test("keeps same-Walkthrough inline reply input isolated by pane", async ({ page
     await expect(leftReply).toHaveValue("k");
     await expect(rightReply).toHaveValue("");
     await expect(leftReply).toBeFocused();
+
+    await page
+      .locator('.document-pane[data-pane="left"]')
+      .getByRole("button", { name: "左ペインの操作" })
+      .click();
+    await page.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
+    await expect(leftReply).toHaveCount(0);
+    await expect(rightReply).toHaveValue("k");
   } finally {
     const deleteResponse = await request.delete(`/api/comments/${comment.id}`, { data: {} });
     expect(deleteResponse.ok()).toBe(true);

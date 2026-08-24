@@ -119,7 +119,7 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
   expect(preflight.status, preflight.stderr).toBe(0);
   expect(JSON.parse(preflight.stdout)).toMatchObject({
     ok: true,
-    rvw: { protocolVersion: 3, missingCapabilities: [] },
+    rvw: { protocolVersion: 4, missingCapabilities: [] },
     checks: { agentStatus: true, agentPingInspected: true },
   });
   const driver = spawn(

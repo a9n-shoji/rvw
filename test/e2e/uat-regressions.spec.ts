@@ -175,6 +175,107 @@ test("supports standard keyboard navigation in the actions menu", async ({ page 
   await expect(actionsButton).toBeFocused();
 });
 
+test("preserves a range ending at the old head when refresh publishes a new head", async ({
+  page,
+  request,
+}) => {
+  type TestPullRequestView = {
+    pullRequest: { latestHeadOid: string } & Record<string, unknown>;
+    comparisonBaseOid: string;
+    headOid: string;
+    commits: Array<{
+      oid: string;
+      parentOids: string[];
+      subject: string;
+      authorName: string;
+      authoredAt: string;
+    }>;
+  };
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+
+  const currentResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  expect(currentResponse.ok()).toBe(true);
+  const current = (await currentResponse.json()) as TestPullRequestView;
+  expect(current.commits.length).toBeGreaterThanOrEqual(2);
+  const oldHead = current.headOid;
+  const newHead = "e".repeat(40);
+  const withNewHead = <View extends TestPullRequestView>(view: View): View => ({
+    ...view,
+    pullRequest: { ...view.pullRequest, latestHeadOid: newHead },
+    headOid: newHead,
+    commits: [
+      ...view.commits,
+      {
+        oid: newHead,
+        parentOids: [oldHead],
+        subject: "Post-review update",
+        authorName: "Fixture Author",
+        authoredAt: "2026-08-08T03:00:00.000Z",
+      },
+    ],
+  });
+
+  let exposeNewHead = false;
+  await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
+    const response = await route.fetch();
+    const view = (await response.json()) as TestPullRequestView;
+    await route.fulfill({ response, json: exposeNewHead ? withNewHead(view) : view });
+  });
+  let releaseRefresh!: () => void;
+  const refreshHeld = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  let markRefreshRequested!: () => void;
+  const refreshRequested = new Promise<void>((resolve) => {
+    markRefreshRequested = resolve;
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    markRefreshRequested();
+    await refreshHeld;
+    const response = await route.fetch();
+    const view = (await response.json()) as TestPullRequestView & {
+      commentUpdatesApplied: number;
+    };
+    exposeNewHead = true;
+    await route.fulfill({ response, json: withNewHead(view) });
+  });
+
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "GitHubと同期" }).click();
+  await refreshRequested;
+
+  const commitPicker = page.getByRole("button", { name: /^対象commit:/ });
+  await commitPicker.click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("button", { name: "最新だけ", exact: true })
+    .click();
+  await expect(commitPicker.locator(".commit-selection-badge")).toHaveText("最新");
+
+  releaseRefresh();
+  await expect(commitPicker).toHaveAccessibleName(/Trim fixture input/);
+  await expect(commitPicker).not.toHaveAccessibleName(/Post-review update/);
+  await expect(commitPicker.locator(".commit-selection-badge")).toHaveCount(0);
+  await commitPicker.click();
+  const commitDialog = page.getByRole("dialog", { name: "対象commitを選択" });
+  await expect(commitDialog.getByRole("option", { name: /Trim fixture input/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(commitDialog.getByRole("option", { name: /Post-review update/ })).toHaveAttribute(
+    "aria-selected",
+    "false",
+  );
+});
+
 test("notifies only after an Agent acknowledgement becomes a final reply", async ({
   page,
   request,

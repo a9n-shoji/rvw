@@ -266,7 +266,8 @@ empty fileは従来どおり明示的に扱う。
   ごとの位置として復元する。reloadは既存の一時workspace境界を保ち、保持された現在entryを初期文書で置換する。
 - document workspaceは通常一ペイン、必要時に横並びの最大二ペインとする。同じdocument identityは各paneに
   一つまで所属でき、tab drag & dropまたはpane headerの`...` menuで左右へ移動できる。移動先に同じidentityが
-  すでにある場合は移動先の一つへ統合する。
+  すでにある場合は移動先の一つへ統合する。未送信のinline reply draftはdocumentとともに移動する。
+  移動先の同じthreadに別draftがある場合は本文を暗黙に統合または上書きせず、tab移動を明示的に拒否する。
 - sidebarとdocument workspaceの境界、および二ペイン間の境界はpointer dragで横幅を変更できる。
   sidebarはmain reading surfaceの最低幅を残し、各document paneも最低幅を持つ。dividerのdouble clickは
   既定幅へ戻し、左右arrow keyでも調整できる。幅はbrowser内だけの一時状態で永続化しない。
@@ -599,7 +600,8 @@ resolved済みthreadにもreplyできるが、reply単独ではreopenしない�
 replyはいずれも現在stateを維持し、resolve/reopenは明示的な別の状態変更とする。
 viewerのthread reply draftはpage内memoryへ保持し、server change sequenceによるcomment再取得や
 Markdown Preview再構築でthreadが再mountされても本文と入力focusを復元する。送信成功、thread削除、
-review resetでは破棄し、page reloadを越えて永続化しない。
+review resetでは破棄し、page reloadを越えて永続化しない。同じdocumentを左右に開いた場合はpaneごとに
+分離し、tabを反対paneへ移動した場合はdraftも移す。移動先の同じthreadにdraftがあれば移動を拒否する。
 新しいroot postとreplyは同じtransactionでDB-wideな単調増加event sequenceへ記録する。既存postは
 migration時にbackfillせず、編集、削除、resolve/reopenはeventを作らない。Agent自身のreplyも通常eventであり、
 watch taskが返却post IDで抑止する。
@@ -652,7 +654,7 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-current protocol versionは3とし、最初のpublic compatibility contractはversion 1である。公開前に
+current protocol versionは4とし、最初のpublic compatibility contractはversion 1である。公開前に
 使用した内部version番号は互換性保証の対象外とする。public release後は番号を再利用せず、breaking
 changeのたびに単調増加させる。capabilityは次を含む。
 
@@ -790,7 +792,9 @@ sequenceとして出力する。cursor省略時は現在の最新event位置へa
 cursor、pending queue、retry、authorization、Agentが作成したpost IDは外部Agent taskがrepository外へ
 保持する。同梱Skillのstate scriptはtask専用SQLiteを使い、event enqueueとcursor更新、batch lease、retry、
 batch内のcomment URIごとのstatus post mapping、自己post抑制をtransaction化する。batch claim直後にthreadを
-確認して冪等なack replyを即時作成する。同じbatchのretryでstatus postがあればそのpostをack本文へ戻すが、
+確認して冪等なack replyを即時作成する。最初のauto-ack claimはack投稿より前に、表示用Agent名または
+意図的な無名をtaskのimmutable metaへ固定する。再開時は同じ値だけを使い、異なる指定はrvwへのread/write前に
+拒否する。同じbatchのretryでstatus postがあればそのpostをack本文へ戻すが、
 後続replyの新しいbatchは新しいpostを作る。完了時は現在のbatchのpostを最終結果へ編集する。同梱preflightは
 protocol、capability、transport、Nodeを一括検査し、watch driverは
 stateのcursorを自動解決してRFC 7464 frameをatomicにingestする。driverのauto-ack modeは新規batchを
@@ -1161,6 +1165,8 @@ tab row
 - 初期表示はlatest headまでのPR全体を選択し、全文を表示する。
 - 更新前にlatest headを見ていた場合、refresh成功後はnew latest headへ進む。
 - historical commitを選択中ならrefresh後も選択を維持する。
+- refresh開始後に利用者がcommit範囲を変更した場合、終了点が更新前のlatest headのままでもnew latest
+  headへ自動追従せず、その操作時の開始点と終了点を維持する。
 - PR本文はselectorと無関係に常にlatest cacheを全文表示し、global controlがdiff modeなら
   `差分なし · 全文表示`を明示する。
 - 未送信comment draftはPR、pane、文書、exact source、commit範囲、表示modeごとに分離し、tab切替や
@@ -1304,7 +1310,8 @@ CLI contract:
 - replyとsync updateのidempotency key retry、head advance、payload conflict、result削除
 - task state scriptのatomic ingest、lease recovery、batch単位status post再利用、後続replyでの新規status post、
   即時ackの自己event抑制、予約済みworker容量によるin-flight制限、同一PR後続batchとdue retryのevent非依存drain、
-  repository write直列化、旧task DBの未完了batch mapping移行、status post削除後の再生成
+  acknowledgement authorのmutation前固定と再開時不一致拒否、repository write直列化、旧task DBの未完了batch
+  mapping移行、status post削除後の再生成
 - `comment edit`のbody完全置換、related commit維持／解除／更新、Agent socket経由write
 - comment create/reply/edit/syncのpost単位reference検証、保存、完全置換、commit保持、idempotency
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract

@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   clearCommentDraftsForPullRequest,
   commentDraftContextKey,
+  commentReplyDraftScope,
   currentCommentDraftRevision,
+  moveCommentReplyDraftsForDocument,
   readCommentDraft,
   readCommentReplyDraft,
   writeCommentDraft,
@@ -95,5 +97,28 @@ describe("comment draft store", () => {
       body: "復元してはいけない返信",
     });
     expect(readCommentReplyDraft(pullRequestId, key).body).toBe("");
+  });
+
+  it("moves a reply draft with its tab without overwriting a destination draft", () => {
+    const document: ActiveDocument = { kind: "repository-file", path: "src/example.ts" };
+    const sourceKey = `inline:${commentReplyDraftScope("left", document)}:comment-1`;
+    const targetKey = `inline:${commentReplyDraftScope("right", document)}:comment-1`;
+    const initial = readCommentReplyDraft(pullRequestId, sourceKey);
+    writeCommentReplyDraft(pullRequestId, sourceKey, {
+      ...initial,
+      body: "タブと一緒に移動する返信",
+    });
+
+    expect(moveCommentReplyDraftsForDocument(pullRequestId, document, "left", "right")).toBe(true);
+    expect(readCommentReplyDraft(pullRequestId, sourceKey).body).toBe("");
+    expect(readCommentReplyDraft(pullRequestId, targetKey).body).toBe("タブと一緒に移動する返信");
+
+    writeCommentReplyDraft(pullRequestId, sourceKey, {
+      ...initial,
+      body: "上書きしてはいけない返信",
+    });
+    expect(moveCommentReplyDraftsForDocument(pullRequestId, document, "left", "right")).toBe(false);
+    expect(readCommentReplyDraft(pullRequestId, sourceKey).body).toBe("上書きしてはいけない返信");
+    expect(readCommentReplyDraft(pullRequestId, targetKey).body).toBe("タブと一緒に移動する返信");
   });
 });
