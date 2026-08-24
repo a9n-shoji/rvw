@@ -43,7 +43,11 @@ interface ReviewReadingHistoryOptions {
   setViewerNavigationTargets: Dispatch<
     SetStateAction<Record<DocumentPaneId, ViewerNavigationTarget | null>>
   >;
-  openWorkspaceDocument: (document: ActiveDocument, pane?: DocumentPaneId) => void;
+  openWorkspaceDocument: (
+    document: ActiveDocument,
+    pane?: DocumentPaneId,
+    beforeCommit?: () => void,
+  ) => boolean;
   activateWorkspaceDocument: (document: ActiveDocument, pane?: DocumentPaneId) => void;
   scrollRevision?: number;
 }
@@ -274,7 +278,7 @@ export function useReviewReadingHistory({
       targetPane?: DocumentPaneId,
       locator?: ReadingLocator,
       resetHorizontal = true,
-    ): void => {
+    ): boolean => {
       const documentKey = documentTabKey(document);
       const pane = targetPane ?? "left";
       const destinationLocator =
@@ -283,11 +287,14 @@ export function useReviewReadingHistory({
           kind: "scroll",
           top: documentScrollPositions.current?.get(documentPaneTabKey(pane, document)) ?? 0,
         } satisfies ReadingLocator);
-      pushReadingHistory(document, pane, destinationLocator);
-      openWorkspaceDocument(document, pane);
+      const opened = openWorkspaceDocument(document, pane, () => {
+        pushReadingHistory(document, pane, destinationLocator);
+      });
+      if (!opened) return false;
       if (destinationLocator.kind === "line") {
         requestLineNavigation(documentKey, pane, destinationLocator, resetHorizontal);
       }
+      return true;
     },
     [documentScrollPositions, openWorkspaceDocument, pushReadingHistory, requestLineNavigation],
   );
@@ -318,19 +325,27 @@ export function useReviewReadingHistory({
 
   const restoreReadingHistory = useCallback(
     (entry: ReadingHistoryEntry): void => {
-      cancelScrollSnapshot();
       const currentWorkspace = workspaceRef.current;
       if (!currentWorkspace) return;
       const documentKey = documentTabKey(entry.document);
       const openPanes = documentPaneIds(currentWorkspace, entry.document);
       const pane = openPanes.includes(entry.pane) ? entry.pane : (openPanes[0] ?? entry.pane);
-      if (entry.locator.kind === "scroll") {
-        documentScrollPositions.current?.set(
-          documentPaneTabKey(pane, entry.document),
-          entry.locator.top,
-        );
+      const opened = openWorkspaceDocument(entry.document, pane, () => {
+        cancelScrollSnapshot();
+        if (entry.locator.kind === "scroll") {
+          documentScrollPositions.current?.set(
+            documentPaneTabKey(pane, entry.document),
+            entry.locator.top,
+          );
+        }
+      });
+      if (!opened) {
+        const currentEntry = currentReadingHistoryEntry();
+        if (currentEntry) {
+          window.history.replaceState(readingHistoryState(window.history.state, currentEntry), "");
+        }
+        return;
       }
-      openWorkspaceDocument(entry.document, pane);
       if (entry.locator.kind === "line") {
         requestLineNavigation(documentKey, pane, entry.locator, true);
         return;
@@ -345,6 +360,7 @@ export function useReviewReadingHistory({
     },
     [
       cancelScrollSnapshot,
+      currentReadingHistoryEntry,
       documentScrollPositions,
       openWorkspaceDocument,
       paneElements,

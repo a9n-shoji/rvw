@@ -43,7 +43,7 @@ export function useExactCodeReferenceNavigation({
     targetPane?: DocumentPaneId,
     locator?: ReadingLocator,
     resetHorizontal?: boolean,
-  ) => void;
+  ) => boolean;
 }) {
   const queryClient = useQueryClient();
   const requestSequence = useRef<Record<DocumentPaneId, number>>({ left: 0, right: 0 });

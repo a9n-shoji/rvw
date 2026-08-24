@@ -1,9 +1,11 @@
 import { useCallback, useState } from "react";
 import { moveCommentDraftsForWorkspaceTransition } from "./comment-draft-store.js";
 import {
+  assignDocumentToPane,
   documentPaneTransitions,
   documentTabKey,
   moveDocumentToPane,
+  preferredDocumentPane,
   removeDocumentFromWorkspace,
   type ActiveDocument,
   type DocumentPaneId,
@@ -35,7 +37,6 @@ export function useDraftAwareDocumentWorkspace({
     workspaceRef,
     setWorkspace: setBaseWorkspace,
     activateDocument,
-    openDocument,
   } = useDocumentWorkspace(onDocumentNavigation, initialDocument);
   const [draftWorkspaceRevision, setDraftWorkspaceRevision] = useState(0);
 
@@ -43,6 +44,7 @@ export function useDraftAwareDocumentWorkspace({
     (
       nextWorkspace: DocumentWorkspaceState,
       navigationPanes: readonly DocumentPaneId[] = [],
+      beforeCommit?: () => void,
     ): boolean => {
       const previousWorkspace = workspaceRef.current;
       if (nextWorkspace === previousWorkspace) return true;
@@ -63,6 +65,7 @@ export function useDraftAwareDocumentWorkspace({
         }
         if (result.commentDraftsMoved) setDraftWorkspaceRevision((revision) => revision + 1);
       }
+      beforeCommit?.();
       onDocumentNavigation([
         ...new Set([
           ...navigationPanes,
@@ -81,6 +84,19 @@ export function useDraftAwareDocumentWorkspace({
       const current = workspaceRef.current;
       const next = typeof update === "function" ? update(current) : update;
       applyWorkspaceTransition(next);
+    },
+    [applyWorkspaceTransition, workspaceRef],
+  );
+
+  const openDocument = useCallback(
+    (document: ActiveDocument, targetPane?: DocumentPaneId, beforeCommit?: () => void): boolean => {
+      const current = workspaceRef.current;
+      const resolvedPane = targetPane ?? preferredDocumentPane(current, document);
+      return applyWorkspaceTransition(
+        assignDocumentToPane(current, document, resolvedPane),
+        [resolvedPane],
+        beforeCommit,
+      );
     },
     [applyWorkspaceTransition, workspaceRef],
   );

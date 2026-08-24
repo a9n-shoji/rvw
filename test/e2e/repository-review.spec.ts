@@ -520,6 +520,51 @@ test("moves a Repository Review comment draft with a dragged file tab", async ({
   );
 });
 
+test("preserves a current Repository file draft when exact-source navigation targets the same path", async ({
+  page,
+}) => {
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
+  await page.getByRole("button", { name: "src フォルダ", exact: true }).click();
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  await leftPane.getByRole("button", { name: "ファイル全体へコメント" }).click();
+  const draft = leftPane.getByRole("textbox", { name: "ファイル全体へコメント" });
+  await draft.fill("exact-sourceへ切り替えても保持するcurrent file draft");
+
+  await page.getByRole("button", { name: "ウォークスルー 1" }).click();
+  await page
+    .getByRole("button", { name: "Current request flow", exact: true })
+    .click({ modifiers: [modifier] });
+  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  const reference = rightPane.getByRole("button", { name: /the implementation.*L1–3/ });
+  await expect(reference).toBeVisible();
+
+  const historyBefore = await page.evaluate(() => JSON.stringify(window.history.state));
+  const lineBefore = await leftPane
+    .locator("diffs-container")
+    .getAttribute("data-search-target-line");
+  await reference.click();
+
+  await expect(
+    page.getByText(
+      "このタブには入力中のコメントがあります。送信または消去してから別のsourceへ切り替えてください。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(draft).toHaveValue("exact-sourceへ切り替えても保持するcurrent file draft");
+  await expect
+    .poll(() => page.evaluate(() => JSON.stringify(window.history.state)))
+    .toBe(historyBefore);
+  await expect
+    .poll(() => leftPane.locator("diffs-container").getAttribute("data-search-target-line"))
+    .toBe(lineBefore);
+});
+
 test("rejects a Repository Review pane merge when both file replies have drafts", async ({
   page,
 }) => {

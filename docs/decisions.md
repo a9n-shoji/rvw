@@ -23,10 +23,15 @@ revision. A source refresh preserves the body and composer but requires a fresh 
 file tab with an exact-source variant is rejected while the source tab owns a new-comment or inline-reply draft
 instead of hiding it, including when a cross-pane move normalizes the surviving tab back to the left pane or the
 original document identity remains open in the other pane but does not own the pane-scoped draft.
+Route every document open, including exact-reference navigation and browser-history restoration, through the same
+draft-aware transition. Validate the transition before saving the previous reading entry, commit the workspace only
+after that save, and leave reading history, line navigation, and pane scroll state unchanged when validation rejects
+the open.
 
 ### Consequences
 
 - Repository Review now preserves or explicitly rejects draft movement with the same rules as Pull Requests.
+- A rejected document replacement does not create a browser-history destination that the workspace never opened.
 - Unlabeled watcher operation remains observable without treating display text as provenance.
 - Shared behavior stays in capability hooks; aggregate queries, synchronization, and PR-only controls remain
   separate rather than introducing a generic `ReviewApp<T>`.

@@ -546,8 +546,9 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
   });
 
   const openDocument = useCallback(
-    (document: ActiveDocument, targetPane?: DocumentPaneId): void =>
-      navigateToDocument(document, targetPane),
+    (document: ActiveDocument, targetPane?: DocumentPaneId): void => {
+      navigateToDocument(document, targetPane);
+    },
     [navigateToDocument],
   );
 
