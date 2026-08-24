@@ -1768,3 +1768,74 @@ contract to protocol version 3 and advertise `comment.codeReferences`.
 - Agent callers must keep Markdown links and the complete typed declaration set consistent on edits.
 - Comments remain lightweight thread content: they gain direct evidence links without becoming
   Walkthrough documents or an in-app Agent conversation surface.
+
+## 2026-08-24: Record the latest comment-post write channel for notifications
+
+### Problem
+
+Browser notifications must fire for Agent posts without firing for human posts. `authorLabel` cannot
+provide that guarantee: it is display text rather than authenticated provenance, and a human may edit
+an Agent-labeled post while an Agent may encounter a legacy unlabeled post.
+
+### Choice
+
+Persist nullable `lastModifiedBy` on each comment post. Viewer HTTP writes set `human`; Agent CLI,
+Agent socket, and synchronized Agent replies set `agent`; migrated rows remain null. The field is
+derived from rvw's trusted local entry point, is output-only, and is used to gate browser notifications.
+It does not identify a person or runtime, authorize a write, add Agent-only lifecycle state, or change
+the unresolved/resolved comment model. `authorLabel` remains the optional display name.
+
+### Trade-offs
+
+- Human edits to Agent-labeled posts stay silent, and Agent edits can be recognized without guessing
+  from a display label.
+- Existing posts stay on the safe side and do not notify until a known entry point modifies them.
+- The database gains one small provenance column, but avoids authenticated identities, session links,
+  and notification-specific event tables.
+
+## 2026-08-24: Advance protocols for comment-post modifier provenance
+
+### Problem
+
+Adding required nullable `lastModifiedBy` to the strict comment-post output changes both the public
+CLI result and Agent socket response. Leaving their versions unchanged would let a newly installed
+CLI select an already-running old viewer, or an old CLI call a new viewer, only to fail later while
+parsing an otherwise successful `comment get` response.
+
+### Choice
+
+Advance the public machine protocol from 3 to 4 and the Agent socket protocol from 1 to 2. Keep the
+socket handshake strict in both directions and include a concrete instruction to restart the viewer
+when a stale peer is detected. Update the bundled Skills and preflight requirement with the public
+version so incompatibility is rejected before comment processing.
+
+### Trade-offs
+
+- Updating rvw now requires restarting an already-running viewer before Agent commands can use it.
+- The explicit break avoids maintaining version-specific post DTOs while the local protocol is still
+  evolving.
+- Mixed-version tests protect both the old-socket/new-client and new-socket/old-client directions.
+
+## 2026-08-24: Pin the watcher acknowledgement author before mutation
+
+### Problem
+
+Acknowledgement idempotency includes the optional display author in its request hash. The task state
+previously persisted the key and returned post ID but not that author, so a process crash after a
+successful reply and before recording the post could turn a restart with a different label into an
+idempotency conflict.
+
+### Choice
+
+Bind the supplied author label, including an explicit unlabeled choice, as immutable task metadata in
+the same transaction that first claims auto-ack work and before any rvw read or write. Reuse the bound
+value for every acknowledgement. On restart, compare already-bound metadata before starting the rvw
+watch process, even when no batch is pending; also enforce the same invariant during claim. Reject a
+changed, added, or removed label before calling rvw.
+
+### Trade-offs
+
+- A long-lived watcher task cannot be relabeled; changing the displayed Agent requires a new task
+  state.
+- Existing task databases bind lazily on their first auto-ack claim, so no migration guess is needed.
+- The retry payload remains identical across the reply-success/state-save crash window.

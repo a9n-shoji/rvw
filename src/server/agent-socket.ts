@@ -25,7 +25,9 @@ import { asRvwError, RvwError } from "../shared/errors.js";
 // pr sync may contain hundreds of valid 64 KiB replies. Reserve framing space above the stdin cap.
 export const MAX_CLI_STDIN_BYTES = 40 * 1024 * 1024;
 export const MAX_AGENT_MESSAGE_BYTES = MAX_CLI_STDIN_BYTES + 64 * 1024;
-const AGENT_SOCKET_PROTOCOL_VERSION = 1;
+export const AGENT_SOCKET_PROTOCOL_VERSION = 2;
+const AGENT_SOCKET_RESTART_SUGGESTION =
+  "起動中のrvw viewerを停止し、更新後のrvw openで再起動してください。";
 const DEFAULT_CONNECT_TIMEOUT_MS = 2_000;
 const DEFAULT_OPERATION_TIMEOUT_MS = 180_000;
 const DEFAULT_TAKEOVER_RETRY_MS = 1_000;
@@ -196,7 +198,13 @@ export async function dispatchAgentSocketRequest(
 ): Promise<unknown> {
   const request = parseRequest(rawRequest);
   if (request.protocolVersion !== AGENT_SOCKET_PROTOCOL_VERSION) {
-    throw new RvwError("STALE_PROTOCOL", "Agent socket protocol versionが一致しません。");
+    throw new RvwError("STALE_PROTOCOL", "Agent socket protocol versionが一致しません。", {
+      details: {
+        expectedProtocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        receivedProtocolVersion: request.protocolVersion,
+      },
+      suggestions: [AGENT_SOCKET_RESTART_SUGGESTION],
+    });
   }
   if (
     request.expectedDatabasePath !== undefined &&
@@ -275,10 +283,10 @@ export async function dispatchAgentSocketRequest(
     }
     case "comment.reply": {
       const input = parseOperationInput("comment.reply", request.input);
-      return await service.replyToComment(
-        input.uri,
-        input.reply as unknown as Parameters<RvwService["replyToComment"]>[1],
-      );
+      return await service.replyToComment(input.uri, {
+        ...(input.reply as unknown as Parameters<RvwService["replyToComment"]>[1]),
+        lastModifiedBy: "agent",
+      });
     }
     case "comment.edit": {
       const input = parseOperationInput("comment.edit", request.input);
@@ -288,6 +296,7 @@ export async function dispatchAgentSocketRequest(
           ? {}
           : { relatedCommitOid: input.edit.relatedCommitOid }),
         ...(input.edit.references === undefined ? {} : { references: input.edit.references }),
+        lastModifiedBy: "agent",
       });
     }
     case "comment.resolve": {
@@ -518,9 +527,18 @@ export async function tryAgentSocketRequest<T>(
             }
             return;
           }
+          const suggestions =
+            response.error.code === "STALE_PROTOCOL"
+              ? [
+                  ...new Set([
+                    ...(response.error.suggestions ?? []),
+                    AGENT_SOCKET_RESTART_SUGGESTION,
+                  ]),
+                ]
+              : response.error.suggestions;
           reject(
             new RvwError(response.error.code, response.error.message, {
-              suggestions: response.error.suggestions,
+              suggestions,
               details: response.error.details,
             }),
           );

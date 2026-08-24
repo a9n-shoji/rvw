@@ -1680,6 +1680,120 @@ test("removes both pane copies when a walkthrough is deleted externally", async 
   await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
 });
 
+test("keeps same-Walkthrough reply input isolated by pane and moves it with the tab", async ({
+  page,
+  request,
+}) => {
+  const walkthroughId = "70000000-0000-4000-8000-000000000001";
+  const walkthroughsResponse = await request.get(
+    `/api/pull-requests/${pullRequestId}/walkthroughs`,
+  );
+  expect(walkthroughsResponse.ok()).toBe(true);
+  const { walkthroughs } = (await walkthroughsResponse.json()) as {
+    walkthroughs: Array<{ id: string; title: string }>;
+  };
+  const walkthroughTitle = walkthroughs.find(
+    (walkthrough) => walkthrough.id === walkthroughId,
+  )?.title;
+  if (!walkthroughTitle) {
+    throw new Error(`Walkthrough ${walkthroughId} was not found.`);
+  }
+  const createResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: { kind: "walkthrough", walkthroughId },
+      body: "左右ペインのウォークスルー返信入力を確認します。",
+      authorLabel: "You",
+    },
+  });
+  expect(createResponse.ok()).toBe(true);
+  const { comment } = (await createResponse.json()) as { comment: { id: string } };
+
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await openWalkthroughFromSidebar(page, walkthroughTitle);
+    await page
+      .getByRole("navigation", { name: "レビュー文書" })
+      .getByRole("button", { name: walkthroughTitle, exact: true })
+      .click({ modifiers: ["Meta"] });
+
+    const leftReply = page
+      .locator(`.document-pane[data-pane="left"] [data-comment-id="${comment.id}"]`)
+      .getByPlaceholder("返信を入力");
+    const rightReply = page
+      .locator(`.document-pane[data-pane="right"] [data-comment-id="${comment.id}"]`)
+      .getByPlaceholder("返信を入力");
+    await leftReply.fill("k");
+
+    await expect(leftReply).toHaveValue("k");
+    await expect(rightReply).toHaveValue("");
+    await expect(leftReply).toBeFocused();
+
+    await page
+      .locator('.document-pane[data-pane="left"]')
+      .getByRole("button", { name: "左ペインの操作" })
+      .click();
+    await page.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
+    await expect(leftReply).toHaveCount(0);
+    await expect(rightReply).toHaveValue("k");
+  } finally {
+    const deleteResponse = await request.delete(`/api/comments/${comment.id}`, { data: {} });
+    expect(deleteResponse.ok()).toBe(true);
+  }
+});
+
+test("underlines a code reference range opened in Markdown preview", async ({ page, request }) => {
+  const viewResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  expect(viewResponse.ok()).toBe(true);
+  const { headOid } = (await viewResponse.json()) as { headOid: string };
+  const createResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: { kind: "pull-request" },
+      body: "Inspect [the rendered documentation](rvw-ref:rendered-docs).",
+      relatedCommitOid: headOid,
+      references: [
+        {
+          id: "rendered-docs",
+          label: "Rendered documentation",
+          path: "README.md",
+          startLine: 6,
+          endLine: 7,
+        },
+      ],
+      authorLabel: "Codex · Markdown reference",
+    },
+  });
+  expect(createResponse.ok()).toBe(true);
+
+  const { comment } = (await createResponse.json()) as { comment: { id: string } };
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await openCommentsSidebar(page);
+    const thread = page.locator(".comment-list-item").filter({
+      hasText: "the rendered documentation",
+    });
+    await thread.getByRole("button", { name: "the rendered documentation" }).click();
+
+    const leftPane = page.locator('.document-pane[data-pane="left"]');
+    await expect(leftPane.getByRole("tab", { name: "README.md" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(leftPane.getByText("Rendered Markdown", { exact: true })).toBeVisible();
+    for (const line of [6, 7]) {
+      await expect(
+        leftPane.locator(
+          `.markdown-preview [data-rvw-source-start-line="${line}"][data-rvw-source-leaf="true"]`,
+        ),
+      ).toHaveClass(/rvw-markdown-commented/);
+    }
+  } finally {
+    const deleteResponse = await request.delete(`/api/comments/${comment.id}`, { data: {} });
+    expect(deleteResponse.ok()).toBe(true);
+  }
+});
+
 test("opens a comment reference to the same file in the right pane", async ({ page, request }) => {
   const viewResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
   expect(viewResponse.ok()).toBe(true);

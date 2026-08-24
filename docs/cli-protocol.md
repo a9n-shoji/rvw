@@ -1,4 +1,4 @@
-# CLI protocol v3
+# CLI protocol v4
 
 Version 1 is the first public compatibility contract. Pre-public internal version numbers were not
 released or supported; after the first public release, protocol versions only increase for breaking
@@ -7,7 +7,9 @@ must be reachable from its Markdown body or Mermaid bindings. Version 3 adds pos
 references to comment create, reply, edit, get, and synchronized replies, and advertises
 `comment.codeReferences`. It also keeps the additive
 `agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
-idempotency keys are additive fields and do not change existing callers.
+idempotency keys are additive fields and do not change existing callers. Version 4 adds required
+nullable `lastModifiedBy` provenance to comment-post output so consumers can distinguish trusted
+Agent and human write channels.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
@@ -231,7 +233,9 @@ synchronized PR body requests it with `comment get --include-pr-body`; only that
 
 `comment get` returns the same top-level `comment` and `latestPlacement` keys with the complete comment
 target and posts, `createdHeadOid`, and the PR's `latestHeadOid`. Each complete post includes its
-`relatedCommitOid` and `references`. `latestPlacement` is rvw's
+`relatedCommitOid`, `references`, and nullable `lastModifiedBy` (`human` or `agent`). The value records
+the trusted local entry point of the latest write and is output-only; callers do not supply it.
+`latestPlacement` is rvw's
 authoritative derived placement at the latest head. Consumers must not treat unequal creation/latest
 OIDs as Outdated: rvw accounts for unchanged lines, renames, deletion, and PR-Markdown quoted-text
 placement.
@@ -494,7 +498,8 @@ the current Agent may supply an accurate optional `authorLabel`.
 
 `rvw-watch-comments` documents the complete state-script stdin/stdout contract. Its driver derives
 `--after` from task state, its auto-ack reuses each batch operation's idempotency key and status post
-only when that batch is retried, and it hands every acknowledged lease to one fresh subagent in the
+only when that batch is retried, accepts the current runtime's accurate `--author-label` for the
+acknowledgement/final post, and hands every acknowledged lease to one fresh subagent in the
 same parent scheduling turn. The parent never substitutes direct processing. Each subagent handoff uses
 an absolute JSON result path rather than relying on relayed completion text. Subagent outcomes carry
 `body`, `relatedCommitOid`, a complete `references` array, and `pushStatus`. The Skill uses typed
@@ -520,7 +525,7 @@ current `walkthrough` object. This gives the Agent the explanation body and exac
 discussed without relying on rendered browser positions. If the Walkthrough is updated, the same
 comment URI subsequently returns the updated current object.
 
-`rvw protocol --json` returns `protocolVersion: 3`, the application version, and these capabilities:
+`rvw protocol --json` returns `protocolVersion: 4`, the application version, and these capabilities:
 
 ```text
 agent.transport

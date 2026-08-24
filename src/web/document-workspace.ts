@@ -19,6 +19,13 @@ export interface DocumentWorkspaceState {
   navigationRevision: Record<DocumentPaneId, number>;
 }
 
+export interface DocumentPaneTransition {
+  sourceDocument: ActiveDocument;
+  targetDocument: ActiveDocument;
+  sourcePane: DocumentPaneId;
+  targetPane: DocumentPaneId;
+}
+
 const initialDocument: ActiveDocument = { kind: "pull-request-markdown" };
 
 export function documentTabKey(document: ActiveDocument): string {
@@ -90,6 +97,23 @@ export function documentPaneIds(
   return (["left", "right"] as const).filter((paneId) =>
     findDocumentInPane(current, document, paneId),
   );
+}
+
+export function documentPaneTransitions(
+  previous: DocumentWorkspaceState,
+  next: DocumentWorkspaceState,
+): DocumentPaneTransition[] {
+  const transitions: DocumentPaneTransition[] = [];
+  for (const sourcePane of ["left", "right"] as const) {
+    const targetPane = otherDocumentPane(sourcePane);
+    for (const sourceDocument of previous.documents[sourcePane]) {
+      if (findDocumentInPane(next, sourceDocument, sourcePane)) continue;
+      const targetDocument = findDocumentInPane(next, sourceDocument, targetPane);
+      if (!targetDocument) continue;
+      transitions.push({ sourceDocument, targetDocument, sourcePane, targetPane });
+    }
+  }
+  return transitions;
 }
 
 export function preferredDocumentPane(

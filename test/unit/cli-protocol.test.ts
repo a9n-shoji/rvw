@@ -37,6 +37,7 @@ const rootPost: CommentPost = {
   relatedCommitOid: null,
   references: [],
   authorLabel: "Reviewer",
+  lastModifiedBy: null,
   isRoot: true,
   createdAt: "2026-08-10T00:02:00.000Z",
   updatedAt: "2026-08-10T00:02:00.000Z",
@@ -171,7 +172,7 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 3,
+      protocolVersion: 4,
       appVersion: "0.2.4",
       capabilities: [
         "agent.transport",
@@ -361,7 +362,10 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
 
-    expect(editCommentPost).toHaveBeenCalledWith(commentRef, rootPost.id, input);
+    expect(editCommentPost).toHaveBeenCalledWith(commentRef, rootPost.id, {
+      ...input,
+      lastModifiedBy: "agent",
+    });
     expect(readStdout()).toEqual({ ok: true, post: edited });
     expect(close).toHaveBeenCalledOnce();
   });

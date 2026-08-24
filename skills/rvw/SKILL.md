@@ -10,7 +10,7 @@ Use only the `rvw` CLI protocol to access rvw state. Never read or edit the SQLi
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 3, `agent.transport`, and every task capability needed for the task.
+2. Require `protocolVersion` 4, `agent.transport`, and every task capability needed for the task.
    Require `comment.codeReferences` whenever reading or writing typed post references.
 3. Run `rvw agent status --json`. Read `socketPath`, `connectionResult`, `selectedDatabasePath`, `selectedTransport`, and `fallbackReason`. If `selectedTransport` is `unavailable`, stop and report the diagnostic; an explicitly configured `RVW_AGENT_SOCKET_PATH` never falls back to direct database access. Otherwise use the reported transport without overriding it.
 4. Prefer the CLI's transparent Unix-socket route when a normally launched rvw viewer is running.

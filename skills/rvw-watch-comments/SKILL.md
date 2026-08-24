@@ -45,7 +45,8 @@ Omit `--expected-login` and force `investigate-and-reply` when identity is unava
 Initialization rejects a policy change for an existing task.
 
 On restart, run `recover`, then `status`. Both expose `quarantinedBatches`; `status` also exposes
-recoverable `inFlightBatches` with lease IDs and status posts.
+recoverable `inFlightBatches` with lease IDs and status posts, plus the task's bound acknowledgement
+`authorLabel` after the first auto-ack claim.
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-state.mjs' recover --state '<TASK_STATE_DB>'
@@ -59,7 +60,7 @@ prevents an interrupted third attempt from leaving `確認中` indefinitely.
 ## Start or resume intake
 
 Run the single preflight command. It concurrently detects `rvw` and verifies Node `>=24.15.0`.
-Require `protocolVersion` 3 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
+Require `protocolVersion` 4 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
 `comment.edit`, `comment.codeReferences`, and `pullRequest.sync`, and report agent status and ping in
 one JSON value. Stop when `ok` is false. A disconnected ping is diagnostic when status safely selects
 direct-database transport; an unavailable selected transport is fatal.
@@ -89,8 +90,17 @@ those workers are source-read-only and each batch owns a distinct status post.
 
 ```bash
 node '<SKILL_DIR>/scripts/watch-driver.mjs' '<TASK_STATE_DB>' \
-  --auto-ack --max-in-flight '<RESERVED_WORKER_SLOTS>'
+  --auto-ack --max-in-flight '<RESERVED_WORKER_SLOTS>' \
+  --author-label '<CURRENT_AGENT_NAME>'
 ```
+
+Set `<CURRENT_AGENT_NAME>` to the accurate product/runtime name of the task that owns the watcher,
+such as `Codex` or `Claude Code`. This label is stored on the acknowledgement post and remains when
+that post is replaced with the final outcome. Omit `--author-label` only when the current runtime
+identity genuinely cannot be determined; those posts intentionally remain unlabeled. The first
+auto-ack claim durably binds either the supplied label or that deliberate absence to the task before
+calling rvw. Every restart must use the same value. A changed, added, or removed label is rejected
+before rvw reads or writes, so an acknowledgement retry keeps the original idempotency payload.
 
 Launch the driver through the runtime's long-lived streaming-process facility. Yield stdout to the
 parent as soon as lines arrive; never wait for the driver to exit or buffer a group of lines before
@@ -138,14 +148,19 @@ acknowledged. If intake runs without auto-ack, invoke the same complete fast pat
 ```bash
 node '<SKILL_DIR>/scripts/auto-ack.mjs' \
   --state '<TASK_STATE_DB>' \
-  --pull-request '<PR_URL>'
+  --pull-request '<PR_URL>' \
+  --author-label '<CURRENT_AGENT_NAME>'
 ```
 
-For a null `statusPostId`, auto-ack sends exactly `{ "body": "🔎 確認中です…",
-"idempotencyKey": "<BATCH_OPERATION_KEY>" }` to `rvw comment reply`, then records the returned post. It omits
-`authorLabel` and `relatedCommitOid`, so an uncertain retry has the identical payload. For an existing
+For a null `statusPostId`, auto-ack first binds the task's immutable acknowledgement label, then sends
+exactly `{ "body": "🔎 確認中です…",
+"idempotencyKey": "<BATCH_OPERATION_KEY>", "authorLabel": "<CURRENT_AGENT_NAME>" }` to
+`rvw comment reply`, then records the returned post. It omits `relatedCommitOid`, so an uncertain
+retry has the identical payload. When `--author-label` is omitted, the task records that explicit
+unlabeled choice and `authorLabel` is omitted too. For an existing
 status post in the same retried batch it sends
-`{ "body": "🔎 確認中です…", "relatedCommitOid": null }` to `comment edit`. A later batch for the
+`{ "body": "🔎 確認中です…", "relatedCommitOid": null }` to `comment edit`; editing preserves the
+label already stored when the post was created. A later batch for the
 same thread has a new key and null `statusPostId`, so it creates another acknowledgement and never
 rewrites the previous final answer.
 The acknowledgement's watch event is suppressed even when intake queued it before the post ID was
@@ -368,8 +383,8 @@ Claim `operations` are `{commentRef,idempotencyKey,statusPostId}`. Claim `events
 idempotent local migrations; existing state databases remain readable and retain their cursors,
 leases, and unfinished batch keys and status posts.
 
-| Script    | Invocation                                                                            | Output                                                                                        |
-| --------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Preflight | `node scripts/preflight.mjs`                                                          | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                     |
-| Driver    | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N]`                  | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
-| Auto-ack  | `node scripts/auto-ack.mjs --state STATE --pull-request URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`. |
+| Script    | Invocation                                                                                                  | Output                                                                                        |
+| --------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Preflight | `node scripts/preflight.mjs`                                                                                | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                     |
+| Driver    | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N --author-label NAME]`                    | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
+| Auto-ack  | `node scripts/auto-ack.mjs --state STATE --pull-request URL [--write-key owner/repo] [--author-label NAME]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`. |

@@ -140,6 +140,7 @@ describe("RvwDatabase", () => {
       "006_theme_preference.sql",
       "009_comment_watch.sql",
       "010_comment_post_references.sql",
+      "011_comment_post_modifier.sql",
     ]) {
       writeFileSync(
         path.join(legacyMigrationsDirectory, migration),
@@ -209,7 +210,7 @@ describe("RvwDatabase", () => {
         startLine: null,
         endLine: null,
       },
-      posts: [{ body: "Keep this whole-Walkthrough comment." }],
+      posts: [{ body: "Keep this whole-Walkthrough comment.", lastModifiedBy: null }],
     });
     const fileLevel = migrated.createWalkthrough({
       pullRequestId: pullRequest.id,
@@ -337,7 +338,14 @@ describe("RvwDatabase", () => {
         sourceDocumentHash: `legacy:${versionId}`,
         quotedText: null,
       },
-      posts: [{ relatedCommitOid: github.headOid, createdAt: now, updatedAt: now }],
+      posts: [
+        {
+          relatedCommitOid: github.headOid,
+          lastModifiedBy: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
     });
     database.close();
   });
@@ -433,7 +441,14 @@ describe("RvwDatabase", () => {
     ]);
     expect(database.getResetCounts(pullRequest.id, 0).commentReferences).toBe(2);
 
-    database.updateCommentPost(comment.id, reply.id, "Reference removed.", undefined, []);
+    database.updateCommentPost(
+      comment.id,
+      reply.id,
+      "Reference removed.",
+      reply.relatedCommitOid,
+      [],
+      reply.lastModifiedBy,
+    );
     expect(database.getResetCounts(pullRequest.id, 0).commentReferences).toBe(1);
     database.deleteComment(comment.id);
     expect(database.getResetCounts(pullRequest.id, 0).commentReferences).toBe(0);

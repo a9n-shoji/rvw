@@ -962,6 +962,8 @@ app.post("/api/comments", async (context) => {
         relatedCommitOid: input.relatedCommitOid ?? null,
         references: input.references ?? [],
         authorLabel: input.authorLabel,
+        lastModifiedBy:
+          context.req.header("x-rvw-fixture-modifier") === "agent" ? "agent" : "human",
         isRoot: true,
         createdAt: now,
         updatedAt: now,
@@ -984,6 +986,7 @@ app.post("/api/comments/:id/posts", async (context) => {
     relatedCommitOid: input.relatedCommitOid,
     references: input.references ?? [],
     authorLabel: input.authorLabel,
+    lastModifiedBy: context.req.header("x-rvw-fixture-modifier") === "agent" ? "agent" : "human",
     isRoot: false,
     createdAt: now,
     updatedAt: now,
@@ -1007,6 +1010,8 @@ app.patch("/api/comments/:id/posts/:postId", async (context) => {
   const now = new Date().toISOString();
   post.body = input.body;
   if (input.references !== undefined) post.references = input.references;
+  post.lastModifiedBy =
+    context.req.header("x-rvw-fixture-modifier") === "agent" ? "agent" : "human";
   post.updatedAt = now;
   comment.updatedAt = now;
   changeSequence += 1;

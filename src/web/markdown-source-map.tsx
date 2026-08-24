@@ -35,6 +35,7 @@ interface SourceMapOptions {
   annotations?: MarkdownCommentAnnotation[];
   activeCommentId?: string | null;
   selectedRange?: MarkdownSourceRange | null;
+  navigationRange?: MarkdownSourceRange | null;
   composerOpen?: boolean;
 }
 
@@ -183,16 +184,18 @@ function highlightRanges(
   annotations: MarkdownCommentAnnotation[],
   activeCommentId: string | null,
   selectedRange: MarkdownSourceRange | null,
+  navigationRange: MarkdownSourceRange | null,
 ): void {
   if (node.type === "element" && node.properties?.dataRvwSourceLeaf === "true") {
     if (
-      activeCommentId &&
-      annotations.some(
-        (annotation) =>
-          annotation.id === activeCommentId &&
-          annotation.range &&
-          overlaps(node.position, annotation.range),
-      )
+      (activeCommentId &&
+        annotations.some(
+          (annotation) =>
+            annotation.id === activeCommentId &&
+            annotation.range &&
+            overlaps(node.position, annotation.range),
+        )) ||
+      (navigationRange && overlaps(node.position, navigationRange))
     ) {
       addClass(node, "rvw-markdown-commented");
     }
@@ -201,7 +204,7 @@ function highlightRanges(
     }
   }
   node.children?.forEach((child) =>
-    highlightRanges(child, annotations, activeCommentId, selectedRange),
+    highlightRanges(child, annotations, activeCommentId, selectedRange, navigationRange),
   );
 }
 
@@ -339,6 +342,7 @@ export function rehypeRvwSourceMap(options: SourceMapOptions = {}) {
       annotations,
       options.activeCommentId ?? null,
       options.composerOpen ? (options.selectedRange ?? null) : null,
+      options.navigationRange ?? null,
     );
     insertCommentAnchors(tree, annotations);
     insertComposerAnchor(tree, options.composerOpen ? (options.selectedRange ?? null) : null);

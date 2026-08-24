@@ -54,6 +54,57 @@ function registerPullRequest(database: RvwDatabase): string {
 }
 
 describe("local HTTP security", () => {
+  it("marks viewer comment writes as human", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequestId = registerPullRequest(database);
+    const app = createApp(new RvwService(database, new GitClient(), github), {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+    const headers = {
+      host: "127.0.0.1:4321",
+      origin: "http://127.0.0.1:4321",
+      "content-type": "application/json",
+    };
+
+    const createdResponse = await app.request("http://127.0.0.1:4321/api/comments", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        pullRequestId,
+        target: { kind: "pull-request" },
+        body: "Human root",
+        authorLabel: "You",
+      }),
+    });
+    expect(createdResponse.status).toBe(201);
+    const created = (await createdResponse.json()) as {
+      comment: { id: string; posts: Array<{ lastModifiedBy: string | null }> };
+    };
+    expect(created.comment.posts[0]?.lastModifiedBy).toBe("human");
+
+    const replyResponse = await app.request(
+      `http://127.0.0.1:4321/api/comments/${created.comment.id}/posts`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ body: "Human reply", authorLabel: "You" }),
+      },
+    );
+    expect(replyResponse.status).toBe(201);
+    const reply = (await replyResponse.json()) as {
+      post: { id: string; lastModifiedBy: string | null };
+    };
+    expect(reply.post.lastModifiedBy).toBe("human");
+
+    const editResponse = await app.request(
+      `http://127.0.0.1:4321/api/comments/${created.comment.id}/posts/${reply.post.id}`,
+      { method: "PATCH", headers, body: JSON.stringify({ body: "Human edit" }) },
+    );
+    expect(editResponse.status).toBe(200);
+    expect(await editResponse.json()).toMatchObject({ post: { lastModifiedBy: "human" } });
+    database.close();
+  });
+
   it("reads and writes a validated user-wide theme preference", async () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const app = createApp(new RvwService(database, new GitClient(), github), {

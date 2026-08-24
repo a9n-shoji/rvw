@@ -6,6 +6,7 @@ import type {
   CodeReference,
   CommentPlacement,
   CommentPost,
+  CommentPostModifier,
   CommentPostEvent,
   CommentTarget,
   CommitSummary,
@@ -623,6 +624,7 @@ export class RvwService {
         commentId,
         reply: update.reply,
         resolve: update.resolve,
+        lastModifiedBy: "agent",
         ...(update.references === undefined ? {} : { references: update.references }),
         ...(update.authorLabel === undefined ? {} : { authorLabel: update.authorLabel }),
         ...(update.idempotencyKey === undefined ? {} : { idempotencyKey: update.idempotencyKey }),
@@ -1185,6 +1187,7 @@ export class RvwService {
     authorLabel?: string | null;
     relatedCommitOid?: string | null;
     references?: CodeReference[];
+    lastModifiedBy?: CommentPostModifier;
   }): Promise<ReviewComment> {
     const pullRequest = this.getPullRequest(input.pullRequestId);
     const target = await this.prepareCommentTarget(pullRequest, input.target);
@@ -1208,6 +1211,7 @@ export class RvwService {
           : { relatedCommitOid: input.relatedCommitOid }),
         references,
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+        ...(input.lastModifiedBy === undefined ? {} : { lastModifiedBy: input.lastModifiedBy }),
       });
     return input.relatedCommitOid
       ? await this.writeWithRetainedCommit(pullRequest, input.relatedCommitOid, "comment", write)
@@ -1223,6 +1227,7 @@ export class RvwService {
       ...(input.relatedCommitOid === undefined ? {} : { relatedCommitOid: input.relatedCommitOid }),
       ...(input.references === undefined ? {} : { references: input.references }),
       ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+      lastModifiedBy: "agent",
     });
   }
 
@@ -1549,6 +1554,7 @@ export class RvwService {
       authorLabel?: string | null;
       references?: CodeReference[];
       idempotencyKey?: string;
+      lastModifiedBy?: CommentPostModifier;
     },
   ) {
     const id = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
@@ -1571,6 +1577,7 @@ export class RvwService {
         ...input,
         body,
         references,
+        ...(input.lastModifiedBy === undefined ? {} : { lastModifiedBy: input.lastModifiedBy }),
         ...(input.idempotencyKey === undefined
           ? {}
           : {
@@ -1599,7 +1606,12 @@ export class RvwService {
     return this.database.deleteComment(id);
   }
 
-  async updateCommentPost(commentId: string, postId: string, body: string): Promise<CommentPost> {
+  async updateCommentPost(
+    commentId: string,
+    postId: string,
+    body: string,
+    lastModifiedBy?: CommentPostModifier,
+  ): Promise<CommentPost> {
     const comment = this.database.getComment(commentId);
     const post = comment?.posts.find((candidate) => candidate.id === postId);
     if (!comment || !post) {
@@ -1611,6 +1623,7 @@ export class RvwService {
     return await this.editCommentPost(commentId, postId, {
       body,
       references: post.references.filter((reference) => usedReferenceIds.has(reference.id)),
+      ...(lastModifiedBy === undefined ? {} : { lastModifiedBy }),
     });
   }
 
@@ -1621,6 +1634,7 @@ export class RvwService {
       body: string;
       relatedCommitOid?: string | null;
       references?: CodeReference[];
+      lastModifiedBy?: CommentPostModifier;
     },
   ): Promise<CommentPost> {
     const commentId = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
@@ -1646,7 +1660,14 @@ export class RvwService {
       subject: "comment post",
     });
     const write = (): CommentPost =>
-      this.database.updateCommentPost(commentId, postId, body, input.relatedCommitOid, references);
+      this.database.updateCommentPost(
+        commentId,
+        postId,
+        body,
+        relatedCommitOid,
+        references,
+        input.lastModifiedBy ?? post.lastModifiedBy,
+      );
     return relatedCommitOid
       ? await this.writeWithRetainedCommit(pullRequest, relatedCommitOid, "comment", write)
       : write();

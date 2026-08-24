@@ -266,7 +266,10 @@ empty fileは従来どおり明示的に扱う。
   ごとの位置として復元する。reloadは既存の一時workspace境界を保ち、保持された現在entryを初期文書で置換する。
 - document workspaceは通常一ペイン、必要時に横並びの最大二ペインとする。同じdocument identityは各paneに
   一つまで所属でき、tab drag & dropまたはpane headerの`...` menuで左右へ移動できる。移動先に同じidentityが
-  すでにある場合は移動先の一つへ統合する。
+  すでにある場合は移動先の一つへ統合する。未送信の新規comment draftとinline reply draftは、明示的なtab移動、
+  最後の左tabを閉じた時の右から左への正規化、外部削除後のreconcileを問わずdocumentとともに移動する。
+  移動先の同じcomposerまたはthreadに別draftがある場合は本文を暗黙に統合または上書きせず、workspace変更を
+  明示的に拒否する。
 - sidebarとdocument workspaceの境界、および二ペイン間の境界はpointer dragで横幅を変更できる。
   sidebarはmain reading surfaceの最低幅を残し、各document paneも最低幅を持つ。dividerのdouble clickは
   既定幅へ戻し、左右arrow keyでも調整できる。幅はbrowser内だけの一時状態で永続化しない。
@@ -310,6 +313,10 @@ empty fileは従来どおり明示的に扱う。
   light / dark / systemから選べる。選択はOS user data directoryの共通DBへ保存し、異なるPRや
   自動割り当てportで新しく起動したviewerにも引き継ぐ。browser storageは初期表示用cacheに限る。
   systemはOS設定へ追従する。
+- その他menuからbrowser origin（portを含む）単位でAgentコメント通知を明示的に有効化できる。初回のcomment読込は通知せず、
+  以後に追加または編集されたpostのうち、最終変更経路が`agent`で、空でない`authorLabel`があり`You`ではないものだけを対象とする。
+  `Unknown`と`🔎 確認中です…`は通知せず、watcherが同じpostを最終回答へ編集した時に通知する。
+  通知permissionと設定が有効な場合だけBrowser Notificationを作り、クリック時はviewerをfocusする。
 
 ### 5.3 File tree、検索、diff rendering
 
@@ -595,7 +602,9 @@ resolved済みthreadにもreplyできるが、reply単独ではreopenしない�
 replyはいずれも現在stateを維持し、resolve/reopenは明示的な別の状態変更とする。
 viewerのthread reply draftはpage内memoryへ保持し、server change sequenceによるcomment再取得や
 Markdown Preview再構築でthreadが再mountされても本文と入力focusを復元する。送信成功、thread削除、
-review resetでは破棄し、page reloadを越えて永続化しない。
+review resetでは破棄し、page reloadを越えて永続化しない。同じdocumentを左右に開いた場合はpaneごとに
+分離し、workspace変更でdocumentのpaneが変わった場合はdraftも移す。移動先の同じthreadにdraftがあれば
+workspace変更を拒否する。新規comment draftも同じpane/document境界と移送規則に従う。
 新しいroot postとreplyは同じtransactionでDB-wideな単調増加event sequenceへ記録する。既存postは
 migration時にbackfillせず、編集、削除、resolve/reopenはeventを作らない。Agent自身のreplyも通常eventであり、
 watch taskが返却post IDで抑止する。
@@ -648,7 +657,7 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-current protocol versionは3とし、最初のpublic compatibility contractはversion 1である。公開前に
+current protocol versionは4とし、最初のpublic compatibility contractはversion 1である。公開前に
 使用した内部version番号は互換性保証の対象外とする。public release後は番号を再利用せず、breaking
 changeのたびに単調増加させる。capabilityは次を含む。
 
@@ -786,7 +795,9 @@ sequenceとして出力する。cursor省略時は現在の最新event位置へa
 cursor、pending queue、retry、authorization、Agentが作成したpost IDは外部Agent taskがrepository外へ
 保持する。同梱Skillのstate scriptはtask専用SQLiteを使い、event enqueueとcursor更新、batch lease、retry、
 batch内のcomment URIごとのstatus post mapping、自己post抑制をtransaction化する。batch claim直後にthreadを
-確認して冪等なack replyを即時作成する。同じbatchのretryでstatus postがあればそのpostをack本文へ戻すが、
+確認して冪等なack replyを即時作成する。最初のauto-ack claimはack投稿より前に、表示用Agent名または
+意図的な無名をtaskのimmutable metaへ固定する。再開時は同じ値だけを使い、異なる指定はrvwへのread/write前に
+拒否する。同じbatchのretryでstatus postがあればそのpostをack本文へ戻すが、
 後続replyの新しいbatchは新しいpostを作る。完了時は現在のbatchのpostを最終結果へ編集する。同梱preflightは
 protocol、capability、transport、Nodeを一括検査し、watch driverは
 stateのcursorを自動解決してRFC 7464 frameをatomicにingestする。driverのauto-ack modeは新規batchを
@@ -904,7 +915,7 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   導出したplacementだけを返し、PR本文は含めない。完全なtarget、全post、source excerptは
   `comment get`だけが返す。
 - `comment get`はPR URL、repository path、最新title、base/head branchとOID、head repository owner/name、comparison base、comment
-  target、posts、`createdHeadOid`、`latestHeadOid`、各postの`relatedCommitOid`と`references`、latest headに対してserviceが
+  target、posts、`createdHeadOid`、`latestHeadOid`、各postの`relatedCommitOid`、`references`、`lastModifiedBy`、latest headに対してserviceが
   導出したplacementを返す。既定ではPR本文を含めず、`--include-pr-body`指定時だけ最新の同期済み本文を
   `pullRequest.body`として返す。呼び出し側はOID比較でOutdatedを推測しない。
 - `comment get --live`はGitHubの現在値をread-onlyで取得し、同期済みcacheを更新せず、`githubState`へ
@@ -927,6 +938,9 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
 - `comment create`は登録済みPR、通常のcomment target、本文、任意の`authorLabel`、`relatedCommitOid`、
   `references`をstdinで受け、
   viewerと同じtarget validationから未解決threadを一件作成する。batch作成は行わない。
+- comment postの`lastModifiedBy`は`human`、`agent`、既存行の`null`とする。viewer HTTPでの作成・返信・編集は
+  `human`、Agent CLI / Agent socket / `pr sync`による作成・返信・編集は`agent`を保存する。これは通知用の
+  経路情報であり、認証済みidentity、Agent専用comment state、caller入力にはしない。
 - `pr sync`の`commentUpdates`は最大500件で、各要素は`commentRef`、`reply`、`resolve`と任意の
   `references`、`idempotencyKey`を持つ。referenceは同期したcurrent GitHub headへ固定する。
 - breakingなprotocol schema変更ではprotocol versionを進める。additiveなcommandは同じversionへ新しい
@@ -1154,6 +1168,8 @@ tab row
 - 初期表示はlatest headまでのPR全体を選択し、全文を表示する。
 - 更新前にlatest headを見ていた場合、refresh成功後はnew latest headへ進む。
 - historical commitを選択中ならrefresh後も選択を維持する。
+- refresh開始後に利用者がcommit範囲を変更した場合、終了点が更新前のlatest headのままでもnew latest
+  headへ自動追従せず、その操作時の開始点と終了点を維持する。
 - PR本文はselectorと無関係に常にlatest cacheを全文表示し、global controlがdiff modeなら
   `差分なし · 全文表示`を明示する。
 - 未送信comment draftはPR、pane、文書、exact source、commit範囲、表示modeごとに分離し、tab切替や
@@ -1297,7 +1313,8 @@ CLI contract:
 - replyとsync updateのidempotency key retry、head advance、payload conflict、result削除
 - task state scriptのatomic ingest、lease recovery、batch単位status post再利用、後続replyでの新規status post、
   即時ackの自己event抑制、予約済みworker容量によるin-flight制限、同一PR後続batchとdue retryのevent非依存drain、
-  repository write直列化、旧task DBの未完了batch mapping移行、status post削除後の再生成
+  acknowledgement authorのmutation前固定と再開時不一致拒否、repository write直列化、旧task DBの未完了batch
+  mapping移行、status post削除後の再生成
 - `comment edit`のbody完全置換、related commit維持／解除／更新、Agent socket経由write
 - comment create/reply/edit/syncのpost単位reference検証、保存、完全置換、commit保持、idempotency
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
@@ -1364,6 +1381,8 @@ batch単位status post、自己event抑制をrepository外のSQLiteで管理す�
 process owner lockをrvw起動前に取得し、同じtaskの二重起動を拒否する。異常終了後のlockは記録したowner
 processが存在しない場合だけ回収する。検知直後に各threadを再読込して
 `🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。
+watcher起動時に実行中Agentを正確に識別できる場合は、その名前をdriverへ渡して確認replyの
+`authorLabel`へ保存し、最終結果への編集後も維持する。識別できない場合だけ省略を許す。
 同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を保持する。
 親taskはintake、dispatch、task state、最終replyだけを所有し、batchの大きさ、mode、変更有無にかかわらず、
 acknowledge済みleaseを同じscheduling turn内で一つのfresh subagentへ必ず委譲する。親taskによる直接調査・
