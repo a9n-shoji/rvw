@@ -383,6 +383,43 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(replyCalls[0]?.input).toEqual(replyCalls[1]?.input);
   });
 
+  it("rejects a changed author label before an empty watcher starts", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-driver-author-startup-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeQueuedState(state);
+    const claimed = runState(state, "claim", [
+      "--pull-request",
+      "https://github.com/acme/repo/pull/1",
+      "--author-label",
+      "Codex",
+    ]) as { leaseId: string };
+    runState(state, "complete", ["--lease", claimed.leaseId], { postIds: [] });
+    expect(runState(state, "status")).toMatchObject({
+      authorLabel: "Codex",
+      authorLabelBound: true,
+      batches: { pending: 0, inFlight: 0, completed: 1 },
+    });
+
+    for (const args of [
+      [driverScript, state, "--auto-ack", "--author-label", "Claude Code"],
+      [driverScript, state, "--auto-ack"],
+    ]) {
+      const result = spawnSync(process.execPath, args, {
+        encoding: "utf8",
+        env: fakeEnvironment(fake),
+      });
+      expect(result.status).toBe(23);
+      expect(result.stdout).toBe("");
+      const failure = JSON.parse(result.stderr) as { error?: unknown };
+      expect(failure).toMatchObject({ ok: false, exitCode: 23 });
+      expect(failure.error).toEqual(
+        expect.stringContaining("Existing task author label Codex does not match"),
+      );
+    }
+    expect(existsSync(fake.log)).toBe(false);
+  });
+
   it("drives RFC 7464 intake and auto-ack without an Agent shell round trip", async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-driver-"));
     const fake = createFakeRvw(directory);

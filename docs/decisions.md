@@ -1829,8 +1829,9 @@ idempotency conflict.
 
 Bind the supplied author label, including an explicit unlabeled choice, as immutable task metadata in
 the same transaction that first claims auto-ack work and before any rvw read or write. Reuse the bound
-value for every acknowledgement. Reject a changed, added, or removed label during claim, before
-calling rvw.
+value for every acknowledgement. On restart, compare already-bound metadata before starting the rvw
+watch process, even when no batch is pending; also enforce the same invariant during claim. Reject a
+changed, added, or removed label before calling rvw.
 
 ### Trade-offs
 

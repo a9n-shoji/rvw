@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page, type Route } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const unknownPullRequestId = "22222222-2222-4222-8222-222222222222";
@@ -23,6 +23,29 @@ async function openCommentsSidebar(page: Page): Promise<void> {
     await toggle.click();
   }
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
+async function createFixtureFileComment(request: APIRequestContext): Promise<string> {
+  const viewResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  expect(viewResponse.ok()).toBe(true);
+  const { headOid } = (await viewResponse.json()) as { headOid: string };
+  const createResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: headOid,
+        path: "src/fixture.ts",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "ペイン移動中の返信draftを確認します。",
+      authorLabel: "You",
+    },
+  });
+  expect(createResponse.ok()).toBe(true);
+  return ((await createResponse.json()) as { comment: { id: string } }).comment.id;
 }
 
 test("uses the comparison base for a PR range starting with a merge-back commit", async ({
@@ -661,6 +684,121 @@ test("keeps unsent drafts independent for the same file in both panes", async ({
   await expect(leftPane.getByRole("textbox", { name: "ファイル全体へコメント" })).toHaveValue(
     "左ペインの未送信ドラフト",
   );
+});
+
+test("moves an unsent file comment draft with its tab", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  await leftPane.getByRole("button", { name: "ファイル全体へコメント" }).click();
+  await leftPane
+    .getByRole("textbox", { name: "ファイル全体へコメント" })
+    .fill("タブと一緒に移動する新規コメントdraft");
+
+  await leftPane.getByRole("button", { name: "左ペインの操作" }).click();
+  await page.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
+
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  await expect(leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true })).toHaveCount(0);
+  await expect(rightPane.getByRole("textbox", { name: "ファイル全体へコメント" })).toHaveValue(
+    "タブと一緒に移動する新規コメントdraft",
+  );
+});
+
+test("moves a right-pane reply when closing the last left tab normalizes panes", async ({
+  page,
+  request,
+}) => {
+  const commentId = await createFixtureFileComment(request);
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await page
+      .getByRole("button", { name: "src/fixture.ts", exact: true })
+      .click({ modifiers: ["Meta"] });
+    const rightReply = page
+      .locator(`.document-pane[data-pane="right"] [data-comment-id="${commentId}"]`)
+      .getByPlaceholder("返信を入力");
+    await rightReply.fill("最後の左タブを閉じても残る返信");
+
+    await page
+      .locator('.document-pane[data-pane="left"]')
+      .getByRole("button", { name: /Pull Request\.md.*を閉じる/ })
+      .click();
+
+    await expect(page.locator('.document-pane[data-pane="right"]')).toHaveCount(0);
+    await expect(
+      page
+        .locator(`.document-pane[data-pane="left"] [data-comment-id="${commentId}"]`)
+        .getByPlaceholder("返信を入力"),
+    ).toHaveValue("最後の左タブを閉じても残る返信");
+  } finally {
+    expect((await request.delete(`/api/comments/${commentId}`, { data: {} })).ok()).toBe(true);
+  }
+});
+
+test("moves right-pane replies when moving the last left tab triggers normalization", async ({
+  page,
+  request,
+}) => {
+  const commentId = await createFixtureFileComment(request);
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await page
+      .getByRole("button", { name: "src/fixture.ts", exact: true })
+      .click({ modifiers: ["Meta"] });
+    await page
+      .locator(`.document-pane[data-pane="right"] [data-comment-id="${commentId}"]`)
+      .getByPlaceholder("返信を入力")
+      .fill("最後の左タブを移動しても残る返信");
+
+    const leftPane = page.locator('.document-pane[data-pane="left"]');
+    await leftPane.getByRole("button", { name: "左ペインの操作" }).click();
+    await page.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
+
+    await expect(page.locator('.document-pane[data-pane="right"]')).toHaveCount(0);
+    await leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true }).click();
+    await expect(
+      page
+        .locator(`.document-pane[data-pane="left"] [data-comment-id="${commentId}"]`)
+        .getByPlaceholder("返信を入力"),
+    ).toHaveValue("最後の左タブを移動しても残る返信");
+  } finally {
+    expect((await request.delete(`/api/comments/${commentId}`, { data: {} })).ok()).toBe(true);
+  }
+});
+
+test("rejects pane consolidation when both copies have a reply draft", async ({
+  page,
+  request,
+}) => {
+  const commentId = await createFixtureFileComment(request);
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    const file = page.getByRole("button", { name: "src/fixture.ts", exact: true });
+    await file.click();
+    await file.click({ modifiers: ["Meta"] });
+    const leftPane = page.locator('.document-pane[data-pane="left"]');
+    const rightPane = page.locator('.document-pane[data-pane="right"]');
+    const leftReply = leftPane
+      .locator(`[data-comment-id="${commentId}"]`)
+      .getByPlaceholder("返信を入力");
+    const rightReply = rightPane
+      .locator(`[data-comment-id="${commentId}"]`)
+      .getByPlaceholder("返信を入力");
+    await leftReply.fill("左の返信draft");
+    await rightReply.fill("右の返信draft");
+    await leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true }).click();
+    await leftPane.getByRole("button", { name: "左ペインの操作" }).click();
+    await page.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
+
+    await expect(page.getByText(/移動先にも入力中のコメントまたは返信があります/)).toBeVisible();
+    await expect(leftPane.getByRole("tab", { name: "src/fixture.ts", exact: true })).toBeVisible();
+    await expect(rightPane.getByRole("tab", { name: "src/fixture.ts", exact: true })).toBeVisible();
+    await expect(leftReply).toHaveValue("左の返信draft");
+    await expect(rightReply).toHaveValue("右の返信draft");
+  } finally {
+    expect((await request.delete(`/api/comments/${commentId}`, { data: {} })).ok()).toBe(true);
+  }
 });
 
 test("keeps same-file inline reply input and focus isolated by pane", async ({ page, request }) => {

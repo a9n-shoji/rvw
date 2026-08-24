@@ -266,8 +266,10 @@ empty fileは従来どおり明示的に扱う。
   ごとの位置として復元する。reloadは既存の一時workspace境界を保ち、保持された現在entryを初期文書で置換する。
 - document workspaceは通常一ペイン、必要時に横並びの最大二ペインとする。同じdocument identityは各paneに
   一つまで所属でき、tab drag & dropまたはpane headerの`...` menuで左右へ移動できる。移動先に同じidentityが
-  すでにある場合は移動先の一つへ統合する。未送信のinline reply draftはdocumentとともに移動する。
-  移動先の同じthreadに別draftがある場合は本文を暗黙に統合または上書きせず、tab移動を明示的に拒否する。
+  すでにある場合は移動先の一つへ統合する。未送信の新規comment draftとinline reply draftは、明示的なtab移動、
+  最後の左tabを閉じた時の右から左への正規化、外部削除後のreconcileを問わずdocumentとともに移動する。
+  移動先の同じcomposerまたはthreadに別draftがある場合は本文を暗黙に統合または上書きせず、workspace変更を
+  明示的に拒否する。
 - sidebarとdocument workspaceの境界、および二ペイン間の境界はpointer dragで横幅を変更できる。
   sidebarはmain reading surfaceの最低幅を残し、各document paneも最低幅を持つ。dividerのdouble clickは
   既定幅へ戻し、左右arrow keyでも調整できる。幅はbrowser内だけの一時状態で永続化しない。
@@ -601,7 +603,8 @@ replyはいずれも現在stateを維持し、resolve/reopenは明示的な別�
 viewerのthread reply draftはpage内memoryへ保持し、server change sequenceによるcomment再取得や
 Markdown Preview再構築でthreadが再mountされても本文と入力focusを復元する。送信成功、thread削除、
 review resetでは破棄し、page reloadを越えて永続化しない。同じdocumentを左右に開いた場合はpaneごとに
-分離し、tabを反対paneへ移動した場合はdraftも移す。移動先の同じthreadにdraftがあれば移動を拒否する。
+分離し、workspace変更でdocumentのpaneが変わった場合はdraftも移す。移動先の同じthreadにdraftがあれば
+workspace変更を拒否する。新規comment draftも同じpane/document境界と移送規則に従う。
 新しいroot postとreplyは同じtransactionでDB-wideな単調増加event sequenceへ記録する。既存postは
 migration時にbackfillせず、編集、削除、resolve/reopenはeventを作らない。Agent自身のreplyも通常eventであり、
 watch taskが返却post IDで抑止する。

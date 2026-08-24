@@ -7,7 +7,9 @@ must be reachable from its Markdown body or Mermaid bindings. Version 3 adds pos
 references to comment create, reply, edit, get, and synchronized replies, and advertises
 `comment.codeReferences`. It also keeps the additive
 `agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
-idempotency keys are additive fields and do not change existing callers.
+idempotency keys are additive fields and do not change existing callers. Version 4 adds required
+nullable `lastModifiedBy` provenance to comment-post output so consumers can distinguish trusted
+Agent and human write channels.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a

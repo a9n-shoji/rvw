@@ -66,18 +66,21 @@ import {
 import {
   currentCommitDocument,
   documentPaneIds,
+  documentPaneTransitions,
   documentPaneTabKey,
   documentTabKey,
   initialDocumentWorkspace,
   moveDocumentToPane,
   normalizeDocumentPanes,
   preferredDocumentPane,
+  removeDocumentFromWorkspace,
   type ActiveDocument,
   type DocumentPaneId,
+  type DocumentWorkspaceState,
 } from "../document-workspace.js";
 import {
   clearCommentDraftsForPullRequest,
-  moveCommentReplyDraftsForDocument,
+  moveCommentDraftsForWorkspaceTransition,
 } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
@@ -557,9 +560,6 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     setWorkspace: setDocumentWorkspace,
     activateDocument: activateWorkspaceDocument,
     openDocument: openWorkspaceDocument,
-    closeDocument,
-    closePaneDocuments,
-    moveDocument,
   } = useDocumentWorkspace(resetViewerNavigation);
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
   const [paneSplit, setPaneSplit] = useState(DEFAULT_PANE_SPLIT);
@@ -573,6 +573,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [searchWholeWord, setSearchWholeWord] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [reviewStateRevision, setReviewStateRevision] = useState(0);
+  const [draftWorkspaceRevision, setDraftWorkspaceRevision] = useState(0);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const [agentNotificationsEnabled, setAgentNotificationsEnabled] = useState(
     readAgentNotificationsEnabled,
@@ -623,25 +624,22 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
 
   useLayoutEffect(() => {
     const previous = previousDocumentWorkspace.current;
-    for (const sourcePane of ["left", "right"] as const) {
-      const targetPane = sourcePane === "left" ? "right" : "left";
-      for (const document of previous.documents[sourcePane]) {
-        const key = documentTabKey(document);
-        const remainedInSource = documentWorkspace.documents[sourcePane].some(
-          (candidate) => documentTabKey(candidate) === key,
+    for (const transition of documentPaneTransitions(previous, documentWorkspace)) {
+      if (
+        previous.documents[transition.targetPane].some(
+          (document) => documentTabKey(document) === documentTabKey(transition.targetDocument),
+        )
+      ) {
+        continue;
+      }
+      const sourceTop = documentScrollPositions.current.get(
+        documentPaneTabKey(transition.sourcePane, transition.sourceDocument),
+      );
+      if (sourceTop !== undefined) {
+        documentScrollPositions.current.set(
+          documentPaneTabKey(transition.targetPane, transition.targetDocument),
+          sourceTop,
         );
-        const alreadyExistedInTarget = previous.documents[targetPane].some(
-          (candidate) => documentTabKey(candidate) === key,
-        );
-        const movedToTarget = documentWorkspace.documents[targetPane].some(
-          (candidate) => documentTabKey(candidate) === key,
-        );
-        if (remainedInSource || alreadyExistedInTarget || !movedToTarget) continue;
-        const sourceKey = documentPaneTabKey(sourcePane, document);
-        const sourceTop = documentScrollPositions.current.get(sourceKey);
-        if (sourceTop !== undefined) {
-          documentScrollPositions.current.set(documentPaneTabKey(targetPane, document), sourceTop);
-        }
       }
     }
     previousDocumentWorkspace.current = documentWorkspace;
@@ -870,6 +868,67 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     return () => window.clearTimeout(timeoutId);
   }, [syncFeedback]);
 
+  const applyDocumentWorkspaceTransition = useCallback(
+    (
+      nextWorkspace: DocumentWorkspaceState,
+      navigationPanes: readonly DocumentPaneId[] = [],
+    ): boolean => {
+      const previousWorkspace = documentWorkspaceRef.current;
+      if (nextWorkspace === previousWorkspace) return true;
+      const paneTransitions = documentPaneTransitions(previousWorkspace, nextWorkspace);
+      if (pullRequestId) {
+        const result = moveCommentDraftsForWorkspaceTransition(
+          pullRequestId,
+          previousWorkspace,
+          nextWorkspace,
+        );
+        if (result.status === "conflict") {
+          setSyncFeedback(
+            "移動先にも入力中のコメントまたは返信があります。どちらかを送信または消去してから移動してください。",
+          );
+          return false;
+        }
+        if (result.commentDraftsMoved) setDraftWorkspaceRevision((revision) => revision + 1);
+      }
+      resetViewerNavigation([
+        ...new Set([
+          ...navigationPanes,
+          ...paneTransitions.flatMap(({ sourcePane, targetPane }) => [sourcePane, targetPane]),
+        ]),
+      ]);
+      documentWorkspaceRef.current = nextWorkspace;
+      setDocumentWorkspace(() => nextWorkspace);
+      return true;
+    },
+    [documentWorkspaceRef, pullRequestId, resetViewerNavigation, setDocumentWorkspace],
+  );
+
+  const closeDocumentWithDrafts = useCallback(
+    (document: ActiveDocument, paneId?: DocumentPaneId): void => {
+      const current = documentWorkspaceRef.current;
+      applyDocumentWorkspaceTransition(
+        removeDocumentFromWorkspace(current, document, paneId),
+        paneId ? [paneId] : ["left", "right"],
+      );
+    },
+    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
+  );
+
+  const closePaneDocumentsWithDrafts = useCallback(
+    (paneId: DocumentPaneId, keepDocument: ActiveDocument | null = null): void => {
+      const current = documentWorkspaceRef.current;
+      const keepKey = keepDocument ? documentTabKey(keepDocument) : null;
+      const nextWorkspace = current.documents[paneId]
+        .filter((document) => documentTabKey(document) !== keepKey)
+        .reduce(
+          (workspace, document) => removeDocumentFromWorkspace(workspace, document, paneId),
+          current,
+        );
+      applyDocumentWorkspaceTransition(nextWorkspace, [paneId]);
+    },
+    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
+  );
+
   const moveDocumentWithDrafts = useCallback(
     (document: ActiveDocument, sourcePane: DocumentPaneId, targetPane: DocumentPaneId): void => {
       const nextWorkspace = moveDocumentToPane(
@@ -879,21 +938,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         targetPane,
       );
       if (nextWorkspace === documentWorkspaceRef.current) return;
-      const actualTargetPane = documentPaneIds(nextWorkspace, document).includes(targetPane)
-        ? targetPane
-        : sourcePane;
-      if (
-        pullRequestId &&
-        !moveCommentReplyDraftsForDocument(pullRequestId, document, sourcePane, actualTargetPane)
-      ) {
-        setSyncFeedback(
-          "移動先にも入力中の返信があります。どちらかを送信または消去してから移動してください。",
-        );
-        return;
-      }
-      moveDocument(document, sourcePane, targetPane);
+      applyDocumentWorkspaceTransition(nextWorkspace, [sourcePane, targetPane]);
     },
-    [documentWorkspaceRef, moveDocument, pullRequestId],
+    [applyDocumentWorkspaceTransition, documentWorkspaceRef],
   );
 
   const dropDocument = useCallback(
@@ -1330,55 +1377,56 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   useEffect(() => {
     if (!walkthroughsQuery.isSuccess) return;
     const summaries = new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough]));
-    setDocumentWorkspace((current) => {
-      const rebind = (document: ActiveDocument | null): ActiveDocument | null => {
-        if (document?.kind !== "walkthrough") return document;
-        const summary = summaries.get(document.id);
-        return summary
-          ? {
-              kind: "walkthrough",
-              id: summary.id,
-              title: summary.title,
-              sourceOid: summary.sourceOid,
-            }
-          : null;
-      };
-      const documents = {
-        left: current.documents.left
-          .map(rebind)
-          .filter((document): document is ActiveDocument => document !== null),
-        right: current.documents.right
-          .map(rebind)
-          .filter((document): document is ActiveDocument => document !== null),
-      };
-      const activeDocument = (
-        paneId: DocumentPaneId,
-        document: ActiveDocument | null,
-      ): ActiveDocument | null => {
-        const rebound = rebind(document);
-        if (
-          rebound &&
-          documents[paneId].some(
-            (candidate) => documentTabKey(candidate) === documentTabKey(rebound),
-          )
-        ) {
-          return rebound;
-        }
-        return documents[paneId][0] ?? null;
-      };
-      return normalizeDocumentPanes({
+    const current = documentWorkspaceRef.current;
+    const rebind = (document: ActiveDocument | null): ActiveDocument | null => {
+      if (document?.kind !== "walkthrough") return document;
+      const summary = summaries.get(document.id);
+      return summary
+        ? {
+            kind: "walkthrough",
+            id: summary.id,
+            title: summary.title,
+            sourceOid: summary.sourceOid,
+          }
+        : null;
+    };
+    const documents = {
+      left: current.documents.left
+        .map(rebind)
+        .filter((document): document is ActiveDocument => document !== null),
+      right: current.documents.right
+        .map(rebind)
+        .filter((document): document is ActiveDocument => document !== null),
+    };
+    const activeDocument = (
+      paneId: DocumentPaneId,
+      document: ActiveDocument | null,
+    ): ActiveDocument | null => {
+      const rebound = rebind(document);
+      if (
+        rebound &&
+        documents[paneId].some((candidate) => documentTabKey(candidate) === documentTabKey(rebound))
+      ) {
+        return rebound;
+      }
+      return documents[paneId][0] ?? null;
+    };
+    applyDocumentWorkspaceTransition(
+      normalizeDocumentPanes({
         ...current,
-        documents: {
-          left: documents.left,
-          right: documents.right,
-        },
+        documents,
         active: {
           left: activeDocument("left", current.active.left),
           right: activeDocument("right", current.active.right),
         },
-      });
-    });
-  }, [walkthroughsQuery.data?.walkthroughs, walkthroughsQuery.isSuccess]);
+      }),
+    );
+  }, [
+    applyDocumentWorkspaceTransition,
+    documentWorkspaceRef,
+    walkthroughsQuery.data?.walkthroughs,
+    walkthroughsQuery.isSuccess,
+  ]);
   const openWalkthroughIds = useMemo(
     () => [
       ...new Set(
@@ -1920,9 +1968,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           activeDocument={paneDocument}
           changeKindsByPath={tabChangeKinds}
           onActivate={(document) => activateDocument(document, paneId)}
-          onClose={(document) => closeDocument(document, paneId)}
-          onCloseOthers={(document) => closePaneDocuments(paneId, document)}
-          onCloseAll={() => closePaneDocuments(paneId)}
+          onClose={(document) => closeDocumentWithDrafts(document, paneId)}
+          onCloseOthers={(document) => closePaneDocumentsWithDrafts(paneId, document)}
+          onCloseAll={() => closePaneDocumentsWithDrafts(paneId)}
           onMove={(document, targetPane) => moveDocumentWithDrafts(document, paneId, targetPane)}
           onDropDocument={dropDocument}
           onDragStartDocument={setDraggedDocumentKey}
@@ -1950,7 +1998,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 onOpenReference={openWalkthroughReferenceFromInteraction}
                 onOpenCommentCodeReference={openCommentCodeReferenceFromInteraction}
                 onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
-                onDeleted={() => closeDocument(paneViewerDocument, paneId)}
+                onDeleted={() => closeDocumentWithDrafts(paneViewerDocument, paneId)}
               />
             </Suspense>
           </LazyLoadBoundary>
@@ -1969,7 +2017,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           <LazyLoadBoundary label="文書ビューアー">
             <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
               <DocumentViewer
-                key={`${reviewStateRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`}
+                key={`${reviewStateRevision}:${draftWorkspaceRevision}:${paneId}:${selectedOid}:${effectiveOldOid}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}` : ""}`}
                 pullRequestId={pullRequest.id}
                 paneId={paneId}
                 selectedOid={selectedOid}

@@ -699,20 +699,16 @@ export function DocumentViewer({
     null,
   );
   useLayoutEffect(() => {
-    const persistDraft = (): void => {
-      if (fileComposerOpen || markdownComposerOpen || selection) {
-        writeCommentDraft(pullRequestId, commentDraftKey, commentDraftRevision, {
-          body,
-          selection,
-          markdownComposerOpen,
-          fileComposerOpen,
-        });
-        return;
-      }
-      deleteCommentDraft(pullRequestId, commentDraftKey, commentDraftRevision);
-    };
-    persistDraft();
-    return persistDraft;
+    if (fileComposerOpen || markdownComposerOpen || selection) {
+      writeCommentDraft(pullRequestId, commentDraftKey, commentDraftRevision, {
+        body,
+        selection,
+        markdownComposerOpen,
+        fileComposerOpen,
+      });
+      return;
+    }
+    deleteCommentDraft(pullRequestId, commentDraftKey, commentDraftRevision);
   }, [
     body,
     commentDraftKey,

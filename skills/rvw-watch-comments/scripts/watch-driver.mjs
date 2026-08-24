@@ -260,6 +260,20 @@ async function dispatchPendingAutoAcks(state, maxInFlight, authorLabel) {
   }
 }
 
+async function assertTaskAuthorLabel(state, authorLabel) {
+  const current = await stateCommand(state, "status");
+  if (!current.authorLabelBound || current.authorLabel === authorLabel) return;
+  throw new DriverError(
+    `Existing task author label ${current.authorLabel ?? "(unlabeled)"} does not match ${authorLabel ?? "(unlabeled)"}`,
+    EXIT_AUTO_ACK,
+    {
+      state,
+      expectedAuthorLabel: current.authorLabel,
+      receivedAuthorLabel: authorLabel,
+    },
+  );
+}
+
 async function processFrame(state, frame, autoAck, maxInFlight, authorLabel) {
   if (!frame || typeof frame !== "object" || typeof frame.type !== "string") {
     throw new DriverError("Invalid RFC 7464 frame", EXIT_SEQUENCE, frame);
@@ -401,6 +415,7 @@ async function main() {
   const { state, autoAck, maxInFlight, authorLabel } = parseArguments(process.argv.slice(2));
   const driverLock = acquireDriverLock(state);
   try {
+    if (autoAck) await assertTaskAuthorLabel(state, authorLabel);
     const stopping = { requested: false, child: null };
     const stop = () => {
       stopping.requested = true;
