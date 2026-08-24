@@ -32,6 +32,8 @@ URLへfallbackしません。Repository Review completion helperはlease、conte
 re-keyします。pending duplicateは統合し、同時にactiveな旧／新leaseはquarantineして二重claimしません。
 再起動時に次eventより先にlegacy pending leaseをclaimした場合は、`comment get`でstable IDを解決し、
 acknowledgement投稿と`batch-acknowledged`出力より前にそのactive leaseをtransactionally re-keyします。
+ただしclaimした全commentが既に削除済みなら、stable IDへre-keyする根拠もworkerへ渡す対象もないため、
+acknowledgementを投稿せず旧keyのままbatchをcompleteし、`batch-discarded`を出して監視を継続します。
 
 2026-08-23時点でpackage 0.3.0、protocol v4、migration 011はpublic release／npm packageとして未公開です。
 そのため011のcanonical owner/repository collationとv4のRepository Review operation契約はrelease前の最終形へ直接更新し、

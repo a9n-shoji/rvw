@@ -83,6 +83,13 @@ durable work up to the same capacity. The driver atomically owns one lock beside
 path before spawning rvw. A second driver for the same state exits immediately; a later restart
 removes a stale lock only when its recorded owner process no longer exists.
 
+If every `comment get` in a claimed PR batch reports `COMMENT_NOT_FOUND` or `NOT_FOUND`, the driver
+completes the lease and events without acknowledgement or delegation, emits `batch-discarded` with
+`reason: "all-comments-gone"`, and keeps watching. Consume that informational line but do not hand it
+to a subagent. It does not occupy an in-flight worker slot. A mixed batch still emits
+`batch-acknowledged`; surviving threads establish its stable context and disappeared operations have
+`status: "gone"`.
+
 Events and batches carry either `{kind:"pull-request",pullRequestId,pullRequestUrl}` or
 `{kind:"repository",repositoryReviewId,repository}`. The stable review ID is the routing identity; URL and
 repository are display values. Never combine those context kinds. Repository Review events remain queued
@@ -105,7 +112,7 @@ node '<SKILL_DIR>/scripts/watch-driver.mjs' '<TASK_STATE_DB>' \
 Launch the driver through the runtime's long-lived streaming-process facility. Yield stdout to the
 parent as soon as lines arrive; never wait for the driver to exit or buffer a group of lines before
 dispatch. Process every `batch-acknowledged` line already received before waiting for more driver
-output.
+output. Record `batch-discarded` lines as consumed intake only; never dispatch them.
 
 The driver polls rvw once per second and task state about every 250 milliseconds. Its state pump
 automatically acknowledges work that becomes eligible after a lease release or `nextAttemptAt`; do
@@ -144,7 +151,8 @@ a crash before that commit causes rvw to replay it. Never construct or edit curs
 With the normal auto-ack driver, consume its `batch-acknowledged` object directly. Each operation has
 `commentRef`, the batch-operation-stable `idempotencyKey`, `statusPostId`, `acknowledgement`, `status`, and the
 fresh `comment get` result as `thread`. A disappeared thread has `status: "gone"` and is not
-acknowledged. If intake runs without auto-ack, invoke the same complete fast path once for the PR:
+acknowledged. When all operations are gone, auto-ack completes the lease itself and emits
+`batch-discarded`; do not delegate or complete it again. If intake runs without auto-ack, invoke the same complete fast path once for the PR:
 
 ```bash
 node '<SKILL_DIR>/scripts/auto-ack.mjs' \
@@ -451,13 +459,14 @@ For a Repository Review the event context is
 PR event transactionally re-keys legacy URL contexts to its actual stable PR ID. Pending duplicates
 merge; conflicting in-flight leases are quarantined rather than double-claimed. If the driver claims a
 legacy pending lease before a new event arrives, auto-ack resolves the stable ID through `comment get`
-and atomically re-keys the lease before acknowledgement posts and `batch-acknowledged` output. The migration rebuilds
+and atomically re-keys the lease before acknowledgement posts and `batch-acknowledged` output. If every
+thread is gone, it completes the legacy lease without re-keying and emits `batch-discarded`. The migration rebuilds
 the context indexes and preserves cursors, leases, unfinished batch keys, batch-scoped status posts,
 and PR compatibility fields.
 
 | Script                       | Invocation                                                                                                                            | Output                                                                                             |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | Preflight                    | `node scripts/preflight.mjs`                                                                                                          | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                          |
-| Driver                       | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N]`                                                                  | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                          |
-| Auto-ack                     | `node scripts/auto-ack.mjs --state STATE --context-kind pull-request --context-key ID --context-display URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`.      |
+| Driver                       | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N]`                                                                  | `watch-ready`, `pending`, `batch-acknowledged`, `batch-discarded`, and reconnect JSON lines.       |
+| Auto-ack                     | `node scripts/auto-ack.mjs --state STATE --context-kind pull-request --context-key ID --context-display URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`, or completed `discarded` when every thread is gone.      |
 | Repository Review completion | `node scripts/complete-repository.mjs --state STATE --lease ID < RESULT.json`                                                         | Posts idempotent final replies, records their post IDs, and completes the Repository Review lease. |

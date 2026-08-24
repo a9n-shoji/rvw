@@ -148,6 +148,10 @@ same URL are transactionally re-keyed to the actual PR UUID; pending batches mer
 in-flight leases are quarantined rather than double-claimed. If restart claims a legacy pending lease
 before another event arrives, auto-ack derives the stable UUID from membership-aware `comment get` results
 and transactionally re-keys the active lease before posting acknowledgements or exposing it to a worker.
+If every claimed thread is already gone, there is no remaining membership from which to derive a stable
+identity: auto-ack completes the batch without re-keying, acknowledgement, retry, or worker dispatch and the
+driver emits `batch-discarded` before continuing to watch. A mixed batch still derives its stable identity
+from the surviving threads and includes the gone operations in the acknowledged lease.
 A long-running external Agent
 task may consume that sequence with an opaque database-scoped cursor through `rvw comment watch`.
 rvw retains minimal event identifiers independently of deletable posts and owns only ordering and

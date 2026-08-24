@@ -122,6 +122,10 @@ if (args[0] === "protocol") {
 } else if (args[0] === "agent" && args[1] === "ping") {
   json({ ok: true, connected: true, selectedTransport: "agent-socket" });
 } else if (args[0] === "comment" && args[1] === "get") {
+  const goneCommentRefs = JSON.parse(process.env.FAKE_GONE_COMMENT_REFS_JSON ?? "[]");
+  if (goneCommentRefs.includes(args[2])) {
+    json({ ok: false, error: { code: "COMMENT_NOT_FOUND", message: "Comment no longer exists" } }, 2);
+  } else {
   const pullRequestNumber = args[2]?.match(/comment-(\d+)/)?.[1] ?? "1";
   const pullRequestUrl = "https://github.com/acme/repo/pull/" + pullRequestNumber;
   json({ ok: true,
@@ -131,6 +135,7 @@ if (args[0] === "protocol") {
     pullRequest: { id: "pull-request:" + pullRequestUrl,
       url: pullRequestUrl },
     comment: { ref: args[2], posts: [] } });
+  }
 } else if (args[0] === "comment" && args[1] === "reply") {
   const priorReplyIndex = priorCalls.findIndex((call) =>
     call.args[0] === "comment" && call.args[1] === "reply" &&
@@ -173,12 +178,13 @@ if (args[0] === "protocol") {
   return { script, log };
 }
 
-function fakeEnvironment(fake: { script: string; log: string }) {
+function fakeEnvironment(fake: { script: string; log: string }, goneCommentRefs: string[] = []) {
   return {
     ...process.env,
     RVW_BIN: process.execPath,
     RVW_BIN_ARGS_JSON: JSON.stringify([fake.script]),
     FAKE_RVW_LOG: fake.log,
+    FAKE_GONE_COMMENT_REFS_JSON: JSON.stringify(goneCommentRefs),
   };
 }
 
@@ -853,6 +859,95 @@ describe("rvw-watch-comments bundled scripts", () => {
       "--json-seq",
     ]);
   });
+
+  it.each([
+    {
+      label: "protocol-v4 stable-ID",
+      legacyUrlKeyed: false,
+      expectedContextKey: "pull-request:https://github.com/acme/repo/pull/1",
+    },
+    {
+      label: "legacy URL-keyed v3",
+      legacyUrlKeyed: true,
+      expectedContextKey: "https://github.com/acme/repo/pull/1",
+    },
+  ])(
+    "discards an all-gone $label batch and keeps watching without acknowledgement",
+    async ({ legacyUrlKeyed, expectedContextKey }) => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-all-gone-"));
+      const fake = createFakeRvw(directory);
+      const state = path.join(directory, "task.db");
+      initializeQueuedState(state);
+      if (legacyUrlKeyed) {
+        const legacy = new DatabaseSync(state);
+        legacy.exec(`
+          UPDATE events
+          SET context_key = pull_request_url, context_display = pull_request_url
+          WHERE review_kind = 'pull-request';
+        `);
+        legacy.close();
+      }
+      const child = spawn(process.execPath, [driverScript, state, "--auto-ack"], {
+        env: fakeEnvironment(fake, ["rvw://comment/comment-1"]),
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const output = collectJsonLines(child);
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+
+      const discarded = await output.waitFor((message) => message.type === "batch-discarded");
+      await output.waitFor((message) => message.type === "watch-ready");
+
+      expect(discarded).toMatchObject({
+        ok: true,
+        type: "batch-discarded",
+        reason: "all-comments-gone",
+        context: { kind: "pull-request", pullRequestId: expectedContextKey },
+        operations: [
+          {
+            commentRef: "rvw://comment/comment-1",
+            status: "gone",
+            acknowledgement: "skipped",
+          },
+        ],
+      });
+      expect(child.exitCode, stderr).toBeNull();
+      expect(runState(state, "status")).toMatchObject({
+        batches: {
+          pending: 0,
+          inFlight: 0,
+          completed: 1,
+          quarantined: 0,
+          unbatchedEvents: 0,
+        },
+        inFlightBatches: [],
+        quarantinedBatches: [],
+      });
+      const calls = readFakeCalls(fake.log);
+      expect(calls.some((call) => ["reply", "edit"].includes(call.args[1] ?? ""))).toBe(false);
+
+      child.kill("SIGTERM");
+      const code = await new Promise<number | null>((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+      });
+      expect(code, stderr).toBe(0);
+      const database = new DatabaseSync(state);
+      const batch = database
+        .prepare("SELECT status, attempts, last_error, context_key FROM batches")
+        .get() as Record<string, unknown>;
+      database.close();
+      expect(batch).toMatchObject({
+        status: "completed",
+        attempts: 1,
+        last_error: null,
+        context_key: expectedContextKey,
+      });
+    },
+  );
 
   it("allows only one driver process to own a task state", async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-driver-owner-"));

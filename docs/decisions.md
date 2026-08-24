@@ -147,6 +147,12 @@ atomically re-key that lease before acknowledgements or `batch-acknowledged` out
 side-effect input `issuesToAdd` so it cannot be mistaken for replaceable Walkthrough content, cap it at
 50 references of at most 256 characters, and require Repository Review remote-mutation policy before fetching.
 
+Treat a claimed Pull Request watch batch whose every thread is already deleted as consumed work, not a
+retryable acknowledgement failure. Complete its events and lease without stable-ID re-keying, status posts,
+or subagent dispatch; emit `batch-discarded` and keep the driver alive. When any thread remains, derive the
+stable context from the surviving result and retain deleted operations as `gone` in the normal acknowledged
+batch.
+
 Separate global cached Issue documents from Review membership documents in the application type
 boundary. The latter alone carries `syncError` and `stale`; comment contexts must use it. A successful
 membership ensure, including Walkthrough `issuesToAdd`, clears that Review's previous sync error while

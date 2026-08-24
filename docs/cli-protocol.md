@@ -506,6 +506,12 @@ one process-owner lock beside the canonical task-state path. A concurrent driver
 without starting another watcher. The lock is released on graceful shutdown, and a later driver reclaims
 it only when the recorded owner process no longer exists.
 
+When every thread in a claimed PR batch has disappeared, auto-ack completes the batch and its events
+without a status post, stable-context re-key, retry, or worker dispatch. The driver emits
+`batch-discarded` with `reason: "all-comments-gone"` and continues monitoring. If at least one thread
+remains, that result supplies the stable context and gone operations stay in the normal acknowledged
+batch with `status: "gone"`.
+
 ## Walkthrough lifecycle
 
 Walkthroughs expose one current value under a stable URI. rvw does not keep Walkthrough revisions or
@@ -688,7 +694,8 @@ On the first matching protocol-v4 PR event, a v3 task DB transactionally re-keys
 the actual Pull Request ID. It merges pending duplicates and quarantines conflicting in-flight leases.
 If restart claims a legacy pending lease before another event arrives, auto-ack obtains the stable ID
 from `comment get` and atomically re-keys the active lease before posting acknowledgements or emitting
-`batch-acknowledged`.
+`batch-acknowledged`. An all-gone legacy lease is instead completed without re-keying and emitted as
+`batch-discarded`; no remaining thread requires stable routing.
 
 Each rvw-managed installation records the bundled digest. Status distinguishes a clean older bundle
 (`updateAvailable` and `updateRequired`), local customization (`locallyModified`), and a differing

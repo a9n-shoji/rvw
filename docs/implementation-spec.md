@@ -926,7 +926,9 @@ cursor、pending queue、retry、authorization、Agentが作成したpost IDは�
 batch内のcomment URIごとのstatus post mapping、自己post抑制をtransaction化する。batch claim直後にthreadを
 確認する。Pull Request batchだけが冪等なack replyを即時作成し、同じbatchのretryでstatus postがあれば
 そのpostをack本文へ戻す。後続replyの新しいbatchは新しいpostを作り、完了時は現在のbatchのpostを最終結果へ
-編集する。Repository Review batchは常に`investigate-and-reply`でacknowledgementやwrite reservationを作らず、worker
+編集する。claim後の全threadが削除済みなら、stable contextの再解決やack、worker委譲を行わずbatchとeventを
+completedにして`batch-discarded`を通知し、driverは監視を継続する。一部だけ削除済みなら、残存threadからstable
+contextを確定して削除済みoperationも`gone`として同じbatchで処理する。Repository Review batchは常に`investigate-and-reply`でacknowledgementやwrite reservationを作らず、worker
 resultの`context.kind = repository`、`repositoryReviewId`、repositoryを使用する。各operationのstable idempotency keyで一つのfinal
 replyを投稿し、返されたpost IDをsuppressionとしてdurableに登録してからleaseをcompleteする。eventが
 complete前にingest済みならpending rowをcompletedへ移し、後ならingest時にsuppressする。reply後の再起動は

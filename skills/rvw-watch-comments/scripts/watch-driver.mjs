@@ -239,7 +239,14 @@ async function dispatchAutoAck(state, context) {
   if (result.code !== 0 || !result.json?.ok) {
     throw new DriverError(`auto-ack failed for ${pullRequest}`, EXIT_AUTO_ACK, result);
   }
-  write({ ...result.json, type: "batch-acknowledged" });
+  if (!["acknowledged", "discarded"].includes(result.json.type)) {
+    throw new DriverError(`auto-ack returned an invalid result for ${pullRequest}`, EXIT_AUTO_ACK, {
+      output: result.json,
+    });
+  }
+  const type = result.json.type === "discarded" ? "batch-discarded" : "batch-acknowledged";
+  write({ ...result.json, type });
+  return type;
 }
 
 async function dispatchPendingAutoAcks(state, maxInFlight, notifiedRepositoryBatches) {
@@ -266,8 +273,8 @@ async function dispatchPendingAutoAcks(state, maxInFlight, notifiedRepositoryBat
       continue;
     }
     if (available === 0) continue;
-    await dispatchAutoAck(state, batch.context);
-    available -= 1;
+    const resultType = await dispatchAutoAck(state, batch.context);
+    if (resultType === "batch-acknowledged") available -= 1;
   }
 }
 

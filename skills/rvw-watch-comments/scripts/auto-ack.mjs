@@ -207,6 +207,36 @@ async function main() {
         runRvw(["comment", "get", operation.commentRef, "--json"]),
       ),
     );
+    if (threadResults.length > 0 && threadResults.every(isGone)) {
+      const operations = [];
+      for (let index = 0; index < claimed.operations.length; index += 1) {
+        operations.push(
+          await acknowledgeOperation(
+            state,
+            claimed.leaseId,
+            claimed.operations[index],
+            threadResults[index],
+          ),
+        );
+      }
+      const discarded = {
+        ok: true,
+        type: "discarded",
+        reason: "all-comments-gone",
+        leaseId: claimed.leaseId,
+        batchId: claimed.batchId,
+        context: claimed.context,
+        pullRequest: claimed.pullRequest,
+        attempts: claimed.attempts,
+        writeKey: null,
+        events: claimed.events,
+        operations,
+      };
+      await runState(state, "complete", ["--lease", claimed.leaseId], { postIds: [] });
+      claimed = null;
+      process.stdout.write(`${JSON.stringify(discarded)}\n`);
+      return;
+    }
     const stableContext = stablePullRequestContext(threadResults);
     const rekeyed = await runState(state, "rekey-lease", [
       "--lease",
