@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { runRvw, successfulJson } from "./rvw-command.mjs";
 
 const ACKNOWLEDGEMENT_BODY = "🔎 確認中です…";
+const MAX_AUTHOR_LABEL_CHARACTERS = 100;
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const stateScript = path.join(scriptDirectory, "watch-state.mjs");
 
@@ -98,6 +99,7 @@ async function acknowledgeOperation(state, leaseId, operation, threadResult) {
       input: {
         body: ACKNOWLEDGEMENT_BODY,
         idempotencyKey: operation.idempotencyKey,
+        ...(operation.authorLabel === null ? {} : { authorLabel: operation.authorLabel }),
       },
     });
     if (!successfulJson(reply) || typeof reply.json?.post?.id !== "string") {
@@ -127,7 +129,12 @@ async function acknowledgeOperation(state, leaseId, operation, threadResult) {
       "--stdin",
       "--json",
     ],
-    { input: { body: ACKNOWLEDGEMENT_BODY, relatedCommitOid: null } },
+    {
+      input: {
+        body: ACKNOWLEDGEMENT_BODY,
+        relatedCommitOid: null,
+      },
+    },
   );
   if (!successfulJson(edit)) {
     fail(`rvw comment edit failed for ${operation.commentRef}`, {
@@ -150,6 +157,13 @@ async function main() {
   const options = parseOptions(process.argv.slice(2));
   const state = path.resolve(required(options, "state"));
   const pullRequest = required(options, "pull-request");
+  const authorLabel = options["author-label"] ?? null;
+  if (
+    authorLabel !== null &&
+    (authorLabel.length === 0 || authorLabel.length > MAX_AUTHOR_LABEL_CHARACTERS)
+  ) {
+    fail(`--author-label must contain 1 through ${MAX_AUTHOR_LABEL_CHARACTERS} characters`);
+  }
   let claimed = null;
   try {
     const claimArgs = ["--pull-request", pullRequest];
@@ -166,7 +180,7 @@ async function main() {
         await acknowledgeOperation(
           state,
           claimed.leaseId,
-          claimed.operations[index],
+          { ...claimed.operations[index], authorLabel },
           threadResults[index],
         ),
       );

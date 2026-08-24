@@ -152,7 +152,10 @@ describe("Agent socket", () => {
         input,
       }),
     ).resolves.toEqual({ id: "post-1", body: "✅ Done" });
-    expect(editCommentPost).toHaveBeenCalledWith(input.uri, input.postId, input.edit);
+    expect(editCommentPost).toHaveBeenCalledWith(input.uri, input.postId, {
+      ...input.edit,
+      lastModifiedBy: "agent",
+    });
   });
 
   it("rejects a different explicit database before dispatching the operation", async () => {

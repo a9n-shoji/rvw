@@ -231,7 +231,9 @@ synchronized PR body requests it with `comment get --include-pr-body`; only that
 
 `comment get` returns the same top-level `comment` and `latestPlacement` keys with the complete comment
 target and posts, `createdHeadOid`, and the PR's `latestHeadOid`. Each complete post includes its
-`relatedCommitOid` and `references`. `latestPlacement` is rvw's
+`relatedCommitOid`, `references`, and nullable `lastModifiedBy` (`human` or `agent`). The value records
+the trusted local entry point of the latest write and is output-only; callers do not supply it.
+`latestPlacement` is rvw's
 authoritative derived placement at the latest head. Consumers must not treat unequal creation/latest
 OIDs as Outdated: rvw accounts for unchanged lines, renames, deletion, and PR-Markdown quoted-text
 placement.
@@ -494,7 +496,8 @@ the current Agent may supply an accurate optional `authorLabel`.
 
 `rvw-watch-comments` documents the complete state-script stdin/stdout contract. Its driver derives
 `--after` from task state, its auto-ack reuses each batch operation's idempotency key and status post
-only when that batch is retried, and it hands every acknowledged lease to one fresh subagent in the
+only when that batch is retried, accepts the current runtime's accurate `--author-label` for the
+acknowledgement/final post, and hands every acknowledged lease to one fresh subagent in the
 same parent scheduling turn. The parent never substitutes direct processing. Each subagent handoff uses
 an absolute JSON result path rather than relying on relayed completion text. Subagent outcomes carry
 `body`, `relatedCommitOid`, a complete `references` array, and `pushStatus`. The Skill uses typed

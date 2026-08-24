@@ -78,6 +78,13 @@ import { clearCommentDraftsForPullRequest } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
 import {
+  agentNotificationBody,
+  browserNotificationPermission,
+  readAgentNotificationsEnabled,
+  scanAgentPostNotifications,
+  storeAgentNotificationsEnabled,
+} from "../agent-notifications.js";
+import {
   parseReadingHistoryEntry,
   readingHistoryState,
   sameReadingDocument,
@@ -564,6 +571,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [reviewStateRevision, setReviewStateRevision] = useState(0);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
+  const [agentNotificationsEnabled, setAgentNotificationsEnabled] = useState(
+    readAgentNotificationsEnabled,
+  );
   const [themePreference, setThemePreference] = useState<ThemePreference>(initialThemePreference);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const handleCommentActiveChange = useCallback((commentId: string, active: boolean): void => {
@@ -571,8 +581,11 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   }, []);
   const attemptedInitialRefresh = useRef(false);
   const commitRangeTouched = useRef(false);
+  const commitRangeInteractionRevision = useRef(0);
   const observedLatestHead = useRef<string | null>(null);
   const observedChangeSequence = useRef<number | null>(null);
+  const observedAgentPostPullRequestId = useRef<string | null>(null);
+  const observedAgentPostSnapshot = useRef<Map<string, string> | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -909,6 +922,49 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     storeThemePreference(preference);
     themePreferenceMutation.mutate(preference);
   };
+  const notificationPermission = browserNotificationPermission();
+  const agentNotificationsActive =
+    agentNotificationsEnabled && notificationPermission === "granted";
+  const toggleAgentNotifications = async (): Promise<void> => {
+    setActionsMenuOpen(false);
+    if (agentNotificationsActive) {
+      storeAgentNotificationsEnabled(false);
+      setAgentNotificationsEnabled(false);
+      setSyncFeedback("Agentのコメント通知をオフにしました。");
+      return;
+    }
+    if (notificationPermission === "unsupported") {
+      storeAgentNotificationsEnabled(false);
+      setAgentNotificationsEnabled(false);
+      setSyncFeedback("このブラウザはBrowser Notificationに対応していません。");
+      return;
+    }
+    if (notificationPermission === "denied") {
+      storeAgentNotificationsEnabled(false);
+      setAgentNotificationsEnabled(false);
+      setSyncFeedback("ブラウザのサイト設定で通知を許可してください。");
+      return;
+    }
+    let permission: NotificationPermission;
+    try {
+      permission =
+        notificationPermission === "granted" ? "granted" : await Notification.requestPermission();
+    } catch (error) {
+      console.warn("ブラウザへ通知permissionを要求できませんでした。", error);
+      storeAgentNotificationsEnabled(false);
+      setAgentNotificationsEnabled(false);
+      setSyncFeedback("通知permissionを要求できませんでした。ブラウザの設定を確認してください。");
+      return;
+    }
+    const enabled = permission === "granted";
+    storeAgentNotificationsEnabled(enabled);
+    setAgentNotificationsEnabled(enabled);
+    setSyncFeedback(
+      enabled
+        ? "Agentのコメントをブラウザ通知します。"
+        : "通知は許可されませんでした。ブラウザのサイト設定から変更できます。",
+    );
+  };
 
   const pullRequestQuery = useQuery({
     queryKey: ["pull-request", pullRequestId],
@@ -1111,6 +1167,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const selectCommitRange = (startOid: string, endOid: string): void => {
     const range = normalizedCommitRange(commits, startOid, endOid);
     if (!range) return;
+    commitRangeInteractionRevision.current += 1;
     commitRangeTouched.current = true;
     setRangeStartOid(range.startOid);
     setSelectedOid(range.endOid);
@@ -1185,6 +1242,33 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         : undefined,
   });
   const comments = commentsQuery.data?.comments ?? [];
+  useEffect(() => {
+    if (!commentsQuery.isSuccess || !commentsQuery.data || !pullRequestId) return;
+    if (observedAgentPostPullRequestId.current !== pullRequestId) {
+      observedAgentPostPullRequestId.current = pullRequestId;
+      observedAgentPostSnapshot.current = null;
+    }
+    const scan = scanAgentPostNotifications(
+      observedAgentPostSnapshot.current,
+      commentsQuery.data.comments,
+    );
+    observedAgentPostSnapshot.current = scan.snapshot;
+    if (!agentNotificationsEnabled || browserNotificationPermission() !== "granted") return;
+    for (const { post } of scan.notifications) {
+      try {
+        const notification = new Notification(`rvw · ${post.authorLabel}`, {
+          body: agentNotificationBody(post.body),
+          tag: `rvw-agent-post:${pullRequestId}:${post.id}`,
+        });
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+        };
+      } catch (error) {
+        console.warn("Agentのコメントをブラウザ通知できませんでした。", error);
+      }
+    }
+  }, [agentNotificationsEnabled, commentsQuery.data, commentsQuery.isSuccess, pullRequestId]);
   const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
   const walkthroughsQuery = useQuery({
     queryKey: ["walkthroughs", pullRequestId],
@@ -1352,10 +1436,13 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         jsonRequest({}),
       );
     },
-    onSuccess: async (result, options) => {
-      const wasAtLatest = selectedOid === latestHeadOid;
-      const wasSingleCommit = rangeStartOid === selectedOid;
-      const previousStartOid = rangeStartOid;
+    onMutate: () => ({
+      commitRangeInteractionRevision: commitRangeInteractionRevision.current,
+      selectedOid,
+      latestHeadOid,
+      rangeStartOid,
+    }),
+    onSuccess: async (result, options, refreshStart) => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["pull-request"] }),
         queryClient.invalidateQueries({ queryKey: ["document"] }),
@@ -1363,18 +1450,21 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         queryClient.invalidateQueries({ queryKey: ["comment-placement"] }),
         queryClient.invalidateQueries({ queryKey: ["search"] }),
       ]);
-      if (wasAtLatest || !selectedOid) {
+      const commitRangeUnchanged =
+        refreshStart.commitRangeInteractionRevision === commitRangeInteractionRevision.current;
+      const wasAtLatest = refreshStart.selectedOid === refreshStart.latestHeadOid;
+      if (commitRangeUnchanged && (wasAtLatest || !refreshStart.selectedOid)) {
         setSelectedOid(result.headOid);
         const previousStartStillExists = result.commits.some(
-          (commit) => commit.oid === previousStartOid,
+          (commit) => commit.oid === refreshStart.rangeStartOid,
         );
         setRangeStartOid(
           !commitRangeTouched.current
             ? pullRequestRangeStartOid(result.commits, result.headOid)
-            : wasSingleCommit
+            : refreshStart.rangeStartOid === refreshStart.selectedOid
               ? result.headOid
               : previousStartStillExists
-                ? previousStartOid
+                ? refreshStart.rangeStartOid
                 : earliestIncludedCommitOid(result.commits, result.headOid),
         );
       }
@@ -1779,6 +1869,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
             >
               <WalkthroughViewer
                 walkthrough={paneViewerState.walkthrough}
+                paneId={paneId}
                 comments={comments}
                 activeCommentId={activeCommentId}
                 navigationTarget={
@@ -1926,6 +2017,25 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
               >
                 GitHubと同期
               </button>
+              <div className="topbar-menu-section" role="group" aria-label="通知">
+                <span className="topbar-menu-section-label">通知</span>
+                <button
+                  role="menuitemcheckbox"
+                  aria-checked={agentNotificationsActive}
+                  onClick={() => void toggleAgentNotifications()}
+                >
+                  <span>Agentのコメントを通知</span>
+                  <span className="topbar-menu-check" aria-hidden="true">
+                    {agentNotificationsActive
+                      ? "✓"
+                      : notificationPermission === "denied"
+                        ? "拒否"
+                        : notificationPermission === "unsupported"
+                          ? "未対応"
+                          : ""}
+                  </span>
+                </button>
+              </div>
               <div className="topbar-menu-section" role="group" aria-label="UIテーマ">
                 <span className="topbar-menu-section-label">UIテーマ</span>
                 {themeOptions.map((option) => (

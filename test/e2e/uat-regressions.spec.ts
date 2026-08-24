@@ -175,6 +175,159 @@ test("supports standard keyboard navigation in the actions menu", async ({ page 
   await expect(actionsButton).toBeFocused();
 });
 
+test("notifies only after an Agent acknowledgement becomes a final reply", async ({
+  page,
+  request,
+}) => {
+  await page.addInitScript(() => {
+    type NotificationRecord = { title: string; options?: NotificationOptions };
+    class MockNotification {
+      static permission: NotificationPermission = "default";
+      static requestPermission(): Promise<NotificationPermission> {
+        MockNotification.permission = "granted";
+        return Promise.resolve(MockNotification.permission);
+      }
+
+      onclick: (() => void) | null = null;
+
+      constructor(title: string, options?: NotificationOptions) {
+        const state = window as typeof window & { rvwNotifications?: NotificationRecord[] };
+        state.rvwNotifications ??= [];
+        state.rvwNotifications.push(options === undefined ? { title } : { title, options });
+      }
+
+      close(): void {}
+    }
+
+    Object.defineProperty(window, "Notification", {
+      configurable: true,
+      value: MockNotification,
+    });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const actionsButton = page.getByRole("button", { name: "その他の操作", exact: true });
+  await actionsButton.click();
+  const notificationToggle = page
+    .getByRole("menu")
+    .getByRole("menuitemcheckbox", { name: "Agentのコメントを通知" });
+  await expect(notificationToggle).toHaveAttribute("aria-checked", "false");
+  await notificationToggle.click();
+  await expect
+    .poll(async () => await page.evaluate(() => localStorage.getItem("rvw.agentNotifications")))
+    .toBe("enabled");
+  await expect(page.getByRole("status")).toHaveText("Agentのコメントをブラウザ通知します。");
+  await openCommentsSidebar(page);
+
+  let commentId: string | null = null;
+  try {
+    const humanResponse = await request.post("/api/comments", {
+      data: {
+        pullRequestId,
+        target: { kind: "pull-request" },
+        body: "Human follow-up must stay silent.",
+        authorLabel: "You",
+      },
+    });
+    expect(humanResponse.ok()).toBe(true);
+    const human = (await humanResponse.json()) as { comment: { id: string } };
+    commentId = human.comment.id;
+    const thread = page.locator(".comment-list-item").filter({
+      hasText: "Human follow-up must stay silent.",
+    });
+    await expect(thread).toBeVisible();
+    expect(
+      await page.evaluate(
+        () =>
+          (window as typeof window & { rvwNotifications?: unknown[] }).rvwNotifications?.length ??
+          0,
+      ),
+    ).toBe(0);
+
+    const acknowledgementResponse = await request.post(`/api/comments/${commentId}/posts`, {
+      headers: { "x-rvw-fixture-modifier": "agent" },
+      data: {
+        body: "🔎 確認中です…",
+        relatedCommitOid: null,
+        authorLabel: "Codex",
+      },
+    });
+    expect(acknowledgementResponse.ok()).toBe(true);
+    const acknowledgement = (await acknowledgementResponse.json()) as { post: { id: string } };
+    await expect(thread.getByText("🔎 確認中です…", { exact: true })).toBeVisible();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    expect(
+      await page.evaluate(
+        () =>
+          (window as typeof window & { rvwNotifications?: unknown[] }).rvwNotifications?.length ??
+          0,
+      ),
+    ).toBe(0);
+
+    const finalResponse = await request.patch(
+      `/api/comments/${commentId}/posts/${acknowledgement.post.id}`,
+      {
+        headers: { "x-rvw-fixture-modifier": "agent" },
+        data: {
+          body: "Agent investigation finished.",
+        },
+      },
+    );
+    expect(finalResponse.ok()).toBe(true);
+    await expect(thread.getByText("Agent investigation finished.", { exact: true })).toBeVisible();
+    await expect
+      .poll(
+        async () =>
+          await page.evaluate(
+            () =>
+              (
+                window as typeof window & {
+                  rvwNotifications?: Array<{ title: string; options?: NotificationOptions }>;
+                }
+              ).rvwNotifications ?? [],
+          ),
+      )
+      .toEqual([
+        {
+          title: "rvw · Codex",
+          options: expect.objectContaining({
+            body: "Agent investigation finished.",
+            tag: expect.stringContaining(acknowledgement.post.id),
+          }),
+        },
+      ]);
+
+    const humanEditResponse = await request.patch(
+      `/api/comments/${commentId}/posts/${acknowledgement.post.id}`,
+      { data: { body: "Human correction must stay silent." } },
+    );
+    expect(humanEditResponse.ok()).toBe(true);
+    await expect(
+      thread.getByText("Human correction must stay silent.", { exact: true }),
+    ).toBeVisible();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    expect(
+      await page.evaluate(
+        () =>
+          (window as typeof window & { rvwNotifications?: unknown[] }).rvwNotifications?.length ??
+          0,
+      ),
+    ).toBe(1);
+  } finally {
+    if (commentId) await request.delete(`/api/comments/${commentId}`, { data: {} });
+  }
+});
+
 test("supports keyboard navigation and dismissal in a document pane menu", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
@@ -407,6 +560,52 @@ test("keeps unsent drafts independent for the same file in both panes", async ({
   await expect(leftPane.getByRole("textbox", { name: "ファイル全体へコメント" })).toHaveValue(
     "左ペインの未送信ドラフト",
   );
+});
+
+test("keeps same-file inline reply input and focus isolated by pane", async ({ page, request }) => {
+  const viewResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  expect(viewResponse.ok()).toBe(true);
+  const { headOid } = (await viewResponse.json()) as { headOid: string };
+  const createResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: headOid,
+        path: "src/fixture.ts",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "左右ペインの返信入力を確認します。",
+      authorLabel: "You",
+    },
+  });
+  expect(createResponse.ok()).toBe(true);
+  const { comment } = (await createResponse.json()) as { comment: { id: string } };
+
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    const file = page.getByRole("button", { name: "src/fixture.ts", exact: true });
+    await file.click();
+    await file.click({ modifiers: ["Meta"] });
+
+    const leftReply = page
+      .locator(`.document-pane[data-pane="left"] [data-comment-id="${comment.id}"]`)
+      .getByPlaceholder("返信を入力");
+    const rightReply = page
+      .locator(`.document-pane[data-pane="right"] [data-comment-id="${comment.id}"]`)
+      .getByPlaceholder("返信を入力");
+    await leftReply.click();
+    await leftReply.press("k");
+
+    await expect(leftReply).toHaveValue("k");
+    await expect(rightReply).toHaveValue("");
+    await expect(leftReply).toBeFocused();
+  } finally {
+    const deleteResponse = await request.delete(`/api/comments/${comment.id}`, { data: {} });
+    expect(deleteResponse.ok()).toBe(true);
+  }
 });
 
 test("visually disambiguates open tabs that share the same basename", async ({ page }) => {

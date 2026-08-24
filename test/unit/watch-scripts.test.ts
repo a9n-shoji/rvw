@@ -201,7 +201,15 @@ describe("rvw-watch-comments bundled scripts", () => {
 
     const result = spawnSync(
       process.execPath,
-      [autoAckScript, "--state", state, "--pull-request", "https://github.com/acme/repo/pull/1"],
+      [
+        autoAckScript,
+        "--state",
+        state,
+        "--pull-request",
+        "https://github.com/acme/repo/pull/1",
+        "--author-label",
+        "Codex",
+      ],
       { encoding: "utf8", env: fakeEnvironment(fake) },
     );
 
@@ -229,7 +237,7 @@ describe("rvw-watch-comments bundled scripts", () => {
       ],
     });
     const replyCall = readFakeCalls(fake.log).find((call) => call.args[1] === "reply");
-    expect(replyCall?.input).toMatchObject({ body: "🔎 確認中です…" });
+    expect(replyCall?.input).toMatchObject({ body: "🔎 確認中です…", authorLabel: "Codex" });
     expect(typeof (replyCall?.input as { idempotencyKey?: unknown }).idempotencyKey).toBe("string");
 
     runState(state, "complete", ["--lease", firstAcknowledgement.leaseId], { postIds: [] });
@@ -275,10 +283,14 @@ describe("rvw-watch-comments bundled scripts", () => {
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
     runState(state, "init");
-    const child = spawn(process.execPath, [driverScript, state, "--auto-ack"], {
-      env: fakeEnvironment(fake),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    const child = spawn(
+      process.execPath,
+      [driverScript, state, "--auto-ack", "--author-label", "Codex"],
+      {
+        env: fakeEnvironment(fake),
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     const lines: unknown[] = [];
     let buffered = "";
     const acknowledged = new Promise<void>((resolve, reject) => {
@@ -314,7 +326,12 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(code, stderr).toBe(0);
     expect(lines).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ type: "watch-ready", cursor: "cursor-0", autoAck: true }),
+        expect.objectContaining({
+          type: "watch-ready",
+          cursor: "cursor-0",
+          autoAck: true,
+          authorLabel: "Codex",
+        }),
         expect.objectContaining({
           type: "batch-acknowledged",
           operations: [expect.objectContaining({ statusPostId: "status-post-1" })],
@@ -329,6 +346,10 @@ describe("rvw-watch-comments bundled scripts", () => {
       (call) => call.args[0] === "comment" && call.args[1] === "watch",
     );
     expect(watchCall?.args).toEqual(["comment", "watch", "--interval", "1", "--json-seq"]);
+    const replyCall = readFakeCalls(fake.log).find(
+      (call) => call.args[0] === "comment" && call.args[1] === "reply",
+    );
+    expect(replyCall?.input).toMatchObject({ authorLabel: "Codex" });
   });
 
   it("acknowledges a durably ingested event before resuming its cursor", async () => {
@@ -517,7 +538,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     }
     const child = spawn(
       process.execPath,
-      [driverScript, state, "--auto-ack", "--max-in-flight", "1"],
+      [driverScript, state, "--auto-ack", "--max-in-flight", "1", "--author-label", "Codex"],
       {
         env: { ...fakeEnvironment(fake), RVW_WATCH_AUTO_ACK_POLL_MS: "10" },
         stdio: ["pipe", "pipe", "pipe"],
@@ -670,6 +691,10 @@ describe("rvw-watch-comments bundled scripts", () => {
       batchId: first.batchId,
       operations: [expect.objectContaining({ acknowledgement: "restored" })],
     });
+    const editCall = readFakeCalls(fake.log).find(
+      (call) => call.args[0] === "comment" && call.args[1] === "edit",
+    );
+    expect(editCall?.input).toEqual({ body: "🔎 確認中です…", relatedCommitOid: null });
 
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve, reject) => {

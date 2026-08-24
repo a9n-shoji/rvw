@@ -275,10 +275,10 @@ export async function dispatchAgentSocketRequest(
     }
     case "comment.reply": {
       const input = parseOperationInput("comment.reply", request.input);
-      return await service.replyToComment(
-        input.uri,
-        input.reply as unknown as Parameters<RvwService["replyToComment"]>[1],
-      );
+      return await service.replyToComment(input.uri, {
+        ...(input.reply as unknown as Parameters<RvwService["replyToComment"]>[1]),
+        lastModifiedBy: "agent",
+      });
     }
     case "comment.edit": {
       const input = parseOperationInput("comment.edit", request.input);
@@ -288,6 +288,7 @@ export async function dispatchAgentSocketRequest(
           ? {}
           : { relatedCommitOid: input.edit.relatedCommitOid }),
         ...(input.edit.references === undefined ? {} : { references: input.edit.references }),
+        lastModifiedBy: "agent",
       });
     }
     case "comment.resolve": {

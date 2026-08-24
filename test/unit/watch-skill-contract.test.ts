@@ -23,6 +23,10 @@ describe("rvw-watch-comments delegation contract", () => {
     expect(skill).toContain("task state about every 250 milliseconds");
     expect(skill).toContain("After retryable `fail`");
     expect(skill).toMatch(/do\s+not wait for another comment event or reconnect/);
+    expect(skill).toContain("--author-label '<CURRENT_AGENT_NAME>'");
+    expect(skill).toMatch(
+      /label is stored on the acknowledgement post and remains when\s+that post is replaced/,
+    );
   });
 
   it("parallelizes investigate-only follow-ups without weakening writer serialization", () => {

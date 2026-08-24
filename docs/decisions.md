@@ -1768,3 +1768,27 @@ contract to protocol version 3 and advertise `comment.codeReferences`.
 - Agent callers must keep Markdown links and the complete typed declaration set consistent on edits.
 - Comments remain lightweight thread content: they gain direct evidence links without becoming
   Walkthrough documents or an in-app Agent conversation surface.
+
+## 2026-08-24: Record the latest comment-post write channel for notifications
+
+### Problem
+
+Browser notifications must fire for Agent posts without firing for human posts. `authorLabel` cannot
+provide that guarantee: it is display text rather than authenticated provenance, and a human may edit
+an Agent-labeled post while an Agent may encounter a legacy unlabeled post.
+
+### Choice
+
+Persist nullable `lastModifiedBy` on each comment post. Viewer HTTP writes set `human`; Agent CLI,
+Agent socket, and synchronized Agent replies set `agent`; migrated rows remain null. The field is
+derived from rvw's trusted local entry point, is output-only, and is used to gate browser notifications.
+It does not identify a person or runtime, authorize a write, add Agent-only lifecycle state, or change
+the unresolved/resolved comment model. `authorLabel` remains the optional display name.
+
+### Trade-offs
+
+- Human edits to Agent-labeled posts stay silent, and Agent edits can be recognized without guessing
+  from a display label.
+- Existing posts stay on the safe side and do not notify until a known entry point modifies them.
+- The database gains one small provenance column, but avoids authenticated identities, session links,
+  and notification-specific event tables.

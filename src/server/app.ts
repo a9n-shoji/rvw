@@ -361,6 +361,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
             : { relatedCommitOid: input.relatedCommitOid }),
           ...(input.references === undefined ? {} : { references: input.references }),
           ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+          lastModifiedBy: "human",
         }),
       },
       201,
@@ -378,6 +379,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
             ? {}
             : { relatedCommitOid: input.relatedCommitOid }),
           ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+          lastModifiedBy: "human",
           ...(input.references === undefined ? {} : { references: input.references }),
         }),
       },
@@ -395,10 +397,12 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
               context.req.param("id"),
               context.req.param("postId"),
               input.body,
+              "human",
             )
           : await service.editCommentPost(context.req.param("id"), context.req.param("postId"), {
               body: input.body,
               references: input.references,
+              lastModifiedBy: "human",
             }),
     });
   });

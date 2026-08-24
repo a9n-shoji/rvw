@@ -310,6 +310,10 @@ empty fileは従来どおり明示的に扱う。
   light / dark / systemから選べる。選択はOS user data directoryの共通DBへ保存し、異なるPRや
   自動割り当てportで新しく起動したviewerにも引き継ぐ。browser storageは初期表示用cacheに限る。
   systemはOS設定へ追従する。
+- その他menuからbrowser origin（portを含む）単位でAgentコメント通知を明示的に有効化できる。初回のcomment読込は通知せず、
+  以後に追加または編集されたpostのうち、最終変更経路が`agent`で、空でない`authorLabel`があり`You`ではないものだけを対象とする。
+  `Unknown`と`🔎 確認中です…`は通知せず、watcherが同じpostを最終回答へ編集した時に通知する。
+  通知permissionと設定が有効な場合だけBrowser Notificationを作り、クリック時はviewerをfocusする。
 
 ### 5.3 File tree、検索、diff rendering
 
@@ -904,7 +908,7 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
   導出したplacementだけを返し、PR本文は含めない。完全なtarget、全post、source excerptは
   `comment get`だけが返す。
 - `comment get`はPR URL、repository path、最新title、base/head branchとOID、head repository owner/name、comparison base、comment
-  target、posts、`createdHeadOid`、`latestHeadOid`、各postの`relatedCommitOid`と`references`、latest headに対してserviceが
+  target、posts、`createdHeadOid`、`latestHeadOid`、各postの`relatedCommitOid`、`references`、`lastModifiedBy`、latest headに対してserviceが
   導出したplacementを返す。既定ではPR本文を含めず、`--include-pr-body`指定時だけ最新の同期済み本文を
   `pullRequest.body`として返す。呼び出し側はOID比較でOutdatedを推測しない。
 - `comment get --live`はGitHubの現在値をread-onlyで取得し、同期済みcacheを更新せず、`githubState`へ
@@ -927,6 +931,9 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
 - `comment create`は登録済みPR、通常のcomment target、本文、任意の`authorLabel`、`relatedCommitOid`、
   `references`をstdinで受け、
   viewerと同じtarget validationから未解決threadを一件作成する。batch作成は行わない。
+- comment postの`lastModifiedBy`は`human`、`agent`、既存行の`null`とする。viewer HTTPでの作成・返信・編集は
+  `human`、Agent CLI / Agent socket / `pr sync`による作成・返信・編集は`agent`を保存する。これは通知用の
+  経路情報であり、認証済みidentity、Agent専用comment state、caller入力にはしない。
 - `pr sync`の`commentUpdates`は最大500件で、各要素は`commentRef`、`reply`、`resolve`と任意の
   `references`、`idempotencyKey`を持つ。referenceは同期したcurrent GitHub headへ固定する。
 - breakingなprotocol schema変更ではprotocol versionを進める。additiveなcommandは同じversionへ新しい
@@ -1364,6 +1371,8 @@ batch単位status post、自己event抑制をrepository外のSQLiteで管理す�
 process owner lockをrvw起動前に取得し、同じtaskの二重起動を拒否する。異常終了後のlockは記録したowner
 processが存在しない場合だけ回収する。検知直後に各threadを再読込して
 `🔎 確認中です…`をLLM往復なしに返信し、完了またはterminal failureでは同じreplyを最終結果へ編集する。
+watcher起動時に実行中Agentを正確に識別できる場合は、その名前をdriverへ渡して確認replyの
+`authorLabel`へ保存し、最終結果への編集後も維持する。識別できない場合だけ省略を許す。
 同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を保持する。
 親taskはintake、dispatch、task state、最終replyだけを所有し、batchの大きさ、mode、変更有無にかかわらず、
 acknowledge済みleaseを同じscheduling turn内で一つのfresh subagentへ必ず委譲する。親taskによる直接調査・
