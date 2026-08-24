@@ -132,7 +132,8 @@ rvw pr issue remove <PULL_REQUEST> <ISSUE_REF> [--yes --confirmation-token <TOKE
 ```
 
 Relocation, Issue removal, and reset without a confirmation token return a binding or count/ref preview with
-`REPOSITORY_RELOCATION_CONFIRMATION_REQUIRED` or `RESET_CONFIRMATION_REQUIRED`,
+`REPOSITORY_RELOCATION_CONFIRMATION_REQUIRED`, `ISSUE_REMOVAL_CONFIRMATION_REQUIRED`, or
+`RESET_CONFIRMATION_REQUIRED`,
 `reviewChangeSequence`, and `confirmationToken`. After the caller
 presents the Issue title/number and owned artifact counts to a human, the same structured arguments
 with `--yes --confirmation-token <TOKEN>` delete only the selected review's membership,
@@ -288,6 +289,11 @@ value is:
   "authorLabel": "Agent name"
 }
 ```
+
+The review and target are one transport union: Pull Request Reviews accept `pull-request`,
+`pull-request-markdown`, registered Issue, Walkthrough, and repository-file targets. Repository Reviews
+accept `repository`, registered Issue, Walkthrough, and repository-file targets. A mismatched pair is
+rejected by the protocol schema before application dispatch.
 
 `review`, `target`, and `body` are required. A Repository Review uses
 `{"kind":"repository","repository":"owner/repository"}`. `authorLabel`, `relatedCommitOid`, and `references`

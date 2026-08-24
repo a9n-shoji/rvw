@@ -23,8 +23,8 @@ import { runProcess, runText } from "../process/run-process.js";
 export interface GitHubPort {
   doctor(): Promise<{ version: string; authenticated: boolean }>;
   getPullRequest(reference: string | undefined, cwd: string): Promise<GitHubPullRequest>;
-  getRepository?(identity: RepositoryIdentity, cwd: string): Promise<GitHubRepository>;
-  getIssue?(number: number, identity: RepositoryIdentity, cwd: string): Promise<GitHubIssue>;
+  getRepository(identity: RepositoryIdentity, cwd: string): Promise<GitHubRepository>;
+  getIssue(number: number, identity: RepositoryIdentity, cwd: string): Promise<GitHubIssue>;
   getAttachment(absoluteUrl: string): Promise<{ content: Buffer; byteLength: number }>;
 }
 

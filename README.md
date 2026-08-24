@@ -61,9 +61,10 @@ offlineでも読めます。remote自体がない場合も、保存済みGit com
 - Node.js 24.15.0以上
 - Git
 - [GitHub CLI](https://cli.github.com/)（`gh auth login`と`gh auth setup-git`を完了済み）
-- PRのbase repository clone、またはそのcloneから作ったGit worktree
+- 対象GitHub repositoryのclone、またはそのcloneから作ったGit worktree
+  （Pull Request Reviewではbase repository、Repository Reviewではdefault branchを取得できるcanonical repository）
 
-head fork側だけのclone、GitHub Enterprise、Closed / merged PRはPhase 1の対象外です。初回登録と同期にはGitHub接続が必要ですが、登録済みPRは保持済みGit objectとSQLite cacheからofflineでも開けます。
+Pull Request Reviewでのhead fork側だけのclone、GitHub Enterprise、Closed / merged PRはPhase 1の対象外です。初回登録と同期にはGitHub接続が必要ですが、登録済みReviewは保持済みGit objectとSQLite cacheからofflineでも開けます。
 
 ## インストール
 
@@ -120,7 +121,7 @@ viewerはこの流れのために次を提供します。
 - split / stacked diff、syntax highlight、行・範囲選択
 - `@pierre/vscode-icons`による全画面共通の言語／tooling file icon
 - ファイル名fuzzy検索、Gitによるrealtime全文fixed-string検索（case / whole-word、file grouping、行jump）
-- PR全体、PR本文、ファイル全体、行範囲、Walkthrough全体へのコメント
+- PR全体、Repository Review全体、PR／Issue本文、ファイル全体、行範囲、Walkthrough全体へのコメント
 - コメントと返信のsafe GFM表示（repository内link／同一commit相対画像、表示専用Mermaid、
   exact commitへ固定したinline code referenceを含む）
 - 未解決／解決済み、返信、Outdated追跡
@@ -374,8 +375,10 @@ stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいず
 
 `comment create`はPull RequestまたはRepository Reviewの明示context、通常のcomment target、本文、任意の
 Agent名、任意の投稿単位code referenceをstdin JSONで受け取り、
-未解決のroot threadを一件作成します。repository targetはexact commit、path、任意のinclusive line rangeを
+未解決のroot threadを一件作成します。repository-file targetはexact commit、path、任意のinclusive line rangeを
 指定し、viewerと同じ文書・行検証を通ります。作成してもbrowserを開かず、tabやcommit選択を変更しません。
+Pull Request contextではPull Request全体、PR本文、登録Issue、Walkthrough、repository fileを、Repository
+Review contextではRepository全体、登録Issue、Walkthrough、repository fileだけをtargetにできます。
 同梱Skillは具体的なcode上のclaimにnavigation価値のある根拠がある場合、Walkthroughと同じくtyped
 referenceを既定で使います。
 

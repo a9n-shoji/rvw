@@ -350,9 +350,7 @@ export async function dispatchAgentSocketRequest(
     }
     case "comment.create": {
       const input = parseOperationInput("comment.create", request.input);
-      return await service.createCommentForReference(
-        input as Parameters<RvwService["createCommentForReference"]>[0],
-      );
+      return await service.createCommentForReference(input);
     }
     case "comment.get": {
       const input = parseOperationInput("comment.get", request.input);

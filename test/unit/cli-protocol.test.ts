@@ -318,7 +318,7 @@ describe("CLI protocol discovery", () => {
     expect(readStdout()).toMatchObject({
       ok: false,
       error: {
-        code: "RESET_CONFIRMATION_REQUIRED",
+        code: "ISSUE_REMOVAL_CONFIRMATION_REQUIRED",
         details: {
           arguments: [
             "repository",

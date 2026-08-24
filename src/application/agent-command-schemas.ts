@@ -24,66 +24,108 @@ const walkthroughUri = z.string().regex(/^rvw:\/\/walkthrough\//);
 const nullableCommentLine = z.number().int().positive().nullable().optional().default(null);
 const idempotencyKey = z.string().min(1).max(MAX_IDEMPOTENCY_KEY_CHARACTERS).optional();
 
+const pullRequestReviewTargetInputSchema = z
+  .object({ kind: z.literal("pull-request"), pullRequest: nonEmptyString })
+  .strict();
+const repositoryReviewTargetInputSchema = z
+  .object({ kind: z.literal("repository"), repository: nonEmptyString })
+  .strict();
+
 export const reviewTargetInputSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("pull-request"), pullRequest: nonEmptyString }).strict(),
-  z.object({ kind: z.literal("repository"), repository: nonEmptyString }).strict(),
+  pullRequestReviewTargetInputSchema,
+  repositoryReviewTargetInputSchema,
 ]);
+
+const pullRequestCommentTargetInputSchema = z.object({ kind: z.literal("pull-request") }).strict();
+const repositoryReviewCommentTargetInputSchema = z
+  .object({ kind: z.literal("repository") })
+  .strict();
+const issueCommentTargetInputSchema = z
+  .object({
+    kind: z.literal("issue"),
+    issue: nonEmptyString,
+    startLine: nullableCommentLine,
+    endLine: nullableCommentLine,
+  })
+  .strict();
+const walkthroughCommentTargetInputSchema = z
+  .object({
+    kind: z.literal("walkthrough"),
+    walkthroughId: z.uuid(),
+    startLine: nullableCommentLine,
+    endLine: nullableCommentLine,
+  })
+  .strict();
+const pullRequestMarkdownCommentTargetInputSchema = z
+  .object({
+    kind: z.literal("document"),
+    documentKind: z.literal("pull-request-markdown"),
+    startLine: nullableCommentLine,
+    endLine: nullableCommentLine,
+  })
+  .strict();
+const repositoryFileCommentTargetInputSchema = z
+  .object({
+    kind: z.literal("document"),
+    documentKind: z.literal("repository-file"),
+    sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
+    path: nonEmptyString,
+    startLine: nullableCommentLine,
+    endLine: nullableCommentLine,
+  })
+  .strict();
+
+function validateCommentTargetLines(
+  target: { kind: string; startLine?: number | null; endLine?: number | null },
+  context: z.RefinementCtx,
+): void {
+  if (target.kind === "pull-request" || target.kind === "repository") return;
+  const startLine = target.startLine ?? null;
+  const endLine = target.endLine ?? null;
+  if ((startLine === null) !== (endLine === null)) {
+    context.addIssue({
+      code: "custom",
+      message: "startLineとendLineは両方指定するか、両方省略してください。",
+    });
+    return;
+  }
+  if (startLine !== null && endLine !== null && endLine < startLine) {
+    context.addIssue({
+      code: "custom",
+      message: "endLineはstartLine以上にしてください。",
+    });
+  }
+}
 
 export const commentTargetInputSchema = z
   .union([
-    z.object({ kind: z.literal("pull-request") }).strict(),
-    z.object({ kind: z.literal("repository") }).strict(),
-    z
-      .object({
-        kind: z.literal("issue"),
-        issue: nonEmptyString,
-        startLine: nullableCommentLine,
-        endLine: nullableCommentLine,
-      })
-      .strict(),
-    z
-      .object({
-        kind: z.literal("walkthrough"),
-        walkthroughId: z.uuid(),
-        startLine: nullableCommentLine,
-        endLine: nullableCommentLine,
-      })
-      .strict(),
-    z
-      .object({
-        kind: z.literal("document"),
-        documentKind: z.literal("pull-request-markdown"),
-        startLine: nullableCommentLine,
-        endLine: nullableCommentLine,
-      })
-      .strict(),
-    z
-      .object({
-        kind: z.literal("document"),
-        documentKind: z.literal("repository-file"),
-        sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
-        path: nonEmptyString,
-        startLine: nullableCommentLine,
-        endLine: nullableCommentLine,
-      })
-      .strict(),
+    pullRequestCommentTargetInputSchema,
+    repositoryReviewCommentTargetInputSchema,
+    issueCommentTargetInputSchema,
+    walkthroughCommentTargetInputSchema,
+    pullRequestMarkdownCommentTargetInputSchema,
+    repositoryFileCommentTargetInputSchema,
   ])
-  .superRefine((target, context) => {
-    if (target.kind === "pull-request" || target.kind === "repository") return;
-    if ((target.startLine === null) !== (target.endLine === null)) {
-      context.addIssue({
-        code: "custom",
-        message: "startLineとendLineは両方指定するか、両方省略してください。",
-      });
-      return;
-    }
-    if (target.startLine !== null && target.endLine !== null && target.endLine < target.startLine) {
-      context.addIssue({
-        code: "custom",
-        message: "endLineはstartLine以上にしてください。",
-      });
-    }
-  });
+  .superRefine(validateCommentTargetLines);
+
+const pullRequestCommentTargetForCreateSchema = z
+  .union([
+    pullRequestCommentTargetInputSchema,
+    issueCommentTargetInputSchema,
+    walkthroughCommentTargetInputSchema,
+    pullRequestMarkdownCommentTargetInputSchema,
+    repositoryFileCommentTargetInputSchema,
+  ])
+  .superRefine(validateCommentTargetLines);
+
+const repositoryReviewCommentTargetForCreateSchema = z
+  .union([
+    repositoryReviewCommentTargetInputSchema,
+    issueCommentTargetInputSchema,
+    walkthroughCommentTargetInputSchema,
+    repositoryFileCommentTargetInputSchema,
+  ])
+  .superRefine(validateCommentTargetLines);
 
 export const codeReferenceInputSchema = z
   .object({
@@ -136,32 +178,48 @@ function requireRelatedCommitForReferences(
   }
 }
 
+const commentCreateFields = {
+  body: z
+    .string()
+    .min(1)
+    .refine((value) => value.trim().length > 0)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
+      message: `bodyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
+    }),
+  authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
+  relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
+  references: optionalCodeReferences,
+};
+
 export const commentCreateInputSchema = z
-  .object({
-    review: reviewTargetInputSchema.optional(),
-    pullRequest: nonEmptyString.optional(),
-    target: commentTargetInputSchema,
-    body: z
-      .string()
-      .min(1)
-      .refine((value) => value.trim().length > 0)
-      .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES, {
-        message: `bodyはUTF-8で${MAX_COMMENT_BODY_BYTES} bytes（64 KiB）以下にしてください。`,
-      }),
-    authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
-    relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
-    references: optionalCodeReferences,
-  })
-  .strict()
+  .union([
+    z
+      .object({
+        ...commentCreateFields,
+        review: pullRequestReviewTargetInputSchema,
+        pullRequest: z.never().optional(),
+        target: pullRequestCommentTargetForCreateSchema,
+      })
+      .strict(),
+    z
+      .object({
+        ...commentCreateFields,
+        review: repositoryReviewTargetInputSchema,
+        pullRequest: z.never().optional(),
+        target: repositoryReviewCommentTargetForCreateSchema,
+      })
+      .strict(),
+    z
+      .object({
+        ...commentCreateFields,
+        review: z.never().optional(),
+        pullRequest: nonEmptyString,
+        target: pullRequestCommentTargetForCreateSchema,
+      })
+      .strict(),
+  ])
   .superRefine((input, context) => {
     requireRelatedCommitForReferences(input, context);
-    if (Boolean(input.review) === Boolean(input.pullRequest)) {
-      context.addIssue({
-        code: "custom",
-        path: ["review"],
-        message: "reviewまたはpullRequestのどちらか一方が必要です。",
-      });
-    }
   });
 
 export const commentReplyInputSchema = z

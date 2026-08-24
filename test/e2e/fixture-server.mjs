@@ -949,7 +949,7 @@ app.delete("/api/pull-requests/:id/issues/:issueId", async (context) => {
     return context.json(
       {
         ok: false,
-        error: { code: "RESET_CONFIRMATION_REQUIRED", message: "confirmation required" },
+        error: { code: "ISSUE_REMOVAL_CONFIRMATION_REQUIRED", message: "confirmation required" },
         issue,
         counts,
         confirmationRequired: true,
@@ -1121,7 +1121,7 @@ app.delete("/api/repository-reviews/:id/issues/:issueId", async (context) => {
     return context.json(
       {
         ok: false,
-        error: { code: "RESET_CONFIRMATION_REQUIRED", message: "confirmation required" },
+        error: { code: "ISSUE_REMOVAL_CONFIRMATION_REQUIRED", message: "confirmation required" },
         issue,
         counts,
         confirmationRequired: true,

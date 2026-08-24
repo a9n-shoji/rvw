@@ -1112,6 +1112,9 @@ change sequenceを更新する。この削除はretained commit refを削除し�
 - `comment create`は登録済みPR、通常のcomment target、本文、任意の`authorLabel`、`relatedCommitOid`、
   `references`をstdinで受け、
   viewerと同じtarget validationから未解決threadを一件作成する。batch作成は行わない。
+  transport schemaはreview kindとtargetを一つのunionにし、Pull Request Reviewだけが`pull-request`と
+  `pull-request-markdown`、Repository Reviewだけが`repository`を受理する。Issue、Walkthrough、repository fileは
+  両Reviewで受理し、application dispatch前に不正なreview kind × target kindを拒否する。
 - comment postの`lastModifiedBy`は`human`、`agent`、既存行の`null`とする。viewer HTTPでの作成・返信・編集は
   `human`、Agent CLI / Agent socket / `pr sync`による作成・返信・編集は`agent`を保存する。これは通知用の
   経路情報であり、認証済みidentity、Agent専用comment state、caller入力にはしない。
@@ -1281,6 +1284,9 @@ Repository Review schemaをversion 011として記録した未公開development 
 検出した場合は012を記録する前にfail closedしてDBの退避・再作成を要求する。公開済み0.2.x DBだけが通常の
 011 comment provenanceから012へ進む。初期version snapshot後のtable検査で関連tableを検出した場合はversion 12を
 再確認し、別processが同じtransactionで正常にDDLとversion記録をcommit済みならfail closedせずその結果を採用する。
+012がlegacy `comment_post_events`をReview共通event tableへ移す前に、対応する`pull_requests.github_url`がない
+eventを明示検査する。orphanがあれば件数とPull Request URLを持つ`ORPHAN_COMMENT_POST_EVENTS` diagnosticで
+transactionをrollbackし、生のNOT NULL制約errorやeventの黙示破棄にしない。
 PRとRepository Reviewのartifact ownershipとcascade境界は分離し、
 共有Issue cacheの表示内容が変わった場合だけ、そのIssueを所有する全Reviewの
 `review_change_sequence`を同じtransactionで更新する。membership固有の同期errorはそのReviewだけを更新し、
@@ -1371,11 +1377,11 @@ CLI、Agent socket、HTTPが同じuse caseを呼ぶ。
   evidence件数を含むsequence付きpreviewの明示確認後だけ同じaggregateの保存locationを移動先cloneへ更新する。
 - `{ kind: "read" }`: `repository comments`と保存済みartifact read。row、ref、fetch、locationを作らない。
 - `{ kind: "synchronize" }`: `repository sync`。保存済みaggregateとlocal remoteを検証してからだけ同期する。
-- `{ kind: "destructive", allowMissingInitialRef }`: resetとRepository Issue removalのpreview／実行。missing
-  initial ref例外を型上resetへ限定する。未登録なら
+- `{ kind: "issue-removal" }`: Repository Issue removalのpreview／実行。通常のowned source ref検証を必須にする。
+- `{ kind: "reset" }`: Repository Review resetのpreview／実行。missing initial ref例外を型上この操作だけへ限定する。未登録なら
   `REPOSITORY_REVIEW_NOT_FOUND`で、previewを含めsequence、DB、refを一切変更しない。
 - 明示的追加: `repository issue add`だけは未登録reviewを作成できるが、remote identityを解決・検証できない
-  状態では実行しない。
+  状態では実行しない。lifecycleの入口も`resolveOrCreateForIssueAddition`としてこの操作名へ閉じ込める。
 
 HTTPの`/api/repository-reviews/:id`配下から始まるsync、Issue add/remove、comments readは、routeで保存pathへ
 変換してpath-based use caseへ渡さない。`expectedRepositoryReviewId`をbinding resolverからDB upsert／membership
@@ -1406,6 +1412,8 @@ detailsへ最新previewを返し、利用者へ再確認を要求する。最終
 previewを再構築し、relocationを含めRepository Review metadataを含む同じerror shapeをcurrent rowから返す。PR resetはGitHub I/O後、
 head ref確保前にもtokenを再検証し、commit一覧をSQLite mutation前に取得して、成功したDB reset後へ失敗可能な
 Git readを残さない。
+preview要求のerror codeはIssue removalを`ISSUE_REMOVAL_CONFIRMATION_REQUIRED`、resetを
+`RESET_CONFIRMATION_REQUIRED`、Walkthrough deletionを`WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED`として操作ごとに区別する。
 
 canonical identity検索、Git common directory検索、conflict判定、ID決定、insert/update、review change
 sequence更新は一つの`BEGIN IMMEDIATE`内で行う。canonical owner/repositoryのSQLite一意性も`NOCASE`とし、

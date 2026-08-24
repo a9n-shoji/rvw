@@ -28,6 +28,13 @@ const draft: CommentDraftState = {
   markdownComposerOpen: false,
   fileComposerOpen: true,
 };
+const issueDocument: ActiveDocument = {
+  kind: "issue",
+  id: "issue-142",
+  number: 142,
+  title: "同期中も入力を保持する",
+  url: "https://github.com/example/repository/issues/142",
+};
 
 function contextKey(
   activeDocument: ActiveDocument,
@@ -74,25 +81,29 @@ describe("comment draft store", () => {
     expect(new Set([current, exactFirst, exactSecond]).size).toBe(3);
   });
 
-  it("keeps an Issue draft identity stable across source refreshes", () => {
-    const issue: ActiveDocument = {
-      kind: "issue",
-      id: "issue-142",
-      number: 142,
-      title: "同期中も入力を保持する",
-      url: "https://github.com/example/repository/issues/142",
-    };
-    const first = contextKey(issue);
-    const refreshed = commentDraftContextKey({
+  it("keeps each pane's Issue draft identity stable across source refreshes", () => {
+    const left = contextKey(issueDocument, "left");
+    const right = contextKey(issueDocument, "right");
+    const refreshedLeft = commentDraftContextKey({
       reviewKind: "pull-request",
-      activeDocument: issue,
+      activeDocument: issueDocument,
       pane: "left",
       selectedOid: "d".repeat(40),
       oldOid: null,
       displayMode: "full",
     });
+    const refreshedRight = commentDraftContextKey({
+      reviewKind: "pull-request",
+      activeDocument: issueDocument,
+      pane: "right",
+      selectedOid: "d".repeat(40),
+      oldOid: null,
+      displayMode: "full",
+    });
 
-    expect(refreshed).toBe(first);
+    expect(right).not.toBe(left);
+    expect(refreshedLeft).toBe(left);
+    expect(refreshedRight).toBe(right);
   });
 
   it("keeps a current Repository Review file draft key stable across source refreshes", () => {
@@ -222,14 +233,9 @@ describe("comment draft store", () => {
     expect(readCommentDraft(pullRequestId, key)).toBeUndefined();
   });
 
-  it("clears only the removed Issue draft and rejects its stale unmount write", () => {
-    const removedIssueKey = contextKey({
-      kind: "issue",
-      id: "issue-142",
-      number: 142,
-      title: "Remove this Issue",
-      url: "https://github.com/example/repository/issues/142",
-    });
+  it("clears both panes for only the removed Issue and rejects their stale unmount writes", () => {
+    const removedLeftKey = contextKey(issueDocument, "left");
+    const removedRightKey = contextKey(issueDocument, "right");
     const retainedIssueKey = contextKey({
       kind: "issue",
       id: "issue-143",
@@ -238,25 +244,33 @@ describe("comment draft store", () => {
       url: "https://github.com/example/repository/issues/143",
     });
     const fileKey = contextKey({ kind: "repository-file", path: "src/example.ts" });
-    const removedRevision = currentCommentDraftRevision(pullRequestId, removedIssueKey);
+    const removedLeftRevision = currentCommentDraftRevision(pullRequestId, removedLeftKey);
+    const removedRightRevision = currentCommentDraftRevision(pullRequestId, removedRightKey);
     const retainedRevision = currentCommentDraftRevision(pullRequestId, retainedIssueKey);
     const fileRevision = currentCommentDraftRevision(pullRequestId, fileKey);
-    writeCommentDraft(pullRequestId, removedIssueKey, removedRevision, draft);
+    writeCommentDraft(pullRequestId, removedLeftKey, removedLeftRevision, draft);
+    writeCommentDraft(pullRequestId, removedRightKey, removedRightRevision, {
+      ...draft,
+      body: "右ペインの未送信ドラフト",
+    });
     writeCommentDraft(pullRequestId, retainedIssueKey, retainedRevision, draft);
     writeCommentDraft(pullRequestId, fileKey, fileRevision, draft);
 
     deleteCommentDraftForIssue(pullRequestId, "issue-142");
 
-    expect(readCommentDraft(pullRequestId, removedIssueKey)).toBeUndefined();
+    expect(readCommentDraft(pullRequestId, removedLeftKey)).toBeUndefined();
+    expect(readCommentDraft(pullRequestId, removedRightKey)).toBeUndefined();
     expect(readCommentDraft(pullRequestId, retainedIssueKey)).toEqual(draft);
     expect(readCommentDraft(pullRequestId, fileKey)).toEqual(draft);
-    writeCommentDraft(pullRequestId, removedIssueKey, removedRevision, draft);
-    expect(readCommentDraft(pullRequestId, removedIssueKey)).toBeUndefined();
+    writeCommentDraft(pullRequestId, removedLeftKey, removedLeftRevision, draft);
+    writeCommentDraft(pullRequestId, removedRightKey, removedRightRevision, draft);
+    expect(readCommentDraft(pullRequestId, removedLeftKey)).toBeUndefined();
+    expect(readCommentDraft(pullRequestId, removedRightKey)).toBeUndefined();
 
-    const reopenedRevision = currentCommentDraftRevision(pullRequestId, removedIssueKey);
-    expect(reopenedRevision).not.toBe(removedRevision);
-    writeCommentDraft(pullRequestId, removedIssueKey, reopenedRevision, draft);
-    expect(readCommentDraft(pullRequestId, removedIssueKey)).toEqual(draft);
+    const reopenedRevision = currentCommentDraftRevision(pullRequestId, removedLeftKey);
+    expect(reopenedRevision).not.toBe(removedLeftRevision);
+    writeCommentDraft(pullRequestId, removedLeftKey, reopenedRevision, draft);
+    expect(readCommentDraft(pullRequestId, removedLeftKey)).toEqual(draft);
   });
 
   it("restores an in-progress reply and rejects it after the review state is reset", () => {
@@ -319,6 +333,53 @@ describe("comment draft store", () => {
     expect(readCommentReplyDraft(pullRequestId, targetKey).body).toBe("タブと一緒に移動する返信");
     expect(readCommentDraft(pullRequestId, sourceCommentKey)).toBeUndefined();
     expect(readCommentDraft(pullRequestId, targetCommentKey)).toEqual(draft);
+  });
+
+  it("moves an Issue draft with its tab", () => {
+    const previous = workspace([{ kind: "pull-request-markdown" }, issueDocument], []);
+    const next = moveDocumentToPane(previous, issueDocument, "left", "right");
+    const sourceKey = contextKey(issueDocument, "left");
+    const targetKey = contextKey(issueDocument, "right");
+    writeCommentDraft(
+      pullRequestId,
+      sourceKey,
+      currentCommentDraftRevision(pullRequestId, sourceKey),
+      draft,
+    );
+
+    expect(moveCommentDraftsForWorkspaceTransition(pullRequestId, previous, next)).toEqual({
+      status: "applied",
+      commentDraftsMoved: true,
+    });
+    expect(readCommentDraft(pullRequestId, sourceKey)).toBeUndefined();
+    expect(readCommentDraft(pullRequestId, targetKey)).toEqual(draft);
+  });
+
+  it("rejects moving an Issue tab onto a pane with another draft for the same Issue", () => {
+    const keep: ActiveDocument = { kind: "pull-request-markdown" };
+    const previous = workspace([keep, issueDocument], [issueDocument]);
+    const next = workspace([keep], [issueDocument]);
+    const sourceKey = contextKey(issueDocument, "left");
+    const targetKey = contextKey(issueDocument, "right");
+    writeCommentDraft(
+      pullRequestId,
+      sourceKey,
+      currentCommentDraftRevision(pullRequestId, sourceKey),
+      draft,
+    );
+    writeCommentDraft(
+      pullRequestId,
+      targetKey,
+      currentCommentDraftRevision(pullRequestId, targetKey),
+      { ...draft, body: "移動先のIssue draft" },
+    );
+
+    expect(moveCommentDraftsForWorkspaceTransition(pullRequestId, previous, next)).toEqual({
+      status: "conflict",
+      reason: "destination",
+    });
+    expect(readCommentDraft(pullRequestId, sourceKey)?.body).toBe("未送信ドラフト");
+    expect(readCommentDraft(pullRequestId, targetKey)?.body).toBe("移動先のIssue draft");
   });
 
   it("moves every right-pane draft when closing the last left tab normalizes the workspace", () => {

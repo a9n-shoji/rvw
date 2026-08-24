@@ -254,7 +254,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
         {
           ok: false,
           error: {
-            code: "RESET_CONFIRMATION_REQUIRED",
+            code: "ISSUE_REMOVAL_CONFIRMATION_REQUIRED",
             message: "Issue削除には明示的な確認が必要です。",
             suggestions: ["削除対象を確認し、返されたconfirmationTokenとyesを指定してください。"],
           },
@@ -584,7 +584,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
         {
           ok: false,
           error: {
-            code: "RESET_CONFIRMATION_REQUIRED",
+            code: "ISSUE_REMOVAL_CONFIRMATION_REQUIRED",
             message: "Issue削除には明示的な確認が必要です。",
             suggestions: ["削除対象を確認し、返されたconfirmationTokenとyesを指定してください。"],
           },

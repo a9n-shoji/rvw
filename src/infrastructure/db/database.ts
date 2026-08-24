@@ -500,6 +500,39 @@ export class RvwDatabase {
     }
   }
 
+  private assertLegacyCommentPostEventsHaveOwners(migrationFilename: string): void {
+    const orphanEvents = this.database
+      .prepare(
+        `SELECT e.pull_request_url, COUNT(*) AS event_count
+         FROM comment_post_events e
+         LEFT JOIN pull_requests pr ON pr.github_url = e.pull_request_url
+         WHERE pr.id IS NULL
+         GROUP BY e.pull_request_url
+         ORDER BY e.pull_request_url`,
+      )
+      .all() as DbRow[];
+    if (orphanEvents.length === 0) return;
+    const events = orphanEvents.map((row) => ({
+      pullRequestUrl: stringValue(row, "pull_request_url"),
+      eventCount: numberValue(row, "event_count"),
+    }));
+    throw new RvwError(
+      "DATABASE_ERROR",
+      `DB migration ${migrationFilename} を適用できません。所有Pull Requestがないcomment watch eventがあります。`,
+      {
+        status: 500,
+        details: {
+          reason: "ORPHAN_COMMENT_POST_EVENTS",
+          eventCount: events.reduce((total, event) => total + event.eventCount, 0),
+          orphanEvents: events,
+        },
+        suggestions: [
+          "details.orphanEventsのPull Request URLを確認し、databaseを修復または退避してから再実行してください。",
+        ],
+      },
+    );
+  }
+
   private migrate(directory: string): void {
     const migrationTableExists = this.database
       .prepare(
@@ -581,6 +614,9 @@ export class RvwDatabase {
               .get(version) as DbRow | undefined)
           : undefined;
         if (!alreadyApplied) {
+          if (filename === "012_repository_reviews_and_issues.sql") {
+            this.assertLegacyCommentPostEventsHaveOwners(filename);
+          }
           this.database.exec(sql);
           this.database
             .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
@@ -593,6 +629,13 @@ export class RvwDatabase {
           this.database.exec("ROLLBACK");
         } catch {
           // Preserve the migration error.
+        }
+        if (
+          error instanceof RvwError &&
+          (error.details as { reason?: unknown } | undefined)?.reason ===
+            "ORPHAN_COMMENT_POST_EVENTS"
+        ) {
+          throw error;
         }
         throw new RvwError("DATABASE_ERROR", `DB migration ${filename} に失敗しました。`, {
           cause: error,

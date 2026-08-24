@@ -520,6 +520,48 @@ test("moves a Repository Review comment draft with a dragged file tab", async ({
   );
 });
 
+test("keeps the same Issue's drafts independent in both panes across synchronization", async ({
+  page,
+  request,
+}) => {
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  const issue = reviewTree.locator(".review-tree-issue").filter({ hasText: "#142" });
+  await issue.click();
+  await issue.click({ modifiers: [modifier] });
+
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  await leftPane.getByRole("button", { name: "Issue全体へコメント" }).click();
+  await rightPane.getByRole("button", { name: "Issue全体へコメント" }).click();
+  const leftDraft = leftPane.getByRole("textbox", { name: "Issue全体へコメント" });
+  const rightDraft = rightPane.getByRole("textbox", { name: "Issue全体へコメント" });
+  await leftDraft.fill("左ペインのIssue draft");
+  await rightDraft.fill("右ペインのIssue draft");
+
+  const refresh = await request.post("/api/test/refresh-repository-review", {
+    data: { sourceOid: "b".repeat(40) },
+  });
+  expect(refresh.ok()).toBe(true);
+  await expect(
+    page.getByRole("heading", { name: "Repository Review · trunk · bbbbbbbb" }),
+  ).toBeVisible();
+  await expect(leftDraft).toHaveValue("左ペインのIssue draft");
+  await expect(rightDraft).toHaveValue("右ペインのIssue draft");
+
+  await rightPane.getByRole("button", { name: "#142 Stabilize the request pathを閉じる" }).click();
+  await issue.click({ modifiers: [modifier] });
+  await expect(rightPane.getByRole("textbox", { name: "Issue全体へコメント" })).toHaveValue(
+    "右ペインのIssue draft",
+  );
+
+  await leftPane.getByRole("button", { name: "#142 Stabilize the request pathを閉じる" }).click();
+  await issue.click();
+  await expect(leftPane.getByRole("textbox", { name: "Issue全体へコメント" })).toHaveValue(
+    "左ペインのIssue draft",
+  );
+});
+
 test("preserves a current Repository file draft when exact-source navigation targets the same path", async ({
   page,
 }) => {

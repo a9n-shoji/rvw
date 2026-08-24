@@ -7,18 +7,13 @@ import { createApp } from "../../src/server/app.js";
 import { ViewerLifecycle } from "../../src/server/viewer-lifecycle.js";
 import { VIEWER_ID_HEADER } from "../../src/shared/constants.js";
 import { RvwError } from "../../src/shared/errors.js";
+import { createThrowingGitHubPort } from "../fixtures/github-port.js";
 
-const github: GitHubPort = {
+const github = createThrowingGitHubPort({
   doctor() {
     return Promise.resolve({ version: "fake", authenticated: true });
   },
-  getPullRequest() {
-    return Promise.reject(new Error("not used"));
-  },
-  getAttachment() {
-    return Promise.reject(new Error("not used"));
-  },
-};
+});
 
 const attachmentUrl =
   "https://github.com/user-attachments/assets/37948111-1227-4cdb-a76d-dc8eb469ae5c";

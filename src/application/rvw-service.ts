@@ -192,16 +192,31 @@ export interface CommentUpdateRequest {
   idempotencyKey?: string | undefined;
 }
 
-export interface CommentCreateRequest {
-  review?:
-    { kind: "pull-request"; pullRequest: string } | { kind: "repository"; repository: string };
-  pullRequest?: string;
-  target: CommentTargetRequest;
+interface CommentCreateFields {
   body: string;
-  authorLabel?: string | null;
-  relatedCommitOid?: string | null;
+  authorLabel?: string | null | undefined;
+  relatedCommitOid?: string | null | undefined;
   references?: CodeReference[] | undefined;
 }
+
+export type CommentCreateRequest = CommentCreateFields &
+  (
+    | {
+        review: { kind: "pull-request"; pullRequest: string };
+        pullRequest?: undefined;
+        target: PullRequestCommentTargetRequest;
+      }
+    | {
+        review: { kind: "repository"; repository: string };
+        pullRequest?: undefined;
+        target: RepositoryReviewCommentTargetRequest;
+      }
+    | {
+        review?: undefined;
+        pullRequest: string;
+        target: PullRequestCommentTargetRequest;
+      }
+  );
 
 export interface CommentExactSource {
   sourceOid: string;
@@ -334,6 +349,12 @@ export type CommentTargetRequest =
       startLine: number | null;
       endLine: number | null;
     };
+
+type PullRequestCommentTargetRequest = Exclude<CommentTargetRequest, { kind: "repository" }>;
+type RepositoryReviewCommentTargetRequest = Exclude<
+  CommentTargetRequest,
+  { kind: "pull-request" } | { kind: "document"; documentKind: "pull-request-markdown" }
+>;
 
 type RepositoryCommentTarget = Extract<
   CommentTarget,
@@ -1193,9 +1214,6 @@ export class RvwService {
       async (issue): Promise<RepositorySyncResult["issueResults"][number]> => {
         const expectedCacheGeneration = this.database.getIssueCacheGeneration(issue.id);
         try {
-          if (!this.github.getIssue) {
-            throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
-          }
           const current = assertFetchedIssueIdentity(
             {
               owner: repositoryReview.owner,
@@ -1282,9 +1300,6 @@ export class RvwService {
     ) {
       throw new RvwError("INVALID_INPUT", "cross-repository Issueは追加できません。");
     }
-    if (!this.github.getIssue) {
-      throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
-    }
     const issue = assertFetchedIssueIdentity(
       identity,
       await this.github.getIssue(
@@ -1325,9 +1340,6 @@ export class RvwService {
       });
     }
     const expectedCacheGeneration = this.database.getIssueCacheGeneration(cached.id);
-    if (!this.github.getIssue) {
-      throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
-    }
     const target = {
       host: "github.com" as const,
       owner: review.owner,
@@ -1395,7 +1407,8 @@ export class RvwService {
     repositoryPath: string,
     issueReference: string,
   ): Promise<{ repositoryReview: RepositoryReview; issue: IssueDocument; added: boolean }> {
-    const repositoryReview = await this.repositoryLifecycle.openForExplicitMutation(repositoryPath);
+    const repositoryReview =
+      await this.repositoryLifecycle.resolveOrCreateForIssueAddition(repositoryPath);
     const result = await this.addIssueToContext(
       { kind: "repository", value: repositoryReview },
       issueReference,
@@ -1547,7 +1560,7 @@ export class RvwService {
     const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
       repositoryPath,
       {
-        policy: { kind: "destructive", allowMissingInitialRef: false },
+        policy: { kind: "issue-removal" },
       },
     );
     const preview = this.getIssueRemovalPreview("repository", repositoryReview.id, issueReference);
@@ -1577,7 +1590,7 @@ export class RvwService {
     const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
       stored.localRepositoryPath,
       {
-        policy: { kind: "destructive", allowMissingInitialRef: false },
+        policy: { kind: "issue-removal" },
         expectedRepositoryReviewId: repositoryReviewId,
       },
     );
@@ -1603,7 +1616,7 @@ export class RvwService {
     const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
       repositoryPath,
       {
-        policy: { kind: "destructive", allowMissingInitialRef: false },
+        policy: { kind: "issue-removal" },
       },
     );
     return this.getIssueRemovalPreview("repository", repositoryReview.id, issueReference);
@@ -1617,7 +1630,7 @@ export class RvwService {
     const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
       stored.localRepositoryPath,
       {
-        policy: { kind: "destructive", allowMissingInitialRef: false },
+        policy: { kind: "issue-removal" },
         expectedRepositoryReviewId: repositoryReviewId,
       },
     );
@@ -1807,129 +1820,127 @@ export class RvwService {
           )
         : this.database.upsertPullRequest(github, repositoryLocation, comparisonBaseOid);
     const issueResults: IssueSyncResult[] = [];
-    const getIssue = this.github.getIssue?.bind(this.github);
-    if (getIssue) {
-      const issueRequests: Array<{
-        reference: string;
-        number: number;
-        previous: IssueDocument | null;
-        operation: "add" | "refresh";
-      }> = [];
-      const fetchedIssueNumbers = new Set<number>();
-      for (const reference of directIssueReferences(github.body, github.owner, github.repository)) {
-        const identity = parseIssueReference(reference, pullRequest);
-        fetchedIssueNumbers.add(identity.number);
-        const cached = this.database.findIssue(
-          pullRequest.owner,
-          pullRequest.repository,
-          identity.number,
-        );
-        issueRequests.push({
-          reference,
-          number: identity.number,
-          previous: cached
-            ? this.database.getReviewIssue("pull-request", pullRequest.id, cached.id)
-            : null,
-          operation: "add",
-        });
-      }
-      for (const cached of this.database.listReviewIssues("pull-request", pullRequest.id)) {
-        if (fetchedIssueNumbers.has(cached.number)) continue;
-        issueRequests.push({
-          reference: cached.url,
-          number: cached.number,
-          previous: cached,
-          operation: "refresh",
-        });
-      }
-      issueResults.push(
-        ...(await mapWithConcurrency(
-          issueRequests,
-          ISSUE_FETCH_CONCURRENCY,
-          async ({ reference, number, previous, operation }): Promise<IssueSyncResult> => {
-            const expectedCacheGeneration = previous
-              ? this.database.getIssueCacheGeneration(previous.id)
-              : null;
-            try {
-              const issue = assertFetchedIssueIdentity(
-                { owner: github.owner, repository: github.repository, number },
-                await getIssue(
-                  number,
-                  {
-                    host: "github.com",
-                    owner: github.owner,
-                    repository: github.repository,
-                    canonicalName: `${github.owner}/${github.repository}`,
-                  },
-                  repository.worktreePath,
-                ),
-              );
-              if (operation === "add") {
-                const cached = this.database.addReviewIssue(
-                  "pull-request",
-                  pullRequest.id,
-                  issue,
-                ).issue;
-                return { reference, issue: cached, ok: true };
-              }
-              const refreshed = this.database.refreshReviewIssue(
+    const getIssue = this.github.getIssue.bind(this.github);
+    const issueRequests: Array<{
+      reference: string;
+      number: number;
+      previous: IssueDocument | null;
+      operation: "add" | "refresh";
+    }> = [];
+    const fetchedIssueNumbers = new Set<number>();
+    for (const reference of directIssueReferences(github.body, github.owner, github.repository)) {
+      const identity = parseIssueReference(reference, pullRequest);
+      fetchedIssueNumbers.add(identity.number);
+      const cached = this.database.findIssue(
+        pullRequest.owner,
+        pullRequest.repository,
+        identity.number,
+      );
+      issueRequests.push({
+        reference,
+        number: identity.number,
+        previous: cached
+          ? this.database.getReviewIssue("pull-request", pullRequest.id, cached.id)
+          : null,
+        operation: "add",
+      });
+    }
+    for (const cached of this.database.listReviewIssues("pull-request", pullRequest.id)) {
+      if (fetchedIssueNumbers.has(cached.number)) continue;
+      issueRequests.push({
+        reference: cached.url,
+        number: cached.number,
+        previous: cached,
+        operation: "refresh",
+      });
+    }
+    issueResults.push(
+      ...(await mapWithConcurrency(
+        issueRequests,
+        ISSUE_FETCH_CONCURRENCY,
+        async ({ reference, number, previous, operation }): Promise<IssueSyncResult> => {
+          const expectedCacheGeneration = previous
+            ? this.database.getIssueCacheGeneration(previous.id)
+            : null;
+          try {
+            const issue = assertFetchedIssueIdentity(
+              { owner: github.owner, repository: github.repository, number },
+              await getIssue(
+                number,
+                {
+                  host: "github.com",
+                  owner: github.owner,
+                  repository: github.repository,
+                  canonicalName: `${github.owner}/${github.repository}`,
+                },
+                repository.worktreePath,
+              ),
+            );
+            if (operation === "add") {
+              const cached = this.database.addReviewIssue(
                 "pull-request",
                 pullRequest.id,
-                previous!.id,
                 issue,
-              );
-              return refreshed.skipped
-                ? {
-                    reference,
-                    issue: refreshed.issue ?? previous!,
-                    ok: true,
-                    skipped: refreshed.skipped,
-                  }
-                : { reference, issue: refreshed.issue!, ok: true };
-            } catch (error) {
-              const rvwError = asRvwError(error);
-              let stale: IssueDocument | null = null;
-              if (previous) {
-                if (isIssueIdentityMismatch(rvwError)) {
-                  const membershipExists = this.database.hasReviewIssue(
-                    "pull-request",
-                    pullRequest.id,
-                    previous.id,
-                  );
-                  if (operation === "refresh" && !membershipExists) {
-                    return {
-                      reference,
-                      issue: previous,
-                      ok: true,
-                      skipped: "membership-removed",
-                    };
-                  }
-                  stale = membershipExists ? previous : null;
-                } else {
-                  const result = this.database.setReviewIssueSyncError(
-                    "pull-request",
-                    pullRequest.id,
-                    previous.id,
-                    expectedCacheGeneration!,
-                    rvwError.message,
-                  );
-                  if (operation === "refresh" && result.skipped) {
-                    return {
-                      reference,
-                      issue: result.issue ?? previous,
-                      ok: true,
-                      skipped: result.skipped,
-                    };
-                  }
-                  stale = result.skipped ? null : result.issue;
-                }
-              }
-              return { reference, issue: stale, ok: false, error: rvwError.toJSON() };
+              ).issue;
+              return { reference, issue: cached, ok: true };
             }
-          },
-        )),
-      );
-    }
+            const refreshed = this.database.refreshReviewIssue(
+              "pull-request",
+              pullRequest.id,
+              previous!.id,
+              issue,
+            );
+            return refreshed.skipped
+              ? {
+                  reference,
+                  issue: refreshed.issue ?? previous!,
+                  ok: true,
+                  skipped: refreshed.skipped,
+                }
+              : { reference, issue: refreshed.issue!, ok: true };
+          } catch (error) {
+            const rvwError = asRvwError(error);
+            let stale: IssueDocument | null = null;
+            if (previous) {
+              if (isIssueIdentityMismatch(rvwError)) {
+                const membershipExists = this.database.hasReviewIssue(
+                  "pull-request",
+                  pullRequest.id,
+                  previous.id,
+                );
+                if (operation === "refresh" && !membershipExists) {
+                  return {
+                    reference,
+                    issue: previous,
+                    ok: true,
+                    skipped: "membership-removed",
+                  };
+                }
+                stale = membershipExists ? previous : null;
+              } else {
+                const result = this.database.setReviewIssueSyncError(
+                  "pull-request",
+                  pullRequest.id,
+                  previous.id,
+                  expectedCacheGeneration!,
+                  rvwError.message,
+                );
+                if (operation === "refresh" && result.skipped) {
+                  return {
+                    reference,
+                    issue: result.issue ?? previous,
+                    ok: true,
+                    skipped: result.skipped,
+                  };
+                }
+                stale = result.skipped ? null : result.issue;
+              }
+            }
+            return { reference, issue: stale, ok: false, error: rvwError.toJSON() };
+          }
+        },
+      )),
+    );
     return { pullRequest, issueResults };
   }
 
@@ -3374,7 +3385,7 @@ export class RvwService {
     const resolved = await this.repositoryLifecycle.resolveExistingAtPath(
       repositoryReview.localRepositoryPath,
       {
-        policy: { kind: "destructive", allowMissingInitialRef: true },
+        policy: { kind: "reset" },
         expectedRepositoryReviewId: repositoryReview.id,
       },
     );
@@ -3390,7 +3401,7 @@ export class RvwService {
     confirmationRequired: true;
   }> {
     const resolved = await this.repositoryLifecycle.resolveExistingAtPath(repositoryPath, {
-      policy: { kind: "destructive", allowMissingInitialRef: true },
+      policy: { kind: "reset" },
     });
     return await this.getResolvedRepositoryResetPreview(resolved);
   }
@@ -3452,7 +3463,7 @@ export class RvwService {
     const resolved = await this.repositoryLifecycle.resolveExistingAtPath(
       repositoryReview.localRepositoryPath,
       {
-        policy: { kind: "destructive", allowMissingInitialRef: true },
+        policy: { kind: "reset" },
         expectedRepositoryReviewId: repositoryReview.id,
       },
     );
@@ -3478,7 +3489,7 @@ export class RvwService {
         };
   }> {
     const resolved = await this.repositoryLifecycle.resolveExistingAtPath(repositoryPath, {
-      policy: { kind: "destructive", allowMissingInitialRef: true },
+      policy: { kind: "reset" },
     });
     return await this.resetResolvedRepositoryReview(resolved, confirmationToken);
   }
@@ -3720,9 +3731,6 @@ export class RvwService {
         `issuesToAddは一回の操作につき${MAX_WALKTHROUGH_ISSUES_TO_ADD}件以下にしてください。`,
       );
     }
-    if (!this.github.getIssue) {
-      throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
-    }
     const issueNumbers = new Set<number>();
     for (const reference of references) {
       if (reference.length > MAX_ISSUE_REFERENCE_CHARACTERS) {
@@ -3749,7 +3757,7 @@ export class RvwService {
     return await mapWithConcurrency([...issueNumbers], ISSUE_FETCH_CONCURRENCY, async (number) =>
       assertFetchedIssueIdentity(
         { owner: review.owner, repository: review.repository, number },
-        await this.github.getIssue!(
+        await this.github.getIssue(
           number,
           {
             host: "github.com",

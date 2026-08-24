@@ -102,6 +102,10 @@ class FakeGitHub implements GitHubPort {
     return this.pullRequest;
   }
 
+  getRepository(): never {
+    throw new Error("Pull Request tests must not call the Repository API");
+  }
+
   async getIssue(number: number, repository: RepositoryIdentity): Promise<GitHubIssue> {
     expect(repository.canonicalName).toBe("acme/review-repo");
     await this.issueBarrier?.blockOnce();

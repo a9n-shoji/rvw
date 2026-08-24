@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, vi } from "vitest";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
+import { RvwError } from "../../src/shared/errors.js";
 
 function openDatabaseInChildProcess(
   filePath: string,
@@ -430,7 +431,7 @@ describe("RvwDatabase", () => {
     migrated.close();
   });
 
-  it("rolls migration 011 back when a legacy watch event has no matching Pull Request", () => {
+  it("reports orphan legacy watch events and rolls migration 012 back", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-unmatched-watch-migration-"));
     const filePath = path.join(directory, "rvw.db");
     const legacyMigrationsDirectory = path.join(directory, "legacy-migrations");
@@ -469,9 +470,26 @@ describe("RvwDatabase", () => {
       );
     legacySqlite.close();
 
-    expect(() => new RvwDatabase({ filePath, migrationsDirectory: "./migrations" })).toThrowError(
-      /012_repository_reviews_and_issues\.sql/,
-    );
+    let migrationError: unknown;
+    try {
+      new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    } catch (error) {
+      migrationError = error;
+    }
+    expect(migrationError).toBeInstanceOf(RvwError);
+    if (!(migrationError instanceof RvwError)) throw migrationError;
+    expect(migrationError.code).toBe("DATABASE_ERROR");
+    expect(migrationError.message).toContain("012_repository_reviews_and_issues.sql");
+    expect(migrationError.details).toEqual({
+      reason: "ORPHAN_COMMENT_POST_EVENTS",
+      eventCount: 1,
+      orphanEvents: [
+        {
+          pullRequestUrl: "https://github.com/acme/review-repo/pull/404",
+          eventCount: 1,
+        },
+      ],
+    });
 
     const inspected = new DatabaseSync(filePath, { readOnly: true });
     expect(

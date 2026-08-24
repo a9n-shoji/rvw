@@ -70,6 +70,9 @@ function documentIdentityTabKey(identity: unknown): string | null {
   if (identity[0] === "walkthrough" && typeof identity[1] === "string") {
     return `walkthrough:${identity[1]}`;
   }
+  if (identity[0] === "issue" && typeof identity[1] === "string") {
+    return `issue:${identity[1]}`;
+  }
   if (identity[0] === "repository-file" && typeof identity[1] === "string") {
     return `file:${identity[1]}`;
   }
@@ -78,7 +81,13 @@ function documentIdentityTabKey(identity: unknown): string | null {
 
 export function commentDraftContextKey(context: CommentDraftContext): string {
   if (context.activeDocument.kind === "issue") {
-    return JSON.stringify([documentIdentity(context.activeDocument)]);
+    return JSON.stringify([
+      context.pane,
+      documentIdentity(context.activeDocument),
+      null,
+      null,
+      "issue",
+    ]);
   }
   const currentRepositoryFile =
     context.reviewKind === "repository" &&
@@ -387,15 +396,19 @@ export function deleteCommentDraft(reviewId: string, contextKey: string, revisio
 }
 
 export function deleteCommentDraftForIssue(reviewId: string, issueId: string): void {
-  const contextKey = JSON.stringify([issueDocumentIdentity(issueId)]);
-  draftsByReview.get(reviewId)?.delete(contextKey);
+  const contextKeys = (["left", "right"] as const).map((pane) =>
+    JSON.stringify([pane, issueDocumentIdentity(issueId), null, null, "issue"]),
+  );
+  const drafts = draftsByReview.get(reviewId);
+  for (const contextKey of contextKeys) drafts?.delete(contextKey);
   if (draftsByReview.get(reviewId)?.size === 0) draftsByReview.delete(reviewId);
   let revisions = revisionByContext.get(reviewId);
   if (!revisions) {
     revisions = new Map();
     revisionByContext.set(reviewId, revisions);
   }
-  revisions.set(contextKey, ++nextDraftRevision);
+  const revision = ++nextDraftRevision;
+  for (const contextKey of contextKeys) revisions.set(contextKey, revision);
 }
 
 export function clearCommentDraftsForReview(reviewId: string): void {

@@ -70,6 +70,34 @@ describe("CLI input schemas", () => {
     });
   });
 
+  it.each([
+    {
+      review: { kind: "repository", repository: "acme/review-repo" },
+      target: { kind: "pull-request" },
+      body: "invalid",
+    },
+    {
+      review: {
+        kind: "pull-request",
+        pullRequest: "https://github.com/acme/review-repo/pull/7",
+      },
+      target: { kind: "repository" },
+      body: "invalid",
+    },
+    {
+      review: { kind: "repository", repository: "acme/review-repo" },
+      target: {
+        kind: "document",
+        documentKind: "pull-request-markdown",
+        startLine: null,
+        endLine: null,
+      },
+      body: "invalid",
+    },
+  ])("rejects comment targets that do not belong to the selected Review kind", (input) => {
+    expect(commentCreateInputSchema.safeParse(input).success).toBe(false);
+  });
+
   it("rejects unbounded Walkthrough Issue additions", () => {
     const input = {
       sourceOid: "a".repeat(40),

@@ -7,9 +7,7 @@ import { GIT_OBJECT_ID_PATTERN } from "../shared/constants.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 
 export type RepositoryReviewResolutionPolicy =
-  | { kind: "read" }
-  | { kind: "synchronize" }
-  | { kind: "destructive"; allowMissingInitialRef: boolean };
+  { kind: "read" } | { kind: "synchronize" } | { kind: "issue-removal" } | { kind: "reset" };
 
 export interface ResolvedRepositoryReview {
   repositoryReview: RepositoryReview;
@@ -373,11 +371,7 @@ export class RepositoryReviewLifecycle {
       repositoryReview.id,
       repositoryReview.sourceOid,
     );
-    if (
-      !ownedSourceAvailable &&
-      options.policy.kind === "destructive" &&
-      options.policy.allowMissingInitialRef
-    ) {
+    if (!ownedSourceAvailable && options.policy.kind === "reset") {
       const prefix = `refs/rvw/repository/${repositoryReview.id.toLowerCase()}/commits/`;
       const retainedRefs = await this.git.listRefsByPrefix(repository.worktreePath, prefix);
       if (repositoryReview.initializationState === "ready" || retainedRefs.length !== 0) {
@@ -530,9 +524,6 @@ export class RepositoryReviewLifecycle {
     remoteIdentity: { owner: string; repository: string; remoteUrl: string },
     existing: RepositoryReview | null,
   ): Promise<RepositoryReview> {
-    if (!this.github.getRepository) {
-      throw new RvwError("GITHUB_REPOSITORY_ERROR", "GitHub repository取得が利用できません。");
-    }
     const identity = {
       host: "github.com" as const,
       owner: remoteIdentity.owner,
@@ -699,7 +690,7 @@ export class RepositoryReviewLifecycle {
     existing: RepositoryReview | null,
   ): Promise<GitHubRepository> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const github = await this.github.getRepository!(identity, repository.worktreePath);
+      const github = await this.github.getRepository(identity, repository.worktreePath);
       if (!sameRepositoryIdentity(identity, github)) {
         const bound =
           existing ??
@@ -856,7 +847,7 @@ export class RepositoryReviewLifecycle {
     };
   }
 
-  async openForExplicitMutation(repositoryPath: string): Promise<RepositoryReview> {
+  async resolveOrCreateForIssueAddition(repositoryPath: string): Promise<RepositoryReview> {
     const repository = await this.git.repositoryContext(repositoryPath);
     let stored = this.database.findRepositoryReviewByGitCommonDir(repository.gitCommonDir);
     if (stored) {

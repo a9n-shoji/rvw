@@ -6,6 +6,7 @@ import { Command, InvalidArgumentError } from "commander";
 import openBrowser from "open";
 import { z } from "zod";
 import { createRuntime, type Runtime } from "../application/runtime.js";
+import type { CommentCreateRequest } from "../application/rvw-service.js";
 import { databasePathConfiguration } from "../infrastructure/db/database.js";
 import { SkillInstaller, type SkillPlatform } from "../infrastructure/skills/skill-installer.js";
 import {
@@ -905,7 +906,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           writeJson({
             ok: false,
             error: {
-              code: "RESET_CONFIRMATION_REQUIRED",
+              code: "ISSUE_REMOVAL_CONFIRMATION_REQUIRED",
               message: "Issue削除には--yesが必要です。",
               suggestions: ["details.argumentsの同じ対象・確認tokenで再実行してください。"],
               details: {
@@ -1138,7 +1139,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           writeJson({
             ok: false,
             error: {
-              code: "RESET_CONFIRMATION_REQUIRED",
+              code: "ISSUE_REMOVAL_CONFIRMATION_REQUIRED",
               message: "Issue削除には--yesが必要です。",
               suggestions: ["details.argumentsの同じ対象・確認tokenで再実行してください。"],
               details: {
@@ -1429,17 +1430,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .description("登録済みReviewへ未解決コメントを一件作成")
     .action(async () => {
       const input = commentCreateInputSchema.parse(await readStdinJson());
-      const request = {
-        ...(input.review === undefined ? {} : { review: input.review }),
-        ...(input.pullRequest === undefined ? {} : { pullRequest: input.pullRequest }),
-        target: input.target,
-        body: input.body,
-        ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
-        ...(input.relatedCommitOid === undefined
-          ? {}
-          : { relatedCommitOid: input.relatedCommitOid }),
-        ...(input.references === undefined ? {} : { references: input.references }),
-      };
+      const request: CommentCreateRequest = input;
       const created = await callService(
         "comment.create",
         request,
