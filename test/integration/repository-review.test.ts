@@ -331,6 +331,24 @@ class RemoteMoveOnceGitClient extends GitClient {
   }
 }
 
+class RenameMatchingRemoteAfterFirstResolutionGitClient extends GitClient {
+  private armed = false;
+  private matchingResolutions = 0;
+
+  arm(): void {
+    this.armed = true;
+    this.matchingResolutions = 0;
+  }
+
+  override async findBaseRepositoryIdentity(cwd: string, owner: string, repository: string) {
+    const selected = await super.findBaseRepositoryIdentity(cwd, owner, repository);
+    if (this.armed && ++this.matchingResolutions === 1) {
+      git(cwd, "remote", "rename", "origin", "upstream");
+    }
+    return selected;
+  }
+}
+
 class RepositoryRetainBarrierGitClient extends GitClient {
   private barrier: Promise<void> | null = null;
   private releaseBarrier: (() => void) | null = null;
@@ -523,6 +541,40 @@ describe("Repository Review", () => {
         },
       },
     });
+  });
+
+  it("returns the remote selected by the final synchronization boundary", async () => {
+    const gitClient = new RenameMatchingRemoteAfterFirstResolutionGitClient();
+    const { repositoryPath, service } = setup(gitClient);
+    const opened = await service.openRepositoryReview(repositoryPath);
+    gitClient.arm();
+
+    await expect(service.syncRepositoryReview(repositoryPath)).resolves.toMatchObject({
+      repositoryReview: { id: opened.repositoryReview.id },
+      selectedRemote: {
+        name: "upstream",
+        url: "https://github.com/acme/review-repo.git",
+      },
+    });
+  });
+
+  it("does not build an extra Repository reset preview for a confirmed HTTP request", async () => {
+    const { repositoryPath, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const preview = await service.getRepositoryResetPreview(opened.repositoryReview.id);
+    const previewSpy = vi.spyOn(service, "getRepositoryResetPreview");
+
+    const response = await httpApp(service).request(
+      `http://127.0.0.1:4321/api/repository-reviews/${opened.repositoryReview.id}/reset`,
+      {
+        method: "POST",
+        headers: { host: "127.0.0.1:4321", "content-type": "application/json" },
+        body: JSON.stringify({ yes: true, confirmationToken: preview.confirmationToken }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(previewSpy).not.toHaveBeenCalled();
   });
 
   it("keeps destructive previews existing-only across direct, Agent socket, and HTTP boundaries", async () => {

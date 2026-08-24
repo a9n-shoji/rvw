@@ -211,7 +211,7 @@ last membership or resetting its last owner garbage-collects the cache row. If a
 owns an equal-version conflict, explicit `issue refresh --force` repairs it only after two identical
 GitHub identity/content reads. Worktree/common-directory values are realpath-canonicalized; Repository Review
 open/viewer/doctor expose the same origin-first selected remote that Git fetch uses, and doctor reports
-40-64 digit retained-ref ownership without cleanup. Cached open upgrades legacy stored path spellings
+40- or 64-digit lowercase retained-ref ownership without cleanup. Cached open upgrades legacy stored path spellings
 to their filesystem realpaths after the binding is verified.
 
 `comment get` resolves Issue content through the owning PR/Repository Review membership, so membership-specific
@@ -442,7 +442,7 @@ A standalone reply accepts:
 
 `body` is required, non-empty UTF-8 GFM Markdown source of at most 64 KiB. `authorLabel` and
 `relatedCommitOid` are optional and may be null. `idempotencyKey` is optional and 1–200 characters.
-A non-null related OID must be a 40–64 digit hex commit available to the PR. An exact retry with the
+A non-null related OID must be an exact 40- or 64-digit lowercase hex commit available to the PR. An exact retry with the
 same key returns the existing post; reuse for another payload fails. Without a key, re-read the
 comment before retrying an uncertain result.
 
@@ -603,7 +603,7 @@ uses `{"kind":"repository","repository":"owner/repository"}`. Optional `issuesTo
 same-repository Issue memberships; it only adds, never removes, relates, or recursively discovers. It
 accepts at most 50 references of at most 256 characters. Repository Review additions require a verified
 canonical remote before any Issue fetch. `sourceOid`
-must be a 40–64 digit hex commit available to the saved pull request. Reference IDs and Mermaid node
+must be an exact 40- or 64-digit lowercase hex commit available to the saved pull request. Reference IDs and Mermaid node
 IDs use `[A-Za-z][A-Za-z0-9_-]{0,63}`. Every repository-relative path must be an available UTF-8
 document at that commit. A reference may omit both `startLine` and `endLine` to target the whole file;
 otherwise both are required and define an existing inclusive single-line or multi-line range. Omitted

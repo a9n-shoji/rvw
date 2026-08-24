@@ -155,12 +155,14 @@ detail queries.
 
 ### Choice
 
-Centralize the application policy as open-or-create, resolve-existing, synchronize-existing, and
+Centralize the application policy as open-or-create, resolve-existing, remote-required, and
 destructive-existing use cases shared by direct CLI, Agent socket, and HTTP. Existing-only resolution
 checks the current Git common directory, local GitHub remote identity when available, and the saved
 review-owned source ref before any network request or state change. A resolvable remote mismatch is
 always `REPOSITORY_MISMATCH` and is never recorded as `source_sync_error`. Missing remotes permit
-verified cached reads and local Issue removal/reset, but not sync or Issue addition. Repository rename
+verified cached reads and local Issue removal/reset, but not sync, Issue addition/repair, or Walkthrough
+Issue additions. The remote-required policy proves only that capability; source synchronization remains
+inside the synchronize-existing use case. Repository rename
 and transfer are not auto-followed; reset at the original binding and recreation is explicit.
 
 Own retained Repository Review evidence under
@@ -252,7 +254,7 @@ Include the review kind in the unreleased Repository Review request hash rather 
 
 Canonicalize worktree and common-directory paths with filesystem realpath. Expose the selected GitHub
 remote in open/viewer/doctor diagnostics, use that same origin-first ordering for fetch, upgrade verified
-legacy path spellings on cached open, and classify 40-64 digit retained Repository Review refs in doctor without automatic
+legacy path spellings on cached open, and classify 40- or 64-digit lowercase retained Repository Review refs in doctor without automatic
 cleanup. Re-key v3 watcher rows from the legacy PR URL to the first observed protocol-v4 PR UUID in the
 same ingest transaction; merge pending duplicates and quarantine conflicting active leases. If restart
 claims a legacy pending lease before another event arrives, derive the stable UUID from `comment get` and

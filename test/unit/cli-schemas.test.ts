@@ -70,6 +70,22 @@ describe("CLI input schemas", () => {
     });
   });
 
+  it("requires exact lowercase SHA-1 or SHA-256 object IDs", () => {
+    expect(
+      commentReplyInputSchema.safeParse({ body: "Result", relatedCommitOid: "a".repeat(40) })
+        .success,
+    ).toBe(true);
+    expect(
+      commentReplyInputSchema.safeParse({ body: "Result", relatedCommitOid: "b".repeat(64) })
+        .success,
+    ).toBe(true);
+    for (const relatedCommitOid of ["a".repeat(41), "a".repeat(63), "A".repeat(40)]) {
+      expect(commentReplyInputSchema.safeParse({ body: "Result", relatedCommitOid }).success).toBe(
+        false,
+      );
+    }
+  });
+
   it.each([
     {
       review: { kind: "repository", repository: "acme/review-repo" },

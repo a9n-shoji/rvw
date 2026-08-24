@@ -29,6 +29,23 @@ describe("commentTargetSchema", () => {
   ])("accepts $kind $documentKind targets", (target) => {
     expect(commentTargetSchema.safeParse(target).success).toBe(true);
   });
+
+  it("accepts exact lowercase SHA-1/SHA-256 OIDs and rejects ambiguous forms", () => {
+    const target = (sourceOid: string) => ({
+      kind: "document",
+      documentKind: "repository-file",
+      sourceOid,
+      path: "src/fixture.ts",
+      startLine: 1,
+      endLine: 1,
+    });
+
+    expect(commentTargetSchema.safeParse(target("a".repeat(40))).success).toBe(true);
+    expect(commentTargetSchema.safeParse(target("b".repeat(64))).success).toBe(true);
+    expect(commentTargetSchema.safeParse(target("a".repeat(41))).success).toBe(false);
+    expect(commentTargetSchema.safeParse(target("a".repeat(63))).success).toBe(false);
+    expect(commentTargetSchema.safeParse(target("A".repeat(40))).success).toBe(false);
+  });
 });
 
 describe("createCommentSchema", () => {

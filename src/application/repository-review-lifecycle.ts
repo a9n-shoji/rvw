@@ -7,7 +7,7 @@ import { GIT_OBJECT_ID_PATTERN } from "../shared/constants.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 
 export type RepositoryReviewResolutionPolicy =
-  { kind: "read" } | { kind: "synchronize" } | { kind: "issue-removal" } | { kind: "reset" };
+  { kind: "read" } | { kind: "remote-required" } | { kind: "issue-removal" } | { kind: "reset" };
 
 export interface ResolvedRepositoryReview {
   repositoryReview: RepositoryReview;
@@ -19,6 +19,8 @@ export interface ResolvedRepositoryReview {
     remoteUrl: string;
   } | null;
 }
+
+export type SynchronizedRepositoryReview = ResolvedRepositoryReview;
 
 export interface RepositoryRelocationEvidenceStatus {
   requiredEvidenceCount: number;
@@ -380,11 +382,11 @@ export class RepositoryReviewLifecycle {
     } else if (!ownedSourceAvailable) {
       repositoryReview = await this.assertOwnedSourceRef(repositoryReview, repository);
     }
-    if (options.policy.kind === "synchronize" && !remoteIdentity) {
+    if (options.policy.kind === "remote-required" && !remoteIdentity) {
       throw this.repositoryMismatch(
         repositoryReview,
         repository,
-        "Repository Reviewの同期に必要なGitHub remote identityを解決できません。",
+        "Repository Reviewのremote操作に必要なGitHub remote identityを解決できません。",
       );
     }
     return { repositoryReview, repository, remoteIdentity };
@@ -889,15 +891,16 @@ export class RepositoryReviewLifecycle {
   async synchronizeExisting(
     repositoryPath: string,
     expectedRepositoryReviewId?: string,
-  ): Promise<RepositoryReview> {
+  ): Promise<SynchronizedRepositoryReview> {
     const resolved = await this.resolveExistingAtPath(repositoryPath, {
-      policy: { kind: "synchronize" },
+      policy: { kind: "remote-required" },
       ...(expectedRepositoryReviewId ? { expectedRepositoryReviewId } : {}),
     });
-    return await this.synchronizeSource(
+    const repositoryReview = await this.synchronizeSource(
       resolved.repository,
       resolved.remoteIdentity!,
       resolved.repositoryReview,
     );
+    return { ...resolved, repositoryReview };
   }
 }

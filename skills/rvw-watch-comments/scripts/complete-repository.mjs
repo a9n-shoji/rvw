@@ -73,9 +73,11 @@ function validatedOutcomes(input, operations) {
     if (
       outcome.relatedCommitOid !== null &&
       (typeof outcome.relatedCommitOid !== "string" ||
-        !/^[0-9a-f]{40,64}$/i.test(outcome.relatedCommitOid))
+        !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(outcome.relatedCommitOid))
     ) {
-      fail("Repository Review relatedCommitOid must be null or a 40-64 character hex commit OID");
+      fail(
+        "Repository Review relatedCommitOid must be null or a 40- or 64-character lowercase hex commit OID",
+      );
     }
     if (!Array.isArray(outcome.references)) {
       fail("Repository Review outcomes must include the complete references array");

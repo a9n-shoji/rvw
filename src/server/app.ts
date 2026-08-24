@@ -440,8 +440,8 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
 
   app.post("/api/repository-reviews/:id/reset", async (context) => {
     const input = resetSchema.parse(await context.req.json());
-    const preview = await service.getRepositoryResetPreview(context.req.param("id"));
     if (!input.yes) {
+      const preview = await service.getRepositoryResetPreview(context.req.param("id"));
       return context.json(
         {
           ok: false,

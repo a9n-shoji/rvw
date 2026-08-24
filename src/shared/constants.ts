@@ -2,7 +2,7 @@ export const APP_VERSION = "0.3.0";
 export const PROTOCOL_VERSION = 4;
 export const VIEWER_ID_HEADER = "x-rvw-viewer-id";
 
-export const GIT_OBJECT_ID_PATTERN = /^[0-9a-f]{40,64}$/i;
+export const GIT_OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
 export const MAX_TEXT_DOCUMENT_BYTES = 1024 * 1024;
 export const MAX_MARKDOWN_ASSET_BYTES = 5 * 1024 * 1024;

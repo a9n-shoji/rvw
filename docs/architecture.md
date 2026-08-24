@@ -34,7 +34,7 @@ ordered remotes for its saved canonical identity, so an unrelated origin does no
 Moved clones resolve the Review from its live namespace before applying the same policy, and doctor applies it to
 the Review bound at the current common directory. The selected remote is used for both display and fetch and is
 exposed through open, the viewer header, and doctor. Doctor classifies
-40-64 digit Repository Review refs as current, artifact-referenced, unreferenced, or orphan without mutating them. The
+40- or 64-digit lowercase Repository Review refs as current, artifact-referenced, unreferenced, or orphan without mutating them. The
 Issue removal transaction deletes only the selected membership and its owned comments/replies.
 Issue-target Comment creation performs the display/range checks in the application layer, then
 rechecks that the same Review still owns the membership inside the Comment insertion transaction.
@@ -68,13 +68,15 @@ socket, connection, database identity, selected transport, and fallback reason. 
 a rollback-only write transaction instead of inferring writeability from Unix modes.
 
 `RepositoryReviewLifecycle` is the application boundary shared by CLI, HTTP, and Agent socket. It separates
-open-or-create from discriminated read, synchronize, and destructive resolution policies; only reset's
+open-or-create from discriminated read, remote-required, and destructive resolution policies; only reset's
 destructive policy can admit a missing initial ref. Only
 `repository open` and the explicit Issue-add operation may create a Repository Review. Reset, Issue removal,
 comments, and synchronization require an existing aggregate; preview failures are read-only. Matching
 local binding plus a network-only GitHub failure preserves cached reads. If no GitHub remote can be
 resolved, cached reads and local cleanup remain available when the common directory and owned ref
-still prove the binding, while synchronization and Issue addition are rejected.
+still prove the binding, while synchronization, Issue addition/repair, and Walkthrough Issue additions are
+rejected. Source synchronization remains confined to the synchronize-existing use case; remote-required
+resolution itself only proves the capability.
 
 On a verified remote-less cached open, the lifecycle may move `localRepositoryPath` to the current
 worktree in that common directory; existing-only previews use the resolved worktree without persisting

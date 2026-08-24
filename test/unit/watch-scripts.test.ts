@@ -542,7 +542,7 @@ describe("rvw-watch-comments bundled scripts", () => {
         {
           commentRef: "rvw://comment/repository-comment",
           body: "📝 調査結果\n\nRead [the source policy](rvw-ref:source-policy).",
-          relatedCommitOid: "A".repeat(64),
+          relatedCommitOid: "a".repeat(64),
           references: [
             {
               id: "source-policy",
@@ -576,7 +576,7 @@ describe("rvw-watch-comments bundled scripts", () => {
       (claimed.operations as Array<{ idempotencyKey: string }>)[0]?.idempotencyKey,
     );
     expect(readFakeCalls(fake.log)[0]?.input).toMatchObject({
-      relatedCommitOid: "A".repeat(64),
+      relatedCommitOid: "a".repeat(64),
       references: [{ id: "source-policy", path: "src/application/rvw-service.ts" }],
     });
     expect(runState(state, "list")).toMatchObject({ pending: [] });
@@ -819,6 +819,24 @@ describe("rvw-watch-comments bundled scripts", () => {
           repository: "acme/repo",
         },
         outcomes: [{ ...validOutcome, pushStatus: undefined }],
+      },
+      {
+        leaseId: claimed.leaseId,
+        context: {
+          kind: "repository",
+          repositoryReviewId: "repository:acme/repo",
+          repository: "acme/repo",
+        },
+        outcomes: [{ ...validOutcome, relatedCommitOid: "A".repeat(40) }],
+      },
+      {
+        leaseId: claimed.leaseId,
+        context: {
+          kind: "repository",
+          repositoryReviewId: "repository:acme/repo",
+          repository: "acme/repo",
+        },
+        outcomes: [{ ...validOutcome, relatedCommitOid: "a".repeat(41) }],
       },
     ];
 

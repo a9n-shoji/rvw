@@ -1054,7 +1054,7 @@ export class RvwService {
     return await this.repositoryLifecycle.resolveExistingAtPath(
       repositoryReview.localRepositoryPath,
       {
-        policy: capability === "remote-mutation" ? { kind: "synchronize" } : { kind: "read" },
+        policy: capability === "remote-mutation" ? { kind: "remote-required" } : { kind: "read" },
         expectedRepositoryReviewId: repositoryReview.id,
       },
     );
@@ -1203,10 +1203,11 @@ export class RvwService {
   private async synchronizeResolvedRepositoryReview(
     existing: ResolvedRepositoryReview,
   ): Promise<RepositorySyncResult> {
-    const repositoryReview = await this.repositoryLifecycle.synchronizeExisting(
+    const synchronized = await this.repositoryLifecycle.synchronizeExisting(
       existing.repository.worktreePath,
       existing.repositoryReview.id,
     );
+    const { repositoryReview } = synchronized;
     const issues = this.database.listReviewIssues("repository", repositoryReview.id);
     const issueResults = await mapWithConcurrency(
       issues,
@@ -1223,7 +1224,7 @@ export class RvwService {
             await this.github.getIssue(
               issue.number,
               repositoryReview,
-              existing.repository.worktreePath,
+              synchronized.repository.worktreePath,
             ),
           );
           const refreshed = this.database.refreshReviewIssue(
@@ -1261,8 +1262,11 @@ export class RvwService {
     );
     return {
       ...this.getRepositoryReviewView(repositoryReview.id),
-      selectedRemote: existing.remoteIdentity
-        ? { name: existing.remoteIdentity.remoteName, url: existing.remoteIdentity.remoteUrl }
+      selectedRemote: synchronized.remoteIdentity
+        ? {
+            name: synchronized.remoteIdentity.remoteName,
+            url: synchronized.remoteIdentity.remoteUrl,
+          }
         : null,
       issueResults,
     };
@@ -1270,7 +1274,7 @@ export class RvwService {
 
   async syncRepositoryReview(repositoryPath: string): Promise<RepositorySyncResult> {
     const existing = await this.repositoryLifecycle.resolveExistingAtPath(repositoryPath, {
-      policy: { kind: "synchronize" },
+      policy: { kind: "remote-required" },
     });
     return await this.synchronizeResolvedRepositoryReview(existing);
   }
@@ -1280,7 +1284,7 @@ export class RvwService {
     const existing = await this.repositoryLifecycle.resolveExistingAtPath(
       repositoryReview.localRepositoryPath,
       {
-        policy: { kind: "synchronize" },
+        policy: { kind: "remote-required" },
         expectedRepositoryReviewId: repositoryReviewId,
       },
     );
@@ -1393,7 +1397,7 @@ export class RvwService {
     issueReference: string,
   ): Promise<{ issue: IssueDocument; repaired: true; verifiedReads: 2 }> {
     const resolved = await this.repositoryLifecycle.resolveExistingAtPath(repositoryPath, {
-      policy: { kind: "synchronize" },
+      policy: { kind: "remote-required" },
     });
     return await this.forceRepairIssue(
       "repository",
@@ -1424,7 +1428,7 @@ export class RvwService {
     const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
       stored.localRepositoryPath,
       {
-        policy: { kind: "synchronize" },
+        policy: { kind: "remote-required" },
         expectedRepositoryReviewId: repositoryReviewId,
       },
     );

@@ -1080,6 +1080,8 @@ change sequenceを更新する。この削除はretained commit refを削除し�
   process callerはJSON送信後にstdinをcloseし、shell callerはpipe、quoted heredoc、input redirectionの
   いずれかを使って対話PTYでのEOF待ちを避ける。Agent socket frameはこの入力とprotocol envelopeを
   収める固定上限を持つ。
+- Git OID入力は40桁または64桁ちょうどの小文字hexとする。41〜63桁や大文字をschema境界で拒否し、
+  ref名、保存値、Git command出力との比較を同じ表現へ揃える。
 - comment本文とreplyはUTF-8 GFM Markdown sourceで64 KiB以下とする。comment postとWalkthroughの
   referenceはそれぞれ最大200件とする。
 - `walkthrough get`はcurrent WalkthroughとPull RequestまたはRepository Reviewのidentity、local repository pathを返す。
@@ -1376,7 +1378,9 @@ CLI、Agent socket、HTTPが同じuse caseを呼ぶ。
 - relocation: `repository relocate`。canonical identityとDB参照中の全review-owned source ref／objectを検証し、
   evidence件数を含むsequence付きpreviewの明示確認後だけ同じaggregateの保存locationを移動先cloneへ更新する。
 - `{ kind: "read" }`: `repository comments`と保存済みartifact read。row、ref、fetch、locationを作らない。
-- `{ kind: "synchronize" }`: `repository sync`。保存済みaggregateとlocal remoteを検証してからだけ同期する。
+- `{ kind: "remote-required" }`: `repository sync`、Repository Issue追加／repair、`issuesToAdd`を伴う
+  Repository Walkthrough mutation。保存済みaggregateとcanonical remoteを検証するが、source同期自体は
+  `synchronizeExisting()` use caseだけが行う。
 - `{ kind: "issue-removal" }`: Repository Issue removalのpreview／実行。通常のowned source ref検証を必須にする。
 - `{ kind: "reset" }`: Repository Review resetのpreview／実行。missing initial ref例外を型上この操作だけへ限定する。未登録なら
   `REPOSITORY_REVIEW_NOT_FOUND`で、previewを含めsequence、DB、refを一切変更しない。
@@ -1391,11 +1395,11 @@ CLIとAgent socketのpath-based use caseは、指定pathに現在bindingされ�
 
 Repository Review read routeは次の契約へ分ける。
 
-| read境界                   | 対象                                                                                            | 必須検証                                                                          |
-| -------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| DB-only archive read       | Issue本文、Walkthrough本文、Comment本文                                                         | owning review row／membership／artifact owner                                     |
-| aggregate-bound read       | Review本体、同期、Comment一覧                                                                   | 保存path、Git common directory、解決可能なcanonical remote、current owned ref     |
-| source-evidence-bound read | tree、repository document／asset／search、exact comment source、placement、typed code reference | aggregate bindingに加え、利用する全source OIDのreview-owned exact refとGit object |
+| read境界                   | 対象                                                                                            | 必須検証                                                                                                                              |
+| -------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| DB-only archive read       | Issue本文、Walkthrough本文、Comment本文                                                         | owning review row／membership／artifact owner                                                                                         |
+| aggregate-bound read       | Review本体、同期、Comment一覧                                                                   | 保存path、Git common directory、current owned ref。remoteが存在する場合はcanonical identityとの一致を必須とし、同期はremote自体も必須 |
+| source-evidence-bound read | tree、repository document／asset／search、exact comment source、placement、typed code reference | aggregate bindingに加え、利用する全source OIDのreview-owned exact refとGit object                                                     |
 
 path-based Comment一覧はresolverが検証した指定worktreeをevidence確認、document read、diffへ一貫して渡し、
 保存済みworktree pathへ戻さず、readによってlocationやsequenceを更新しない。source evidenceはOIDをunique化して

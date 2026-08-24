@@ -55,7 +55,7 @@ Repository Reviewのlocal source bindingはGit common directory単位です。�
 worktreeとGit common directoryはfilesystem realpathへ正規化し、verified cached openは公開済み0.2.x DBの
 非canonical path表記もrealpathへ更新します。新規作成はorigin-first、既存Reviewは保存identityに一致するremoteを
 全remoteから選び、通常open、live namespaceから解決するrelocation、bound Reviewのdoctorで同じname／URLを
-表示とfetchに使います。retained ref分類はopen／viewer／doctorの診断surfaceであり、doctorは40-64桁OIDを扱いrefを自動修復・削除しません。
+表示とfetchに使います。retained ref分類はopen／viewer／doctorの診断surfaceであり、doctorは40桁または64桁ちょうどの小文字hex OIDを扱いrefを自動修復・削除しません。
 
 remoteを解決できなくても、保存済みGit common directoryとreview-owned source refが一致すればcached read、
 comments、Issue removal、resetは利用できます。syncとIssue addはremote identityを安全に確認できるまで拒否します。

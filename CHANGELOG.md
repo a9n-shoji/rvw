@@ -107,7 +107,7 @@
 - final SQLite CASでstaleになったreset／Issue removal／Walkthrough deletionにも最新previewを返すよう統一
 - `comment get`が共有Issue cacheではなく所有membershipのsync error／stale状態を返すよう修正
 - Walkthrough `issuesToAdd`の正常取得で既存PR／Repository Review membershipのsync errorをclear
-- doctorで40〜64桁Repository Review OIDを診断し、review単位のevidence lookupを一回へ集約
+- doctorで40桁または64桁ちょうどの小文字hex Repository Review OIDを診断し、review単位のevidence lookupを一回へ集約
 - 表示remoteとGit fetchのorigin-first選択を共通化し、legacy保存pathをverified cached openでrealpathへ更新
 - Issue membership確認後に並行削除されたPR／Repository Issue Commentを、共有cacheのFKだけで作成できるraceを修正
 - PR resetの返却用commit一覧を破壊的SQLite transaction前に取得し、後続Git read失敗をreset失敗と誤報しないよう修正
