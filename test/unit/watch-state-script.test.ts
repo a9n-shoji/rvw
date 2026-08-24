@@ -30,7 +30,7 @@ function stableReviewArgs(command: string, args: string[]): string[] {
   const display = args[keyIndex + 1]!;
   const result = [...args];
   result[keyIndex + 1] =
-    kind === "branch" ? `branch:${display.toLowerCase()}` : `pull-request:${display}`;
+    kind === "repository" ? `repository:${display.toLowerCase()}` : `pull-request:${display}`;
   return [...result, "--context-display", display.toLowerCase()];
 }
 
@@ -41,13 +41,13 @@ function stableReviewFrame(frame: unknown): unknown {
   const context = event.context;
   if (context && typeof context === "object" && "kind" in context) {
     const review = context as Record<string, unknown>;
-    if (review.kind === "branch" && typeof review.repository === "string") {
-      const hasStableId = typeof review.branchReviewId === "string";
+    if (review.kind === "repository" && typeof review.repository === "string") {
+      const hasStableId = typeof review.repositoryReviewId === "string";
       event.context = {
-        kind: "branch",
-        branchReviewId: hasStableId
-          ? review.branchReviewId
-          : `branch:${review.repository.toLowerCase()}`,
+        kind: "repository",
+        repositoryReviewId: hasStableId
+          ? review.repositoryReviewId
+          : `repository:${review.repository.toLowerCase()}`,
         repository: hasStableId ? review.repository : review.repository.toLowerCase(),
       };
     }
@@ -358,7 +358,7 @@ describe("rvw-watch-comments task state", () => {
     ).toThrow(/in-flight/);
   });
 
-  it("batches Branch Reviews by repository and rejects write reservations", () => {
+  it("batches Repository Reviews by repository and rejects write reservations", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-")), "task.db");
     run(state, "init", ["--own-mode", "fix-and-push"]);
     ingest(state, {
@@ -373,8 +373,8 @@ describe("rvw-watch-comments task state", () => {
       event: {
         sequence: 1,
         postId: "branch-human-post",
-        commentRef: "rvw://comment/branch-comment",
-        context: { kind: "branch", repository: "Acme/Repo" },
+        commentRef: "rvw://comment/repository-comment",
+        context: { kind: "repository", repository: "Acme/Repo" },
         createdAt: "2026-08-20T00:00:00.000Z",
         deleted: false,
       },
@@ -383,17 +383,22 @@ describe("rvw-watch-comments task state", () => {
     expect(run(state, "list")).toMatchObject({
       pending: [
         {
-          context: { kind: "branch", repository: "acme/repo" },
+          context: { kind: "repository", repository: "acme/repo" },
           repository: "acme/repo",
-          commentRefs: ["rvw://comment/branch-comment"],
+          commentRefs: ["rvw://comment/repository-comment"],
         },
       ],
     });
-    const claimed = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    const claimed = run(state, "claim", [
+      "--context-kind",
+      "repository",
+      "--context-key",
+      "acme/repo",
+    ]);
     expect(claimed).toMatchObject({
-      context: { kind: "branch", repository: "acme/repo" },
+      context: { kind: "repository", repository: "acme/repo" },
       writeKey: null,
-      operations: [{ commentRef: "rvw://comment/branch-comment", statusPostId: null }],
+      operations: [{ commentRef: "rvw://comment/repository-comment", statusPostId: null }],
     });
     expect(() =>
       run(state, "reserve-write", ["--lease", String(claimed.leaseId), "--write-key", "acme/repo"]),
@@ -408,8 +413,8 @@ describe("rvw-watch-comments task state", () => {
         event: {
           sequence: 2,
           postId: "branch-final-reply",
-          commentRef: "rvw://comment/branch-comment",
-          context: { kind: "branch", repository: "acme/repo" },
+          commentRef: "rvw://comment/repository-comment",
+          context: { kind: "repository", repository: "acme/repo" },
           createdAt: "2026-08-20T00:00:01.000Z",
           deleted: false,
         },
@@ -426,10 +431,10 @@ describe("rvw-watch-comments task state", () => {
       cursor: "cursor-0",
       anchoredAtCurrent: true,
     });
-    for (const [sequence, branchReviewId, repository] of [
-      [1, "branch-review-1", "Acme/Repo"],
-      [2, "branch-review-1", "acme/repo"],
-      [3, "branch-review-2", "acme/repo"],
+    for (const [sequence, repositoryReviewId, repository] of [
+      [1, "repository-review-1", "Acme/Repo"],
+      [2, "repository-review-1", "acme/repo"],
+      [3, "repository-review-2", "acme/repo"],
     ] as const) {
       ingest(state, {
         type: "comment-posted",
@@ -437,8 +442,8 @@ describe("rvw-watch-comments task state", () => {
         event: {
           sequence,
           postId: `branch-post-${sequence}`,
-          commentRef: `rvw://comment/branch-comment-${sequence}`,
-          context: { kind: "branch", branchReviewId, repository },
+          commentRef: `rvw://comment/repository-comment-${sequence}`,
+          context: { kind: "repository", repositoryReviewId, repository },
           createdAt: `2026-08-20T00:00:0${sequence}.000Z`,
           deleted: false,
         },
@@ -449,16 +454,16 @@ describe("rvw-watch-comments task state", () => {
       pending: [
         {
           context: {
-            kind: "branch",
-            branchReviewId: "branch-review-1",
+            kind: "repository",
+            repositoryReviewId: "repository-review-1",
             repository: "acme/repo",
           },
           eventCount: 2,
         },
         {
           context: {
-            kind: "branch",
-            branchReviewId: "branch-review-2",
+            kind: "repository",
+            repositoryReviewId: "repository-review-2",
             repository: "acme/repo",
           },
           eventCount: 1,
@@ -467,7 +472,7 @@ describe("rvw-watch-comments task state", () => {
     });
   });
 
-  it("allows concurrent Branch leases even when the task can fix owned Pull Requests", () => {
+  it("allows concurrent Repository Review leases even when the task can fix owned Pull Requests", () => {
     const state = path.join(
       mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-parallel-")),
       "task.db",
@@ -485,21 +490,26 @@ describe("rvw-watch-comments task state", () => {
       event: {
         sequence: 1,
         postId: "branch-human-post-1",
-        commentRef: "rvw://comment/branch-comment-1",
-        context: { kind: "branch", repository: "acme/repo" },
+        commentRef: "rvw://comment/repository-comment-1",
+        context: { kind: "repository", repository: "acme/repo" },
         createdAt: "2026-08-20T00:00:00.000Z",
         deleted: false,
       },
     });
-    const first = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    const first = run(state, "claim", [
+      "--context-kind",
+      "repository",
+      "--context-key",
+      "acme/repo",
+    ]);
     ingest(state, {
       type: "comment-posted",
       cursor: "cursor-2",
       event: {
         sequence: 2,
         postId: "branch-human-post-2",
-        commentRef: "rvw://comment/branch-comment-2",
-        context: { kind: "branch", repository: "acme/repo" },
+        commentRef: "rvw://comment/repository-comment-2",
+        context: { kind: "repository", repository: "acme/repo" },
         createdAt: "2026-08-20T00:00:01.000Z",
         deleted: false,
       },
@@ -507,14 +517,19 @@ describe("rvw-watch-comments task state", () => {
 
     expect(run(state, "list")).toMatchObject({
       inFlight: 1,
-      pending: [{ commentRefs: ["rvw://comment/branch-comment-2"] }],
+      pending: [{ commentRefs: ["rvw://comment/repository-comment-2"] }],
     });
-    const second = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    const second = run(state, "claim", [
+      "--context-kind",
+      "repository",
+      "--context-key",
+      "acme/repo",
+    ]);
     expect(second.batchId).not.toBe(first.batchId);
     expect(run(state, "status")).toMatchObject({ batches: { inFlight: 2 } });
   });
 
-  it("completes an already-ingested Branch final reply when suppression is recorded", () => {
+  it("completes an already-ingested Repository Review final reply when suppression is recorded", () => {
     const state = path.join(
       mkdtempSync(path.join(os.tmpdir(), "rvw-watch-branch-first-")),
       "task.db",
@@ -532,13 +547,18 @@ describe("rvw-watch-comments task state", () => {
       event: {
         sequence: 1,
         postId: "branch-human-post",
-        commentRef: "rvw://comment/branch-comment",
-        context: { kind: "branch", repository: "acme/repo" },
+        commentRef: "rvw://comment/repository-comment",
+        context: { kind: "repository", repository: "acme/repo" },
         createdAt: "2026-08-20T00:00:00.000Z",
         deleted: false,
       },
     });
-    const claimed = run(state, "claim", ["--context-kind", "branch", "--context-key", "acme/repo"]);
+    const claimed = run(state, "claim", [
+      "--context-kind",
+      "repository",
+      "--context-key",
+      "acme/repo",
+    ]);
     expect(
       ingest(state, {
         type: "comment-posted",
@@ -546,8 +566,8 @@ describe("rvw-watch-comments task state", () => {
         event: {
           sequence: 2,
           postId: "branch-final-reply",
-          commentRef: "rvw://comment/branch-comment",
-          context: { kind: "branch", repository: "acme/repo" },
+          commentRef: "rvw://comment/repository-comment",
+          context: { kind: "repository", repository: "acme/repo" },
           createdAt: "2026-08-20T00:00:01.000Z",
           deleted: false,
         },

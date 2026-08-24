@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { BranchCommentReviewContext } from "../../src/application/rvw-service.js";
+import type { RepositoryCommentReviewContext } from "../../src/application/rvw-service.js";
 import { formatCommentGetOutput } from "../../src/cli/comment-protocol.js";
 
-describe("Branch Review comment protocol", () => {
-  it("returns an explicit Branch context and complete Issue evidence", () => {
+describe("Repository Review comment protocol", () => {
+  it("returns an explicit Repository Review context and complete Issue evidence", () => {
     const sourceOid = "a".repeat(40);
     const createdAt = "2026-08-20T00:00:00.000Z";
     const issue = {
@@ -23,13 +23,13 @@ describe("Branch Review comment protocol", () => {
       syncError: null,
       stale: false,
     };
-    const context: BranchCommentReviewContext = {
+    const context: RepositoryCommentReviewContext = {
       context: {
-        kind: "branch",
-        branchReviewId: "branch-review-1",
+        kind: "repository",
+        repositoryReviewId: "repository-review-1",
         repository: "acme/review-repo",
       },
-      branchReview: {
+      repositoryReview: {
         id: "11111111-1111-4111-8111-111111111111",
         host: "github.com",
         owner: "acme",
@@ -48,7 +48,7 @@ describe("Branch Review comment protocol", () => {
       comment: {
         id: "33333333-3333-4333-8333-333333333333",
         ref: "rvw://comment/33333333-3333-4333-8333-333333333333",
-        branchReviewId: "11111111-1111-4111-8111-111111111111",
+        repositoryReviewId: "11111111-1111-4111-8111-111111111111",
         createdSourceOid: sourceOid,
         resolvedAt: null,
         createdAt,
@@ -88,11 +88,11 @@ describe("Branch Review comment protocol", () => {
     expect(formatCommentGetOutput(context)).toMatchObject({
       ok: true,
       context: {
-        kind: "branch",
-        branchReviewId: "branch-review-1",
+        kind: "repository",
+        repositoryReviewId: "repository-review-1",
         repository: "acme/review-repo",
       },
-      branchReview: {
+      repositoryReview: {
         repository: "acme/review-repo",
         defaultBranchName: "trunk",
         currentSourceOid: sourceOid,

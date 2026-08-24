@@ -14,18 +14,18 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import envPaths from "env-paths";
 import type {
-  BranchCommentTarget,
-  BranchResetCounts,
-  BranchReview,
-  BranchReviewComment,
-  BranchWalkthrough,
-  BranchWalkthroughSummary,
+  RepositoryReviewCommentTarget,
+  RepositoryResetCounts,
+  RepositoryReview,
+  RepositoryReviewComment,
+  RepositoryWalkthrough,
+  RepositoryWalkthroughSummary,
   CachedIssueDocument,
   CodeReference,
   CommentPost,
   CommentPostEvent,
   CommentTarget,
-  DeletedBranchWalkthrough,
+  DeletedRepositoryWalkthrough,
   DeletedWalkthrough,
   GitHubIssue,
   GitHubPullRequest,
@@ -132,10 +132,10 @@ function mapPullRequest(row: DbRow): PullRequest {
   };
 }
 
-function mapBranchReview(row: DbRow): BranchReview {
+function mapRepositoryReview(row: DbRow): RepositoryReview {
   const initializationState = stringValue(row, "initialization_state");
   if (!(["pending", "ready", "failed"] as const).includes(initializationState as never)) {
-    throw new RvwError("DATABASE_ERROR", "Branch Reviewの初期化状態が不正です。");
+    throw new RvwError("DATABASE_ERROR", "Repository Reviewの初期化状態が不正です。");
   }
   return {
     id: stringValue(row, "id"),
@@ -149,7 +149,7 @@ function mapBranchReview(row: DbRow): BranchReview {
     sourceOid: stringValue(row, "source_oid"),
     githubFetchedAt: stringValue(row, "github_fetched_at"),
     sourceSyncError: nullableString(row, "source_sync_error"),
-    initializationState: initializationState as BranchReview["initializationState"],
+    initializationState: initializationState as RepositoryReview["initializationState"],
     createdAt: stringValue(row, "created_at"),
     updatedAt: stringValue(row, "updated_at"),
   };
@@ -375,18 +375,18 @@ export interface NewWalkthroughInput {
   references: WalkthroughReference[];
 }
 
-export interface NewBranchCommentInput {
-  branchReviewId: string;
+export interface NewRepositoryCommentInput {
+  repositoryReviewId: string;
   createdSourceOid: string;
-  target: BranchCommentTarget;
+  target: RepositoryReviewCommentTarget;
   body: string;
   relatedCommitOid?: string | null;
   references?: CodeReference[];
   authorLabel?: string | null;
 }
 
-export interface NewBranchWalkthroughInput {
-  branchReviewId: string;
+export interface NewRepositoryWalkthroughInput {
+  repositoryReviewId: string;
   sourceOid: string;
   title: string;
   body: string;
@@ -566,7 +566,7 @@ export class RvwDatabase {
     commentRef: string,
     context:
       | { kind: "pull-request"; pullRequestId: string; pullRequestUrl: string }
-      | { kind: "branch"; branchReviewId: string; repository: string },
+      | { kind: "repository"; repositoryReviewId: string; repository: string },
     createdAt: string,
   ): void {
     this.database
@@ -579,9 +579,9 @@ export class RvwDatabase {
         postId,
         commentRef,
         context.kind,
-        context.kind === "pull-request" ? context.pullRequestId : context.branchReviewId,
+        context.kind === "pull-request" ? context.pullRequestId : context.repositoryReviewId,
         context.kind === "pull-request" ? context.pullRequestUrl : null,
-        context.kind === "branch" ? context.repository : null,
+        context.kind === "repository" ? context.repository : null,
         createdAt,
       );
   }
@@ -595,7 +595,7 @@ export class RvwDatabase {
   }
 
   private incrementReviewChangeSequence(context: {
-    kind: "pull-request" | "branch";
+    kind: "pull-request" | "repository";
     reviewId: string;
   }): void {
     this.database
@@ -607,7 +607,10 @@ export class RvwDatabase {
       .run(`review_change_sequence:${context.kind}:${context.reviewId}`);
   }
 
-  incrementChangeSequence(context?: { kind: "pull-request" | "branch"; reviewId: string }): number {
+  incrementChangeSequence(context?: {
+    kind: "pull-request" | "repository";
+    reviewId: string;
+  }): number {
     this.incrementGlobalChangeSequence();
     if (context) this.incrementReviewChangeSequence(context);
     return this.getChangeSequence();
@@ -620,7 +623,7 @@ export class RvwDatabase {
     return Number(stringValue(row, "value"));
   }
 
-  getReviewChangeSequence(kind: "pull-request" | "branch", reviewId: string): number {
+  getReviewChangeSequence(kind: "pull-request" | "repository", reviewId: string): number {
     const row = this.database
       .prepare("SELECT value FROM app_meta WHERE key = ?")
       .get(`review_change_sequence:${kind}:${reviewId}`) as DbRow | undefined;
@@ -628,7 +631,7 @@ export class RvwDatabase {
   }
 
   private assertReviewChangeSequence(
-    kind: "pull-request" | "branch",
+    kind: "pull-request" | "repository",
     reviewId: string,
     expected: number,
   ): void {
@@ -656,7 +659,7 @@ export class RvwDatabase {
         `DELETE FROM github_issues
          WHERE id = ?
            AND NOT EXISTS (SELECT 1 FROM pull_request_issues WHERE issue_id = github_issues.id)
-           AND NOT EXISTS (SELECT 1 FROM branch_review_issues WHERE issue_id = github_issues.id)`,
+           AND NOT EXISTS (SELECT 1 FROM repository_review_issues WHERE issue_id = github_issues.id)`,
       )
       .run(issueId);
     return Number(deleted.changes) === 1;
@@ -683,7 +686,7 @@ export class RvwDatabase {
         `SELECT e.*, CASE WHEN p.id IS NULL AND bp.id IS NULL THEN 1 ELSE 0 END AS deleted
         FROM review_comment_post_events e
         LEFT JOIN comment_posts p ON e.review_kind = 'pull-request' AND p.id = e.post_id
-        LEFT JOIN branch_comment_posts bp ON e.review_kind = 'branch' AND bp.id = e.post_id
+        LEFT JOIN repository_comment_posts bp ON e.review_kind = 'repository' AND bp.id = e.post_id
         WHERE e.sequence > ?
         ORDER BY e.sequence ASC
         LIMIT ?`,
@@ -702,8 +705,8 @@ export class RvwDatabase {
               pullRequestUrl: stringValue(row, "pull_request_url"),
             }
           : {
-              kind: "branch",
-              branchReviewId: stringValue(row, "review_id"),
+              kind: "repository",
+              repositoryReviewId: stringValue(row, "review_id"),
               repository: stringValue(row, "repository"),
             },
       deleted: numberValue(row, "deleted") === 1,
@@ -763,57 +766,57 @@ export class RvwDatabase {
     ).map(mapPullRequest);
   }
 
-  getBranchReview(id: string): BranchReview | null {
-    const row = this.database.prepare("SELECT * FROM branch_reviews WHERE id = ?").get(id) as
+  getRepositoryReview(id: string): RepositoryReview | null {
+    const row = this.database.prepare("SELECT * FROM repository_reviews WHERE id = ?").get(id) as
       DbRow | undefined;
-    return row ? mapBranchReview(row) : null;
+    return row ? mapRepositoryReview(row) : null;
   }
 
-  findBranchReviewByGitCommonDir(gitCommonDir: string): BranchReview | null {
+  findRepositoryReviewByGitCommonDir(gitCommonDir: string): RepositoryReview | null {
     const row = this.database
-      .prepare("SELECT * FROM branch_reviews WHERE git_common_dir = ?")
+      .prepare("SELECT * FROM repository_reviews WHERE git_common_dir = ?")
       .get(gitCommonDir) as DbRow | undefined;
-    return row ? mapBranchReview(row) : null;
+    return row ? mapRepositoryReview(row) : null;
   }
 
-  findBranchReviewByIdentity(owner: string, repository: string): BranchReview | null {
+  findRepositoryReviewByIdentity(owner: string, repository: string): RepositoryReview | null {
     const row = this.database
       .prepare(
-        "SELECT * FROM branch_reviews WHERE host = 'github.com' AND lower(owner) = lower(?) AND lower(repository) = lower(?)",
+        "SELECT * FROM repository_reviews WHERE host = 'github.com' AND lower(owner) = lower(?) AND lower(repository) = lower(?)",
       )
       .get(owner, repository) as DbRow | undefined;
-    return row ? mapBranchReview(row) : null;
+    return row ? mapRepositoryReview(row) : null;
   }
 
-  beginBranchSourceSync(id: string): number {
+  beginRepositorySourceSync(id: string): number {
     return this.immediateTransaction(() => {
-      if (!this.getBranchReview(id)) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+      if (!this.getRepositoryReview(id)) {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
           status: 404,
         });
       }
       this.database
         .prepare(
-          "UPDATE branch_reviews SET source_sync_generation = source_sync_generation + 1 WHERE id = ?",
+          "UPDATE repository_reviews SET source_sync_generation = source_sync_generation + 1 WHERE id = ?",
         )
         .run(id);
-      return this.getBranchSourceSyncGeneration(id);
+      return this.getRepositorySourceSyncGeneration(id);
     });
   }
 
-  getBranchSourceSyncGeneration(id: string): number {
+  getRepositorySourceSyncGeneration(id: string): number {
     const row = this.database
-      .prepare("SELECT source_sync_generation FROM branch_reviews WHERE id = ?")
+      .prepare("SELECT source_sync_generation FROM repository_reviews WHERE id = ?")
       .get(id) as DbRow | undefined;
     if (!row) {
-      throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
         status: 404,
       });
     }
     return numberValue(row, "source_sync_generation");
   }
 
-  publishBranchReviewSource(
+  publishRepositoryReviewSource(
     github: {
       owner: string;
       repository: string;
@@ -822,13 +825,13 @@ export class RvwDatabase {
       defaultBranchOid: string;
     },
     repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
-    options: { expectedBranchReviewId: string; expectedSourceSyncGeneration: number },
-  ): { branchReview: BranchReview; published: boolean } {
-    const result = this.writeBranchReview(github, repositoryLocation, options);
-    return { branchReview: result.branchReview, published: result.published };
+    options: { expectedRepositoryReviewId: string; expectedSourceSyncGeneration: number },
+  ): { repositoryReview: RepositoryReview; published: boolean } {
+    const result = this.writeRepositoryReview(github, repositoryLocation, options);
+    return { repositoryReview: result.repositoryReview, published: result.published };
   }
 
-  beginBranchReviewInitialization(
+  beginRepositoryReviewInitialization(
     github: {
       owner: string;
       repository: string;
@@ -837,11 +840,13 @@ export class RvwDatabase {
       defaultBranchOid: string;
     },
     repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
-  ): { branchReview: BranchReview; created: boolean } {
-    return this.writeBranchReview(github, repositoryLocation, { createOnlyInitialization: true });
+  ): { repositoryReview: RepositoryReview; created: boolean } {
+    return this.writeRepositoryReview(github, repositoryLocation, {
+      createOnlyInitialization: true,
+    });
   }
 
-  private writeBranchReview(
+  private writeRepositoryReview(
     github: {
       owner: string;
       repository: string;
@@ -851,22 +856,24 @@ export class RvwDatabase {
     },
     repositoryLocation: { localRepositoryPath: string; gitCommonDir: string },
     options: {
-      expectedBranchReviewId?: string;
+      expectedRepositoryReviewId?: string;
       expectedSourceSyncGeneration?: number;
       createOnlyInitialization?: boolean;
     },
-  ): { branchReview: BranchReview; created: boolean; published: boolean } {
+  ): { repositoryReview: RepositoryReview; created: boolean; published: boolean } {
     const now = new Date().toISOString();
     let written: { id: string; created: boolean; published: boolean };
     try {
       written = this.immediateTransaction(() => {
-        const byIdentity = this.findBranchReviewByIdentity(github.owner, github.repository);
-        const byGitCommonDir = this.findBranchReviewByGitCommonDir(repositoryLocation.gitCommonDir);
-        const expected = options.expectedBranchReviewId
-          ? this.getBranchReview(options.expectedBranchReviewId)
+        const byIdentity = this.findRepositoryReviewByIdentity(github.owner, github.repository);
+        const byGitCommonDir = this.findRepositoryReviewByGitCommonDir(
+          repositoryLocation.gitCommonDir,
+        );
+        const expected = options.expectedRepositoryReviewId
+          ? this.getRepositoryReview(options.expectedRepositoryReviewId)
           : null;
-        if (options.expectedBranchReviewId && !expected) {
-          throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+        if (options.expectedRepositoryReviewId && !expected) {
+          throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
             status: 404,
           });
         }
@@ -878,10 +885,10 @@ export class RvwDatabase {
         ) {
           throw new RvwError(
             "REPOSITORY_MISMATCH",
-            "expected Branch Reviewと現在のrepository bindingが一致しません。",
+            "expected Repository Reviewと現在のrepository bindingが一致しません。",
             {
               details: {
-                expectedBranchReviewId: expected.id,
+                expectedRepositoryReviewId: expected.id,
                 registeredRepository: expected.canonicalName,
                 registeredGitCommonDir: expected.gitCommonDir,
                 currentRepository: github.canonicalName,
@@ -893,11 +900,11 @@ export class RvwDatabase {
         if (byIdentity && byGitCommonDir && byIdentity.id !== byGitCommonDir.id) {
           throw new RvwError(
             "REPOSITORY_MISMATCH",
-            "canonical repositoryとGit common directoryが異なるBranch Reviewへ登録されています。",
+            "canonical repositoryとGit common directoryが異なるRepository Reviewへ登録されています。",
             {
               details: {
-                canonicalBranchReviewId: byIdentity.id,
-                localBranchReviewId: byGitCommonDir.id,
+                canonicalRepositoryReviewId: byIdentity.id,
+                localRepositoryReviewId: byGitCommonDir.id,
               },
             },
           );
@@ -908,10 +915,10 @@ export class RvwDatabase {
         ) {
           throw new RvwError(
             "REPOSITORY_MISMATCH",
-            "このcanonical repositoryのBranch Reviewは別の独立cloneへ登録されています。",
+            "このcanonical repositoryのRepository Reviewは別の独立cloneへ登録されています。",
             {
               details: {
-                branchReviewId: byIdentity.id,
+                repositoryReviewId: byIdentity.id,
                 registeredGitCommonDir: byIdentity.gitCommonDir,
                 currentGitCommonDir: repositoryLocation.gitCommonDir,
               },
@@ -928,7 +935,7 @@ export class RvwDatabase {
             "このGit common directoryは別のcanonical repositoryへ登録されています。",
             {
               details: {
-                branchReviewId: byGitCommonDir.id,
+                repositoryReviewId: byGitCommonDir.id,
                 registeredRepository: byGitCommonDir.canonicalName,
                 currentRepository: github.canonicalName,
               },
@@ -944,12 +951,12 @@ export class RvwDatabase {
         ) {
           throw new RvwError(
             "REPOSITORY_MISMATCH",
-            "expected Branch Reviewは現在のrepository bindingを所有していません。",
+            "expected Repository Reviewは現在のrepository bindingを所有していません。",
             {
               details: {
-                expectedBranchReviewId: expected.id,
-                canonicalBranchReviewId: byIdentity?.id ?? null,
-                localBranchReviewId: byGitCommonDir?.id ?? null,
+                expectedRepositoryReviewId: expected.id,
+                canonicalRepositoryReviewId: byIdentity?.id ?? null,
+                localRepositoryReviewId: byGitCommonDir?.id ?? null,
               },
             },
           );
@@ -960,7 +967,8 @@ export class RvwDatabase {
         if (
           existing &&
           options.expectedSourceSyncGeneration !== undefined &&
-          this.getBranchSourceSyncGeneration(existing.id) !== options.expectedSourceSyncGeneration
+          this.getRepositorySourceSyncGeneration(existing.id) !==
+            options.expectedSourceSyncGeneration
         ) {
           return { id: existing.id, created: false, published: false };
         }
@@ -982,7 +990,7 @@ export class RvwDatabase {
         if (existing) {
           this.database
             .prepare(
-              `UPDATE branch_reviews SET
+              `UPDATE repository_reviews SET
                 owner = ?, repository = ?, canonical_name = ?, local_repository_path = ?,
                 git_common_dir = ?, default_branch_name = ?, source_oid = ?, github_fetched_at = ?,
                 source_sync_error = ?, initialization_state = ?, updated_at = ?
@@ -1005,7 +1013,7 @@ export class RvwDatabase {
         } else {
           this.database
             .prepare(
-              `INSERT INTO branch_reviews(
+              `INSERT INTO repository_reviews(
                 id, host, owner, repository, canonical_name, local_repository_path, git_common_dir,
                 default_branch_name, source_oid, github_fetched_at, source_sync_error,
                 initialization_state, created_at, updated_at
@@ -1028,7 +1036,7 @@ export class RvwDatabase {
             );
         }
         if (reviewChanged) {
-          this.incrementChangeSequence({ kind: "branch", reviewId: selectedId });
+          this.incrementChangeSequence({ kind: "repository", reviewId: selectedId });
         }
         return { id: selectedId, created: !existing, published: true };
       });
@@ -1037,26 +1045,26 @@ export class RvwDatabase {
       if (/constraint/i.test(error instanceof Error ? error.message : String(error))) {
         throw new RvwError(
           "DATABASE_ERROR",
-          "Branch Review identityを一意に保存できませんでした。",
+          "Repository Review identityを一意に保存できませんでした。",
           { cause: error },
         );
       }
       throw error;
     }
-    const result = this.getBranchReview(written.id);
-    if (!result) throw new RvwError("DATABASE_ERROR", "Branch Reviewを読み出せません。");
+    const result = this.getRepositoryReview(written.id);
+    if (!result) throw new RvwError("DATABASE_ERROR", "Repository Reviewを読み出せません。");
     return {
-      branchReview: result,
+      repositoryReview: result,
       created: written.created,
       published: written.published,
     };
   }
 
-  completeBranchReviewInitialization(id: string, sourceOid: string): BranchReview {
+  completeRepositoryReviewInitialization(id: string, sourceOid: string): RepositoryReview {
     this.immediateTransaction(() => {
-      const current = this.getBranchReview(id);
+      const current = this.getRepositoryReview(id);
       if (!current) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
           status: 404,
         });
       }
@@ -1069,11 +1077,11 @@ export class RvwDatabase {
       if (current.sourceOid !== sourceOid) {
         throw new RvwError(
           "LOCAL_STATE_INCONSISTENT",
-          "初期化対象のBranch sourceが保存済みsourceと一致しません。",
+          "初期化対象のRepository Review sourceが保存済みsourceと一致しません。",
           {
             status: 409,
             details: {
-              branchReviewId: id,
+              repositoryReviewId: id,
               expectedSourceOid: sourceOid,
               sourceOid: current.sourceOid,
             },
@@ -1082,36 +1090,37 @@ export class RvwDatabase {
       }
       this.database
         .prepare(
-          `UPDATE branch_reviews SET source_sync_error = NULL, initialization_state = 'ready',
+          `UPDATE repository_reviews SET source_sync_error = NULL, initialization_state = 'ready',
             updated_at = ? WHERE id = ? AND source_oid = ?`,
         )
         .run(new Date().toISOString(), id, sourceOid);
     });
-    const result = this.getBranchReview(id);
-    if (!result) throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
+    const result = this.getRepositoryReview(id);
+    if (!result)
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。");
     return result;
   }
 
-  recordBranchReviewInitializationFailure(
+  recordRepositoryReviewInitializationFailure(
     id: string,
     sourceOid: string,
     message: string,
-  ): BranchReview {
+  ): RepositoryReview {
     this.immediateTransaction(() => {
-      const current = this.getBranchReview(id);
+      const current = this.getRepositoryReview(id);
       if (!current) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
           status: 404,
         });
       }
       if (current.sourceOid !== sourceOid) {
         throw new RvwError(
           "LOCAL_STATE_INCONSISTENT",
-          "初期化失敗対象のBranch sourceが保存済みsourceと一致しません。",
+          "初期化失敗対象のRepository Review sourceが保存済みsourceと一致しません。",
           {
             status: 409,
             details: {
-              branchReviewId: id,
+              repositoryReviewId: id,
               expectedSourceOid: sourceOid,
               sourceOid: current.sourceOid,
             },
@@ -1121,50 +1130,52 @@ export class RvwDatabase {
       if (current.initializationState !== "pending") return;
       this.database
         .prepare(
-          `UPDATE branch_reviews SET source_sync_error = ?, initialization_state = 'failed',
+          `UPDATE repository_reviews SET source_sync_error = ?, initialization_state = 'failed',
             updated_at = ? WHERE id = ? AND source_oid = ?`,
         )
         .run(message, new Date().toISOString(), id, sourceOid);
     });
-    const result = this.getBranchReview(id);
-    if (!result) throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
+    const result = this.getRepositoryReview(id);
+    if (!result)
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。");
     return result;
   }
 
-  updateBranchRepositoryLocation(
+  updateRepositoryReviewLocation(
     id: string,
     repository: { localRepositoryPath: string; gitCommonDir: string },
-  ): BranchReview {
+  ): RepositoryReview {
     const now = new Date().toISOString();
     this.immediateTransaction(() => {
       const result = this.database
         .prepare(
-          "UPDATE branch_reviews SET local_repository_path = ?, git_common_dir = ?, updated_at = ? WHERE id = ?",
+          "UPDATE repository_reviews SET local_repository_path = ?, git_common_dir = ?, updated_at = ? WHERE id = ?",
         )
         .run(repository.localRepositoryPath, repository.gitCommonDir, now, id);
       if (Number(result.changes) !== 1) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。");
       }
-      this.incrementChangeSequence({ kind: "branch", reviewId: id });
+      this.incrementChangeSequence({ kind: "repository", reviewId: id });
     });
-    const result = this.getBranchReview(id);
-    if (!result) throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
+    const result = this.getRepositoryReview(id);
+    if (!result)
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。");
     return result;
   }
 
-  setBranchSyncError(
+  setRepositorySyncError(
     id: string,
     expectedSourceSyncGeneration: number,
     message: string,
-  ): { branchReview: BranchReview; updated: boolean; skipped: "newer-attempt" | null } {
+  ): { repositoryReview: RepositoryReview; updated: boolean; skipped: "newer-attempt" | null } {
     const outcome = this.immediateTransaction(() => {
-      const current = this.getBranchReview(id);
+      const current = this.getRepositoryReview(id);
       if (!current) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
           status: 404,
         });
       }
-      if (this.getBranchSourceSyncGeneration(id) !== expectedSourceSyncGeneration) {
+      if (this.getRepositorySourceSyncGeneration(id) !== expectedSourceSyncGeneration) {
         return { updated: false, skipped: "newer-attempt" as const };
       }
       if (current.sourceSyncError === message) {
@@ -1172,23 +1183,23 @@ export class RvwDatabase {
       }
       const result = this.database
         .prepare(
-          `UPDATE branch_reviews SET source_sync_error = ?, updated_at = ?
+          `UPDATE repository_reviews SET source_sync_error = ?, updated_at = ?
            WHERE id = ? AND source_sync_generation = ?`,
         )
         .run(message, new Date().toISOString(), id, expectedSourceSyncGeneration);
       if (Number(result.changes) !== 1) {
         return { updated: false, skipped: "newer-attempt" as const };
       }
-      this.incrementChangeSequence({ kind: "branch", reviewId: id });
+      this.incrementChangeSequence({ kind: "repository", reviewId: id });
       return { updated: true, skipped: null };
     });
-    const branchReview = this.getBranchReview(id);
-    if (!branchReview) {
-      throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+    const repositoryReview = this.getRepositoryReview(id);
+    if (!repositoryReview) {
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
         status: 404,
       });
     }
-    return { branchReview, ...outcome };
+    return { repositoryReview, ...outcome };
   }
 
   getIssue(id: string): CachedIssueDocument | null {
@@ -1198,7 +1209,7 @@ export class RvwDatabase {
   }
 
   getReviewIssue(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issueId: string,
   ): IssueDocument | null {
@@ -1339,18 +1350,18 @@ export class RvwDatabase {
     return this.writeIssue(issue).issue;
   }
 
-  private issueMembershipStorage(reviewKind: "pull-request" | "branch"): {
-    table: "pull_request_issues" | "branch_review_issues";
-    reviewColumn: "pull_request_id" | "branch_review_id";
+  private issueMembershipStorage(reviewKind: "pull-request" | "repository"): {
+    table: "pull_request_issues" | "repository_review_issues";
+    reviewColumn: "pull_request_id" | "repository_review_id";
   } {
     return reviewKind === "pull-request"
       ? { table: "pull_request_issues", reviewColumn: "pull_request_id" }
-      : { table: "branch_review_issues", reviewColumn: "branch_review_id" };
+      : { table: "repository_review_issues", reviewColumn: "repository_review_id" };
   }
 
-  private assertReviewExists(reviewKind: "pull-request" | "branch", reviewId: string): void {
-    if (reviewKind === "branch" && !this.getBranchReview(reviewId)) {
-      throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+  private assertReviewExists(reviewKind: "pull-request" | "repository", reviewId: string): void {
+    if (reviewKind === "repository" && !this.getRepositoryReview(reviewId)) {
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
         status: 404,
       });
     }
@@ -1361,7 +1372,7 @@ export class RvwDatabase {
 
   private notifyIssueReviewChanges(
     issueId: string,
-    exclude?: { kind: "pull-request" | "branch"; reviewId: string },
+    exclude?: { kind: "pull-request" | "repository"; reviewId: string },
   ): void {
     const contexts = (
       this.database
@@ -1369,13 +1380,13 @@ export class RvwDatabase {
           `SELECT 'pull-request' AS review_kind, pull_request_id AS review_id
            FROM pull_request_issues WHERE issue_id = ?
            UNION ALL
-           SELECT 'branch' AS review_kind, branch_review_id AS review_id
-           FROM branch_review_issues WHERE issue_id = ?`,
+           SELECT 'repository' AS review_kind, repository_review_id AS review_id
+           FROM repository_review_issues WHERE issue_id = ?`,
         )
         .all(issueId, issueId) as DbRow[]
     )
       .map((row) => ({
-        kind: stringValue(row, "review_kind") as "pull-request" | "branch",
+        kind: stringValue(row, "review_kind") as "pull-request" | "repository",
         reviewId: stringValue(row, "review_id"),
       }))
       .filter(
@@ -1388,7 +1399,7 @@ export class RvwDatabase {
   }
 
   setReviewIssueSyncError(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issueId: string,
     expectedCacheGeneration: number,
@@ -1434,7 +1445,7 @@ export class RvwDatabase {
   }
 
   refreshReviewIssue(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issueId: string,
     fetchedIssue: GitHubIssue,
@@ -1512,7 +1523,7 @@ export class RvwDatabase {
   }
 
   forceRepairReviewIssue(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issueId: string,
     expectedCacheGeneration: number,
@@ -1590,7 +1601,7 @@ export class RvwDatabase {
   }
 
   addReviewIssue(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issue: GitHubIssue,
   ): { issue: IssueDocument; added: boolean } {
@@ -1626,7 +1637,7 @@ export class RvwDatabase {
   }
 
   private ensureReviewIssueMemberships(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issues: GitHubIssue[],
   ): IssueDocument[] {
@@ -1659,7 +1670,7 @@ export class RvwDatabase {
     return added;
   }
 
-  listReviewIssues(reviewKind: "pull-request" | "branch", reviewId: string): IssueDocument[] {
+  listReviewIssues(reviewKind: "pull-request" | "repository", reviewId: string): IssueDocument[] {
     const { table, reviewColumn } = this.issueMembershipStorage(reviewKind);
     return (
       this.database
@@ -1674,7 +1685,7 @@ export class RvwDatabase {
   }
 
   hasReviewIssue(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issueId: string,
   ): boolean {
@@ -1687,15 +1698,15 @@ export class RvwDatabase {
   }
 
   getIssueRemovalCounts(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issueId: string,
   ): IssueRemovalCounts {
-    const commentTable = reviewKind === "pull-request" ? "comments" : "branch_comments";
+    const commentTable = reviewKind === "pull-request" ? "comments" : "repository_comments";
     const targetTable =
-      reviewKind === "pull-request" ? "comment_targets" : "branch_comment_targets";
-    const postTable = reviewKind === "pull-request" ? "comment_posts" : "branch_comment_posts";
-    const reviewColumn = reviewKind === "pull-request" ? "pull_request_id" : "branch_review_id";
+      reviewKind === "pull-request" ? "comment_targets" : "repository_comment_targets";
+    const postTable = reviewKind === "pull-request" ? "comment_posts" : "repository_comment_posts";
+    const reviewColumn = reviewKind === "pull-request" ? "pull_request_id" : "repository_review_id";
     const row = this.database
       .prepare(
         `SELECT
@@ -1716,14 +1727,14 @@ export class RvwDatabase {
   }
 
   removeReviewIssue(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issueId: string,
     expectedReviewChangeSequence: number,
   ): IssueRemovalCounts {
     return this.immediateTransaction(() => {
-      if (reviewKind === "branch" && !this.getBranchReview(reviewId)) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+      if (reviewKind === "repository" && !this.getRepositoryReview(reviewId)) {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
           status: 404,
         });
       }
@@ -1750,9 +1761,9 @@ export class RvwDatabase {
       } else {
         this.database
           .prepare(
-            `DELETE FROM branch_comments
-             WHERE branch_review_id = ? AND id IN (
-               SELECT comment_id FROM branch_comment_targets
+            `DELETE FROM repository_comments
+             WHERE repository_review_id = ? AND id IN (
+               SELECT comment_id FROM repository_comment_targets
                WHERE target_kind = 'issue' AND issue_id = ?
              )`,
           )
@@ -1771,39 +1782,39 @@ export class RvwDatabase {
     });
   }
 
-  getBranchResetCounts(branchReviewId: string, gitRefs: number): BranchResetCounts {
+  getRepositoryResetCounts(repositoryReviewId: string, gitRefs: number): RepositoryResetCounts {
     const row = this.database
       .prepare(
         `SELECT
-          (SELECT count(*) FROM branch_reviews WHERE id = ?) AS branch_review,
-          (SELECT count(*) FROM branch_review_issues WHERE branch_review_id = ?) AS issue_memberships,
-          (SELECT count(*) FROM branch_comments WHERE branch_review_id = ?) AS comments,
-          (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'issue') AS issue_comments,
-          (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'repository_file') AS code_comments,
-          (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'branch') AS review_comments,
-          (SELECT count(*) FROM branch_comments c JOIN branch_comment_targets t ON t.comment_id = c.id WHERE c.branch_review_id = ? AND t.target_kind = 'walkthrough') AS walkthrough_comments,
-          (SELECT count(*) FROM branch_comment_posts p JOIN branch_comments c ON c.id = p.comment_id WHERE c.branch_review_id = ?) AS posts,
-          (SELECT count(*) FROM branch_comment_post_references r JOIN branch_comment_posts p ON p.id = r.post_id JOIN branch_comments c ON c.id = p.comment_id WHERE c.branch_review_id = ?) AS comment_references,
-          (SELECT count(*) FROM branch_comment_targets t JOIN branch_comments c ON c.id = t.comment_id WHERE c.branch_review_id = ?) AS targets,
-          (SELECT count(*) FROM branch_walkthroughs WHERE branch_review_id = ?) AS walkthroughs,
-          (SELECT count(*) FROM branch_walkthrough_references r JOIN branch_walkthroughs w ON w.id = r.walkthrough_id WHERE w.branch_review_id = ?) AS walkthrough_references`,
+          (SELECT count(*) FROM repository_reviews WHERE id = ?) AS repository_review,
+          (SELECT count(*) FROM repository_review_issues WHERE repository_review_id = ?) AS issue_memberships,
+          (SELECT count(*) FROM repository_comments WHERE repository_review_id = ?) AS comments,
+          (SELECT count(*) FROM repository_comments c JOIN repository_comment_targets t ON t.comment_id = c.id WHERE c.repository_review_id = ? AND t.target_kind = 'issue') AS issue_comments,
+          (SELECT count(*) FROM repository_comments c JOIN repository_comment_targets t ON t.comment_id = c.id WHERE c.repository_review_id = ? AND t.target_kind = 'repository_file') AS code_comments,
+          (SELECT count(*) FROM repository_comments c JOIN repository_comment_targets t ON t.comment_id = c.id WHERE c.repository_review_id = ? AND t.target_kind = 'repository') AS review_comments,
+          (SELECT count(*) FROM repository_comments c JOIN repository_comment_targets t ON t.comment_id = c.id WHERE c.repository_review_id = ? AND t.target_kind = 'walkthrough') AS walkthrough_comments,
+          (SELECT count(*) FROM repository_comment_posts p JOIN repository_comments c ON c.id = p.comment_id WHERE c.repository_review_id = ?) AS posts,
+          (SELECT count(*) FROM repository_comment_post_references r JOIN repository_comment_posts p ON p.id = r.post_id JOIN repository_comments c ON c.id = p.comment_id WHERE c.repository_review_id = ?) AS comment_references,
+          (SELECT count(*) FROM repository_comment_targets t JOIN repository_comments c ON c.id = t.comment_id WHERE c.repository_review_id = ?) AS targets,
+          (SELECT count(*) FROM repository_walkthroughs WHERE repository_review_id = ?) AS walkthroughs,
+          (SELECT count(*) FROM repository_walkthrough_references r JOIN repository_walkthroughs w ON w.id = r.walkthrough_id WHERE w.repository_review_id = ?) AS walkthrough_references`,
       )
       .get(
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
       ) as DbRow;
     return {
-      branchReview: numberValue(row, "branch_review"),
+      repositoryReview: numberValue(row, "repository_review"),
       issueMemberships: numberValue(row, "issue_memberships"),
       comments: numberValue(row, "comments"),
       issueComments: numberValue(row, "issue_comments"),
@@ -1819,60 +1830,64 @@ export class RvwDatabase {
     };
   }
 
-  listBranchEvidenceOids(branchReviewId: string): string[] {
+  listRepositoryReviewEvidenceOids(repositoryReviewId: string): string[] {
     const rows = this.database
       .prepare(
-        `SELECT source_oid AS oid FROM branch_reviews WHERE id = ?
-         UNION SELECT created_source_oid AS oid FROM branch_comments WHERE branch_review_id = ?
+        `SELECT source_oid AS oid FROM repository_reviews WHERE id = ?
+         UNION SELECT created_source_oid AS oid FROM repository_comments WHERE repository_review_id = ?
          UNION SELECT t.source_oid AS oid
-           FROM branch_comment_targets t JOIN branch_comments c ON c.id = t.comment_id
-           WHERE c.branch_review_id = ? AND t.source_oid IS NOT NULL
+           FROM repository_comment_targets t JOIN repository_comments c ON c.id = t.comment_id
+           WHERE c.repository_review_id = ? AND t.source_oid IS NOT NULL
          UNION SELECT p.related_commit_oid AS oid
-           FROM branch_comment_posts p JOIN branch_comments c ON c.id = p.comment_id
-           WHERE c.branch_review_id = ? AND p.related_commit_oid IS NOT NULL
-         UNION SELECT source_oid AS oid FROM branch_walkthroughs WHERE branch_review_id = ?`,
+           FROM repository_comment_posts p JOIN repository_comments c ON c.id = p.comment_id
+           WHERE c.repository_review_id = ? AND p.related_commit_oid IS NOT NULL
+         UNION SELECT source_oid AS oid FROM repository_walkthroughs WHERE repository_review_id = ?`,
       )
       .all(
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
-        branchReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
+        repositoryReviewId,
       ) as DbRow[];
     return rows.map((row) => stringValue(row, "oid"));
   }
 
-  resetBranchReview(
-    branchReviewId: string,
+  resetRepositoryReview(
+    repositoryReviewId: string,
     gitRefs: number,
     expectedReviewChangeSequence: number,
-  ): BranchResetCounts {
+  ): RepositoryResetCounts {
     return this.immediateTransaction(() => {
-      if (!this.getBranchReview(branchReviewId)) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+      if (!this.getRepositoryReview(repositoryReviewId)) {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
           status: 404,
         });
       }
-      this.assertReviewChangeSequence("branch", branchReviewId, expectedReviewChangeSequence);
-      const counts = this.getBranchResetCounts(branchReviewId, gitRefs);
+      this.assertReviewChangeSequence(
+        "repository",
+        repositoryReviewId,
+        expectedReviewChangeSequence,
+      );
+      const counts = this.getRepositoryResetCounts(repositoryReviewId, gitRefs);
       const issueIds = this.database
-        .prepare("SELECT issue_id FROM branch_review_issues WHERE branch_review_id = ?")
-        .all(branchReviewId)
+        .prepare("SELECT issue_id FROM repository_review_issues WHERE repository_review_id = ?")
+        .all(repositoryReviewId)
         .map((row) => stringValue(row as DbRow, "issue_id"));
       this.database
-        .prepare("DELETE FROM branch_comments WHERE branch_review_id = ?")
-        .run(branchReviewId);
+        .prepare("DELETE FROM repository_comments WHERE repository_review_id = ?")
+        .run(repositoryReviewId);
       this.database
-        .prepare("DELETE FROM branch_walkthroughs WHERE branch_review_id = ?")
-        .run(branchReviewId);
+        .prepare("DELETE FROM repository_walkthroughs WHERE repository_review_id = ?")
+        .run(repositoryReviewId);
       const review = this.database
-        .prepare("DELETE FROM branch_reviews WHERE id = ?")
-        .run(branchReviewId);
+        .prepare("DELETE FROM repository_reviews WHERE id = ?")
+        .run(repositoryReviewId);
       if (Number(review.changes) !== 1) {
-        throw new RvwError("DATABASE_ERROR", "Branch Reviewを削除できませんでした。");
+        throw new RvwError("DATABASE_ERROR", "Repository Reviewを削除できませんでした。");
       }
       for (const issueId of issueIds) this.deleteOrphanIssue(issueId);
-      this.incrementChangeSequence({ kind: "branch", reviewId: branchReviewId });
+      this.incrementChangeSequence({ kind: "repository", reviewId: repositoryReviewId });
       return counts;
     });
   }
@@ -2074,29 +2089,29 @@ export class RvwDatabase {
   }
 
   private codeReferenceStorage(
-    kind: "comment-post" | "walkthrough" | "branch-comment-post" | "branch-walkthrough",
+    kind: "comment-post" | "walkthrough" | "repository-comment-post" | "repository-walkthrough",
   ): {
     table:
       | "comment_post_references"
       | "walkthrough_references"
-      | "branch_comment_post_references"
-      | "branch_walkthrough_references";
+      | "repository_comment_post_references"
+      | "repository_walkthrough_references";
     ownerColumn: "post_id" | "walkthrough_id";
   } {
     if (kind === "comment-post") {
       return { table: "comment_post_references", ownerColumn: "post_id" };
     }
-    if (kind === "branch-comment-post") {
-      return { table: "branch_comment_post_references", ownerColumn: "post_id" };
+    if (kind === "repository-comment-post") {
+      return { table: "repository_comment_post_references", ownerColumn: "post_id" };
     }
-    if (kind === "branch-walkthrough") {
-      return { table: "branch_walkthrough_references", ownerColumn: "walkthrough_id" };
+    if (kind === "repository-walkthrough") {
+      return { table: "repository_walkthrough_references", ownerColumn: "walkthrough_id" };
     }
     return { table: "walkthrough_references", ownerColumn: "walkthrough_id" };
   }
 
   private listCodeReferences(
-    kind: "comment-post" | "walkthrough" | "branch-comment-post" | "branch-walkthrough",
+    kind: "comment-post" | "walkthrough" | "repository-comment-post" | "repository-walkthrough",
     ownerId: string,
   ): CodeReference[] {
     const { table, ownerColumn } = this.codeReferenceStorage(kind);
@@ -2108,7 +2123,7 @@ export class RvwDatabase {
   }
 
   private listCodeReferencesForOwners(
-    kind: "comment-post" | "branch-comment-post",
+    kind: "comment-post" | "repository-comment-post",
     ownerIds: string[],
   ): Map<string, CodeReference[]> {
     const referencesByOwner = new Map(ownerIds.map((ownerId) => [ownerId, [] as CodeReference[]]));
@@ -2130,12 +2145,12 @@ export class RvwDatabase {
   }
 
   private listPostsForComments(
-    kind: "comment-post" | "branch-comment-post",
+    kind: "comment-post" | "repository-comment-post",
     commentIds: string[],
   ): Map<string, CommentPost[]> {
     const postsByComment = new Map(commentIds.map((commentId) => [commentId, [] as CommentPost[]]));
     if (commentIds.length === 0) return postsByComment;
-    const table = kind === "comment-post" ? "comment_posts" : "branch_comment_posts";
+    const table = kind === "comment-post" ? "comment_posts" : "repository_comment_posts";
     const placeholders = commentIds.map(() => "?").join(", ");
     const rows = this.database
       .prepare(
@@ -2158,7 +2173,7 @@ export class RvwDatabase {
   }
 
   private insertCodeReferences(
-    kind: "comment-post" | "walkthrough" | "branch-comment-post" | "branch-walkthrough",
+    kind: "comment-post" | "walkthrough" | "repository-comment-post" | "repository-walkthrough",
     ownerId: string,
     references: CodeReference[],
   ): void {
@@ -2410,9 +2425,9 @@ export class RvwDatabase {
   }
 
   private assertReviewOwnsCommentTargetIssue(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
-    target: CommentTarget | BranchCommentTarget,
+    target: CommentTarget | RepositoryReviewCommentTarget,
   ): void {
     if (target.kind !== "issue") return;
     if (this.hasReviewIssue(reviewKind, reviewId, target.issueId)) return;
@@ -2916,42 +2931,43 @@ export class RvwDatabase {
     }
   }
 
-  private mapBranchWalkthrough(row: DbRow): BranchWalkthrough {
+  private mapRepositoryWalkthrough(row: DbRow): RepositoryWalkthrough {
     const id = stringValue(row, "id");
     return {
       id,
       ref: formatWalkthroughUri(id),
-      branchReviewId: stringValue(row, "branch_review_id"),
+      repositoryReviewId: stringValue(row, "repository_review_id"),
       sourceOid: stringValue(row, "source_oid"),
       title: stringValue(row, "title"),
       body: stringValue(row, "body"),
       authorLabel: nullableString(row, "author_label"),
       diagramBindings: stringRecordValue(row, "diagram_bindings_json"),
-      references: this.listCodeReferences("branch-walkthrough", id),
+      references: this.listCodeReferences("repository-walkthrough", id),
       createdAt: stringValue(row, "created_at"),
     };
   }
 
-  getBranchWalkthrough(id: string): BranchWalkthrough | null {
-    const row = this.database.prepare("SELECT * FROM branch_walkthroughs WHERE id = ?").get(id) as
-      DbRow | undefined;
-    return row ? this.mapBranchWalkthrough(row) : null;
+  getRepositoryWalkthrough(id: string): RepositoryWalkthrough | null {
+    const row = this.database
+      .prepare("SELECT * FROM repository_walkthroughs WHERE id = ?")
+      .get(id) as DbRow | undefined;
+    return row ? this.mapRepositoryWalkthrough(row) : null;
   }
 
-  listBranchWalkthroughs(branchReviewId: string): BranchWalkthroughSummary[] {
+  listRepositoryWalkthroughs(repositoryReviewId: string): RepositoryWalkthroughSummary[] {
     return (
       this.database
         .prepare(
           `SELECT w.*,
-            (SELECT COUNT(*) FROM branch_walkthrough_references r WHERE r.walkthrough_id = w.id) AS reference_count
-           FROM branch_walkthroughs w
-           WHERE w.branch_review_id = ?
+            (SELECT COUNT(*) FROM repository_walkthrough_references r WHERE r.walkthrough_id = w.id) AS reference_count
+           FROM repository_walkthroughs w
+           WHERE w.repository_review_id = ?
            ORDER BY w.created_at DESC, w.id DESC`,
         )
-        .all(branchReviewId) as DbRow[]
+        .all(repositoryReviewId) as DbRow[]
     ).map((row) => ({
       id: stringValue(row, "id"),
-      branchReviewId: stringValue(row, "branch_review_id"),
+      repositoryReviewId: stringValue(row, "repository_review_id"),
       sourceOid: stringValue(row, "source_oid"),
       title: stringValue(row, "title"),
       authorLabel: nullableString(row, "author_label"),
@@ -2960,26 +2976,26 @@ export class RvwDatabase {
     }));
   }
 
-  createBranchWalkthrough(
-    input: NewBranchWalkthroughInput,
+  createRepositoryWalkthrough(
+    input: NewRepositoryWalkthroughInput,
     issues: GitHubIssue[] = [],
-  ): { walkthrough: BranchWalkthrough; issuesAdded: IssueDocument[] } {
+  ): { walkthrough: RepositoryWalkthrough; issuesAdded: IssueDocument[] } {
     const id = randomUUID();
     const issuesAdded = this.immediateTransaction(() => {
-      if (!this.getBranchReview(input.branchReviewId)) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+      if (!this.getRepositoryReview(input.repositoryReviewId)) {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
           status: 404,
         });
       }
       this.database
         .prepare(
-          `INSERT INTO branch_walkthroughs(
-            id, branch_review_id, source_oid, title, body, author_label, diagram_bindings_json, created_at
+          `INSERT INTO repository_walkthroughs(
+            id, repository_review_id, source_oid, title, body, author_label, diagram_bindings_json, created_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
-          input.branchReviewId,
+          input.repositoryReviewId,
           input.sourceOid,
           input.title,
           input.body,
@@ -2987,25 +3003,29 @@ export class RvwDatabase {
           JSON.stringify(input.diagramBindings),
           new Date().toISOString(),
         );
-      this.insertCodeReferences("branch-walkthrough", id, input.references);
-      const added = this.ensureReviewIssueMemberships("branch", input.branchReviewId, issues);
-      this.incrementChangeSequence({ kind: "branch", reviewId: input.branchReviewId });
+      this.insertCodeReferences("repository-walkthrough", id, input.references);
+      const added = this.ensureReviewIssueMemberships(
+        "repository",
+        input.repositoryReviewId,
+        issues,
+      );
+      this.incrementChangeSequence({ kind: "repository", reviewId: input.repositoryReviewId });
       return added;
     });
-    const walkthrough = this.getBranchWalkthrough(id);
+    const walkthrough = this.getRepositoryWalkthrough(id);
     if (!walkthrough) throw new RvwError("DATABASE_ERROR", "Walkthroughを読み出せません。");
     return { walkthrough, issuesAdded };
   }
 
-  updateBranchWalkthrough(
+  updateRepositoryWalkthrough(
     id: string,
-    input: Omit<NewBranchWalkthroughInput, "branchReviewId">,
+    input: Omit<NewRepositoryWalkthroughInput, "repositoryReviewId">,
     issues: GitHubIssue[] = [],
-  ): { walkthrough: BranchWalkthrough; issuesAdded: IssueDocument[] } {
+  ): { walkthrough: RepositoryWalkthrough; issuesAdded: IssueDocument[] } {
     const issuesAdded = this.immediateTransaction(() => {
       const result = this.database
         .prepare(
-          `UPDATE branch_walkthroughs
+          `UPDATE repository_walkthroughs
            SET source_oid = ?, title = ?, body = ?, author_label = ?, diagram_bindings_json = ?
            WHERE id = ?`,
         )
@@ -3021,36 +3041,43 @@ export class RvwDatabase {
         throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
       }
       this.database
-        .prepare("DELETE FROM branch_walkthrough_references WHERE walkthrough_id = ?")
+        .prepare("DELETE FROM repository_walkthrough_references WHERE walkthrough_id = ?")
         .run(id);
-      this.insertCodeReferences("branch-walkthrough", id, input.references);
-      const walkthrough = this.getBranchWalkthrough(id);
+      this.insertCodeReferences("repository-walkthrough", id, input.references);
+      const walkthrough = this.getRepositoryWalkthrough(id);
       if (!walkthrough) throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。");
-      const added = this.ensureReviewIssueMemberships("branch", walkthrough.branchReviewId, issues);
-      this.incrementChangeSequence({ kind: "branch", reviewId: walkthrough.branchReviewId });
+      const added = this.ensureReviewIssueMemberships(
+        "repository",
+        walkthrough.repositoryReviewId,
+        issues,
+      );
+      this.incrementChangeSequence({
+        kind: "repository",
+        reviewId: walkthrough.repositoryReviewId,
+      });
       return added;
     });
-    const walkthrough = this.getBranchWalkthrough(id);
+    const walkthrough = this.getRepositoryWalkthrough(id);
     if (!walkthrough) throw new RvwError("DATABASE_ERROR", "Walkthroughを読み出せません。");
     return { walkthrough, issuesAdded };
   }
 
-  getBranchWalkthroughDeleteCounts(id: string): WalkthroughDeleteCounts {
+  getRepositoryWalkthroughDeleteCounts(id: string): WalkthroughDeleteCounts {
     const comments = this.database
-      .prepare("SELECT count(*) AS count FROM branch_comment_targets WHERE walkthrough_id = ?")
+      .prepare("SELECT count(*) AS count FROM repository_comment_targets WHERE walkthrough_id = ?")
       .get(id) as DbRow;
     const posts = this.database
       .prepare(
         `SELECT count(*) AS count
-         FROM branch_comment_posts
+         FROM repository_comment_posts
          WHERE comment_id IN (
-           SELECT comment_id FROM branch_comment_targets WHERE walkthrough_id = ?
+           SELECT comment_id FROM repository_comment_targets WHERE walkthrough_id = ?
          )`,
       )
       .get(id) as DbRow;
     const references = this.database
       .prepare(
-        "SELECT count(*) AS count FROM branch_walkthrough_references WHERE walkthrough_id = ?",
+        "SELECT count(*) AS count FROM repository_walkthrough_references WHERE walkthrough_id = ?",
       )
       .get(id) as DbRow;
     return {
@@ -3060,48 +3087,56 @@ export class RvwDatabase {
     };
   }
 
-  deleteBranchWalkthrough(
+  deleteRepositoryWalkthrough(
     id: string,
     expectedReviewChangeSequence: number,
-  ): DeletedBranchWalkthrough {
+  ): DeletedRepositoryWalkthrough {
     return this.immediateTransaction(() => {
-      const walkthrough = this.getBranchWalkthrough(id);
+      const walkthrough = this.getRepositoryWalkthrough(id);
       if (!walkthrough) {
         throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
       }
       this.assertReviewChangeSequence(
-        "branch",
-        walkthrough.branchReviewId,
+        "repository",
+        walkthrough.repositoryReviewId,
         expectedReviewChangeSequence,
       );
-      const counts = this.getBranchWalkthroughDeleteCounts(id);
+      const counts = this.getRepositoryWalkthroughDeleteCounts(id);
       this.database
         .prepare(
-          "DELETE FROM branch_comments WHERE id IN (SELECT comment_id FROM branch_comment_targets WHERE walkthrough_id = ?)",
+          "DELETE FROM repository_comments WHERE id IN (SELECT comment_id FROM repository_comment_targets WHERE walkthrough_id = ?)",
         )
         .run(id);
-      this.database.prepare("DELETE FROM branch_walkthroughs WHERE id = ?").run(id);
-      this.incrementChangeSequence({ kind: "branch", reviewId: walkthrough.branchReviewId });
+      this.database.prepare("DELETE FROM repository_walkthroughs WHERE id = ?").run(id);
+      this.incrementChangeSequence({
+        kind: "repository",
+        reviewId: walkthrough.repositoryReviewId,
+      });
       return {
         id,
         ref: walkthrough.ref,
-        branchReviewId: walkthrough.branchReviewId,
+        repositoryReviewId: walkthrough.repositoryReviewId,
         counts,
       };
     });
   }
 
-  private insertBranchCommentTarget(commentId: string, target: BranchCommentTarget): void {
-    if (target.kind === "branch") {
+  private insertRepositoryCommentTarget(
+    commentId: string,
+    target: RepositoryReviewCommentTarget,
+  ): void {
+    if (target.kind === "repository") {
       this.database
-        .prepare("INSERT INTO branch_comment_targets(comment_id, target_kind) VALUES (?, 'branch')")
+        .prepare(
+          "INSERT INTO repository_comment_targets(comment_id, target_kind) VALUES (?, 'repository')",
+        )
         .run(commentId);
       return;
     }
     if (target.kind === "walkthrough") {
       this.database
         .prepare(
-          `INSERT INTO branch_comment_targets(
+          `INSERT INTO repository_comment_targets(
             comment_id, target_kind, walkthrough_id, source_document_hash, quoted_text,
             start_line, end_line
           ) VALUES (?, 'walkthrough', ?, ?, ?, ?, ?)`,
@@ -3119,7 +3154,7 @@ export class RvwDatabase {
     if (target.kind === "issue") {
       this.database
         .prepare(
-          `INSERT INTO branch_comment_targets(
+          `INSERT INTO repository_comment_targets(
             comment_id, target_kind, issue_id, source_document_hash, quoted_text,
             start_line, end_line
           ) VALUES (?, 'issue', ?, ?, ?, ?, ?)`,
@@ -3136,18 +3171,18 @@ export class RvwDatabase {
     }
     this.database
       .prepare(
-        `INSERT INTO branch_comment_targets(
+        `INSERT INTO repository_comment_targets(
           comment_id, target_kind, source_oid, file_path, start_line, end_line
         ) VALUES (?, 'repository_file', ?, ?, ?, ?)`,
       )
       .run(commentId, target.sourceOid, target.path, target.startLine, target.endLine);
   }
 
-  private mapBranchCommentWithoutPosts(row: DbRow): Omit<BranchReviewComment, "posts"> {
+  private mapRepositoryCommentWithoutPosts(row: DbRow): Omit<RepositoryReviewComment, "posts"> {
     const targetKind = stringValue(row, "target_kind");
-    let target: BranchCommentTarget;
-    if (targetKind === "branch") {
-      target = { kind: "branch" };
+    let target: RepositoryReviewCommentTarget;
+    if (targetKind === "repository") {
+      target = { kind: "repository" };
     } else if (targetKind === "walkthrough") {
       target = {
         kind: "walkthrough",
@@ -3184,7 +3219,7 @@ export class RvwDatabase {
     return {
       id,
       ref: formatCommentUri(id),
-      branchReviewId: stringValue(row, "branch_review_id"),
+      repositoryReviewId: stringValue(row, "repository_review_id"),
       createdSourceOid: stringValue(row, "created_source_oid"),
       resolvedAt: nullableString(row, "resolved_at"),
       createdAt: stringValue(row, "created_at"),
@@ -3193,27 +3228,30 @@ export class RvwDatabase {
     };
   }
 
-  private branchCommentSelect(where: string): string {
+  private repositoryCommentSelect(where: string): string {
     return `SELECT c.*, t.target_kind, t.source_oid, t.file_path, t.source_document_hash,
       t.quoted_text, t.walkthrough_id, t.issue_id, t.start_line, t.end_line,
       w.title AS walkthrough_title,
       i.github_url AS issue_url, i.number AS issue_number, i.title AS issue_title
-      FROM branch_comments c
-      JOIN branch_comment_targets t ON t.comment_id = c.id
-      LEFT JOIN branch_walkthroughs w ON w.id = t.walkthrough_id
+      FROM repository_comments c
+      JOIN repository_comment_targets t ON t.comment_id = c.id
+      LEFT JOIN repository_walkthroughs w ON w.id = t.walkthrough_id
       LEFT JOIN github_issues i ON i.id = t.issue_id
       ${where}`;
   }
 
-  getBranchComment(id: string): BranchReviewComment | null {
-    const row = this.database.prepare(this.branchCommentSelect("WHERE c.id = ?")).get(id) as
+  getRepositoryComment(id: string): RepositoryReviewComment | null {
+    const row = this.database.prepare(this.repositoryCommentSelect("WHERE c.id = ?")).get(id) as
       DbRow | undefined;
     if (!row) return null;
-    const comment = this.mapBranchCommentWithoutPosts(row);
-    return { ...comment, posts: this.listBranchCommentPosts(id) };
+    const comment = this.mapRepositoryCommentWithoutPosts(row);
+    return { ...comment, posts: this.listRepositoryCommentPosts(id) };
   }
 
-  listBranchComments(branchReviewId: string, resolved?: boolean): BranchReviewComment[] {
+  listRepositoryComments(
+    repositoryReviewId: string,
+    resolved?: boolean,
+  ): RepositoryReviewComment[] {
     const state =
       resolved === undefined
         ? ""
@@ -3222,13 +3260,13 @@ export class RvwDatabase {
           : " AND c.resolved_at IS NULL";
     const rows = this.database
       .prepare(
-        `${this.branchCommentSelect(`WHERE c.branch_review_id = ?${state}`)}
+        `${this.repositoryCommentSelect(`WHERE c.repository_review_id = ?${state}`)}
            ORDER BY c.updated_at DESC, c.id DESC`,
       )
-      .all(branchReviewId) as DbRow[];
-    const comments = rows.map((row) => this.mapBranchCommentWithoutPosts(row));
+      .all(repositoryReviewId) as DbRow[];
+    const comments = rows.map((row) => this.mapRepositoryCommentWithoutPosts(row));
     const postsByComment = this.listPostsForComments(
-      "branch-comment-post",
+      "repository-comment-post",
       comments.map((comment) => comment.id),
     );
     return comments.map((comment) => ({
@@ -3237,33 +3275,33 @@ export class RvwDatabase {
     }));
   }
 
-  listBranchCommentPosts(commentId: string): CommentPost[] {
-    return this.listPostsForComments("branch-comment-post", [commentId]).get(commentId) ?? [];
+  listRepositoryCommentPosts(commentId: string): CommentPost[] {
+    return this.listPostsForComments("repository-comment-post", [commentId]).get(commentId) ?? [];
   }
 
-  createBranchComment(input: NewBranchCommentInput): BranchReviewComment {
+  createRepositoryComment(input: NewRepositoryCommentInput): RepositoryReviewComment {
     const id = randomUUID();
     const postId = randomUUID();
     const now = new Date().toISOString();
     this.immediateTransaction(() => {
-      const branch = this.getBranchReview(input.branchReviewId);
-      if (!branch) {
-        throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+      const repositoryReview = this.getRepositoryReview(input.repositoryReviewId);
+      if (!repositoryReview) {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
           status: 404,
         });
       }
-      this.assertReviewOwnsCommentTargetIssue("branch", branch.id, input.target);
+      this.assertReviewOwnsCommentTargetIssue("repository", repositoryReview.id, input.target);
       this.database
         .prepare(
-          `INSERT INTO branch_comments(
-            id, branch_review_id, created_source_oid, resolved_at, created_at, updated_at
+          `INSERT INTO repository_comments(
+            id, repository_review_id, created_source_oid, resolved_at, created_at, updated_at
           ) VALUES (?, ?, ?, NULL, ?, ?)`,
         )
-        .run(id, input.branchReviewId, input.createdSourceOid, now, now);
-      this.insertBranchCommentTarget(id, input.target);
+        .run(id, input.repositoryReviewId, input.createdSourceOid, now, now);
+      this.insertRepositoryCommentTarget(id, input.target);
       this.database
         .prepare(
-          `INSERT INTO branch_comment_posts(
+          `INSERT INTO repository_comment_posts(
             id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
         )
@@ -3276,21 +3314,25 @@ export class RvwDatabase {
           now,
           now,
         );
-      this.insertCodeReferences("branch-comment-post", postId, input.references ?? []);
+      this.insertCodeReferences("repository-comment-post", postId, input.references ?? []);
       this.insertReviewCommentEvent(
         postId,
         formatCommentUri(id),
-        { kind: "branch", branchReviewId: branch.id, repository: branch.canonicalName },
+        {
+          kind: "repository",
+          repositoryReviewId: repositoryReview.id,
+          repository: repositoryReview.canonicalName,
+        },
         now,
       );
-      this.incrementChangeSequence({ kind: "branch", reviewId: input.branchReviewId });
+      this.incrementChangeSequence({ kind: "repository", reviewId: input.repositoryReviewId });
     });
-    const comment = this.getBranchComment(id);
+    const comment = this.getRepositoryComment(id);
     if (!comment) throw new RvwError("DATABASE_ERROR", "保存したコメントを読み出せません。");
     return comment;
   }
 
-  insertBranchReply(
+  insertRepositoryReply(
     commentId: string,
     input: {
       body: string;
@@ -3302,17 +3344,19 @@ export class RvwDatabase {
     },
   ): CommentPost {
     return this.immediateTransaction(() => {
-      const comment = this.getBranchComment(commentId);
+      const comment = this.getRepositoryComment(commentId);
       if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
-      const branch = this.getBranchReview(comment.branchReviewId);
-      if (!branch) throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。");
+      const repositoryReview = this.getRepositoryReview(comment.repositoryReviewId);
+      if (!repositoryReview) {
+        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。");
+      }
       const keyHash = input.idempotencyKey ? hashIdempotencyKey(input.idempotencyKey) : null;
       const requestHash = keyHash
         ? (input.idempotencyRequestHash ??
           hashIdempotencyKey(
             JSON.stringify({
               operation: "comment.reply",
-              reviewKind: "branch",
+              reviewKind: "repository",
               commentId,
               body: input.body,
               relatedCommitOid: input.relatedCommitOid ?? null,
@@ -3333,7 +3377,7 @@ export class RvwDatabase {
             );
           }
           const postId = stringValue(existing, "post_id");
-          const post = this.listBranchCommentPosts(commentId).find(
+          const post = this.listRepositoryCommentPosts(commentId).find(
             (candidate) => candidate.id === postId,
           );
           if (!post) {
@@ -3350,7 +3394,7 @@ export class RvwDatabase {
       const now = new Date().toISOString();
       this.database
         .prepare(
-          `INSERT INTO branch_comment_posts(
+          `INSERT INTO repository_comment_posts(
             id, comment_id, body, related_commit_oid, author_label, is_root, created_at, updated_at
           ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
         )
@@ -3363,11 +3407,15 @@ export class RvwDatabase {
           now,
           now,
         );
-      this.insertCodeReferences("branch-comment-post", id, input.references ?? []);
+      this.insertCodeReferences("repository-comment-post", id, input.references ?? []);
       this.insertReviewCommentEvent(
         id,
         comment.ref,
-        { kind: "branch", branchReviewId: branch.id, repository: branch.canonicalName },
+        {
+          kind: "repository",
+          repositoryReviewId: repositoryReview.id,
+          repository: repositoryReview.canonicalName,
+        },
         now,
       );
       if (keyHash && requestHash) {
@@ -3380,16 +3428,18 @@ export class RvwDatabase {
           .run(keyHash, requestHash, id, now);
       }
       this.database
-        .prepare("UPDATE branch_comments SET updated_at = ? WHERE id = ?")
+        .prepare("UPDATE repository_comments SET updated_at = ? WHERE id = ?")
         .run(now, commentId);
-      this.incrementChangeSequence({ kind: "branch", reviewId: comment.branchReviewId });
-      const post = this.listBranchCommentPosts(commentId).find((candidate) => candidate.id === id);
+      this.incrementChangeSequence({ kind: "repository", reviewId: comment.repositoryReviewId });
+      const post = this.listRepositoryCommentPosts(commentId).find(
+        (candidate) => candidate.id === id,
+      );
       if (!post) throw new RvwError("DATABASE_ERROR", "返信を読み出せません。");
       return post;
     });
   }
 
-  updateBranchCommentPost(
+  updateRepositoryCommentPost(
     commentId: string,
     postId: string,
     body: string,
@@ -3397,19 +3447,19 @@ export class RvwDatabase {
     references?: CodeReference[],
   ): CommentPost {
     const now = new Date().toISOString();
-    const comment = this.getBranchComment(commentId);
+    const comment = this.getRepositoryComment(commentId);
     if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     this.immediateTransaction(() => {
       const result =
         relatedCommitOid === undefined
           ? this.database
               .prepare(
-                "UPDATE branch_comment_posts SET body = ?, updated_at = ? WHERE id = ? AND comment_id = ?",
+                "UPDATE repository_comment_posts SET body = ?, updated_at = ? WHERE id = ? AND comment_id = ?",
               )
               .run(body, now, postId, commentId)
           : this.database
               .prepare(
-                `UPDATE branch_comment_posts SET body = ?, related_commit_oid = ?, updated_at = ?
+                `UPDATE repository_comment_posts SET body = ?, related_commit_oid = ?, updated_at = ?
                  WHERE id = ? AND comment_id = ?`,
               )
               .run(body, relatedCommitOid, now, postId, commentId);
@@ -3420,26 +3470,26 @@ export class RvwDatabase {
       }
       if (references !== undefined) {
         this.database
-          .prepare("DELETE FROM branch_comment_post_references WHERE post_id = ?")
+          .prepare("DELETE FROM repository_comment_post_references WHERE post_id = ?")
           .run(postId);
-        this.insertCodeReferences("branch-comment-post", postId, references);
+        this.insertCodeReferences("repository-comment-post", postId, references);
       }
       this.database
-        .prepare("UPDATE branch_comments SET updated_at = ? WHERE id = ?")
+        .prepare("UPDATE repository_comments SET updated_at = ? WHERE id = ?")
         .run(now, commentId);
-      this.incrementChangeSequence({ kind: "branch", reviewId: comment.branchReviewId });
+      this.incrementChangeSequence({ kind: "repository", reviewId: comment.repositoryReviewId });
     });
-    const post = this.listBranchCommentPosts(commentId).find(
+    const post = this.listRepositoryCommentPosts(commentId).find(
       (candidate) => candidate.id === postId,
     );
     if (!post) throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。");
     return post;
   }
 
-  deleteBranchReply(commentId: string, postId: string): { commentId: string; postId: string } {
-    const comment = this.getBranchComment(commentId);
+  deleteRepositoryReply(commentId: string, postId: string): { commentId: string; postId: string } {
+    const comment = this.getRepositoryComment(commentId);
     if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
-    const post = this.listBranchCommentPosts(commentId).find(
+    const post = this.listRepositoryCommentPosts(commentId).find(
       (candidate) => candidate.id === postId,
     );
     if (!post)
@@ -3448,40 +3498,40 @@ export class RvwDatabase {
       throw new RvwError("INVALID_INPUT", "root commentは返信として削除できません。");
     this.immediateTransaction(() => {
       this.database
-        .prepare("DELETE FROM branch_comment_posts WHERE id = ? AND comment_id = ?")
+        .prepare("DELETE FROM repository_comment_posts WHERE id = ? AND comment_id = ?")
         .run(postId, commentId);
       this.database
-        .prepare("UPDATE branch_comments SET updated_at = ? WHERE id = ?")
+        .prepare("UPDATE repository_comments SET updated_at = ? WHERE id = ?")
         .run(new Date().toISOString(), commentId);
-      this.incrementChangeSequence({ kind: "branch", reviewId: comment.branchReviewId });
+      this.incrementChangeSequence({ kind: "repository", reviewId: comment.repositoryReviewId });
     });
     return { commentId, postId };
   }
 
-  setBranchCommentResolved(commentId: string, resolved: boolean): BranchReviewComment {
-    const current = this.getBranchComment(commentId);
+  setRepositoryCommentResolved(commentId: string, resolved: boolean): RepositoryReviewComment {
+    const current = this.getRepositoryComment(commentId);
     if (!current) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     this.immediateTransaction(() => {
       const now = new Date().toISOString();
       const result = this.database
-        .prepare("UPDATE branch_comments SET resolved_at = ?, updated_at = ? WHERE id = ?")
+        .prepare("UPDATE repository_comments SET resolved_at = ?, updated_at = ? WHERE id = ?")
         .run(resolved ? now : null, now, commentId);
       if (Number(result.changes) !== 1) {
         throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
       }
-      this.incrementChangeSequence({ kind: "branch", reviewId: current.branchReviewId });
+      this.incrementChangeSequence({ kind: "repository", reviewId: current.repositoryReviewId });
     });
-    const comment = this.getBranchComment(commentId);
+    const comment = this.getRepositoryComment(commentId);
     if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     return comment;
   }
 
-  deleteBranchComment(commentId: string): { id: string; ref: string } {
-    const comment = this.getBranchComment(commentId);
+  deleteRepositoryComment(commentId: string): { id: string; ref: string } {
+    const comment = this.getRepositoryComment(commentId);
     if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     this.immediateTransaction(() => {
-      this.database.prepare("DELETE FROM branch_comments WHERE id = ?").run(commentId);
-      this.incrementChangeSequence({ kind: "branch", reviewId: comment.branchReviewId });
+      this.database.prepare("DELETE FROM repository_comments WHERE id = ?").run(commentId);
+      this.incrementChangeSequence({ kind: "repository", reviewId: comment.repositoryReviewId });
     });
     return { id: comment.id, ref: comment.ref };
   }

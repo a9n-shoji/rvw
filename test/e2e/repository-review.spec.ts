@@ -1,6 +1,6 @@
 import { expect, test, type Locator } from "@playwright/test";
 
-const branchReviewId = "33333333-3333-4333-8333-333333333333";
+const repositoryReviewId = "33333333-3333-4333-8333-333333333333";
 const modifier = process.platform === "darwin" ? "Meta" : "Control";
 
 async function selectMappedText(locator: Locator): Promise<void> {
@@ -20,30 +20,30 @@ async function selectMappedText(locator: Locator): Promise<void> {
 }
 
 test.beforeEach(async ({ request }) => {
-  const response = await request.post("/api/test/reset-branch-review", { data: {} });
+  const response = await request.post("/api/test/reset-repository-review", { data: {} });
   expect(response.ok()).toBe(true);
 });
 
-test("rejects a malformed Branch Review ID before starting Review queries", async ({
+test("rejects a malformed Repository Review ID before starting Review queries", async ({
   page,
   request,
 }) => {
-  const branchRequests: string[] = [];
+  const repositoryRequests: string[] = [];
   page.on("request", (browserRequest) => {
-    if (new URL(browserRequest.url()).pathname.startsWith("/api/branch-reviews/")) {
-      branchRequests.push(browserRequest.url());
+    if (new URL(browserRequest.url()).pathname.startsWith("/api/repository-reviews/")) {
+      repositoryRequests.push(browserRequest.url());
     }
   });
-  await page.goto("/?branchReviewId=not-a-uuid");
-  await expect(page.getByText("Branch Review IDが不正です。", { exact: true })).toBeVisible();
-  expect(branchRequests).toEqual([]);
-  expect((await request.get("/api/branch-reviews/not-a-uuid")).status()).toBe(400);
+  await page.goto("/?repositoryReviewId=not-a-uuid");
+  await expect(page.getByText("Repository Review IDが不正です。", { exact: true })).toBeVisible();
+  expect(repositoryRequests).toEqual([]);
+  expect((await request.get("/api/repository-reviews/not-a-uuid")).status()).toBe(400);
 });
 
-test("shows Issue refresh failures without reporting the whole Branch sync as clean", async ({
+test("shows Issue refresh failures without reporting the whole Repository Review sync as clean", async ({
   page,
 }) => {
-  await page.route(`**/api/branch-reviews/${branchReviewId}/sync`, async (route) => {
+  await page.route(`**/api/repository-reviews/${repositoryReviewId}/sync`, async (route) => {
     if (route.request().method() !== "POST") {
       await route.continue();
       return;
@@ -73,7 +73,7 @@ test("shows Issue refresh failures without reporting the whole Branch sync as cl
     });
   });
 
-  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
   const feedback = page.getByRole("status");
   await expect(feedback).toContainText("trunk · cccccccc に同期しました。");
   await expect(feedback).toContainText("Issue 1件の更新に失敗しました");
@@ -81,7 +81,9 @@ test("shows Issue refresh failures without reporting the whole Branch sync as cl
   await expect(feedback).toHaveClass(/sync-feedback-warning/);
 });
 
-test("does not let a delayed Branch reference replace newer navigation", async ({ page }) => {
+test("does not let a delayed Repository Review reference replace newer navigation", async ({
+  page,
+}) => {
   let releaseRequest = (): void => undefined;
   const requestMayContinue = new Promise<void>((resolve) => {
     releaseRequest = resolve;
@@ -90,7 +92,7 @@ test("does not let a delayed Branch reference replace newer navigation", async (
   const requestStarted = new Promise<void>((resolve) => {
     markRequestStarted = resolve;
   });
-  await page.route("**/api/branch-reviews/*/document?*", async (route) => {
+  await page.route("**/api/repository-reviews/*/document?*", async (route) => {
     const url = new URL(route.request().url());
     if (url.searchParams.get("path") !== "src/fixture.ts") {
       await route.continue();
@@ -102,7 +104,7 @@ test("does not let a delayed Branch reference replace newer navigation", async (
   });
 
   try {
-    await page.goto(`/?branchReviewId=${branchReviewId}`);
+    await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
     await page.getByRole("button", { name: "ウォークスルー 1" }).click();
     await page.getByRole("button", { name: "Current request flow", exact: true }).click();
     await page.getByRole("button", { name: /the implementation.*L1–3/ }).click();
@@ -118,7 +120,7 @@ test("does not let a delayed Branch reference replace newer navigation", async (
     const delayedResponse = page.waitForResponse((response) => {
       const url = new URL(response.url());
       return (
-        url.pathname === `/api/branch-reviews/${branchReviewId}/document` &&
+        url.pathname === `/api/repository-reviews/${repositoryReviewId}/document` &&
         url.searchParams.get("path") === "src/fixture.ts"
       );
     });
@@ -134,11 +136,11 @@ test("does not let a delayed Branch reference replace newer navigation", async (
   }
 });
 
-test("refreshes both pane details without losing unrelated UI state after an external Branch Walkthrough update", async ({
+test("refreshes both pane details without losing unrelated UI state after an external Repository Walkthrough update", async ({
   page,
   request,
 }) => {
-  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
   await page.getByRole("button", { name: "ウォークスルー 1" }).click();
   const walkthroughButton = page.getByRole("button", {
     name: "Current request flow",
@@ -163,8 +165,8 @@ test("refreshes both pane details without losing unrelated UI state after an ext
 
   const commentsToggle = page.getByRole("button", { name: "コメント 2", exact: true });
   await commentsToggle.click();
-  await page.getByRole("button", { name: "＋ Branch全体", exact: true }).click();
-  const unrelatedDraft = page.getByPlaceholder("Branch Review全体へのコメント");
+  await page.getByRole("button", { name: "＋ Repository Review全体", exact: true }).click();
+  const unrelatedDraft = page.getByPlaceholder("Repository Review全体へのコメント");
   await unrelatedDraft.fill("External Walkthrough refresh must preserve this draft");
   await unrelatedDraft.evaluate((element) => {
     element.dataset.rvwE2eIdentity = "unrelated-branch-draft";
@@ -199,7 +201,7 @@ test("refreshes both pane details without losing unrelated UI state after an ext
     "  replacement[Replacement] --> complete[Complete]",
     "```",
   ].join("\n");
-  const update = await request.post("/api/test/update-branch-walkthrough", {
+  const update = await request.post("/api/test/update-repository-walkthrough", {
     data: {
       title: updatedTitle,
       body: updatedBody,
@@ -247,7 +249,7 @@ test("refreshes both pane details without losing unrelated UI state after an ext
   await expect(unrelatedDraft).toBeFocused();
   await expect(rightPane).toBeVisible();
 
-  const deletionEndpoint = `/api/branch-reviews/${branchReviewId}/walkthroughs/66666666-6666-4666-8666-666666666666`;
+  const deletionEndpoint = `/api/repository-reviews/${repositoryReviewId}/walkthroughs/66666666-6666-4666-8666-666666666666`;
   const deletionPreview = await request.delete(deletionEndpoint, { data: { yes: false } });
   expect(deletionPreview.status()).toBe(409);
   const { confirmationToken } = (await deletionPreview.json()) as {
@@ -261,10 +263,10 @@ test("refreshes both pane details without losing unrelated UI state after an ext
   await expect(page.getByRole("button", { name: "ウォークスルー 0" })).toBeVisible();
 });
 
-test("keeps a moved Branch document in its current pane during reading-history restore", async ({
+test("keeps a moved Repository Review document in its current pane during reading-history restore", async ({
   page,
 }) => {
-  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
   await page.getByRole("button", { name: "src フォルダ", exact: true }).click();
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
   await page.getByRole("button", { name: "README.md", exact: true }).click();
@@ -292,10 +294,10 @@ test("keeps a moved Branch document in its current pane during reading-history r
   await expect(leftPane.getByRole("tab", { name: "README.md", exact: true })).toHaveCount(0);
 });
 
-test("restores the actual Branch pane scroll position after leaving a line jump", async ({
+test("restores the actual Repository Review pane scroll position after leaving a line jump", async ({
   page,
 }) => {
-  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
   await page.getByRole("button", { name: "コード検索を開く" }).click();
   await page.getByRole("textbox", { name: "全文検索", exact: true }).fill("dispatcher");
   await page.getByRole("button", { name: /README\.md \d+行/ }).click();
@@ -334,10 +336,10 @@ test("restores the actual Branch pane scroll position after leaving a line jump"
 test("uses the shared review workspace for the default branch, Issues, code, and Walkthroughs", async ({
   page,
 }) => {
-  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
 
   await expect(
-    page.getByRole("heading", { name: /^Branch Review · trunk · [0-9a-f]{8}$/ }),
+    page.getByRole("heading", { name: /^Repository Review · trunk · [0-9a-f]{8}$/ }),
   ).toBeVisible();
   await expect(page.getByText("acme/review-repo · remote origin", { exact: true })).toHaveAttribute(
     "title",
@@ -403,7 +405,7 @@ test("uses the shared review workspace for the default branch, Issues, code, and
   const issueAttachment = page.getByRole("img", { name: "Issue attachment", exact: true });
   await expect(issueAttachment).toHaveAttribute(
     "src",
-    new RegExp(`/api/branch-reviews/${branchReviewId}/github-attachment\\?url=`),
+    new RegExp(`/api/repository-reviews/${repositoryReviewId}/github-attachment\\?url=`),
   );
   await expect
     .poll(() => issueAttachment.evaluate((image: HTMLImageElement) => image.naturalWidth))
@@ -492,14 +494,14 @@ test("uses the shared review workspace for the default branch, Issues, code, and
   await expect(page.getByRole("button", { name: "#19を削除" })).toHaveCount(0);
 });
 
-test("keeps Branch mutations isolated and recreates an empty review after reset", async ({
+test("keeps Repository Review mutations isolated and recreates an empty review after reset", async ({
   page,
   request,
 }) => {
   const pullRequestCommentsBefore = (await (
     await request.get("/api/pull-requests/11111111-1111-4111-8111-111111111111/comments")
   ).json()) as Record<string, unknown>;
-  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
 
   const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
   const issueButtons = reviewTree.locator(".review-tree-issue");
@@ -543,23 +545,27 @@ test("keeps Branch mutations isolated and recreates an empty review after reset"
 
   const commentsToggle = page.getByRole("button", { name: "コメント 3", exact: true });
   await commentsToggle.click();
-  await page.getByRole("button", { name: "＋ Branch全体", exact: true }).click();
-  await page.getByPlaceholder("Branch Review全体へのコメント").fill("Branch whole fixture comment");
+  await page.getByRole("button", { name: "＋ Repository Review全体", exact: true }).click();
+  await page
+    .getByPlaceholder("Repository Review全体へのコメント")
+    .fill("Repository Review whole fixture comment");
   await page
     .locator(".review-comment-composer")
     .getByRole("button", { name: "コメント", exact: true })
     .click();
-  await expect(page.getByText("Branch whole fixture comment", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Repository Review whole fixture comment", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "コメント 4", exact: true })).toBeVisible();
 
-  const branchComments = (await (
-    await request.get(`/api/branch-reviews/${branchReviewId}/comments`)
+  const repositoryComments = (await (
+    await request.get(`/api/repository-reviews/${repositoryReviewId}/comments`)
   ).json()) as { comments: unknown[] };
-  expect(branchComments.comments).toEqual(
+  expect(repositoryComments.comments).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
         comment: expect.objectContaining({
-          branchReviewId,
+          repositoryReviewId,
           target: expect.objectContaining({
             kind: "issue",
             issueNumber: 142,
@@ -571,8 +577,8 @@ test("keeps Branch mutations isolated and recreates an empty review after reset"
       }),
       expect.objectContaining({
         comment: expect.objectContaining({
-          branchReviewId,
-          target: { kind: "branch" },
+          repositoryReviewId,
+          target: { kind: "repository" },
           resolvedAt: null,
         }),
       }),
@@ -587,20 +593,20 @@ test("keeps Branch mutations isolated and recreates an empty review after reset"
     expect(dialog.message()).toContain("Issue membership 3");
     expect(dialog.message()).toContain("Issueコメント 1");
     expect(dialog.message()).toContain("コードコメント 1");
-    expect(dialog.message()).toContain("Branch全体コメント 2");
+    expect(dialog.message()).toContain("Repository Review全体コメント 2");
     expect(dialog.message()).toContain("Walkthroughコメント 1");
     await dialog.accept();
   });
   await page.getByRole("button", { name: "その他の操作", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Branch Reviewを削除して再構築" }).click();
-  await expect(page).not.toHaveURL(`/?branchReviewId=${branchReviewId}`);
+  await page.getByRole("menuitem", { name: "Repository Reviewを削除して再構築" }).click();
+  await expect(page).not.toHaveURL(`/?repositoryReviewId=${repositoryReviewId}`);
   await expect(page.getByRole("button", { name: "Issues 0", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "ウォークスルー 0" })).toBeVisible();
   await expect(page.getByRole("button", { name: "コメント 0", exact: true })).toBeVisible();
 });
 
-test("distinguishes a completed Branch reset from a failed reopen", async ({ page }) => {
-  await page.route(`**/api/branch-reviews/${branchReviewId}/reset`, async (route) => {
+test("distinguishes a completed Repository Review reset from a failed reopen", async ({ page }) => {
+  await page.route(`**/api/repository-reviews/${repositoryReviewId}/reset`, async (route) => {
     const input = route.request().postDataJSON() as { yes: boolean };
     if (!input.yes) {
       await route.fulfill({
@@ -627,14 +633,14 @@ test("distinguishes a completed Branch reset from a failed reopen", async ({ pag
     await route.fulfill({
       json: {
         ok: true,
-        branchReview: { id: branchReviewId },
-        deleted: { branchReview: 1 },
+        repositoryReview: { id: repositoryReviewId },
+        deleted: { repositoryReview: 1 },
         removedRefs: [],
         outcome: { kind: "completed" },
       },
     });
   });
-  await page.route("**/api/branch-reviews/open", async (route) => {
+  await page.route("**/api/repository-reviews/open", async (route) => {
     await route.fulfill({
       status: 502,
       json: {
@@ -646,25 +652,27 @@ test("distinguishes a completed Branch reset from a failed reopen", async ({ pag
       },
     });
   });
-  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
 
   page.once("dialog", async (dialog) => await dialog.accept());
   await page.getByRole("button", { name: "その他の操作", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Branch Reviewを削除して再構築" }).click();
+  await page.getByRole("menuitem", { name: "Repository Reviewを削除して再構築" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "Branch Reviewのresetは完了しました" }),
+    page.getByRole("heading", { name: "Repository Reviewのresetは完了しました" }),
   ).toBeVisible();
-  await expect(page.getByText(/rvw branch open/)).toBeVisible();
+  await expect(page.getByText(/rvw repository open/)).toBeVisible();
   await expect(
     page.getByText("default branchを取得できませんでした。", { exact: true }),
   ).toBeVisible();
-  await expect(page).toHaveURL(`/?branchReviewId=${branchReviewId}`);
+  await expect(page).toHaveURL(`/?repositoryReviewId=${repositoryReviewId}`);
 });
 
-test("clears deleted Branch state after reset leaves isolated orphan refs", async ({ page }) => {
+test("clears deleted Repository Review state after reset leaves isolated orphan refs", async ({
+  page,
+}) => {
   let reopenRequests = 0;
-  await page.route(`**/api/branch-reviews/${branchReviewId}/reset`, async (route) => {
+  await page.route(`**/api/repository-reviews/${repositoryReviewId}/reset`, async (route) => {
     const input = route.request().postDataJSON() as { yes: boolean };
     if (!input.yes) {
       await route.fulfill({
@@ -682,7 +690,7 @@ test("clears deleted Branch state after reset leaves isolated orphan refs", asyn
             walkthroughs: 0,
             gitRefs: 1,
           },
-          retainedRefs: [`refs/rvw/branch/${branchReviewId}/commits/oid-${"c".repeat(40)}`],
+          retainedRefs: [`refs/rvw/repository/${repositoryReviewId}/commits/oid-${"c".repeat(40)}`],
           confirmationToken: "d".repeat(64),
         },
       });
@@ -691,44 +699,48 @@ test("clears deleted Branch state after reset leaves isolated orphan refs", asyn
     await route.fulfill({
       json: {
         ok: true,
-        branchReview: { id: branchReviewId },
-        deleted: { branchReview: 1, gitRefs: 0 },
+        repositoryReview: { id: repositoryReviewId },
+        deleted: { repositoryReview: 1, gitRefs: 0 },
         removedRefs: [],
         outcome: {
           kind: "completed-with-orphan-refs",
-          branchReviewDeleted: true,
-          remainingRefs: [`refs/rvw/branch/${branchReviewId}/commits/oid-${"c".repeat(40)}`],
-          refPrefix: `refs/rvw/branch/${branchReviewId}/commits/`,
+          repositoryReviewDeleted: true,
+          remainingRefs: [
+            `refs/rvw/repository/${repositoryReviewId}/commits/oid-${"c".repeat(40)}`,
+          ],
+          refPrefix: `refs/rvw/repository/${repositoryReviewId}/commits/`,
           repositoryPath: "/fixture/review-repo",
           manualCleanupPossible: true,
         },
       },
     });
   });
-  await page.route("**/api/branch-reviews/open", async (route) => {
+  await page.route("**/api/repository-reviews/open", async (route) => {
     reopenRequests += 1;
     await route.abort();
   });
-  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
 
   page.once("dialog", async (dialog) => await dialog.accept());
   await page.getByRole("button", { name: "その他の操作", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Branch Reviewを削除して再構築" }).click();
+  await page.getByRole("menuitem", { name: "Repository Reviewを削除して再構築" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "Branch Reviewのresetは完了しました" }),
+    page.getByRole("heading", { name: "Repository Reviewのresetは完了しました" }),
   ).toBeVisible();
   await expect(page.getByRole("alert")).toContainText("新しいReviewから隔離されています");
-  await expect(page.getByRole("alert")).toContainText(`refs/rvw/branch/${branchReviewId}/commits/`);
-  await expect(page.getByText(/rvw branch open/)).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText(
+    `refs/rvw/repository/${repositoryReviewId}/commits/`,
+  );
+  await expect(page.getByText(/rvw repository open/)).toBeVisible();
   expect(reopenRequests).toBe(0);
 });
 
-test("keeps an Issue range composer focused across a same-body Branch refresh", async ({
+test("keeps an Issue range composer focused across a same-body Repository Review refresh", async ({
   page,
   request,
 }) => {
-  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
   const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
   await reviewTree.locator(".review-tree-issue").filter({ hasText: "#142" }).click();
   const leftPane = page.getByRole("region", { name: "左のコードペイン" });
@@ -744,12 +756,12 @@ test("keeps an Issue range composer focused across a same-body Branch refresh", 
   });
   await expect(textarea).toBeFocused();
 
-  const refresh = await request.post("/api/test/refresh-branch-review", {
+  const refresh = await request.post("/api/test/refresh-repository-review", {
     data: { sourceOid: "b".repeat(40) },
   });
   expect(refresh.ok()).toBe(true);
   await expect(
-    page.getByRole("heading", { name: "Branch Review · trunk · bbbbbbbb" }),
+    page.getByRole("heading", { name: "Repository Review · trunk · bbbbbbbb" }),
   ).toBeVisible();
   await expect(textarea).toHaveValue("Background sync must preserve this draft");
   await expect(textarea).toHaveAttribute("data-rvw-e2e-identity", "original-textarea");
@@ -768,7 +780,7 @@ test("refreshes an open Issue body without silently applying a stale range draft
   page,
   request,
 }) => {
-  await page.goto(`/?branchReviewId=${branchReviewId}`);
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
   const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
   await reviewTree.locator(".review-tree-issue").filter({ hasText: "#142" }).click();
   const leftPane = page.getByRole("region", { name: "左のコードペイン" });
@@ -805,7 +817,7 @@ test("refreshes an open Issue body without silently applying a stale range draft
     "",
     "The Issue body changed while a reviewer was writing.",
   ].join("\n");
-  const refresh = await request.post("/api/test/refresh-branch-review", {
+  const refresh = await request.post("/api/test/refresh-repository-review", {
     data: { issueNumber: 142, issueBody: updatedBody },
   });
   expect(refresh.ok()).toBe(true);

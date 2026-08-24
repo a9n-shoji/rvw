@@ -8,24 +8,28 @@ import {
   walkthroughPublishInputSchema,
   walkthroughUpdateInputSchema,
 } from "../../src/cli/schemas.js";
-import { MAX_COMMENT_BODY_BYTES } from "../../src/shared/constants.js";
+import {
+  MAX_COMMENT_BODY_BYTES,
+  MAX_ISSUE_REFERENCE_CHARACTERS,
+  MAX_WALKTHROUGH_ISSUES_TO_ADD,
+} from "../../src/shared/constants.js";
 
 describe("CLI input schemas", () => {
-  it("accepts explicit Branch Review, Issue, and add-only Walkthrough Issue inputs", () => {
+  it("accepts explicit Repository Review, Issue, and add-only Walkthrough Issue inputs", () => {
     expect(
       commentCreateInputSchema.parse({
-        review: { kind: "branch", repository: "acme/review-repo" },
+        review: { kind: "repository", repository: "acme/review-repo" },
         target: { kind: "issue", issue: "#142", startLine: 2, endLine: 4 },
         body: "Check the current implementation against this requirement.",
       }),
     ).toMatchObject({
-      review: { kind: "branch", repository: "acme/review-repo" },
+      review: { kind: "repository", repository: "acme/review-repo" },
       target: { kind: "issue", issue: "#142", startLine: 2, endLine: 4 },
     });
 
     expect(
       walkthroughPublishInputSchema.parse({
-        review: { kind: "branch", repository: "acme/review-repo" },
+        review: { kind: "repository", repository: "acme/review-repo" },
         sourceOid: "a".repeat(40),
         title: "Current request flow",
         body: "Open [the handler](rvw-ref:handler).",
@@ -42,7 +46,7 @@ describe("CLI input schemas", () => {
         issuesToAdd: ["#142", "https://github.com/acme/review-repo/issues/19"],
       }),
     ).toMatchObject({
-      review: { kind: "branch" },
+      review: { kind: "repository" },
       issuesToAdd: ["#142", "https://github.com/acme/review-repo/issues/19"],
     });
   });
@@ -64,6 +68,39 @@ describe("CLI input schemas", () => {
       target: { startLine: null, endLine: null },
       authorLabel: "Codex",
     });
+  });
+
+  it("rejects unbounded Walkthrough Issue additions", () => {
+    const input = {
+      sourceOid: "a".repeat(40),
+      title: "Bounded additions",
+      body: "Open [the handler](rvw-ref:handler).",
+      references: [
+        {
+          id: "handler",
+          label: "Handler",
+          path: "src/handler.ts",
+          startLine: 1,
+          endLine: 3,
+          description: null,
+        },
+      ],
+    };
+    expect(() =>
+      walkthroughUpdateInputSchema.parse({
+        ...input,
+        issuesToAdd: Array.from(
+          { length: MAX_WALKTHROUGH_ISSUES_TO_ADD + 1 },
+          (_, index) => `#${index + 1}`,
+        ),
+      }),
+    ).toThrow();
+    expect(() =>
+      walkthroughUpdateInputSchema.parse({
+        ...input,
+        issuesToAdd: ["x".repeat(MAX_ISSUE_REFERENCE_CHARACTERS + 1)],
+      }),
+    ).toThrow();
   });
 
   it("accepts typed code references on comment posts and requires their exact commit", () => {

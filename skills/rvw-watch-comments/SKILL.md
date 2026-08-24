@@ -1,6 +1,6 @@
 ---
 name: rvw-watch-comments
-description: Continuously watch saved Pull Request Reviews and Branch Reviews for new RVW comments and replies, durably queue them, dispatch work within reserved subagent capacity, and publish the final RVW reply. Preserve explicitly authorized fix-and-push only for verified owned Pull Requests; Branch Reviews are always investigate-and-reply.
+description: Continuously watch saved Pull Request Reviews and Repository Reviews for new RVW comments and replies, durably queue them, dispatch work within reserved subagent capacity, and publish the final RVW reply. Preserve explicitly authorized fix-and-push only for verified owned Pull Requests; Repository Reviews are always investigate-and-reply.
 ---
 
 # Watch rvw comments
@@ -60,7 +60,7 @@ prevents an interrupted third attempt from leaving `確認中` indefinitely.
 
 Run the single preflight command. It concurrently detects `rvw` and verifies Node `>=24.15.0`.
 Require `protocolVersion` 4 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
-`comment.edit`, `comment.codeReferences`, `pullRequest.sync`, and `branchReview.read`, and report agent
+`comment.edit`, `comment.codeReferences`, `pullRequest.sync`, and `repositoryReview.read`, and report agent
 status and ping in one JSON value. Stop when `ok` is false. A disconnected ping is diagnostic when status safely selects
 direct-database transport; an unavailable selected transport is fatal.
 
@@ -84,14 +84,14 @@ path before spawning rvw. A second driver for the same state exits immediately; 
 removes a stale lock only when its recorded owner process no longer exists.
 
 Events and batches carry either `{kind:"pull-request",pullRequestId,pullRequestUrl}` or
-`{kind:"branch",branchReviewId,repository}`. The stable review ID is the routing identity; URL and
-repository are display values. Never combine those context kinds. Branch Review events remain queued
+`{kind:"repository",repositoryReviewId,repository}`. The stable review ID is the routing identity; URL and
+repository are display values. Never combine those context kinds. Repository Review events remain queued
 without an acknowledgement post even when `--auto-ack` is enabled. Claim them with
-`--context-kind branch --context-key <branchReviewId> --context-display owner/repository`; their mode is always
+`--context-kind repository --context-key <repositoryReviewId> --context-display owner/repository`; their mode is always
 `investigate-and-reply`. Read each thread with `rvw comment get`, inspect only the exact/current source,
 Issue, or Walkthrough needed, and create exactly one final idempotent reply per affected comment. Do
 not create progress replies, edit code, commit, push, open a Pull Request, synchronize a PR, change the
-default branch, update a GitHub Issue, or resolve the thread. `reserve-write` rejects Branch leases.
+default branch, update a GitHub Issue, or resolve the thread. `reserve-write` rejects Repository Review leases.
 
 For an `investigate-and-reply`-only task, prefer the target of eight above whenever capacity permits.
 Do not reduce capacity merely because multiple leases may inspect the same Pull Request or repository:
@@ -240,14 +240,14 @@ shape:
 }
 ```
 
-For a Branch Review, use this context and never invent a Pull Request URL:
+For a Repository Review, use this context and never invent a Pull Request URL:
 
 ```json
 {
   "leaseId": "<LEASE_ID>",
   "context": {
-    "kind": "branch",
-    "branchReviewId": "<BRANCH_REVIEW_ID>",
+    "kind": "repository",
+    "repositoryReviewId": "<REPOSITORY_REVIEW_ID>",
     "repository": "owner/repository"
   },
   "outcomes": [
@@ -258,7 +258,7 @@ For a Branch Review, use this context and never invent a Pull Request URL:
       "references": [
         {
           "id": "source-policy",
-          "label": "Branch source policy",
+          "label": "Repository Review source policy",
           "path": "src/application/branch-source-policy.ts",
           "startLine": 10,
           "endLine": 24
@@ -270,10 +270,10 @@ For a Branch Review, use this context and never invent a Pull Request URL:
 }
 ```
 
-`pushStatus` is `not-attempted`, `not-needed`, or `pushed`; Branch outcomes always use
+`pushStatus` is `not-attempted`, `not-needed`, or `pushed`; Repository Review outcomes always use
 `not-attempted`. `relatedCommitOid` is the exact available review commit containing every referenced
-path and may identify investigation evidence even when no change was made. For a Branch outcome it
-must be the current or an already retained Branch source commit; never use an arbitrary local branch or
+path and may identify investigation evidence even when no change was made. For a Repository Review outcome it
+must be the current or an already retained Repository Review source commit; never use an arbitrary local branch or
 worktree commit. Set it to null only when `references` is empty and the body does not need that commit
 for repository links or images. `references` is always the complete array for that outcome.
 The worker's completion notification only signals that the file is ready.
@@ -290,8 +290,8 @@ uncommitted evidence, terminal errors, or target-only evidence where another lin
 navigation.
 
 Re-read each extant thread immediately before applying a file result. For a Pull Request,
-replace its recorded status post with exactly one final outcome. For a Branch Review, use the same
-outcome body as the one final reply posted by `complete-branch.mjs`:
+replace its recorded status post with exactly one final outcome. For a Repository Review, use the same
+outcome body as the one final reply posted by `complete-repository.mjs`:
 
 - `✅ 対応しました` followed by the change, commit, and test result.
 - `📝 調査結果` followed by the conclusion when no code change was made.
@@ -313,23 +313,23 @@ available to suppress exceptional additional task-created posts. If a thread or 
 complete it without creating a replacement and report it as gone. Comment and reply bodies are UTF-8
 GFM Markdown up to 64 KiB, not 4 KiB; a 4093-byte result is within the contract.
 
-For a Branch Review, do not use the empty `postIds` example. Pass the validated worker result to the
+For a Repository Review, do not use the empty `postIds` example. Pass the validated worker result to the
 bundled completion helper. It posts exactly one final reply per operation with that operation's stable
 idempotency key, captures every returned post ID, durably records those IDs for suppression, and only
 then completes the lease:
 
 ```bash
-node '<SKILL_DIR>/scripts/complete-branch.mjs' \
+node '<SKILL_DIR>/scripts/complete-repository.mjs' \
   --state '<TASK_STATE_DB>' --lease '<LEASE_ID>' < '<WORKER_RESULT_JSON>'
 ```
 
-The helper requires the worker's `leaseId`, Branch `context`, and every outcome's explicit
+The helper requires the worker's `leaseId`, Repository Review `context`, and every outcome's explicit
 `commentRef`, non-empty `body`, `relatedCommitOid`, complete `references` array, and
 `pushStatus: "not-attempted"`. It rejects the complete input before posting any reply when any field is
 absent, mismatched, or write-capable. The rvw service then validates that a non-null commit is current
 or already retained and that every reference resolves within that exact source.
 
-If the process stops after posting but before completion, run `recover`, claim the same Branch batch,
+If the process stops after posting but before completion, run `recover`, claim the same Repository Review batch,
 and invoke the helper with the same outcomes and new lease. The batch retains its operation keys, so
 `comment reply` returns the existing posts and completion suppresses them without duplicate replies.
 Whether each reply event arrives before or after completion, it must not create another pending batch.
@@ -342,8 +342,8 @@ follow-ups remain durable but ineligible until the active lease is released, and
 reservations serialize writers across different PRs. After retryable `fail`, let the pump wait through
 the recorded `nextAttemptAt` and dispatch the restored lease when due. Never assign a follow-up or retry
 to the previous subagent.
-Branch leases are always read-only, so their same-repository follow-ups are likewise eligible while an
-older Branch lease is active and worker capacity remains.
+Repository Review leases are always read-only, so their same-repository follow-ups are likewise eligible while an
+older Repository Review lease is active and worker capacity remains.
 
 ## Choose the worker mode
 
@@ -365,8 +365,8 @@ branch name alone, local Git author, remote name, or rvw `authorLabel`.
 Inspect exact and surrounding source read-only and produce one concise final outcome per affected
 comment. For a Pull Request, use the exact commit that supports the conclusion as `relatedCommitOid`
 and follow the code evidence defaults above even though no commit was pushed. The parent edits the
-recorded status post; do not add another final reply. For a Branch Review there is no
-acknowledgement/status post, so use `complete-branch.mjs` to create the one final reply and suppress its
+recorded status post; do not add another final reply. For a Repository Review there is no
+acknowledgement/status post, so use `complete-repository.mjs` to create the one final reply and suppress its
 self-event.
 
 ### Fix and push an owned PR
@@ -443,19 +443,21 @@ Frame schemas accepted by `ingest`:
 }
 ```
 
-For a Branch Review the event context is
-`{kind:"branch",branchReviewId:"<id>",repository:"owner/repo"}`. Claim
+For a Repository Review the event context is
+`{kind:"repository",repositoryReviewId:"<id>",repository:"owner/repo"}`. Claim
 `operations` are `{commentRef,idempotencyKey,statusPostId}`. Claim `events` are
 `{sequence,postId,commentRef,context}`. Startup migrates existing state rows to the explicit
 `review_kind`, `context_key`, and display-only `context_display`, then the first matching protocol-v4
 PR event transactionally re-keys legacy URL contexts to its actual stable PR ID. Pending duplicates
-merge; conflicting in-flight leases are quarantined rather than double-claimed. The migration rebuilds
+merge; conflicting in-flight leases are quarantined rather than double-claimed. If the driver claims a
+legacy pending lease before a new event arrives, auto-ack resolves the stable ID through `comment get`
+and atomically re-keys the lease before acknowledgement posts and `batch-acknowledged` output. The migration rebuilds
 the context indexes and preserves cursors, leases, unfinished batch keys, batch-scoped status posts,
 and PR compatibility fields.
 
-| Script            | Invocation                                                                                                                            | Output                                                                                        |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Preflight         | `node scripts/preflight.mjs`                                                                                                          | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                     |
-| Driver            | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N]`                                                                  | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
-| Auto-ack          | `node scripts/auto-ack.mjs --state STATE --context-kind pull-request --context-key ID --context-display URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`. |
-| Branch completion | `node scripts/complete-branch.mjs --state STATE --lease ID < RESULT.json`                                                             | Posts idempotent final replies, records their post IDs, and completes the Branch lease.       |
+| Script                       | Invocation                                                                                                                            | Output                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Preflight                    | `node scripts/preflight.mjs`                                                                                                          | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                          |
+| Driver                       | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N]`                                                                  | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                          |
+| Auto-ack                     | `node scripts/auto-ack.mjs --state STATE --context-kind pull-request --context-key ID --context-display URL [--write-key owner/repo]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`.      |
+| Repository Review completion | `node scripts/complete-repository.mjs --state STATE --lease ID < RESULT.json`                                                         | Posts idempotent final replies, records their post IDs, and completes the Repository Review lease. |

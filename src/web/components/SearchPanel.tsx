@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type RefObject } from "react";
 import type {
-  BranchSearchResponse,
-  BranchSearchResult,
+  RepositoryReviewSearchResponse,
+  RepositoryReviewSearchResult,
   ChangeKind,
   SearchResponse,
   SearchResult,
@@ -17,7 +17,7 @@ export interface SearchResultGroup {
   matchCount: number;
 }
 
-export type AnySearchResult = SearchResult | BranchSearchResult;
+export type AnySearchResult = SearchResult | RepositoryReviewSearchResult;
 
 export function splitSearchResultPath(path: string): { fileName: string; directory: string } {
   const separatorIndex = path.lastIndexOf("/");
@@ -100,7 +100,7 @@ export function SearchPanel({
   matchCase: boolean;
   wholeWord: boolean;
   changeKindsByPath: ReadonlyMap<string, ChangeKind>;
-  response: SearchResponse | BranchSearchResponse | undefined;
+  response: SearchResponse | RepositoryReviewSearchResponse | undefined;
   isFetching: boolean;
   error: unknown;
   onQueryChange: (query: string) => void;

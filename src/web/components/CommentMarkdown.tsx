@@ -15,7 +15,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { CodeReference } from "../../domain/models.js";
 import {
-  branchMarkdownAssetUrl,
+  repositoryMarkdownAssetUrl,
   isExternalMarkdownHref,
   markdownAssetUrl,
   markdownLinkWasDragged,
@@ -93,7 +93,7 @@ function CommentMermaidDiagram({
 export function CommentMarkdown({
   body,
   pullRequestId,
-  branchReviewId,
+  repositoryReviewId,
   sourceOid,
   sourcePath,
   references,
@@ -104,7 +104,7 @@ export function CommentMarkdown({
 }: {
   body: string;
   pullRequestId?: string | undefined;
-  branchReviewId?: string | undefined;
+  repositoryReviewId?: string | undefined;
   sourceOid: string;
   sourcePath: string | null;
   references: CodeReference[];
@@ -224,8 +224,8 @@ export function CommentMarkdown({
           ? resolveRepositoryMarkdownPath(src, sourcePath)
           : null;
         const assetUrl = repositoryPath
-          ? branchReviewId
-            ? branchMarkdownAssetUrl(branchReviewId, sourceOid, repositoryPath)
+          ? repositoryReviewId
+            ? repositoryMarkdownAssetUrl(repositoryReviewId, sourceOid, repositoryPath)
             : pullRequestId
               ? markdownAssetUrl(pullRequestId, sourceOid, repositoryPath)
               : null
@@ -262,7 +262,7 @@ export function CommentMarkdown({
     [
       onOpenCodeReference,
       onOpenRepositoryLink,
-      branchReviewId,
+      repositoryReviewId,
       pullRequestId,
       referencesById,
       repositoryAssetsEnabled,

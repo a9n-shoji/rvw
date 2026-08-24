@@ -98,34 +98,34 @@ created `rvw://comment/<uuid>` reference to the user.
 ## Manage Issue documents
 
 Add or remove an Issue membership only when the user explicitly requests that review-level change.
-Issue membership is independent for each Pull Request Review and Branch Review; never copy or remove
-the same Issue in another review. Add with `rvw pr issue add` or `rvw branch issue add`.
+Issue membership is independent for each Pull Request Review and Repository Review; never copy or remove
+the same Issue in another review. Add with `rvw pr issue add` or `rvw repository issue add`.
 
 Removal is destructive because Issue-target RVW comments and replies owned by that review are deleted
 with the membership. First run `rvw pr issue remove ... --json` or
-`rvw branch issue remove ... --json` without `--yes`, report the returned Issue number/title and whole,
+`rvw repository issue remove ... --json` without `--yes`, report the returned Issue number/title and whole,
 range, and reply counts, and stop unless the human explicitly authorizes those exact deletions. Only
 then repeat with `--yes --confirmation-token <PREVIEW_TOKEN>`. If the token is stale, present the new
 preview and obtain authorization again. These commands never edit or close the GitHub Issue itself.
 
 If an owned Issue cache is stuck on an equal-version content conflict, use `rvw pr issue refresh ...
---force --json` or `rvw branch issue refresh ... --force --json` only after reporting that this is an
+--force --json` or `rvw repository issue refresh ... --force --json` only after reporting that this is an
 explicit local-cache repair. Require the `issue.cacheRepair` capability first. rvw accepts the repair
 only when two consecutive GitHub reads have the same canonical identity and content snapshot.
 
-A Branch Review stays bound to one Git common directory. Another worktree from that same clone may
+A Repository Review stays bound to one Git common directory. Another worktree from that same clone may
 reuse it and become the current local path. An independent clone of the same canonical GitHub
 repository is rejected rather than silently replacing the saved path and retained-object store. To
-use that independent clone, first obtain explicit authorization for the destructive Branch Review
-reset, inspect its deletion preview, reset it, and then open the Branch Review from the new clone.
+use that independent clone, first obtain explicit authorization for the destructive Repository Review
+reset, inspect its deletion preview, reset it, and then open the Repository Review from the new clone.
 The local GitHub remote must also match the saved canonical repository. A remote change, repository
 rename, or organization transfer is not followed automatically; use the same explicit reset/recreate
 boundary from the original binding. Do not retry a `REPOSITORY_MISMATCH` as a sync failure.
 
-Branch reset and Issue-removal previews/execution, `branch comments`, and `branch sync` are
-existing-only. `BRANCH_REVIEW_NOT_FOUND` means they created no review row or retained ref. Only
-`branch open` and an explicit `branch issue add` may create the singleton. Branch evidence belongs to
-the returned Branch Review ID, not only to owner/repository. Use the preview's confirmation token for
+Repository Review reset and Issue-removal previews/execution, `repository comments`, and `repository sync` are
+existing-only. `REPOSITORY_REVIEW_NOT_FOUND` means they created no review row or retained ref. Only
+`repository open` and an explicit `repository issue add` may create the singleton. Repository Review evidence belongs to
+the returned Repository Review ID, not only to owner/repository. Use the preview's confirmation token for
 reset execution. If reset returns `completed-with-orphan-refs`, treat the Review as deleted and report
 the isolated orphan prefix and manual-cleanup details. This release has no rvw-managed orphan-ref
 cleanup command; do not imply that recreation or an automatic repair removes it. Creating a new
@@ -139,10 +139,10 @@ When the user asks for unresolved feedback without supplying individual comment 
 rvw comment list <PULL_REQUEST> --state unresolved --limit 50 --offset 0 --json
 ```
 
-For one Branch Review, discover comments with:
+For one Repository Review, discover comments with:
 
 ```bash
-rvw branch comments --repository <PATH> --state unresolved --json
+rvw repository comments --repository <PATH> --state unresolved --json
 ```
 
 The default state is `unresolved`; use `--state resolved` or `--state all` only when the request needs
@@ -171,19 +171,19 @@ same PR body once per comment. When supplied references span multiple Pull Reque
 most once for each group that needs it. `latestPlacement` is rvw's authoritative derived placement at
 the latest head; never infer Outdated by comparing OIDs.
 
-When `comment get` returns `context.kind: "branch"`, use the canonical `context.repository`,
-`branchReview.localRepositoryPath`, `defaultBranchName`, `currentSourceOid`, the comment's
-`createdSourceOid`, target kind, and `latestPlacement`. Branch Review comment
+When `comment get` returns `context.kind: "repository"`, use the canonical `context.repository`,
+`repositoryReview.localRepositoryPath`, `defaultBranchName`, `currentSourceOid`, the comment's
+`createdSourceOid`, target kind, and `latestPlacement`. Repository Review comment
 access authorizes investigation and an RVW reply only: do not edit code, commit, push, create a Pull
 Request, synchronize a PR, change the default branch, or update/close/reopen a GitHub Issue. Read the
 returned exact source, current Walkthrough, or Issue body as applicable. For an Issue target, compare
 the returned current body hash with the target's creation hash only as evidence; treat
 `latestPlacement.outdated` as authoritative and retain the exact quote/range in the investigation.
-Branch replies
+Repository Review replies
 are never auto-resolved.
 
-Create Branch Review comments with an explicit review context such as
-`{"review":{"kind":"branch","repository":"owner/repository"},"target":{"kind":"branch"},
+Create Repository Review comments with an explicit review context such as
+`{"review":{"kind":"repository","repository":"owner/repository"},"target":{"kind":"repository"},
 "body":"Investigation question"}`. Issue targets use `kind: "issue"` and an `issue` reference such
 as `#142`; they never write to GitHub Issue discussion or metadata.
 

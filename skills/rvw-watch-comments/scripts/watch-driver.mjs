@@ -221,7 +221,7 @@ function releaseDriverLock(lock) {
 
 async function dispatchAutoAck(state, context) {
   if (context.kind !== "pull-request") {
-    throw new DriverError("Branch Review batches cannot be auto-acknowledged", EXIT_AUTO_ACK, {
+    throw new DriverError("Repository Review batches cannot be auto-acknowledged", EXIT_AUTO_ACK, {
       context,
     });
   }
@@ -242,7 +242,7 @@ async function dispatchAutoAck(state, context) {
   write({ ...result.json, type: "batch-acknowledged" });
 }
 
-async function dispatchPendingAutoAcks(state, maxInFlight, notifiedBranchBatches) {
+async function dispatchPendingAutoAcks(state, maxInFlight, notifiedRepositoryBatches) {
   const work = await stateCommand(state, "list");
   const inFlight = Number(work.inFlight);
   if (!Number.isSafeInteger(inFlight) || inFlight < 0 || !Array.isArray(work.pending)) {
@@ -250,17 +250,17 @@ async function dispatchPendingAutoAcks(state, maxInFlight, notifiedBranchBatches
   }
   let available = Math.max(0, maxInFlight - inFlight);
   for (const batch of work.pending) {
-    if (batch.context?.kind === "branch") {
-      const notificationKey = batch.batchId ?? `unbatched:${batch.context.branchReviewId}`;
-      if (!notifiedBranchBatches.has(notificationKey)) {
-        notifiedBranchBatches.add(notificationKey);
+    if (batch.context?.kind === "repository") {
+      const notificationKey = batch.batchId ?? `unbatched:${batch.context.repositoryReviewId}`;
+      if (!notifiedRepositoryBatches.has(notificationKey)) {
+        notifiedRepositoryBatches.add(notificationKey);
         write({
           ok: true,
           type: "pending",
           context: batch.context,
           repository: batch.context.repository,
           batchId: batch.batchId,
-          reason: "branch-reviews-use-one-final-reply-without-acknowledgement",
+          reason: "repository-reviews-use-one-final-reply-without-acknowledgement",
         });
       }
       continue;
@@ -291,13 +291,13 @@ async function processFrame(state, frame, autoAck, maxInFlight) {
     });
   } else if (frame.type === "comment-posted" && ingested.status === "queued") {
     const context = frame.event.context;
-    if (!autoAck || context.kind === "branch") {
+    if (!autoAck || context.kind === "repository") {
       write({
         ok: true,
         type: "pending",
         context,
         ...(context.kind === "pull-request" ? { pullRequest: context.pullRequestUrl } : {}),
-        ...(context.kind === "branch" ? { repository: context.repository } : {}),
+        ...(context.kind === "repository" ? { repository: context.repository } : {}),
         commentRef: frame.event.commentRef,
         cursor: ingested.cursor,
       });
@@ -314,7 +314,7 @@ function autoAckPollMilliseconds() {
     : DEFAULT_AUTO_ACK_POLL_MS;
 }
 
-async function runWatchOnce(state, autoAck, maxInFlight, stopping, notifiedBranchBatches) {
+async function runWatchOnce(state, autoAck, maxInFlight, stopping, notifiedRepositoryBatches) {
   const current = await stateCommand(state, "status");
   const args = ["comment", "watch"];
   if (current.cursor) args.push("--after", current.cursor);
@@ -337,7 +337,7 @@ async function runWatchOnce(state, autoAck, maxInFlight, stopping, notifiedBranc
   const pumpAutoAcks = async () => {
     if (!autoAck || stopping.requested) return;
     if (autoAckPump) return autoAckPump;
-    autoAckPump = dispatchPendingAutoAcks(state, maxInFlight, notifiedBranchBatches);
+    autoAckPump = dispatchPendingAutoAcks(state, maxInFlight, notifiedRepositoryBatches);
     try {
       await autoAckPump;
     } catch (error) {
@@ -422,20 +422,20 @@ async function main() {
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
     const maxRestarts = Number(process.env.RVW_WATCH_DRIVER_MAX_RESTARTS ?? "5");
-    const notifiedBranchBatches = new Set();
+    const notifiedRepositoryBatches = new Set();
     let restarts = 0;
     try {
       while (!stopping.requested) {
         const startedAt = Date.now();
         if (autoAck) {
-          await dispatchPendingAutoAcks(state, maxInFlight, notifiedBranchBatches);
+          await dispatchPendingAutoAcks(state, maxInFlight, notifiedRepositoryBatches);
         }
         const result = await runWatchOnce(
           state,
           autoAck,
           maxInFlight,
           stopping,
-          notifiedBranchBatches,
+          notifiedRepositoryBatches,
         );
         if (stopping.requested) return;
         if (Date.now() - startedAt >= 30_000) restarts = 0;

@@ -41,13 +41,13 @@ const fixtureAttachmentSvg = [
 const baseOid = repositoryDemo?.baseOid ?? "a".repeat(40);
 const firstHead = repositoryDemo?.commits[0]?.oid ?? "b".repeat(40);
 const secondHead = repositoryDemo?.headOid ?? "c".repeat(40);
-const branchReviewId = "33333333-3333-4333-8333-333333333333";
+const repositoryReviewId = "33333333-3333-4333-8333-333333333333";
 const destructiveConfirmationToken = "f".repeat(64);
-const branchIssueId = "44444444-4444-4444-8444-444444444444";
-const olderBranchIssueId = "55555555-5555-4555-8555-555555555555";
-const branchWalkthroughId = "66666666-6666-4666-8666-666666666666";
-const branchReviewFixture = {
-  id: branchReviewId,
+const repositoryIssueId = "44444444-4444-4444-8444-444444444444";
+const olderRepositoryIssueId = "55555555-5555-4555-8555-555555555555";
+const repositoryWalkthroughId = "66666666-6666-4666-8666-666666666666";
+const repositoryReviewFixture = {
+  id: repositoryReviewId,
   host: "github.com",
   owner: "acme",
   repository: "review-repo",
@@ -61,9 +61,9 @@ const branchReviewFixture = {
   createdAt: "2026-08-20T00:00:00.000Z",
   updatedAt: "2026-08-20T00:00:00.000Z",
 };
-const branchIssueFixtures = [
+const repositoryIssueFixtures = [
   {
-    id: branchIssueId,
+    id: repositoryIssueId,
     host: "github.com",
     owner: "acme",
     repository: "review-repo",
@@ -88,7 +88,7 @@ const branchIssueFixtures = [
     stale: false,
   },
   {
-    id: olderBranchIssueId,
+    id: olderRepositoryIssueId,
     host: "github.com",
     owner: "acme",
     repository: "review-repo",
@@ -112,8 +112,8 @@ const branchIssueFixtures = [
     canonicalName: "acme/review-repo",
     number: 77,
     url: "https://github.com/acme/review-repo/issues/77",
-    title: "Exercise Branch Review mutations",
-    body: "# Exercise Branch Review mutations\n\nCover Issue additions and reset as durable browser flows.",
+    title: "Exercise Repository Review mutations",
+    body: "# Exercise Repository Review mutations\n\nCover Issue additions and reset as durable browser flows.",
     state: "OPEN",
     updatedAt: "2026-08-20T00:00:00.000Z",
     bodyHash: "3".repeat(64),
@@ -122,10 +122,10 @@ const branchIssueFixtures = [
     stale: false,
   },
 ];
-const branchWalkthroughFixture = {
-  id: branchWalkthroughId,
-  ref: `rvw://walkthrough/${branchWalkthroughId}`,
-  branchReviewId,
+const repositoryWalkthroughFixture = {
+  id: repositoryWalkthroughId,
+  ref: `rvw://walkthrough/${repositoryWalkthroughId}`,
+  repositoryReviewId,
   sourceOid: secondHead,
   title: "Current request flow",
   body: [
@@ -152,20 +152,22 @@ const branchWalkthroughFixture = {
   ],
   createdAt: "2026-08-20T00:00:00.000Z",
 };
-const branchWalkthroughCommentId = "77777777-7777-4777-8777-777777777777";
-const branchWalkthroughCommentFixture = {
-  id: branchWalkthroughCommentId,
-  ref: `rvw://comment/${branchWalkthroughCommentId}`,
-  branchReviewId,
+const repositoryWalkthroughCommentId = "77777777-7777-4777-8777-777777777777";
+const repositoryWalkthroughCommentFixture = {
+  id: repositoryWalkthroughCommentId,
+  ref: `rvw://comment/${repositoryWalkthroughCommentId}`,
+  repositoryReviewId,
   createdSourceOid: secondHead,
   resolvedAt: null,
   createdAt: "2026-08-20T01:00:00.000Z",
   updatedAt: "2026-08-20T01:00:00.000Z",
   target: {
     kind: "walkthrough",
-    walkthroughId: branchWalkthroughId,
-    walkthroughTitle: branchWalkthroughFixture.title,
-    sourceDocumentHash: createHash("sha256").update(branchWalkthroughFixture.body).digest("hex"),
+    walkthroughId: repositoryWalkthroughId,
+    walkthroughTitle: repositoryWalkthroughFixture.title,
+    sourceDocumentHash: createHash("sha256")
+      .update(repositoryWalkthroughFixture.body)
+      .digest("hex"),
     quotedText: "Start with [the implementation](rvw-ref:implementation).",
     startLine: 3,
     endLine: 3,
@@ -173,21 +175,21 @@ const branchWalkthroughCommentFixture = {
   posts: [
     {
       id: "88888888-8888-4888-8888-888888888888",
-      commentId: branchWalkthroughCommentId,
+      commentId: repositoryWalkthroughCommentId,
       body: "Confirm this entry point against the exact default-branch source.",
       relatedCommitOid: null,
       references: [],
-      authorLabel: "Branch Reviewer",
+      authorLabel: "Repository Reviewer",
       isRoot: true,
       createdAt: "2026-08-20T01:00:00.000Z",
       updatedAt: "2026-08-20T01:00:00.000Z",
     },
   ],
 };
-const branchCodeCommentFixture = {
+const repositoryCodeCommentFixture = {
   id: "77777777-7777-4777-8777-777777777778",
   ref: "rvw://comment/77777777-7777-4777-8777-777777777778",
-  branchReviewId,
+  repositoryReviewId,
   createdSourceOid: secondHead,
   resolvedAt: null,
   createdAt: "2026-08-20T01:10:00.000Z",
@@ -207,22 +209,22 @@ const branchCodeCommentFixture = {
       body: "Verify the default-branch trimming behavior at its exact source.",
       relatedCommitOid: secondHead,
       references: [],
-      authorLabel: "Branch Reviewer",
+      authorLabel: "Repository Reviewer",
       isRoot: true,
       createdAt: "2026-08-20T01:10:00.000Z",
       updatedAt: "2026-08-20T01:10:00.000Z",
     },
   ],
 };
-const branchResolvedCommentFixture = {
+const repositoryResolvedCommentFixture = {
   id: "77777777-7777-4777-8777-777777777779",
   ref: "rvw://comment/77777777-7777-4777-8777-777777777779",
-  branchReviewId,
+  repositoryReviewId,
   createdSourceOid: secondHead,
   resolvedAt: "2026-08-20T01:25:00.000Z",
   createdAt: "2026-08-20T01:20:00.000Z",
   updatedAt: "2026-08-20T01:25:00.000Z",
-  target: { kind: "branch" },
+  target: { kind: "repository" },
   posts: [
     {
       id: "88888888-8888-4888-8888-888888888890",
@@ -230,29 +232,29 @@ const branchResolvedCommentFixture = {
       body: "The default-branch scope is confirmed.",
       relatedCommitOid: null,
       references: [],
-      authorLabel: "Branch Reviewer",
+      authorLabel: "Repository Reviewer",
       isRoot: true,
       createdAt: "2026-08-20T01:20:00.000Z",
       updatedAt: "2026-08-20T01:20:00.000Z",
     },
   ],
 };
-let branchReview;
-let branchIssues;
-let branchWalkthroughs;
-let branchCommentContexts;
+let repositoryReview;
+let repositoryIssues;
+let repositoryWalkthroughs;
+let repositoryCommentContexts;
 
-function resetBranchFixture() {
-  branchReview = structuredClone(branchReviewFixture);
-  branchIssues = structuredClone(branchIssueFixtures.slice(0, 2));
-  branchWalkthroughs = [structuredClone(branchWalkthroughFixture)];
-  branchCommentContexts = [
+function resetRepositoryFixture() {
+  repositoryReview = structuredClone(repositoryReviewFixture);
+  repositoryIssues = structuredClone(repositoryIssueFixtures.slice(0, 2));
+  repositoryWalkthroughs = [structuredClone(repositoryWalkthroughFixture)];
+  repositoryCommentContexts = [
     {
-      comment: structuredClone(branchWalkthroughCommentFixture),
+      comment: structuredClone(repositoryWalkthroughCommentFixture),
       latestPlacement: { outdated: false, range: { startLine: 3, endLine: 3 }, path: null },
     },
     {
-      comment: structuredClone(branchCodeCommentFixture),
+      comment: structuredClone(repositoryCodeCommentFixture),
       latestPlacement: {
         outdated: false,
         range: { startLine: 2, endLine: 2 },
@@ -260,13 +262,13 @@ function resetBranchFixture() {
       },
     },
     {
-      comment: structuredClone(branchResolvedCommentFixture),
+      comment: structuredClone(repositoryResolvedCommentFixture),
       latestPlacement: { outdated: false, range: null, path: null },
     },
   ];
 }
 
-resetBranchFixture();
+resetRepositoryFixture();
 const comments = repositoryDemo ? structuredClone(repositoryDemo.comments) : [];
 const pullRequestIssues = repositoryDemo ? structuredClone(repositoryDemo.issues) : [];
 const originalWalkthroughs = structuredClone(walkthroughs);
@@ -610,10 +612,10 @@ function enrichCommentTarget(target) {
   };
 }
 
-function branchWalkthroughSummaries() {
-  return branchWalkthroughs.map((walkthrough) => ({
+function repositoryWalkthroughSummaries() {
+  return repositoryWalkthroughs.map((walkthrough) => ({
     id: walkthrough.id,
-    branchReviewId: branchReview.id,
+    repositoryReviewId: repositoryReview.id,
     sourceOid: walkthrough.sourceOid,
     title: walkthrough.title,
     authorLabel: walkthrough.authorLabel,
@@ -622,19 +624,19 @@ function branchWalkthroughSummaries() {
   }));
 }
 
-function findBranchIssue(reference) {
+function findRepositoryIssue(reference) {
   const number = Number(String(reference).match(/(?:^#|\/issues\/)(\d+)$/)?.[1]);
-  return branchIssues.find(
+  return repositoryIssues.find(
     (issue) => issue.id === reference || issue.url === reference || issue.number === number,
   );
 }
 
-function enrichBranchCommentTarget(target) {
+function enrichRepositoryCommentTarget(target) {
   const startLine = target.startLine ?? null;
   const endLine = target.endLine ?? null;
-  if (target.kind === "branch") return target;
+  if (target.kind === "repository") return target;
   if (target.kind === "issue") {
-    const issue = findBranchIssue(target.issue);
+    const issue = findRepositoryIssue(target.issue);
     if (!issue) return null;
     return {
       kind: "issue",
@@ -652,7 +654,7 @@ function enrichBranchCommentTarget(target) {
     };
   }
   if (target.kind === "walkthrough") {
-    const walkthrough = branchWalkthroughs.find(
+    const walkthrough = repositoryWalkthroughs.find(
       (candidate) => candidate.id === target.walkthroughId,
     );
     if (!walkthrough) return null;
@@ -673,10 +675,10 @@ function enrichBranchCommentTarget(target) {
   return { ...target, startLine, endLine };
 }
 
-function branchCommentPlacement(target) {
-  if (target.kind === "branch") return { outdated: false, range: null, path: null };
+function repositoryCommentPlacement(target) {
+  if (target.kind === "repository") return { outdated: false, range: null, path: null };
   if (target.kind === "issue") {
-    const issue = branchIssues.find((candidate) => candidate.id === target.issueId);
+    const issue = repositoryIssues.find((candidate) => candidate.id === target.issueId);
     const current =
       issue !== undefined &&
       (target.startLine === null || issue.bodyHash === target.sourceDocumentHash);
@@ -692,7 +694,7 @@ function branchCommentPlacement(target) {
       : { outdated: true, range: null, path: `#${target.issueNumber}` };
   }
   if (target.kind === "walkthrough") {
-    const walkthrough = branchWalkthroughs.find(
+    const walkthrough = repositoryWalkthroughs.find(
       (candidate) => candidate.id === target.walkthroughId,
     );
     if (!walkthrough) return { outdated: true, range: null, path: null };
@@ -706,9 +708,9 @@ function branchCommentPlacement(target) {
       : { outdated: true, range: null, path: null };
   }
   return {
-    outdated: target.sourceOid !== branchReview.sourceOid,
+    outdated: target.sourceOid !== repositoryReview.sourceOid,
     range:
-      target.sourceOid === branchReview.sourceOid && target.startLine !== null
+      target.sourceOid === repositoryReview.sourceOid && target.startLine !== null
         ? { startLine: target.startLine, endLine: target.endLine }
         : null,
     path: target.path,
@@ -718,7 +720,7 @@ function branchCommentPlacement(target) {
 function findFixtureComment(id) {
   return (
     comments.find((comment) => comment.id === id) ??
-    branchCommentContexts.find(({ comment }) => comment.id === id)?.comment ??
+    repositoryCommentContexts.find(({ comment }) => comment.id === id)?.comment ??
     null
   );
 }
@@ -766,21 +768,24 @@ app.use("/api/pull-requests/*", async (context, next) => {
   await next();
 });
 
-app.use("/api/branch-reviews/*", async (context, next) => {
-  if (context.req.path === "/api/branch-reviews/open") {
+app.use("/api/repository-reviews/*", async (context, next) => {
+  if (context.req.path === "/api/repository-reviews/open") {
     await next();
     return;
   }
-  const requestedId = context.req.path.match(/^\/api\/branch-reviews\/([^/]+)/)?.[1] ?? "";
+  const requestedId = context.req.path.match(/^\/api\/repository-reviews\/([^/]+)/)?.[1] ?? "";
   if (!viewerIdPattern.test(requestedId)) {
     return context.json(
-      { ok: false, error: { code: "INVALID_INPUT", message: "invalid branch review ID" } },
+      { ok: false, error: { code: "INVALID_INPUT", message: "invalid repository review ID" } },
       400,
     );
   }
-  if (!branchReview || requestedId !== branchReview.id) {
+  if (!repositoryReview || requestedId !== repositoryReview.id) {
     return context.json(
-      { ok: false, error: { code: "BRANCH_REVIEW_NOT_FOUND", message: "missing branch review" } },
+      {
+        ok: false,
+        error: { code: "REPOSITORY_REVIEW_NOT_FOUND", message: "missing repository review" },
+      },
       404,
     );
   }
@@ -844,20 +849,20 @@ app.get("/api/test/external-image-count", (context) =>
   context.json({ ok: true, count: blockedImageRequestCount }),
 );
 
-app.post("/api/test/reset-branch-review", (context) => {
-  resetBranchFixture();
+app.post("/api/test/reset-repository-review", (context) => {
+  resetRepositoryFixture();
   changeSequence += 1;
-  return context.json({ ok: true, branchReviewId: branchReview.id });
+  return context.json({ ok: true, repositoryReviewId: repositoryReview.id });
 });
 
-app.post("/api/test/refresh-branch-review", async (context) => {
+app.post("/api/test/refresh-repository-review", async (context) => {
   const input = await context.req.json();
   if (typeof input.sourceOid === "string") {
-    branchReview.sourceOid = input.sourceOid;
-    branchReview.updatedAt = new Date().toISOString();
+    repositoryReview.sourceOid = input.sourceOid;
+    repositoryReview.updatedAt = new Date().toISOString();
   }
   if (typeof input.issueNumber === "number" && typeof input.issueBody === "string") {
-    const issue = branchIssues.find((candidate) => candidate.number === input.issueNumber);
+    const issue = repositoryIssues.find((candidate) => candidate.number === input.issueNumber);
     if (!issue) {
       return context.json(
         { ok: false, error: { code: "ISSUE_NOT_FOUND", message: "missing issue" } },
@@ -870,13 +875,13 @@ app.post("/api/test/refresh-branch-review", async (context) => {
     issue.fetchedAt = issue.updatedAt;
   }
   changeSequence += 1;
-  return context.json({ ok: true, branchReview, issues: branchIssues, changeSequence });
+  return context.json({ ok: true, repositoryReview, issues: repositoryIssues, changeSequence });
 });
 
-app.post("/api/test/update-branch-walkthrough", async (context) => {
+app.post("/api/test/update-repository-walkthrough", async (context) => {
   const input = await context.req.json();
-  const walkthrough = branchWalkthroughs.find(
-    (candidate) => candidate.id === (input.walkthroughId ?? branchWalkthroughId),
+  const walkthrough = repositoryWalkthroughs.find(
+    (candidate) => candidate.id === (input.walkthroughId ?? repositoryWalkthroughId),
   );
   if (!walkthrough) {
     return context.json(
@@ -963,12 +968,12 @@ app.delete("/api/pull-requests/:id/issues/:issueId", async (context) => {
   return context.json({ ok: true, issue, deleted: counts });
 });
 
-app.get("/api/branch-reviews/:id", (context) =>
+app.get("/api/repository-reviews/:id", (context) =>
   context.json({
     ok: true,
-    branchReview,
-    issues: branchIssues,
-    walkthroughs: branchWalkthroughSummaries(),
+    repositoryReview,
+    issues: repositoryIssues,
+    walkthroughs: repositoryWalkthroughSummaries(),
     selectedRemote: {
       name: "origin",
       url: "https://github.com/acme/review-repo.git",
@@ -976,12 +981,12 @@ app.get("/api/branch-reviews/:id", (context) =>
   }),
 );
 
-app.post("/api/branch-reviews/open", (context) => {
-  const fromCache = branchReview !== null;
-  if (!branchReview) {
+app.post("/api/repository-reviews/open", (context) => {
+  const fromCache = repositoryReview !== null;
+  if (!repositoryReview) {
     const now = new Date().toISOString();
-    branchReview = {
-      ...structuredClone(branchReviewFixture),
+    repositoryReview = {
+      ...structuredClone(repositoryReviewFixture),
       id: randomUUID(),
       createdAt: now,
       updatedAt: now,
@@ -989,7 +994,7 @@ app.post("/api/branch-reviews/open", (context) => {
   }
   return context.json({
     ok: true,
-    branchReview,
+    repositoryReview,
     fromCache,
     selectedRemote: {
       name: "origin",
@@ -998,11 +1003,11 @@ app.post("/api/branch-reviews/open", (context) => {
   });
 });
 
-app.post("/api/branch-reviews/:id/sync", (context) =>
+app.post("/api/repository-reviews/:id/sync", (context) =>
   context.json({
     ok: true,
-    branchReview,
-    issues: branchIssues,
+    repositoryReview,
+    issues: repositoryIssues,
     issueResults: [],
     selectedRemote: {
       name: "origin",
@@ -1011,22 +1016,30 @@ app.post("/api/branch-reviews/:id/sync", (context) =>
   }),
 );
 
-app.post("/api/branch-reviews/:id/reset", async (context) => {
-  const retainedRefs = [`refs/rvw/branch/${branchReview.id}/commits/oid-${branchReview.sourceOid}`];
+app.post("/api/repository-reviews/:id/reset", async (context) => {
+  const retainedRefs = [
+    `refs/rvw/repository/${repositoryReview.id}/commits/oid-${repositoryReview.sourceOid}`,
+  ];
   const counts = {
-    branchReview: 1,
-    issueMemberships: branchIssues.length,
-    issueComments: branchCommentContexts.filter(({ comment }) => comment.target.kind === "issue")
-      .length,
-    codeComments: branchCommentContexts.filter(({ comment }) => comment.target.kind === "document")
-      .length,
-    reviewComments: branchCommentContexts.filter(({ comment }) => comment.target.kind === "branch")
-      .length,
-    walkthroughComments: branchCommentContexts.filter(
+    repositoryReview: 1,
+    issueMemberships: repositoryIssues.length,
+    issueComments: repositoryCommentContexts.filter(
+      ({ comment }) => comment.target.kind === "issue",
+    ).length,
+    codeComments: repositoryCommentContexts.filter(
+      ({ comment }) => comment.target.kind === "document",
+    ).length,
+    reviewComments: repositoryCommentContexts.filter(
+      ({ comment }) => comment.target.kind === "repository",
+    ).length,
+    walkthroughComments: repositoryCommentContexts.filter(
       ({ comment }) => comment.target.kind === "walkthrough",
     ).length,
-    posts: branchCommentContexts.reduce((total, { comment }) => total + comment.posts.length, 0),
-    walkthroughs: branchWalkthroughs.length,
+    posts: repositoryCommentContexts.reduce(
+      (total, { comment }) => total + comment.posts.length,
+      0,
+    ),
+    walkthroughs: repositoryWalkthroughs.length,
     gitRefs: retainedRefs.length,
   };
   const input = await context.req.json();
@@ -1035,7 +1048,7 @@ app.post("/api/branch-reviews/:id/reset", async (context) => {
       {
         ok: false,
         error: { code: "RESET_CONFIRMATION_REQUIRED", message: "confirmation required" },
-        branchReview,
+        repositoryReview,
         counts,
         retainedRefs,
         confirmationRequired: true,
@@ -1044,43 +1057,43 @@ app.post("/api/branch-reviews/:id/reset", async (context) => {
       409,
     );
   }
-  const deletedBranchReview = branchReview;
-  branchReview = null;
-  branchIssues = [];
-  branchWalkthroughs = [];
-  branchCommentContexts = [];
+  const deletedRepositoryReview = repositoryReview;
+  repositoryReview = null;
+  repositoryIssues = [];
+  repositoryWalkthroughs = [];
+  repositoryCommentContexts = [];
   changeSequence += 1;
   return context.json({
     ok: true,
-    branchReview: deletedBranchReview,
+    repositoryReview: deletedRepositoryReview,
     deleted: counts,
     removedRefs: retainedRefs,
     outcome: { kind: "completed" },
   });
 });
 
-app.post("/api/branch-reviews/:id/issues", async (context) => {
+app.post("/api/repository-reviews/:id/issues", async (context) => {
   const input = await context.req.json();
   const number = Number(String(input.issue).match(/(?:^#|\/issues\/)(\d+)$/)?.[1]);
-  const fixture = branchIssueFixtures.find((issue) => issue.number === number);
+  const fixture = repositoryIssueFixtures.find((issue) => issue.number === number);
   if (!fixture) {
     return context.json(
       { ok: false, error: { code: "GITHUB_ISSUE_ERROR", message: "missing fixture issue" } },
       404,
     );
   }
-  const existing = branchIssues.find((issue) => issue.id === fixture.id);
+  const existing = repositoryIssues.find((issue) => issue.id === fixture.id);
   if (existing) {
-    return context.json({ ok: true, branchReview, issue: existing, added: false });
+    return context.json({ ok: true, repositoryReview, issue: existing, added: false });
   }
   const issue = structuredClone(fixture);
-  branchIssues.unshift(issue);
+  repositoryIssues.unshift(issue);
   changeSequence += 1;
-  return context.json({ ok: true, branchReview, issue, added: true });
+  return context.json({ ok: true, repositoryReview, issue, added: true });
 });
 
-app.delete("/api/branch-reviews/:id/issues/:issueId", async (context) => {
-  const issueIndex = branchIssues.findIndex(
+app.delete("/api/repository-reviews/:id/issues/:issueId", async (context) => {
+  const issueIndex = repositoryIssues.findIndex(
     (candidate) => candidate.id === context.req.param("issueId"),
   );
   if (issueIndex < 0) {
@@ -1089,8 +1102,8 @@ app.delete("/api/branch-reviews/:id/issues/:issueId", async (context) => {
       404,
     );
   }
-  const issue = branchIssues[issueIndex];
-  const issueComments = branchCommentContexts.filter(
+  const issue = repositoryIssues[issueIndex];
+  const issueComments = repositoryCommentContexts.filter(
     ({ comment }) => comment.target.kind === "issue" && comment.target.issueId === issue.id,
   );
   const counts = {
@@ -1117,15 +1130,15 @@ app.delete("/api/branch-reviews/:id/issues/:issueId", async (context) => {
       409,
     );
   }
-  branchIssues.splice(issueIndex, 1);
-  branchCommentContexts = branchCommentContexts.filter(
+  repositoryIssues.splice(issueIndex, 1);
+  repositoryCommentContexts = repositoryCommentContexts.filter(
     ({ comment }) => comment.target.kind !== "issue" || comment.target.issueId !== issue.id,
   );
   changeSequence += 1;
   return context.json({ ok: true, issue, deleted: counts });
 });
 
-app.get("/api/branch-reviews/:id/tree", (context) =>
+app.get("/api/repository-reviews/:id/tree", (context) =>
   context.json({
     ok: true,
     entries: repositoryPathsAt(secondHead).map((filePath) => ({
@@ -1139,10 +1152,12 @@ app.get("/api/branch-reviews/:id/tree", (context) =>
   }),
 );
 
-app.get("/api/branch-reviews/:id/document", (context) => {
+app.get("/api/repository-reviews/:id/document", (context) => {
   const kind = context.req.query("kind");
   if (kind === "issue-markdown") {
-    const issue = branchIssues.find((candidate) => candidate.id === context.req.query("issueId"));
+    const issue = repositoryIssues.find(
+      (candidate) => candidate.id === context.req.query("issueId"),
+    );
     if (!issue) {
       return context.json(
         { ok: false, error: { code: "ISSUE_NOT_FOUND", message: "missing issue" } },
@@ -1152,7 +1167,7 @@ app.get("/api/branch-reviews/:id/document", (context) => {
     return context.json({
       ok: true,
       document: {
-        ref: { kind, branchReviewId: branchReview.id, issueId: issue.id },
+        ref: { kind, repositoryReviewId: repositoryReview.id, issueId: issue.id },
         availability: "available",
         text: issue.body,
         byteLength: Buffer.byteLength(issue.body, "utf8"),
@@ -1169,7 +1184,7 @@ app.get("/api/branch-reviews/:id/document", (context) => {
     document: {
       ref: {
         kind: "repository-file",
-        branchReviewId: branchReview.id,
+        repositoryReviewId: repositoryReview.id,
         sourceOid: secondHead,
         path: filePath,
       },
@@ -1183,7 +1198,7 @@ app.get("/api/branch-reviews/:id/document", (context) => {
   });
 });
 
-app.get("/api/branch-reviews/:id/markdown-asset", (context) => {
+app.get("/api/repository-reviews/:id/markdown-asset", (context) => {
   if (context.req.query("path") !== "docs/order-lifecycle.svg") {
     return context.json(
       { ok: false, error: { code: "DOCUMENT_NOT_FOUND", message: "missing asset" } },
@@ -1196,7 +1211,7 @@ app.get("/api/branch-reviews/:id/markdown-asset", (context) => {
   );
 });
 
-app.get("/api/branch-reviews/:id/search", (context) => {
+app.get("/api/repository-reviews/:id/search", (context) => {
   const query = context.req.query("q") ?? "";
   const matchCase = context.req.query("matchCase") === "true";
   const wholeWord = context.req.query("wholeWord") === "true";
@@ -1211,7 +1226,7 @@ app.get("/api/branch-reviews/:id/search", (context) => {
               {
                 document: {
                   kind: "repository-file",
-                  branchReviewId: branchReview.id,
+                  repositoryReviewId: repositoryReview.id,
                   sourceOid: secondHead,
                   path: filePath,
                 },
@@ -1232,18 +1247,18 @@ app.get("/api/branch-reviews/:id/search", (context) => {
   });
 });
 
-app.get("/api/branch-reviews/:id/comments", (context) =>
+app.get("/api/repository-reviews/:id/comments", (context) =>
   context.json({
     ok: true,
-    comments: branchCommentContexts.map(({ comment }) => ({
+    comments: repositoryCommentContexts.map(({ comment }) => ({
       comment,
-      latestPlacement: branchCommentPlacement(comment.target),
+      latestPlacement: repositoryCommentPlacement(comment.target),
     })),
   }),
 );
 
-app.get("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
-  const walkthrough = branchWalkthroughs.find(
+app.get("/api/repository-reviews/:id/walkthroughs/:walkthroughId", (context) => {
+  const walkthrough = repositoryWalkthroughs.find(
     (candidate) => candidate.id === context.req.param("walkthroughId"),
   );
   return walkthrough
@@ -1254,8 +1269,8 @@ app.get("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) => {
       );
 });
 
-app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", async (context) => {
-  const walkthroughIndex = branchWalkthroughs.findIndex(
+app.delete("/api/repository-reviews/:id/walkthroughs/:walkthroughId", async (context) => {
+  const walkthroughIndex = repositoryWalkthroughs.findIndex(
     (candidate) => candidate.id === context.req.param("walkthroughId"),
   );
   if (walkthroughIndex < 0) {
@@ -1264,8 +1279,8 @@ app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", async (context
       404,
     );
   }
-  const walkthrough = branchWalkthroughs[walkthroughIndex];
-  const associatedComments = branchCommentContexts.filter(
+  const walkthrough = repositoryWalkthroughs[walkthroughIndex];
+  const associatedComments = repositoryCommentContexts.filter(
     ({ comment }) =>
       comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id,
   );
@@ -1294,8 +1309,8 @@ app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", async (context
       409,
     );
   }
-  branchWalkthroughs.splice(walkthroughIndex, 1);
-  branchCommentContexts = branchCommentContexts.filter(
+  repositoryWalkthroughs.splice(walkthroughIndex, 1);
+  repositoryCommentContexts = repositoryCommentContexts.filter(
     ({ comment }) =>
       comment.target.kind !== "walkthrough" || comment.target.walkthroughId !== walkthrough.id,
   );
@@ -1305,7 +1320,7 @@ app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", async (context
     deleted: {
       id: walkthrough.id,
       ref: walkthrough.ref,
-      branchReviewId,
+      repositoryReviewId,
       counts,
     },
   });
@@ -1565,7 +1580,7 @@ app.get("/api/pull-requests/:id/github-attachment", (context) => {
   return context.body(fixtureAttachmentSvg);
 });
 
-app.get("/api/branch-reviews/:id/github-attachment", (context) => {
+app.get("/api/repository-reviews/:id/github-attachment", (context) => {
   if (context.req.query("url") !== attachmentUrl) {
     return context.json(
       { ok: false, error: { code: "GITHUB_ERROR", message: "attachment unavailable" } },
@@ -1802,8 +1817,8 @@ app.get("/api/comments/:id/placement", (context) => {
       404,
     );
   }
-  if (comment.branchReviewId) {
-    if (context.req.query("branchReviewId") !== comment.branchReviewId) {
+  if (comment.repositoryReviewId) {
+    if (context.req.query("repositoryReviewId") !== comment.repositoryReviewId) {
       return context.json({
         ok: true,
         placement: { outdated: true, range: null, path: null },
@@ -1825,11 +1840,11 @@ app.get("/api/comments/:id/placement", (context) => {
       return context.json({
         ok: true,
         placement: matches
-          ? branchCommentPlacement(comment.target)
+          ? repositoryCommentPlacement(comment.target)
           : { outdated: true, range: null, path: null },
       });
     }
-    return context.json({ ok: true, placement: branchCommentPlacement(comment.target) });
+    return context.json({ ok: true, placement: repositoryCommentPlacement(comment.target) });
   }
   if (comment.target.kind === "pull-request") {
     return context.json({ ok: true, placement: { outdated: false, range: null, path: null } });
@@ -1922,17 +1937,17 @@ app.post("/api/comments", async (context) => {
   const input = await context.req.json();
   const now = new Date().toISOString();
   const id = randomUUID();
-  if (input.branchReviewId) {
-    if (!branchReview || input.branchReviewId !== branchReview.id) {
+  if (input.repositoryReviewId) {
+    if (!repositoryReview || input.repositoryReviewId !== repositoryReview.id) {
       return context.json(
         {
           ok: false,
-          error: { code: "BRANCH_REVIEW_NOT_FOUND", message: "missing branch review" },
+          error: { code: "REPOSITORY_REVIEW_NOT_FOUND", message: "missing repository review" },
         },
         404,
       );
     }
-    const target = enrichBranchCommentTarget(input.target);
+    const target = enrichRepositoryCommentTarget(input.target);
     if (!target) {
       return context.json(
         { ok: false, error: { code: "INVALID_INPUT", message: "missing comment target" } },
@@ -1942,8 +1957,8 @@ app.post("/api/comments", async (context) => {
     const comment = {
       id,
       ref: `rvw://comment/${id}`,
-      branchReviewId: branchReview.id,
-      createdSourceOid: branchReview.sourceOid,
+      repositoryReviewId: repositoryReview.id,
+      createdSourceOid: repositoryReview.sourceOid,
       resolvedAt: null,
       createdAt: now,
       updatedAt: now,
@@ -1962,7 +1977,10 @@ app.post("/api/comments", async (context) => {
         },
       ],
     };
-    branchCommentContexts.push({ comment, latestPlacement: branchCommentPlacement(target) });
+    repositoryCommentContexts.push({
+      comment,
+      latestPlacement: repositoryCommentPlacement(target),
+    });
     changeSequence += 1;
     return context.json({ ok: true, comment }, 201);
   }
@@ -2116,10 +2134,10 @@ for (const action of ["resolve", "reopen"]) {
 
 app.delete("/api/comments/:id", (context) => {
   const index = comments.findIndex((item) => item.id === context.req.param("id"));
-  const branchIndex = branchCommentContexts.findIndex(
+  const repositoryIndex = repositoryCommentContexts.findIndex(
     ({ comment }) => comment.id === context.req.param("id"),
   );
-  if (index < 0 && branchIndex < 0) {
+  if (index < 0 && repositoryIndex < 0) {
     return context.json(
       { ok: false, error: { code: "COMMENT_NOT_FOUND", message: "missing comment" } },
       404,
@@ -2128,7 +2146,7 @@ app.delete("/api/comments/:id", (context) => {
   const comment =
     index >= 0
       ? comments.splice(index, 1)[0]
-      : branchCommentContexts.splice(branchIndex, 1)[0].comment;
+      : repositoryCommentContexts.splice(repositoryIndex, 1)[0].comment;
   changeSequence += 1;
   return context.json({ ok: true, deleted: { id: comment.id, ref: comment.ref } });
 });

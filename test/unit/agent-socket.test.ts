@@ -160,7 +160,7 @@ describe("Agent socket", () => {
       walkthrough: {
         id: "walkthrough-branch",
         ref: "rvw://walkthrough/70000000-0000-4000-8000-000000000001",
-        branchReviewId: "branch-review-1",
+        repositoryReviewId: "repository-review-1",
       },
       issuesAdded: [{ id: "issue-142", number: 142 }],
     };
@@ -194,7 +194,7 @@ describe("Agent socket", () => {
     const published = await dispatchAgentSocketRequest(service, {
       protocolVersion: 1,
       operation: "walkthrough.publish",
-      input: { review: { kind: "branch", repository: "acme/review-repo" }, ...content },
+      input: { review: { kind: "repository", repository: "acme/review-repo" }, ...content },
     });
     const updated = await dispatchAgentSocketRequest(service, {
       protocolVersion: 1,
@@ -233,16 +233,16 @@ describe("Agent socket", () => {
 
   it("requires server-side confirmation for destructive operations", async () => {
     const resetPullRequest = vi.fn();
-    const resetBranchReview = vi.fn();
+    const resetRepositoryReview = vi.fn();
     const removePullRequestIssue = vi.fn();
-    const removeBranchIssue = vi.fn();
+    const removeRepositoryIssue = vi.fn();
     const deleteWalkthroughByUri = vi.fn();
     const service = {
       resolveStoredPullRequest: vi.fn().mockReturnValue({ id: "pr-1" }),
       resetPullRequest,
-      resetBranchReview,
+      resetRepositoryReview,
       removePullRequestIssue,
-      removeBranchIssue,
+      removeRepositoryIssue,
       deleteWalkthroughByUri,
     } as unknown as RvwService;
 
@@ -263,14 +263,14 @@ describe("Agent socket", () => {
     await expect(
       dispatchAgentSocketRequest(service, {
         protocolVersion: 1,
-        operation: "branch.issue.remove",
+        operation: "repository.issue.remove",
         input: { repositoryPath: "/repo", issueReference: "#142" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(
       dispatchAgentSocketRequest(service, {
         protocolVersion: 1,
-        operation: "branch.reset",
+        operation: "repository.reset",
         input: { repositoryPath: "/repo" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
@@ -282,9 +282,9 @@ describe("Agent socket", () => {
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     expect(resetPullRequest).not.toHaveBeenCalled();
-    expect(resetBranchReview).not.toHaveBeenCalled();
+    expect(resetRepositoryReview).not.toHaveBeenCalled();
     expect(removePullRequestIssue).not.toHaveBeenCalled();
-    expect(removeBranchIssue).not.toHaveBeenCalled();
+    expect(removeRepositoryIssue).not.toHaveBeenCalled();
     expect(deleteWalkthroughByUri).not.toHaveBeenCalled();
   });
 

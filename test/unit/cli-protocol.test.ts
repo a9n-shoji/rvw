@@ -175,8 +175,8 @@ describe("CLI protocol discovery", () => {
       appVersion: "0.3.0",
       capabilities: [
         "agent.transport",
-        "branchReview.read",
-        "branchReview.sync",
+        "repositoryReview.read",
+        "repositoryReview.sync",
         "issue.read",
         "issue.membership",
         "issue.cacheRepair",
@@ -214,7 +214,7 @@ describe("CLI protocol discovery", () => {
     ).toEqual(["add", "refresh", "remove"]);
     expect(
       program.commands
-        .find((command) => command.name() === "branch")
+        .find((command) => command.name() === "repository")
         ?.commands.find((command) => command.name() === "issue")
         ?.commands.map((command) => command.name()),
     ).toEqual(["add", "refresh", "remove"]);
@@ -245,29 +245,29 @@ describe("CLI protocol discovery", () => {
     );
   });
 
-  it("uses the existing-only Branch reset preview and preserves the exact repository argument", async () => {
+  it("uses the existing-only Repository Review reset preview and preserves the exact repository argument", async () => {
     const repositoryPath = "/tmp/review repo/owner's $(literal)";
-    const getBranchResetPreviewAtPath = vi.fn().mockResolvedValue({
-      branchReview: { id: "branch-review-1" },
-      counts: { branchReview: 1, gitRefs: 2 },
-      retainedRefs: ["refs/rvw/branch/branch-review-1/commits/oid-abc"],
+    const getRepositoryResetPreviewAtPath = vi.fn().mockResolvedValue({
+      repositoryReview: { id: "repository-review-1" },
+      counts: { repositoryReview: 1, gitRefs: 2 },
+      retainedRefs: ["refs/rvw/repository/repository-review-1/commits/oid-abc"],
       confirmationToken: "a".repeat(64),
       confirmationRequired: true,
     });
-    const { runtime } = mockRuntime({ getBranchResetPreviewAtPath });
+    const { runtime } = mockRuntime({ getRepositoryResetPreviewAtPath });
     const readStdout = captureStdout();
 
     await createProgram(() => runtime).parseAsync([
       "node",
       "rvw",
-      "branch",
+      "repository",
       "reset",
       "--repository",
       repositoryPath,
       "--json",
     ]);
 
-    expect(getBranchResetPreviewAtPath).toHaveBeenCalledWith(repositoryPath);
+    expect(getRepositoryResetPreviewAtPath).toHaveBeenCalledWith(repositoryPath);
     expect(readStdout()).toMatchObject({
       ok: false,
       error: {
@@ -275,7 +275,7 @@ describe("CLI protocol discovery", () => {
         details: {
           command: "rvw",
           arguments: [
-            "branch",
+            "repository",
             "reset",
             "--repository",
             repositoryPath,
@@ -286,25 +286,25 @@ describe("CLI protocol discovery", () => {
           ],
         },
       },
-      branchReview: { id: "branch-review-1" },
+      repositoryReview: { id: "repository-review-1" },
       confirmationRequired: true,
     });
   });
 
-  it("uses the existing-only Branch Issue-removal preview", async () => {
-    const getBranchIssueRemovalPreview = vi.fn().mockResolvedValue({
+  it("uses the existing-only Repository Issue-removal preview", async () => {
+    const getRepositoryIssueRemovalPreview = vi.fn().mockResolvedValue({
       issue: { id: "issue-142", number: 142, title: "Existing Issue" },
       counts: { issueWholeComments: 1, issueRangeComments: 2, replies: 3 },
       confirmationToken: "b".repeat(64),
       confirmationRequired: true,
     });
-    const { runtime } = mockRuntime({ getBranchIssueRemovalPreview });
+    const { runtime } = mockRuntime({ getRepositoryIssueRemovalPreview });
     const readStdout = captureStdout();
 
     await createProgram(() => runtime).parseAsync([
       "node",
       "rvw",
-      "branch",
+      "repository",
       "issue",
       "remove",
       "#142",
@@ -313,14 +313,14 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
 
-    expect(getBranchIssueRemovalPreview).toHaveBeenCalledWith("/review repo", "#142");
+    expect(getRepositoryIssueRemovalPreview).toHaveBeenCalledWith("/review repo", "#142");
     expect(readStdout()).toMatchObject({
       ok: false,
       error: {
         code: "RESET_CONFIRMATION_REQUIRED",
         details: {
           arguments: [
-            "branch",
+            "repository",
             "issue",
             "remove",
             "#142",
@@ -773,11 +773,11 @@ describe("CLI protocol discovery", () => {
 
   it("reads the current Walkthrough through the CLI", async () => {
     const uri = "rvw://walkthrough/70000000-0000-4000-8000-000000000001";
-    const getAnyWalkthroughByUri = vi.fn().mockReturnValue({
+    const getBoundAnyWalkthroughByUri = vi.fn().mockResolvedValue({
       pullRequest: { id: "pull-request-1", localRepositoryPath: "/review-repo" },
       walkthrough: { id: "70000000-0000-4000-8000-000000000001", ref: uri },
     });
-    const { runtime, close } = mockRuntime({ getAnyWalkthroughByUri });
+    const { runtime, close } = mockRuntime({ getBoundAnyWalkthroughByUri });
     const readStdout = captureStdout();
 
     await createProgram(() => runtime).parseAsync([
@@ -789,7 +789,7 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
 
-    expect(getAnyWalkthroughByUri).toHaveBeenCalledWith(uri);
+    expect(getBoundAnyWalkthroughByUri).toHaveBeenCalledWith(uri);
     expect(readStdout()).toMatchObject({
       ok: true,
       pullRequest: { id: "pull-request-1" },
@@ -801,9 +801,9 @@ describe("CLI protocol discovery", () => {
   it("returns an explicit Walkthrough publish envelope from the CLI", async () => {
     const uri = "rvw://walkthrough/70000000-0000-4000-8000-000000000003";
     const input = {
-      review: { kind: "branch" as const, repository: "acme/review-repo" },
+      review: { kind: "repository" as const, repository: "acme/review-repo" },
       sourceOid: "b".repeat(40),
-      title: "Branch explanation",
+      title: "Repository Review explanation",
       body: "Open [the handler](rvw-ref:handler).",
       references: [
         {
@@ -818,7 +818,12 @@ describe("CLI protocol discovery", () => {
       issuesToAdd: ["#142"],
     };
     const publishWalkthrough = vi.fn().mockResolvedValue({
-      walkthrough: { id: "walkthrough-3", ref: uri, branchReviewId: "branch-review-1", ...input },
+      walkthrough: {
+        id: "walkthrough-3",
+        ref: uri,
+        repositoryReviewId: "repository-review-1",
+        ...input,
+      },
       issuesAdded: [{ id: "issue-142", number: 142 }],
     });
     const { runtime, close } = mockRuntime({ publishWalkthrough });
@@ -836,7 +841,7 @@ describe("CLI protocol discovery", () => {
 
     expect(readStdout()).toMatchObject({
       ok: true,
-      walkthrough: { ref: uri, branchReviewId: "branch-review-1" },
+      walkthrough: { ref: uri, repositoryReviewId: "repository-review-1" },
       issuesAdded: [{ number: 142 }],
     });
     expect(close).toHaveBeenCalledOnce();

@@ -1,8 +1,8 @@
 import { useCallback, useRef, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type {
-  BranchDocumentContent,
-  BranchDocumentRef,
+  RepositoryReviewDocumentContent,
+  RepositoryReviewDocumentRef,
   CodeReference,
   DocumentContent,
   DocumentRef,
@@ -18,7 +18,7 @@ import type { ReadingLocator } from "./reading-history.js";
 import { reviewQueryKeys } from "./review-query-keys.js";
 import type { ReviewKind } from "./review-context.js";
 
-function branchDocumentUrl(ref: BranchDocumentRef): string {
+function repositoryReviewDocumentUrl(ref: RepositoryReviewDocumentRef): string {
   const search = new URLSearchParams({ kind: ref.kind });
   if (ref.kind === "repository-file") {
     search.set("sourceOid", ref.sourceOid);
@@ -26,7 +26,7 @@ function branchDocumentUrl(ref: BranchDocumentRef): string {
   } else {
     search.set("issueId", ref.issueId);
   }
-  return `/api/branch-reviews/${ref.branchReviewId}/document?${search.toString()}`;
+  return `/api/repository-reviews/${ref.repositoryReviewId}/document?${search.toString()}`;
 }
 
 export function useExactCodeReferenceNavigation({
@@ -62,7 +62,7 @@ export function useExactCodeReferenceNavigation({
       const requestIsCurrent = (): boolean =>
         currentRequest === requestSequence.current[targetPane] &&
         workspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
-      const request: { ref: DocumentRef | BranchDocumentRef; url: string } = (() => {
+      const request: { ref: DocumentRef | RepositoryReviewDocumentRef; url: string } = (() => {
         if (reviewKind === "pull-request") {
           const ref: DocumentRef = {
             kind: "repository-file",
@@ -72,20 +72,23 @@ export function useExactCodeReferenceNavigation({
           };
           return { ref, url: documentUrl(ref) };
         }
-        const ref: BranchDocumentRef = {
+        const ref: RepositoryReviewDocumentRef = {
           kind: "repository-file",
-          branchReviewId: reviewId,
+          repositoryReviewId: reviewId,
           sourceOid,
           path: reference.path,
         };
-        return { ref, url: branchDocumentUrl(ref) };
+        return { ref, url: repositoryReviewDocumentUrl(ref) };
       })();
       try {
         const referencedDocument = await queryClient.fetchQuery({
           queryKey: reviewQueryKeys.document(request.ref),
           queryFn: async () =>
-            (await api<{ document: DocumentContent | BranchDocumentContent }>(request.url))
-              .document,
+            (
+              await api<{ document: DocumentContent | RepositoryReviewDocumentContent }>(
+                request.url,
+              )
+            ).document,
         });
         if (!requestIsCurrent()) return null;
         if (referencedDocument.availability !== "available") {

@@ -1,5 +1,5 @@
 import type {
-  BranchCommentReviewContext,
+  RepositoryCommentReviewContext,
   CommentListContext,
   CommentReviewContext,
   CommentWatchEventContext,
@@ -101,28 +101,28 @@ function formatListTarget(
 }
 
 export function formatCommentGetOutput(
-  result: CommentReviewContext | BranchCommentReviewContext,
+  result: CommentReviewContext | RepositoryCommentReviewContext,
   options: { includePrBody?: boolean } = {},
 ): CommentGetOutput {
-  if ("branchReview" in result) {
+  if ("repositoryReview" in result) {
     return commentGetOutputSchema.parse({
       ok: true,
       context: result.context,
-      branchReview: {
-        repository: result.branchReview.canonicalName,
-        owner: result.branchReview.owner,
-        name: result.branchReview.repository,
-        localRepositoryPath: result.branchReview.localRepositoryPath,
-        defaultBranchName: result.branchReview.defaultBranchName,
-        currentSourceOid: result.branchReview.sourceOid,
-        githubFetchedAt: result.branchReview.githubFetchedAt,
-        sourceSyncError: result.branchReview.sourceSyncError,
+      repositoryReview: {
+        repository: result.repositoryReview.canonicalName,
+        owner: result.repositoryReview.owner,
+        name: result.repositoryReview.repository,
+        localRepositoryPath: result.repositoryReview.localRepositoryPath,
+        defaultBranchName: result.repositoryReview.defaultBranchName,
+        currentSourceOid: result.repositoryReview.sourceOid,
+        githubFetchedAt: result.repositoryReview.githubFetchedAt,
+        sourceSyncError: result.repositoryReview.sourceSyncError,
       },
       comment: {
         ...result.comment,
         resolved: result.comment.resolvedAt !== null,
       },
-      currentSourceOid: result.branchReview.sourceOid,
+      currentSourceOid: result.repositoryReview.sourceOid,
       latestPlacement: result.latestPlacement,
       exactSource: result.exactSource,
       walkthrough: result.walkthrough,

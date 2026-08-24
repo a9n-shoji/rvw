@@ -29,8 +29,8 @@ import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type {
-  BranchDocumentContent,
-  BranchDocumentRef,
+  RepositoryReviewDocumentContent,
+  RepositoryReviewDocumentRef,
   CodeReference,
   CommentPlacement,
   DocumentContent,
@@ -54,8 +54,8 @@ import {
   type PlacementResponse,
 } from "../api.js";
 import {
-  branchGitHubAttachmentAssetUrl,
-  branchMarkdownAssetUrl,
+  repositoryGitHubAttachmentAssetUrl,
+  repositoryMarkdownAssetUrl,
   githubAttachmentAssetUrl,
   isExternalMarkdownHref,
   markdownAssetUrl,
@@ -91,8 +91,8 @@ type ViewerAnnotation =
   | { kind: "comment"; comment: AnyReviewComment; placement: CommentPlacement }
   | { kind: "line-composer" };
 
-type ReviewFileRef = DocumentRef | BranchDocumentRef;
-type ReviewDocumentContent = DocumentContent | BranchDocumentContent;
+type ReviewFileRef = DocumentRef | RepositoryReviewDocumentRef;
+type ReviewDocumentContent = DocumentContent | RepositoryReviewDocumentContent;
 
 type CreateCommentTarget =
   | { kind: "pull-request" }
@@ -317,7 +317,7 @@ function params(ref: ReviewFileRef): string {
     kind: ref.kind,
     ...("pullRequestId" in ref
       ? { pullRequestId: ref.pullRequestId }
-      : { branchReviewId: ref.branchReviewId }),
+      : { repositoryReviewId: ref.repositoryReviewId }),
   });
   if (ref.kind === "repository-file") {
     search.set("sourceOid", ref.sourceOid);
@@ -337,7 +337,7 @@ function reviewDocumentUrl(ref: ReviewFileRef): string {
   } else {
     search.set("issueId", ref.issueId);
   }
-  return `/api/branch-reviews/${ref.branchReviewId}/document?${search.toString()}`;
+  return `/api/repository-reviews/${ref.repositoryReviewId}/document?${search.toString()}`;
 }
 
 function reviewDocumentPath(ref: ReviewFileRef, activeDocument: ActiveDocument): string {
@@ -353,7 +353,7 @@ function reviewMarkdownAssetUrl(
 ): string {
   return review.kind === "pull-request"
     ? markdownAssetUrl(review.id, sourceOid, filePath)
-    : branchMarkdownAssetUrl(review.id, sourceOid, filePath);
+    : repositoryMarkdownAssetUrl(review.id, sourceOid, filePath);
 }
 
 function reviewGitHubAttachmentUrl(
@@ -362,7 +362,7 @@ function reviewGitHubAttachmentUrl(
 ): string | null {
   return review.kind === "pull-request"
     ? githubAttachmentAssetUrl(review.id, absoluteUrl)
-    : branchGitHubAttachmentAssetUrl(review.id, absoluteUrl);
+    : repositoryGitHubAttachmentAssetUrl(review.id, absoluteUrl);
 }
 
 function markdownNodeText(node: ReactNode): string {
@@ -906,7 +906,7 @@ export function DocumentViewer({
               }
             : {
                 kind: "issue-markdown",
-                branchReviewId: review.id,
+                repositoryReviewId: review.id,
                 issueId: activeDocument.id,
               }
           : review.kind === "pull-request"
@@ -918,7 +918,7 @@ export function DocumentViewer({
               }
             : {
                 kind: "repository-file",
-                branchReviewId: review.id,
+                repositoryReviewId: review.id,
                 sourceOid: activeDocument.sourceOid ?? selectedOid,
                 path: activeDocument.path,
               },
@@ -955,7 +955,7 @@ export function DocumentViewer({
     queryKey: reviewQueryKeys.document(fullRef),
     queryFn: async () =>
       (
-        await api<DocumentResponse | { document: BranchDocumentContent }>(
+        await api<DocumentResponse | { document: RepositoryReviewDocumentContent }>(
           reviewDocumentUrl(fullRef),
         )
       ).document,

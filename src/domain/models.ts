@@ -56,7 +56,7 @@ export interface IssueDocument extends CachedIssueDocument {
   stale: boolean;
 }
 
-export interface BranchReview extends RepositoryIdentity {
+export interface RepositoryReview extends RepositoryIdentity {
   id: string;
   localRepositoryPath: string;
   gitCommonDir: string;
@@ -71,7 +71,7 @@ export interface BranchReview extends RepositoryIdentity {
 
 export type ReviewContext =
   | { kind: "pull-request"; reviewId: string; pullRequest: PullRequest }
-  | { kind: "branch"; reviewId: string; branchReview: BranchReview };
+  | { kind: "repository"; reviewId: string; repositoryReview: RepositoryReview };
 
 export interface PullRequest extends PullRequestIdentity {
   id: string;
@@ -118,14 +118,14 @@ export type DocumentRef =
       path: string;
     };
 
-export type BranchDocumentRef =
+export type RepositoryReviewDocumentRef =
   | {
       kind: "repository-file";
-      branchReviewId: string;
+      repositoryReviewId: string;
       sourceOid: string;
       path: string;
     }
-  | { kind: "issue-markdown"; branchReviewId: string; issueId: string };
+  | { kind: "issue-markdown"; repositoryReviewId: string; issueId: string };
 
 export interface DiffDocumentRef {
   kind: "diff";
@@ -166,8 +166,8 @@ export interface DocumentContent {
   oid: string | null;
 }
 
-export interface BranchDocumentContent extends Omit<DocumentContent, "ref"> {
-  ref: BranchDocumentRef;
+export interface RepositoryReviewDocumentContent extends Omit<DocumentContent, "ref"> {
+  ref: RepositoryReviewDocumentRef;
 }
 
 export interface SearchResult {
@@ -199,12 +199,12 @@ export interface SearchResponse {
   };
 }
 
-export interface BranchSearchResult extends Omit<SearchResult, "document"> {
-  document: Extract<BranchDocumentRef, { kind: "repository-file" }>;
+export interface RepositoryReviewSearchResult extends Omit<SearchResult, "document"> {
+  document: Extract<RepositoryReviewDocumentRef, { kind: "repository-file" }>;
 }
 
-export interface BranchSearchResponse extends Omit<SearchResponse, "results"> {
-  results: BranchSearchResult[];
+export interface RepositoryReviewSearchResponse extends Omit<SearchResponse, "results"> {
+  results: RepositoryReviewSearchResult[];
 }
 
 export interface CodeReference {
@@ -312,7 +312,7 @@ export interface CommentPostEvent {
   commentRef: string;
   context:
     | { kind: "pull-request"; pullRequestId: string; pullRequestUrl: string }
-    | { kind: "branch"; branchReviewId: string; repository: string };
+    | { kind: "repository"; repositoryReviewId: string; repository: string };
   deleted: boolean;
 }
 
@@ -328,25 +328,25 @@ export interface ReviewComment {
   posts: CommentPost[];
 }
 
-export interface BranchWalkthrough extends Omit<Walkthrough, "pullRequestId"> {
-  branchReviewId: string;
+export interface RepositoryWalkthrough extends Omit<Walkthrough, "pullRequestId"> {
+  repositoryReviewId: string;
 }
 
 export interface WalkthroughMutationResult {
-  walkthrough: Walkthrough | BranchWalkthrough;
+  walkthrough: Walkthrough | RepositoryWalkthrough;
   issuesAdded: IssueDocument[];
 }
 
-export interface BranchWalkthroughSummary extends Omit<WalkthroughSummary, "pullRequestId"> {
-  branchReviewId: string;
+export interface RepositoryWalkthroughSummary extends Omit<WalkthroughSummary, "pullRequestId"> {
+  repositoryReviewId: string;
 }
 
-export interface DeletedBranchWalkthrough extends Omit<DeletedWalkthrough, "pullRequestId"> {
-  branchReviewId: string;
+export interface DeletedRepositoryWalkthrough extends Omit<DeletedWalkthrough, "pullRequestId"> {
+  repositoryReviewId: string;
 }
 
-export type BranchCommentTarget =
-  | { kind: "branch" }
+export type RepositoryReviewCommentTarget =
+  | { kind: "repository" }
   | {
       kind: "walkthrough";
       walkthroughId: string;
@@ -376,13 +376,13 @@ export type BranchCommentTarget =
       endLine: number | null;
     };
 
-export interface BranchReviewComment extends Omit<
+export interface RepositoryReviewComment extends Omit<
   ReviewComment,
   "pullRequestId" | "createdHeadOid" | "target"
 > {
-  branchReviewId: string;
+  repositoryReviewId: string;
   createdSourceOid: string;
-  target: BranchCommentTarget;
+  target: RepositoryReviewCommentTarget;
 }
 
 export interface MappedRange {
@@ -405,8 +405,8 @@ export interface ResetCounts {
   gitRefs: number;
 }
 
-export interface BranchResetCounts {
-  branchReview: number;
+export interface RepositoryResetCounts {
+  repositoryReview: number;
   issueMemberships: number;
   comments: number;
   issueComments: number;

@@ -20,8 +20,8 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import type {
-  BranchReviewComment,
-  BranchWalkthrough,
+  RepositoryReviewComment,
+  RepositoryWalkthrough,
   CommentPlacement,
   CodeReference,
   ReviewComment,
@@ -223,7 +223,7 @@ interface MermaidMarkdownRenderContext {
   diagramBindings: Record<string, string>;
   references: ReadonlyMap<string, WalkthroughReference>;
   placedComments: Array<{
-    comment: ReviewComment | BranchReviewComment;
+    comment: ReviewComment | RepositoryReviewComment;
     placement: CommentPlacement;
   }>;
   activeCommentId: string | null;
@@ -349,7 +349,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   diagramBindings: Record<string, string>;
   references: ReadonlyMap<string, WalkthroughReference>;
   placedComments: Array<{
-    comment: ReviewComment | BranchReviewComment;
+    comment: ReviewComment | RepositoryReviewComment;
     placement: CommentPlacement;
   }>;
   activeCommentId: string | null;
@@ -495,9 +495,9 @@ export function WalkthroughReadingSurface({
   onOpenCommentCodeReference,
   onOpenRepositoryLink,
 }: {
-  walkthrough: Walkthrough | BranchWalkthrough;
+  walkthrough: Walkthrough | RepositoryWalkthrough;
   placedComments: Array<{
-    comment: ReviewComment | BranchReviewComment;
+    comment: ReviewComment | RepositoryReviewComment;
     placement: CommentPlacement;
   }>;
   themePreference: ThemePreference;
@@ -671,7 +671,7 @@ export function WalkthroughViewer({
     queryFn: async () => {
       const search = new URLSearchParams({
         kind: "walkthrough",
-        [reviewKind === "pull-request" ? "pullRequestId" : "branchReviewId"]: reviewId,
+        [reviewKind === "pull-request" ? "pullRequestId" : "repositoryReviewId"]: reviewId,
         walkthroughId: walkthrough.id,
       });
       return await Promise.all(
@@ -732,7 +732,7 @@ export function WalkthroughViewer({
   });
   const deleteWalkthrough = useMutation({
     mutationFn: async () => {
-      const endpoint = `/api/${reviewKind === "pull-request" ? "pull-requests" : "branch-reviews"}/${reviewId}/walkthroughs/${walkthrough.id}`;
+      const endpoint = `/api/${reviewKind === "pull-request" ? "pull-requests" : "repository-reviews"}/${reviewId}/walkthroughs/${walkthrough.id}`;
       const response = await fetch(endpoint, {
         ...jsonRequest({ yes: false }),
         method: "DELETE",

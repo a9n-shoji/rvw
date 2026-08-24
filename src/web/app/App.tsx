@@ -93,9 +93,9 @@ const WalkthroughViewer = lazy(async () => {
   const module = await import("../components/WalkthroughViewer.js");
   return { default: module.WalkthroughViewer };
 });
-const BranchReviewApp = lazy(async () => {
-  const module = await import("./BranchReviewApp.js");
-  return { default: module.BranchReviewApp };
+const RepositoryReviewApp = lazy(async () => {
+  const module = await import("./RepositoryReviewApp.js");
+  return { default: module.RepositoryReviewApp };
 });
 
 function changePath(change: ChangedFile): string {
@@ -1015,7 +1015,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     [openRepositoryMarkdownLink],
   );
   const openSearchResult = (result: AnySearchResult, openInRightPane = false): void => {
-    if ("branchReviewId" in result.document) return;
+    if ("repositoryReviewId" in result.document) return;
     const requestedDocument: ActiveDocument =
       result.document.kind === "pull-request-markdown"
         ? { kind: "pull-request-markdown" }
@@ -1041,7 +1041,7 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     placement: CommentPlacement | null,
     openInRightPane: boolean,
   ): void => {
-    if ("branchReviewId" in comment) return;
+    if ("repositoryReviewId" in comment) return;
     const target = comment.target;
     const targetPane: DocumentPaneId = openInRightPane ? "right" : "left";
     const navigate = (
@@ -1545,15 +1545,17 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
 }
 
 export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
-  const branchReviewIdParameter = new URLSearchParams(window.location.search).get("branchReviewId");
-  const branchReviewId = parseReviewId(branchReviewIdParameter);
-  if (branchReviewIdParameter && !branchReviewId) {
-    return <main className="fatal-state">Branch Review IDが不正です。</main>;
+  const repositoryReviewIdParameter = new URLSearchParams(window.location.search).get(
+    "repositoryReviewId",
+  );
+  const repositoryReviewId = parseReviewId(repositoryReviewIdParameter);
+  if (repositoryReviewIdParameter && !repositoryReviewId) {
+    return <main className="fatal-state">Repository Review IDが不正です。</main>;
   }
-  return branchReviewId ? (
-    <Suspense fallback={<main className="fatal-state">Branch Reviewを準備しています…</main>}>
-      <BranchReviewApp
-        branchReviewId={branchReviewId}
+  return repositoryReviewId ? (
+    <Suspense fallback={<main className="fatal-state">Repository Reviewを準備しています…</main>}>
+      <RepositoryReviewApp
+        repositoryReviewId={repositoryReviewId}
         initialThemePreference={initialThemePreference}
       />
     </Suspense>

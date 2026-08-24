@@ -7,100 +7,100 @@
 
 ### Added
 
-- GitHub repositoryごとに一件だけ保持し、default branchのexact commitを読むBranch Review
-- Pull Request ReviewとBranch Reviewで、GitHub Issue本文を通常文書として読む・コメントするsurface
-- Branch Reviewのcomment eventをcontext別にbatchし、read-only調査と冪等な最終replyを行うwatcher mode
-- 件数previewと明示確認を伴うPR / Branch Issue membership削除、およびBranch Review reset
+- GitHub repositoryごとに一件だけ保持し、default branchのexact commitを読むRepository Review
+- Pull Request ReviewとRepository Reviewで、GitHub Issue本文を通常文書として読む・コメントするsurface
+- Repository Reviewのcomment eventをcontext別にbatchし、read-only調査と冪等な最終replyを行うwatcher mode
+- 件数previewと明示確認を伴うPR / Repository Issue membership削除、およびRepository Review reset
 - `issue.cacheRepair` capabilityで検出でき、二回連続の一致するGitHub snapshotでowned Issue cacheを再構築する明示`issue refresh --force`
-- selected GitHub remoteとBranch retained ref ownershipを表示するread-only doctor診断
-- Pull Request / Branch ReviewのIssue本文に貼り付けたmodern GitHub user attachment画像を、既存の
+- selected GitHub remoteとRepository Review retained ref ownershipを表示するread-only doctor診断
+- Pull Request / Repository ReviewのIssue本文に貼り付けたmodern GitHub user attachment画像を、既存の
   review-scoped localhost proxyと同じ検証・認証・画像判定で表示
 - repository demoのPR本文とIssue本文へ、安全な添付と停止対象の外部画像を並べたMarkdown tableを追加
 
 ### Changed
 
-- comment、Walkthrough、watch eventをPull Request / Branch Reviewの明示contextで扱うprotocol v4
+- comment、Walkthrough、watch eventをPull Request / Repository Reviewの明示contextで扱うprotocol v4
 - watch eventのrouting identityを表示用URL／repository名から安定したreview IDへ変更
 - Issue cacheをGitHub identityで共有しつつ、membershipとreview artifactを各reviewへ分離
-- Branch ReviewをPR Reviewと同じExplorer / Search / Comments、document tab、最大二pane、theme、
+- Repository ReviewをPR Reviewと同じExplorer / Search / Comments、document tab、最大二pane、theme、
   comment操作へ統一し、PR固有controlだけを省略
 - IssueをPR本文・Walkthroughと同列のreview文書nodeへ統合し、追加formを必要時だけ開くUIと、共通Markdown
   viewerからのIssue全体／本文選択コメントへ変更
 - Walkthrough publish/update responseを、transportに依存しない`walkthrough` + `issuesAdded` envelopeへ変更
 - watcher worker resultをPull Request URL前提からreview contextのdiscriminated unionへ変更
-- Branch watcherのread-only境界を保ったまま、current／retained sourceのtyped code referenceを最終replyへ
+- Repository Review watcherのread-only境界を保ったまま、current／retained sourceのtyped code referenceを最終replyへ
   付けられるよう変更
 - Issue同期を認証確認の共有と最大8件のbounded concurrencyへ変更
 - viewerの変更pollをdatabase全体からreview kind／ID単位へ絞り、別reviewの更新による再取得を削減
-- Branch retained refをrepository名ではなくBranch Review ID単位で所有し、reset/recreate後のevidenceを分離
-- Branch lifecycleのcreate、existing-only、sync、destructive binding policyをapplication層へ集約
+- Repository Review retained refをrepository名ではなくRepository Review ID単位で所有し、reset/recreate後のevidenceを分離
+- Repository Review lifecycleのcreate、existing-only、sync、destructive binding policyをapplication層へ集約
 - migration 011のcanonical repository一意性をcase-insensitiveにし、protocol v4の全transportを最新service前提へ統一
 - Walkthroughの追加専用Issue入力をreplace型contentと区別できる`issuesToAdd`へ変更
-- Branch初期化状態を通常のsync error文字列から`pending | ready | failed`列へ分離
+- Repository Review初期化状態を通常のsync error文字列から`pending | ready | failed`列へ分離
 - Issue sync errorを共有content cacheからreview membershipへ移し、最後のowner削除時にorphan cacheをGC
 - worktreeとGit common directoryをfilesystem realpathへ正規化し、選択remoteをviewerでも表示
 
 ### Fixed
 
 - Issue本文が更新された後も全体コメントはcurrentのまま維持し、rangeコメントだけをoutdatedにするよう修正
-- Branch Review resetでGit ref削除が適用済みなら、終了statusだけを根拠に不整合errorを返さないよう修正
+- Repository Review resetでGit ref削除が適用済みなら、終了statusだけを根拠に不整合errorを返さないよう修正
 - `investigate-and-reply`で開始したwatch taskがPull Requestのwrite reservationを取得できる抜け道を修正
-- Branch Issue本文の同期でviewerをremountせず、入力中のrange comment draft、selection、focusを保持するよう修正
-- Branch syncが共通document queryを正しく更新し、Issue本文とOutdated placementを最新化するよう修正
-- 同じGitHub repositoryの独立cloneから既存Branch Reviewを開いても、保存済みGit common directoryを
+- Repository Issue本文の同期でviewerをremountせず、入力中のrange comment draft、selection、focusを保持するよう修正
+- Repository Review syncが共通document queryを正しく更新し、Issue本文とOutdated placementを最新化するよう修正
+- 同じGitHub repositoryの独立cloneから既存Repository Reviewを開いても、保存済みGit common directoryを
   暗黙に再bindしないよう修正
-- Branch watcherの最終reply post IDをdurableにself-suppressし、event ingest順序や再起動による自己loopを修正
+- Repository Review watcherの最終reply post IDをdurableにself-suppressし、event ingest順序や再起動による自己loopを修正
 - Walkthroughの`issuesAdded`をtransaction外のsnapshot差分ではなく、実際に追加したmembershipから返すよう修正
-- Branch completion helperがworker contextとread-only outcome fieldsの省略を投稿前に拒否するよう修正
+- Repository Review completion helperがworker contextとread-only outcome fieldsの省略を投稿前に拒否するよう修正
 - Issue membership削除後に対象Issueの未送信draftだけが復活し得る問題を修正
-- Branch Reviewがclone内に存在するだけの未同期local commitをdocumentやcomment evidenceとして受理する問題を修正
+- Repository Reviewがclone内に存在するだけの未同期local commitをdocumentやcomment evidenceとして受理する問題を修正
 - PR本文のinline/fenced codeやraw HTML内に書かれた`#123`をIssue membershipとして誤検出する問題を修正
 - 初期background refreshの完了が、待機中に人間が選択したhistorical commit rangeを上書きするraceを修正
-- reset／Issue removal preview、comments、syncが未登録Branch Reviewを暗黙作成する問題を修正
-- cache hitを含む全path-based Branch操作でlocal remote identityを検証し、remote変更後の取り違えをmutation前に拒否
+- reset／Issue removal preview、comments、syncが未登録Repository Reviewを暗黙作成する問題を修正
+- cache hitを含む全path-based Repository Review操作でlocal remote identityを検証し、remote変更後の取り違えをmutation前に拒否
 - resetのref削除失敗で残った旧review refを、新reviewのdocument、Comment、Walkthrough evidenceとして受理しないよう修正
 - concurrent first openのidentity lookupとID決定を一つのimmediate transactionへ移し、raw unique constraint raceを修正
-- 外部Branch Walkthrough更新時にsummaryだけでなく左右paneのdetail本文、reference、diagram bindingも再取得し、draft、focus、scrollを保持
-- HTTPのBranch Review ID-bound操作がreset/recreate後の同一pathにあるreplacement reviewへフォールスルーするraceを修正
+- 外部Repository Walkthrough更新時にsummaryだけでなく左右paneのdetail本文、reference、diagram bindingも再取得し、draft、focus、scrollを保持
+- HTTPのRepository Review ID-bound操作がreset/recreate後の同一pathにあるreplacement reviewへフォールスルーするraceを修正
 - remoteなしでも同じGit common directoryの別worktreeからowned sourceを読み、cached open時だけ保存pathを安全に更新
-- 初回Branch retained ref作成失敗を、専用markerを検証する明示resetで手動DB編集なしに復旧可能に変更
+- 初回Repository Review retained ref作成失敗を、専用markerを検証する明示resetで手動DB編集なしに復旧可能に変更
 - GitHub Issue responseと差し替え可能なGitHub portのcanonical identityを二層検証し、cache／membership書き込み前に拒否
 - 新規Comment threadが静止pointer直下へ挿入されただけでMarkdown行をactive highlightする問題を修正
-- background Issue refreshが同期中に明示削除されたPR／Branch membershipを再作成するraceを修正
+- background Issue refreshが同期中に明示削除されたPR／Repository Review membershipを再作成するraceを修正
 - 削除済みreview由来のIssue sync errorがreplacementや別ownerの共有cache／sequenceを更新するraceを修正
-- Branch初期化markerをretained ref作成前に保存し、process停止位置に応じて明示resetまたは次回openで復旧
-- Branch viewerがIssue identity mismatchなどの部分失敗を同期成功だけでなくwarningとして表示
+- Repository Review初期化markerをretained ref作成前に保存し、process停止位置に応じて明示resetまたは次回openで復旧
+- Repository Review viewerがIssue identity mismatchなどの部分失敗を同期成功だけでなくwarningとして表示
 - 異なるsource OIDを返す同時初回openで、loserがretained ref作成前に既存aggregateのsourceを公開するraceを修正
 - reset完了後に遅延作成された初期retained refをexact ref単位でbest-effort cleanup
-- Issue削除後に遅れて失敗したPR／Branch refreshをwarningではなく`membership-removed`としてskip
-- Branch source同期をgeneration付きretain-before-publishへ変更し、古い成功／失敗が新しいOIDやerrorを巻き戻すraceを修正
+- Issue削除後に遅れて失敗したPR／Repository Review refreshをwarningではなく`membership-removed`としてskip
+- Repository Review source同期をgeneration付きretain-before-publishへ変更し、古い成功／失敗が新しいOIDやerrorを巻き戻すraceを修正
 - 初期化pendingとfailed markerを分離し、pendingだけを最大5秒待つことで長い同時初回openと即時failureを区別
 - GitHub metadata取得後にdefault branchが進んだ場合、local corruptionではなくremote snapshotを一度再取得
 - 共有Issue cacheをGitHub `updatedAt`と取得snapshotで順序付けし、古い成功／失敗と同一version内容競合をfail closed
-- comment reply idempotency keyをPR／Branch共通のdatabase-wide keyspaceへ統一
+- comment reply idempotency keyをPR／Repository Review共通のdatabase-wide keyspaceへ統一
 - PR viewerもIssue同期の部分失敗をreview source成功と分けてwarning表示
 - 同時初回openのloserがaggregate発見前のGitHub snapshotを新しいgenerationで公開し、sourceを巻き戻すraceを修正
 - Issue failure CASをmillisecond `fetchedAt`から内部cache generationへ変更し、同時刻の新しい成功をstale化しないよう修正
-- browser reset成功後に再openだけが失敗した場合、reset失敗と区別して明示的な`rvw branch open`復旧を表示
-- PR／Branch viewerのIssue同期warningを先頭3件と残件数に省略し、top barの肥大化を防止
+- browser reset成功後に再openだけが失敗した場合、reset失敗と区別して明示的な`rvw repository open`復旧を表示
+- PR／Repository Review viewerのIssue同期warningを先頭3件と残件数に省略し、top barの肥大化を防止
 - 初期化完了後にsourceが進んでも、遅延initializerがhistorical retained refを削除しないよう修正
 - retained refの初回作成をGit compare-and-swapにし、同時作成の所有判定を1件に限定
-- Branch comment replyのrequest hashへReview種別を追加しつつ、公開済み0.2.xのPR reply hashを維持
+- Repository Review comment replyのrequest hashへReview種別を追加しつつ、公開済み0.2.xのPR reply hashを維持
 - protocol v3 watcher stateのURL-keyed PR contextを最初のv4 eventでstable PR IDへ再キー化し、二重claimを防止
-- Branch resetのDB削除後にref cleanupだけが失敗した場合をtyped partial successとして扱い、browserの削除済みstateを破棄
+- Repository Review resetのDB削除後にref cleanupだけが失敗した場合をtyped partial successとして扱い、browserの削除済みstateを破棄
 - reset、Issue removal、Walkthrough deletionをreview sequenceに結び付いたconfirmation tokenでfenceし、stale previewを409で拒否
 - PR resetがGitHub I/O待機中にreview stateが変わった場合、head ref確保前にstale tokenを拒否
-- Branch reset previewのComment post/reference/targetとWalkthrough reference件数をPR側と同じ粒度へ統一
+- Repository Review reset previewのComment post/reference/targetとWalkthrough reference件数をPR側と同じ粒度へ統一
 - PR resetが最終SQLite CASより前にhistorical refsを削除し得たraceをなくし、既存PR refをimmutable evidenceとして保持
 - final SQLite CASでstaleになったreset／Issue removal／Walkthrough deletionにも最新previewを返すよう統一
 - `comment get`が共有Issue cacheではなく所有membershipのsync error／stale状態を返すよう修正
-- Walkthrough `issuesToAdd`の正常取得で既存PR／Branch membershipのsync errorをclear
-- doctorで40〜64桁Branch OIDを診断し、review単位のevidence lookupを一回へ集約
+- Walkthrough `issuesToAdd`の正常取得で既存PR／Repository Review membershipのsync errorをclear
+- doctorで40〜64桁Repository Review OIDを診断し、review単位のevidence lookupを一回へ集約
 - 表示remoteとGit fetchのorigin-first選択を共通化し、legacy保存pathをverified cached openでrealpathへ更新
-- Issue membership確認後に並行削除されたPR／Branch Issue Commentを、共有cacheのFKだけで作成できるraceを修正
+- Issue membership確認後に並行削除されたPR／Repository Issue Commentを、共有cacheのFKだけで作成できるraceを修正
 - PR resetの返却用commit一覧を破壊的SQLite transaction前に取得し、後続Git read失敗をreset失敗と誤報しないよう修正
-- final SQLite CASでstaleになったBranch reset previewが古いReview metadataを返す問題を修正
-- 失敗したPR／Branch artifact writerが、同じretained refを共有して正常保存された別artifactのexact evidenceを
+- final SQLite CASでstaleになったRepository Review reset previewが古いReview metadataを返す問題を修正
+- 失敗したPR／Repository Review artifact writerが、同じretained refを共有して正常保存された別artifactのexact evidenceを
   補償削除できるraceを修正
 
 ## [0.2.4] - 2026-08-24

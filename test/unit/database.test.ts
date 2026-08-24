@@ -263,9 +263,11 @@ describe("RvwDatabase", () => {
         expect.objectContaining({ table: "github_issues", from: "issue_id" }),
       ]),
     );
-    expect(migratedSqlite.prepare("PRAGMA foreign_key_list(branch_review_issues)").all()).toEqual(
+    expect(
+      migratedSqlite.prepare("PRAGMA foreign_key_list(repository_review_issues)").all(),
+    ).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ table: "branch_reviews", from: "branch_review_id" }),
+        expect.objectContaining({ table: "repository_reviews", from: "repository_review_id" }),
         expect.objectContaining({ table: "github_issues", from: "issue_id" }),
       ]),
     );
@@ -293,6 +295,71 @@ describe("RvwDatabase", () => {
     migrated.close();
   });
 
+  it("rolls migration 011 back when a legacy watch event has no matching Pull Request", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-unmatched-watch-migration-"));
+    const filePath = path.join(directory, "rvw.db");
+    const legacyMigrationsDirectory = path.join(directory, "legacy-migrations");
+    mkdirSync(legacyMigrationsDirectory);
+    for (const migration of [
+      "001_initial.sql",
+      "002_commit_model.sql",
+      "003_editable_comment_posts.sql",
+      "004_walkthroughs.sql",
+      "005_walkthrough_comments.sql",
+      "006_theme_preference.sql",
+      "007_file_level_walkthrough_references.sql",
+      "008_walkthrough_line_comments.sql",
+      "009_comment_watch.sql",
+      "010_comment_post_references.sql",
+    ]) {
+      writeFileSync(
+        path.join(legacyMigrationsDirectory, migration),
+        readFileSync(path.join("migrations", migration)),
+      );
+    }
+
+    const legacy = new RvwDatabase({ filePath, migrationsDirectory: legacyMigrationsDirectory });
+    legacy.close();
+    const legacySqlite = new DatabaseSync(filePath);
+    legacySqlite
+      .prepare(
+        `INSERT INTO comment_post_events(post_id, comment_ref, pull_request_url, created_at)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(
+        "unmatched-post",
+        "rvw://comment/unmatched-comment",
+        "https://github.com/acme/review-repo/pull/404",
+        new Date().toISOString(),
+      );
+    legacySqlite.close();
+
+    expect(() => new RvwDatabase({ filePath, migrationsDirectory: "./migrations" })).toThrowError(
+      /011_repository_reviews_and_issues\.sql/,
+    );
+
+    const inspected = new DatabaseSync(filePath, { readOnly: true });
+    expect(
+      inspected.prepare("SELECT post_id, pull_request_url FROM comment_post_events").all(),
+    ).toEqual([
+      {
+        post_id: "unmatched-post",
+        pull_request_url: "https://github.com/acme/review-repo/pull/404",
+      },
+    ]);
+    expect(
+      inspected
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'review_comment_post_events'",
+        )
+        .get(),
+    ).toBeUndefined();
+    expect(
+      inspected.prepare("SELECT version FROM schema_migrations WHERE version = 11").get(),
+    ).toBeUndefined();
+    inspected.close();
+  });
+
   it("applies migrations and increments change sequence per write transaction", () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     expect(database.getChangeSequence()).toBe(0);
@@ -308,7 +375,7 @@ describe("RvwDatabase", () => {
     );
     expect(database.getChangeSequence()).toBe(1);
     expect(database.getReviewChangeSequence("pull-request", pullRequest.id)).toBe(1);
-    expect(database.getReviewChangeSequence("branch", pullRequest.id)).toBe(0);
+    expect(database.getReviewChangeSequence("repository", pullRequest.id)).toBe(0);
     expect(database.getPullRequest(pullRequest.id)?.latestHeadOid).toBe(github.headOid);
     expect(database.getPullRequest(pullRequest.id)?.latestComparisonBaseOid).toBe("c".repeat(40));
     const otherPullRequest = database.upsertPullRequest(
@@ -462,14 +529,14 @@ describe("RvwDatabase", () => {
     database.close();
   });
 
-  it("uses one database-wide idempotency keyspace for PR and Branch replies", () => {
+  it("uses one database-wide idempotency keyspace for PR and Repository Review replies", () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const pullRequest = database.upsertPullRequest(
       github,
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
       "c".repeat(40),
     );
-    const branchInitialization = database.beginBranchReviewInitialization(
+    const repositoryInitialization = database.beginRepositoryReviewInitialization(
       {
         owner: github.owner,
         repository: github.repository,
@@ -478,10 +545,10 @@ describe("RvwDatabase", () => {
         defaultBranchOid: github.headOid,
       },
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
-    ).branchReview;
-    const branchReview = database.completeBranchReviewInitialization(
-      branchInitialization.id,
-      branchInitialization.sourceOid,
+    ).repositoryReview;
+    const repositoryReview = database.completeRepositoryReviewInitialization(
+      repositoryInitialization.id,
+      repositoryInitialization.sourceOid,
     );
     const pullRequestComment = database.createComment({
       pullRequestId: pullRequest.id,
@@ -489,11 +556,11 @@ describe("RvwDatabase", () => {
       target: { kind: "pull-request" },
       body: "PR question",
     });
-    const branchComment = database.createBranchComment({
-      branchReviewId: branchReview.id,
-      createdSourceOid: branchReview.sourceOid,
-      target: { kind: "branch" },
-      body: "Branch question",
+    const repositoryComment = database.createRepositoryComment({
+      repositoryReviewId: repositoryReview.id,
+      createdSourceOid: repositoryReview.sourceOid,
+      target: { kind: "repository" },
+      body: "Repository Review question",
     });
     database.insertReply(pullRequestComment.id, {
       body: "PR answer",
@@ -501,12 +568,12 @@ describe("RvwDatabase", () => {
     });
 
     expect(() =>
-      database.insertBranchReply(branchComment.id, {
-        body: "Branch answer",
+      database.insertRepositoryReply(repositoryComment.id, {
+        body: "Repository Review answer",
         idempotencyKey: "shared-public-key",
       }),
     ).toThrowError(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
-    expect(database.listBranchCommentPosts(branchComment.id)).toHaveLength(1);
+    expect(database.listRepositoryCommentPosts(repositoryComment.id)).toHaveLength(1);
     database.close();
   });
 
@@ -517,7 +584,7 @@ describe("RvwDatabase", () => {
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
       "c".repeat(40),
     );
-    const branchInitialization = database.beginBranchReviewInitialization(
+    const repositoryInitialization = database.beginRepositoryReviewInitialization(
       {
         owner: github.owner,
         repository: github.repository,
@@ -526,10 +593,10 @@ describe("RvwDatabase", () => {
         defaultBranchOid: github.headOid,
       },
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
-    ).branchReview;
-    const branchReview = database.completeBranchReviewInitialization(
-      branchInitialization.id,
-      branchInitialization.sourceOid,
+    ).repositoryReview;
+    const repositoryReview = database.completeRepositoryReviewInitialization(
+      repositoryInitialization.id,
+      repositoryInitialization.sourceOid,
     );
     const initialIssue = {
       host: "github.com" as const,
@@ -544,7 +611,7 @@ describe("RvwDatabase", () => {
       updatedAt: "2026-08-08T01:00:00.000Z",
     };
     const cached = database.addReviewIssue("pull-request", pullRequest.id, initialIssue).issue;
-    database.addReviewIssue("branch", branchReview.id, initialIssue);
+    database.addReviewIssue("repository", repositoryReview.id, initialIssue);
     const initialCacheGeneration = database.getIssueCacheGeneration(cached.id);
     const newer = {
       ...initialIssue,
@@ -552,9 +619,9 @@ describe("RvwDatabase", () => {
       body: "Newest body",
       updatedAt: "2026-08-08T03:00:00.000Z",
     };
-    database.refreshReviewIssue("branch", branchReview.id, cached.id, newer);
+    database.refreshReviewIssue("repository", repositoryReview.id, cached.id, newer);
     const newestSnapshot = database.getIssue(cached.id);
-    const branchSequence = database.getReviewChangeSequence("branch", branchReview.id);
+    const repositorySequence = database.getReviewChangeSequence("repository", repositoryReview.id);
     const pullRequestSequence = database.getReviewChangeSequence("pull-request", pullRequest.id);
 
     expect(
@@ -575,13 +642,15 @@ describe("RvwDatabase", () => {
       ),
     ).toMatchObject({ updated: false, skipped: "newer-attempt", issue: newestSnapshot });
     expect(() =>
-      database.refreshReviewIssue("branch", branchReview.id, cached.id, {
+      database.refreshReviewIssue("repository", repositoryReview.id, cached.id, {
         ...newer,
         body: "Conflicting body at same timestamp",
       }),
     ).toThrowError(expect.objectContaining({ code: "GITHUB_ISSUE_ERROR" }));
     expect(database.getIssue(cached.id)).toEqual(newestSnapshot);
-    expect(database.getReviewChangeSequence("branch", branchReview.id)).toBe(branchSequence);
+    expect(database.getReviewChangeSequence("repository", repositoryReview.id)).toBe(
+      repositorySequence,
+    );
     expect(database.getReviewChangeSequence("pull-request", pullRequest.id)).toBe(
       pullRequestSequence,
     );
@@ -646,7 +715,7 @@ describe("RvwDatabase", () => {
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
       "c".repeat(40),
     );
-    const initialization = database.beginBranchReviewInitialization(
+    const initialization = database.beginRepositoryReviewInitialization(
       {
         owner: github.owner,
         repository: github.repository,
@@ -655,8 +724,8 @@ describe("RvwDatabase", () => {
         defaultBranchOid: github.headOid,
       },
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
-    ).branchReview;
-    const branchReview = database.completeBranchReviewInitialization(
+    ).repositoryReview;
+    const repositoryReview = database.completeRepositoryReviewInitialization(
       initialization.id,
       initialization.sourceOid,
     );
@@ -673,8 +742,8 @@ describe("RvwDatabase", () => {
       updatedAt: "2026-08-08T05:00:00.000Z",
     };
     const cached = database.addReviewIssue("pull-request", pullRequest.id, issue).issue;
-    database.addReviewIssue("branch", branchReview.id, issue);
-    const branchSequence = database.getReviewChangeSequence("branch", branchReview.id);
+    database.addReviewIssue("repository", repositoryReview.id, issue);
+    const repositorySequence = database.getReviewChangeSequence("repository", repositoryReview.id);
     const generation = database.getIssueCacheGeneration(cached.id);
 
     expect(
@@ -690,11 +759,13 @@ describe("RvwDatabase", () => {
       syncError: "PR-only failure",
       stale: true,
     });
-    expect(database.listReviewIssues("branch", branchReview.id)[0]).toMatchObject({
+    expect(database.listReviewIssues("repository", repositoryReview.id)[0]).toMatchObject({
       syncError: null,
       stale: false,
     });
-    expect(database.getReviewChangeSequence("branch", branchReview.id)).toBe(branchSequence);
+    expect(database.getReviewChangeSequence("repository", repositoryReview.id)).toBe(
+      repositorySequence,
+    );
 
     database.removeReviewIssue(
       "pull-request",
@@ -704,10 +775,10 @@ describe("RvwDatabase", () => {
     );
     expect(database.getIssue(cached.id)).not.toBeNull();
     database.removeReviewIssue(
-      "branch",
-      branchReview.id,
+      "repository",
+      repositoryReview.id,
       cached.id,
-      database.getReviewChangeSequence("branch", branchReview.id),
+      database.getReviewChangeSequence("repository", repositoryReview.id),
     );
     expect(database.getIssue(cached.id)).toBeNull();
 
@@ -716,7 +787,7 @@ describe("RvwDatabase", () => {
       number: 145,
       url: `https://github.com/${github.owner}/${github.repository}/issues/145`,
     }).issue;
-    database.addReviewIssue("branch", branchReview.id, {
+    database.addReviewIssue("repository", repositoryReview.id, {
       ...issue,
       number: 145,
       url: `https://github.com/${github.owner}/${github.repository}/issues/145`,
@@ -728,10 +799,10 @@ describe("RvwDatabase", () => {
       database.getReviewChangeSequence("pull-request", pullRequest.id),
     );
     expect(database.getIssue(resetCached.id)).not.toBeNull();
-    database.resetBranchReview(
-      branchReview.id,
+    database.resetRepositoryReview(
+      repositoryReview.id,
       0,
-      database.getReviewChangeSequence("branch", branchReview.id),
+      database.getReviewChangeSequence("repository", repositoryReview.id),
     );
     expect(database.getIssue(resetCached.id)).toBeNull();
     database.close();

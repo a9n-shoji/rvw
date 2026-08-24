@@ -9,7 +9,7 @@ const scripts = path.resolve("skills/rvw-watch-comments/scripts");
 const stateScript = path.join(scripts, "watch-state.mjs");
 const preflightScript = path.join(scripts, "preflight.mjs");
 const autoAckScript = path.join(scripts, "auto-ack.mjs");
-const completeBranchScript = path.join(scripts, "complete-branch.mjs");
+const completeRepositoryScript = path.join(scripts, "complete-repository.mjs");
 const driverScript = path.join(scripts, "watch-driver.mjs");
 
 function stableReviewFrame(frame: unknown): unknown {
@@ -19,13 +19,13 @@ function stableReviewFrame(frame: unknown): unknown {
   const context = event.context;
   if (context && typeof context === "object" && "kind" in context) {
     const review = context as Record<string, unknown>;
-    if (review.kind === "branch" && typeof review.repository === "string") {
-      const hasStableId = typeof review.branchReviewId === "string";
+    if (review.kind === "repository" && typeof review.repository === "string") {
+      const hasStableId = typeof review.repositoryReviewId === "string";
       event.context = {
-        kind: "branch",
-        branchReviewId: hasStableId
-          ? review.branchReviewId
-          : `branch:${review.repository.toLowerCase()}`,
+        kind: "repository",
+        repositoryReviewId: hasStableId
+          ? review.repositoryReviewId
+          : `repository:${review.repository.toLowerCase()}`,
         repository: hasStableId ? review.repository : review.repository.toLowerCase(),
       };
     }
@@ -64,7 +64,7 @@ function stableReviewArgs(command: string, args: string[]): string[] {
   const display = args[keyIndex + 1]!;
   const result = [...args];
   result[keyIndex + 1] =
-    kind === "branch" ? `branch:${display.toLowerCase()}` : `pull-request:${display}`;
+    kind === "repository" ? `repository:${display.toLowerCase()}` : `pull-request:${display}`;
   return [...result, "--context-display", display.toLowerCase()];
 }
 
@@ -115,14 +115,22 @@ const json = (value, code = 0) => {
 if (args[0] === "protocol") {
   json({ protocolVersion: 4, appVersion: "9.9.9", capabilities: [
     "agent.transport", "comment.watch", "comment.read", "comment.reply",
-    "comment.edit", "comment.codeReferences", "pullRequest.sync", "branchReview.read"
+    "comment.edit", "comment.codeReferences", "pullRequest.sync", "repositoryReview.read"
   ] });
 } else if (args[0] === "agent" && args[1] === "status") {
   json({ ok: true, connected: true, selectedTransport: "agent-socket" });
 } else if (args[0] === "agent" && args[1] === "ping") {
   json({ ok: true, connected: true, selectedTransport: "agent-socket" });
 } else if (args[0] === "comment" && args[1] === "get") {
-  json({ ok: true, pullRequest: { url: "https://github.com/acme/repo/pull/1" }, comment: { ref: args[2], posts: [] } });
+  const pullRequestNumber = args[2]?.match(/comment-(\d+)/)?.[1] ?? "1";
+  const pullRequestUrl = "https://github.com/acme/repo/pull/" + pullRequestNumber;
+  json({ ok: true,
+    context: { kind: "pull-request",
+      pullRequestId: "pull-request:" + pullRequestUrl,
+      pullRequestUrl },
+    pullRequest: { id: "pull-request:" + pullRequestUrl,
+      url: pullRequestUrl },
+    comment: { ref: args[2], posts: [] } });
 } else if (args[0] === "comment" && args[1] === "reply") {
   const priorReplyIndex = priorCalls.findIndex((call) =>
     call.args[0] === "comment" && call.args[1] === "reply" &&
@@ -145,7 +153,8 @@ if (args[0] === "protocol") {
     process.stdout.write("\u001e" + JSON.stringify({
       type: "comment-posted", cursor: "cursor-1", event: {
         sequence: 1, postId: "human-post", commentRef: "rvw://comment/comment-1",
-        context: { kind: "pull-request", pullRequestId: "pull-request-1",
+        context: { kind: "pull-request",
+          pullRequestId: "pull-request:https://github.com/acme/repo/pull/1",
           pullRequestUrl: "https://github.com/acme/repo/pull/1" },
         createdAt: "2026-08-20T00:00:00.000Z", deleted: false
       }
@@ -195,7 +204,7 @@ function initializeQueuedState(state: string) {
   });
 }
 
-function initializeBranchQueuedState(state: string) {
+function initializeRepositoryQueuedState(state: string) {
   runState(state, "init", ["--own-mode", "fix-and-push"]);
   runState(state, "ingest", [], {
     type: "ready",
@@ -209,10 +218,10 @@ function initializeBranchQueuedState(state: string) {
     event: {
       sequence: 1,
       postId: "branch-human-post",
-      commentRef: "rvw://comment/branch-comment",
+      commentRef: "rvw://comment/repository-comment",
       context: {
-        kind: "branch",
-        branchReviewId: "branch:acme/repo",
+        kind: "repository",
+        repositoryReviewId: "repository:acme/repo",
         repository: "acme/repo",
       },
       createdAt: "2026-08-20T00:00:00.000Z",
@@ -385,27 +394,27 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(calls.some((call) => call.args[1] === "edit")).toBe(false);
   });
 
-  it("posts one Branch final reply and durably suppresses its later event", () => {
+  it("posts one Repository Review final reply and durably suppresses its later event", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-complete-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeBranchQueuedState(state);
+    initializeRepositoryQueuedState(state);
     const claimed = runState(state, "claim", [
       "--context-kind",
-      "branch",
+      "repository",
       "--context-key",
       "acme/repo",
     ]);
     const input = {
       leaseId: claimed.leaseId,
       context: {
-        kind: "branch",
-        branchReviewId: "branch:acme/repo",
+        kind: "repository",
+        repositoryReviewId: "repository:acme/repo",
         repository: "acme/repo",
       },
       outcomes: [
         {
-          commentRef: "rvw://comment/branch-comment",
+          commentRef: "rvw://comment/repository-comment",
           body: "📝 調査結果\n\nRead [the source policy](rvw-ref:source-policy).",
           relatedCommitOid: "A".repeat(64),
           references: [
@@ -424,7 +433,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     };
     const completed = spawnSync(
       process.execPath,
-      [completeBranchScript, "--state", state, "--lease", String(claimed.leaseId)],
+      [completeRepositoryScript, "--state", state, "--lease", String(claimed.leaseId)],
       { encoding: "utf8", env: fakeEnvironment(fake), input: JSON.stringify(input) },
     );
 
@@ -433,8 +442,8 @@ describe("rvw-watch-comments bundled scripts", () => {
       replies: Array<{ idempotencyKey: string; postId: string }>;
     };
     expect(result).toMatchObject({
-      type: "branch-completed",
-      context: { kind: "branch", repository: "acme/repo" },
+      type: "repository-completed",
+      context: { kind: "repository", repository: "acme/repo" },
       replies: [{ postId: "status-post-1" }],
     });
     expect(result.replies[0]?.idempotencyKey).toBe(
@@ -452,10 +461,10 @@ describe("rvw-watch-comments bundled scripts", () => {
         event: {
           sequence: 2,
           postId: result.replies[0]?.postId,
-          commentRef: "rvw://comment/branch-comment",
+          commentRef: "rvw://comment/repository-comment",
           context: {
-            kind: "branch",
-            branchReviewId: "branch:acme/repo",
+            kind: "repository",
+            repositoryReviewId: "repository:acme/repo",
             repository: "acme/repo",
           },
           createdAt: "2026-08-20T00:00:01.000Z",
@@ -465,11 +474,11 @@ describe("rvw-watch-comments bundled scripts", () => {
     ).toMatchObject({ status: "suppressed" });
   });
 
-  it("rejects Branch Review auto-ack before claiming a lease", () => {
+  it("rejects Repository Review auto-ack before claiming a lease", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-no-ack-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeBranchQueuedState(state);
+    initializeRepositoryQueuedState(state);
 
     const result = spawnSync(
       process.execPath,
@@ -478,9 +487,9 @@ describe("rvw-watch-comments bundled scripts", () => {
         "--state",
         state,
         "--context-kind",
-        "branch",
+        "repository",
         "--context-key",
-        "branch:acme/repo",
+        "repository:acme/repo",
         "--context-display",
         "acme/repo",
       ],
@@ -493,14 +502,14 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(runState(state, "status")).toMatchObject({ batches: { inFlight: 0 } });
   });
 
-  it("reuses the Branch final-reply idempotency key after recovery", () => {
+  it("reuses the Repository Review final-reply idempotency key after recovery", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-restart-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeBranchQueuedState(state);
+    initializeRepositoryQueuedState(state);
     const firstClaim = runState(state, "claim", [
       "--context-kind",
-      "branch",
+      "repository",
       "--context-key",
       "acme/repo",
     ]);
@@ -508,7 +517,7 @@ describe("rvw-watch-comments bundled scripts", () => {
       ?.idempotencyKey;
     const firstReply = spawnSync(
       process.execPath,
-      [fake.script, "comment", "reply", "rvw://comment/branch-comment", "--stdin", "--json"],
+      [fake.script, "comment", "reply", "rvw://comment/repository-comment", "--stdin", "--json"],
       {
         encoding: "utf8",
         env: fakeEnvironment(fake),
@@ -526,7 +535,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(runState(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
     const recoveredClaim = runState(state, "claim", [
       "--context-kind",
-      "branch",
+      "repository",
       "--context-key",
       "acme/repo",
     ]);
@@ -535,20 +544,20 @@ describe("rvw-watch-comments bundled scripts", () => {
     ).toBe(idempotencyKey);
     const completed = spawnSync(
       process.execPath,
-      [completeBranchScript, "--state", state, "--lease", String(recoveredClaim.leaseId)],
+      [completeRepositoryScript, "--state", state, "--lease", String(recoveredClaim.leaseId)],
       {
         encoding: "utf8",
         env: fakeEnvironment(fake),
         input: JSON.stringify({
           leaseId: recoveredClaim.leaseId,
           context: {
-            kind: "branch",
-            branchReviewId: "branch:acme/repo",
+            kind: "repository",
+            repositoryReviewId: "repository:acme/repo",
             repository: "acme/repo",
           },
           outcomes: [
             {
-              commentRef: "rvw://comment/branch-comment",
+              commentRef: "rvw://comment/repository-comment",
               body: "📝 調査結果\n\nRecovered outcome.",
               relatedCommitOid: null,
               references: [],
@@ -569,33 +578,33 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(runState(state, "list")).toMatchObject({ pending: [] });
   });
 
-  it("rejects Branch worker outcomes that claim a write", () => {
+  it("rejects Repository Review worker outcomes that claim a write", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-write-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeBranchQueuedState(state);
+    initializeRepositoryQueuedState(state);
     const claimed = runState(state, "claim", [
       "--context-kind",
-      "branch",
+      "repository",
       "--context-key",
       "acme/repo",
     ]);
     const result = spawnSync(
       process.execPath,
-      [completeBranchScript, "--state", state, "--lease", String(claimed.leaseId)],
+      [completeRepositoryScript, "--state", state, "--lease", String(claimed.leaseId)],
       {
         encoding: "utf8",
         env: fakeEnvironment(fake),
         input: JSON.stringify({
           leaseId: claimed.leaseId,
           context: {
-            kind: "branch",
-            branchReviewId: "branch:acme/repo",
+            kind: "repository",
+            repositoryReviewId: "repository:acme/repo",
             repository: "acme/repo",
           },
           outcomes: [
             {
-              commentRef: "rvw://comment/branch-comment",
+              commentRef: "rvw://comment/repository-comment",
               body: "This must not be posted.",
               relatedCommitOid: "a".repeat(40),
               references: [],
@@ -612,19 +621,19 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(runState(state, "status").inFlightBatches).toHaveLength(1);
   });
 
-  it("rejects an incomplete Branch worker result before posting any reply", () => {
+  it("rejects an incomplete Repository Review worker result before posting any reply", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-branch-schema-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeBranchQueuedState(state);
+    initializeRepositoryQueuedState(state);
     const claimed = runState(state, "claim", [
       "--context-kind",
-      "branch",
+      "repository",
       "--context-key",
       "acme/repo",
     ]);
     const validOutcome = {
-      commentRef: "rvw://comment/branch-comment",
+      commentRef: "rvw://comment/repository-comment",
       body: "📝 調査結果\n\nNo repository write was attempted.",
       relatedCommitOid: null,
       references: [],
@@ -633,8 +642,8 @@ describe("rvw-watch-comments bundled scripts", () => {
     const invalidInputs = [
       {
         context: {
-          kind: "branch",
-          branchReviewId: "branch:acme/repo",
+          kind: "repository",
+          repositoryReviewId: "repository:acme/repo",
           repository: "acme/repo",
         },
         outcomes: [validOutcome],
@@ -643,8 +652,8 @@ describe("rvw-watch-comments bundled scripts", () => {
       {
         leaseId: "different-lease",
         context: {
-          kind: "branch",
-          branchReviewId: "branch:acme/repo",
+          kind: "repository",
+          repositoryReviewId: "repository:acme/repo",
           repository: "acme/repo",
         },
         outcomes: [validOutcome],
@@ -652,8 +661,8 @@ describe("rvw-watch-comments bundled scripts", () => {
       {
         leaseId: claimed.leaseId,
         context: {
-          kind: "branch",
-          branchReviewId: "branch:acme/other",
+          kind: "repository",
+          repositoryReviewId: "repository:acme/other",
           repository: "acme/other",
         },
         outcomes: [validOutcome],
@@ -661,8 +670,8 @@ describe("rvw-watch-comments bundled scripts", () => {
       {
         leaseId: claimed.leaseId,
         context: {
-          kind: "branch",
-          branchReviewId: "branch:acme/repo",
+          kind: "repository",
+          repositoryReviewId: "repository:acme/repo",
           repository: "acme/repo",
         },
         outcomes: [{ ...validOutcome, relatedCommitOid: undefined }],
@@ -670,8 +679,8 @@ describe("rvw-watch-comments bundled scripts", () => {
       {
         leaseId: claimed.leaseId,
         context: {
-          kind: "branch",
-          branchReviewId: "branch:acme/repo",
+          kind: "repository",
+          repositoryReviewId: "repository:acme/repo",
           repository: "acme/repo",
         },
         outcomes: [{ ...validOutcome, references: undefined }],
@@ -679,8 +688,8 @@ describe("rvw-watch-comments bundled scripts", () => {
       {
         leaseId: claimed.leaseId,
         context: {
-          kind: "branch",
-          branchReviewId: "branch:acme/repo",
+          kind: "repository",
+          repositoryReviewId: "repository:acme/repo",
           repository: "acme/repo",
         },
         outcomes: [{ ...validOutcome, pushStatus: undefined }],
@@ -690,7 +699,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     for (const input of invalidInputs) {
       const result = spawnSync(
         process.execPath,
-        [completeBranchScript, "--state", state, "--lease", String(claimed.leaseId)],
+        [completeRepositoryScript, "--state", state, "--lease", String(claimed.leaseId)],
         { encoding: "utf8", env: fakeEnvironment(fake), input: JSON.stringify(input) },
       );
       expect(result.status).not.toBe(0);
@@ -766,11 +775,18 @@ describe("rvw-watch-comments bundled scripts", () => {
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
     initializeQueuedState(state);
+    const legacy = new DatabaseSync(state);
+    legacy.exec(`
+      UPDATE events
+      SET context_key = pull_request_url, context_display = pull_request_url
+      WHERE review_kind = 'pull-request';
+    `);
+    legacy.close();
     const child = spawn(process.execPath, [driverScript, state, "--auto-ack"], {
       env: fakeEnvironment(fake),
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const types: string[] = [];
+    const messages: Array<Record<string, unknown>> = [];
     let buffered = "";
     const ready = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("driver recovery timed out")), 5000);
@@ -780,8 +796,8 @@ describe("rvw-watch-comments bundled scripts", () => {
         const complete = buffered.split("\n");
         buffered = complete.pop() ?? "";
         for (const line of complete.filter(Boolean)) {
-          const parsed = JSON.parse(line) as { type: string };
-          types.push(parsed.type);
+          const parsed = JSON.parse(line) as Record<string, unknown> & { type: string };
+          messages.push(parsed);
           if (parsed.type === "watch-ready") {
             clearTimeout(timeout);
             resolve();
@@ -803,7 +819,27 @@ describe("rvw-watch-comments bundled scripts", () => {
     });
 
     expect(code, stderr).toBe(0);
-    expect(types.slice(0, 2)).toEqual(["batch-acknowledged", "watch-ready"]);
+    expect(messages.slice(0, 2)).toMatchObject([
+      {
+        type: "batch-acknowledged",
+        context: {
+          kind: "pull-request",
+          pullRequestId: "pull-request:https://github.com/acme/repo/pull/1",
+          pullRequestUrl: "https://github.com/acme/repo/pull/1",
+        },
+      },
+      { type: "watch-ready" },
+    ]);
+    expect(runState(state, "status")).toMatchObject({
+      inFlightBatches: [
+        {
+          context: {
+            kind: "pull-request",
+            pullRequestId: "pull-request:https://github.com/acme/repo/pull/1",
+          },
+        },
+      ],
+    });
     const watchCall = readFakeCalls(fake.log).find(
       (call) => call.args[0] === "comment" && call.args[1] === "watch",
     );

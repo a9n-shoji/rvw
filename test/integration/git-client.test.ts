@@ -46,17 +46,17 @@ describe("GitClient with real git", () => {
   it("gives exactly one concurrent creator ownership of an exact retained ref", async () => {
     const repository = createGitRepository("rvw-ref-cas-");
     const oid = git(repository, "rev-parse", "HEAD");
-    const branchReviewId = "11111111-1111-4111-8111-111111111111";
+    const repositoryReviewId = "11111111-1111-4111-8111-111111111111";
 
     const retained = await Promise.all(
       Array.from({ length: 8 }, () =>
-        new GitClient().ensureBranchCommitRef(repository, branchReviewId, oid),
+        new GitClient().ensureRepositoryReviewCommitRef(repository, repositoryReviewId, oid),
       ),
     );
 
     expect(retained.filter(({ created }) => created)).toHaveLength(1);
     expect(new Set(retained.map(({ ref }) => ref))).toEqual(
-      new Set([`refs/rvw/branch/${branchReviewId}/commits/oid-${oid}`]),
+      new Set([`refs/rvw/repository/${repositoryReviewId}/commits/oid-${oid}`]),
     );
   });
 

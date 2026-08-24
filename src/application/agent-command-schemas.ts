@@ -11,7 +11,9 @@ import {
   MAX_COMMENT_LIST_LIMIT,
   MAX_COMMENT_WATCH_LIMIT,
   MAX_IDEMPOTENCY_KEY_CHARACTERS,
+  MAX_ISSUE_REFERENCE_CHARACTERS,
   MAX_WALKTHROUGH_BODY_BYTES,
+  MAX_WALKTHROUGH_ISSUES_TO_ADD,
   MAX_WALKTHROUGH_TITLE_CHARACTERS,
 } from "../shared/constants.js";
 
@@ -24,13 +26,13 @@ const idempotencyKey = z.string().min(1).max(MAX_IDEMPOTENCY_KEY_CHARACTERS).opt
 
 export const reviewTargetInputSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("pull-request"), pullRequest: nonEmptyString }).strict(),
-  z.object({ kind: z.literal("branch"), repository: nonEmptyString }).strict(),
+  z.object({ kind: z.literal("repository"), repository: nonEmptyString }).strict(),
 ]);
 
 export const commentTargetInputSchema = z
   .union([
     z.object({ kind: z.literal("pull-request") }).strict(),
-    z.object({ kind: z.literal("branch") }).strict(),
+    z.object({ kind: z.literal("repository") }).strict(),
     z
       .object({
         kind: z.literal("issue"),
@@ -67,7 +69,7 @@ export const commentTargetInputSchema = z
       .strict(),
   ])
   .superRefine((target, context) => {
-    if (target.kind === "pull-request" || target.kind === "branch") return;
+    if (target.kind === "pull-request" || target.kind === "repository") return;
     if ((target.startLine === null) !== (target.endLine === null)) {
       context.addIssue({
         code: "custom",
@@ -226,7 +228,10 @@ const walkthroughContentInputSchema = z
     authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
     diagramBindings: z.record(z.string(), z.string()).optional(),
     references: z.array(codeReferenceInputSchema).min(1).max(MAX_CODE_REFERENCES),
-    issuesToAdd: z.array(nonEmptyString).optional(),
+    issuesToAdd: z
+      .array(z.string().min(1).max(MAX_ISSUE_REFERENCE_CHARACTERS))
+      .max(MAX_WALKTHROUGH_ISSUES_TO_ADD)
+      .optional(),
   })
   .strict();
 
@@ -271,21 +276,21 @@ export const agentCommandInputSchemas = {
       confirmationToken,
     })
     .strict(),
-  "branch.sync": z.object({ repositoryPath: nonEmptyString }).strict(),
-  "branch.issue.add": z
+  "repository.sync": z.object({ repositoryPath: nonEmptyString }).strict(),
+  "repository.issue.add": z
     .object({ repositoryPath: nonEmptyString, issueReference: nonEmptyString })
     .strict(),
-  "branch.issue.refresh": z
+  "repository.issue.refresh": z
     .object({
       repositoryPath: nonEmptyString,
       issueReference: nonEmptyString,
       force: z.literal(true),
     })
     .strict(),
-  "branch.issue.remove.preview": z
+  "repository.issue.remove.preview": z
     .object({ repositoryPath: nonEmptyString, issueReference: nonEmptyString })
     .strict(),
-  "branch.issue.remove": z
+  "repository.issue.remove": z
     .object({
       repositoryPath: nonEmptyString,
       issueReference: nonEmptyString,
@@ -293,11 +298,11 @@ export const agentCommandInputSchemas = {
       confirmationToken,
     })
     .strict(),
-  "branch.reset.preview": z.object({ repositoryPath: nonEmptyString }).strict(),
-  "branch.reset": z
+  "repository.reset.preview": z.object({ repositoryPath: nonEmptyString }).strict(),
+  "repository.reset": z
     .object({ repositoryPath: nonEmptyString, confirmed: z.literal(true), confirmationToken })
     .strict(),
-  "branch.comments": z
+  "repository.comments": z
     .object({
       repositoryPath: nonEmptyString,
       resolved: z.boolean().optional(),

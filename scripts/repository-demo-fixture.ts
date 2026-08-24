@@ -286,7 +286,7 @@ function createIssues(): IssueDocument[] {
         "- Do not assume that the branch is named `main`.",
         "- Keep the checkout, index, and worktree unchanged.",
         "- Preserve older source commits used by comments and Walkthroughs.",
-        "- Keep Branch Review artifacts independent from Pull Request artifacts.",
+        "- Keep Repository Review artifacts independent from Pull Request artifacts.",
         "",
         "Issue #160 is intentionally mentioned here; the demo review must not recursively add it.",
       ].join("\n"),
@@ -322,7 +322,7 @@ function createIssues(): IssueDocument[] {
       [
         "# Comment watch safety",
         "",
-        "Pull Request batches may use an explicitly authorized fix-and-push policy. Branch Review batches are always investigate-and-reply and must never mutate the repository or GitHub.",
+        "Pull Request batches may use an explicitly authorized fix-and-push policy. Repository Review batches are always investigate-and-reply and must never mutate the repository or GitHub.",
         "",
         "A final reply stays idempotent across restart, replay, lease recovery, and self-event suppression.",
       ].join("\n"),

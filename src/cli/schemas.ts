@@ -320,39 +320,45 @@ const pullRequestCommentGetOutputSchema = z
   })
   .strict();
 
-const branchCommentTargetOutputSchema = z.union([
-  z.object({ kind: z.literal("branch") }).strict(),
+const repositoryReviewCommentTargetOutputSchema = z.union([
+  z.object({ kind: z.literal("repository") }).strict(),
   walkthroughCommentTargetOutputSchema,
   repositoryCommentTargetOutputSchema,
   issueCommentTargetOutputSchema,
 ]);
 
-const branchReviewCommentOutputSchema = z
+const repositoryReviewCommentOutputSchema = z
   .object({
     id: z.string(),
     ref: z.string(),
-    branchReviewId: z.string(),
+    repositoryReviewId: z.string(),
     createdSourceOid: z.string(),
     resolvedAt: z.string().nullable(),
     resolved: z.boolean(),
     createdAt: z.string(),
     updatedAt: z.string(),
-    target: branchCommentTargetOutputSchema,
+    target: repositoryReviewCommentTargetOutputSchema,
     posts: z.array(commentPostOutputSchema),
   })
   .strict();
 
-const branchWalkthroughOutputSchema = walkthroughOutputSchema.omit({ pullRequestId: true }).extend({
-  branchReviewId: z.string(),
-});
+const repositoryWalkthroughOutputSchema = walkthroughOutputSchema
+  .omit({ pullRequestId: true })
+  .extend({
+    repositoryReviewId: z.string(),
+  });
 
-const branchCommentGetOutputSchema = z
+const repositoryCommentGetOutputSchema = z
   .object({
     ok: z.literal(true),
     context: z
-      .object({ kind: z.literal("branch"), branchReviewId: z.string(), repository: z.string() })
+      .object({
+        kind: z.literal("repository"),
+        repositoryReviewId: z.string(),
+        repository: z.string(),
+      })
       .strict(),
-    branchReview: z
+    repositoryReview: z
       .object({
         repository: z.string(),
         owner: z.string(),
@@ -364,11 +370,11 @@ const branchCommentGetOutputSchema = z
         sourceSyncError: z.string().nullable(),
       })
       .strict(),
-    comment: branchReviewCommentOutputSchema,
+    comment: repositoryReviewCommentOutputSchema,
     currentSourceOid: z.string(),
     latestPlacement: commentPlacementOutputSchema,
     exactSource: exactSourceOutputSchema.nullable(),
-    walkthrough: branchWalkthroughOutputSchema.nullable(),
+    walkthrough: repositoryWalkthroughOutputSchema.nullable(),
     issue: issueDocumentOutputSchema.nullable(),
     githubState: z
       .object({
@@ -382,7 +388,7 @@ const branchCommentGetOutputSchema = z
 
 export const commentGetOutputSchema = z.union([
   pullRequestCommentGetOutputSchema,
-  branchCommentGetOutputSchema,
+  repositoryCommentGetOutputSchema,
 ]);
 
 export const commentListOutputSchema = z

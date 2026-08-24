@@ -31,7 +31,7 @@ Pull Request
 ```
 
 ```text
-Branch Review（repositoryごとに一件）
+Repository Review（repositoryごとに一件）
 ├─ GitHub default branchのexact source
 ├─ repository全体
 ├─ 明示的に登録したGitHub Issue documents
@@ -39,8 +39,8 @@ Branch Review（repositoryごとに一件）
 └─ コメント
 ```
 
-Pull Request ReviewとBranch Reviewは独立する。同じIssueを双方へ登録できるが、membership、Comment、
-Walkthroughをコピー・移動・統合せず、Branch Reviewをfake Pull Requestとして表現しない。
+Pull Request ReviewとRepository Reviewは独立する。同じIssueを双方へ登録できるが、membership、Comment、
+Walkthroughをコピー・移動・統合せず、Repository Reviewをfake Pull Requestとして表現しない。
 
 コード履歴の正本はGit commitである。rvw独自の「レビュー版」は持たず、ユーザーへ
 capture、版番号、版説明、版切り替えを要求しない。
@@ -55,8 +55,8 @@ runtimeにはならない。説明上の原則は`docs/product-principles.md`に
 rvwが担うもの:
 
 - GitHub PRの取得と最新メタデータcache
-- repositoryごとに一件のBranch Review、GitHub default branchとexact sourceの同期・offline cache
-- Pull Request / Branch Reviewへ明示登録する同一repositoryのGitHub Issue document
+- repositoryごとに一件のRepository Review、GitHub default branchとexact sourceの同期・offline cache
+- Pull Request / Repository Reviewへ明示登録する同一repositoryのGitHub Issue document
 - PR commitのfetch、保持、一覧表示、選択
 - 任意の連続commit範囲とPR全体diff
 - 最新PRタイトル・本文を表す`Pull Request.md`
@@ -73,8 +73,8 @@ rvwが担うもの:
 rvwが担わないもの:
 
 - in-app Ask、AI chat、Agent起動、Agent session管理
-- arbitrary branch selector、Branch Review一覧、同一repositoryの複数Branch Review
-- Branch ReviewとPull Request Reviewのartifact attach、Issue relation graph、Issue revision履歴
+- arbitrary branch selector、Repository Review一覧、同一repositoryの複数Repository Review
+- Repository ReviewとPull Request Reviewのartifact attach、Issue relation graph、Issue revision履歴
 - cross-repository Issue、GitHub Issueの作成・編集・close / reopen
 - コード編集、テスト実行、commit、push、PR編集
 - GitHub review commentとの双方向同期
@@ -97,7 +97,7 @@ Pull Request
 Commit
 Commit range
 Pull Request.md
-Branch Review
+Repository Review
 Issue
 Code
 Walkthrough
@@ -114,23 +114,23 @@ WalkthroughはAgentが説明として提示する読み物であり、事実の�
 diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分で照合する。同じ参照を横や下へ
 列挙するindexは表示しない。
 
-Branch Reviewのidentityはcanonical GitHub repositoryであり、default branch名が変わっても同じrowを
+Repository Reviewのidentityはcanonical GitHub repositoryであり、default branch名が変わっても同じrowを
 再利用する。pathから解決するたびに、保存済みGit common directoryと、localの`git remote get-url`から
 得たcanonical GitHub repository identityをcase-insensitiveに検証する。remote identityを解決できて異なる
 場合は`REPOSITORY_MISMATCH`でfail closedし、GitHub API、fetch、DB更新、location更新、ref作成、Issue同期
 より前に停止する。GitHub repositoryのrename / organization transferは自動追従せず、元のbindingで明示
 resetして新しいaggregateを作る。default branchのrenameはidentityを変えない。
 worktree pathとGit common directoryは保存・比較前にfilesystem `realpath`へ正規化する。複数GitHub remoteは
-`origin`、その後remote名順で選択し、選択したname／URLを`branch open`、viewer header、`doctor`で観測可能にする。
-`doctor`はreview-owned Branch refをcurrent、artifact referenced、unreferenced、deleted-review orphanへ分類する
+`origin`、その後remote名順で選択し、選択したname／URLを`repository open`、viewer header、`doctor`で観測可能にする。
+`doctor`はreview-owned Repository Review refをcurrent、artifact referenced、unreferenced、deleted-review orphanへ分類する
 read-only reportを返し、自動削除しない。
 
 sourceはGitHub repository metadataが返したdefault branch OIDを一時refへfetchして一致を検証し、
-`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`へ保持する。checkout、index、worktreeを変更しない。
+`refs/rvw/repository/<repositoryReviewId>/commits/oid-<oid>`へ保持する。checkout、index、worktreeを変更しない。
 metadata取得後、fetchしたdefault branch tipが進んでいた場合は`GITHUB_REPOSITORY_ERROR`のremote snapshot
 競合としてmetadataとOIDを一度だけ再取得し、`LOCAL_STATE_INCONSISTENT`としてresetを案内しない。
-Branch document、Comment、Walkthrough、typed referenceが受理するsource OIDは、そのBranch Review IDの
-namespaceにあるcurrentまたは既存retained refと同じOIDに限り、clone内や別Branch Review namespaceに
+Repository Review document、Comment、Walkthrough、typed referenceが受理するsource OIDは、そのRepository Review IDの
+namespaceにあるcurrentまたは既存retained refと同じOIDに限り、clone内や別Repository Review namespaceに
 存在するだけのcommitは認めない。保存済みGit common directoryとreview-owned current source refはlocal
 bindingの証明とする。同じcommon directoryの別worktreeは同じreviewを利用できるが、canonical repositoryが
 同じ独立cloneや保存pathを置換した別repositoryは同期・削除前に明示errorとし、path、common directory、
@@ -139,13 +139,15 @@ source、ref、artifactを変更しない。別cloneでの再作成は登録済�
 local remote identityが一致し、GitHub networkだけが失敗した場合は、一度保持したsource、Issue、Comment、
 Walkthroughをcacheから読める。remoteを解決できない場合も、同じGit common directoryとreview-owned source
 refおよびGit objectが一致するcached read、comment discovery、Issue removal、resetというlocal operationは
-許可する。`branch open`のcache hitだけは現在の同一common-directory worktreeへ`localRepositoryPath`を更新する。
+許可する。`repository open`のcache hitだけは現在の同一common-directory worktreeへ`localRepositoryPath`を更新する。
 existing-only previewは実際のGit readに現在pathを使うが、locationとsequenceを更新しない。GitHub同期と
 Issue追加は拒否する。同期はIssueごとの結果と失敗分離を維持しつつ最大8件を並列取得し、一件の
 取得失敗で他のcached文書を失わない。同じGitHub client processでは成功した認証確認を共有する。
 
 Issue cacheはcanonical GitHub identityで共有し、review membershipは別tableで所有する。PR本文からは
-同一repositoryの直接参照だけを一段抽出し、Walkthrough payloadの`issuesToAdd`は追加だけを保証する。Issue
+同一repositoryの直接参照だけを一段抽出し、Walkthrough payloadの`issuesToAdd`は追加だけを保証する。
+`issuesToAdd`は一操作50件、各参照256文字を上限とし、Repository Reviewではcanonical remoteを検証する
+remote mutationとして扱ってからIssueを取得する。Issue
 参照抽出はMarkdownのproseとlink destinationだけを対象にし、inline/fenced codeとraw HTML内の見かけ上の
 参照を登録しない。Issue本文やWalkthroughから再帰探索せず、参照消失でもmembershipを自動削除しない。Issue本文hashが変わった
 場合、旧本文range Commentは保守的にOutdatedとし、自動resolveしない。membershipを明示削除した場合は、
@@ -156,7 +158,7 @@ case-insensitiveな同一identityだけを許し、不一致は`GITHUB_ISSUE_ERR
 変更せずfail closedする。repository rename／transferへは自動追従しない。
 共有cacheのcontent versionはGitHub `updatedAt`とする。古いresponseは書き込まず、同一versionでtitle、body、
 stateが異なるresponseはcorruptionとして`GITHUB_ISSUE_ERROR`にする。同期失敗は共有content rowではなく、
-同期を実行した`pull_request_issues`または`branch_review_issues`の`sync_error`へ保存する。fetch開始時に読んだ
+同期を実行した`pull_request_issues`または`repository_review_issues`の`sync_error`へ保存する。fetch開始時に読んだ
 内部`cache_generation`がtransaction内でも同じ場合だけerrorを書き、新しい成功後の古い失敗はskipする。
 accepted successは同一millisecondでもgenerationを必ず増やし、`fetchedAt`をCAS tokenとして使用しない。
 最後のmembership削除またはresetはownerのなくなった`github_issues` rowを同じtransactionでGCする。ほかの
@@ -277,11 +279,11 @@ type DocumentRef =
   | { kind: "issue-markdown"; pullRequestId: string; issueId: string }
   | { kind: "repository-file"; pullRequestId: string; sourceOid: string; path: string };
 
-type BranchDocumentRef =
-  | { kind: "issue-markdown"; branchReviewId: string; issueId: string }
-  | { kind: "repository-file"; branchReviewId: string; sourceOid: string; path: string };
+type RepositoryReviewDocumentRef =
+  | { kind: "issue-markdown"; repositoryReviewId: string; issueId: string }
+  | { kind: "repository-file"; repositoryReviewId: string; sourceOid: string; path: string };
 
-type ReviewDocumentRef = DocumentRef | BranchDocumentRef;
+type ReviewDocumentRef = DocumentRef | RepositoryReviewDocumentRef;
 
 type DiffDocumentRef = {
   kind: "diff";
@@ -360,22 +362,22 @@ empty fileは従来どおり明示的に扱う。
   明示する。Walkthrough referenceのexact sourceを取得できない場合はtabやpaneを開かず、操作元の
   Walkthroughへ一時chipを表示し、リンク切れと一時的な取得失敗を区別する。
 - Markdown内の画像はrepository Markdownまたはcomment postから、後述する基準commit内の相対pathを
-  参照する場合だけexact commit assetとして自動取得する。PR本文とPull Request / Branch Reviewへ登録した
+  参照する場合だけexact commit assetとして自動取得する。PR本文とPull Request / Repository Reviewへ登録した
   Issue本文ではmodernな`https://github.com/user-attachments/assets/<uuid>`だけをreview scopeの
   localhost endpointへ書き換えて取得する。
   それ以外の外部URL、protocol-relative URL、`data:`、`blob:`、Walkthrough本文、repository pathへ
   安全に解決できない参照はrequestを送らずplaceholderを表示する。画像load errorもalt/titleを保った
   placeholderへ戻す。SVG asset responseは同一originへの直接navigationも含め、scriptと外部subresourceを
   禁止するContent Security Policyとsandboxを付ける。
-- Pull Request ReviewとBranch Reviewは同じsidebar、document tab、最大二pane、resize、theme、comment操作を
-  使い、review種別だけを理由に別のinteractionや簡易rendererを持たない。Branch ReviewではPR固有のcommit
+- Pull Request ReviewとRepository Reviewは同じsidebar、document tab、最大二pane、resize、theme、comment操作を
+  使い、review種別だけを理由に別のinteractionや簡易rendererを持たない。Repository ReviewではPR固有のcommit
   range、changes / diff style、`Pull Request.md`だけを表示しない。
 - sidebarのtop-level stackはExplorerとCommentsの二つにする。Explorerには、Pull Request Reviewだけの
   `Pull Request.md`、collapsibleなIssues folder、collapsibleなWalkthrough folder、file名filter、repository
   treeをこの順に置き、review文書を同じtreeの並列nodeとして扱う。Issues folder右端の`+` actionでのみ
   Issue追加formを開き、追加成功またはEscapeで閉じる。Issue row右端の削除actionは文書を開くactionから
   分離する。
-  Pull Request Reviewではunchanged file表示checkboxを置き、Branch Reviewではrepository tree全体を
+  Pull Request Reviewではunchanged file表示checkboxを置き、Repository Reviewではrepository tree全体を
   常に表示する。
   本文検索はExplorer headerのactionでSearch viewへ切り替える。ExplorerとSearchは別々のscroll領域へ
   mountしたまま片方だけを表示し、directory、Walkthrough、検索結果の展開状態とscroll位置を保持する。
@@ -389,10 +391,10 @@ empty fileは従来どおり明示的に扱う。
   source line mapping、inline comment表示を共有する。本文選択からrange commentを作成でき、Issue全体の
   composerは常設せずviewer右上のcomment iconから開く。
 - review metadata、Issue一覧、文書、annotation、comment placement、Walkthrough、検索、treeのquery keyは
-  Pull Request / Branchで共通helperから構成し、Issue keyにもreview kindを含める。各reviewの
+  Pull Request / Repository Reviewで共通helperから構成し、Issue keyにもreview kindを含める。各reviewの
   `review_change_sequence`更新は共通DocumentViewerが
   実際に読むqueryをinvalidateする。Issue documentのcomponent identityはreview kind、review ID、Issue IDとし、
-  Branch source OIDを含めない。repository documentだけはpathとsource policy / exact OIDをidentityへ含める。
+  Repository Review source OIDを含めない。repository documentだけはpathとsource policy / exact OIDをidentityへ含める。
 - Walkthroughのreview scope keyは`["walkthrough", kind, reviewId]`とし、外部更新pollではこのprefixを
   invalidateしてsummary/listと開いているdetailを同時に再取得する。detail更新でpaneをremountせず、左右の
   同一Walkthrough、本文、reference、diagram bindingを揃え、無関係なdraft、focus、pane、scrollを保持する。
@@ -473,10 +475,10 @@ empty fileは従来どおり明示的に扱う。
   exact `/user-attachments/assets/<uuid>` pathを共通validatorで検証し、parse後のcanonical URLだけを使う。
   `user-images.githubusercontent.com`と`private-user-images.githubusercontent.com`は安全な認証取得経路を
   確認していないため対象外とする。
-- PR本文とPull Request / Branch Reviewへ登録したIssue本文のmodern GitHub user attachmentを表示対象とする。
+- PR本文とPull Request / Repository Reviewへ登録したIssue本文のmodern GitHub user attachmentを表示対象とする。
   browserはGitHub attachment hostへ直接接続せず、対象reviewにscopeしたsame-origin GET endpointを使う。
   endpointは`Sec-Fetch-Site`がある場合に`same-origin`または`none`だけを受理し、`Origin`がある場合は
-  viewer originとの一致も検証する。serverは対象Pull Request ReviewまたはBranch Reviewの存在を確認してから、shellを使わない
+  viewer originとの一致も検証する。serverは対象Pull Request ReviewまたはRepository Reviewの存在を確認してから、shellを使わない
   `gh api <canonical-url>` argument配列でbinaryを取得する。tokenを抽出、保存、header化せず、認証と
   cross-host redirect処理はGitHub CLIへ委ねる。timeoutは30秒、stdoutは10 MiB、stderrは64 KiBを上限とし、
   process errorのstderrやprivate URLをresponseへ含めない。binaryはSQLiteやpersistent cacheへ保存しない。
@@ -503,10 +505,10 @@ private attachmentをCI fixtureへ保存しないため、release前に次を人
 1. private repositoryを閲覧できるaccountで`gh auth status --hostname github.com`が成功することを確認する。
 2. そのrepositoryのopen PR本文または登録対象Issue本文へ小さなPNGまたはJPEGをpasteし、生成されたmodern
    `https://github.com/user-attachments/assets/<uuid>` URLを本文に残す。比較用に任意の外部画像URLも一件置く。
-3. 対象のPull Request ReviewまたはBranch Reviewをviewerで開き、PR本文またはIssue本文のPreviewでprivate
+3. 対象のPull Request ReviewまたはRepository Reviewをviewerで開き、PR本文またはIssue本文のPreviewでprivate
    attachmentが表示され、外部画像はalt/title付きplaceholderのままであることを確認する。
 4. browser DevToolsのNetworkで、表示画像の`src`とrequest先がlocalhostの
-   `/api/pull-requests/:id/github-attachment`または`/api/branch-reviews/:id/github-attachment`であり、browserから
+   `/api/pull-requests/:id/github-attachment`または`/api/repository-reviews/:id/github-attachment`であり、browserから
    `github.com/user-attachments`や外部画像hostへ直接requestしていないことを確認する。
 5. localhost responseが検出済みのimage Content-Type、`nosniff`、private immutable cache、same-origin CORPを
    持ち、reload後も画像表示とplaceholderが維持されることを確認する。
@@ -578,7 +580,7 @@ interface Walkthrough {
   publishと同じ規則で再検証する。
 - 人間はviewerから、Agentは明示authorizationを受けたCLIから、不要なWalkthroughを削除できる。削除前に
   reference、対象comment、postの件数を示し、確認後はそれらを一つのtransactionで削除する。共有され得る
-  retained Git commit refは個別削除しない。Branch refはそのaggregateのresetまで、PR refは将来の明示的・
+  retained Git commit refは個別削除しない。Repository Review refはそのaggregateのresetまで、PR refは将来の明示的・
   排他的GCまでhistorical evidenceとして保持する。
 - raw HTMLやscriptは実行しない。本文は256 KiB、referenceは200件を上限とする。
 - Phase 1は作成、閲覧、同一ID更新、確認付き削除を扱い、更新履歴、AI chat、自動navigationは扱わない。
@@ -588,7 +590,7 @@ interface Walkthrough {
 コメント対象:
 
 1. PR全体
-2. Branch Review全体
+2. Repository Review全体
 3. 登録済みIssue本文全体またはMarkdown source行範囲
 4. 最新Pull Request.md全体またはMarkdown source行範囲
 5. exact commitのコードファイル全体またはコード行範囲
@@ -635,8 +637,8 @@ type CommentTarget =
       endLine: number | null;
     };
 
-type BranchCommentTarget =
-  | { kind: "branch" }
+type RepositoryCommentTarget =
+  | { kind: "repository" }
   | Extract<CommentTarget, { kind: "issue" | "walkthrough" }>
   | {
       kind: "document";
@@ -731,7 +733,7 @@ Pull Requestのwatch taskはbatchをclaimし、対象threadの存在を確認し
 保持し、同じbatchのretryだけでそのpostを再利用する。同じthreadへの後続replyを別batchで処理するときは
 新しいstatus postを作成し、過去の回答を変更しない。調査または作業の完了、terminal failureでは現在の
 batchの同じpost本文を一つの最終結果へ編集し、新しい完了replyを追加しない。このstatus postは専用comment
-stateではなく通常postであり、threadのunresolved/resolved状態を変えない。Branch batchは進捗postを作らず、
+stateではなく通常postであり、threadのunresolved/resolved状態を変えない。Repository Review batchは進捗postを作らず、
 完了時に一件のfinal replyだけを追加する。
 誤投稿を取り消すため、reply postは個別に物理削除できる。root postの削除はcomment targetと
 `rvw://comment/<uuid>`のanchorを含むthread全体の削除として扱い、返信があれば同じtransactionで
@@ -782,8 +784,8 @@ changeのたびに単調増加させる。capabilityは次を含む。
 
 ```text
 agent.transport
-branchReview.read
-branchReview.sync
+repositoryReview.read
+repositoryReview.sync
 issue.read
 issue.membership
 issue.cacheRepair
@@ -902,17 +904,17 @@ fetchするが、behindなworktreeのcheckoutやbranch refは変更しない。
 
 `comment create`は非冪等である。`pr sync`と`comment reply`のreplyは任意のidempotency keyを受け、
 同じcaller payloadのretryは元のpostを返す。syncが内部で関連付けるGitHub head OIDはcaller payload
-fingerprintへ含めない。keyspaceはdatabase全体でPR／Branch replyに共通とし、別kindを含む別payloadへの
+fingerprintへ含めない。keyspaceはdatabase全体でPR／Repository Review replyに共通とし、別kindを含む別payloadへの
 key reuseは拒否する。元postが削除済みなら再作成せず明示errorにする。
 
 ### 7.3 comment watch
 
-`rvw comment watch --json-seq`は保存済みの全Pull Request ReviewとBranch Reviewの新規root commentとreplyをRFC 7464 JSON text
+`rvw comment watch --json-seq`は保存済みの全Pull Request ReviewとRepository Reviewの新規root commentとreplyをRFC 7464 JSON text
 sequenceとして出力する。cursor省略時は現在の最新event位置へanchorし、起動前の既存未解決commentを
 処理しない。最初の`ready` frameがdatabase-scoped opaque cursorを返し、その後の`comment-posted` frameは
 各event直後のcursor、sequence、post ID、comment URI、削除済みかと、stableな`pullRequestId`または
-`branchReviewId`、表示用のPR URLまたはcanonical repositoryを持つ明示的なreview contextを返す。
-routingとbatch keyにはreview IDだけを使うため、repository casing変更は同じcontext、Branch reset後の
+`repositoryReviewId`、表示用のPR URLまたはcanonical repositoryを持つ明示的なreview contextを返す。
+routingとbatch keyにはreview IDだけを使うため、repository casing変更は同じcontext、Repository Review reset後の
 再作成は同じrepository表示でも別contextになる。eventは最小triggerとし、Agentは必ず`comment get`でthreadを読み直す。
 
 `--after`は同じdatabaseのcursorから再生し、別database、最新sequenceより先、破損、未知versionのcursorを拒否する。poll間隔は
@@ -924,8 +926,8 @@ cursor、pending queue、retry、authorization、Agentが作成したpost IDは�
 batch内のcomment URIごとのstatus post mapping、自己post抑制をtransaction化する。batch claim直後にthreadを
 確認する。Pull Request batchだけが冪等なack replyを即時作成し、同じbatchのretryでstatus postがあれば
 そのpostをack本文へ戻す。後続replyの新しいbatchは新しいpostを作り、完了時は現在のbatchのpostを最終結果へ
-編集する。Branch batchは常に`investigate-and-reply`でacknowledgementやwrite reservationを作らず、worker
-resultの`context.kind = branch`、`branchReviewId`、repositoryを使用する。各operationのstable idempotency keyで一つのfinal
+編集する。Repository Review batchは常に`investigate-and-reply`でacknowledgementやwrite reservationを作らず、worker
+resultの`context.kind = repository`、`repositoryReviewId`、repositoryを使用する。各operationのstable idempotency keyで一つのfinal
 replyを投稿し、返されたpost IDをsuppressionとしてdurableに登録してからleaseをcompleteする。eventが
 complete前にingest済みならpending rowをcompletedへ移し、後ならingest時にsuppressする。reply後の再起動は
 同じkeyで既存postを取得して同じ完了手順を再開する。同梱preflightは
@@ -936,8 +938,8 @@ LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthre
 それ未満なら保証できる最大の正数、複数枠を保証できなければ1を指定し、予約数を超えない。driverはlimit
 未満だけauto-ackし、task stateを短周期で再確認する。investigate-and-replyだけを許可したtaskでは、同一PRの
 active lease中に到着したeventも別batchとしてcapacity内でauto-ackし、同じPRまたはrepositoryをread-onlyで
-並列調査できる。Branch batchはtask全体のpolicyにかかわらず常にこのread-only並列規則を使う。batchごとの
-status postまたはBranch final replyを使うため結果は衝突しない。fix-and-pushを許可したtaskではPull Requestの
+並列調査できる。Repository Review batchはtask全体のpolicyにかかわらず常にこのread-only並列規則を使う。batchごとの
+status postまたはRepository Review final replyを使うため結果は衝突しない。fix-and-pushを許可したtaskではPull Requestの
 後続eventを先行lease解放後まで待たせ、repository write reservationにより異なるPR間のwriterも直列化する。
 retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
 state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。rvwはAgentやsubagentを
@@ -949,7 +951,7 @@ fresh subagentへ必ず委譲し、直接調査・実装しない。subagentを�
 failureへ戻し、親taskが代行しない。subagent結果は、最終bodyに加えて`relatedCommitOid`、完全な
 `references`配列、`pushStatus`を持つ。
 code変更がない調査結果でも、具体的なcode上の結論を支える利用可能なreview commitとtyped referenceを返せる。
-Branchではcurrent sourceまたは既存retained refのOIDだけを認め、任意のlocal commitを根拠にしない。
+Repository Reviewではcurrent sourceまたは既存retained refのOIDだけを認め、任意のlocal commitを根拠にしない。
 parentはthreadを再取得してbody、commit、referenceを検証し、同じstatus postの完全置換へすべて渡す。
 fix-and-push後のreferenceは同期済みGitHub headへ固定する。referenceがない結果は空配列を明示し、以前の
 retryやacknowledgementから宣言を引き継がない。
@@ -1000,7 +1002,7 @@ stdinの最小例:
 ```
 
 `review`と`sourceOid`、title、body、1件以上のreferenceは必須である。`review`はPull Request URLまたは
-Branch Reviewのcanonical repositoryをdiscriminated unionで指定する。CLIはcommit、path、
+Repository Reviewのcanonical repositoryをdiscriminated unionで指定する。CLIはcommit、path、
 任意のline range、Markdown reference、実在するflowchart/classDiagram nodeへのdiagram bindingを検証し、本文linkまたはdiagram bindingから
 一度も参照されないreferenceを拒否してから、一つのSQLite transactionで保存してchange sequenceを
 更新する。成功responseは`walkthrough`へ`rvw://walkthrough/<uuid>`を含むWalkthrough全体、`issuesAdded`へ
@@ -1044,7 +1046,7 @@ change sequenceを更新する。この削除はretained commit refを削除し�
   収める固定上限を持つ。
 - comment本文とreplyはUTF-8 GFM Markdown sourceで64 KiB以下とする。comment postとWalkthroughの
   referenceはそれぞれ最大200件とする。
-- `walkthrough get`はcurrent WalkthroughとPull RequestまたはBranch Reviewのidentity、local repository pathを返す。
+- `walkthrough get`はcurrent WalkthroughとPull RequestまたはRepository Reviewのidentity、local repository pathを返す。
 - `comment list`は登録済みPRをURLまたは番号で受け、`unresolved`を既定に`resolved` / `all`も選べる。
   `limit`は既定50、最大100、`offset`は既定0とし、`total`、`hasMore`、`nextOffset`を返す。
   各threadはURI、state、target要約、post件数、root postの先頭512 bytes、latest headに対してserviceが
@@ -1229,14 +1231,14 @@ CREATE TABLE walkthrough_references (
 ```
 
 `comment_reply_idempotency`というtable名はmigration 009由来だが、このledgerはprotocol v4で
-Pull Request／Branch Review replyの双方が共有するdatabase-wide keyspaceである。
-Branch replyのrequest hashはreview kindを含む。PR replyは公開済み0.2.xが保存した
+Pull Request／Repository Review replyの双方が共有するdatabase-wide keyspaceである。
+Repository Review replyのrequest hashはreview kindを含む。PR replyは公開済み0.2.xが保存した
 `comment.reply`と`pr.sync.comment-update`のhash形式を維持し、migration後もexact retryで既存postを返す。
 
-Branch ReviewとIssue追加migrationは、canonical Issue cacheの`github_issues`、実owner FKを持つ
-`pull_request_issues` / `branch_review_issues`、nativeなPR `comment_targets.target_kind = issue`、repository
-singletonの`branch_reviews`、およびBranch専用のWalkthrough、Comment、post、typed reference tableを追加する。
-PRとBranchのartifact ownershipとcascade境界は分離し、
+Repository ReviewとIssue追加migrationは、canonical Issue cacheの`github_issues`、実owner FKを持つ
+`pull_request_issues` / `repository_review_issues`、nativeなPR `comment_targets.target_kind = issue`、repository
+singletonの`repository_reviews`、およびRepository Review専用のWalkthrough、Comment、post、typed reference tableを追加する。
+PRとRepository Reviewのartifact ownershipとcascade境界は分離し、
 共有Issue cacheの表示内容が変わった場合だけ、そのIssueを所有する全Reviewの
 `review_change_sequence`を同じtransactionで更新する。membership固有の同期errorはそのReviewだけを更新し、
 単なる`fetched_at`更新では他Reviewをinvalidateしない。
@@ -1248,7 +1250,7 @@ transactionで元reviewとmembershipの存続を再確認し、削除済みな�
 Issue targetのComment作成もapplication層の本文／range検証後、Comment、target、root post、event、sequenceを
 書く同じimmediate transaction内で対象Reviewのmembershipを再確認する。確認後にmembershipが削除されていれば
 `ISSUE_NOT_FOUND` (404)とし、別Reviewが共有cacheを保持していてもCommentを作成しない。
-PR本文に現在も直接含まれるIssueだけは追加操作として扱い、次回refreshで再登録できる。PR／Branch viewerはreview
+PR本文に現在も直接含まれるIssueだけは追加操作として扱い、次回refreshで再登録できる。PR／Repository Review viewerはreview
 sourceの同期成功とIssueごとの部分失敗を区別し、`issueResults`の失敗をresponse-local warningとして表示する。
 top barのdetailは先頭3件と残件数に省略する。
 
@@ -1256,10 +1258,12 @@ commit table、review version table、PR revision tableは持たない。既存P
 version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元できない場合Outdatedとして残す。
 既存の`refs/rvw/pr/<n>/version/...`は旧comment source objectを失わないよう保持し、resetでも削除しない。
 以後の同期だけがcommit ref形式を使う。将来の明示的・排他的GCまでhistorical evidenceとして残す。
-Comment、reply、Walkthroughはexact source refをSQLite書き込み前に確保するが、書き込み失敗時にそのrefを
-補償削除しない。refの`created`はそのGit commandが初回作成したことだけを示し、同じPR／Branch ReviewとOIDを
-共有する別processの正常なartifactが依存していないことを証明しない。未参照refの回収は将来の明示的かつ
-review-scopedな排他的GCへ委ねる。
+Comment、reply、Walkthroughはexact source refをSQLite書き込み前に確保する。通常の書き込み失敗では
+補償削除しない。refの`created`はそのGit commandが初回作成したことだけを示し、同じPR／Repository ReviewとOIDを
+共有する別processの正常なartifactが依存していないことを証明しない。ただしRepository Reviewでは、当該writeが
+exact refを作成し、SQLite失敗後にaggregate IDの消失を確認した場合だけ、expected OID付きでそのrefをbest-effort
+削除する。aggregateが残る場合、refが既存だった場合、削除に失敗した場合は保持する。その他の未参照ref回収は
+将来の明示的かつreview-scopedな排他的GCへ委ねる。
 
 ## 9. Application / API
 
@@ -1286,22 +1290,22 @@ GET /api/pull-requests/:id/walkthroughs
 GET /api/pull-requests/:id/walkthroughs/:walkthroughId
 DELETE /api/pull-requests/:id/walkthroughs/:walkthroughId
 
-GET  /api/branch-reviews/:id
-POST /api/branch-reviews/open
-POST /api/branch-reviews/:id/sync
-POST /api/branch-reviews/:id/reset
-GET /api/branch-reviews/:id/tree
-GET /api/branch-reviews/:id/document?kind=...&sourceOid=...&path=...&issueId=...
-GET|HEAD /api/branch-reviews/:id/markdown-asset?sourceOid=...&path=...
-GET /api/branch-reviews/:id/github-attachment?url=...
-GET /api/branch-reviews/:id/search?q=<query>&matchCase=<bool>&wholeWord=<bool>
-GET|POST /api/branch-reviews/:id/issues
-GET /api/branch-reviews/:id/issues/:issueId
-DELETE /api/branch-reviews/:id/issues/:issueId
-GET /api/branch-reviews/:id/comments
-GET /api/branch-reviews/:id/walkthroughs
-GET /api/branch-reviews/:id/walkthroughs/:walkthroughId
-DELETE /api/branch-reviews/:id/walkthroughs/:walkthroughId
+GET  /api/repository-reviews/:id
+POST /api/repository-reviews/open
+POST /api/repository-reviews/:id/sync
+POST /api/repository-reviews/:id/reset
+GET /api/repository-reviews/:id/tree
+GET /api/repository-reviews/:id/document?kind=...&sourceOid=...&path=...&issueId=...
+GET|HEAD /api/repository-reviews/:id/markdown-asset?sourceOid=...&path=...
+GET /api/repository-reviews/:id/github-attachment?url=...
+GET /api/repository-reviews/:id/search?q=<query>&matchCase=<bool>&wholeWord=<bool>
+GET|POST /api/repository-reviews/:id/issues
+GET /api/repository-reviews/:id/issues/:issueId
+DELETE /api/repository-reviews/:id/issues/:issueId
+GET /api/repository-reviews/:id/comments
+GET /api/repository-reviews/:id/walkthroughs
+GET /api/repository-reviews/:id/walkthroughs/:walkthroughId
+DELETE /api/repository-reviews/:id/walkthroughs/:walkthroughId
 
 GET  /api/pull-requests/:id/comments
 POST /api/comments
@@ -1316,30 +1320,30 @@ GET  /api/comments/:id/placement?...
 
 HTTP/CLIは同じapplication serviceを使用し、transportへbusiness logicを書かない。
 
-Branch Review lifecycleはapplication層でopen-or-createと、次のdiscriminated resolution policyへ分類し、
+Repository Review lifecycleはapplication層でopen-or-createと、次のdiscriminated resolution policyへ分類し、
 CLI、Agent socket、HTTPが同じuse caseを呼ぶ。
 
-- `open-or-create`: `branch open`。保存済みbindingを検証してcacheを開き、未登録時だけGitHub同期後に作成する。
-- `{ kind: "read" }`: `branch comments`と保存済みartifact read。row、ref、fetch、locationを作らない。
-- `{ kind: "synchronize" }`: `branch sync`。保存済みaggregateとlocal remoteを検証してからだけ同期する。
-- `{ kind: "destructive", allowMissingInitialRef }`: resetとBranch Issue removalのpreview／実行。missing
+- `open-or-create`: `repository open`。保存済みbindingを検証してcacheを開き、未登録時だけGitHub同期後に作成する。
+- `{ kind: "read" }`: `repository comments`と保存済みartifact read。row、ref、fetch、locationを作らない。
+- `{ kind: "synchronize" }`: `repository sync`。保存済みaggregateとlocal remoteを検証してからだけ同期する。
+- `{ kind: "destructive", allowMissingInitialRef }`: resetとRepository Issue removalのpreview／実行。missing
   initial ref例外を型上resetへ限定する。未登録なら
-  `BRANCH_REVIEW_NOT_FOUND`で、previewを含めsequence、DB、refを一切変更しない。
-- 明示的追加: `branch issue add`だけは未登録reviewを作成できるが、remote identityを解決・検証できない
+  `REPOSITORY_REVIEW_NOT_FOUND`で、previewを含めsequence、DB、refを一切変更しない。
+- 明示的追加: `repository issue add`だけは未登録reviewを作成できるが、remote identityを解決・検証できない
   状態では実行しない。
 
-HTTPの`/api/branch-reviews/:id`配下から始まるsync、Issue add/remove、comments readは、routeで保存pathへ
-変換してpath-based use caseへ渡さない。`expectedBranchReviewId`をbinding resolverからDB upsert／membership
+HTTPの`/api/repository-reviews/:id`配下から始まるsync、Issue add/remove、comments readは、routeで保存pathへ
+変換してpath-based use caseへ渡さない。`expectedRepositoryReviewId`をbinding resolverからDB upsert／membership
 transactionまで保持し、待機中に対象IDがreset/recreateされた場合は旧IDへ
-`BRANCH_REVIEW_NOT_FOUND`を返す。replacement aggregateのsource、membership、Comment、sequence、refは変更しない。
+`REPOSITORY_REVIEW_NOT_FOUND`を返す。replacement aggregateのsource、membership、Comment、sequence、refは変更しない。
 CLIとAgent socketのpath-based use caseは、指定pathに現在bindingされるreviewを対象とする。
 
-PR／Branch reset、Issue removal、Walkthrough deletionのpreviewはreview change sequenceと、review ID、
+PR／Repository Review reset、Issue removal、Walkthrough deletionのpreviewはreview change sequenceと、review ID、
 対象ID、件数、削除対象のreview-owned refを含むconfirmation tokenを返す。PR resetのretained refsは
 preserved情報として返し、削除件数やtoken対象へ含めない。実行は同じtokenを必須とし、SQLiteの
 mutation transactionでもexpected sequenceを再検証する。変更済みなら`DESTRUCTIVE_PREVIEW_STALE` (409)の
 detailsへ最新previewを返し、利用者へ再確認を要求する。最終SQLite CASで競合を検出した場合もservice層で
-previewを再構築し、Branch Review metadataを含む同じerror shapeをcurrent rowから返す。PR resetはGitHub I/O後、
+previewを再構築し、Repository Review metadataを含む同じerror shapeをcurrent rowから返す。PR resetはGitHub I/O後、
 head ref確保前にもtokenを再検証し、commit一覧をSQLite mutation前に取得して、成功したDB reset後へ失敗可能な
 Git readを残さない。
 
@@ -1408,8 +1412,8 @@ Walkthrough、code referenceを削除し、現在のGitHub状態を同期してc
 `refs/rvw/pr/<n>/...`のhistorical refsはimmutable evidenceとして保持し、`counts.gitRefs = 0`とする。削除件数を事前表示し、
 CLIはpreviewのconfirmation tokenと`--yes`を必須とする。不可逆であり、明示的な利用者authorizationなしにAgentが実行しない。
 
-`rvw branch reset --repository <PATH> --yes --confirmation-token <TOKEN> --json`はexisting-onlyでbindingを検証し、対象review ID配下の
-`refs/rvw/branch/<branchReviewId>/...`だけをpreview／削除する。DB削除後にref削除が失敗した場合は例外で
+`rvw repository reset --repository <PATH> --yes --confirmation-token <TOKEN> --json`はexisting-onlyでbindingを検証し、対象review ID配下の
+`refs/rvw/repository/<repositoryReviewId>/...`だけをpreview／削除する。DB削除後にref削除が失敗した場合は例外で
 削除済みreviewを保持せず、`completed-with-orphan-refs`というtyped success outcomeへDB削除済み、review ID、
 ref prefix、残存ref、manual cleanup可能性を含める。0.3.0にはrvw管理下のorphan-ref cleanup commandを追加しない。
 残存refはorphanとして新しいreview IDから隔離され、新reviewは旧evidenceを受理せず、旧reset retryも
@@ -1423,8 +1427,8 @@ ref作成後、ready化前に停止した場合は、次回openがexpected ID／
 `ready`へ進める。初回lookupではrowがなくても、初期化用immediate transactionが既存rowを発見した場合は
 source OID、default branch、location、sync errorを変更せず`created: false`を返す。呼び出し側はwinnerのowned
 sourceを検証し、aggregate発見前に取得したsnapshotを破棄する。その後generationを確保し、GitHub metadataを
-再取得してからretainし、expected Branch Review ID付きtransactionでだけ既存sourceを更新する。generationなしで
-既存Branch sourceを変更できるunrestricted upsertはapplicationへ公開しない。初期ref作成とresetが競合し、
+再取得してからretainし、expected Repository Review ID付きtransactionでだけ既存sourceを更新する。generationなしで
+既存Repository Review sourceを変更できるunrestricted upsertはapplicationへ公開しない。初期ref作成とresetが競合し、
 aggregate削除後にrefが作成された場合は、そのattemptが作ったexact refだけをbest-effortで削除する。この例外を
 Issue removalその他のdestructive操作へ広げない。
 既存aggregateのsource同期はGitHubアクセス前に`source_sync_generation`を増やす。candidate ref作成後のsource公開と
@@ -1629,12 +1633,12 @@ acknowledge済みleaseを同じscheduling turn内で一つのfresh subagentへ�
 `max-in-flight`は8を目標に、8枠を保証できれば8、それ未満なら保証できる最大の正数、複数枠を保証できなければ
 1を指定する。予約数を超えてはならない。driverはlimit未満だけauto-ackし、task stateを短周期で再確認する。
 investigate-and-replyだけを許可したtaskでは同一PRのactive lease中に到着したeventも別leaseとして並列委譲する。
-Branch leaseはtask全体のpolicyにかかわらず常にread-onlyで同一repositoryへ並列委譲できる。fix-and-pushを
+Repository Review leaseはtask全体のpolicyにかかわらず常にread-onlyで同一repositoryへ並列委譲できる。fix-and-pushを
 許可したtaskではPull Requestの後続eventを先行lease解放後まで待たせ、repository writerもwrite reservationで
 直列化する。retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
 subagentを速やかに起動できない場合はleaseをretryable
 failureへ戻し、親taskが代行しない。subagentごとに一leaseだけを割り当て、絶対pathのatomic JSON fileを
-唯一の最終結果回収経路にする。Branch batchはacknowledgementを作らず、同じ即時委譲規則で調査し、
+唯一の最終結果回収経路にする。Repository Review batchはacknowledgementを作らず、同じ即時委譲規則で調査し、
 厳格に検証したworker resultから一件のfinal replyを投稿する。subagentの最終結果はbody、
 `relatedCommitOid`、完全なtyped reference配列、push状態を持ち、具体的なcode上の結論、実装、testには
 navigation価値のあるexact rangeを既定で付ける。task起動時の
@@ -1659,30 +1663,30 @@ source of truthとする。
 Functional:
 
 - URLまたはcurrent branchからopen/draft PRを開き、登録済みPRはofflineでも再表示できる。
-- `rvw branch open`でrepository singletonのBranch Reviewを開き、default branch名とsource OIDを表示し、
+- `rvw repository open`でrepository singletonのRepository Reviewを開き、default branch名とsource OIDを表示し、
   同じGit common directoryのworktreeとoffline openから同じreviewを再利用できる。独立cloneからはbindingを
   変更せず失敗し、明示reset後にだけそのcloneで作り直せる。
-- 未登録repositoryのBranch reset／Issue removal previewと実行、comments、syncはreviewを暗黙作成せず、
-  `BRANCH_REVIEW_NOT_FOUND`後もDB row、retained ref、change sequenceを変更しない。remote mismatchは全transportで
+- 未登録repositoryのRepository Review reset／Issue removal previewと実行、comments、syncはreviewを暗黙作成せず、
+  `REPOSITORY_REVIEW_NOT_FOUND`後もDB row、retained ref、change sequenceを変更しない。remote mismatchは全transportで
   mutation前に拒否し、`source_sync_error`へ記録しない。
-- Pull Request / Branch Reviewへ同一repository Issueを追加し、番号降順で通常文書として二ペイン表示、
+- Pull Request / Repository Reviewへ同一repository Issueを追加し、番号降順で通常文書として二ペイン表示、
   全体・source range Comment、Outdated追跡を利用できる。
 - Issue番号/titleとowned Comment/reply件数をpreviewした明示確認後、選択reviewのmembershipとIssue feedback
   だけを削除でき、別reviewの同じIssueは残る。preview後のsequence変更はtoken不一致で削除せず再確認する。
 - 共有Issue cache documentとreview membership documentを型で分け、後者だけが`syncError`／`stale`を持つ。
   `comment get`はComment所有Reviewのmembership-aware getterを使う。Walkthrough `issuesToAdd`による正常な
   membership ensureは、既存membershipなら追加扱いにせず、そのReviewのsync errorだけをclearする。
-- Branch Review resetはIssue、Comment、Walkthrough、review recordとBranch専用retained ref候補をpreviewし、
-  `--yes`後にBranch固有状態とそのreview IDのrefだけを削除する。再openは新しいIDの空reviewを作り、失敗した
+- Repository Review resetはIssue、Comment、Walkthrough、review recordとRepository Review専用retained ref候補をpreviewし、
+  `--yes`後にRepository Review固有状態とそのreview IDのrefだけを削除する。再openは新しいIDの空reviewを作り、失敗した
   旧resetのorphan refを証拠として継承しない。browserでreset成功後の再openだけが失敗した場合はreset完了と
-  再作成失敗を分けて表示し、repository pathと`rvw branch open`による復旧を案内する。DB削除後のref cleanup
+  再作成失敗を分けて表示し、repository pathと`rvw repository open`による復旧を案内する。DB削除後のref cleanup
   失敗もtyped partial successとして同じ削除済みUI stateへ移り、隔離されたprefixを表示する。
-- Branch Review WalkthroughとCommentを既存URI/CLIで扱い、watcherは明示contextでbatchしてread-only調査後の
+- Repository Review WalkthroughとCommentを既存URI/CLIで扱い、watcherは明示contextでbatchしてread-only調査後の
   最終replyだけを冪等に記録し、そのpost eventをdurableにself-suppressできる。
-- Branch Issue range comment draftはbackground sync中も本文とfocusを保持し、Issue本文変更時はdraftを失わず
+- Repository Issue range comment draftはbackground sync中も本文とfocusを保持し、Issue本文変更時はdraftを失わず
   古いrangeの送信を拒否する。同期後の本文、inline placement、sidebar Outdated表示は一致する。
 - Walkthrough publish/updateはreview kindとtransportによらず`walkthrough`と`issuesAdded`を返す。
-- 外部Branch Walkthrough更新はreloadなしにlist/detail、左右pane、本文、reference、diagram bindingへ反映し、
+- 外部Repository Walkthrough更新はreloadなしにlist/detail、左右pane、本文、reference、diagram bindingへ反映し、
   無関係なcomment draft、focus、pane配置、scrollを失わない。
 - destination commit選択、PR全体diff、複数commit range、changed/all tree、全文、検索を利用できる。
 - `Pull Request.md`は常に最後に成功した同期の最新内容だけを表示する。
@@ -1723,9 +1727,9 @@ Manual acceptance:
 - PR本文履歴やPR revision selectorを追加しない
 - PR本文をcommitへ擬似的にbindingしない
 - Ask/AI chat/Agent spawnを追加しない
-- arbitrary branch selector、複数Branch Review、Branch ReviewとPull Request Reviewのattachを追加しない
+- arbitrary branch selector、複数Repository Review、Repository ReviewとPull Request Reviewのattachを追加しない
 - Issue relation/revision history/cross-repository membership/GitHub Issue writeを追加しない
-- Branch Reviewでfix-and-pushやremote writeを許可しない
+- Repository Reviewでfix-and-pushやremote writeを許可しない
 - Agentにbrowser tabやscroll位置を操作させない
 - unresolved/resolved以外のcomment stateを追加しない
 - Skill-less fallback、GitHub comment syncを追加しない

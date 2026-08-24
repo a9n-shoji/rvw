@@ -469,14 +469,14 @@ async function runOpenWorker(
   }
 }
 
-function forkBranchOpenWorker(repositoryPath: string, port: number): BackgroundOpenChild {
+function forkRepositoryOpenWorker(repositoryPath: string, port: number): BackgroundOpenChild {
   const modulePath = process.argv[1];
   if (!modulePath) {
     throw new RvwError("PROCESS_FAILED", "rvw CLIの実行pathを解決できませんでした。");
   }
   return fork(
     path.resolve(modulePath),
-    ["__branch-open-worker", "--repository", repositoryPath, "--port", String(port)],
+    ["__repository-open-worker", "--repository", repositoryPath, "--port", String(port)],
     {
       cwd: process.cwd(),
       env: process.env,
@@ -486,14 +486,17 @@ function forkBranchOpenWorker(repositoryPath: string, port: number): BackgroundO
   );
 }
 
-async function startBackgroundBranchOpen(repositoryPath: string, port: number): Promise<string> {
+async function startBackgroundRepositoryOpen(
+  repositoryPath: string,
+  port: number,
+): Promise<string> {
   return await completeBackgroundOpen(
-    forkBranchOpenWorker(repositoryPath, port),
+    forkRepositoryOpenWorker(repositoryPath, port),
     async (url) => await openBrowser(url),
   );
 }
 
-async function runBranchOpenServer(
+async function runRepositoryOpenServer(
   activeRuntime: Runtime,
   repositoryPath: string,
   port: number,
@@ -507,7 +510,7 @@ async function runBranchOpenServer(
     if (worker && (!process.send || !process.connected)) {
       throw new RvwError("INVALID_INPUT", "内部viewer workerは親CLIから起動してください。");
     }
-    const opened = await activeRuntime.service.openBranchReview(repositoryPath);
+    const opened = await activeRuntime.service.openRepositoryReview(repositoryPath);
     running = await startServer(activeRuntime.service, {
       port,
       staticDirectory: staticDirectory(),
@@ -515,7 +518,7 @@ async function runBranchOpenServer(
     });
     if (useAgentSocket || worker) agentSocket = await startAgentSocket(activeRuntime.service);
     const url = new URL(running.origin);
-    url.searchParams.set("branchReviewId", opened.branchReview.id);
+    url.searchParams.set("repositoryReviewId", opened.repositoryReview.id);
     if (worker) {
       if (!(await sendOpenWorkerMessage({ type: "ready", url: url.toString() }))) return;
       if (!running.firstViewerConnected) {
@@ -629,8 +632,8 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         appVersion: APP_VERSION,
         capabilities: [
           "agent.transport",
-          "branchReview.read",
-          "branchReview.sync",
+          "repositoryReview.read",
+          "repositoryReview.sync",
           "issue.read",
           "issue.membership",
           "issue.cacheRepair",
@@ -719,12 +722,19 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     });
 
   program
-    .command("__branch-open-worker", { hidden: true })
+    .command("__repository-open-worker", { hidden: true })
     .requiredOption("--repository <path>")
     .requiredOption("--port <port>", "listen port", parsePort)
     .action(async (options: { repository: string; port: number }) => {
       try {
-        await runBranchOpenServer(getRuntime(), options.repository, options.port, true, true, true);
+        await runRepositoryOpenServer(
+          getRuntime(),
+          options.repository,
+          options.port,
+          true,
+          true,
+          true,
+        );
       } catch (error) {
         const rvwError = asRvwError(error);
         const sent = await sendOpenWorkerMessage({
@@ -736,8 +746,10 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       }
     });
 
-  const branch = program.command("branch").description("default branchのBranch Reviewを管理");
-  branch
+  const repositoryReview = program
+    .command("repository")
+    .description("default branchのRepository Reviewを管理");
+  repositoryReview
     .command("open")
     .option("--repository <path>", "対象repository", process.cwd())
     .option("--no-open", "ブラウザを開かない")
@@ -752,11 +764,11 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         port: number;
       }) => {
         if (options.open && !options.foreground && useAgentSocket) {
-          const url = await startBackgroundBranchOpen(options.repository, options.port);
+          const url = await startBackgroundRepositoryOpen(options.repository, options.port);
           process.stdout.write(`rvw: ${url}\n`);
           return;
         }
-        await runBranchOpenServer(
+        await runRepositoryOpenServer(
           getRuntime(),
           options.repository,
           options.port,
@@ -766,35 +778,38 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       },
     );
 
-  branch
+  repositoryReview
     .command("sync")
     .option("--repository <path>", "対象repository", process.cwd())
     .requiredOption("--json", "JSONで出力")
     .action(async (options: { repository: string }) => {
       const result = await callService(
-        "branch.sync",
+        "repository.sync",
         { repositoryPath: options.repository },
-        async () => await getRuntime().service.syncBranchReview(options.repository),
+        async () => await getRuntime().service.syncRepositoryReview(options.repository),
       );
       writeJson({ ok: true, ...result });
     });
 
-  const branchIssue = branch.command("issue").description("Branch ReviewのIssueを管理");
-  branchIssue
+  const repositoryIssue = repositoryReview
+    .command("issue")
+    .description("Repository ReviewのIssueを管理");
+  repositoryIssue
     .command("add")
     .argument("<issue-ref>")
     .option("--repository <path>", "対象repository", process.cwd())
     .requiredOption("--json", "JSONで出力")
     .action(async (issueReference: string, options: { repository: string }) => {
       const result = await callService(
-        "branch.issue.add",
+        "repository.issue.add",
         { repositoryPath: options.repository, issueReference },
-        async () => await getRuntime().service.addBranchIssue(options.repository, issueReference),
+        async () =>
+          await getRuntime().service.addRepositoryIssue(options.repository, issueReference),
       );
       writeJson({ ok: true, ...result });
     });
 
-  branchIssue
+  repositoryIssue
     .command("refresh")
     .argument("<issue-ref>")
     .option("--repository <path>", "対象repository", process.cwd())
@@ -802,15 +817,15 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .requiredOption("--json", "JSONで出力")
     .action(async (issueReference: string, options: { repository: string }) => {
       const result = await callService(
-        "branch.issue.refresh",
+        "repository.issue.refresh",
         { repositoryPath: options.repository, issueReference, force: true },
         async () =>
-          await getRuntime().service.forceRepairBranchIssue(options.repository, issueReference),
+          await getRuntime().service.forceRepairRepositoryIssue(options.repository, issueReference),
       );
       writeJson({ ok: true, ...result });
     });
 
-  branchIssue
+  repositoryIssue
     .command("remove")
     .argument("<issue-ref>")
     .option("--repository <path>", "対象repository", process.cwd())
@@ -824,10 +839,10 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       ) => {
         if (!options.yes || !options.confirmationToken) {
           const preview = await callService(
-            "branch.issue.remove.preview",
+            "repository.issue.remove.preview",
             { repositoryPath: options.repository, issueReference },
             async () =>
-              await getRuntime().service.getBranchIssueRemovalPreview(
+              await getRuntime().service.getRepositoryIssueRemovalPreview(
                 options.repository,
                 issueReference,
               ),
@@ -841,7 +856,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
               details: {
                 command: "rvw",
                 arguments: [
-                  "branch",
+                  "repository",
                   "issue",
                   "remove",
                   issueReference,
@@ -860,7 +875,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           return;
         }
         const result = await callService(
-          "branch.issue.remove",
+          "repository.issue.remove",
           {
             repositoryPath: options.repository,
             issueReference,
@@ -868,7 +883,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
             confirmationToken: options.confirmationToken,
           },
           async () =>
-            await getRuntime().service.removeBranchIssue(
+            await getRuntime().service.removeRepositoryIssue(
               options.repository,
               issueReference,
               options.confirmationToken!,
@@ -878,7 +893,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       },
     );
 
-  branch
+  repositoryReview
     .command("comments")
     .option("--repository <path>", "対象repository", process.cwd())
     .option("--state <state>", "unresolved、resolved、all（既定: unresolved）", "unresolved")
@@ -889,15 +904,18 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       }
       const resolved = options.state === "all" ? undefined : options.state === "resolved";
       const result = await callService(
-        "branch.comments",
+        "repository.comments",
         { repositoryPath: options.repository, resolved },
         async () =>
-          await getRuntime().service.listBranchCommentContextsAtPath(options.repository, resolved),
+          await getRuntime().service.listRepositoryCommentContextsAtPath(
+            options.repository,
+            resolved,
+          ),
       );
       writeJson({ ok: true, ...result });
     });
 
-  branch
+  repositoryReview
     .command("reset")
     .option("--repository <path>", "対象repository", process.cwd())
     .option("--yes", "不可逆な削除を確認")
@@ -906,9 +924,10 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .action(async (options: { repository: string; yes?: boolean; confirmationToken?: string }) => {
       if (!options.yes || !options.confirmationToken) {
         const preview = await callService(
-          "branch.reset.preview",
+          "repository.reset.preview",
           { repositoryPath: options.repository },
-          async () => await getRuntime().service.getBranchResetPreviewAtPath(options.repository),
+          async () =>
+            await getRuntime().service.getRepositoryResetPreviewAtPath(options.repository),
         );
         writeJson({
           ok: false,
@@ -919,7 +938,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
             details: {
               command: "rvw",
               arguments: [
-                "branch",
+                "repository",
                 "reset",
                 "--repository",
                 options.repository,
@@ -936,14 +955,14 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         return;
       }
       const result = await callService(
-        "branch.reset",
+        "repository.reset",
         {
           repositoryPath: options.repository,
           confirmed: true,
           confirmationToken: options.confirmationToken,
         },
         async () =>
-          await getRuntime().service.resetBranchReviewAtPath(
+          await getRuntime().service.resetRepositoryReviewAtPath(
             options.repository,
             options.confirmationToken!,
           ),
@@ -1208,7 +1227,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .description("walkthroughの現在内容を取得")
     .action(async (uri: string) => {
       const result = await callService("walkthrough.get", { uri }, () =>
-        getRuntime().service.getAnyWalkthroughByUri(uri),
+        getRuntime().service.getBoundAnyWalkthroughByUri(uri),
       );
       writeJson({ ok: true, ...result });
     });
@@ -1528,7 +1547,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     if (
       actionCommand.name() !== "open" &&
       actionCommand.name() !== "__open-worker" &&
-      actionCommand.name() !== "__branch-open-worker"
+      actionCommand.name() !== "__repository-open-worker"
     ) {
       runtime?.close();
     }

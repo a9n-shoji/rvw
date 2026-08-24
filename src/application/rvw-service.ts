@@ -3,15 +3,15 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import type {
-  BranchCommentTarget,
-  BranchDocumentContent,
-  BranchDocumentRef,
-  BranchResetCounts,
-  BranchReview,
-  BranchReviewComment,
-  BranchSearchResponse,
-  BranchWalkthrough,
-  BranchWalkthroughSummary,
+  RepositoryReviewCommentTarget,
+  RepositoryReviewDocumentContent,
+  RepositoryReviewDocumentRef,
+  RepositoryResetCounts,
+  RepositoryReview,
+  RepositoryReviewComment,
+  RepositoryReviewSearchResponse,
+  RepositoryWalkthrough,
+  RepositoryWalkthroughSummary,
   CachedIssueDocument,
   ChangedFile,
   CodeReference,
@@ -34,7 +34,7 @@ import type {
   SearchResponse,
   SearchOptions,
   TreeEntry,
-  DeletedBranchWalkthrough,
+  DeletedRepositoryWalkthrough,
   DeletedWalkthrough,
   Walkthrough,
   WalkthroughDeleteCounts,
@@ -60,10 +60,12 @@ import {
   MAX_COMMENT_LIST_LIMIT,
   MAX_COMMENT_WATCH_LIMIT,
   MAX_IDEMPOTENCY_KEY_CHARACTERS,
+  MAX_ISSUE_REFERENCE_CHARACTERS,
   MAX_SEARCH_QUERY_BYTES,
   MAX_SEARCH_RESULTS,
   MAX_SEARCH_STDOUT_BYTES,
   MAX_WALKTHROUGH_BODY_BYTES,
+  MAX_WALKTHROUGH_ISSUES_TO_ADD,
   MAX_CODE_REFERENCE_DESCRIPTION_CHARACTERS,
   MAX_CODE_REFERENCE_LABEL_CHARACTERS,
   MAX_CODE_REFERENCE_PATH_CHARACTERS,
@@ -92,27 +94,30 @@ import {
   parsePullRequestUrl,
   type GitHubPort,
 } from "../infrastructure/github/github-client.js";
-import { BranchReviewLifecycle, type ResolvedBranchReview } from "./branch-review-lifecycle.js";
+import {
+  RepositoryReviewLifecycle,
+  type ResolvedRepositoryReview,
+} from "./repository-review-lifecycle.js";
 
 export interface OpenResult {
   pullRequest: PullRequest;
   fromCache: boolean;
 }
 
-export interface OpenBranchResult {
-  branchReview: BranchReview;
+export interface OpenRepositoryResult {
+  repositoryReview: RepositoryReview;
   fromCache: boolean;
   selectedRemote: { name: string; url: string } | null;
 }
 
-export interface BranchReviewView {
-  branchReview: BranchReview;
+export interface RepositoryReviewView {
+  repositoryReview: RepositoryReview;
   issues: IssueDocument[];
-  walkthroughs: BranchWalkthroughSummary[];
+  walkthroughs: RepositoryWalkthroughSummary[];
   selectedRemote?: { name: string; url: string } | null;
 }
 
-export interface BranchSyncResult extends BranchReviewView {
+export interface RepositorySyncResult extends RepositoryReviewView {
   issueResults: Array<
     | {
         issue: IssueDocument;
@@ -174,7 +179,8 @@ export interface CommentUpdateRequest {
 }
 
 export interface CommentCreateRequest {
-  review?: { kind: "pull-request"; pullRequest: string } | { kind: "branch"; repository: string };
+  review?:
+    { kind: "pull-request"; pullRequest: string } | { kind: "repository"; repository: string };
   pullRequest?: string;
   target: CommentTargetRequest;
   body: string;
@@ -205,13 +211,13 @@ export interface CommentReviewContext {
   };
 }
 
-export interface BranchCommentReviewContext {
-  context: { kind: "branch"; branchReviewId: string; repository: string };
-  branchReview: BranchReview;
-  comment: BranchReviewComment;
+export interface RepositoryCommentReviewContext {
+  context: { kind: "repository"; repositoryReviewId: string; repository: string };
+  repositoryReview: RepositoryReview;
+  comment: RepositoryReviewComment;
   latestPlacement: CommentPlacement;
   exactSource: CommentExactSource | null;
-  walkthrough: BranchWalkthrough | null;
+  walkthrough: RepositoryWalkthrough | null;
   issue: IssueDocument | null;
   githubState: {
     liveCheckedAt: null;
@@ -220,7 +226,7 @@ export interface BranchCommentReviewContext {
   };
 }
 
-interface BranchPlacementCache {
+interface RepositoryPlacementCache {
   changedFiles: Map<string, Promise<ChangedFile[]>>;
   documents: Map<string, Promise<BlobContent>>;
 }
@@ -270,14 +276,15 @@ export interface WalkthroughContentRequest {
 }
 
 export interface WalkthroughPublishRequest extends WalkthroughContentRequest {
-  review?: { kind: "pull-request"; pullRequest: string } | { kind: "branch"; repository: string };
+  review?:
+    { kind: "pull-request"; pullRequest: string } | { kind: "repository"; repository: string };
   pullRequest?: string;
 }
 
 export type WalkthroughUpdateRequest = WalkthroughContentRequest;
 
 export interface WalkthroughDeletePreview {
-  walkthrough: Walkthrough | BranchWalkthrough;
+  walkthrough: Walkthrough | RepositoryWalkthrough;
   counts: WalkthroughDeleteCounts;
   reviewChangeSequence: number;
   confirmationToken: string;
@@ -286,7 +293,7 @@ export interface WalkthroughDeletePreview {
 
 export type CommentTargetRequest =
   | { kind: "pull-request" }
-  | { kind: "branch" }
+  | { kind: "repository" }
   | {
       kind: "issue";
       issue: string;
@@ -346,7 +353,7 @@ function assertAuthorLabel(authorLabel: string | null | undefined): void {
 
 function destructiveConfirmationToken(input: {
   operation: string;
-  reviewKind: "pull-request" | "branch";
+  reviewKind: "pull-request" | "repository";
   reviewId: string;
   reviewChangeSequence: number;
   subjectId?: string;
@@ -663,10 +670,12 @@ function directIssueReferences(body: string, owner: string, repository: string):
   const references = new Set<string>();
   const escapedOwner = owner.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const escapedRepository = repository.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const githubIssueDestinationPattern =
+    /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/issues\/([^/?#]+)(?:[/?#].*)?$/i;
   const collectTextReferences = (value: string): void => {
     const patterns = [
       new RegExp(
-        `https://github\\.com/${escapedOwner}/${escapedRepository}/issues/(\\d+)(?!\\d)`,
+        `https://github\\.com/${escapedOwner}/${escapedRepository}/issues/(\\d+)(?=$|[/?#\\s<>()\\[\\]{}.,;:!?"'\\x60])`,
         "gi",
       ),
       new RegExp(`\\b${escapedOwner}/${escapedRepository}#(\\d+)\\b`, "gi"),
@@ -679,15 +688,33 @@ function directIssueReferences(body: string, owner: string, repository: string):
       }
     }
   };
-  const collectUrlReference = (value: string): void => {
-    const pattern = new RegExp(
-      `^https://github\\.com/${escapedOwner}/${escapedRepository}/issues/(\\d+)(?:[/?#].*)?$`,
-      "i",
-    );
-    const number = pattern.exec(value)?.[1];
-    if (number) references.add(`#${number}`);
+  const collectUrlReference = (value: string): boolean => {
+    const match = githubIssueDestinationPattern.exec(value);
+    if (!match) return false;
+    const [, linkedOwner, linkedRepository, issueSegment] = match;
+    if (
+      linkedOwner?.toLowerCase() === owner.toLowerCase() &&
+      linkedRepository?.toLowerCase() === repository.toLowerCase() &&
+      issueSegment &&
+      /^\d+$/.test(issueSegment)
+    ) {
+      references.add(`#${issueSegment}`);
+    }
+    return true;
   };
   const root = fromMarkdown(body) as MarkdownNode;
+  const definitionUrls = new Map<string, string>();
+  const collectDefinitions = (node: MarkdownNode): void => {
+    if (
+      node.type === "definition" &&
+      typeof node.identifier === "string" &&
+      typeof node.url === "string"
+    ) {
+      definitionUrls.set(node.identifier.toLowerCase(), node.url);
+    }
+    node.children?.forEach(collectDefinitions);
+  };
+  collectDefinitions(root);
   const voidHtmlElements = new Set([
     "area",
     "base",
@@ -723,6 +750,14 @@ function directIssueReferences(body: string, owner: string, repository: string):
       }
       return;
     }
+    if (
+      rawHtmlDepth === 0 &&
+      node.type === "linkReference" &&
+      typeof node.identifier === "string" &&
+      collectUrlReference(definitionUrls.get(node.identifier.toLowerCase()) ?? "")
+    ) {
+      return;
+    }
     if (rawHtmlDepth === 0 && node.type === "text" && typeof node.value === "string") {
       collectTextReferences(node.value);
     } else if (
@@ -730,7 +765,7 @@ function directIssueReferences(body: string, owner: string, repository: string):
       (node.type === "link" || node.type === "definition") &&
       typeof node.url === "string"
     ) {
-      collectUrlReference(node.url);
+      if (collectUrlReference(node.url)) return;
     }
     node.children?.forEach(visit);
   };
@@ -739,14 +774,14 @@ function directIssueReferences(body: string, owner: string, repository: string):
 }
 
 export class RvwService {
-  private readonly branchLifecycle: BranchReviewLifecycle;
+  private readonly repositoryLifecycle: RepositoryReviewLifecycle;
 
   constructor(
     readonly database: RvwDatabase,
     readonly git: GitClient,
     readonly github: GitHubPort,
   ) {
-    this.branchLifecycle = new BranchReviewLifecycle(database, git, github);
+    this.repositoryLifecycle = new RepositoryReviewLifecycle(database, git, github);
   }
 
   async doctor(cwd: string): Promise<{
@@ -759,8 +794,8 @@ export class RvwService {
     databasePermissionsManagedByRvw: boolean;
     databasePermissions: ReturnType<RvwDatabase["permissionStatus"]>;
     databaseWriteProbe: ReturnType<RvwDatabase["writeProbe"]>;
-    branchRetainedRefs: {
-      prefix: "refs/rvw/branch/";
+    repositoryReviewRetainedRefs: {
+      prefix: "refs/rvw/repository/";
       refs: Array<{
         ref: string;
         reviewId: string;
@@ -771,25 +806,27 @@ export class RvwService {
   }> {
     const [git, github] = await Promise.all([this.git.doctor(cwd), this.github.doctor()]);
     const databaseWriteProbe = this.database.writeProbe();
-    let branchRetainedRefs: Awaited<ReturnType<RvwService["doctor"]>>["branchRetainedRefs"] = null;
+    let repositoryReviewRetainedRefs: Awaited<
+      ReturnType<RvwService["doctor"]>
+    >["repositoryReviewRetainedRefs"] = null;
     if (git.repository) {
-      const prefix = "refs/rvw/branch/" as const;
+      const prefix = "refs/rvw/repository/" as const;
       const refs = await this.git.listRefsByPrefix(git.repository.worktreePath, prefix);
       const diagnostics: NonNullable<
-        Awaited<ReturnType<RvwService["doctor"]>>["branchRetainedRefs"]
+        Awaited<ReturnType<RvwService["doctor"]>>["repositoryReviewRetainedRefs"]
       >["refs"] = [];
       const evidenceByReview = new Map<string, Set<string>>();
       for (const ref of refs) {
-        const match = /^refs\/rvw\/branch\/([^/]+)\/commits\/oid-([^/]+)$/i.exec(ref);
+        const match = /^refs\/rvw\/repository\/([^/]+)\/commits\/oid-([^/]+)$/i.exec(ref);
         if (!match?.[1] || !match[2] || !GIT_OBJECT_ID_PATTERN.test(match[2])) continue;
-        const review = this.database.getBranchReview(match[1]);
+        const review = this.database.getRepositoryReview(match[1]);
         if (!review) {
           diagnostics.push({ ref, reviewId: match[1], oid: match[2], status: "orphan-review" });
           continue;
         }
         let evidence = evidenceByReview.get(review.id);
         if (!evidence) {
-          evidence = new Set(this.database.listBranchEvidenceOids(review.id));
+          evidence = new Set(this.database.listRepositoryReviewEvidenceOids(review.id));
           evidenceByReview.set(review.id, evidence);
         }
         diagnostics.push({
@@ -804,7 +841,7 @@ export class RvwService {
                 : "unreferenced",
         });
       }
-      branchRetainedRefs = {
+      repositoryReviewRetainedRefs = {
         prefix,
         refs: diagnostics,
       };
@@ -819,7 +856,7 @@ export class RvwService {
       databasePermissionsManagedByRvw: !this.database.configuredPath,
       databasePermissions: this.database.permissionStatus(),
       databaseWriteProbe,
-      branchRetainedRefs,
+      repositoryReviewRetainedRefs,
     };
   }
 
@@ -936,83 +973,100 @@ export class RvwService {
     return { pullRequest, fromCache: false };
   }
 
-  getBranchReview(id: string): BranchReview {
-    const review = this.database.getBranchReview(id);
+  getRepositoryReview(id: string): RepositoryReview {
+    const review = this.database.getRepositoryReview(id);
     if (!review) {
-      throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
         status: 404,
       });
     }
     return review;
   }
 
-  resolveStoredBranchReview(repository: string): BranchReview {
+  resolveStoredRepositoryReview(repository: string): RepositoryReview {
     const match = /^([^/\s]+)\/([^/\s]+)$/.exec(repository.trim());
     const review =
-      match?.[1] && match[2] ? this.database.findBranchReviewByIdentity(match[1], match[2]) : null;
+      match?.[1] && match[2]
+        ? this.database.findRepositoryReviewByIdentity(match[1], match[2])
+        : null;
     if (!review) {
-      throw new RvwError("BRANCH_REVIEW_NOT_FOUND", "Branch Reviewが見つかりません。", {
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
         status: 404,
-        suggestions: ["対象repositoryで rvw branch open を実行してください。"],
+        suggestions: ["対象repositoryで rvw repository open を実行してください。"],
       });
     }
     return review;
   }
 
-  private async branchRepositoryFor(branchReview: BranchReview): Promise<RepositoryContext> {
-    return (
-      await this.branchLifecycle.resolveExistingAtPath(branchReview.localRepositoryPath, {
-        policy: { kind: "read" },
-        expectedBranchReviewId: branchReview.id,
-      })
-    ).repository;
+  private async resolveBoundRepositoryArtifactContext(
+    repositoryReview: RepositoryReview,
+    capability: "local-artifact" | "remote-mutation" = "local-artifact",
+  ): Promise<ResolvedRepositoryReview> {
+    return await this.repositoryLifecycle.resolveExistingAtPath(
+      repositoryReview.localRepositoryPath,
+      {
+        policy: capability === "remote-mutation" ? { kind: "synchronize" } : { kind: "read" },
+        expectedRepositoryReviewId: repositoryReview.id,
+      },
+    );
   }
 
-  async openBranchReview(cwd: string): Promise<OpenBranchResult> {
-    return await this.branchLifecycle.openAtPath(cwd);
+  private async repositoryContextFor(
+    repositoryReview: RepositoryReview,
+  ): Promise<RepositoryContext> {
+    return (await this.resolveBoundRepositoryArtifactContext(repositoryReview)).repository;
   }
 
-  async resolveExistingBranchReviewAtPath(repositoryPath: string): Promise<ResolvedBranchReview> {
-    return await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+  async openRepositoryReview(cwd: string): Promise<OpenRepositoryResult> {
+    return await this.repositoryLifecycle.openAtPath(cwd);
+  }
+
+  async resolveExistingRepositoryReviewAtPath(
+    repositoryPath: string,
+  ): Promise<ResolvedRepositoryReview> {
+    return await this.repositoryLifecycle.resolveExistingAtPath(repositoryPath, {
       policy: { kind: "read" },
     });
   }
 
-  getBranchReviewView(id: string): BranchReviewView {
-    const branchReview = this.getBranchReview(id);
+  getRepositoryReviewView(id: string): RepositoryReviewView {
+    const repositoryReview = this.getRepositoryReview(id);
     return {
-      branchReview,
-      issues: this.database.listReviewIssues("branch", id),
-      walkthroughs: this.database.listBranchWalkthroughs(id),
+      repositoryReview,
+      issues: this.database.listReviewIssues("repository", id),
+      walkthroughs: this.database.listRepositoryWalkthroughs(id),
     };
   }
 
-  async getBoundBranchReviewView(id: string): Promise<BranchReviewView> {
-    const stored = this.getBranchReview(id);
-    const resolved = await this.branchLifecycle.resolveExistingAtPath(stored.localRepositoryPath, {
-      policy: { kind: "read" },
-      expectedBranchReviewId: id,
-    });
+  async getBoundRepositoryReviewView(id: string): Promise<RepositoryReviewView> {
+    const stored = this.getRepositoryReview(id);
+    const resolved = await this.repositoryLifecycle.resolveExistingAtPath(
+      stored.localRepositoryPath,
+      {
+        policy: { kind: "read" },
+        expectedRepositoryReviewId: id,
+      },
+    );
     return {
-      ...this.getBranchReviewView(id),
+      ...this.getRepositoryReviewView(id),
       selectedRemote: resolved.remoteIdentity
         ? { name: resolved.remoteIdentity.remoteName, url: resolved.remoteIdentity.remoteUrl }
         : null,
     };
   }
 
-  private async synchronizeResolvedBranchReview(
-    existing: ResolvedBranchReview,
-  ): Promise<BranchSyncResult> {
-    const branchReview = await this.branchLifecycle.synchronizeExisting(
+  private async synchronizeResolvedRepositoryReview(
+    existing: ResolvedRepositoryReview,
+  ): Promise<RepositorySyncResult> {
+    const repositoryReview = await this.repositoryLifecycle.synchronizeExisting(
       existing.repository.worktreePath,
-      existing.branchReview.id,
+      existing.repositoryReview.id,
     );
-    const issues = this.database.listReviewIssues("branch", branchReview.id);
+    const issues = this.database.listReviewIssues("repository", repositoryReview.id);
     const issueResults = await mapWithConcurrency(
       issues,
       ISSUE_FETCH_CONCURRENCY,
-      async (issue): Promise<BranchSyncResult["issueResults"][number]> => {
+      async (issue): Promise<RepositorySyncResult["issueResults"][number]> => {
         const expectedCacheGeneration = this.database.getIssueCacheGeneration(issue.id);
         try {
           if (!this.github.getIssue) {
@@ -1020,19 +1074,19 @@ export class RvwService {
           }
           const current = assertFetchedIssueIdentity(
             {
-              owner: branchReview.owner,
-              repository: branchReview.repository,
+              owner: repositoryReview.owner,
+              repository: repositoryReview.repository,
               number: issue.number,
             },
             await this.github.getIssue(
               issue.number,
-              branchReview,
+              repositoryReview,
               existing.repository.worktreePath,
             ),
           );
           const refreshed = this.database.refreshReviewIssue(
-            "branch",
-            branchReview.id,
+            "repository",
+            repositoryReview.id,
             issue.id,
             current,
           );
@@ -1041,16 +1095,16 @@ export class RvwService {
             : { issue: refreshed.issue!, ok: true };
         } catch (error) {
           const rvwError = asRvwError(error);
-          if (rvwError.code === "BRANCH_REVIEW_NOT_FOUND") throw rvwError;
+          if (rvwError.code === "REPOSITORY_REVIEW_NOT_FOUND") throw rvwError;
           if (isIssueIdentityMismatch(rvwError)) {
-            if (!this.database.hasReviewIssue("branch", branchReview.id, issue.id)) {
+            if (!this.database.hasReviewIssue("repository", repositoryReview.id, issue.id)) {
               return { issue, ok: true, skipped: "membership-removed" };
             }
             return { issue, ok: false, error: rvwError.toJSON() };
           }
           const syncError = this.database.setReviewIssueSyncError(
-            "branch",
-            branchReview.id,
+            "repository",
+            repositoryReview.id,
             issue.id,
             expectedCacheGeneration,
             rvwError.message,
@@ -1064,7 +1118,7 @@ export class RvwService {
       },
     );
     return {
-      ...this.getBranchReviewView(branchReview.id),
+      ...this.getRepositoryReviewView(repositoryReview.id),
       selectedRemote: existing.remoteIdentity
         ? { name: existing.remoteIdentity.remoteName, url: existing.remoteIdentity.remoteUrl }
         : null,
@@ -1072,27 +1126,29 @@ export class RvwService {
     };
   }
 
-  async syncBranchReview(repositoryPath: string): Promise<BranchSyncResult> {
-    const existing = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+  async syncRepositoryReview(repositoryPath: string): Promise<RepositorySyncResult> {
+    const existing = await this.repositoryLifecycle.resolveExistingAtPath(repositoryPath, {
       policy: { kind: "synchronize" },
     });
-    return await this.synchronizeResolvedBranchReview(existing);
+    return await this.synchronizeResolvedRepositoryReview(existing);
   }
 
-  async syncBranchReviewById(branchReviewId: string): Promise<BranchSyncResult> {
-    const branchReview = this.getBranchReview(branchReviewId);
-    const existing = await this.branchLifecycle.resolveExistingAtPath(
-      branchReview.localRepositoryPath,
+  async syncRepositoryReviewById(repositoryReviewId: string): Promise<RepositorySyncResult> {
+    const repositoryReview = this.getRepositoryReview(repositoryReviewId);
+    const existing = await this.repositoryLifecycle.resolveExistingAtPath(
+      repositoryReview.localRepositoryPath,
       {
         policy: { kind: "synchronize" },
-        expectedBranchReviewId: branchReviewId,
+        expectedRepositoryReviewId: repositoryReviewId,
       },
     );
-    return await this.synchronizeResolvedBranchReview(existing);
+    return await this.synchronizeResolvedRepositoryReview(existing);
   }
 
   private async addIssueToContext(
-    review: { kind: "pull-request"; value: PullRequest } | { kind: "branch"; value: BranchReview },
+    review:
+      | { kind: "pull-request"; value: PullRequest }
+      | { kind: "repository"; value: RepositoryReview },
     reference: string,
   ): Promise<{ issue: IssueDocument; added: boolean }> {
     const identity = parseIssueReference(reference, review.value);
@@ -1132,8 +1188,8 @@ export class RvwService {
   }
 
   private async forceRepairIssue(
-    reviewKind: "pull-request" | "branch",
-    review: PullRequest | BranchReview,
+    reviewKind: "pull-request" | "repository",
+    review: PullRequest | RepositoryReview,
     issueReference: string,
     repositoryPath: string,
   ): Promise<{ issue: IssueDocument; repaired: true; verifiedReads: 2 }> {
@@ -1196,50 +1252,50 @@ export class RvwService {
     );
   }
 
-  async forceRepairBranchIssue(
+  async forceRepairRepositoryIssue(
     repositoryPath: string,
     issueReference: string,
   ): Promise<{ issue: IssueDocument; repaired: true; verifiedReads: 2 }> {
-    const resolved = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+    const resolved = await this.repositoryLifecycle.resolveExistingAtPath(repositoryPath, {
       policy: { kind: "synchronize" },
     });
     return await this.forceRepairIssue(
-      "branch",
-      resolved.branchReview,
+      "repository",
+      resolved.repositoryReview,
       issueReference,
       resolved.repository.worktreePath,
     );
   }
 
-  async addBranchIssue(
+  async addRepositoryIssue(
     repositoryPath: string,
     issueReference: string,
-  ): Promise<{ branchReview: BranchReview; issue: IssueDocument; added: boolean }> {
-    const branchReview = await this.branchLifecycle.openForExplicitMutation(repositoryPath);
+  ): Promise<{ repositoryReview: RepositoryReview; issue: IssueDocument; added: boolean }> {
+    const repositoryReview = await this.repositoryLifecycle.openForExplicitMutation(repositoryPath);
     const result = await this.addIssueToContext(
-      { kind: "branch", value: branchReview },
+      { kind: "repository", value: repositoryReview },
       issueReference,
     );
-    return { branchReview, ...result };
+    return { repositoryReview, ...result };
   }
 
-  async addBranchIssueById(
-    branchReviewId: string,
+  async addRepositoryIssueById(
+    repositoryReviewId: string,
     issueReference: string,
-  ): Promise<{ branchReview: BranchReview; issue: IssueDocument; added: boolean }> {
-    const stored = this.getBranchReview(branchReviewId);
-    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(
+  ): Promise<{ repositoryReview: RepositoryReview; issue: IssueDocument; added: boolean }> {
+    const stored = this.getRepositoryReview(repositoryReviewId);
+    const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
       stored.localRepositoryPath,
       {
         policy: { kind: "synchronize" },
-        expectedBranchReviewId: branchReviewId,
+        expectedRepositoryReviewId: repositoryReviewId,
       },
     );
     const result = await this.addIssueToContext(
-      { kind: "branch", value: branchReview },
+      { kind: "repository", value: repositoryReview },
       issueReference,
     );
-    return { branchReview: this.getBranchReview(branchReviewId), ...result };
+    return { repositoryReview: this.getRepositoryReview(repositoryReviewId), ...result };
   }
 
   listPullRequestIssues(pullRequestId: string): IssueDocument[] {
@@ -1247,18 +1303,18 @@ export class RvwService {
     return this.database.listReviewIssues("pull-request", pullRequestId);
   }
 
-  listBranchIssues(branchReviewId: string): IssueDocument[] {
-    this.getBranchReview(branchReviewId);
-    return this.database.listReviewIssues("branch", branchReviewId);
+  listRepositoryIssues(repositoryReviewId: string): IssueDocument[] {
+    this.getRepositoryReview(repositoryReviewId);
+    return this.database.listReviewIssues("repository", repositoryReviewId);
   }
 
   getReviewIssue(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issueId: string,
   ): IssueDocument {
     if (reviewKind === "pull-request") this.getPullRequest(reviewId);
-    else this.getBranchReview(reviewId);
+    else this.getRepositoryReview(reviewId);
     const issue = this.database.getReviewIssue(reviewKind, reviewId, issueId);
     if (!issue) {
       throw new RvwError("ISSUE_NOT_FOUND", "Issue documentが見つかりません。", { status: 404 });
@@ -1267,7 +1323,7 @@ export class RvwService {
   }
 
   getIssueRemovalPreview(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issueReference: string,
   ): {
@@ -1280,7 +1336,7 @@ export class RvwService {
     const review =
       reviewKind === "pull-request"
         ? this.getPullRequest(reviewId)
-        : this.getBranchReview(reviewId);
+        : this.getRepositoryReview(reviewId);
     const identity = parseIssueReference(issueReference, review);
     const cached = this.database.findIssue(identity.owner, identity.repository, identity.number);
     const issue = cached ? this.database.getReviewIssue(reviewKind, reviewId, cached.id) : null;
@@ -1308,7 +1364,7 @@ export class RvwService {
   }
 
   private removeReviewIssueWithPreview(
-    reviewKind: "pull-request" | "branch",
+    reviewKind: "pull-request" | "repository",
     reviewId: string,
     issueReference: string,
     preview: ReturnType<RvwService["getIssueRemovalPreview"]>,
@@ -1355,118 +1411,131 @@ export class RvwService {
     };
   }
 
-  async removeBranchIssue(
+  async removeRepositoryIssue(
     repositoryPath: string,
     issueReference: string,
     confirmationToken: string,
   ): Promise<{
-    branchReview: BranchReview;
+    repositoryReview: RepositoryReview;
     issue: IssueDocument;
     deleted: IssueRemovalCounts;
   }> {
-    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
-      policy: { kind: "destructive", allowMissingInitialRef: false },
-    });
-    const preview = this.getIssueRemovalPreview("branch", branchReview.id, issueReference);
+    const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
+      repositoryPath,
+      {
+        policy: { kind: "destructive", allowMissingInitialRef: false },
+      },
+    );
+    const preview = this.getIssueRemovalPreview("repository", repositoryReview.id, issueReference);
     assertDestructiveConfirmation(confirmationToken, preview);
     return {
-      branchReview,
+      repositoryReview,
       issue: preview.issue,
       deleted: this.removeReviewIssueWithPreview(
-        "branch",
-        branchReview.id,
+        "repository",
+        repositoryReview.id,
         issueReference,
         preview,
       ),
     };
   }
 
-  async removeBranchIssueById(
-    branchReviewId: string,
+  async removeRepositoryIssueById(
+    repositoryReviewId: string,
     issueReference: string,
     confirmationToken: string,
   ): Promise<{
-    branchReview: BranchReview;
+    repositoryReview: RepositoryReview;
     issue: IssueDocument;
     deleted: IssueRemovalCounts;
   }> {
-    const stored = this.getBranchReview(branchReviewId);
-    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(
+    const stored = this.getRepositoryReview(repositoryReviewId);
+    const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
       stored.localRepositoryPath,
       {
         policy: { kind: "destructive", allowMissingInitialRef: false },
-        expectedBranchReviewId: branchReviewId,
+        expectedRepositoryReviewId: repositoryReviewId,
       },
     );
-    const preview = this.getIssueRemovalPreview("branch", branchReview.id, issueReference);
+    const preview = this.getIssueRemovalPreview("repository", repositoryReview.id, issueReference);
     assertDestructiveConfirmation(confirmationToken, preview);
     const deleted = this.removeReviewIssueWithPreview(
-      "branch",
-      branchReview.id,
+      "repository",
+      repositoryReview.id,
       issueReference,
       preview,
     );
-    return { branchReview: this.getBranchReview(branchReviewId), issue: preview.issue, deleted };
-  }
-
-  async getBranchIssueRemovalPreview(
-    repositoryPath: string,
-    issueReference: string,
-  ): Promise<ReturnType<RvwService["getIssueRemovalPreview"]>> {
-    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
-      policy: { kind: "destructive", allowMissingInitialRef: false },
-    });
-    return this.getIssueRemovalPreview("branch", branchReview.id, issueReference);
-  }
-
-  async getBranchIssueRemovalPreviewById(
-    branchReviewId: string,
-    issueReference: string,
-  ): Promise<ReturnType<RvwService["getIssueRemovalPreview"]>> {
-    const stored = this.getBranchReview(branchReviewId);
-    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(
-      stored.localRepositoryPath,
-      {
-        policy: { kind: "destructive", allowMissingInitialRef: false },
-        expectedBranchReviewId: branchReviewId,
-      },
-    );
-    return this.getIssueRemovalPreview("branch", branchReview.id, issueReference);
-  }
-
-  async listBranchCommentContextsAtPath(
-    repositoryPath: string,
-    resolved?: boolean,
-  ): Promise<{
-    context: { kind: "branch"; branchReviewId: string; repository: string };
-    branchReview: BranchReview;
-    comments: Array<{ comment: BranchReviewComment; latestPlacement: CommentPlacement }>;
-  }> {
-    const { branchReview } = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
-      policy: { kind: "read" },
-    });
     return {
-      context: {
-        kind: "branch",
-        branchReviewId: branchReview.id,
-        repository: branchReview.canonicalName,
-      },
-      branchReview,
-      comments: await this.listBranchCommentContexts(branchReview.id, resolved),
+      repositoryReview: this.getRepositoryReview(repositoryReviewId),
+      issue: preview.issue,
+      deleted,
     };
   }
 
-  async listBranchCommentContextsById(
-    branchReviewId: string,
+  async getRepositoryIssueRemovalPreview(
+    repositoryPath: string,
+    issueReference: string,
+  ): Promise<ReturnType<RvwService["getIssueRemovalPreview"]>> {
+    const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
+      repositoryPath,
+      {
+        policy: { kind: "destructive", allowMissingInitialRef: false },
+      },
+    );
+    return this.getIssueRemovalPreview("repository", repositoryReview.id, issueReference);
+  }
+
+  async getRepositoryIssueRemovalPreviewById(
+    repositoryReviewId: string,
+    issueReference: string,
+  ): Promise<ReturnType<RvwService["getIssueRemovalPreview"]>> {
+    const stored = this.getRepositoryReview(repositoryReviewId);
+    const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
+      stored.localRepositoryPath,
+      {
+        policy: { kind: "destructive", allowMissingInitialRef: false },
+        expectedRepositoryReviewId: repositoryReviewId,
+      },
+    );
+    return this.getIssueRemovalPreview("repository", repositoryReview.id, issueReference);
+  }
+
+  async listRepositoryCommentContextsAtPath(
+    repositoryPath: string,
     resolved?: boolean,
-  ): Promise<Array<{ comment: BranchReviewComment; latestPlacement: CommentPlacement }>> {
-    const stored = this.getBranchReview(branchReviewId);
-    await this.branchLifecycle.resolveExistingAtPath(stored.localRepositoryPath, {
+  ): Promise<{
+    context: { kind: "repository"; repositoryReviewId: string; repository: string };
+    repositoryReview: RepositoryReview;
+    comments: Array<{ comment: RepositoryReviewComment; latestPlacement: CommentPlacement }>;
+  }> {
+    const { repositoryReview } = await this.repositoryLifecycle.resolveExistingAtPath(
+      repositoryPath,
+      {
+        policy: { kind: "read" },
+      },
+    );
+    return {
+      context: {
+        kind: "repository",
+        repositoryReviewId: repositoryReview.id,
+        repository: repositoryReview.canonicalName,
+      },
+      repositoryReview,
+      comments: await this.listRepositoryCommentContexts(repositoryReview.id, resolved),
+    };
+  }
+
+  async listRepositoryCommentContextsById(
+    repositoryReviewId: string,
+    resolved?: boolean,
+  ): Promise<Array<{ comment: RepositoryReviewComment; latestPlacement: CommentPlacement }>> {
+    const stored = this.getRepositoryReview(repositoryReviewId);
+    await this.repositoryLifecycle.resolveExistingAtPath(stored.localRepositoryPath, {
       policy: { kind: "read" },
-      expectedBranchReviewId: branchReviewId,
+      expectedRepositoryReviewId: repositoryReviewId,
     });
-    const comments = await this.listBranchCommentContexts(branchReviewId, resolved);
-    this.getBranchReview(branchReviewId);
+    const comments = await this.listRepositoryCommentContexts(repositoryReviewId, resolved);
+    this.getRepositoryReview(repositoryReviewId);
     return comments;
   }
 
@@ -1899,40 +1968,45 @@ export class RvwService {
     };
   }
 
-  private async assertBranchCommitAvailable(
-    branchReview: BranchReview,
+  private async assertRepositoryReviewCommitAvailable(
+    repositoryReview: RepositoryReview,
     oid: string,
   ): Promise<void> {
     if (!GIT_OBJECT_ID_PATTERN.test(oid)) {
       throw new RvwError("COMMIT_NOT_FOUND", `Git commitが見つかりません: ${oid}`, { status: 404 });
     }
-    const repository = await this.branchRepositoryFor(branchReview);
+    const repository = await this.repositoryContextFor(repositoryReview);
     const [retained, available] = await Promise.all([
-      this.git.verifyBranchCommitRef(repository.worktreePath, branchReview.id, oid),
+      this.git.verifyRepositoryReviewCommitRef(repository.worktreePath, repositoryReview.id, oid),
       this.git.hasObject(repository.worktreePath, oid),
     ]);
     if (!retained || !available) {
       throw new RvwError(
         "COMMIT_NOT_FOUND",
-        `Branch Reviewで保持されているGit commitが見つかりません: ${oid}`,
+        `Repository Reviewで保持されているGit commitが見つかりません: ${oid}`,
         { status: 404 },
       );
     }
   }
 
-  async getBranchTree(branchReviewId: string): Promise<{ entries: TreeEntry[] }> {
-    const branchReview = this.getBranchReview(branchReviewId);
-    await this.assertBranchCommitAvailable(branchReview, branchReview.sourceOid);
+  async getRepositoryTree(repositoryReviewId: string): Promise<{ entries: TreeEntry[] }> {
+    const repositoryReview = this.getRepositoryReview(repositoryReviewId);
+    await this.assertRepositoryReviewCommitAvailable(repositoryReview, repositoryReview.sourceOid);
     return {
-      entries: await this.git.tree(branchReview.localRepositoryPath, branchReview.sourceOid),
+      entries: await this.git.tree(
+        repositoryReview.localRepositoryPath,
+        repositoryReview.sourceOid,
+      ),
     };
   }
 
-  async getBranchDocument(ref: BranchDocumentRef): Promise<BranchDocumentContent> {
-    const branchReview = this.getBranchReview(ref.branchReviewId);
+  async getRepositoryReviewDocument(
+    ref: RepositoryReviewDocumentRef,
+  ): Promise<RepositoryReviewDocumentContent> {
+    const repositoryReview = this.getRepositoryReview(ref.repositoryReviewId);
     if (ref.kind === "issue-markdown") {
       const issue = this.database.getIssue(ref.issueId);
-      if (!issue || !this.database.hasReviewIssue("branch", branchReview.id, issue.id)) {
+      if (!issue || !this.database.hasReviewIssue("repository", repositoryReview.id, issue.id)) {
         throw new RvwError("ISSUE_NOT_FOUND", "Issue documentが見つかりません。", { status: 404 });
       }
       return {
@@ -1945,30 +2019,30 @@ export class RvwService {
         oid: null,
       };
     }
-    await this.assertBranchCommitAvailable(branchReview, ref.sourceOid);
+    await this.assertRepositoryReviewCommitAvailable(repositoryReview, ref.sourceOid);
     const content = await this.git.readDocument(
-      branchReview.localRepositoryPath,
+      repositoryReview.localRepositoryPath,
       ref.sourceOid,
       ref.path,
     );
     return { ref, ...content };
   }
 
-  async getBranchRepositoryAsset(branchReviewId: string, sourceOid: string, filePath: string) {
-    const branchReview = this.getBranchReview(branchReviewId);
-    await this.assertBranchCommitAvailable(branchReview, sourceOid);
+  async getRepositoryReviewAsset(repositoryReviewId: string, sourceOid: string, filePath: string) {
+    const repositoryReview = this.getRepositoryReview(repositoryReviewId);
+    await this.assertRepositoryReviewCommitAvailable(repositoryReview, sourceOid);
     return await this.git.readRepositoryAsset(
-      branchReview.localRepositoryPath,
+      repositoryReview.localRepositoryPath,
       sourceOid,
       filePath,
     );
   }
 
-  async searchBranch(
-    branchReviewId: string,
+  async searchRepositoryReview(
+    repositoryReviewId: string,
     query: string,
     options: SearchOptions,
-  ): Promise<BranchSearchResponse> {
+  ): Promise<RepositoryReviewSearchResponse> {
     const queryBytes = Buffer.byteLength(query, "utf8");
     if (queryBytes === 0 || queryBytes > MAX_SEARCH_QUERY_BYTES || /[\r\n]/.test(query)) {
       throw new RvwError(
@@ -1976,11 +2050,11 @@ export class RvwService {
         `検索語は改行を含まない1〜${MAX_SEARCH_QUERY_BYTES} UTF-8 bytesにしてください。`,
       );
     }
-    const branchReview = this.getBranchReview(branchReviewId);
-    await this.assertBranchCommitAvailable(branchReview, branchReview.sourceOid);
+    const repositoryReview = this.getRepositoryReview(repositoryReviewId);
+    await this.assertRepositoryReviewCommitAvailable(repositoryReview, repositoryReview.sourceOid);
     const result = await this.git.search(
-      branchReview.localRepositoryPath,
-      branchReview.sourceOid,
+      repositoryReview.localRepositoryPath,
+      repositoryReview.sourceOid,
       query,
       options,
     );
@@ -1988,8 +2062,8 @@ export class RvwService {
       ...entry,
       document: {
         kind: "repository-file" as const,
-        branchReviewId: branchReview.id,
-        sourceOid: branchReview.sourceOid,
+        repositoryReviewId: repositoryReview.id,
+        sourceOid: repositoryReview.sourceOid,
         path: entry.path,
       },
     }));
@@ -2071,11 +2145,11 @@ export class RvwService {
     return await this.fetchGitHubAttachment(absoluteUrl);
   }
 
-  async getBranchGitHubAttachment(
-    branchReviewId: string,
+  async getRepositoryGitHubAttachment(
+    repositoryReviewId: string,
     absoluteUrl: string,
   ): Promise<{ content: Buffer; byteLength: number; contentType: ImageContentType }> {
-    this.getBranchReview(branchReviewId);
+    this.getRepositoryReview(repositoryReviewId);
     return await this.fetchGitHubAttachment(absoluteUrl);
   }
 
@@ -2184,7 +2258,7 @@ export class RvwService {
   }
 
   private async validateCodeReferences(
-    review: PullRequest | BranchReview,
+    review: PullRequest | RepositoryReview,
     input: {
       sourceOid: string | null;
       body: string;
@@ -2208,7 +2282,7 @@ export class RvwService {
     }
     if (input.sourceOid) {
       if ("defaultBranchName" in review) {
-        await this.assertBranchCommitAvailable(review, input.sourceOid);
+        await this.assertRepositoryReviewCommitAvailable(review, input.sourceOid);
       } else {
         await this.assertCommitAvailable(review, input.sourceOid);
       }
@@ -2296,8 +2370,11 @@ export class RvwService {
     target: CommentTargetRequest,
   ): Promise<CommentTarget> {
     if (target.kind === "pull-request") return target;
-    if (target.kind === "branch") {
-      throw new RvwError("INVALID_INPUT", "Pull Request Reviewにはbranch targetを作成できません。");
+    if (target.kind === "repository") {
+      throw new RvwError(
+        "INVALID_INPUT",
+        "Pull Request Reviewにはrepository targetを作成できません。",
+      );
     }
     if (target.kind === "issue") {
       const storedById = this.database.getIssue(target.issue);
@@ -2438,21 +2515,26 @@ export class RvwService {
       : write();
   }
 
-  private async prepareBranchCommentTarget(
-    branchReview: BranchReview,
+  private async prepareRepositoryCommentTarget(
+    repositoryReview: RepositoryReview,
     target: CommentTargetRequest,
-  ): Promise<BranchCommentTarget> {
-    if (target.kind === "branch") return target;
+  ): Promise<RepositoryReviewCommentTarget> {
+    if (target.kind === "repository") return target;
     if (target.kind === "pull-request") {
-      throw new RvwError("INVALID_INPUT", "Branch ReviewにはPull Request targetを作成できません。");
+      throw new RvwError(
+        "INVALID_INPUT",
+        "Repository ReviewにはPull Request targetを作成できません。",
+      );
     }
     if (target.kind === "issue") {
       const storedById = this.database.getIssue(target.issue);
-      const identity = storedById ? storedById : parseIssueReference(target.issue, branchReview);
+      const identity = storedById
+        ? storedById
+        : parseIssueReference(target.issue, repositoryReview);
       const issue =
         storedById ?? this.database.findIssue(identity.owner, identity.repository, identity.number);
-      if (!issue || !this.database.hasReviewIssue("branch", branchReview.id, issue.id)) {
-        throw new RvwError("ISSUE_NOT_FOUND", "このBranch ReviewにIssueが登録されていません。");
+      if (!issue || !this.database.hasReviewIssue("repository", repositoryReview.id, issue.id)) {
+        throw new RvwError("ISSUE_NOT_FOUND", "このRepository ReviewにIssueが登録されていません。");
       }
       const startLine = target.startLine ?? null;
       const endLine = target.endLine ?? null;
@@ -2475,9 +2557,9 @@ export class RvwService {
       };
     }
     if (target.kind === "walkthrough") {
-      const walkthrough = this.database.getBranchWalkthrough(target.walkthroughId);
-      if (!walkthrough || walkthrough.branchReviewId !== branchReview.id) {
-        throw new RvwError("INVALID_INPUT", "このBranch ReviewのWalkthroughが見つかりません。");
+      const walkthrough = this.database.getRepositoryWalkthrough(target.walkthroughId);
+      if (!walkthrough || walkthrough.repositoryReviewId !== repositoryReview.id) {
+        throw new RvwError("INVALID_INPUT", "このRepository ReviewのWalkthroughが見つかりません。");
       }
       const startLine = target.startLine ?? null;
       const endLine = target.endLine ?? null;
@@ -2498,18 +2580,18 @@ export class RvwService {
       };
     }
     if (target.documentKind === "pull-request-markdown") {
-      throw new RvwError("INVALID_INPUT", "Branch ReviewにPull Request.mdはありません。");
+      throw new RvwError("INVALID_INPUT", "Repository ReviewにPull Request.mdはありません。");
     }
     assertLinePair(target.startLine, target.endLine);
-    if (target.sourceOid !== branchReview.sourceOid) {
+    if (target.sourceOid !== repositoryReview.sourceOid) {
       throw new RvwError(
         "INVALID_INPUT",
-        "Branch Reviewの新規code commentはcurrent source OIDを対象にしてください。",
+        "Repository Reviewの新規code commentはcurrent source OIDを対象にしてください。",
       );
     }
-    await this.assertBranchCommitAvailable(branchReview, target.sourceOid);
+    await this.assertRepositoryReviewCommitAvailable(repositoryReview, target.sourceOid);
     const content = await this.git.readDocument(
-      branchReview.localRepositoryPath,
+      repositoryReview.localRepositoryPath,
       target.sourceOid,
       target.path,
     );
@@ -2527,43 +2609,52 @@ export class RvwService {
     return target;
   }
 
-  private async writeWithBranchRetainedCommit<T>(
-    branchReview: BranchReview,
+  private async writeWithRepositoryRetainedCommit<T>(
+    repositoryReview: RepositoryReview,
     sourceOid: string,
     write: () => T,
   ): Promise<T> {
-    await this.git.ensureBranchCommitRef(
-      branchReview.localRepositoryPath,
-      branchReview.id,
+    const retained = await this.git.ensureRepositoryReviewCommitRef(
+      repositoryReview.localRepositoryPath,
+      repositoryReview.id,
       sourceOid,
     );
-    return write();
+    try {
+      return write();
+    } catch (error) {
+      if (retained.created && !this.database.getRepositoryReview(repositoryReview.id)) {
+        await this.git
+          .deleteRef(repositoryReview.localRepositoryPath, retained.ref, sourceOid)
+          .catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
-  async createBranchComment(input: {
-    branchReviewId: string;
+  async createRepositoryComment(input: {
+    repositoryReviewId: string;
     target: CommentTargetRequest;
     body: string;
     authorLabel?: string | null;
     relatedCommitOid?: string | null;
     references?: CodeReference[];
-  }): Promise<BranchReviewComment> {
-    const branchReview = this.getBranchReview(input.branchReviewId);
-    await this.branchRepositoryFor(branchReview);
-    const target = await this.prepareBranchCommentTarget(branchReview, input.target);
+  }): Promise<RepositoryReviewComment> {
+    const repositoryReview = this.getRepositoryReview(input.repositoryReviewId);
+    await this.repositoryContextFor(repositoryReview);
+    const target = await this.prepareRepositoryCommentTarget(repositoryReview, input.target);
     const body = assertTextBody(input.body);
     assertAuthorLabel(input.authorLabel);
     const references = input.references ?? [];
-    await this.validateCodeReferences(branchReview, {
+    await this.validateCodeReferences(repositoryReview, {
       sourceOid: input.relatedCommitOid ?? null,
       body,
       references,
       subject: "comment post",
     });
-    const write = (): BranchReviewComment =>
-      this.database.createBranchComment({
-        branchReviewId: branchReview.id,
-        createdSourceOid: branchReview.sourceOid,
+    const write = (): RepositoryReviewComment =>
+      this.database.createRepositoryComment({
+        repositoryReviewId: repositoryReview.id,
+        createdSourceOid: repositoryReview.sourceOid,
         target,
         body,
         ...(input.relatedCommitOid === undefined
@@ -2573,23 +2664,27 @@ export class RvwService {
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
       });
     return input.relatedCommitOid
-      ? await this.writeWithBranchRetainedCommit(branchReview, input.relatedCommitOid, write)
+      ? await this.writeWithRepositoryRetainedCommit(
+          repositoryReview,
+          input.relatedCommitOid,
+          write,
+        )
       : write();
   }
 
   async createCommentForReference(
     input: CommentCreateRequest,
-  ): Promise<ReviewComment | BranchReviewComment> {
+  ): Promise<ReviewComment | RepositoryReviewComment> {
     const review =
       input.review ??
       (input.pullRequest
         ? { kind: "pull-request" as const, pullRequest: input.pullRequest }
         : null);
     if (!review) throw new RvwError("INVALID_INPUT", "review targetが必要です。");
-    if (review.kind === "branch") {
-      const branchReview = this.resolveStoredBranchReview(review.repository);
-      return await this.createBranchComment({
-        branchReviewId: branchReview.id,
+    if (review.kind === "repository") {
+      const repositoryReview = this.resolveStoredRepositoryReview(review.repository);
+      return await this.createRepositoryComment({
+        repositoryReviewId: repositoryReview.id,
         target: input.target,
         body: input.body,
         ...(input.relatedCommitOid === undefined
@@ -2618,16 +2713,16 @@ export class RvwService {
     return { pullRequest: this.getPullRequest(comment.pullRequestId), comment };
   }
 
-  getBranchCommentByUri(uri: string): {
-    branchReview: BranchReview;
-    comment: BranchReviewComment;
+  getRepositoryCommentByUri(uri: string): {
+    repositoryReview: RepositoryReview;
+    comment: RepositoryReviewComment;
   } {
     const id = parseCommentUri(uri);
-    const comment = this.database.getBranchComment(id);
+    const comment = this.database.getRepositoryComment(id);
     if (!comment) {
       throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
     }
-    return { branchReview: this.getBranchReview(comment.branchReviewId), comment };
+    return { repositoryReview: this.getRepositoryReview(comment.repositoryReviewId), comment };
   }
 
   private async getCommentExactSource(comment: ReviewComment): Promise<CommentExactSource | null> {
@@ -2652,14 +2747,14 @@ export class RvwService {
     };
   }
 
-  private async getBranchCommentExactSource(
-    branchReview: BranchReview,
-    comment: BranchReviewComment,
+  private async getRepositoryCommentExactSource(
+    repositoryReview: RepositoryReview,
+    comment: RepositoryReviewComment,
   ): Promise<CommentExactSource | null> {
     if (comment.target.kind !== "document") return null;
     const target = comment.target;
     const content = await this.git.readDocument(
-      branchReview.localRepositoryPath,
+      repositoryReview.localRepositoryPath,
       target.sourceOid,
       target.path,
     );
@@ -2674,24 +2769,25 @@ export class RvwService {
     };
   }
 
-  private async placeBranchCommentAtSource(
-    branchReview: BranchReview,
-    comment: BranchReviewComment,
+  private async placeRepositoryCommentAtSource(
+    repositoryReview: RepositoryReview,
+    comment: RepositoryReviewComment,
     destinationOid: string,
-    cache?: BranchPlacementCache,
+    cache?: RepositoryPlacementCache,
   ): Promise<CommentPlacement> {
     const target = comment.target;
-    if (target.kind === "branch") return { outdated: false, range: null, path: null };
+    if (target.kind === "repository") return { outdated: false, range: null, path: null };
     if (target.kind === "issue") {
       const issue = this.database.getIssue(target.issueId);
       return placeIssueComment(
         target,
         issue,
-        issue !== null && this.database.hasReviewIssue("branch", branchReview.id, target.issueId),
+        issue !== null &&
+          this.database.hasReviewIssue("repository", repositoryReview.id, target.issueId),
       );
     }
     if (target.kind === "walkthrough") {
-      const walkthrough = this.database.getBranchWalkthrough(target.walkthroughId);
+      const walkthrough = this.database.getRepositoryWalkthrough(target.walkthroughId);
       if (!walkthrough) return { outdated: true, range: null, path: null };
       if (target.startLine === null || target.endLine === null) {
         return { outdated: false, range: null, path: null };
@@ -2706,7 +2802,7 @@ export class RvwService {
             let changesPromise = cache?.changedFiles.get(cacheKey);
             if (!changesPromise) {
               changesPromise = this.git.changedFiles(
-                branchReview.localRepositoryPath,
+                repositoryReview.localRepositoryPath,
                 target.sourceOid,
                 destinationOid,
               );
@@ -2725,7 +2821,11 @@ export class RvwService {
       const cacheKey = `${oid}:${filePath}`;
       let documentPromise = cache?.documents.get(cacheKey);
       if (!documentPromise) {
-        documentPromise = this.git.readDocument(branchReview.localRepositoryPath, oid, filePath);
+        documentPromise = this.git.readDocument(
+          repositoryReview.localRepositoryPath,
+          oid,
+          filePath,
+        );
         cache?.documents.set(cacheKey, documentPromise);
       }
       return documentPromise;
@@ -2751,33 +2851,33 @@ export class RvwService {
       : { outdated: true, range: null, path: resolved.path };
   }
 
-  async placeBranchCommentAtCommit(
-    branchReviewId: string,
-    comment: BranchReviewComment,
+  async placeRepositoryCommentAtCommit(
+    repositoryReviewId: string,
+    comment: RepositoryReviewComment,
     destinationOid: string,
   ): Promise<CommentPlacement> {
-    const branchReview = this.getBranchReview(branchReviewId);
-    if (comment.branchReviewId !== branchReview.id) {
+    const repositoryReview = this.getRepositoryReview(repositoryReviewId);
+    if (comment.repositoryReviewId !== repositoryReview.id) {
       return { outdated: true, range: null, path: null };
     }
-    await this.assertBranchCommitAvailable(branchReview, destinationOid);
-    return await this.placeBranchCommentAtSource(branchReview, comment, destinationOid);
+    await this.assertRepositoryReviewCommitAvailable(repositoryReview, destinationOid);
+    return await this.placeRepositoryCommentAtSource(repositoryReview, comment, destinationOid);
   }
 
-  placeBranchWalkthroughComment(
-    branchReviewId: string,
-    comment: BranchReviewComment,
+  placeRepositoryWalkthroughComment(
+    repositoryReviewId: string,
+    comment: RepositoryReviewComment,
     walkthroughId: string,
   ): CommentPlacement {
     if (
-      comment.branchReviewId !== branchReviewId ||
+      comment.repositoryReviewId !== repositoryReviewId ||
       comment.target.kind !== "walkthrough" ||
       comment.target.walkthroughId !== walkthroughId
     ) {
       return { outdated: true, range: null, path: null };
     }
-    const walkthrough = this.database.getBranchWalkthrough(walkthroughId);
-    if (!walkthrough || walkthrough.branchReviewId !== branchReviewId) {
+    const walkthrough = this.database.getRepositoryWalkthrough(walkthroughId);
+    if (!walkthrough || walkthrough.repositoryReviewId !== repositoryReviewId) {
       return { outdated: true, range: null, path: null };
     }
     if (comment.target.startLine === null || comment.target.endLine === null) {
@@ -2786,13 +2886,13 @@ export class RvwService {
     return { ...placeMutableDocumentComment(comment.target, walkthrough.body), path: null };
   }
 
-  placeBranchIssueComment(
-    branchReviewId: string,
-    comment: BranchReviewComment,
+  placeRepositoryIssueComment(
+    repositoryReviewId: string,
+    comment: RepositoryReviewComment,
     issueId: string,
   ): CommentPlacement {
     if (
-      comment.branchReviewId !== branchReviewId ||
+      comment.repositoryReviewId !== repositoryReviewId ||
       comment.target.kind !== "issue" ||
       comment.target.issueId !== issueId
     ) {
@@ -2802,40 +2902,48 @@ export class RvwService {
     return placeIssueComment(
       comment.target,
       issue,
-      issue !== null && this.database.hasReviewIssue("branch", branchReviewId, issue.id),
+      issue !== null && this.database.hasReviewIssue("repository", repositoryReviewId, issue.id),
     );
   }
 
   async getAnyCommentReviewContext(
     uri: string,
     options: { live?: boolean } = {},
-  ): Promise<CommentReviewContext | BranchCommentReviewContext> {
+  ): Promise<CommentReviewContext | RepositoryCommentReviewContext> {
     const id = parseCommentUri(uri);
-    const branchComment = this.database.getBranchComment(id);
-    if (branchComment) {
-      const branchReview = this.getBranchReview(branchComment.branchReviewId);
-      await this.branchRepositoryFor(branchReview);
+    const repositoryComment = this.database.getRepositoryComment(id);
+    if (repositoryComment) {
+      const repositoryReview = this.getRepositoryReview(repositoryComment.repositoryReviewId);
+      await this.repositoryContextFor(repositoryReview);
       const [latestPlacement, exactSource] = await Promise.all([
-        this.placeBranchCommentAtSource(branchReview, branchComment, branchReview.sourceOid),
-        this.getBranchCommentExactSource(branchReview, branchComment),
+        this.placeRepositoryCommentAtSource(
+          repositoryReview,
+          repositoryComment,
+          repositoryReview.sourceOid,
+        ),
+        this.getRepositoryCommentExactSource(repositoryReview, repositoryComment),
       ]);
       return {
         context: {
-          kind: "branch",
-          branchReviewId: branchReview.id,
-          repository: branchReview.canonicalName,
+          kind: "repository",
+          repositoryReviewId: repositoryReview.id,
+          repository: repositoryReview.canonicalName,
         },
-        branchReview,
-        comment: branchComment,
+        repositoryReview,
+        comment: repositoryComment,
         latestPlacement,
         exactSource,
         walkthrough:
-          branchComment.target.kind === "walkthrough"
-            ? this.database.getBranchWalkthrough(branchComment.target.walkthroughId)
+          repositoryComment.target.kind === "walkthrough"
+            ? this.database.getRepositoryWalkthrough(repositoryComment.target.walkthroughId)
             : null,
         issue:
-          branchComment.target.kind === "issue"
-            ? this.database.getReviewIssue("branch", branchReview.id, branchComment.target.issueId)
+          repositoryComment.target.kind === "issue"
+            ? this.database.getReviewIssue(
+                "repository",
+                repositoryReview.id,
+                repositoryComment.target.issueId,
+              )
             : null,
         githubState: { liveCheckedAt: null, staleAgainstGitHub: null, live: null },
       };
@@ -2890,22 +2998,22 @@ export class RvwService {
     };
   }
 
-  async listBranchCommentContexts(
-    branchReviewId: string,
+  async listRepositoryCommentContexts(
+    repositoryReviewId: string,
     resolved?: boolean,
-  ): Promise<Array<{ comment: BranchReviewComment; latestPlacement: CommentPlacement }>> {
-    const branchReview = this.getBranchReview(branchReviewId);
-    const cache: BranchPlacementCache = {
+  ): Promise<Array<{ comment: RepositoryReviewComment; latestPlacement: CommentPlacement }>> {
+    const repositoryReview = this.getRepositoryReview(repositoryReviewId);
+    const cache: RepositoryPlacementCache = {
       changedFiles: new Map(),
       documents: new Map(),
     };
     return await Promise.all(
-      this.database.listBranchComments(branchReviewId, resolved).map(async (comment) => ({
+      this.database.listRepositoryComments(repositoryReviewId, resolved).map(async (comment) => ({
         comment,
-        latestPlacement: await this.placeBranchCommentAtSource(
-          branchReview,
+        latestPlacement: await this.placeRepositoryCommentAtSource(
+          repositoryReview,
           comment,
-          branchReview.sourceOid,
+          repositoryReview.sourceOid,
           cache,
         ),
       })),
@@ -3003,9 +3111,12 @@ export class RvwService {
     return this.database.listComments(pullRequestId, resolved);
   }
 
-  listBranchComments(branchReviewId: string, resolved?: boolean): BranchReviewComment[] {
-    this.getBranchReview(branchReviewId);
-    return this.database.listBranchComments(branchReviewId, resolved);
+  listRepositoryComments(
+    repositoryReviewId: string,
+    resolved?: boolean,
+  ): RepositoryReviewComment[] {
+    this.getRepositoryReview(repositoryReviewId);
+    return this.database.listRepositoryComments(repositoryReviewId, resolved);
   }
 
   listWalkthroughs(pullRequestId: string): WalkthroughSummary[] {
@@ -3013,77 +3124,83 @@ export class RvwService {
     return this.database.listWalkthroughs(pullRequestId);
   }
 
-  listBranchWalkthroughs(branchReviewId: string): BranchWalkthroughSummary[] {
-    this.getBranchReview(branchReviewId);
-    return this.database.listBranchWalkthroughs(branchReviewId);
+  listRepositoryWalkthroughs(repositoryReviewId: string): RepositoryWalkthroughSummary[] {
+    this.getRepositoryReview(repositoryReviewId);
+    return this.database.listRepositoryWalkthroughs(repositoryReviewId);
   }
 
-  getBranchWalkthrough(branchReviewId: string, walkthroughId: string): BranchWalkthrough {
-    this.getBranchReview(branchReviewId);
-    const walkthrough = this.database.getBranchWalkthrough(walkthroughId);
-    if (!walkthrough || walkthrough.branchReviewId !== branchReviewId) {
+  getRepositoryWalkthrough(
+    repositoryReviewId: string,
+    walkthroughId: string,
+  ): RepositoryWalkthrough {
+    this.getRepositoryReview(repositoryReviewId);
+    const walkthrough = this.database.getRepositoryWalkthrough(walkthroughId);
+    if (!walkthrough || walkthrough.repositoryReviewId !== repositoryReviewId) {
       throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
     }
     return walkthrough;
   }
 
-  async getBranchResetPreview(branchReviewId: string): Promise<{
-    branchReview: BranchReview;
-    counts: BranchResetCounts;
+  async getRepositoryResetPreview(repositoryReviewId: string): Promise<{
+    repositoryReview: RepositoryReview;
+    counts: RepositoryResetCounts;
     retainedRefs: string[];
     reviewChangeSequence: number;
     confirmationToken: string;
     confirmationRequired: true;
   }> {
-    const branchReview = this.getBranchReview(branchReviewId);
-    const resolved = await this.branchLifecycle.resolveExistingAtPath(
-      branchReview.localRepositoryPath,
+    const repositoryReview = this.getRepositoryReview(repositoryReviewId);
+    const resolved = await this.repositoryLifecycle.resolveExistingAtPath(
+      repositoryReview.localRepositoryPath,
       {
         policy: { kind: "destructive", allowMissingInitialRef: true },
-        expectedBranchReviewId: branchReview.id,
+        expectedRepositoryReviewId: repositoryReview.id,
       },
     );
-    return await this.getResolvedBranchResetPreview(resolved);
+    return await this.getResolvedRepositoryResetPreview(resolved);
   }
 
-  async getBranchResetPreviewAtPath(repositoryPath: string): Promise<{
-    branchReview: BranchReview;
-    counts: BranchResetCounts;
+  async getRepositoryResetPreviewAtPath(repositoryPath: string): Promise<{
+    repositoryReview: RepositoryReview;
+    counts: RepositoryResetCounts;
     retainedRefs: string[];
     reviewChangeSequence: number;
     confirmationToken: string;
     confirmationRequired: true;
   }> {
-    const resolved = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+    const resolved = await this.repositoryLifecycle.resolveExistingAtPath(repositoryPath, {
       policy: { kind: "destructive", allowMissingInitialRef: true },
     });
-    return await this.getResolvedBranchResetPreview(resolved);
+    return await this.getResolvedRepositoryResetPreview(resolved);
   }
 
-  private async getResolvedBranchResetPreview(resolved: ResolvedBranchReview): Promise<{
-    branchReview: BranchReview;
-    counts: BranchResetCounts;
+  private async getResolvedRepositoryResetPreview(resolved: ResolvedRepositoryReview): Promise<{
+    repositoryReview: RepositoryReview;
+    counts: RepositoryResetCounts;
     retainedRefs: string[];
     reviewChangeSequence: number;
     confirmationToken: string;
     confirmationRequired: true;
   }> {
-    const branchReviewId = resolved.branchReview.id;
+    const repositoryReviewId = resolved.repositoryReview.id;
     const { repository } = resolved;
-    const prefix = `refs/rvw/branch/${branchReviewId.toLowerCase()}/commits/`;
+    const prefix = `refs/rvw/repository/${repositoryReviewId.toLowerCase()}/commits/`;
     const retainedRefs = await this.git.listRefsByPrefix(repository.worktreePath, prefix);
-    const branchReview = this.getBranchReview(branchReviewId);
-    const counts = this.database.getBranchResetCounts(branchReviewId, retainedRefs.length);
-    const reviewChangeSequence = this.database.getReviewChangeSequence("branch", branchReviewId);
+    const repositoryReview = this.getRepositoryReview(repositoryReviewId);
+    const counts = this.database.getRepositoryResetCounts(repositoryReviewId, retainedRefs.length);
+    const reviewChangeSequence = this.database.getReviewChangeSequence(
+      "repository",
+      repositoryReviewId,
+    );
     return {
-      branchReview,
+      repositoryReview,
       counts,
       retainedRefs,
       reviewChangeSequence,
       confirmationToken: destructiveConfirmationToken({
-        operation: "branch-reset",
-        reviewKind: "branch",
-        reviewId: branchReview.id,
+        operation: "repository-reset",
+        reviewKind: "repository",
+        reviewId: repositoryReview.id,
         reviewChangeSequence,
         counts,
         retainedRefs,
@@ -3092,84 +3209,84 @@ export class RvwService {
     };
   }
 
-  async resetBranchReview(
-    branchReviewId: string,
+  async resetRepositoryReview(
+    repositoryReviewId: string,
     confirmationToken: string,
   ): Promise<{
-    branchReview: BranchReview;
-    deleted: BranchResetCounts;
+    repositoryReview: RepositoryReview;
+    deleted: RepositoryResetCounts;
     removedRefs: string[];
     outcome:
       | { kind: "completed" }
       | {
           kind: "completed-with-orphan-refs";
-          branchReviewDeleted: true;
+          repositoryReviewDeleted: true;
           remainingRefs: string[] | null;
           refPrefix: string;
           repositoryPath: string;
           manualCleanupPossible: true;
         };
   }> {
-    const branchReview = this.getBranchReview(branchReviewId);
-    const resolved = await this.branchLifecycle.resolveExistingAtPath(
-      branchReview.localRepositoryPath,
+    const repositoryReview = this.getRepositoryReview(repositoryReviewId);
+    const resolved = await this.repositoryLifecycle.resolveExistingAtPath(
+      repositoryReview.localRepositoryPath,
       {
         policy: { kind: "destructive", allowMissingInitialRef: true },
-        expectedBranchReviewId: branchReview.id,
+        expectedRepositoryReviewId: repositoryReview.id,
       },
     );
-    return await this.resetResolvedBranchReview(resolved, confirmationToken);
+    return await this.resetResolvedRepositoryReview(resolved, confirmationToken);
   }
 
-  async resetBranchReviewAtPath(
+  async resetRepositoryReviewAtPath(
     repositoryPath: string,
     confirmationToken: string,
   ): Promise<{
-    branchReview: BranchReview;
-    deleted: BranchResetCounts;
+    repositoryReview: RepositoryReview;
+    deleted: RepositoryResetCounts;
     removedRefs: string[];
     outcome:
       | { kind: "completed" }
       | {
           kind: "completed-with-orphan-refs";
-          branchReviewDeleted: true;
+          repositoryReviewDeleted: true;
           remainingRefs: string[] | null;
           refPrefix: string;
           repositoryPath: string;
           manualCleanupPossible: true;
         };
   }> {
-    const resolved = await this.branchLifecycle.resolveExistingAtPath(repositoryPath, {
+    const resolved = await this.repositoryLifecycle.resolveExistingAtPath(repositoryPath, {
       policy: { kind: "destructive", allowMissingInitialRef: true },
     });
-    return await this.resetResolvedBranchReview(resolved, confirmationToken);
+    return await this.resetResolvedRepositoryReview(resolved, confirmationToken);
   }
 
-  private async resetResolvedBranchReview(
-    resolved: ResolvedBranchReview,
+  private async resetResolvedRepositoryReview(
+    resolved: ResolvedRepositoryReview,
     confirmationToken: string,
   ): Promise<{
-    branchReview: BranchReview;
-    deleted: BranchResetCounts;
+    repositoryReview: RepositoryReview;
+    deleted: RepositoryResetCounts;
     removedRefs: string[];
     outcome:
       | { kind: "completed" }
       | {
           kind: "completed-with-orphan-refs";
-          branchReviewDeleted: true;
+          repositoryReviewDeleted: true;
           remainingRefs: string[] | null;
           refPrefix: string;
           repositoryPath: string;
           manualCleanupPossible: true;
         };
   }> {
-    const preview = await this.getResolvedBranchResetPreview(resolved);
+    const preview = await this.getResolvedRepositoryResetPreview(resolved);
     assertDestructiveConfirmation(confirmationToken, preview);
-    const prefix = `refs/rvw/branch/${preview.branchReview.id.toLowerCase()}/commits/`;
-    let deleted: BranchResetCounts;
+    const prefix = `refs/rvw/repository/${preview.repositoryReview.id.toLowerCase()}/commits/`;
+    let deleted: RepositoryResetCounts;
     try {
-      deleted = this.database.resetBranchReview(
-        preview.branchReview.id,
+      deleted = this.database.resetRepositoryReview(
+        preview.repositoryReview.id,
         preview.retainedRefs.length,
         preview.reviewChangeSequence,
       );
@@ -3177,7 +3294,7 @@ export class RvwService {
       if (asRvwError(error).code === "DESTRUCTIVE_PREVIEW_STALE") {
         throw destructiveStaleErrorWithCurrentPreview(
           error,
-          await this.getResolvedBranchResetPreview(resolved),
+          await this.getResolvedRepositoryResetPreview(resolved),
         );
       }
       throw error;
@@ -3187,7 +3304,7 @@ export class RvwService {
       | { kind: "completed" }
       | {
           kind: "completed-with-orphan-refs";
-          branchReviewDeleted: true;
+          repositoryReviewDeleted: true;
           remainingRefs: string[] | null;
           refPrefix: string;
           repositoryPath: string;
@@ -3213,7 +3330,7 @@ export class RvwService {
         removedCount = removedRefs.length;
         outcome = {
           kind: "completed-with-orphan-refs",
-          branchReviewDeleted: true,
+          repositoryReviewDeleted: true,
           remainingRefs,
           refPrefix: prefix,
           repositoryPath: resolved.repository.worktreePath,
@@ -3222,7 +3339,7 @@ export class RvwService {
       }
     }
     return {
-      branchReview: preview.branchReview,
+      repositoryReview: preview.repositoryReview,
       deleted: { ...deleted, gitRefs: removedCount },
       removedRefs,
       outcome,
@@ -3249,11 +3366,12 @@ export class RvwService {
     };
   }
 
-  getAnyWalkthroughByUri(
-    uri: string,
-  ):
+  getAnyWalkthroughByUri(uri: string):
     | { context: { kind: "pull-request"; pullRequest: PullRequest }; walkthrough: Walkthrough }
-    | { context: { kind: "branch"; branchReview: BranchReview }; walkthrough: BranchWalkthrough } {
+    | {
+        context: { kind: "repository"; repositoryReview: RepositoryReview };
+        walkthrough: RepositoryWalkthrough;
+      } {
     const id = parseWalkthroughUri(uri);
     const pullRequestWalkthrough = this.database.getWalkthrough(id);
     if (pullRequestWalkthrough) {
@@ -3265,21 +3383,31 @@ export class RvwService {
         walkthrough: pullRequestWalkthrough,
       };
     }
-    const branchWalkthrough = this.database.getBranchWalkthrough(id);
-    if (branchWalkthrough) {
+    const repositoryWalkthrough = this.database.getRepositoryWalkthrough(id);
+    if (repositoryWalkthrough) {
       return {
         context: {
-          kind: "branch",
-          branchReview: this.getBranchReview(branchWalkthrough.branchReviewId),
+          kind: "repository",
+          repositoryReview: this.getRepositoryReview(repositoryWalkthrough.repositoryReviewId),
         },
-        walkthrough: branchWalkthrough,
+        walkthrough: repositoryWalkthrough,
       };
     }
     throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
   }
 
+  async getBoundAnyWalkthroughByUri(
+    uri: string,
+  ): Promise<ReturnType<RvwService["getAnyWalkthroughByUri"]>> {
+    const current = this.getAnyWalkthroughByUri(uri);
+    if (current.context.kind === "repository") {
+      await this.resolveBoundRepositoryArtifactContext(current.context.repositoryReview);
+    }
+    return current;
+  }
+
   private async validateWalkthroughContent(
-    review: PullRequest | BranchReview,
+    review: PullRequest | RepositoryReview,
     input: WalkthroughContentRequest,
   ): Promise<
     Omit<WalkthroughContentRequest, "diagramBindings"> & {
@@ -3287,7 +3415,7 @@ export class RvwService {
     }
   > {
     if ("defaultBranchName" in review) {
-      await this.assertBranchCommitAvailable(review, input.sourceOid);
+      await this.assertRepositoryReviewCommitAvailable(review, input.sourceOid);
     } else {
       await this.assertCommitAvailable(review, input.sourceOid);
     }
@@ -3361,15 +3489,27 @@ export class RvwService {
   }
 
   private async fetchRequestedIssues(
-    review: PullRequest | BranchReview,
+    review: PullRequest | RepositoryReview,
     references: string[],
   ): Promise<GitHubIssue[]> {
     if (references.length === 0) return [];
+    if (references.length > MAX_WALKTHROUGH_ISSUES_TO_ADD) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `issuesToAddは一回の操作につき${MAX_WALKTHROUGH_ISSUES_TO_ADD}件以下にしてください。`,
+      );
+    }
     if (!this.github.getIssue) {
       throw new RvwError("GITHUB_ISSUE_ERROR", "GitHub Issue取得が利用できません。");
     }
     const issueNumbers = new Set<number>();
     for (const reference of references) {
+      if (reference.length > MAX_ISSUE_REFERENCE_CHARACTERS) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `Issue referenceは${MAX_ISSUE_REFERENCE_CHARACTERS}文字以下にしてください。`,
+        );
+      }
       const identity = parseIssueReference(reference, review);
       if (
         identity.owner.toLowerCase() !== review.owner.toLowerCase() ||
@@ -3378,6 +3518,12 @@ export class RvwService {
         throw new RvwError("INVALID_INPUT", "cross-repository Issueは追加できません。");
       }
       issueNumbers.add(identity.number);
+    }
+    if (issueNumbers.size > MAX_WALKTHROUGH_ISSUES_TO_ADD) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `issuesToAddは重複除去後に${MAX_WALKTHROUGH_ISSUES_TO_ADD}件以下にしてください。`,
+      );
     }
     return await mapWithConcurrency([...issueNumbers], ISSUE_FETCH_CONCURRENCY, async (number) =>
       assertFetchedIssueIdentity(
@@ -3403,19 +3549,23 @@ export class RvwService {
         ? { kind: "pull-request" as const, pullRequest: input.pullRequest }
         : null);
     if (!target) throw new RvwError("INVALID_INPUT", "review targetが必要です。");
-    if (target.kind === "branch") {
-      const branchReview = this.resolveStoredBranchReview(target.repository);
-      if (input.sourceOid !== branchReview.sourceOid) {
+    if (target.kind === "repository") {
+      const stored = this.resolveStoredRepositoryReview(target.repository);
+      const { repositoryReview } = await this.resolveBoundRepositoryArtifactContext(
+        stored,
+        (input.issuesToAdd?.length ?? 0) > 0 ? "remote-mutation" : "local-artifact",
+      );
+      if (input.sourceOid !== repositoryReview.sourceOid) {
         throw new RvwError(
           "INVALID_INPUT",
-          "Branch Walkthroughのpublishはcurrent source OIDを対象にしてください。",
+          "Repository Walkthroughのpublishはcurrent source OIDを対象にしてください。",
         );
       }
-      const content = await this.validateWalkthroughContent(branchReview, input);
-      const issues = await this.fetchRequestedIssues(branchReview, input.issuesToAdd ?? []);
-      return await this.writeWithBranchRetainedCommit(branchReview, content.sourceOid, () =>
-        this.database.createBranchWalkthrough(
-          { branchReviewId: branchReview.id, ...content },
+      const content = await this.validateWalkthroughContent(repositoryReview, input);
+      const issues = await this.fetchRequestedIssues(repositoryReview, input.issuesToAdd ?? []);
+      return await this.writeWithRepositoryRetainedCommit(repositoryReview, content.sourceOid, () =>
+        this.database.createRepositoryWalkthrough(
+          { repositoryReviewId: repositoryReview.id, ...content },
           issues,
         ),
       );
@@ -3432,11 +3582,18 @@ export class RvwService {
     uri: string,
     input: WalkthroughUpdateRequest,
   ): Promise<WalkthroughMutationResult> {
-    const current = this.getAnyWalkthroughByUri(uri);
+    const current = await this.getBoundAnyWalkthroughByUri(uri);
+    const repositoryReview =
+      current.context.kind === "repository"
+        ? (
+            await this.resolveBoundRepositoryArtifactContext(
+              current.context.repositoryReview,
+              (input.issuesToAdd?.length ?? 0) > 0 ? "remote-mutation" : "local-artifact",
+            )
+          ).repositoryReview
+        : null;
     const review =
-      current.context.kind === "pull-request"
-        ? current.context.pullRequest
-        : current.context.branchReview;
+      current.context.kind === "pull-request" ? current.context.pullRequest : repositoryReview!;
     const content = await this.validateWalkthroughContent(review, {
       ...input,
       authorLabel:
@@ -3447,25 +3604,23 @@ export class RvwService {
       ? await this.writeWithRetainedCommit(current.context.pullRequest, content.sourceOid, () =>
           this.database.updateWalkthrough(current.walkthrough.id, content, issues),
         )
-      : await this.writeWithBranchRetainedCommit(
-          current.context.branchReview,
-          content.sourceOid,
-          () => this.database.updateBranchWalkthrough(current.walkthrough.id, content, issues),
+      : await this.writeWithRepositoryRetainedCommit(repositoryReview!, content.sourceOid, () =>
+          this.database.updateRepositoryWalkthrough(current.walkthrough.id, content, issues),
         );
   }
 
-  getWalkthroughDeletePreview(uri: string): WalkthroughDeletePreview {
-    const current = this.getAnyWalkthroughByUri(uri);
+  async getWalkthroughDeletePreview(uri: string): Promise<WalkthroughDeletePreview> {
+    const current = await this.getBoundAnyWalkthroughByUri(uri);
     const { walkthrough } = current;
     const reviewKind = current.context.kind;
     const reviewId =
       current.context.kind === "pull-request"
         ? current.context.pullRequest.id
-        : current.context.branchReview.id;
+        : current.context.repositoryReview.id;
     const counts =
       current.context.kind === "pull-request"
         ? this.database.getWalkthroughDeleteCounts(walkthrough.id)
-        : this.database.getBranchWalkthroughDeleteCounts(walkthrough.id);
+        : this.database.getRepositoryWalkthroughDeleteCounts(walkthrough.id);
     const reviewChangeSequence = this.database.getReviewChangeSequence(reviewKind, reviewId);
     return {
       walkthrough,
@@ -3483,66 +3638,69 @@ export class RvwService {
     };
   }
 
-  private deleteWalkthroughWithPreview(
+  private async deleteWalkthroughWithPreview(
     uri: string,
     current: ReturnType<RvwService["getAnyWalkthroughByUri"]>,
     preview: WalkthroughDeletePreview,
-  ): DeletedWalkthrough | DeletedBranchWalkthrough {
+  ): Promise<DeletedWalkthrough | DeletedRepositoryWalkthrough> {
     try {
       return current.context.kind === "pull-request"
         ? this.database.deleteWalkthrough(current.walkthrough.id, preview.reviewChangeSequence)
-        : this.database.deleteBranchWalkthrough(
+        : this.database.deleteRepositoryWalkthrough(
             current.walkthrough.id,
             preview.reviewChangeSequence,
           );
     } catch (error) {
       if (asRvwError(error).code === "DESTRUCTIVE_PREVIEW_STALE") {
-        throw destructiveStaleErrorWithCurrentPreview(error, this.getWalkthroughDeletePreview(uri));
+        throw destructiveStaleErrorWithCurrentPreview(
+          error,
+          await this.getWalkthroughDeletePreview(uri),
+        );
       }
       throw error;
     }
   }
 
-  deleteWalkthroughByUri(
+  async deleteWalkthroughByUri(
     uri: string,
     confirmationToken: string,
-  ): DeletedWalkthrough | DeletedBranchWalkthrough {
-    const current = this.getAnyWalkthroughByUri(uri);
-    const preview = this.getWalkthroughDeletePreview(uri);
+  ): Promise<DeletedWalkthrough | DeletedRepositoryWalkthrough> {
+    const current = await this.getBoundAnyWalkthroughByUri(uri);
+    const preview = await this.getWalkthroughDeletePreview(uri);
     assertDestructiveConfirmation(confirmationToken, preview);
-    return this.deleteWalkthroughWithPreview(uri, current, preview);
+    return await this.deleteWalkthroughWithPreview(uri, current, preview);
   }
 
-  deleteWalkthrough(
+  async deleteWalkthrough(
     pullRequestId: string,
     walkthroughId: string,
     confirmationToken: string,
-  ): DeletedWalkthrough {
+  ): Promise<DeletedWalkthrough> {
     this.getWalkthrough(pullRequestId, walkthroughId);
     const uri = `rvw://walkthrough/${walkthroughId}`;
     const current = this.getAnyWalkthroughByUri(uri);
-    const preview = this.getWalkthroughDeletePreview(uri);
+    const preview = await this.getWalkthroughDeletePreview(uri);
     assertDestructiveConfirmation(confirmationToken, preview);
-    const deleted = this.deleteWalkthroughWithPreview(uri, current, preview);
+    const deleted = await this.deleteWalkthroughWithPreview(uri, current, preview);
     if (!("pullRequestId" in deleted)) {
       throw new RvwError("INVALID_INPUT", "この操作はPull Request Walkthrough専用です。");
     }
     return deleted;
   }
 
-  deleteBranchWalkthrough(
-    branchReviewId: string,
+  async deleteRepositoryWalkthrough(
+    repositoryReviewId: string,
     walkthroughId: string,
     confirmationToken: string,
-  ): DeletedBranchWalkthrough {
-    this.getBranchWalkthrough(branchReviewId, walkthroughId);
+  ): Promise<DeletedRepositoryWalkthrough> {
+    this.getRepositoryWalkthrough(repositoryReviewId, walkthroughId);
     const uri = `rvw://walkthrough/${walkthroughId}`;
     const current = this.getAnyWalkthroughByUri(uri);
-    const preview = this.getWalkthroughDeletePreview(uri);
+    const preview = await this.getWalkthroughDeletePreview(uri);
     assertDestructiveConfirmation(confirmationToken, preview);
-    const deleted = this.deleteWalkthroughWithPreview(uri, current, preview);
-    if (!("branchReviewId" in deleted)) {
-      throw new RvwError("INVALID_INPUT", "この操作はBranch Walkthrough専用です。");
+    const deleted = await this.deleteWalkthroughWithPreview(uri, current, preview);
+    if (!("repositoryReviewId" in deleted)) {
+      throw new RvwError("INVALID_INPUT", "この操作はRepository Walkthrough専用です。");
     }
     return deleted;
   }
@@ -3564,20 +3722,20 @@ export class RvwService {
     const body = assertTextBody(input.body);
     const references = input.references ?? [];
     if (!comment) {
-      const branchComment = this.database.getBranchComment(id);
-      if (!branchComment) {
+      const repositoryComment = this.database.getRepositoryComment(id);
+      if (!repositoryComment) {
         throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
       }
-      const branchReview = this.getBranchReview(branchComment.branchReviewId);
-      await this.branchRepositoryFor(branchReview);
-      await this.validateCodeReferences(branchReview, {
+      const repositoryReview = this.getRepositoryReview(repositoryComment.repositoryReviewId);
+      await this.repositoryContextFor(repositoryReview);
+      await this.validateCodeReferences(repositoryReview, {
         sourceOid: input.relatedCommitOid ?? null,
         body,
         references,
         subject: "comment reply",
       });
       const write = (): CommentPost =>
-        this.database.insertBranchReply(id, {
+        this.database.insertRepositoryReply(id, {
           ...input,
           body,
           references,
@@ -3586,7 +3744,7 @@ export class RvwService {
             : {
                 idempotencyRequestHash: idempotencyRequestHash({
                   operation: "comment.reply",
-                  reviewKind: "branch",
+                  reviewKind: "repository",
                   commentId: id,
                   body,
                   relatedCommitOid: input.relatedCommitOid ?? null,
@@ -3596,7 +3754,11 @@ export class RvwService {
               }),
         });
       return input.relatedCommitOid
-        ? await this.writeWithBranchRetainedCommit(branchReview, input.relatedCommitOid, write)
+        ? await this.writeWithRepositoryRetainedCommit(
+            repositoryReview,
+            input.relatedCommitOid,
+            write,
+          )
         : write();
     }
     const pullRequest = this.getPullRequest(comment.pullRequestId);
@@ -3629,21 +3791,42 @@ export class RvwService {
       : write();
   }
 
-  setCommentResolved(uriOrId: string, resolved: boolean): ReviewComment | BranchReviewComment {
+  async setCommentResolved(
+    uriOrId: string,
+    resolved: boolean,
+  ): Promise<ReviewComment | RepositoryReviewComment> {
     const id = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
-    if (!this.database.getComment(id)) return this.database.setBranchCommentResolved(id, resolved);
+    if (!this.database.getComment(id)) {
+      const comment = this.database.getRepositoryComment(id);
+      if (!comment) {
+        throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
+      }
+      await this.resolveBoundRepositoryArtifactContext(
+        this.getRepositoryReview(comment.repositoryReviewId),
+      );
+      return this.database.setRepositoryCommentResolved(id, resolved);
+    }
     return this.database.setCommentResolved(id, resolved);
   }
 
-  deleteComment(uriOrId: string): { id: string; ref: string } {
+  async deleteComment(uriOrId: string): Promise<{ id: string; ref: string }> {
     const id = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
-    if (!this.database.getComment(id)) return this.database.deleteBranchComment(id);
+    if (!this.database.getComment(id)) {
+      const comment = this.database.getRepositoryComment(id);
+      if (!comment) {
+        throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
+      }
+      await this.resolveBoundRepositoryArtifactContext(
+        this.getRepositoryReview(comment.repositoryReviewId),
+      );
+      return this.database.deleteRepositoryComment(id);
+    }
     return this.database.deleteComment(id);
   }
 
   async updateCommentPost(commentId: string, postId: string, body: string): Promise<CommentPost> {
     const comment =
-      this.database.getComment(commentId) ?? this.database.getBranchComment(commentId);
+      this.database.getComment(commentId) ?? this.database.getRepositoryComment(commentId);
     const post = comment?.posts.find((candidate) => candidate.id === postId);
     if (!comment || !post) {
       throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
@@ -3668,11 +3851,11 @@ export class RvwService {
   ): Promise<CommentPost> {
     const commentId = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
     const comment = this.database.getComment(commentId);
-    const branchComment = comment ? null : this.database.getBranchComment(commentId);
-    if (!comment && !branchComment) {
+    const repositoryComment = comment ? null : this.database.getRepositoryComment(commentId);
+    if (!comment && !repositoryComment) {
       throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
     }
-    const post = (comment ?? branchComment)!.posts.find((candidate) => candidate.id === postId);
+    const post = (comment ?? repositoryComment)!.posts.find((candidate) => candidate.id === postId);
     if (!post) {
       throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
         status: 404,
@@ -3684,8 +3867,8 @@ export class RvwService {
     const references = input.references ?? post.references;
     const review = comment
       ? this.getPullRequest(comment.pullRequestId)
-      : this.getBranchReview(branchComment!.branchReviewId);
-    if (branchComment) await this.branchRepositoryFor(review as BranchReview);
+      : this.getRepositoryReview(repositoryComment!.repositoryReviewId);
+    if (repositoryComment) await this.repositoryContextFor(review as RepositoryReview);
     await this.validateCodeReferences(review, {
       sourceOid: relatedCommitOid,
       body,
@@ -3701,7 +3884,7 @@ export class RvwService {
             input.relatedCommitOid,
             references,
           )
-        : this.database.updateBranchCommentPost(
+        : this.database.updateRepositoryCommentPost(
             commentId,
             postId,
             body,
@@ -3711,12 +3894,23 @@ export class RvwService {
     if (!relatedCommitOid) return write();
     return comment
       ? await this.writeWithRetainedCommit(review as PullRequest, relatedCommitOid, write)
-      : await this.writeWithBranchRetainedCommit(review as BranchReview, relatedCommitOid, write);
+      : await this.writeWithRepositoryRetainedCommit(
+          review as RepositoryReview,
+          relatedCommitOid,
+          write,
+        );
   }
 
-  deleteReply(commentId: string, postId: string): { commentId: string; postId: string } {
-    if (this.database.getBranchComment(commentId)) {
-      return this.database.deleteBranchReply(commentId, postId);
+  async deleteReply(
+    commentId: string,
+    postId: string,
+  ): Promise<{ commentId: string; postId: string }> {
+    const repositoryComment = this.database.getRepositoryComment(commentId);
+    if (repositoryComment) {
+      await this.resolveBoundRepositoryArtifactContext(
+        this.getRepositoryReview(repositoryComment.repositoryReviewId),
+      );
+      return this.database.deleteRepositoryReply(commentId, postId);
     }
     return this.database.deleteReply(commentId, postId);
   }

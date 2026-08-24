@@ -44,9 +44,9 @@ function removePullRequestIssue(
   );
 }
 
-function deleteWalkthrough(service: RvwService, uri: string) {
-  const preview = service.getWalkthroughDeletePreview(uri);
-  return service.deleteWalkthroughByUri(uri, preview.confirmationToken);
+async function deleteWalkthrough(service: RvwService, uri: string) {
+  const preview = await service.getWalkthroughDeletePreview(uri);
+  return await service.deleteWalkthroughByUri(uri, preview.confirmationToken);
 }
 
 class OneShotBarrier {
@@ -255,16 +255,16 @@ describe("RvwService commit workflow", () => {
     expect(database.getChangeSequence()).toBe(changeSequence);
   });
 
-  it("reports 64-character Branch retained-ref OIDs instead of silently dropping them", async () => {
+  it("reports 64-character Repository Review retained-ref OIDs instead of silently dropping them", async () => {
     const { repository, service } = setup("rvw-doctor-sha256-ref-");
     const oid = "a".repeat(64);
     const reviewId = "11111111-1111-4111-8111-111111111111";
     vi.spyOn(service.git, "listRefsByPrefix").mockResolvedValue([
-      `refs/rvw/branch/${reviewId}/commits/oid-${oid}`,
+      `refs/rvw/repository/${reviewId}/commits/oid-${oid}`,
     ]);
 
     await expect(service.doctor(repository)).resolves.toMatchObject({
-      branchRetainedRefs: {
+      repositoryReviewRetainedRefs: {
         refs: [{ reviewId, oid, status: "orphan-review" }],
       },
     });
@@ -284,6 +284,10 @@ describe("RvwService commit workflow", () => {
         "Closes #142.",
         "Also acme/review-repo#99.",
         "See [the tracked issue](https://github.com/acme/review-repo/issues/88).",
+        "Ignore [upstream issue #77](https://github.com/other/repository/issues/77).",
+        "Ignore [Issue #77][upstream].",
+        "[upstream]: https://github.com/other/repository/issues/77",
+        "Ignore malformed https://github.com/acme/review-repo/issues/123abc.",
         "Ignore other/repository#77.",
         "Inline code is not a relation: `#66`.",
         "```text",
@@ -846,7 +850,7 @@ describe("RvwService commit workflow", () => {
       opened.pullRequest.id,
       "#142",
     );
-    const walkthroughPreview = service.getWalkthroughDeletePreview(walkthrough.ref);
+    const walkthroughPreview = await service.getWalkthroughDeletePreview(walkthrough.ref);
     await service.createComment({
       pullRequestId: opened.pullRequest.id,
       target: { kind: "pull-request" },
@@ -863,9 +867,9 @@ describe("RvwService commit workflow", () => {
         issuePreview.confirmationToken,
       ),
     ).toThrowError(expect.objectContaining({ code: "DESTRUCTIVE_PREVIEW_STALE", status: 409 }));
-    expect(() =>
+    await expect(
       service.deleteWalkthroughByUri(walkthrough.ref, walkthroughPreview.confirmationToken),
-    ).toThrowError(expect.objectContaining({ code: "DESTRUCTIVE_PREVIEW_STALE", status: 409 }));
+    ).rejects.toMatchObject({ code: "DESTRUCTIVE_PREVIEW_STALE", status: 409 });
     expect(database.hasReviewIssue("pull-request", opened.pullRequest.id, added.issue.id)).toBe(
       true,
     );
@@ -934,7 +938,7 @@ describe("RvwService commit workflow", () => {
         ],
       })
     ).walkthrough;
-    const walkthroughPreview = service.getWalkthroughDeletePreview(walkthrough.ref);
+    const walkthroughPreview = await service.getWalkthroughDeletePreview(walkthrough.ref);
     const deleteWalkthrough = database.deleteWalkthrough.bind(database);
     vi.spyOn(database, "deleteWalkthrough").mockImplementationOnce(
       (...args: Parameters<RvwDatabase["deleteWalkthrough"]>) => {
@@ -946,9 +950,9 @@ describe("RvwService commit workflow", () => {
       },
     );
 
-    const walkthroughError = (() => {
+    const walkthroughError = await (async () => {
       try {
-        service.deleteWalkthroughByUri(walkthrough.ref, walkthroughPreview.confirmationToken);
+        await service.deleteWalkthroughByUri(walkthrough.ref, walkthroughPreview.confirmationToken);
         return null;
       } catch (error) {
         return error as RvwError;
@@ -1447,7 +1451,7 @@ describe("RvwService commit workflow", () => {
     };
     await service.refreshPullRequest(opened.pullRequest.id);
 
-    service.setCommentResolved(codeComment.ref, true);
+    await service.setCommentResolved(codeComment.ref, true);
     await service.replyToComment(codeComment.ref, {
       body: "A follow-up on the resolved thread.",
       authorLabel: "Codex",
@@ -2056,12 +2060,12 @@ describe("RvwService commit workflow", () => {
     });
     await service.replyToComment(comment.ref, { body: "Confirmed." });
 
-    expect(service.getWalkthroughDeletePreview(walkthrough.ref)).toMatchObject({
+    await expect(service.getWalkthroughDeletePreview(walkthrough.ref)).resolves.toMatchObject({
       walkthrough: { id: walkthrough.id },
       counts: { comments: 1, posts: 2, references: 1 },
       confirmationRequired: true,
     });
-    expect(deleteWalkthrough(service, walkthrough.ref)).toEqual({
+    await expect(deleteWalkthrough(service, walkthrough.ref)).resolves.toEqual({
       id: walkthrough.id,
       ref: walkthrough.ref,
       pullRequestId: opened.pullRequest.id,
@@ -2167,7 +2171,7 @@ describe("RvwService commit workflow", () => {
       authorLabel: "You",
     });
 
-    expect(service.deleteComment(deletable.ref)).toEqual({
+    await expect(service.deleteComment(deletable.ref)).resolves.toEqual({
       id: deletable.id,
       ref: deletable.ref,
     });
@@ -2220,16 +2224,16 @@ describe("RvwService commit workflow", () => {
       body: "Disposable reply",
     });
 
-    expect(() => service.deleteReply(replied.id, replied.posts[0]!.id)).toThrowError(
-      expect.objectContaining({ code: "COMMENT_DELETE_NOT_ALLOWED" }),
-    );
+    await expect(service.deleteReply(replied.id, replied.posts[0]!.id)).rejects.toMatchObject({
+      code: "COMMENT_DELETE_NOT_ALLOWED",
+    });
 
-    expect(service.deleteReply(replied.id, disposableReply.id)).toEqual({
+    await expect(service.deleteReply(replied.id, disposableReply.id)).resolves.toEqual({
       commentId: replied.id,
       postId: disposableReply.id,
     });
     expect(service.database.listCommentPosts(replied.id)).toHaveLength(2);
-    expect(service.deleteComment(replied.id)).toEqual({
+    await expect(service.deleteComment(replied.id)).resolves.toEqual({
       id: replied.id,
       ref: replied.ref,
     });
@@ -2287,7 +2291,7 @@ describe("RvwService commit workflow", () => {
     expect(retried.id).toBe(reply.id);
     expect(service.listCommentPostEvents(replayed.cursor).events).toEqual([]);
 
-    service.deleteReply(comment.id, reply.id);
+    await service.deleteReply(comment.id, reply.id);
     expect(service.listCommentPostEvents(anchored.cursor).events).toMatchObject([
       { event: { postId: reply.id, deleted: true } },
     ]);

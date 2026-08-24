@@ -9,7 +9,7 @@
     "github",
     "local-first",
     "pull-request",
-    "branch-review"
+    "repository-review"
   ],
   "license": "MIT",
   "homepage": "https://github.com/a9n-shoji/rvw#readme",

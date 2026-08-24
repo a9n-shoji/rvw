@@ -34,13 +34,13 @@ rvw walkthrough get <WALKTHROUGH_URI> --json
 ```
 
 Read the complete current body, source OID, diagram bindings, references, and owning Pull Request or
-Branch Review repository location before revising or deleting it. Walkthroughs have one current value
+Repository Review repository location before revising or deleting it. Walkthroughs have one current value
 and no local revision history.
 
-For a Branch Walkthrough, let RVW validate the saved Git common directory, current local remote
-identity when available, and that Branch Review ID's retained source ref. Do not work around
+For a Repository Walkthrough, let RVW validate the saved Git common directory, current local remote
+identity when available, and that Repository Review ID's retained source ref. Do not work around
 `REPOSITORY_MISMATCH` by changing a path or treating another clone/ref namespace as equivalent. A
-repository rename or transfer requires an explicit Branch reset/recreate outside this authoring flow.
+repository rename or transfer requires an explicit Repository Review reset/recreate outside this authoring flow.
 
 ## Prepare the artifact
 
@@ -93,12 +93,14 @@ RVW_JSON
 
 Set the optional `authorLabel` to an accurate current Agent name when known; otherwise omit it.
 
-For a Branch Review, require `branchReview.read` and publish with
-`"review": { "kind": "branch", "repository": "owner/repository" }`. Use the current default-branch
-source OID returned by RVW. A Branch Walkthrough may support evaluation of an Issue or an architecture
+For a Repository Review, require `repositoryReview.read` and publish with
+`"review": { "kind": "repository", "repository": "owner/repository" }`. Use the current default-branch
+source OID returned by RVW. A Repository Walkthrough may support evaluation of an Issue or an architecture
 investigation without an Issue, but must not merely paraphrase Issue text. Optional
 `"issuesToAdd": ["#98", "#156"]` adds only those same-repository Issues while publishing or updating.
-Do not recursively discover linked Issues; omitting an Issue from a later update does not remove it.
+The field accepts at most 50 references of at most 256 characters. Repository Review additions require
+the canonical remote to remain resolvable and bound before Issue fetches. Do not recursively discover
+linked Issues; omitting an Issue from a later update does not remove it.
 
 Parse the successful response as `{ "ok": true, "walkthrough": {...}, "issuesAdded": [...] }` and
 report the returned `walkthrough.ref`. `issuesAdded` is always present, including as `[]`, and has the

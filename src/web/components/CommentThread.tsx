@@ -37,7 +37,7 @@ const referenceNoticeDurationMs = 2400;
 function rangeLabel(comment: AnyReviewComment, placement: CommentPlacement | null): string | null {
   if (
     comment.target.kind === "pull-request" ||
-    comment.target.kind === "branch" ||
+    comment.target.kind === "repository" ||
     comment.target.startLine === null
   )
     return null;
@@ -53,7 +53,7 @@ function targetLabel(
   side: DiffSide,
 ): string {
   if (comment.target.kind === "pull-request") return "Pull Request全体";
-  if (comment.target.kind === "branch") return "Branch Review全体";
+  if (comment.target.kind === "repository") return "Repository Review全体";
   if (comment.target.kind === "walkthrough") {
     return [
       comment.target.walkthroughTitle,
@@ -83,7 +83,7 @@ function inlineTargetLabel(
   side: DiffSide,
 ): string {
   if (comment.target.kind === "pull-request") return "Pull Request全体";
-  if (comment.target.kind === "branch") return "Branch Review全体";
+  if (comment.target.kind === "repository") return "Repository Review全体";
   if (comment.target.kind === "walkthrough") {
     return rangeLabel(comment, placement) ?? "ウォークスルー全体";
   }
@@ -175,7 +175,7 @@ function CommentPostMarkdown({
         body={post.body}
         {...("pullRequestId" in comment
           ? { pullRequestId: comment.pullRequestId }
-          : { branchReviewId: comment.branchReviewId })}
+          : { repositoryReviewId: comment.repositoryReviewId })}
         sourceOid={sourceOid}
         sourcePath={repositoryTarget?.path ?? null}
         references={post.references}

@@ -1,4 +1,4 @@
-CREATE TABLE branch_reviews (
+CREATE TABLE repository_reviews (
   id TEXT PRIMARY KEY,
   host TEXT NOT NULL CHECK(host = 'github.com'),
   owner TEXT NOT NULL COLLATE NOCASE,
@@ -46,15 +46,15 @@ CREATE TABLE pull_request_issues (
 
 CREATE INDEX pull_request_issues_issue ON pull_request_issues(issue_id);
 
-CREATE TABLE branch_review_issues (
-  branch_review_id TEXT NOT NULL REFERENCES branch_reviews(id) ON DELETE CASCADE,
+CREATE TABLE repository_review_issues (
+  repository_review_id TEXT NOT NULL REFERENCES repository_reviews(id) ON DELETE CASCADE,
   issue_id TEXT NOT NULL REFERENCES github_issues(id),
   added_at TEXT NOT NULL,
   sync_error TEXT,
-  PRIMARY KEY(branch_review_id, issue_id)
+  PRIMARY KEY(repository_review_id, issue_id)
 );
 
-CREATE INDEX branch_review_issues_issue ON branch_review_issues(issue_id);
+CREATE INDEX repository_review_issues_issue ON repository_review_issues(issue_id);
 
 CREATE TABLE comment_targets_v5 (
   comment_id TEXT PRIMARY KEY REFERENCES comments(id) ON DELETE CASCADE,
@@ -114,9 +114,9 @@ CREATE INDEX comment_targets_document ON comment_targets(document_kind, source_o
 CREATE INDEX comment_targets_walkthrough ON comment_targets(walkthrough_id);
 CREATE INDEX comment_targets_issue ON comment_targets(issue_id);
 
-CREATE TABLE branch_walkthroughs (
+CREATE TABLE repository_walkthroughs (
   id TEXT PRIMARY KEY,
-  branch_review_id TEXT NOT NULL REFERENCES branch_reviews(id) ON DELETE CASCADE,
+  repository_review_id TEXT NOT NULL REFERENCES repository_reviews(id) ON DELETE CASCADE,
   source_oid TEXT NOT NULL,
   title TEXT NOT NULL CHECK(length(title) > 0),
   body TEXT NOT NULL CHECK(length(body) > 0),
@@ -125,8 +125,8 @@ CREATE TABLE branch_walkthroughs (
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE branch_walkthrough_references (
-  walkthrough_id TEXT NOT NULL REFERENCES branch_walkthroughs(id) ON DELETE CASCADE,
+CREATE TABLE repository_walkthrough_references (
+  walkthrough_id TEXT NOT NULL REFERENCES repository_walkthroughs(id) ON DELETE CASCADE,
   reference_id TEXT NOT NULL,
   label TEXT NOT NULL CHECK(length(label) > 0),
   file_path TEXT NOT NULL CHECK(length(file_path) > 0),
@@ -140,33 +140,33 @@ CREATE TABLE branch_walkthrough_references (
   PRIMARY KEY(walkthrough_id, reference_id)
 );
 
-CREATE INDEX branch_walkthroughs_review_created
-  ON branch_walkthroughs(branch_review_id, created_at DESC);
+CREATE INDEX repository_walkthroughs_review_created
+  ON repository_walkthroughs(repository_review_id, created_at DESC);
 
-CREATE TABLE branch_comments (
+CREATE TABLE repository_comments (
   id TEXT PRIMARY KEY,
-  branch_review_id TEXT NOT NULL REFERENCES branch_reviews(id) ON DELETE CASCADE,
+  repository_review_id TEXT NOT NULL REFERENCES repository_reviews(id) ON DELETE CASCADE,
   created_source_oid TEXT NOT NULL,
   resolved_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE branch_comment_targets (
-  comment_id TEXT PRIMARY KEY REFERENCES branch_comments(id) ON DELETE CASCADE,
-  target_kind TEXT NOT NULL CHECK(target_kind IN ('branch', 'repository_file', 'walkthrough', 'issue')),
+CREATE TABLE repository_comment_targets (
+  comment_id TEXT PRIMARY KEY REFERENCES repository_comments(id) ON DELETE CASCADE,
+  target_kind TEXT NOT NULL CHECK(target_kind IN ('repository', 'repository_file', 'walkthrough', 'issue')),
   source_oid TEXT,
   file_path TEXT,
   source_document_hash TEXT,
   quoted_text TEXT,
-  walkthrough_id TEXT REFERENCES branch_walkthroughs(id),
+  walkthrough_id TEXT REFERENCES repository_walkthroughs(id),
   issue_id TEXT REFERENCES github_issues(id),
   start_line INTEGER,
   end_line INTEGER,
   CHECK(start_line IS NULL OR start_line >= 1),
   CHECK(end_line IS NULL OR end_line >= start_line),
   CHECK(
-    (target_kind = 'branch' AND source_oid IS NULL AND file_path IS NULL AND source_document_hash IS NULL AND quoted_text IS NULL AND walkthrough_id IS NULL AND issue_id IS NULL AND start_line IS NULL AND end_line IS NULL)
+    (target_kind = 'repository' AND source_oid IS NULL AND file_path IS NULL AND source_document_hash IS NULL AND quoted_text IS NULL AND walkthrough_id IS NULL AND issue_id IS NULL AND start_line IS NULL AND end_line IS NULL)
     OR
     (target_kind = 'repository_file' AND source_oid IS NOT NULL AND file_path IS NOT NULL AND source_document_hash IS NULL AND quoted_text IS NULL AND walkthrough_id IS NULL AND issue_id IS NULL)
     OR
@@ -181,9 +181,9 @@ CREATE TABLE branch_comment_targets (
   CHECK((start_line IS NULL AND end_line IS NULL) OR (start_line IS NOT NULL AND end_line IS NOT NULL))
 );
 
-CREATE TABLE branch_comment_posts (
+CREATE TABLE repository_comment_posts (
   id TEXT PRIMARY KEY,
-  comment_id TEXT NOT NULL REFERENCES branch_comments(id) ON DELETE CASCADE,
+  comment_id TEXT NOT NULL REFERENCES repository_comments(id) ON DELETE CASCADE,
   body TEXT NOT NULL CHECK(length(body) > 0),
   related_commit_oid TEXT,
   author_label TEXT,
@@ -192,8 +192,8 @@ CREATE TABLE branch_comment_posts (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE branch_comment_post_references (
-  post_id TEXT NOT NULL REFERENCES branch_comment_posts(id) ON DELETE CASCADE,
+CREATE TABLE repository_comment_post_references (
+  post_id TEXT NOT NULL REFERENCES repository_comment_posts(id) ON DELETE CASCADE,
   reference_id TEXT NOT NULL,
   label TEXT NOT NULL CHECK(length(label) > 0),
   file_path TEXT NOT NULL CHECK(length(file_path) > 0),
@@ -207,29 +207,29 @@ CREATE TABLE branch_comment_post_references (
   PRIMARY KEY(post_id, reference_id)
 );
 
-CREATE INDEX branch_comments_review_state_updated
-  ON branch_comments(branch_review_id, resolved_at, updated_at);
-CREATE INDEX branch_comment_posts_comment_created
-  ON branch_comment_posts(comment_id, created_at);
-CREATE UNIQUE INDEX branch_comment_posts_one_root
-  ON branch_comment_posts(comment_id) WHERE is_root = 1;
-CREATE INDEX branch_comment_targets_issue ON branch_comment_targets(issue_id);
-CREATE INDEX branch_comment_targets_walkthrough ON branch_comment_targets(walkthrough_id);
+CREATE INDEX repository_comments_review_state_updated
+  ON repository_comments(repository_review_id, resolved_at, updated_at);
+CREATE INDEX repository_comment_posts_comment_created
+  ON repository_comment_posts(comment_id, created_at);
+CREATE UNIQUE INDEX repository_comment_posts_one_root
+  ON repository_comment_posts(comment_id) WHERE is_root = 1;
+CREATE INDEX repository_comment_targets_issue ON repository_comment_targets(issue_id);
+CREATE INDEX repository_comment_targets_walkthrough ON repository_comment_targets(walkthrough_id);
 
 -- One append-only sequence orders posts across both review kinds. Existing PR events keep their
--- original sequence; new PR and Branch events are written here after this migration.
+-- original sequence; new PR and Repository Review events are written here after this migration.
 CREATE TABLE review_comment_post_events (
   sequence INTEGER PRIMARY KEY AUTOINCREMENT,
   post_id TEXT NOT NULL UNIQUE,
   comment_ref TEXT NOT NULL,
-  review_kind TEXT NOT NULL CHECK(review_kind IN ('pull-request', 'branch')),
+  review_kind TEXT NOT NULL CHECK(review_kind IN ('pull-request', 'repository')),
   review_id TEXT NOT NULL,
   pull_request_url TEXT,
   repository TEXT,
   created_at TEXT NOT NULL,
   CHECK(
     (review_kind = 'pull-request' AND pull_request_url IS NOT NULL AND repository IS NULL)
-    OR (review_kind = 'branch' AND pull_request_url IS NULL AND repository IS NOT NULL)
+    OR (review_kind = 'repository' AND pull_request_url IS NULL AND repository IS NOT NULL)
   )
 );
 
@@ -238,7 +238,7 @@ INSERT INTO review_comment_post_events(
 )
 SELECT e.sequence, e.post_id, e.comment_ref, 'pull-request', pr.id, e.pull_request_url, NULL, e.created_at
 FROM comment_post_events e
-JOIN pull_requests pr ON pr.github_url = e.pull_request_url;
+LEFT JOIN pull_requests pr ON pr.github_url = e.pull_request_url;
 
 DROP TABLE comment_post_events;
 

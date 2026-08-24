@@ -18,7 +18,7 @@ import {
   createCommentSchema,
   editCommentPostSchema,
   issueMutationSchema,
-  openBranchReviewSchema,
+  openRepositoryReviewSchema,
   openPullRequestSchema,
   replySchema,
   resetSchema,
@@ -182,7 +182,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
       throw new RvwError("INVALID_INPUT", "reviewKindとreviewId queryは同時に指定してください。");
     }
     const parsedKind =
-      reviewKind === undefined ? null : z.enum(["pull-request", "branch"]).parse(reviewKind);
+      reviewKind === undefined ? null : z.enum(["pull-request", "repository"]).parse(reviewKind);
     const parsedReviewId = reviewId === undefined ? null : z.uuid().parse(reviewId);
     return context.json({
       ok: true,
@@ -419,28 +419,28 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }),
   );
 
-  app.get("/api/branch-reviews/:id", async (context) =>
+  app.get("/api/repository-reviews/:id", async (context) =>
     context.json({
       ok: true,
-      ...(await service.getBoundBranchReviewView(context.req.param("id"))),
+      ...(await service.getBoundRepositoryReviewView(context.req.param("id"))),
     }),
   );
 
-  app.post("/api/branch-reviews/open", async (context) => {
-    const input = openBranchReviewSchema.parse(await context.req.json());
-    return context.json({ ok: true, ...(await service.openBranchReview(input.cwd)) });
+  app.post("/api/repository-reviews/open", async (context) => {
+    const input = openRepositoryReviewSchema.parse(await context.req.json());
+    return context.json({ ok: true, ...(await service.openRepositoryReview(input.cwd)) });
   });
 
-  app.post("/api/branch-reviews/:id/sync", async (context) => {
+  app.post("/api/repository-reviews/:id/sync", async (context) => {
     return context.json({
       ok: true,
-      ...(await service.syncBranchReviewById(context.req.param("id"))),
+      ...(await service.syncRepositoryReviewById(context.req.param("id"))),
     });
   });
 
-  app.post("/api/branch-reviews/:id/reset", async (context) => {
+  app.post("/api/repository-reviews/:id/reset", async (context) => {
     const input = resetSchema.parse(await context.req.json());
-    const preview = await service.getBranchResetPreview(context.req.param("id"));
+    const preview = await service.getRepositoryResetPreview(context.req.param("id"));
     if (!input.yes) {
       return context.json(
         {
@@ -457,23 +457,23 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }
     return context.json({
       ok: true,
-      ...(await service.resetBranchReview(context.req.param("id"), input.confirmationToken)),
+      ...(await service.resetRepositoryReview(context.req.param("id"), input.confirmationToken)),
     });
   });
 
-  app.get("/api/branch-reviews/:id/tree", async (context) =>
-    context.json({ ok: true, ...(await service.getBranchTree(context.req.param("id"))) }),
+  app.get("/api/repository-reviews/:id/tree", async (context) =>
+    context.json({ ok: true, ...(await service.getRepositoryTree(context.req.param("id"))) }),
   );
 
-  app.get("/api/branch-reviews/:id/document", async (context) => {
-    const branchReviewId = context.req.param("id");
+  app.get("/api/repository-reviews/:id/document", async (context) => {
+    const repositoryReviewId = context.req.param("id");
     const query = context.req.query();
     if (query.kind === "issue-markdown" && query.issueId) {
       return context.json({
         ok: true,
-        document: await service.getBranchDocument({
+        document: await service.getRepositoryReviewDocument({
           kind: "issue-markdown",
-          branchReviewId,
+          repositoryReviewId,
           issueId: query.issueId,
         }),
       });
@@ -481,21 +481,21 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     if (query.kind === "repository-file" && query.sourceOid && query.path) {
       return context.json({
         ok: true,
-        document: await service.getBranchDocument({
+        document: await service.getRepositoryReviewDocument({
           kind: "repository-file",
-          branchReviewId,
+          repositoryReviewId,
           sourceOid: oidSchema.parse(query.sourceOid),
           path: query.path,
         }),
       });
     }
-    throw new RvwError("INVALID_INPUT", "Branch document参照queryが不正です。");
+    throw new RvwError("INVALID_INPUT", "Repository Review document参照queryが不正です。");
   });
 
-  app.on(["GET", "HEAD"], "/api/branch-reviews/:id/markdown-asset", async (context) => {
+  app.on(["GET", "HEAD"], "/api/repository-reviews/:id/markdown-asset", async (context) => {
     const sourceOid = oidQuery(context.req.query("sourceOid"), "sourceOid");
     const filePath = requiredQuery(context.req.query("path"), "path");
-    const asset = await service.getBranchRepositoryAsset(
+    const asset = await service.getRepositoryReviewAsset(
       context.req.param("id"),
       sourceOid,
       filePath,
@@ -513,14 +513,14 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
       : context.body(Uint8Array.from(asset.content));
   });
 
-  app.get("/api/branch-reviews/:id/github-attachment", async (context) => {
+  app.get("/api/repository-reviews/:id/github-attachment", async (context) => {
     assertSameOriginAttachmentRequest(
       context.req.header("sec-fetch-site"),
       context.req.header("origin"),
       options.security.expectedOrigin,
     );
     const absoluteUrl = requiredQuery(context.req.query("url"), "url");
-    const attachment = await service.getBranchGitHubAttachment(
+    const attachment = await service.getRepositoryGitHubAttachment(
       context.req.param("id"),
       absoluteUrl,
     );
@@ -528,47 +528,58 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     return context.body(Uint8Array.from(attachment.content));
   });
 
-  app.get("/api/branch-reviews/:id/search", async (context) => {
+  app.get("/api/repository-reviews/:id/search", async (context) => {
     const matchCase = parseBooleanQuery(context.req.query("matchCase"), "matchCase");
     const wholeWord = parseBooleanQuery(context.req.query("wholeWord"), "wholeWord");
     return context.json({
       ok: true,
-      ...(await service.searchBranch(context.req.param("id"), context.req.query("q") ?? "", {
-        matchCase,
-        wholeWord,
-      })),
+      ...(await service.searchRepositoryReview(
+        context.req.param("id"),
+        context.req.query("q") ?? "",
+        {
+          matchCase,
+          wholeWord,
+        },
+      )),
     });
   });
 
-  app.get("/api/branch-reviews/:id/issues", (context) =>
-    context.json({ ok: true, issues: service.listBranchIssues(context.req.param("id")) }),
+  app.get("/api/repository-reviews/:id/issues", (context) =>
+    context.json({ ok: true, issues: service.listRepositoryIssues(context.req.param("id")) }),
   );
 
-  app.get("/api/branch-reviews/:id/issues/:issueId", (context) =>
+  app.get("/api/repository-reviews/:id/issues/:issueId", (context) =>
     context.json({
       ok: true,
       issue: service.getReviewIssue(
-        "branch",
+        "repository",
         context.req.param("id"),
         context.req.param("issueId"),
       ),
     }),
   );
 
-  app.post("/api/branch-reviews/:id/issues", async (context) => {
+  app.post("/api/repository-reviews/:id/issues", async (context) => {
     const input = issueMutationSchema.parse(await context.req.json());
     return context.json({
       ok: true,
-      ...(await service.addBranchIssueById(context.req.param("id"), input.issue)),
+      ...(await service.addRepositoryIssueById(context.req.param("id"), input.issue)),
     });
   });
 
-  app.delete("/api/branch-reviews/:id/issues/:issueId", async (context) => {
+  app.delete("/api/repository-reviews/:id/issues/:issueId", async (context) => {
     const input = resetSchema.parse(await context.req.json());
-    const branchReview = service.getBranchReview(context.req.param("id"));
-    const issue = service.getReviewIssue("branch", branchReview.id, context.req.param("issueId"));
+    const repositoryReview = service.getRepositoryReview(context.req.param("id"));
+    const issue = service.getReviewIssue(
+      "repository",
+      repositoryReview.id,
+      context.req.param("issueId"),
+    );
     if (!input.yes) {
-      const preview = await service.getBranchIssueRemovalPreviewById(branchReview.id, issue.url);
+      const preview = await service.getRepositoryIssueRemovalPreviewById(
+        repositoryReview.id,
+        issue.url,
+      );
       return context.json(
         {
           ok: false,
@@ -584,39 +595,46 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }
     return context.json({
       ok: true,
-      ...(await service.removeBranchIssueById(branchReview.id, issue.url, input.confirmationToken)),
+      ...(await service.removeRepositoryIssueById(
+        repositoryReview.id,
+        issue.url,
+        input.confirmationToken,
+      )),
     });
   });
 
-  app.get("/api/branch-reviews/:id/comments", async (context) => {
+  app.get("/api/repository-reviews/:id/comments", async (context) => {
     const resolved = parseResolved(context.req.query("resolved"));
-    const comments = await service.listBranchCommentContextsById(context.req.param("id"), resolved);
+    const comments = await service.listRepositoryCommentContextsById(
+      context.req.param("id"),
+      resolved,
+    );
     return context.json({
       ok: true,
       comments,
     });
   });
 
-  app.get("/api/branch-reviews/:id/walkthroughs", (context) =>
+  app.get("/api/repository-reviews/:id/walkthroughs", (context) =>
     context.json({
       ok: true,
-      walkthroughs: service.listBranchWalkthroughs(context.req.param("id")),
+      walkthroughs: service.listRepositoryWalkthroughs(context.req.param("id")),
     }),
   );
 
-  app.get("/api/branch-reviews/:id/walkthroughs/:walkthroughId", (context) =>
+  app.get("/api/repository-reviews/:id/walkthroughs/:walkthroughId", (context) =>
     context.json({
       ok: true,
-      walkthrough: service.getBranchWalkthrough(
+      walkthrough: service.getRepositoryWalkthrough(
         context.req.param("id"),
         context.req.param("walkthroughId"),
       ),
     }),
   );
 
-  app.delete("/api/branch-reviews/:id/walkthroughs/:walkthroughId", async (context) => {
+  app.delete("/api/repository-reviews/:id/walkthroughs/:walkthroughId", async (context) => {
     const input = resetSchema.parse(await context.req.json());
-    const walkthrough = service.getBranchWalkthrough(
+    const walkthrough = service.getRepositoryWalkthrough(
       context.req.param("id"),
       context.req.param("walkthroughId"),
     );
@@ -628,14 +646,14 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
             code: "WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED",
             message: "Walkthrough削除には明示的な確認が必要です。",
           },
-          ...service.getWalkthroughDeletePreview(walkthrough.ref),
+          ...(await service.getWalkthroughDeletePreview(walkthrough.ref)),
         },
         409,
       );
     }
     return context.json({
       ok: true,
-      deleted: service.deleteBranchWalkthrough(
+      deleted: await service.deleteRepositoryWalkthrough(
         context.req.param("id"),
         context.req.param("walkthroughId"),
         input.confirmationToken,
@@ -657,14 +675,14 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
             code: "WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED",
             message: "Walkthrough削除には明示的な確認が必要です。",
           },
-          ...service.getWalkthroughDeletePreview(walkthrough.ref),
+          ...(await service.getWalkthroughDeletePreview(walkthrough.ref)),
         },
         409,
       );
     }
     return context.json({
       ok: true,
-      deleted: service.deleteWalkthrough(
+      deleted: await service.deleteWalkthrough(
         context.req.param("id"),
         context.req.param("walkthroughId"),
         input.confirmationToken,
@@ -674,9 +692,9 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
 
   app.post("/api/comments", async (context) => {
     const input = createCommentSchema.parse(await context.req.json());
-    const comment = input.branchReviewId
-      ? await service.createBranchComment({
-          branchReviewId: input.branchReviewId,
+    const comment = input.repositoryReviewId
+      ? await service.createRepositoryComment({
+          repositoryReviewId: input.repositoryReviewId,
           target: input.target,
           body: input.body,
           ...(input.relatedCommitOid === undefined
@@ -740,35 +758,44 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     });
   });
 
-  app.delete("/api/comments/:id/posts/:postId", (context) =>
+  app.delete("/api/comments/:id/posts/:postId", async (context) =>
     context.json({
       ok: true,
-      deleted: service.deleteReply(context.req.param("id"), context.req.param("postId")),
+      deleted: await service.deleteReply(context.req.param("id"), context.req.param("postId")),
     }),
   );
 
-  app.post("/api/comments/:id/resolve", (context) =>
-    context.json({ ok: true, comment: service.setCommentResolved(context.req.param("id"), true) }),
+  app.post("/api/comments/:id/resolve", async (context) =>
+    context.json({
+      ok: true,
+      comment: await service.setCommentResolved(context.req.param("id"), true),
+    }),
   );
 
-  app.post("/api/comments/:id/reopen", (context) =>
-    context.json({ ok: true, comment: service.setCommentResolved(context.req.param("id"), false) }),
+  app.post("/api/comments/:id/reopen", async (context) =>
+    context.json({
+      ok: true,
+      comment: await service.setCommentResolved(context.req.param("id"), false),
+    }),
   );
 
-  app.delete("/api/comments/:id", (context) =>
-    context.json({ ok: true, deleted: service.deleteComment(context.req.param("id")) }),
+  app.delete("/api/comments/:id", async (context) =>
+    context.json({ ok: true, deleted: await service.deleteComment(context.req.param("id")) }),
   );
 
   app.get("/api/comments/:id/placement", async (context) => {
     const comment = service.database.getComment(context.req.param("id"));
-    const branchComment = comment
+    const repositoryComment = comment
       ? null
-      : service.database.getBranchComment(context.req.param("id"));
-    if (!comment && !branchComment)
+      : service.database.getRepositoryComment(context.req.param("id"));
+    if (!comment && !repositoryComment)
       throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
-    if (branchComment) {
-      const branchReviewId = requiredQuery(context.req.query("branchReviewId"), "branchReviewId");
-      if (branchComment.branchReviewId !== branchReviewId) {
+    if (repositoryComment) {
+      const repositoryReviewId = requiredQuery(
+        context.req.query("repositoryReviewId"),
+        "repositoryReviewId",
+      );
+      if (repositoryComment.repositoryReviewId !== repositoryReviewId) {
         return context.json({
           ok: true,
           placement: { outdated: true as const, range: null, path: null },
@@ -778,9 +805,9 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
         const walkthroughId = requiredQuery(context.req.query("walkthroughId"), "walkthroughId");
         return context.json({
           ok: true,
-          placement: service.placeBranchWalkthroughComment(
-            branchReviewId,
-            branchComment,
+          placement: service.placeRepositoryWalkthroughComment(
+            repositoryReviewId,
+            repositoryComment,
             walkthroughId,
           ),
         });
@@ -789,7 +816,11 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
         const issueId = requiredQuery(context.req.query("issueId"), "issueId");
         return context.json({
           ok: true,
-          placement: service.placeBranchIssueComment(branchReviewId, branchComment, issueId),
+          placement: service.placeRepositoryIssueComment(
+            repositoryReviewId,
+            repositoryComment,
+            issueId,
+          ),
         });
       }
       const kind = context.req.query("kind");
@@ -799,11 +830,15 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
       } else if (kind === "commit") {
         oid = oidQuery(context.req.query("oid"), "oid");
       } else {
-        throw new RvwError("INVALID_INPUT", "Branch配置先queryが不正です。");
+        throw new RvwError("INVALID_INPUT", "Repository Review配置先queryが不正です。");
       }
       return context.json({
         ok: true,
-        placement: await service.placeBranchCommentAtCommit(branchReviewId, branchComment, oid),
+        placement: await service.placeRepositoryCommentAtCommit(
+          repositoryReviewId,
+          repositoryComment,
+          oid,
+        ),
       });
     }
     if (!comment) {

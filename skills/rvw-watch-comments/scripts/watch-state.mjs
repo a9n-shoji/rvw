@@ -35,8 +35,8 @@ function required(options, key) {
 }
 
 function reviewContext(kind, key, display) {
-  return kind === "branch"
-    ? { kind: "branch", branchReviewId: key, repository: display }
+  return kind === "repository"
+    ? { kind: "repository", repositoryReviewId: key, repository: display }
     : { kind: "pull-request", pullRequestId: key, pullRequestUrl: display };
 }
 
@@ -304,7 +304,7 @@ function quarantinedBatches(database) {
         batchId: batch.id,
         context,
         ...(context.kind === "pull-request" ? { pullRequest: context.pullRequestUrl } : {}),
-        ...(context.kind === "branch" ? { repository: context.repository } : {}),
+        ...(context.kind === "repository" ? { repository: context.repository } : {}),
         attempts: Number(batch.attempts),
         error: batch.last_error,
         operations: batchStatusOperations(database, batch.id),
@@ -476,14 +476,14 @@ function ingestEvent(database, frame) {
           key: event.context.pullRequestId,
           display: event.context.pullRequestUrl,
         }
-      : event?.context?.kind === "branch" &&
-          typeof event.context.branchReviewId === "string" &&
-          event.context.branchReviewId.length > 0 &&
+      : event?.context?.kind === "repository" &&
+          typeof event.context.repositoryReviewId === "string" &&
+          event.context.repositoryReviewId.length > 0 &&
           typeof event.context.repository === "string" &&
           event.context.repository.length > 0
         ? {
-            kind: "branch",
-            key: event.context.branchReviewId,
+            kind: "repository",
+            key: event.context.repositoryReviewId,
             display: event.context.repository,
           }
         : null;
@@ -625,7 +625,7 @@ function listPending(database) {
       return {
         context,
         ...(context.kind === "pull-request" ? { pullRequest: context.pullRequestUrl } : {}),
-        ...(context.kind === "branch" ? { repository: context.repository } : {}),
+        ...(context.kind === "repository" ? { repository: context.repository } : {}),
         batchId: row.batch_id ?? null,
         eventCount: Number(row.event_count),
         firstSequence: Number(row.first_sequence),
@@ -679,11 +679,11 @@ function reviewContextFromOptions(options) {
   const kind = required(options, "context-kind");
   const key = required(options, "context-key");
   const display = required(options, "context-display");
-  if (kind !== "pull-request" && kind !== "branch") {
-    fail("--context-kind must be pull-request or branch");
+  if (kind !== "pull-request" && kind !== "repository") {
+    fail("--context-kind must be pull-request or repository");
   }
-  if (kind === "branch" && !/^[^/\s]+\/[^/\s]+$/.test(display)) {
-    fail("Branch --context-display must be owner/repository");
+  if (kind === "repository" && !/^[^/\s]+\/[^/\s]+$/.test(display)) {
+    fail("Repository --context-display must be owner/repository");
   }
   return { kind, key, display };
 }
@@ -716,8 +716,8 @@ function createBatch(database, context, now) {
 }
 
 function claim(database, context, writeKey) {
-  if (context.kind === "branch" && writeKey !== undefined) {
-    fail("Branch Review batches are read-only and cannot reserve a write key");
+  if (context.kind === "repository" && writeKey !== undefined) {
+    fail("Repository Review batches are read-only and cannot reserve a write key");
   }
   if (writeKey !== undefined && getMeta(database, "own_mode") !== "fix-and-push") {
     fail("Task policy is investigate-and-reply and cannot reserve a write key");
@@ -790,11 +790,43 @@ function claim(database, context, writeKey) {
       batchId,
       context: reviewContext(context.kind, context.key, context.display),
       ...(context.kind === "pull-request" ? { pullRequest: context.display } : {}),
-      ...(context.kind === "branch" ? { repository: context.display } : {}),
+      ...(context.kind === "repository" ? { repository: context.display } : {}),
       attempts: Number(batch.attempts) + 1,
       writeKey: canonicalWriteKey ?? null,
       events,
       operations,
+    };
+  });
+}
+
+function rekeyPullRequestLease(database, leaseId, context) {
+  if (context.kind !== "pull-request") fail("Only Pull Request leases can be re-keyed");
+  return transaction(database, () => {
+    const batch = database
+      .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
+      .get(leaseId);
+    if (!batch) fail("Active lease was not found");
+    if (batch.review_kind !== "pull-request") fail("Active lease is not a Pull Request batch");
+    if (batch.context_display.toLowerCase() !== context.display.toLowerCase()) {
+      fail("Stable Pull Request context does not match the active lease URL");
+    }
+    const now = new Date().toISOString();
+    database
+      .prepare(
+        `UPDATE events SET context_key = ?, context_display = ?, pull_request_url = ?, updated_at = ?
+        WHERE batch_id = ? AND review_kind = 'pull-request'`,
+      )
+      .run(context.key, context.display, context.display, now, batch.id);
+    database
+      .prepare(
+        `UPDATE batches SET context_key = ?, context_display = ?, pull_request_url = ?, updated_at = ?
+        WHERE id = ?`,
+      )
+      .run(context.key, context.display, context.display, now, batch.id);
+    return {
+      batchId: batch.id,
+      context: reviewContext("pull-request", context.key, context.display),
+      changed: batch.context_key !== context.key || batch.context_display !== context.display,
     };
   });
 }
@@ -809,8 +841,8 @@ function reserveWrite(database, leaseId, writeKey) {
       .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
       .get(leaseId);
     if (!batch) fail("Active lease was not found");
-    if (batch.review_kind === "branch") {
-      fail("Branch Review batches are investigate-and-reply only");
+    if (batch.review_kind === "repository") {
+      fail("Repository Review batches are investigate-and-reply only");
     }
     if (getMeta(database, "own_mode") !== "fix-and-push") {
       fail("Task policy is investigate-and-reply and cannot reserve a write key");
@@ -1003,7 +1035,7 @@ function status(database) {
       leaseId: batch.lease_id,
       context: reviewContext(batch.review_kind, batch.context_key, batch.context_display),
       ...(batch.review_kind === "pull-request" ? { pullRequest: batch.context_display } : {}),
-      ...(batch.review_kind === "branch" ? { repository: batch.context_display } : {}),
+      ...(batch.review_kind === "repository" ? { repository: batch.context_display } : {}),
       attempts: Number(batch.attempts),
       writeKey: batch.write_key,
       updatedAt: batch.updated_at,
@@ -1074,6 +1106,14 @@ async function main() {
       write({
         ok: true,
         ...reserveWrite(database, required(options, "lease"), required(options, "write-key")),
+      });
+      return;
+    }
+    if (command === "rekey-lease") {
+      const context = reviewContextFromOptions(options);
+      write({
+        ok: true,
+        ...rekeyPullRequestLease(database, required(options, "lease"), context),
       });
       return;
     }

@@ -467,8 +467,8 @@ export class GitClient {
     return `refs/rvw/pr/${number}/commits/oid-${oid.toLowerCase()}`;
   }
 
-  branchCommitRef(branchReviewId: string, oid: string): string {
-    return `refs/rvw/branch/${branchReviewId.toLowerCase()}/commits/oid-${oid.toLowerCase()}`;
+  repositoryReviewCommitRef(repositoryReviewId: string, oid: string): string {
+    return `refs/rvw/repository/${repositoryReviewId.toLowerCase()}/commits/oid-${oid.toLowerCase()}`;
   }
 
   private async ensureExactCommitRef(
@@ -515,12 +515,12 @@ export class GitClient {
     });
   }
 
-  async ensureBranchCommitRef(
+  async ensureRepositoryReviewCommitRef(
     cwd: string,
-    branchReviewId: string,
+    repositoryReviewId: string,
     oid: string,
   ): Promise<EnsuredCommitRef> {
-    const ref = this.branchCommitRef(branchReviewId, oid);
+    const ref = this.repositoryReviewCommitRef(repositoryReviewId, oid);
     return await this.ensureExactCommitRef(cwd, ref, oid);
   }
 
@@ -542,8 +542,12 @@ export class GitClient {
     }
   }
 
-  async verifyBranchCommitRef(cwd: string, branchReviewId: string, oid: string): Promise<boolean> {
-    const ref = this.branchCommitRef(branchReviewId, oid);
+  async verifyRepositoryReviewCommitRef(
+    cwd: string,
+    repositoryReviewId: string,
+    oid: string,
+  ): Promise<boolean> {
+    const ref = this.repositoryReviewCommitRef(repositoryReviewId, oid);
     try {
       return (await runText("git", ["rev-parse", "--verify", ref], { cwd })) === oid;
     } catch {

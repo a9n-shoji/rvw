@@ -16,9 +16,9 @@ Provide an initial route through the implementation that lowers the cost of buil
 
 When the requested subject is a standalone architecture, flow, or surrounding-code explanation rather than a change, treat its central responsibility, contract, or path as the center. Do not require a diff or invent a change narrative.
 
-For a Branch Review, use the current default-branch source OID and explain the software that exists at
+For a Repository Review, use the current default-branch source OID and explain the software that exists at
 that exact commit. An Issue may establish the investigation question, but do not merely restate its
-body or require a future implementation plan. A Branch Walkthrough may also explain architecture with
+body or require a future implementation plan. A Repository Walkthrough may also explain architecture with
 no Issue. Add only explicitly requested same-repository Issues and never recursively discover related
 Issues.
 
@@ -108,5 +108,5 @@ Use this checklist internally; do not reproduce it mechanically in the Walkthrou
 - [ ] The output is an orientation path, not an AI review, approval plan, or completeness claim.
 - [ ] The endpoint leaves clear starting points for continued exploration.
 - [ ] Every file, symbol, range, link, and binding is real and valid at the selected commit.
-- [ ] A Branch Review uses the current exact default-branch source and does not paraphrase an Issue.
+- [ ] A Repository Review uses the current exact default-branch source and does not paraphrase an Issue.
 - [ ] A reviewer seeing the subject for the first time gains a useful route into the committed code.

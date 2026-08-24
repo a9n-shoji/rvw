@@ -2,11 +2,11 @@ import fuzzysort from "fuzzysort";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
-  BranchReview,
-  BranchReviewComment,
-  BranchSearchResponse,
-  BranchWalkthrough,
-  BranchWalkthroughSummary,
+  RepositoryReview,
+  RepositoryReviewComment,
+  RepositoryReviewSearchResponse,
+  RepositoryWalkthrough,
+  RepositoryWalkthroughSummary,
   CommentPlacement,
   IssueDocument,
   TreeEntry,
@@ -61,14 +61,14 @@ const WalkthroughViewer = lazy(async () => {
   return { default: module.WalkthroughViewer };
 });
 
-interface BranchReviewResponse {
-  branchReview: BranchReview;
+interface RepositoryReviewResponse {
+  repositoryReview: RepositoryReview;
   issues: IssueDocument[];
-  walkthroughs: BranchWalkthroughSummary[];
+  walkthroughs: RepositoryWalkthroughSummary[];
   selectedRemote: { name: string; url: string } | null;
 }
 
-interface BranchSyncResponse extends BranchReviewResponse {
+interface RepositorySyncResponse extends RepositoryReviewResponse {
   issueResults: Array<
     | {
         issue: IssueDocument;
@@ -83,12 +83,12 @@ interface BranchSyncResponse extends BranchReviewResponse {
   >;
 }
 
-interface BranchTreeResponse {
+interface RepositoryTreeResponse {
   entries: TreeEntry[];
 }
 
-interface BranchCommentsResponse {
-  comments: Array<{ comment: BranchReviewComment; latestPlacement: CommentPlacement }>;
+interface RepositoryCommentsResponse {
+  comments: Array<{ comment: RepositoryReviewComment; latestPlacement: CommentPlacement }>;
 }
 
 function shortOid(oid: string): string {
@@ -106,11 +106,11 @@ function repositoryDocument(
   };
 }
 
-export function BranchReviewApp({
-  branchReviewId,
+export function RepositoryReviewApp({
+  repositoryReviewId,
   initialThemePreference,
 }: {
-  branchReviewId: string;
+  repositoryReviewId: string;
   initialThemePreference: ThemePreference;
 }) {
   const queryClient = useQueryClient();
@@ -154,7 +154,7 @@ export function BranchReviewApp({
     right: null,
   });
   const documentScrollPositions = useRef(new Map<string, number>());
-  const reviewHistoryKey = `branch:${branchReviewId}`;
+  const reviewHistoryKey = `repository:${repositoryReviewId}`;
   const resetViewerNavigation = useCallback((paneIds: readonly DocumentPaneId[]): void => {
     const uniquePaneIds = [...new Set(paneIds)];
     const nextTargets = { ...viewerNavigationTargetsRef.current };
@@ -195,8 +195,8 @@ export function BranchReviewApp({
     activateWorkspaceDocument,
   });
   const openCodeReference = useExactCodeReferenceNavigation({
-    reviewKind: "branch",
-    reviewId: branchReviewId,
+    reviewKind: "repository",
+    reviewId: repositoryReviewId,
     workspaceRef,
     navigateToDocument,
   });
@@ -213,23 +213,24 @@ export function BranchReviewApp({
     onModeChange: setSidebarMode,
   });
   const reviewQuery = useQuery({
-    queryKey: reviewQueryKeys.review("branch", branchReviewId),
-    queryFn: async () => await api<BranchReviewResponse>(`/api/branch-reviews/${branchReviewId}`),
+    queryKey: reviewQueryKeys.review("repository", repositoryReviewId),
+    queryFn: async () =>
+      await api<RepositoryReviewResponse>(`/api/repository-reviews/${repositoryReviewId}`),
   });
   const treeQuery = useQuery({
     queryKey: reviewQueryKeys.tree(
-      "branch",
-      branchReviewId,
-      reviewQuery.data?.branchReview.sourceOid,
+      "repository",
+      repositoryReviewId,
+      reviewQuery.data?.repositoryReview.sourceOid,
     ),
     queryFn: async () =>
-      await api<BranchTreeResponse>(`/api/branch-reviews/${branchReviewId}/tree`),
+      await api<RepositoryTreeResponse>(`/api/repository-reviews/${repositoryReviewId}/tree`),
   });
   const changeSequence = useQuery({
-    queryKey: reviewQueryKeys.changeSequence("branch", branchReviewId),
+    queryKey: reviewQueryKeys.changeSequence("repository", repositoryReviewId),
     queryFn: async () =>
       await api<{ changeSequence: number; reviewChangeSequence: number }>(
-        `/api/meta/change-sequence?reviewKind=branch&reviewId=${encodeURIComponent(branchReviewId)}`,
+        `/api/meta/change-sequence?reviewKind=repository&reviewId=${encodeURIComponent(repositoryReviewId)}`,
         viewerHeartbeatRequest(),
       ),
     refetchInterval: 1_000,
@@ -238,20 +239,20 @@ export function BranchReviewApp({
   });
   const commentsQuery = useQuery({
     queryKey: reviewQueryKeys.comments(
-      "branch",
-      branchReviewId,
+      "repository",
+      repositoryReviewId,
       changeSequence.data?.reviewChangeSequence,
     ),
     queryFn: async () =>
-      await api<BranchCommentsResponse>(
-        `/api/branch-reviews/${branchReviewId}/comments?resolved=all`,
+      await api<RepositoryCommentsResponse>(
+        `/api/repository-reviews/${repositoryReviewId}/comments?resolved=all`,
       ),
   });
   const searchQuery = useQuery({
     queryKey: reviewQueryKeys.search(
-      "branch",
-      branchReviewId,
-      reviewQuery.data?.branchReview.sourceOid,
+      "repository",
+      repositoryReviewId,
+      reviewQuery.data?.repositoryReview.sourceOid,
       debouncedSearch,
       searchMatchCase,
       searchWholeWord,
@@ -262,8 +263,8 @@ export function BranchReviewApp({
         matchCase: String(searchMatchCase),
         wholeWord: String(searchWholeWord),
       });
-      return await api<BranchSearchResponse>(
-        `/api/branch-reviews/${branchReviewId}/search?${parameters.toString()}`,
+      return await api<RepositoryReviewSearchResponse>(
+        `/api/repository-reviews/${repositoryReviewId}/search?${parameters.toString()}`,
         { signal },
       );
     },
@@ -272,8 +273,8 @@ export function BranchReviewApp({
   });
 
   const refresh = useCallback(async (): Promise<void> => {
-    await invalidateReviewScope(queryClient, "branch", branchReviewId);
-  }, [branchReviewId, queryClient]);
+    await invalidateReviewScope(queryClient, "repository", repositoryReviewId);
+  }, [repositoryReviewId, queryClient]);
 
   useEffect(() => {
     const nextSequence = changeSequence.data?.reviewChangeSequence;
@@ -286,11 +287,14 @@ export function BranchReviewApp({
 
   const syncMutation = useMutation({
     mutationFn: async () =>
-      await api<BranchSyncResponse>(`/api/branch-reviews/${branchReviewId}/sync`, jsonRequest({})),
-    onSuccess: async ({ branchReview, issueResults }) => {
+      await api<RepositorySyncResponse>(
+        `/api/repository-reviews/${repositoryReviewId}/sync`,
+        jsonRequest({}),
+      ),
+    onSuccess: async ({ repositoryReview, issueResults }) => {
       const failures = issueResults.filter((result) => !result.ok);
       setSyncFeedbackWarning(failures.length > 0);
-      const sourceFeedback = `${branchReview.defaultBranchName} · ${shortOid(branchReview.sourceOid)} に同期しました。`;
+      const sourceFeedback = `${repositoryReview.defaultBranchName} · ${shortOid(repositoryReview.sourceOid)} に同期しました。`;
       const issueFeedback = issueSyncFailureFeedback(failures);
       showSyncFeedback(issueFeedback ? `${sourceFeedback} ${issueFeedback}` : sourceFeedback);
       await refresh();
@@ -306,7 +310,7 @@ export function BranchReviewApp({
   const issueMutation = useMutation({
     mutationFn: async () =>
       await api(
-        `/api/branch-reviews/${branchReviewId}/issues`,
+        `/api/repository-reviews/${repositoryReviewId}/issues`,
         jsonRequest({ issue: issueReference }),
       ),
     onSuccess: async () => {
@@ -317,7 +321,7 @@ export function BranchReviewApp({
   });
   const removeIssueMutation = useMutation({
     mutationFn: async (issue: IssueDocument) => {
-      const endpoint = `/api/branch-reviews/${branchReviewId}/issues/${issue.id}`;
+      const endpoint = `/api/repository-reviews/${repositoryReviewId}/issues/${issue.id}`;
       const response = await fetch(endpoint, {
         ...jsonRequest({ yes: false }),
         method: "DELETE",
@@ -340,7 +344,7 @@ export function BranchReviewApp({
         );
       }
       const confirmed = window.confirm(
-        `Issue #${issue.number} ${issue.title} をこのBranch Reviewから削除します。\n\nIssue全体コメント ${preview.counts.issueWholeComments}\nIssue本文rangeコメント ${preview.counts.issueRangeComments}\n返信 ${preview.counts.replies}\n\nこの操作は元に戻せません。`,
+        `Issue #${issue.number} ${issue.title} をこのRepository Reviewから削除します。\n\nIssue全体コメント ${preview.counts.issueWholeComments}\nIssue本文rangeコメント ${preview.counts.issueRangeComments}\n返信 ${preview.counts.replies}\n\nこの操作は元に戻せません。`,
       );
       if (!confirmed) return null;
       return await api(endpoint, {
@@ -350,10 +354,10 @@ export function BranchReviewApp({
     },
     onSuccess: async (result, issue) => {
       if (!result) return;
-      deleteCommentDraftForIssue(branchReviewId, issue.id);
+      deleteCommentDraftForIssue(repositoryReviewId, issue.id);
       for (const comment of comments) {
         if (comment.target.kind === "issue" && comment.target.issueId === issue.id) {
-          deleteCommentReplyDraftsForComment(branchReviewId, comment.id);
+          deleteCommentReplyDraftsForComment(repositoryReviewId, comment.id);
         }
       }
       for (const paneId of ["left", "right"] as const) {
@@ -367,9 +371,9 @@ export function BranchReviewApp({
   });
   const resetMutation = useMutation({
     mutationFn: async () => {
-      const branchReview = reviewQuery.data?.branchReview;
-      if (!branchReview) throw new ApiError("Branch Reviewを読み込めません。", "NOT_FOUND");
-      const endpoint = `/api/branch-reviews/${branchReviewId}/reset`;
+      const repositoryReview = reviewQuery.data?.repositoryReview;
+      if (!repositoryReview) throw new ApiError("Repository Reviewを読み込めません。", "NOT_FOUND");
+      const endpoint = `/api/repository-reviews/${repositoryReviewId}/reset`;
       const response = await fetch(endpoint, jsonRequest({ yes: false }));
       const preview = (await response.json()) as {
         counts?: Record<string, number>;
@@ -387,7 +391,7 @@ export function BranchReviewApp({
       }
       const counts = preview.counts;
       const confirmed = window.confirm(
-        `Branch Reviewを削除します。\n\nIssue membership ${counts.issueMemberships ?? 0}\nコメント合計 ${counts.comments ?? 0}\nIssueコメント ${counts.issueComments ?? 0}\nコードコメント ${counts.codeComments ?? 0}\nBranch全体コメント ${counts.reviewComments ?? 0}\nWalkthroughコメント ${counts.walkthroughComments ?? 0}\n投稿 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\nコメント対象 ${counts.targets ?? 0}\nWalkthrough ${counts.walkthroughs ?? 0}\nWalkthroughコード参照 ${counts.walkthroughReferences ?? 0}\n解放候補Git ref ${preview.retainedRefs?.length ?? counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
+        `Repository Reviewを削除します。\n\nIssue membership ${counts.issueMemberships ?? 0}\nコメント合計 ${counts.comments ?? 0}\nIssueコメント ${counts.issueComments ?? 0}\nコードコメント ${counts.codeComments ?? 0}\nRepository Review全体コメント ${counts.reviewComments ?? 0}\nWalkthroughコメント ${counts.walkthroughComments ?? 0}\n投稿 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\nコメント対象 ${counts.targets ?? 0}\nWalkthrough ${counts.walkthroughs ?? 0}\nWalkthroughコード参照 ${counts.walkthroughReferences ?? 0}\n解放候補Git ref ${preview.retainedRefs?.length ?? counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
       );
       if (!confirmed) return null;
       const reset = await api<{
@@ -402,21 +406,21 @@ export function BranchReviewApp({
       if (reset.outcome.kind === "completed-with-orphan-refs") {
         return {
           kind: "reset-complete" as const,
-          repositoryPath: branchReview.localRepositoryPath,
+          repositoryPath: repositoryReview.localRepositoryPath,
           reopenError: null,
           orphanRefs: reset.outcome,
         };
       }
       try {
-        const reopened = await api<{ branchReview: BranchReview }>(
-          "/api/branch-reviews/open",
-          jsonRequest({ cwd: branchReview.localRepositoryPath }),
+        const reopened = await api<{ repositoryReview: RepositoryReview }>(
+          "/api/repository-reviews/open",
+          jsonRequest({ cwd: repositoryReview.localRepositoryPath }),
         );
-        return { kind: "reopened" as const, branchReview: reopened.branchReview };
+        return { kind: "reopened" as const, repositoryReview: reopened.repositoryReview };
       } catch (reopenError) {
         return {
           kind: "reset-complete" as const,
-          repositoryPath: branchReview.localRepositoryPath,
+          repositoryPath: repositoryReview.localRepositoryPath,
           reopenError,
           orphanRefs: null,
         };
@@ -424,7 +428,7 @@ export function BranchReviewApp({
     },
     onSuccess: (result) => {
       if (!result) return;
-      clearCommentDraftsForReview(branchReviewId);
+      clearCommentDraftsForReview(repositoryReviewId);
       documentScrollPositions.current.clear();
       setWorkspace(initialDocumentWorkspace());
       resetViewerNavigation(["left", "right"]);
@@ -433,7 +437,7 @@ export function BranchReviewApp({
         return;
       }
       const next = new URL(window.location.href);
-      next.search = `?branchReviewId=${encodeURIComponent(result.branchReview.id)}`;
+      next.search = `?repositoryReviewId=${encodeURIComponent(result.repositoryReview.id)}`;
       window.location.replace(next.toString());
     },
   });
@@ -498,10 +502,10 @@ export function BranchReviewApp({
   );
   const walkthroughDetailQueries = useQueries({
     queries: openWalkthroughIds.map((walkthroughId) => ({
-      queryKey: reviewQueryKeys.walkthrough("branch", branchReviewId, walkthroughId),
+      queryKey: reviewQueryKeys.walkthrough("repository", repositoryReviewId, walkthroughId),
       queryFn: async () =>
-        await api<{ walkthrough: BranchWalkthrough }>(
-          `/api/branch-reviews/${branchReviewId}/walkthroughs/${walkthroughId}`,
+        await api<{ walkthrough: RepositoryWalkthrough }>(
+          `/api/repository-reviews/${repositoryReviewId}/walkthroughs/${walkthroughId}`,
         ),
     })),
   });
@@ -515,7 +519,7 @@ export function BranchReviewApp({
   if (resetRecovery) {
     return (
       <main className="fatal-state">
-        <h1>Branch Reviewのresetは完了しました</h1>
+        <h1>Repository Reviewのresetは完了しました</h1>
         {resetRecovery.orphanRefs && (
           <div role="alert">
             <p>
@@ -529,15 +533,15 @@ export function BranchReviewApp({
           </div>
         )}
         <p>
-          repository <code>{resetRecovery.repositoryPath}</code> で <code>rvw branch open</code>
-          を実行してBranch Reviewを再作成してください。
+          repository <code>{resetRecovery.repositoryPath}</code> で <code>rvw repository open</code>
+          を実行してRepository Reviewを再作成してください。
         </p>
         {resetRecovery.reopenError !== null && <ErrorNotice error={resetRecovery.reopenError} />}
       </main>
     );
   }
   if (reviewQuery.isPending) {
-    return <main className="fatal-state">Branch Reviewを読み込んでいます…</main>;
+    return <main className="fatal-state">Repository Reviewを読み込んでいます…</main>;
   }
   if (reviewQuery.error || !reviewQuery.data) {
     return (
@@ -547,11 +551,11 @@ export function BranchReviewApp({
     );
   }
 
-  const { branchReview, issues } = reviewQuery.data;
+  const { repositoryReview, issues } = reviewQuery.data;
   const review = {
-    kind: "branch" as const,
-    id: branchReview.id,
-    sourceOid: branchReview.sourceOid,
+    kind: "repository" as const,
+    id: repositoryReview.id,
+    sourceOid: repositoryReview.sourceOid,
   };
   const commentsWithPlacement = commentsQuery.data?.comments ?? [];
   const comments = commentsWithPlacement.map(({ comment }) => comment);
@@ -559,7 +563,7 @@ export function BranchReviewApp({
     commentsWithPlacement.map(({ comment, latestPlacement }) => [comment.id, latestPlacement]),
   );
   const unresolvedCommentCount = comments.filter((comment) => comment.resolvedAt === null).length;
-  const walkthroughDetails = new Map<string, BranchWalkthrough>();
+  const walkthroughDetails = new Map<string, RepositoryWalkthrough>();
   const loadingWalkthroughIds = new Set<string>();
   openWalkthroughIds.forEach((walkthroughId, index) => {
     const query = walkthroughDetailQueries[index];
@@ -585,7 +589,7 @@ export function BranchReviewApp({
     );
   };
   const openWalkthrough = (
-    walkthrough: BranchWalkthroughSummary,
+    walkthrough: RepositoryWalkthroughSummary,
     openInRightPane: boolean,
   ): void => {
     navigateToDocument(
@@ -603,7 +607,7 @@ export function BranchReviewApp({
     placement: CommentPlacement | null,
     openInRightPane: boolean,
   ): void => {
-    if (!("branchReviewId" in comment)) return;
+    if (!("repositoryReviewId" in comment)) return;
     setCommentsExpanded(true);
     setActiveCommentId(comment.id);
     const target = comment.target;
@@ -623,7 +627,7 @@ export function BranchReviewApp({
       ...(endLine === null ? {} : { endLine }),
     };
     const targetPane: DocumentPaneId = openInRightPane ? "right" : "left";
-    if (target.kind === "branch") return;
+    if (target.kind === "repository") return;
     if (target.kind === "issue") {
       navigateToDocument(
         {
@@ -730,12 +734,12 @@ export function BranchReviewApp({
             <DocumentViewer
               key={
                 paneDocument.kind === "issue"
-                  ? `${paneId}:branch:${branchReview.id}:issue:${paneDocument.id}`
-                  : `${paneId}:branch:${branchReview.id}:repository-file:${paneDocument.path}:${paneDocument.sourceOid ?? branchReview.sourceOid}:${paneDocument.comparisonPolicy ?? ""}`
+                  ? `${paneId}:repository:${repositoryReview.id}:issue:${paneDocument.id}`
+                  : `${paneId}:repository:${repositoryReview.id}:repository-file:${paneDocument.path}:${paneDocument.sourceOid ?? repositoryReview.sourceOid}:${paneDocument.comparisonPolicy ?? ""}`
               }
               review={review}
               paneId={paneId}
-              selectedOid={branchReview.sourceOid}
+              selectedOid={repositoryReview.sourceOid}
               oldOid={null}
               activeDocument={paneDocument}
               documentRevision={
@@ -828,13 +832,14 @@ export function BranchReviewApp({
         </div>
         <div className="review-heading">
           <span title={reviewQuery.data.selectedRemote?.url}>
-            {branchReview.canonicalName}
+            {repositoryReview.canonicalName}
             {reviewQuery.data.selectedRemote
               ? ` · remote ${reviewQuery.data.selectedRemote.name}`
               : " · remote unavailable"}
           </span>
           <h1>
-            Branch Review · {branchReview.defaultBranchName} · {shortOid(branchReview.sourceOid)}
+            Repository Review · {repositoryReview.defaultBranchName} ·{" "}
+            {shortOid(repositoryReview.sourceOid)}
           </h1>
         </div>
         <div className="review-scope-spacer" />
@@ -843,7 +848,7 @@ export function BranchReviewApp({
           themePending={themeMutation.isPending}
           syncPending={syncMutation.isPending}
           resetPending={resetMutation.isPending}
-          resetLabel="Branch Reviewを削除して再構築"
+          resetLabel="Repository Reviewを削除して再構築"
           onOpenQuickOpen={(returnFocusElement) => {
             setQuickOpenReturnFocus(returnFocusElement);
             setQuickOpenVisible(true);
@@ -882,10 +887,10 @@ export function BranchReviewApp({
           {syncFeedback}
         </div>
       )}
-      {branchReview.sourceSyncError && (
+      {repositoryReview.sourceSyncError && (
         <p className="issue-stale-notice">
           default branchの最新sourceを取得できなかったため、最後に同期できた
-          {shortOid(branchReview.sourceOid)} を表示しています。
+          {shortOid(repositoryReview.sourceOid)} を表示しています。
         </p>
       )}
       <ReviewWorkspace
@@ -922,7 +927,7 @@ export function BranchReviewApp({
                   onRemoveIssue={(issue) => removeIssueMutation.mutate(issue)}
                   onOpenPullRequest={() => undefined}
                   onOpen={(walkthrough, openInRightPane) =>
-                    openWalkthrough(walkthrough as BranchWalkthroughSummary, openInRightPane)
+                    openWalkthrough(walkthrough as RepositoryWalkthroughSummary, openInRightPane)
                   }
                 />
                 <input
@@ -958,7 +963,7 @@ export function BranchReviewApp({
                 onMatchCaseChange={setSearchMatchCase}
                 onWholeWordChange={setSearchWholeWord}
                 onOpenResult={(result: AnySearchResult, openInRightPane) => {
-                  if (!("branchReviewId" in result.document)) return;
+                  if (!("repositoryReviewId" in result.document)) return;
                   openFile(result.path, openInRightPane, result.document.sourceOid, result.line);
                 }}
               />

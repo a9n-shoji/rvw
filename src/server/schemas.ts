@@ -11,7 +11,7 @@ const nullableLine = z.number().int().positive().nullable();
 
 export const commentTargetSchema = z.union([
   z.object({ kind: z.literal("pull-request") }),
-  z.object({ kind: z.literal("branch") }),
+  z.object({ kind: z.literal("repository") }),
   z.object({
     kind: z.literal("issue"),
     issue: z.string().min(1),
@@ -45,7 +45,7 @@ export const openPullRequestSchema = z.object({
   cwd: z.string().min(1),
 });
 
-export const openBranchReviewSchema = z.object({ cwd: z.string().min(1) });
+export const openRepositoryReviewSchema = z.object({ cwd: z.string().min(1) });
 export const issueMutationSchema = z.object({
   issue: z.string().min(1),
   yes: z.boolean().optional(),
@@ -64,7 +64,7 @@ export const themePreferenceSchema = z.object({ themePreference: z.enum(themePre
 export const createCommentSchema = z
   .object({
     pullRequestId: z.uuid().optional(),
-    branchReviewId: z.uuid().optional(),
+    repositoryReviewId: z.uuid().optional(),
     target: commentTargetSchema,
     body: z
       .string()
@@ -75,11 +75,11 @@ export const createCommentSchema = z
     references: z.array(codeReferenceInputSchema).optional(),
   })
   .superRefine((input, context) => {
-    if (Boolean(input.pullRequestId) === Boolean(input.branchReviewId)) {
+    if (Boolean(input.pullRequestId) === Boolean(input.repositoryReviewId)) {
       context.addIssue({
         code: "custom",
         path: ["pullRequestId"],
-        message: "pullRequestIdまたはbranchReviewIdのどちらか一方が必要です。",
+        message: "pullRequestIdまたはrepositoryReviewIdのどちらか一方が必要です。",
       });
     }
     if ((input.references?.length ?? 0) > 0 && !input.relatedCommitOid) {

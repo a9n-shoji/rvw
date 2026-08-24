@@ -16,7 +16,7 @@ import { ErrorNotice } from "./ErrorNotice.js";
 
 function selectionLabel(comment: AnyReviewComment): string {
   if (comment.target.kind === "pull-request") return "Pull Request全体";
-  if (comment.target.kind === "branch") return "Branch Review全体";
+  if (comment.target.kind === "repository") return "Repository Review全体";
   if (comment.target.kind === "walkthrough") return comment.target.walkthroughTitle;
   if (comment.target.kind === "issue")
     return `#${comment.target.issueNumber} ${comment.target.issueTitle}`;
@@ -164,7 +164,7 @@ export function CommentSidebar({
   const defaultLoadPlacement = async (comment: AnyReviewComment): Promise<CommentPlacement> =>
     (
       await api<PlacementResponse>(
-        `/api/comments/${comment.id}/placement?kind=commit&${review.kind === "pull-request" ? "pullRequestId" : "branchReviewId"}=${review.id}&oid=${review.sourceOid}`,
+        `/api/comments/${comment.id}/placement?kind=commit&${review.kind === "pull-request" ? "pullRequestId" : "repositoryReviewId"}=${review.id}&oid=${review.sourceOid}`,
       )
     ).placement;
   const createReviewComment = useMutation({
@@ -173,7 +173,7 @@ export function CommentSidebar({
         "/api/comments",
         jsonRequest({
           ...reviewCommentPayload(review),
-          target: { kind: review.kind === "pull-request" ? "pull-request" : "branch" },
+          target: { kind: review.kind === "pull-request" ? "pull-request" : "repository" },
           body: reviewComment,
           authorLabel: "You",
         }),
@@ -234,13 +234,13 @@ export function CommentSidebar({
           aria-expanded={reviewComposerOpen}
           onClick={() => setReviewComposerOpen((open) => !open)}
         >
-          ＋ {review.kind === "pull-request" ? "PR全体" : "Branch全体"}
+          ＋ {review.kind === "pull-request" ? "PR全体" : "Repository Review全体"}
         </button>
       </div>
       {reviewComposerOpen && (
         <div className="review-comment-composer">
           <label>
-            {review.kind === "pull-request" ? "Pull Request" : "Branch Review"}全体へコメント
+            {review.kind === "pull-request" ? "Pull Request" : "Repository Review"}全体へコメント
           </label>
           <textarea
             autoFocus
@@ -259,7 +259,7 @@ export function CommentSidebar({
                 () => createReviewComment.mutate(),
               );
             }}
-            placeholder={`${review.kind === "pull-request" ? "Pull Request" : "Branch Review"}全体へのコメント`}
+            placeholder={`${review.kind === "pull-request" ? "Pull Request" : "Repository Review"}全体へのコメント`}
           />
           <div className="review-comment-actions">
             <button

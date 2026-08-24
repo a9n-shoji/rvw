@@ -6,7 +6,7 @@ const REQUIRED_NODE = [24, 15, 0];
 const REQUIRED_PROTOCOL = 4;
 const REQUIRED_CAPABILITIES = [
   "agent.transport",
-  "branchReview.read",
+  "repositoryReview.read",
   "comment.watch",
   "comment.read",
   "comment.reply",

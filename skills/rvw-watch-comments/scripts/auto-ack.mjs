@@ -79,6 +79,41 @@ function isGone(result) {
   );
 }
 
+function stablePullRequestContext(threadResults) {
+  let stable = null;
+  for (const result of threadResults) {
+    if (isGone(result)) continue;
+    if (!successfulJson(result)) continue;
+    const context = result.json?.context;
+    if (
+      context?.kind !== "pull-request" ||
+      typeof context.pullRequestId !== "string" ||
+      context.pullRequestId.length === 0 ||
+      typeof context.pullRequestUrl !== "string" ||
+      context.pullRequestUrl.length === 0
+    ) {
+      fail("rvw comment get returned no stable Pull Request context", { output: result.json });
+    }
+    if (
+      stable &&
+      (stable.key !== context.pullRequestId ||
+        stable.display.toLowerCase() !== context.pullRequestUrl.toLowerCase())
+    ) {
+      fail("Batch comments resolved to different Pull Request contexts", {
+        first: stable,
+        current: context,
+      });
+    }
+    stable = {
+      kind: "pull-request",
+      key: context.pullRequestId,
+      display: context.pullRequestUrl,
+    };
+  }
+  if (!stable) fail("Could not resolve a stable Pull Request context for the active lease");
+  return stable;
+}
+
 async function acknowledgeOperation(state, leaseId, operation, threadResult) {
   if (isGone(threadResult)) {
     return {
@@ -172,6 +207,23 @@ async function main() {
         runRvw(["comment", "get", operation.commentRef, "--json"]),
       ),
     );
+    const stableContext = stablePullRequestContext(threadResults);
+    const rekeyed = await runState(state, "rekey-lease", [
+      "--lease",
+      claimed.leaseId,
+      "--context-kind",
+      stableContext.kind,
+      "--context-key",
+      stableContext.key,
+      "--context-display",
+      stableContext.display,
+    ]);
+    claimed = {
+      ...claimed,
+      context: rekeyed.context,
+      pullRequest: rekeyed.context.pullRequestUrl,
+      events: claimed.events.map((event) => ({ ...event, context: rekeyed.context })),
+    };
     const operations = [];
     for (let index = 0; index < claimed.operations.length; index += 1) {
       operations.push(

@@ -1,7 +1,7 @@
-import type { BranchDocumentRef, DocumentRef } from "../domain/models.js";
+import type { RepositoryReviewDocumentRef, DocumentRef } from "../domain/models.js";
 import type { ReviewKind } from "./review-context.js";
 
-type ReviewDocumentRef = DocumentRef | BranchDocumentRef;
+type ReviewDocumentRef = DocumentRef | RepositoryReviewDocumentRef;
 
 function optionalTail(value: unknown): [] | [unknown] {
   return value === undefined ? [] : [value];
@@ -15,22 +15,22 @@ export const reviewQueryKeys = {
   review: (kind: ReviewKind, reviewId: string | null) =>
     kind === "pull-request"
       ? (["pull-request", reviewId] as const)
-      : (["branch-review", reviewId] as const),
+      : (["repository-review", reviewId] as const),
   tree: (kind: ReviewKind, reviewId: string, sourceOid?: string) =>
     kind === "pull-request"
       ? (["tree", reviewId, sourceOid] as const)
-      : (["branch-tree", reviewId, sourceOid] as const),
+      : (["repository-tree", reviewId, sourceOid] as const),
   document: (ref?: ReviewDocumentRef) =>
     ref === undefined ? (["document"] as const) : (["document", ref] as const),
   annotations: () => ["annotations"] as const,
   allReviews: (kind: ReviewKind) =>
-    kind === "pull-request" ? (["pull-request"] as const) : (["branch-review"] as const),
+    kind === "pull-request" ? (["pull-request"] as const) : (["repository-review"] as const),
   allComments: () => ["comments"] as const,
   allCommentPlacements: () => ["comment-placement"] as const,
   comments: (kind: ReviewKind, reviewId: string | null, changeSequence?: number) =>
     kind === "pull-request"
       ? (["comments", reviewId, ...optionalTail(changeSequence)] as const)
-      : (["comments", "branch", reviewId, ...optionalTail(changeSequence)] as const),
+      : (["comments", "repository", reviewId, ...optionalTail(changeSequence)] as const),
   issues: (kind: ReviewKind, reviewId: string | null, changeSequence?: number) =>
     ["issues", kind, reviewId, ...optionalTail(changeSequence)] as const,
   commentPlacement: (kind: ReviewKind, reviewId: string, commentId?: string, sourceOid?: string) =>

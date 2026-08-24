@@ -27,22 +27,22 @@ Skill + CLI protocol
 Agentが次の実装へ反映
 ```
 
-default branchの現在値を調査するときは、同じcloneでBranch Reviewを開きます。
+default branchの現在値を調査するときは、同じcloneでRepository Reviewを開きます。
 
 ```bash
-rvw branch open
+rvw repository open
 ```
 
-Branch ReviewはcanonicalなGitHub repositoryごとに一件だけ作られ、GitHubのdefault branch名とexact
+Repository ReviewはcanonicalなGitHub repositoryごとに一件だけ作られ、GitHubのdefault branch名とexact
 source OID、選択したGitHub remote名／URLをheaderへ表示します。default branch名が変わっても同じreviewを再利用し、checkoutやindexを
 変更せずに同期します。同じGit common directoryのworktreeからは同じreviewを利用できますが、同じ
 GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作り直す場合は、登録済みcloneから
-`rvw branch reset`を明示実行します。local remoteを別owner/repositoryへ変更した場合はcache hitでも
+`rvw repository reset`を明示実行します。local remoteを別owner/repositoryへ変更した場合はcache hitでも
 `REPOSITORY_MISMATCH`となり、状態を更新しません。repository rename／organization transferには自動追従せず、
 元のbindingでresetして作り直します。一度同期したcode、Issue、Walkthrough、CommentはGitHub networkが
 offlineでも読めます。remote自体がない場合も、保存済みGit common directoryとreview-owned source refが
 一致し、source objectが存在すればcached readとlocal cleanupは可能です。同じcommon directoryの別worktreeで
-`branch open`した場合は、保存locationをそのworktreeへ更新しますが、existing-only previewはlocationもsequenceも
+`repository open`した場合は、保存locationをそのworktreeへ更新しますが、existing-only previewはlocationもsequenceも
 更新しません。syncとIssue追加はremoteを復元するまで拒否されます。
 
 この考え方とプロダクト境界は[Product principles](docs/product-principles.md)にまとめています。
@@ -102,7 +102,7 @@ serverを端末に接続したままにする場合は`rvw open --foreground`を
 viewerはこの流れのために次を提供します。
 
 - `Pull Request.md`、変更ファイル、全ファイル
-- Pull Request Review / Branch Reviewへ明示登録した同一repositoryのGitHub Issue documents
+- Pull Request Review / Repository Reviewへ明示登録した同一repositoryのGitHub Issue documents
   （PR本文とIssue本文のmodern GitHub user attachment画像を認証付きlocalhost proxyで表示）
 - 開いた文書を保持するタブ、最大2つの横ペイン、横幅をdrag調整できるsidebar / pane divider
 - タブのdrag & drop、ペインmenu、sidebarからの`Cmd` / `Ctrl`+clickによる右ペイン表示
@@ -225,15 +225,15 @@ queue、retry、batch内のthread単位status post、自己返信抑制をtransa
 後から返信が追加された場合は新しいstatus postを返信するため、以前の回答は書き換えません。親taskは
 起動前にsubagent枠を予約し、driverはその枠数までだけbatchをclaimします。acknowledge済みbatchは大小や
 変更有無にかかわらず同じscheduling turnでfresh subagentへ委譲し、親taskは直接処理しません。read-only taskの
-同一PR follow-upと、常にread-onlyなBranch follow-upはcapacity内で並列にclaimし、fix-and-pushを許可したtaskの
+同一PR follow-upと、常にread-onlyなRepository Review follow-upはcapacity内で並列にclaimし、fix-and-pushを許可したtaskの
 同一PR writerだけをlease解放まで待たせます。期限到達したretryはdriverがtask stateから自動的に再開します。
 調査結果、実装内容、test結果が具体的なcodeに基づく場合、Skillは最終replyからexact commitの有用な
 line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動できるようにします。
-Branch
+Repository Review
 Reviewは常にread-only調査で、進捗replyを作らず一件の冪等な最終replyだけを追加し、commit、push、
-GitHub Issue更新、resolveを行いません。具体的なcode上の結論にはcurrentまたはretained Branch sourceの
+GitHub Issue更新、resolveを行いません。具体的なcode上の結論にはcurrentまたはretained Repository Review sourceの
 typed referenceを付けられ、任意のlocal commitは根拠として受理されません。最終replyのpost IDはlease完了時にdurableな自己抑止対象へ
-登録されるため、そのreply eventが完了の前後どちらで届いても新しいBranch batchを作りません。
+登録されるため、そのreply eventが完了の前後どちらで届いても新しいRepository Review batchを作りません。
 
 三つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
 `rvw walkthrough get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`だけを利用します。
@@ -242,10 +242,10 @@ typed referenceを付けられ、任意のlocal commitは根拠として受理�
 ## 復旧
 
 まず`rvw doctor --json`でGit、選択remote、GitHub CLI認証、現在のrealpath済みrepository／Git common
-directory、DB path、Branch retained refのcurrent／referenced／unreferenced／orphan状態を確認してください。初回登録や
+directory、DB path、Repository Review retained refのcurrent／referenced／unreferenced／orphan状態を確認してください。初回登録や
 同期だけが失敗する場合は`gh auth status`とnetworkを確認します。登録済みPRはofflineでも開けます。
 
-force-push前に観測したhead commitはimmutable refで保持するため、旧コメントの参照元として読めます。Git refとSQLiteの不整合は部分修復せず、まず`rvw doctor --json`で診断します。PR resetはSQLite上のreview artifactを初期化しますが、並行writerが確保したexact evidenceを壊さないよう既存PR refは削除しません。Comment、reply、WalkthroughのSQLite書き込みが失敗した場合も、その直前に作成したPR／Branch refを削除しません。`created`は一回のGit commandの結果であり、同じOIDを使う別processのartifactが既に依存していないことを保証しないためです。
+force-push前に観測したhead commitはimmutable refで保持するため、旧コメントの参照元として読めます。Git refとSQLiteの不整合は部分修復せず、まず`rvw doctor --json`で診断します。PR resetはSQLite上のreview artifactを初期化しますが、並行writerが確保したexact evidenceを壊さないよう既存PR refは削除しません。Comment、reply、WalkthroughのSQLite書き込みが失敗した場合も、その直前に作成したPR／Repository Review refを削除しません。`created`は一回のGit commandの結果であり、同じOIDを使う別processのartifactが既に依存していないことを保証しないためです。
 
 ```bash
 rvw pr reset https://github.com/owner/repository/pull/123 --json
@@ -267,14 +267,14 @@ rvw protocol --json
 rvw agent ping --json
 rvw agent status --json
 rvw pr refresh <PR_REF> --json
-rvw branch sync [--repository <PATH>] --json
-rvw branch issue add <ISSUE_REF> [--repository <PATH>] --json
-rvw branch issue refresh <ISSUE_REF> [--repository <PATH>] --force --json
-rvw branch issue remove <ISSUE_REF> [--repository <PATH>] --json
-rvw branch issue remove <ISSUE_REF> [--repository <PATH>] --yes --confirmation-token <TOKEN> --json
-rvw branch comments [--repository <PATH>] --state unresolved --json
-rvw branch reset [--repository <PATH>] --json
-rvw branch reset [--repository <PATH>] --yes --confirmation-token <TOKEN> --json
+rvw repository sync [--repository <PATH>] --json
+rvw repository issue add <ISSUE_REF> [--repository <PATH>] --json
+rvw repository issue refresh <ISSUE_REF> [--repository <PATH>] --force --json
+rvw repository issue remove <ISSUE_REF> [--repository <PATH>] --json
+rvw repository issue remove <ISSUE_REF> [--repository <PATH>] --yes --confirmation-token <TOKEN> --json
+rvw repository comments [--repository <PATH>] --state unresolved --json
+rvw repository reset [--repository <PATH>] --json
+rvw repository reset [--repository <PATH>] --yes --confirmation-token <TOKEN> --json
 rvw pr issue add <PR_REF> <ISSUE_REF> --json
 rvw pr issue refresh <PR_REF> <ISSUE_REF> --force --json
 rvw pr issue remove <PR_REF> <ISSUE_REF> --json
@@ -298,37 +298,37 @@ rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
 rvw pr attach <PR_REF> --repository <PATH> --json
 ```
 
-PR／Branch reset、Issue削除、Walkthrough削除は、確認tokenなしでは対象Issue、コメント、返信、Walkthrough、
-Branchの解放候補refなどのpreviewだけを返して終了します。PR reset previewの`retainedRefs`は保持される
+PR／Repository Review reset、Issue削除、Walkthrough削除は、確認tokenなしでは対象Issue、コメント、返信、Walkthrough、
+Repository Reviewの解放候補refなどのpreviewだけを返して終了します。PR reset previewの`retainedRefs`は保持される
 evidenceの情報であり、削除対象ではありません。返却された構造化`details.arguments`を使い、同じ
 `reviewChangeSequence`と`confirmationToken`を`--yes`とともに返した場合だけ、対象reviewが所有する
 artifactを削除します。同じIssueを利用する別reviewのmembership、Comment、共有Issue cacheは残ります。
 確認後にartifactが変わった場合は、service確認と最終SQLite CASのどちらで競合を検出しても
 `DESTRUCTIVE_PREVIEW_STALE` (409)と最新previewを返し、再確認を要求します。
-Branch resetの最新previewはReview metadataもDBから読み直します。PR resetは返却用commit一覧をSQLite削除前に読み、
+Repository Review resetの最新previewはReview metadataもDBから読み直します。PR resetは返却用commit一覧をSQLite削除前に読み、
 そのGit readが失敗した場合はartifactを保持します。
 最後のmembershipまたはresetでownerがなくなった共有Issue cache rowは同じtransactionでGCします。ほかのReviewが
 所有しているcacheの同一version競合は、`issue.cacheRepair` capabilityを確認した上で、
-`pr issue refresh --force`または`branch issue refresh --force`がGitHubから
+`pr issue refresh --force`または`repository issue refresh --force`がGitHubから
 二回連続で同じidentity／snapshotを確認した場合だけ明示repairできます。同期失敗は共有content rowではなく
 各review membershipへ保存されます。repair開始後に別の同期がcache generationを進めた場合は、古いrepairを
 409で拒否します。
 IssueへのComment作成はtarget検証後にもSQLite transaction内で対象Reviewのmembershipを再確認します。並行して
 membershipが削除された場合は、別Reviewが共有Issue cacheを保持していても`ISSUE_NOT_FOUND` (404)となり、遅延した
 Comment、post、watch eventを保存しません。
-これらのBranch preview／削除、`branch comments`、`branch sync`はexisting-onlyで、未登録repositoryに
-Branch Review、DB row、retained refを暗黙作成しません。作成を許すのは`branch open`と明示的な
-`branch issue add`だけです。
+これらのRepository Review preview／削除、`repository comments`、`repository sync`はexisting-onlyで、未登録repositoryに
+Repository Review、DB row、retained refを暗黙作成しません。作成を許すのは`repository open`と明示的な
+`repository issue add`だけです。
 
-Branch retained refは`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`に属します。reset後のref削除が
+Repository Review retained refは`refs/rvw/repository/<repositoryReviewId>/commits/oid-<oid>`に属します。reset後のref削除が
 失敗した場合、`completed-with-orphan-refs`という部分成功outcomeがDB削除済み、残存prefix／ref、manual
 cleanupの可否を返します。現時点にrvw管理下のcleanup commandはなく、browserは削除済みreviewの
-draft／workspaceを破棄してwarningを表示します。新しいBranch Reviewを
+draft／workspaceを破棄してwarningを表示します。新しいRepository Reviewを
 作ってもorphan refはcleanupされませんが、新reviewは別IDのnamespaceだけを証拠として使うため旧sourceを
 継承せず、旧resetも新reviewのrefを削除しません。
 
 初回openはSQLite rowをreview-owned source ref作成前から初期化未完了として記録します。ref作成前にprocessが
-停止した場合は、同じlocal bindingからpreview token付きの明示的な`branch reset --yes`でrowを安全にcleanupできます。ref作成後、
+停止した場合は、同じlocal bindingからpreview token付きの明示的な`repository reset --yes`でrowを安全にcleanupできます。ref作成後、
 初期化完了前に停止した場合は、次回openがowned refとsource objectを確認して初期化を完了します。状態は
 `initialization_state = pending | ready | failed`として通常の`source_sync_error`と分離します。通常のread／syncは
 `pending`だけを最大5秒待ち、明示的な`failed`や通常rowのrefなし状態は直ちに
@@ -341,7 +341,7 @@ retained refの初回作成はGit compare-and-swapで単一のcreatorだけを�
 既存reviewのsource同期は開始時にgenerationを確保し、ref作成後も同じgenerationのときだけsourceまたはsync errorを
 公開します。古い同期responseは新しい同期済みsourceを巻き戻しません。GitHub metadata取得後のfetch中にdefault branchが
 進んだ場合はlocal corruptionとせず、metadataとOIDの組を一度だけ再取得します。
-HTTPの`/api/branch-reviews/:id/...`操作はURLのstable IDを実処理まで保持し、reset後に同じpathへ別reviewが
+HTTPの`/api/repository-reviews/:id/...`操作はURLのstable IDを実処理まで保持し、reset後に同じpathへ別reviewが
 作られてもreplacementへフォールスルーしません。GitHub Issue取得はresponseのowner、repository、number、URLを
 requestと照合し、rename、transfer、redirect相当のidentity不一致をcache／membership書き込み前に拒否します。
 既存Issueのbackground refreshは、fetch後のtransactionで元reviewとmembershipを再確認し、明示削除済みmembershipを
@@ -352,8 +352,8 @@ requestと照合し、rename、transfer、redirect相当のidentity不一致をc
 `syncError`は同期を実行したreview membershipだけに属し、`comment get`もCommentの所有Reviewにある
 membership stateを返します。Walkthroughの`issuesToAdd`が同じIssueを正常取得した場合は、既存membershipの
 sync errorもclearします。実在するmembershipのIssueごとの部分失敗は
-CLI／HTTP responseに加え、PR／Branch viewerの同期結果にもwarningとして表示し、top barでは先頭3件と残件数に省略します。
-comment replyのidempotency keyはReview種別をまたぐdatabase-wide keyspaceです。未公開のBranch replyは
+CLI／HTTP responseに加え、PR／Repository Review viewerの同期結果にもwarningとして表示し、top barでは先頭3件と残件数に省略します。
+comment replyのidempotency keyはReview種別をまたぐdatabase-wide keyspaceです。未公開のRepository Review replyは
 request hashにReview種別を含めますが、PR replyは公開済み0.2.xの永続ledgerをexact retryできるよう従来のhash形式を
 維持します。同じkeyを別payloadや別Reviewで再利用すると`IDEMPOTENCY_CONFLICT`で拒否します。
 
@@ -361,7 +361,7 @@ request hashにReview種別を含めますが、PR replyは公開済み0.2.xの�
 stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの
 対話commandへJSONと改行だけを送るとEOF待ちになります。
 
-`comment create`はPull RequestまたはBranch Reviewの明示context、通常のcomment target、本文、任意の
+`comment create`はPull RequestまたはRepository Reviewの明示context、通常のcomment target、本文、任意の
 Agent名、任意の投稿単位code referenceをstdin JSONで受け取り、
 未解決のroot threadを一件作成します。repository targetはexact commit、path、任意のinclusive line rangeを
 指定し、viewerと同じ文書・行検証を通ります。作成してもbrowserを開かず、tabやcommit選択を変更しません。
@@ -373,7 +373,7 @@ root post preview、post件数、最新head時点のOutdated判定を返しま�
 続けて取得し、完全なthreadは`comment get`で読みます。listと通常の`comment get`はPR本文を省略し、
 本文が必要な場合だけ`comment get --include-pr-body`で最新の同期済み本文を取得します。複数threadを
 扱うAgentは同じPR本文を一度だけ取得し、そのPRの全threadで共有します。
-`comment get`はcontext discriminatorと、PRなら最新title/base/head、Branch Reviewならcanonical
+`comment get`はcontext discriminatorと、PRなら最新title/base/head、Repository Reviewならcanonical
 repository/default branch/current source、さらにserviceが導出したplacement、Issueまたは対象commitの
 bounded sourceを返すため、AgentはOIDやbody hash比較だけでOutdatedを推測しません。
 

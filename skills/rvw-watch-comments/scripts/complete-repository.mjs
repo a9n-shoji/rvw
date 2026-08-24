@@ -75,13 +75,13 @@ function validatedOutcomes(input, operations) {
       (typeof outcome.relatedCommitOid !== "string" ||
         !/^[0-9a-f]{40,64}$/i.test(outcome.relatedCommitOid))
     ) {
-      fail("Branch Review relatedCommitOid must be null or a 40-64 character hex commit OID");
+      fail("Repository Review relatedCommitOid must be null or a 40-64 character hex commit OID");
     }
     if (!Array.isArray(outcome.references)) {
-      fail("Branch Review outcomes must include the complete references array");
+      fail("Repository Review outcomes must include the complete references array");
     }
     if (outcome.references.length > 0 && outcome.relatedCommitOid === null) {
-      fail("Branch Review outcomes with references require relatedCommitOid");
+      fail("Repository Review outcomes with references require relatedCommitOid");
     }
     const referenceIds = new Set();
     for (const reference of outcome.references) {
@@ -96,7 +96,7 @@ function validatedOutcomes(input, operations) {
         typeof reference.path !== "string" ||
         reference.path.length === 0
       ) {
-        fail(`Invalid Branch Review reference: ${outcome.commentRef}`);
+        fail(`Invalid Repository Review reference: ${outcome.commentRef}`);
       }
       const startLine = reference.startLine ?? null;
       const endLine = reference.endLine ?? null;
@@ -108,19 +108,19 @@ function validatedOutcomes(input, operations) {
             startLine < 1 ||
             endLine < startLine))
       ) {
-        fail(`Invalid Branch Review reference line range: ${reference.id}`);
+        fail(`Invalid Repository Review reference line range: ${reference.id}`);
       }
       if (
         reference.description !== undefined &&
         reference.description !== null &&
         typeof reference.description !== "string"
       ) {
-        fail(`Invalid Branch Review reference description: ${reference.id}`);
+        fail(`Invalid Repository Review reference description: ${reference.id}`);
       }
       referenceIds.add(reference.id);
     }
     if (outcome.pushStatus !== "not-attempted")
-      fail("Branch Review outcomes must use pushStatus: not-attempted");
+      fail("Repository Review outcomes must use pushStatus: not-attempted");
     outcomes.set(outcome.commentRef, outcome);
   }
   if (outcomes.size !== operations.length) fail("One final outcome is required per operation");
@@ -142,8 +142,9 @@ async function main() {
   const status = await runState(state, "status");
   const batch = status.inFlightBatches?.find((candidate) => candidate.leaseId === leaseId);
   if (!batch) fail("Active lease was not found");
-  if (batch.context?.kind !== "branch") fail("complete-branch only accepts a Branch Review lease");
-  if (batch.writeKey !== null) fail("Branch Review lease must not own a write key");
+  if (batch.context?.kind !== "repository")
+    fail("complete-repository only accepts a Repository Review lease");
+  if (batch.writeKey !== null) fail("Repository Review lease must not own a write key");
   if (typeof input.leaseId !== "string" || input.leaseId.length === 0) {
     fail("Worker leaseId is required");
   }
@@ -151,19 +152,19 @@ async function main() {
   if (
     !input.context ||
     typeof input.context !== "object" ||
-    input.context.kind !== "branch" ||
-    typeof input.context.branchReviewId !== "string" ||
-    input.context.branchReviewId.length === 0 ||
+    input.context.kind !== "repository" ||
+    typeof input.context.repositoryReviewId !== "string" ||
+    input.context.repositoryReviewId.length === 0 ||
     typeof input.context.repository !== "string" ||
     input.context.repository.length === 0
   ) {
-    fail("Worker Branch context is required");
+    fail("Worker Repository Review context is required");
   }
   if (
-    input.context.branchReviewId !== batch.context.branchReviewId ||
+    input.context.repositoryReviewId !== batch.context.repositoryReviewId ||
     input.context.repository !== batch.context.repository
   )
-    fail("Worker context does not match the Branch Review lease");
+    fail("Worker context does not match the Repository Review lease");
   const pending = validatedOutcomes(input, batch.operations ?? []);
   for (const { operation } of pending) {
     if (typeof operation.idempotencyKey !== "string" || operation.idempotencyKey.length === 0) {
@@ -200,7 +201,7 @@ async function main() {
   process.stdout.write(
     `${JSON.stringify({
       ok: true,
-      type: "branch-completed",
+      type: "repository-completed",
       context: batch.context,
       leaseId,
       replies,

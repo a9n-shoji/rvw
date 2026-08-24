@@ -16,13 +16,13 @@ export function markdownAssetUrl(
   return `/api/pull-requests/${pullRequestId}/markdown-asset?${search.toString()}`;
 }
 
-export function branchMarkdownAssetUrl(
-  branchReviewId: string,
+export function repositoryMarkdownAssetUrl(
+  repositoryReviewId: string,
   sourceOid: string,
   filePath: string,
 ): string {
   const search = new URLSearchParams({ sourceOid, path: filePath });
-  return `/api/branch-reviews/${branchReviewId}/markdown-asset?${search.toString()}`;
+  return `/api/repository-reviews/${repositoryReviewId}/markdown-asset?${search.toString()}`;
 }
 
 export function githubAttachmentAssetUrl(
@@ -32,15 +32,15 @@ export function githubAttachmentAssetUrl(
   return reviewGitHubAttachmentAssetUrl("pull-requests", pullRequestId, absoluteUrl);
 }
 
-export function branchGitHubAttachmentAssetUrl(
-  branchReviewId: string,
+export function repositoryGitHubAttachmentAssetUrl(
+  repositoryReviewId: string,
   absoluteUrl: string | undefined,
 ): string | null {
-  return reviewGitHubAttachmentAssetUrl("branch-reviews", branchReviewId, absoluteUrl);
+  return reviewGitHubAttachmentAssetUrl("repository-reviews", repositoryReviewId, absoluteUrl);
 }
 
 function reviewGitHubAttachmentAssetUrl(
-  reviewPath: "pull-requests" | "branch-reviews",
+  reviewPath: "pull-requests" | "repository-reviews",
   reviewId: string,
   absoluteUrl: string | undefined,
 ): string | null {

@@ -273,41 +273,50 @@ export async function dispatchAgentSocketRequest(
         input.confirmationToken,
       );
     }
-    case "branch.sync": {
-      const input = parseOperationInput("branch.sync", request.input);
-      return await service.syncBranchReview(input.repositoryPath);
+    case "repository.sync": {
+      const input = parseOperationInput("repository.sync", request.input);
+      return await service.syncRepositoryReview(input.repositoryPath);
     }
-    case "branch.issue.add": {
-      const input = parseOperationInput("branch.issue.add", request.input);
-      return await service.addBranchIssue(input.repositoryPath, input.issueReference);
+    case "repository.issue.add": {
+      const input = parseOperationInput("repository.issue.add", request.input);
+      return await service.addRepositoryIssue(input.repositoryPath, input.issueReference);
     }
-    case "branch.issue.refresh": {
-      const input = parseOperationInput("branch.issue.refresh", request.input);
-      return await service.forceRepairBranchIssue(input.repositoryPath, input.issueReference);
+    case "repository.issue.refresh": {
+      const input = parseOperationInput("repository.issue.refresh", request.input);
+      return await service.forceRepairRepositoryIssue(input.repositoryPath, input.issueReference);
     }
-    case "branch.issue.remove.preview": {
-      const input = parseOperationInput("branch.issue.remove.preview", request.input);
-      return await service.getBranchIssueRemovalPreview(input.repositoryPath, input.issueReference);
+    case "repository.issue.remove.preview": {
+      const input = parseOperationInput("repository.issue.remove.preview", request.input);
+      return await service.getRepositoryIssueRemovalPreview(
+        input.repositoryPath,
+        input.issueReference,
+      );
     }
-    case "branch.issue.remove": {
-      const input = parseOperationInput("branch.issue.remove", request.input);
-      return await service.removeBranchIssue(
+    case "repository.issue.remove": {
+      const input = parseOperationInput("repository.issue.remove", request.input);
+      return await service.removeRepositoryIssue(
         input.repositoryPath,
         input.issueReference,
         input.confirmationToken,
       );
     }
-    case "branch.reset.preview": {
-      const input = parseOperationInput("branch.reset.preview", request.input);
-      return await service.getBranchResetPreviewAtPath(input.repositoryPath);
+    case "repository.reset.preview": {
+      const input = parseOperationInput("repository.reset.preview", request.input);
+      return await service.getRepositoryResetPreviewAtPath(input.repositoryPath);
     }
-    case "branch.reset": {
-      const input = parseOperationInput("branch.reset", request.input);
-      return await service.resetBranchReviewAtPath(input.repositoryPath, input.confirmationToken);
+    case "repository.reset": {
+      const input = parseOperationInput("repository.reset", request.input);
+      return await service.resetRepositoryReviewAtPath(
+        input.repositoryPath,
+        input.confirmationToken,
+      );
     }
-    case "branch.comments": {
-      const input = parseOperationInput("branch.comments", request.input);
-      return await service.listBranchCommentContextsAtPath(input.repositoryPath, input.resolved);
+    case "repository.comments": {
+      const input = parseOperationInput("repository.comments", request.input);
+      return await service.listRepositoryCommentContextsAtPath(
+        input.repositoryPath,
+        input.resolved,
+      );
     }
     case "comment.list": {
       const input = parseOperationInput("comment.list", request.input);
@@ -349,15 +358,15 @@ export async function dispatchAgentSocketRequest(
     }
     case "comment.resolve": {
       const input = parseOperationInput("comment.resolve", request.input);
-      return service.setCommentResolved(input.uri, true);
+      return await service.setCommentResolved(input.uri, true);
     }
     case "comment.reopen": {
       const input = parseOperationInput("comment.reopen", request.input);
-      return service.setCommentResolved(input.uri, false);
+      return await service.setCommentResolved(input.uri, false);
     }
     case "walkthrough.get": {
       const input = parseOperationInput("walkthrough.get", request.input);
-      return service.getAnyWalkthroughByUri(input.uri);
+      return await service.getBoundAnyWalkthroughByUri(input.uri);
     }
     case "walkthrough.publish": {
       const input = parseOperationInput("walkthrough.publish", request.input);
@@ -374,11 +383,11 @@ export async function dispatchAgentSocketRequest(
     }
     case "walkthrough.delete.preview": {
       const input = parseOperationInput("walkthrough.delete.preview", request.input);
-      return service.getWalkthroughDeletePreview(input.uri);
+      return await service.getWalkthroughDeletePreview(input.uri);
     }
     case "walkthrough.delete": {
       const input = parseOperationInput("walkthrough.delete", request.input);
-      return service.deleteWalkthroughByUri(input.uri, input.confirmationToken);
+      return await service.deleteWalkthroughByUri(input.uri, input.confirmationToken);
     }
   }
 }

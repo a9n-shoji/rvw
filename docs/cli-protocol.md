@@ -9,9 +9,9 @@ references to comment create, reply, edit, get, and synchronized replies, and ad
 `agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
 idempotency keys are additive fields and do not change existing callers.
 
-Version 4 introduces explicit Pull Request and Branch Review contexts, Issue documents, and a
-discriminated comment event context. Branch Reviews are keyed by canonical `owner/repository` and
-never masquerade as Pull Requests. The capabilities `branchReview.read`, `branchReview.sync`,
+Version 4 introduces explicit Pull Request and Repository Review contexts, Issue documents, and a
+discriminated comment event context. Repository Reviews are keyed by canonical `owner/repository` and
+never masquerade as Pull Requests. The capabilities `repositoryReview.read`, `repositoryReview.sync`,
 `issue.read`, `issue.membership`, and `issue.cacheRepair` advertise these surfaces. The last capability
 is required before using the explicit two-read `issue refresh --force` recovery path.
 
@@ -87,11 +87,11 @@ an rvw ref, validates every reply reference against that exact synchronized head
 comment updates in one SQLite transaction. Created replies and their references are linked to the
 synchronized head commit. A successful response includes the current pull request, comparison
 base, head OID, commit summaries, and `commentUpdatesApplied`.
-PR and Branch synchronization also return per-Issue results. A review source may succeed while one or
+PR and Repository Review synchronization also return per-Issue results. A review source may succeed while one or
 more Issue refreshes fail; both viewers show that response-local partial failure as a warning.
 
 An exact retry of an update carrying the same idempotency key returns its existing reply. Reusing the
-key for another comment, review kind, or caller payload fails. PR and Branch replies share one
+key for another comment, review kind, or caller payload fails. PR and Repository Review replies share one
 database-wide public keyspace. The derived synchronized head is not part of that
 caller payload, so a concurrent head advance does not invalidate an exact retry. If the original post
 was deleted, retry fails without recreating it. An update without a key remains non-idempotent; after
@@ -112,17 +112,17 @@ To update only the saved worktree without launching a viewer, use:
 rvw pr attach <PULL_REQUEST> --repository <PATH> --json
 ```
 
-## Branch Review and Issue membership
+## Repository Review and Issue membership
 
 ```bash
-rvw branch open [--repository <PATH>] [--foreground] [--no-open]
-rvw branch sync [--repository <PATH>] --json
-rvw branch issue add <ISSUE_REF> [--repository <PATH>] --json
-rvw branch issue refresh <ISSUE_REF> [--repository <PATH>] --force --json
-rvw branch issue remove <ISSUE_REF> [--repository <PATH>] [--yes --confirmation-token <TOKEN>] --json
-rvw branch comments [--repository <PATH>] --state unresolved --json
-rvw branch reset [--repository <PATH>] --json
-rvw branch reset [--repository <PATH>] --yes --confirmation-token <TOKEN> --json
+rvw repository open [--repository <PATH>] [--foreground] [--no-open]
+rvw repository sync [--repository <PATH>] --json
+rvw repository issue add <ISSUE_REF> [--repository <PATH>] --json
+rvw repository issue refresh <ISSUE_REF> [--repository <PATH>] --force --json
+rvw repository issue remove <ISSUE_REF> [--repository <PATH>] [--yes --confirmation-token <TOKEN>] --json
+rvw repository comments [--repository <PATH>] --state unresolved --json
+rvw repository reset [--repository <PATH>] --json
+rvw repository reset [--repository <PATH>] --yes --confirmation-token <TOKEN> --json
 rvw pr issue add <PULL_REQUEST> <ISSUE_REF> --json
 rvw pr issue refresh <PULL_REQUEST> <ISSUE_REF> --force --json
 rvw pr issue remove <PULL_REQUEST> <ISSUE_REF> [--yes --confirmation-token <TOKEN>] --json
@@ -132,33 +132,33 @@ Issue removal and reset without a confirmation token return a count/ref preview 
 `RESET_CONFIRMATION_REQUIRED`, `reviewChangeSequence`, and `confirmationToken`. After the caller
 presents the Issue title/number and owned artifact counts to a human, the same structured arguments
 with `--yes --confirmation-token <TOKEN>` delete only the selected review's membership,
-Issue comments, replies, or Branch Review artifacts. Shared Issue cache and artifacts owned by another
-review remain intact. Branch reset removes only its review-owned Branch retained refs; PR refs
+Issue comments, replies, or Repository Review artifacts. Shared Issue cache and artifacts owned by another
+review remain intact. Repository Review reset removes only its review-owned Repository Review retained refs; PR refs
 and objects retained by other refs remain reachable. PR reset clears SQLite-owned review artifacts but
 preserves every existing `refs/rvw/pr/<number>/...` ref as immutable evidence; its preview exposes
-those refs as preserved information and reports `counts.gitRefs = 0`. The Branch namespace is
-`refs/rvw/branch/<branchReviewId>/commits/oid-<oid>`; preview and deletion never count another Branch
+those refs as preserved information and reports `counts.gitRefs = 0`. The Repository Review namespace is
+`refs/rvw/repository/<repositoryReviewId>/commits/oid-<oid>`; preview and deletion never count another Repository Review
 Review ID's refs.
 
-Branch commands resolve the canonical GitHub base repository and Git common directory from the
-current directory or `--repository`; callers never pass an internal Branch Review ID. There is one
-durable Branch Review per repository. A worktree in the saved Git common directory may reuse it and
+Repository Review commands resolve the canonical GitHub base repository and Git common directory from the
+current directory or `--repository`; callers never pass an internal Repository Review ID. There is one
+durable Repository Review per repository. A worktree in the saved Git common directory may reuse it and
 refresh the usable local path. An independent clone of the same canonical repository fails with an
 actionable repository-mismatch error before changing the saved path, common directory, source OID,
 retained refs, or artifacts. A local remote that resolves to another owner/repository fails at the same
 boundary, including cache hits, and does not update `sourceSyncError`. Repository rename or transfer is
-not auto-followed. After an explicit `branch reset` at the original binding, opening the new identity or
-other clone creates a new review ID. `branch sync` resolves GitHub's current default branch and OID,
+not auto-followed. After an explicit `repository reset` at the original binding, opening the new identity or
+other clone creates a new review ID. `repository sync` resolves GitHub's current default branch and OID,
 fetches and verifies that exact object without changing checkout or index, advances the cached source,
 and refreshes every registered Issue independently. A previously synchronized review remains readable
 offline. If the local remote is missing, matching common-directory and review-owned-ref evidence permits
-cached reads, `branch comments`, Issue removal, and reset; the owned object must also exist. A cached
-`branch open` from another worktree in that common directory updates the saved usable path, while
+cached reads, `repository comments`, Issue removal, and reset; the owned object must also exist. A cached
+`repository open` from another worktree in that common directory updates the saved usable path, while
 existing-only previews use the current path without persisting it. Sync and Issue addition fail closed.
-`branch comments` returns the explicit Branch context and full comments for the selected state.
-`branch sync`, `branch comments`, reset preview/execution, and Issue-removal preview/execution are
-existing-only. A missing review returns `BRANCH_REVIEW_NOT_FOUND` without calling GitHub, fetching,
-creating a row/ref, updating location, or advancing either change sequence. Only `branch open` and an
+`repository comments` returns the explicit Repository Review context and full comments for the selected state.
+`repository sync`, `repository comments`, reset preview/execution, and Issue-removal preview/execution are
+existing-only. A missing review returns `REPOSITORY_REVIEW_NOT_FOUND` without calling GitHub, fetching,
+creating a row/ref, updating location, or advancing either change sequence. Only `repository open` and an
 explicit Issue-add operation may create the singleton.
 
 If reset deletes SQLite state but cannot delete its Git refs, the successful
@@ -184,24 +184,24 @@ only when the aggregate ID is absent, never merely because its current source di
 Normal reads still reject a missing ref. Existing-source attempts allocate a generation before network
 access and publish the retained OID or error only when that generation is current. A default branch
 move detected between metadata and fetch retries the metadata/OID snapshot once. HTTP ID-bound operations keep the
-URL's expected Branch Review ID through their final database access and return
-`BRANCH_REVIEW_NOT_FOUND` rather than falling through to a replacement review at the same path.
-`branch sync`の`issueResults`は各cached Issueの成功またはstale errorを別々に返す。`pr refresh`と
+URL's expected Repository Review ID through their final database access and return
+`REPOSITORY_REVIEW_NOT_FOUND` rather than falling through to a replacement review at the same path.
+`repository sync`の`issueResults`は各cached Issueの成功またはstale errorを別々に返す。`pr refresh`と
 `pr sync`も、PR本文から直接見つけた候補と既存membershipの結果を`issueResults`へ返し、一件の失敗を
 他のIssue同期やPR metadata更新の失敗として扱わない。
 既存membershipのbackground refreshはfetch後にも元reviewとmembershipを再確認し、明示削除済みmembershipを
 再追加せず、削除済みreview由来の失敗を共有cacheへ保存しない。membership削除後にfetchが失敗した場合も
 `ok: true, skipped: "membership-removed"`として返し、stale warningには含めない。PR本文に現在も直接あるIssueは追加候補のままとする。
-PR／Branch viewerはreview source同期成功と`issueResults`の部分失敗を同じstatus warningで区別して表示する。
+PR／Repository Review viewerはreview source同期成功と`issueResults`の部分失敗を同じstatus warningで区別して表示する。
 Sync errors belong to the originating membership, while title/body/state remain shared. Removing the
 last membership or resetting its last owner garbage-collects the cache row. If another Review still
 owns an equal-version conflict, explicit `issue refresh --force` repairs it only after two identical
-GitHub identity/content reads. Worktree/common-directory values are realpath-canonicalized; Branch
+GitHub identity/content reads. Worktree/common-directory values are realpath-canonicalized; Repository Review
 open/viewer/doctor expose the same origin-first selected remote that Git fetch uses, and doctor reports
 40-64 digit retained-ref ownership without cleanup. Cached open upgrades legacy stored path spellings
 to their filesystem realpaths after the binding is verified.
 
-`comment get` resolves Issue content through the owning PR/Branch membership, so membership-specific
+`comment get` resolves Issue content through the owning PR/Repository Review membership, so membership-specific
 `syncError` and `stale` are not lost by reading the shared cache directly. A successful Walkthrough
 publish/update with an existing Issue in `issuesToAdd` clears that Review membership's previous sync
 error even though `issuesAdded` remains empty.
@@ -210,7 +210,7 @@ All reset, Issue-removal, and Walkthrough-deletion executions recheck the previe
 SQLite mutation. A changed review returns `DESTRUCTIVE_PREVIEW_STALE` (409) with the current preview and
 does not delete newly added artifacts. This response shape is identical when the service-layer check
 passes but the final SQLite sequence CAS detects the race.
-The returned current Branch reset preview is rebuilt from the latest aggregate metadata. PR reset
+The returned current Repository Review reset preview is rebuilt from the latest aggregate metadata. PR reset
 reads its response commit list before the destructive SQLite transaction; a Git-read failure leaves
 the reviewed artifacts unchanged rather than reporting a post-commit reset failure.
 
@@ -241,7 +241,7 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-`comment create` records one new unresolved thread for an explicit Pull Request or Branch Review. An
+`comment create` records one new unresolved thread for an explicit Pull Request or Repository Review. An
 Issue target must still belong to that Review when the SQLite write begins. If membership removal wins
 after target validation, creation returns `ISSUE_NOT_FOUND` (404) and inserts no Comment, post, target,
 watch event, or sequence change, even when another Review keeps the shared Issue cache alive. Its stdin
@@ -277,8 +277,8 @@ value is:
 }
 ```
 
-`review`, `target`, and `body` are required. A Branch Review uses
-`{"kind":"branch","repository":"owner/repository"}`. `authorLabel`, `relatedCommitOid`, and `references`
+`review`, `target`, and `body` are required. A Repository Review uses
+`{"kind":"repository","repository":"owner/repository"}`. `authorLabel`, `relatedCommitOid`, and `references`
 are optional. `authorLabel` and `relatedCommitOid` may be `null`.
 The PR reference is a saved PR's full URL or a number that is unique across saved PRs. `body` is non-blank
 UTF-8 GFM Markdown source of at most 64 KiB. The viewer sanitizes raw HTML, preserves soft line
@@ -291,7 +291,7 @@ Markdown source-range targets remain Walkthrough-only. The target is one of:
 ```
 
 ```json
-{ "kind": "branch" }
+{ "kind": "repository" }
 ```
 
 ```json
@@ -335,7 +335,7 @@ Markdown source-range targets remain Walkthrough-only. The target is one of:
 Omitting both line fields creates a whole-document target and normalizes both values to `null`.
 Supplying only one line, reversing the range, selecting a line outside the document, naming an
 unavailable commit or path, or selecting an Issue/Walkthrough from another review is rejected. A
-`pull-request` target is valid only in a Pull Request context and a `branch` target only in a Branch
+`pull-request` target is valid only in a Pull Request context and a `repository` target only in a Repository Review
 context. File-wide
 comments are accepted for binary and oversized entries, but line comments require displayable text.
 PR-Markdown hashes and quoted lines, Walkthrough titles and quoted lines, and the creation head are
@@ -379,7 +379,7 @@ synchronized PR body requests it with `comment get --include-pr-body`; only that
 
 `comment get` always returns a top-level `context` discriminator. For Pull Requests it returns the
 same top-level `comment` and `latestPlacement` keys with the complete comment target and posts,
-`createdHeadOid`, and the PR's `latestHeadOid`. For Branch Reviews it returns the canonical repository,
+`createdHeadOid`, and the PR's `latestHeadOid`. For Repository Reviews it returns the canonical repository,
 local path, current default branch/source OID, comment creation source OID, current Issue or Walkthrough
 when targeted, exact source excerpt for code, and authoritative Outdated placement. Each complete post includes its
 `relatedCommitOid` and `references`. `latestPlacement` is rvw's
@@ -454,13 +454,13 @@ update with `resolve: true` resolves it.
 
 ### Continuous watch
 
-`rvw comment watch --json-seq` watches new root comments and replies across all Pull Request and Branch
+`rvw comment watch --json-seq` watches new root comments and replies across all Pull Request and Repository Review
 Reviews saved in the selected rvw database. A cursorless invocation emits a `ready` frame anchored at the current event
 position and does not replay existing unresolved comments. Each subsequent `comment-posted` frame
 contains an opaque database-scoped cursor plus `sequence`, `postId`, `commentRef`, `createdAt`,
 `deleted`, and exactly one context: `{kind:"pull-request",pullRequestId,pullRequestUrl}` or
-`{kind:"branch",branchReviewId,repository}`. The ID is the stable routing key; URL/repository is a
-display value. A Branch Review never receives fake PR fields. It is a minimal trigger; consumers must
+`{kind:"repository",repositoryReviewId,repository}`. The ID is the stable routing key; URL/repository is a
+display value. A Repository Review never receives fake PR fields. It is a minimal trigger; consumers must
 run `comment get` for complete context. Edits, deletions, resolve, and reopen do not create new events.
 An existing event survives post deletion and is then returned with `deleted: true`.
 
@@ -478,14 +478,14 @@ final outcome. A retry of the same batch restores that post; a later batch for t
 new one and leaves the earlier outcome unchanged. It requires explicit
 startup authorization before an authenticated user's own PR can be fixed and pushed, and verifies the
 live head repository, branch, and OID so fork PRs cannot target the base repository accidentally.
-Another or unknown author remains code/GitHub read-only. A Branch batch is always
+Another or unknown author remains code/GitHub read-only. A Repository Review batch is always
 `investigate-and-reply`, cannot reserve a write key, creates no progress post, and records exactly one
 final idempotent reply without resolving the thread. Its worker result uses
-`{kind:"branch",branchReviewId,repository}` rather than a fake Pull Request URL. The final reply uses the operation's
+`{kind:"repository",repositoryReviewId,repository}` rather than a fake Pull Request URL. The final reply uses the operation's
 stable idempotency key, and lease completion receives the returned post ID as a durable suppression.
 The reply may carry typed references when `relatedCommitOid` is the current or an already retained
-Branch source; an arbitrary commit that merely exists in the local clone is rejected. This evidence
-does not widen the Branch worker's read-only authority.
+Repository Review source; an arbitrary commit that merely exists in the local clone is rejected. This evidence
+does not widen the Repository Review worker's read-only authority.
 If the reply event was already ingested, completion marks that pending event completed; if it arrives
 later, ingestion suppresses it. A restart retries the same key, recovers the existing reply, and then
 completes without adding a duplicate or a new batch.
@@ -499,7 +499,7 @@ processes and do not move Agent runtime or task state into rvw. Before an initia
 reconnect, the driver drains eligible pending work left between a durable ingest and an interrupted
 acknowledgement. Auto-ack is capped by the subagent capacity reserved by the parent. A short-period
 task-state pump may claim same-review follow-ups immediately when they are necessarily read-only,
-including every Branch lease and an investigate-only task's PR leases. A task that permits PR fixes
+including every Repository Review lease and an investigate-only task's PR leases. A task that permits PR fixes
 waits for the active same-PR lease to release. Due retryable batches resume without waiting for another
 watch event or reconnect. Before spawning rvw, the driver atomically acquires
 one process-owner lock beside the canonical task-state path. A concurrent driver for that state exits
@@ -519,7 +519,7 @@ Read an existing Walkthrough before updating or deleting it:
 rvw walkthrough get <WALKTHROUGH_URI> --json
 ```
 
-The response contains the complete current Walkthrough and its Pull Request or Branch Review context,
+The response contains the complete current Walkthrough and its Pull Request or Repository Review context,
 including the local repository path needed to inspect referenced code.
 
 ### Publish
@@ -572,10 +572,11 @@ The stdin value is:
 }
 ```
 
-`review`, `sourceOid`, `title`, `body`, and one or more references are required. Branch publication
-uses `{"kind":"branch","repository":"owner/repository"}`. Optional `issuesToAdd` explicitly ensures
-same-repository Issue memberships; it only adds, never removes, relates, or recursively discovers.
-`sourceOid`
+`review`, `sourceOid`, `title`, `body`, and one or more references are required. Repository Review publication
+uses `{"kind":"repository","repository":"owner/repository"}`. Optional `issuesToAdd` explicitly ensures
+same-repository Issue memberships; it only adds, never removes, relates, or recursively discovers. It
+accepts at most 50 references of at most 256 characters. Repository Review additions require a verified
+canonical remote before any Issue fetch. `sourceOid`
 must be a 40–64 digit hex commit available to the saved pull request. Reference IDs and Mermaid node
 IDs use `[A-Za-z][A-Za-z0-9_-]{0,63}`. Every repository-relative path must be an available UTF-8
 document at that commit. A reference may omit both `startLine` and `endLine` to target the whole file;
@@ -661,7 +662,7 @@ an explicitly managed database path; rvw does not chmod existing components of t
 directory/file components created by rvw use creation modes `0700` / `0600`. The socket request includes this
 expected path and is dispatched only when the viewer uses the same database. `rvw doctor --json`
 reports the active path, its source, whether rvw manages its permissions, actual/expected permission
-metadata and warnings, a real write-transaction probe, selected GitHub remote, Branch retained-ref
+metadata and warnings, a real write-transaction probe, selected GitHub remote, Repository Review retained-ref
 ownership diagnostics, Agent transport connectivity, and installed
 Skill status.
 
@@ -681,10 +682,13 @@ an absolute JSON result path rather than relying on relayed completion text. Sub
 `body`, `relatedCommitOid`, a complete `references` array, and `pushStatus`. The Skill uses typed
 references by default for concrete code behavior, implemented
 changes, and relevant tests when an exact committed range adds navigation value. Investigation-only
-outcomes may cite their evidence commit without claiming that a change was pushed. Branch outcomes keep
-`pushStatus: "not-attempted"` and limit that evidence commit to the current or retained Branch source.
+outcomes may cite their evidence commit without claiming that a change was pushed. Repository Review outcomes keep
+`pushStatus: "not-attempted"` and limit that evidence commit to the current or retained Repository Review source.
 On the first matching protocol-v4 PR event, a v3 task DB transactionally re-keys legacy URL contexts to
 the actual Pull Request ID. It merges pending duplicates and quarantines conflicting in-flight leases.
+If restart claims a legacy pending lease before another event arrives, auto-ack obtains the stable ID
+from `comment get` and atomically re-keys the active lease before posting acknowledgements or emitting
+`batch-acknowledged`.
 
 Each rvw-managed installation records the bundled digest. Status distinguishes a clean older bundle
 (`updateAvailable` and `updateRequired`), local customization (`locallyModified`), and a differing
@@ -708,8 +712,8 @@ comment URI subsequently returns the updated current object.
 
 ```text
 agent.transport
-branchReview.read
-branchReview.sync
+repositoryReview.read
+repositoryReview.sync
 issue.read
 issue.membership
 issue.cacheRepair
