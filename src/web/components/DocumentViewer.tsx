@@ -65,6 +65,7 @@ import {
 import {
   MarkdownSelectionSurface,
   markdownCommentAnchorIds,
+  markdownNodeSourceRange,
   markdownSourceDataAttributes,
   rehypeRvwSourceMap,
   type MarkdownCommentAnnotation,
@@ -345,6 +346,46 @@ function markdownFragmentLine(anchor: HTMLAnchorElement, href: string): number |
   return Number.isInteger(line) && line > 0 ? line : null;
 }
 
+function markdownRangesOverlap(
+  sourceRange: MarkdownSourceRange | null,
+  targetRange: MarkdownSourceRange | null,
+): boolean {
+  return Boolean(
+    sourceRange &&
+    targetRange &&
+    sourceRange.startLine <= targetRange.endLine &&
+    sourceRange.endLine >= targetRange.startLine,
+  );
+}
+
+function markdownNavigationElement(root: HTMLElement | null, line: number): HTMLElement | null {
+  if (!root) return null;
+  const exact = root.querySelector<HTMLElement>(`[data-rvw-source-start-line="${line}"]`);
+  if (exact) return exact;
+
+  let best: { element: HTMLElement; span: number; leaf: boolean } | null = null;
+  for (const element of root.querySelectorAll<HTMLElement>(
+    "[data-rvw-source-start-line][data-rvw-source-end-line]",
+  )) {
+    const startLine = Number(element.dataset.rvwSourceStartLine);
+    const endLine = Number(element.dataset.rvwSourceEndLine);
+    if (
+      !Number.isInteger(startLine) ||
+      !Number.isInteger(endLine) ||
+      startLine > line ||
+      endLine < line
+    ) {
+      continue;
+    }
+    const span = endLine - startLine;
+    const leaf = element.dataset.rvwSourceLeaf === "true";
+    if (!best || span < best.span || (span === best.span && leaf && !best.leaf)) {
+      best = { element, span, leaf };
+    }
+  }
+  return best?.element ?? null;
+}
+
 function renderRepositoryMarkdown({
   text,
   pullRequestMarkdown,
@@ -581,9 +622,21 @@ function renderRepositoryMarkdown({
           ) {
             return <pre {...props}>{children}</pre>;
           }
+          const sourceRange = markdownNodeSourceRange(_node);
+          const sourceHighlighted =
+            markdownRangesOverlap(sourceRange, navigationRange) ||
+            Boolean(
+              activeCommentId &&
+              annotations.some(
+                (annotation) =>
+                  annotation.id === activeCommentId &&
+                  markdownRangesOverlap(sourceRange, annotation.range),
+              ),
+            );
+          const sourceSelected = markdownRangesOverlap(sourceRange, selectedRange);
           return (
             <div
-              className="markdown-mermaid-shell"
+              className={`markdown-mermaid-shell${sourceHighlighted ? " is-source-highlighted" : ""}${sourceSelected ? " is-source-selected" : ""}`}
               data-rvw-source-leaf="true"
               {...markdownSourceDataAttributes(_node)}
             >
@@ -1419,6 +1472,18 @@ export function DocumentViewer({
             : { side: "additions" as const, endSide: "additions" as const }),
         }
       : null;
+  const navigationStartLine = navigationTarget?.line ?? null;
+  const navigationEndLine = navigationTarget?.endLine;
+  const markdownNavigationRange = useMemo<MarkdownSourceRange | null>(
+    () =>
+      navigationStartLine === null
+        ? null
+        : {
+            startLine: navigationStartLine,
+            endLine: navigationEndLine ?? navigationStartLine,
+          },
+    [navigationEndLine, navigationStartLine],
+  );
   const markdownText =
     fullQuery.data?.availability === "available" ? (fullQuery.data.text ?? "") : null;
   const markdownSelectedRange: MarkdownSourceRange | null = selection
@@ -1444,9 +1509,7 @@ export function DocumentViewer({
               composerStartLine === null || composerEndLine === null
                 ? null
                 : { startLine: composerStartLine, endLine: composerEndLine },
-            navigationRange: navigationSelection
-              ? { startLine: navigationSelection.start, endLine: navigationSelection.end }
-              : null,
+            navigationRange: markdownNavigationRange,
             composerOpen: markdownComposerOpen,
             markdownDiv,
             sourceRef: fullRef,
@@ -1465,9 +1528,9 @@ export function DocumentViewer({
       fullRef,
       markdownCommentAnnotations,
       markdownComposerOpen,
+      markdownNavigationRange,
       markdownDiv,
       markdownText,
-      navigationSelection,
       openMarkdownFragment,
       openRepositoryLink,
       pullRequestId,
@@ -1486,10 +1549,9 @@ export function DocumentViewer({
       return;
     }
     const requestId = navigationTarget.requestId;
+    const navigationLine = navigationTarget.line;
     const frame = window.requestAnimationFrame(() => {
-      const target = diffSurfaceRef.current?.querySelector<HTMLElement>(
-        `[data-rvw-source-start-line="${navigationTarget.line}"]`,
-      );
+      const target = markdownNavigationElement(diffSurfaceRef.current, navigationLine);
       if (!target) return;
       target.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
       appliedNavigationRequest.current = requestId;
