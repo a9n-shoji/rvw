@@ -1299,6 +1299,9 @@ test("resizes the expanded comments stack from its top edge", async ({ page }) =
   await expect(resizeHandle).toBeVisible();
   await expect(resizeHandle).toHaveAttribute("aria-valuetext", "自動");
 
+  await resizeHandle.click();
+  await expect(resizeHandle).toHaveAttribute("aria-valuetext", "自動");
+
   const codeBefore = await codeStack.boundingBox();
   const commentsBefore = await commentsStack.boundingBox();
   const handleBox = await resizeHandle.boundingBox();
@@ -1344,6 +1347,15 @@ test("resizes the expanded comments stack from its top edge", async ({ page }) =
       );
     })
     .toBe(true);
+
+  await resizeHandle.press("Escape");
+  await expect(resizeHandle).toHaveAttribute("aria-valuetext", "自動");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect
+    .poll(async () =>
+      Math.abs(((await commentsStack.boundingBox())?.height ?? 0) - commentsBefore!.height),
+    )
+    .toBeLessThan(3);
 });
 
 test("keeps virtual review nodes compact and useful height for code navigation", async ({

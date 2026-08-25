@@ -121,6 +121,7 @@ const MAX_SIDEBAR_WIDTH = 560;
 const MIN_MAIN_VIEW_WIDTH = 500;
 const DEFAULT_PANE_SPLIT = 50;
 const MIN_PANE_WIDTH = 280;
+// Keep these drag bounds aligned with the sidebar stack constraints in main.css.
 const MIN_CODE_STACK_HEIGHT = 260;
 const CODE_STACK_COMPACT_SHARE = 0.58;
 const MIN_COMMENTS_STACK_HEIGHT = 210;
@@ -2413,15 +2414,12 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 aria-valuenow={commentsMeasuredHeight}
                 aria-valuetext={commentsHeight === null ? "自動" : undefined}
                 tabIndex={0}
-                title="ドラッグしてコメント欄の高さを変更（ダブルクリックで自動調整）"
+                title="ドラッグしてコメント欄の高さを変更（ダブルクリックまたはEscで自動調整）"
                 onPointerDown={(event) => {
                   if (event.button !== 0) return;
-                  const sidebar = event.currentTarget.closest<HTMLElement>(".sidebar");
-                  if (!sidebar) return;
                   event.preventDefault();
                   event.currentTarget.setPointerCapture(event.pointerId);
                   setResizingSurface("comments");
-                  updateCommentsHeight(event.clientY, sidebar);
                 }}
                 onPointerMove={(event) => {
                   if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
@@ -2433,6 +2431,11 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 onLostPointerCapture={() => setResizingSurface(null)}
                 onDoubleClick={() => setCommentsHeight(null)}
                 onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setCommentsHeight(null);
+                    return;
+                  }
                   if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
                   event.preventDefault();
                   adjustCommentsHeight(event.key === "ArrowUp" ? 16 : -16);
