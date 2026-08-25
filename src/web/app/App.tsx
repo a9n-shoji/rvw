@@ -121,6 +121,11 @@ const MAX_SIDEBAR_WIDTH = 560;
 const MIN_MAIN_VIEW_WIDTH = 500;
 const DEFAULT_PANE_SPLIT = 50;
 const MIN_PANE_WIDTH = 280;
+const MIN_CODE_STACK_HEIGHT = 260;
+const CODE_STACK_COMPACT_SHARE = 0.58;
+const MIN_COMMENTS_STACK_HEIGHT = 210;
+const COMMENTS_STACK_COMPACT_SHARE = 0.28;
+const COLLAPSED_STACK_HEIGHT = 37;
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
@@ -128,6 +133,21 @@ function clamp(value: number, minimum: number, maximum: number): number {
 
 function initialSidebarWidth(): number {
   return window.innerWidth <= 850 ? 280 : DEFAULT_SIDEBAR_WIDTH;
+}
+
+function commentsStackHeightBounds(
+  sidebar: HTMLElement,
+  codeExpanded: boolean,
+): { minimum: number; maximum: number } {
+  const sidebarHeight = sidebar.getBoundingClientRect().height;
+  const minimum = Math.min(MIN_COMMENTS_STACK_HEIGHT, sidebarHeight * COMMENTS_STACK_COMPACT_SHARE);
+  const reservedCodeHeight = codeExpanded
+    ? Math.min(MIN_CODE_STACK_HEIGHT, sidebarHeight * CODE_STACK_COMPACT_SHARE)
+    : COLLAPSED_STACK_HEIGHT;
+  return {
+    minimum,
+    maximum: Math.max(minimum, sidebarHeight - reservedCodeHeight),
+  };
 }
 
 function useDebouncedValue<T>(value: T, delay: number): T {
@@ -530,6 +550,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("unified");
   const [codeExpanded, setCodeExpanded] = useState(true);
   const [commentsExpanded, setCommentsExpanded] = useState(false);
+  const [commentsHeight, setCommentsHeight] = useState<number | null>(null);
+  const [commentsMeasuredHeight, setCommentsMeasuredHeight] = useState(COLLAPSED_STACK_HEIGHT);
   const [codeNavigationMode, setCodeNavigationMode] = useState<"files" | "search">("files");
   const [treeMode, setTreeMode] = useState<"changed" | "all">("changed");
   const [viewerNavigationTargets, setViewerNavigationTargets] = useState<
@@ -563,7 +585,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   } = useDocumentWorkspace(resetViewerNavigation);
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
   const [paneSplit, setPaneSplit] = useState(DEFAULT_PANE_SPLIT);
-  const [resizingSurface, setResizingSurface] = useState<"sidebar" | "panes" | null>(null);
+  const [resizingSurface, setResizingSurface] = useState<"sidebar" | "comments" | "panes" | null>(
+    null,
+  );
   const [draggedDocumentKey, setDraggedDocumentKey] = useState<string | null>(null);
   const [fileFilter, setFileFilter] = useState("");
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
@@ -594,12 +618,42 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const observedAgentPostSnapshot = useRef<Map<string, string> | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const commentsStackRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchNavigationSequence = useRef(0);
   const codeReferenceRequestSequence = useRef<Record<DocumentPaneId, number>>({
     left: 0,
     right: 0,
   });
+  useLayoutEffect(() => {
+    if (!commentsExpanded || !commentsStackRef.current) return;
+    const commentsStack = commentsStackRef.current;
+    const sidebar = commentsStack.parentElement;
+    const updateMeasuredHeight = (): void => {
+      const nextHeight = Math.round(commentsStack.getBoundingClientRect().height);
+      setCommentsMeasuredHeight((currentHeight) =>
+        currentHeight === nextHeight ? currentHeight : nextHeight,
+      );
+    };
+    updateMeasuredHeight();
+    const commentsObserver = new ResizeObserver(updateMeasuredHeight);
+    commentsObserver.observe(commentsStack);
+    const clampManualHeight = (): void => {
+      if (!sidebar) return;
+      const heightBounds = commentsStackHeightBounds(sidebar, codeExpanded);
+      setCommentsHeight((currentHeight) => {
+        if (currentHeight === null) return currentHeight;
+        return clamp(currentHeight, heightBounds.minimum, heightBounds.maximum);
+      });
+    };
+    clampManualHeight();
+    const sidebarObserver = new ResizeObserver(clampManualHeight);
+    if (sidebar) sidebarObserver.observe(sidebar);
+    return () => {
+      commentsObserver.disconnect();
+      sidebarObserver.disconnect();
+    };
+  }, [codeExpanded, commentsExpanded]);
   const debouncedSearch = useDebouncedValue(searchText.trim(), 250);
   const openDocuments = useMemo(
     () => [...documentWorkspace.documents.left, ...documentWorkspace.documents.right],
@@ -961,6 +1015,19 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       Math.min(MAX_SIDEBAR_WIDTH, bounds.width - MIN_MAIN_VIEW_WIDTH),
     );
     setSidebarWidth(clamp(clientX - bounds.left, MIN_SIDEBAR_WIDTH, dynamicMaximum));
+  };
+  const updateCommentsHeight = (clientY: number, sidebar: HTMLElement): void => {
+    const bounds = sidebar.getBoundingClientRect();
+    const heightBounds = commentsStackHeightBounds(sidebar, codeExpanded);
+    setCommentsHeight(clamp(bounds.bottom - clientY, heightBounds.minimum, heightBounds.maximum));
+  };
+  const adjustCommentsHeight = (delta: number): void => {
+    const commentsStack = commentsStackRef.current;
+    const sidebar = commentsStack?.parentElement;
+    if (!commentsStack || !sidebar) return;
+    const heightBounds = commentsStackHeightBounds(sidebar, codeExpanded);
+    const currentHeight = commentsStack.getBoundingClientRect().height;
+    setCommentsHeight(clamp(currentHeight + delta, heightBounds.minimum, heightBounds.maximum));
   };
   const updatePaneSplit = (clientX: number, mainView: HTMLElement): void => {
     const bounds = mainView.getBoundingClientRect();
@@ -1931,6 +1998,9 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     changeSequence.error;
   const rightPaneVisible =
     documentWorkspace.documents.right.length > 0 || draggedDocumentKey !== null;
+  const commentsHeightRange = commentsStackRef.current?.parentElement
+    ? commentsStackHeightBounds(commentsStackRef.current.parentElement, codeExpanded)
+    : { minimum: MIN_COMMENTS_STACK_HEIGHT, maximum: window.innerHeight };
 
   const renderDocumentPane = (paneId: DocumentPaneId) => {
     const paneDocuments = documentWorkspace.documents[paneId];
@@ -2207,7 +2277,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         </div>
       )}
       <div
-        className={`workspace${resizingSurface ? " is-resizing" : ""}`}
+        className={`workspace${resizingSurface ? " is-resizing" : ""}${resizingSurface === "comments" ? " is-row-resizing" : ""}`}
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
         <aside className="sidebar" aria-label="レビューサイドバー">
@@ -2324,8 +2394,51 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
             </div>
           </section>
           <section
+            ref={commentsStackRef}
             className={`sidebar-stack sidebar-stack--comments${commentsExpanded ? " is-expanded" : ""}`}
+            style={
+              commentsExpanded && commentsHeight !== null
+                ? { flex: `0 0 ${commentsHeight}px` }
+                : undefined
+            }
           >
+            {commentsExpanded && (
+              <div
+                className={`vertical-resize-handle comments-resize-handle${resizingSurface === "comments" ? " active" : ""}`}
+                role="separator"
+                aria-label="コメント欄の高さを変更"
+                aria-orientation="horizontal"
+                aria-valuemin={Math.round(commentsHeightRange.minimum)}
+                aria-valuemax={Math.round(commentsHeightRange.maximum)}
+                aria-valuenow={commentsMeasuredHeight}
+                aria-valuetext={commentsHeight === null ? "自動" : undefined}
+                tabIndex={0}
+                title="ドラッグしてコメント欄の高さを変更（ダブルクリックで自動調整）"
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  const sidebar = event.currentTarget.closest<HTMLElement>(".sidebar");
+                  if (!sidebar) return;
+                  event.preventDefault();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  setResizingSurface("comments");
+                  updateCommentsHeight(event.clientY, sidebar);
+                }}
+                onPointerMove={(event) => {
+                  if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+                  const sidebar = event.currentTarget.closest<HTMLElement>(".sidebar");
+                  if (sidebar) updateCommentsHeight(event.clientY, sidebar);
+                }}
+                onPointerUp={finishResize}
+                onPointerCancel={finishResize}
+                onLostPointerCapture={() => setResizingSurface(null)}
+                onDoubleClick={() => setCommentsHeight(null)}
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                  event.preventDefault();
+                  adjustCommentsHeight(event.key === "ArrowUp" ? 16 : -16);
+                }}
+              />
+            )}
             <button
               className="sidebar-stack-toggle"
               aria-expanded={commentsExpanded}

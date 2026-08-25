@@ -1284,6 +1284,68 @@ test("keeps every sidebar section heading visible in a short viewport", async ({
   expect(layout.bodyOverflow.every((overflow) => overflow === "auto")).toBe(true);
 });
 
+test("resizes the expanded comments stack from its top edge", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+
+  const commentsToggle = page.locator(".sidebar-stack--comments > .sidebar-stack-toggle");
+  await commentsToggle.click();
+  await expect(commentsToggle).toHaveAttribute("aria-expanded", "true");
+
+  const codeStack = page.locator(".sidebar-stack--code");
+  const commentsStack = page.locator(".sidebar-stack--comments");
+  const resizeHandle = page.getByRole("separator", { name: "コメント欄の高さを変更" });
+  await expect(resizeHandle).toBeVisible();
+  await expect(resizeHandle).toHaveAttribute("aria-valuetext", "自動");
+
+  const codeBefore = await codeStack.boundingBox();
+  const commentsBefore = await commentsStack.boundingBox();
+  const handleBox = await resizeHandle.boundingBox();
+  expect(codeBefore).not.toBeNull();
+  expect(commentsBefore).not.toBeNull();
+  expect(handleBox).not.toBeNull();
+
+  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y + handleBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(handleBox!.x + handleBox!.width / 2, handleBox!.y - 96, { steps: 5 });
+  await page.mouse.up();
+
+  const codeAfter = await codeStack.boundingBox();
+  const commentsAfter = await commentsStack.boundingBox();
+  expect(codeAfter).not.toBeNull();
+  expect(commentsAfter).not.toBeNull();
+  expect(commentsAfter!.height).toBeGreaterThan(commentsBefore!.height + 70);
+  expect(codeAfter!.height).toBeLessThan(codeBefore!.height - 70);
+  await expect(resizeHandle).not.toHaveAttribute("aria-valuetext", "自動");
+
+  await resizeHandle.dblclick();
+  const commentsReset = await commentsStack.boundingBox();
+  expect(commentsReset).not.toBeNull();
+  expect(Math.abs(commentsReset!.height - commentsBefore!.height)).toBeLessThan(3);
+  await expect(resizeHandle).toHaveAttribute("aria-valuetext", "自動");
+
+  await resizeHandle.focus();
+  await resizeHandle.press("ArrowUp");
+  const commentsAfterKeyboardResize = await commentsStack.boundingBox();
+  expect(commentsAfterKeyboardResize).not.toBeNull();
+  expect(commentsAfterKeyboardResize!.height).toBeGreaterThan(commentsReset!.height + 10);
+  await expect(resizeHandle).not.toHaveAttribute("aria-valuetext", "自動");
+
+  await page.setViewportSize({ width: 1280, height: 320 });
+  await expect
+    .poll(async () => {
+      const sidebarBox = await page.locator(".sidebar").boundingBox();
+      const commentsBox = await commentsStack.boundingBox();
+      return Boolean(
+        sidebarBox &&
+        commentsBox &&
+        commentsBox.y + commentsBox.height <= sidebarBox.y + sidebarBox.height + 1,
+      );
+    })
+    .toBe(true);
+});
+
 test("keeps virtual review nodes compact and useful height for code navigation", async ({
   page,
 }) => {
