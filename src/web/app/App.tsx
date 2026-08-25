@@ -2070,6 +2070,11 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         data-pane={paneId}
         aria-label={`${paneId === "left" ? "左" : "右"}のコードペイン`}
         tabIndex={-1}
+        onFocusCapture={() => {
+          setDocumentWorkspace((current) =>
+            current.focusedPane === paneId ? current : { ...current, focusedPane: paneId },
+          );
+        }}
         onPointerDown={(event) => {
           setDocumentWorkspace((current) =>
             current.focusedPane === paneId ? current : { ...current, focusedPane: paneId },

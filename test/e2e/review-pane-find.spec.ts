@@ -66,7 +66,9 @@ test("finds within the focused document pane with VS Code-style controls", async
   await expect(leftInput).toHaveAttribute("aria-invalid", "true");
   await expect(leftFind.locator(".pane-find-status")).toHaveText("正規表現が無効です");
 
-  await leftInput.press("Escape");
+  await leftInput.press("Tab");
+  await expect(leftFind.getByRole("button", { name: "大文字と小文字を区別" })).toBeFocused();
+  await page.keyboard.press("Escape");
   await expect(leftFind).toHaveCount(0);
   await expect(leftPane).toBeFocused();
 
@@ -78,8 +80,9 @@ test("finds within the focused document pane with VS Code-style controls", async
     "aria-selected",
     "true",
   );
-  await rightPane.focus();
-  await expect(rightPane).toBeFocused();
+  await leftPane.getByRole("tab", { name: "src/fixture.ts" }).click();
+  await rightPane.getByRole("tab", { name: "src/new.ts" }).focus();
+  await expect(rightPane.getByRole("tab", { name: "src/new.ts" })).toBeFocused();
   await page.keyboard.press("Control+F");
   const rightFind = rightPane.getByRole("search", { name: "右ペイン内を検索" });
   const rightInput = rightFind.getByRole("textbox", { name: "ペイン内を検索" });
@@ -98,6 +101,55 @@ test("finds within the focused document pane with VS Code-style controls", async
   await page.keyboard.press("F3");
   await expect(leftFind.locator(".pane-find-status")).toHaveText("2/2");
   await expect(rightFind.locator(".pane-find-status")).toHaveText("1/1");
+});
+
+test("keeps inline text searchable across formatting boundaries and observes late ShadowRoots", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  await leftPane.focus();
+  await page.keyboard.press("Control+F");
+  const find = leftPane.getByRole("search", { name: "左ペイン内を検索" });
+  const input = find.getByRole("textbox", { name: "ペイン内を検索" });
+
+  await leftPane.locator("[data-pane-find-text]").evaluate((surface) => {
+    const lightDomFixture = document.createElement("div");
+    lightDomFixture.innerHTML = "<p>format<strong>Boundary</strong></p><p>line<br>Boundary</p>";
+    surface.append(lightDomFixture);
+  });
+
+  await input.fill("formatBoundary");
+  await expect(find.locator(".pane-find-status")).toHaveText("1/1");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const highlight = CSS.highlights.get("rvw-pane-find-left-current");
+        return highlight
+          ? [...highlight].map((range) => (range instanceof Range ? range.toString() : ""))
+          : [];
+      }),
+    )
+    .toEqual(["formatBoundary"]);
+
+  await input.fill("lineBoundary");
+  await expect(find.locator(".pane-find-status")).toHaveText("0/0");
+
+  await input.fill("lateShadowMatch");
+  await expect(find.locator(".pane-find-status")).toHaveText("0/0");
+  await leftPane.locator("[data-pane-find-text]").evaluate((surface) => {
+    const shadowHost = document.createElement("div");
+    shadowHost.dataset.paneFindShadowFixture = "";
+    shadowHost.attachShadow({ mode: "open" }).innerHTML =
+      '<div data-line="1">lateShadowMatch</div>';
+    surface.append(shadowHost);
+  });
+  await expect(find.locator(".pane-find-status")).toHaveText("1/1");
+  await leftPane.locator("[data-pane-find-shadow-fixture]").evaluate((host) => {
+    const line = host.shadowRoot?.querySelector("[data-line]");
+    if (line) line.textContent = "lateShadowMatch lateShadowMatch";
+  });
+  await expect(find.locator(".pane-find-status")).toHaveText("1/2");
 });
 
 test("finds rendered text in a walkthrough without searching its viewer controls", async ({

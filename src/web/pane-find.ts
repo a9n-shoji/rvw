@@ -83,17 +83,35 @@ export function findPaneTextMatches(
   return { matches, invalidRegularExpression: false };
 }
 
-function textNodesWithin(container: Element): Text[] {
-  const nodes: Text[] = [];
-  const walker = container.ownerDocument.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+function searchableNodesWithin(
+  container: Element,
+  includeLineBreaks: boolean,
+): Array<Text | Element> {
+  const nodes: Array<Text | Element> = [];
+  const walker = container.ownerDocument.createTreeWalker(
+    container,
+    NodeFilter.SHOW_TEXT | (includeLineBreaks ? NodeFilter.SHOW_ELEMENT : 0),
+  );
   let current: Node | null;
   while ((current = walker.nextNode())) {
-    if (!(current instanceof Text) || !current.data) continue;
-    const parent = current.parentElement;
-    if (!parent || parent.closest(paneFindIgnoredSelector)) continue;
-    nodes.push(current);
+    if (current instanceof Text) {
+      if (!current.data) continue;
+      const parent = current.parentElement;
+      if (!parent || parent.closest(paneFindIgnoredSelector)) continue;
+      nodes.push(current);
+      continue;
+    }
+    if (includeLineBreaks && current instanceof Element && current.tagName === "BR") {
+      if (!current.closest(paneFindIgnoredSelector)) nodes.push(current);
+    }
   }
   return nodes;
+}
+
+function textNodesWithin(container: Element): Text[] {
+  return searchableNodesWithin(container, false).filter(
+    (node): node is Text => node instanceof Text,
+  );
 }
 
 function lightDomTextGroups(surface: HTMLElement): Text[][] {
@@ -103,17 +121,25 @@ function lightDomTextGroups(surface: HTMLElement): Text[][] {
     ...surface.querySelectorAll<HTMLElement>("[data-pane-find-text]"),
   ];
   for (const root of roots) {
-    const grouped = new Map<Element, Text[]>();
-    for (const node of textNodesWithin(root)) {
+    const currentGroups = new Map<Element, Text[]>();
+    for (const node of searchableNodesWithin(root, true)) {
       const parent = node.parentElement;
       if (!parent) continue;
       const block = parent.closest(paneFindBlockSelector);
       const key = block && root.contains(block) ? block : parent;
-      const existing = grouped.get(key);
-      if (existing) existing.push(node);
-      else grouped.set(key, [node]);
+      if (node instanceof Element) {
+        currentGroups.delete(key);
+        continue;
+      }
+      const existing = currentGroups.get(key);
+      if (existing) {
+        existing.push(node);
+      } else {
+        const group = [node];
+        currentGroups.set(key, group);
+        groups.push(group);
+      }
     }
-    groups.push(...grouped.values());
   }
   return groups;
 }

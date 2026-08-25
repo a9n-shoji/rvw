@@ -156,16 +156,24 @@ export function PaneFindWidget({
 
   useEffect(() => {
     if (!visible || !paneElement) return;
-    const observer = new MutationObserver(() => scheduleRefresh(false));
-    observer.observe(paneElement, { childList: true, subtree: true, characterData: true });
-    const surface = paneElement.querySelector<HTMLElement>("[data-pane-find-surface]");
-    if (surface) {
+    const observedShadowRoots = new WeakSet<ShadowRoot>();
+    const observeShadowRoots = (): void => {
+      const surface = paneElement.querySelector<HTMLElement>("[data-pane-find-surface]");
+      if (!surface) return;
       for (const root of paneFindShadowRoots(surface)) {
+        if (observedShadowRoots.has(root)) continue;
         observer.observe(root, { childList: true, subtree: true, characterData: true });
+        observedShadowRoots.add(root);
       }
-    }
+    };
+    const observer = new MutationObserver(() => {
+      observeShadowRoots();
+      scheduleRefresh(false);
+    });
+    observer.observe(paneElement, { childList: true, subtree: true, characterData: true });
+    observeShadowRoots();
     return () => observer.disconnect();
-  }, [documentKey, paneElement, scheduleRefresh, visible]);
+  }, [paneElement, scheduleRefresh, visible]);
 
   useEffect(() => {
     if (!visible) {
@@ -235,6 +243,11 @@ export function PaneFindWidget({
         className="pane-find-widget"
         role="search"
         aria-label={`${paneId === "left" ? "左" : "右"}ペイン内を検索`}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          onClose();
+        }}
       >
         <div className={`pane-find-input-shell${invalidRegularExpression ? " invalid" : ""}`}>
           <input
@@ -249,11 +262,6 @@ export function PaneFindWidget({
               if (event.key === "Enter") {
                 event.preventDefault();
                 move(event.shiftKey ? -1 : 1);
-                return;
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                onClose();
                 return;
               }
               if (!event.altKey) return;
