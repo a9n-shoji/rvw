@@ -26,6 +26,7 @@ import type {
   Walkthrough,
   WalkthroughReference,
 } from "../../domain/models.js";
+import { walkthroughHtmlPreviewSourceRanges } from "../../shared/walkthrough-html.js";
 import {
   api,
   type DeleteWalkthroughResponse,
@@ -228,6 +229,7 @@ interface MermaidMarkdownRenderContext {
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
+  onActivateComment: (commentId: string) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
   diagramCommentPending: boolean;
   diagramCommentError: unknown;
@@ -239,26 +241,29 @@ const MermaidMarkdownRenderContext = createContext<MermaidMarkdownRenderContext 
 
 function WalkthroughDiagramCommentComposer({
   range,
+  label,
   pending,
   error,
   onCancel,
   onSubmit,
 }: {
   range: MarkdownSourceRange;
+  label?: string;
   pending: boolean;
   error: unknown;
   onCancel: () => void;
   onSubmit: (body: string) => void;
 }) {
   const [body, setBody] = useState("");
-  const label =
-    range.startLine === range.endLine
+  const composerLabel =
+    label ??
+    (range.startLine === range.endLine
       ? `L${range.startLine}へコメント`
-      : `L${range.startLine}–${range.endLine}へコメント`;
+      : `L${range.startLine}–${range.endLine}へコメント`);
   return (
     <InlineCommentComposer
       body={body}
-      label={label}
+      label={composerLabel}
       pending={pending}
       error={error}
       validationError={undefined}
@@ -304,12 +309,13 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
         onOpenReference={context.onOpenReference}
         onOpenRepositoryLink={context.onOpenRepositoryLink}
         onCommentRange={context.onCommentRange}
-        onCommentActiveChange={context.onCommentActiveChange}
-        commentComposer={
+        onActivateComment={context.onActivateComment}
+        commentComposer={(label) =>
           previewCommentRange ? (
             <WalkthroughDiagramCommentComposer
               key={`${previewCommentRange.startLine}:${previewCommentRange.endLine}`}
               range={previewCommentRange}
+              label={label}
               pending={context.diagramCommentPending}
               error={context.diagramCommentError}
               onCancel={context.onCancelDiagramComment}
@@ -377,6 +383,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   onOpenCommentCodeReference,
   onOpenRepositoryLink,
   onCommentActiveChange,
+  onActivateComment,
   onCommentRange,
   diagramCommentPending,
   diagramCommentError,
@@ -404,24 +411,45 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
+  onActivateComment: (commentId: string) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
   diagramCommentPending: boolean;
   diagramCommentError: unknown;
   onCancelDiagramComment: () => void;
   onSubmitDiagramComment: (range: MarkdownSourceRange, body: string) => void;
 }) {
+  const htmlPreviewRanges = useMemo(() => walkthroughHtmlPreviewSourceRanges(body), [body]);
+  const markdownPlacedComments = useMemo(
+    () =>
+      placedComments.filter(({ placement }) => {
+        const range = placement.range;
+        return !(
+          range &&
+          htmlPreviewRanges.some(
+            (previewRange) =>
+              range.startLine >= previewRange.startLine && range.endLine <= previewRange.endLine,
+          )
+        );
+      }),
+    [htmlPreviewRanges, placedComments],
+  );
   const annotations = useMemo<MarkdownCommentAnnotation[]>(
     () =>
-      placedComments.map(({ comment, placement }) => ({
+      markdownPlacedComments.map(({ comment, placement }) => ({
         id: comment.id,
         range: placement.range,
       })),
-    [placedComments],
+    [markdownPlacedComments],
   );
   const commentsById = useMemo(
     () =>
-      new Map(placedComments.map(({ comment, placement }) => [comment.id, { comment, placement }])),
-    [placedComments],
+      new Map(
+        markdownPlacedComments.map(({ comment, placement }) => [
+          comment.id,
+          { comment, placement },
+        ]),
+      ),
+    [markdownPlacedComments],
   );
   const markdownDiv: NonNullable<Components["div"]> = useCallback(
     ({ node, children, ...props }: ComponentPropsWithoutRef<"div"> & { node?: unknown }) => {
@@ -474,6 +502,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
         onOpenReference,
         onOpenRepositoryLink,
         onCommentActiveChange,
+        onActivateComment,
         onCommentRange,
         diagramCommentPending,
         diagramCommentError,
@@ -539,6 +568,7 @@ export function WalkthroughViewer({
   onNavigationApplied,
   themePreference,
   onCommentActiveChange,
+  onActivateComment,
   onOpenReference,
   onOpenCommentCodeReference,
   onOpenRepositoryLink,
@@ -552,6 +582,7 @@ export function WalkthroughViewer({
   onNavigationApplied: (requestId: number) => void;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
+  onActivateComment: (commentId: string) => void;
   onOpenReference: (
     walkthrough: Walkthrough,
     reference: WalkthroughReference,
@@ -813,6 +844,7 @@ export function WalkthroughViewer({
       onOpenCommentCodeReference={onOpenCommentCodeReference}
       onOpenRepositoryLink={onOpenRepositoryLink}
       onCommentActiveChange={onCommentActiveChange}
+      onActivateComment={onActivateComment}
       onCommentRange={openDiagramComposer}
       diagramCommentPending={createComment.isPending}
       diagramCommentError={createComment.error}

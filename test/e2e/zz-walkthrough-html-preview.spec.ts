@@ -92,6 +92,35 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   expect(contentSecurityPolicy).toContain("connect-src 'none'");
   expect(contentSecurityPolicy).toContain("form-action 'none'");
 
+  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  await leftPane.focus();
+  await page.keyboard.press("Control+F");
+  const paneFind = leftPane.getByRole("search", { name: "左ペイン内を検索" });
+  const paneFindInput = paneFind.getByRole("textbox", { name: "ペイン内を検索" });
+  await paneFindInput.fill("AuthGateway");
+  await expect(paneFind.locator(".pane-find-status")).toHaveText("1/1");
+  await expect
+    .poll(
+      async () =>
+        await frame.locator("body").evaluate(() => {
+          const highlight = CSS.highlights.get("rvw-pane-find-left-current");
+          return highlight
+            ? [...highlight].map((range) => (range instanceof Range ? range.toString() : ""))
+            : [];
+        }),
+    )
+    .toEqual(["AuthGateway"]);
+  await paneFindInput.press("Escape");
+  await expect(paneFind).toHaveCount(0);
+  await expect
+    .poll(
+      async () =>
+        await frame
+          .locator("body")
+          .evaluate(() => CSS.highlights.get("rvw-pane-find-left-current")?.size ?? 0),
+    )
+    .toBe(0);
+
   await frame.getByRole("link", { name: "AuthGateway に集約する" }).click();
   await expect(
     page.getByRole("tab", { name: "src/application/orders/create-order.ts" }),
@@ -114,12 +143,29 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   await commentAction.click();
   const composer = shell.locator(".walkthrough-html-comment-composer");
   await expect(composer).toBeVisible();
-  await composer.getByRole("textbox").fill("Gatewayへの集約境界を確認してください。");
+  await expect(composer.getByRole("textbox")).toHaveAccessibleName("選択したテキストへコメント");
+  const [selectionBox, composerBox] = await Promise.all([
+    afterText.boundingBox(),
+    composer.boundingBox(),
+  ]);
+  expect(selectionBox).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+  expect(Math.abs(composerBox!.y - selectionBox!.y)).toBeLessThan(120);
+  const commentBody = "Gatewayへの集約境界を確認してください。";
+  await composer.getByRole("textbox").fill(commentBody);
   await composer.getByRole("textbox").press("Control+Enter");
   await expect(
     page.locator(".markdown-inline-comments .comment-thread").filter({
-      hasText: "Gatewayへの集約境界を確認してください。",
+      hasText: commentBody,
     }),
+  ).toHaveCount(0);
+  const marker = shell.locator(".walkthrough-html-marker").last();
+  await expect(marker).toBeVisible();
+  await marker.click();
+  const commentsToggle = page.locator(".sidebar-stack--comments > .sidebar-stack-toggle");
+  await expect(commentsToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(
+    page.locator(".comment-sidebar .comment-thread").filter({ hasText: commentBody }),
   ).toBeVisible();
 
   await frame.getByRole("heading", { name: "Before" }).hover();

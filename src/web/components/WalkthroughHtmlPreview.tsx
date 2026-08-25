@@ -87,6 +87,8 @@ function previewBaseCss(themePreference: ThemePreference): string {
     .rvw-preview-root { min-width: 0; padding: 16px; }
     .rvw-html-image-placeholder { display: grid; min-height: 96px; place-items: center; padding: 16px; border: 1px dashed var(--rvw-border); border-radius: 6px; background: var(--rvw-panel); color: var(--rvw-muted); text-align: center; }
     [data-rvw-comment-surface="true"] { cursor: default; }
+    ::highlight(rvw-pane-find-left-match), ::highlight(rvw-pane-find-right-match) { background-color: light-dark(rgb(234 179 8 / 0.42), rgb(250 204 21 / 0.38)); }
+    ::highlight(rvw-pane-find-left-current), ::highlight(rvw-pane-find-right-current) { background-color: light-dark(rgb(245 139 10 / 0.82), rgb(249 115 22 / 0.78)); color: light-dark(#17120a, #fff); }
   `;
 }
 
@@ -101,7 +103,7 @@ function srcdoc(html: string, themePreference: ThemePreference): string {
   return `<meta http-equiv="Content-Security-Policy" content="${previewContentSecurityPolicy}">
 <meta name="color-scheme" content="light dark">
 <style>${previewBaseCss(themePreference)}</style>
-<div class="rvw-preview-root">${html}</div>
+<div class="rvw-preview-root" data-pane-find-text>${html}</div>
 <style>${previewCommentCss}</style>`;
 }
 
@@ -226,7 +228,7 @@ export function WalkthroughHtmlPreview({
   onOpenReference,
   onOpenRepositoryLink,
   onCommentRange,
-  onCommentActiveChange,
+  onActivateComment,
 }: {
   source: string;
   fenceRange: MarkdownSourceRange;
@@ -237,18 +239,20 @@ export function WalkthroughHtmlPreview({
   activeCommentId: string | null;
   navigationLine: number | null;
   themePreference: ThemePreference;
-  commentComposer: ReactNode;
+  commentComposer: (label: string) => ReactNode;
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
-  onCommentActiveChange: (commentId: string, active: boolean) => void;
+  onActivateComment: (commentId: string) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const frameShellRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const textRangesRef = useRef(new WeakMap<Text, MarkdownSourceRange>());
   const [resolvedImages, setResolvedImages] = useState<Map<string, string | null>>(new Map());
   const [frameHeight, setFrameHeight] = useState(minimumFrameHeight);
   const [overlayAction, setOverlayAction] = useState<HtmlPreviewOverlayAction | null>(null);
+  const [composerAnchor, setComposerAnchor] = useState<HtmlPreviewOverlayAction | null>(null);
   const [markers, setMarkers] = useState<HtmlPreviewOverlayMarker[]>([]);
   const rendered = useMemo(() => {
     try {
@@ -287,8 +291,9 @@ export function WalkthroughHtmlPreview({
   const updateLayout = useCallback((): void => {
     const iframe = iframeRef.current;
     const host = hostRef.current;
+    const frameShell = frameShellRef.current;
     const document = iframe?.contentDocument;
-    if (!iframe || !host || !document) return;
+    if (!iframe || !host || !frameShell || !document) return;
     const contentHeight = Math.max(
       document.documentElement.scrollHeight,
       document.body?.scrollHeight ?? 0,
@@ -298,7 +303,7 @@ export function WalkthroughHtmlPreview({
     if (document.body)
       document.body.style.overflowY = contentHeight > maximumFrameHeight ? "auto" : "hidden";
     const iframeRect = iframe.getBoundingClientRect();
-    const hostRect = host.getBoundingClientRect();
+    const frameShellRect = frameShell.getBoundingClientRect();
     setMarkers(
       placedComments.flatMap(({ comment, placement }) => {
         if (placement.outdated || !placement.range) return [];
@@ -308,8 +313,8 @@ export function WalkthroughHtmlPreview({
         return [
           {
             id: comment.id,
-            left: iframeRect.left - hostRect.left + rect.right,
-            top: iframeRect.top - hostRect.top + rect.top,
+            left: iframeRect.left - frameShellRect.left + rect.right,
+            top: iframeRect.top - frameShellRect.top + rect.top,
             active: comment.id === activeCommentId,
             label: `${comment.id}のコメントを開く`,
           },
@@ -325,7 +330,8 @@ export function WalkthroughHtmlPreview({
   useEffect(() => {
     const iframe = iframeRef.current;
     const host = hostRef.current;
-    if (!iframe || !host || !rendered.value) return;
+    const frameShell = frameShellRef.current;
+    if (!iframe || !host || !frameShell || !rendered.value) return;
     let detachDocument = (): void => undefined;
     const onLoad = (): void => {
       detachDocument();
@@ -393,12 +399,13 @@ export function WalkthroughHtmlPreview({
           return;
         }
         const iframeRect = iframe.getBoundingClientRect();
-        const hostRect = host.getBoundingClientRect();
+        const frameShellRect = frameShell.getBoundingClientRect();
         setOverlayAction({
           range: selected.range,
-          left: iframeRect.left - hostRect.left + selected.rect.left + selected.rect.width / 2,
-          top: iframeRect.top - hostRect.top + selected.rect.bottom + 8,
-          label: `L${selected.range.startLine}–${selected.range.endLine}へコメント`,
+          left:
+            iframeRect.left - frameShellRect.left + selected.rect.left + selected.rect.width / 2,
+          top: iframeRect.top - frameShellRect.top + selected.rect.bottom + 8,
+          label: "選択したテキストへコメント",
         });
       };
 
@@ -413,12 +420,12 @@ export function WalkthroughHtmlPreview({
         }
         const rect = surface.getBoundingClientRect();
         const iframeRect = iframe.getBoundingClientRect();
-        const hostRect = host.getBoundingClientRect();
+        const frameShellRect = frameShell.getBoundingClientRect();
         setOverlayAction({
           range,
-          left: iframeRect.left - hostRect.left + rect.right,
-          top: iframeRect.top - hostRect.top + rect.top,
-          label: `L${range.startLine}–${range.endLine}のvisualへコメント`,
+          left: iframeRect.left - frameShellRect.left + rect.right,
+          top: iframeRect.top - frameShellRect.top + rect.top,
+          label: "このvisualへコメント",
         });
       };
 
@@ -536,14 +543,15 @@ export function WalkthroughHtmlPreview({
       data-rvw-navigation-start-line={fenceRange.startLine}
       data-rvw-navigation-end-line={fenceRange.endLine}
     >
-      <div className="walkthrough-html-preview-toolbar">
+      <div className="walkthrough-html-preview-toolbar" data-pane-find-ignore>
         <span>HTML preview</span>
         <span>textまたはvisualを選択してコメント</span>
       </div>
-      <div className="walkthrough-html-preview-frame-shell">
+      <div className="walkthrough-html-preview-frame-shell" ref={frameShellRef}>
         <iframe
           ref={iframeRef}
           title={`Walkthrough HTML preview L${fenceRange.startLine}`}
+          data-pane-find-child-document
           sandbox="allow-same-origin"
           srcDoc={srcdoc(rendered.value?.html ?? "", themePreference)}
           style={{ height: frameHeight }}
@@ -551,17 +559,24 @@ export function WalkthroughHtmlPreview({
         <HtmlPreviewOverlay
           action={overlayAction}
           markers={markers}
-          onComment={(range) => {
+          composer={composerAnchor ? commentComposer(composerAnchor.label) : null}
+          composerAnchor={composerAnchor}
+          onComment={(action) => {
             iframeRef.current?.contentDocument?.getSelection()?.removeAllRanges();
             setOverlayAction(null);
-            onCommentRange(range);
+            const hostWidth = hostRef.current?.clientWidth ?? 0;
+            const composerWidth = Math.min(420, Math.max(0, hostWidth - 24));
+            const halfWidth = composerWidth / 2;
+            const left =
+              hostWidth > 0
+                ? Math.max(12 + halfWidth, Math.min(hostWidth - 12 - halfWidth, action.left))
+                : action.left;
+            setComposerAnchor({ ...action, left });
+            onCommentRange(action.range);
           }}
-          onActivateComment={(commentId) => onCommentActiveChange(commentId, true)}
+          onActivateComment={onActivateComment}
         />
       </div>
-      {commentComposer && (
-        <div className="walkthrough-html-comment-composer">{commentComposer}</div>
-      )}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import {
   analyzeWalkthroughHtmlPreview,
   renderWalkthroughHtmlPreview,
   resolveWalkthroughRepositoryPath,
+  walkthroughHtmlPreviewSourceRanges,
 } from "../../src/shared/walkthrough-html.js";
 
 describe("Walkthrough HTML preview", () => {
@@ -27,6 +28,30 @@ describe("Walkthrough HTML preview", () => {
     expect(analysis.htmlPreviews).toHaveLength(1);
     expect(analysis.referenceIds).toEqual(["handler"]);
     expect(analysis.htmlPreviews[0]).toMatchObject({ startLine: 10, endLine: 10 });
+    expect(walkthroughHtmlPreviewSourceRanges(body)).toEqual([{ startLine: 10, endLine: 10 }]);
+  });
+
+  it("finds every HTML preview content range without treating ordinary HTML fences as previews", () => {
+    expect(
+      walkthroughHtmlPreviewSourceRanges(
+        [
+          "```html-preview",
+          "<section>",
+          "  <p>First</p>",
+          "</section>",
+          "```",
+          "```html",
+          "<p>Source only</p>",
+          "```",
+          "```html-preview",
+          "<p>Second</p>",
+          "```",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { startLine: 2, endLine: 4 },
+      { startLine: 10, endLine: 10 },
+    ]);
   });
 
   it("maps HTML node positions to absolute Walkthrough lines after sanitation", () => {

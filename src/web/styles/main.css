@@ -2643,7 +2643,7 @@ diffs-container > [slot="header-metadata"] {
 }
 .walkthrough-html-preview-shell {
   margin: 22px 0 28px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   background: var(--panel);
@@ -2683,7 +2683,7 @@ diffs-container > [slot="header-metadata"] {
   position: absolute;
   z-index: 4;
   inset: 0;
-  overflow: hidden;
+  overflow: visible;
   pointer-events: none;
 }
 .walkthrough-html-comment-action,
@@ -2732,13 +2732,20 @@ diffs-container > [slot="header-metadata"] {
   height: 13px;
 }
 .walkthrough-html-comment-composer {
-  padding: 0 10px 10px;
-  border-top: 1px solid var(--line);
-  background: var(--panel-2);
+  position: absolute;
+  z-index: 2;
+  width: min(420px, calc(100% - 24px));
+  padding: 10px;
+  transform: translate(-50%, 8px);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px var(--shadow-medium);
+  pointer-events: auto;
 }
 .walkthrough-html-comment-composer .inline-comment-composer--line {
   width: 100%;
-  margin: 10px 0 0;
+  margin: 0;
 }
 .walkthrough-html-preview-error {
   margin: 18px 0;

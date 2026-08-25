@@ -1,6 +1,7 @@
 import { fromHtml } from "hast-util-from-html";
 import { sanitize, type Schema } from "hast-util-sanitize";
 import { toHtml } from "hast-util-to-html";
+import { fromMarkdown } from "mdast-util-from-markdown";
 import { RvwError } from "./errors.js";
 
 export const MAX_WALKTHROUGH_HTML_IMAGES = 32;
@@ -294,6 +295,43 @@ export interface RenderedHtmlPreview extends HtmlPreviewAnalysis {
 }
 
 export type HtmlPreviewResolvedImages = ReadonlyMap<string, string | null>;
+
+export interface WalkthroughHtmlPreviewSourceRange {
+  startLine: number;
+  endLine: number;
+}
+
+interface MarkdownNode {
+  type: string;
+  lang?: string | null;
+  value?: string;
+  children?: MarkdownNode[];
+  position?: SourcePosition;
+}
+
+export function walkthroughHtmlPreviewSourceRanges(
+  markdown: string,
+): WalkthroughHtmlPreviewSourceRange[] {
+  const root = fromMarkdown(markdown) as MarkdownNode;
+  const ranges: WalkthroughHtmlPreviewSourceRange[] = [];
+  const visit = (node: MarkdownNode): void => {
+    if (
+      node.type === "code" &&
+      node.lang === "html-preview" &&
+      typeof node.value === "string" &&
+      node.position
+    ) {
+      const startLine = node.position.start.line + 1;
+      ranges.push({
+        startLine,
+        endLine: startLine + Math.max(1, node.value.split("\n").length) - 1,
+      });
+    }
+    node.children?.forEach(visit);
+  };
+  visit(root);
+  return ranges;
+}
 
 function absoluteLine(position: SourcePosition | undefined, fenceStartLine: number): number {
   return fenceStartLine + (position?.start.line ?? 1);

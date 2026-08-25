@@ -13,8 +13,9 @@
 利用者は最新PRタイトル・本文から変更の意図を読み、PRを構成するGit commitから実装の進行を読み、
 変更箇所を入口に選択commit時点のrepository全体へ移動する。コード全文、変更されていないfile、
 検索結果を含む任意の文書へコメントでき、その判断をCodex / Claude Codeへ共通Skill経由で受け渡す。
-Agentが実装やarchitectureを説明する場合は、commit固定のWalkthroughとしてcode referenceと
-Mermaid図を提示できる。どの参照をいつ開くかは人間が選び、rvwの最大二ペインのdocument workspaceで確認する。
+Agentが実装やarchitectureを説明する場合は、commit固定のWalkthroughとしてcode reference、
+Mermaid図、staticなHTML visualを提示できる。どの参照をいつ開くかは人間が選び、rvwの最大二ペインの
+document workspaceで確認する。
 
 diffは変更を見つけるlensであり、レビュー対象の境界ではない。レビュー対象は選択したcommitが作る
 repositoryの状態と、その状態を説明するPull Request全体である。
@@ -52,7 +53,7 @@ rvwが担うもの:
 - `rvw://comment/<uuid>`参照とSkill用CLI
 - comment postごとのexact commit固定typed code reference
 - 新規comment postのDB-wide event順序、opaque cursor、10秒pollのwatch CLI
-- commit固定のAgent Walkthrough、typed code reference、Mermaid図
+- commit固定のAgent Walkthrough、typed code reference、Mermaid図、static HTML visual
 - platform非依存の`rvw` / `rvw-walkthrough` / `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
 
 rvwが担わないもの:
@@ -254,7 +255,8 @@ empty fileは従来どおり明示的に扱う。
   option、現在位置を独立して持つ。fixed-string、case-insensitive、部分一致を既定とし、match case、whole word、
   regular expressionを明示toggleできる。入力中に全一致と現在位置を表示・highlightし、前後button、`Enter` /
   `Shift+Enter`、`F3` / `Shift+F3`で末尾と先頭をwrapして移動する。`Escape`で閉じてpaneへfocusを戻し、
-  `Cmd` / `Ctrl`+`Shift`+`F`のrepository本文検索とは混同しない。
+  `Cmd` / `Ctrl`+`Shift`+`F`のrepository本文検索とは混同しない。表示中の文書がsame-origin iframeへ登録した
+  static visual本文も同じ検索順序・件数・前後移動へ含め、highlightは各child documentのregistryへ描画する。
 - Walkthroughも独立した一時tabとして保持し、そこからcodeを開いても説明tabを閉じない。
   tabは個別に閉じられ、paneの`...` menuからactive以外またはpane内すべてを一括で閉じられる。
   overflow時は横scrollとopen-tab一覧を提供する。
@@ -471,6 +473,21 @@ interface Walkthrough {
   Phase 1のinteractive bindingはflowchart nodeとclass diagram classをE2E保証し、記法固有のSVG構造を
   持つ他のdiagramは描画対応とbinding対応を分ける。binding済み要素はdiagram種別にかかわらずaccent枠、
   薄いaccent背景、hover / focus強調を共通のaffordanceとして表示する。
+- exact `html-preview` fenced blockは、Markdown正本の一部としてstaticなHTML fragmentをvisual explanationへ
+  描画する。通常の`html` fenceはcode表示のままとする。Walkthrough本文全体を一つの`html-preview`中心で
+  構成することも許容するが、HTML用domain model、DB row、別revisionは追加せず、current Markdown本文と
+  そのinclusive source lineだけを正本にする。
+- `html-preview`はpublish / update時にHTML、inline CSS、inline SVGをparse、allowlist検証、sanitizeし、
+  source line情報を付けてからsame-origin sandbox iframeへ`srcdoc`として渡す。Agent authored script、event
+  handler、frame、form送信、network、font、media、worker、外部resourceは実行・取得させず、sandboxへ
+  `allow-scripts`を付けない。CSPを最終防衛線としてscriptと全networkを拒否する。
+- HTML visual内の`rvw-ref:<referenceId>`はMarkdown linkと同じreference lifecycleへ統合し、人間が選んだ
+  時だけexact sourceを開く。repository相対画像はWalkthroughのexact `sourceOid`からparent documentが取得し、
+  許可された画像data URLへ変換してiframeへ渡す。外部画像、stylesheet、その他の外部resourceは拒否する。
+- HTML要素とtext selectionは生成DOM identityを保存せず、parser由来のWalkthrough source line rangeへ戻す。
+  新規comment composerは選択したtextまたはvisualの近くへparent overlayとして表示し、既存commentはvisual
+  markerからcanonicalなComments sidebar threadをactivateする。HTML内部rangeのthreadを外側Markdown blockの
+  inline threadとして重複表示しない。本文更新後のmappingとOutdatedは通常のWalkthrough line comment規則に従う。
 - 人間がreferenceを選んだ時だけ、そのexact `sourceOid + path`を事前確認してdocument workspaceへ開く。
   このnavigationはglobalなcommit範囲と表示controlを変更しない。exact sourceのcommitまたはpathが
   missingならtabを開かず一時chipでリンク切れを示し、通信や一時的な取得失敗はリンク切れと区別する。
@@ -489,7 +506,8 @@ interface Walkthrough {
 - 人間はviewerから、Agentは明示authorizationを受けたCLIから、不要なWalkthroughを削除できる。削除前に
   reference、対象comment、postの件数を示し、確認後はそれらを一つのtransactionで削除する。共有され得る
   retained Git commit refは個別削除せずresetまで保持する。
-- raw HTMLやscriptは実行しない。本文は256 KiB、referenceは200件を上限とする。
+- 通常のraw HTMLとscriptは実行しない。検証済みのexact `html-preview` fragmentだけを上記sandboxで表示する。
+  本文は256 KiB、referenceは200件を上限とする。
 - Phase 1は作成、閲覧、同一ID更新、確認付き削除を扱い、更新履歴、AI chat、自動navigationは扱わない。
 
 ## 6. コメントモデル
@@ -1235,7 +1253,7 @@ invariant検証を行う。refとSQLiteの不整合を検出した場合は部�
 - local changes未commit、head未push
 - dirty判定errorには対象repository pathとstatus entry一覧を含める
 - invalid commit range / object / path
-- invalid Walkthrough reference / Mermaid binding / line range
+- invalid Walkthrough reference / Mermaid binding / HTML preview / line range
 - refとOID不整合
 - binary / too large
 - stale protocol
@@ -1251,7 +1269,7 @@ Unit:
 - commit log parse
 - line mapping、rename、Outdated
 - comment resolve/reopen、URI、CLI/API schema
-- Walkthrough schema、URI、Markdown reference validation、行comment placement
+- Walkthrough schema、URI、Markdown reference / HTML preview validation、行comment placement
 - DB migration 001→current
 
 Integration（実git + fake GitHub）:
@@ -1306,6 +1324,9 @@ E2E:
     現在のcommit範囲、表示mode、tree modeを維持。reloadは初期一時workspaceへ戻る
 19. 左右それぞれのfocused paneで`Cmd` / `Ctrl`+`F`を開き、match case、whole word、regular expression、
     一致件数、前後移動、wrap、`Escape`後のpane focus復元を確認。片方の検索状態とhighlightが他方へ混ざらない
+20. full-Walkthroughの`html-preview`をsandboxで表示し、exact source画像、`rvw-ref:`、source-mapped commentを
+    確認する。composerはtarget付近へ表示し、HTML内部threadは外側Markdown inlineへ重複せず、markerから
+    Comments sidebarのthreadをactivateできる。Pane Findはiframe本文を検索・highlight・前後移動できる
 
 CLI contract:
 

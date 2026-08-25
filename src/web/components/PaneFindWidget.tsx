@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { DocumentPaneId } from "../document-workspace.js";
-import { findPaneRanges, paneFindShadowRoots, type PaneFindOptions } from "../pane-find.js";
+import {
+  findPaneRanges,
+  paneFindChildDocuments,
+  paneFindShadowRoots,
+  type PaneFindOptions,
+} from "../pane-find.js";
 
 interface PaneFindWidgetProps {
   paneId: DocumentPaneId;
@@ -46,27 +51,48 @@ function nodeIsWithin(node: Node, container: Element): boolean {
   while (current) {
     if (current === container) return true;
     const root = current.getRootNode();
-    current = root instanceof ShadowRoot ? root.host : current.parentNode;
+    current =
+      root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && "host" in root
+        ? (root as ShadowRoot).host
+        : current.parentNode;
   }
   return false;
 }
 
 function selectionSeed(surface: HTMLElement | null): string | null {
-  const selection = window.getSelection();
-  if (!surface || !selection || selection.isCollapsed || !selection.anchorNode) return null;
-  if (!nodeIsWithin(selection.anchorNode, surface)) return null;
-  const value = selection.toString();
-  return value && value.length <= 200 && !/[\r\n]/u.test(value) ? value : null;
+  if (!surface) return null;
+  const documents = [surface.ownerDocument, ...paneFindChildDocuments(surface)];
+  for (const document of documents) {
+    const selection = document.getSelection();
+    if (!selection || selection.isCollapsed || !selection.anchorNode) continue;
+    const withinSurface =
+      document === surface.ownerDocument
+        ? nodeIsWithin(selection.anchorNode, surface)
+        : document.documentElement.contains(selection.anchorNode);
+    if (!withinSurface) continue;
+    const value = selection.toString();
+    if (value && value.length <= 200 && !/[\r\n]/u.test(value)) return value;
+  }
+  return null;
 }
 
-function scrollToRange(range: Range | undefined): void {
-  if (!range) return;
-  const element =
-    range.startContainer instanceof Element
-      ? range.startContainer
+function scrollToRange(range: Range | undefined, paneElement: HTMLElement | null): void {
+  if (!range || !paneElement) return;
+  const element: Element | null =
+    range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? (range.startContainer as Element)
       : range.startContainer.parentElement;
   const target = element?.closest<HTMLElement>("[data-line]") ?? element;
   target?.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+  const ownerDocument = range.startContainer.ownerDocument;
+  if (!ownerDocument || ownerDocument === paneElement.ownerDocument) return;
+  const frame = ownerDocument.defaultView?.frameElement;
+  if (!(frame instanceof HTMLElement)) return;
+  const rangeRect = range.getBoundingClientRect();
+  const frameRect = frame.getBoundingClientRect();
+  const paneRect = paneElement.getBoundingClientRect();
+  const targetCenter = frameRect.top + rangeRect.top + rangeRect.height / 2;
+  paneElement.scrollTop += targetCenter - paneRect.top - paneElement.clientHeight / 2;
 }
 
 export function PaneFindWidget({
@@ -86,21 +112,43 @@ export function PaneFindWidget({
   const rangesRef = useRef<Range[]>([]);
   const currentIndexRef = useRef(0);
   const refreshFrameRef = useRef<number | null>(null);
+  const highlightedDocumentsRef = useRef(new Set<Document>());
   const allHighlightName = `rvw-pane-find-${paneId}-match`;
   const currentHighlightName = `rvw-pane-find-${paneId}-current`;
 
   const clearHighlights = useCallback((): void => {
     CSS.highlights?.delete(allHighlightName);
     CSS.highlights?.delete(currentHighlightName);
+    for (const document of highlightedDocumentsRef.current) {
+      const view = document.defaultView;
+      view?.CSS.highlights?.delete(allHighlightName);
+      view?.CSS.highlights?.delete(currentHighlightName);
+    }
+    highlightedDocumentsRef.current.clear();
   }, [allHighlightName, currentHighlightName]);
 
   const paintHighlights = useCallback(
     (ranges: Range[], index: number): void => {
       clearHighlights();
-      if (!CSS.highlights || ranges.length === 0) return;
-      CSS.highlights.set(allHighlightName, new Highlight(...ranges));
+      if (ranges.length === 0) return;
+      const rangesByDocument = new Map<Document, Range[]>();
+      for (const range of ranges) {
+        const document = range.startContainer.ownerDocument;
+        if (!document) continue;
+        const existing = rangesByDocument.get(document);
+        if (existing) existing.push(range);
+        else rangesByDocument.set(document, [range]);
+      }
       const current = ranges[index];
-      if (current) CSS.highlights.set(currentHighlightName, new Highlight(current));
+      for (const [document, documentRanges] of rangesByDocument) {
+        const view = document.defaultView;
+        if (!view?.CSS.highlights || !view.Highlight) continue;
+        view.CSS.highlights.set(allHighlightName, new view.Highlight(...documentRanges));
+        if (current?.startContainer.ownerDocument === document) {
+          view.CSS.highlights.set(currentHighlightName, new view.Highlight(current));
+        }
+        highlightedDocumentsRef.current.add(document);
+      }
     },
     [allHighlightName, clearHighlights, currentHighlightName],
   );
@@ -132,7 +180,7 @@ export function PaneFindWidget({
         paneElement?.removeAttribute("data-pane-find-match-count");
         paneElement?.removeAttribute("data-pane-find-current-index");
       }
-      if (navigate) scrollToRange(result.ranges[nextIndex]);
+      if (navigate) scrollToRange(result.ranges[nextIndex], paneElement);
     },
     [options, paintHighlights, paneElement, query, visible],
   );
@@ -157,7 +205,8 @@ export function PaneFindWidget({
   useEffect(() => {
     if (!visible || !paneElement) return;
     const observedShadowRoots = new WeakSet<ShadowRoot>();
-    const observeShadowRoots = (): void => {
+    const observedChildDocuments = new WeakSet<Document>();
+    const observeSearchableSources = (): void => {
       const surface = paneElement.querySelector<HTMLElement>("[data-pane-find-surface]");
       if (!surface) return;
       for (const root of paneFindShadowRoots(surface)) {
@@ -165,14 +214,29 @@ export function PaneFindWidget({
         observer.observe(root, { childList: true, subtree: true, characterData: true });
         observedShadowRoots.add(root);
       }
+      for (const childDocument of paneFindChildDocuments(surface)) {
+        if (observedChildDocuments.has(childDocument)) continue;
+        observer.observe(childDocument, { childList: true, subtree: true, characterData: true });
+        observedChildDocuments.add(childDocument);
+      }
     };
     const observer = new MutationObserver(() => {
-      observeShadowRoots();
+      observeSearchableSources();
       scheduleRefresh(false);
     });
+    const handleChildLoad = (event: Event): void => {
+      if (!(event.target instanceof HTMLIFrameElement)) return;
+      if (!event.target.matches("[data-pane-find-child-document]")) return;
+      observeSearchableSources();
+      scheduleRefresh(false);
+    };
     observer.observe(paneElement, { childList: true, subtree: true, characterData: true });
-    observeShadowRoots();
-    return () => observer.disconnect();
+    paneElement.addEventListener("load", handleChildLoad, true);
+    observeSearchableSources();
+    return () => {
+      observer.disconnect();
+      paneElement.removeEventListener("load", handleChildLoad, true);
+    };
   }, [paneElement, scheduleRefresh, visible]);
 
   useEffect(() => {
@@ -209,7 +273,7 @@ export function PaneFindWidget({
       setCurrentIndex(nextIndex);
       paintHighlights(ranges, nextIndex);
       paneElement?.setAttribute("data-pane-find-current-index", String(nextIndex + 1));
-      scrollToRange(ranges[nextIndex]);
+      scrollToRange(ranges[nextIndex], paneElement);
       inputRef.current?.focus({ preventScroll: true });
     },
     [paintHighlights, paneElement],

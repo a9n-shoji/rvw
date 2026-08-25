@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import type { MarkdownSourceRange } from "./markdown-source-map.js";
 import { CommentIcon } from "./components/CommentComposer.js";
 
@@ -19,16 +20,31 @@ export interface HtmlPreviewOverlayMarker {
 export function HtmlPreviewOverlay({
   action,
   markers,
+  composer,
+  composerAnchor,
   onComment,
   onActivateComment,
 }: {
   action: HtmlPreviewOverlayAction | null;
   markers: HtmlPreviewOverlayMarker[];
-  onComment: (range: MarkdownSourceRange) => void;
+  composer: ReactNode;
+  composerAnchor: HtmlPreviewOverlayAction | null;
+  onComment: (action: HtmlPreviewOverlayAction) => void;
   onActivateComment: (commentId: string) => void;
 }) {
+  const composerRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!composer) return;
+    const frame = window.requestAnimationFrame(() => {
+      composerRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [composer]);
   return (
-    <div className="walkthrough-html-overlay" aria-hidden={action === null && markers.length === 0}>
+    <div
+      className="walkthrough-html-overlay"
+      aria-hidden={action === null && markers.length === 0 && !composer}
+    >
       {markers.map((marker) => (
         <button
           key={marker.id}
@@ -48,11 +64,20 @@ export function HtmlPreviewOverlay({
           aria-label={action.label}
           title={action.label}
           onPointerDown={(event) => event.preventDefault()}
-          onClick={() => onComment(action.range)}
+          onClick={() => onComment(action)}
         >
           <CommentIcon />
           コメント
         </button>
+      )}
+      {composer && composerAnchor && (
+        <div
+          ref={composerRef}
+          className="walkthrough-html-comment-composer"
+          style={{ left: composerAnchor.left, top: composerAnchor.top }}
+        >
+          {composer}
+        </div>
       )}
     </div>
   );
