@@ -424,6 +424,120 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
   await expect(commitPicker).toHaveAttribute("aria-label", initialCommitSelection!);
 });
 
+test("reveals an entire code reference range and nearby context in the changes view", async ({
+  page,
+  request,
+}) => {
+  const filePath = "src/application/orders/create-order.ts";
+  const referenceId = "wide-change-context";
+  const lines = Array.from(
+    { length: 340 },
+    (_, index) => `export const fixtureLine${index + 1} = ${index + 1};`,
+  );
+  const oldText = `${lines.join("\n")}\n`;
+  const newLines = [...lines];
+  newLines[169] = 'export const fixtureLine170 = "changed";';
+  const newText = `${newLines.join("\n")}\n`;
+
+  const refreshResponse = await request.post(`/api/pull-requests/${pullRequestId}/refresh`, {
+    data: {},
+  });
+  expect(refreshResponse.ok()).toBe(true);
+
+  await page.route("**/api/pull-requests/*/walkthroughs**", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      walkthrough?: {
+        title: string;
+        body: string;
+        references: Array<Record<string, unknown>>;
+      };
+    };
+    if (body.walkthrough?.title === primaryWalkthrough) {
+      body.walkthrough = {
+        ...body.walkthrough,
+        body: `${body.walkthrough.body}\n\nInspect the [wide changed range](rvw-ref:${referenceId}).`,
+        references: [
+          ...body.walkthrough.references,
+          {
+            id: referenceId,
+            label: "wide changed range",
+            path: filePath,
+            startLine: 20,
+            endLine: 300,
+            description: "A range crossing collapsed context on both sides of a change",
+          },
+        ],
+      };
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.route("**/api/pull-requests/*/changed-files?*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      files: Array<{
+        kind: string;
+        status: string;
+        similarity: number | null;
+        oldPath: string | null;
+        newPath: string | null;
+      }>;
+    };
+    if (!body.files.some((file) => file.oldPath === filePath || file.newPath === filePath)) {
+      body.files.push({
+        kind: "modified",
+        status: "M",
+        similarity: null,
+        oldPath: filePath,
+        newPath: filePath,
+      });
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.route("**/api/pull-requests/*/diff?*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      diff: {
+        old: { text: string | null; byteLength: number } | null;
+        new: { text: string | null; byteLength: number } | null;
+      };
+    };
+    const url = new URL(route.request().url());
+    if (
+      url.searchParams.get("oldPath") === filePath &&
+      url.searchParams.get("newPath") === filePath
+    ) {
+      if (body.diff.old) {
+        body.diff.old.text = oldText;
+        body.diff.old.byteLength = Buffer.byteLength(oldText);
+      }
+      if (body.diff.new) {
+        body.diff.new.text = newText;
+        body.diff.new.byteLength = Buffer.byteLength(newText);
+      }
+    }
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  const displayDiffButton = reviewScope.getByRole("button", { name: "変更", exact: true });
+  await displayDiffButton.click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
+  await page
+    .locator(".walkthrough-markdown .walkthrough-inline-reference")
+    .filter({ hasText: "wide changed range" })
+    .click();
+
+  const diff = page.locator('.document-pane[data-pane="left"] diffs-container');
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+  await expect(diff).toHaveAttribute("data-search-target-line", "20");
+  await expect(diff.locator('[data-line="15"]')).toBeVisible();
+  await expect(diff.locator('[data-line="20"][data-selected-line="first"]').first()).toBeVisible();
+  await expect(diff.locator('[data-line="300"][data-selected-line="last"]').first()).toBeVisible();
+  await expect(diff.locator('[data-line="305"]')).toBeVisible();
+});
+
 test("keeps the review scope and reports a broken Walkthrough reference temporarily", async ({
   page,
 }) => {

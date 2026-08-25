@@ -54,6 +54,7 @@ import {
   jsonRequest,
   type PlacementResponse,
 } from "../api.js";
+import { firstCollapsedDiffNavigationLine } from "../diff-navigation.js";
 import {
   githubAttachmentAssetUrl,
   isExternalMarkdownHref,
@@ -876,6 +877,10 @@ export function DocumentViewer({
         return;
       }
       if (appliedNavigationRequest.current === navigationTarget.requestId) return;
+      const collapsedRangeLine = firstCollapsedDiffNavigationLine(navigationTarget, (line) =>
+        instance.isLineRenderable(line),
+      );
+      if (collapsedRangeLine !== null && instance.revealLine(collapsedRangeLine)) return;
       if (
         !instance.isLineRenderable(navigationTarget.line) &&
         instance.revealLine(navigationTarget.line)
