@@ -919,18 +919,32 @@ export class RvwDatabase {
     return row ? mapRepositoryReview(row) : null;
   }
 
-  beginRepositorySourceSync(id: string): number {
+  beginRepositorySourceSync(id: string, expectedGitCommonDir: string): number {
     return this.immediateTransaction(() => {
-      if (!this.getRepositoryReview(id)) {
-        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
-          status: 404,
-        });
-      }
-      this.database
+      this.assertRepositoryReviewWriteContext({
+        repositoryReviewId: id,
+        expectedGitCommonDir,
+      });
+      const result = this.database
         .prepare(
-          "UPDATE repository_reviews SET source_sync_generation = source_sync_generation + 1 WHERE id = ?",
+          `UPDATE repository_reviews
+           SET source_sync_generation = source_sync_generation + 1
+           WHERE id = ? AND git_common_dir = ?`,
         )
-        .run(id);
+        .run(id, expectedGitCommonDir);
+      if (Number(result.changes) !== 1) {
+        throw new RvwError(
+          "REPOSITORY_MISMATCH",
+          "source sync開始中にRepository Review bindingが変更されました。",
+          {
+            status: 409,
+            details: {
+              repositoryReviewId: id,
+              expectedGitCommonDir,
+            },
+          },
+        );
+      }
       return this.getRepositorySourceSyncGeneration(id);
     });
   }

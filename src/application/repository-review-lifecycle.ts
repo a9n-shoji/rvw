@@ -535,7 +535,7 @@ export class RepositoryReviewLifecycle {
     let sourceAttempt = existing
       ? {
           repositoryReviewId: existing.id,
-          generation: this.database.beginRepositorySourceSync(existing.id),
+          generation: this.database.beginRepositorySourceSync(existing.id, repository.gitCommonDir),
         }
       : null;
     try {
@@ -573,7 +573,10 @@ export class RepositoryReviewLifecycle {
         }
         sourceAttempt = {
           repositoryReviewId: concurrent.id,
-          generation: this.database.beginRepositorySourceSync(concurrent.id),
+          generation: this.database.beginRepositorySourceSync(
+            concurrent.id,
+            repository.gitCommonDir,
+          ),
         };
         const latest = await this.fetchAndEnsureSource(repository, identity, concurrent);
         return await this.publishExistingSource(

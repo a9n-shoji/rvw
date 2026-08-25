@@ -147,6 +147,14 @@ function isGone(result) {
   );
 }
 
+function deletedIdempotencyPostId(result) {
+  if (result.json?.ok !== false || result.json?.error?.code !== "IDEMPOTENCY_RESULT_DELETED") {
+    return null;
+  }
+  const postId = result.json?.error?.details?.postId;
+  return typeof postId === "string" && postId.length > 0 ? postId : null;
+}
+
 function commandFailure(command, commentRef, result) {
   return result.stderr.trim() || result.stdout.trim() || `${command} failed: ${commentRef}`;
 }
@@ -193,6 +201,7 @@ async function main() {
   }
   const replies = [];
   const gone = [];
+  const deletedReplyPostIds = [];
   for (const { operation, outcome } of pending) {
     const current = await runRvw(["comment", "get", operation.commentRef, "--json"]);
     if (isGone(current)) {
@@ -226,6 +235,17 @@ async function main() {
       });
       continue;
     }
+    const deletedReplyPostId = deletedIdempotencyPostId(result);
+    if (deletedReplyPostId) {
+      deletedReplyPostIds.push(deletedReplyPostId);
+      gone.push({
+        commentRef: operation.commentRef,
+        status: "gone",
+        reason: "reply-deleted-after-crash",
+        suppressedPostId: deletedReplyPostId,
+      });
+      continue;
+    }
     if (!successfulJson(result) || typeof result.json?.post?.id !== "string") {
       fail(commandFailure("Final reply", operation.commentRef, result));
     }
@@ -236,7 +256,7 @@ async function main() {
     });
   }
   const completed = await runState(state, "complete", ["--lease", leaseId], {
-    postIds: replies.map((reply) => reply.postId),
+    postIds: [...replies.map((reply) => reply.postId), ...deletedReplyPostIds],
   });
   process.stdout.write(
     `${JSON.stringify({

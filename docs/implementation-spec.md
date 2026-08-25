@@ -779,6 +779,8 @@ stateではなく通常postであり、threadのunresolved/resolved状態を変�
 `gone`を明示でき、completion helperはreply直前にもCommentを再取得する。明示`gone`を確認できた場合、または
 最終replyが`COMMENT_NOT_FOUND` / `NOT_FOUND`になった場合はreplacementを作らずそのoperationを正常完了する。
 all-goneとmixed batchのどちらも、実際に作成したreply post IDだけをsuppressionへ登録してleaseをcompleteする。
+最終reply作成後・lease completion前のcrash recoveryで、同じidempotency keyの結果が人間により削除済みの
+`IDEMPOTENCY_RESULT_DELETED`ならreplyを再作成せず、`details.postId`をsuppressionに登録して正常完了する。
 誤投稿を取り消すため、reply postは個別に物理削除できる。root postの削除はcomment targetと
 `rvw://comment/<uuid>`のanchorを含むthread全体の削除として扱い、返信があれば同じtransactionで
 すべて削除する。確認画面は返信も削除されることを明示する。編集・削除はchange sequenceを更新する。
@@ -1521,10 +1523,13 @@ sourceを検証し、aggregate発見前に取得したsnapshotを破棄する。
 既存Repository Review sourceを変更できるunrestricted upsertはapplicationへ公開しない。初期ref作成とresetが競合し、
 aggregate削除後にrefが作成された場合は、そのattemptが作ったexact refだけをbest-effortで削除する。この例外を
 Issue removalその他のdestructive操作へ広げない。
-既存aggregateのsource同期はGitHubアクセス前に`source_sync_generation`を増やす。candidate ref作成後のsource公開と
+既存aggregateのsource同期はGitHubアクセス前に、resolverが検証したReview IDとGit common directoryを
+immediate transaction内でCASし、現在bindingが一致する場合だけ`source_sync_generation`を増やす。
+この制約はconcurrent initializationのwinnerを観測した後の再同期にも適用する。candidate ref作成後のsource公開と
 sync error保存はexpected review IDと同じgenerationを一つのimmediate transactionで再検証し、古い試行は新しい
 source、location、error、change sequenceを変更しない。明示relocateも同じtransactionでgenerationを増やし、
-旧cloneで進行中のsource attemptをsource publishとerror publishの両方について無効化する。
+旧cloneで進行中のsource attemptをsource publishとerror publishの両方について無効化する。relocate後に
+古いresolver結果が再開した場合はgenerationを取得せず、GitHubへもアクセスしない。
 初期retained ref作成はall-zero old OIDを指定したGit `update-ref`のcompare-and-swapで行い、
 同時作成時には1件だけが`created: true`を得る。`initialization_state = ready`後のcompletionは冪等とし、
 後続syncでsourceが進んでいても失敗にしない。補償削除はexpected aggregate IDが存在しない場合だけとし、

@@ -218,6 +218,29 @@ class VerifyRepositoryReviewRefBarrierGitClient extends GitClient {
   }
 }
 
+class PauseOnNthRepositoryRefVerificationGitClient extends GitClient {
+  readonly barrier = new OneShotBarrier();
+  private verificationsBeforePause = 0;
+
+  arm(verificationNumber: number): void {
+    this.verificationsBeforePause = verificationNumber;
+    this.barrier.arm();
+  }
+
+  override async verifyRepositoryReviewCommitRef(
+    cwd: string,
+    repositoryReviewId: string,
+    oid: string,
+  ) {
+    const result = await super.verifyRepositoryReviewCommitRef(cwd, repositoryReviewId, oid);
+    if (this.verificationsBeforePause > 0) {
+      this.verificationsBeforePause -= 1;
+      if (this.verificationsBeforePause === 0) await this.barrier.blockOnce();
+    }
+    return result;
+  }
+}
+
 class FailInitialRepositoryReviewRefGitClient extends GitClient {
   private failed = false;
 
@@ -1713,6 +1736,88 @@ describe("Repository Review", () => {
       gitCommonDir: candidate.gitCommonDir,
       sourceSyncError: null,
     });
+  });
+
+  it("does not let an old-clone sync acquire a generation after relocation", async () => {
+    const gitClient = new PauseOnNthRepositoryRefVerificationGitClient();
+    const { repositoryPath, sourceOid, github, database, service } = setup(gitClient);
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const nextSourceOid = commitFile(
+      repositoryPath,
+      "README.md",
+      "# Fixture\n\nFresh binding source.\n",
+      "fresh binding source",
+    );
+    const candidate = await createRelocationCandidate(
+      service,
+      repositoryPath,
+      opened.repositoryReview.id,
+      [sourceOid],
+      "source-begin-relocation",
+    );
+    const generationBeforeRace = database.getRepositorySourceSyncGeneration(
+      opened.repositoryReview.id,
+    );
+    const githubRequestsBeforeRace = github.repositoryRequests;
+    gitClient.arm(2);
+
+    const staleSync = service.syncRepositoryReview(repositoryPath);
+    await gitClient.barrier.waitUntilBlocked();
+    expect(github.repositoryRequests).toBe(githubRequestsBeforeRace);
+
+    const preview = await service.getRepositoryRelocationPreview(candidate.repositoryPath);
+    await service.relocateRepositoryReviewAtPath(
+      candidate.repositoryPath,
+      preview.confirmationToken,
+    );
+    expect(database.getRepositorySourceSyncGeneration(opened.repositoryReview.id)).toBe(
+      generationBeforeRace + 1,
+    );
+
+    github.repository = { ...github.repository, defaultBranchOid: nextSourceOid };
+    const freshSourceBarrier = new OneShotBarrier();
+    freshSourceBarrier.arm();
+    github.repositoryBarrier = freshSourceBarrier;
+    const freshSync = service.syncRepositoryReview(candidate.repositoryPath);
+    await freshSourceBarrier.waitUntilBlocked();
+    const freshGeneration = generationBeforeRace + 2;
+    expect(database.getRepositorySourceSyncGeneration(opened.repositoryReview.id)).toBe(
+      freshGeneration,
+    );
+    expect(github.repositoryRequests).toBe(githubRequestsBeforeRace + 1);
+
+    gitClient.barrier.release();
+    await expect(staleSync).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+      status: 409,
+      details: {
+        repositoryReviewId: opened.repositoryReview.id,
+        expectedGitCommonDir: opened.repositoryReview.gitCommonDir,
+        currentGitCommonDir: candidate.gitCommonDir,
+      },
+    });
+    expect(database.getRepositorySourceSyncGeneration(opened.repositoryReview.id)).toBe(
+      freshGeneration,
+    );
+    expect(github.repositoryRequests).toBe(githubRequestsBeforeRace + 1);
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toMatchObject({
+      gitCommonDir: candidate.gitCommonDir,
+      sourceOid,
+      sourceSyncError: null,
+    });
+
+    freshSourceBarrier.release();
+    await expect(freshSync).resolves.toMatchObject({
+      repositoryReview: {
+        id: opened.repositoryReview.id,
+        gitCommonDir: candidate.gitCommonDir,
+        sourceOid: nextSourceOid,
+        sourceSyncError: null,
+      },
+    });
+    expect(database.getRepositorySourceSyncGeneration(opened.repositoryReview.id)).toBe(
+      freshGeneration,
+    );
   });
 
   it("relocates a moved review through its matching non-origin remote", async () => {

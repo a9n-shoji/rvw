@@ -138,8 +138,12 @@ if (args[0] === "protocol") {
   }
 } else if (args[0] === "comment" && args[1] === "reply") {
   const goneOnReplyCommentRefs = JSON.parse(process.env.FAKE_GONE_ON_REPLY_COMMENT_REFS_JSON ?? "[]");
+  const deletedIdempotencyCommentRefs = JSON.parse(process.env.FAKE_DELETED_IDEMPOTENCY_COMMENT_REFS_JSON ?? "[]");
   if (goneOnReplyCommentRefs.includes(args[2])) {
     json({ ok: false, error: { code: "COMMENT_NOT_FOUND", message: "Comment disappeared before reply" } }, 2);
+  } else if (deletedIdempotencyCommentRefs.includes(args[2])) {
+    json({ ok: false, error: { code: "IDEMPOTENCY_RESULT_DELETED", message: "Reply was deleted",
+      details: { postId: "deleted-status-post" } } }, 2);
   } else {
   const priorReplyIndex = priorCalls.findIndex((call) =>
     call.args[0] === "comment" && call.args[1] === "reply" &&
@@ -187,6 +191,7 @@ function fakeEnvironment(
   fake: { script: string; log: string },
   goneCommentRefs: string[] = [],
   goneOnReplyCommentRefs: string[] = [],
+  deletedIdempotencyCommentRefs: string[] = [],
 ) {
   return {
     ...process.env,
@@ -195,6 +200,7 @@ function fakeEnvironment(
     FAKE_RVW_LOG: fake.log,
     FAKE_GONE_COMMENT_REFS_JSON: JSON.stringify(goneCommentRefs),
     FAKE_GONE_ON_REPLY_COMMENT_REFS_JSON: JSON.stringify(goneOnReplyCommentRefs),
+    FAKE_DELETED_IDEMPOTENCY_COMMENT_REFS_JSON: JSON.stringify(deletedIdempotencyCommentRefs),
   };
 }
 
@@ -760,6 +766,70 @@ describe("rvw-watch-comments bundled scripts", () => {
       gone: [{ commentRef: lateGone, reason: "deleted-during-reply" }],
     });
     expect(readFakeCalls(fake.log).filter((call) => call.args[1] === "reply")).toHaveLength(2);
+    expect(runState(state, "status")).toMatchObject({
+      batches: { pending: 0, inFlight: 0, completed: 1, quarantined: 0 },
+    });
+  });
+
+  it("completes recovery when the idempotent Repository reply was deleted", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-repository-deleted-reply-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    const commentRef = "rvw://comment/repository-comment";
+    initializeRepositoryQueuedState(state, [commentRef]);
+    const claimed = runState(state, "claim", [
+      "--context-kind",
+      "repository",
+      "--context-key",
+      "acme/repo",
+    ]);
+    const completed = spawnSync(
+      process.execPath,
+      [completeRepositoryScript, "--state", state, "--lease", String(claimed.leaseId)],
+      {
+        encoding: "utf8",
+        env: fakeEnvironment(fake, [], [], [commentRef]),
+        input: JSON.stringify({
+          leaseId: claimed.leaseId,
+          context: {
+            kind: "repository",
+            repositoryReviewId: "repository:acme/repo",
+            repository: "acme/repo",
+          },
+          outcomes: [
+            {
+              commentRef,
+              status: "reply",
+              body: "📝 調査結果\n\nThis reply existed before recovery.",
+              relatedCommitOid: null,
+              references: [],
+              pushStatus: "not-attempted",
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(completed.status, completed.stderr).toBe(0);
+    expect(JSON.parse(completed.stdout)).toMatchObject({
+      replies: [],
+      gone: [
+        {
+          commentRef,
+          status: "gone",
+          reason: "reply-deleted-after-crash",
+          suppressedPostId: "deleted-status-post",
+        },
+      ],
+      completion: {
+        status: "completed",
+        suppressedPostIds: ["deleted-status-post"],
+      },
+    });
+    expect(readFakeCalls(fake.log).map((call) => call.args.slice(0, 2))).toEqual([
+      ["comment", "get"],
+      ["comment", "reply"],
+    ]);
     expect(runState(state, "status")).toMatchObject({
       batches: { pending: 0, inFlight: 0, completed: 1, quarantined: 0 },
     });

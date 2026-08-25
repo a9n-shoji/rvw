@@ -361,9 +361,11 @@ A reply outcome requires explicit `commentRef`, non-empty `body`, `relatedCommit
 `references` array, and `pushStatus: "not-attempted"`; a gone outcome requires only `commentRef` and
 `status: "gone"`. It rejects invalid input before posting any reply, re-reads each Comment immediately
 before writing, verifies a claimed gone outcome, and also treats `COMMENT_NOT_FOUND` / `NOT_FOUND` from
-the final reply as normal disappearance. This covers all-gone and mixed batches, including deletion or
-Repository Review reset after worker completion. The rvw service validates that a non-null commit is
-current or already retained and that every reference resolves within that exact source.
+the final reply as normal disappearance. If crash recovery finds `IDEMPOTENCY_RESULT_DELETED`, the helper
+does not recreate the deliberately deleted reply; it records `details.postId` for suppression and completes
+the operation. This covers all-gone and mixed batches, including deletion or Repository Review reset after
+worker completion and reply deletion after a post-success/pre-completion crash. The rvw service validates
+that a non-null commit is current or already retained and that every reference resolves within that exact source.
 
 If the process stops after posting but before completion, run `recover`, claim the same Repository Review batch,
 and invoke the helper with the same outcomes and new lease. The batch retains its operation keys, so

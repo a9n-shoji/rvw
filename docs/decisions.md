@@ -8,7 +8,9 @@ Explicit relocation checked the previous binding and review sequence, but a cach
 write that had already validated the old clone could resume after relocation committed. Cached open could restore
 the old common directory, while a Comment or Walkthrough could add historical evidence whose exact owned ref was
 present only in the old clone. An old source-sync failure was also fenced only by its generation, which relocation
-did not change. Repository Review completion separately had no successful exit when a Comment disappeared before
+did not change. Even after relocation began incrementing that generation, an old resolver result could resume and
+allocate a newer generation by Review ID alone, invalidating a legitimate new-binding sync and publishing an
+old-clone error. Repository Review completion separately had no successful exit when a Comment disappeared before
 its final reply.
 
 ### Choice
@@ -17,19 +19,25 @@ Keep relocation and add narrow symmetric fences. A normal cached open updates on
 expected-common-directory CAS; only relocation can change `git_common_dir`. Pass the resolver-verified Review ID
 and common directory as a Repository Review write context into Git-backed Comment and Walkthrough transactions,
 and reject the write if relocation won first. Increment `source_sync_generation` in the relocation transaction so
-all source publications and error publications started in the old clone become stale.
+all source publications and error publications started in the old clone become stale. Allocate every existing
+Review source-sync generation under the resolver-verified common-directory CAS, including the retry after observing
+a concurrent initialization, so an old resolver result cannot become the newest attempt after relocation.
 
 Allow Repository Review watch outcomes to be `reply` or `gone`. The completion helper re-reads each Comment before
 replying, verifies explicit gone outcomes, treats disappearance during the final reply as normal, records only
-created post IDs, and completes all-gone and mixed batches without replacement posts.
+created post IDs, and completes all-gone and mixed batches without replacement posts. On recovery after a reply was
+created and then deliberately deleted before lease completion, treat `IDEMPOTENCY_RESULT_DELETED` as terminal,
+suppress its durable post ID, and do not recreate the reply.
 
 ### Consequences
 
 - A cached worktree refresh cannot undo an independent-clone relocation.
 - Artifact-first advances the review sequence and makes relocation stale; relocation-first makes the artifact
   binding context stale.
-- Failed source attempts cannot attach old-clone errors to a newly relocated binding.
+- Failed source attempts cannot attach old-clone errors to a newly relocated binding, and an old resolver result
+  cannot supersede a legitimate new-binding attempt.
 - Repository watch deletion races complete normally instead of retrying toward quarantine.
+- A user-deleted final reply stays deleted after a post-success/pre-completion watcher crash.
 - DB-only Issue, Walkthrough-body, and Comment-body archive reads remain owner-checked without requiring Git
   evidence; only Git-dependent reads and mutations resolve the local binding.
 
