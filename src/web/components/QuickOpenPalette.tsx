@@ -171,6 +171,20 @@ export function buildQuickOpenCandidates(
       file,
     })),
   ];
+  const representedDocumentKeys = new Set(sources.map(({ document }) => documentTabKey(document)));
+  for (const document of openDocuments) {
+    if (
+      (document.kind !== "issue" && document.kind !== "walkthrough") ||
+      representedDocumentKeys.has(documentTabKey(document))
+    ) {
+      continue;
+    }
+    sources.push({
+      document,
+      file: { path: documentTabPath(document), entryKind: "file" },
+    });
+    representedDocumentKeys.add(documentTabKey(document));
+  }
   const pathCounts = new Map<string, number>();
   for (const { document } of sources) {
     const path = documentTabPath(document);

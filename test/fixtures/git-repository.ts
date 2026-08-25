@@ -7,12 +7,16 @@ export function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
-export function createGitRepository(prefix = "rvw-test-"): string {
-  const repository = mkdtempSync(path.join(os.tmpdir(), prefix));
-  git(repository, "init", "-b", "main");
+export function configureTestGitRepository(repository: string): void {
   git(repository, "config", "user.name", "rvw test");
   git(repository, "config", "user.email", "rvw@example.test");
   git(repository, "config", "core.autocrlf", "false");
+}
+
+export function createGitRepository(prefix = "rvw-test-"): string {
+  const repository = mkdtempSync(path.join(os.tmpdir(), prefix));
+  git(repository, "init", "-b", "main");
+  configureTestGitRepository(repository);
   git(repository, "remote", "add", "origin", "https://github.com/acme/review-repo.git");
   writeFileSync(path.join(repository, "README.md"), "# Fixture\n");
   git(repository, "add", "README.md");

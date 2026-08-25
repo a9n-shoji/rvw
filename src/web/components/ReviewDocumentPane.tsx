@@ -11,6 +11,7 @@ export function ReviewDocumentPane({
   changeKindsByPath,
   draggedDocumentKey,
   content,
+  emptyHint,
   onPaneRef,
   onScroll,
   onFocus,
@@ -30,6 +31,7 @@ export function ReviewDocumentPane({
   changeKindsByPath: ReadonlyMap<string, ChangeKind>;
   draggedDocumentKey: string | null;
   content: ReactNode | null;
+  emptyHint?: ReactNode;
   onPaneRef: (element: HTMLElement | null) => void;
   onScroll: (scrollTop: number) => void;
   onFocus: () => void;
@@ -52,7 +54,7 @@ export function ReviewDocumentPane({
       onScroll={(event) => onScroll(event.currentTarget.scrollTop)}
       className={`document-pane${focusedPane === paneId ? " active" : ""}${documents.length === 0 ? " empty" : ""}`}
       data-pane={paneId}
-      aria-label={`${paneId === "left" ? "左" : "右"}のコードペイン`}
+      aria-label={`${paneId === "left" ? "左" : "右"}の文書ペイン`}
       onPointerDown={onFocus}
     >
       <DocumentTabs
@@ -74,7 +76,7 @@ export function ReviewDocumentPane({
           <strong>
             {draggedDocumentKey ? "ここへドロップ" : `${paneId === "left" ? "左" : "右"}ペイン`}
           </strong>
-          <span>タブを移動するか、Cmd/Ctrl+クリックで文書を開けます。</span>
+          <span>{emptyHint ?? "タブを移動するか、Cmd/Ctrl+クリックで文書を開けます。"}</span>
         </div>
       )}
     </section>

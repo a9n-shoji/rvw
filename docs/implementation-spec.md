@@ -340,7 +340,8 @@ empty fileは従来どおり明示的に扱う。
   `PR全体`と`最新だけ`のshortcutも提供し、範囲内のcommitを一件ずつtoggleさせない。
 - 開いた`Pull Request.md`とrepository fileはpaneごとにpath identityで重複しない一時tabとして保持する。
   同じdocument identityは左paneと右paneへ一つずつまで開ける。
-- `Cmd` / `Ctrl`+`P`は全repository fileと`Pull Request.md`を対象にQuick Openを開く。file名を
+- `Cmd` / `Ctrl`+`P`は全repository file、`Pull Request.md`、現在tabで開いているIssue／Walkthroughを
+  対象にQuick Openを開く。file名または文書名を
   pathより優先するbrowser内fuzzy search、match highlight、open / active状態、file / change iconを表示し、
   Arrow keyで選択、Enterまたは通常clickで左pane、`Cmd` / `Ctrl`+clickで右paneへ追加して開き、
   Escapeで閉じる。
@@ -1505,7 +1506,7 @@ Walkthrough、code referenceを削除し、現在のGitHub状態を同期してc
 `refs/rvw/pr/<n>/...`のhistorical refsはimmutable evidenceとして保持し、`counts.gitRefs = 0`とする。削除件数を事前表示し、
 CLIはpreviewのconfirmation tokenと`--yes`を必須とする。不可逆であり、明示的な利用者authorizationなしにAgentが実行しない。
 
-`rvw repository reset --repository <PATH> --yes --confirmation-token <TOKEN> --json`はexisting-onlyでbindingを検証し、対象review ID配下の
+`rvw repository reset --repository <PATH> --yes --confirmation-token <TOKEN> [--json]`はexisting-onlyでbindingを検証し、対象review ID配下の
 `refs/rvw/repository/<repositoryReviewId>/...`だけをpreview／削除する。DB削除後はref削除commandの成否にかかわらず
 namespaceを再列挙し、残存refがあれば一度だけ再削除して最終postconditionを確認する。空であることを確認できた場合だけ
 `completed`とし、残存または確認不能なら削除済みreviewを保持せず、`completed-with-orphan-refs`というtyped success outcomeへ

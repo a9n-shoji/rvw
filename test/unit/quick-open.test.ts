@@ -82,4 +82,46 @@ describe("quick open", () => {
       { path: "README.md", identityQualifier: undefined },
     ]);
   });
+
+  it("includes already-open Issue and Walkthrough documents without duplicating files", () => {
+    const issue = {
+      kind: "issue" as const,
+      id: "issue-142",
+      number: 142,
+      title: "Stabilize the request path",
+      url: "https://github.com/acme/review-repo/issues/142",
+    };
+    const walkthrough = {
+      kind: "walkthrough" as const,
+      id: "walkthrough-1",
+      title: "Current request flow",
+      sourceOid: "a".repeat(40),
+    };
+    const file = { kind: "repository-file" as const, path: "README.md" };
+
+    const candidates = buildQuickOpenCandidates(
+      [{ path: "README.md", entryKind: "file" }],
+      [file, issue, walkthrough, issue],
+      walkthrough,
+      false,
+    );
+
+    expect(
+      candidates.map(({ key, path, isActive, isOpen }) => ({ key, path, isActive, isOpen })),
+    ).toEqual([
+      { key: "file:README.md", path: "README.md", isActive: false, isOpen: true },
+      {
+        key: "issue:issue-142",
+        path: "#142 Stabilize the request path",
+        isActive: false,
+        isOpen: true,
+      },
+      {
+        key: "walkthrough:walkthrough-1",
+        path: "Current request flow",
+        isActive: true,
+        isOpen: true,
+      },
+    ]);
+  });
 });

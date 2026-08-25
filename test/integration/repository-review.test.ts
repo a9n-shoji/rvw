@@ -23,7 +23,12 @@ import {
 } from "../../src/server/agent-socket.js";
 import { createApp } from "../../src/server/app.js";
 import { RvwError } from "../../src/shared/errors.js";
-import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
+import {
+  commitFile,
+  configureTestGitRepository,
+  createGitRepository,
+  git,
+} from "../fixtures/git-repository.js";
 
 async function resetRepositoryReview(service: RvwService, repositoryReviewId: string) {
   const preview = await service.getRepositoryResetPreview(repositoryReviewId);
@@ -516,6 +521,7 @@ describe("Repository Review", () => {
   ): Promise<{ repositoryPath: string; gitCommonDir: string }> {
     const candidatePath = `${repositoryPath}-${suffix}`;
     git(path.dirname(repositoryPath), "clone", "--no-local", repositoryPath, candidatePath);
+    configureTestGitRepository(candidatePath);
     git(candidatePath, "remote", "set-url", "origin", "https://github.com/acme/review-repo.git");
     for (const oid of evidenceOids) {
       git(

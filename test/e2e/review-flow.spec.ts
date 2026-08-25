@@ -1370,7 +1370,7 @@ test("opens a fuzzy-matched file from Cmd/Ctrl+P in the left pane", async ({ pag
   await page
     .getByRole("button", { name: "src/new.ts", exact: true })
     .click({ modifiers: ["Control"] });
-  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  const rightPane = page.getByRole("region", { name: "右の文書ペイン" });
   await expect(rightPane.getByRole("tab", { name: "src/new.ts" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -1379,7 +1379,7 @@ test("opens a fuzzy-matched file from Cmd/Ctrl+P in the left pane", async ({ pag
   await page.keyboard.press("Control+P");
   await input.fill("rdm");
   await input.press("Enter");
-  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
   await expect(leftPane.getByRole("tab", { name: "README.md" })).toHaveAttribute(
     "aria-selected",
     "true",

@@ -299,26 +299,41 @@ export function RepositoryReviewApp({
   }, [changeSequence.data?.reviewChangeSequence, refresh]);
 
   const syncMutation = useMutation({
-    mutationFn: async () =>
-      await api<RepositorySyncResponse>(
+    mutationFn: async (options: { announce: boolean }) => {
+      void options;
+      return await api<RepositorySyncResponse>(
         `/api/repository-reviews/${repositoryReviewId}/sync`,
         jsonRequest({}),
-      ),
-    onSuccess: async ({ repositoryReview, issueResults }) => {
+      );
+    },
+    onSuccess: async ({ repositoryReview, issueResults }, options) => {
       const failures = issueResults.filter((result) => !result.ok);
       setSyncFeedbackWarning(failures.length > 0);
       const sourceFeedback = `${repositoryReview.defaultBranchName} · ${shortOid(repositoryReview.sourceOid)} に同期しました。`;
       const issueFeedback = issueSyncFailureFeedback(failures);
-      showSyncFeedback(issueFeedback ? `${sourceFeedback} ${issueFeedback}` : sourceFeedback);
+      if (options.announce || issueFeedback) {
+        showSyncFeedback(issueFeedback ? `${sourceFeedback} ${issueFeedback}` : sourceFeedback);
+      }
       await refresh();
     },
-    onError: async () => await refresh(),
+    onError: async (_error, options) => {
+      if (!options.announce) {
+        setSyncFeedbackWarning(true);
+        showSyncFeedback("GitHubと同期できないため、最後に保存した内容を表示しています。");
+      }
+      await refresh();
+    },
   });
   useEffect(() => {
     if (!reviewQuery.data || attemptedInitialSync.current) return;
     attemptedInitialSync.current = true;
-    syncMutation.mutate();
+    syncMutation.mutate({ announce: false });
   }, [reviewQuery.data]);
+
+  const canonicalName = reviewQuery.data?.repositoryReview.canonicalName;
+  useEffect(() => {
+    document.title = canonicalName ? `rvw: ${canonicalName}` : "rvw";
+  }, [canonicalName]);
 
   const issueMutation = useMutation({
     mutationFn: async () =>
@@ -803,6 +818,11 @@ export function RepositoryReviewApp({
         changeKindsByPath={new Map()}
         draggedDocumentKey={draggedDocumentKey}
         content={content}
+        emptyHint={
+          paneId === "left"
+            ? "左のファイル・Issue・Walkthroughを選択するか、Cmd/Ctrl+PでQuick Openを開けます。"
+            : undefined
+        }
         onPaneRef={(element) => {
           paneElements.current[paneId] = element;
         }}
@@ -827,7 +847,7 @@ export function RepositoryReviewApp({
   };
 
   const actionError =
-    syncMutation.error ??
+    (syncMutation.variables?.announce ? syncMutation.error : null) ??
     resetMutation.error ??
     themeQuery.error ??
     themeMutation.error ??
@@ -869,7 +889,7 @@ export function RepositoryReviewApp({
           onSync={() => {
             setSyncFeedbackWarning(false);
             clearSyncFeedback();
-            syncMutation.mutate();
+            syncMutation.mutate({ announce: true });
           }}
           onThemeChange={selectThemePreference}
           onToggleAgentNotifications={() => {

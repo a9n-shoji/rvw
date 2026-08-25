@@ -521,7 +521,7 @@ test("notifies only after an Agent acknowledgement becomes a final reply", async
 test("supports keyboard navigation and dismissal in a document pane menu", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
-  const pane = page.getByRole("region", { name: "左のコードペイン" });
+  const pane = page.getByRole("region", { name: "左の文書ペイン" });
   const toggle = pane.getByRole("button", { name: "左ペインの操作" });
   await toggle.click();
   const menu = pane.getByRole("menu");
@@ -999,7 +999,7 @@ test("distinguishes virtual and repository documents with the same path", async 
   await expect(palette.getByRole("option", { name: /Pull Request\.md（PR本文）/ })).toBeVisible();
   await palette.getByRole("option", { name: "Pull Request.md（repository）", exact: true }).click();
 
-  const pane = page.getByRole("region", { name: "左のコードペイン" });
+  const pane = page.getByRole("region", { name: "左の文書ペイン" });
   const tablist = pane.getByRole("tablist", { name: "開いている文書" });
   await expect(
     tablist.getByRole("tab", { name: "Pull Request.md（PR本文）", exact: true }),

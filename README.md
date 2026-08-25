@@ -310,6 +310,9 @@ rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
 rvw pr attach <PR_REF> --repository <PATH> --json
 ```
 
+人が直接復旧するときは`repository relocate`と`repository reset`から`--json`を省略でき、同じpreviewと
+確認tokenを読みやすい形式で表示します。機械向けconsumerは常に`--json`を指定します。
+
 Repository Review relocationと、PR／Repository Review reset、Issue削除、Walkthrough削除は、確認tokenなしでは移動先bindingまたは対象Issue、コメント、返信、Walkthrough、
 Repository Reviewの解放候補refなどのpreviewだけを返して終了します。PR reset previewの`retainedRefs`は保持される
 evidenceの情報であり、削除対象ではありません。返却された構造化`details.arguments`を使い、同じ

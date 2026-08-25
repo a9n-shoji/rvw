@@ -127,6 +127,15 @@ function captureStdout(): () => unknown {
   return () => JSON.parse(stdout) as unknown;
 }
 
+function captureTextStdout(): () => string {
+  let stdout = "";
+  vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+    stdout += String(chunk);
+    return true;
+  });
+  return () => stdout;
+}
+
 function captureJsonSequence(): () => unknown[] {
   let stdout = "";
   vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
@@ -290,6 +299,84 @@ describe("CLI protocol discovery", () => {
       repositoryReview: { id: "repository-review-1" },
       confirmationRequired: true,
     });
+  });
+
+  it("prints a human-readable Repository Review reset preview when --json is omitted", async () => {
+    const getRepositoryResetPreviewAtPath = vi.fn().mockResolvedValue({
+      repositoryReview: { id: "repository-review-1" },
+      counts: {
+        repositoryReview: 1,
+        issueMemberships: 2,
+        comments: 3,
+        issueComments: 1,
+        codeComments: 1,
+        reviewComments: 1,
+        walkthroughComments: 0,
+        posts: 4,
+        commentReferences: 5,
+        targets: 3,
+        walkthroughs: 6,
+        walkthroughReferences: 7,
+        gitRefs: 2,
+      },
+      retainedRefs: [
+        "refs/rvw/repository/repository-review-1/commits/oid-abc",
+        "refs/rvw/repository/repository-review-1/commits/oid-def",
+      ],
+      confirmationToken: "a".repeat(64),
+      confirmationRequired: true,
+    });
+    const { runtime } = mockRuntime({ getRepositoryResetPreviewAtPath });
+    const readStdout = captureTextStdout();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "repository",
+      "reset",
+      "--repository",
+      "/review repo",
+    ]);
+
+    expect(readStdout()).toContain(
+      "削除対象: Repository Review 1、Issue membership 2、コメント 3、返信 4、Walkthrough 6、Git ref 2。",
+    );
+    expect(readStdout()).toContain(`確認token: ${"a".repeat(64)}`);
+    expect(readStdout()).toContain("このtokenと --yes");
+  });
+
+  it("prints a human-readable Repository Review relocation preview when --json is omitted", async () => {
+    const getRepositoryRelocationPreview = vi.fn().mockResolvedValue({
+      repositoryReview: { id: "repository-review-1" },
+      previousLocation: { localRepositoryPath: "/old/repo", gitCommonDir: "/old/repo/.git" },
+      candidateLocation: { localRepositoryPath: "/new/repo", gitCommonDir: "/new/repo/.git" },
+      selectedRemote: { name: "origin", url: "https://github.com/acme/review-repo.git" },
+      sourceOid: "a".repeat(40),
+      requiredEvidenceCount: 3,
+      verifiedEvidenceCount: 3,
+      missingEvidence: [],
+      reviewChangeSequence: 4,
+      confirmationToken: "b".repeat(64),
+      confirmationRequired: true,
+    });
+    const { runtime } = mockRuntime({ getRepositoryRelocationPreview });
+    const readStdout = captureTextStdout();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "repository",
+      "relocate",
+      "--repository",
+      "/new/repo",
+    ]);
+
+    expect(getRepositoryRelocationPreview).toHaveBeenCalledWith("/new/repo");
+    expect(readStdout()).toContain(
+      "Repository Review bindingを /old/repo から /new/repo へ変更します。Git証跡 3/3件を確認しました。",
+    );
+    expect(readStdout()).toContain(`確認token: ${"b".repeat(64)}`);
+    expect(readStdout()).toContain("このtokenと --yes");
   });
 
   it("uses the existing-only Repository Issue-removal preview", async () => {

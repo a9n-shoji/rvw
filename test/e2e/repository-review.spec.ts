@@ -40,6 +40,42 @@ test("rejects a malformed Repository Review ID before starting Review queries", 
   expect((await request.get("/api/repository-reviews/not-a-uuid")).status()).toBe(400);
 });
 
+test("starts with Repository Review guidance and the canonical repository title", async ({
+  page,
+}) => {
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
+
+  await expect(page).toHaveTitle("rvw: acme/review-repo");
+  await expect(page.getByRole("region", { name: "左の文書ペイン" })).toContainText(
+    "左のファイル・Issue・Walkthroughを選択するか、Cmd/Ctrl+PでQuick Openを開けます。",
+  );
+});
+
+test("keeps cached Repository Review content visible when initial synchronization fails", async ({
+  page,
+}) => {
+  await page.route(`**/api/repository-reviews/${repositoryReviewId}/sync`, async (route) => {
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      json: {
+        ok: false,
+        error: { code: "GITHUB_ERROR", message: "GitHub is unavailable" },
+      },
+    });
+  });
+
+  await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
+
+  const feedback = page.getByRole("status");
+  await expect(feedback).toHaveText(
+    "GitHubと同期できないため、最後に保存した内容を表示しています。",
+  );
+  await expect(feedback).toHaveClass(/sync-feedback-warning/);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: /Repository Review · trunk/ })).toBeVisible();
+});
+
 test("shows Issue refresh failures without reporting the whole Repository Review sync as clean", async ({
   page,
 }) => {
@@ -111,7 +147,7 @@ test("does not let a delayed Repository Review reference replace newer navigatio
     await requestStarted;
 
     await page.getByRole("button", { name: "README.md", exact: true }).click();
-    const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+    const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
     await expect(leftPane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -149,8 +185,8 @@ test("refreshes both pane details without losing unrelated UI state after an ext
   await walkthroughButton.click();
   await walkthroughButton.click({ modifiers: [modifier] });
   await expect(page.getByRole("tab", { name: "Current request flow", exact: true })).toHaveCount(2);
-  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
-  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
+  const rightPane = page.getByRole("region", { name: "右の文書ペイン" });
   for (const pane of [leftPane, rightPane]) {
     await expect(
       pane.getByRole("heading", { level: 1, name: "Current request flow", exact: true }),
@@ -271,8 +307,8 @@ test("keeps a moved Repository Review document in its current pane during readin
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
   await page.getByRole("button", { name: "README.md", exact: true }).click();
 
-  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
-  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
+  const rightPane = page.getByRole("region", { name: "右の文書ペイン" });
   await leftPane.getByRole("button", { name: "左ペインの操作" }).click();
   await leftPane.getByRole("menuitem", { name: "選択中のタブを右ペインへ移動" }).click();
   await expect(rightPane.getByRole("tab", { name: "README.md", exact: true })).toHaveAttribute(
@@ -302,7 +338,7 @@ test("restores the actual Repository Review pane scroll position after leaving a
   await page.getByRole("textbox", { name: "全文検索", exact: true }).fill("dispatcher");
   await page.getByRole("button", { name: /README\.md \d+行/ }).click();
 
-  const pane = page.getByRole("region", { name: "左のコードペイン" });
+  const pane = page.getByRole("region", { name: "左の文書ペイン" });
   await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(100);
   const lineJumpTop = await pane.evaluate((element) => element.scrollTop);
   await pane.hover();
@@ -378,7 +414,7 @@ test("uses the shared review workspace for the default branch, Issues, code, and
     hasText: "Verify the default-branch trimming behavior at its exact source.",
   });
   await codeComment.getByRole("button", { name: "コメント対象を開く" }).click();
-  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
   const source = leftPane.locator("diffs-container");
   await expect(page.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
     "aria-selected",
@@ -422,7 +458,7 @@ test("uses the shared review workspace for the default branch, Issues, code, and
     exact: true,
   });
   await walkthroughButton.click({ modifiers: [modifier] });
-  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  const rightPane = page.getByRole("region", { name: "右の文書ペイン" });
   await expect(rightPane).toBeVisible();
   await expect(
     rightPane.getByRole("heading", {
@@ -449,6 +485,9 @@ test("uses the shared review workspace for the default branch, Issues, code, and
   await page.keyboard.press(`${modifier}+p`);
   const quickOpen = page.getByRole("dialog", { name: "ファイルを開く" });
   await expect(quickOpen).toBeVisible();
+  await expect(
+    quickOpen.getByRole("option", { name: "Current request flow、開いています" }),
+  ).toBeVisible();
   await quickOpen.getByRole("combobox", { name: "ファイル名で検索" }).fill("README.md");
   await expect(quickOpen.getByRole("option", { name: "README.md" })).toBeVisible();
   await expect(quickOpen.getByRole("option", { name: "Pull Request.md" })).toHaveCount(0);
@@ -477,7 +516,7 @@ test("uses the shared review workspace for the default branch, Issues, code, and
     await dialog.accept();
   });
   await page
-    .getByRole("region", { name: "右のコードペイン" })
+    .getByRole("region", { name: "右の文書ペイン" })
     .getByRole("tab", { name: "Current request flow", exact: true })
     .click();
   await page.getByRole("button", { name: "ウォークスルーを削除" }).click();
@@ -569,7 +608,7 @@ test("preserves a current Repository file draft when exact-source navigation tar
   await page.getByRole("button", { name: "src フォルダ", exact: true }).click();
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
 
-  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
   await leftPane.getByRole("button", { name: "ファイル全体へコメント" }).click();
   const draft = leftPane.getByRole("textbox", { name: "ファイル全体へコメント" });
   await draft.fill("exact-sourceへ切り替えても保持するcurrent file draft");
@@ -578,7 +617,7 @@ test("preserves a current Repository file draft when exact-source navigation tar
   await page
     .getByRole("button", { name: "Current request flow", exact: true })
     .click({ modifiers: [modifier] });
-  const rightPane = page.getByRole("region", { name: "右のコードペイン" });
+  const rightPane = page.getByRole("region", { name: "右の文書ペイン" });
   const reference = rightPane.getByRole("button", { name: /the implementation.*L1–3/ });
   await expect(reference).toBeVisible();
 
@@ -774,7 +813,7 @@ test("keeps Repository Review mutations isolated and recreates an empty review a
   await expect(issueButtons.first()).toContainText("#77");
 
   await issueButtons.filter({ hasText: "#142" }).click();
-  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
   await expect(leftPane.getByRole("button", { name: "Preview", exact: true })).toBeVisible();
   await expect(leftPane.getByRole("textbox", { name: "Issue全体へコメント" })).toHaveCount(0);
   await leftPane.getByRole("button", { name: "Issue全体へコメント" }).click();
@@ -994,7 +1033,7 @@ test("keeps an Issue range composer focused across a same-body Repository Review
   await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
   const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
   await reviewTree.locator(".review-tree-issue").filter({ hasText: "#142" }).click();
-  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
   const issueBodyLine = leftPane
     .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
     .filter({ hasText: "Inspect the default-branch implementation." });
@@ -1033,7 +1072,7 @@ test("preserves a current repository-file draft body across source synchronizati
 }) => {
   await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
   await page.getByRole("button", { name: "README.md", exact: true }).click();
-  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
   await leftPane.getByRole("button", { name: "ファイル全体へコメント" }).click();
   const textarea = leftPane.getByRole("textbox", { name: "ファイル全体へコメント" });
   await textarea.fill("Preserve this current-source file draft");
@@ -1055,7 +1094,7 @@ test("requires a fresh line selection when the current repository source changes
 }) => {
   await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
   await page.getByRole("button", { name: "README.md", exact: true }).click();
-  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
   const sourceLine = leftPane
     .locator('[data-rvw-source-start-line="5"][data-rvw-source-leaf="true"]')
     .filter({ hasText: "Repository documentation updated." });
@@ -1090,7 +1129,7 @@ test("refreshes an open Issue body without silently applying a stale range draft
   await page.goto(`/?repositoryReviewId=${repositoryReviewId}`);
   const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
   await reviewTree.locator(".review-tree-issue").filter({ hasText: "#142" }).click();
-  const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const leftPane = page.getByRole("region", { name: "左の文書ペイン" });
   const originalLine = leftPane
     .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
     .filter({ hasText: "Inspect the default-branch implementation." });

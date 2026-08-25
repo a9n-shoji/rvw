@@ -797,55 +797,69 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .option("--repository <path>", "移動後の対象repository", process.cwd())
     .option("--yes", "Repository Review bindingの変更を確認")
     .option("--confirmation-token <token>", "previewが返した確認token")
-    .requiredOption("--json", "JSONで出力")
+    .option("--json", "JSONで出力")
     .description("移動後の同じcloneへRepository Review bindingを付け替える")
-    .action(async (options: { repository: string; yes?: boolean; confirmationToken?: string }) => {
-      if (!options.yes || !options.confirmationToken) {
-        const preview = await callService(
-          "repository.relocate.preview",
-          { repositoryPath: options.repository },
-          async () => await getRuntime().service.getRepositoryRelocationPreview(options.repository),
-        );
-        writeJson({
-          ok: false,
-          error: {
-            code: "REPOSITORY_RELOCATION_CONFIRMATION_REQUIRED",
-            message: "relocationには--yesが必要です。",
-            suggestions: ["details.argumentsの同じ移動先・確認tokenで再実行してください。"],
-            details: {
-              command: "rvw",
-              arguments: [
-                "repository",
-                "relocate",
-                "--repository",
-                options.repository,
-                "--yes",
-                "--confirmation-token",
-                preview.confirmationToken,
-                "--json",
-              ],
+    .action(
+      async (
+        options: OutputOptions & { repository: string; yes?: boolean; confirmationToken?: string },
+      ) => {
+        if (!options.yes || !options.confirmationToken) {
+          const preview = await callService(
+            "repository.relocate.preview",
+            { repositoryPath: options.repository },
+            async () =>
+              await getRuntime().service.getRepositoryRelocationPreview(options.repository),
+          );
+          const result = {
+            ok: false,
+            error: {
+              code: "REPOSITORY_RELOCATION_CONFIRMATION_REQUIRED",
+              message: "relocationには--yesが必要です。",
+              suggestions: ["details.argumentsの同じ移動先・確認tokenで再実行してください。"],
+              details: {
+                command: "rvw",
+                arguments: [
+                  "repository",
+                  "relocate",
+                  "--repository",
+                  options.repository,
+                  "--yes",
+                  "--confirmation-token",
+                  preview.confirmationToken,
+                  ...(options.json ? ["--json"] : []),
+                ],
+              },
             },
+            ...preview,
+          };
+          writeOutput(
+            options,
+            result,
+            `Repository Review bindingを ${preview.previousLocation.localRepositoryPath} から ${preview.candidateLocation.localRepositoryPath} へ変更します。Git証跡 ${preview.verifiedEvidenceCount}/${preview.requiredEvidenceCount}件を確認しました。\n確認token: ${preview.confirmationToken}\n続行するにはこのtokenと --yes を指定してください。`,
+          );
+          process.exitCode = 2;
+          return;
+        }
+        const result = await callService(
+          "repository.relocate",
+          {
+            repositoryPath: options.repository,
+            confirmed: true,
+            confirmationToken: options.confirmationToken,
           },
-          ...preview,
-        });
-        process.exitCode = 2;
-        return;
-      }
-      const result = await callService(
-        "repository.relocate",
-        {
-          repositoryPath: options.repository,
-          confirmed: true,
-          confirmationToken: options.confirmationToken,
-        },
-        async () =>
-          await getRuntime().service.relocateRepositoryReviewAtPath(
-            options.repository,
-            options.confirmationToken!,
-          ),
-      );
-      writeJson({ ok: true, ...result });
-    });
+          async () =>
+            await getRuntime().service.relocateRepositoryReviewAtPath(
+              options.repository,
+              options.confirmationToken!,
+            ),
+        );
+        writeOutput(
+          options,
+          { ok: true, ...result },
+          `Repository Review bindingを ${result.candidateLocation.localRepositoryPath} へ変更しました。`,
+        );
+      },
+    );
 
   const repositoryIssue = repositoryReview
     .command("issue")
@@ -976,55 +990,70 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .option("--repository <path>", "対象repository", process.cwd())
     .option("--yes", "不可逆な削除を確認")
     .option("--confirmation-token <token>", "previewが返した確認token")
-    .requiredOption("--json", "JSONで出力")
-    .action(async (options: { repository: string; yes?: boolean; confirmationToken?: string }) => {
-      if (!options.yes || !options.confirmationToken) {
-        const preview = await callService(
-          "repository.reset.preview",
-          { repositoryPath: options.repository },
-          async () =>
-            await getRuntime().service.getRepositoryResetPreviewAtPath(options.repository),
-        );
-        writeJson({
-          ok: false,
-          error: {
-            code: "RESET_CONFIRMATION_REQUIRED",
-            message: "resetには--yesが必要です。",
-            suggestions: ["details.argumentsの同じrepository・確認tokenで再実行してください。"],
-            details: {
-              command: "rvw",
-              arguments: [
-                "repository",
-                "reset",
-                "--repository",
-                options.repository,
-                "--yes",
-                "--confirmation-token",
-                preview.confirmationToken,
-                "--json",
-              ],
+    .option("--json", "JSONで出力")
+    .action(
+      async (
+        options: OutputOptions & { repository: string; yes?: boolean; confirmationToken?: string },
+      ) => {
+        if (!options.yes || !options.confirmationToken) {
+          const preview = await callService(
+            "repository.reset.preview",
+            { repositoryPath: options.repository },
+            async () =>
+              await getRuntime().service.getRepositoryResetPreviewAtPath(options.repository),
+          );
+          const result = {
+            ok: false,
+            error: {
+              code: "RESET_CONFIRMATION_REQUIRED",
+              message: "resetには--yesが必要です。",
+              suggestions: ["details.argumentsの同じrepository・確認tokenで再実行してください。"],
+              details: {
+                command: "rvw",
+                arguments: [
+                  "repository",
+                  "reset",
+                  "--repository",
+                  options.repository,
+                  "--yes",
+                  "--confirmation-token",
+                  preview.confirmationToken,
+                  ...(options.json ? ["--json"] : []),
+                ],
+              },
             },
+            ...preview,
+          };
+          writeOutput(
+            options,
+            result,
+            `削除対象: Repository Review ${preview.counts.repositoryReview}、Issue membership ${preview.counts.issueMemberships}、コメント ${preview.counts.comments}、返信 ${preview.counts.posts}、Walkthrough ${preview.counts.walkthroughs}、Git ref ${preview.retainedRefs.length}。\n確認token: ${preview.confirmationToken}\n続行するにはこのtokenと --yes を指定してください。`,
+          );
+          process.exitCode = 2;
+          return;
+        }
+        const result = await callService(
+          "repository.reset",
+          {
+            repositoryPath: options.repository,
+            confirmed: true,
+            confirmationToken: options.confirmationToken,
           },
-          ...preview,
-        });
-        process.exitCode = 2;
-        return;
-      }
-      const result = await callService(
-        "repository.reset",
-        {
-          repositoryPath: options.repository,
-          confirmed: true,
-          confirmationToken: options.confirmationToken,
-        },
-        async () =>
-          await getRuntime().service.resetRepositoryReviewAtPath(
-            options.repository,
-            options.confirmationToken!,
-          ),
-      );
-      writeJson({ ok: true, ...result });
-    });
+          async () =>
+            await getRuntime().service.resetRepositoryReviewAtPath(
+              options.repository,
+              options.confirmationToken!,
+            ),
+        );
+        writeOutput(
+          options,
+          { ok: true, ...result },
+          result.outcome.kind === "completed"
+            ? `Repository Reviewを削除し、Git ref ${result.removedRefs.length}件をcleanupしました。`
+            : `Repository Reviewは削除しましたが、Git ref namespaceを空にできませんでした。cleanup対象prefix: ${result.outcome.refPrefix}`,
+        );
+      },
+    );
 
   const pr = program.command("pr").description("Pull Request状態を管理");
   pr.command("refresh")
