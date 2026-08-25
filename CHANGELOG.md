@@ -5,6 +5,27 @@
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-08-26
+
+### Added
+
+- focus中のdocument paneで`Cmd/Ctrl+F`を押すと、code、Markdown、Walkthroughの描画内容を
+  case-sensitive、whole-word、regular expressionの切り替え付きで検索できるVS Code風find widget
+- PR本文とrepository Markdown preview内の`mermaid` fenced blockを、themeとsource-line mappingを
+  保ったstrict Mermaid surfaceで描画
+- final Agent commentをnative browser notificationで通知し、human post、acknowledgement、初回load、
+  idempotent retryは通知対象から除外
+
+### Changed
+
+- expanded Comments sidebarの上端をpointerまたはkeyboardでresize可能にし、double-clickで自動配分へreset
+
+### Fixed
+
+- dual-pane表示でcomment / reply draftをpaneごとに分離し、refresh時も選択中のcommit rangeを保持
+- watcher postのAgent provenanceを保持し、comment notificationを投稿種別に応じて正しく判定
+- compound template extensionのsyntax highlightと、Markdown preview内code referenceのrange highlightを改善
+
 ## [0.2.4] - 2026-08-24
 
 ### Changed
