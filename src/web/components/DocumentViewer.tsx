@@ -78,6 +78,7 @@ import { FileEntryIcon } from "./FileIcon.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import { MarkdownImage } from "./MarkdownImage.js";
 import { PreviewMarkdownTable } from "./MarkdownTable.js";
+import { MermaidSurface } from "./MermaidSurface.js";
 import { RepositoryImageViewer } from "./RepositoryImageViewer.js";
 
 type ViewerAnnotation =
@@ -356,6 +357,7 @@ function renderRepositoryMarkdown({
   sourceRef,
   selectedOid,
   pullRequestId,
+  themePreference,
   linkPointerStart,
   onOpenRepositoryLink,
   onOpenMarkdownFragment,
@@ -371,6 +373,7 @@ function renderRepositoryMarkdown({
   sourceRef: DocumentRef;
   selectedOid: string;
   pullRequestId: string;
+  themePreference: ThemePreference;
   linkPointerStart: { current: PointerPosition | null };
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onOpenMarkdownFragment: (line: number, hash: string) => void;
@@ -567,6 +570,34 @@ function renderRepositoryMarkdown({
               title={title}
               sourceAttributes={sourceAttributes}
             />
+          );
+        },
+        pre: ({ children, node: _node, ...props }) => {
+          const childParts = Children.toArray(children);
+          const child = childParts.length === 1 ? childParts[0] : null;
+          if (
+            !isValidElement<{ className?: string; children?: ReactNode }>(child) ||
+            !child.props.className?.split(/\s+/u).includes("language-mermaid")
+          ) {
+            return <pre {...props}>{children}</pre>;
+          }
+          return (
+            <div
+              className="markdown-mermaid-shell"
+              data-rvw-source-leaf="true"
+              {...markdownSourceDataAttributes(_node)}
+            >
+              <div className="markdown-mermaid-toolbar">Mermaid diagram</div>
+              <MermaidSurface
+                className="markdown-mermaid"
+                role="img"
+                aria-label="Mermaid diagram"
+                source={markdownNodeText(child.props.children).trim()}
+                themePreference={themePreference}
+                renderIdPrefix="rvwMarkdown"
+                errorClassName="markdown-mermaid-error"
+              />
+            </div>
           );
         },
       }}
@@ -1421,6 +1452,7 @@ export function DocumentViewer({
             sourceRef: fullRef,
             selectedOid,
             pullRequestId,
+            themePreference,
             linkPointerStart: markdownLinkPointerStart,
             onOpenRepositoryLink: openRepositoryLink,
             onOpenMarkdownFragment: openMarkdownFragment,
@@ -1440,6 +1472,7 @@ export function DocumentViewer({
       openRepositoryLink,
       pullRequestId,
       selectedOid,
+      themePreference,
     ],
   );
   useLayoutEffect(() => {
