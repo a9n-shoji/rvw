@@ -418,6 +418,14 @@ key must identify a node or class that actually occurs in a flowchart or classDi
 supplied reference must be used by at least one Markdown link or valid diagram binding. Unused or
 phantom-bound references are rejected because the viewer has no separate reference index.
 
+A fenced code block whose language is exactly `html-preview` is rendered as a static HTML/CSS visual.
+HTML previews remain part of the Markdown `body`; no alternate Walkthrough format or persistence shape
+is added. They may contain `rvw-ref:<referenceId>` links, which participate in the same declared/used
+reference validation as Markdown links. Repository images use repository-root-relative paths fixed to
+`sourceOid`. JavaScript, event handlers, frames, forms, external resources, network-capable CSS, and
+internal `data-rvw-source-*` attributes are rejected with a Walkthrough line number. Consumers must
+require the additive `walkthrough.htmlPreview` capability before publishing this fence syntax.
+
 The body is limited to 256 KiB, and a publication may contain at most 200 references. A successful
 publication protects `sourceOid` with rvw's immutable commit ref. The response contains the saved
 Walkthrough and its `rvw://walkthrough/<uuid>` reference. Publication is
@@ -543,6 +551,7 @@ walkthrough.read
 walkthrough.publish
 walkthrough.update
 walkthrough.delete
+walkthrough.htmlPreview
 ```
 
 Consumers must reject an unsupported protocol version or missing required capability rather than

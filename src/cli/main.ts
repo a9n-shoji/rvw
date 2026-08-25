@@ -567,6 +567,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "walkthrough.publish",
           "walkthrough.update",
           "walkthrough.delete",
+          "walkthrough.htmlPreview",
         ],
       };
       writeOutput(options, result, `rvw protocol ${PROTOCOL_VERSION}`);

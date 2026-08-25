@@ -2641,6 +2641,114 @@ diffs-container > [slot="header-metadata"] {
   color: var(--warning-text);
   font-size: 12px;
 }
+.walkthrough-html-preview-shell {
+  margin: 22px 0 28px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 4px 18px var(--shadow-small);
+}
+.walkthrough-html-preview-toolbar {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+}
+.walkthrough-html-preview-toolbar > span:nth-child(2) {
+  min-width: 0;
+  flex: 1;
+  text-align: right;
+}
+.walkthrough-html-preview-frame-shell {
+  position: relative;
+  min-width: 0;
+}
+.walkthrough-html-preview-frame-shell iframe {
+  display: block;
+  width: 100%;
+  min-height: 240px;
+  border: 0;
+  background: var(--panel);
+}
+.walkthrough-html-overlay {
+  position: absolute;
+  z-index: 4;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.walkthrough-html-comment-action,
+.walkthrough-html-marker {
+  position: absolute;
+  pointer-events: auto;
+  box-shadow: 0 3px 10px var(--shadow-medium);
+}
+.walkthrough-html-comment-action {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  transform: translate(-50%, 0);
+  border-color: var(--accent);
+  background: var(--panel);
+  color: var(--accent);
+  font-size: 10px;
+}
+.walkthrough-html-comment-action:hover {
+  background: var(--accent-soft);
+}
+.walkthrough-html-comment-action svg {
+  width: 13px;
+  height: 13px;
+}
+.walkthrough-html-marker {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  padding: 5px;
+  transform: translate(-75%, -25%);
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, var(--line));
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--accent);
+}
+.walkthrough-html-marker.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.walkthrough-html-marker svg {
+  width: 13px;
+  height: 13px;
+}
+.walkthrough-html-comment-composer {
+  padding: 0 10px 10px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.walkthrough-html-comment-composer .inline-comment-composer--line {
+  width: 100%;
+  margin: 10px 0 0;
+}
+.walkthrough-html-preview-error {
+  margin: 18px 0;
+  padding: 12px;
+  border: 1px solid var(--warning-line);
+  border-radius: 8px;
+  background: var(--warning);
+  color: var(--warning-text);
+  font-size: 12px;
+}
 
 .comment-sidebar {
   font-size: var(--comment-body-size);

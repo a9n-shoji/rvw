@@ -62,6 +62,11 @@ import {
   detectImageContentType,
   type ImageContentType,
 } from "../shared/image-assets.js";
+import {
+  analyzeWalkthroughHtmlPreview,
+  MAX_WALKTHROUGH_HTML_IMAGES,
+  type HtmlPreviewAnalysis,
+} from "../shared/walkthrough-html.js";
 import { RvwDatabase, type CommentUpdateInput } from "../infrastructure/db/database.js";
 import { GitClient, type RepositoryContext } from "../infrastructure/git/git-client.js";
 import { parsePullRequestUrl, type GitHubPort } from "../infrastructure/github/github-client.js";
@@ -264,11 +269,16 @@ interface MarkdownNode {
   lang?: unknown;
   value?: unknown;
   children?: MarkdownNode[];
+  position?: {
+    start: { line: number };
+    end: { line: number };
+  };
 }
 
-interface WalkthroughMarkdownAnalysis {
+export interface WalkthroughMarkdownAnalysis {
   referenceIds: string[];
   mermaidNodeIds: Set<string>;
+  htmlPreviews: HtmlPreviewAnalysis[];
 }
 
 const mermaidIdentifierPattern = /[A-Za-z][A-Za-z0-9_-]{0,63}/g;
@@ -378,7 +388,10 @@ function addMermaidDiagramNodes(source: string, nodeIds: Set<string>): void {
   }
 }
 
-function analyzeReferenceMarkdown(body: string): WalkthroughMarkdownAnalysis {
+export function analyzeReferenceMarkdown(
+  body: string,
+  options: { htmlPreviews?: boolean } = {},
+): WalkthroughMarkdownAnalysis {
   const root = fromMarkdown(body) as MarkdownNode;
   const definitions = new Map<string, string>();
   const visit = (node: MarkdownNode, callback: (candidate: MarkdownNode) => void): void => {
@@ -396,6 +409,7 @@ function analyzeReferenceMarkdown(body: string): WalkthroughMarkdownAnalysis {
   });
   const urls: string[] = [];
   const mermaidNodeIds = new Set<string>();
+  const htmlPreviews: HtmlPreviewAnalysis[] = [];
   visit(root, (node) => {
     if (node.type === "link" && typeof node.url === "string") urls.push(node.url);
     if (node.type === "linkReference" && typeof node.identifier === "string") {
@@ -405,12 +419,31 @@ function analyzeReferenceMarkdown(body: string): WalkthroughMarkdownAnalysis {
     if (node.type === "code" && node.lang === "mermaid" && typeof node.value === "string") {
       addMermaidDiagramNodes(node.value, mermaidNodeIds);
     }
+    if (
+      options.htmlPreviews &&
+      node.type === "code" &&
+      node.lang === "html-preview" &&
+      typeof node.value === "string"
+    ) {
+      htmlPreviews.push(analyzeWalkthroughHtmlPreview(node.value, node.position?.start.line ?? 1));
+    }
   });
+  const htmlImageCount = htmlPreviews.reduce((count, preview) => count + preview.imageCount, 0);
+  if (htmlImageCount > MAX_WALKTHROUGH_HTML_IMAGES) {
+    throw new RvwError(
+      "INVALID_INPUT",
+      `html-preview画像はWalkthrough全体で${MAX_WALKTHROUGH_HTML_IMAGES}件以下にしてください。`,
+    );
+  }
   return {
-    referenceIds: urls
-      .filter((url) => url.startsWith("rvw-ref:"))
-      .map((url) => url.slice("rvw-ref:".length)),
+    referenceIds: [
+      ...urls
+        .filter((url) => url.startsWith("rvw-ref:"))
+        .map((url) => url.slice("rvw-ref:".length)),
+      ...htmlPreviews.flatMap((preview) => preview.referenceIds),
+    ],
     mermaidNodeIds,
+    htmlPreviews,
   };
 }
 
@@ -1013,10 +1046,11 @@ export class RvwService {
       body: string;
       references: CodeReference[];
       additionalUsedReferenceIds?: Iterable<string>;
+      markdownAnalysis?: WalkthroughMarkdownAnalysis;
       subject: string;
     },
   ): Promise<WalkthroughMarkdownAnalysis> {
-    const markdown = analyzeReferenceMarkdown(input.body);
+    const markdown = input.markdownAnalysis ?? analyzeReferenceMarkdown(input.body);
     if (input.references.length > MAX_CODE_REFERENCES) {
       throw new RvwError(
         "INVALID_INPUT",
@@ -1439,7 +1473,7 @@ export class RvwService {
       );
     }
     assertAuthorLabel(input.authorLabel);
-    const markdown = analyzeReferenceMarkdown(input.body);
+    const markdown = analyzeReferenceMarkdown(input.body, { htmlPreviews: true });
     const diagramBindings = input.diagramBindings ?? {};
     const referenceIds = new Set(input.references.map((reference) => reference.id));
     for (const [nodeId, referenceId] of Object.entries(diagramBindings)) {
@@ -1464,6 +1498,7 @@ export class RvwService {
       body: input.body,
       references: input.references,
       additionalUsedReferenceIds: Object.values(diagramBindings),
+      markdownAnalysis: markdown,
       subject: "Walkthrough",
     });
     return {

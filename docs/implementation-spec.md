@@ -683,6 +683,7 @@ walkthrough.read
 walkthrough.publish
 walkthrough.update
 walkthrough.delete
+walkthrough.htmlPreview
 ```
 
 ### 7.1 comment create

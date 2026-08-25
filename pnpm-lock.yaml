@@ -62,6 +62,15 @@ importers:
       globals:
         specifier: ^17.9.0
         version: 17.9.0
+      hast-util-from-html:
+        specifier: ^2.0.3
+        version: 2.0.3
+      hast-util-sanitize:
+        specifier: ^5.0.2
+        version: 5.0.2
+      hast-util-to-html:
+        specifier: ^9.0.5
+        version: 9.0.5
       hono:
         specifier: ^4.13.1
         version: 4.13.1
@@ -1225,6 +1234,9 @@ packages:
 
   hachure-fill@0.5.2:
     resolution: {integrity: sha512-3GKBOn+m2LX9iq+JC1064cSFprJY4jL1jCXTcpnfER5HYE2l/4EfWSGzkPa/ZDBmYI0ZOEj5VHV/eKnPGkHuOg==}
+
+  hast-util-from-html@2.0.3:
+    resolution: {integrity: sha512-CUSRHXyKjzHov8yKsQjGOElXy/3EKpyX56ELnkHH34vDVw1N1XSQ1ZcAvTyAPtGqLTuKP/uxM+aLkSPqF/EtMw==}
 
   hast-util-from-parse5@8.0.3:
     resolution: {integrity: sha512-3kxEVkEKt0zvcZ3hCRYI8rqrgwtlIOFMWkbclACvjlDw8Li9S2hk/d51OI0nr/gIpdMHNepwgOKqZ/sy0Clpyg==}
@@ -3149,6 +3161,15 @@ snapshots:
   globals@17.9.0: {}
 
   hachure-fill@0.5.2: {}
+
+  hast-util-from-html@2.0.3:
+    dependencies:
+      '@types/hast': 3.0.5
+      devlop: 1.1.0
+      hast-util-from-parse5: 8.0.3
+      parse5: 7.3.0
+      vfile: 6.0.3
+      vfile-message: 4.0.3
 
   hast-util-from-parse5@8.0.3:
     dependencies:

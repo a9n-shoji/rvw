@@ -39,6 +39,53 @@ When the requested subject is a standalone architecture, flow, or surrounding-co
 - For an API or external integration, consider contract, input, transformation, internal processing, output, and error handling.
 - For a test-centered change, connect the behavior being guaranteed to the implementation rather than walking through test files alone.
 
+## Choose a visual format
+
+Prefer ordinary Markdown for prose and Mermaid for structure or flow. Use an `html-preview` fence only
+when spatial layout, an ELI5 visual hierarchy or metaphor, a UI mock, or a Before / After comparison
+materially lowers the reader's comprehension cost. The Walkthrough may consist mostly or entirely of
+one HTML preview when that is the clearest requested format; it remains a Markdown document.
+
+Keep HTML visuals static and self-contained:
+
+- Write HTML and CSS only. Never add JavaScript, event handlers, forms, frames, external stylesheets,
+  fonts, images, or other network resources.
+- Use inline `<svg>` for vector art. Use `<img src="docs/image.png">` only for an existing image at the
+  Walkthrough `sourceOid`; resolve the path from the repository root, not from a Markdown file.
+- Use theme variables such as `--rvw-bg`, `--rvw-fg`, `--rvw-muted`, `--rvw-border`, and `--rvw-accent`
+  when practical, while allowing an intentional self-contained theme when the subject needs it.
+- Put `rvw-ref:<referenceId>` on important code claims inside `<a href="...">` elements. HTML links
+  participate in the same declared/used reference validation as Markdown links.
+- Add `data-rvw-commentable` to cards, flow nodes, comparison panes, or other visual groups that a
+  reviewer may need to question. Images, SVGs, figures, tables, sections, articles, asides, and details
+  are commentable automatically.
+- Pretty-print the HTML. Keep each semantic element on its own source line when practical so comments
+  map to useful Walkthrough line ranges. Never minify authored HTML.
+- Do not add decoration merely because HTML is available. For an ELI5 request, reduce prose and favor
+  visual hierarchy, metaphor, Before / After, or flow only where it clarifies the verified subject.
+
+Example:
+
+````markdown
+```html-preview
+<style>
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { padding: 16px; border: 1px solid var(--rvw-border); border-radius: 8px; }
+</style>
+
+<div class="cards">
+  <section class="card" data-rvw-commentable>
+    <h2>Before</h2>
+    <p>Each screen decides.</p>
+  </section>
+  <section class="card" data-rvw-commentable>
+    <h2>After</h2>
+    <p><a href="rvw-ref:gateway">AuthGateway</a> decides once.</p>
+  </section>
+</div>
+```
+````
+
 ## Keep the review boundary clear
 
 Do not turn the Walkthrough into an exhaustive bug list, style critique, security or performance review, improvement backlog, final approval decision, or guarantee that every risk was checked. Mention an important constraint, hazardous assumption, or deliberate tradeoff only when the reader needs it to understand the implementation, and frame it as a property to inspect rather than a review finding.
@@ -102,4 +149,5 @@ Use this checklist internally; do not reproduce it mechanically in the Walkthrou
 - [ ] The output is an orientation path, not an AI review, approval plan, or completeness claim.
 - [ ] The endpoint leaves clear starting points for continued exploration.
 - [ ] Every file, symbol, range, link, and binding is real and valid at the selected commit.
+- [ ] Any HTML preview is static, network-free, readable in both themes, pretty-printed, and used only where it improves comprehension.
 - [ ] A reviewer seeing the subject for the first time gains a useful route into the committed code.

@@ -56,6 +56,7 @@ import {
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import { PreviewMarkdownTable } from "./MarkdownTable.js";
 import { MermaidSurface } from "./MermaidSurface.js";
+import { WalkthroughHtmlPreview } from "./WalkthroughHtmlPreview.js";
 import { WalkthroughIcon } from "./WalkthroughPanel.js";
 
 const referenceNoticeDurationMs = 2400;
@@ -215,13 +216,18 @@ function MermaidDiagram({
 }
 
 interface MermaidMarkdownRenderContext {
+  pullRequestId: string;
+  sourceOid: string;
   diagramBindings: Record<string, string>;
   references: ReadonlyMap<string, WalkthroughReference>;
   placedComments: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
   activeCommentId: string | null;
+  navigationLine: number | null;
   diagramCommentRange: MarkdownSourceRange | null;
   themePreference: ThemePreference;
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
+  onCommentActiveChange: (commentId: string, active: boolean) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
   diagramCommentPending: boolean;
   diagramCommentError: unknown;
@@ -273,10 +279,50 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
           children?: ReactNode;
         }>)
       : null;
-  if (!context || !isValidElement(child) || child.props.className !== "language-mermaid") {
+  if (!context || !isValidElement(child)) {
     return <pre {...props}>{children}</pre>;
   }
   const sourceRange = markdownNodeSourceRange(node);
+  if (child.props.className === "language-html-preview" && sourceRange) {
+    const previewCommentRange =
+      context.diagramCommentRange &&
+      context.diagramCommentRange.startLine >= sourceRange.startLine &&
+      context.diagramCommentRange.endLine <= sourceRange.endLine
+        ? context.diagramCommentRange
+        : null;
+    return (
+      <WalkthroughHtmlPreview
+        source={codeText(child.props.children).replace(/\n$/u, "")}
+        fenceRange={sourceRange}
+        pullRequestId={context.pullRequestId}
+        sourceOid={context.sourceOid}
+        references={context.references}
+        placedComments={context.placedComments}
+        activeCommentId={context.activeCommentId}
+        navigationLine={context.navigationLine}
+        themePreference={context.themePreference}
+        onOpenReference={context.onOpenReference}
+        onOpenRepositoryLink={context.onOpenRepositoryLink}
+        onCommentRange={context.onCommentRange}
+        onCommentActiveChange={context.onCommentActiveChange}
+        commentComposer={
+          previewCommentRange ? (
+            <WalkthroughDiagramCommentComposer
+              key={`${previewCommentRange.startLine}:${previewCommentRange.endLine}`}
+              range={previewCommentRange}
+              pending={context.diagramCommentPending}
+              error={context.diagramCommentError}
+              onCancel={context.onCancelDiagramComment}
+              onSubmit={(body) => context.onSubmitDiagramComment(previewCommentRange, body)}
+            />
+          ) : null
+        }
+      />
+    );
+  }
+  if (child.props.className !== "language-mermaid") {
+    return <pre {...props}>{children}</pre>;
+  }
   return (
     <MermaidDiagram
       source={codeText(child.props.children).trim()}
@@ -314,11 +360,13 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
 };
 
 const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
+  pullRequestId,
   body,
   diagramBindings,
   references,
   placedComments,
   activeCommentId,
+  navigationLine,
   selectedRange,
   selectionComposerOpen,
   diagramCommentRange,
@@ -335,11 +383,13 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   onCancelDiagramComment,
   onSubmitDiagramComment,
 }: {
+  pullRequestId: string;
   body: string;
   diagramBindings: Record<string, string>;
   references: ReadonlyMap<string, WalkthroughReference>;
   placedComments: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
   activeCommentId: string | null;
+  navigationLine: number | null;
   selectedRange: MarkdownSourceRange | null;
   selectionComposerOpen: boolean;
   diagramCommentRange: MarkdownSourceRange | null;
@@ -412,13 +462,18 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   return (
     <MermaidMarkdownRenderContext.Provider
       value={{
+        pullRequestId,
+        sourceOid: markdownSourceOid,
         diagramBindings,
         references,
         placedComments,
         activeCommentId,
+        navigationLine,
         diagramCommentRange,
         themePreference,
         onOpenReference,
+        onOpenRepositoryLink,
+        onCommentActiveChange,
         onCommentRange,
         diagramCommentPending,
         diagramCommentError,
@@ -552,7 +607,14 @@ export function WalkthroughViewer({
       const line = String(navigationTarget.line);
       const target =
         root.querySelector<HTMLElement>(`[data-rvw-navigation-start-line="${line}"]`) ??
-        root.querySelector<HTMLElement>(`[data-rvw-source-start-line="${line}"]`);
+        root.querySelector<HTMLElement>(`[data-rvw-source-start-line="${line}"]`) ??
+        [...root.querySelectorAll<HTMLElement>("[data-rvw-navigation-start-line]")].find(
+          (candidate) => {
+            const startLine = Number(candidate.dataset.rvwNavigationStartLine);
+            const endLine = Number(candidate.dataset.rvwNavigationEndLine);
+            return startLine <= navigationTarget.line! && endLine >= navigationTarget.line!;
+          },
+        );
       const collapsedDetails = target?.closest<HTMLDetailsElement>("details:not([open])");
       if (collapsedDetails) collapsedDetails.open = true;
       if (!target) return;
@@ -734,11 +796,13 @@ export function WalkthroughViewer({
   ) : null;
   const walkthroughMarkdown = (
     <WalkthroughMarkdown
+      pullRequestId={walkthrough.pullRequestId}
       body={walkthrough.body}
       diagramBindings={walkthrough.diagramBindings}
       references={references}
       placedComments={markdownComments}
       activeCommentId={activeCommentId}
+      navigationLine={navigationTarget?.line ?? null}
       selectedRange={lineComposerPlacement === "selection" ? selectedRange : null}
       selectionComposerOpen={lineComposerPlacement === "selection"}
       diagramCommentRange={diagramRange}
