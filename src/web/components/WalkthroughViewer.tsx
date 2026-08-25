@@ -864,7 +864,9 @@ export function WalkthroughViewer({
         onOpenComposer={() => setLineComposerPlacement("selection")}
         composer={selectionComposer}
       >
-        {walkthroughMarkdown}
+        <div data-pane-find-surface data-pane-find-text>
+          {walkthroughMarkdown}
+        </div>
       </MarkdownSelectionSurface>
     </div>
   );

@@ -249,6 +249,12 @@ empty fileは従来どおり明示的に扱う。
   pathより優先するbrowser内fuzzy search、match highlight、open / active状態、file / change iconを表示し、
   Arrow keyで選択、Enterまたは通常clickで左pane、`Cmd` / `Ctrl`+clickで右paneへ追加して開き、
   Escapeで閉じる。
+- focused document paneで`Cmd` / `Ctrl`+`F`を押すと、そのpane右上へVS Code型の検索widgetを重ねる。
+  検索対象は現在表示中の文書本文だけとし、tab、viewer control、inline commentは含めない。左右paneはquery、
+  option、現在位置を独立して持つ。fixed-string、case-insensitive、部分一致を既定とし、match case、whole word、
+  regular expressionを明示toggleできる。入力中に全一致と現在位置を表示・highlightし、前後button、`Enter` /
+  `Shift+Enter`、`F3` / `Shift+F3`で末尾と先頭をwrapして移動する。`Escape`で閉じてpaneへfocusを戻し、
+  `Cmd` / `Ctrl`+`Shift`+`F`のrepository本文検索とは混同しない。
 - Walkthroughも独立した一時tabとして保持し、そこからcodeを開いても説明tabを閉じない。
   tabは個別に閉じられ、paneの`...` menuからactive以外またはpane内すべてを一括で閉じられる。
   overflow時は横scrollとopen-tab一覧を提供する。
@@ -1297,6 +1303,8 @@ E2E:
 18. file、tab、Search result、comment、Walkthrough reference、Markdown相対／見出しlinkを辿ったbrowser
     Back / Forwardがfocused paneの文書と位置を復元し、行jump後に手動で読み進めた位置、反対paneのtab、
     現在のcommit範囲、表示mode、tree modeを維持。reloadは初期一時workspaceへ戻る
+19. 左右それぞれのfocused paneで`Cmd` / `Ctrl`+`F`を開き、match case、whole word、regular expression、
+    一致件数、前後移動、wrap、`Escape`後のpane focus復元を確認。片方の検索状態とhighlightが他方へ混ざらない
 
 CLI contract:
 

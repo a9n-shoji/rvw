@@ -160,6 +160,15 @@ const viewerUnsafeCss = `
   [data-line][data-editor-active-line] {
     background: color-mix(in srgb, var(--diffs-modified-base) 28%, transparent) !important;
   }
+  ::highlight(rvw-pane-find-left-match),
+  ::highlight(rvw-pane-find-right-match) {
+    background-color: light-dark(rgb(234 179 8 / 0.42), rgb(250 204 21 / 0.38));
+  }
+  ::highlight(rvw-pane-find-left-current),
+  ::highlight(rvw-pane-find-right-current) {
+    background-color: light-dark(rgb(245 139 10 / 0.82), rgb(249 115 22 / 0.78));
+    color: light-dark(#17120a, #fff);
+  }
 `;
 
 export type DisplayMode = "full" | "pull-request" | "range";
@@ -1810,7 +1819,7 @@ export function DocumentViewer({
           onSubmit={() => create("file")}
         />
       )}
-      <div className="diff-surface" ref={diffSurfaceRef}>
+      <div className="diff-surface" ref={diffSurfaceRef} data-pane-find-surface>
         {repositoryImageSurface ? (
           repositoryImageSurface
         ) : showingMarkdownPreview ? (
@@ -1848,7 +1857,7 @@ export function DocumentViewer({
                   />
                 }
               >
-                <article>{renderedRepositoryMarkdown}</article>
+                <article data-pane-find-text>{renderedRepositoryMarkdown}</article>
               </MarkdownSelectionSurface>
             </div>
           ) : (
