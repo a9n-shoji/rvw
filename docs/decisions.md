@@ -208,8 +208,11 @@ and transfer are not auto-followed; reset at the original binding and recreation
 
 Own retained Repository Review evidence under
 `refs/rvw/repository/<repositoryReviewId>/commits/oid-<oid>`. Reset previews and deletion use only that prefix.
-If DB deletion succeeds and ref deletion fails, report the two outcomes, remaining refs, and explicit
-repair boundary. A new aggregate receives a new ID and cannot see the orphan namespace.
+After DB deletion, re-list the namespace regardless of the deletion command result, retry one observed
+remainder once, and report full completion only when the final list is empty. A remaining or uninspectable
+namespace is typed partial success with the explicit repair boundary. Derive `removedRefs` from the observed
+pre-delete set minus the final remainder and keep `deleted.gitRefs` equal to that list length. A new aggregate
+receives a new ID and cannot see the orphan namespace.
 
 Move both identity lookups, binding conflict checks, ID selection, insert/update, and sequence update
 inside one `BEGIN IMMEDIATE`, and make the unreleased migration 012 identity columns `NOCASE`. Use

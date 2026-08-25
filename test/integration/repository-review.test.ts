@@ -7,6 +7,8 @@ import type {
   GitHubIssue,
   GitHubPullRequest,
   GitHubRepository,
+  RepositoryResetCounts,
+  RepositoryReview,
   RepositoryIdentity,
 } from "../../src/domain/models.js";
 import { hashDocument } from "../../src/domain/pr-markdown.js";
@@ -171,15 +173,36 @@ class RepositoryGitHub implements GitHubPort {
 }
 
 class DeleteThenThrowGitClient extends GitClient {
-  override async deleteRefsByPrefix(repositoryPath: string, prefix: string): Promise<number> {
-    await super.deleteRefsByPrefix(repositoryPath, prefix);
+  override async deleteRefs(repositoryPath: string, refs: string[]): Promise<number> {
+    await super.deleteRefs(repositoryPath, refs);
     throw new Error("git update-ref exited after applying the transaction");
   }
 }
 
 class ThrowBeforeDeleteGitClient extends GitClient {
-  override deleteRefsByPrefix(): Promise<number> {
+  override deleteRefs(): Promise<number> {
     return Promise.reject(new Error("git update-ref failed before applying the transaction"));
+  }
+}
+
+class PauseBeforeRepositoryResetRefDeleteGitClient extends GitClient {
+  readonly barrier = new OneShotBarrier();
+  private deleteAttempts = 0;
+  private failRetry = false;
+
+  arm(failRetry = false): void {
+    this.deleteAttempts = 0;
+    this.failRetry = failRetry;
+    this.barrier.arm();
+  }
+
+  override async deleteRefs(repositoryPath: string, refs: string[]): Promise<number> {
+    this.deleteAttempts += 1;
+    if (this.deleteAttempts === 1) await this.barrier.blockOnce();
+    if (this.deleteAttempts === 2 && this.failRetry) {
+      throw new Error("git update-ref retry failed before applying the transaction");
+    }
+    return await super.deleteRefs(repositoryPath, refs);
   }
 }
 
@@ -2523,6 +2546,113 @@ describe("Repository Review", () => {
     ).not.toBe(preview.confirmationToken);
   });
 
+  it("re-resolves the current clone when relocation wins the final reset CAS", async () => {
+    const { repositoryPath, sourceOid, database, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const prefix = `refs/rvw/repository/${opened.repositoryReview.id}/commits/`;
+    const candidate = await createRelocationCandidate(
+      service,
+      repositoryPath,
+      opened.repositoryReview.id,
+      [sourceOid],
+      "reset-cas-relocation",
+    );
+    const candidateOnlyOid = commitFile(
+      candidate.repositoryPath,
+      "candidate-only.txt",
+      "candidate binding\n",
+      "candidate-only evidence",
+    );
+    const candidateOnlyRef = (
+      await service.git.ensureRepositoryReviewCommitRef(
+        candidate.repositoryPath,
+        opened.repositoryReview.id,
+        candidateOnlyOid,
+      )
+    ).ref;
+    const sourceRef = service.git.repositoryReviewCommitRef(opened.repositoryReview.id, sourceOid);
+    const preview = await service.getRepositoryResetPreview(opened.repositoryReview.id);
+    const resetRepositoryReviewInDatabase = database.resetRepositoryReview.bind(database);
+    vi.spyOn(database, "resetRepositoryReview").mockImplementationOnce(
+      (...args: Parameters<RvwDatabase["resetRepositoryReview"]>) => {
+        const current = database.getRepositoryReview(opened.repositoryReview.id);
+        if (!current) throw new Error("missing Repository Review before relocation race");
+        database.relocateRepositoryReview(
+          current.id,
+          {
+            localRepositoryPath: current.localRepositoryPath,
+            gitCommonDir: current.gitCommonDir,
+            reviewChangeSequence: database.getReviewChangeSequence("repository", current.id),
+          },
+          {
+            localRepositoryPath: candidate.repositoryPath,
+            gitCommonDir: candidate.gitCommonDir,
+          },
+        );
+        return resetRepositoryReviewInDatabase(...args);
+      },
+    );
+
+    const error = (await service
+      .resetRepositoryReview(opened.repositoryReview.id, preview.confirmationToken)
+      .catch((caught: unknown) => caught)) as RvwError;
+    expect(error).toMatchObject({ code: "DESTRUCTIVE_PREVIEW_STALE", status: 409 });
+    const currentPreview = (
+      error.details as {
+        currentPreview: {
+          repositoryReview: RepositoryReview;
+          counts: RepositoryResetCounts;
+          retainedRefs: string[];
+          reviewChangeSequence: number;
+          confirmationToken: string;
+        };
+      }
+    ).currentPreview;
+    expect(currentPreview).toMatchObject({
+      repositoryReview: {
+        id: opened.repositoryReview.id,
+        localRepositoryPath: candidate.repositoryPath,
+        gitCommonDir: candidate.gitCommonDir,
+      },
+      counts: { gitRefs: 2 },
+      reviewChangeSequence: database.getReviewChangeSequence(
+        "repository",
+        opened.repositoryReview.id,
+      ),
+    });
+    expect(currentPreview.retainedRefs).toEqual(
+      expect.arrayContaining([sourceRef, candidateOnlyRef]),
+    );
+    expect(currentPreview.confirmationToken).not.toBe(preview.confirmationToken);
+    await expect(service.git.listRefsByPrefix(repositoryPath, prefix)).resolves.toEqual([
+      sourceRef,
+    ]);
+  });
+
+  it("preserves the final reset CAS error when its current preview cannot be rebuilt", async () => {
+    const { repositoryPath, database, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const preview = await service.getRepositoryResetPreview(opened.repositoryReview.id);
+    const resetRepositoryReviewInDatabase = database.resetRepositoryReview.bind(database);
+    vi.spyOn(database, "resetRepositoryReview").mockImplementationOnce(
+      (...args: Parameters<RvwDatabase["resetRepositoryReview"]>) => {
+        database.incrementChangeSequence({
+          kind: "repository",
+          reviewId: opened.repositoryReview.id,
+        });
+        renameSync(repositoryPath, `${repositoryPath}-unavailable-during-stale-preview`);
+        return resetRepositoryReviewInDatabase(...args);
+      },
+    );
+
+    const error = (await service
+      .resetRepositoryReview(opened.repositoryReview.id, preview.confirmationToken)
+      .catch((caught: unknown) => caught)) as RvwError;
+    expect(error).toMatchObject({ code: "DESTRUCTIVE_PREVIEW_STALE", status: 409 });
+    expect(error.details).not.toHaveProperty("currentPreview");
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).not.toBeNull();
+  });
+
   it("reports a concurrently requested Repository Issue in exactly one Walkthrough update", async () => {
     const gitClient = new RepositoryRetainBarrierGitClient();
     const { repositoryPath, sourceOid, github, service } = setup(gitClient);
@@ -3546,6 +3676,77 @@ describe("Repository Review", () => {
         },
       },
     );
+  });
+
+  it("post-checks and removes a ref retained after reset cleanup listed the namespace", async () => {
+    const gitClient = new PauseBeforeRepositoryResetRefDeleteGitClient();
+    const { repositoryPath, database, service } = setup(gitClient);
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const lateOid = commitFile(
+      repositoryPath,
+      "late-evidence.txt",
+      "late evidence\n",
+      "late reset evidence",
+    );
+    const prefix = `refs/rvw/repository/${opened.repositoryReview.id}/commits/`;
+    gitClient.arm();
+
+    const reset = resetRepositoryReview(service, opened.repositoryReview.id);
+    await gitClient.barrier.waitUntilBlocked();
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toBeNull();
+    const lateRef = (
+      await service.git.ensureRepositoryReviewCommitRef(
+        repositoryPath,
+        opened.repositoryReview.id,
+        lateOid,
+      )
+    ).ref;
+    gitClient.barrier.release();
+
+    const result = await reset;
+    expect(result.outcome).toEqual({ kind: "completed" });
+    expect(result.removedRefs).not.toContain(lateRef);
+    expect(result.deleted.gitRefs).toBe(result.removedRefs.length);
+    await expect(service.git.listRefsByPrefix(repositoryPath, prefix)).resolves.toEqual([]);
+  });
+
+  it("reports a ref retained after reset cleanup when the bounded retry fails", async () => {
+    const gitClient = new PauseBeforeRepositoryResetRefDeleteGitClient();
+    const { repositoryPath, database, service } = setup(gitClient);
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const lateOid = commitFile(
+      repositoryPath,
+      "orphan-evidence.txt",
+      "orphan evidence\n",
+      "orphan reset evidence",
+    );
+    const prefix = `refs/rvw/repository/${opened.repositoryReview.id}/commits/`;
+    gitClient.arm(true);
+
+    const reset = resetRepositoryReview(service, opened.repositoryReview.id);
+    await gitClient.barrier.waitUntilBlocked();
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toBeNull();
+    const lateRef = (
+      await service.git.ensureRepositoryReviewCommitRef(
+        repositoryPath,
+        opened.repositoryReview.id,
+        lateOid,
+      )
+    ).ref;
+    gitClient.barrier.release();
+
+    const result = await reset;
+    expect(result.outcome).toEqual({
+      kind: "completed-with-orphan-refs",
+      repositoryReviewDeleted: true,
+      remainingRefs: [lateRef],
+      refPrefix: prefix,
+      repositoryPath: opened.repositoryReview.localRepositoryPath,
+      manualCleanupPossible: true,
+    });
+    expect(result.removedRefs).not.toContain(lateRef);
+    expect(result.deleted.gitRefs).toBe(result.removedRefs.length);
+    await expect(service.git.listRefsByPrefix(repositoryPath, prefix)).resolves.toEqual([lateRef]);
   });
 
   it("removes a ref recreated by an artifact writer after its Repository Review was reset", async () => {

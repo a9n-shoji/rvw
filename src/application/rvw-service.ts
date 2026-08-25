@@ -3461,6 +3461,49 @@ export class RvwService {
     };
   }
 
+  private async getCurrentRepositoryResetPreview(repositoryReviewId: string) {
+    const current = this.getRepositoryReview(repositoryReviewId);
+    const resolved = await this.repositoryLifecycle.resolveExistingAtPath(
+      current.localRepositoryPath,
+      {
+        policy: { kind: "reset" },
+        expectedRepositoryReviewId: repositoryReviewId,
+      },
+    );
+    return await this.getResolvedRepositoryResetPreview(resolved);
+  }
+
+  private async listRepositoryResetRefs(
+    repositoryPath: string,
+    prefix: string,
+  ): Promise<string[] | null> {
+    try {
+      return await this.git.listRefsByPrefix(repositoryPath, prefix);
+    } catch {
+      return null;
+    }
+  }
+
+  private async deleteRepositoryResetRefs(repositoryPath: string, prefix: string) {
+    let beforeRefs = await this.listRepositoryResetRefs(repositoryPath, prefix);
+    if (beforeRefs !== null && beforeRefs.length > 0) {
+      await this.git.deleteRefs(repositoryPath, beforeRefs).catch(() => undefined);
+    }
+
+    let remainingRefs = await this.listRepositoryResetRefs(repositoryPath, prefix);
+    if (remainingRefs !== null && remainingRefs.length > 0) {
+      if (beforeRefs === null) beforeRefs = remainingRefs;
+      await this.git.deleteRefs(repositoryPath, remainingRefs).catch(() => undefined);
+      remainingRefs = await this.listRepositoryResetRefs(repositoryPath, prefix);
+    }
+
+    const removedRefs =
+      beforeRefs === null || remainingRefs === null
+        ? []
+        : beforeRefs.filter((ref) => !remainingRefs.includes(ref));
+    return { removedRefs, remainingRefs };
+  }
+
   async resetRepositoryReview(
     repositoryReviewId: string,
     confirmationToken: string,
@@ -3544,14 +3587,16 @@ export class RvwService {
       );
     } catch (error) {
       if (asRvwError(error).code === "DESTRUCTIVE_PREVIEW_STALE") {
-        throw destructiveStaleErrorWithCurrentPreview(
-          error,
-          await this.getResolvedRepositoryResetPreview(resolved),
-        );
+        const currentPreview = await this.getCurrentRepositoryResetPreview(
+          preview.repositoryReview.id,
+        ).catch(() => null);
+        if (currentPreview) {
+          throw destructiveStaleErrorWithCurrentPreview(error, currentPreview);
+        }
+        // Rebuilding the current preview must not hide the final SQLite CAS error.
       }
       throw error;
     }
-    let removedCount: number;
     let outcome:
       | { kind: "completed" }
       | {
@@ -3562,37 +3607,23 @@ export class RvwService {
           repositoryPath: string;
           manualCleanupPossible: true;
         } = { kind: "completed" };
-    let removedRefs = preview.retainedRefs;
-    try {
-      removedCount = await this.git.deleteRefsByPrefix(resolved.repository.worktreePath, prefix);
-    } catch {
-      let remainingRefs: string[] | null = null;
-      try {
-        remainingRefs = await this.git.listRefsByPrefix(resolved.repository.worktreePath, prefix);
-      } catch {
-        // Preserve the deletion error when the uncertain outcome cannot be inspected.
-      }
-      if (remainingRefs?.length === 0) {
-        removedCount = preview.retainedRefs.length;
-      } else {
-        removedRefs =
-          remainingRefs === null
-            ? []
-            : preview.retainedRefs.filter((ref) => !remainingRefs.includes(ref));
-        removedCount = removedRefs.length;
-        outcome = {
-          kind: "completed-with-orphan-refs",
-          repositoryReviewDeleted: true,
-          remainingRefs,
-          refPrefix: prefix,
-          repositoryPath: resolved.repository.worktreePath,
-          manualCleanupPossible: true,
-        };
-      }
+    const { removedRefs, remainingRefs } = await this.deleteRepositoryResetRefs(
+      resolved.repository.worktreePath,
+      prefix,
+    );
+    if (remainingRefs === null || remainingRefs.length > 0) {
+      outcome = {
+        kind: "completed-with-orphan-refs",
+        repositoryReviewDeleted: true,
+        remainingRefs,
+        refPrefix: prefix,
+        repositoryPath: resolved.repository.worktreePath,
+        manualCleanupPossible: true,
+      };
     }
     return {
       repositoryReview: preview.repositoryReview,
-      deleted: { ...deleted, gitRefs: removedCount },
+      deleted: { ...deleted, gitRefs: removedRefs.length },
       removedRefs,
       outcome,
     };

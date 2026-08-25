@@ -583,6 +583,10 @@ export class GitClient {
 
   async deleteRefsByPrefix(cwd: string, prefix: string): Promise<number> {
     const refs = await this.listRefsByPrefix(cwd, prefix);
+    return await this.deleteRefs(cwd, refs);
+  }
+
+  async deleteRefs(cwd: string, refs: string[]): Promise<number> {
     if (refs.length === 0) return 0;
     const input = ["start", ...refs.map((ref) => `delete ${ref}`), "prepare", "commit", ""].join(
       "\n",

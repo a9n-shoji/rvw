@@ -122,14 +122,17 @@ Destructive previews carry the active review sequence and a content-bound confir
 Issue removal, and Walkthrough deletion recheck that sequence in their SQLite mutation; stale previews
 return 409 with the current preview even when the final transaction, rather than the preceding service
 check, detects the conflict. The rebuilt Repository Review preview rereads the current aggregate row as well as
-its sequence, counts, and refs. PR reset non-destructively ensures the latest head ref and reads the
+its sequence, binding, counts, and refs; a relocation race is resolved again from the current row, and a
+failed rebuild preserves the original final-CAS error. PR reset non-destructively ensures the latest head ref and reads the
 replacement commit list before its destructive SQLite transaction, then clears SQLite-owned artifacts
 with that CAS and performs no fallible Git reads after it. It preserves all historical PR refs. Physical PR-ref reclamation requires a
 future explicit exclusive GC; reset never races a Comment or Walkthrough writer by deleting evidence.
 When browser reset succeeds
 but the following open fails, the viewer reports reset as complete and
 gives an explicit `rvw repository open` recovery action instead of presenting the reset itself as failed.
-The same deleted-review state is used when ref cleanup returns a partial-success orphan outcome.
+Repository Review reset post-checks its owned ref namespace after cleanup, retries one observed remainder
+once, and reports completion only when the namespace is confirmed empty. The same deleted-review state is
+used when the final check returns a partial-success orphan outcome or cannot inspect the namespace.
 
 The viewer reads committed Git objects rather than the worktree or index. That keeps the human's
 reading context stable while an external Agent edits, tests, commits, and pushes. Comments bridge the

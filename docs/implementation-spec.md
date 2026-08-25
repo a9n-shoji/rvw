@@ -1431,7 +1431,8 @@ preserved情報として返し、削除件数やtoken対象へ含めない。実
 mutation transactionでもexpected sequenceを再検証する。relocationも全evidence状態をtokenへ含め、変更済みなら
 `DESTRUCTIVE_PREVIEW_STALE` (409)の
 detailsへ最新previewを返し、利用者へ再確認を要求する。最終SQLite CASで競合を検出した場合もservice層で
-previewを再構築し、relocationを含めRepository Review metadataを含む同じerror shapeをcurrent rowから返す。PR resetはGitHub I/O後、
+previewを再構築し、relocationを含めRepository Review metadataを含む同じerror shapeをcurrent rowから返す。Repository Review resetは
+current rowの保存pathからbindingを再resolveしてrefを読む。再構築不能時は元のfinal-CAS errorを別errorで隠さない。PR resetはGitHub I/O後、
 head ref確保前にもtokenを再検証し、commit一覧をSQLite mutation前に取得して、成功したDB reset後へ失敗可能な
 Git readを残さない。
 preview要求のerror codeはIssue removalを`ISSUE_REMOVAL_CONFIRMATION_REQUIRED`、resetを
@@ -1505,9 +1506,11 @@ Walkthrough、code referenceを削除し、現在のGitHub状態を同期してc
 CLIはpreviewのconfirmation tokenと`--yes`を必須とする。不可逆であり、明示的な利用者authorizationなしにAgentが実行しない。
 
 `rvw repository reset --repository <PATH> --yes --confirmation-token <TOKEN> --json`はexisting-onlyでbindingを検証し、対象review ID配下の
-`refs/rvw/repository/<repositoryReviewId>/...`だけをpreview／削除する。DB削除後にref削除が失敗した場合は例外で
-削除済みreviewを保持せず、`completed-with-orphan-refs`というtyped success outcomeへDB削除済み、review ID、
-ref prefix、残存ref、manual cleanup可能性を含める。0.3.0にはrvw管理下のorphan-ref cleanup commandを追加しない。
+`refs/rvw/repository/<repositoryReviewId>/...`だけをpreview／削除する。DB削除後はref削除commandの成否にかかわらず
+namespaceを再列挙し、残存refがあれば一度だけ再削除して最終postconditionを確認する。空であることを確認できた場合だけ
+`completed`とし、残存または確認不能なら削除済みreviewを保持せず、`completed-with-orphan-refs`というtyped success outcomeへ
+DB削除済み、review ID、ref prefix、残存ref、manual cleanup可能性を含める。`removedRefs`は削除前に観測したrefと
+最終残存refの差分、`deleted.gitRefs`はその長さとする。0.3.0にはrvw管理下のorphan-ref cleanup commandを追加しない。
 残存refはorphanとして新しいreview IDから隔離され、新reviewは旧evidenceを受理せず、旧reset retryも
 新reviewのrefを削除しない。「再作成すればorphan cleanupされる」とは案内しない。保存pathが削除・置換され、
 Git common directoryとreview-owned source refを検証できない場合はDB rowを削除しない。
