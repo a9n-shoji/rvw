@@ -534,6 +534,8 @@ test("reveals an entire code reference range and nearby context in the changes v
   await expect(diff).toHaveAttribute("data-search-target-line", "20");
   await expect(diff.locator('[data-line="15"]')).toBeVisible();
   await expect(diff.locator('[data-line="20"][data-selected-line="first"]').first()).toBeVisible();
+  await expect(diff.locator('[data-line="100"]')).toBeVisible();
+  await expect(diff.locator('[data-line="250"]')).toBeVisible();
   await expect(diff.locator('[data-line="300"][data-selected-line="last"]').first()).toBeVisible();
   await expect(diff.locator('[data-line="305"]')).toBeVisible();
 });

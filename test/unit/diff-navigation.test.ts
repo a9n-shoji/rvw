@@ -1,40 +1,29 @@
+import { FileDiff, parseDiffFromFile } from "@pierre/diffs";
 import { describe, expect, it, vi } from "vitest";
-import {
-  diffNavigationWindow,
-  firstCollapsedDiffNavigationLine,
-} from "../../src/web/diff-navigation.js";
+import { DIFF_NAVIGATION_CONTEXT_LINES } from "../../src/web/diff-navigation.js";
 
 describe("diff navigation", () => {
-  it("adds nearby context to a code reference range", () => {
-    expect(diffNavigationWindow({ line: 20, endLine: 300 })).toEqual({
-      startLine: 15,
-      endLine: 305,
-    });
-    expect(diffNavigationWindow({ line: 3, endLine: 1 })).toEqual({
-      startLine: 1,
-      endLine: 8,
-    });
-  });
-
-  it("does not turn a single-line jump without a range into a context expansion", () => {
-    expect(diffNavigationWindow({ line: 20 })).toBeNull();
-    expect(diffNavigationWindow({ line: null })).toBeNull();
-  });
-
-  it("finds the first collapsed line across the whole reference window", () => {
-    const isLineRenderable = vi.fn((line: number) => line < 121 || line > 174);
-    expect(firstCollapsedDiffNavigationLine({ line: 20, endLine: 300 }, isLineRenderable)).toBe(
-      121,
+  it("reveals a 10,000-line range and its exact context with one rerender", () => {
+    const lines = Array.from({ length: 10_040 }, (_, index) => `line ${index + 1}`);
+    const changedLines = [...lines];
+    changedLines[2_499] = "first change";
+    changedLines[7_499] = "second change";
+    const instance = new FileDiff();
+    instance.fileDiff = parseDiffFromFile(
+      { name: "fixture.ts", contents: `${lines.join("\n")}\n` },
+      { name: "fixture.ts", contents: `${changedLines.join("\n")}\n` },
     );
-    expect(isLineRenderable).toHaveBeenLastCalledWith(121);
-  });
+    const rerender = vi.spyOn(instance, "rerender").mockImplementation(() => undefined);
 
-  it("finishes only after the range and its context are renderable", () => {
-    const isLineRenderable = vi.fn(() => true);
-    expect(
-      firstCollapsedDiffNavigationLine({ line: 20, endLine: 300 }, isLineRenderable),
-    ).toBeNull();
-    expect(isLineRenderable).toHaveBeenCalledTimes(291);
-    expect(isLineRenderable).toHaveBeenLastCalledWith(305);
+    expect(instance.revealRange(20, 10_019, DIFF_NAVIGATION_CONTEXT_LINES)).toBe(true);
+    expect(rerender).toHaveBeenCalledTimes(1);
+    for (let line = 15; line <= 10_024; line += 1) {
+      expect(instance.isLineRenderable(line), `line ${line}`).toBe(true);
+    }
+    expect(instance.isLineRenderable(14)).toBe(false);
+    expect(instance.isLineRenderable(10_025)).toBe(false);
+
+    expect(instance.revealRange(20, 10_019, DIFF_NAVIGATION_CONTEXT_LINES)).toBe(false);
+    expect(rerender).toHaveBeenCalledTimes(1);
   });
 });

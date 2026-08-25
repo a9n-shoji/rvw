@@ -1,0 +1,76 @@
+diff --git a/dist/components/FileDiff.d.ts b/dist/components/FileDiff.d.ts
+index dd9bab56b7031152cd990bcb6b5e97209c56cfa9..c5eca3922f687875ac8457026e5bba0f21427092 100644
+--- a/dist/components/FileDiff.d.ts
++++ b/dist/components/FileDiff.d.ts
+@@ -199,6 +199,7 @@ declare class FileDiff<LAnnotation = undefined> implements DiffsEditableComponen
+   }): void;
+   isLineRenderable(lineNumber: number): boolean;
+   getNearestRenderableLine(lineNumber: number, direction: 'up' | 'down'): number | undefined;
++  revealRange(startLine: number, endLine: number, padding?: number): boolean;
+   revealLine(lineNumber: number): boolean;
+   protected shouldSelfHealEditSession(): boolean;
+   protected escalateEditSessionRender(): void;
+diff --git a/dist/components/FileDiff.js b/dist/components/FileDiff.js
+index 4ee3d95f21fa52834ebd4e726d88669a90722dbd..69f936ce16a4d26c7ec3fa1dd29e1387da1515e1 100644
+--- a/dist/components/FileDiff.js
++++ b/dist/components/FileDiff.js
+@@ -729,6 +729,59 @@ var FileDiff = class {
+ 			collapsedContextThreshold
+ 		});
+ 	}
++	revealRange(startLine, endLine, padding = 0) {
++		const fileDiff = this.fileDiffCache;
++		const { expandUnchanged = false, collapsedContextThreshold = 1 } = this.options;
++		if (fileDiff == null || fileDiff.isPartial || expandUnchanged || !Number.isFinite(startLine) || !Number.isFinite(endLine)) return false;
++		const normalizedPadding = Number.isFinite(padding) ? Math.max(0, Math.floor(padding)) : 0;
++		const rangeStart = Math.max(1, Math.floor(Math.min(startLine, endLine)) - normalizedPadding);
++		const rangeEnd = Math.floor(Math.max(startLine, endLine)) + normalizedPadding + 1;
++		const expandedHunks = this.hunksRenderer.getExpandedHunksMap();
++		let didExpand = false;
++		const expandRegion = (hunkIndex, gapStart, region, canExpandFromEnd) => {
++			if (region.renderAll || region.rangeSize <= 0) return;
++			const gapEnd = gapStart + region.rangeSize;
++			const hiddenStart = gapStart + region.fromStart;
++			const hiddenEnd = gapEnd - region.fromEnd;
++			const overlapStart = Math.max(rangeStart, hiddenStart);
++			const overlapEnd = Math.min(rangeEnd, hiddenEnd);
++			if (overlapStart >= overlapEnd) return;
++			const fromStartExpansion = overlapEnd - hiddenStart;
++			const fromEndExpansion = canExpandFromEnd ? hiddenEnd - overlapStart : Infinity;
++			if (fromStartExpansion <= fromEndExpansion) this.hunksRenderer.expandHunk(hunkIndex, "up", fromStartExpansion);
++			else this.hunksRenderer.expandHunk(hunkIndex, "down", fromEndExpansion);
++			didExpand = true;
++		};
++		for (const [hunkIndex, hunk] of fileDiff.hunks.entries()) {
++			const [hunkStart] = getHunkAdditionLineRange(hunk);
++			const region = getExpandedRegion({
++				isPartial: fileDiff.isPartial,
++				rangeSize: hunk.collapsedBefore,
++				expandedHunks,
++				hunkIndex,
++				collapsedContextThreshold
++			});
++			expandRegion(hunkIndex, hunkStart - region.rangeSize, region, true);
++		}
++		const trailingRegion = getTrailingExpandedRegion({
++			fileDiff,
++			hunkIndex: fileDiff.hunks.length - 1,
++			expandedHunks,
++			collapsedContextThreshold,
++			errorPrefix: "FileDiff.revealRange"
++		});
++		if (trailingRegion != null) {
++			const lastHunk = fileDiff.hunks.at(-1);
++			if (lastHunk != null) {
++				const [, trailingStart] = getHunkAdditionLineRange(lastHunk);
++				expandRegion(fileDiff.hunks.length, trailingStart, trailingRegion, false);
++			}
++		}
++		if (!didExpand) return false;
++		this.loadFilesIfNecessary();
++		this.rerender();
++		return true;
++	}
+ 	revealLine(lineNumber) {
+ 		const fileDiff = this.fileDiffCache;
+ 		const { expandUnchanged = false, collapsedContextThreshold = 1, expansionLineCount = 100 } = this.options;
