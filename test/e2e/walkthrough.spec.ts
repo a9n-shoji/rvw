@@ -2059,7 +2059,7 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await expect(sidebarMarkdown.locator("script")).toHaveCount(0);
   expect(await page.evaluate(() => "__rvwUnsafeCommentExecuted" in window)).toBe(false);
   const sidebarDiagram = sidebarMarkdown.locator(".comment-mermaid-shell");
-  await sidebarDiagram.scrollIntoViewIfNeeded();
+  await sidebarDiagram.evaluate((element) => element.scrollIntoView({ block: "center" }));
   await expect(sidebarDiagram.locator("svg")).toBeVisible();
   await expect(sidebarDiagram.locator("[data-walkthrough-reference-id]")).toHaveCount(0);
 
