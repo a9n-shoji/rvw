@@ -6,6 +6,7 @@ import type {
   RepositoryReviewCommentTarget,
   RepositoryReviewDocumentContent,
   RepositoryReviewDocumentRef,
+  RepositoryForgetCounts,
   RepositoryResetCounts,
   RepositoryReview,
   RepositoryReviewComment,
@@ -102,6 +103,7 @@ import {
 import {
   RepositoryReviewLifecycle,
   type RepositoryRelocationEvidenceStatus,
+  type ResolvedRepositoryForget,
   type ResolvedRepositoryRelocation,
   type ResolvedRepositoryReview,
 } from "./repository-review-lifecycle.js";
@@ -123,6 +125,19 @@ export interface RepositoryRelocationPreview extends RepositoryRelocationEvidenc
   candidateLocation: { localRepositoryPath: string; gitCommonDir: string };
   selectedRemote: { name: string; url: string };
   sourceOid: string;
+  reviewChangeSequence: number;
+  confirmationToken: string;
+  confirmationRequired: true;
+}
+
+export interface RepositoryForgetPreview {
+  repositoryReview: RepositoryReview;
+  counts: RepositoryForgetCounts;
+  registeredLocation: { localRepositoryPath: string; gitCommonDir: string };
+  candidateLocation: { localRepositoryPath: string; gitCommonDir: string };
+  selectedRemote: { name: string; url: string };
+  registeredBinding: ResolvedRepositoryForget["registeredBinding"];
+  refPrefix: string;
   reviewChangeSequence: number;
   confirmationToken: string;
   confirmationRequired: true;
@@ -1176,6 +1191,108 @@ export class RvwService {
       previousLocation: preview.previousLocation,
       candidateLocation: preview.candidateLocation,
       selectedRemote: preview.selectedRemote,
+    };
+  }
+
+  async getRepositoryForgetPreviewAtPath(repositoryPath: string): Promise<RepositoryForgetPreview> {
+    const resolved = await this.repositoryLifecycle.resolveForgetCandidate(repositoryPath);
+    return this.repositoryForgetPreview(resolved);
+  }
+
+  private repositoryForgetPreview(resolved: ResolvedRepositoryForget): RepositoryForgetPreview {
+    const { repositoryReview, repository, remoteIdentity, registeredBinding, refPrefix } = resolved;
+    const counts = this.database.getRepositoryForgetCounts(repositoryReview.id);
+    const reviewChangeSequence = this.database.getReviewChangeSequence(
+      "repository",
+      repositoryReview.id,
+    );
+    const registeredLocation = {
+      localRepositoryPath: repositoryReview.localRepositoryPath,
+      gitCommonDir: repositoryReview.gitCommonDir,
+    };
+    const candidateLocation = {
+      localRepositoryPath: repository.worktreePath,
+      gitCommonDir: repository.gitCommonDir,
+    };
+    const selectedRemote = { name: remoteIdentity.remoteName, url: remoteIdentity.remoteUrl };
+    return {
+      repositoryReview,
+      counts,
+      registeredLocation,
+      candidateLocation,
+      selectedRemote,
+      registeredBinding,
+      refPrefix,
+      reviewChangeSequence,
+      confirmationToken: destructiveConfirmationToken({
+        operation: "repository-forget",
+        reviewKind: "repository",
+        reviewId: repositoryReview.id,
+        reviewChangeSequence,
+        counts: {
+          artifacts: counts,
+          registeredLocation,
+          candidateLocation,
+          selectedRemote,
+          registeredBinding,
+          refPrefix,
+        },
+      }),
+      confirmationRequired: true,
+    };
+  }
+
+  async forgetRepositoryReviewAtPath(
+    repositoryPath: string,
+    confirmationToken: string,
+  ): Promise<{
+    repositoryReview: RepositoryReview;
+    deleted: RepositoryForgetCounts;
+    candidateLocation: RepositoryForgetPreview["candidateLocation"];
+    outcome: {
+      kind: "completed-with-unreachable-orphan-refs";
+      repositoryReviewDeleted: true;
+      registeredRepositoryPath: string;
+      registeredGitCommonDir: string;
+      refPrefix: string;
+      remainingRefs: null;
+      cleanupAvailable: false;
+    };
+  }> {
+    const resolved = await this.repositoryLifecycle.resolveForgetCandidate(repositoryPath);
+    const preview = this.repositoryForgetPreview(resolved);
+    assertDestructiveConfirmation(confirmationToken, preview);
+    let deleted: RepositoryForgetCounts;
+    try {
+      deleted = this.database.forgetRepositoryReview(
+        preview.repositoryReview.id,
+        preview.reviewChangeSequence,
+      );
+    } catch (error) {
+      if (asRvwError(error).code === "DESTRUCTIVE_PREVIEW_STALE") {
+        const currentPreview = await this.repositoryLifecycle
+          .resolveForgetCandidate(repositoryPath)
+          .then((current) => this.repositoryForgetPreview(current))
+          .catch(() => null);
+        if (currentPreview) {
+          throw destructiveStaleErrorWithCurrentPreview(error, currentPreview);
+        }
+      }
+      throw error;
+    }
+    return {
+      repositoryReview: preview.repositoryReview,
+      deleted,
+      candidateLocation: preview.candidateLocation,
+      outcome: {
+        kind: "completed-with-unreachable-orphan-refs",
+        repositoryReviewDeleted: true,
+        registeredRepositoryPath: preview.registeredLocation.localRepositoryPath,
+        registeredGitCommonDir: preview.registeredLocation.gitCommonDir,
+        refPrefix: preview.refPrefix,
+        remainingRefs: null,
+        cleanupAvailable: false,
+      },
     };
   }
 

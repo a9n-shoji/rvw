@@ -14,7 +14,8 @@ Agent and human write channels.
 Version 4 introduces explicit Pull Request and Repository Review contexts, Issue documents, and a
 discriminated comment event context. Repository Reviews are keyed by canonical `owner/repository` and
 never masquerade as Pull Requests. The capabilities `repositoryReview.read`, `repositoryReview.sync`,
-`issue.read`, `issue.membership`, and `issue.cacheRepair` advertise these surfaces. The last capability
+`repositoryReview.lostBindingRecovery`, `issue.read`, `issue.membership`, and `issue.cacheRepair` advertise these surfaces.
+`repositoryReview.lostBindingRecovery` is required before invoking the DB-only `repository forget` escape hatch. The last capability
 is required before using the explicit two-read `issue refresh --force` recovery path.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
@@ -120,6 +121,7 @@ rvw pr attach <PULL_REQUEST> --repository <PATH> --json
 rvw repository open [--repository <PATH>] [--foreground] [--no-open]
 rvw repository sync [--repository <PATH>] --json
 rvw repository relocate [--repository <MOVED_PATH>] [--yes --confirmation-token <TOKEN>] --json
+rvw repository forget [--repository <FRESH_PATH>] [--yes --confirmation-token <TOKEN>] --json
 rvw repository issue add <ISSUE_REF> [--repository <PATH>] --json
 rvw repository issue refresh <ISSUE_REF> [--repository <PATH>] --force --json
 rvw repository issue remove <ISSUE_REF> [--repository <PATH>] [--yes --confirmation-token <TOKEN>] --json
@@ -131,8 +133,8 @@ rvw pr issue refresh <PULL_REQUEST> <ISSUE_REF> --force --json
 rvw pr issue remove <PULL_REQUEST> <ISSUE_REF> [--yes --confirmation-token <TOKEN>] --json
 ```
 
-Relocation, Issue removal, and reset without a confirmation token return a binding or count/ref preview with
-`REPOSITORY_RELOCATION_CONFIRMATION_REQUIRED`, `ISSUE_REMOVAL_CONFIRMATION_REQUIRED`, or
+Relocation, lost-binding recovery, Issue removal, and reset without a confirmation token return a binding or count/ref preview with
+`REPOSITORY_RELOCATION_CONFIRMATION_REQUIRED`, `REPOSITORY_FORGET_CONFIRMATION_REQUIRED`, `ISSUE_REMOVAL_CONFIRMATION_REQUIRED`, or
 `RESET_CONFIRMATION_REQUIRED`,
 `reviewChangeSequence`, and `confirmationToken`. After the caller
 presents the Issue title/number and owned artifact counts to a human, the same structured arguments
@@ -173,6 +175,17 @@ persisting its path or advancing the review sequence.
 existing-only. A missing review returns `REPOSITORY_REVIEW_NOT_FOUND` without calling GitHub, fetching,
 creating a row/ref, updating location, or advancing either change sequence. Only `repository open` and an
 explicit Issue-add operation may create the singleton.
+
+If the registered clone and saved Git common directory have been deleted or replaced, normal reset remains
+fail-closed. `repository forget --repository <FRESH_PATH>` is the explicit last-resort recovery. The fresh clone's
+ordered GitHub remotes must identify exactly one saved canonical Repository Review, its common directory must be
+unregistered by another Review, its old Review ID ref namespace must be empty, and the saved path must be missing,
+resolve to a different common directory, or be a same-path replacement whose empty namespace cannot prove the old
+binding. If the binding is still usable, the command requires normal reset; if a different candidate contains the
+old namespace, it requires relocation. The preview binds SQLite artifact counts, both locations, binding status,
+orphan prefix, and review sequence into the token. Confirmed execution CASes that sequence and deletes only SQLite
+state. Its typed `completed-with-unreachable-orphan-refs` result has no `gitRefs` deletion count and reports
+`remainingRefs: null` plus `cleanupAvailable: false`; any old refs recovered later remain isolated by the old Review ID.
 
 If reset deletes SQLite state but cannot delete its Git refs, the successful
 `completed-with-orphan-refs` outcome identifies the deleted row, review ID, ref prefix, remaining refs,
@@ -219,7 +232,7 @@ to their filesystem realpaths after the binding is verified.
 publish/update with an existing Issue in `issuesToAdd` clears that Review membership's previous sync
 error even though `issuesAdded` remains empty.
 
-All reset, Issue-removal, and Walkthrough-deletion executions recheck the preview sequence in their
+All reset, lost-binding-recovery, Issue-removal, and Walkthrough-deletion executions recheck the preview sequence in their
 SQLite mutation. A changed review returns `DESTRUCTIVE_PREVIEW_STALE` (409) with the current preview and
 does not delete newly added artifacts. This response shape is identical when the service-layer check
 passes but the final SQLite sequence CAS detects the race.

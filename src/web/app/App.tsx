@@ -81,7 +81,7 @@ import { useQuickOpenShortcut } from "../use-quick-open-shortcut.js";
 import { useReviewReadingHistory } from "../use-review-reading-history.js";
 import { parseReviewId } from "../review-id.js";
 import { useExactCodeReferenceNavigation } from "../use-exact-code-reference-navigation.js";
-import { useWalkthroughDocumentReconciliation } from "../use-walkthrough-document-reconciliation.js";
+import { useReviewDocumentReconciliation } from "../use-review-document-reconciliation.js";
 import { useTemporaryFeedback } from "../use-temporary-feedback.js";
 import { issueSyncFailureFeedback } from "../review-sync-feedback.js";
 import { useAgentPostNotifications } from "../use-agent-post-notifications.js";
@@ -818,9 +818,11 @@ function PullRequestApp({ initialThemePreference }: { initialThemePreference: Th
     enabled: Boolean(pullRequestId),
   });
   const walkthroughs = walkthroughsQuery.data?.walkthroughs ?? [];
-  useWalkthroughDocumentReconciliation({
+  useReviewDocumentReconciliation({
+    issues,
+    issuesEnabled: issuesQuery.isSuccess,
     walkthroughs,
-    enabled: walkthroughsQuery.isSuccess,
+    walkthroughsEnabled: walkthroughsQuery.isSuccess,
     setWorkspace: setDocumentWorkspace,
   });
   const openWalkthroughIds = useMemo(

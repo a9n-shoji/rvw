@@ -27,7 +27,14 @@ from local GitHub remotes with the saved identity before any GitHub request, fet
 mutation. Worktrees in that common directory may reuse the review, but an independent clone, a changed
 canonical remote, or a replacement repository at the saved path fails closed instead of moving the
 binding. Repository rename and transfer are not followed automatically; an explicit Repository Review reset at
-the original binding is the boundary for recreating the aggregate. Worktree and common-directory paths
+the original binding is the normal boundary for recreating the aggregate. If that clone and its common directory
+are lost, `repository forget` is a separate fail-closed escape hatch: a fresh clone must resolve the same saved
+canonical identity, own no other Review binding, and contain no ref in the lost Review ID's namespace. The saved
+path must be unavailable, resolve to a different common directory, or be a same-path replacement whose empty
+namespace can no longer prove the old binding. A sequence-bound preview then deletes only
+the SQLite aggregate. It reports the unreachable old ref prefix as uninspectable orphan evidence rather than
+claiming Git cleanup. Reopening the fresh clone creates a new Review ID, so a later recovery of the old object
+store cannot mix its refs into the replacement. Worktree and common-directory paths
 are filesystem-realpath canonicalized. Legacy saved path spellings are upgraded to realpaths on a
 verified cached open. Creation selects a GitHub remote origin-first; an existing review searches all
 ordered remotes for its saved canonical identity, so an unrelated origin does not hide a matching upstream.
@@ -216,6 +223,9 @@ data without remounting the composer. Drafts record the Issue body hash; a chang
 and focus but blocks the old range until the human selects a range in the current body. Persisted
 whole-Issue comments remain current across body updates because they target the stable Issue identity;
 persisted range comments become Outdated when that body hash changes.
+Issue summary refresh also rebinds title, number, and URL into every open document object so tabs and Quick Open
+do not retain stale display metadata. A missing membership is not auto-closed by that metadata pass because Issue
+draft cleanup remains owned by the explicit draft-aware removal transition.
 Removing an Issue membership invalidates only that Issue's composer generation and deleted threads'
 reply drafts, so a late unmount cannot resurrect them and unrelated document drafts remain available.
 Relative preview and comment images are fetched from their resolved exact commit through a size-limited

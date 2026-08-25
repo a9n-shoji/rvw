@@ -129,6 +129,16 @@ boundary from the original binding. If the clone was also moved, restore the sav
 attempting relocation; rvw will not create another Review beside the live Review namespace. Do not retry a
 `REPOSITORY_MISMATCH` as a sync failure.
 
+If the registered clone was deleted or replaced and cannot run reset, do not edit SQLite or relax relocation.
+Require the `repositoryReview.lostBindingRecovery` capability, explicit human authorization to discard the exact
+previewed local artifacts, and a fresh clone of the same canonical repository. Run
+`rvw repository forget --repository <FRESH_PATH> --json` first. Report the saved and candidate locations, all
+artifact counts, and that the old Git ref prefix is unreachable, will not be inspected or deleted, and may remain as
+an orphan if the old object store returns. Only after authorization, repeat the structured arguments with
+`--yes --confirmation-token <PREVIEW_TOKEN>`. A stale token needs new authorization. Never use forget while normal
+reset can reach the saved binding or relocation can verify the old Review namespace. After success, opening the fresh
+clone creates a new Review ID and does not inherit old refs.
+
 Repository Review reset and Issue-removal previews/execution, `repository comments`, and `repository sync` are
 existing-only. `REPOSITORY_REVIEW_NOT_FOUND` means they created no review row or retained ref. Only
 `repository open` and an explicit `repository issue add` may create the singleton. Repository Review evidence belongs to

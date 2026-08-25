@@ -14,6 +14,8 @@
 - `issue.cacheRepair` capabilityで検出でき、二回連続の一致するGitHub snapshotでowned Issue cacheを再構築する明示`issue refresh --force`
 - selected GitHub remoteとRepository Review retained ref ownershipを表示するread-only doctor診断
 - 同じcloneのdirectory移動をexact owned sourceと確認tokenで復旧する`rvw repository relocate`
+- 削除・置換された登録cloneをfresh cloneから件数確認付きでDB-only破棄し、新Review IDで復旧できる
+  `rvw repository forget`
 - Pull Request / Repository ReviewのIssue本文に貼り付けたmodern GitHub user attachment画像を、既存の
   review-scoped localhost proxyと同じ検証・認証・画像判定で表示
 - repository demoのPR本文とIssue本文へ、安全な添付と停止対象の外部画像を並べたMarkdown tableを追加
@@ -50,6 +52,7 @@
 
 - Repository Reviewのtab移動、drag & drop、close正規化、Walkthrough reconcileでpane単位のcomment／reply
   draftが取り残される問題と、移動先draftを暗黙に隠す競合を修正
+- Issue同期後も開いているtabとQuick Openが古いIssue titleを表示し続ける問題を修正
 - Repository ReviewのAgent replyがbrowser通知されず、`authorLabel`を省略した正規Agent writeも通知対象外に
   なっていた問題を修正
 - Issue本文が更新された後も全体コメントはcurrentのまま維持し、rangeコメントだけをoutdatedにするよう修正

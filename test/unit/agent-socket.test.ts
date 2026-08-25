@@ -301,6 +301,7 @@ describe("Agent socket", () => {
   it("requires server-side confirmation for destructive operations", async () => {
     const resetPullRequest = vi.fn();
     const resetRepositoryReview = vi.fn();
+    const forgetRepositoryReviewAtPath = vi.fn();
     const removePullRequestIssue = vi.fn();
     const removeRepositoryIssue = vi.fn();
     const deleteWalkthroughByUri = vi.fn();
@@ -308,6 +309,7 @@ describe("Agent socket", () => {
       resolveStoredPullRequest: vi.fn().mockReturnValue({ id: "pr-1" }),
       resetPullRequest,
       resetRepositoryReview,
+      forgetRepositoryReviewAtPath,
       removePullRequestIssue,
       removeRepositoryIssue,
       deleteWalkthroughByUri,
@@ -318,6 +320,13 @@ describe("Agent socket", () => {
         protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
         operation: "pr.reset",
         input: { reference: "1" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "repository.forget",
+        input: { repositoryPath: "/repo" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(
@@ -350,6 +359,7 @@ describe("Agent socket", () => {
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     expect(resetPullRequest).not.toHaveBeenCalled();
     expect(resetRepositoryReview).not.toHaveBeenCalled();
+    expect(forgetRepositoryReviewAtPath).not.toHaveBeenCalled();
     expect(removePullRequestIssue).not.toHaveBeenCalled();
     expect(removeRepositoryIssue).not.toHaveBeenCalled();
     expect(deleteWalkthroughByUri).not.toHaveBeenCalled();

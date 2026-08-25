@@ -296,6 +296,17 @@ export async function dispatchAgentSocketRequest(
         input.confirmationToken,
       );
     }
+    case "repository.forget.preview": {
+      const input = parseOperationInput("repository.forget.preview", request.input);
+      return await service.getRepositoryForgetPreviewAtPath(input.repositoryPath);
+    }
+    case "repository.forget": {
+      const input = parseOperationInput("repository.forget", request.input);
+      return await service.forgetRepositoryReviewAtPath(
+        input.repositoryPath,
+        input.confirmationToken,
+      );
+    }
     case "repository.issue.add": {
       const input = parseOperationInput("repository.issue.add", request.input);
       return await service.addRepositoryIssue(input.repositoryPath, input.issueReference);

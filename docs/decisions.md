@@ -2389,3 +2389,40 @@ changed, added, or removed label before calling rvw.
   state.
 - Existing task databases bind lazily on their first auto-ack claim, so no migration guess is needed.
 - The retry payload remains identical across the reply-success/state-save crash window.
+
+## 2026-08-25: Add an explicit lost Repository Review binding escape hatch
+
+### Problem
+
+The canonical-repository singleton deliberately rejects independent clones and lets normal reset delete an
+aggregate only from its verified Git common-directory binding. If a user permanently deletes that registered
+clone and later makes a fresh clone, open, relocation, and reset all correctly fail closed: the fresh clone has
+neither the saved common directory nor the Review-owned refs. The same rules also leave the singleton row with no
+supported recovery path short of deleting the whole rvw database or editing SQLite directly.
+
+### Choice
+
+Keep normal open, relocation, and reset strict. Add `repository forget` as a distinct, explicitly destructive
+lost-binding recovery. Its candidate clone must have a GitHub remote matching exactly one saved Repository Review,
+use a different and otherwise unregistered Git common directory, and have an empty namespace for that Review ID.
+The saved path must be unavailable, resolve to a different common directory, or be a same-path replacement with
+an empty Review namespace. Path equality alone cannot distinguish a freshly recreated `.git` directory, so a
+non-empty old namespace keeps the operation on normal reset; if a different candidate contains the Review evidence
+it requires relocation.
+
+Preview the complete SQLite artifact counts, saved and candidate locations, observed binding state, orphan ref
+prefix, and review change sequence. Bind all of them into the confirmation token, repeat the resolution before
+execution, and CAS the sequence in the final immediate transaction. Delete the SQLite aggregate and its owned
+artifacts only. Do not list or delete the unreachable Git namespace, do not include `gitRefs` in deletion counts,
+and return `completed-with-unreachable-orphan-refs` with unknown remaining refs and cleanup unavailable. A later
+open creates a new Review ID, leaving any recovered old refs isolated.
+
+### Trade-offs
+
+- A user can recover from an ordinary clone deletion without weakening independent-clone or relocation checks.
+- Explicit confirmation may orphan refs even if an undiscovered moved copy of the old clone still exists; Review-ID
+  isolation prevents those refs from becoming evidence for the replacement aggregate.
+- This is DB-only destruction, so its result must never look like successful Git cleanup and doctor can observe the
+  old namespace only if that object store becomes reachable again.
+- The singleton identity remains intentionally more expensive than a clone-local Review identity, but preserves one
+  artifact set per canonical repository across recoverable directory moves.

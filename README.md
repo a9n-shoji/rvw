@@ -37,7 +37,10 @@ Repository ReviewはcanonicalなGitHub repositoryごとに一件だけ作られ�
 source OID、選択したGitHub remote名／URLをheaderへ表示します。default branch名が変わっても同じreviewを再利用し、checkoutやindexを
 変更せずに同期します。同じGit common directoryのworktreeからは同じreviewを利用できますが、同じ
 GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作り直す場合は、登録済みcloneから
-`rvw repository reset`を明示実行します。同じcloneのdirectoryを移動した場合、通常openは
+`rvw repository reset`を明示実行します。登録済みclone自体を削除してreset不能になった場合だけ、同じcanonical
+repositoryのfresh cloneから`rvw repository forget`の件数previewとorphan警告を確認し、SQLite aggregateを明示破棄して
+新しいReview IDで開き直せます。fresh cloneの旧Review ID namespaceが空でない場合はforgetせずrelocateを要求します。
+同じcloneのdirectoryを移動した場合、通常openは
 `REPOSITORY_RELOCATION_REQUIRED`を返します。移動した`.git`内のreview-owned exact source refとobjectを
 current sourceだけでなくComment、reply、Walkthroughが参照するhistorical sourceまでpreviewで全件確認し、返された
 tokenで`rvw repository relocate --yes`を実行すると、artifactを削除せずbindingだけを復旧できます。移動と同時に
@@ -280,6 +283,8 @@ rvw pr refresh <PR_REF> --json
 rvw repository sync [--repository <PATH>] --json
 rvw repository relocate [--repository <MOVED_PATH>] --json
 rvw repository relocate [--repository <MOVED_PATH>] --yes --confirmation-token <TOKEN> --json
+rvw repository forget [--repository <FRESH_PATH>] --json
+rvw repository forget [--repository <FRESH_PATH>] --yes --confirmation-token <TOKEN> --json
 rvw repository issue add <ISSUE_REF> [--repository <PATH>] --json
 rvw repository issue refresh <ISSUE_REF> [--repository <PATH>] --force --json
 rvw repository issue remove <ISSUE_REF> [--repository <PATH>] --json
@@ -310,10 +315,10 @@ rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
 rvw pr attach <PR_REF> --repository <PATH> --json
 ```
 
-人が直接復旧するときは`repository relocate`と`repository reset`から`--json`を省略でき、同じpreviewと
+人が直接復旧するときは`repository relocate`、`repository forget`、`repository reset`から`--json`を省略でき、同じpreviewと
 確認tokenを読みやすい形式で表示します。機械向けconsumerは常に`--json`を指定します。
 
-Repository Review relocationと、PR／Repository Review reset、Issue削除、Walkthrough削除は、確認tokenなしでは移動先bindingまたは対象Issue、コメント、返信、Walkthrough、
+Repository Review relocation／lost-binding recoveryと、PR／Repository Review reset、Issue削除、Walkthrough削除は、確認tokenなしでは移動先bindingまたは対象Issue、コメント、返信、Walkthrough、
 Repository Reviewの解放候補refなどのpreviewだけを返して終了します。PR reset previewの`retainedRefs`は保持される
 evidenceの情報であり、削除対象ではありません。返却された構造化`details.arguments`を使い、同じ
 `reviewChangeSequence`と`confirmationToken`を`--yes`とともに返した場合だけ、対象reviewが所有する
@@ -341,6 +346,12 @@ cleanupの可否を返します。現時点にrvw管理下のcleanup commandは�
 draft／workspaceを破棄してwarningを表示します。新しいRepository Reviewを
 作ってもorphan refはcleanupされませんが、新reviewは別IDのnamespaceだけを証拠として使うため旧sourceを
 継承せず、旧resetも新reviewのrefを削除しません。
+
+保存済みcloneを失った場合の`repository forget`は通常resetと異なり、旧Git common directoryへ到達できないこと、fresh
+cloneのcanonical identity一致、未登録common directory、旧Review ID namespaceが空であることをpreviewと実行時に検証します。
+確認後はSQLiteのReview、Issue membership、Comment、reply、Walkthroughだけをsequence CASで削除します。旧refを観測できないため
+`gitRefs`削除件数は返さず、結果は`completed-with-unreachable-orphan-refs`、`remainingRefs: null`、
+`cleanupAvailable: false`です。元cloneが後から復旧しても旧refは旧Review IDのorphanで、新Reviewへ継承されません。
 
 初回openはSQLite rowをreview-owned source ref作成前から初期化未完了として記録します。ref作成前にprocessが
 停止した場合は、同じlocal bindingからpreview token付きの明示的な`repository reset --yes`でrowを安全にcleanupできます。ref作成後、

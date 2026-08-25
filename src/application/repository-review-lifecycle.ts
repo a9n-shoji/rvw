@@ -36,6 +36,16 @@ export interface ResolvedRepositoryRelocation extends ResolvedRepositoryReview {
   relocationEvidence: RepositoryRelocationEvidenceStatus;
 }
 
+export interface ResolvedRepositoryForget {
+  repositoryReview: RepositoryReview;
+  repository: RepositoryContext;
+  remoteIdentity: NonNullable<ResolvedRepositoryReview["remoteIdentity"]>;
+  registeredBinding:
+    | { kind: "unavailable"; currentGitCommonDir: null }
+    | { kind: "replaced"; currentGitCommonDir: string };
+  refPrefix: string;
+}
+
 export interface RepositoryReviewOpenResult {
   repositoryReview: RepositoryReview;
   fromCache: boolean;
@@ -519,6 +529,148 @@ export class RepositoryReviewLifecycle {
       );
     }
     return { repositoryReview, repository, remoteIdentity, relocationEvidence };
+  }
+
+  async resolveForgetCandidate(repositoryPath: string): Promise<ResolvedRepositoryForget> {
+    const repository = await this.git.repositoryContext(repositoryPath);
+    const remotes = await this.git.listGitHubRemoteIdentities(repository.worktreePath);
+    const matches = remotes
+      .map((remoteIdentity) => ({
+        remoteIdentity,
+        repositoryReview: this.database.findRepositoryReviewByIdentity(
+          remoteIdentity.owner,
+          remoteIdentity.repository,
+        ),
+      }))
+      .filter(
+        (
+          match,
+        ): match is {
+          remoteIdentity: NonNullable<ResolvedRepositoryReview["remoteIdentity"]>;
+          repositoryReview: RepositoryReview;
+        } => match.repositoryReview !== null,
+      );
+    const reviewIds = [...new Set(matches.map(({ repositoryReview }) => repositoryReview.id))];
+    if (reviewIds.length > 1) {
+      throw new RvwError(
+        "LOCAL_STATE_INCONSISTENT",
+        "candidate cloneのGitHub remoteが複数の保存済みRepository Reviewを指しています。",
+        {
+          status: 409,
+          details: {
+            candidatePath: repository.worktreePath,
+            candidateGitCommonDir: repository.gitCommonDir,
+            repositoryReviewIds: reviewIds,
+          },
+        },
+      );
+    }
+    const match = matches[0];
+    if (!match) {
+      throw new RvwError(
+        "REPOSITORY_REVIEW_NOT_FOUND",
+        "candidate cloneのcanonical GitHub remoteに対応するRepository Reviewが見つかりません。",
+        {
+          status: 404,
+          details: {
+            candidatePath: repository.worktreePath,
+            candidateGitCommonDir: repository.gitCommonDir,
+          },
+        },
+      );
+    }
+    const { repositoryReview, remoteIdentity } = match;
+    const sameSavedCommonDir =
+      path.resolve(repositoryReview.gitCommonDir) === path.resolve(repository.gitCommonDir);
+    const candidateOwner = this.database.findRepositoryReviewByGitCommonDir(
+      repository.gitCommonDir,
+    );
+    if (candidateOwner && candidateOwner.id !== repositoryReview.id) {
+      throw this.repositoryMismatch(
+        candidateOwner,
+        repository,
+        "candidate cloneは別のRepository Reviewへすでに登録されています。",
+        { forgetRepositoryReviewId: repositoryReview.id },
+      );
+    }
+    const refPrefix = `refs/rvw/repository/${repositoryReview.id.toLowerCase()}/`;
+    const candidateRefs = await this.git.listRefsByPrefix(repository.worktreePath, refPrefix);
+    if (candidateRefs.length > 0) {
+      if (sameSavedCommonDir) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          "Repository Reviewの保存済みbindingはこのcloneで利用できます。forgetではなくresetを使用してください。",
+          {
+            status: 409,
+            details: {
+              repositoryReviewId: repositoryReview.id,
+              repositoryPath: repository.worktreePath,
+              gitCommonDir: repository.gitCommonDir,
+              candidateRefs,
+            },
+            suggestions: [
+              `rvw repository reset --repository ${repository.worktreePath} で通常のcleanupをpreviewしてください。`,
+            ],
+          },
+        );
+      }
+      throw new RvwError(
+        "REPOSITORY_RELOCATION_REQUIRED",
+        "candidate cloneに保存済みRepository Reviewのevidenceがあります。forgetではなくrelocateを使用してください。",
+        {
+          status: 409,
+          details: {
+            repositoryReviewId: repositoryReview.id,
+            candidatePath: repository.worktreePath,
+            candidateGitCommonDir: repository.gitCommonDir,
+            refPrefix,
+            candidateRefs,
+          },
+          suggestions: [
+            `rvw repository relocate --repository ${repository.worktreePath} でevidenceを検証してください。`,
+          ],
+        },
+      );
+    }
+
+    let registeredBinding: ResolvedRepositoryForget["registeredBinding"];
+    if (sameSavedCommonDir) {
+      // A fresh clone recreated at the same filesystem path has the same path-valued common-dir
+      // identity. The empty Review namespace is the fail-closed evidence that the saved binding is
+      // no longer usable; otherwise the branch above requires normal reset.
+      registeredBinding = { kind: "replaced", currentGitCommonDir: repository.gitCommonDir };
+    } else {
+      let registered: RepositoryContext | null = null;
+      try {
+        registered = await this.git.repositoryContext(repositoryReview.localRepositoryPath);
+      } catch {
+        // Missing, non-repository, and unreadable saved paths are all unavailable to cleanup.
+      }
+      if (
+        registered &&
+        path.resolve(registered.gitCommonDir) === path.resolve(repositoryReview.gitCommonDir)
+      ) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          "Repository Reviewの保存済みbindingはまだ利用できます。forgetではなくresetを使用してください。",
+          {
+            status: 409,
+            details: {
+              repositoryReviewId: repositoryReview.id,
+              registeredPath: registered.worktreePath,
+              registeredGitCommonDir: registered.gitCommonDir,
+            },
+            suggestions: [
+              `rvw repository reset --repository ${registered.worktreePath} でGit refを含む通常のcleanupをpreviewしてください。`,
+            ],
+          },
+        );
+      }
+      registeredBinding = registered
+        ? { kind: "replaced", currentGitCommonDir: registered.gitCommonDir }
+        : { kind: "unavailable", currentGitCommonDir: null };
+    }
+    return { repositoryReview, repository, remoteIdentity, registeredBinding, refPrefix };
   }
 
   private async synchronizeSource(

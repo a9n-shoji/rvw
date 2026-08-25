@@ -231,7 +231,7 @@ export class GitClient {
     }
   }
 
-  private async orderedGitHubRemotes(cwd: string): Promise<
+  async listGitHubRemoteIdentities(cwd: string): Promise<
     Array<{
       owner: string;
       repository: string;
@@ -291,7 +291,7 @@ export class GitClient {
     remoteUrl: string;
   } | null> {
     return (
-      (await this.orderedGitHubRemotes(cwd)).find(
+      (await this.listGitHubRemoteIdentities(cwd)).find(
         (remote) =>
           remote.owner.toLowerCase() === owner.toLowerCase() &&
           remote.repository.toLowerCase() === repository.toLowerCase(),
@@ -320,7 +320,7 @@ export class GitClient {
     remoteName: string;
     remoteUrl: string;
   } | null> {
-    return (await this.orderedGitHubRemotes(cwd))[0] ?? null;
+    return (await this.listGitHubRemoteIdentities(cwd))[0] ?? null;
   }
 
   async hasObject(cwd: string, oid: string): Promise<boolean> {

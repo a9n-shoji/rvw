@@ -1164,9 +1164,19 @@ test("refreshes an open Issue body without silently applying a stale range draft
     "The Issue body changed while a reviewer was writing.",
   ].join("\n");
   const refresh = await request.post("/api/test/refresh-repository-review", {
-    data: { issueNumber: 142, issueBody: updatedBody },
+    data: {
+      issueNumber: 142,
+      issueBody: updatedBody,
+      issueTitle: "Stabilize the refreshed request path",
+    },
   });
   expect(refresh.ok()).toBe(true);
+  await expect(
+    leftPane.getByRole("button", {
+      name: "#142 Stabilize the refreshed request pathを閉じる",
+      exact: true,
+    }),
+  ).toBeVisible();
   const refreshedLine = leftPane
     .locator('[data-rvw-source-start-line="3"][data-rvw-source-leaf="true"]')
     .filter({ hasText: "Inspect the refreshed default-branch implementation." });
@@ -1205,4 +1215,12 @@ test("refreshes an open Issue body without silently applying a stale range draft
     .getByRole("button", { name: "コメント", exact: true })
     .click();
   await expect(leftPane.getByText("Preserve this unsent draft", { exact: true })).toBeVisible();
+  await page.keyboard.press("Control+P");
+  const quickOpen = page.getByRole("dialog", { name: "ファイルを開く" });
+  await expect(
+    quickOpen.getByRole("option", {
+      name: "#142 Stabilize the refreshed request path、開いています",
+      exact: true,
+    }),
+  ).toBeVisible();
 });

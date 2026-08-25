@@ -16,6 +16,7 @@ import envPaths from "env-paths";
 import type {
   RepositoryReviewCommentTarget,
   RepositoryResetCounts,
+  RepositoryForgetCounts,
   RepositoryReview,
   RepositoryReviewComment,
   RepositoryWalkthrough,
@@ -70,6 +71,12 @@ function nullableString(row: DbRow, key: string): string | null {
   if (value === null) return null;
   if (typeof value !== "string") throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
   return value;
+}
+
+function repositoryForgetCounts(counts: RepositoryResetCounts): RepositoryForgetCounts {
+  const { gitRefs, ...withoutGitRefs } = counts;
+  void gitRefs;
+  return withoutGitRefs;
 }
 
 function numberValue(row: DbRow, key: string): number {
@@ -2067,6 +2074,15 @@ export class RvwDatabase {
     };
   }
 
+  getRepositoryForgetCounts(repositoryReviewId: string): RepositoryForgetCounts {
+    if (!this.getRepositoryReview(repositoryReviewId)) {
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
+        status: 404,
+      });
+    }
+    return repositoryForgetCounts(this.getRepositoryResetCounts(repositoryReviewId, 0));
+  }
+
   listRepositoryReviewEvidenceOids(repositoryReviewId: string): string[] {
     const rows = this.database
       .prepare(
@@ -2127,6 +2143,15 @@ export class RvwDatabase {
       this.incrementChangeSequence({ kind: "repository", reviewId: repositoryReviewId });
       return counts;
     });
+  }
+
+  forgetRepositoryReview(
+    repositoryReviewId: string,
+    expectedReviewChangeSequence: number,
+  ): RepositoryForgetCounts {
+    return repositoryForgetCounts(
+      this.resetRepositoryReview(repositoryReviewId, 0, expectedReviewChangeSequence),
+    );
   }
 
   updateRepositoryLocation(

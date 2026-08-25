@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1504,6 +1504,207 @@ describe("Repository Review", () => {
       },
     });
     expect(recreated.repositoryReview.id).not.toBe(opened.repositoryReview.id);
+  });
+
+  it("forgets a lost clone binding and reopens a fresh clone with a new Review ID", async () => {
+    const { repositoryPath, github, database, service } = setup();
+    github.issues.set(142, issue(142));
+    const opened = await service.openRepositoryReview(repositoryPath);
+    await service.addRepositoryIssue(repositoryPath, "#142");
+    await service.createRepositoryComment({
+      repositoryReviewId: opened.repositoryReview.id,
+      target: { kind: "repository" },
+      body: "This local artifact is intentionally discarded.",
+    });
+    const freshClone = await createRelocationCandidate(
+      service,
+      repositoryPath,
+      opened.repositoryReview.id,
+      [],
+      "fresh-after-loss",
+    );
+    rmSync(repositoryPath, { recursive: true, force: true });
+
+    await expect(service.openRepositoryReview(freshClone.repositoryPath)).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+    });
+    await expect(
+      service.getRepositoryRelocationPreview(freshClone.repositoryPath),
+    ).rejects.toMatchObject({ code: "REPOSITORY_MISMATCH" });
+    await expect(
+      service.getRepositoryResetPreviewAtPath(freshClone.repositoryPath),
+    ).rejects.toMatchObject({ code: "REPOSITORY_MISMATCH" });
+
+    const preview = await service.getRepositoryForgetPreviewAtPath(freshClone.repositoryPath);
+    expect(preview).toMatchObject({
+      repositoryReview: { id: opened.repositoryReview.id },
+      counts: {
+        repositoryReview: 1,
+        issueMemberships: 1,
+        comments: 1,
+        posts: 1,
+      },
+      registeredLocation: {
+        localRepositoryPath: opened.repositoryReview.localRepositoryPath,
+        gitCommonDir: opened.repositoryReview.gitCommonDir,
+      },
+      candidateLocation: {
+        localRepositoryPath: freshClone.repositoryPath,
+        gitCommonDir: freshClone.gitCommonDir,
+      },
+      selectedRemote: {
+        name: "origin",
+        url: "https://github.com/acme/review-repo.git",
+      },
+      registeredBinding: { kind: "unavailable", currentGitCommonDir: null },
+      refPrefix: `refs/rvw/repository/${opened.repositoryReview.id}/`,
+      confirmationRequired: true,
+    });
+    expect(preview.counts).not.toHaveProperty("gitRefs");
+
+    const forgotten = await dispatchAgentSocketRequest(service, {
+      protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+      operation: "repository.forget",
+      input: {
+        repositoryPath: freshClone.repositoryPath,
+        confirmed: true,
+        confirmationToken: preview.confirmationToken,
+      },
+    });
+    expect(forgotten).toMatchObject({
+      repositoryReview: { id: opened.repositoryReview.id },
+      deleted: { repositoryReview: 1, issueMemberships: 1, comments: 1, posts: 1 },
+      candidateLocation: {
+        localRepositoryPath: freshClone.repositoryPath,
+        gitCommonDir: freshClone.gitCommonDir,
+      },
+      outcome: {
+        kind: "completed-with-unreachable-orphan-refs",
+        repositoryReviewDeleted: true,
+        registeredRepositoryPath: opened.repositoryReview.localRepositoryPath,
+        registeredGitCommonDir: opened.repositoryReview.gitCommonDir,
+        refPrefix: `refs/rvw/repository/${opened.repositoryReview.id}/`,
+        remainingRefs: null,
+        cleanupAvailable: false,
+      },
+    });
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toBeNull();
+
+    const recreated = await service.openRepositoryReview(freshClone.repositoryPath);
+    expect(recreated.repositoryReview).toMatchObject({
+      localRepositoryPath: freshClone.repositoryPath,
+      gitCommonDir: freshClone.gitCommonDir,
+    });
+    expect(recreated.repositoryReview.id).not.toBe(opened.repositoryReview.id);
+    expect(service.listRepositoryIssues(recreated.repositoryReview.id)).toEqual([]);
+    expect(service.listRepositoryComments(recreated.repositoryReview.id)).toEqual([]);
+  });
+
+  it("refuses lost-binding recovery while the registered clone is still available", async () => {
+    const { repositoryPath, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const freshClone = await createRelocationCandidate(
+      service,
+      repositoryPath,
+      opened.repositoryReview.id,
+      [],
+      "forget-while-live",
+    );
+
+    await expect(
+      service.getRepositoryForgetPreviewAtPath(freshClone.repositoryPath),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      details: {
+        repositoryReviewId: opened.repositoryReview.id,
+        registeredGitCommonDir: opened.repositoryReview.gitCommonDir,
+      },
+    });
+  });
+
+  it("recognizes a fresh clone recreated at the saved filesystem path as a replaced binding", async () => {
+    const { repositoryPath, database, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const stagedClone = await createRelocationCandidate(
+      service,
+      repositoryPath,
+      opened.repositoryReview.id,
+      [],
+      "same-path-replacement",
+    );
+    rmSync(repositoryPath, { recursive: true, force: true });
+    renameSync(stagedClone.repositoryPath, repositoryPath);
+    const replacement = await service.git.repositoryContext(repositoryPath);
+    expect(replacement.gitCommonDir).toBe(opened.repositoryReview.gitCommonDir);
+
+    const preview = await service.getRepositoryForgetPreviewAtPath(repositoryPath);
+    expect(preview).toMatchObject({
+      repositoryReview: { id: opened.repositoryReview.id },
+      candidateLocation: {
+        localRepositoryPath: replacement.worktreePath,
+        gitCommonDir: replacement.gitCommonDir,
+      },
+      registeredBinding: {
+        kind: "replaced",
+        currentGitCommonDir: replacement.gitCommonDir,
+      },
+    });
+    await expect(
+      service.forgetRepositoryReviewAtPath(repositoryPath, preview.confirmationToken),
+    ).resolves.toMatchObject({
+      outcome: { kind: "completed-with-unreachable-orphan-refs" },
+    });
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toBeNull();
+
+    const recreated = await service.openRepositoryReview(repositoryPath);
+    expect(recreated.repositoryReview.id).not.toBe(opened.repositoryReview.id);
+  });
+
+  it("returns a current forget preview when its final SQLite CAS loses a race", async () => {
+    const { repositoryPath, database, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const freshClone = await createRelocationCandidate(
+      service,
+      repositoryPath,
+      opened.repositoryReview.id,
+      [],
+      "forget-cas",
+    );
+    rmSync(repositoryPath, { recursive: true, force: true });
+    const preview = await service.getRepositoryForgetPreviewAtPath(freshClone.repositoryPath);
+    const forgetInDatabase = database.forgetRepositoryReview.bind(database);
+    vi.spyOn(database, "forgetRepositoryReview").mockImplementationOnce(
+      (...args: Parameters<RvwDatabase["forgetRepositoryReview"]>) => {
+        database.incrementChangeSequence({
+          kind: "repository",
+          reviewId: opened.repositoryReview.id,
+        });
+        return forgetInDatabase(...args);
+      },
+    );
+
+    const error = (await service
+      .forgetRepositoryReviewAtPath(freshClone.repositoryPath, preview.confirmationToken)
+      .catch((caught: unknown) => caught)) as RvwError;
+    expect(error).toMatchObject({
+      code: "DESTRUCTIVE_PREVIEW_STALE",
+      status: 409,
+      details: {
+        currentPreview: {
+          repositoryReview: { id: opened.repositoryReview.id },
+          candidateLocation: {
+            localRepositoryPath: freshClone.repositoryPath,
+            gitCommonDir: freshClone.gitCommonDir,
+          },
+          registeredBinding: { kind: "unavailable" },
+        },
+      },
+    });
+    expect(
+      (error.details as { currentPreview: { confirmationToken: string } }).currentPreview
+        .confirmationToken,
+    ).not.toBe(preview.confirmationToken);
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).not.toBeNull();
   });
 
   it("requires explicit relocation after a clone directory move and restores every bound operation", async () => {

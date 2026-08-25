@@ -424,6 +424,8 @@ export interface RepositoryResetCounts {
   gitRefs: number;
 }
 
+export type RepositoryForgetCounts = Omit<RepositoryResetCounts, "gitRefs">;
+
 export interface IssueRemovalCounts {
   issueWholeComments: number;
   issueRangeComments: number;

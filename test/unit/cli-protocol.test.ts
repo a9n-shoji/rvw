@@ -187,6 +187,7 @@ describe("CLI protocol discovery", () => {
         "agent.transport",
         "repositoryReview.read",
         "repositoryReview.sync",
+        "repositoryReview.lostBindingRecovery",
         "issue.read",
         "issue.membership",
         "issue.cacheRepair",
@@ -377,6 +378,49 @@ describe("CLI protocol discovery", () => {
     );
     expect(readStdout()).toContain(`確認token: ${"b".repeat(64)}`);
     expect(readStdout()).toContain("このtokenと --yes");
+  });
+
+  it("previews lost-binding recovery without claiming that unreachable refs were deleted", async () => {
+    const getRepositoryForgetPreviewAtPath = vi.fn().mockResolvedValue({
+      repositoryReview: { id: "repository-review-1" },
+      counts: {
+        repositoryReview: 1,
+        issueMemberships: 2,
+        comments: 3,
+        posts: 4,
+        walkthroughs: 5,
+      },
+      registeredLocation: {
+        localRepositoryPath: "/lost/repo",
+        gitCommonDir: "/lost/repo/.git",
+      },
+      candidateLocation: {
+        localRepositoryPath: "/fresh/repo",
+        gitCommonDir: "/fresh/repo/.git",
+      },
+      selectedRemote: { name: "origin", url: "https://github.com/acme/review-repo.git" },
+      registeredBinding: { kind: "unavailable", currentGitCommonDir: null },
+      refPrefix: "refs/rvw/repository/repository-review-1/",
+      reviewChangeSequence: 7,
+      confirmationToken: "c".repeat(64),
+      confirmationRequired: true,
+    });
+    const { runtime } = mockRuntime({ getRepositoryForgetPreviewAtPath });
+    const readStdout = captureTextStdout();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "repository",
+      "forget",
+      "--repository",
+      "/fresh/repo",
+    ]);
+
+    expect(getRepositoryForgetPreviewAtPath).toHaveBeenCalledWith("/fresh/repo");
+    expect(readStdout()).toContain("保存済みbinding /lost/repo は利用できません");
+    expect(readStdout()).toContain("旧cloneのGit refは確認・削除できず");
+    expect(readStdout()).toContain(`確認token: ${"c".repeat(64)}`);
   });
 
   it("uses the existing-only Repository Issue-removal preview", async () => {

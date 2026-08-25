@@ -53,7 +53,7 @@ import { useReviewSidebarSearch } from "../use-review-sidebar-search.js";
 import { useQuickOpenShortcut } from "../use-quick-open-shortcut.js";
 import { useReviewReadingHistory } from "../use-review-reading-history.js";
 import { useExactCodeReferenceNavigation } from "../use-exact-code-reference-navigation.js";
-import { useWalkthroughDocumentReconciliation } from "../use-walkthrough-document-reconciliation.js";
+import { useReviewDocumentReconciliation } from "../use-review-document-reconciliation.js";
 import { useTemporaryFeedback } from "../use-temporary-feedback.js";
 import { useAgentPostNotifications } from "../use-agent-post-notifications.js";
 import { useDraftAwareDocumentWorkspace } from "../use-draft-aware-document-workspace.js";
@@ -538,9 +538,11 @@ export function RepositoryReviewApp({
     })),
   });
   const walkthroughs = reviewQuery.data?.walkthroughs ?? [];
-  useWalkthroughDocumentReconciliation({
+  useReviewDocumentReconciliation({
+    issues: reviewQuery.data?.issues ?? [],
+    issuesEnabled: reviewQuery.isSuccess,
     walkthroughs,
-    enabled: reviewQuery.isSuccess,
+    walkthroughsEnabled: reviewQuery.isSuccess,
     setWorkspace,
   });
 

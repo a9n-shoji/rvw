@@ -870,6 +870,7 @@ app.post("/api/test/refresh-repository-review", async (context) => {
       );
     }
     issue.body = input.issueBody;
+    if (typeof input.issueTitle === "string") issue.title = input.issueTitle;
     issue.bodyHash = hashDocument(input.issueBody);
     issue.updatedAt = new Date().toISOString();
     issue.fetchedAt = issue.updatedAt;

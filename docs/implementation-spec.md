@@ -414,7 +414,9 @@ empty fileは従来どおり明示的に扱う。
   Pull Request / Repository Reviewで共通helperから構成し、Issue keyにもreview kindを含める。各reviewの
   `review_change_sequence`更新は共通DocumentViewerが
   実際に読むqueryをinvalidateする。Issue documentのcomponent identityはreview kind、review ID、Issue IDとし、
-  Repository Review source OIDを含めない。repository documentだけはpathとsource policy / exact OIDをidentityへ含める。
+  Repository Review source OIDを含めない。Issue一覧の再取得時は、同じstable IDで開いている左右paneのtitle、number、URLを
+  current summaryへrebindし、tabとQuick Openが古いmetadataを保持しない。membershipが外部削除された場合は未送信draftを
+  暗黙破棄せず、draft-aware removalを明示操作の正本とする。repository documentだけはpathとsource policy / exact OIDをidentityへ含める。
 - Walkthroughのreview scope keyは`["walkthrough", kind, reviewId]`とし、外部更新pollではこのprefixを
   invalidateしてsummary/listと開いているdetailを同時に再取得する。detail更新でpaneをremountせず、左右の
   同一Walkthrough、本文、reference、diagram bindingを揃え、無関係なdraft、focus、pane、scrollを保持する。
@@ -1396,6 +1398,9 @@ CLI、Agent socket、HTTPが同じuse caseを呼ぶ。
 - `open-or-create`: `repository open`。保存済みbindingを検証してcacheを開き、未登録時だけGitHub同期後に作成する。
 - relocation: `repository relocate`。canonical identityとDB参照中の全review-owned source ref／objectを検証し、
   evidence件数を含むsequence付きpreviewの明示確認後だけ同じaggregateの保存locationを移動先cloneへ更新する。
+- lost-binding recovery: `repository forget`。同じcanonical identityのfresh cloneを候補にし、保存済みbindingが保存pathから
+  利用不能または同一pathの空namespaceを持つreplacementで、候補cloneが別Reviewにboundされず対象Review IDのref namespaceも空である場合だけ、
+  件数とsequence付きpreviewの明示確認後にSQLite aggregateを削除する。到達不能な旧refは確認・削除済みと報告しない。
 - `{ kind: "read" }`: `repository comments`と保存済みartifact read。row、ref、fetch、locationを作らない。
 - `{ kind: "remote-required" }`: `repository sync`、Repository Issue追加／repair、`issuesToAdd`を伴う
   Repository Walkthrough mutation。保存済みaggregateとcanonical remoteを検証するが、source同期自体は
@@ -1437,7 +1442,8 @@ current rowの保存pathからbindingを再resolveしてrefを読む。再構築
 head ref確保前にもtokenを再検証し、commit一覧をSQLite mutation前に取得して、成功したDB reset後へ失敗可能な
 Git readを残さない。
 preview要求のerror codeはIssue removalを`ISSUE_REMOVAL_CONFIRMATION_REQUIRED`、resetを
-`RESET_CONFIRMATION_REQUIRED`、Walkthrough deletionを`WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED`として操作ごとに区別する。
+`RESET_CONFIRMATION_REQUIRED`、lost-binding recoveryを`REPOSITORY_FORGET_CONFIRMATION_REQUIRED`、Walkthrough deletionを
+`WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED`として操作ごとに区別する。
 
 canonical identity検索、Git common directory検索、conflict判定、ID決定、insert/update、review change
 sequence更新は一つの`BEGIN IMMEDIATE`内で行う。canonical owner/repositoryのSQLite一意性も`NOCASE`とし、
@@ -1514,7 +1520,15 @@ DB削除済み、review ID、ref prefix、残存ref、manual cleanup可能性を
 最終残存refの差分、`deleted.gitRefs`はその長さとする。0.3.0にはrvw管理下のorphan-ref cleanup commandを追加しない。
 残存refはorphanとして新しいreview IDから隔離され、新reviewは旧evidenceを受理せず、旧reset retryも
 新reviewのrefを削除しない。「再作成すればorphan cleanupされる」とは案内しない。保存pathが削除・置換され、
-Git common directoryとreview-owned source refを検証できない場合はDB rowを削除しない。
+Git common directoryとreview-owned source refを検証できない場合、通常resetはDB rowを削除しない。唯一の例外として
+`rvw repository forget --repository <FRESH_PATH> --yes --confirmation-token <TOKEN> [--json]`は、候補pathの全GitHub remoteから
+保存済みcanonical identityを一意に特定し、候補Git common directoryが別Reviewへ未登録で対象Review IDのref namespaceが空、かつ
+保存pathが不在・別common directoryを指すか、同じpath値でもそのempty namespaceによって旧bindingを検証不能であることをpreviewと実行の両方で再検証する。その上でartifact件数、
+旧・候補location、binding状態、ref prefix、review change sequenceをtokenへbindし、最終SQLite transactionでもsequenceを
+CASしてaggregateだけを削除する。旧Git refは列挙不能なため`gitRefs`削除件数を返さず、
+`completed-with-unreachable-orphan-refs`として`remainingRefs: null`、`cleanupAvailable: false`を明示する。旧cloneが後から復旧しても
+refは旧Review IDのorphanであり、候補cloneの再openは新しいReview IDを作成して旧evidenceを継承しない。保存bindingが利用可能、
+候補が別Reviewへ登録済み、または候補に旧Review IDのrefがある場合はforgetを拒否し、それぞれ通常resetまたはrelocateへ誘導する。
 初回rowはsource ref作成前から`initialization_state = pending`を保存し、`source_sync_error`と分離する。ref作成前にprocessが停止した場合は、通常
 read／syncを`LOCAL_STATE_INCONSISTENT`のまま扱い、明示resetに限りexpected review ID、Git common directory、
 canonical remote（またはremoteなし）、非ready state、review ID配下のrefが0件であることを検証してrowを削除できる。
@@ -1770,6 +1784,9 @@ Functional:
   同じGit common directoryのworktreeとoffline openから同じreviewを再利用できる。独立cloneからはbindingを
   変更せず失敗し、明示reset後にだけそのcloneで作り直せる。同じcloneのdirectory移動は通常openで暗黙rebindせず、
   DB参照中の全exact owned source evidenceを検証したpreview token付きの`repository relocate --yes`後にopen、sync、Comment、resetを再利用できる。
+- 登録cloneを失った場合は、同じcanonical repositoryのfresh cloneからsequence付き`repository forget --yes`でSQLite artifact件数と
+  cleanup不能な旧ref prefixを確認してaggregateだけを破棄し、そのcloneで新しいReview IDを作成できる。保存bindingがまだ利用可能、
+  candidateに旧Review IDのrefがある、またはpreview後にreview stateが変わった場合は削除しない。
 - 未登録repositoryのRepository Review reset／Issue removal previewと実行、comments、syncはreviewを暗黙作成せず、
   `REPOSITORY_REVIEW_NOT_FOUND`後もDB row、retained ref、change sequenceを変更しない。remote mismatchは全transportで
   mutation前に拒否し、`source_sync_error`へ記録しない。

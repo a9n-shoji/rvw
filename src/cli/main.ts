@@ -635,6 +635,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "agent.transport",
           "repositoryReview.read",
           "repositoryReview.sync",
+          "repositoryReview.lostBindingRecovery",
           "issue.read",
           "issue.membership",
           "issue.cacheRepair",
@@ -857,6 +858,77 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           options,
           { ok: true, ...result },
           `Repository Review bindingを ${result.candidateLocation.localRepositoryPath} へ変更しました。`,
+        );
+      },
+    );
+
+  repositoryReview
+    .command("forget")
+    .option("--repository <path>", "fresh cloneまたは置換後の対象repository", process.cwd())
+    .option("--yes", "到達不能なbindingとRepository Review artifactの破棄を確認")
+    .option("--confirmation-token <token>", "previewが返した確認token")
+    .option("--json", "JSONで出力")
+    .description("失われたcloneのRepository Review bindingとlocal artifactを明示破棄する")
+    .action(
+      async (
+        options: OutputOptions & { repository: string; yes?: boolean; confirmationToken?: string },
+      ) => {
+        if (!options.yes || !options.confirmationToken) {
+          const preview = await callService(
+            "repository.forget.preview",
+            { repositoryPath: options.repository },
+            async () =>
+              await getRuntime().service.getRepositoryForgetPreviewAtPath(options.repository),
+          );
+          const result = {
+            ok: false,
+            error: {
+              code: "REPOSITORY_FORGET_CONFIRMATION_REQUIRED",
+              message: "lost bindingの破棄には--yesが必要です。",
+              suggestions: [
+                "details.argumentsの同じcandidate repository・確認tokenで再実行してください。",
+              ],
+              details: {
+                command: "rvw",
+                arguments: [
+                  "repository",
+                  "forget",
+                  "--repository",
+                  options.repository,
+                  "--yes",
+                  "--confirmation-token",
+                  preview.confirmationToken,
+                  ...(options.json ? ["--json"] : []),
+                ],
+              },
+            },
+            ...preview,
+          };
+          writeOutput(
+            options,
+            result,
+            `保存済みbinding ${preview.registeredLocation.localRepositoryPath} は利用できません。Repository Review ${preview.repositoryReview.id} とlocal artifact（Issue membership ${preview.counts.issueMemberships}、コメント ${preview.counts.comments}、返信 ${preview.counts.posts}、Walkthrough ${preview.counts.walkthroughs}）をSQLiteから削除します。旧cloneのGit refは確認・削除できず、復旧時も旧Review IDのorphanとして残ります。\n確認token: ${preview.confirmationToken}\n続行するにはこのtokenと --yes を指定してください。`,
+          );
+          process.exitCode = 2;
+          return;
+        }
+        const result = await callService(
+          "repository.forget",
+          {
+            repositoryPath: options.repository,
+            confirmed: true,
+            confirmationToken: options.confirmationToken,
+          },
+          async () =>
+            await getRuntime().service.forgetRepositoryReviewAtPath(
+              options.repository,
+              options.confirmationToken!,
+            ),
+        );
+        writeOutput(
+          options,
+          { ok: true, ...result },
+          `失われたbindingのRepository Reviewを削除しました。旧Git refは ${result.outcome.refPrefix} 配下の到達不能なorphanとして扱います。${result.candidateLocation.localRepositoryPath} で repository open を実行すると新しいReview IDを作成できます。`,
         );
       },
     );
