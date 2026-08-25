@@ -137,6 +137,10 @@ if (args[0] === "protocol") {
     comment: { ref: args[2], posts: [] } });
   }
 } else if (args[0] === "comment" && args[1] === "reply") {
+  const goneOnReplyCommentRefs = JSON.parse(process.env.FAKE_GONE_ON_REPLY_COMMENT_REFS_JSON ?? "[]");
+  if (goneOnReplyCommentRefs.includes(args[2])) {
+    json({ ok: false, error: { code: "COMMENT_NOT_FOUND", message: "Comment disappeared before reply" } }, 2);
+  } else {
   const priorReplyIndex = priorCalls.findIndex((call) =>
     call.args[0] === "comment" && call.args[1] === "reply" &&
     call.input?.idempotencyKey === parsedInput.idempotencyKey
@@ -145,6 +149,7 @@ if (args[0] === "protocol") {
     ? priorCalls.slice(0, priorReplyIndex + 1).filter((call) => call.args[0] === "comment" && call.args[1] === "reply").length
     : priorCalls.filter((call) => call.args[0] === "comment" && call.args[1] === "reply").length + 1;
   json({ ok: true, post: { id: "status-post-" + replyCount, body: parsedInput.body } });
+  }
 } else if (args[0] === "comment" && args[1] === "edit") {
   json({ ok: true, post: { id: args[4], body: parsedInput.body } });
 } else if (args[0] === "comment" && args[1] === "watch") {
@@ -178,13 +183,18 @@ if (args[0] === "protocol") {
   return { script, log };
 }
 
-function fakeEnvironment(fake: { script: string; log: string }, goneCommentRefs: string[] = []) {
+function fakeEnvironment(
+  fake: { script: string; log: string },
+  goneCommentRefs: string[] = [],
+  goneOnReplyCommentRefs: string[] = [],
+) {
   return {
     ...process.env,
     RVW_BIN: process.execPath,
     RVW_BIN_ARGS_JSON: JSON.stringify([fake.script]),
     FAKE_RVW_LOG: fake.log,
     FAKE_GONE_COMMENT_REFS_JSON: JSON.stringify(goneCommentRefs),
+    FAKE_GONE_ON_REPLY_COMMENT_REFS_JSON: JSON.stringify(goneOnReplyCommentRefs),
   };
 }
 
@@ -210,7 +220,10 @@ function initializeQueuedState(state: string) {
   });
 }
 
-function initializeRepositoryQueuedState(state: string) {
+function initializeRepositoryQueuedState(
+  state: string,
+  commentRefs = ["rvw://comment/repository-comment"],
+) {
   runState(state, "init", ["--own-mode", "fix-and-push"]);
   runState(state, "ingest", [], {
     type: "ready",
@@ -218,22 +231,25 @@ function initializeRepositoryQueuedState(state: string) {
     cursor: "cursor-0",
     anchoredAtCurrent: true,
   });
-  runState(state, "ingest", [], {
-    type: "comment-posted",
-    cursor: "cursor-1",
-    event: {
-      sequence: 1,
-      postId: "branch-human-post",
-      commentRef: "rvw://comment/repository-comment",
-      context: {
-        kind: "repository",
-        repositoryReviewId: "repository:acme/repo",
-        repository: "acme/repo",
+  for (const [index, commentRef] of commentRefs.entries()) {
+    const sequence = index + 1;
+    runState(state, "ingest", [], {
+      type: "comment-posted",
+      cursor: `cursor-${sequence}`,
+      event: {
+        sequence,
+        postId: `branch-human-post-${sequence}`,
+        commentRef,
+        context: {
+          kind: "repository",
+          repositoryReviewId: "repository:acme/repo",
+          repository: "acme/repo",
+        },
+        createdAt: `2026-08-20T00:00:0${index}.000Z`,
+        deleted: false,
       },
-      createdAt: "2026-08-20T00:00:00.000Z",
-      deleted: false,
-    },
-  });
+    });
+  }
 }
 
 function collectJsonLines(child: ChildProcessWithoutNullStreams) {
@@ -575,7 +591,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(result.replies[0]?.idempotencyKey).toBe(
       (claimed.operations as Array<{ idempotencyKey: string }>)[0]?.idempotencyKey,
     );
-    expect(readFakeCalls(fake.log)[0]?.input).toMatchObject({
+    expect(readFakeCalls(fake.log).find((call) => call.args[1] === "reply")?.input).toMatchObject({
       relatedCommitOid: "a".repeat(64),
       references: [{ id: "source-policy", path: "src/application/rvw-service.ts" }],
     });
@@ -598,6 +614,155 @@ describe("rvw-watch-comments bundled scripts", () => {
         },
       }),
     ).toMatchObject({ status: "suppressed" });
+  });
+
+  it("completes an all-gone Repository Review batch without posting a reply", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-repository-all-gone-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeRepositoryQueuedState(state);
+    const claimed = runState(state, "claim", [
+      "--context-kind",
+      "repository",
+      "--context-key",
+      "acme/repo",
+    ]);
+    const completed = spawnSync(
+      process.execPath,
+      [completeRepositoryScript, "--state", state, "--lease", String(claimed.leaseId)],
+      {
+        encoding: "utf8",
+        env: fakeEnvironment(fake, ["rvw://comment/repository-comment"]),
+        input: JSON.stringify({
+          leaseId: claimed.leaseId,
+          context: {
+            kind: "repository",
+            repositoryReviewId: "repository:acme/repo",
+            repository: "acme/repo",
+          },
+          outcomes: [{ commentRef: "rvw://comment/repository-comment", status: "gone" }],
+        }),
+      },
+    );
+
+    expect(completed.status, completed.stderr).toBe(0);
+    expect(JSON.parse(completed.stdout)).toMatchObject({
+      type: "repository-completed",
+      replies: [],
+      gone: [
+        {
+          commentRef: "rvw://comment/repository-comment",
+          status: "gone",
+          reason: "confirmed",
+        },
+      ],
+    });
+    expect(readFakeCalls(fake.log).map((call) => call.args.slice(0, 2))).toEqual([
+      ["comment", "get"],
+    ]);
+    expect(runState(state, "status")).toMatchObject({
+      batches: { pending: 0, inFlight: 0, completed: 1, quarantined: 0 },
+    });
+  });
+
+  it("completes a mixed Repository Review batch with replies only for surviving Comments", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-repository-mixed-gone-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    const surviving = "rvw://comment/repository-comment";
+    const deleted = "rvw://comment/repository-comment-gone";
+    initializeRepositoryQueuedState(state, [surviving, deleted]);
+    const claimed = runState(state, "claim", [
+      "--context-kind",
+      "repository",
+      "--context-key",
+      "acme/repo",
+    ]);
+    const completed = spawnSync(
+      process.execPath,
+      [completeRepositoryScript, "--state", state, "--lease", String(claimed.leaseId)],
+      {
+        encoding: "utf8",
+        env: fakeEnvironment(fake, [deleted]),
+        input: JSON.stringify({
+          leaseId: claimed.leaseId,
+          context: {
+            kind: "repository",
+            repositoryReviewId: "repository:acme/repo",
+            repository: "acme/repo",
+          },
+          outcomes: [
+            {
+              commentRef: surviving,
+              status: "reply",
+              body: "📝 調査結果\n\nThe surviving Comment receives this reply.",
+              relatedCommitOid: null,
+              references: [],
+              pushStatus: "not-attempted",
+            },
+            { commentRef: deleted, status: "gone" },
+          ],
+        }),
+      },
+    );
+
+    expect(completed.status, completed.stderr).toBe(0);
+    expect(JSON.parse(completed.stdout)).toMatchObject({
+      replies: [{ commentRef: surviving, postId: "status-post-1" }],
+      gone: [{ commentRef: deleted, reason: "confirmed" }],
+    });
+    expect(readFakeCalls(fake.log).filter((call) => call.args[1] === "reply")).toHaveLength(1);
+    expect(runState(state, "list")).toMatchObject({ pending: [] });
+  });
+
+  it("completes after one Repository reply succeeds and another Comment disappears during reply", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-repository-late-gone-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    const first = "rvw://comment/repository-comment-first";
+    const lateGone = "rvw://comment/repository-comment-late-gone";
+    initializeRepositoryQueuedState(state, [first, lateGone]);
+    const claimed = runState(state, "claim", [
+      "--context-kind",
+      "repository",
+      "--context-key",
+      "acme/repo",
+    ]);
+    const outcomes = [first, lateGone].map((commentRef) => ({
+      commentRef,
+      status: "reply",
+      body: `📝 調査結果\n\nOutcome for ${commentRef}.`,
+      relatedCommitOid: null,
+      references: [],
+      pushStatus: "not-attempted",
+    }));
+    const completed = spawnSync(
+      process.execPath,
+      [completeRepositoryScript, "--state", state, "--lease", String(claimed.leaseId)],
+      {
+        encoding: "utf8",
+        env: fakeEnvironment(fake, [], [lateGone]),
+        input: JSON.stringify({
+          leaseId: claimed.leaseId,
+          context: {
+            kind: "repository",
+            repositoryReviewId: "repository:acme/repo",
+            repository: "acme/repo",
+          },
+          outcomes,
+        }),
+      },
+    );
+
+    expect(completed.status, completed.stderr).toBe(0);
+    expect(JSON.parse(completed.stdout)).toMatchObject({
+      replies: [{ commentRef: first, postId: "status-post-1" }],
+      gone: [{ commentRef: lateGone, reason: "deleted-during-reply" }],
+    });
+    expect(readFakeCalls(fake.log).filter((call) => call.args[1] === "reply")).toHaveLength(2);
+    expect(runState(state, "status")).toMatchObject({
+      batches: { pending: 0, inFlight: 0, completed: 1, quarantined: 0 },
+    });
   });
 
   it("rejects Repository Review auto-ack before claiming a lease", () => {

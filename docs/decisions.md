@@ -1,5 +1,38 @@
 # Architecture decisions
 
+## 2026-08-25: Make Repository Review relocation a symmetric write fence
+
+### Problem
+
+Explicit relocation checked the previous binding and review sequence, but a cached open or Git-backed artifact
+write that had already validated the old clone could resume after relocation committed. Cached open could restore
+the old common directory, while a Comment or Walkthrough could add historical evidence whose exact owned ref was
+present only in the old clone. An old source-sync failure was also fenced only by its generation, which relocation
+did not change. Repository Review completion separately had no successful exit when a Comment disappeared before
+its final reply.
+
+### Choice
+
+Keep relocation and add narrow symmetric fences. A normal cached open updates only the worktree path under an
+expected-common-directory CAS; only relocation can change `git_common_dir`. Pass the resolver-verified Review ID
+and common directory as a Repository Review write context into Git-backed Comment and Walkthrough transactions,
+and reject the write if relocation won first. Increment `source_sync_generation` in the relocation transaction so
+all source publications and error publications started in the old clone become stale.
+
+Allow Repository Review watch outcomes to be `reply` or `gone`. The completion helper re-reads each Comment before
+replying, verifies explicit gone outcomes, treats disappearance during the final reply as normal, records only
+created post IDs, and completes all-gone and mixed batches without replacement posts.
+
+### Consequences
+
+- A cached worktree refresh cannot undo an independent-clone relocation.
+- Artifact-first advances the review sequence and makes relocation stale; relocation-first makes the artifact
+  binding context stale.
+- Failed source attempts cannot attach old-clone errors to a newly relocated binding.
+- Repository watch deletion races complete normally instead of retrying toward quarantine.
+- DB-only Issue, Walkthrough-body, and Comment-body archive reads remain owner-checked without requiring Git
+  evidence; only Git-dependent reads and mutations resolve the local binding.
+
 ## 2026-08-24: Share review UI capabilities without merging review aggregates
 
 ### Problem

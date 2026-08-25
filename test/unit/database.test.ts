@@ -716,22 +716,33 @@ describe("RvwDatabase", () => {
       target: { kind: "pull-request" },
       body: "PR question",
     });
-    const repositoryComment = database.createRepositoryComment({
+    const repositoryWriteContext = {
       repositoryReviewId: repositoryReview.id,
-      createdSourceOid: repositoryReview.sourceOid,
-      target: { kind: "repository" },
-      body: "Repository Review question",
-    });
+      expectedGitCommonDir: repositoryReview.gitCommonDir,
+    };
+    const repositoryComment = database.createRepositoryComment(
+      {
+        repositoryReviewId: repositoryReview.id,
+        createdSourceOid: repositoryReview.sourceOid,
+        target: { kind: "repository" },
+        body: "Repository Review question",
+      },
+      repositoryWriteContext,
+    );
     database.insertReply(pullRequestComment.id, {
       body: "PR answer",
       idempotencyKey: "shared-public-key",
     });
 
     expect(() =>
-      database.insertRepositoryReply(repositoryComment.id, {
-        body: "Repository Review answer",
-        idempotencyKey: "shared-public-key",
-      }),
+      database.insertRepositoryReply(
+        repositoryComment.id,
+        {
+          body: "Repository Review answer",
+          idempotencyKey: "shared-public-key",
+        },
+        repositoryWriteContext,
+      ),
     ).toThrowError(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
     expect(database.listRepositoryCommentPosts(repositoryComment.id)).toHaveLength(1);
     database.close();

@@ -63,13 +63,20 @@ function validatedOutcomes(input, operations) {
       !outcome ||
       typeof outcome !== "object" ||
       typeof outcome.commentRef !== "string" ||
-      outcome.commentRef.length === 0 ||
-      typeof outcome.body !== "string" ||
-      outcome.body.trim().length === 0
+      outcome.commentRef.length === 0
     ) {
-      fail("Each outcome requires commentRef and a non-empty body");
+      fail("Each outcome requires commentRef");
     }
     if (outcomes.has(outcome.commentRef)) fail(`Duplicate outcome: ${outcome.commentRef}`);
+    const status = outcome.status ?? "reply";
+    if (status === "gone") {
+      outcomes.set(outcome.commentRef, { commentRef: outcome.commentRef, status });
+      continue;
+    }
+    if (status !== "reply") fail(`Invalid Repository Review outcome status: ${status}`);
+    if (typeof outcome.body !== "string" || outcome.body.trim().length === 0) {
+      fail("Each reply outcome requires a non-empty body");
+    }
     if (
       outcome.relatedCommitOid !== null &&
       (typeof outcome.relatedCommitOid !== "string" ||
@@ -123,7 +130,7 @@ function validatedOutcomes(input, operations) {
     }
     if (outcome.pushStatus !== "not-attempted")
       fail("Repository Review outcomes must use pushStatus: not-attempted");
-    outcomes.set(outcome.commentRef, outcome);
+    outcomes.set(outcome.commentRef, { ...outcome, status });
   }
   if (outcomes.size !== operations.length) fail("One final outcome is required per operation");
   return operations.map((operation) => {
@@ -131,6 +138,17 @@ function validatedOutcomes(input, operations) {
     if (!outcome) fail(`Missing final outcome: ${operation.commentRef}`);
     return { operation, outcome };
   });
+}
+
+function isGone(result) {
+  return (
+    result.json?.ok === false &&
+    ["COMMENT_NOT_FOUND", "NOT_FOUND"].includes(result.json?.error?.code)
+  );
+}
+
+function commandFailure(command, commentRef, result) {
+  return result.stderr.trim() || result.stdout.trim() || `${command} failed: ${commentRef}`;
 }
 
 async function main() {
@@ -174,7 +192,23 @@ async function main() {
     }
   }
   const replies = [];
+  const gone = [];
   for (const { operation, outcome } of pending) {
+    const current = await runRvw(["comment", "get", operation.commentRef, "--json"]);
+    if (isGone(current)) {
+      gone.push({
+        commentRef: operation.commentRef,
+        status: "gone",
+        reason: outcome.status === "gone" ? "confirmed" : "deleted-before-reply",
+      });
+      continue;
+    }
+    if (!successfulJson(current)) {
+      fail(commandFailure("comment get", operation.commentRef, current));
+    }
+    if (outcome.status === "gone") {
+      fail(`Outcome reported gone but the Comment still exists: ${operation.commentRef}`);
+    }
     const reply = {
       body: outcome.body,
       relatedCommitOid: outcome.relatedCommitOid,
@@ -184,12 +218,16 @@ async function main() {
     const result = await runRvw(["comment", "reply", operation.commentRef, "--stdin", "--json"], {
       input: reply,
     });
+    if (isGone(result)) {
+      gone.push({
+        commentRef: operation.commentRef,
+        status: "gone",
+        reason: "deleted-during-reply",
+      });
+      continue;
+    }
     if (!successfulJson(result) || typeof result.json?.post?.id !== "string") {
-      fail(
-        result.stderr.trim() ||
-          result.stdout.trim() ||
-          `Final reply failed: ${operation.commentRef}`,
-      );
+      fail(commandFailure("Final reply", operation.commentRef, result));
     }
     replies.push({
       commentRef: operation.commentRef,
@@ -207,6 +245,7 @@ async function main() {
       context: batch.context,
       leaseId,
       replies,
+      gone,
       completion: completed,
     })}\n`,
   );

@@ -84,7 +84,11 @@ import {
   detectImageContentType,
   type ImageContentType,
 } from "../shared/image-assets.js";
-import { RvwDatabase, type CommentUpdateInput } from "../infrastructure/db/database.js";
+import {
+  RvwDatabase,
+  type CommentUpdateInput,
+  type RepositoryReviewWriteContext,
+} from "../infrastructure/db/database.js";
 import {
   GitClient,
   type BlobContent,
@@ -1064,6 +1068,15 @@ export class RvwService {
     repositoryReview: RepositoryReview,
   ): Promise<RepositoryContext> {
     return (await this.resolveBoundRepositoryArtifactContext(repositoryReview)).repository;
+  }
+
+  private repositoryReviewWriteContext(
+    resolved: ResolvedRepositoryReview,
+  ): RepositoryReviewWriteContext {
+    return {
+      repositoryReviewId: resolved.repositoryReview.id,
+      expectedGitCommonDir: resolved.repository.gitCommonDir,
+    };
   }
 
   async openRepositoryReview(cwd: string): Promise<OpenRepositoryResult> {
@@ -2789,12 +2802,13 @@ export class RvwService {
   }
 
   private async writeWithRepositoryRetainedCommit<T>(
-    repositoryReview: RepositoryReview,
+    resolved: ResolvedRepositoryReview,
     sourceOid: string,
     write: () => T,
   ): Promise<T> {
+    const { repositoryReview, repository } = resolved;
     const retained = await this.git.ensureRepositoryReviewCommitRef(
-      repositoryReview.localRepositoryPath,
+      repository.worktreePath,
       repositoryReview.id,
       sourceOid,
     );
@@ -2803,7 +2817,7 @@ export class RvwService {
     } catch (error) {
       if (retained.created && !this.database.getRepositoryReview(repositoryReview.id)) {
         await this.git
-          .deleteRef(repositoryReview.localRepositoryPath, retained.ref, sourceOid)
+          .deleteRef(repository.worktreePath, retained.ref, sourceOid)
           .catch(() => undefined);
       }
       throw error;
@@ -2819,8 +2833,11 @@ export class RvwService {
     references?: CodeReference[];
     lastModifiedBy?: CommentPostModifier;
   }): Promise<RepositoryReviewComment> {
-    const repositoryReview = this.getRepositoryReview(input.repositoryReviewId);
-    await this.repositoryContextFor(repositoryReview);
+    const resolved = await this.resolveBoundRepositoryArtifactContext(
+      this.getRepositoryReview(input.repositoryReviewId),
+    );
+    const { repositoryReview } = resolved;
+    const writeContext = this.repositoryReviewWriteContext(resolved);
     const target = await this.prepareRepositoryCommentTarget(repositoryReview, input.target);
     const body = assertTextBody(input.body);
     assertAuthorLabel(input.authorLabel);
@@ -2832,24 +2849,23 @@ export class RvwService {
       subject: "comment post",
     });
     const write = (): RepositoryReviewComment =>
-      this.database.createRepositoryComment({
-        repositoryReviewId: repositoryReview.id,
-        createdSourceOid: repositoryReview.sourceOid,
-        target,
-        body,
-        ...(input.relatedCommitOid === undefined
-          ? {}
-          : { relatedCommitOid: input.relatedCommitOid }),
-        references,
-        ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
-        ...(input.lastModifiedBy === undefined ? {} : { lastModifiedBy: input.lastModifiedBy }),
-      });
+      this.database.createRepositoryComment(
+        {
+          repositoryReviewId: repositoryReview.id,
+          createdSourceOid: repositoryReview.sourceOid,
+          target,
+          body,
+          ...(input.relatedCommitOid === undefined
+            ? {}
+            : { relatedCommitOid: input.relatedCommitOid }),
+          references,
+          ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+          ...(input.lastModifiedBy === undefined ? {} : { lastModifiedBy: input.lastModifiedBy }),
+        },
+        writeContext,
+      );
     return input.relatedCommitOid
-      ? await this.writeWithRepositoryRetainedCommit(
-          repositoryReview,
-          input.relatedCommitOid,
-          write,
-        )
+      ? await this.writeWithRepositoryRetainedCommit(resolved, input.relatedCommitOid, write)
       : write();
   }
 
@@ -3784,10 +3800,12 @@ export class RvwService {
     if (!target) throw new RvwError("INVALID_INPUT", "review targetが必要です。");
     if (target.kind === "repository") {
       const stored = this.resolveStoredRepositoryReview(target.repository);
-      const { repositoryReview } = await this.resolveBoundRepositoryArtifactContext(
+      const resolved = await this.resolveBoundRepositoryArtifactContext(
         stored,
         (input.issuesToAdd?.length ?? 0) > 0 ? "remote-mutation" : "local-artifact",
       );
+      const { repositoryReview } = resolved;
+      const writeContext = this.repositoryReviewWriteContext(resolved);
       if (input.sourceOid !== repositoryReview.sourceOid) {
         throw new RvwError(
           "INVALID_INPUT",
@@ -3796,9 +3814,10 @@ export class RvwService {
       }
       const content = await this.validateWalkthroughContent(repositoryReview, input);
       const issues = await this.fetchRequestedIssues(repositoryReview, input.issuesToAdd ?? []);
-      return await this.writeWithRepositoryRetainedCommit(repositoryReview, content.sourceOid, () =>
+      return await this.writeWithRepositoryRetainedCommit(resolved, content.sourceOid, () =>
         this.database.createRepositoryWalkthrough(
           { repositoryReviewId: repositoryReview.id, ...content },
+          writeContext,
           issues,
         ),
       );
@@ -3816,15 +3835,14 @@ export class RvwService {
     input: WalkthroughUpdateRequest,
   ): Promise<WalkthroughMutationResult> {
     const current = await this.getBoundAnyWalkthroughByUri(uri);
-    const repositoryReview =
+    const repositoryResolved =
       current.context.kind === "repository"
-        ? (
-            await this.resolveBoundRepositoryArtifactContext(
-              current.context.repositoryReview,
-              (input.issuesToAdd?.length ?? 0) > 0 ? "remote-mutation" : "local-artifact",
-            )
-          ).repositoryReview
+        ? await this.resolveBoundRepositoryArtifactContext(
+            current.context.repositoryReview,
+            (input.issuesToAdd?.length ?? 0) > 0 ? "remote-mutation" : "local-artifact",
+          )
         : null;
+    const repositoryReview = repositoryResolved?.repositoryReview ?? null;
     const review =
       current.context.kind === "pull-request" ? current.context.pullRequest : repositoryReview!;
     const content = await this.validateWalkthroughContent(review, {
@@ -3837,8 +3855,13 @@ export class RvwService {
       ? await this.writeWithRetainedCommit(current.context.pullRequest, content.sourceOid, () =>
           this.database.updateWalkthrough(current.walkthrough.id, content, issues),
         )
-      : await this.writeWithRepositoryRetainedCommit(repositoryReview!, content.sourceOid, () =>
-          this.database.updateRepositoryWalkthrough(current.walkthrough.id, content, issues),
+      : await this.writeWithRepositoryRetainedCommit(repositoryResolved!, content.sourceOid, () =>
+          this.database.updateRepositoryWalkthrough(
+            current.walkthrough.id,
+            content,
+            this.repositoryReviewWriteContext(repositoryResolved!),
+            issues,
+          ),
         );
   }
 
@@ -3960,8 +3983,11 @@ export class RvwService {
       if (!repositoryComment) {
         throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
       }
-      const repositoryReview = this.getRepositoryReview(repositoryComment.repositoryReviewId);
-      await this.repositoryContextFor(repositoryReview);
+      const resolved = await this.resolveBoundRepositoryArtifactContext(
+        this.getRepositoryReview(repositoryComment.repositoryReviewId),
+      );
+      const { repositoryReview } = resolved;
+      const writeContext = this.repositoryReviewWriteContext(resolved);
       await this.validateCodeReferences(repositoryReview, {
         sourceOid: input.relatedCommitOid ?? null,
         body,
@@ -3969,30 +3995,30 @@ export class RvwService {
         subject: "comment reply",
       });
       const write = (): CommentPost =>
-        this.database.insertRepositoryReply(id, {
-          ...input,
-          body,
-          references,
-          ...(input.idempotencyKey === undefined
-            ? {}
-            : {
-                idempotencyRequestHash: idempotencyRequestHash({
-                  operation: "comment.reply",
-                  reviewKind: "repository",
-                  commentId: id,
-                  body,
-                  relatedCommitOid: input.relatedCommitOid ?? null,
-                  authorLabel: input.authorLabel ?? null,
-                  references,
+        this.database.insertRepositoryReply(
+          id,
+          {
+            ...input,
+            body,
+            references,
+            ...(input.idempotencyKey === undefined
+              ? {}
+              : {
+                  idempotencyRequestHash: idempotencyRequestHash({
+                    operation: "comment.reply",
+                    reviewKind: "repository",
+                    commentId: id,
+                    body,
+                    relatedCommitOid: input.relatedCommitOid ?? null,
+                    authorLabel: input.authorLabel ?? null,
+                    references,
+                  }),
                 }),
-              }),
-        });
+          },
+          writeContext,
+        );
       return input.relatedCommitOid
-        ? await this.writeWithRepositoryRetainedCommit(
-            repositoryReview,
-            input.relatedCommitOid,
-            write,
-          )
+        ? await this.writeWithRepositoryRetainedCommit(resolved, input.relatedCommitOid, write)
         : write();
     }
     const pullRequest = this.getPullRequest(comment.pullRequestId);
@@ -4110,8 +4136,11 @@ export class RvwService {
     const review = comment
       ? this.getPullRequest(comment.pullRequestId)
       : this.getRepositoryReview(repositoryComment!.repositoryReviewId);
-    if (repositoryComment) await this.repositoryContextFor(review as RepositoryReview);
-    await this.validateCodeReferences(review, {
+    const repositoryResolved = repositoryComment
+      ? await this.resolveBoundRepositoryArtifactContext(review as RepositoryReview)
+      : null;
+    const repositoryReview = repositoryResolved?.repositoryReview ?? null;
+    await this.validateCodeReferences(repositoryReview ?? review, {
       sourceOid: relatedCommitOid,
       body,
       references,
@@ -4130,6 +4159,7 @@ export class RvwService {
         : this.database.updateRepositoryCommentPost(
             commentId,
             postId,
+            this.repositoryReviewWriteContext(repositoryResolved!),
             body,
             relatedCommitOid,
             references,
@@ -4138,11 +4168,7 @@ export class RvwService {
     if (!relatedCommitOid) return write();
     return comment
       ? await this.writeWithRetainedCommit(review as PullRequest, relatedCommitOid, write)
-      : await this.writeWithRepositoryRetainedCommit(
-          review as RepositoryReview,
-          relatedCommitOid,
-          write,
-        );
+      : await this.writeWithRepositoryRetainedCommit(repositoryResolved!, relatedCommitOid, write);
   }
 
   async deleteReply(

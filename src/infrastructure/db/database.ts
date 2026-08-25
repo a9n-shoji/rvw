@@ -406,6 +406,11 @@ export interface NewRepositoryWalkthroughInput {
   references: WalkthroughReference[];
 }
 
+export interface RepositoryReviewWriteContext {
+  repositoryReviewId: string;
+  expectedGitCommonDir: string;
+}
+
 export class RvwDatabase {
   readonly filePath: string;
   readonly configuredPath: boolean;
@@ -872,6 +877,32 @@ export class RvwDatabase {
     return row ? mapRepositoryReview(row) : null;
   }
 
+  private assertRepositoryReviewWriteContext(
+    context: RepositoryReviewWriteContext,
+  ): RepositoryReview {
+    const current = this.getRepositoryReview(context.repositoryReviewId);
+    if (!current) {
+      throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
+        status: 404,
+      });
+    }
+    if (path.resolve(current.gitCommonDir) !== path.resolve(context.expectedGitCommonDir)) {
+      throw new RvwError(
+        "REPOSITORY_MISMATCH",
+        "artifact検証後にRepository Review bindingが変更されました。",
+        {
+          status: 409,
+          details: {
+            repositoryReviewId: current.id,
+            expectedGitCommonDir: context.expectedGitCommonDir,
+            currentGitCommonDir: current.gitCommonDir,
+          },
+        },
+      );
+    }
+    return current;
+  }
+
   findRepositoryReviewByGitCommonDir(gitCommonDir: string): RepositoryReview | null {
     const row = this.database
       .prepare("SELECT * FROM repository_reviews WHERE git_common_dir = ?")
@@ -1241,19 +1272,37 @@ export class RvwDatabase {
     return result;
   }
 
-  updateRepositoryReviewLocation(
+  refreshRepositoryReviewWorktreePath(
     id: string,
-    repository: { localRepositoryPath: string; gitCommonDir: string },
+    expectedGitCommonDir: string,
+    localRepositoryPath: string,
   ): RepositoryReview {
     const now = new Date().toISOString();
     this.immediateTransaction(() => {
       const result = this.database
         .prepare(
-          "UPDATE repository_reviews SET local_repository_path = ?, git_common_dir = ?, updated_at = ? WHERE id = ?",
+          `UPDATE repository_reviews SET local_repository_path = ?, updated_at = ?
+           WHERE id = ? AND git_common_dir = ?`,
         )
-        .run(repository.localRepositoryPath, repository.gitCommonDir, now, id);
+        .run(localRepositoryPath, now, id, expectedGitCommonDir);
       if (Number(result.changes) !== 1) {
-        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。");
+        const current = this.getRepositoryReview(id);
+        if (!current) {
+          throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。");
+        }
+        throw new RvwError(
+          "REPOSITORY_MISMATCH",
+          "cached open中にRepository Review bindingが変更されました。",
+          {
+            status: 409,
+            details: {
+              repositoryReviewId: id,
+              expectedGitCommonDir,
+              currentGitCommonDir: current.gitCommonDir,
+              attemptedLocalRepositoryPath: localRepositoryPath,
+            },
+          },
+        );
       }
       this.incrementChangeSequence({ kind: "repository", reviewId: id });
     });
@@ -1316,7 +1365,9 @@ export class RvwDatabase {
       }
       const updated = this.database
         .prepare(
-          "UPDATE repository_reviews SET local_repository_path = ?, git_common_dir = ?, updated_at = ? WHERE id = ?",
+          `UPDATE repository_reviews SET local_repository_path = ?, git_common_dir = ?,
+             source_sync_generation = source_sync_generation + 1, updated_at = ?
+           WHERE id = ?`,
         )
         .run(candidate.localRepositoryPath, candidate.gitCommonDir, now, id);
       if (Number(updated.changes) !== 1) {
@@ -3158,14 +3209,20 @@ export class RvwDatabase {
 
   createRepositoryWalkthrough(
     input: NewRepositoryWalkthroughInput,
+    writeContext: RepositoryReviewWriteContext,
     issues: GitHubIssue[] = [],
   ): { walkthrough: RepositoryWalkthrough; issuesAdded: IssueDocument[] } {
     const id = randomUUID();
     const issuesAdded = this.immediateTransaction(() => {
-      if (!this.getRepositoryReview(input.repositoryReviewId)) {
-        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
-          status: 404,
-        });
+      const repositoryReview = this.assertRepositoryReviewWriteContext(writeContext);
+      if (repositoryReview.id !== input.repositoryReviewId) {
+        throw new RvwError(
+          "REPOSITORY_MISMATCH",
+          "Repository Review write contextが一致しません。",
+          {
+            status: 409,
+          },
+        );
       }
       this.database
         .prepare(
@@ -3200,14 +3257,16 @@ export class RvwDatabase {
   updateRepositoryWalkthrough(
     id: string,
     input: Omit<NewRepositoryWalkthroughInput, "repositoryReviewId">,
+    writeContext: RepositoryReviewWriteContext,
     issues: GitHubIssue[] = [],
   ): { walkthrough: RepositoryWalkthrough; issuesAdded: IssueDocument[] } {
     const issuesAdded = this.immediateTransaction(() => {
+      this.assertRepositoryReviewWriteContext(writeContext);
       const result = this.database
         .prepare(
           `UPDATE repository_walkthroughs
            SET source_oid = ?, title = ?, body = ?, author_label = ?, diagram_bindings_json = ?
-           WHERE id = ?`,
+           WHERE id = ? AND repository_review_id = ?`,
         )
         .run(
           input.sourceOid,
@@ -3216,6 +3275,7 @@ export class RvwDatabase {
           input.authorLabel ?? null,
           JSON.stringify(input.diagramBindings),
           id,
+          writeContext.repositoryReviewId,
         );
       if (Number(result.changes) !== 1) {
         throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
@@ -3459,16 +3519,23 @@ export class RvwDatabase {
     return this.listPostsForComments("repository-comment-post", [commentId]).get(commentId) ?? [];
   }
 
-  createRepositoryComment(input: NewRepositoryCommentInput): RepositoryReviewComment {
+  createRepositoryComment(
+    input: NewRepositoryCommentInput,
+    writeContext: RepositoryReviewWriteContext,
+  ): RepositoryReviewComment {
     const id = randomUUID();
     const postId = randomUUID();
     const now = new Date().toISOString();
     this.immediateTransaction(() => {
-      const repositoryReview = this.getRepositoryReview(input.repositoryReviewId);
-      if (!repositoryReview) {
-        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。", {
-          status: 404,
-        });
+      const repositoryReview = this.assertRepositoryReviewWriteContext(writeContext);
+      if (repositoryReview.id !== input.repositoryReviewId) {
+        throw new RvwError(
+          "REPOSITORY_MISMATCH",
+          "Repository Review write contextが一致しません。",
+          {
+            status: 409,
+          },
+        );
       }
       this.assertReviewOwnsCommentTargetIssue("repository", repositoryReview.id, input.target);
       this.database
@@ -3525,14 +3592,22 @@ export class RvwDatabase {
       idempotencyRequestHash?: string;
       lastModifiedBy?: CommentPostModifier;
     },
+    writeContext: RepositoryReviewWriteContext,
   ): CommentPost {
     return this.immediateTransaction(() => {
+      const boundReview = this.assertRepositoryReviewWriteContext(writeContext);
       const comment = this.getRepositoryComment(commentId);
       if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
-      const repositoryReview = this.getRepositoryReview(comment.repositoryReviewId);
-      if (!repositoryReview) {
-        throw new RvwError("REPOSITORY_REVIEW_NOT_FOUND", "Repository Reviewが見つかりません。");
+      if (comment.repositoryReviewId !== boundReview.id) {
+        throw new RvwError(
+          "REPOSITORY_MISMATCH",
+          "CommentのRepository Review bindingが一致しません。",
+          {
+            status: 409,
+          },
+        );
       }
+      const repositoryReview = boundReview;
       const keyHash = input.idempotencyKey ? hashIdempotencyKey(input.idempotencyKey) : null;
       const requestHash = keyHash
         ? (input.idempotencyRequestHash ??
@@ -3627,6 +3702,7 @@ export class RvwDatabase {
   updateRepositoryCommentPost(
     commentId: string,
     postId: string,
+    writeContext: RepositoryReviewWriteContext,
     body: string,
     relatedCommitOid?: string | null,
     references?: CodeReference[],
@@ -3636,6 +3712,16 @@ export class RvwDatabase {
     const comment = this.getRepositoryComment(commentId);
     if (!comment) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
     this.immediateTransaction(() => {
+      const repositoryReview = this.assertRepositoryReviewWriteContext(writeContext);
+      if (comment.repositoryReviewId !== repositoryReview.id) {
+        throw new RvwError(
+          "REPOSITORY_MISMATCH",
+          "CommentのRepository Review bindingが一致しません。",
+          {
+            status: 409,
+          },
+        );
+      }
       const result =
         relatedCommitOid === undefined && lastModifiedBy === undefined
           ? this.database

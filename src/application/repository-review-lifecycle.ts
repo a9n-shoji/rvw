@@ -792,10 +792,11 @@ export class RepositoryReviewLifecycle {
           path.resolve(initialized.localRepositoryPath) !== path.resolve(repository.worktreePath);
         return {
           repositoryReview: locationChanged
-            ? this.database.updateRepositoryReviewLocation(initialized.id, {
-                localRepositoryPath: repository.worktreePath,
-                gitCommonDir: repository.gitCommonDir,
-              })
+            ? this.database.refreshRepositoryReviewWorktreePath(
+                initialized.id,
+                repository.gitCommonDir,
+                repository.worktreePath,
+              )
             : initialized,
           fromCache: true,
           selectedRemote: remoteIdentity
@@ -865,10 +866,11 @@ export class RepositoryReviewLifecycle {
       stored = await this.assertOwnedSourceRef(stored, repository);
       return path.resolve(stored.localRepositoryPath) === path.resolve(repository.worktreePath)
         ? stored
-        : this.database.updateRepositoryReviewLocation(stored.id, {
-            localRepositoryPath: repository.worktreePath,
-            gitCommonDir: repository.gitCommonDir,
-          });
+        : this.database.refreshRepositoryReviewWorktreePath(
+            stored.id,
+            repository.gitCommonDir,
+            repository.worktreePath,
+          );
     }
     const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
     if (!remoteIdentity) {

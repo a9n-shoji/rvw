@@ -113,6 +113,7 @@ class OneShotBarrier {
 
 class RepositoryGitHub implements GitHubPort {
   repositoryError: Error | null = null;
+  repositoryFailureAfterBarrier: Error | null = null;
   repositoryRequests = 0;
   issueFetchDelayMs = 0;
   activeIssueFetches = 0;
@@ -138,7 +139,10 @@ class RepositoryGitHub implements GitHubPort {
     this.repositoryRequests += 1;
     expect(identity.canonicalName).toBe("acme/review-repo");
     if (this.repositoryError) throw this.repositoryError;
-    await this.repositoryBarrier?.blockOnce();
+    const waitedAtBarrier = (await this.repositoryBarrier?.blockOnce()) ?? false;
+    if (waitedAtBarrier && this.repositoryFailureAfterBarrier) {
+      throw this.repositoryFailureAfterBarrier;
+    }
     return this.repository;
   }
 
@@ -302,6 +306,25 @@ class PauseBeforeRepositoryArtifactRetainGitClient extends GitClient {
   }
 }
 
+class PauseAfterRepositoryObjectCheckGitClient extends GitClient {
+  readonly barrier = new OneShotBarrier();
+  private pauseNextObjectCheck = false;
+
+  arm(): void {
+    this.pauseNextObjectCheck = true;
+    this.barrier.arm();
+  }
+
+  override async hasObject(cwd: string, oid: string): Promise<boolean> {
+    const available = await super.hasObject(cwd, oid);
+    if (this.pauseNextObjectCheck) {
+      this.pauseNextObjectCheck = false;
+      await this.barrier.blockOnce();
+    }
+    return available;
+  }
+}
+
 class PauseAfterRepositoryObjectForOidGitClient extends GitClient {
   readonly barrier = new OneShotBarrier();
 
@@ -436,6 +459,28 @@ describe("Repository Review", () => {
       database,
       service: new RvwService(database, gitClient, github),
     };
+  }
+
+  async function createRelocationCandidate(
+    service: RvwService,
+    repositoryPath: string,
+    repositoryReviewId: string,
+    evidenceOids: string[],
+    suffix: string,
+  ): Promise<{ repositoryPath: string; gitCommonDir: string }> {
+    const candidatePath = `${repositoryPath}-${suffix}`;
+    git(path.dirname(repositoryPath), "clone", "--no-local", repositoryPath, candidatePath);
+    git(candidatePath, "remote", "set-url", "origin", "https://github.com/acme/review-repo.git");
+    for (const oid of evidenceOids) {
+      git(
+        candidatePath,
+        "update-ref",
+        service.git.repositoryReviewCommitRef(repositoryReviewId, oid),
+        oid,
+      );
+    }
+    const context = await service.git.repositoryContext(candidatePath);
+    return { repositoryPath: context.worktreePath, gitCommonDir: context.gitCommonDir };
   }
 
   function httpApp(service: RvwService) {
@@ -1510,6 +1555,164 @@ describe("Repository Review", () => {
       outcome: { kind: "completed" },
     });
     expect(database.getRepositoryReview(opened.repositoryReview.id)).toBeNull();
+  });
+
+  it("does not let a stale cached open roll a completed relocation back", async () => {
+    const gitClient = new PauseAfterRepositoryObjectCheckGitClient();
+    const { repositoryPath, sourceOid, database, service } = setup(gitClient);
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const cachedWorktree = `${repositoryPath}-stale-cached-open`;
+    git(repositoryPath, "worktree", "add", "--detach", cachedWorktree, sourceOid);
+    const candidate = await createRelocationCandidate(
+      service,
+      repositoryPath,
+      opened.repositoryReview.id,
+      [sourceOid],
+      "cached-open-relocation",
+    );
+    gitClient.arm();
+
+    const staleOpen = service.openRepositoryReview(cachedWorktree);
+    await gitClient.barrier.waitUntilBlocked();
+    const preview = await service.getRepositoryRelocationPreview(candidate.repositoryPath);
+    await service.relocateRepositoryReviewAtPath(
+      candidate.repositoryPath,
+      preview.confirmationToken,
+    );
+
+    gitClient.barrier.release();
+    await expect(staleOpen).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+      status: 409,
+      details: {
+        repositoryReviewId: opened.repositoryReview.id,
+        expectedGitCommonDir: opened.repositoryReview.gitCommonDir,
+        currentGitCommonDir: candidate.gitCommonDir,
+      },
+    });
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toMatchObject({
+      localRepositoryPath: candidate.repositoryPath,
+      gitCommonDir: candidate.gitCommonDir,
+    });
+  });
+
+  it("rejects historical Comment evidence retained in the old clone after relocation wins", async () => {
+    const repositoryPath = createGitRepository("rvw-repository-artifact-relocation-");
+    const historicalOid = git(repositoryPath, "rev-parse", "HEAD");
+    const gitClient = new PauseRepositoryReviewRefForOidGitClient(historicalOid);
+    const github = new RepositoryGitHub({
+      host: "github.com",
+      owner: "acme",
+      repository: "review-repo",
+      canonicalName: "acme/review-repo",
+      defaultBranchName: "main",
+      defaultBranchOid: historicalOid,
+    });
+    const database = new RvwDatabase({
+      filePath: path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-branch-db-")), "rvw.db"),
+      migrationsDirectory: "./migrations",
+    });
+    databases.push(database);
+    const service = new RvwService(database, gitClient, github);
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const currentOid = commitFile(
+      repositoryPath,
+      "README.md",
+      "# Fixture\n\nCurrent.\n",
+      "current",
+    );
+    github.repository = { ...github.repository, defaultBranchOid: currentOid };
+    await service.syncRepositoryReview(repositoryPath);
+    const comment = await service.createRepositoryComment({
+      repositoryReviewId: opened.repositoryReview.id,
+      target: { kind: "repository" },
+      body: "Investigate the historical implementation.",
+    });
+    const candidate = await createRelocationCandidate(
+      service,
+      repositoryPath,
+      opened.repositoryReview.id,
+      [currentOid],
+      "artifact-relocation",
+    );
+    expect(
+      await service.git.verifyRepositoryReviewCommitRef(
+        candidate.repositoryPath,
+        opened.repositoryReview.id,
+        historicalOid,
+      ),
+    ).toBe(false);
+    gitClient.barrier.arm();
+
+    const staleReply = service.replyToComment(comment.ref, {
+      body: "This reply must not publish stale-clone evidence.",
+      relatedCommitOid: historicalOid,
+    });
+    await gitClient.barrier.waitUntilBlocked();
+    const preview = await service.getRepositoryRelocationPreview(candidate.repositoryPath);
+    expect(preview).toMatchObject({ requiredEvidenceCount: 1, missingEvidence: [] });
+    await service.relocateRepositoryReviewAtPath(
+      candidate.repositoryPath,
+      preview.confirmationToken,
+    );
+
+    gitClient.barrier.release();
+    await expect(staleReply).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+      status: 409,
+      details: {
+        repositoryReviewId: opened.repositoryReview.id,
+        expectedGitCommonDir: opened.repositoryReview.gitCommonDir,
+        currentGitCommonDir: candidate.gitCommonDir,
+      },
+    });
+    expect(database.getRepositoryComment(comment.id)?.posts).toHaveLength(1);
+    expect(database.listRepositoryReviewEvidenceOids(opened.repositoryReview.id)).toEqual([
+      currentOid,
+    ]);
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toMatchObject({
+      gitCommonDir: candidate.gitCommonDir,
+    });
+  });
+
+  it("does not publish an old-clone source sync error after relocation", async () => {
+    const { repositoryPath, sourceOid, github, database, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    const candidate = await createRelocationCandidate(
+      service,
+      repositoryPath,
+      opened.repositoryReview.id,
+      [sourceOid],
+      "source-error-relocation",
+    );
+    const generationBeforeSync = database.getRepositorySourceSyncGeneration(
+      opened.repositoryReview.id,
+    );
+    const barrier = new OneShotBarrier();
+    barrier.arm();
+    github.repositoryBarrier = barrier;
+    github.repositoryFailureAfterBarrier = new Error("old clone fetch failed");
+
+    const staleSync = service.syncRepositoryReview(repositoryPath);
+    await barrier.waitUntilBlocked();
+    expect(database.getRepositorySourceSyncGeneration(opened.repositoryReview.id)).toBe(
+      generationBeforeSync + 1,
+    );
+    const preview = await service.getRepositoryRelocationPreview(candidate.repositoryPath);
+    await service.relocateRepositoryReviewAtPath(
+      candidate.repositoryPath,
+      preview.confirmationToken,
+    );
+    expect(database.getRepositorySourceSyncGeneration(opened.repositoryReview.id)).toBe(
+      generationBeforeSync + 2,
+    );
+
+    barrier.release();
+    await expect(staleSync).rejects.toThrow("old clone fetch failed");
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toMatchObject({
+      gitCommonDir: candidate.gitCommonDir,
+      sourceSyncError: null,
+    });
   });
 
   it("relocates a moved review through its matching non-origin remote", async () => {

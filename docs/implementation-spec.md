@@ -153,6 +153,9 @@ local remote identityが一致し、GitHub networkだけが失敗した場合は
 Walkthroughをcacheから読める。remoteを解決できない場合も、同じGit common directoryとreview-owned source
 refおよびGit objectが一致するcached read、comment discovery、Issue removal、resetというlocal operationは
 許可する。`repository open`のcache hitだけは現在の同一common-directory worktreeへ`localRepositoryPath`を更新する。
+この通常open更新は、検証時の`git_common_dir`をSQLite transaction内のCAS条件にしてworktree pathだけを
+変更する。`git_common_dir`を変更できるのは明示`repository relocate`だけとし、検証後にbindingが変わって
+いればcached openを中止する。
 existing-only previewは実際のGit readに現在pathを使うが、locationとsequenceを更新しない。GitHub同期と
 Issue追加は拒否する。同期はIssueごとの結果と失敗分離を維持しつつ最大8件を並列取得し、一件の
 取得失敗で他のcached文書を失わない。同じGitHub client processでは成功した認証確認を共有する。
@@ -721,6 +724,12 @@ full revisionは保存しない。コメント作成時にserviceが現在の`Pu
 
 PR全体commentとWalkthrough全体commentはOutdatedにならない。
 
+Repository fileへの新規CommentとRepository Walkthrough publishは、submitを受けたservice validation時点で
+`sourceOid`がcurrentであることを要求する。この確認後、artifactのSQLite commit前に別processのsource syncが
+進んだ場合は受理し、作成直後からhistorical artifactとして扱う。exact review-owned refは書き込み前に保持するため
+表示可能性は維持される。DB commit時点のcurrent source CASは行わない。replyと既存Walkthrough updateは最初から
+currentまたは既存retained historical sourceを明示的に扱える。
+
 ### 6.4 Reply
 
 投稿は64 KiB以下のUTF-8 GFM Markdown sourceで、rootとreplyを編集できる。既存のplain textも同じsource
@@ -766,7 +775,10 @@ Pull Requestのwatch taskはbatchをclaimし、対象threadの存在を確認し
 新しいstatus postを作成し、過去の回答を変更しない。調査または作業の完了、terminal failureでは現在の
 batchの同じpost本文を一つの最終結果へ編集し、新しい完了replyを追加しない。このstatus postは専用comment
 stateではなく通常postであり、threadのunresolved/resolved状態を変えない。Repository Review batchは進捗postを作らず、
-完了時に一件のfinal replyだけを追加する。
+完了時に存在する各Commentへ一件のfinal replyだけを追加する。worker結果はoperationごとに`reply`または
+`gone`を明示でき、completion helperはreply直前にもCommentを再取得する。明示`gone`を確認できた場合、または
+最終replyが`COMMENT_NOT_FOUND` / `NOT_FOUND`になった場合はreplacementを作らずそのoperationを正常完了する。
+all-goneとmixed batchのどちらも、実際に作成したreply post IDだけをsuppressionへ登録してleaseをcompleteする。
 誤投稿を取り消すため、reply postは個別に物理削除できる。root postの削除はcomment targetと
 `rvw://comment/<uuid>`のanchorを含むthread全体の削除として扱い、返信があれば同じtransactionで
 すべて削除する。確認画面は返信も削除されることを明示する。編集・削除はchange sequenceを更新する。
@@ -1315,6 +1327,10 @@ Comment、reply、Walkthroughはexact source refをSQLite書き込み前に確�
 exact refを作成し、SQLite失敗後にaggregate IDの消失を確認した場合だけ、expected OID付きでそのrefをbest-effort
 削除する。aggregateが残る場合、refが既存だった場合、削除に失敗した場合は保持する。その他の未参照ref回収は
 将来の明示的かつreview-scopedな排他的GCへ委ねる。
+Repository ReviewのGit-backed artifact mutationは、binding resolverが検証したReview IDとGit common
+directoryを小さなwrite contextとしてSQLite mutationへ渡す。同じimmediate transaction内で現在bindingと
+一致する場合だけComment root/reply/post editとWalkthrough publish/updateをcommitする。artifactが先に
+commitすればreview sequenceによりrelocateがstaleになり、relocateが先ならartifactのbinding fenceが拒否する。
 
 ## 9. Application / API
 
@@ -1507,7 +1523,8 @@ aggregate削除後にrefが作成された場合は、そのattemptが作ったe
 Issue removalその他のdestructive操作へ広げない。
 既存aggregateのsource同期はGitHubアクセス前に`source_sync_generation`を増やす。candidate ref作成後のsource公開と
 sync error保存はexpected review IDと同じgenerationを一つのimmediate transactionで再検証し、古い試行は新しい
-source、location、error、change sequenceを変更しない。
+source、location、error、change sequenceを変更しない。明示relocateも同じtransactionでgenerationを増やし、
+旧cloneで進行中のsource attemptをsource publishとerror publishの両方について無効化する。
 初期retained ref作成はall-zero old OIDを指定したGit `update-ref`のcompare-and-swapで行い、
 同時作成時には1件だけが`created: true`を得る。`initialization_state = ready`後のcompletionは冪等とし、
 後続syncでsourceが進んでいても失敗にしない。補償削除はexpected aggregate IDが存在しない場合だけとし、

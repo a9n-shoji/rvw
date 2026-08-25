@@ -276,6 +276,7 @@ For a Repository Review, use this context and never invent a Pull Request URL:
   "outcomes": [
     {
       "commentRef": "rvw://comment/uuid",
+      "status": "reply",
       "body": "📝 調査結果\n\nThe conclusion follows from [the source policy](rvw-ref:source-policy).",
       "relatedCommitOid": "0123456789abcdef0123456789abcdef01234567",
       "references": [
@@ -293,8 +294,16 @@ For a Repository Review, use this context and never invent a Pull Request URL:
 }
 ```
 
+If a Repository Review Comment disappeared before the worker result was written, return the operation
+explicitly without inventing a replacement reply:
+
+```json
+{ "commentRef": "rvw://comment/uuid", "status": "gone" }
+```
+
 `pushStatus` is `not-attempted`, `not-needed`, or `pushed`; Repository Review outcomes always use
-`not-attempted`. `relatedCommitOid` is the exact available review commit containing every referenced
+`status: "reply"` (or omit `status` for compatibility) and `pushStatus: "not-attempted"`.
+`relatedCommitOid` is the exact available review commit containing every referenced
 path and may identify investigation evidence even when no change was made. For a Repository Review outcome it
 must be the current or an already retained Repository Review source commit; never use an arbitrary local branch or
 worktree commit. Set it to null only when `references` is empty and the body does not need that commit
@@ -338,19 +347,23 @@ GFM Markdown up to 64 KiB, not 4 KiB; a 4093-byte result is within the contract.
 
 For a Repository Review, do not use the empty `postIds` example. Pass the validated worker result to the
 bundled completion helper. It posts exactly one final reply per operation with that operation's stable
-idempotency key, captures every returned post ID, durably records those IDs for suppression, and only
-then completes the lease:
+idempotency key when the Comment still exists, captures every returned post ID, durably records those IDs
+for suppression, and only then completes the lease. A confirmed `gone` operation is skipped and does not
+block completion:
 
 ```bash
 node '<SKILL_DIR>/scripts/complete-repository.mjs' \
   --state '<TASK_STATE_DB>' --lease '<LEASE_ID>' < '<WORKER_RESULT_JSON>'
 ```
 
-The helper requires the worker's `leaseId`, Repository Review `context`, and every outcome's explicit
-`commentRef`, non-empty `body`, `relatedCommitOid`, complete `references` array, and
-`pushStatus: "not-attempted"`. It rejects the complete input before posting any reply when any field is
-absent, mismatched, or write-capable. The rvw service then validates that a non-null commit is current
-or already retained and that every reference resolves within that exact source.
+The helper requires the worker's `leaseId`, Repository Review `context`, and one outcome per operation.
+A reply outcome requires explicit `commentRef`, non-empty `body`, `relatedCommitOid`, complete
+`references` array, and `pushStatus: "not-attempted"`; a gone outcome requires only `commentRef` and
+`status: "gone"`. It rejects invalid input before posting any reply, re-reads each Comment immediately
+before writing, verifies a claimed gone outcome, and also treats `COMMENT_NOT_FOUND` / `NOT_FOUND` from
+the final reply as normal disappearance. This covers all-gone and mixed batches, including deletion or
+Repository Review reset after worker completion. The rvw service validates that a non-null commit is
+current or already retained and that every reference resolves within that exact source.
 
 If the process stops after posting but before completion, run `recover`, claim the same Repository Review batch,
 and invoke the helper with the same outcomes and new lease. The batch retains its operation keys, so
