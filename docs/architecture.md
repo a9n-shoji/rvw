@@ -22,14 +22,16 @@ write does not compensate that ref: PR/OID and Repository Review/OID refs are sh
 process that created a ref cannot know that a concurrent successful artifact has not begun relying on
 it. Unreferenced refs remain diagnostic data until a future explicit, exclusive GC.
 The saved Git common directory and aggregate-owned current source ref are the local Repository Review binding. Every
-path-based use case compares that common directory and, when available, the canonical identity parsed
+normal path-based use case compares that common directory and, when available, the canonical identity parsed
 from local GitHub remotes with the saved identity before any GitHub request, fetch, location update, or
 mutation. Worktrees in that common directory may reuse the review, but an independent clone, a changed
 canonical remote, or a replacement repository at the saved path fails closed instead of moving the
 binding. Repository rename and transfer are not followed automatically; an explicit Repository Review reset at
 the original binding is the normal boundary for recreating the aggregate. If that clone and its common directory
-are lost, `repository forget` is a separate fail-closed escape hatch: a fresh clone must resolve the same saved
-canonical identity, own no other Review binding, and contain no ref in the lost Review ID's namespace. The saved
+are lost, `repository forget` is the only path-based exception and a separate fail-closed DB-only escape hatch: a fresh clone must resolve the same saved
+canonical identity through the same origin-first selection used by new Review creation, own no other Review
+binding, and contain no ref in the lost Review ID's namespace. A saved Review found only through a secondary
+remote is rejected because reopening that clone would create the creation-selected repository instead. The saved
 path must be unavailable, resolve to a different common directory, or be a same-path replacement whose empty
 namespace can no longer prove the old binding. A sequence-bound preview then deletes only
 the SQLite aggregate. It reports the unreachable old ref prefix as uninspectable orphan evidence rather than

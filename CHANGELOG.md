@@ -15,7 +15,8 @@
 - selected GitHub remoteとRepository Review retained ref ownershipを表示するread-only doctor診断
 - 同じcloneのdirectory移動をexact owned sourceと確認tokenで復旧する`rvw repository relocate`
 - 削除・置換された登録cloneをfresh cloneから件数確認付きでDB-only破棄し、新Review IDで復旧できる
-  `rvw repository forget`
+  `rvw repository forget`。対象は新規openと同じorigin-first remote選択へ固定し、secondary remoteだけが一致する
+  fork cloneから別repositoryのaggregateを破棄しない
 - Pull Request / Repository ReviewのIssue本文に貼り付けたmodern GitHub user attachment画像を、既存の
   review-scoped localhost proxyと同じ検証・認証・画像判定で表示
 - repository demoのPR本文とIssue本文へ、安全な添付と停止対象の外部画像を並べたMarkdown tableを追加

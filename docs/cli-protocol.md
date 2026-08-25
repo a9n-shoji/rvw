@@ -178,10 +178,11 @@ explicit Issue-add operation may create the singleton.
 
 If the registered clone and saved Git common directory have been deleted or replaced, normal reset remains
 fail-closed. `repository forget --repository <FRESH_PATH>` is the explicit last-resort recovery. The fresh clone's
-ordered GitHub remotes must identify exactly one saved canonical Repository Review, its common directory must be
-unregistered by another Review, its old Review ID ref namespace must be empty, and the saved path must be missing,
+origin-first creation-selected GitHub remote must identify the saved canonical Repository Review, its common
+directory must be unregistered by another Review, its old Review ID ref namespace must be empty, and the saved path must be missing,
 resolve to a different common directory, or be a same-path replacement whose empty namespace cannot prove the old
-binding. If the binding is still usable, the command requires normal reset; if a different candidate contains the
+binding. A saved Review found only through a secondary remote is rejected because the following new open would
+select a different repository. If the binding is still usable, the command requires normal reset; if a different candidate contains the
 old namespace, it requires relocation. The preview binds SQLite artifact counts, both locations, binding status,
 orphan prefix, and review sequence into the token. Confirmed execution CASes that sequence and deletes only SQLite
 state. Its typed `completed-with-unreachable-orphan-refs` result has no `gitRefs` deletion count and reports

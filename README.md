@@ -39,7 +39,9 @@ source OID、選択したGitHub remote名／URLをheaderへ表示します。def
 GitHub repositoryの独立cloneへ暗黙に移動しません。別cloneで作り直す場合は、登録済みcloneから
 `rvw repository reset`を明示実行します。登録済みclone自体を削除してreset不能になった場合だけ、同じcanonical
 repositoryのfresh cloneから`rvw repository forget`の件数previewとorphan警告を確認し、SQLite aggregateを明示破棄して
-新しいReview IDで開き直せます。fresh cloneの旧Review ID namespaceが空でない場合はforgetせずrelocateを要求します。
+新しいReview IDで開き直せます。このfresh cloneは新規openと同じorigin-first規則で対象canonical repositoryを選ぶ必要があり、
+forkの`origin`が別repositoryで保存済みReviewが`upstream`にしか一致しない場合はforgetを拒否します。
+fresh cloneの旧Review ID namespaceが空でない場合はforgetせずrelocateを要求します。
 同じcloneのdirectoryを移動した場合、通常openは
 `REPOSITORY_RELOCATION_REQUIRED`を返します。移動した`.git`内のreview-owned exact source refとobjectを
 current sourceだけでなくComment、reply、Walkthroughが参照するhistorical sourceまでpreviewで全件確認し、返された
@@ -348,7 +350,8 @@ draft／workspaceを破棄してwarningを表示します。新しいRepository 
 継承せず、旧resetも新reviewのrefを削除しません。
 
 保存済みcloneを失った場合の`repository forget`は通常resetと異なり、旧Git common directoryへ到達できないこと、fresh
-cloneのcanonical identity一致、未登録common directory、旧Review ID namespaceが空であることをpreviewと実行時に検証します。
+cloneを新規openしたときのorigin-first canonical identity一致、未登録common directory、旧Review ID namespaceが空であることをpreviewと実行時に検証します。
+保存済みReviewがsecondary remoteにしか一致しないcloneは、forget後のopenが別repositoryを選ぶため拒否します。
 確認後はSQLiteのReview、Issue membership、Comment、reply、Walkthroughだけをsequence CASで削除します。旧refを観測できないため
 `gitRefs`削除件数は返さず、結果は`completed-with-unreachable-orphan-refs`、`remainingRefs: null`、
 `cleanupAvailable: false`です。元cloneが後から復旧しても旧refは旧Review IDのorphanで、新Reviewへ継承されません。

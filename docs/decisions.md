@@ -2403,8 +2403,10 @@ supported recovery path short of deleting the whole rvw database or editing SQLi
 ### Choice
 
 Keep normal open, relocation, and reset strict. Add `repository forget` as a distinct, explicitly destructive
-lost-binding recovery. Its candidate clone must have a GitHub remote matching exactly one saved Repository Review,
-use a different and otherwise unregistered Git common directory, and have an empty namespace for that Review ID.
+lost-binding recovery. Its candidate clone must select the saved Repository Review's canonical identity under the
+same origin-first rule used by a new `repository open`, use a different and otherwise unregistered Git common
+directory, and have an empty namespace for that Review ID. A match found only through a secondary remote is not
+eligible: otherwise forget could delete one repository's aggregate while the following open creates another's.
 The saved path must be unavailable, resolve to a different common directory, or be a same-path replacement with
 an empty Review namespace. Path equality alone cannot distinguish a freshly recreated `.git` directory, so a
 non-empty old namespace keeps the operation on normal reset; if a different candidate contains the Review evidence
@@ -2422,6 +2424,8 @@ open creates a new Review ID, leaving any recovered old refs isolated.
 - A user can recover from an ordinary clone deletion without weakening independent-clone or relocation checks.
 - Explicit confirmation may orphan refs even if an undiscovered moved copy of the old clone still exists; Review-ID
   isolation prevents those refs from becoming evidence for the replacement aggregate.
+- A fork-origin/canonical-upstream clone cannot forget the canonical Review without an explicit remote-selection
+  feature; use a fresh clone whose creation-selected remote is the canonical repository.
 - This is DB-only destruction, so its result must never look like successful Git cleanup and doctor can observe the
   old namespace only if that object store becomes reachable again.
 - The singleton identity remains intentionally more expensive than a clone-local Review identity, but preserves one

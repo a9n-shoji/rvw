@@ -1600,6 +1600,57 @@ describe("Repository Review", () => {
     expect(service.listRepositoryComments(recreated.repositoryReview.id)).toEqual([]);
   });
 
+  it("refuses to forget a Review found only through a secondary remote", async () => {
+    const { repositoryPath, database, service } = setup();
+    const opened = await service.openRepositoryReview(repositoryPath);
+    await service.createRepositoryComment({
+      repositoryReviewId: opened.repositoryReview.id,
+      target: { kind: "repository" },
+      body: "This artifact must survive a mismatched forget candidate.",
+    });
+    const freshClone = await createRelocationCandidate(
+      service,
+      repositoryPath,
+      opened.repositoryReview.id,
+      [],
+      "forget-fork-origin",
+    );
+    git(freshClone.repositoryPath, "remote", "rename", "origin", "upstream");
+    git(
+      freshClone.repositoryPath,
+      "remote",
+      "add",
+      "origin",
+      "https://github.com/reviewer/review-repo.git",
+    );
+    rmSync(repositoryPath, { recursive: true, force: true });
+
+    await expect(
+      service.getRepositoryForgetPreviewAtPath(freshClone.repositoryPath),
+    ).rejects.toMatchObject({
+      code: "REPOSITORY_MISMATCH",
+      details: {
+        selectedRemote: {
+          name: "origin",
+          url: "https://github.com/reviewer/review-repo.git",
+        },
+        selectedRepository: "reviewer/review-repo",
+        secondaryRepositoryReviews: [
+          {
+            repositoryReviewId: opened.repositoryReview.id,
+            canonicalName: "acme/review-repo",
+            remoteName: "upstream",
+            remoteUrl: "https://github.com/acme/review-repo.git",
+          },
+        ],
+      },
+    });
+    expect(database.getRepositoryReview(opened.repositoryReview.id)).toEqual(
+      opened.repositoryReview,
+    );
+    expect(service.listRepositoryComments(opened.repositoryReview.id)).toHaveLength(1);
+  });
+
   it("refuses lost-binding recovery while the registered clone is still available", async () => {
     const { repositoryPath, service } = setup();
     const opened = await service.openRepositoryReview(repositoryPath);

@@ -131,7 +131,9 @@ attempting relocation; rvw will not create another Review beside the live Review
 
 If the registered clone was deleted or replaced and cannot run reset, do not edit SQLite or relax relocation.
 Require the `repositoryReview.lostBindingRecovery` capability, explicit human authorization to discard the exact
-previewed local artifacts, and a fresh clone of the same canonical repository. Run
+previewed local artifacts, and a fresh clone whose origin-first creation-selected remote is the same canonical
+repository. A match through only a secondary remote is not eligible because the following open would select a
+different repository. Run
 `rvw repository forget --repository <FRESH_PATH> --json` first. Report the saved and candidate locations, all
 artifact counts, and that the old Git ref prefix is unreachable, will not be inspected or deleted, and may remain as
 an orphan if the old object store returns. Only after authorization, repeat the structured arguments with

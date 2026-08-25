@@ -533,53 +533,88 @@ export class RepositoryReviewLifecycle {
 
   async resolveForgetCandidate(repositoryPath: string): Promise<ResolvedRepositoryForget> {
     const repository = await this.git.repositoryContext(repositoryPath);
-    const remotes = await this.git.listGitHubRemoteIdentities(repository.worktreePath);
-    const matches = remotes
-      .map((remoteIdentity) => ({
-        remoteIdentity,
-        repositoryReview: this.database.findRepositoryReviewByIdentity(
-          remoteIdentity.owner,
-          remoteIdentity.repository,
-        ),
-      }))
-      .filter(
-        (
-          match,
-        ): match is {
-          remoteIdentity: NonNullable<ResolvedRepositoryReview["remoteIdentity"]>;
-          repositoryReview: RepositoryReview;
-        } => match.repositoryReview !== null,
-      );
-    const reviewIds = [...new Set(matches.map(({ repositoryReview }) => repositoryReview.id))];
-    if (reviewIds.length > 1) {
+    const remoteIdentity = await this.git.tryBaseRepositoryIdentity(repository.worktreePath);
+    if (!remoteIdentity) {
       throw new RvwError(
-        "LOCAL_STATE_INCONSISTENT",
-        "candidate cloneのGitHub remoteが複数の保存済みRepository Reviewを指しています。",
+        "REPOSITORY_MISMATCH",
+        "lost binding recoveryに必要なcreation-selected GitHub remote identityを解決できません。",
         {
           status: 409,
           details: {
             candidatePath: repository.worktreePath,
             candidateGitCommonDir: repository.gitCommonDir,
-            repositoryReviewIds: reviewIds,
           },
+          suggestions: ["対象repositoryをoriginにしたfresh cloneを使用してください。"],
         },
       );
     }
-    const match = matches[0];
-    if (!match) {
+    const repositoryReview = this.database.findRepositoryReviewByIdentity(
+      remoteIdentity.owner,
+      remoteIdentity.repository,
+    );
+    if (!repositoryReview) {
+      const secondaryMatches = (await this.git.listGitHubRemoteIdentities(repository.worktreePath))
+        .filter(
+          (candidate) =>
+            candidate.remoteName !== remoteIdentity.remoteName ||
+            candidate.remoteUrl !== remoteIdentity.remoteUrl,
+        )
+        .flatMap((candidate) => {
+          const secondaryReview = this.database.findRepositoryReviewByIdentity(
+            candidate.owner,
+            candidate.repository,
+          );
+          return secondaryReview
+            ? [
+                {
+                  repositoryReviewId: secondaryReview.id,
+                  canonicalName: secondaryReview.canonicalName,
+                  remoteName: candidate.remoteName,
+                  remoteUrl: candidate.remoteUrl,
+                },
+              ]
+            : [];
+        });
+      if (secondaryMatches.length > 0) {
+        throw new RvwError(
+          "REPOSITORY_MISMATCH",
+          "candidate cloneを新規openしたときに選択されるGitHub repositoryは、lost binding recovery対象と一致しません。",
+          {
+            status: 409,
+            details: {
+              candidatePath: repository.worktreePath,
+              candidateGitCommonDir: repository.gitCommonDir,
+              selectedRemote: {
+                name: remoteIdentity.remoteName,
+                url: remoteIdentity.remoteUrl,
+              },
+              selectedRepository: `${remoteIdentity.owner}/${remoteIdentity.repository}`,
+              secondaryRepositoryReviews: secondaryMatches,
+            },
+            suggestions: [
+              `repository openは${remoteIdentity.owner}/${remoteIdentity.repository}を選択します。`,
+              "lost binding recoveryには、破棄対象repositoryがcreation-selected remoteになるfresh cloneを使用してください。",
+            ],
+          },
+        );
+      }
       throw new RvwError(
         "REPOSITORY_REVIEW_NOT_FOUND",
-        "candidate cloneのcanonical GitHub remoteに対応するRepository Reviewが見つかりません。",
+        "candidate cloneのcreation-selected GitHub remoteに対応するRepository Reviewが見つかりません。",
         {
           status: 404,
           details: {
             candidatePath: repository.worktreePath,
             candidateGitCommonDir: repository.gitCommonDir,
+            selectedRemote: {
+              name: remoteIdentity.remoteName,
+              url: remoteIdentity.remoteUrl,
+            },
+            selectedRepository: `${remoteIdentity.owner}/${remoteIdentity.repository}`,
           },
         },
       );
     }
-    const { repositoryReview, remoteIdentity } = match;
     const sameSavedCommonDir =
       path.resolve(repositoryReview.gitCommonDir) === path.resolve(repository.gitCommonDir);
     const candidateOwner = this.database.findRepositoryReviewByGitCommonDir(
