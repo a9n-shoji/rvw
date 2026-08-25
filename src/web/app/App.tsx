@@ -51,6 +51,7 @@ import {
 } from "../components/FileTree.js";
 import { FileEntryIcon } from "../components/FileIcon.js";
 import { LazyLoadBoundary } from "../components/LazyLoadBoundary.js";
+import { PaneFindWidget } from "../components/PaneFindWidget.js";
 import type { DisplayMode, ViewerNavigationTarget } from "../components/DocumentViewer.js";
 import { SearchPanel } from "../components/SearchPanel.js";
 import { QuickOpenPalette } from "../components/QuickOpenPalette.js";
@@ -593,6 +594,12 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [fileFilter, setFileFilter] = useState("");
   const [quickOpenVisible, setQuickOpenVisible] = useState(false);
   const [quickOpenReturnFocus, setQuickOpenReturnFocus] = useState<HTMLElement | null>(null);
+  const [paneFindState, setPaneFindState] = useState<
+    Record<DocumentPaneId, { visible: boolean; openRequestId: number }>
+  >({
+    left: { visible: false, openRequestId: 0 },
+    right: { visible: false, openRequestId: 0 },
+  });
   const [searchText, setSearchText] = useState("");
   const [searchMatchCase, setSearchMatchCase] = useState(false);
   const [searchWholeWord, setSearchWholeWord] = useState(false);
@@ -1252,6 +1259,41 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     window.addEventListener("beforeunload", warnBeforeBrowserClose);
     return () => window.removeEventListener("beforeunload", warnBeforeBrowserClose);
   }, []);
+  useEffect(() => {
+    const openPaneFind = (event: KeyboardEvent): void => {
+      if (
+        !(event.metaKey || event.ctrlKey) ||
+        event.shiftKey ||
+        event.altKey ||
+        event.key.toLowerCase() !== "f"
+      ) {
+        return;
+      }
+      const workspace = documentWorkspaceRef.current;
+      const pane = workspace.focusedPane;
+      if (!workspace.active[pane]) return;
+      const activeElement = document.activeElement;
+      const paneElement = paneElements.current[pane];
+      if (!paneElement || !(activeElement instanceof Node) || !paneElement.contains(activeElement))
+        return;
+      if (
+        activeElement instanceof HTMLElement &&
+        activeElement.matches("input, textarea, select, [contenteditable='true']") &&
+        !activeElement.closest(".pane-find-widget")
+      )
+        return;
+      event.preventDefault();
+      setPaneFindState((current) => ({
+        ...current,
+        [pane]: {
+          visible: true,
+          openRequestId: current[pane].openRequestId + 1,
+        },
+      }));
+    };
+    document.addEventListener("keydown", openPaneFind);
+    return () => document.removeEventListener("keydown", openPaneFind);
+  }, [documentWorkspaceRef]);
   useEffect(() => {
     const openQuickOpen = (event: KeyboardEvent): void => {
       if (
@@ -2027,11 +2069,22 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
         className={`document-pane${activePane === paneId ? " active" : ""}${paneDocuments.length === 0 ? " empty" : ""}`}
         data-pane={paneId}
         aria-label={`${paneId === "left" ? "左" : "右"}のコードペイン`}
-        onPointerDown={() =>
+        tabIndex={-1}
+        onPointerDown={(event) => {
           setDocumentWorkspace((current) =>
             current.focusedPane === paneId ? current : { ...current, focusedPane: paneId },
-          )
-        }
+          );
+          const target = event.target;
+          if (
+            event.button === 0 &&
+            !(
+              target instanceof Element &&
+              target.closest("button, a, input, textarea, select, [contenteditable='true']")
+            )
+          ) {
+            event.currentTarget.focus({ preventScroll: true });
+          }
+        }}
       >
         <DocumentTabs
           paneId={paneId}
@@ -2046,6 +2099,22 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
           onDropDocument={dropDocument}
           onDragStartDocument={setDraggedDocumentKey}
           onDragEndDocument={() => setDraggedDocumentKey(null)}
+        />
+        <PaneFindWidget
+          paneId={paneId}
+          paneElement={paneElements.current[paneId]}
+          documentKey={paneViewerDocument ? documentTabKey(paneViewerDocument) : null}
+          visible={paneFindState[paneId].visible}
+          openRequestId={paneFindState[paneId].openRequestId}
+          onClose={() => {
+            setPaneFindState((current) => ({
+              ...current,
+              [paneId]: { ...current[paneId], visible: false },
+            }));
+            window.requestAnimationFrame(() => {
+              paneElements.current[paneId]?.focus({ preventScroll: true });
+            });
+          }}
         />
         {paneViewerDocument?.kind === "walkthrough" && paneViewerState.walkthrough ? (
           <LazyLoadBoundary label="ウォークスルー">

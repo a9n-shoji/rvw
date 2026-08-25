@@ -1460,6 +1460,120 @@ code {
   border-bottom: 1px solid var(--line-strong);
   background: var(--panel-2);
 }
+.pane-find-layer {
+  position: sticky;
+  top: 44px;
+  z-index: 7;
+  display: flex;
+  height: 0;
+  justify-content: flex-end;
+  padding-right: 10px;
+  pointer-events: none;
+}
+.document-pane:has(.markdown-view-toolbar) .pane-find-layer {
+  top: 86px;
+}
+.document-pane:has(.walkthrough-viewer) .pane-find-layer {
+  top: 118px;
+}
+.pane-find-widget {
+  display: flex;
+  width: min(430px, calc(100% - 6px));
+  height: 35px;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--panel);
+  box-shadow: 0 5px 18px var(--shadow-medium);
+  pointer-events: auto;
+}
+.pane-find-input-shell {
+  display: flex;
+  min-width: 96px;
+  height: 25px;
+  flex: 1 1 auto;
+  align-items: center;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+}
+.pane-find-input-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.pane-find-input-shell.invalid,
+.pane-find-input-shell.invalid:focus-within {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
+}
+.pane-find-input-shell input {
+  min-width: 48px;
+  height: 23px;
+  flex: 1 1 auto;
+  padding: 3px 5px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: 12px var(--mono);
+}
+.pane-find-input-shell > button,
+.pane-find-action {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  flex: 0 0 23px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font: 650 10px var(--mono);
+}
+.pane-find-input-shell > button:hover,
+.pane-find-action:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.pane-find-input-shell > button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.pane-find-whole-word {
+  padding-bottom: 1px;
+  border-bottom: 1px solid currentColor;
+}
+.pane-find-status {
+  width: 42px;
+  flex: 0 0 42px;
+  overflow: hidden;
+  color: var(--muted);
+  font: 10px var(--mono);
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pane-find-status.invalid {
+  color: var(--danger);
+}
+.pane-find-action svg {
+  width: 15px;
+  height: 15px;
+}
+.pane-find-action:disabled {
+  opacity: 0.35;
+}
+::highlight(rvw-pane-find-left-match),
+::highlight(rvw-pane-find-right-match) {
+  background-color: light-dark(rgb(234 179 8 / 0.42), rgb(250 204 21 / 0.38));
+}
+::highlight(rvw-pane-find-left-current),
+::highlight(rvw-pane-find-right-current) {
+  background-color: light-dark(rgb(245 139 10 / 0.82), rgb(249 115 22 / 0.78));
+  color: light-dark(#17120a, #fff);
+}
 .document-tabs {
   display: flex;
   min-width: 0;
