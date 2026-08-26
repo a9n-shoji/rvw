@@ -1,0 +1,1 @@
+export const DIFF_NAVIGATION_CONTEXT_LINES = 5;

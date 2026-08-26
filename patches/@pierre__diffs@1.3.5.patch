@@ -1,0 +1,262 @@
+diff --git a/dist/components/FileDiff.d.ts b/dist/components/FileDiff.d.ts
+index dd9bab56b7031152cd990bcb6b5e97209c56cfa9..d74ffa20bfa5b2fdc0985693871bd132d25b3932 100644
+--- a/dist/components/FileDiff.d.ts
++++ b/dist/components/FileDiff.d.ts
+@@ -1,4 +1,4 @@
+-import { AppliedThemeStyleCache, BaseCodeOptions, BaseDiffOptions, CustomPreProperties, DiffLineAnnotation, DiffsEditableComponent, DiffsEditor, DiffsTextDocument, EditorActiveLineOptions, ExpansionDirections, FileContents, FileDiffMetadata, HighlightedToken, HunkData, HunkSeparators, MaybeDiffFileInput, PostRenderPhase, PrePropertiesConfig, RenderHeaderFilenameSuffixCallback, RenderHeaderMetadataCallback, RenderHeaderPrefixCallback, RenderRange, SelectedLineRange, ThemeTypes } from "../types.js";
++import { AppliedThemeStyleCache, BaseCodeOptions, BaseDiffOptions, CustomPreProperties, DiffLineAnnotation, DiffsEditableComponent, DiffsEditor, DiffsTextDocument, EditorActiveLineOptions, ExpansionDirections, FileContents, FileDiffMetadata, HighlightedToken, HunkData, HunkExpansionRegion, HunkSeparators, MaybeDiffFileInput, PostRenderPhase, PrePropertiesConfig, RenderHeaderFilenameSuffixCallback, RenderHeaderMetadataCallback, RenderHeaderPrefixCallback, RenderRange, SelectedLineRange, ThemeTypes } from "../types.js";
+ import { GetHoveredLineResult, GetLineIndexUtility, InteractionManager, InteractionManagerBaseOptions, SelectionWriteOptions } from "../managers/InteractionManager.js";
+ import { WorkerPoolManager } from "../worker/WorkerPoolManager.js";
+ import { ResizeManager } from "../managers/ResizeManager.js";
+@@ -158,6 +158,11 @@ declare class FileDiff<LAnnotation = undefined> implements DiffsEditableComponen
+   onThemeChange(): void;
+   handleExpandHunk: (hunkIndex: number, direction: ExpansionDirections, expansionLineCountOverride?: number) => void;
+   expandHunk: (hunkIndex: number, direction: ExpansionDirections, expansionLineCountOverride?: number) => void;
++  protected applyHunkExpansionPlan(expansionPlan: ReadonlyArray<{
++    hunkIndex: number;
++    direction: ExpansionDirections;
++    expansionLineCountOverride?: number;
++  }>): void;
+   protected loadFilesIfNecessary(): void;
+   private loadFilesForDiff;
+   protected handleFilesLoaded(expectedDiff: FileDiffMetadata, files: LoadedPartialDiffContents): Promise<void>;
+@@ -197,8 +202,10 @@ declare class FileDiff<LAnnotation = undefined> implements DiffsEditableComponen
+     shouldRefreshDiffsView?: boolean;
+     lineCountChangeInFlight?: boolean;
+   }): void;
++  protected getHunkExpansionState(): Map<number, HunkExpansionRegion>;
+   isLineRenderable(lineNumber: number): boolean;
+   getNearestRenderableLine(lineNumber: number, direction: 'up' | 'down'): number | undefined;
++  revealRange(startLine: number, endLine: number, padding?: number): boolean;
+   revealLine(lineNumber: number): boolean;
+   protected shouldSelfHealEditSession(): boolean;
+   protected escalateEditSessionRender(): void;
+diff --git a/dist/components/FileDiff.js b/dist/components/FileDiff.js
+index 4ee3d95f21fa52834ebd4e726d88669a90722dbd..01d872be9bbd3204d7cc9b4be9ab127a33294fa7 100644
+--- a/dist/components/FileDiff.js
++++ b/dist/components/FileDiff.js
+@@ -426,10 +426,18 @@ var FileDiff = class {
+ 		this.expandHunk(hunkIndex, direction, expansionLineCountOverride);
+ 	};
+ 	expandHunk = (hunkIndex, direction, expansionLineCountOverride) => {
+-		this.hunksRenderer.expandHunk(hunkIndex, direction, expansionLineCountOverride);
++		this.applyHunkExpansionPlan([{
++			hunkIndex,
++			direction,
++			expansionLineCountOverride
++		}]);
++	};
++	applyHunkExpansionPlan(expansionPlan) {
++		if (expansionPlan.length === 0) return;
++		for (const expansion of expansionPlan) this.hunksRenderer.expandHunk(expansion.hunkIndex, expansion.direction, expansion.expansionLineCountOverride);
+ 		this.loadFilesIfNecessary();
+ 		this.rerender();
+-	};
++	}
+ 	loadFilesIfNecessary() {
+ 		const { fileDiff, options: { loadDiffFiles } } = this;
+ 		if (fileDiff == null || loadDiffFiles == null || !canHydrateDiff(fileDiff) || this.pendingFiles?.fileDiff === fileDiff) return;
+@@ -706,6 +714,9 @@ var FileDiff = class {
+ 			}, 150);
+ 		}
+ 	}
++	getHunkExpansionState() {
++		return this.hunksRenderer.getExpandedHunksMap();
++	}
+ 	isLineRenderable(lineNumber) {
+ 		const fileDiff = this.fileDiffCache;
+ 		if (fileDiff == null) return true;
+@@ -713,7 +724,7 @@ var FileDiff = class {
+ 		return isAdditionLineRenderable({
+ 			fileDiff,
+ 			lineNumber,
+-			expandedHunks: expandUnchanged ? true : this.hunksRenderer.getExpandedHunksMap(),
++			expandedHunks: expandUnchanged ? true : this.getHunkExpansionState(),
+ 			collapsedContextThreshold
+ 		});
+ 	}
+@@ -725,15 +736,74 @@ var FileDiff = class {
+ 			fileDiff,
+ 			lineNumber,
+ 			direction,
+-			expandedHunks: expandUnchanged ? true : this.hunksRenderer.getExpandedHunksMap(),
++			expandedHunks: expandUnchanged ? true : this.getHunkExpansionState(),
+ 			collapsedContextThreshold
+ 		});
+ 	}
++	revealRange(startLine, endLine, padding = 0) {
++		const fileDiff = this.fileDiffCache;
++		const { expandUnchanged = false, collapsedContextThreshold = 1 } = this.options;
++		if (fileDiff == null || fileDiff.isPartial || expandUnchanged || !Number.isFinite(startLine) || !Number.isFinite(endLine)) return false;
++		const normalizedPadding = Number.isFinite(padding) ? Math.max(0, Math.floor(padding)) : 0;
++		const rangeStart = Math.max(1, Math.floor(Math.min(startLine, endLine)) - normalizedPadding);
++		const rangeEnd = Math.floor(Math.max(startLine, endLine)) + normalizedPadding + 1;
++		const expandedHunks = this.getHunkExpansionState();
++		const expansionPlan = [];
++		const expandRegion = (hunkIndex, gapStart, region, canExpandFromEnd) => {
++			if (region.renderAll || region.rangeSize <= 0) return;
++			const gapEnd = gapStart + region.rangeSize;
++			const hiddenStart = gapStart + region.fromStart;
++			const hiddenEnd = gapEnd - region.fromEnd;
++			const overlapStart = Math.max(rangeStart, hiddenStart);
++			const overlapEnd = Math.min(rangeEnd, hiddenEnd);
++			if (overlapStart >= overlapEnd) return;
++			const fromStartExpansion = overlapEnd - hiddenStart;
++			const fromEndExpansion = canExpandFromEnd ? hiddenEnd - overlapStart : Infinity;
++			if (fromStartExpansion <= fromEndExpansion) expansionPlan.push({
++				hunkIndex,
++				direction: "up",
++				expansionLineCountOverride: fromStartExpansion
++			});
++			else expansionPlan.push({
++				hunkIndex,
++				direction: "down",
++				expansionLineCountOverride: fromEndExpansion
++			});
++		};
++		for (const [hunkIndex, hunk] of fileDiff.hunks.entries()) {
++			const [hunkStart] = getHunkAdditionLineRange(hunk);
++			const region = getExpandedRegion({
++				isPartial: fileDiff.isPartial,
++				rangeSize: hunk.collapsedBefore,
++				expandedHunks,
++				hunkIndex,
++				collapsedContextThreshold
++			});
++			expandRegion(hunkIndex, hunkStart - region.rangeSize, region, true);
++		}
++		const trailingRegion = getTrailingExpandedRegion({
++			fileDiff,
++			hunkIndex: fileDiff.hunks.length - 1,
++			expandedHunks,
++			collapsedContextThreshold,
++			errorPrefix: "FileDiff.revealRange"
++		});
++		if (trailingRegion != null) {
++			const lastHunk = fileDiff.hunks.at(-1);
++			if (lastHunk != null) {
++				const [, trailingStart] = getHunkAdditionLineRange(lastHunk);
++				expandRegion(fileDiff.hunks.length, trailingStart, trailingRegion, false);
++			}
++		}
++		if (expansionPlan.length === 0) return false;
++		this.applyHunkExpansionPlan(expansionPlan);
++		return true;
++	}
+ 	revealLine(lineNumber) {
+ 		const fileDiff = this.fileDiffCache;
+ 		const { expandUnchanged = false, collapsedContextThreshold = 1, expansionLineCount = 100 } = this.options;
+ 		if (fileDiff == null || fileDiff.isPartial || expandUnchanged) return false;
+-		const expandedHunks = this.hunksRenderer.getExpandedHunksMap();
++		const expandedHunks = this.getHunkExpansionState();
+ 		for (const [hunkIndex, hunk] of fileDiff.hunks.entries()) {
+ 			const [hunkStart, hunkEnd] = getHunkAdditionLineRange(hunk);
+ 			if (lineNumber < hunkStart) {
+diff --git a/dist/components/VirtualizedFileDiff.d.ts b/dist/components/VirtualizedFileDiff.d.ts
+index ce7d458760275a72c4310a2a90e993e87c4e43ab..d1904d9ddd6687b545b22e6e6d29e388f10a0218 100644
+--- a/dist/components/VirtualizedFileDiff.d.ts
++++ b/dist/components/VirtualizedFileDiff.d.ts
+@@ -1,4 +1,4 @@
+-import { BaseDiffOptions, DiffLineAnnotation, DiffsTextDocument, ExpansionDirections, FileDiffMetadata, NumericScrollLineAnchor, PendingCodeViewLayoutReset, RenderWindow, SelectionSide, StickySpecs, ThemeTypes, VirtualFileMetrics } from "../types.js";
++import { BaseDiffOptions, DiffLineAnnotation, DiffsTextDocument, ExpansionDirections, FileDiffMetadata, HunkExpansionRegion, NumericScrollLineAnchor, PendingCodeViewLayoutReset, RenderWindow, SelectionSide, StickySpecs, ThemeTypes, VirtualFileMetrics } from "../types.js";
+ import { WorkerPoolManager } from "../worker/WorkerPoolManager.js";
+ import { FileDiff, FileDiffOptions, FileDiffRenderProps } from "./FileDiff.js";
+ import { Virtualizer } from "./Virtualizer.js";
+@@ -48,10 +48,15 @@ declare class VirtualizedFileDiff<LAnnotation = undefined> extends FileDiff<LAnn
+   getAdvancedStickySpecs(windowSpecs?: RenderWindow): StickySpecs | undefined;
+   cleanUp(recycle?: boolean): void;
+   expandHunk: (hunkIndex: number, direction: ExpansionDirections, expansionLineCountOverride?: number) => void;
++  protected applyHunkExpansionPlan(expansionPlan: ReadonlyArray<{
++    hunkIndex: number;
++    direction: ExpansionDirections;
++    expansionLineCountOverride?: number;
++  }>): void;
+   protected handleFilesLoaded(expectedDiff: FileDiffMetadata, files: LoadedPartialDiffContents): Promise<void>;
+   consumeCodeViewLayoutChanges(expectedFileDiff: FileDiffMetadata): FileDiffMetadata | undefined;
+   protected loadFilesIfNecessary(): void;
+-  isLineRenderable(lineNumber: number): boolean;
++  protected getHunkExpansionState(): Map<number, HunkExpansionRegion>;
+   /**
+    * Invalidate layout after an edit session changed the rendered row set
+    * without a line-count change (a mid-session region change or the exit
+diff --git a/dist/components/VirtualizedFileDiff.js b/dist/components/VirtualizedFileDiff.js
+index 0d9ee99e6779ad118718f12fa940ec3ab72eecac..52ce01bcdde708116c5b580bbc9dbc6ebe3ac9ec 100644
+--- a/dist/components/VirtualizedFileDiff.js
++++ b/dist/components/VirtualizedFileDiff.js
+@@ -3,7 +3,7 @@ import { areObjectsEqual } from "../utils/areObjectsEqual.js";
+ import { areOptionsEqual } from "../utils/areOptionsEqual.js";
+ import { parseDiffFromFile } from "../utils/parseDiffFromFile.js";
+ import { computeVirtualFileMetrics, getVirtualFileHeaderRegion, getVirtualFilePaddingBottom } from "../utils/computeVirtualFileMetrics.js";
+-import { getExpandedRegion, getLeadingHunkSeparatorLayout, getTrailingExpandedRegion, getTrailingHunkSeparatorLayout, isAdditionLineRenderable } from "../utils/virtualDiffLayout.js";
++import { getExpandedRegion, getLeadingHunkSeparatorLayout, getTrailingExpandedRegion, getTrailingHunkSeparatorLayout } from "../utils/virtualDiffLayout.js";
+ import { areFilesEqual } from "../utils/areFilesEqual.js";
+ import { FILE_ANNOTATION_DOM_KEY, includesFileAnnotations, shouldRenderFileAnnotations } from "../utils/includesFileAnnotations.js";
+ import { areDiffTargetsEqual } from "../utils/areDiffTargetsEqual.js";
+@@ -363,23 +363,26 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 		super.cleanUp(recycle);
+ 	}
+ 	expandHunk = (hunkIndex, direction, expansionLineCountOverride) => {
+-		if (this.fileDiff == null) return;
++		this.applyHunkExpansionPlan([{
++			hunkIndex,
++			direction,
++			expansionLineCountOverride
++		}]);
++	};
++	applyHunkExpansionPlan(expansionPlan) {
++		if (this.fileDiff == null || expansionPlan.length === 0) return;
+ 		if (this.isAdvancedMode()) {
+ 			this.pendingExpansions ??= [];
+-			this.pendingExpansions.push({
+-				hunkIndex,
+-				direction,
+-				expansionLineCountOverride
+-			});
++			this.pendingExpansions.push(...expansionPlan);
+ 		} else {
+-			this.hunksRenderer.expandHunk(hunkIndex, direction, expansionLineCountOverride);
++			for (const expansion of expansionPlan) this.hunksRenderer.expandHunk(expansion.hunkIndex, expansion.direction, expansion.expansionLineCountOverride);
+ 			this.resetLayoutCache({ includeEstimatedHeights: true });
+ 			this.computeApproximateSize();
+ 		}
+ 		this.loadFilesIfNecessary();
+ 		this.forceRenderOverride = true;
+ 		this.virtualizer.instanceChanged(this, true);
+-	};
++	}
+ 	async handleFilesLoaded(expectedDiff, files) {
+ 		if (this.fileDiff !== expectedDiff || !expectedDiff.isPartial) return;
+ 		if (this.isAdvancedMode()) {
+@@ -436,13 +439,12 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 		}
+ 		super.loadFilesIfNecessary();
+ 	}
+-	isLineRenderable(lineNumber) {
+-		if (super.isLineRenderable(lineNumber)) return true;
++	getHunkExpansionState() {
++		const expandedHunks = super.getHunkExpansionState();
+ 		const { pendingExpansions } = this;
+-		const fileDiff = this.fileDiffCache;
+-		if (pendingExpansions == null || pendingExpansions.length === 0 || fileDiff == null) return false;
+-		const { expansionLineCount = 100, collapsedContextThreshold = 1 } = this.options;
+-		const staged = new Map(this.hunksRenderer.getExpandedHunksMap());
++		if (pendingExpansions == null || pendingExpansions.length === 0) return expandedHunks;
++		const { expansionLineCount = 100 } = this.options;
++		const staged = new Map(expandedHunks);
+ 		for (const expansion of pendingExpansions) {
+ 			const region = { ...staged.get(expansion.hunkIndex) ?? {
+ 				fromStart: 0,
+@@ -453,12 +455,7 @@ var VirtualizedFileDiff = class extends FileDiff {
+ 			if (expansion.direction === "down" || expansion.direction === "both") region.fromEnd += count;
+ 			staged.set(expansion.hunkIndex, region);
+ 		}
+-		return isAdditionLineRenderable({
+-			fileDiff,
+-			lineNumber,
+-			expandedHunks: staged,
+-			collapsedContextThreshold
+-		});
++		return staged;
+ 	}
+ 	/**
+ 	* Invalidate layout after an edit session changed the rendered row set

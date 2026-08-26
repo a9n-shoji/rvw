@@ -54,6 +54,7 @@ import {
   jsonRequest,
   type PlacementResponse,
 } from "../api.js";
+import { DIFF_NAVIGATION_CONTEXT_LINES } from "../diff-navigation.js";
 import {
   githubAttachmentAssetUrl,
   isExternalMarkdownHref,
@@ -876,6 +877,16 @@ export function DocumentViewer({
         return;
       }
       if (appliedNavigationRequest.current === navigationTarget.requestId) return;
+      if (
+        navigationTarget.endLine !== undefined &&
+        instance.revealRange(
+          navigationTarget.line,
+          navigationTarget.endLine,
+          DIFF_NAVIGATION_CONTEXT_LINES,
+        )
+      ) {
+        return;
+      }
       if (
         !instance.isLineRenderable(navigationTarget.line) &&
         instance.revealLine(navigationTarget.line)
