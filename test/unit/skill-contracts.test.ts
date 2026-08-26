@@ -34,6 +34,9 @@ describe("bundled Skill code-reference guidance", () => {
   it("gates HTML preview authoring on capability and keeps visuals static", () => {
     expect(walkthroughSkill).toContain("Require `walkthrough.htmlPreview`");
     expect(walkthroughSkill).toContain("Markdown or HTML `rvw-ref:` link");
+    expect(walkthroughSkill).toContain(
+      'use Markdown links in prose and `<a href="rvw-ref:<referenceId>">` links inside HTML previews',
+    );
     expect(walkthroughAuthoring).toContain("```html-preview");
     expect(walkthroughAuthoring).toContain("Never add JavaScript");
     expect(walkthroughAuthoring).toContain("Author an HTML fragment only");

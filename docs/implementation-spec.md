@@ -458,7 +458,7 @@ interface Walkthrough {
   CLI入力で両方を省略した場合は`null`へ正規化する。line rangeがある場合は文書内に収まることも検証する。
 - Markdown内のlink destinationとしてparseされた`rvw-ref:<referenceId>`を登録時に完全一致で検証し、
   typed reference buttonとして表示する。code blockやinline code内の文字列はlinkとして扱わない。
-- 全reference IDはMarkdown内の`rvw-ref:` linkまたは`diagramBindings`のvalueとして最低一度使う。
+- 全reference IDはMarkdownまたはHTML内の`rvw-ref:` link、または`diagramBindings`のvalueとして最低一度使う。
   binding keyは本文中のflowchart nodeまたはclass diagram classとして実在することも検証する。存在しない
   nodeへのbindingを含め、どちらからも実際に到達できないreferenceは、重複indexのないviewerでは
   開けないため登録を拒否する。

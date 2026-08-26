@@ -415,7 +415,7 @@ otherwise both are required and define an existing inclusive single-line or mult
 input fields are normalized to `null`, and saved references always return both fields as numbers or `null`. Markdown uses
 `rvw-ref:<referenceId>` links. Every `diagramBindings` value must name a supplied reference, and its
 key must identify a node or class that actually occurs in a flowchart or classDiagram fence. Every
-supplied reference must be used by at least one Markdown link or valid diagram binding. Unused or
+supplied reference must be used by at least one Markdown or HTML `rvw-ref:` link or valid diagram binding. Unused or
 phantom-bound references are rejected because the viewer has no separate reference index.
 
 A fenced code block whose language is exactly `html-preview` is rendered as a static HTML/CSS visual.
