@@ -120,6 +120,34 @@ describe("Walkthrough HTML preview", () => {
     expect(rendered.html).toContain('fill="url(#paint)"');
   });
 
+  it("keeps accessible reusable SVG symbols and arrow markers", () => {
+    const rendered = renderWalkthroughHtmlPreview(
+      [
+        '<svg aria-label="Request flow" viewBox="0 0 160 40">',
+        "  <title>Request flow</title>",
+        "  <desc>A request moves from the client to the gateway.</desc>",
+        "  <defs>",
+        '    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">',
+        '      <path d="M0,0 L8,4 L0,8 Z"></path>',
+        "    </marker>",
+        '    <symbol id="client"><circle cx="5" cy="5" r="4"></circle></symbol>',
+        "  </defs>",
+        '  <use href="#client" x="4" y="15"></use>',
+        '  <line x1="14" y1="20" x2="145" y2="20" marker-end="url(#arrow)"></line>',
+        "</svg>",
+      ].join("\n"),
+      4,
+    );
+
+    expect(rendered.html).toContain("<title ");
+    expect(rendered.html).toContain("<desc ");
+    expect(rendered.html).toContain("<marker");
+    expect(rendered.html).toContain('markerWidth="8"');
+    expect(rendered.html).toContain("<symbol");
+    expect(rendered.html).toContain('<use href="#client"');
+    expect(rendered.html).toContain('marker-end="url(#arrow)"');
+  });
+
   it("replaces unresolved repository images without leaving a requestable src", () => {
     const rendered = renderWalkthroughHtmlPreview(
       '<img src="docs/flow.png" alt="Flow diagram">',

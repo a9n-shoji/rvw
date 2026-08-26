@@ -353,6 +353,9 @@ export function WalkthroughHtmlPreview({
       }
       textRangesRef.current = textRanges;
 
+      const actionLeft = (desired: number): number =>
+        Math.max(48, Math.min(frameShell.clientWidth - 48, desired));
+
       const selectionRange = (): { range: MarkdownSourceRange; rect: DOMRect } | null => {
         const selection = document.getSelection();
         if (
@@ -402,8 +405,9 @@ export function WalkthroughHtmlPreview({
         const frameShellRect = frameShell.getBoundingClientRect();
         setOverlayAction({
           range: selected.range,
-          left:
+          left: actionLeft(
             iframeRect.left - frameShellRect.left + selected.rect.left + selected.rect.width / 2,
+          ),
           top: iframeRect.top - frameShellRect.top + selected.rect.bottom + 8,
           label: "選択したテキストへコメント",
         });
@@ -423,13 +427,33 @@ export function WalkthroughHtmlPreview({
         const frameShellRect = frameShell.getBoundingClientRect();
         setOverlayAction({
           range,
-          left: iframeRect.left - frameShellRect.left + rect.right,
+          left: actionLeft(iframeRect.left - frameShellRect.left + rect.right),
           top: iframeRect.top - frameShellRect.top + rect.top,
           label: "このvisualへコメント",
         });
       };
 
-      const onPointerLeave = (): void => setOverlayAction(null);
+      const onKeyDown = (event: KeyboardEvent): void => {
+        if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+        const key = event.key.toLowerCase();
+        const isPaneFind = key === "f" && !event.shiftKey;
+        const isQuickOpen = key === "p" && !event.shiftKey;
+        const isFullTextSearch = key === "f" && event.shiftKey;
+        if (!isPaneFind && !isQuickOpen && !isFullTextSearch) return;
+        const relayed = new KeyboardEvent("keydown", {
+          key: event.key,
+          code: event.code,
+          location: event.location,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          shiftKey: event.shiftKey,
+          altKey: event.altKey,
+          repeat: event.repeat,
+          bubbles: true,
+          cancelable: true,
+        });
+        if (!window.document.dispatchEvent(relayed)) event.preventDefault();
+      };
 
       const onClick = (event: MouseEvent): void => {
         const target = eventElement(event.target);
@@ -459,9 +483,18 @@ export function WalkthroughHtmlPreview({
       document.addEventListener("selectionchange", setSelectionAction);
       document.addEventListener("pointerup", setSelectionAction);
       document.addEventListener("pointermove", onPointerMove);
-      document.addEventListener("pointerleave", onPointerLeave);
+      document.addEventListener("keydown", onKeyDown);
       document.addEventListener("click", onClick, true);
       document.addEventListener("toggle", updateLayout, true);
+      let layoutFrame: number | null = null;
+      const scheduleLayout = (): void => {
+        if (layoutFrame !== null) return;
+        layoutFrame = window.requestAnimationFrame(() => {
+          layoutFrame = null;
+          updateLayout();
+        });
+      };
+      document.addEventListener("scroll", scheduleLayout, true);
       const images = [...document.images];
       for (const image of images) {
         image.addEventListener("load", updateLayout);
@@ -477,9 +510,11 @@ export function WalkthroughHtmlPreview({
         document.removeEventListener("selectionchange", setSelectionAction);
         document.removeEventListener("pointerup", setSelectionAction);
         document.removeEventListener("pointermove", onPointerMove);
-        document.removeEventListener("pointerleave", onPointerLeave);
+        document.removeEventListener("keydown", onKeyDown);
         document.removeEventListener("click", onClick, true);
         document.removeEventListener("toggle", updateLayout, true);
+        document.removeEventListener("scroll", scheduleLayout, true);
+        if (layoutFrame !== null) window.cancelAnimationFrame(layoutFrame);
         for (const image of images) {
           image.removeEventListener("load", updateLayout);
           image.removeEventListener("error", updateLayout);
@@ -547,7 +582,11 @@ export function WalkthroughHtmlPreview({
         <span>HTML preview</span>
         <span>textまたはvisualを選択してコメント</span>
       </div>
-      <div className="walkthrough-html-preview-frame-shell" ref={frameShellRef}>
+      <div
+        className="walkthrough-html-preview-frame-shell"
+        ref={frameShellRef}
+        onPointerLeave={() => setOverlayAction(null)}
+      >
         <iframe
           ref={iframeRef}
           title={`Walkthrough HTML preview L${fenceRange.startLine}`}

@@ -28,7 +28,7 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   const body = [
     "```html-preview",
     "<style>",
-    "  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }",
+    "  .cards { display: grid; min-width: 900px; grid-template-columns: 1fr 1fr; gap: 12px; }",
     "  .card { padding: 16px; border: 1px solid var(--rvw-border); border-radius: 8px; }",
     "  .card:hover { border-color: var(--rvw-accent); }",
     "</style>",
@@ -40,6 +40,7 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
     '  <section class="card" data-rvw-commentable>',
     "    <h2>After</h2>",
     '    <p><a href="rvw-ref:handler">AuthGateway に集約する</a></p>',
+    '    <button type="button">Preview control</button>',
     "  </section>",
     "</main>",
     '<figure><img src="docs/order-lifecycle.svg" alt="Order lifecycle"><figcaption>Exact source asset</figcaption></figure>',
@@ -93,7 +94,10 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   expect(contentSecurityPolicy).toContain("form-action 'none'");
 
   const leftPane = page.getByRole("region", { name: "左のコードペイン" });
-  await leftPane.focus();
+  const previewLink = frame.getByRole("link", { name: "AuthGateway に集約する" });
+  const previewControl = frame.getByRole("button", { name: "Preview control" });
+  await previewControl.click();
+  await expect(previewControl).toBeFocused();
   await page.keyboard.press("Control+F");
   const paneFind = leftPane.getByRole("search", { name: "左ペイン内を検索" });
   const paneFindInput = paneFind.getByRole("textbox", { name: "ペイン内を検索" });
@@ -121,14 +125,24 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
     )
     .toBe(0);
 
-  await frame.getByRole("link", { name: "AuthGateway に集約する" }).click();
+  await previewControl.click();
+  await page.keyboard.press("Control+P");
+  const quickOpen = page.getByRole("dialog", { name: "ファイルを開く" });
+  await expect(quickOpen).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(quickOpen).toHaveCount(0);
+
+  await previewControl.click();
+  await page.keyboard.press("Control+Shift+F");
+  await expect(page.getByRole("textbox", { name: "全文検索" })).toBeFocused();
+
+  await previewLink.click();
   await expect(
     page.getByRole("tab", { name: "src/application/orders/create-order.ts" }),
   ).toHaveAttribute("aria-selected", "true");
   await page.getByRole("tab", { name: title }).click();
 
-  const afterText = frame.getByRole("link", { name: "AuthGateway に集約する" });
-  await afterText.evaluate((element) => {
+  await previewLink.evaluate((element) => {
     const text = [...element.childNodes].find((node) => node instanceof Text);
     if (!(text instanceof Text)) throw new Error("Expected preview text node.");
     const range = element.ownerDocument.createRange();
@@ -139,18 +153,43 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
     element.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
   });
   const commentAction = page.locator(".walkthrough-html-comment-action");
+  await expect(commentAction).toHaveAccessibleName("選択したテキストへコメント");
+  await previewLink.evaluate((element) => {
+    element.ownerDocument.getSelection()?.removeAllRanges();
+  });
+  await expect(commentAction).toHaveCount(0);
+
+  const afterHeading = frame.getByRole("heading", { name: "After" });
+  await afterHeading.hover();
   await expect(commentAction).toBeVisible();
-  await commentAction.click();
+  const [visualActionSourceBox, commentActionBox] = await Promise.all([
+    afterHeading.boundingBox(),
+    commentAction.boundingBox(),
+  ]);
+  expect(visualActionSourceBox).not.toBeNull();
+  expect(commentActionBox).not.toBeNull();
+  await page.mouse.move(
+    visualActionSourceBox!.x + visualActionSourceBox!.width / 2,
+    visualActionSourceBox!.y + visualActionSourceBox!.height / 2,
+  );
+  await page.mouse.move(
+    commentActionBox!.x + commentActionBox!.width / 2,
+    commentActionBox!.y + commentActionBox!.height / 2,
+    { steps: 8 },
+  );
+  await expect(commentAction).toBeVisible();
+  await page.mouse.down();
+  await page.mouse.up();
   const composer = shell.locator(".walkthrough-html-comment-composer");
   await expect(composer).toBeVisible();
-  await expect(composer.getByRole("textbox")).toHaveAccessibleName("選択したテキストへコメント");
-  const [selectionBox, composerBox] = await Promise.all([
-    afterText.boundingBox(),
+  await expect(composer.getByRole("textbox")).toHaveAccessibleName("このvisualへコメント");
+  const [visualBox, composerBox] = await Promise.all([
+    afterHeading.boundingBox(),
     composer.boundingBox(),
   ]);
-  expect(selectionBox).not.toBeNull();
+  expect(visualBox).not.toBeNull();
   expect(composerBox).not.toBeNull();
-  expect(Math.abs(composerBox!.y - selectionBox!.y)).toBeLessThan(120);
+  expect(Math.abs(composerBox!.y - visualBox!.y)).toBeLessThan(120);
   const commentBody = "Gatewayへの集約境界を確認してください。";
   await composer.getByRole("textbox").fill(commentBody);
   await composer.getByRole("textbox").press("Control+Enter");
@@ -161,6 +200,23 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   ).toHaveCount(0);
   const marker = shell.locator(".walkthrough-html-marker").last();
   await expect(marker).toBeVisible();
+  await frame.locator("body").evaluate(() => window.scrollTo({ left: 0 }));
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  const markerBeforeScroll = await marker.boundingBox();
+  expect(markerBeforeScroll).not.toBeNull();
+  await frame.locator("body").evaluate(() => window.scrollTo({ left: 140 }));
+  await expect
+    .poll(async () => frame.locator("body").evaluate(() => window.scrollX))
+    .toBeGreaterThan(40);
+  const iframeScrollLeft = await frame.locator("body").evaluate(() => window.scrollX);
+  await expect
+    .poll(async () => (await marker.boundingBox())?.x ?? Number.POSITIVE_INFINITY)
+    .toBeLessThan(markerBeforeScroll!.x - iframeScrollLeft + 4);
   await marker.click();
   const commentsToggle = page.locator(".sidebar-stack--comments > .sidebar-stack-toggle");
   await expect(commentsToggle).toHaveAttribute("aria-expanded", "true");
@@ -168,6 +224,7 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
     page.locator(".comment-sidebar .comment-thread").filter({ hasText: commentBody }),
   ).toBeVisible();
 
+  await frame.locator("body").evaluate(() => window.scrollTo({ left: 0 }));
   await frame.getByRole("heading", { name: "Before" }).hover();
   await expect(commentAction).toBeVisible();
 });

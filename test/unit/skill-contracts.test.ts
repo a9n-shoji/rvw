@@ -36,7 +36,10 @@ describe("bundled Skill code-reference guidance", () => {
     expect(walkthroughSkill).toContain("Markdown or HTML `rvw-ref:` link");
     expect(walkthroughAuthoring).toContain("```html-preview");
     expect(walkthroughAuthoring).toContain("Never add JavaScript");
+    expect(walkthroughAuthoring).toContain("Author an HTML fragment only");
+    expect(walkthroughAuthoring).toContain("Put `<style>` directly inside");
     expect(walkthroughAuthoring).toContain("data-rvw-commentable");
+    expect(walkthroughAuthoring).toContain("meaningful `aria-label`");
     expect(walkthroughAuthoring).toContain("repository root");
   });
 });

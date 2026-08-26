@@ -48,6 +48,8 @@ one HTML preview when that is the clearest requested format; it remains a Markdo
 
 Keep HTML visuals static and self-contained:
 
+- Author an HTML fragment only: do not include `<!doctype>`, `<html>`, `<head>`, or `<body>`.
+  Put `<style>` directly inside the `html-preview` fence before the visual markup.
 - Write HTML and CSS only. Never add JavaScript, event handlers, forms, frames, external stylesheets,
   fonts, images, or other network resources.
 - Use inline `<svg>` for vector art. Use `<img src="docs/image.png">` only for an existing image at the
@@ -59,6 +61,8 @@ Keep HTML visuals static and self-contained:
 - Add `data-rvw-commentable` to cards, flow nodes, comparison panes, or other visual groups that a
   reviewer may need to question. Images, SVGs, figures, tables, sections, articles, asides, and details
   are commentable automatically.
+- Give non-text visuals a visible caption or a meaningful `aria-label` so both the reviewer and a later
+  Agent session can recover what the visual represents from the Markdown source.
 - Pretty-print the HTML. Keep each semantic element on its own source line when practical so comments
   map to useful Walkthrough line ranges. Never minify authored HTML.
 - Do not add decoration merely because HTML is available. For an ELI5 request, reduce prose and favor

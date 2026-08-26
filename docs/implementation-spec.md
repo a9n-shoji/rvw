@@ -487,7 +487,10 @@ interface Walkthrough {
 - HTML要素とtext selectionは生成DOM identityを保存せず、parser由来のWalkthrough source line rangeへ戻す。
   新規comment composerは選択したtextまたはvisualの近くへparent overlayとして表示し、既存commentはvisual
   markerからcanonicalなComments sidebar threadをactivateする。HTML内部rangeのthreadを外側Markdown blockの
-  inline threadとして重複表示しない。本文更新後のmappingとOutdatedは通常のWalkthrough line comment規則に従う。
+  inline threadとして重複表示しない。overlay actionはiframeからparent overlayへpointerを移動しても維持し、
+  markerはiframe内部scrollにも追従する。本文更新後のmappingとOutdatedは通常のWalkthrough line comment規則に従う。
+- same-origin iframe documentはPane Findの検索・highlight対象へ登録し、iframe内にfocusがある時の
+  Cmd/Ctrl+F、Cmd/Ctrl+P、Cmd/Ctrl+Shift+Fをparentの同じglobal shortcutへrelayする。
 - 人間がreferenceを選んだ時だけ、そのexact `sourceOid + path`を事前確認してdocument workspaceへ開く。
   このnavigationはglobalなcommit範囲と表示controlを変更しない。exact sourceのcommitまたはpathが
   missingならtabを開かず一時chipでリンク切れを示し、通信や一時的な取得失敗はリンク切れと区別する。
