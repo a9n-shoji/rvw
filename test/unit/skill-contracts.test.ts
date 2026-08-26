@@ -3,6 +3,11 @@ import { describe, expect, it } from "vitest";
 
 const rvwSkill = readFileSync("skills/rvw/SKILL.md", "utf8");
 const watchSkill = readFileSync("skills/rvw-watch-comments/SKILL.md", "utf8");
+const walkthroughSkill = readFileSync("skills/rvw-walkthrough/SKILL.md", "utf8");
+const walkthroughAuthoring = readFileSync(
+  "skills/rvw-walkthrough/references/walkthrough-authoring.md",
+  "utf8",
+);
 
 describe("bundled Skill code-reference guidance", () => {
   it("makes exact code evidence the default for concrete review outcomes", () => {
@@ -24,5 +29,20 @@ describe("bundled Skill code-reference guidance", () => {
     expect(outcomeExample).toContain('"references"');
     expect(outcomeExample).toContain('"pushStatus"');
     expect(outcomeExample).not.toContain('"commitOid"');
+  });
+
+  it("gates HTML preview authoring on capability and keeps visuals static", () => {
+    expect(walkthroughSkill).toContain("Require `walkthrough.htmlPreview`");
+    expect(walkthroughSkill).toContain("Markdown or HTML `rvw-ref:` link");
+    expect(walkthroughSkill).toContain(
+      'use Markdown links in prose and `<a href="rvw-ref:<referenceId>">` links inside HTML previews',
+    );
+    expect(walkthroughAuthoring).toContain("```html-preview");
+    expect(walkthroughAuthoring).toContain("Never add JavaScript");
+    expect(walkthroughAuthoring).toContain("Author an HTML fragment only");
+    expect(walkthroughAuthoring).toContain("Put `<style>` directly inside");
+    expect(walkthroughAuthoring).toContain("data-rvw-commentable");
+    expect(walkthroughAuthoring).toContain("meaningful `aria-label`");
+    expect(walkthroughAuthoring).toContain("repository root");
   });
 });

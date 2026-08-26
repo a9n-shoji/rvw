@@ -19,8 +19,9 @@ Use only the `rvw` CLI protocol. Never access the SQLite database directly or co
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
 2. Require `protocolVersion` 4, `agent.transport`, and the `walkthrough.read` capability plus every publish, update, or delete capability needed for the task.
-3. Run `rvw agent status --json`. Read `socketPath`, `connectionResult`, `selectedDatabasePath`, `selectedTransport`, and `fallbackReason`. If `selectedTransport` is `unavailable`, stop and report the diagnostic; an explicitly configured `RVW_AGENT_SOCKET_PATH` never falls back to direct database access. Otherwise use the reported transport without overriding it.
-4. Require local access to the saved repository. When a normally launched rvw viewer is running, the
+3. Require `walkthrough.htmlPreview` before publishing or updating any `html-preview` fence. If it is absent, use Markdown or Mermaid instead; never send unsupported HTML preview syntax.
+4. Run `rvw agent status --json`. Read `socketPath`, `connectionResult`, `selectedDatabasePath`, `selectedTransport`, and `fallbackReason`. If `selectedTransport` is `unavailable`, stop and report the diagnostic; an explicitly configured `RVW_AGENT_SOCKET_PATH` never falls back to direct database access. Otherwise use the reported transport without overriding it.
+5. Require local access to the saved repository. When a normally launched rvw viewer is running, the
    CLI can route database reads and writes through its user-only Unix socket; otherwise direct rvw data
    access is required. `RVW_DATABASE_PATH` selects an explicitly managed database; the CLI uses a
    running viewer only when it reports that same database.
@@ -43,10 +44,11 @@ Read the complete current body, source OID, diagram bindings, references, and Pu
 4. For a change-focused Walkthrough, inspect the diff and enough surrounding code to identify the change's center and connections. For a standalone subject, inspect its central responsibility, contract, entry points, and connections without inventing a before/after story. Include unchanged callers, callees, contracts, models, or tests when they materially reduce the reader's exploration cost; do not include them merely because they are related.
 5. Compose the smallest useful reading path in the order that best builds the mental model, rather than file order or diff order. Connect each step to concrete code, explain why it comes next, expose meaningful uncertainty, and leave useful starting points for exploration beyond the Walkthrough.
 6. Generate the completed Walkthrough in one pass unless the user explicitly requests an interactive process. Do not ask for approval of an intermediate review plan.
-7. Link important code claims with Markdown URLs of the form `rvw-ref:<referenceId>`.
+7. Link important code claims with `rvw-ref:<referenceId>`; use Markdown links in prose and `<a href="rvw-ref:<referenceId>">` links inside HTML previews.
 8. Define every reference with a repository-relative path and, when useful, an inclusive line range at the chosen `sourceOid`. Prefer the smallest meaningful multi-line range that lets the reader verify a code block or flow; include the signature and relevant body instead of pointing only at its first line. Use a single-line range only for a genuinely line-local claim such as one constant or declaration. Omit both `startLine` and `endLine` when the claim concerns the file as a whole. Keep IDs unique and stable within the publication.
 9. Add Mermaid only when it helps the explanation. Bind only elements that should open code. rvw renders Mermaid-supported diagram types, while interactive binding is currently guaranteed for flowchart nodes and class-diagram classes.
-10. Ensure every supplied reference is used by at least one Markdown `rvw-ref:` link or a Mermaid binding whose key is an actual flowchart node or classDiagram class in the body, and ensure every link and binding names a supplied reference. Never invent a binding key merely to mark a reference as used. For a line reference, supply both `startLine` and `endLine`; for a file reference, omit both. Let the CLI reject invalid commits, paths, ranges, IDs, unused references, or bindings; never silently omit a failed reference.
+10. Use `html-preview` only when spatial layout, an ELI5 visual, a UI mock, or a visual comparison materially lowers comprehension cost. Follow the HTML visual rules in the authoring guide; do not generate JavaScript or network resources.
+11. Ensure every supplied reference is used by at least one Markdown or HTML `rvw-ref:` link or a Mermaid binding whose key is an actual flowchart node or classDiagram class in the body, and ensure every link and binding names a supplied reference. Never invent a binding key merely to mark a reference as used. For a line reference, supply both `startLine` and `endLine`; for a file reference, omit both. Let the CLI reject invalid commits, paths, ranges, IDs, unused references, or bindings; never silently omit a failed reference.
 
 ## Send JSON without interactive input
 

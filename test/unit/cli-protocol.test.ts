@@ -190,6 +190,7 @@ describe("CLI protocol discovery", () => {
         "walkthrough.publish",
         "walkthrough.update",
         "walkthrough.delete",
+        "walkthrough.htmlPreview",
       ],
     });
     expect(

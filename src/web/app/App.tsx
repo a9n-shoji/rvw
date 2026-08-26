@@ -615,6 +615,19 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const handleCommentActiveChange = useCallback((commentId: string, active: boolean): void => {
     setActiveCommentId((current) => (active ? commentId : current === commentId ? null : current));
   }, []);
+  const activateSidebarComment = useCallback((commentId: string): void => {
+    setActiveCommentId(commentId);
+    setCommentsExpanded(true);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLElement>(
+            `.comment-sidebar [data-comment-id="${CSS.escape(commentId)}"]`,
+          )
+          ?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "nearest" });
+      });
+    });
+  }, []);
   const attemptedInitialRefresh = useRef(false);
   const commitRangeTouched = useRef(false);
   const commitRangeInteractionRevision = useRef(0);
@@ -2140,6 +2153,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
                 onNavigationApplied={(requestId) => markLineNavigationApplied(paneId, requestId)}
                 themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}
+                onActivateComment={activateSidebarComment}
                 onOpenReference={openWalkthroughReferenceFromInteraction}
                 onOpenCommentCodeReference={openCommentCodeReferenceFromInteraction}
                 onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}

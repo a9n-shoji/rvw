@@ -94,15 +94,19 @@ function searchableNodesWithin(
   );
   let current: Node | null;
   while ((current = walker.nextNode())) {
-    if (current instanceof Text) {
-      if (!current.data) continue;
-      const parent = current.parentElement;
+    if (current.nodeType === Node.TEXT_NODE) {
+      const text = current as Text;
+      if (!text.data) continue;
+      const parent = text.parentElement;
       if (!parent || parent.closest(paneFindIgnoredSelector)) continue;
-      nodes.push(current);
+      nodes.push(text);
       continue;
     }
-    if (includeLineBreaks && current instanceof Element && current.tagName === "BR") {
-      if (!current.closest(paneFindIgnoredSelector)) nodes.push(current);
+    if (includeLineBreaks && current.nodeType === Node.ELEMENT_NODE) {
+      const element = current as Element;
+      if (element.tagName === "BR" && !element.closest(paneFindIgnoredSelector)) {
+        nodes.push(element);
+      }
     }
   }
   return nodes;
@@ -110,7 +114,7 @@ function searchableNodesWithin(
 
 function textNodesWithin(container: Element): Text[] {
   return searchableNodesWithin(container, false).filter(
-    (node): node is Text => node instanceof Text,
+    (node): node is Text => node.nodeType === Node.TEXT_NODE,
   );
 }
 
@@ -127,15 +131,16 @@ function lightDomTextGroups(surface: HTMLElement): Text[][] {
       if (!parent) continue;
       const block = parent.closest(paneFindBlockSelector);
       const key = block && root.contains(block) ? block : parent;
-      if (node instanceof Element) {
+      if (node.nodeType === Node.ELEMENT_NODE) {
         currentGroups.delete(key);
         continue;
       }
+      const text = node as Text;
       const existing = currentGroups.get(key);
       if (existing) {
-        existing.push(node);
+        existing.push(text);
       } else {
-        const group = [node];
+        const group = [text];
         currentGroups.set(key, group);
         groups.push(group);
       }
@@ -163,6 +168,56 @@ function shadowDomTextGroups(surface: HTMLElement): Text[][] {
     }
   }
   return groups;
+}
+
+export function paneFindChildDocuments(surface: HTMLElement): Document[] {
+  const documents: Document[] = [];
+  for (const frame of surface.querySelectorAll<HTMLIFrameElement>(
+    "iframe[data-pane-find-child-document]",
+  )) {
+    try {
+      const document = frame.contentDocument;
+      if (document?.documentElement) documents.push(document);
+    } catch {
+      // Cross-origin documents are never searchable children.
+    }
+  }
+  return documents;
+}
+
+function outerDocumentAnchor(node: Node, surface: HTMLElement): Node {
+  let current = node;
+  while (current.ownerDocument && current.ownerDocument !== surface.ownerDocument) {
+    const frame = current.ownerDocument.defaultView?.frameElement;
+    if (!frame) break;
+    current = frame;
+  }
+  const root = current.getRootNode();
+  return root.nodeType === Node.DOCUMENT_FRAGMENT_NODE && "host" in root
+    ? (root as ShadowRoot).host
+    : current;
+}
+
+function orderedTextGroups(surface: HTMLElement): Text[][] {
+  const unordered = [...lightDomTextGroups(surface), ...shadowDomTextGroups(surface)];
+  for (const document of paneFindChildDocuments(surface)) {
+    const root = document.querySelector<HTMLElement>("[data-pane-find-text]");
+    if (root) unordered.push(...lightDomTextGroups(root), ...shadowDomTextGroups(root));
+  }
+  return unordered
+    .map((nodes, sequence) => ({
+      nodes,
+      sequence,
+      anchor: outerDocumentAnchor(nodes[0]!, surface),
+    }))
+    .sort((left, right) => {
+      if (left.anchor === right.anchor) return left.sequence - right.sequence;
+      const position = left.anchor.compareDocumentPosition(right.anchor);
+      if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return left.sequence - right.sequence;
+    })
+    .map(({ nodes }) => nodes);
 }
 
 function rangeAtOffsets(nodes: readonly Text[], start: number, end: number): Range | null {
@@ -203,7 +258,7 @@ export function findPaneRanges(
     return { ranges, invalidRegularExpression: true };
   }
   let invalidRegularExpression = false;
-  const groups = [...lightDomTextGroups(surface), ...shadowDomTextGroups(surface)];
+  const groups = orderedTextGroups(surface);
   for (const nodes of groups) {
     const text = nodes.map((node) => node.data).join("");
     const result = findPaneTextMatches(text, query, options);
