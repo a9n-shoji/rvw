@@ -146,11 +146,13 @@ live確認、resetはClosed/Merged後もGitHub metadataを取得し、最後に�
 ローカル表示はPRの現在状態やnetwork接続に依存しない。
 `createdAt`と`updatedAt`はGitHub上のPR日時としてcacheする。既存DBで`createdAt`が未取得の行は
 ローカル登録日時で補わず`NULL`のまま表示し、次回の通常同期でだけ埋める。一覧表示を契機にGitHubへ
-一括問い合わせしない。利用者が一覧の一括更新buttonを押した場合だけ、全登録PRの`state`と`isDraft`を
-GitHubへ問い合わせてcacheする。この操作はcommit、PR title/body、作成／更新日時を同期しない。個別PRの
+一括問い合わせしない。利用者が一覧の一括更新buttonを押した場合だけ、保存済みPRのうち最後に成功した
+syncで`state=OPEN`または状態未取得のPRについて、`state`と`isDraft`をGitHubへ問い合わせてcacheする。
+Closed / Mergedは通常の一括更新対象に含めず、個別refresh、`pr sync`、resetで再取得した場合は現在のstateへ
+更新する。この操作はcommit、PR title/body、作成／更新日時を同期しない。個別PRの
 失敗は成功分の反映を妨げず、対象とerrorを一覧へ返す。GitHub上のDraftは独立stateではなく`state=OPEN`かつ`isDraft=true`なので、
 DBでも別々に保持し、一覧ではOpen / Draft / Closed / Mergedの一つへ合成して表示する。既存DBで状態が
-未取得の行はbadgeを表示せず、通常同期時にだけ埋める。
+未取得の行はbadgeを表示せず、一括status更新または通常同期で取得した際に埋める。
 
 ### 4.2 Local-first open
 
@@ -1177,8 +1179,10 @@ HTTP/CLIは同じapplication serviceを使用し、transportへbusiness logicを
 Pull Request一覧APIは既定50件・最大100件のoffset paginationとし、`total`、`hasMore`、`nextOffset`を返す。
 `hideClosedOrMerged`は既定`true`で、最後に成功したsyncで保存した`github_state`がClosedまたはMergedの行だけを
 pagination前に除外する。Open、Draft、および状態未取得のlegacy行は表示し、`false`では全件を返す。
-一覧表示を理由にGitHubへ通信しない。一括status更新は明示的なPOSTだけで実行し、最大4件を並列取得する。
-成功したstatusは一つのSQLite transactionで反映し、部分失敗を結果へ含める。
+一覧表示を理由にGitHubへ通信しない。一括status更新は明示的なPOSTだけで実行し、`github_state = 'OPEN' OR
+github_state IS NULL`の保存済みPRだけを最大4件並列で取得する。対象がなければGitHub認証も行わない。
+成功したstatusは一つのSQLite transactionで反映し、部分失敗を結果へ含める。`attempted`、`updated`、
+`failures`は全登録件数ではなく、この同期対象についての件数と結果を表す。
 各行はPR identity、title、GitHubの作成／更新日時、未解決／解決済みcomment数、Walkthrough数だけを持つ
 SQLite専用read modelとする。Git commitを読む`getPullRequestView()`は呼ばず、先に一覧1ページを絞ってから
 その行だけのcountをaggregate queryで取得し、PRごとのN+1 queryを作らない。順序は
@@ -1192,7 +1196,7 @@ URLに`pullRequestId`がない場合はuser-global SQLiteへ登録済みのPull 
 一行にまとめ、未解決comment数は`unresolved`と表示する。PR titleは省略せず、必要な高さまで複数行に
 折り返して全文を表示する。GitHub更新日時の新しい順であることを明示し、
 Closed / Mergedを非表示にするcheckboxは既定ONとする。状態未取得のlegacy行はbadgeなしで表示する。
-全登録PRのcached statusを明示的に更新するbuttonをfilterの隣へ置き、実行中、成功件数、失敗件数と
+Openまたは状態未取得の登録済みPRのcached statusを明示的に更新するbuttonをfilterの隣へ置き、実行中、成功件数、失敗件数と
 失敗対象を表示する。画面表示やfilter変更だけではGitHubへ問い合わせない。一括更新で現在のpagination
 offsetが範囲外になった場合だけ、最後の有効pageへ移動する。
 filter後の0件は解除方法を示し、全件表示でも0件なら
@@ -1316,7 +1320,7 @@ Unit:
 - Walkthrough schema、URI、Markdown reference / HTML preview validation、行comment placement
 - DB migration 001→current
 - Pull Request一覧のGitHub更新日時順、stable tie-breaker、aggregate count、Closed / Merged filter適用後の
-  pagination、既存行の不明な作成日時と状態、明示操作による一括status更新と部分失敗
+  pagination、既存行の不明な作成日時と状態、Open／状態未取得だけを対象とする明示的な一括status更新と部分失敗
 
 Integration（実git + fake GitHub）:
 

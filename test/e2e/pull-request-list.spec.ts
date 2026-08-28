@@ -91,7 +91,7 @@ test("opens the Pull Request list in a new tab from a modified logo click", asyn
   await listPage.close();
 });
 
-test("refreshes every saved Pull Request status only after an explicit click", async ({
+test("refreshes eligible saved Pull Request statuses only after an explicit click", async ({
   page,
   request,
 }) => {

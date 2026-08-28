@@ -98,7 +98,7 @@ describe("RvwService commit workflow", () => {
     expect(database.getChangeSequence()).toBe(changeSequence);
   });
 
-  it("refreshes cached GitHub statuses in bulk and preserves content on partial failure", async () => {
+  it("refreshes the Open status working set and preserves content on partial failure", async () => {
     const { repository, base, firstHead, fake, database, service } = setup();
     const opened = await service.openPullRequest(undefined, repository);
     const secondGithub: GitHubPullRequest = {
@@ -107,6 +107,7 @@ describe("RvwService commit workflow", () => {
       url: "https://github.com/acme/review-repo/pull/8",
       title: "Second cached title",
       headOid: firstHead,
+      isDraft: true,
     };
     const second = database.upsertPullRequest(
       secondGithub,
@@ -116,10 +117,44 @@ describe("RvwService commit workflow", () => {
       },
       base,
     );
+    const closed = database.upsertPullRequest(
+      {
+        ...secondGithub,
+        owner: "closed",
+        number: 9,
+        url: "https://github.com/closed/review-repo/pull/9",
+        title: "Closed cached title",
+        state: "CLOSED",
+        isDraft: false,
+      },
+      {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      base,
+    );
+    const merged = database.upsertPullRequest(
+      {
+        ...secondGithub,
+        owner: "merged",
+        number: 10,
+        url: "https://github.com/merged/review-repo/pull/10",
+        title: "Merged cached title",
+        state: "MERGED",
+        isDraft: false,
+      },
+      {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      base,
+    );
+    const requestedReferences: string[] = [];
     const statusGithub: GitHubPort = {
       doctor: () => Promise.resolve({ version: "gh fake", authenticated: true }),
       getPullRequest: () => Promise.reject(new Error("not used")),
       getPullRequestStatuses(references) {
+        requestedReferences.push(...references);
         return Promise.resolve(
           references.map((reference) =>
             reference === opened.pullRequest.url
@@ -149,6 +184,7 @@ describe("RvwService commit workflow", () => {
         },
       ],
     });
+    expect(requestedReferences.sort()).toEqual([opened.pullRequest.url, second.url].sort());
     expect(database.getPullRequest(opened.pullRequest.id)).toMatchObject({
       latestTitle: "Initial review",
       latestBody: "Please review.",
@@ -159,8 +195,40 @@ describe("RvwService commit workflow", () => {
     expect(database.getPullRequest(second.id)).toMatchObject({
       latestTitle: "Second cached title",
       githubState: "OPEN",
+      githubIsDraft: true,
+    });
+    expect(database.getPullRequest(closed.id)).toMatchObject({
+      latestTitle: "Closed cached title",
+      githubState: "CLOSED",
+    });
+    expect(database.getPullRequest(merged.id)).toMatchObject({
+      latestTitle: "Merged cached title",
+      githubState: "MERGED",
     });
     expect(database.getChangeSequence()).toBe(changeSequence + 1);
+  });
+
+  it("skips GitHub when no saved Pull Request needs a status refresh", async () => {
+    const { repository, database, service } = setup("rvw-empty-status-working-set-");
+    const opened = await service.openPullRequest(undefined, repository);
+    database.updatePullRequestGitHubStatuses([
+      { pullRequestId: opened.pullRequest.id, state: "CLOSED", isDraft: false },
+    ]);
+    let githubCalled = false;
+    const statusGithub: GitHubPort = {
+      doctor: () => Promise.resolve({ version: "gh fake", authenticated: true }),
+      getPullRequest: () => Promise.reject(new Error("not used")),
+      getPullRequestStatuses: () => {
+        githubCalled = true;
+        return Promise.reject(new Error("must not query GitHub"));
+      },
+      getAttachment: () => Promise.reject(new Error("not used")),
+    };
+
+    await expect(
+      new RvwService(database, new GitClient(), statusGithub).refreshPullRequestStatuses(),
+    ).resolves.toEqual({ attempted: 0, updated: 0, failures: [] });
+    expect(githubCalled).toBe(false);
   });
 
   it("uses commits as history, keeps PR markdown latest, syncs comment updates, and resets", async () => {
@@ -356,7 +424,7 @@ describe("RvwService commit workflow", () => {
     expect(git(repository, "rev-parse", "HEAD")).toBe(firstHead);
   });
 
-  it("rejects a new closed Pull Request but synchronizes the status of a saved one", async () => {
+  it("rejects a new closed Pull Request but lets individual refresh update saved states", async () => {
     const unopened = setup("rvw-unopened-closed-");
     unopened.fake.pullRequest = { ...unopened.fake.pullRequest, state: "CLOSED" };
     await expect(unopened.service.openPullRequest(undefined, unopened.repository)).rejects.toThrow(
@@ -380,6 +448,19 @@ describe("RvwService commit workflow", () => {
     expect(saved.service.listPullRequests({ hideClosedOrMerged: false }).items[0]).toMatchObject({
       githubState: "MERGED",
       githubIsDraft: false,
+    });
+
+    saved.fake.pullRequest = {
+      ...saved.fake.pullRequest,
+      state: "OPEN",
+      isDraft: true,
+      updatedAt: "2026-08-13T00:00:00.000Z",
+    };
+    const reopened = await saved.service.refreshPullRequest(opened.pullRequest.id);
+
+    expect(reopened.pullRequest).toMatchObject({
+      githubState: "OPEN",
+      githubIsDraft: true,
     });
   });
 

@@ -661,7 +661,10 @@ export class RvwService {
   }
 
   async refreshPullRequestStatuses(): Promise<PullRequestStatusRefreshResult> {
-    const pullRequests = this.database.listPullRequests();
+    const pullRequests = this.database.listPullRequestsNeedingStatusRefresh();
+    if (pullRequests.length === 0) {
+      return { attempted: 0, updated: 0, failures: [] };
+    }
     const outcomes = await this.github.getPullRequestStatuses(
       pullRequests.map((pullRequest) => pullRequest.url),
     );

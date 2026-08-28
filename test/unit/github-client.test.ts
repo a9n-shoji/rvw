@@ -13,6 +13,17 @@ const attachmentUrl =
 const pullRequestUrl = "https://github.com/acme/review-repo/pull/7";
 
 describe("GitHubClient Pull Request status fetching", () => {
+  it("does not check authentication when there are no status refresh candidates", async () => {
+    let called = false;
+    const runner: typeof runProcess = () => {
+      called = true;
+      return Promise.reject(new Error("must not run"));
+    };
+
+    await expect(new GitHubClient(runner).getPullRequestStatuses([])).resolves.toEqual([]);
+    expect(called).toBe(false);
+  });
+
   it("requests only state and draft metadata after one authentication check", async () => {
     const calls: Array<{ executable: string; args: readonly string[]; options: unknown }> = [];
     const runner: typeof runProcess = (executable, args, options = {}) => {
