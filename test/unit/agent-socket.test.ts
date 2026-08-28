@@ -623,6 +623,36 @@ describe("Agent socket", () => {
     }
   });
 
+  it("keeps runtime ownership while the Agent listener is draining", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-runtime-drain-"));
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
+    const databasePath = path.join(directory, "review.db");
+    let owner: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
+    try {
+      owner = await startRuntimeAgentSocket(databasePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    let contender: Awaited<ReturnType<typeof startRuntimeAgentSocket>> | undefined;
+    let successor: Awaited<ReturnType<typeof startRuntimeAgentSocket>> | undefined;
+    try {
+      await owner.stopAccepting();
+      expect(owner.owned).toBe(true);
+      expect(existsSync(`${owner.path}.owner`)).toBe(true);
+
+      contender = await startRuntimeAgentSocket(databasePath);
+      expect(contender.owned).toBe(false);
+
+      await owner.releaseOwnership();
+      expect(owner.owned).toBe(false);
+      successor = await startRuntimeAgentSocket(databasePath);
+      expect(successor.owned).toBe(true);
+    } finally {
+      await Promise.all([owner.close(), contender?.close(), successor?.close()]);
+    }
+  });
+
   it("keeps one runtime owner across processes and does not promote the loser", async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-runtime-multiprocess-"));
     const socketPath = path.join(directory, "agent.sock");

@@ -1,9 +1,30 @@
-import { VIEWER_ID_HEADER } from "../shared/constants.js";
+import {
+  VIEWER_ID_HEADER,
+  VIEWER_OPEN_LEASE_HEADER,
+  VIEWER_OPEN_LEASE_QUERY,
+} from "../shared/constants.js";
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function consumeViewerOpenLease(): string | null {
+  const url = new URL(window.location.href);
+  const leaseId = url.searchParams.get(VIEWER_OPEN_LEASE_QUERY);
+  if (leaseId === null) return null;
+  url.searchParams.delete(VIEWER_OPEN_LEASE_QUERY);
+  window.history.replaceState(window.history.state, "", url);
+  return UUID_PATTERN.test(leaseId) ? leaseId : null;
+}
 
 export let viewerSessionId = crypto.randomUUID();
+const viewerOpenLeaseId = consumeViewerOpenLease();
 
 export function viewerHeartbeatRequest(): RequestInit {
-  return { headers: { [VIEWER_ID_HEADER]: viewerSessionId } };
+  return {
+    headers: {
+      [VIEWER_ID_HEADER]: viewerSessionId,
+      ...(viewerOpenLeaseId === null ? {} : { [VIEWER_OPEN_LEASE_HEADER]: viewerOpenLeaseId }),
+    },
+  };
 }
 
 let releaseHandlerInstalled = false;

@@ -1010,6 +1010,9 @@ direct実行へfallbackせず、結果不明の明示errorを返す。破壊操�
 transport、fallback理由をmachine-readableに返し、人向け出力にも同じ診断項目を表示する。同じsocket
 pathのlisten前にatomicなowner lockを取得し、その所有権をRuntime / SQLite / HTTP serverの初期化より先に
 確定する。競合に負けた`rvw open` workerはこれらを初期化せず、ownerの`viewer.open`へ委譲して終了する。
+終了時はowner lockをRuntime全体の寿命まで保持し、Agent requestの受付停止、HTTP serverのdrain、
+Runtime / SQLiteのclose、socket cleanup、owner lock解放の順に処理する。受付を止めた後もlockを解放するまでは
+同じdatabaseの新しいRuntimeを作らない。
 lockのowner PIDが生存中またはlockが安全に読めない間はtakeoverせず、owner終了後の新しい起動だけがexact
 inodeを確認してstale lock/socketを除去する。`doctor --json`はDBの
 mode/ownerに加えてrollbackするwrite transactionとAgent疎通を実行・報告する。
@@ -1285,14 +1288,17 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - 通常の自動openはactive runtimeがなければdatabase ownershipを持つbackground workerを一つだけ起動する。
   worker ready後にbrowserを開き、最初のviewer heartbeatを確認してから親CLIを終了する
 - 同じdatabaseのactive runtimeがあればworker、Runtime、SQLite、HTTP serverを追加せず、内部socket操作で
-  requested PRを開いて同じoriginのURLをbrowserへ渡す
+  requested PRを開いて同じoriginのURLをbrowserへ渡す。この操作は30秒のpending viewer leaseを作り、
+  最初のbrowser heartbeatが通常のtab leaseへ引き継ぐ。pending中は最後のtab終了後の停止を延期し、未接続なら
+  timeout後に解放する
 - browser起動失敗、初回worker error、30秒以内に最初のviewer heartbeatがない場合は初回workerを停止して
   明示的なerrorを返す。再利用時のbrowser起動失敗は既存runtimeを停止しない
 - background runtimeはpersistent daemonではなく、一覧を含む最後のviewer tab終了後に短い猶予を置いて
   serverとともに停止する。複数tabの一つを閉じても他が残る間は停止しない
 - `--foreground`はterminal接続serverを明示的に起動し、同じdatabaseのruntimeが既にあればconflict errorを返す
 - `--no-open`はbrowser自動起動だけを無効にする。active runtimeは再利用し、active runtimeがなければ従来どおり
-  signal管理のserverを起動する
+  signal管理のserverを起動する。browser管理のactive runtimeを再利用した場合はCLI自身がviewer leaseを
+  Ctrl+Cまでheartbeatし、終了時にreleaseする
 - 初回の明示`--port`は尊重する。active runtimeと異なる非0 portを指定した再利用はconflict errorとし、
   二つ目のserverを起動しない
 - SQLiteはWALでserver processを扱い、Agent CLIの書き込みは可能ならuser専用Unix socketを経由する

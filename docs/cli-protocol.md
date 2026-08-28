@@ -486,6 +486,9 @@ The non-JSON output shows the same diagnostic fields. The same socket also carri
 An atomic owner lock is acquired before Runtime, SQLite, or HTTP initialization. Exactly one runtime may
 serve a database path, while different database paths may have independent owners. A concurrent loser
 delegates its requested Pull Request to the owner and exits; it does not wait to become another server.
+A successful `viewer.open` reserves a pending viewer until the returned URL sends its first heartbeat;
+`--no-open` consumes that reservation itself and heartbeats until Ctrl+C. Shutdown stops socket request
+acceptance, drains HTTP, closes Runtime/SQLite, and only then removes the socket and releases ownership.
 A later invocation may remove an exact stale lock/socket whose recorded owner PID is dead. CLI stdin and
 socket request/response frames are capped at 40 MiB.
 

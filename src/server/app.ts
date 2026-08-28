@@ -6,7 +6,11 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import type { RvwService } from "../application/rvw-service.js";
 import type { DiffDocumentRef, DocumentRef } from "../domain/models.js";
-import { GIT_OBJECT_ID_PATTERN, VIEWER_ID_HEADER } from "../shared/constants.js";
+import {
+  GIT_OBJECT_ID_PATTERN,
+  VIEWER_ID_HEADER,
+  VIEWER_OPEN_LEASE_HEADER,
+} from "../shared/constants.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 import {
   detectImageContentType,
@@ -155,7 +159,11 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
   app.get("/api/meta/change-sequence", (context) => {
     const rawViewerId = context.req.header(VIEWER_ID_HEADER);
     if (rawViewerId !== undefined) {
-      options.viewerLifecycle?.heartbeat(viewerIdSchema.parse(rawViewerId));
+      const rawViewerLease = context.req.header(VIEWER_OPEN_LEASE_HEADER);
+      options.viewerLifecycle?.heartbeat(
+        viewerIdSchema.parse(rawViewerId),
+        rawViewerLease === undefined ? undefined : viewerIdSchema.parse(rawViewerLease),
+      );
     }
     return context.json({ ok: true, changeSequence: service.database.getChangeSequence() });
   });

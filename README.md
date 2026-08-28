@@ -74,7 +74,8 @@ serverは`127.0.0.1`の空きportだけへbindします。同じdatabaseで既�
 serverを端末に接続したままにする場合は`rvw open --foreground`を使います。同じdatabaseのruntimeが
 既にあればforeground commandは競合を明示します。ブラウザだけを自動で開かない場合は
 `rvw open --no-open`を使います。active runtimeがあればURLを表示して再利用し、なければCtrl+Cまで
-signal管理のserverを起動します。初回の`--port`は尊重し、active runtimeと異なるportを指定した場合は
+signal管理のserverを起動します。再利用時もCLIがCtrl+Cまでviewer leaseを保持するため、表示したURLが
+終了猶予中に無効になることはありません。初回の`--port`は尊重し、active runtimeと異なるportを指定した場合は
 二つ目を起動せず競合を返します。一度登録したPRは、完全URLまたは全登録PRで一意な番号を指定すれば
 repository外のdirectoryからも開けます。
 

@@ -1,4 +1,5 @@
 import { fork } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -14,6 +15,9 @@ import {
   DEFAULT_COMMENT_WATCH_INTERVAL_SECONDS,
   DEFAULT_COMMENT_WATCH_LIMIT,
   PROTOCOL_VERSION,
+  VIEWER_ID_HEADER,
+  VIEWER_OPEN_LEASE_HEADER,
+  VIEWER_OPEN_LEASE_QUERY,
 } from "../shared/constants.js";
 import {
   asRvwError,
@@ -56,6 +60,8 @@ const MAX_STDIN_BYTES = MAX_CLI_STDIN_BYTES;
 const OPEN_WORKER_READY_TIMEOUT_MS = 120_000;
 const OPEN_WORKER_PARENT_TIMEOUT_PADDING_MS = 5_000;
 const RUNTIME_REUSE_RETRY_MS = 50;
+const RUNTIME_VIEWER_HEARTBEAT_INTERVAL_MS = 30_000;
+const RUNTIME_VIEWER_REQUEST_TIMEOUT_MS = 5_000;
 declare const __RVW_CLI_BUNDLE__: boolean | undefined;
 
 interface OutputOptions {
@@ -158,6 +164,12 @@ interface BackgroundOpenDependencies {
   tryRuntimeOpen?: (
     input: RuntimeViewerOpenInput,
   ) => Promise<AgentSocketResult<RuntimeViewerOpenResult>>;
+}
+
+interface RuntimeViewerLeaseDependencies {
+  fetch?: typeof fetch;
+  heartbeatIntervalMs?: number;
+  requestTimeoutMs?: number;
 }
 
 function isRvwErrorCode(value: unknown): value is RvwErrorCode {
@@ -437,18 +449,116 @@ export function createRuntimeAgentSocketHandler(
           },
         );
       }
-      const opened = await activeRuntime.service.openPullRequest(input.reference, input.cwd);
-      const url = new URL(running.origin);
-      url.searchParams.set("pullRequestId", opened.pullRequest.id);
-      return {
-        url: url.toString(),
-        origin: running.origin,
-        port: running.port,
-        pullRequestId: opened.pullRequest.id,
-        ownerPid: process.pid,
-      };
+      const viewerLeaseId = running.reserveViewer();
+      try {
+        const opened = await activeRuntime.service.openPullRequest(input.reference, input.cwd);
+        const url = new URL(running.origin);
+        url.searchParams.set("pullRequestId", opened.pullRequest.id);
+        if (viewerLeaseId !== null) url.searchParams.set(VIEWER_OPEN_LEASE_QUERY, viewerLeaseId);
+        return {
+          url: url.toString(),
+          origin: running.origin,
+          port: running.port,
+          pullRequestId: opened.pullRequest.id,
+          ownerPid: process.pid,
+          ...(viewerLeaseId === null ? {} : { viewerLeaseId }),
+        };
+      } catch (error) {
+        if (viewerLeaseId !== null) running.cancelViewerReservation(viewerLeaseId);
+        throw error;
+      }
     },
   };
+}
+
+export async function holdRuntimeViewerLease(
+  result: RuntimeViewerOpenResult,
+  dependencies: RuntimeViewerLeaseDependencies = {},
+): Promise<void> {
+  const viewerLeaseId = result.viewerLeaseId;
+  if (viewerLeaseId === undefined) return;
+  const fetchRequest = dependencies.fetch ?? fetch;
+  const viewerId = randomUUID();
+  const requestTimeoutMs = dependencies.requestTimeoutMs ?? RUNTIME_VIEWER_REQUEST_TIMEOUT_MS;
+  const heartbeatUrl = new URL("/api/meta/change-sequence", result.origin);
+  const releaseUrl = new URL("/api/meta/viewers/release", result.origin);
+  const heartbeat = async (): Promise<void> => {
+    const response = await fetchRequest(heartbeatUrl, {
+      signal: AbortSignal.timeout(requestTimeoutMs),
+      headers: {
+        [VIEWER_ID_HEADER]: viewerId,
+        [VIEWER_OPEN_LEASE_HEADER]: viewerLeaseId,
+      },
+    });
+    if (!response.ok) {
+      throw new RvwError("PROCESS_FAILED", "rvw runtimeのviewer leaseを更新できませんでした。", {
+        details: { status: response.status, origin: result.origin },
+      });
+    }
+  };
+
+  const stopped = Promise.withResolvers<"signal" | "heartbeat-failed">();
+  let heartbeatError: unknown;
+  let heartbeatInFlight = false;
+  const onSignal = (): void => stopped.resolve("signal");
+  process.once("SIGINT", onSignal);
+  process.once("SIGTERM", onSignal);
+  let interval: ReturnType<typeof setInterval> | undefined;
+  let registered = false;
+  try {
+    await heartbeat();
+    registered = true;
+    interval = setInterval(() => {
+      if (heartbeatInFlight) return;
+      heartbeatInFlight = true;
+      void heartbeat()
+        .catch((error: unknown) => {
+          heartbeatError = error;
+          stopped.resolve("heartbeat-failed");
+        })
+        .finally(() => {
+          heartbeatInFlight = false;
+        });
+    }, dependencies.heartbeatIntervalMs ?? RUNTIME_VIEWER_HEARTBEAT_INTERVAL_MS);
+    interval.unref();
+    const reason = await stopped.promise;
+    if (reason === "heartbeat-failed") throw heartbeatError;
+  } finally {
+    if (interval) clearInterval(interval);
+    process.removeListener("SIGINT", onSignal);
+    process.removeListener("SIGTERM", onSignal);
+    if (registered) {
+      await fetchRequest(releaseUrl, {
+        method: "POST",
+        signal: AbortSignal.timeout(requestTimeoutMs),
+        headers: {
+          origin: result.origin,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ viewerId }),
+      }).catch(() => undefined);
+    }
+  }
+}
+
+export async function closeOwnedRuntime(
+  agentSocket: RunningRuntimeAgentSocket | undefined,
+  running: RunningServer | undefined,
+  activeRuntime: Runtime | undefined,
+): Promise<void> {
+  try {
+    await agentSocket?.stopAccepting();
+  } finally {
+    try {
+      await running?.close();
+    } finally {
+      try {
+        activeRuntime?.close();
+      } finally {
+        await agentSocket?.releaseOwnership();
+      }
+    }
+  }
 }
 
 async function waitForRunningRuntime(
@@ -501,6 +611,7 @@ async function runOpenServer(
             databaseFilePath,
           );
           process.stdout.write(`rvw: ${result.url}\n`);
+          if (!openAutomatically) await holdRuntimeViewerLease(result);
           return;
         }
         throw new RvwError(
@@ -531,15 +642,7 @@ async function runOpenServer(
       process.stdout.write("rvw: viewerを閉じたためserverを停止します。\n");
     }
   } finally {
-    try {
-      await agentSocket?.close();
-    } finally {
-      try {
-        await running?.close();
-      } finally {
-        activeRuntime?.close();
-      }
-    }
+    await closeOwnedRuntime(agentSocket, running, activeRuntime);
   }
 }
 
@@ -594,15 +697,7 @@ async function runOpenWorker(
     await sendOpenWorkerMessage({ type: "viewer-connected" });
     await waitForServerShutdown(running.allViewersClosed);
   } finally {
-    try {
-      await agentSocket?.close();
-    } finally {
-      try {
-        await running?.close();
-      } finally {
-        activeRuntime?.close();
-      }
-    }
+    await closeOwnedRuntime(agentSocket, running, activeRuntime);
   }
 }
 

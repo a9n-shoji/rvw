@@ -5,7 +5,7 @@ import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
 import { createApp } from "../../src/server/app.js";
 import { ViewerLifecycle } from "../../src/server/viewer-lifecycle.js";
-import { VIEWER_ID_HEADER } from "../../src/shared/constants.js";
+import { VIEWER_ID_HEADER, VIEWER_OPEN_LEASE_HEADER } from "../../src/shared/constants.js";
 import { RvwError } from "../../src/shared/errors.js";
 
 const github: GitHubPort = {
@@ -471,12 +471,19 @@ describe("local HTTP security", () => {
       viewerLifecycle: lifecycle,
     });
     const viewerId = "44444444-4444-4444-8444-444444444444";
+    const viewerLeaseId = "55555555-5555-4555-8555-555555555555";
+    lifecycle.reserveViewer(viewerLeaseId);
 
     const heartbeat = await app.request("http://127.0.0.1:4321/api/meta/change-sequence", {
-      headers: { host: "127.0.0.1:4321", [VIEWER_ID_HEADER]: viewerId },
+      headers: {
+        host: "127.0.0.1:4321",
+        [VIEWER_ID_HEADER]: viewerId,
+        [VIEWER_OPEN_LEASE_HEADER]: viewerLeaseId,
+      },
     });
     expect(heartbeat.status).toBe(200);
     expect(lifecycle.activeViewerCount).toBe(1);
+    expect(lifecycle.pendingViewerCount).toBe(0);
 
     const invalidHeartbeat = await app.request("http://127.0.0.1:4321/api/meta/change-sequence", {
       headers: { host: "127.0.0.1:4321", [VIEWER_ID_HEADER]: "invalid" },
