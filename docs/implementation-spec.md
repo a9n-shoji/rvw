@@ -1009,7 +1009,9 @@ direct実行へfallbackせず、結果不明の明示errorを返す。破壊操�
 `rvw agent ping/status --json`はsocket path、接続結果、OS接続error詳細、期待／接続先DB、owner PID、選択
 transport、fallback理由をmachine-readableに返し、人向け出力にも同じ診断項目を表示する。同じsocket
 pathのlisten前にatomicなowner lockを取得し、その所有権をRuntime / SQLite / HTTP serverの初期化より先に
-確定する。競合に負けた`rvw open` workerはこれらを初期化せず、ownerの`viewer.open`へ委譲して終了する。
+確定する。競合に負けた`rvw open` workerはこれらを初期化せず、稼働中のownerの`viewer.open`へ委譲する。
+ownerが停止中でsocket受付を終えている、または`viewer.open`が停止中を返した場合は、owner lock解放後に
+ownership取得を再試行する。複数workerが再試行してもlockのwinnerだけがRuntimeを初期化する。
 終了時はowner lockをRuntime全体の寿命まで保持し、Agent requestの受付停止、HTTP serverのdrain、
 Runtime / SQLiteのclose、socket cleanup、owner lock解放の順に処理する。受付を止めた後もlockを解放するまでは
 同じdatabaseの新しいRuntimeを作らない。
@@ -1288,9 +1290,9 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - 通常の自動openはactive runtimeがなければdatabase ownershipを持つbackground workerを一つだけ起動する。
   worker ready後にbrowserを開き、最初のviewer heartbeatを確認してから親CLIを終了する
 - 同じdatabaseのactive runtimeがあればworker、Runtime、SQLite、HTTP serverを追加せず、内部socket操作で
-  requested PRを開いて同じoriginのURLをbrowserへ渡す。この操作は30秒のpending viewer leaseを作り、
-  最初のbrowser heartbeatが通常のtab leaseへ引き継ぐ。pending中は最後のtab終了後の停止を延期し、未接続なら
-  timeout後に解放する
+  requested PRを開いて同じoriginのURLをbrowserへ渡す。この操作はPR解決中に期限なしのoperation reservationで
+  runtimeを維持し、解決後に30秒のbrowser startup reservationへ切り替える。最初のbrowser heartbeatが通常の
+  tab leaseへ引き継ぐ。reservation中は最後のtab終了後の停止を延期し、解決後も未接続ならtimeout後に解放する
 - browser起動失敗、初回worker error、30秒以内に最初のviewer heartbeatがない場合は初回workerを停止して
   明示的なerrorを返す。再利用時のbrowser起動失敗は既存runtimeを停止しない
 - background runtimeはpersistent daemonではなく、一覧を含む最後のviewer tab終了後に短い猶予を置いて

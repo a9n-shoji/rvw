@@ -25,7 +25,11 @@ import {
   type RvwErrorCode,
   type SerializedRvwError,
 } from "../shared/errors.js";
-import { startServer, type RunningServer } from "../server/start-server.js";
+import {
+  RUNTIME_STOPPING_REASON,
+  startServer,
+  type RunningServer,
+} from "../server/start-server.js";
 import { DEFAULT_VIEWER_STARTUP_TIMEOUT_MS } from "../server/viewer-lifecycle.js";
 import {
   type AgentSocketResult,
@@ -172,6 +176,20 @@ interface RuntimeViewerLeaseDependencies {
   requestTimeoutMs?: number;
 }
 
+interface RuntimeStartupHandoffDependencies {
+  startSocket?: (databaseFilePath: string) => Promise<RunningRuntimeAgentSocket>;
+  tryRuntimeOpen?: (
+    input: RuntimeViewerOpenInput,
+    databaseFilePath: string,
+  ) => Promise<AgentSocketResult<RuntimeViewerOpenResult>>;
+  wait?: (milliseconds: number) => Promise<void>;
+  now?: () => number;
+}
+
+export type RuntimeStartupHandoffResult =
+  | { kind: "owned"; agentSocket: RunningRuntimeAgentSocket }
+  | { kind: "reused"; result: RuntimeViewerOpenResult };
+
 function isRvwErrorCode(value: unknown): value is RvwErrorCode {
   return typeof value === "string";
 }
@@ -214,6 +232,12 @@ function errorFromOpenWorker(error: OpenWorkerError): RvwError {
     suggestions: error.suggestions,
     ...(error.details === undefined ? {} : { details: error.details }),
   });
+}
+
+function isRuntimeStoppingError(error: unknown): boolean {
+  if (!(error instanceof RvwError) || error.code !== "PROCESS_FAILED") return false;
+  if (!error.details || typeof error.details !== "object") return false;
+  return (error.details as Record<string, unknown>).reason === RUNTIME_STOPPING_REASON;
 }
 
 export async function completeBackgroundOpen(
@@ -365,12 +389,17 @@ export async function startBackgroundOpen(
     requestedPort: port,
   };
   const launchBrowser = dependencies.launchBrowser ?? (async (url) => await openBrowser(url));
-  const existing = await (dependencies.tryRuntimeOpen ?? tryRuntimeViewerOpen)(input);
-  if (existing.available) {
+  let existing: AgentSocketResult<RuntimeViewerOpenResult> | null = null;
+  try {
+    existing = await (dependencies.tryRuntimeOpen ?? tryRuntimeViewerOpen)(input);
+  } catch (error) {
+    if (!isRuntimeStoppingError(error)) throw error;
+  }
+  if (existing?.available) {
     await launchBrowser(existing.result.url);
     return existing.result.url;
   }
-  if (existing.reason === "database-mismatch") {
+  if (existing?.reason === "database-mismatch") {
     throw new RvwError(
       "AGENT_SOCKET_UNAVAILABLE",
       "起動中のrvw runtimeが別のdatabaseを使用しています。",
@@ -452,6 +481,7 @@ export function createRuntimeAgentSocketHandler(
       const viewerLeaseId = running.reserveViewer();
       try {
         const opened = await activeRuntime.service.openPullRequest(input.reference, input.cwd);
+        if (viewerLeaseId !== null) running.armViewerReservation(viewerLeaseId);
         const url = new URL(running.origin);
         url.searchParams.set("pullRequestId", opened.pullRequest.id);
         if (viewerLeaseId !== null) url.searchParams.set(VIEWER_OPEN_LEASE_QUERY, viewerLeaseId);
@@ -561,24 +591,42 @@ export async function closeOwnedRuntime(
   }
 }
 
-async function waitForRunningRuntime(
+export async function acquireRuntimeOrReuseExisting(
   input: RuntimeViewerOpenInput,
   databaseFilePath: string,
   timeoutMs = OPEN_WORKER_READY_TIMEOUT_MS,
-): Promise<RuntimeViewerOpenResult> {
-  const deadline = Date.now() + timeoutMs;
+  dependencies: RuntimeStartupHandoffDependencies = {},
+): Promise<RuntimeStartupHandoffResult> {
+  const startSocket = dependencies.startSocket ?? startRuntimeAgentSocket;
+  const tryRuntimeOpen = dependencies.tryRuntimeOpen ?? tryRuntimeViewerOpen;
+  const wait =
+    dependencies.wait ??
+    (async (milliseconds: number) => {
+      await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+    });
+  const now = dependencies.now ?? Date.now;
+  const deadline = now() + timeoutMs;
   do {
-    const response = await tryRuntimeViewerOpen(input, databaseFilePath);
-    if (response.available) return response.result;
-    if (response.reason === "database-mismatch") {
+    const candidate = await startSocket(databaseFilePath);
+    if (candidate.owned) return { kind: "owned", agentSocket: candidate };
+    await candidate.close();
+
+    let response: AgentSocketResult<RuntimeViewerOpenResult> | null = null;
+    try {
+      response = await tryRuntimeOpen(input, databaseFilePath);
+    } catch (error) {
+      if (!isRuntimeStoppingError(error)) throw error;
+    }
+    if (response?.available) return { kind: "reused", result: response.result };
+    if (response?.reason === "database-mismatch") {
       throw new RvwError(
         "AGENT_SOCKET_UNAVAILABLE",
         "起動中のrvw runtimeが別のdatabaseを使用しています。",
         { details: response.details },
       );
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, RUNTIME_REUSE_RETRY_MS));
-  } while (Date.now() < deadline);
+    await wait(RUNTIME_REUSE_RETRY_MS);
+  } while (now() < deadline);
   throw new RvwError("PROCESS_TIMEOUT", "起動中のrvw runtimeへの接続がタイムアウトしました。", {
     details: { timeoutMs },
   });
@@ -603,26 +651,31 @@ async function runOpenServer(
   try {
     if (useAgentSocket) {
       const databaseFilePath = databasePathConfiguration().filePath;
-      agentSocket = await startRuntimeAgentSocket(databaseFilePath);
-      if (!agentSocket.owned) {
-        if (reuseExisting) {
-          const result = await waitForRunningRuntime(
-            runtimeViewerOpenInput(reference, process.cwd(), port),
-            databaseFilePath,
-          );
+      if (reuseExisting) {
+        const startup = await acquireRuntimeOrReuseExisting(
+          runtimeViewerOpenInput(reference, process.cwd(), port),
+          databaseFilePath,
+        );
+        if (startup.kind === "reused") {
+          const result = startup.result;
           process.stdout.write(`rvw: ${result.url}\n`);
           if (!openAutomatically) await holdRuntimeViewerLease(result);
           return;
         }
-        throw new RvwError(
-          "PROCESS_FAILED",
-          "同じdatabaseのrvw runtimeが既に起動中のためforeground serverを開始できません。",
-          {
-            suggestions: [
-              "通常のrvw openで既存runtimeを利用するか、既存runtimeを停止してから再実行してください。",
-            ],
-          },
-        );
+        agentSocket = startup.agentSocket;
+      } else {
+        agentSocket = await startRuntimeAgentSocket(databaseFilePath);
+        if (!agentSocket.owned) {
+          throw new RvwError(
+            "PROCESS_FAILED",
+            "同じdatabaseのrvw runtimeが既に起動中のためforeground serverを開始できません。",
+            {
+              suggestions: [
+                "通常のrvw openで既存runtimeを利用するか、既存runtimeを停止してから再実行してください。",
+              ],
+            },
+          );
+        }
       }
     }
     activeRuntime = runtimeFactory();
@@ -659,17 +712,18 @@ async function runOpenWorker(
       throw new RvwError("INVALID_INPUT", "内部viewer workerは親CLIから起動してください。");
     }
     const databaseFilePath = databasePathConfiguration().filePath;
-    agentSocket = await startRuntimeAgentSocket(databaseFilePath);
-    if (!agentSocket.owned) {
-      const result = await waitForRunningRuntime(
-        runtimeViewerOpenInput(reference, process.cwd(), port),
-        databaseFilePath,
-      );
+    const startup = await acquireRuntimeOrReuseExisting(
+      runtimeViewerOpenInput(reference, process.cwd(), port),
+      databaseFilePath,
+    );
+    if (startup.kind === "reused") {
+      const result = startup.result;
       if (!(await sendOpenWorkerMessage({ type: "ready", url: result.url }))) return;
       if (!(await sendOpenWorkerMessage({ type: "viewer-connected" }))) return;
       await waitForWorkerParentDisconnect();
       return;
     }
+    agentSocket = startup.agentSocket;
     activeRuntime = runtimeFactory();
     const opened = await activeRuntime.service.openPullRequest(reference, process.cwd());
     running = await startServer(activeRuntime.service, {

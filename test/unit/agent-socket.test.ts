@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RvwService } from "../../src/application/rvw-service.js";
+import { acquireRuntimeOrReuseExisting } from "../../src/cli/main.js";
 import {
   AGENT_SOCKET_PROTOCOL_VERSION,
   dispatchAgentSocketRequest,
@@ -650,6 +651,44 @@ describe("Agent socket", () => {
       expect(successor.owned).toBe(true);
     } finally {
       await Promise.all([owner.close(), contender?.close(), successor?.close()]);
+    }
+  });
+
+  it("hands ownership to a new open after a draining runtime releases its lock", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-runtime-handoff-"));
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
+    const databasePath = path.join(directory, "review.db");
+    let owner: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
+    try {
+      owner = await startRuntimeAgentSocket(databasePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    let successor: Awaited<ReturnType<typeof startRuntimeAgentSocket>> | undefined;
+    const firstOwnershipLoss = Promise.withResolvers<void>();
+    const startSocket = vi.fn(async (filePath: string) => {
+      const candidate = await startRuntimeAgentSocket(filePath);
+      if (!candidate.owned) firstOwnershipLoss.resolve();
+      return candidate;
+    });
+    try {
+      await owner.stopAccepting();
+      const handoff = acquireRuntimeOrReuseExisting(
+        { cwd: "/repo", requestedPort: 0 },
+        databasePath,
+        2_000,
+        { startSocket },
+      );
+      await firstOwnershipLoss.promise;
+
+      await owner.releaseOwnership();
+      const result = await handoff;
+      expect(result.kind).toBe("owned");
+      if (result.kind === "owned") successor = result.agentSocket;
+      expect(startSocket).toHaveBeenCalledTimes(2);
+    } finally {
+      await Promise.all([owner.close(), successor?.close()]);
     }
   });
 

@@ -6,6 +6,8 @@ import { RvwError } from "../shared/errors.js";
 import { createApp, type ServerSecurityContext } from "./app.js";
 import { ViewerLifecycle } from "./viewer-lifecycle.js";
 
+export const RUNTIME_STOPPING_REASON = "runtime-stopping";
+
 export interface RunningServer {
   server: ServerType;
   host: "127.0.0.1";
@@ -14,6 +16,7 @@ export interface RunningServer {
   firstViewerConnected: Promise<void> | null;
   allViewersClosed: Promise<void> | null;
   reserveViewer(): string | null;
+  armViewerReservation(leaseId: string): void;
   cancelViewerReservation(leaseId: string): void;
   close(): Promise<void>;
 }
@@ -79,10 +82,24 @@ export async function startServer(
               throw new RvwError(
                 "PROCESS_FAILED",
                 "rvw runtimeは停止処理中のためviewerを追加できません。",
-                { suggestions: ["rvw openを再実行してください。"] },
+                {
+                  details: { reason: RUNTIME_STOPPING_REASON },
+                  suggestions: ["rvw openを再実行してください。"],
+                },
               );
             }
             return leaseId;
+          },
+          armViewerReservation: (leaseId) => {
+            if (!viewerLifecycle || viewerLifecycle.armViewerReservation(leaseId)) return;
+            throw new RvwError(
+              "PROCESS_FAILED",
+              "rvw runtimeは停止処理中のためviewerを追加できません。",
+              {
+                details: { reason: RUNTIME_STOPPING_REASON },
+                suggestions: ["rvw openを再実行してください。"],
+              },
+            );
           },
           cancelViewerReservation: (leaseId) => viewerLifecycle?.cancelViewerReservation(leaseId),
           close: () =>

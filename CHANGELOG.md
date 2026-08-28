@@ -26,6 +26,8 @@
 - status更新によって現在のoffsetが無効になった場合、最後の有効な一覧pageへ戻して誤ったempty stateを防止
 - runtime停止時にHTTP / SQLiteを閉じるまでdatabase owner lockを保持し、新旧runtimeが一時的に重複するraceを防止
 - 終了猶予中の`rvw open`をpending viewer leaseで保護し、`--no-open`で再利用したruntimeをCtrl+Cまで維持
+- runtime停止中に到着した`rvw open`がowner解放後にownershipを再取得できずtimeoutするhandoff raceを防止
+- `viewer.open`のPR解決中はoperation reservationを維持し、解決後からbrowser接続待ちtimeoutを開始
 
 ## [0.3.0] - 2026-08-28
 

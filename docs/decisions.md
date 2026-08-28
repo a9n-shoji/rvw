@@ -20,8 +20,10 @@ origin. Keep this operation out of the public Agent command schemas and capabili
 serve public Agent operations through the same application service. Advance only the internal socket
 protocol version so older running viewers fail with the existing restart guidance.
 
-A simultaneous loser does not initialize Runtime or HTTP and does not remain as a takeover follower. It
-waits for the winner's socket, delegates its open, completes the parent/browser handshake, and exits.
+A simultaneous loser does not initialize Runtime or HTTP and does not remain as a background takeover
+follower. It waits for the winner's socket, delegates its open, completes the parent/browser handshake,
+and exits. If the owner is draining and no longer accepts requests, the invocation repeats ownership
+election until either it delegates to a healthy owner or wins the lock after the old Runtime fully closes.
 After a crash, a new invocation may recover only a dead-PID owner lock and the exact stale socket inode.
 Different database paths retain different socket identities and can run independently.
 
@@ -30,9 +32,10 @@ drains HTTP, closes Runtime/SQLite, removes the socket, and releases the owner l
 and ownership state are separate so a new starter cannot construct a Runtime while the old one drains.
 
 Keep ViewerLifecycle as the runtime lifetime authority: every browser document, including the index, has
-an ephemeral lease, and the runtime exits after the final tab's grace period. Each successful `viewer.open`
-first creates a bounded pending lease that cancels an existing close grace; the first heartbeat transfers
-it to the new browser document, while an unused reservation expires. This remains a transient
+an ephemeral lease, and the runtime exits after the final tab's grace period. Each `viewer.open` first
+creates an operation reservation without a startup deadline while Pull Request resolution is in flight.
+After resolution it becomes a bounded startup reservation; the first heartbeat transfers it to the new
+browser document, while an unused startup reservation expires. This remains a transient
 browser-owned process, not a login daemon or persistent service. `--foreground` is an explicit
 terminal-attached owner and conflicts with an existing runtime. `--no-open` suppresses browser launch
 only, reusing an active runtime or starting a signal-managed one. When reusing a browser-managed runtime,
@@ -52,6 +55,8 @@ fail-closed transport, lock safety, and stale inode rules remain unchanged.
 - Foreground diagnostics cannot silently attach to an existing background process, so users must stop the
   owner before requesting terminal ownership or another explicit port.
 - The runtime is still intentionally absent when no viewer tabs or signal-managed command own it.
+- A slow Pull Request lookup can keep the runtime alive for the operation, but its GitHub and socket layers
+  retain their existing timeouts and a completed lookup still has only the bounded browser startup window.
 
 ## 2026-08-28: Keep Pull Request CI on the fast Linux path
 
