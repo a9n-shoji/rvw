@@ -4,6 +4,7 @@ const port = Number(process.env.RVW_E2E_PORT ?? 43117);
 const baseURL = `http://127.0.0.1:${port}`;
 const demoPort = Number(process.env.RVW_DEMO_E2E_PORT ?? port + 1);
 const demoBaseURL = `http://127.0.0.1:${demoPort}`;
+const runningInCI = Boolean(process.env.CI);
 
 export default defineConfig({
   testDir: "./test/e2e",
@@ -14,7 +15,8 @@ export default defineConfig({
   reporter: "list",
   use: {
     baseURL,
-    trace: "retain-on-failure",
+    // CI does not upload test-results, so recording every passing test would be discarded work.
+    trace: runningInCI ? "off" : "retain-on-failure",
     screenshot: "only-on-failure",
   },
   webServer: [
