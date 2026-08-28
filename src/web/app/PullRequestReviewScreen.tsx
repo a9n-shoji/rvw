@@ -1281,14 +1281,6 @@ export function PullRequestReviewScreen({
   ]);
 
   useEffect(() => {
-    const warnBeforeBrowserClose = (event: BeforeUnloadEvent): void => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warnBeforeBrowserClose);
-    return () => window.removeEventListener("beforeunload", warnBeforeBrowserClose);
-  }, []);
-  useEffect(() => {
     const openPaneFind = (event: KeyboardEvent): void => {
       if (
         !(event.metaKey || event.ctrlKey) ||
@@ -2227,7 +2219,11 @@ export function PullRequestReviewScreen({
           type="button"
           className="brand brand-button"
           aria-label="Pull Request一覧へ"
-          onClick={onNavigateToList}
+          onClick={() => {
+            cancelReadingHistoryScrollSnapshot();
+            replaceCurrentReadingHistory();
+            onNavigateToList();
+          }}
         >
           <span className="brand-mark">r</span>
           <strong>rvw</strong>

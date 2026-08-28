@@ -1315,8 +1315,9 @@ Integration（実git + fake GitHub）:
 - commit固定Walkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
 - worktree間共有
 
-E2Eで登録済みPR一覧、empty state、pagination、一覧とviewer間のBack / Forward、一覧表示中のviewer
-heartbeatを確認する。既存のreview E2Eは次を維持する。
+E2Eで登録済みPR一覧、empty state、URLに保持するpagination、2ページ目からviewerを開いた後の
+Back / Forward、一覧遷移後の未送信draft警告、一覧へ戻る直前のreading position、相対日時の更新、
+一覧表示中のviewer heartbeatを確認する。既存のreview E2Eは次を維持する。
 
 1. PRを開きlatest commitと最新Pull Request.mdを表示
 2. commit subjectで一件選択へ切り替え、open tabを維持

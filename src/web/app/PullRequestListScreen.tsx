@@ -17,11 +17,14 @@ const compactDateFormatter = new Intl.DateTimeFormat(undefined, {
 });
 const relativeTimeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 
-function datePresentation(value: string | null): { label: string; exact: string | undefined } {
+function datePresentation(
+  value: string | null,
+  now: number,
+): { label: string; exact: string | undefined } {
   if (value === null) return { label: "不明", exact: undefined };
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return { label: "不明", exact: undefined };
-  const differenceSeconds = Math.round((date.getTime() - Date.now()) / 1000);
+  const differenceSeconds = Math.round((date.getTime() - now) / 1000);
   const absoluteSeconds = Math.abs(differenceSeconds);
   let label: string;
   if (absoluteSeconds < 60) label = relativeTimeFormatter.format(differenceSeconds, "second");
@@ -37,14 +40,19 @@ function datePresentation(value: string | null): { label: string; exact: string 
 
 function PullRequestRow({
   item,
+  now,
   onOpen,
 }: {
   item: PullRequestSummary;
+  now: number;
   onOpen: (pullRequestId: string) => void;
 }) {
-  const created = datePresentation(item.githubCreatedAt);
-  const updated = datePresentation(item.githubUpdatedAt);
-  const href = `?pullRequestId=${encodeURIComponent(item.pullRequestId)}`;
+  const created = datePresentation(item.githubCreatedAt, now);
+  const updated = datePresentation(item.githubUpdatedAt, now);
+  const url = new URL(window.location.href);
+  url.hash = "";
+  url.searchParams.set("pullRequestId", item.pullRequestId);
+  const href = `${url.pathname}${url.search}`;
   const handleClick = (event: MouseEvent<HTMLAnchorElement>): void => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
       return;
@@ -90,13 +98,17 @@ function PullRequestRow({
 export function PullRequestListScreen({
   changeSequence,
   heartbeatError,
+  offset,
+  onNavigateToOffset,
   onOpenPullRequest,
 }: {
   changeSequence: number | undefined;
   heartbeatError: unknown;
+  offset: number;
+  onNavigateToOffset: (offset: number) => void;
   onOpenPullRequest: (pullRequestId: string) => void;
 }) {
-  const [offset, setOffset] = useState(0);
+  const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const listQuery = useQuery({
     queryKey: ["pull-request-list", offset, changeSequence],
     queryFn: async () =>
@@ -113,6 +125,10 @@ export function PullRequestListScreen({
 
   useEffect(() => {
     document.title = "rvw";
+  }, []);
+  useEffect(() => {
+    const interval = window.setInterval(() => setRelativeTimeNow(Date.now()), 60_000);
+    return () => window.clearInterval(interval);
   }, []);
 
   return (
@@ -153,7 +169,12 @@ export function PullRequestListScreen({
               <span>Updated</span>
             </div>
             {listQuery.data?.items.map((item) => (
-              <PullRequestRow key={item.pullRequestId} item={item} onOpen={onOpenPullRequest} />
+              <PullRequestRow
+                key={item.pullRequestId}
+                item={item}
+                now={relativeTimeNow}
+                onOpen={onOpenPullRequest}
+              />
             ))}
           </section>
         )}
@@ -163,7 +184,7 @@ export function PullRequestListScreen({
               type="button"
               className="button--quiet"
               disabled={pagination.offset === 0 || listQuery.isFetching}
-              onClick={() => setOffset(Math.max(0, pagination.offset - pagination.limit))}
+              onClick={() => onNavigateToOffset(Math.max(0, pagination.offset - pagination.limit))}
             >
               前へ
             </button>
@@ -173,7 +194,7 @@ export function PullRequestListScreen({
               className="button--quiet"
               disabled={!pagination.hasMore || listQuery.isFetching}
               onClick={() => {
-                if (pagination.nextOffset !== null) setOffset(pagination.nextOffset);
+                if (pagination.nextOffset !== null) onNavigateToOffset(pagination.nextOffset);
               }}
             >
               次へ

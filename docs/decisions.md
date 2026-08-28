@@ -17,8 +17,11 @@ a persistent-ID tie-breaker. Cache GitHub `createdAt` in a nullable migrated col
 rvw's local registration timestamp for legacy rows and do not backfill the index with GitHub requests.
 
 Keep routing dependency-free. The React root selects the index or existing review screen from the URL,
-and uses the History API for row selection and the return link. A popstate traversal back into a review
-restores the retained reading destination, while a fresh row selection starts the normal initial workspace.
+and uses the History API for pagination, row selection, and the return link. The current list offset stays
+in the URL so Back, Forward, reload, and modifier-click preserve the selected page. A popstate traversal
+back into a review restores the retained reading destination, while a fresh row selection starts the normal
+initial workspace. Flush the current reading position before returning to the index, and keep the browser
+close guard at the root so a draft retained across that transition cannot be discarded without warning.
 Keep the viewer heartbeat above both screens so an index-only tab continues owning the browser-managed worker.
 
 ### Trade-offs

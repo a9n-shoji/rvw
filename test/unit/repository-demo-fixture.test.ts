@@ -22,9 +22,14 @@ describe("repository demo fixture", () => {
     expect(fixture.comments.some((comment) => comment.resolvedAt !== null)).toBe(true);
     expect(fixture.comments.some((comment) => comment.posts.length > 1)).toBe(true);
 
-    const app = fixture.repositoryDocumentAt(fixture.headOid, "src/web/app/App.tsx");
-    expect(app.availability).toBe("available");
-    expect(app.text?.split("\n").length).toBeGreaterThan(500);
+    const largestTypeScriptEntry = entries
+      .filter((entry) => entry.kind === "file" && /\.(?:ts|tsx)$/.test(entry.path))
+      .sort((left, right) => (right.size ?? 0) - (left.size ?? 0))[0];
+    expect(largestTypeScriptEntry).toBeDefined();
+    if (!largestTypeScriptEntry) throw new Error("fixture requires a TypeScript source document");
+    const largeSource = fixture.repositoryDocumentAt(fixture.headOid, largestTypeScriptEntry.path);
+    expect(largeSource.availability).toBe("available");
+    expect(largeSource.text?.split("\n").length).toBeGreaterThan(500);
     expect(fixture.repositoryDocumentAt(fixture.headOid, "missing.ts").availability).toBe(
       "missing",
     );

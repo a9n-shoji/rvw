@@ -4,6 +4,7 @@ import {
   commentDraftContextKey,
   commentReplyDraftScope,
   currentCommentDraftRevision,
+  hasPendingCommentDrafts,
   moveCommentDraftsForWorkspaceTransition,
   readCommentDraft,
   readCommentReplyDraft,
@@ -47,6 +48,22 @@ function workspace(left: ActiveDocument[], right: ActiveDocument[]): DocumentWor
 
 describe("comment draft store", () => {
   beforeEach(() => clearCommentDraftsForPullRequest(pullRequestId));
+
+  it("reports drafts retained outside the review screen", () => {
+    expect(hasPendingCommentDrafts()).toBe(false);
+    const key = contextKey({ kind: "repository-file", path: "src/example.ts" });
+    writeCommentDraft(pullRequestId, key, currentCommentDraftRevision(pullRequestId), draft);
+    expect(hasPendingCommentDrafts()).toBe(true);
+
+    clearCommentDraftsForPullRequest(pullRequestId);
+    expect(hasPendingCommentDrafts()).toBe(false);
+    const replyKey = "inline:comment-1";
+    writeCommentReplyDraft(pullRequestId, replyKey, {
+      ...readCommentReplyDraft(pullRequestId, replyKey),
+      body: "未送信の返信",
+    });
+    expect(hasPendingCommentDrafts()).toBe(true);
+  });
 
   it("isolates the same path by exact source and comparison policy", () => {
     const current = contextKey({ kind: "repository-file", path: "src/example.ts" });

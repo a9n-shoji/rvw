@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api.js";
+import { hasPendingCommentDrafts } from "../comment-draft-store.js";
 import type { ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { PullRequestListScreen } from "./PullRequestListScreen.js";
@@ -10,13 +11,21 @@ const pullRequestIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type AppRoute =
-  | { kind: "list" }
+  | { kind: "list"; offset: number }
   | { kind: "review"; pullRequestId: string; restoreReadingHistory: boolean }
   | { kind: "invalid" };
 
+function listOffset(searchParams: URLSearchParams): number {
+  const value = searchParams.get("offset");
+  if (value === null || !/^\d+$/.test(value)) return 0;
+  const offset = Number(value);
+  return Number.isSafeInteger(offset) ? offset : 0;
+}
+
 function routeFromLocation(restoreReadingHistory = false): AppRoute {
-  const pullRequestId = new URL(window.location.href).searchParams.get("pullRequestId");
-  if (pullRequestId === null) return { kind: "list" };
+  const searchParams = new URL(window.location.href).searchParams;
+  const pullRequestId = searchParams.get("pullRequestId");
+  if (pullRequestId === null) return { kind: "list", offset: listOffset(searchParams) };
   return pullRequestIdPattern.test(pullRequestId)
     ? { kind: "review", pullRequestId, restoreReadingHistory }
     : { kind: "invalid" };
@@ -25,8 +34,13 @@ function routeFromLocation(restoreReadingHistory = false): AppRoute {
 function pushRoute(route: Extract<AppRoute, { kind: "list" | "review" }>): void {
   const url = new URL(window.location.href);
   url.hash = "";
-  if (route.kind === "review") url.searchParams.set("pullRequestId", route.pullRequestId);
-  else url.searchParams.delete("pullRequestId");
+  if (route.kind === "review") {
+    url.searchParams.set("pullRequestId", route.pullRequestId);
+  } else {
+    url.searchParams.delete("pullRequestId");
+    if (route.offset === 0) url.searchParams.delete("offset");
+    else url.searchParams.set("offset", String(route.offset));
+  }
   window.history.pushState({}, "", url);
 }
 
@@ -47,8 +61,26 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
+  useEffect(() => {
+    const warnBeforeBrowserClose = (event: BeforeUnloadEvent): void => {
+      if (route.kind !== "review" && !hasPendingCommentDrafts()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeBrowserClose);
+    return () => window.removeEventListener("beforeunload", warnBeforeBrowserClose);
+  }, [route.kind]);
+
   const navigateToList = useCallback((): void => {
-    const nextRoute = { kind: "list" } as const;
+    const nextRoute = {
+      kind: "list",
+      offset: listOffset(new URL(window.location.href).searchParams),
+    } as const;
+    pushRoute(nextRoute);
+    setRoute(nextRoute);
+  }, []);
+  const navigateToListOffset = useCallback((offset: number): void => {
+    const nextRoute = { kind: "list", offset } as const;
     pushRoute(nextRoute);
     setRoute(nextRoute);
   }, []);
@@ -71,6 +103,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       <PullRequestListScreen
         changeSequence={heartbeat.data?.changeSequence}
         heartbeatError={heartbeat.error}
+        offset={route.offset}
+        onNavigateToOffset={navigateToListOffset}
         onOpenPullRequest={navigateToPullRequest}
       />
     );
