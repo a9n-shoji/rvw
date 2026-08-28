@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-28
+
+### Added
+
+- 登録済みPull RequestをGitHub更新日時順に一覧できるworkspace入口。未解決／解決済みcomment数、
+  Walkthrough数、cached Open / Draft / Closed / Merged statusをofflineでも確認でき、Closed / Mergedだけを
+  既定で非表示にする
+- Walkthroughの`html-preview` fenced blockを、sanitized HTML / CSS / SVG、exact repository画像、theme、
+  source navigation、comment、Pane Findに対応したsandboxed interactive previewとして表示
+
+### Changed
+
+- code referenceやcomment rangeへ移動したとき、changes viewの折りたたまれたhunkをまとめて展開し、
+  長いrangeでも対象全体を表示
+
 ## [0.2.5] - 2026-08-26
 
 ### Added
