@@ -326,8 +326,8 @@ pnpm test:package
 
 通常テストは実Git binaryとfake GitHub adapterを使い、GitHub認証やnetworkを必要としません。
 `test:package`はclean buildと実tarball作成を行い、一時directoryへinstallしてrepository checkout外から
-CLI、migration、frontend、bundled Skillをsmoke testします。CIはmacOS、Linux、Windowsでpackage smokeを
-実行しますが、通常CIからnpmへ公開しません。
+CLI、migration、frontend、bundled Skillをsmoke testします。Pull Request CIはLinuxでpackage smokeを
+実行し、`main`更新時とrelease CIはmacOS、Linux、Windowsで互換性を確認します。通常CIからnpmへ公開しません。
 
 ## データとセキュリティ
 
