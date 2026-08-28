@@ -5,6 +5,24 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-28
+
+### Added
+
+- Pull Request一覧を表示しただけではGitHubへ問い合わせず、Open、Draft、状態未取得の登録済みPRだけを
+  明示的なbutton操作で一括status更新する機能
+
+### Changed
+
+- 一括status更新のGitHub認証を操作ごとに一度だけ行い、最大4件並列・部分失敗許容で処理。Closed / Mergedを
+  継続追跡対象から除外し、保存済みPRの累積件数ではなく現在のworking setに問い合わせ量を限定
+- 一覧のPR titleを省略せず複数行で全文表示し、review画面のロゴをCmd / Ctrl / 中クリックで一覧を
+  別tabに開けるnative linkへ変更
+
+### Fixed
+
+- status更新によって現在のoffsetが無効になった場合、最後の有効な一覧pageへ戻して誤ったempty stateを防止
+
 ## [0.3.0] - 2026-08-28
 
 ### Added
