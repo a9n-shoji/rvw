@@ -15,6 +15,9 @@ const github: GitHubPort = {
   getPullRequest() {
     return Promise.reject(new Error("not used"));
   },
+  getPullRequestStatus() {
+    return Promise.reject(new Error("not used"));
+  },
   getAttachment() {
     return Promise.reject(new Error("not used"));
   },
@@ -135,6 +138,43 @@ describe("local HTTP security", () => {
       { headers },
     );
     expect(invalidFilter.status).toBe(400);
+    database.close();
+  });
+
+  it("refreshes saved Pull Request statuses through an explicit write request", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequestId = registerPullRequest(database);
+    const statusGithub: GitHubPort = {
+      ...github,
+      getPullRequestStatus() {
+        return Promise.resolve({ state: "MERGED", isDraft: false });
+      },
+    };
+    const app = createApp(new RvwService(database, new GitClient(), statusGithub), {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+    const response = await app.request("http://127.0.0.1:4321/api/pull-requests/refresh-statuses", {
+      method: "POST",
+      headers: {
+        host: "127.0.0.1:4321",
+        origin: "http://127.0.0.1:4321",
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      attempted: 1,
+      updated: 1,
+      failures: [],
+    });
+    expect(database.getPullRequest(pullRequestId)).toMatchObject({
+      githubState: "MERGED",
+      githubIsDraft: false,
+      latestTitle: "Review",
+    });
     database.close();
   });
 

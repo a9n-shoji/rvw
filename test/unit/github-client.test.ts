@@ -10,6 +10,40 @@ import { RvwError } from "../../src/shared/errors.js";
 
 const attachmentUrl =
   "https://github.com/user-attachments/assets/37948111-1227-4cdb-a76d-dc8eb469ae5c";
+const pullRequestUrl = "https://github.com/acme/review-repo/pull/7";
+
+describe("GitHubClient Pull Request status fetching", () => {
+  it("requests only state and draft metadata after checking authentication", async () => {
+    const calls: Array<{ executable: string; args: readonly string[]; options: unknown }> = [];
+    const runner: typeof runProcess = (executable, args, options = {}) => {
+      calls.push({ executable, args, options });
+      const stdout = args[0] === "pr" ? JSON.stringify({ state: "MERGED", isDraft: false }) : "";
+      return Promise.resolve({
+        stdout: Buffer.from(stdout),
+        stderr: Buffer.alloc(0),
+        exitCode: 0,
+        stdoutTruncated: false,
+      });
+    };
+
+    await expect(new GitHubClient(runner).getPullRequestStatus(pullRequestUrl)).resolves.toEqual({
+      state: "MERGED",
+      isDraft: false,
+    });
+    expect(calls).toEqual([
+      {
+        executable: "gh",
+        args: ["auth", "status", "--hostname", "github.com"],
+        options: { allowExitCodes: [1] },
+      },
+      {
+        executable: "gh",
+        args: ["pr", "view", pullRequestUrl, "--json", "state,isDraft"],
+        options: { timeoutMs: 60_000 },
+      },
+    ]);
+  });
+});
 
 describe("GitHubClient attachment fetching", () => {
   it("uses a binary-safe gh api argument array with bounded process output", async () => {

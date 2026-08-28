@@ -25,6 +25,16 @@ test("lists saved Pull Requests and navigates through browser history", async ({
   await expect(rows.first()).toContainText(/Fixture review/);
   await expect(rows.first().getByLabel("Pull Request status: Open")).toBeVisible();
   await expect(rows.nth(1).getByLabel("Pull Request status: Draft")).toBeVisible();
+  const longTitle = rows.nth(1).locator(".pull-request-row__title");
+  await expect(longTitle).toHaveText(
+    "Older fixture review with a deliberately long Pull Request title that must wrap onto multiple lines without being truncated",
+  );
+  await expect(longTitle).toHaveCSS("white-space", "normal");
+  const titleLayout = await longTitle.evaluate((element) => ({
+    height: element.getBoundingClientRect().height,
+    lineHeight: Number.parseFloat(window.getComputedStyle(element).lineHeight),
+  }));
+  expect(titleLayout.height).toBeGreaterThan(titleLayout.lineHeight * 1.5);
   await expect(rows.nth(1)).toContainText("3 unresolved");
   await expect(rows.nth(1)).toContainText("5 resolved");
   await expect(rows.nth(1)).toContainText("2 walkthroughs");
@@ -57,11 +67,55 @@ test("lists saved Pull Requests and navigates through browser history", async ({
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
   await expect(page.locator(".document-tab.active")).toContainText("fixture.ts");
 
-  await page.getByRole("button", { name: "Pull Request一覧へ" }).click();
+  await page.getByRole("link", { name: "Pull Request一覧へ" }).click();
   await expect(page.getByRole("heading", { name: "Pull Requests" })).toBeVisible();
   await page.goBack();
   await expect(page.locator(".pr-heading h1")).toContainText("Fixture review");
   await expect(page.locator(".document-tab.active")).toContainText("fixture.ts");
+});
+
+test("opens the Pull Request list in a new tab from a modified logo click", async ({
+  page,
+  context,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const logo = page.getByRole("link", { name: "Pull Request一覧へ" });
+  await expect(logo).toHaveAttribute("href", "/");
+
+  const newPagePromise = context.waitForEvent("page");
+  await logo.click({ modifiers: ["Meta"] });
+  const listPage = await newPagePromise;
+
+  await expect(listPage.getByRole("heading", { name: "Pull Requests" })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`pullRequestId=${pullRequestId}`));
+  await listPage.close();
+});
+
+test("refreshes every saved Pull Request status only after an explicit click", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/");
+  await expect(page.locator(".pull-request-row")).toHaveCount(2);
+  await expect
+    .poll(async () => {
+      const response = await request.get("/api/test/pull-request-status-refresh-count");
+      return ((await response.json()) as { count: number }).count;
+    })
+    .toBe(0);
+
+  await page.getByRole("button", { name: "PRステータスを一括更新" }).click();
+
+  await expect(page.getByRole("status")).toHaveText("2件のPRステータスを更新しました。");
+  await expect(
+    page.getByRole("heading", { name: "Closed / Merged以外のPull Requestはありません" }),
+  ).toBeVisible();
+  await expect
+    .poll(async () => {
+      const response = await request.get("/api/test/pull-request-status-refresh-count");
+      return ((await response.json()) as { count: number }).count;
+    })
+    .toBe(1);
 });
 
 test("shows an actionable empty state when no Pull Requests are saved", async ({
@@ -132,8 +186,8 @@ test("preserves drafts and the latest reading position when returning to the lis
 
   await page.evaluate(() => {
     const paneElement = document.querySelector<HTMLElement>('.document-pane[data-pane="left"]');
-    const listButton = document.querySelector<HTMLButtonElement>(
-      'button[aria-label="Pull Request一覧へ"]',
+    const listButton = document.querySelector<HTMLAnchorElement>(
+      'a[aria-label="Pull Request一覧へ"]',
     );
     if (!paneElement || !listButton) throw new Error("review navigation controls are unavailable");
     paneElement.scrollTop = 200;

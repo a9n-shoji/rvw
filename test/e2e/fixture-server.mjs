@@ -44,6 +44,7 @@ let blockedImageRequestCount = 0;
 let imageTextRequestCount = 0;
 let pullRequestListEmpty = false;
 let pullRequestListPaginated = false;
+let pullRequestStatusRefreshCount = 0;
 const selectedLineText = (value, startLine, endLine) =>
   value
     .replace(/\r\n?/g, "\n")
@@ -375,7 +376,10 @@ app.use("*", async (context, next) => {
 });
 
 app.use("/api/pull-requests/*", async (context, next) => {
-  if (context.req.path === "/api/pull-requests") {
+  if (
+    context.req.path === "/api/pull-requests" ||
+    context.req.path === "/api/pull-requests/refresh-statuses"
+  ) {
     await next();
     return;
   }
@@ -471,8 +475,13 @@ app.post("/api/test/pull-request-list-paginated", async (context) => {
 app.post("/api/test/reset-pull-request-list", (context) => {
   pullRequestListEmpty = false;
   pullRequestListPaginated = false;
+  pullRequestStatusRefreshCount = 0;
   return context.json({ ok: true });
 });
+
+app.get("/api/test/pull-request-status-refresh-count", (context) =>
+  context.json({ ok: true, count: pullRequestStatusRefreshCount }),
+);
 
 app.post("/api/test/reset-sync-stage", (context) => {
   syncStage = 0;
@@ -492,7 +501,7 @@ app.get("/api/pull-requests", (context) => {
     title: pullRequest.latestTitle,
     githubCreatedAt: pullRequest.githubCreatedAt,
     githubUpdatedAt: pullRequest.githubUpdatedAt,
-    githubState: pullRequest.githubState,
+    githubState: pullRequestStatusRefreshCount > 0 ? "MERGED" : pullRequest.githubState,
     githubIsDraft: pullRequest.githubIsDraft,
     unresolvedCommentCount: comments.filter((comment) => comment.resolvedAt === null).length,
     resolvedCommentCount: comments.filter((comment) => comment.resolvedAt !== null).length,
@@ -577,10 +586,11 @@ app.get("/api/pull-requests", (context) => {
           owner: "octo-org",
           repository: "review-repo",
           number: 3,
-          title: "Older fixture review",
+          title:
+            "Older fixture review with a deliberately long Pull Request title that must wrap onto multiple lines without being truncated",
           githubCreatedAt: null,
           githubUpdatedAt: "2026-07-01T00:00:00.000Z",
-          githubState: "OPEN",
+          githubState: pullRequestStatusRefreshCount > 0 ? "CLOSED" : "OPEN",
           githubIsDraft: true,
           unresolvedCommentCount: 3,
           resolvedCommentCount: 5,
@@ -612,6 +622,13 @@ app.get("/api/pull-requests", (context) => {
 });
 
 app.get("/api/pull-requests/:id", (context) => context.json({ ok: true, ...currentView() }));
+
+app.post("/api/pull-requests/refresh-statuses", async (context) => {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  pullRequestStatusRefreshCount += 1;
+  changeSequence += 1;
+  return context.json({ ok: true, attempted: 2, updated: 2, failures: [] });
+});
 
 app.post("/api/pull-requests/:id/refresh", async (context) => {
   await new Promise((resolve) => setTimeout(resolve, 100));

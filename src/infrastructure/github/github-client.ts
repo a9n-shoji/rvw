@@ -12,6 +12,9 @@ import { runProcess, runText } from "../process/run-process.js";
 
 export interface GitHubPort {
   doctor(): Promise<{ version: string; authenticated: boolean }>;
+  getPullRequestStatus(
+    reference: string,
+  ): Promise<{ state: GitHubPullRequest["state"]; isDraft: boolean }>;
   getPullRequest(
     reference: string | undefined,
     cwd: string,
@@ -40,6 +43,11 @@ const ghPullRequestSchema = z.object({
   createdAt: z.string(),
 });
 
+const ghPullRequestStatusSchema = z.object({
+  state: z.enum(["OPEN", "CLOSED", "MERGED"]),
+  isDraft: z.boolean(),
+});
+
 export function parsePullRequestUrl(url: string): {
   owner: string;
   repository: string;
@@ -64,7 +72,7 @@ export class GitHubClient implements GitHubPort {
   }
 
   async assertAuthenticated(): Promise<void> {
-    const status = await runProcess("gh", ["auth", "status", "--hostname", "github.com"], {
+    const status = await this.processRunner("gh", ["auth", "status", "--hostname", "github.com"], {
       allowExitCodes: [1],
     });
     if (status.exitCode !== 0) {
@@ -72,6 +80,45 @@ export class GitHubClient implements GitHubPort {
         suggestions: ["gh auth login", "gh auth setup-git"],
       });
     }
+  }
+
+  async getPullRequestStatus(
+    reference: string,
+  ): Promise<{ state: GitHubPullRequest["state"]; isDraft: boolean }> {
+    await this.assertAuthenticated();
+    let output: string;
+    try {
+      const result = await this.processRunner(
+        "gh",
+        ["pr", "view", reference, "--json", "state,isDraft"],
+        { timeoutMs: 60_000 },
+      );
+      output = result.stdout.toString("utf8").trimEnd();
+    } catch (error) {
+      if (error instanceof RvwError && error.code === "PROCESS_FAILED") {
+        throw new RvwError("GITHUB_ERROR", "Pull Request状態をGitHubから取得できませんでした。", {
+          cause: error,
+          details: error.details,
+          suggestions: ["PR URLとgh認証を確認してください。"],
+        });
+      }
+      throw error;
+    }
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(output);
+    } catch (error) {
+      throw new RvwError("GITHUB_ERROR", "GitHub CLIのPull Request状態応答が不正です。", {
+        cause: error,
+      });
+    }
+    const parsed = ghPullRequestStatusSchema.safeParse(decoded);
+    if (!parsed.success) {
+      throw new RvwError("GITHUB_ERROR", "GitHub CLIのPull Request状態応答が不正です。", {
+        details: parsed.error.flatten(),
+      });
+    }
+    return parsed.data;
   }
 
   async getPullRequest(

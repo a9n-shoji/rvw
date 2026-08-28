@@ -2209,17 +2209,32 @@ export function PullRequestReviewScreen({
     );
   };
 
+  const listUrl = new URL(window.location.href);
+  listUrl.hash = "";
+  listUrl.searchParams.delete("pullRequestId");
+  const listHref = `${listUrl.pathname}${listUrl.search}`;
+
   return (
     <main className="app-shell">
       <a className="skip-link" href="#review-main-content">
         レビュー本文へ移動
       </a>
       <header className="topbar">
-        <button
-          type="button"
+        <a
           className="brand brand-button"
           aria-label="Pull Request一覧へ"
-          onClick={() => {
+          href={listHref}
+          onClick={(event) => {
+            if (
+              event.button !== 0 ||
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.altKey
+            ) {
+              return;
+            }
+            event.preventDefault();
             cancelReadingHistoryScrollSnapshot();
             replaceCurrentReadingHistory();
             onNavigateToList();
@@ -2227,7 +2242,7 @@ export function PullRequestReviewScreen({
         >
           <span className="brand-mark">r</span>
           <strong>rvw</strong>
-        </button>
+        </a>
         <div className="pr-heading">
           <span>
             {pullRequest.owner}/{pullRequest.repository} · #{pullRequest.number}

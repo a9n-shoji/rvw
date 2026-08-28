@@ -59,7 +59,7 @@ import {
   MAX_WALKTHROUGH_TITLE_CHARACTERS,
 } from "../shared/constants.js";
 import { findFixedStringMatches } from "../domain/search.js";
-import { RvwError } from "../shared/errors.js";
+import { asRvwError, RvwError, type SerializedRvwError } from "../shared/errors.js";
 import {
   canonicalGitHubAttachmentUrl,
   detectImageContentType,
@@ -96,6 +96,18 @@ export interface PullRequestList {
     hasMore: boolean;
     nextOffset: number | null;
   };
+}
+
+export interface PullRequestStatusRefreshResult {
+  attempted: number;
+  updated: number;
+  failures: Array<{
+    pullRequestId: string;
+    owner: string;
+    repository: string;
+    number: number;
+    error: SerializedRvwError;
+  }>;
 }
 
 export interface SyncResult extends PullRequestView {
@@ -645,6 +657,71 @@ export class RvwService {
         hasMore,
         nextOffset: hasMore ? offset + returned : null,
       },
+    };
+  }
+
+  async refreshPullRequestStatuses(): Promise<PullRequestStatusRefreshResult> {
+    const pullRequests = this.database.listPullRequests();
+    type StatusRefreshOutcome =
+      | {
+          status: "fulfilled";
+          pullRequestId: string;
+          state: GitHubPullRequest["state"];
+          isDraft: boolean;
+        }
+      | { status: "rejected"; pullRequest: PullRequest; error: SerializedRvwError };
+    const outcomes: Array<StatusRefreshOutcome | undefined> = Array.from(
+      { length: pullRequests.length },
+      () => undefined,
+    );
+    let nextIndex = 0;
+    const workerCount = Math.min(4, pullRequests.length);
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (nextIndex < pullRequests.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          const pullRequest = pullRequests[index];
+          if (!pullRequest) continue;
+          try {
+            const githubStatus = await this.github.getPullRequestStatus(pullRequest.url);
+            outcomes[index] = {
+              status: "fulfilled",
+              pullRequestId: pullRequest.id,
+              ...githubStatus,
+            };
+          } catch (error) {
+            outcomes[index] = {
+              status: "rejected",
+              pullRequest,
+              error: asRvwError(error).toJSON(),
+            };
+          }
+        }
+      }),
+    );
+    const successful = outcomes.filter(
+      (outcome): outcome is Extract<StatusRefreshOutcome, { status: "fulfilled" }> =>
+        outcome?.status === "fulfilled",
+    );
+    this.database.updatePullRequestGitHubStatuses(successful);
+    const failures = outcomes.flatMap((outcome) =>
+      outcome?.status === "rejected"
+        ? [
+            {
+              pullRequestId: outcome.pullRequest.id,
+              owner: outcome.pullRequest.owner,
+              repository: outcome.pullRequest.repository,
+              number: outcome.pullRequest.number,
+              error: outcome.error,
+            },
+          ]
+        : [],
+    );
+    return {
+      attempted: pullRequests.length,
+      updated: successful.length,
+      failures,
     };
   }
 
