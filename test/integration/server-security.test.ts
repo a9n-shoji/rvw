@@ -113,7 +113,7 @@ describe("local HTTP security", () => {
     });
 
     const allResponse = await app.request(
-      "http://127.0.0.1:4321/api/pull-requests?offset=0&limit=2&activeOnly=false",
+      "http://127.0.0.1:4321/api/pull-requests?offset=0&limit=2&hideClosedOrMerged=false",
       { headers },
     );
     expect(allResponse.status).toBe(200);
@@ -131,7 +131,7 @@ describe("local HTTP security", () => {
     );
     expect(invalid.status).toBe(400);
     const invalidFilter = await app.request(
-      "http://127.0.0.1:4321/api/pull-requests?activeOnly=maybe",
+      "http://127.0.0.1:4321/api/pull-requests?hideClosedOrMerged=maybe",
       { headers },
     );
     expect(invalidFilter.status).toBe(400);

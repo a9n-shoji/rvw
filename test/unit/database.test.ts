@@ -439,6 +439,16 @@ describe("RvwDatabase", () => {
       githubState: null,
       githubIsDraft: null,
     });
+    expect(database.listPullRequestSummaries(0, 50, true)).toMatchObject({
+      items: [
+        {
+          pullRequestId,
+          githubState: null,
+          githubIsDraft: null,
+        },
+      ],
+      total: 1,
+    });
     expect(database.getComment(commentId)).toMatchObject({
       createdHeadOid: github.headOid,
       target: {

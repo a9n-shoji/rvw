@@ -7,22 +7,27 @@ const pullRequestId = "22222222-2222-4222-8222-222222222222";
 
 test("opens a repository-scale demo backed by committed Git objects", async ({ page, request }) => {
   await page.goto(demoBaseURL);
-  const activeOnlyFilter = page.getByRole("checkbox", { name: "Open / Draft のみ表示" });
+  const hideClosedOrMergedFilter = page.getByRole("checkbox", {
+    name: "Closed / Merged を非表示",
+  });
   const statusBadges = page.locator(".pull-request-status");
-  await expect(activeOnlyFilter).toBeChecked();
-  await expect(page.locator(".pull-request-row")).toHaveCount(2);
+  const rows = page.locator(".pull-request-row");
+  await expect(hideClosedOrMergedFilter).toBeChecked();
+  await expect(rows).toHaveCount(3);
   await expect(statusBadges).toHaveText(["Open", "Draft"]);
+  await expect(rows.nth(2)).toContainText("Legacy: status not synchronized yet");
+  await expect(rows.nth(2).locator(".pull-request-status")).toHaveCount(0);
 
-  await activeOnlyFilter.uncheck();
-  await expect(page.locator(".pull-request-row")).toHaveCount(4);
+  await hideClosedOrMergedFilter.uncheck();
+  await expect(rows).toHaveCount(5);
   await expect(statusBadges).toHaveText(["Open", "Draft", "Closed", "Merged"]);
-  await page.locator(".pull-request-row").nth(2).click();
+  await rows.nth(3).click();
   await expect(
     page.getByRole("heading", { name: "Demo: review rvw as a medium-sized repository" }),
   ).toBeVisible();
   await page.goBack();
-  await expect(activeOnlyFilter).not.toBeChecked();
-  await expect(page.locator(".pull-request-row")).toHaveCount(4);
+  await expect(hideClosedOrMergedFilter).not.toBeChecked();
+  await expect(rows).toHaveCount(5);
 
   const viewResponse = await request.get(`${demoBaseURL}/api/pull-requests/${pullRequestId}`);
   expect(viewResponse.ok()).toBe(true);

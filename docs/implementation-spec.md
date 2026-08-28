@@ -1141,7 +1141,7 @@ version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元�
 主なHTTP API:
 
 ```text
-GET  /api/pull-requests?offset=<offset>&limit=<limit>&activeOnly=<bool>
+GET  /api/pull-requests?offset=<offset>&limit=<limit>&hideClosedOrMerged=<bool>
 GET  /api/pull-requests/:id
 POST /api/pull-requests/open
 POST /api/pull-requests/:id/refresh
@@ -1172,8 +1172,9 @@ GET  /api/comments/:id/placement?...
 
 HTTP/CLIは同じapplication serviceを使用し、transportへbusiness logicを書かない。
 Pull Request一覧APIは既定50件・最大100件のoffset paginationとし、`total`、`hasMore`、`nextOffset`を返す。
-`activeOnly`は既定`true`で、最後に成功したsyncで保存した`github_state = 'OPEN'`（Draftを含む）だけを
-pagination前に絞り込む。`false`ではClosed / Mergedを含む全件を返し、一覧表示を理由にGitHubへ通信しない。
+`hideClosedOrMerged`は既定`true`で、最後に成功したsyncで保存した`github_state`がClosedまたはMergedの行だけを
+pagination前に除外する。Open、Draft、および状態未取得のlegacy行は表示し、`false`では全件を返す。
+一覧表示を理由にGitHubへ通信しない。
 各行はPR identity、title、GitHubの作成／更新日時、未解決／解決済みcomment数、Walkthrough数だけを持つ
 SQLite専用read modelとする。Git commitを読む`getPullRequestView()`は呼ばず、先に一覧1ページを絞ってから
 その行だけのcountをaggregate queryで取得し、PRごとのN+1 queryを作らない。順序は
@@ -1185,9 +1186,11 @@ tie-breakerとして固定する。
 URLに`pullRequestId`がない場合はuser-global SQLiteへ登録済みのPull Request一覧をworkspace入口として表示する。
 一覧は`owner/repository`、PR番号、title、未解決／解決済みcomment数、Walkthrough数、GitHub上の作成／更新日時を
 一行にまとめ、未解決comment数は`unresolved`と表示する。GitHub更新日時の新しい順であることを明示し、
-Open / Draftだけを表示するcheckboxは既定ONとする。filter後の0件は解除方法を示し、全件表示でも0件なら
+Closed / Mergedを非表示にするcheckboxは既定ONとする。状態未取得のlegacy行はbadgeなしで表示する。
+filter後の0件は解除方法を示し、全件表示でも0件なら
 `rvw open <PR URL>`を案内するempty stateとし、
-未取得の作成日時は不明と表示する。行選択とviewerのrvw brandはHistory APIで一覧と対象viewerを往復し、
+未取得の作成日時は不明と表示する。filter値はURLへ追加せず、reloadでは既定ONへ戻す。行選択とviewerの
+rvw brandはHistory APIで一覧と対象viewerを往復し、
 browser Back / Forwardを保つ。新しいrouterや永続workspace stateは導入しない。
 一覧からBack / Forwardで既存viewer entryへ戻る場合は、そのentryが持つfocused documentと位置も通常の
 reading historyとして復元する。reloadまたは新しい一覧行選択は従来どおり新しい一時workspaceを開始する。
@@ -1302,8 +1305,8 @@ Unit:
 - comment resolve/reopen、URI、CLI/API schema
 - Walkthrough schema、URI、Markdown reference / HTML preview validation、行comment placement
 - DB migration 001→current
-- Pull Request一覧のGitHub更新日時順、stable tie-breaker、aggregate count、active filter適用後のpagination、
-  既存行の不明な作成日時
+- Pull Request一覧のGitHub更新日時順、stable tie-breaker、aggregate count、Closed / Merged filter適用後の
+  pagination、既存行の不明な作成日時と状態
 
 Integration（実git + fake GitHub）:
 
@@ -1325,7 +1328,8 @@ Integration（実git + fake GitHub）:
 - commit固定Walkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
 - worktree間共有
 
-E2Eで登録済みPR一覧、Open / Draft filter、empty state、URLに保持するpagination、2ページ目からviewerを開いた後の
+E2Eで登録済みPR一覧、Closed / Merged filterと状態未取得行、empty state、URLに保持するpagination、
+2ページ目からviewerを開いた後の
 Back / Forward、一覧遷移後の未送信draft警告、一覧へ戻る直前のreading position、相対日時の更新、
 Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確認する。既存のreview E2Eは次を維持する。
 

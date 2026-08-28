@@ -46,7 +46,7 @@ function pushRoute(route: Extract<AppRoute, { kind: "list" | "review" }>): void 
 
 export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
   const [route, setRoute] = useState<AppRoute>(routeFromLocation);
-  const [activePullRequestsOnly, setActivePullRequestsOnly] = useState(true);
+  const [hideClosedOrMerged, setHideClosedOrMerged] = useState(true);
   const heartbeat = useQuery({
     queryKey: ["change-sequence"],
     queryFn: async () =>
@@ -102,11 +102,11 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   if (route.kind === "list") {
     return (
       <PullRequestListScreen
-        activeOnly={activePullRequestsOnly}
+        hideClosedOrMerged={hideClosedOrMerged}
         changeSequence={heartbeat.data?.changeSequence}
         heartbeatError={heartbeat.error}
         offset={route.offset}
-        onActiveOnlyChange={setActivePullRequestsOnly}
+        onHideClosedOrMergedChange={setHideClosedOrMerged}
         onNavigateToOffset={navigateToListOffset}
         onOpenPullRequest={navigateToPullRequest}
       />

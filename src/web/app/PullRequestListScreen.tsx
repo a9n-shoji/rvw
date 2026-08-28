@@ -116,28 +116,28 @@ function PullRequestRow({
 }
 
 export function PullRequestListScreen({
-  activeOnly,
+  hideClosedOrMerged,
   changeSequence,
   heartbeatError,
   offset,
-  onActiveOnlyChange,
+  onHideClosedOrMergedChange,
   onNavigateToOffset,
   onOpenPullRequest,
 }: {
-  activeOnly: boolean;
+  hideClosedOrMerged: boolean;
   changeSequence: number | undefined;
   heartbeatError: unknown;
   offset: number;
-  onActiveOnlyChange: (activeOnly: boolean) => void;
+  onHideClosedOrMergedChange: (hideClosedOrMerged: boolean) => void;
   onNavigateToOffset: (offset: number) => void;
   onOpenPullRequest: (pullRequestId: string) => void;
 }) {
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const listQuery = useQuery({
-    queryKey: ["pull-request-list", offset, activeOnly, changeSequence],
+    queryKey: ["pull-request-list", offset, hideClosedOrMerged, changeSequence],
     queryFn: async () =>
       await api<PullRequestListResponse>(
-        `/api/pull-requests?offset=${offset}&limit=${PAGE_LIMIT}&activeOnly=${activeOnly}`,
+        `/api/pull-requests?offset=${offset}&limit=${PAGE_LIMIT}&hideClosedOrMerged=${hideClosedOrMerged}`,
       ),
     placeholderData: (previousData) => previousData,
   });
@@ -174,13 +174,13 @@ export function PullRequestListScreen({
           <label className="pull-request-list-filter">
             <input
               type="checkbox"
-              checked={activeOnly}
+              checked={hideClosedOrMerged}
               onChange={(event) => {
-                onActiveOnlyChange(event.target.checked);
+                onHideClosedOrMergedChange(event.target.checked);
                 if (offset !== 0) onNavigateToOffset(0);
               }}
             />
-            Open / Draft のみ表示
+            Closed / Merged を非表示
           </label>
         </div>
         <ErrorNotice error={heartbeatError ?? listQuery.error} />
@@ -194,11 +194,11 @@ export function PullRequestListScreen({
               r
             </div>
             <h2>
-              {activeOnly
-                ? "Open / DraftのPull Requestはありません"
+              {hideClosedOrMerged
+                ? "Closed / Merged以外のPull Requestはありません"
                 : "まだレビュー対象が登録されていません"}
             </h2>
-            {activeOnly ? (
+            {hideClosedOrMerged ? (
               <p>Closed / Mergedを表示するにはfilterを解除してください。</p>
             ) : (
               <p>

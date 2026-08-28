@@ -300,7 +300,7 @@ describe("RvwService commit workflow", () => {
       githubState: "MERGED",
       githubIsDraft: false,
     });
-    expect(saved.service.listPullRequests({ activeOnly: false }).items[0]).toMatchObject({
+    expect(saved.service.listPullRequests({ hideClosedOrMerged: false }).items[0]).toMatchObject({
       githubState: "MERGED",
       githubIsDraft: false,
     });

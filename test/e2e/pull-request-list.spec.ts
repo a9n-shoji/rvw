@@ -17,7 +17,7 @@ test("lists saved Pull Requests and navigates through browser history", async ({
 
   await expect(page.getByRole("heading", { name: "Pull Requests" })).toBeVisible();
   await expect(page.getByText("GitHubでの更新が新しい順")).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: "Open / Draft のみ表示" })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Closed / Merged を非表示" })).toBeChecked();
   const rows = page.locator(".pull-request-row");
   await expect(rows).toHaveCount(2);
   await expect(rows.first()).toContainText("acme/review-repo");
@@ -71,11 +71,13 @@ test("shows an actionable empty state when no Pull Requests are saved", async ({
   await request.post("/api/test/pull-request-list-empty", { data: { enabled: true } });
   try {
     await page.goto("/");
-    const activeOnlyFilter = page.getByRole("checkbox", { name: "Open / Draft のみ表示" });
+    const hideClosedOrMergedFilter = page.getByRole("checkbox", {
+      name: "Closed / Merged を非表示",
+    });
     await expect(
-      page.getByRole("heading", { name: "Open / DraftのPull Requestはありません" }),
+      page.getByRole("heading", { name: "Closed / Merged以外のPull Requestはありません" }),
     ).toBeVisible();
-    await activeOnlyFilter.uncheck();
+    await hideClosedOrMergedFilter.uncheck();
     await expect(
       page.getByRole("heading", { name: "まだレビュー対象が登録されていません" }),
     ).toBeVisible();

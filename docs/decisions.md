@@ -18,15 +18,20 @@ taking precedence over Draft/Open.
 
 Continue accepting only Open or Draft Pull Requests for a new registration. Once a Pull Request is saved,
 allow refresh, sync, live inspection, and reset to read Closed or Merged metadata so the cache can advance
-without making the review workspace unavailable. The index never performs a GitHub lookup.
+without making the review workspace unavailable. The index never performs a GitHub lookup. Its default
+filter hides only rows whose cached state is explicitly Closed or Merged; legacy rows with no cached state
+remain visible without a badge until a normal synchronization fills both nullable columns.
 
 ### Trade-offs
 
 - Status remains available offline but represents the last successful synchronization, not guaranteed live
   GitHub state.
-- Legacy rows omit the badge until a normal synchronization fills both nullable columns.
+- Legacy rows omit the badge until a normal synchronization fills both nullable columns, but remain visible
+  under the default Closed / Merged filter.
 - Closed and Merged Pull Requests remain readable from cached Git objects and review data.
 - Keeping `state` and `isDraft` separate avoids inventing a GitHub state that its API does not provide.
+- The filter value is ephemeral UI state rather than URL history state. Back/Forward still restores the
+  paginated offset, but restoring an earlier filter value is deferred to a separate navigation change.
 
 ## 2026-08-28: Use a SQLite-only workspace index for saved Pull Requests
 
