@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
 import type { ServerType } from "@hono/node-server";
 import { serve } from "@hono/node-server";
 import type { RvwService } from "../application/rvw-service.js";
+import { RvwError } from "../shared/errors.js";
 import { createApp, type ServerSecurityContext } from "./app.js";
 import { ViewerLifecycle } from "./viewer-lifecycle.js";
 
@@ -11,6 +13,8 @@ export interface RunningServer {
   origin: string;
   firstViewerConnected: Promise<void> | null;
   allViewersClosed: Promise<void> | null;
+  reserveViewer(): string | null;
+  cancelViewerReservation(leaseId: string): void;
   close(): Promise<void>;
 }
 
@@ -68,6 +72,19 @@ export async function startServer(
           origin,
           firstViewerConnected,
           allViewersClosed,
+          reserveViewer: () => {
+            if (!viewerLifecycle) return null;
+            const leaseId = randomUUID();
+            if (!viewerLifecycle.reserveViewer(leaseId)) {
+              throw new RvwError(
+                "PROCESS_FAILED",
+                "rvw runtimeは停止処理中のためviewerを追加できません。",
+                { suggestions: ["rvw openを再実行してください。"] },
+              );
+            }
+            return leaseId;
+          },
+          cancelViewerReservation: (leaseId) => viewerLifecycle?.cancelViewerReservation(leaseId),
           close: () =>
             (closePromise ??= (async () => {
               viewerLifecycle?.close();

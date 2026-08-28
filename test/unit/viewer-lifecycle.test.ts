@@ -1,8 +1,10 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  closeOwnedRuntime,
   completeBackgroundOpen,
   createRuntimeAgentSocketHandler,
+  holdRuntimeViewerLease,
   startBackgroundOpen,
   waitForServerShutdown,
   type BackgroundOpenChild,
@@ -87,6 +89,47 @@ describe("ViewerLifecycle", () => {
 
     expect(lifecycle.activeViewerCount).toBe(1);
     expect(onAllViewersClosed).not.toHaveBeenCalled();
+  });
+
+  it("keeps the runtime alive when viewer.open reserves a viewer during the close grace", async () => {
+    vi.useFakeTimers();
+    const onAllViewersClosed = vi.fn();
+    const lifecycle = new ViewerLifecycle({
+      onAllViewersClosed,
+      leaseTimeoutMs: 10_000,
+      startupTimeoutMs: 1_000,
+      closeGraceMs: 500,
+    });
+
+    lifecycle.heartbeat("old-document");
+    lifecycle.release("old-document");
+    await vi.advanceTimersByTimeAsync(499);
+    expect(lifecycle.reserveViewer("55555555-5555-4555-8555-555555555555")).toBe(true);
+    await vi.advanceTimersByTimeAsync(2);
+
+    expect(lifecycle.pendingViewerCount).toBe(1);
+    expect(onAllViewersClosed).not.toHaveBeenCalled();
+
+    lifecycle.heartbeat("new-document", "55555555-5555-4555-8555-555555555555");
+    expect(lifecycle.pendingViewerCount).toBe(0);
+    expect(lifecycle.activeViewerCount).toBe(1);
+  });
+
+  it("releases an unused viewer.open reservation and then applies the close grace", async () => {
+    vi.useFakeTimers();
+    const onAllViewersClosed = vi.fn();
+    const lifecycle = new ViewerLifecycle({
+      onAllViewersClosed,
+      startupTimeoutMs: 100,
+      closeGraceMs: 50,
+    });
+
+    lifecycle.reserveViewer("55555555-5555-4555-8555-555555555555");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(lifecycle.pendingViewerCount).toBe(0);
+    expect(onAllViewersClosed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(onAllViewersClosed).toHaveBeenCalledOnce();
   });
 
   it("ignores an in-flight heartbeat that arrives after the viewer release", async () => {
@@ -322,9 +365,16 @@ describe("database-scoped viewer runtime reuse", () => {
 
   it("reuses the active origin and rejects a conflicting explicit port before opening a PR", async () => {
     const openPullRequest = vi.fn().mockResolvedValue({ pullRequest: { id: "pr-45" } });
+    const reserveViewer = vi.fn().mockReturnValue("55555555-5555-4555-8555-555555555555");
+    const cancelViewerReservation = vi.fn();
     const handler = createRuntimeAgentSocketHandler(
       { service: { openPullRequest } } as unknown as Runtime,
-      { origin: "http://127.0.0.1:4321", port: 4321 } as RunningServer,
+      {
+        origin: "http://127.0.0.1:4321",
+        port: 4321,
+        reserveViewer,
+        cancelViewerReservation,
+      } as unknown as RunningServer,
     );
 
     await expect(
@@ -338,12 +388,103 @@ describe("database-scoped viewer runtime reuse", () => {
     await expect(
       handler.openViewer({ reference: "45", cwd: "/repo", requestedPort: 4321 }),
     ).resolves.toEqual({
-      url: "http://127.0.0.1:4321/?pullRequestId=pr-45",
+      url: "http://127.0.0.1:4321/?pullRequestId=pr-45&viewerLease=55555555-5555-4555-8555-555555555555",
       origin: "http://127.0.0.1:4321",
       port: 4321,
       pullRequestId: "pr-45",
       ownerPid: process.pid,
+      viewerLeaseId: "55555555-5555-4555-8555-555555555555",
     });
     expect(openPullRequest).toHaveBeenCalledWith("45", "/repo");
+    expect(reserveViewer).toHaveBeenCalledOnce();
+    expect(reserveViewer.mock.invocationCallOrder[0]).toBeLessThan(
+      openPullRequest.mock.invocationCallOrder[0]!,
+    );
+    expect(cancelViewerReservation).not.toHaveBeenCalled();
+  });
+
+  it("cancels a pending viewer reservation when PR resolution fails", async () => {
+    const failure = new Error("unknown PR");
+    const cancelViewerReservation = vi.fn();
+    const handler = createRuntimeAgentSocketHandler(
+      {
+        service: { openPullRequest: vi.fn().mockRejectedValue(failure) },
+      } as unknown as Runtime,
+      {
+        origin: "http://127.0.0.1:4321",
+        port: 4321,
+        reserveViewer: () => "55555555-5555-4555-8555-555555555555",
+        cancelViewerReservation,
+      } as unknown as RunningServer,
+    );
+
+    await expect(
+      handler.openViewer({ reference: "999", cwd: "/repo", requestedPort: 0 }),
+    ).rejects.toBe(failure);
+    expect(cancelViewerReservation).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
+  });
+});
+
+describe("runtime shutdown sequencing", () => {
+  it("stops Agent requests, drains HTTP, closes SQLite, and releases ownership last", async () => {
+    const calls: string[] = [];
+    const agentSocket = {
+      stopAccepting: vi.fn(() => {
+        calls.push("agent-stop");
+        return Promise.resolve();
+      }),
+      releaseOwnership: vi.fn(() => {
+        calls.push("owner-release");
+        return Promise.resolve();
+      }),
+    };
+    const running = {
+      close: vi.fn(() => {
+        calls.push("http-close");
+        return Promise.resolve();
+      }),
+    };
+    const runtime = { close: vi.fn(() => calls.push("runtime-close")) };
+
+    await closeOwnedRuntime(
+      agentSocket as unknown as Parameters<typeof closeOwnedRuntime>[0],
+      running as unknown as Parameters<typeof closeOwnedRuntime>[1],
+      runtime as unknown as Parameters<typeof closeOwnedRuntime>[2],
+    );
+
+    expect(calls).toEqual(["agent-stop", "http-close", "runtime-close", "owner-release"]);
+  });
+});
+
+describe("--no-open runtime lease", () => {
+  it("heartbeats until a signal and releases its CLI-held viewer", async () => {
+    const fetchRequest = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    const holding = holdRuntimeViewerLease(
+      {
+        url: "http://127.0.0.1:4321/?pullRequestId=pr-45",
+        origin: "http://127.0.0.1:4321",
+        port: 4321,
+        pullRequestId: "pr-45",
+        ownerPid: 123,
+        viewerLeaseId: "55555555-5555-4555-8555-555555555555",
+      },
+      { fetch: fetchRequest, heartbeatIntervalMs: 60_000 },
+    );
+    await vi.waitFor(() => expect(fetchRequest).toHaveBeenCalledOnce());
+    process.emit("SIGTERM", "SIGTERM");
+    await holding;
+
+    expect(fetchRequest).toHaveBeenCalledTimes(2);
+    expect(fetchRequest.mock.calls[0]?.[1]).toMatchObject({
+      headers: {
+        "x-rvw-viewer-open-lease": "55555555-5555-4555-8555-555555555555",
+      },
+    });
+    const releaseRequest = fetchRequest.mock.calls[1]?.[1];
+    expect(releaseRequest?.method).toBe("POST");
+    expect(releaseRequest?.body).toEqual(expect.stringContaining("viewerId"));
   });
 });

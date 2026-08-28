@@ -27,7 +27,9 @@ sent operation with an unknown outcome is never automatically repeated. Concurre
 database compete for an atomic filesystem owner lock before Runtime and HTTP initialization, so only
 the winner can become the runtime. A loser delegates its open request to the winner and exits instead
 of waiting to become a second owner. A later invocation recovers a dead-PID lock and stale socket by
-exact inode. Transport diagnostics report the
+exact inode. Shutdown stops accepting socket requests, drains HTTP, and closes Runtime/SQLite before
+removing the socket and releasing the owner lock, so a new runtime cannot start while the old one is
+still draining. Transport diagnostics report the
 socket, connection, database identity, selected transport, and fallback reason. Doctor also executes
 a rollback-only write transaction instead of inferring writeability from Unix modes.
 
@@ -99,11 +101,14 @@ Each browser document attaches an ephemeral viewer ID to that poll. The database
 only to stop its HTTP listener after the final tab closes; they are never persisted and are not part of
 review state or the public Agent CLI protocol. By default, the first parent `rvw open` process starts the
 runtime worker in the background, opens the browser after readiness, waits for the first viewer heartbeat,
-and then returns control to the terminal. Later opens use the runtime socket and same HTTP origin. This is
-a browser-owned runtime rather than a persistent daemon. `--foreground` explicitly owns a terminal-attached
-runtime and conflicts with an existing owner. `--no-open` disables only browser launch: it reuses an active
-runtime or starts a signal-managed one when none exists. An explicit nonzero port must match an active
-runtime; otherwise the command reports a conflict instead of starting a second server.
+and then returns control to the terminal. Later opens use the runtime socket and same HTTP origin, with a
+bounded pending viewer reservation until the returned URL sends its first heartbeat. This prevents a prior
+final-tab grace timer from invalidating the new URL. The process remains a browser-owned runtime rather than
+a persistent daemon. `--foreground` explicitly owns a terminal-attached runtime and conflicts with an
+existing owner. `--no-open` disables only browser launch: it reuses an active runtime or starts a
+signal-managed one when none exists. When reusing a browser-managed runtime, the CLI holds a viewer lease
+until Ctrl+C. An explicit nonzero port must match an active runtime; otherwise the command reports a conflict
+instead of starting a second server.
 
 The React root treats a URL without `pullRequestId` as a lightweight workspace index over the
 user-global database. Its paginated summary query first bounds the Pull Request rows and then aggregates
