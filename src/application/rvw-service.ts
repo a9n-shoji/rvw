@@ -662,62 +662,35 @@ export class RvwService {
 
   async refreshPullRequestStatuses(): Promise<PullRequestStatusRefreshResult> {
     const pullRequests = this.database.listPullRequests();
-    type StatusRefreshOutcome =
-      | {
-          status: "fulfilled";
-          pullRequestId: string;
-          state: GitHubPullRequest["state"];
-          isDraft: boolean;
-        }
-      | { status: "rejected"; pullRequest: PullRequest; error: SerializedRvwError };
-    const outcomes: Array<StatusRefreshOutcome | undefined> = Array.from(
-      { length: pullRequests.length },
-      () => undefined,
+    const outcomes = await this.github.getPullRequestStatuses(
+      pullRequests.map((pullRequest) => pullRequest.url),
     );
-    let nextIndex = 0;
-    const workerCount = Math.min(4, pullRequests.length);
-    await Promise.all(
-      Array.from({ length: workerCount }, async () => {
-        while (nextIndex < pullRequests.length) {
-          const index = nextIndex;
-          nextIndex += 1;
-          const pullRequest = pullRequests[index];
-          if (!pullRequest) continue;
-          try {
-            const githubStatus = await this.github.getPullRequestStatus(pullRequest.url);
-            outcomes[index] = {
-              status: "fulfilled",
-              pullRequestId: pullRequest.id,
-              ...githubStatus,
-            };
-          } catch (error) {
-            outcomes[index] = {
-              status: "rejected",
-              pullRequest,
-              error: asRvwError(error).toJSON(),
-            };
-          }
-        }
-      }),
-    );
-    const successful = outcomes.filter(
-      (outcome): outcome is Extract<StatusRefreshOutcome, { status: "fulfilled" }> =>
-        outcome?.status === "fulfilled",
-    );
+    if (outcomes.length !== pullRequests.length) {
+      throw new RvwError("GITHUB_ERROR", "Pull Request状態の一括取得件数が一致しません。", {
+        status: 502,
+      });
+    }
+    const successful = outcomes.flatMap((outcome, index) => {
+      const pullRequest = pullRequests[index];
+      return outcome.status === "fulfilled" && pullRequest
+        ? [{ pullRequestId: pullRequest.id, ...outcome.value }]
+        : [];
+    });
     this.database.updatePullRequestGitHubStatuses(successful);
-    const failures = outcomes.flatMap((outcome) =>
-      outcome?.status === "rejected"
+    const failures = outcomes.flatMap((outcome, index) => {
+      const pullRequest = pullRequests[index];
+      return outcome.status === "rejected" && pullRequest
         ? [
             {
-              pullRequestId: outcome.pullRequest.id,
-              owner: outcome.pullRequest.owner,
-              repository: outcome.pullRequest.repository,
-              number: outcome.pullRequest.number,
-              error: outcome.error,
+              pullRequestId: pullRequest.id,
+              owner: pullRequest.owner,
+              repository: pullRequest.repository,
+              number: pullRequest.number,
+              error: asRvwError(outcome.error).toJSON(),
             },
           ]
-        : [],
-    );
+        : [];
+    });
     return {
       attempted: pullRequests.length,
       updated: successful.length,

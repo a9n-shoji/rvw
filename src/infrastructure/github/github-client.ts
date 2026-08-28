@@ -12,9 +12,7 @@ import { runProcess, runText } from "../process/run-process.js";
 
 export interface GitHubPort {
   doctor(): Promise<{ version: string; authenticated: boolean }>;
-  getPullRequestStatus(
-    reference: string,
-  ): Promise<{ state: GitHubPullRequest["state"]; isDraft: boolean }>;
+  getPullRequestStatuses(references: readonly string[]): Promise<GitHubPullRequestStatusResult[]>;
   getPullRequest(
     reference: string | undefined,
     cwd: string,
@@ -22,6 +20,14 @@ export interface GitHubPort {
   ): Promise<GitHubPullRequest>;
   getAttachment(absoluteUrl: string): Promise<{ content: Buffer; byteLength: number }>;
 }
+
+export interface GitHubPullRequestStatus {
+  state: GitHubPullRequest["state"];
+  isDraft: boolean;
+}
+
+export type GitHubPullRequestStatusResult =
+  { status: "fulfilled"; value: GitHubPullRequestStatus } | { status: "rejected"; error: unknown };
 
 type ProcessRunner = typeof runProcess;
 
@@ -82,10 +88,7 @@ export class GitHubClient implements GitHubPort {
     }
   }
 
-  async getPullRequestStatus(
-    reference: string,
-  ): Promise<{ state: GitHubPullRequest["state"]; isDraft: boolean }> {
-    await this.assertAuthenticated();
+  private async getPullRequestStatus(reference: string): Promise<GitHubPullRequestStatus> {
     let output: string;
     try {
       const result = await this.processRunner(
@@ -119,6 +122,45 @@ export class GitHubClient implements GitHubPort {
       });
     }
     return parsed.data;
+  }
+
+  async getPullRequestStatuses(
+    references: readonly string[],
+  ): Promise<GitHubPullRequestStatusResult[]> {
+    if (references.length === 0) return [];
+    await this.assertAuthenticated();
+    const outcomes: Array<GitHubPullRequestStatusResult | undefined> = Array.from(
+      { length: references.length },
+      () => undefined,
+    );
+    let nextIndex = 0;
+    const workerCount = Math.min(4, references.length);
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (nextIndex < references.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          const reference = references[index];
+          if (!reference) continue;
+          try {
+            outcomes[index] = {
+              status: "fulfilled",
+              value: await this.getPullRequestStatus(reference),
+            };
+          } catch (error) {
+            outcomes[index] = { status: "rejected", error };
+          }
+        }
+      }),
+    );
+    return outcomes.map((outcome) => {
+      if (!outcome) {
+        throw new RvwError("INTERNAL_ERROR", "Pull Request状態の一括取得結果が不足しています。", {
+          status: 500,
+        });
+      }
+      return outcome;
+    });
   }
 
   async getPullRequest(

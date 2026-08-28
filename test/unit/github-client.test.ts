@@ -13,11 +13,17 @@ const attachmentUrl =
 const pullRequestUrl = "https://github.com/acme/review-repo/pull/7";
 
 describe("GitHubClient Pull Request status fetching", () => {
-  it("requests only state and draft metadata after checking authentication", async () => {
+  it("requests only state and draft metadata after one authentication check", async () => {
     const calls: Array<{ executable: string; args: readonly string[]; options: unknown }> = [];
     const runner: typeof runProcess = (executable, args, options = {}) => {
       calls.push({ executable, args, options });
-      const stdout = args[0] === "pr" ? JSON.stringify({ state: "MERGED", isDraft: false }) : "";
+      const stdout =
+        args[0] === "pr"
+          ? JSON.stringify({
+              state: args[2] === pullRequestUrl ? "MERGED" : "OPEN",
+              isDraft: false,
+            })
+          : "";
       return Promise.resolve({
         stdout: Buffer.from(stdout),
         stderr: Buffer.alloc(0),
@@ -26,10 +32,13 @@ describe("GitHubClient Pull Request status fetching", () => {
       });
     };
 
-    await expect(new GitHubClient(runner).getPullRequestStatus(pullRequestUrl)).resolves.toEqual({
-      state: "MERGED",
-      isDraft: false,
-    });
+    const secondPullRequestUrl = "https://github.com/acme/review-repo/pull/8";
+    await expect(
+      new GitHubClient(runner).getPullRequestStatuses([pullRequestUrl, secondPullRequestUrl]),
+    ).resolves.toEqual([
+      { status: "fulfilled", value: { state: "MERGED", isDraft: false } },
+      { status: "fulfilled", value: { state: "OPEN", isDraft: false } },
+    ]);
     expect(calls).toEqual([
       {
         executable: "gh",
@@ -39,6 +48,11 @@ describe("GitHubClient Pull Request status fetching", () => {
       {
         executable: "gh",
         args: ["pr", "view", pullRequestUrl, "--json", "state,isDraft"],
+        options: { timeoutMs: 60_000 },
+      },
+      {
+        executable: "gh",
+        args: ["pr", "view", secondPullRequestUrl, "--json", "state,isDraft"],
         options: { timeoutMs: 60_000 },
       },
     ]);

@@ -220,7 +220,7 @@ export function PullRequestListScreen({
               ? "更新対象のPull Requestはありません。"
               : `${statusRefresh.data.updated}件のPRステータスを更新しました。`}
             {statusRefresh.data.failures.length > 0 && (
-              <details>
+              <details open>
                 <summary>{statusRefresh.data.failures.length}件を更新できませんでした</summary>
                 <ul>
                   {statusRefresh.data.failures.map((failure) => (

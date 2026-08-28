@@ -118,6 +118,27 @@ test("refreshes every saved Pull Request status only after an explicit click", a
     .toBe(1);
 });
 
+test("keeps successful status updates and shows partial failures immediately", async ({
+  page,
+  request,
+}) => {
+  await request.post("/api/test/pull-request-status-refresh-failure", {
+    data: { enabled: true },
+  });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "PRステータスを一括更新" }).click();
+
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("1件のPRステータスを更新しました。");
+  await expect(alert).toContainText("1件を更新できませんでした");
+  await expect(alert).toContainText(
+    "octo-org/review-repo#3: Pull Request状態をGitHubから取得できませんでした。",
+  );
+  await expect(page.locator(".pull-request-row")).toHaveCount(1);
+  await expect(page.locator(".pull-request-row")).toContainText("#3");
+});
+
 test("shows an actionable empty state when no Pull Requests are saved", async ({
   page,
   request,

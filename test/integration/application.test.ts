@@ -17,11 +17,16 @@ class FakeGitHub implements GitHubPort {
     return Promise.resolve({ version: "gh fake", authenticated: true });
   }
 
-  getPullRequestStatus() {
-    return Promise.resolve({
-      state: this.pullRequest.state,
-      isDraft: this.pullRequest.isDraft,
-    });
+  getPullRequestStatuses(references: readonly string[]) {
+    return Promise.resolve(
+      references.map(() => ({
+        status: "fulfilled" as const,
+        value: {
+          state: this.pullRequest.state,
+          isDraft: this.pullRequest.isDraft,
+        },
+      })),
+    );
   }
 
   getPullRequest(_reference?: string, _cwd?: string, options: { allowClosed?: boolean } = {}) {
@@ -114,10 +119,17 @@ describe("RvwService commit workflow", () => {
     const statusGithub: GitHubPort = {
       doctor: () => Promise.resolve({ version: "gh fake", authenticated: true }),
       getPullRequest: () => Promise.reject(new Error("not used")),
-      getPullRequestStatus(reference) {
-        return reference === opened.pullRequest.url
-          ? Promise.resolve({ state: "CLOSED", isDraft: false })
-          : Promise.reject(new Error("temporary GitHub failure"));
+      getPullRequestStatuses(references) {
+        return Promise.resolve(
+          references.map((reference) =>
+            reference === opened.pullRequest.url
+              ? {
+                  status: "fulfilled" as const,
+                  value: { state: "CLOSED" as const, isDraft: false },
+                }
+              : { status: "rejected" as const, error: new Error("temporary GitHub failure") },
+          ),
+        );
       },
       getAttachment: () => Promise.reject(new Error("not used")),
     };

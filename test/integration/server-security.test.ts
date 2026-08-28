@@ -15,7 +15,7 @@ const github: GitHubPort = {
   getPullRequest() {
     return Promise.reject(new Error("not used"));
   },
-  getPullRequestStatus() {
+  getPullRequestStatuses() {
     return Promise.reject(new Error("not used"));
   },
   getAttachment() {
@@ -146,8 +146,13 @@ describe("local HTTP security", () => {
     const pullRequestId = registerPullRequest(database);
     const statusGithub: GitHubPort = {
       ...github,
-      getPullRequestStatus() {
-        return Promise.resolve({ state: "MERGED", isDraft: false });
+      getPullRequestStatuses(references) {
+        return Promise.resolve(
+          references.map(() => ({
+            status: "fulfilled" as const,
+            value: { state: "MERGED" as const, isDraft: false },
+          })),
+        );
       },
     };
     const app = createApp(new RvwService(database, new GitClient(), statusGithub), {
