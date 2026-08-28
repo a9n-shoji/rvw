@@ -18,6 +18,7 @@ import {
   createCommentSchema,
   editCommentPostSchema,
   openPullRequestSchema,
+  pullRequestListQuerySchema,
   replySchema,
   resetSchema,
   themePreferenceSchema,
@@ -175,6 +176,14 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
       ok: true,
       themePreference: service.database.setThemePreference(input.themePreference),
     });
+  });
+
+  app.get("/api/pull-requests", (context) => {
+    const query = pullRequestListQuerySchema.parse({
+      offset: context.req.query("offset"),
+      limit: context.req.query("limit"),
+    });
+    return context.json({ ok: true, ...service.listPullRequests(query) });
   });
 
   app.get("/api/pull-requests/:id", async (context) =>

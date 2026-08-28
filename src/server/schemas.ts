@@ -1,8 +1,10 @@
 import { z } from "zod";
 import {
+  DEFAULT_PULL_REQUEST_LIST_LIMIT,
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
   MAX_COMMENT_BODY_BYTES,
+  MAX_PULL_REQUEST_LIST_LIMIT,
 } from "../shared/constants.js";
 import { codeReferenceInputSchema } from "../application/agent-command-schemas.js";
 import { themePreferences } from "../shared/preferences.js";
@@ -43,6 +45,15 @@ export const resetSchema = z.object({ yes: z.boolean() });
 export const viewerIdSchema = z.uuid();
 export const viewerReleaseSchema = z.object({ viewerId: viewerIdSchema });
 export const themePreferenceSchema = z.object({ themePreference: z.enum(themePreferences) });
+export const pullRequestListQuerySchema = z.object({
+  offset: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_PULL_REQUEST_LIST_LIMIT)
+    .default(DEFAULT_PULL_REQUEST_LIST_LIMIT),
+});
 
 export const createCommentSchema = z
   .object({

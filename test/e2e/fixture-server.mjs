@@ -42,6 +42,7 @@ let syncStage = 0;
 let themePreference = "system";
 let blockedImageRequestCount = 0;
 let imageTextRequestCount = 0;
+let pullRequestListEmpty = false;
 const selectedLineText = (value, startLine, endLine) =>
   value
     .replace(/\r\n?/g, "\n")
@@ -100,6 +101,7 @@ function currentPullRequest() {
     latestBaseOid: baseOid,
     latestComparisonBaseOid: baseOid,
     latestHeadOid: headOid,
+    githubCreatedAt: "2026-08-07T01:00:00.000Z",
     githubUpdatedAt:
       syncStage > 1
         ? "2026-08-08T03:00:00.000Z"
@@ -370,6 +372,10 @@ app.use("*", async (context, next) => {
 });
 
 app.use("/api/pull-requests/*", async (context, next) => {
+  if (context.req.path === "/api/pull-requests") {
+    await next();
+    return;
+  }
   const requestedId = context.req.path.match(/^\/api\/pull-requests\/([^/]+)/)?.[1] ?? "";
   if (!viewerIdPattern.test(requestedId)) {
     return context.json(
@@ -446,6 +452,65 @@ app.get("/api/test/external-image-count", (context) =>
 app.get("/api/test/image-text-request-count", (context) =>
   context.json({ ok: true, count: imageTextRequestCount }),
 );
+
+app.post("/api/test/pull-request-list-empty", async (context) => {
+  const input = await context.req.json();
+  pullRequestListEmpty = input.enabled === true;
+  return context.json({ ok: true, enabled: pullRequestListEmpty });
+});
+
+app.post("/api/test/reset-sync-stage", (context) => {
+  syncStage = 0;
+  return context.json({ ok: true });
+});
+
+app.get("/api/pull-requests", (context) => {
+  const offset = Math.max(0, Number(context.req.query("offset") ?? 0));
+  const limit = Math.min(100, Math.max(1, Number(context.req.query("limit") ?? 50)));
+  const pullRequest = currentPullRequest();
+  const items = pullRequestListEmpty
+    ? []
+    : [
+        {
+          pullRequestId: pullRequest.id,
+          owner: pullRequest.owner,
+          repository: pullRequest.repository,
+          number: pullRequest.number,
+          title: pullRequest.latestTitle,
+          githubCreatedAt: pullRequest.githubCreatedAt,
+          githubUpdatedAt: pullRequest.githubUpdatedAt,
+          unresolvedCommentCount: comments.filter((comment) => comment.resolvedAt === null).length,
+          resolvedCommentCount: comments.filter((comment) => comment.resolvedAt !== null).length,
+          walkthroughCount: activeWalkthroughs.length,
+        },
+        {
+          pullRequestId: "22222222-2222-4222-8222-222222222222",
+          owner: "octo-org",
+          repository: "review-repo",
+          number: 3,
+          title: "Older fixture review",
+          githubCreatedAt: null,
+          githubUpdatedAt: "2026-07-01T00:00:00.000Z",
+          unresolvedCommentCount: 3,
+          resolvedCommentCount: 5,
+          walkthroughCount: 2,
+        },
+      ];
+  const pageItems = items.slice(offset, offset + limit);
+  const hasMore = offset + pageItems.length < items.length;
+  return context.json({
+    ok: true,
+    items: pageItems,
+    pagination: {
+      offset,
+      limit,
+      returned: pageItems.length,
+      total: items.length,
+      hasMore,
+      nextOffset: hasMore ? offset + pageItems.length : null,
+    },
+  });
+});
 
 app.get("/api/pull-requests/:id", (context) => context.json({ ok: true, ...currentView() }));
 

@@ -16,6 +16,7 @@ import type {
   DocumentRef,
   GitHubPullRequest,
   PullRequest,
+  PullRequestSummary,
   ResetCounts,
   ReviewComment,
   SearchResponse,
@@ -38,11 +39,13 @@ import { buildPullRequestMarkdown, hashDocument, selectedLineText } from "../dom
 import { createSourceExcerpt, type SourceExcerpt } from "../domain/source-excerpt.js";
 import {
   DEFAULT_COMMENT_LIST_LIMIT,
+  DEFAULT_PULL_REQUEST_LIST_LIMIT,
   DEFAULT_COMMENT_WATCH_LIMIT,
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
   MAX_COMMENT_BODY_BYTES,
   MAX_COMMENT_LIST_LIMIT,
+  MAX_PULL_REQUEST_LIST_LIMIT,
   MAX_COMMENT_WATCH_LIMIT,
   MAX_IDEMPOTENCY_KEY_CHARACTERS,
   MAX_SEARCH_QUERY_BYTES,
@@ -81,6 +84,18 @@ export interface PullRequestView {
   comparisonBaseOid: string;
   headOid: string;
   commits: CommitSummary[];
+}
+
+export interface PullRequestList {
+  items: PullRequestSummary[];
+  pagination: {
+    offset: number;
+    limit: number;
+    returned: number;
+    total: number;
+    hasMore: boolean;
+    nextOffset: number | null;
+  };
 }
 
 export interface SyncResult extends PullRequestView {
@@ -596,6 +611,37 @@ export class RvwService {
     if (!pullRequest)
       throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。", { status: 404 });
     return pullRequest;
+  }
+
+  listPullRequests(input: {
+    offset?: number | undefined;
+    limit?: number | undefined;
+  }): PullRequestList {
+    const offset = input.offset ?? 0;
+    const limit = input.limit ?? DEFAULT_PULL_REQUEST_LIST_LIMIT;
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new RvwError("INVALID_INPUT", "offsetは0以上の整数にしてください。");
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PULL_REQUEST_LIST_LIMIT) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `limitは1以上${MAX_PULL_REQUEST_LIST_LIMIT}以下の整数にしてください。`,
+      );
+    }
+    const page = this.database.listPullRequestSummaries(offset, limit);
+    const returned = page.items.length;
+    const hasMore = offset + returned < page.total;
+    return {
+      items: page.items,
+      pagination: {
+        offset,
+        limit,
+        returned,
+        total: page.total,
+        hasMore,
+        nextOffset: hasMore ? offset + returned : null,
+      },
+    };
   }
 
   resolveStoredPullRequest(reference: string): PullRequest {

@@ -33,6 +33,7 @@ const ghPullRequestSchema = z.object({
   baseRefOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
   headRefName: z.string().min(1),
   headRefOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
+  createdAt: z.string(),
 });
 
 export function parsePullRequestUrl(url: string): {
@@ -77,6 +78,7 @@ export class GitHubClient implements GitHubPort {
       "url",
       "title",
       "body",
+      "createdAt",
       "updatedAt",
       "state",
       "isDraft",
@@ -131,6 +133,7 @@ export class GitHubClient implements GitHubPort {
       baseOid: parsed.data.baseRefOid,
       headRefName: parsed.data.headRefName,
       headOid: parsed.data.headRefOid,
+      createdAt: parsed.data.createdAt,
       updatedAt: parsed.data.updatedAt,
       state: "OPEN",
       isDraft: parsed.data.isDraft,

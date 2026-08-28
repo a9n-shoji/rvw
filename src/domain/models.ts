@@ -16,6 +16,7 @@ export interface GitHubPullRequest extends PullRequestIdentity {
   baseOid: string;
   headRefName: string;
   headOid: string;
+  createdAt: string;
   updatedAt: string;
   state: "OPEN";
   isDraft: boolean;
@@ -35,10 +36,24 @@ export interface PullRequest extends PullRequestIdentity {
   latestBaseOid: string;
   latestComparisonBaseOid: string;
   latestHeadOid: string;
+  githubCreatedAt: string | null;
   githubUpdatedAt: string;
   fetchedAt: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PullRequestSummary {
+  pullRequestId: string;
+  owner: string;
+  repository: string;
+  number: number;
+  title: string;
+  githubCreatedAt: string | null;
+  githubUpdatedAt: string;
+  unresolvedCommentCount: number;
+  resolvedCommentCount: number;
+  walkthroughCount: number;
 }
 
 export interface CommitSummary {

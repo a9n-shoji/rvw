@@ -22,6 +22,7 @@ import type {
   DeletedWalkthrough,
   GitHubPullRequest,
   PullRequest,
+  PullRequestSummary,
   ResetCounts,
   ReviewComment,
   Walkthrough,
@@ -44,6 +45,11 @@ export interface CommentPageItem {
 
 export interface CommentPage {
   comments: CommentPageItem[];
+  total: number;
+}
+
+export interface PullRequestSummaryPage {
+  items: PullRequestSummary[];
   total: number;
 }
 
@@ -120,6 +126,7 @@ function mapPullRequest(row: DbRow): PullRequest {
     latestBaseOid: stringValue(row, "latest_base_oid"),
     latestComparisonBaseOid: stringValue(row, "latest_comparison_base_oid"),
     latestHeadOid: stringValue(row, "latest_head_oid"),
+    githubCreatedAt: nullableString(row, "github_created_at"),
     githubUpdatedAt: stringValue(row, "github_updated_at"),
     fetchedAt: stringValue(row, "fetched_at"),
     createdAt: stringValue(row, "created_at"),
@@ -592,6 +599,72 @@ export class RvwDatabase {
     ).map(mapPullRequest);
   }
 
+  listPullRequestSummaries(offset: number, limit: number): PullRequestSummaryPage {
+    const rows = this.database
+      .prepare(
+        `WITH page AS (
+           SELECT
+             id,
+             owner,
+             repository,
+             number,
+             latest_title,
+             github_created_at,
+             github_updated_at
+           FROM pull_requests
+           ORDER BY github_updated_at DESC, id DESC
+           LIMIT ? OFFSET ?
+         ), comment_counts AS (
+           SELECT
+             comments.pull_request_id,
+             SUM(CASE WHEN resolved_at IS NULL THEN 1 ELSE 0 END) AS unresolved_count,
+             SUM(CASE WHEN resolved_at IS NOT NULL THEN 1 ELSE 0 END) AS resolved_count
+           FROM comments
+           JOIN page ON page.id = comments.pull_request_id
+           GROUP BY comments.pull_request_id
+         ), walkthrough_counts AS (
+           SELECT walkthroughs.pull_request_id, COUNT(*) AS walkthrough_count
+           FROM walkthroughs
+           JOIN page ON page.id = walkthroughs.pull_request_id
+           GROUP BY walkthroughs.pull_request_id
+         )
+         SELECT
+           pr.id AS pull_request_id,
+           pr.owner,
+           pr.repository,
+           pr.number,
+           pr.latest_title,
+           pr.github_created_at,
+           pr.github_updated_at,
+           COALESCE(comment_counts.unresolved_count, 0) AS unresolved_comment_count,
+           COALESCE(comment_counts.resolved_count, 0) AS resolved_comment_count,
+           COALESCE(walkthrough_counts.walkthrough_count, 0) AS walkthrough_count
+         FROM page AS pr
+         LEFT JOIN comment_counts ON comment_counts.pull_request_id = pr.id
+         LEFT JOIN walkthrough_counts ON walkthrough_counts.pull_request_id = pr.id
+         ORDER BY pr.github_updated_at DESC, pr.id DESC`,
+      )
+      .all(limit, offset) as DbRow[];
+    const totalRow = this.database.prepare("SELECT COUNT(*) AS total FROM pull_requests").get() as
+      DbRow | undefined;
+    if (!totalRow) throw new RvwError("DATABASE_ERROR", "Pull Request件数を取得できません。");
+    return {
+      items: rows.map((row) => ({
+        pullRequestId: stringValue(row, "pull_request_id"),
+        owner: stringValue(row, "owner"),
+        repository: stringValue(row, "repository"),
+        number: numberValue(row, "number"),
+        title: stringValue(row, "latest_title"),
+        githubCreatedAt: nullableString(row, "github_created_at"),
+        githubUpdatedAt: stringValue(row, "github_updated_at"),
+        unresolvedCommentCount: numberValue(row, "unresolved_comment_count"),
+        resolvedCommentCount: numberValue(row, "resolved_comment_count"),
+        walkthroughCount: numberValue(row, "walkthrough_count"),
+      })),
+      total: numberValue(totalRow, "total"),
+    };
+  }
+
   updateRepositoryLocation(
     id: string,
     repository: { localRepositoryPath: string; gitCommonDir: string },
@@ -626,9 +699,9 @@ export class RvwDatabase {
           local_repository_path, git_common_dir,
           latest_author_login, latest_head_repository_owner, latest_head_repository_name,
           latest_title, latest_body, latest_base_ref_name, latest_head_ref_name,
-          latest_base_oid, latest_head_oid, github_updated_at, fetched_at,
+          latest_base_oid, latest_head_oid, github_created_at, github_updated_at, fetched_at,
           created_at, updated_at, latest_comparison_base_oid
-        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(host, owner, repository, number) DO UPDATE SET
           github_url = excluded.github_url,
           local_repository_path = excluded.local_repository_path,
@@ -643,6 +716,7 @@ export class RvwDatabase {
           latest_base_oid = excluded.latest_base_oid,
           latest_comparison_base_oid = excluded.latest_comparison_base_oid,
           latest_head_oid = excluded.latest_head_oid,
+          github_created_at = excluded.github_created_at,
           github_updated_at = excluded.github_updated_at,
           fetched_at = excluded.fetched_at,
           updated_at = excluded.updated_at`,
@@ -664,6 +738,7 @@ export class RvwDatabase {
         github.headRefName,
         github.baseOid,
         github.headOid,
+        github.createdAt,
         github.updatedAt,
         now,
         existing?.createdAt ?? now,

@@ -64,6 +64,7 @@ const github = {
   baseOid: "a".repeat(40),
   headRefName: "feature",
   headOid: "b".repeat(40),
+  createdAt: "2026-08-07T00:00:00.000Z",
   updatedAt: "2026-08-08T00:00:00.000Z",
   state: "OPEN" as const,
   isDraft: false,
@@ -126,6 +127,81 @@ describe("RvwDatabase", () => {
     second.close();
   });
 
+  it("lists Pull Request summaries by GitHub update time with aggregate counts and pagination", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const older = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const newerGithub = {
+      ...github,
+      owner: "other",
+      number: 8,
+      url: "https://github.com/other/review-repo/pull/8",
+      title: "Newest review",
+      createdAt: "2026-08-08T12:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+    };
+    const newer = database.upsertPullRequest(
+      newerGithub,
+      { localRepositoryPath: "/other", gitCommonDir: "/other/.git" },
+      "d".repeat(40),
+    );
+    const unresolved = database.createComment({
+      pullRequestId: newer.id,
+      createdHeadOid: newerGithub.headOid,
+      target: { kind: "pull-request" },
+      body: "Open feedback",
+    });
+    const resolved = database.createComment({
+      pullRequestId: newer.id,
+      createdHeadOid: newerGithub.headOid,
+      target: { kind: "pull-request" },
+      body: "Resolved feedback",
+    });
+    database.setCommentResolved(resolved.id, true);
+    database.createWalkthrough({
+      pullRequestId: newer.id,
+      sourceOid: newerGithub.headOid,
+      title: "Architecture tour",
+      body: "Read the implementation.",
+      diagramBindings: {},
+      references: [],
+    });
+
+    expect(unresolved.resolvedAt).toBeNull();
+    expect(database.listPullRequestSummaries(0, 1)).toEqual({
+      items: [
+        {
+          pullRequestId: newer.id,
+          owner: "other",
+          repository: "review-repo",
+          number: 8,
+          title: "Newest review",
+          githubCreatedAt: "2026-08-08T12:00:00.000Z",
+          githubUpdatedAt: "2026-08-10T00:00:00.000Z",
+          unresolvedCommentCount: 1,
+          resolvedCommentCount: 1,
+          walkthroughCount: 1,
+        },
+      ],
+      total: 2,
+    });
+    expect(database.listPullRequestSummaries(1, 1)).toMatchObject({
+      items: [
+        {
+          pullRequestId: older.id,
+          unresolvedCommentCount: 0,
+          resolvedCommentCount: 0,
+          walkthroughCount: 0,
+        },
+      ],
+      total: 2,
+    });
+    database.close();
+  });
+
   it("migrates existing walkthrough ranges and persists file-level references", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-walkthrough-reference-db-"));
     const filePath = path.join(directory, "rvw.db");
@@ -141,6 +217,7 @@ describe("RvwDatabase", () => {
       "009_comment_watch.sql",
       "010_comment_post_references.sql",
       "011_comment_post_modifier.sql",
+      "012_pull_request_list.sql",
     ]) {
       writeFileSync(
         path.join(legacyMigrationsDirectory, migration),
@@ -330,7 +407,10 @@ describe("RvwDatabase", () => {
     legacy.close();
 
     const database = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
-    expect(database.getPullRequest(pullRequestId)?.latestComparisonBaseOid).toBe("c".repeat(40));
+    expect(database.getPullRequest(pullRequestId)).toMatchObject({
+      latestComparisonBaseOid: "c".repeat(40),
+      githubCreatedAt: null,
+    });
     expect(database.getComment(commentId)).toMatchObject({
       createdHeadOid: github.headOid,
       target: {

@@ -97,3 +97,10 @@ never persisted and are not part of review state or the agent CLI protocol. By d
 readiness, waits for the first viewer heartbeat, and then returns control to the terminal. This is a
 browser-owned worker rather than a persistent daemon. `--foreground` and `--no-open` remain
 terminal-signal managed.
+
+The React root treats a URL without `pullRequestId` as a lightweight workspace index over the
+user-global database. Its paginated summary query first bounds the Pull Request rows and then aggregates
+their comment and Walkthrough counts in SQLite, without reading Git objects or contacting GitHub. Selecting a saved Pull Request mounts the existing
+commit-backed review screen; the index and review screen share the same ephemeral viewer heartbeat and
+use the browser History API for transitions. A history traversal back into a review also restores that
+entry's focused reading destination; a fresh row selection starts a fresh ephemeral review workspace.

@@ -101,6 +101,7 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
       baseOid,
       headRefName: "feature/watch-latency",
       headOid,
+      createdAt: "2026-08-19T00:00:00.000Z",
       updatedAt: "2026-08-20T00:00:00.000Z",
       state: "OPEN",
       isDraft: false,

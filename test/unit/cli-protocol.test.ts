@@ -23,6 +23,7 @@ const pullRequest: PullRequest = {
   latestBaseOid: "a".repeat(40),
   latestComparisonBaseOid: "b".repeat(40),
   latestHeadOid: "c".repeat(40),
+  githubCreatedAt: "2026-08-09T00:00:00.000Z",
   githubUpdatedAt: "2026-08-10T00:00:00.000Z",
   fetchedAt: "2026-08-10T00:01:00.000Z",
   createdAt: "2026-08-10T00:01:00.000Z",

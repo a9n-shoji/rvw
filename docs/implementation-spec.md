@@ -136,13 +136,16 @@ GitHub CLIの既存認証を使用する。独自OAuthを持たない。
 
 ```bash
 gh pr view <PR> --json \
-  author,number,url,title,body,updatedAt,state,isDraft,\
+  author,number,url,title,body,createdAt,updatedAt,state,isDraft,\
   baseRefName,baseRefOid,headRefName,headRefOid,\
   headRepository,headRepositoryOwner
 ```
 
 Phase 1の新規登録とsyncは`github.com`のopen/draft PRを対象とする。保存済みPRの
 ローカル表示はPRの現在状態やnetwork接続に依存しない。
+`createdAt`と`updatedAt`はGitHub上のPR日時としてcacheする。既存DBで`createdAt`が未取得の行は
+ローカル登録日時で補わず`NULL`のまま表示し、次回の通常同期でだけ埋める。一覧表示を契機にGitHubへ
+一括問い合わせしない。
 
 ### 4.2 Local-first open
 
@@ -1027,6 +1030,7 @@ CREATE TABLE pull_requests (
   latest_base_oid TEXT NOT NULL,
   latest_comparison_base_oid TEXT NOT NULL,
   latest_head_oid TEXT NOT NULL,
+  github_created_at TEXT,
   github_updated_at TEXT NOT NULL,
   fetched_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -1132,6 +1136,7 @@ version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元�
 主なHTTP API:
 
 ```text
+GET  /api/pull-requests?offset=<offset>&limit=<limit>
 GET  /api/pull-requests/:id
 POST /api/pull-requests/open
 POST /api/pull-requests/:id/refresh
@@ -1161,8 +1166,22 @@ GET  /api/comments/:id/placement?...
 ```
 
 HTTP/CLIは同じapplication serviceを使用し、transportへbusiness logicを書かない。
+Pull Request一覧APIは既定50件・最大100件のoffset paginationとし、`total`、`hasMore`、`nextOffset`を返す。
+各行はPR identity、title、GitHubの作成／更新日時、未解決／解決済みcomment数、Walkthrough数だけを持つ
+SQLite専用read modelとする。Git commitを読む`getPullRequestView()`は呼ばず、先に一覧1ページを絞ってから
+その行だけのcountをaggregate queryで取得し、PRごとのN+1 queryを作らない。順序は
+`github_updated_at DESC`の後に永続IDを
+tie-breakerとして固定する。
 
 ## 10. Viewer UX
+
+URLに`pullRequestId`がない場合はuser-global SQLiteへ登録済みのPull Request一覧をworkspace入口として表示する。
+一覧は`owner/repository`、PR番号、title、未解決／解決済みcomment数、Walkthrough数、GitHub上の作成／更新日時を
+一行にまとめ、GitHub更新日時の新しい順であることを明示する。0件は`rvw open <PR URL>`を案内するempty stateとし、
+未取得の作成日時は不明と表示する。行選択とviewerのrvw brandはHistory APIで一覧と対象viewerを往復し、
+browser Back / Forwardを保つ。新しいrouterや永続workspace stateは導入しない。
+一覧からBack / Forwardで既存viewer entryへ戻る場合は、そのentryが持つfocused documentと位置も通常の
+reading historyとして復元する。reloadまたは新しい一覧行選択は従来どおり新しい一時workspaceを開始する。
 
 Viewerの最優先目的は、選択commitが作るrepositoryの状態を利用者が見失わずに読み進めることである。
 初期表示は全文とし、変更fileとdiffはrepository readingを開始するindexとして扱う。利用者が
@@ -1232,7 +1251,7 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - same-origin以外のwriteを拒否、CORSを有効にしない
 - GitHub attachment readも存在するFetch Metadataと`Origin`でsame-originへ限定し、画像responseへ
   `Cross-Origin-Resource-Policy: same-origin`を付ける
-- browser tab leaseはtransport-onlyで永続化しない
+- browser tab leaseはtransport-onlyで永続化しない。一覧画面も同じviewer heartbeatを更新する
 - 通常の自動openはPRごとのbackground workerを起動し、worker ready後にbrowserを開き、最初のviewer
   heartbeatを確認してから親CLIを終了する
 - browser起動失敗、worker error、30秒以内に最初のviewer heartbeatがない場合はworkerを停止して明示的な
@@ -1274,6 +1293,7 @@ Unit:
 - comment resolve/reopen、URI、CLI/API schema
 - Walkthrough schema、URI、Markdown reference / HTML preview validation、行comment placement
 - DB migration 001→current
+- Pull Request一覧のGitHub更新日時順、stable tie-breaker、aggregate count、pagination、既存行の不明な作成日時
 
 Integration（実git + fake GitHub）:
 
@@ -1295,7 +1315,8 @@ Integration（実git + fake GitHub）:
 - commit固定Walkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
 - worktree間共有
 
-E2E:
+E2Eで登録済みPR一覧、empty state、pagination、一覧とviewer間のBack / Forward、一覧表示中のviewer
+heartbeatを確認する。既存のreview E2Eは次を維持する。
 
 1. PRを開きlatest commitと最新Pull Request.mdを表示
 2. commit subjectで一件選択へ切り替え、open tabを維持

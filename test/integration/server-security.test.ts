@@ -44,6 +44,7 @@ function registerPullRequest(database: RvwDatabase): string {
       baseOid: "a".repeat(40),
       headRefName: "feature",
       headOid: "b".repeat(40),
+      createdAt: "2026-08-20T00:00:00.000Z",
       updatedAt: "2026-08-21T00:00:00.000Z",
       state: "OPEN",
       isDraft: false,
@@ -54,6 +55,52 @@ function registerPullRequest(database: RvwDatabase): string {
 }
 
 describe("local HTTP security", () => {
+  it("returns a bounded SQLite-only Pull Request summary page", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequestId = registerPullRequest(database);
+    const app = createApp(new RvwService(database, new GitClient(), github), {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+    const headers = { host: "127.0.0.1:4321" };
+
+    const response = await app.request("http://127.0.0.1:4321/api/pull-requests?offset=0&limit=1", {
+      headers,
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      items: [
+        {
+          pullRequestId,
+          owner: "acme",
+          repository: "review-repo",
+          number: 7,
+          title: "Review",
+          githubCreatedAt: "2026-08-20T00:00:00.000Z",
+          githubUpdatedAt: "2026-08-21T00:00:00.000Z",
+          unresolvedCommentCount: 0,
+          resolvedCommentCount: 0,
+          walkthroughCount: 0,
+        },
+      ],
+      pagination: {
+        offset: 0,
+        limit: 1,
+        returned: 1,
+        total: 1,
+        hasMore: false,
+        nextOffset: null,
+      },
+    });
+
+    const invalid = await app.request(
+      "http://127.0.0.1:4321/api/pull-requests?offset=-1&limit=101",
+      { headers },
+    );
+    expect(invalid.status).toBe(400);
+    database.close();
+  });
+
   it("marks viewer comment writes as human", async () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const pullRequestId = registerPullRequest(database);

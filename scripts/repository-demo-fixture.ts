@@ -50,6 +50,7 @@ export interface RepositoryDemoFixture {
     latestBaseOid: string;
     latestComparisonBaseOid: string;
     latestHeadOid: string;
+    githubCreatedAt: string | null;
     githubUpdatedAt: string;
     fetchedAt: string;
     createdAt: string;
@@ -719,6 +720,7 @@ export function createRepositoryDemoFixture(
       latestBaseOid: baseOid,
       latestComparisonBaseOid: baseOid,
       latestHeadOid: latestCommit.oid,
+      githubCreatedAt: firstCommit.authoredAt,
       githubUpdatedAt: latestCommit.authoredAt,
       fetchedAt: latestCommit.authoredAt,
       createdAt: firstCommit.authoredAt,

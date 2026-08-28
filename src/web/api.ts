@@ -7,6 +7,7 @@ import type {
   DocumentContent,
   DocumentRef,
   PullRequest,
+  PullRequestSummary,
   ReviewComment,
   SearchResponse,
   TreeEntry,
@@ -86,6 +87,18 @@ export interface PullRequestResponse {
   comparisonBaseOid: string;
   headOid: string;
   commits: CommitSummary[];
+}
+
+export interface PullRequestListResponse {
+  items: PullRequestSummary[];
+  pagination: {
+    offset: number;
+    limit: number;
+    returned: number;
+    total: number;
+    hasMore: boolean;
+    nextOffset: number | null;
+  };
 }
 
 export interface ThemePreferenceResponse {

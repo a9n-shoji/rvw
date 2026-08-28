@@ -1,5 +1,34 @@
 # Architecture decisions
 
+## 2026-08-28: Use a SQLite-only workspace index for saved Pull Requests
+
+### Problem
+
+Opening the viewer without a `pullRequestId` produced a fatal state even though rvw stores Pull Requests
+in one user-global database. Returning to a recent review required knowing its URL or invoking the CLI
+again. Reusing the full Pull Request view would read commit history from every repository and make the
+index depend on available Git objects.
+
+### Choice
+
+Use the parameterless viewer URL as a paginated workspace index. Read one page of PR metadata and then
+aggregate comment and Walkthrough counts for only those rows entirely from SQLite, ordered by cached GitHub `updatedAt` with
+a persistent-ID tie-breaker. Cache GitHub `createdAt` in a nullable migrated column; do not substitute
+rvw's local registration timestamp for legacy rows and do not backfill the index with GitHub requests.
+
+Keep routing dependency-free. The React root selects the index or existing review screen from the URL,
+and uses the History API for row selection and the return link. A popstate traversal back into a review
+restores the retained reading destination, while a fresh row selection starts the normal initial workspace.
+Keep the viewer heartbeat above both screens so an index-only tab continues owning the browser-managed worker.
+
+### Trade-offs
+
+- The index remains available offline and does not perform per-PR Git or GitHub work.
+- Offset pagination is simple for a local database; concurrent synchronization can move rows between
+  pages because GitHub update time is the intended ordering key.
+- Legacy rows show an unknown creation time until their next explicit synchronization.
+- Navigation state remains ephemeral and URL-based without adding a routing framework.
+
 ## 2026-08-21: Parallelize investigate-only leases within one Pull Request
 
 ### Problem
