@@ -101,6 +101,18 @@ export interface PullRequestListResponse {
   };
 }
 
+export interface PullRequestStatusRefreshResponse {
+  attempted: number;
+  updated: number;
+  failures: Array<{
+    pullRequestId: string;
+    owner: string;
+    repository: string;
+    number: number;
+    error: { code: string; message: string; suggestions: string[]; details?: unknown };
+  }>;
+}
+
 export interface ThemePreferenceResponse {
   themePreference: ThemePreference;
 }

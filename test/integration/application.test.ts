@@ -17,6 +17,18 @@ class FakeGitHub implements GitHubPort {
     return Promise.resolve({ version: "gh fake", authenticated: true });
   }
 
+  getPullRequestStatuses(references: readonly string[]) {
+    return Promise.resolve(
+      references.map(() => ({
+        status: "fulfilled" as const,
+        value: {
+          state: this.pullRequest.state,
+          isDraft: this.pullRequest.isDraft,
+        },
+      })),
+    );
+  }
+
   getPullRequest(_reference?: string, _cwd?: string, options: { allowClosed?: boolean } = {}) {
     if (this.pullRequest.state !== "OPEN" && !options.allowClosed) {
       return Promise.reject(new Error("Pull Request is not open"));
@@ -84,6 +96,71 @@ describe("RvwService commit workflow", () => {
       databaseWriteProbe: { ok: true, error: null },
     });
     expect(database.getChangeSequence()).toBe(changeSequence);
+  });
+
+  it("refreshes cached GitHub statuses in bulk and preserves content on partial failure", async () => {
+    const { repository, base, firstHead, fake, database, service } = setup();
+    const opened = await service.openPullRequest(undefined, repository);
+    const secondGithub: GitHubPullRequest = {
+      ...fake.pullRequest,
+      number: 8,
+      url: "https://github.com/acme/review-repo/pull/8",
+      title: "Second cached title",
+      headOid: firstHead,
+    };
+    const second = database.upsertPullRequest(
+      secondGithub,
+      {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      base,
+    );
+    const statusGithub: GitHubPort = {
+      doctor: () => Promise.resolve({ version: "gh fake", authenticated: true }),
+      getPullRequest: () => Promise.reject(new Error("not used")),
+      getPullRequestStatuses(references) {
+        return Promise.resolve(
+          references.map((reference) =>
+            reference === opened.pullRequest.url
+              ? {
+                  status: "fulfilled" as const,
+                  value: { state: "CLOSED" as const, isDraft: false },
+                }
+              : { status: "rejected" as const, error: new Error("temporary GitHub failure") },
+          ),
+        );
+      },
+      getAttachment: () => Promise.reject(new Error("not used")),
+    };
+    const statusService = new RvwService(database, new GitClient(), statusGithub);
+    const changeSequence = database.getChangeSequence();
+
+    await expect(statusService.refreshPullRequestStatuses()).resolves.toMatchObject({
+      attempted: 2,
+      updated: 1,
+      failures: [
+        {
+          pullRequestId: second.id,
+          owner: "acme",
+          repository: "review-repo",
+          number: 8,
+          error: { code: "INTERNAL_ERROR", message: "temporary GitHub failure" },
+        },
+      ],
+    });
+    expect(database.getPullRequest(opened.pullRequest.id)).toMatchObject({
+      latestTitle: "Initial review",
+      latestBody: "Please review.",
+      latestHeadOid: firstHead,
+      githubState: "CLOSED",
+      githubIsDraft: false,
+    });
+    expect(database.getPullRequest(second.id)).toMatchObject({
+      latestTitle: "Second cached title",
+      githubState: "OPEN",
+    });
+    expect(database.getChangeSequence()).toBe(changeSequence + 1);
   });
 
   it("uses commits as history, keeps PR markdown latest, syncs comment updates, and resets", async () => {

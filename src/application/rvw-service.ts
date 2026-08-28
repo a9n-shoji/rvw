@@ -59,7 +59,7 @@ import {
   MAX_WALKTHROUGH_TITLE_CHARACTERS,
 } from "../shared/constants.js";
 import { findFixedStringMatches } from "../domain/search.js";
-import { RvwError } from "../shared/errors.js";
+import { asRvwError, RvwError, type SerializedRvwError } from "../shared/errors.js";
 import {
   canonicalGitHubAttachmentUrl,
   detectImageContentType,
@@ -96,6 +96,18 @@ export interface PullRequestList {
     hasMore: boolean;
     nextOffset: number | null;
   };
+}
+
+export interface PullRequestStatusRefreshResult {
+  attempted: number;
+  updated: number;
+  failures: Array<{
+    pullRequestId: string;
+    owner: string;
+    repository: string;
+    number: number;
+    error: SerializedRvwError;
+  }>;
 }
 
 export interface SyncResult extends PullRequestView {
@@ -645,6 +657,44 @@ export class RvwService {
         hasMore,
         nextOffset: hasMore ? offset + returned : null,
       },
+    };
+  }
+
+  async refreshPullRequestStatuses(): Promise<PullRequestStatusRefreshResult> {
+    const pullRequests = this.database.listPullRequests();
+    const outcomes = await this.github.getPullRequestStatuses(
+      pullRequests.map((pullRequest) => pullRequest.url),
+    );
+    if (outcomes.length !== pullRequests.length) {
+      throw new RvwError("GITHUB_ERROR", "Pull Request状態の一括取得件数が一致しません。", {
+        status: 502,
+      });
+    }
+    const successful = outcomes.flatMap((outcome, index) => {
+      const pullRequest = pullRequests[index];
+      return outcome.status === "fulfilled" && pullRequest
+        ? [{ pullRequestId: pullRequest.id, ...outcome.value }]
+        : [];
+    });
+    this.database.updatePullRequestGitHubStatuses(successful);
+    const failures = outcomes.flatMap((outcome, index) => {
+      const pullRequest = pullRequests[index];
+      return outcome.status === "rejected" && pullRequest
+        ? [
+            {
+              pullRequestId: pullRequest.id,
+              owner: pullRequest.owner,
+              repository: pullRequest.repository,
+              number: pullRequest.number,
+              error: asRvwError(outcome.error).toJSON(),
+            },
+          ]
+        : [];
+    });
+    return {
+      attempted: pullRequests.length,
+      updated: successful.length,
+      failures,
     };
   }
 

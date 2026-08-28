@@ -44,6 +44,8 @@ let blockedImageRequestCount = 0;
 let imageTextRequestCount = 0;
 let pullRequestListEmpty = false;
 let pullRequestListPaginated = false;
+let pullRequestStatusRefreshCount = 0;
+let pullRequestStatusRefreshFailure = false;
 const selectedLineText = (value, startLine, endLine) =>
   value
     .replace(/\r\n?/g, "\n")
@@ -375,7 +377,10 @@ app.use("*", async (context, next) => {
 });
 
 app.use("/api/pull-requests/*", async (context, next) => {
-  if (context.req.path === "/api/pull-requests") {
+  if (
+    context.req.path === "/api/pull-requests" ||
+    context.req.path === "/api/pull-requests/refresh-statuses"
+  ) {
     await next();
     return;
   }
@@ -471,8 +476,20 @@ app.post("/api/test/pull-request-list-paginated", async (context) => {
 app.post("/api/test/reset-pull-request-list", (context) => {
   pullRequestListEmpty = false;
   pullRequestListPaginated = false;
+  pullRequestStatusRefreshCount = 0;
+  pullRequestStatusRefreshFailure = false;
   return context.json({ ok: true });
 });
+
+app.post("/api/test/pull-request-status-refresh-failure", async (context) => {
+  const input = await context.req.json();
+  pullRequestStatusRefreshFailure = input.enabled === true;
+  return context.json({ ok: true, enabled: pullRequestStatusRefreshFailure });
+});
+
+app.get("/api/test/pull-request-status-refresh-count", (context) =>
+  context.json({ ok: true, count: pullRequestStatusRefreshCount }),
+);
 
 app.post("/api/test/reset-sync-stage", (context) => {
   syncStage = 0;
@@ -492,7 +509,7 @@ app.get("/api/pull-requests", (context) => {
     title: pullRequest.latestTitle,
     githubCreatedAt: pullRequest.githubCreatedAt,
     githubUpdatedAt: pullRequest.githubUpdatedAt,
-    githubState: pullRequest.githubState,
+    githubState: pullRequestStatusRefreshCount > 0 ? "MERGED" : pullRequest.githubState,
     githubIsDraft: pullRequest.githubIsDraft,
     unresolvedCommentCount: comments.filter((comment) => comment.resolvedAt === null).length,
     resolvedCommentCount: comments.filter((comment) => comment.resolvedAt !== null).length,
@@ -577,10 +594,14 @@ app.get("/api/pull-requests", (context) => {
           owner: "octo-org",
           repository: "review-repo",
           number: 3,
-          title: "Older fixture review",
+          title:
+            "Older fixture review with a deliberately long Pull Request title that must wrap onto multiple lines without being truncated",
           githubCreatedAt: null,
           githubUpdatedAt: "2026-07-01T00:00:00.000Z",
-          githubState: "OPEN",
+          githubState:
+            pullRequestStatusRefreshCount > 0 && !pullRequestStatusRefreshFailure
+              ? "CLOSED"
+              : "OPEN",
           githubIsDraft: true,
           unresolvedCommentCount: 3,
           resolvedCommentCount: 5,
@@ -612,6 +633,32 @@ app.get("/api/pull-requests", (context) => {
 });
 
 app.get("/api/pull-requests/:id", (context) => context.json({ ok: true, ...currentView() }));
+
+app.post("/api/pull-requests/refresh-statuses", async (context) => {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  pullRequestStatusRefreshCount += 1;
+  changeSequence += 1;
+  return context.json({
+    ok: true,
+    attempted: 2,
+    updated: pullRequestStatusRefreshFailure ? 1 : 2,
+    failures: pullRequestStatusRefreshFailure
+      ? [
+          {
+            pullRequestId: "22222222-2222-4222-8222-222222222222",
+            owner: "octo-org",
+            repository: "review-repo",
+            number: 3,
+            error: {
+              code: "GITHUB_ERROR",
+              message: "Pull Request状態をGitHubから取得できませんでした。",
+              suggestions: ["PR URLとgh認証を確認してください。"],
+            },
+          },
+        ]
+      : [],
+  });
+});
 
 app.post("/api/pull-requests/:id/refresh", async (context) => {
   await new Promise((resolve) => setTimeout(resolve, 100));

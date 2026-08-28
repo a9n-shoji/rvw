@@ -54,6 +54,12 @@ export interface PullRequestSummaryPage {
   total: number;
 }
 
+export interface PullRequestGitHubStatusUpdate {
+  pullRequestId: string;
+  state: GitHubPullRequestState;
+  isDraft: boolean;
+}
+
 function stringValue(row: DbRow, key: string): string {
   const value = row[key];
   if (typeof value !== "string") throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
@@ -695,6 +701,26 @@ export class RvwDatabase {
       })),
       total: numberValue(totalRow, "total"),
     };
+  }
+
+  updatePullRequestGitHubStatuses(updates: PullRequestGitHubStatusUpdate[]): void {
+    if (updates.length === 0) return;
+    this.immediateTransaction(() => {
+      const statement = this.database.prepare(
+        "UPDATE pull_requests SET github_state = ?, github_is_draft = ? WHERE id = ?",
+      );
+      for (const update of updates) {
+        const result = statement.run(update.state, update.isDraft ? 1 : 0, update.pullRequestId);
+        if (Number(result.changes) !== 1) {
+          throw new RvwError(
+            "PR_NOT_FOUND",
+            `Pull Requestが見つかりません: ${update.pullRequestId}`,
+            { status: 404 },
+          );
+        }
+      }
+      this.incrementChangeSequence();
+    });
   }
 
   updateRepositoryLocation(

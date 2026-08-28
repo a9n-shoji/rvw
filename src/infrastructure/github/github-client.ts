@@ -12,6 +12,7 @@ import { runProcess, runText } from "../process/run-process.js";
 
 export interface GitHubPort {
   doctor(): Promise<{ version: string; authenticated: boolean }>;
+  getPullRequestStatuses(references: readonly string[]): Promise<GitHubPullRequestStatusResult[]>;
   getPullRequest(
     reference: string | undefined,
     cwd: string,
@@ -19,6 +20,14 @@ export interface GitHubPort {
   ): Promise<GitHubPullRequest>;
   getAttachment(absoluteUrl: string): Promise<{ content: Buffer; byteLength: number }>;
 }
+
+export interface GitHubPullRequestStatus {
+  state: GitHubPullRequest["state"];
+  isDraft: boolean;
+}
+
+export type GitHubPullRequestStatusResult =
+  { status: "fulfilled"; value: GitHubPullRequestStatus } | { status: "rejected"; error: unknown };
 
 type ProcessRunner = typeof runProcess;
 
@@ -38,6 +47,11 @@ const ghPullRequestSchema = z.object({
   headRefName: z.string().min(1),
   headRefOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
   createdAt: z.string(),
+});
+
+const ghPullRequestStatusSchema = z.object({
+  state: z.enum(["OPEN", "CLOSED", "MERGED"]),
+  isDraft: z.boolean(),
 });
 
 export function parsePullRequestUrl(url: string): {
@@ -64,7 +78,7 @@ export class GitHubClient implements GitHubPort {
   }
 
   async assertAuthenticated(): Promise<void> {
-    const status = await runProcess("gh", ["auth", "status", "--hostname", "github.com"], {
+    const status = await this.processRunner("gh", ["auth", "status", "--hostname", "github.com"], {
       allowExitCodes: [1],
     });
     if (status.exitCode !== 0) {
@@ -72,6 +86,81 @@ export class GitHubClient implements GitHubPort {
         suggestions: ["gh auth login", "gh auth setup-git"],
       });
     }
+  }
+
+  private async getPullRequestStatus(reference: string): Promise<GitHubPullRequestStatus> {
+    let output: string;
+    try {
+      const result = await this.processRunner(
+        "gh",
+        ["pr", "view", reference, "--json", "state,isDraft"],
+        { timeoutMs: 60_000 },
+      );
+      output = result.stdout.toString("utf8").trimEnd();
+    } catch (error) {
+      if (error instanceof RvwError && error.code === "PROCESS_FAILED") {
+        throw new RvwError("GITHUB_ERROR", "Pull Request状態をGitHubから取得できませんでした。", {
+          cause: error,
+          details: error.details,
+          suggestions: ["PR URLとgh認証を確認してください。"],
+        });
+      }
+      throw error;
+    }
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(output);
+    } catch (error) {
+      throw new RvwError("GITHUB_ERROR", "GitHub CLIのPull Request状態応答が不正です。", {
+        cause: error,
+      });
+    }
+    const parsed = ghPullRequestStatusSchema.safeParse(decoded);
+    if (!parsed.success) {
+      throw new RvwError("GITHUB_ERROR", "GitHub CLIのPull Request状態応答が不正です。", {
+        details: parsed.error.flatten(),
+      });
+    }
+    return parsed.data;
+  }
+
+  async getPullRequestStatuses(
+    references: readonly string[],
+  ): Promise<GitHubPullRequestStatusResult[]> {
+    if (references.length === 0) return [];
+    await this.assertAuthenticated();
+    const outcomes: Array<GitHubPullRequestStatusResult | undefined> = Array.from(
+      { length: references.length },
+      () => undefined,
+    );
+    let nextIndex = 0;
+    const workerCount = Math.min(4, references.length);
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (nextIndex < references.length) {
+          const index = nextIndex;
+          nextIndex += 1;
+          const reference = references[index];
+          if (!reference) continue;
+          try {
+            outcomes[index] = {
+              status: "fulfilled",
+              value: await this.getPullRequestStatus(reference),
+            };
+          } catch (error) {
+            outcomes[index] = { status: "rejected", error };
+          }
+        }
+      }),
+    );
+    return outcomes.map((outcome) => {
+      if (!outcome) {
+        throw new RvwError("INTERNAL_ERROR", "Pull Request状態の一括取得結果が不足しています。", {
+          status: 500,
+        });
+      }
+      return outcome;
+    });
   }
 
   async getPullRequest(

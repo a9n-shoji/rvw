@@ -1,7 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import type { PullRequestSummary } from "../../domain/models.js";
-import { api, type PullRequestListResponse } from "../api.js";
+import {
+  api,
+  jsonRequest,
+  type PullRequestListResponse,
+  type PullRequestStatusRefreshResponse,
+} from "../api.js";
 import { ErrorNotice } from "../components/ErrorNotice.js";
 
 const PAGE_LIMIT = 50;
@@ -141,6 +146,27 @@ export function PullRequestListScreen({
       ),
     placeholderData: (previousData) => previousData,
   });
+  const statusRefresh = useMutation({
+    mutationFn: async () =>
+      await api<PullRequestStatusRefreshResponse>(
+        "/api/pull-requests/refresh-statuses",
+        jsonRequest({}),
+      ),
+    onSuccess: async () => {
+      const result = await listQuery.refetch();
+      const refreshedPagination = result.data?.pagination;
+      if (
+        refreshedPagination &&
+        refreshedPagination.total > 0 &&
+        refreshedPagination.offset >= refreshedPagination.total
+      ) {
+        onNavigateToOffset(
+          Math.floor((refreshedPagination.total - 1) / refreshedPagination.limit) *
+            refreshedPagination.limit,
+        );
+      }
+    },
+  });
   const pagination = listQuery.data?.pagination;
   const rangeLabel = useMemo(() => {
     if (!pagination || pagination.total === 0) return null;
@@ -171,6 +197,14 @@ export function PullRequestListScreen({
       </header>
       <div className="pull-request-list-content">
         <div className="pull-request-list-filters">
+          <button
+            type="button"
+            className="button--quiet pull-request-status-refresh"
+            disabled={statusRefresh.isPending}
+            onClick={() => statusRefresh.mutate()}
+          >
+            {statusRefresh.isPending ? "更新中…" : "PRステータスを一括更新"}
+          </button>
           <label className="pull-request-list-filter">
             <input
               type="checkbox"
@@ -183,7 +217,33 @@ export function PullRequestListScreen({
             Closed / Merged を非表示
           </label>
         </div>
-        <ErrorNotice error={heartbeatError ?? listQuery.error} />
+        <ErrorNotice error={heartbeatError ?? listQuery.error ?? statusRefresh.error} />
+        {!statusRefresh.isPending && statusRefresh.data && (
+          <div
+            className={`pull-request-status-refresh-result${
+              statusRefresh.data.failures.length > 0
+                ? " pull-request-status-refresh-result--error"
+                : ""
+            }`}
+            role={statusRefresh.data.failures.length > 0 ? "alert" : "status"}
+          >
+            {statusRefresh.data.attempted === 0
+              ? "更新対象のPull Requestはありません。"
+              : `${statusRefresh.data.updated}件のPRステータスを更新しました。`}
+            {statusRefresh.data.failures.length > 0 && (
+              <details open>
+                <summary>{statusRefresh.data.failures.length}件を更新できませんでした</summary>
+                <ul>
+                  {statusRefresh.data.failures.map((failure) => (
+                    <li key={failure.pullRequestId}>
+                      {failure.owner}/{failure.repository}#{failure.number}: {failure.error.message}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
         {listQuery.isPending && !listQuery.data ? (
           <div className="pull-request-list-status" role="status">
             登録済みPull Requestを読み込んでいます…

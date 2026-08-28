@@ -187,6 +187,10 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     return context.json({ ok: true, ...service.listPullRequests(query) });
   });
 
+  app.post("/api/pull-requests/refresh-statuses", async (context) =>
+    context.json({ ok: true, ...(await service.refreshPullRequestStatuses()) }),
+  );
+
   app.get("/api/pull-requests/:id", async (context) =>
     context.json({ ok: true, ...(await service.getPullRequestView(context.req.param("id"))) }),
   );
