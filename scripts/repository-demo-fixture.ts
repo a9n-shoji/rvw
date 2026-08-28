@@ -8,6 +8,7 @@ import type {
   CommentPost,
   CommitSummary,
   DocumentAvailability,
+  PullRequest,
   ReviewComment,
   TreeEntry,
   TreeEntryKind,
@@ -31,30 +32,7 @@ export interface RepositoryDemoFixture {
   baseOid: string;
   headOid: string;
   commits: CommitSummary[];
-  pullRequest: {
-    id: string;
-    host: "github.com";
-    owner: string;
-    repository: string;
-    number: number;
-    url: string;
-    latestAuthorLogin: string;
-    latestHeadRepositoryOwner: string;
-    latestHeadRepositoryName: string;
-    localRepositoryPath: string;
-    gitCommonDir: string;
-    latestTitle: string;
-    latestBody: string;
-    latestBaseRefName: string;
-    latestHeadRefName: string;
-    latestBaseOid: string;
-    latestComparisonBaseOid: string;
-    latestHeadOid: string;
-    githubUpdatedAt: string;
-    fetchedAt: string;
-    createdAt: string;
-    updatedAt: string;
-  };
+  pullRequest: PullRequest;
   comments: ReviewComment[];
   walkthroughs: Walkthrough[];
   repositoryEntriesAt(oid: string): TreeEntry[];
@@ -719,7 +697,10 @@ export function createRepositoryDemoFixture(
       latestBaseOid: baseOid,
       latestComparisonBaseOid: baseOid,
       latestHeadOid: latestCommit.oid,
+      githubCreatedAt: firstCommit.authoredAt,
       githubUpdatedAt: latestCommit.authoredAt,
+      githubState: "OPEN" as const,
+      githubIsDraft: false,
       fetchedAt: latestCommit.authoredAt,
       createdAt: firstCommit.authoredAt,
       updatedAt: latestCommit.authoredAt,

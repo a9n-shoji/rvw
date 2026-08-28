@@ -6,6 +6,29 @@ const demoBaseURL = `http://127.0.0.1:${demoPort}`;
 const pullRequestId = "22222222-2222-4222-8222-222222222222";
 
 test("opens a repository-scale demo backed by committed Git objects", async ({ page, request }) => {
+  await page.goto(demoBaseURL);
+  const hideClosedOrMergedFilter = page.getByRole("checkbox", {
+    name: "Closed / Merged を非表示",
+  });
+  const statusBadges = page.locator(".pull-request-status");
+  const rows = page.locator(".pull-request-row");
+  await expect(hideClosedOrMergedFilter).toBeChecked();
+  await expect(rows).toHaveCount(3);
+  await expect(statusBadges).toHaveText(["Open", "Draft"]);
+  await expect(rows.nth(2)).toContainText("Legacy: status not synchronized yet");
+  await expect(rows.nth(2).locator(".pull-request-status")).toHaveCount(0);
+
+  await hideClosedOrMergedFilter.uncheck();
+  await expect(rows).toHaveCount(5);
+  await expect(statusBadges).toHaveText(["Open", "Draft", "Closed", "Merged"]);
+  await rows.nth(3).click();
+  await expect(
+    page.getByRole("heading", { name: "Demo: review rvw as a medium-sized repository" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(hideClosedOrMergedFilter).not.toBeChecked();
+  await expect(rows).toHaveCount(5);
+
   const viewResponse = await request.get(`${demoBaseURL}/api/pull-requests/${pullRequestId}`);
   expect(viewResponse.ok()).toBe(true);
   const view = (await viewResponse.json()) as {

@@ -12,7 +12,11 @@ import { runProcess, runText } from "../process/run-process.js";
 
 export interface GitHubPort {
   doctor(): Promise<{ version: string; authenticated: boolean }>;
-  getPullRequest(reference: string | undefined, cwd: string): Promise<GitHubPullRequest>;
+  getPullRequest(
+    reference: string | undefined,
+    cwd: string,
+    options?: { allowClosed?: boolean },
+  ): Promise<GitHubPullRequest>;
   getAttachment(absoluteUrl: string): Promise<{ content: Buffer; byteLength: number }>;
 }
 
@@ -33,6 +37,7 @@ const ghPullRequestSchema = z.object({
   baseRefOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
   headRefName: z.string().min(1),
   headRefOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
+  createdAt: z.string(),
 });
 
 export function parsePullRequestUrl(url: string): {
@@ -69,7 +74,11 @@ export class GitHubClient implements GitHubPort {
     }
   }
 
-  async getPullRequest(reference: string | undefined, cwd: string): Promise<GitHubPullRequest> {
+  async getPullRequest(
+    reference: string | undefined,
+    cwd: string,
+    options: { allowClosed?: boolean } = {},
+  ): Promise<GitHubPullRequest> {
     await this.assertAuthenticated();
     const fields = [
       "author",
@@ -77,6 +86,7 @@ export class GitHubClient implements GitHubPort {
       "url",
       "title",
       "body",
+      "createdAt",
       "updatedAt",
       "state",
       "isDraft",
@@ -109,10 +119,10 @@ export class GitHubClient implements GitHubPort {
         details: parsed.error.flatten(),
       });
     }
-    if (parsed.data.state !== "OPEN") {
+    if (parsed.data.state !== "OPEN" && !options.allowClosed) {
       throw new RvwError(
         "GITHUB_PR_NOT_OPEN",
-        "Closedまたはmerged Pull RequestはPhase 1の対象外です。",
+        "ClosedまたはMerged Pull Requestは新規登録の対象外です。",
       );
     }
     const identity = parsePullRequestUrl(parsed.data.url);
@@ -131,8 +141,9 @@ export class GitHubClient implements GitHubPort {
       baseOid: parsed.data.baseRefOid,
       headRefName: parsed.data.headRefName,
       headOid: parsed.data.headRefOid,
+      createdAt: parsed.data.createdAt,
       updatedAt: parsed.data.updatedAt,
-      state: "OPEN",
+      state: parsed.data.state,
       isDraft: parsed.data.isDraft,
     };
   }

@@ -42,6 +42,8 @@ let syncStage = 0;
 let themePreference = "system";
 let blockedImageRequestCount = 0;
 let imageTextRequestCount = 0;
+let pullRequestListEmpty = false;
+let pullRequestListPaginated = false;
 const selectedLineText = (value, startLine, endLine) =>
   value
     .replace(/\r\n?/g, "\n")
@@ -100,12 +102,15 @@ function currentPullRequest() {
     latestBaseOid: baseOid,
     latestComparisonBaseOid: baseOid,
     latestHeadOid: headOid,
+    githubCreatedAt: "2026-08-07T01:00:00.000Z",
     githubUpdatedAt:
       syncStage > 1
         ? "2026-08-08T03:00:00.000Z"
         : syncStage > 0
           ? "2026-08-08T02:00:00.000Z"
           : "2026-08-08T01:00:00.000Z",
+    githubState: "OPEN",
+    githubIsDraft: false,
     fetchedAt: "2026-08-08T02:00:00.000Z",
     createdAt: "2026-08-08T00:00:00.000Z",
     updatedAt: "2026-08-08T02:00:00.000Z",
@@ -370,6 +375,10 @@ app.use("*", async (context, next) => {
 });
 
 app.use("/api/pull-requests/*", async (context, next) => {
+  if (context.req.path === "/api/pull-requests") {
+    await next();
+    return;
+  }
   const requestedId = context.req.path.match(/^\/api\/pull-requests\/([^/]+)/)?.[1] ?? "";
   if (!viewerIdPattern.test(requestedId)) {
     return context.json(
@@ -446,6 +455,161 @@ app.get("/api/test/external-image-count", (context) =>
 app.get("/api/test/image-text-request-count", (context) =>
   context.json({ ok: true, count: imageTextRequestCount }),
 );
+
+app.post("/api/test/pull-request-list-empty", async (context) => {
+  const input = await context.req.json();
+  pullRequestListEmpty = input.enabled === true;
+  return context.json({ ok: true, enabled: pullRequestListEmpty });
+});
+
+app.post("/api/test/pull-request-list-paginated", async (context) => {
+  const input = await context.req.json();
+  pullRequestListPaginated = input.enabled === true;
+  return context.json({ ok: true, enabled: pullRequestListPaginated });
+});
+
+app.post("/api/test/reset-pull-request-list", (context) => {
+  pullRequestListEmpty = false;
+  pullRequestListPaginated = false;
+  return context.json({ ok: true });
+});
+
+app.post("/api/test/reset-sync-stage", (context) => {
+  syncStage = 0;
+  return context.json({ ok: true });
+});
+
+app.get("/api/pull-requests", (context) => {
+  const offset = Math.max(0, Number(context.req.query("offset") ?? 0));
+  const limit = Math.min(100, Math.max(1, Number(context.req.query("limit") ?? 50)));
+  const hideClosedOrMerged = context.req.query("hideClosedOrMerged") !== "false";
+  const pullRequest = currentPullRequest();
+  const currentSummary = {
+    pullRequestId: pullRequest.id,
+    owner: pullRequest.owner,
+    repository: pullRequest.repository,
+    number: pullRequest.number,
+    title: pullRequest.latestTitle,
+    githubCreatedAt: pullRequest.githubCreatedAt,
+    githubUpdatedAt: pullRequest.githubUpdatedAt,
+    githubState: pullRequest.githubState,
+    githubIsDraft: pullRequest.githubIsDraft,
+    unresolvedCommentCount: comments.filter((comment) => comment.resolvedAt === null).length,
+    resolvedCommentCount: comments.filter((comment) => comment.resolvedAt !== null).length,
+    walkthroughCount: activeWalkthroughs.length,
+  };
+  const paginatedItems = Array.from({ length: 50 }, (_, index) => ({
+    pullRequestId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+    owner: "fixture-org",
+    repository: "pagination-repo",
+    number: 100 - index,
+    title: `Pagination fixture ${index + 1}`,
+    githubCreatedAt: "2026-08-01T00:00:00.000Z",
+    githubUpdatedAt: "2026-08-07T00:00:00.000Z",
+    githubState: "OPEN",
+    githubIsDraft: false,
+    unresolvedCommentCount: 0,
+    resolvedCommentCount: 0,
+    walkthroughCount: 0,
+  }));
+  const statusFixtureItems = repositoryDemo
+    ? [
+        {
+          pullRequestId,
+          owner: "a9n-shoji",
+          repository: "rvw",
+          number: 998,
+          title: "Draft: refine the review workspace",
+          githubCreatedAt: "2026-08-20T00:00:00.000Z",
+          githubUpdatedAt: "2026-08-22T00:00:00.000Z",
+          githubState: "OPEN",
+          githubIsDraft: true,
+          unresolvedCommentCount: 1,
+          resolvedCommentCount: 0,
+          walkthroughCount: 1,
+        },
+        {
+          pullRequestId,
+          owner: "a9n-shoji",
+          repository: "rvw",
+          number: 997,
+          title: "Legacy: status not synchronized yet",
+          githubCreatedAt: null,
+          githubUpdatedAt: "2026-08-21T12:00:00.000Z",
+          githubState: null,
+          githubIsDraft: null,
+          unresolvedCommentCount: 2,
+          resolvedCommentCount: 1,
+          walkthroughCount: 1,
+        },
+        {
+          pullRequestId,
+          owner: "a9n-shoji",
+          repository: "rvw",
+          number: 996,
+          title: "Closed: explore an alternate navigation model",
+          githubCreatedAt: "2026-08-18T00:00:00.000Z",
+          githubUpdatedAt: "2026-08-21T00:00:00.000Z",
+          githubState: "CLOSED",
+          githubIsDraft: false,
+          unresolvedCommentCount: 2,
+          resolvedCommentCount: 3,
+          walkthroughCount: 0,
+        },
+        {
+          pullRequestId,
+          owner: "a9n-shoji",
+          repository: "rvw",
+          number: 995,
+          title: "Merged: add local-first review history",
+          githubCreatedAt: "2026-08-15T00:00:00.000Z",
+          githubUpdatedAt: "2026-08-20T00:00:00.000Z",
+          githubState: "MERGED",
+          githubIsDraft: false,
+          unresolvedCommentCount: 0,
+          resolvedCommentCount: 8,
+          walkthroughCount: 2,
+        },
+      ]
+    : [
+        {
+          pullRequestId: "22222222-2222-4222-8222-222222222222",
+          owner: "octo-org",
+          repository: "review-repo",
+          number: 3,
+          title: "Older fixture review",
+          githubCreatedAt: null,
+          githubUpdatedAt: "2026-07-01T00:00:00.000Z",
+          githubState: "OPEN",
+          githubIsDraft: true,
+          unresolvedCommentCount: 3,
+          resolvedCommentCount: 5,
+          walkthroughCount: 2,
+        },
+      ];
+  const allItems = pullRequestListEmpty
+    ? []
+    : pullRequestListPaginated
+      ? [...paginatedItems, currentSummary]
+      : [currentSummary, ...statusFixtureItems];
+  const items = hideClosedOrMerged
+    ? allItems.filter((item) => item.githubState === null || item.githubState === "OPEN")
+    : allItems;
+  const pageItems = items.slice(offset, offset + limit);
+  const hasMore = offset + pageItems.length < items.length;
+  return context.json({
+    ok: true,
+    items: pageItems,
+    pagination: {
+      offset,
+      limit,
+      returned: pageItems.length,
+      total: items.length,
+      hasMore,
+      nextOffset: hasMore ? offset + pageItems.length : null,
+    },
+  });
+});
 
 app.get("/api/pull-requests/:id", (context) => context.json({ ok: true, ...currentView() }));
 

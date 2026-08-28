@@ -1,6 +1,27 @@
 import { expect, test } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
+const createdCommentBodies = [
+  "Image review comment from E2E.",
+  "Deleted image old-side comment from E2E.",
+  "Hybrid rename new-side comment from E2E.",
+] as const;
+
+type FixtureComment = { id: string; posts: Array<{ body: string }> };
+
+test.afterEach(async ({ request }) => {
+  const response = await request.get(`/api/pull-requests/${pullRequestId}/comments`);
+  expect(response.ok()).toBe(true);
+  const { comments } = (await response.json()) as { comments: FixtureComment[] };
+
+  for (const comment of comments) {
+    if (!comment.posts.some((post) => createdCommentBodies.some((body) => body === post.body))) {
+      continue;
+    }
+    const deleteResponse = await request.delete(`/api/comments/${comment.id}`, { data: {} });
+    expect(deleteResponse.ok()).toBe(true);
+  }
+});
 
 test("renders secured attachments and repository image states without text-image requests", async ({
   page,
@@ -8,11 +29,6 @@ test("renders secured attachments and repository image states without text-image
 }) => {
   test.setTimeout(120_000);
   const directGitHubImageRequests: string[] = [];
-  const createdCommentBodies = [
-    "Image review comment from E2E.",
-    "Deleted image old-side comment from E2E.",
-    "Hybrid rename new-side comment from E2E.",
-  ] as const;
   page.on("request", (browserRequest) => {
     if (browserRequest.url().startsWith("https://github.com/user-attachments/")) {
       directGitHubImageRequests.push(browserRequest.url());
@@ -94,11 +110,17 @@ test("renders secured attachments and repository image states without text-image
   });
   await expect(sidebarComment).toBeVisible();
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await expect(
+    page
+      .locator('.document-pane[data-pane="left"]')
+      .getByRole("tab", { name: "src/fixture.ts", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   await sidebarComment.getByRole("button", { name: "コメント対象を開く", exact: true }).click();
-  await expect(page.getByRole("tab", { name: "assets/modified.png", exact: true })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(
+    page
+      .locator('.document-pane[data-pane="left"]')
+      .getByRole("tab", { name: "assets/modified.png", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   inlineComment = page.locator(".repository-image-comments .comment-thread--inline").filter({
     hasText: createdCommentBodies[0],
   });
@@ -163,10 +185,10 @@ test("renders secured attachments and repository image states without text-image
   await composer.getByRole("button", { name: "コメント", exact: true }).click();
 
   type CommentTarget = { sourceOid?: string; path?: string };
-  type FixtureComment = { id: string; target: CommentTarget; posts: Array<{ body: string }> };
+  type TargetedFixtureComment = FixtureComment & { target: CommentTarget };
   const createdComments = (await (
     await request.get(`/api/pull-requests/${pullRequestId}/comments`)
-  ).json()) as { comments: FixtureComment[] };
+  ).json()) as { comments: TargetedFixtureComment[] };
   const oldSideComment = createdComments.comments.find((comment) =>
     comment.posts.some((post) => post.body === createdCommentBodies[1]),
   );
@@ -209,10 +231,4 @@ test("renders secured attachments and repository image states without text-image
     count: number;
   };
   expect(imageTextAfter.count).toBe(imageTextBefore.count);
-
-  for (const comment of createdComments.comments) {
-    if (comment.posts.some((post) => createdCommentBodies.some((body) => body === post.body))) {
-      await request.delete(`/api/comments/${comment.id}`);
-    }
-  }
 });

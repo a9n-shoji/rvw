@@ -16,6 +16,7 @@ import type {
   DocumentRef,
   GitHubPullRequest,
   PullRequest,
+  PullRequestSummary,
   ResetCounts,
   ReviewComment,
   SearchResponse,
@@ -38,11 +39,13 @@ import { buildPullRequestMarkdown, hashDocument, selectedLineText } from "../dom
 import { createSourceExcerpt, type SourceExcerpt } from "../domain/source-excerpt.js";
 import {
   DEFAULT_COMMENT_LIST_LIMIT,
+  DEFAULT_PULL_REQUEST_LIST_LIMIT,
   DEFAULT_COMMENT_WATCH_LIMIT,
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
   MAX_COMMENT_BODY_BYTES,
   MAX_COMMENT_LIST_LIMIT,
+  MAX_PULL_REQUEST_LIST_LIMIT,
   MAX_COMMENT_WATCH_LIMIT,
   MAX_IDEMPOTENCY_KEY_CHARACTERS,
   MAX_SEARCH_QUERY_BYTES,
@@ -81,6 +84,18 @@ export interface PullRequestView {
   comparisonBaseOid: string;
   headOid: string;
   commits: CommitSummary[];
+}
+
+export interface PullRequestList {
+  items: PullRequestSummary[];
+  pagination: {
+    offset: number;
+    limit: number;
+    returned: number;
+    total: number;
+    hasMore: boolean;
+    nextOffset: number | null;
+  };
 }
 
 export interface SyncResult extends PullRequestView {
@@ -580,7 +595,9 @@ export class RvwService {
       }
     }
 
-    const github = await this.github.getPullRequest(reference, repository.worktreePath);
+    const github = await this.github.getPullRequest(reference, repository.worktreePath, {
+      allowClosed: stored !== null,
+    });
     const existing = this.database.findPullRequestByIdentity(
       github.owner,
       github.repository,
@@ -596,6 +613,39 @@ export class RvwService {
     if (!pullRequest)
       throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。", { status: 404 });
     return pullRequest;
+  }
+
+  listPullRequests(input: {
+    offset?: number | undefined;
+    limit?: number | undefined;
+    hideClosedOrMerged?: boolean | undefined;
+  }): PullRequestList {
+    const offset = input.offset ?? 0;
+    const limit = input.limit ?? DEFAULT_PULL_REQUEST_LIST_LIMIT;
+    const hideClosedOrMerged = input.hideClosedOrMerged ?? true;
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new RvwError("INVALID_INPUT", "offsetは0以上の整数にしてください。");
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PULL_REQUEST_LIST_LIMIT) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `limitは1以上${MAX_PULL_REQUEST_LIST_LIMIT}以下の整数にしてください。`,
+      );
+    }
+    const page = this.database.listPullRequestSummaries(offset, limit, hideClosedOrMerged);
+    const returned = page.items.length;
+    const hasMore = offset + returned < page.total;
+    return {
+      items: page.items,
+      pagination: {
+        offset,
+        limit,
+        returned,
+        total: page.total,
+        hasMore,
+        nextOffset: hasMore ? offset + returned : null,
+      },
+    };
   }
 
   resolveStoredPullRequest(reference: string): PullRequest {
@@ -731,7 +781,9 @@ export class RvwService {
   async refreshPullRequest(id: string): Promise<SyncResult> {
     const current = this.getPullRequest(id);
     const repository = await this.repositoryFor(current);
-    const github = await this.github.getPullRequest(current.url, repository.worktreePath);
+    const github = await this.github.getPullRequest(current.url, repository.worktreePath, {
+      allowClosed: true,
+    });
     const pullRequest = await this.synchronizeGithub(github, repository, []);
     return { ...(await this.getPullRequestView(pullRequest.id)), commentUpdatesApplied: 0 };
   }
@@ -776,7 +828,9 @@ export class RvwService {
         },
       );
     }
-    const github = await this.github.getPullRequest(current.url, repository.worktreePath);
+    const github = await this.github.getPullRequest(current.url, repository.worktreePath, {
+      allowClosed: true,
+    });
     const localHead = await this.git.headState(repository.worktreePath);
     if (localHead.branch === github.headRefName && localHead.oid !== github.headOid) {
       const remoteUrl = await this.git.assertBaseRepository(
@@ -1312,6 +1366,7 @@ export class RvwService {
       ? await this.github.getPullRequest(
           result.pullRequest.url,
           result.pullRequest.localRepositoryPath,
+          { allowClosed: true },
         )
       : null;
     const staleAgainstGitHub = live
@@ -1321,7 +1376,9 @@ export class RvwService {
         live.headRepositoryName !== result.pullRequest.latestHeadRepositoryName ||
         live.baseOid !== result.pullRequest.latestBaseOid ||
         live.headOid !== result.pullRequest.latestHeadOid ||
-        live.updatedAt !== result.pullRequest.githubUpdatedAt
+        live.updatedAt !== result.pullRequest.githubUpdatedAt ||
+        live.state !== result.pullRequest.githubState ||
+        live.isDraft !== result.pullRequest.githubIsDraft
       : null;
     return {
       ...result,
@@ -1892,6 +1949,7 @@ export class RvwService {
     const github = await this.github.getPullRequest(
       preview.pullRequest.url,
       repository.worktreePath,
+      { allowClosed: true },
     );
     const remoteUrl = await this.git.assertBaseRepository(
       repository.worktreePath,

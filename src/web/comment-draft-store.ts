@@ -38,6 +38,13 @@ const emptyReplyDraftByPullRequest = new Map<string, CommentReplyDraftSnapshot>(
 const replyDraftListeners = new Set<() => void>();
 const revisionByPullRequest = new Map<string, number>();
 
+export function hasPendingCommentDrafts(): boolean {
+  return (
+    [...draftsByPullRequest.values()].some((drafts) => drafts.size > 0) ||
+    [...replyDraftsByPullRequest.values()].some((drafts) => drafts.size > 0)
+  );
+}
+
 function documentIdentity(document: ActiveDocument): unknown[] {
   if (document.kind === "pull-request-markdown") return ["pull-request-markdown"];
   if (document.kind === "walkthrough") {

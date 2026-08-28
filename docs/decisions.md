@@ -1,5 +1,70 @@
 # Architecture decisions
 
+## 2026-08-28: Cache GitHub Pull Request status separately from local review availability
+
+### Problem
+
+The workspace index could not distinguish Open, Draft, Closed, and Merged Pull Requests. GitHub already
+returned `state` and `isDraft`, but rvw discarded both before persistence and rejected every refresh once
+a saved Pull Request became Closed or Merged. Looking up every row while rendering the index would break
+its offline and bounded-read guarantees.
+
+### Choice
+
+Cache nullable `github_state` and `github_is_draft` columns on each successful synchronization and expose
+them through the SQLite summary read model. Keep GitHub's two-field meaning: Draft is `OPEN` plus
+`isDraft`, while Closed and Merged are values of `state`. Derive one display badge with Merged/Closed
+taking precedence over Draft/Open.
+
+Continue accepting only Open or Draft Pull Requests for a new registration. Once a Pull Request is saved,
+allow refresh, sync, live inspection, and reset to read Closed or Merged metadata so the cache can advance
+without making the review workspace unavailable. The index never performs a GitHub lookup. Its default
+filter hides only rows whose cached state is explicitly Closed or Merged; legacy rows with no cached state
+remain visible without a badge until a normal synchronization fills both nullable columns.
+
+### Trade-offs
+
+- Status remains available offline but represents the last successful synchronization, not guaranteed live
+  GitHub state.
+- Legacy rows omit the badge until a normal synchronization fills both nullable columns, but remain visible
+  under the default Closed / Merged filter.
+- Closed and Merged Pull Requests remain readable from cached Git objects and review data.
+- Keeping `state` and `isDraft` separate avoids inventing a GitHub state that its API does not provide.
+- The filter value is ephemeral UI state rather than URL history state. Back/Forward still restores the
+  paginated offset, but restoring an earlier filter value is deferred to a separate navigation change.
+
+## 2026-08-28: Use a SQLite-only workspace index for saved Pull Requests
+
+### Problem
+
+Opening the viewer without a `pullRequestId` produced a fatal state even though rvw stores Pull Requests
+in one user-global database. Returning to a recent review required knowing its URL or invoking the CLI
+again. Reusing the full Pull Request view would read commit history from every repository and make the
+index depend on available Git objects.
+
+### Choice
+
+Use the parameterless viewer URL as a paginated workspace index. Read one page of PR metadata and then
+aggregate comment and Walkthrough counts for only those rows entirely from SQLite, ordered by cached GitHub `updatedAt` with
+a persistent-ID tie-breaker. Cache GitHub `createdAt` in a nullable migrated column; do not substitute
+rvw's local registration timestamp for legacy rows and do not backfill the index with GitHub requests.
+
+Keep routing dependency-free. The React root selects the index or existing review screen from the URL,
+and uses the History API for pagination, row selection, and the return link. The current list offset stays
+in the URL so Back, Forward, reload, and modifier-click preserve the selected page. A popstate traversal
+back into a review restores the retained reading destination, while a fresh row selection starts the normal
+initial workspace. Flush the current reading position before returning to the index, and keep the browser
+close guard at the root so a draft retained across that transition cannot be discarded without warning.
+Keep the viewer heartbeat above both screens so an index-only tab continues owning the browser-managed worker.
+
+### Trade-offs
+
+- The index remains available offline and does not perform per-PR Git or GitHub work.
+- Offset pagination is simple for a local database; concurrent synchronization can move rows between
+  pages because GitHub update time is the intended ordering key.
+- Legacy rows show an unknown creation time until their next explicit synchronization.
+- Navigation state remains ephemeral and URL-based without adding a routing framework.
+
 ## 2026-08-21: Parallelize investigate-only leases within one Pull Request
 
 ### Problem
