@@ -1,8 +1,13 @@
+import { mkdtempSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Runtime } from "../../src/application/runtime.js";
+import type { RvwService } from "../../src/application/rvw-service.js";
 import { createProgram, runCli } from "../../src/cli/main.js";
 import type { CommentPost, PullRequest, ReviewComment } from "../../src/domain/models.js";
+import { startRuntimeAgentSocket } from "../../src/server/agent-socket.js";
 
 const pullRequest: PullRequest = {
   id: "pull-request-1",
@@ -793,5 +798,80 @@ describe("CLI protocol discovery", () => {
       deleted: { ref: uri, counts: { comments: 1, posts: 2, references: 3 } },
     });
     expect(close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("CLI viewer runtime options", () => {
+  const originalDatabasePath = process.env.RVW_DATABASE_PATH;
+  const originalSocketPath = process.env.RVW_AGENT_SOCKET_PATH;
+
+  afterEach(() => {
+    if (originalDatabasePath === undefined) delete process.env.RVW_DATABASE_PATH;
+    else process.env.RVW_DATABASE_PATH = originalDatabasePath;
+    if (originalSocketPath === undefined) delete process.env.RVW_AGENT_SOCKET_PATH;
+    else process.env.RVW_AGENT_SOCKET_PATH = originalSocketPath;
+    vi.restoreAllMocks();
+  });
+
+  it("lets --no-open reuse an active runtime without constructing a local Runtime", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-cli-no-open-"));
+    const databasePath = path.join(directory, "review.db");
+    process.env.RVW_DATABASE_PATH = databasePath;
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
+    let running: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
+    try {
+      running = await startRuntimeAgentSocket(databasePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    const openViewer = vi.fn().mockResolvedValue({
+      url: "http://127.0.0.1:4321/?pullRequestId=pr-45",
+      origin: "http://127.0.0.1:4321",
+      port: 4321,
+      pullRequestId: "pr-45",
+      ownerPid: process.pid,
+    });
+    running.setHandler({
+      service: { database: { filePath: databasePath } } as unknown as RvwService,
+      openViewer,
+    });
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      await createProgram().parseAsync(["node", "rvw", "open", "45", "--no-open"]);
+      expect(openViewer).toHaveBeenCalledWith({
+        reference: "45",
+        cwd: process.cwd(),
+        requestedPort: 0,
+      });
+      expect(stdout).toHaveBeenCalledWith("rvw: http://127.0.0.1:4321/?pullRequestId=pr-45\n");
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("makes --foreground conflict with an active runtime before Runtime construction", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-cli-foreground-"));
+    const databasePath = path.join(directory, "review.db");
+    process.env.RVW_DATABASE_PATH = databasePath;
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
+    let running: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
+    try {
+      running = await startRuntimeAgentSocket(databasePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    running.setHandler({
+      service: { database: { filePath: databasePath } } as unknown as RvwService,
+      openViewer: vi.fn(),
+    });
+    try {
+      await expect(
+        createProgram().parseAsync(["node", "rvw", "open", "45", "--foreground"]),
+      ).rejects.toMatchObject({ code: "PROCESS_FAILED" });
+    } finally {
+      await running.close();
+    }
   });
 });

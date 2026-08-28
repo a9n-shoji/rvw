@@ -1,10 +1,14 @@
 import { EventEmitter } from "node:events";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   completeBackgroundOpen,
+  createRuntimeAgentSocketHandler,
+  startBackgroundOpen,
   waitForServerShutdown,
   type BackgroundOpenChild,
 } from "../../src/cli/main.js";
+import type { Runtime } from "../../src/application/runtime.js";
+import type { RunningServer } from "../../src/server/start-server.js";
 import { ViewerLifecycle } from "../../src/server/viewer-lifecycle.js";
 
 function backgroundChild(): BackgroundOpenChild & {
@@ -260,5 +264,86 @@ describe("completeBackgroundOpen", () => {
 
     await rejection;
     expect(child.kill.mock.calls).toEqual([["SIGTERM"]]);
+  });
+});
+
+describe("database-scoped viewer runtime reuse", () => {
+  beforeEach(() => vi.useRealTimers());
+
+  it("opens an additional viewer in an active runtime without forking a worker", async () => {
+    const forkWorker = vi.fn();
+    const launchBrowser = vi.fn().mockResolvedValue(undefined);
+    const tryRuntimeOpen = vi.fn().mockResolvedValue({
+      available: true,
+      result: {
+        url: "http://127.0.0.1:4321/?pullRequestId=pr-45",
+        origin: "http://127.0.0.1:4321",
+        port: 4321,
+        pullRequestId: "pr-45",
+        ownerPid: 123,
+      },
+    });
+
+    await expect(
+      startBackgroundOpen("45", 0, { forkWorker, launchBrowser, tryRuntimeOpen }),
+    ).resolves.toBe("http://127.0.0.1:4321/?pullRequestId=pr-45");
+
+    expect(tryRuntimeOpen).toHaveBeenCalledWith({
+      reference: "45",
+      cwd: process.cwd(),
+      requestedPort: 0,
+    });
+    expect(launchBrowser).toHaveBeenCalledWith("http://127.0.0.1:4321/?pullRequestId=pr-45");
+    expect(forkWorker).not.toHaveBeenCalled();
+  });
+
+  it("forks the first background worker when no runtime is active", async () => {
+    const child = backgroundChild();
+    const forkWorker = vi.fn(() => {
+      setTimeout(() => {
+        child.emit("message", { type: "ready", url: "http://127.0.0.1:4321/" });
+        child.emit("message", { type: "viewer-connected" });
+      }, 0);
+      return child;
+    });
+
+    await expect(
+      startBackgroundOpen(undefined, 4321, {
+        forkWorker,
+        launchBrowser: vi.fn().mockResolvedValue(undefined),
+        tryRuntimeOpen: vi.fn().mockResolvedValue({
+          available: false,
+          reason: "socket-not-found",
+        }),
+      }),
+    ).resolves.toBe("http://127.0.0.1:4321/");
+    expect(forkWorker).toHaveBeenCalledWith(undefined, 4321);
+  });
+
+  it("reuses the active origin and rejects a conflicting explicit port before opening a PR", async () => {
+    const openPullRequest = vi.fn().mockResolvedValue({ pullRequest: { id: "pr-45" } });
+    const handler = createRuntimeAgentSocketHandler(
+      { service: { openPullRequest } } as unknown as Runtime,
+      { origin: "http://127.0.0.1:4321", port: 4321 } as RunningServer,
+    );
+
+    await expect(
+      handler.openViewer({ reference: "45", cwd: "/repo", requestedPort: 5000 }),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      details: { activePort: 4321, requestedPort: 5000 },
+    });
+    expect(openPullRequest).not.toHaveBeenCalled();
+
+    await expect(
+      handler.openViewer({ reference: "45", cwd: "/repo", requestedPort: 4321 }),
+    ).resolves.toEqual({
+      url: "http://127.0.0.1:4321/?pullRequestId=pr-45",
+      origin: "http://127.0.0.1:4321",
+      port: 4321,
+      pullRequestId: "pr-45",
+      ownerPid: process.pid,
+    });
+    expect(openPullRequest).toHaveBeenCalledWith("45", "/repo");
   });
 });

@@ -994,8 +994,11 @@ OS user data directoryに一つのDBを置く。`node:sqlite`、WAL、foreign ke
 chmodしない。rvwが不足directory/fileを新規作成する場合はchmodではなく作成modeで`0700` / `0600`にし、
 既存pathのmode/ownerと推奨値との差は`doctor --json`へwarningとして出す。
 
-通常権限のviewer processは`0700`のuser専用一時directory内へdatabase別Unix socket（`0600`）を
-提供する。Agent CLIはDBを直接開く前に
+通常権限のviewer runtimeは`0700`のuser専用一時directory内へdatabase別Unix socket（`0600`）を
+提供する。同じdatabase pathでは一つのruntime processだけを許し、別の`RVW_DATABASE_PATH`は独立した
+runtimeを持てる。通常の`rvw open`はこのsocketの内部`viewer.open`操作でactive runtimeを発見し、
+requested PRを同じHTTP originへ追加してURLを受け取る。これは公開Agent command / capabilityではない。
+Agent CLIはDBを直接開く前に
 socketへ同じapplication service操作を依頼する。`RVW_AGENT_SOCKET_PATH`未指定時はrequest送信前の接続失敗
 だけ従来のdirect CLIへfallbackできる。明示時はそのsocketを必須とし、接続失敗またはDB不一致を
 `AGENT_SOCKET_UNAVAILABLE`として返してdirect DBを開かない。全socket requestは期待DB pathを含め、viewerの
@@ -1005,9 +1008,10 @@ direct実行へfallbackせず、結果不明の明示errorを返す。破壊操�
 
 `rvw agent ping/status --json`はsocket path、接続結果、OS接続error詳細、期待／接続先DB、owner PID、選択
 transport、fallback理由をmachine-readableに返し、人向け出力にも同じ診断項目を表示する。同じsocket
-pathのlisten前にatomicなowner lockを取得し、一つのNode
-processだけがsocket名を保持する。lockのowner PIDが生存中またはlockが安全に読めない間はtakeoverせず、owner
-終了後だけexact inodeを確認してstale lock/socketを除去し、待機中viewerが引き継ぐ。`doctor --json`はDBの
+pathのlisten前にatomicなowner lockを取得し、その所有権をRuntime / SQLite / HTTP serverの初期化より先に
+確定する。競合に負けた`rvw open` workerはこれらを初期化せず、ownerの`viewer.open`へ委譲して終了する。
+lockのowner PIDが生存中またはlockが安全に読めない間はtakeoverせず、owner終了後の新しい起動だけがexact
+inodeを確認してstale lock/socketを除去する。`doctor --json`はDBの
 mode/ownerに加えてrollbackするwrite transactionとAgent疎通を実行・報告する。
 
 ```sql
@@ -1278,15 +1282,22 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - GitHub attachment readも存在するFetch Metadataと`Origin`でsame-originへ限定し、画像responseへ
   `Cross-Origin-Resource-Policy: same-origin`を付ける
 - browser tab leaseはtransport-onlyで永続化しない。一覧画面も同じviewer heartbeatを更新する
-- 通常の自動openはPRごとのbackground workerを起動し、worker ready後にbrowserを開き、最初のviewer
-  heartbeatを確認してから親CLIを終了する
-- browser起動失敗、worker error、30秒以内に最初のviewer heartbeatがない場合はworkerを停止して明示的な
-  errorを返す
-- background workerはpersistent daemonではなく、最後のviewer tab終了後にserverとともに停止する
-- `--foreground`と`--no-open`はsignal管理
+- 通常の自動openはactive runtimeがなければdatabase ownershipを持つbackground workerを一つだけ起動する。
+  worker ready後にbrowserを開き、最初のviewer heartbeatを確認してから親CLIを終了する
+- 同じdatabaseのactive runtimeがあればworker、Runtime、SQLite、HTTP serverを追加せず、内部socket操作で
+  requested PRを開いて同じoriginのURLをbrowserへ渡す
+- browser起動失敗、初回worker error、30秒以内に最初のviewer heartbeatがない場合は初回workerを停止して
+  明示的なerrorを返す。再利用時のbrowser起動失敗は既存runtimeを停止しない
+- background runtimeはpersistent daemonではなく、一覧を含む最後のviewer tab終了後に短い猶予を置いて
+  serverとともに停止する。複数tabの一つを閉じても他が残る間は停止しない
+- `--foreground`はterminal接続serverを明示的に起動し、同じdatabaseのruntimeが既にあればconflict errorを返す
+- `--no-open`はbrowser自動起動だけを無効にする。active runtimeは再利用し、active runtimeがなければ従来どおり
+  signal管理のserverを起動する
+- 初回の明示`--port`は尊重する。active runtimeと異なる非0 portを指定した再利用はconflict errorとし、
+  二つ目のserverを起動しない
 - SQLiteはWALでserver processを扱い、Agent CLIの書き込みは可能ならuser専用Unix socketを経由する
 
-同一PRを複数viewer/processで開くことは許容する。SQLite writeは`BEGIN IMMEDIATE`を使う。
+同一PRを同じruntimeの複数viewer tabで開くことは許容する。SQLite writeは`BEGIN IMMEDIATE`を使う。
 Phase 1ではDBとGit refを単一transactionにできないため、失敗時の補償削除と起動・同期時の
 invariant検証を行う。refとSQLiteの不整合を検出した場合は部分的に自動修復せずresetを案内する。
 
@@ -1337,7 +1348,8 @@ Integration（実git + fake GitHub）:
 - `pr sync --repository`、`--allow-untracked`、behind-onlyなlocal branch
 - repository外からの保存済みPR openと`pr attach`
 - `comment get --live`のread-only stale判定
-- Agent socket経由のwrite、implicit fallback、explicit fail-closed、diagnostic、process間単一owner takeover
+- Agent socket経由のwrite、implicit fallback、explicit fail-closed、diagnostic、process間単一runtime owner、
+  同一databaseのopen再利用、異なるdatabaseの独立runtime、stale owner/socket recovery、明示port conflict
 - doctorのDB write transactionとAgent疎通
 - commit固定Walkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
 - worktree間共有

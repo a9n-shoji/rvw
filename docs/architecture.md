@@ -12,17 +12,22 @@ rvw is a local Node.js application with four boundaries:
 - `infrastructure`: SQLite, Git, GitHub CLI, filesystem, and subprocess adapters.
 - `server`, `cli`, and `web`: transport and presentation only.
 
-The SQLite database is user-global. Observed PR heads are retained by `refs/rvw/...` in the base
+The SQLite database is user-global by default. Observed PR heads are retained by `refs/rvw/...` in the base
 repository's common Git directory. The browser polls `app_meta.change_sequence`; there is no
-persistent daemon or agent session coupling. While a viewer process is running, it exposes a
+persistent daemon or agent session coupling. While a database-scoped viewer runtime is running, it exposes a
 user/database-specific Unix socket inside a `0700` temporary directory as an alternate transport for
-the same application service. Agent
+the same application service and for the internal `viewer.open` lifecycle request. A later `rvw open`
+resolves its requested Pull Request through that owner and opens another URL on the same HTTP origin;
+it does not construct another Runtime, SQLite connection, or HTTP server. Different explicitly selected
+database paths have separate socket identities and may run independently. Agent
 CLI operations prefer that socket and fall back to direct local execution only before a request has
 been sent and only when no socket path was explicitly configured. `RVW_AGENT_SOCKET_PATH` is
 fail-closed: an unavailable or database-mismatched configured socket never falls back to SQLite. A
-sent operation with an unknown outcome is never automatically repeated. Concurrent viewers for one
-database acquire an atomic filesystem owner lock before listening, so one socket name is held by one
-Node process; a follower takes over only after that owner exits. Transport diagnostics report the
+sent operation with an unknown outcome is never automatically repeated. Concurrent starters for one
+database compete for an atomic filesystem owner lock before Runtime and HTTP initialization, so only
+the winner can become the runtime. A loser delegates its open request to the winner and exits instead
+of waiting to become a second owner. A later invocation recovers a dead-PID lock and stale socket by
+exact inode. Transport diagnostics report the
 socket, connection, database identity, selected transport, and fallback reason. Doctor also executes
 a rollback-only write transaction instead of inferring writeability from Unix modes.
 
@@ -90,13 +95,15 @@ the same Skill directories under their respective local Skill roots. Platform se
 concern only and does not fork the Agent protocol or workflow instructions. Installer metadata records
 the bundled digest so update availability and local customization are reported separately.
 
-Each automatically opened browser document attaches an ephemeral viewer ID to that poll. The
-per-viewer worker uses those IDs only to stop its HTTP listener after the final tab closes; they are
-never persisted and are not part of review state or the agent CLI protocol. By default, the parent
-`rvw open` process starts that worker in the background, opens the browser after the worker reports
-readiness, waits for the first viewer heartbeat, and then returns control to the terminal. This is a
-browser-owned worker rather than a persistent daemon. `--foreground` and `--no-open` remain
-terminal-signal managed.
+Each browser document attaches an ephemeral viewer ID to that poll. The database runtime uses those IDs
+only to stop its HTTP listener after the final tab closes; they are never persisted and are not part of
+review state or the public Agent CLI protocol. By default, the first parent `rvw open` process starts the
+runtime worker in the background, opens the browser after readiness, waits for the first viewer heartbeat,
+and then returns control to the terminal. Later opens use the runtime socket and same HTTP origin. This is
+a browser-owned runtime rather than a persistent daemon. `--foreground` explicitly owns a terminal-attached
+runtime and conflicts with an existing owner. `--no-open` disables only browser launch: it reuses an active
+runtime or starts a signal-managed one when none exists. An explicit nonzero port must match an active
+runtime; otherwise the command reports a conflict instead of starting a second server.
 
 The React root treats a URL without `pullRequestId` as a lightweight workspace index over the
 user-global database. Its paginated summary query first bounds the Pull Request rows and then aggregates

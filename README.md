@@ -65,9 +65,18 @@ rvw open https://github.com/owner/repository/pull/123
 rvw open
 ```
 
-serverは`127.0.0.1`の空きportだけへbindします。通常の`rvw open`はviewerを開き、最初のtab接続を確認してから端末へ制御を返します。serverはbackgroundで動き、最後のtabを閉じると短い猶予後に停止します。リロード中や別tabが残っている間は停止しません。
+serverは`127.0.0.1`の空きportだけへbindします。同じdatabaseで既にrvwが動いていれば、通常の
+`rvw open`はそのruntimeへPRを追加し、同じoriginで新しいtabを開きます。二つ目のserverやdatabase接続は
+起動しません。最初の`rvw open`だけがbackground runtimeを開始し、最初のtab接続を確認してから端末へ
+制御を返します。最後のtabを閉じると短い猶予後に停止し、リロード中や別tabが残っている間は停止しません。
+異なる`RVW_DATABASE_PATH`を指定したruntimeは独立して起動できます。
 
-serverを端末に接続したままにする場合は`rvw open --foreground`を使います。ブラウザを開かずに検証する場合は`rvw open --no-open`を使います。どちらもCtrl+Cで停止します。一度登録したPRは、完全URLまたは全登録PRで一意な番号を指定すればrepository外のdirectoryからも開けます。
+serverを端末に接続したままにする場合は`rvw open --foreground`を使います。同じdatabaseのruntimeが
+既にあればforeground commandは競合を明示します。ブラウザだけを自動で開かない場合は
+`rvw open --no-open`を使います。active runtimeがあればURLを表示して再利用し、なければCtrl+Cまで
+signal管理のserverを起動します。初回の`--port`は尊重し、active runtimeと異なるportを指定した場合は
+二つ目を起動せず競合を返します。一度登録したPRは、完全URLまたは全登録PRで一意な番号を指定すれば
+repository外のdirectoryからも開けます。
 
 ## 変更を理解する
 
@@ -339,10 +348,12 @@ credentialはGitHub CLIが管理し、rvwのDBへコピーしません。
 既定DBのdirectory/fileは新規作成時だけ`0700` / `0600`へ設定し、既存pathはownerとmodeを検証して
 安全ならchmodしません。明示的に管理する別pathは`RVW_DATABASE_PATH`で指定でき、この場合rvwは既存pathを
 chmodしません。存在しないdirectory/fileは作成時のmodeだけで`0700` / `0600`にし、既存pathが推奨modeで
-なければ`doctor --json`にwarningを表示します。通常起動したviewerは`0700`の一時directory内へ
+なければ`doctor --json`にwarningを表示します。通常起動したviewer runtimeは`0700`の一時directory内へ
 `0600`のdatabase別Unix socketを提供し、Agent CLIは可能ならそのprocessへ
 書き込みを依頼するため、AgentへDB directoryの直接write権限を渡す必要がありません。同じsocketでは
-atomicなowner lockを取得した一つのNode processだけがlistenし、owner終了後にfollowerが引き継ぎます。
+RuntimeやHTTP serverより先にatomicなowner lockを取得し、一つのdatabaseを一つのNode processだけが
+扱います。競合した`rvw open`はownerへ依頼して終了し、dead ownerのstale lock/socketは次回起動時に
+exact inodeを確認して回収します。
 `rvw doctor --json`はmode/ownerだけでなくwrite transactionとAgent疎通も報告します。
 
 ローカルHTTP serverは`127.0.0.1`だけへbindしてHost / Originを検証し、write APIは

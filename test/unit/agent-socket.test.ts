@@ -10,7 +10,9 @@ import {
   dispatchAgentSocketRequest,
   inspectAgentTransport,
   startAgentSocket,
+  startRuntimeAgentSocket,
   tryAgentSocketRequest,
+  tryRuntimeViewerOpen,
 } from "../../src/server/agent-socket.js";
 
 async function waitForChildMessage<T>(
@@ -539,6 +541,185 @@ describe("Agent socket", () => {
       expect(syncPullRequest).toHaveBeenCalledOnce();
     } finally {
       await running.close();
+    }
+  });
+
+  it("accepts lifecycle requests before Runtime initialization and dispatches after setup", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-runtime-dispatch-"));
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
+    const databasePath = path.join(directory, "review.db");
+    let running: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
+    try {
+      running = await startRuntimeAgentSocket(databasePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    const openViewer = vi.fn().mockResolvedValue({
+      url: "http://127.0.0.1:4321/?pullRequestId=pr-1",
+      origin: "http://127.0.0.1:4321",
+      port: 4321,
+      pullRequestId: "pr-1",
+      ownerPid: process.pid,
+    });
+    try {
+      expect(running.owned).toBe(true);
+      const requested = tryRuntimeViewerOpen(
+        { reference: "45", cwd: directory, requestedPort: 0 },
+        databasePath,
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(openViewer).not.toHaveBeenCalled();
+
+      running.setHandler({
+        service: { database: { filePath: databasePath } } as unknown as RvwService,
+        openViewer,
+      });
+
+      await expect(requested).resolves.toEqual({
+        available: true,
+        result: {
+          url: "http://127.0.0.1:4321/?pullRequestId=pr-1",
+          origin: "http://127.0.0.1:4321",
+          port: 4321,
+          pullRequestId: "pr-1",
+          ownerPid: process.pid,
+        },
+      });
+      expect(openViewer).toHaveBeenCalledWith({
+        reference: "45",
+        cwd: directory,
+        requestedPort: 0,
+      });
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("gives concurrent runtime contenders one owner without follower takeover", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-runtime-owner-"));
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
+    const databasePath = path.join(directory, "review.db");
+    let running: Array<Awaited<ReturnType<typeof startRuntimeAgentSocket>>>;
+    try {
+      running = await Promise.all([
+        startRuntimeAgentSocket(databasePath),
+        startRuntimeAgentSocket(databasePath),
+      ]);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    const ownerIndex = running.findIndex((candidate) => candidate.owned);
+    const followerIndex = ownerIndex === 0 ? 1 : 0;
+    try {
+      expect(ownerIndex).toBeGreaterThanOrEqual(0);
+      expect(running.filter((candidate) => candidate.owned)).toHaveLength(1);
+      await running[ownerIndex]!.close();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(running[followerIndex]!.owned).toBe(false);
+    } finally {
+      await Promise.all(running.map(async (candidate) => await candidate.close()));
+    }
+  });
+
+  it("keeps one runtime owner across processes and does not promote the loser", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-runtime-multiprocess-"));
+    const socketPath = path.join(directory, "agent.sock");
+    const databasePath = path.join(directory, "review.db");
+    process.env.RVW_AGENT_SOCKET_PATH = socketPath;
+    const fixture = path.resolve("test/fixtures/agent-socket-process.ts");
+    const children = [
+      fork(fixture, [databasePath, "runtime"], {
+        execArgv: ["--import", "tsx"],
+        env: { ...process.env, RVW_AGENT_SOCKET_PATH: socketPath },
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      }),
+      fork(fixture, [databasePath, "runtime"], {
+        execArgv: ["--import", "tsx"],
+        env: { ...process.env, RVW_AGENT_SOCKET_PATH: socketPath },
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      }),
+    ];
+
+    try {
+      const ready = await Promise.all(
+        children.map(async (child) => await waitForChildMessage(child, childState)),
+      );
+      if (ready.some((state) => state.type === "unsupported")) return;
+      expect(ready.filter((state) => state.owned)).toHaveLength(1);
+      const ownerIndex = ready.findIndex((state) => state.owned);
+      const followerIndex = ownerIndex === 0 ? 1 : 0;
+      sendChildMessage(children[ownerIndex]!, { type: "close" });
+      await new Promise<void>((resolve) => {
+        if (children[ownerIndex]!.exitCode !== null) resolve();
+        else children[ownerIndex]!.once("exit", () => resolve());
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const requestId = Date.now();
+      sendChildMessage(children[followerIndex]!, { type: "status", requestId });
+      const follower = await waitForChildMessage(
+        children[followerIndex]!,
+        (message): message is ChildState =>
+          childState(message) && message.type === "status" && message.requestId === requestId,
+      );
+      expect(follower.owned).toBe(false);
+      expect(existsSync(`${socketPath}.owner`)).toBe(false);
+    } finally {
+      for (const child of children) sendChildMessage(child, { type: "close" });
+      await Promise.all(
+        children.map(
+          async (child) =>
+            await new Promise<void>((resolve) => {
+              if (child.exitCode !== null || child.signalCode !== null) resolve();
+              else child.once("exit", () => resolve());
+            }),
+        ),
+      );
+    }
+  });
+
+  it("recovers a dead owner lock and stale socket before claiming runtime ownership", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-runtime-stale-"));
+    const socketPath = path.join(directory, "agent.sock");
+    process.env.RVW_AGENT_SOCKET_PATH = socketPath;
+    writeFileSync(`${socketPath}.owner`, `${JSON.stringify({ pid: 2_147_483_647 })}\n`, {
+      mode: 0o600,
+    });
+    writeFileSync(socketPath, "stale", { mode: 0o600 });
+    let running: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
+    try {
+      running = await startRuntimeAgentSocket(path.join(directory, "review.db"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    try {
+      expect(running.owned).toBe(true);
+      expect(statSync(`${socketPath}.owner`).mode & 0o777).toBe(0o600);
+    } finally {
+      await running.close();
+    }
+  });
+
+  it("allows independent runtime owners for different databases", async () => {
+    delete process.env.RVW_AGENT_SOCKET_PATH;
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-runtime-databases-"));
+    let running: Array<Awaited<ReturnType<typeof startRuntimeAgentSocket>>>;
+    try {
+      running = await Promise.all([
+        startRuntimeAgentSocket(path.join(directory, "first.db")),
+        startRuntimeAgentSocket(path.join(directory, "second.db")),
+      ]);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    try {
+      expect(running[0]!.path).not.toBe(running[1]!.path);
+      expect(running.every((candidate) => candidate.owned)).toBe(true);
+    } finally {
+      await Promise.all(running.map(async (candidate) => await candidate.close()));
     }
   });
 

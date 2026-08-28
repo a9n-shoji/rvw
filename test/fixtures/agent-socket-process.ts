@@ -1,17 +1,20 @@
 import type { RvwService } from "../../src/application/rvw-service.js";
-import { startAgentSocket } from "../../src/server/agent-socket.js";
+import { startAgentSocket, startRuntimeAgentSocket } from "../../src/server/agent-socket.js";
 
 const databasePath = process.argv[2];
 if (!databasePath || !process.send) throw new Error("database path and IPC are required");
 
 let running: Awaited<ReturnType<typeof startAgentSocket>> | null = null;
 try {
-  running = await startAgentSocket(
-    {
-      database: { filePath: databasePath },
-    } as unknown as RvwService,
-    { takeoverRetryMs: 20 },
-  );
+  running =
+    process.argv[3] === "runtime"
+      ? await startRuntimeAgentSocket(databasePath)
+      : await startAgentSocket(
+          {
+            database: { filePath: databasePath },
+          } as unknown as RvwService,
+          { takeoverRetryMs: 20 },
+        );
 } catch (error) {
   if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
   process.send?.({ type: "unsupported", code: "EPERM", pid: process.pid });

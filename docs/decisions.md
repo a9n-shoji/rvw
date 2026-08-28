@@ -1,5 +1,51 @@
 # Architecture decisions
 
+## 2026-08-28: Own one browser-managed runtime per database
+
+### Problem
+
+The detached viewer model returned the terminal promptly, but every ordinary `rvw open` created a new
+Runtime, SQLite connection, HTTP listener, and worker even when the same database already had a healthy
+viewer. The database-derived Agent socket elected only a transport owner; followers remained complete
+viewer processes. Concurrent starts could therefore create redundant servers before socket ownership
+was known, and long-running usage accumulated unnecessary process and database contention.
+
+### Choice
+
+Use the database-derived Agent socket as the active runtime rendezvous point. Acquire its atomic owner
+lock and begin listening before constructing Runtime, opening SQLite, or binding HTTP. The winner starts
+one browser-managed runtime. A later `rvw open` sends the private `viewer.open` lifecycle operation with
+its reference, cwd, and requested port; the owner resolves the Pull Request and returns a URL on the same
+origin. Keep this operation out of the public Agent command schemas and capabilities, while continuing to
+serve public Agent operations through the same application service. Advance only the internal socket
+protocol version so older running viewers fail with the existing restart guidance.
+
+A simultaneous loser does not initialize Runtime or HTTP and does not remain as a takeover follower. It
+waits for the winner's socket, delegates its open, completes the parent/browser handshake, and exits.
+After a crash, a new invocation may recover only a dead-PID owner lock and the exact stale socket inode.
+Different database paths retain different socket identities and can run independently.
+
+Keep ViewerLifecycle as the runtime lifetime authority: every browser document, including the index, has
+an ephemeral lease, and the runtime exits after the final tab's grace period. This remains a transient
+browser-owned process, not a login daemon or persistent service. `--foreground` is an explicit
+terminal-attached owner and conflicts with an existing runtime. `--no-open` suppresses browser launch
+only, reusing an active runtime or starting a signal-managed one. A nonzero `--port` must match an active
+runtime or return a conflict.
+
+This supersedes the per-viewer-worker and no-cross-session-registry parts of the 2026-08-13 terminal
+return decision, and the viewer-follower takeover behavior in the 2026-08-13 Agent socket decision. Its
+fail-closed transport, lock safety, and stale inode rules remain unchanged.
+
+### Trade-offs
+
+- Repeated opens share process and SQLite state while still allowing any number of tabs and Pull Requests.
+- The socket now coordinates process lifecycle as well as Agent transport, but the lifecycle operation
+  stays private and database-local.
+- A Closed/Merged tab does not keep historical processes alive; only current browser leases do.
+- Foreground diagnostics cannot silently attach to an existing background process, so users must stop the
+  owner before requesting terminal ownership or another explicit port.
+- The runtime is still intentionally absent when no viewer tabs or signal-managed command own it.
+
 ## 2026-08-28: Keep Pull Request CI on the fast Linux path
 
 ### Problem
