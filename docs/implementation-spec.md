@@ -152,7 +152,7 @@ Closed / Mergedは通常の一括更新対象に含めず、個別refresh、`pr 
 更新する。この操作はcommit、PR title/body、作成／更新日時を同期しない。個別PRの
 失敗は成功分の反映を妨げず、対象とerrorを一覧へ返す。GitHub上のDraftは独立stateではなく`state=OPEN`かつ`isDraft=true`なので、
 DBでも別々に保持し、一覧ではOpen / Draft / Closed / Mergedの一つへ合成して表示する。既存DBで状態が
-未取得の行はbadgeを表示せず、通常同期時にだけ埋める。
+未取得の行はbadgeを表示せず、一括status更新または通常同期で取得した際に埋める。
 
 ### 4.2 Local-first open
 
