@@ -223,6 +223,62 @@ describe("RvwDatabase", () => {
     database.close();
   });
 
+  it("lists only Open, Draft, and unknown Pull Requests needing a status refresh", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-status-refresh-db-"));
+    const filePath = path.join(directory, "rvw.db");
+    const database = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    const savePullRequest = (
+      owner: string,
+      number: number,
+      state: "OPEN" | "CLOSED" | "MERGED",
+      isDraft = false,
+    ) =>
+      database.upsertPullRequest(
+        {
+          ...github,
+          owner,
+          number,
+          url: `https://github.com/${owner}/review-repo/pull/${number}`,
+          state,
+          isDraft,
+        },
+        { localRepositoryPath: `/${owner}`, gitCommonDir: `/${owner}/.git` },
+        "c".repeat(40),
+      );
+    const open = savePullRequest("open", 1, "OPEN");
+    const draft = savePullRequest("draft", 2, "OPEN", true);
+    const unknown = savePullRequest("unknown", 3, "OPEN");
+    const closed = savePullRequest("closed", 4, "CLOSED");
+    const merged = savePullRequest("merged", 5, "MERGED");
+    database.close();
+
+    const raw = new DatabaseSync(filePath);
+    raw
+      .prepare("UPDATE pull_requests SET github_state = NULL, github_is_draft = NULL WHERE id = ?")
+      .run(unknown.id);
+    raw.close();
+
+    const reopened = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    const candidates = reopened.listPullRequestsNeedingStatusRefresh();
+
+    expect(candidates.map(({ id }) => id).sort()).toEqual([open.id, draft.id, unknown.id].sort());
+    expect(candidates.find(({ id }) => id === open.id)).toMatchObject({
+      githubState: "OPEN",
+      githubIsDraft: false,
+    });
+    expect(candidates.find(({ id }) => id === draft.id)).toMatchObject({
+      githubState: "OPEN",
+      githubIsDraft: true,
+    });
+    expect(candidates.find(({ id }) => id === unknown.id)).toMatchObject({
+      githubState: null,
+      githubIsDraft: null,
+    });
+    expect(candidates.map(({ id }) => id)).not.toContain(closed.id);
+    expect(candidates.map(({ id }) => id)).not.toContain(merged.id);
+    reopened.close();
+  });
+
   it("migrates existing walkthrough ranges and persists file-level references", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-walkthrough-reference-db-"));
     const filePath = path.join(directory, "rvw.db");

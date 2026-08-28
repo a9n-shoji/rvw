@@ -622,6 +622,16 @@ export class RvwDatabase {
     ).map(mapPullRequest);
   }
 
+  listPullRequestsNeedingStatusRefresh(): PullRequest[] {
+    return (
+      this.database
+        .prepare(
+          "SELECT * FROM pull_requests WHERE github_state = 'OPEN' OR github_state IS NULL ORDER BY updated_at DESC",
+        )
+        .all() as DbRow[]
+    ).map(mapPullRequest);
+  }
+
   listPullRequestSummaries(
     offset: number,
     limit: number,
