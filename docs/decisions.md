@@ -8,16 +8,14 @@ The ordinary CI workflow waited for macOS, Linux, and Windows package-smoke jobs
 Request. Recent successful runs showed that the Linux quality, unit, and E2E gate completed in about
 three minutes, while a Windows runner occasionally spent several additional minutes in runner setup
 and checkout before the package smoke itself began. Repeated pushes could also leave superseded runs
-executing, and Playwright recorded traces for passing tests even though CI did not retain its result
-directory.
+executing.
 
 ### Choice
 
 Run the Linux package smoke on every Pull Request and keep the macOS, Linux, and Windows matrix on
 every push to `main`. The manually dispatched release workflow continues to run the complete release
 gate before staging a package. Cancel an older in-progress ordinary CI run when a newer commit for the
-same Pull Request or branch arrives. Disable Playwright trace recording only in CI while keeping the
-existing local retain-on-failure behavior.
+same Pull Request or branch arrives.
 
 Use only standard GitHub-hosted runners. Do not add a paid larger runner, external cache, or artifact
 storage dependency.
@@ -30,8 +28,6 @@ storage dependency.
   main build; the release workflow independently reruns all required gates before staging.
 - Superseded runs stop consuming runner capacity, but their partial results are intentionally replaced
   by the newest commit's run.
-- CI failures no longer produce a Playwright trace that would have been discarded with the runner;
-  local reproduction still retains traces on failure.
 
 ## 2026-08-28: Cache GitHub Pull Request status separately from local review availability
 
