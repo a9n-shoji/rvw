@@ -153,7 +153,18 @@ export function PullRequestListScreen({
         jsonRequest({}),
       ),
     onSuccess: async () => {
-      await listQuery.refetch();
+      const result = await listQuery.refetch();
+      const refreshedPagination = result.data?.pagination;
+      if (
+        refreshedPagination &&
+        refreshedPagination.total > 0 &&
+        refreshedPagination.offset >= refreshedPagination.total
+      ) {
+        onNavigateToOffset(
+          Math.floor((refreshedPagination.total - 1) / refreshedPagination.limit) *
+            refreshedPagination.limit,
+        );
+      }
     },
   });
   const pagination = listQuery.data?.pagination;

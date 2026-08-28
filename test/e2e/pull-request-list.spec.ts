@@ -83,7 +83,7 @@ test("opens the Pull Request list in a new tab from a modified logo click", asyn
   await expect(logo).toHaveAttribute("href", "/");
 
   const newPagePromise = context.waitForEvent("page");
-  await logo.click({ modifiers: ["Meta"] });
+  await logo.click({ modifiers: ["ControlOrMeta"] });
   const listPage = await newPagePromise;
 
   await expect(listPage.getByRole("heading", { name: "Pull Requests" })).toBeVisible();
@@ -188,6 +188,24 @@ test("keeps the current list page in URL and browser history", async ({ page, re
   await page.goBack();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText("1–50 / 51")).toBeVisible();
+});
+
+test("moves to the last valid page when a status refresh invalidates the current page", async ({
+  page,
+  request,
+}) => {
+  await request.post("/api/test/pull-request-list-paginated", { data: { enabled: true } });
+  await page.goto("/?offset=50");
+  await expect(page.getByText("51–51 / 51")).toBeVisible();
+
+  await page.getByRole("button", { name: "PRステータスを一括更新" }).click();
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByText("1–50 / 50")).toBeVisible();
+  await expect(page.locator(".pull-request-row")).toHaveCount(50);
+  await expect(
+    page.getByRole("heading", { name: "Closed / Merged以外のPull Requestはありません" }),
+  ).toHaveCount(0);
 });
 
 test("preserves drafts and the latest reading position when returning to the list", async ({

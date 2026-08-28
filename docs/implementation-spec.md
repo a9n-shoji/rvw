@@ -1193,7 +1193,8 @@ URLに`pullRequestId`がない場合はuser-global SQLiteへ登録済みのPull 
 折り返して全文を表示する。GitHub更新日時の新しい順であることを明示し、
 Closed / Mergedを非表示にするcheckboxは既定ONとする。状態未取得のlegacy行はbadgeなしで表示する。
 全登録PRのcached statusを明示的に更新するbuttonをfilterの隣へ置き、実行中、成功件数、失敗件数と
-失敗対象を表示する。画面表示やfilter変更だけではGitHubへ問い合わせない。
+失敗対象を表示する。画面表示やfilter変更だけではGitHubへ問い合わせない。一括更新で現在のpagination
+offsetが範囲外になった場合だけ、最後の有効pageへ移動する。
 filter後の0件は解除方法を示し、全件表示でも0件なら
 `rvw open <PR URL>`を案内するempty stateとし、
 未取得の作成日時は不明と表示する。filter値はURLへ追加せず、reloadでは既定ONへ戻す。行選択とviewerの

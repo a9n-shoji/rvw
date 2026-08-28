@@ -57,6 +57,69 @@ describe("GitHubClient Pull Request status fetching", () => {
       },
     ]);
   });
+
+  it("limits concurrent Pull Request status requests to four", async () => {
+    let activeRequests = 0;
+    let peakRequests = 0;
+    const startedReferences: string[] = [];
+    const pendingRequests: Array<() => void> = [];
+    let resolveFirstWave: (() => void) | undefined;
+    const firstWaveStarted = new Promise<void>((resolve) => {
+      resolveFirstWave = resolve;
+    });
+    let resolveAllStarted: (() => void) | undefined;
+    const allRequestsStarted = new Promise<void>((resolve) => {
+      resolveAllStarted = resolve;
+    });
+    const runner: typeof runProcess = (_executable, args) => {
+      if (args[0] === "auth") {
+        return Promise.resolve({
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.alloc(0),
+          exitCode: 0,
+          stdoutTruncated: false,
+        });
+      }
+      const reference = args[2];
+      if (!reference) return Promise.reject(new Error("missing Pull Request reference"));
+      activeRequests += 1;
+      peakRequests = Math.max(peakRequests, activeRequests);
+      startedReferences.push(reference);
+      if (startedReferences.length === 4) resolveFirstWave?.();
+      if (startedReferences.length === 5) resolveAllStarted?.();
+      return new Promise((resolve) => {
+        pendingRequests.push(() => {
+          activeRequests -= 1;
+          resolve({
+            stdout: Buffer.from(JSON.stringify({ state: "OPEN", isDraft: false })),
+            stderr: Buffer.alloc(0),
+            exitCode: 0,
+            stdoutTruncated: false,
+          });
+        });
+      });
+    };
+    const references = Array.from(
+      { length: 5 },
+      (_, index) => `https://github.com/acme/review-repo/pull/${index + 1}`,
+    );
+
+    const resultPromise = new GitHubClient(runner).getPullRequestStatuses(references);
+    await firstWaveStarted;
+    expect(startedReferences).toHaveLength(4);
+    expect(activeRequests).toBe(4);
+    expect(peakRequests).toBe(4);
+
+    pendingRequests.shift()?.();
+    await allRequestsStarted;
+    expect(activeRequests).toBe(4);
+    expect(peakRequests).toBe(4);
+
+    for (const resolve of pendingRequests.splice(0)) resolve();
+    await expect(resultPromise).resolves.toHaveLength(5);
+    expect(activeRequests).toBe(0);
+    expect(peakRequests).toBe(4);
+  });
 });
 
 describe("GitHubClient attachment fetching", () => {
