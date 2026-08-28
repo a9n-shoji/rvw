@@ -3419,6 +3419,31 @@ diffs-container > [slot="header-metadata"] {
   color: var(--muted);
   text-align: center;
 }
+.pull-request-list-filters {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+.pull-request-list-filter {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.pull-request-list-filter:hover {
+  color: var(--text);
+}
+.pull-request-list-filter > input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
 .pull-request-list {
   overflow: hidden;
   border: 1px solid var(--line);
@@ -3528,7 +3553,7 @@ diffs-container > [slot="header-metadata"] {
   text-align: center;
   white-space: nowrap;
 }
-.pull-request-count--open {
+.pull-request-count--unresolved {
   border-color: color-mix(in srgb, var(--attention) 45%, var(--line));
   background: color-mix(in srgb, var(--attention) 12%, var(--panel));
   color: var(--attention);

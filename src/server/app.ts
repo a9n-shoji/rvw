@@ -182,6 +182,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     const query = pullRequestListQuerySchema.parse({
       offset: context.req.query("offset"),
       limit: context.req.query("limit"),
+      activeOnly: context.req.query("activeOnly"),
     });
     return context.json({ ok: true, ...service.listPullRequests(query) });
   });

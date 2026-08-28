@@ -7,9 +7,22 @@ const pullRequestId = "22222222-2222-4222-8222-222222222222";
 
 test("opens a repository-scale demo backed by committed Git objects", async ({ page, request }) => {
   await page.goto(demoBaseURL);
+  const activeOnlyFilter = page.getByRole("checkbox", { name: "Open / Draft のみ表示" });
   const statusBadges = page.locator(".pull-request-status");
+  await expect(activeOnlyFilter).toBeChecked();
+  await expect(page.locator(".pull-request-row")).toHaveCount(2);
+  await expect(statusBadges).toHaveText(["Open", "Draft"]);
+
+  await activeOnlyFilter.uncheck();
   await expect(page.locator(".pull-request-row")).toHaveCount(4);
   await expect(statusBadges).toHaveText(["Open", "Draft", "Closed", "Merged"]);
+  await page.locator(".pull-request-row").nth(2).click();
+  await expect(
+    page.getByRole("heading", { name: "Demo: review rvw as a medium-sized repository" }),
+  ).toBeVisible();
+  await page.goBack();
+  await expect(activeOnlyFilter).not.toBeChecked();
+  await expect(page.locator(".pull-request-row")).toHaveCount(4);
 
   const viewResponse = await request.get(`${demoBaseURL}/api/pull-requests/${pullRequestId}`);
   expect(viewResponse.ok()).toBe(true);

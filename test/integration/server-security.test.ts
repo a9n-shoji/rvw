@@ -27,16 +27,26 @@ const png = Buffer.from([
   0, 0, 0, 1, 8, 6, 0, 0, 0, 0, 0, 0, 0,
 ]);
 
-function registerPullRequest(database: RvwDatabase): string {
+function registerPullRequest(
+  database: RvwDatabase,
+  options: {
+    owner?: string;
+    number?: number;
+    state?: "OPEN" | "CLOSED";
+    updatedAt?: string;
+  } = {},
+): string {
+  const owner = options.owner ?? "acme";
+  const number = options.number ?? 7;
   return database.upsertPullRequest(
     {
       host: "github.com",
-      owner: "acme",
+      owner,
       repository: "review-repo",
-      number: 7,
-      url: "https://github.com/acme/review-repo/pull/7",
+      number,
+      url: `https://github.com/${owner}/review-repo/pull/${number}`,
       authorLogin: "reviewer",
-      headRepositoryOwner: "acme",
+      headRepositoryOwner: owner,
       headRepositoryName: "review-repo",
       title: "Review",
       body: "Body",
@@ -45,11 +55,14 @@ function registerPullRequest(database: RvwDatabase): string {
       headRefName: "feature",
       headOid: "b".repeat(40),
       createdAt: "2026-08-20T00:00:00.000Z",
-      updatedAt: "2026-08-21T00:00:00.000Z",
-      state: "OPEN",
+      updatedAt: options.updatedAt ?? "2026-08-21T00:00:00.000Z",
+      state: options.state ?? "OPEN",
       isDraft: false,
     },
-    { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+    {
+      localRepositoryPath: owner === "acme" ? "/repo" : `/${owner}`,
+      gitCommonDir: owner === "acme" ? "/repo/.git" : `/${owner}/.git`,
+    },
     "a".repeat(40),
   ).id;
 }
@@ -58,6 +71,12 @@ describe("local HTTP security", () => {
   it("returns a bounded SQLite-only Pull Request summary page", async () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const pullRequestId = registerPullRequest(database);
+    const closedPullRequestId = registerPullRequest(database, {
+      owner: "closed",
+      number: 8,
+      state: "CLOSED",
+      updatedAt: "2026-08-22T00:00:00.000Z",
+    });
     const app = createApp(new RvwService(database, new GitClient(), github), {
       security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
     });
@@ -93,11 +112,29 @@ describe("local HTTP security", () => {
       },
     });
 
+    const allResponse = await app.request(
+      "http://127.0.0.1:4321/api/pull-requests?offset=0&limit=2&activeOnly=false",
+      { headers },
+    );
+    expect(allResponse.status).toBe(200);
+    expect(await allResponse.json()).toMatchObject({
+      items: [
+        { pullRequestId: closedPullRequestId, githubState: "CLOSED" },
+        { pullRequestId, githubState: "OPEN" },
+      ],
+      pagination: { returned: 2, total: 2, hasMore: false },
+    });
+
     const invalid = await app.request(
       "http://127.0.0.1:4321/api/pull-requests?offset=-1&limit=101",
       { headers },
     );
     expect(invalid.status).toBe(400);
+    const invalidFilter = await app.request(
+      "http://127.0.0.1:4321/api/pull-requests?activeOnly=maybe",
+      { headers },
+    );
+    expect(invalidFilter.status).toBe(400);
     database.close();
   });
 

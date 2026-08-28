@@ -616,7 +616,12 @@ export class RvwDatabase {
     ).map(mapPullRequest);
   }
 
-  listPullRequestSummaries(offset: number, limit: number): PullRequestSummaryPage {
+  listPullRequestSummaries(
+    offset: number,
+    limit: number,
+    activeOnly = true,
+  ): PullRequestSummaryPage {
+    const activeOnlyValue = activeOnly ? 1 : 0;
     const rows = this.database
       .prepare(
         `WITH page AS (
@@ -631,6 +636,7 @@ export class RvwDatabase {
              github_state,
              github_is_draft
            FROM pull_requests
+           WHERE ? = 0 OR github_state = 'OPEN'
            ORDER BY github_updated_at DESC, id DESC
            LIMIT ? OFFSET ?
          ), comment_counts AS (
@@ -665,9 +671,10 @@ export class RvwDatabase {
          LEFT JOIN walkthrough_counts ON walkthrough_counts.pull_request_id = pr.id
          ORDER BY pr.github_updated_at DESC, pr.id DESC`,
       )
-      .all(limit, offset) as DbRow[];
-    const totalRow = this.database.prepare("SELECT COUNT(*) AS total FROM pull_requests").get() as
-      DbRow | undefined;
+      .all(activeOnlyValue, limit, offset) as DbRow[];
+    const totalRow = this.database
+      .prepare("SELECT COUNT(*) AS total FROM pull_requests WHERE ? = 0 OR github_state = 'OPEN'")
+      .get(activeOnlyValue) as DbRow | undefined;
     if (!totalRow) throw new RvwError("DATABASE_ERROR", "Pull Request件数を取得できません。");
     return {
       items: rows.map((row) => ({

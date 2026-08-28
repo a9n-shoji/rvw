@@ -149,6 +149,20 @@ describe("RvwDatabase", () => {
       { localRepositoryPath: "/other", gitCommonDir: "/other/.git" },
       "d".repeat(40),
     );
+    const closedGithub = {
+      ...github,
+      owner: "closed",
+      number: 9,
+      url: "https://github.com/closed/review-repo/pull/9",
+      title: "Closed review",
+      updatedAt: "2026-08-11T00:00:00.000Z",
+      state: "CLOSED" as const,
+    };
+    const closed = database.upsertPullRequest(
+      closedGithub,
+      { localRepositoryPath: "/closed", gitCommonDir: "/closed/.git" },
+      "e".repeat(40),
+    );
     const unresolved = database.createComment({
       pullRequestId: newer.id,
       createdHeadOid: newerGithub.headOid,
@@ -201,6 +215,10 @@ describe("RvwDatabase", () => {
         },
       ],
       total: 2,
+    });
+    expect(database.listPullRequestSummaries(0, 1, false)).toMatchObject({
+      items: [{ pullRequestId: closed.id, githubState: "CLOSED" }],
+      total: 3,
     });
     database.close();
   });

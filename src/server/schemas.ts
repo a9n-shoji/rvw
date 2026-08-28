@@ -53,6 +53,10 @@ export const pullRequestListQuerySchema = z.object({
     .min(1)
     .max(MAX_PULL_REQUEST_LIST_LIMIT)
     .default(DEFAULT_PULL_REQUEST_LIST_LIMIT),
+  activeOnly: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
 });
 
 export const createCommentSchema = z

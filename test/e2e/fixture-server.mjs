@@ -482,6 +482,7 @@ app.post("/api/test/reset-sync-stage", (context) => {
 app.get("/api/pull-requests", (context) => {
   const offset = Math.max(0, Number(context.req.query("offset") ?? 0));
   const limit = Math.min(100, Math.max(1, Number(context.req.query("limit") ?? 50)));
+  const activeOnly = context.req.query("activeOnly") !== "false";
   const pullRequest = currentPullRequest();
   const currentSummary = {
     pullRequestId: pullRequest.id,
@@ -572,11 +573,12 @@ app.get("/api/pull-requests", (context) => {
           walkthroughCount: 2,
         },
       ];
-  const items = pullRequestListEmpty
+  const allItems = pullRequestListEmpty
     ? []
     : pullRequestListPaginated
       ? [...paginatedItems, currentSummary]
       : [currentSummary, ...statusFixtureItems];
+  const items = activeOnly ? allItems.filter((item) => item.githubState === "OPEN") : allItems;
   const pageItems = items.slice(offset, offset + limit);
   const hasMore = offset + pageItems.length < items.length;
   return context.json({

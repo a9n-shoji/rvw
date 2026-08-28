@@ -17,6 +17,7 @@ test("lists saved Pull Requests and navigates through browser history", async ({
 
   await expect(page.getByRole("heading", { name: "Pull Requests" })).toBeVisible();
   await expect(page.getByText("GitHubでの更新が新しい順")).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Open / Draft のみ表示" })).toBeChecked();
   const rows = page.locator(".pull-request-row");
   await expect(rows).toHaveCount(2);
   await expect(rows.first()).toContainText("acme/review-repo");
@@ -24,7 +25,7 @@ test("lists saved Pull Requests and navigates through browser history", async ({
   await expect(rows.first()).toContainText(/Fixture review/);
   await expect(rows.first().getByLabel("Pull Request status: Open")).toBeVisible();
   await expect(rows.nth(1).getByLabel("Pull Request status: Draft")).toBeVisible();
-  await expect(rows.nth(1)).toContainText("3 open");
+  await expect(rows.nth(1)).toContainText("3 unresolved");
   await expect(rows.nth(1)).toContainText("5 resolved");
   await expect(rows.nth(1)).toContainText("2 walkthroughs");
   await expect(rows.nth(1).getByText("不明")).toBeVisible();
@@ -70,6 +71,11 @@ test("shows an actionable empty state when no Pull Requests are saved", async ({
   await request.post("/api/test/pull-request-list-empty", { data: { enabled: true } });
   try {
     await page.goto("/");
+    const activeOnlyFilter = page.getByRole("checkbox", { name: "Open / Draft のみ表示" });
+    await expect(
+      page.getByRole("heading", { name: "Open / DraftのPull Requestはありません" }),
+    ).toBeVisible();
+    await activeOnlyFilter.uncheck();
     await expect(
       page.getByRole("heading", { name: "まだレビュー対象が登録されていません" }),
     ).toBeVisible();

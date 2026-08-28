@@ -89,8 +89,8 @@ function PullRequestRow({
       </span>
       <strong className="pull-request-row__title">{item.title}</strong>
       <span className="pull-request-row__counts" aria-label="レビュー項目数">
-        <span className="pull-request-count pull-request-count--open">
-          {item.unresolvedCommentCount} open
+        <span className="pull-request-count pull-request-count--unresolved">
+          {item.unresolvedCommentCount} unresolved
         </span>
         <span className="pull-request-count pull-request-count--resolved">
           {item.resolvedCommentCount} resolved
@@ -116,23 +116,29 @@ function PullRequestRow({
 }
 
 export function PullRequestListScreen({
+  activeOnly,
   changeSequence,
   heartbeatError,
   offset,
+  onActiveOnlyChange,
   onNavigateToOffset,
   onOpenPullRequest,
 }: {
+  activeOnly: boolean;
   changeSequence: number | undefined;
   heartbeatError: unknown;
   offset: number;
+  onActiveOnlyChange: (activeOnly: boolean) => void;
   onNavigateToOffset: (offset: number) => void;
   onOpenPullRequest: (pullRequestId: string) => void;
 }) {
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const listQuery = useQuery({
-    queryKey: ["pull-request-list", offset, changeSequence],
+    queryKey: ["pull-request-list", offset, activeOnly, changeSequence],
     queryFn: async () =>
-      await api<PullRequestListResponse>(`/api/pull-requests?offset=${offset}&limit=${PAGE_LIMIT}`),
+      await api<PullRequestListResponse>(
+        `/api/pull-requests?offset=${offset}&limit=${PAGE_LIMIT}&activeOnly=${activeOnly}`,
+      ),
     placeholderData: (previousData) => previousData,
   });
   const pagination = listQuery.data?.pagination;
@@ -164,6 +170,19 @@ export function PullRequestListScreen({
         </div>
       </header>
       <div className="pull-request-list-content">
+        <div className="pull-request-list-filters">
+          <label className="pull-request-list-filter">
+            <input
+              type="checkbox"
+              checked={activeOnly}
+              onChange={(event) => {
+                onActiveOnlyChange(event.target.checked);
+                if (offset !== 0) onNavigateToOffset(0);
+              }}
+            />
+            Open / Draft のみ表示
+          </label>
+        </div>
         <ErrorNotice error={heartbeatError ?? listQuery.error} />
         {listQuery.isPending && !listQuery.data ? (
           <div className="pull-request-list-status" role="status">
@@ -174,10 +193,18 @@ export function PullRequestListScreen({
             <div className="brand-mark" aria-hidden="true">
               r
             </div>
-            <h2>まだレビュー対象が登録されていません</h2>
-            <p>
-              <code>rvw open &lt;PR URL&gt;</code> でPull Requestを開くと、ここに表示されます。
-            </p>
+            <h2>
+              {activeOnly
+                ? "Open / DraftのPull Requestはありません"
+                : "まだレビュー対象が登録されていません"}
+            </h2>
+            {activeOnly ? (
+              <p>Closed / Mergedを表示するにはfilterを解除してください。</p>
+            ) : (
+              <p>
+                <code>rvw open &lt;PR URL&gt;</code> でPull Requestを開くと、ここに表示されます。
+              </p>
+            )}
           </section>
         ) : (
           <section className="pull-request-list" aria-label="登録済みPull Request">

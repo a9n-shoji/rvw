@@ -618,9 +618,11 @@ export class RvwService {
   listPullRequests(input: {
     offset?: number | undefined;
     limit?: number | undefined;
+    activeOnly?: boolean | undefined;
   }): PullRequestList {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? DEFAULT_PULL_REQUEST_LIST_LIMIT;
+    const activeOnly = input.activeOnly ?? true;
     if (!Number.isInteger(offset) || offset < 0) {
       throw new RvwError("INVALID_INPUT", "offsetは0以上の整数にしてください。");
     }
@@ -630,7 +632,7 @@ export class RvwService {
         `limitは1以上${MAX_PULL_REQUEST_LIST_LIMIT}以下の整数にしてください。`,
       );
     }
-    const page = this.database.listPullRequestSummaries(offset, limit);
+    const page = this.database.listPullRequestSummaries(offset, limit, activeOnly);
     const returned = page.items.length;
     const hasMore = offset + returned < page.total;
     return {
