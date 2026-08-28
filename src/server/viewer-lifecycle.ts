@@ -14,10 +14,8 @@ export interface ViewerLifecycleOptions {
 
 type TimerKind = "activity" | "empty";
 
-interface PendingViewer {
-  deadline: number;
-  timeoutMs: number;
-}
+type PendingViewer =
+  { phase: "opening" } | { phase: "startup"; deadline: number; timeoutMs: number };
 
 export class ViewerLifecycle {
   private readonly viewers = new Map<string, number>();
@@ -50,7 +48,15 @@ export class ViewerLifecycle {
 
   reserveViewer(leaseId: string): boolean {
     if (this.stopped) return false;
+    this.pendingViewers.set(leaseId, { phase: "opening" });
+    this.scheduleActivityCheck();
+    return true;
+  }
+
+  armViewerReservation(leaseId: string): boolean {
+    if (this.stopped || !this.pendingViewers.has(leaseId)) return false;
     this.pendingViewers.set(leaseId, {
+      phase: "startup",
       deadline: Date.now() + this.startupTimeoutMs,
       timeoutMs: this.startupTimeoutMs,
     });
@@ -98,9 +104,17 @@ export class ViewerLifecycle {
     if (this.stopped) return;
     const deadlines = [
       ...Array.from(this.viewers.values(), (heartbeat) => heartbeat + this.leaseTimeoutMs),
-      ...Array.from(this.pendingViewers.values(), (pending) => pending.deadline),
+      ...Array.from(this.pendingViewers.values())
+        .filter(
+          (pending): pending is Extract<PendingViewer, { phase: "startup" }> =>
+            pending.phase === "startup",
+        )
+        .map((pending) => pending.deadline),
     ];
-    if (deadlines.length === 0) return;
+    if (deadlines.length === 0) {
+      this.clearTimer();
+      return;
+    }
     this.schedule("activity", Math.min(...deadlines));
   }
 
@@ -123,7 +137,9 @@ export class ViewerLifecycle {
     if (now - deadline > this.timerLatenessToleranceMs) {
       for (const viewerId of this.viewers.keys()) this.viewers.set(viewerId, now);
       for (const [leaseId, pending] of this.pendingViewers) {
+        if (pending.phase !== "startup") continue;
         this.pendingViewers.set(leaseId, {
+          phase: "startup",
           deadline: now + pending.timeoutMs,
           timeoutMs: pending.timeoutMs,
         });
@@ -137,6 +153,7 @@ export class ViewerLifecycle {
         if (now - lastHeartbeat >= this.leaseTimeoutMs) this.viewers.delete(viewerId);
       }
       for (const [leaseId, pending] of this.pendingViewers) {
+        if (pending.phase !== "startup") continue;
         if (now >= pending.deadline) this.pendingViewers.delete(leaseId);
       }
       this.scheduleNext();

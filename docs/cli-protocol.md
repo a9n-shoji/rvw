@@ -485,8 +485,10 @@ The non-JSON output shows the same diagnostic fields. The same socket also carri
 `viewer.open` lifecycle request used by `rvw open`; it is not an Agent command or advertised capability.
 An atomic owner lock is acquired before Runtime, SQLite, or HTTP initialization. Exactly one runtime may
 serve a database path, while different database paths may have independent owners. A concurrent loser
-delegates its requested Pull Request to the owner and exits; it does not wait to become another server.
-A successful `viewer.open` reserves a pending viewer until the returned URL sends its first heartbeat;
+delegates its requested Pull Request to the owner and exits; if the owner is stopping, it retries ownership
+after the old lock is released rather than waiting only for a disappearing socket. A successful `viewer.open`
+holds an operation reservation while resolving the Pull Request, then starts a bounded viewer reservation
+until the returned URL sends its first heartbeat;
 `--no-open` consumes that reservation itself and heartbeats until Ctrl+C. Shutdown stops socket request
 acceptance, drains HTTP, closes Runtime/SQLite, and only then removes the socket and releases ownership.
 A later invocation may remove an exact stale lock/socket whose recorded owner PID is dead. CLI stdin and

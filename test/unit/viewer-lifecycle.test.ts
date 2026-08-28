@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  acquireRuntimeOrReuseExisting,
   closeOwnedRuntime,
   completeBackgroundOpen,
   createRuntimeAgentSocketHandler,
@@ -10,6 +11,8 @@ import {
   type BackgroundOpenChild,
 } from "../../src/cli/main.js";
 import type { Runtime } from "../../src/application/runtime.js";
+import { RvwError } from "../../src/shared/errors.js";
+import type { RunningRuntimeAgentSocket } from "../../src/server/agent-socket.js";
 import type { RunningServer } from "../../src/server/start-server.js";
 import { ViewerLifecycle } from "../../src/server/viewer-lifecycle.js";
 
@@ -125,9 +128,32 @@ describe("ViewerLifecycle", () => {
     });
 
     lifecycle.reserveViewer("55555555-5555-4555-8555-555555555555");
+    lifecycle.armViewerReservation("55555555-5555-4555-8555-555555555555");
     await vi.advanceTimersByTimeAsync(100);
     expect(lifecycle.pendingViewerCount).toBe(0);
     expect(onAllViewersClosed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(onAllViewersClosed).toHaveBeenCalledOnce();
+  });
+
+  it("does not expire a viewer reservation while PR resolution is still running", async () => {
+    vi.useFakeTimers();
+    const onAllViewersClosed = vi.fn();
+    const lifecycle = new ViewerLifecycle({
+      onAllViewersClosed,
+      startupTimeoutMs: 100,
+      closeGraceMs: 50,
+    });
+    const leaseId = "55555555-5555-4555-8555-555555555555";
+
+    lifecycle.reserveViewer(leaseId);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(lifecycle.pendingViewerCount).toBe(1);
+    expect(onAllViewersClosed).not.toHaveBeenCalled();
+
+    lifecycle.armViewerReservation(leaseId);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(lifecycle.pendingViewerCount).toBe(0);
     await vi.advanceTimersByTimeAsync(50);
     expect(onAllViewersClosed).toHaveBeenCalledOnce();
   });
@@ -363,9 +389,34 @@ describe("database-scoped viewer runtime reuse", () => {
     expect(forkWorker).toHaveBeenCalledWith(undefined, 4321);
   });
 
+  it("hands a stopping runtime off to a background worker", async () => {
+    const child = backgroundChild();
+    const forkWorker = vi.fn(() => {
+      setTimeout(() => {
+        child.emit("message", { type: "ready", url: "http://127.0.0.1:4321/" });
+        child.emit("message", { type: "viewer-connected" });
+      }, 0);
+      return child;
+    });
+
+    await expect(
+      startBackgroundOpen(undefined, 0, {
+        forkWorker,
+        launchBrowser: vi.fn().mockResolvedValue(undefined),
+        tryRuntimeOpen: vi.fn().mockRejectedValue(
+          new RvwError("PROCESS_FAILED", "runtime stopping", {
+            details: { reason: "runtime-stopping" },
+          }),
+        ),
+      }),
+    ).resolves.toBe("http://127.0.0.1:4321/");
+    expect(forkWorker).toHaveBeenCalledWith(undefined, 0);
+  });
+
   it("reuses the active origin and rejects a conflicting explicit port before opening a PR", async () => {
     const openPullRequest = vi.fn().mockResolvedValue({ pullRequest: { id: "pr-45" } });
     const reserveViewer = vi.fn().mockReturnValue("55555555-5555-4555-8555-555555555555");
+    const armViewerReservation = vi.fn();
     const cancelViewerReservation = vi.fn();
     const handler = createRuntimeAgentSocketHandler(
       { service: { openPullRequest } } as unknown as Runtime,
@@ -373,6 +424,7 @@ describe("database-scoped viewer runtime reuse", () => {
         origin: "http://127.0.0.1:4321",
         port: 4321,
         reserveViewer,
+        armViewerReservation,
         cancelViewerReservation,
       } as unknown as RunningServer,
     );
@@ -399,6 +451,9 @@ describe("database-scoped viewer runtime reuse", () => {
     expect(reserveViewer).toHaveBeenCalledOnce();
     expect(reserveViewer.mock.invocationCallOrder[0]).toBeLessThan(
       openPullRequest.mock.invocationCallOrder[0]!,
+    );
+    expect(openPullRequest.mock.invocationCallOrder[0]).toBeLessThan(
+      armViewerReservation.mock.invocationCallOrder[0]!,
     );
     expect(cancelViewerReservation).not.toHaveBeenCalled();
   });
@@ -453,6 +508,59 @@ describe("runtime shutdown sequencing", () => {
     );
 
     expect(calls).toEqual(["agent-stop", "http-close", "runtime-close", "owner-release"]);
+  });
+
+  it("retries ownership after a draining runtime disappears", async () => {
+    const closeFollower = vi.fn().mockResolvedValue(undefined);
+    const follower = {
+      owned: false,
+      close: closeFollower,
+    } as unknown as RunningRuntimeAgentSocket;
+    const owner = {
+      owned: true,
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RunningRuntimeAgentSocket;
+    const startSocket = vi.fn().mockResolvedValueOnce(follower).mockResolvedValueOnce(owner);
+    const tryRuntimeOpen = vi.fn().mockResolvedValue({
+      available: false,
+      reason: "socket-not-found",
+    });
+
+    await expect(
+      acquireRuntimeOrReuseExisting({ cwd: "/repo", requestedPort: 0 }, "/data/review.db", 1_000, {
+        startSocket,
+        tryRuntimeOpen,
+        wait: vi.fn().mockResolvedValue(undefined),
+      }),
+    ).resolves.toEqual({ kind: "owned", agentSocket: owner });
+    expect(closeFollower).toHaveBeenCalledOnce();
+    expect(startSocket).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries ownership when viewer.open reports that its runtime is stopping", async () => {
+    const follower = {
+      owned: false,
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RunningRuntimeAgentSocket;
+    const owner = {
+      owned: true,
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as RunningRuntimeAgentSocket;
+    const startSocket = vi.fn().mockResolvedValueOnce(follower).mockResolvedValueOnce(owner);
+    const tryRuntimeOpen = vi.fn().mockRejectedValue(
+      new RvwError("PROCESS_FAILED", "runtime stopping", {
+        details: { reason: "runtime-stopping" },
+      }),
+    );
+
+    await expect(
+      acquireRuntimeOrReuseExisting({ cwd: "/repo", requestedPort: 0 }, "/data/review.db", 1_000, {
+        startSocket,
+        tryRuntimeOpen,
+        wait: vi.fn().mockResolvedValue(undefined),
+      }),
+    ).resolves.toEqual({ kind: "owned", agentSocket: owner });
+    expect(startSocket).toHaveBeenCalledTimes(2);
   });
 });
 
