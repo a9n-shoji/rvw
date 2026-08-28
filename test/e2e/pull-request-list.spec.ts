@@ -22,6 +22,8 @@ test("lists saved Pull Requests and navigates through browser history", async ({
   await expect(rows.first()).toContainText("acme/review-repo");
   await expect(rows.first()).toContainText("#7");
   await expect(rows.first()).toContainText(/Fixture review/);
+  await expect(rows.first().getByLabel("Pull Request status: Open")).toBeVisible();
+  await expect(rows.nth(1).getByLabel("Pull Request status: Draft")).toBeVisible();
   await expect(rows.nth(1)).toContainText("3 open");
   await expect(rows.nth(1)).toContainText("5 resolved");
   await expect(rows.nth(1)).toContainText("2 walkthroughs");

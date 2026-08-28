@@ -25,6 +25,8 @@ const pullRequest: PullRequest = {
   latestHeadOid: "c".repeat(40),
   githubCreatedAt: "2026-08-09T00:00:00.000Z",
   githubUpdatedAt: "2026-08-10T00:00:00.000Z",
+  githubState: "OPEN",
+  githubIsDraft: false,
   fetchedAt: "2026-08-10T00:01:00.000Z",
   createdAt: "2026-08-10T00:01:00.000Z",
   updatedAt: "2026-08-10T00:01:00.000Z",

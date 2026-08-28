@@ -6,6 +6,11 @@ const demoBaseURL = `http://127.0.0.1:${demoPort}`;
 const pullRequestId = "22222222-2222-4222-8222-222222222222";
 
 test("opens a repository-scale demo backed by committed Git objects", async ({ page, request }) => {
+  await page.goto(demoBaseURL);
+  const statusBadges = page.locator(".pull-request-status");
+  await expect(page.locator(".pull-request-row")).toHaveCount(4);
+  await expect(statusBadges).toHaveText(["Open", "Draft", "Closed", "Merged"]);
+
   const viewResponse = await request.get(`${demoBaseURL}/api/pull-requests/${pullRequestId}`);
   expect(viewResponse.ok()).toBe(true);
   const view = (await viewResponse.json()) as {

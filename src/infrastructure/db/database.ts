@@ -21,6 +21,7 @@ import type {
   CommentTarget,
   DeletedWalkthrough,
   GitHubPullRequest,
+  GitHubPullRequestState,
   PullRequest,
   PullRequestSummary,
   ResetCounts,
@@ -83,6 +84,20 @@ function nullableNumber(row: DbRow, key: string): number | null {
   return Number(value);
 }
 
+function nullableBoolean(row: DbRow, key: string): boolean | null {
+  const value = nullableNumber(row, key);
+  if (value === null) return null;
+  if (value === 0) return false;
+  if (value === 1) return true;
+  throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
+}
+
+function nullableGitHubPullRequestState(row: DbRow, key: string): GitHubPullRequestState | null {
+  const value = nullableString(row, key);
+  if (value === null || value === "OPEN" || value === "CLOSED" || value === "MERGED") return value;
+  throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
+}
+
 function nullableCommentPostModifier(row: DbRow, key: string): CommentPostModifier | null {
   const value = nullableString(row, key);
   if (value === null || value === "human" || value === "agent") return value;
@@ -128,6 +143,8 @@ function mapPullRequest(row: DbRow): PullRequest {
     latestHeadOid: stringValue(row, "latest_head_oid"),
     githubCreatedAt: nullableString(row, "github_created_at"),
     githubUpdatedAt: stringValue(row, "github_updated_at"),
+    githubState: nullableGitHubPullRequestState(row, "github_state"),
+    githubIsDraft: nullableBoolean(row, "github_is_draft"),
     fetchedAt: stringValue(row, "fetched_at"),
     createdAt: stringValue(row, "created_at"),
     updatedAt: stringValue(row, "updated_at"),
@@ -610,7 +627,9 @@ export class RvwDatabase {
              number,
              latest_title,
              github_created_at,
-             github_updated_at
+             github_updated_at,
+             github_state,
+             github_is_draft
            FROM pull_requests
            ORDER BY github_updated_at DESC, id DESC
            LIMIT ? OFFSET ?
@@ -636,6 +655,8 @@ export class RvwDatabase {
            pr.latest_title,
            pr.github_created_at,
            pr.github_updated_at,
+           pr.github_state,
+           pr.github_is_draft,
            COALESCE(comment_counts.unresolved_count, 0) AS unresolved_comment_count,
            COALESCE(comment_counts.resolved_count, 0) AS resolved_comment_count,
            COALESCE(walkthrough_counts.walkthrough_count, 0) AS walkthrough_count
@@ -657,6 +678,8 @@ export class RvwDatabase {
         title: stringValue(row, "latest_title"),
         githubCreatedAt: nullableString(row, "github_created_at"),
         githubUpdatedAt: stringValue(row, "github_updated_at"),
+        githubState: nullableGitHubPullRequestState(row, "github_state"),
+        githubIsDraft: nullableBoolean(row, "github_is_draft"),
         unresolvedCommentCount: numberValue(row, "unresolved_comment_count"),
         resolvedCommentCount: numberValue(row, "resolved_comment_count"),
         walkthroughCount: numberValue(row, "walkthrough_count"),
@@ -699,9 +722,10 @@ export class RvwDatabase {
           local_repository_path, git_common_dir,
           latest_author_login, latest_head_repository_owner, latest_head_repository_name,
           latest_title, latest_body, latest_base_ref_name, latest_head_ref_name,
-          latest_base_oid, latest_head_oid, github_created_at, github_updated_at, fetched_at,
+          latest_base_oid, latest_head_oid, github_created_at, github_updated_at,
+          github_state, github_is_draft, fetched_at,
           created_at, updated_at, latest_comparison_base_oid
-        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(host, owner, repository, number) DO UPDATE SET
           github_url = excluded.github_url,
           local_repository_path = excluded.local_repository_path,
@@ -718,6 +742,8 @@ export class RvwDatabase {
           latest_head_oid = excluded.latest_head_oid,
           github_created_at = excluded.github_created_at,
           github_updated_at = excluded.github_updated_at,
+          github_state = excluded.github_state,
+          github_is_draft = excluded.github_is_draft,
           fetched_at = excluded.fetched_at,
           updated_at = excluded.updated_at`,
       )
@@ -740,6 +766,8 @@ export class RvwDatabase {
         github.headOid,
         github.createdAt,
         github.updatedAt,
+        github.state,
+        github.isDraft ? 1 : 0,
         now,
         existing?.createdAt ?? now,
         now,

@@ -17,7 +17,10 @@ class FakeGitHub implements GitHubPort {
     return Promise.resolve({ version: "gh fake", authenticated: true });
   }
 
-  getPullRequest() {
+  getPullRequest(_reference?: string, _cwd?: string, options: { allowClosed?: boolean } = {}) {
+    if (this.pullRequest.state !== "OPEN" && !options.allowClosed) {
+      return Promise.reject(new Error("Pull Request is not open"));
+    }
     return Promise.resolve(this.pullRequest);
   }
 
@@ -274,6 +277,33 @@ describe("RvwService commit workflow", () => {
 
     expect(synced.pullRequest.latestHeadOid).toBe(rewrittenHead);
     expect(git(repository, "rev-parse", "HEAD")).toBe(firstHead);
+  });
+
+  it("rejects a new closed Pull Request but synchronizes the status of a saved one", async () => {
+    const unopened = setup("rvw-unopened-closed-");
+    unopened.fake.pullRequest = { ...unopened.fake.pullRequest, state: "CLOSED" };
+    await expect(unopened.service.openPullRequest(undefined, unopened.repository)).rejects.toThrow(
+      "Pull Request is not open",
+    );
+
+    const saved = setup("rvw-saved-merged-");
+    const opened = await saved.service.openPullRequest(undefined, saved.repository);
+    saved.fake.pullRequest = {
+      ...saved.fake.pullRequest,
+      state: "MERGED",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    };
+
+    const refreshed = await saved.service.refreshPullRequest(opened.pullRequest.id);
+
+    expect(refreshed.pullRequest).toMatchObject({
+      githubState: "MERGED",
+      githubIsDraft: false,
+    });
+    expect(saved.service.listPullRequests({}).items[0]).toMatchObject({
+      githubState: "MERGED",
+      githubIsDraft: false,
+    });
   });
 
   it("reports live GitHub drift without mutating the cached PR snapshot", async () => {

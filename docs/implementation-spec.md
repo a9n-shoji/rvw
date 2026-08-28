@@ -141,11 +141,14 @@ gh pr view <PR> --json \
   headRepository,headRepositoryOwner
 ```
 
-Phase 1の新規登録とsyncは`github.com`のopen/draft PRを対象とする。保存済みPRの
+Phase 1の新規登録は`github.com`のopen/draft PRを対象とする。保存済みPRのsync、refresh、
+live確認、resetはClosed/Merged後もGitHub metadataを取得し、最後に成功した`state`と`isDraft`をcacheする。
 ローカル表示はPRの現在状態やnetwork接続に依存しない。
 `createdAt`と`updatedAt`はGitHub上のPR日時としてcacheする。既存DBで`createdAt`が未取得の行は
 ローカル登録日時で補わず`NULL`のまま表示し、次回の通常同期でだけ埋める。一覧表示を契機にGitHubへ
-一括問い合わせしない。
+一括問い合わせしない。GitHub上のDraftは独立stateではなく`state=OPEN`かつ`isDraft=true`なので、
+DBでも別々に保持し、一覧ではOpen / Draft / Closed / Mergedの一つへ合成して表示する。既存DBで状態が
+未取得の行はbadgeを表示せず、通常同期時にだけ埋める。
 
 ### 4.2 Local-first open
 
@@ -1032,6 +1035,8 @@ CREATE TABLE pull_requests (
   latest_head_oid TEXT NOT NULL,
   github_created_at TEXT,
   github_updated_at TEXT NOT NULL,
+  github_state TEXT CHECK(github_state IN ('OPEN', 'CLOSED', 'MERGED')),
+  github_is_draft INTEGER CHECK(github_is_draft IN (0, 1)),
   fetched_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -1269,7 +1274,7 @@ invariant検証を行う。refとSQLiteの不整合を検出した場合は部�
 ユーザー修正可能errorはcode、短いmessage、具体的suggestionsを返す。silent fallbackしない。
 
 - gh/git未導入・未認証
-- PR URL不正、未登録、closed/merged sync
+- PR URL不正、未登録、closed/merged PRの新規登録
 - base repository mismatch
 - object fetch失敗
 - local changes未commit、head未push
@@ -1317,7 +1322,7 @@ Integration（実git + fake GitHub）:
 
 E2Eで登録済みPR一覧、empty state、URLに保持するpagination、2ページ目からviewerを開いた後の
 Back / Forward、一覧遷移後の未送信draft警告、一覧へ戻る直前のreading position、相対日時の更新、
-一覧表示中のviewer heartbeatを確認する。既存のreview E2Eは次を維持する。
+Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確認する。既存のreview E2Eは次を維持する。
 
 1. PRを開きlatest commitと最新Pull Request.mdを表示
 2. commit subjectで一件選択へ切り替え、open tabを維持
@@ -1472,7 +1477,7 @@ source of truthとする。
 
 Functional:
 
-- URLまたはcurrent branchからopen/draft PRを開き、登録済みPRはofflineでも再表示できる。
+- URLまたはcurrent branchからopen/draft PRを開き、登録済みPRはofflineでも状態badge付きで再表示できる。
 - destination commit選択、PR全体diff、複数commit range、changed/all tree、全文、検索を利用できる。
 - `Pull Request.md`は常に最後に成功した同期の最新内容だけを表示する。
 - Agentがcommit固定WalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の

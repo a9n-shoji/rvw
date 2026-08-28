@@ -6,6 +6,8 @@ export interface PullRequestIdentity {
   url: string;
 }
 
+export type GitHubPullRequestState = "OPEN" | "CLOSED" | "MERGED";
+
 export interface GitHubPullRequest extends PullRequestIdentity {
   authorLogin: string | null;
   headRepositoryOwner: string | null;
@@ -18,7 +20,7 @@ export interface GitHubPullRequest extends PullRequestIdentity {
   headOid: string;
   createdAt: string;
   updatedAt: string;
-  state: "OPEN";
+  state: GitHubPullRequestState;
   isDraft: boolean;
 }
 
@@ -38,6 +40,8 @@ export interface PullRequest extends PullRequestIdentity {
   latestHeadOid: string;
   githubCreatedAt: string | null;
   githubUpdatedAt: string;
+  githubState: GitHubPullRequestState | null;
+  githubIsDraft: boolean | null;
   fetchedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -51,6 +55,8 @@ export interface PullRequestSummary {
   title: string;
   githubCreatedAt: string | null;
   githubUpdatedAt: string;
+  githubState: GitHubPullRequestState | null;
+  githubIsDraft: boolean | null;
   unresolvedCommentCount: number;
   resolvedCommentCount: number;
   walkthroughCount: number;

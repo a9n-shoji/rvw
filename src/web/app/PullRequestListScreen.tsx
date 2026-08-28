@@ -38,6 +38,17 @@ function datePresentation(
   return { label, exact: exactDateFormatter.format(date) };
 }
 
+function statusPresentation(item: PullRequestSummary): {
+  label: "Open" | "Draft" | "Closed" | "Merged";
+  modifier: "open" | "draft" | "closed" | "merged";
+} | null {
+  if (item.githubState === null) return null;
+  if (item.githubState === "MERGED") return { label: "Merged", modifier: "merged" };
+  if (item.githubState === "CLOSED") return { label: "Closed", modifier: "closed" };
+  if (item.githubIsDraft) return { label: "Draft", modifier: "draft" };
+  return { label: "Open", modifier: "open" };
+}
+
 function PullRequestRow({
   item,
   now,
@@ -49,6 +60,7 @@ function PullRequestRow({
 }) {
   const created = datePresentation(item.githubCreatedAt, now);
   const updated = datePresentation(item.githubUpdatedAt, now);
+  const status = statusPresentation(item);
   const url = new URL(window.location.href);
   url.hash = "";
   url.searchParams.set("pullRequestId", item.pullRequestId);
@@ -66,6 +78,14 @@ function PullRequestRow({
           {item.owner}/{item.repository}
         </span>
         <span className="pull-request-row__number">#{item.number}</span>
+        {status && (
+          <span
+            className={`pull-request-status pull-request-status--${status.modifier}`}
+            aria-label={`Pull Request status: ${status.label}`}
+          >
+            {status.label}
+          </span>
+        )}
       </span>
       <strong className="pull-request-row__title">{item.title}</strong>
       <span className="pull-request-row__counts" aria-label="レビュー項目数">
@@ -170,7 +190,7 @@ export function PullRequestListScreen({
             </div>
             {listQuery.data?.items.map((item) => (
               <PullRequestRow
-                key={item.pullRequestId}
+                key={`${item.pullRequestId}:${item.number}`}
                 item={item}
                 now={relativeTimeNow}
                 onOpen={onOpenPullRequest}

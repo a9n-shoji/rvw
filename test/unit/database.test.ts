@@ -142,6 +142,7 @@ describe("RvwDatabase", () => {
       title: "Newest review",
       createdAt: "2026-08-08T12:00:00.000Z",
       updatedAt: "2026-08-10T00:00:00.000Z",
+      isDraft: true,
     };
     const newer = database.upsertPullRequest(
       newerGithub,
@@ -181,6 +182,8 @@ describe("RvwDatabase", () => {
           title: "Newest review",
           githubCreatedAt: "2026-08-08T12:00:00.000Z",
           githubUpdatedAt: "2026-08-10T00:00:00.000Z",
+          githubState: "OPEN",
+          githubIsDraft: true,
           unresolvedCommentCount: 1,
           resolvedCommentCount: 1,
           walkthroughCount: 1,
@@ -218,6 +221,7 @@ describe("RvwDatabase", () => {
       "010_comment_post_references.sql",
       "011_comment_post_modifier.sql",
       "012_pull_request_list.sql",
+      "013_pull_request_github_status.sql",
     ]) {
       writeFileSync(
         path.join(legacyMigrationsDirectory, migration),
@@ -328,6 +332,10 @@ describe("RvwDatabase", () => {
     expect(database.getChangeSequence()).toBe(1);
     expect(database.getPullRequest(pullRequest.id)?.latestHeadOid).toBe(github.headOid);
     expect(database.getPullRequest(pullRequest.id)?.latestComparisonBaseOid).toBe("c".repeat(40));
+    expect(database.getPullRequest(pullRequest.id)).toMatchObject({
+      githubState: "OPEN",
+      githubIsDraft: false,
+    });
     database.close();
   });
 
@@ -410,6 +418,8 @@ describe("RvwDatabase", () => {
     expect(database.getPullRequest(pullRequestId)).toMatchObject({
       latestComparisonBaseOid: "c".repeat(40),
       githubCreatedAt: null,
+      githubState: null,
+      githubIsDraft: null,
     });
     expect(database.getComment(commentId)).toMatchObject({
       createdHeadOid: github.headOid,

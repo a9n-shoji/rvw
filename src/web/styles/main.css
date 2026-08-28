@@ -3479,6 +3479,31 @@ diffs-container > [slot="header-metadata"] {
   font-family: var(--mono);
   font-weight: 700;
 }
+.pull-request-status {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font: 700 9px/1.4 var(--mono);
+  letter-spacing: 0.02em;
+}
+.pull-request-status--open {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--line));
+  background: color-mix(in srgb, var(--success) 10%, var(--panel));
+  color: var(--success);
+}
+.pull-request-status--closed {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  background: color-mix(in srgb, var(--danger) 9%, var(--panel));
+  color: var(--danger);
+}
+.pull-request-status--merged {
+  border-color: color-mix(in srgb, var(--done) 45%, var(--line));
+  background: color-mix(in srgb, var(--done) 10%, var(--panel));
+  color: var(--done);
+}
 .pull-request-row__title {
   min-width: 0;
   overflow: hidden;

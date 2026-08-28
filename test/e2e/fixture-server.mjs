@@ -109,6 +109,8 @@ function currentPullRequest() {
         : syncStage > 0
           ? "2026-08-08T02:00:00.000Z"
           : "2026-08-08T01:00:00.000Z",
+    githubState: "OPEN",
+    githubIsDraft: false,
     fetchedAt: "2026-08-08T02:00:00.000Z",
     createdAt: "2026-08-08T00:00:00.000Z",
     updatedAt: "2026-08-08T02:00:00.000Z",
@@ -489,6 +491,8 @@ app.get("/api/pull-requests", (context) => {
     title: pullRequest.latestTitle,
     githubCreatedAt: pullRequest.githubCreatedAt,
     githubUpdatedAt: pullRequest.githubUpdatedAt,
+    githubState: pullRequest.githubState,
+    githubIsDraft: pullRequest.githubIsDraft,
     unresolvedCommentCount: comments.filter((comment) => comment.resolvedAt === null).length,
     resolvedCommentCount: comments.filter((comment) => comment.resolvedAt !== null).length,
     walkthroughCount: activeWalkthroughs.length,
@@ -501,29 +505,78 @@ app.get("/api/pull-requests", (context) => {
     title: `Pagination fixture ${index + 1}`,
     githubCreatedAt: "2026-08-01T00:00:00.000Z",
     githubUpdatedAt: "2026-08-07T00:00:00.000Z",
+    githubState: "OPEN",
+    githubIsDraft: false,
     unresolvedCommentCount: 0,
     resolvedCommentCount: 0,
     walkthroughCount: 0,
   }));
+  const statusFixtureItems = repositoryDemo
+    ? [
+        {
+          pullRequestId,
+          owner: "a9n-shoji",
+          repository: "rvw",
+          number: 998,
+          title: "Draft: refine the review workspace",
+          githubCreatedAt: "2026-08-20T00:00:00.000Z",
+          githubUpdatedAt: "2026-08-22T00:00:00.000Z",
+          githubState: "OPEN",
+          githubIsDraft: true,
+          unresolvedCommentCount: 1,
+          resolvedCommentCount: 0,
+          walkthroughCount: 1,
+        },
+        {
+          pullRequestId,
+          owner: "a9n-shoji",
+          repository: "rvw",
+          number: 997,
+          title: "Closed: explore an alternate navigation model",
+          githubCreatedAt: "2026-08-18T00:00:00.000Z",
+          githubUpdatedAt: "2026-08-21T00:00:00.000Z",
+          githubState: "CLOSED",
+          githubIsDraft: false,
+          unresolvedCommentCount: 2,
+          resolvedCommentCount: 3,
+          walkthroughCount: 0,
+        },
+        {
+          pullRequestId,
+          owner: "a9n-shoji",
+          repository: "rvw",
+          number: 996,
+          title: "Merged: add local-first review history",
+          githubCreatedAt: "2026-08-15T00:00:00.000Z",
+          githubUpdatedAt: "2026-08-20T00:00:00.000Z",
+          githubState: "MERGED",
+          githubIsDraft: false,
+          unresolvedCommentCount: 0,
+          resolvedCommentCount: 8,
+          walkthroughCount: 2,
+        },
+      ]
+    : [
+        {
+          pullRequestId: "22222222-2222-4222-8222-222222222222",
+          owner: "octo-org",
+          repository: "review-repo",
+          number: 3,
+          title: "Older fixture review",
+          githubCreatedAt: null,
+          githubUpdatedAt: "2026-07-01T00:00:00.000Z",
+          githubState: "OPEN",
+          githubIsDraft: true,
+          unresolvedCommentCount: 3,
+          resolvedCommentCount: 5,
+          walkthroughCount: 2,
+        },
+      ];
   const items = pullRequestListEmpty
     ? []
     : pullRequestListPaginated
       ? [...paginatedItems, currentSummary]
-      : [
-          currentSummary,
-          {
-            pullRequestId: "22222222-2222-4222-8222-222222222222",
-            owner: "octo-org",
-            repository: "review-repo",
-            number: 3,
-            title: "Older fixture review",
-            githubCreatedAt: null,
-            githubUpdatedAt: "2026-07-01T00:00:00.000Z",
-            unresolvedCommentCount: 3,
-            resolvedCommentCount: 5,
-            walkthroughCount: 2,
-          },
-        ];
+      : [currentSummary, ...statusFixtureItems];
   const pageItems = items.slice(offset, offset + limit);
   const hasMore = offset + pageItems.length < items.length;
   return context.json({

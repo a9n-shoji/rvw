@@ -1,5 +1,33 @@
 # Architecture decisions
 
+## 2026-08-28: Cache GitHub Pull Request status separately from local review availability
+
+### Problem
+
+The workspace index could not distinguish Open, Draft, Closed, and Merged Pull Requests. GitHub already
+returned `state` and `isDraft`, but rvw discarded both before persistence and rejected every refresh once
+a saved Pull Request became Closed or Merged. Looking up every row while rendering the index would break
+its offline and bounded-read guarantees.
+
+### Choice
+
+Cache nullable `github_state` and `github_is_draft` columns on each successful synchronization and expose
+them through the SQLite summary read model. Keep GitHub's two-field meaning: Draft is `OPEN` plus
+`isDraft`, while Closed and Merged are values of `state`. Derive one display badge with Merged/Closed
+taking precedence over Draft/Open.
+
+Continue accepting only Open or Draft Pull Requests for a new registration. Once a Pull Request is saved,
+allow refresh, sync, live inspection, and reset to read Closed or Merged metadata so the cache can advance
+without making the review workspace unavailable. The index never performs a GitHub lookup.
+
+### Trade-offs
+
+- Status remains available offline but represents the last successful synchronization, not guaranteed live
+  GitHub state.
+- Legacy rows omit the badge until a normal synchronization fills both nullable columns.
+- Closed and Merged Pull Requests remain readable from cached Git objects and review data.
+- Keeping `state` and `isDraft` separate avoids inventing a GitHub state that its API does not provide.
+
 ## 2026-08-28: Use a SQLite-only workspace index for saved Pull Requests
 
 ### Problem
