@@ -25,7 +25,8 @@ import { asRvwError, RvwError } from "../shared/errors.js";
 // pr sync may contain hundreds of valid 64 KiB replies. Reserve framing space above the stdin cap.
 export const MAX_CLI_STDIN_BYTES = 40 * 1024 * 1024;
 export const MAX_AGENT_MESSAGE_BYTES = MAX_CLI_STDIN_BYTES + 64 * 1024;
-export const AGENT_SOCKET_PROTOCOL_VERSION = 2;
+export const AGENT_SOCKET_PROTOCOL_VERSION = 3;
+export const RUNTIME_VIEWER_OPEN_OPERATION = "viewer.open";
 const AGENT_SOCKET_RESTART_SUGGESTION =
   "起動中のrvw viewerを停止し、更新後のrvw openで再起動してください。";
 const DEFAULT_CONNECT_TIMEOUT_MS = 2_000;
@@ -87,6 +88,29 @@ export interface RunningAgentSocket {
   close(): Promise<void>;
 }
 
+export interface RuntimeViewerOpenInput {
+  reference?: string;
+  cwd: string;
+  requestedPort: number;
+}
+
+export interface RuntimeViewerOpenResult {
+  url: string;
+  origin: string;
+  port: number;
+  pullRequestId: string;
+  ownerPid: number;
+}
+
+export interface RuntimeAgentSocketHandler {
+  service: RvwService;
+  openViewer(input: RuntimeViewerOpenInput): Promise<RuntimeViewerOpenResult>;
+}
+
+export interface RunningRuntimeAgentSocket extends RunningAgentSocket {
+  setHandler(handler: RuntimeAgentSocketHandler): void;
+}
+
 interface AgentSocketClientOptions {
   expectedDatabasePath?: string;
   connectTimeoutMs?: number;
@@ -97,6 +121,10 @@ interface AgentSocketClientOptions {
 
 interface AgentSocketServerOptions {
   takeoverRetryMs?: number;
+}
+
+interface AgentSocketListenerOptions extends AgentSocketServerOptions {
+  retryOwnership: boolean;
 }
 
 interface SocketIdentity {
@@ -115,6 +143,24 @@ const agentRequestEnvelopeSchema = z
     operation: z.string().min(1),
     input: z.unknown(),
     expectedDatabasePath: z.string().min(1).optional(),
+  })
+  .strict();
+
+const runtimeViewerOpenInputSchema = z
+  .object({
+    reference: z.string().min(1).optional(),
+    cwd: z.string().min(1),
+    requestedPort: z.number().int().min(0).max(65_535),
+  })
+  .strict();
+
+const runtimeViewerOpenResultSchema = z
+  .object({
+    url: z.string().url(),
+    origin: z.string().url(),
+    port: z.number().int().min(1).max(65_535),
+    pullRequestId: z.string().min(1),
+    ownerPid: z.number().int().positive(),
   })
   .strict();
 
@@ -192,10 +238,11 @@ function parseOperationInput<Operation extends AgentCommandOperation>(
   return parsed.data as AgentCommandInput<Operation>;
 }
 
-export async function dispatchAgentSocketRequest(
-  service: RvwService,
-  rawRequest: AgentRequest,
-): Promise<unknown> {
+function resolveDatabaseIdentity(databaseFilePath: string): string {
+  return databaseFilePath === ":memory:" ? databaseFilePath : path.resolve(databaseFilePath);
+}
+
+function validateAgentRequest(rawRequest: AgentRequest, databaseFilePath?: string): AgentRequest {
   const request = parseRequest(rawRequest);
   if (request.protocolVersion !== AGENT_SOCKET_PROTOCOL_VERSION) {
     throw new RvwError("STALE_PROTOCOL", "Agent socket protocol versionが一致しません。", {
@@ -208,24 +255,38 @@ export async function dispatchAgentSocketRequest(
   }
   if (
     request.expectedDatabasePath !== undefined &&
-    path.resolve(request.expectedDatabasePath) !== path.resolve(service.database.filePath)
+    databaseFilePath !== undefined &&
+    resolveDatabaseIdentity(request.expectedDatabasePath) !==
+      resolveDatabaseIdentity(databaseFilePath)
   ) {
     throw new RvwError("DATABASE_ERROR", "Agent socketが別のdatabaseを使用しています。", {
       details: {
         agentSocketDatabaseMismatch: true,
-        expectedDatabasePath: path.resolve(request.expectedDatabasePath),
-        actualDatabasePath: path.resolve(service.database.filePath),
+        expectedDatabasePath: resolveDatabaseIdentity(request.expectedDatabasePath),
+        actualDatabasePath: resolveDatabaseIdentity(databaseFilePath),
       },
     });
   }
+  return request;
+}
+
+function pingResult(databaseFilePath: string): AgentPingResult {
+  return {
+    protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+    databasePath: resolveDatabaseIdentity(databaseFilePath),
+    ownerPid: process.pid,
+  };
+}
+
+export async function dispatchAgentSocketRequest(
+  service: RvwService,
+  rawRequest: AgentRequest,
+): Promise<unknown> {
+  const request = validateAgentRequest(rawRequest, service.database?.filePath);
   if (request.operation === "ping") {
     const ping = z.object({}).strict().safeParse(request.input);
     if (!ping.success) throw invalidSocketInput(ping.error);
-    return {
-      protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
-      databasePath: path.resolve(service.database.filePath),
-      ownerPid: process.pid,
-    } satisfies AgentPingResult;
+    return pingResult(service.database.filePath);
   }
   if (!Object.hasOwn(agentCommandInputSchemas, request.operation)) {
     throw new RvwError("INVALID_INPUT", `未対応のAgent socket operationです: ${request.operation}`);
@@ -552,6 +613,33 @@ export async function tryAgentSocketRequest<T>(
   });
 }
 
+export async function tryRuntimeViewerOpen(
+  input: RuntimeViewerOpenInput,
+  databaseFilePath = databasePathConfiguration().filePath,
+  options: Pick<AgentSocketClientOptions, "connectTimeoutMs" | "operationTimeoutMs"> = {},
+): Promise<AgentSocketResult<RuntimeViewerOpenResult>> {
+  const parsedInput = runtimeViewerOpenInputSchema.safeParse(input);
+  if (!parsedInput.success) throw invalidSocketInput(parsedInput.error);
+  const response = await tryAgentSocketRequest<unknown>(
+    RUNTIME_VIEWER_OPEN_OPERATION,
+    parsedInput.data,
+    {
+      expectedDatabasePath: databaseFilePath,
+      requireSocket: false,
+      ...options,
+    },
+  );
+  if (!response.available) return response;
+  const parsedResult = runtimeViewerOpenResultSchema.safeParse(response.result);
+  if (!parsedResult.success) {
+    throw new RvwError("PROCESS_FAILED", "起動中のrvw runtimeから不正な応答を受信しました。", {
+      details: { issues: parsedResult.error.issues },
+      suggestions: [AGENT_SOCKET_RESTART_SUGGESTION],
+    });
+  }
+  return { available: true, result: parsedResult.data };
+}
+
 export async function inspectAgentTransport(
   databaseFilePath = databasePathConfiguration().filePath,
 ): Promise<AgentTransportStatus> {
@@ -722,7 +810,9 @@ function releaseSocketOwnerLock(lock: SocketOwnerLock | null): void {
   unlinkIfOwned(lock.path, lock.identity);
 }
 
-function createAgentServer(service: RvwService): net.Server {
+type AgentSocketDispatcher = (request: AgentRequest) => Promise<unknown>;
+
+function createAgentServer(dispatch: AgentSocketDispatcher): net.Server {
   const server = net.createServer((socket) => {
     const chunks: Buffer[] = [];
     let bytes = 0;
@@ -749,7 +839,7 @@ function createAgentServer(service: RvwService): net.Server {
           const request = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
           response = {
             ok: true,
-            result: await dispatchAgentSocketRequest(service, parseRequest(request)),
+            result: await dispatch(parseRequest(request)),
           };
         } catch (error) {
           response = { ok: false, error: asRvwError(error).toJSON() };
@@ -778,11 +868,12 @@ async function listen(server: net.Server, socketPath: string): Promise<void> {
   });
 }
 
-export async function startAgentSocket(
-  service: RvwService,
-  options: AgentSocketServerOptions = {},
+async function startAgentSocketListener(
+  databaseFilePath: string,
+  dispatch: AgentSocketDispatcher,
+  options: AgentSocketListenerOptions,
 ): Promise<RunningAgentSocket> {
-  const socketPath = agentSocketPath(service.database.filePath);
+  const socketPath = agentSocketPath(databaseFilePath);
   ensurePrivateSocketDirectory(socketPath);
   const retryDelay = options.takeoverRetryMs ?? DEFAULT_TAKEOVER_RETRY_MS;
   let server: net.Server | null = null;
@@ -793,7 +884,7 @@ export async function startAgentSocket(
   let closed = false;
 
   const scheduleTakeover = (): void => {
-    if (closed || server || retryTimer) return;
+    if (!options.retryOwnership || closed || server || retryTimer) return;
     retryTimer = setTimeout(() => {
       retryTimer = undefined;
       void acquire().catch(() => scheduleTakeover());
@@ -824,7 +915,7 @@ export async function startAgentSocket(
           throw error;
         }
       }
-      const candidate = createAgentServer(service);
+      const candidate = createAgentServer(dispatch);
       try {
         await listen(candidate, socketPath);
       } catch (error) {
@@ -857,9 +948,15 @@ export async function startAgentSocket(
       candidate.on("error", () => {
         if (server !== candidate) return;
         const failedIdentity = identity;
-        const failedOwnerLock = ownerLock;
         server = null;
         identity = null;
+        if (!options.retryOwnership) {
+          // Keep the live-PID owner lock until the runtime shuts down. Releasing it while HTTP is
+          // still alive would allow a second runtime for the same database after a socket failure.
+          candidate.close(() => unlinkIfOwned(socketPath, failedIdentity));
+          return;
+        }
+        const failedOwnerLock = ownerLock;
         ownerLock = null;
         candidate.close(() => {
           unlinkIfOwned(socketPath, failedIdentity);
@@ -903,6 +1000,99 @@ export async function startAgentSocket(
         unlinkIfOwned(socketPath, ownedIdentity);
         releaseSocketOwnerLock(ownedOwnerLock);
       }
+    },
+  };
+}
+
+export async function startAgentSocket(
+  service: RvwService,
+  options: AgentSocketServerOptions = {},
+): Promise<RunningAgentSocket> {
+  return await startAgentSocketListener(
+    service.database.filePath,
+    async (request) => await dispatchAgentSocketRequest(service, request),
+    { ...options, retryOwnership: true },
+  );
+}
+
+export async function startRuntimeAgentSocket(
+  databaseFilePath: string,
+): Promise<RunningRuntimeAgentSocket> {
+  let handler: RuntimeAgentSocketHandler | null = null;
+  let resolveHandler: ((value: RuntimeAgentSocketHandler) => void) | undefined;
+  let rejectHandler: ((reason: unknown) => void) | undefined;
+  const handlerPromise = new Promise<RuntimeAgentSocketHandler>((resolve, reject) => {
+    resolveHandler = resolve;
+    rejectHandler = reject;
+  });
+  void handlerPromise.catch(() => {
+    // Closing an owner before Runtime initialization must also release waiting requests.
+  });
+
+  const running = await startAgentSocketListener(
+    databaseFilePath,
+    async (rawRequest) => {
+      const request = validateAgentRequest(rawRequest, databaseFilePath);
+      if (request.operation === "ping") {
+        const ping = z.object({}).strict().safeParse(request.input);
+        if (!ping.success) throw invalidSocketInput(ping.error);
+        return pingResult(databaseFilePath);
+      }
+      if (request.operation === RUNTIME_VIEWER_OPEN_OPERATION) {
+        const parsed = runtimeViewerOpenInputSchema.safeParse(request.input);
+        if (!parsed.success) throw invalidSocketInput(parsed.error);
+        return await (
+          await handlerPromise
+        ).openViewer({
+          ...(parsed.data.reference === undefined ? {} : { reference: parsed.data.reference }),
+          cwd: parsed.data.cwd,
+          requestedPort: parsed.data.requestedPort,
+        });
+      }
+      return await dispatchAgentSocketRequest((await handlerPromise).service, request);
+    },
+    { retryOwnership: false },
+  );
+
+  return {
+    path: running.path,
+    get owned() {
+      return running.owned;
+    },
+    setHandler(value) {
+      if (!running.owned) {
+        throw new RvwError("PROCESS_FAILED", "所有していないruntime socketは初期化できません。");
+      }
+      if (handler) {
+        throw new RvwError("INTERNAL_ERROR", "runtime socketは初期化済みです。", {
+          status: 500,
+        });
+      }
+      if (
+        resolveDatabaseIdentity(value.service.database.filePath) !==
+        resolveDatabaseIdentity(databaseFilePath)
+      ) {
+        throw new RvwError("DATABASE_ERROR", "runtimeとAgent socketのdatabaseが一致しません。", {
+          details: {
+            socketDatabasePath: resolveDatabaseIdentity(databaseFilePath),
+            runtimeDatabasePath: resolveDatabaseIdentity(value.service.database.filePath),
+          },
+        });
+      }
+      handler = value;
+      resolveHandler?.(value);
+      resolveHandler = undefined;
+      rejectHandler = undefined;
+    },
+    close: async () => {
+      if (!handler) {
+        rejectHandler?.(
+          new RvwError("PROCESS_FAILED", "rvw runtimeが初期化される前に停止しました。"),
+        );
+        resolveHandler = undefined;
+        rejectHandler = undefined;
+      }
+      await running.close();
     },
   };
 }

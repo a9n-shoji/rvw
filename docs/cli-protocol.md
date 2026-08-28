@@ -465,7 +465,7 @@ resolving. Deletion does not remove the retained Git commit ref because other re
 
 ## Local transport and database path
 
-When a normally launched rvw viewer is running, its process exposes a database-specific Unix socket
+When a normally launched rvw viewer is running, its database-scoped runtime exposes a Unix socket
 with mode `0600` inside a per-user `0700` temporary directory. Agent CLI commands try that socket
 first, so writes such as comment creation, reply, resolve, Walkthrough update,
 and repository attachment execute through the already-authorized rvw process instead of requiring the
@@ -481,10 +481,13 @@ status --json` reports the transport that normal commands would select and exits
 explicit socket makes the transport unavailable. Both expose `socketPath`, `socketPathSource`,
 `connectionResult`, `expectedDatabasePath`, `socketDatabasePath`, `socketOwnerPid`,
 `selectedTransport`, `selectedDatabasePath`, `fallbackReason`, and any OS-level `connectionDetails`.
-The non-JSON output shows the same diagnostic fields. Multiple viewer processes may
-coexist, but an atomic owner lock ensures only one Node process can own a socket path at a time; a
-follower acquires the lock and socket only after the owner exits. CLI stdin and socket
-request/response frames are capped at 40 MiB.
+The non-JSON output shows the same diagnostic fields. The same socket also carries the private
+`viewer.open` lifecycle request used by `rvw open`; it is not an Agent command or advertised capability.
+An atomic owner lock is acquired before Runtime, SQLite, or HTTP initialization. Exactly one runtime may
+serve a database path, while different database paths may have independent owners. A concurrent loser
+delegates its requested Pull Request to the owner and exits; it does not wait to become another server.
+A later invocation may remove an exact stale lock/socket whose recorded owner PID is dead. CLI stdin and
+socket request/response frames are capped at 40 MiB.
 
 The default database directory and file are created with modes `0700` and `0600`. Existing paths are
 checked with `stat`; rvw does not chmod them when owner and mode are already safe. A failed chmod on a

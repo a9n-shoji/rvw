@@ -14,6 +14,8 @@
 
 ### Changed
 
+- 同じdatabaseを使う通常の`rvw open`は既存runtimeへPRを追加し、同じHTTP originを再利用。並行起動でも
+  owner lockをRuntime / HTTP serverより先に確定し、一つのdatabaseにつき一つのactive processへ限定
 - 一括status更新のGitHub認証を操作ごとに一度だけ行い、最大4件並列・部分失敗許容で処理。Closed / Mergedを
   継続追跡対象から除外し、保存済みPRの累積件数ではなく現在のworking setに問い合わせ量を限定
 - 一覧のPR titleを省略せず複数行で全文表示し、review画面のロゴをCmd / Ctrl / 中クリックで一覧を
