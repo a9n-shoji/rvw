@@ -16,6 +16,19 @@ function lines(text: string): string[] {
   return normalizeLf(text).split("\n");
 }
 
+function countLineRangeOccurrences(
+  documentLines: readonly string[],
+  selected: readonly string[],
+): number {
+  let occurrences = 0;
+  for (let index = 0; index <= documentLines.length - selected.length; index += 1) {
+    if (selected.every((line, offset) => documentLines[index + offset] === line)) {
+      occurrences += 1;
+    }
+  }
+  return occurrences;
+}
+
 /**
  * Conservatively maps an inclusive 1-based line range. A source line must
  * survive unchanged and contiguously; replacements and ambiguous matches are
@@ -31,6 +44,8 @@ export function mapUnchangedLineRange(
   const sourceLines = lines(sourceText);
   if (endLine > sourceLines.length) return null;
   if (sourceText === destinationText) return { startLine, endLine };
+  const selected = sourceLines.slice(startLine - 1, endLine);
+  if (countLineRangeOccurrences(sourceLines, selected) !== 1) return null;
 
   const mapping = new Map<number, number>();
   let sourceIndex = 1;
@@ -58,14 +73,8 @@ export function mapUnchangedLineRange(
   for (let line = startLine; line <= endLine; line += 1) {
     if (mapping.get(line) !== mappedStart + line - startLine) return null;
   }
-  const selected = sourceLines.slice(startLine - 1, endLine);
-  let occurrences = 0;
   const destinationLines = lines(destinationText);
-  for (let index = 0; index <= destinationLines.length - selected.length; index += 1) {
-    if (selected.every((line, offset) => destinationLines[index + offset] === line))
-      occurrences += 1;
-    if (occurrences > 1) return null;
-  }
+  if (countLineRangeOccurrences(destinationLines, selected) !== 1) return null;
   return { startLine: mappedStart, endLine: mappedEnd };
 }
 

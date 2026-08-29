@@ -34,6 +34,7 @@ import type {
   DocumentContent,
   DocumentRef,
   ReviewComment,
+  WalkthroughReferenceFileTarget,
 } from "../../domain/models.js";
 import { isSupportedImagePath } from "../../shared/image-assets.js";
 import {
@@ -44,7 +45,12 @@ import {
   readCommentDraft,
   writeCommentDraft,
 } from "../comment-draft-store.js";
-import type { ActiveDocument, DocumentPaneId } from "../document-workspace.js";
+import type {
+  ActiveDocument,
+  DocumentPaneId,
+  ReferenceDocumentContext,
+} from "../document-workspace.js";
+import type { ReferenceStaleness } from "../document-viewer-state.js";
 import { fileContentsForRenderer } from "../file-rendering.js";
 import {
   api,
@@ -712,6 +718,7 @@ function Unavailable({
 export function DocumentViewer({
   pullRequestId,
   paneId,
+  latestHeadOid,
   selectedOid,
   oldOid,
   activeDocument,
@@ -721,6 +728,7 @@ export function DocumentViewer({
   activeCommentId,
   fullViewNotice = null,
   fullViewUnavailableMessage = null,
+  referenceStaleness,
   themePreference,
   onCommentActiveChange,
   navigationTarget = null,
@@ -728,9 +736,12 @@ export function DocumentViewer({
   onOpenMarkdownFragment,
   onOpenCodeReference,
   onOpenRepositoryLink,
+  onOpenLatestReferenceFile,
+  onReresolveWalkthroughReference,
 }: {
   pullRequestId: string;
   paneId: DocumentPaneId;
+  latestHeadOid: string;
   selectedOid: string;
   oldOid: string | null;
   activeDocument: ActiveDocument;
@@ -740,6 +751,7 @@ export function DocumentViewer({
   activeCommentId: string | null;
   fullViewNotice?: string | null;
   fullViewUnavailableMessage?: string | null;
+  referenceStaleness: ReferenceStaleness | null;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   navigationTarget?: ViewerNavigationTarget | null;
@@ -751,6 +763,8 @@ export function DocumentViewer({
     openInRightPane: boolean,
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
+  onOpenLatestReferenceFile: (target: WalkthroughReferenceFileTarget) => void;
+  onReresolveWalkthroughReference: (context: ReferenceDocumentContext) => Promise<string | null>;
 }) {
   if (activeDocument.kind === "walkthrough") {
     throw new Error("walkthroughはWalkthroughViewerで表示してください。");
@@ -764,6 +778,8 @@ export function DocumentViewer({
   const [markdownView, setMarkdownViewState] = useState<"source" | "preview">(
     () => markdownViewByDocument.get(activeMarkdownViewKey) ?? "preview",
   );
+  const [referenceResolutionPending, setReferenceResolutionPending] = useState(false);
+  const [referenceResolutionError, setReferenceResolutionError] = useState<string | null>(null);
   const setMarkdownView = (view: "source" | "preview"): void => {
     markdownViewByDocument.set(activeMarkdownViewKey, view);
     setMarkdownViewState(view);
@@ -1790,9 +1806,76 @@ export function DocumentViewer({
         }}
       />
     ) : null;
+  const referenceFallback =
+    activeDocument.kind === "repository-file" &&
+    activeDocument.referenceContext?.outcome === "source-fallback"
+      ? activeDocument.referenceContext
+      : null;
+  const staleReference =
+    activeDocument.kind === "repository-file" &&
+    activeDocument.referenceContext &&
+    referenceStaleness
+      ? activeDocument.referenceContext
+      : null;
+  const reresolveReference = async (context: ReferenceDocumentContext): Promise<void> => {
+    setReferenceResolutionPending(true);
+    setReferenceResolutionError(null);
+    const error = await onReresolveWalkthroughReference(context);
+    setReferenceResolutionPending(false);
+    setReferenceResolutionError(error);
+  };
   return (
     <div className="document-viewer">
       <ErrorNotice error={annotationQuery.error} />
+      {staleReference && referenceStaleness && (
+        <div className="reference-fallback-banner reference-stale-banner" role="status">
+          <div>
+            <strong>
+              {referenceStaleness.walkthroughChanged
+                ? `Walkthroughが更新されています${
+                    referenceStaleness.headChanged
+                      ? ` · 解決時 ${staleReference.latestHeadOid.slice(0, 8)} → 現在 ${latestHeadOid.slice(0, 8)}`
+                      : ""
+                  }`
+                : `解決時 ${staleReference.latestHeadOid.slice(0, 8)} → 現在 ${latestHeadOid.slice(0, 8)}`}
+            </strong>
+            <span>
+              {referenceFallback
+                ? `参照時点のコード · ${referenceFallback.anchorSourceOid.slice(0, 8)} を表示中。`
+                : ""}
+              {referenceStaleness.walkthroughChanged
+                ? referenceStaleness.headChanged
+                  ? "このコード参照はWalkthroughとPRの更新前に解決されています。"
+                  : "このコード参照はWalkthroughの更新前に解決されています。"
+                : "このコード参照はPR更新前に解決されています。"}
+              {referenceResolutionError ? ` ${referenceResolutionError}` : ""}
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={referenceResolutionPending}
+            onClick={() => void reresolveReference(staleReference)}
+          >
+            {referenceResolutionPending ? "再解決中…" : "最新へ再解決"}
+          </button>
+        </div>
+      )}
+      {referenceFallback && !staleReference && (
+        <div className="reference-fallback-banner reference-anchor-fallback-banner" role="status">
+          <div>
+            <strong>参照時点のコード · {referenceFallback.anchorSourceOid.slice(0, 8)}</strong>
+            <span>最新コード上の対応位置を確実に特定できませんでした。</span>
+          </div>
+          {referenceFallback.latestFile && (
+            <button
+              type="button"
+              onClick={() => onOpenLatestReferenceFile(referenceFallback.latestFile!)}
+            >
+              最新のファイルを見る
+            </button>
+          )}
+        </div>
+      )}
       {markdownCapable && effectiveDisplayMode === "full" && (
         <div className="markdown-view-toolbar" aria-label="Markdown表示">
           <span>

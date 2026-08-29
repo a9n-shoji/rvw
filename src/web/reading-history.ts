@@ -1,4 +1,9 @@
-import type { ActiveDocument, DocumentPaneId } from "./document-workspace.js";
+import type { WalkthroughReferenceFileTarget } from "../domain/models.js";
+import type {
+  ActiveDocument,
+  DocumentPaneId,
+  ReferenceDocumentContext,
+} from "./document-workspace.js";
 
 export const READING_HISTORY_STATE_KEY = "rvwReading";
 
@@ -26,7 +31,8 @@ export function sameReadingDocument(left: ActiveDocument, right: ActiveDocument)
     left.oldPath === right.oldPath &&
     left.newPath === right.newPath &&
     left.sourceOid === right.sourceOid &&
-    left.comparisonPolicy === right.comparisonPolicy
+    left.comparisonPolicy === right.comparisonPolicy &&
+    JSON.stringify(left.referenceContext ?? null) === JSON.stringify(right.referenceContext ?? null)
   );
 }
 
@@ -38,6 +44,58 @@ function isRecord(value: unknown): value is UnknownRecord {
 
 function optionalNullableString(value: unknown): value is string | null | undefined {
   return value === undefined || value === null || typeof value === "string";
+}
+
+function parseReferenceFileTarget(value: unknown): WalkthroughReferenceFileTarget | null {
+  if (
+    !isRecord(value) ||
+    typeof value.sourceOid !== "string" ||
+    typeof value.path !== "string" ||
+    !optionalNullableString(value.diffBaseOid) ||
+    !optionalNullableString(value.oldPath) ||
+    !optionalNullableString(value.newPath) ||
+    typeof value.hasDiff !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    sourceOid: value.sourceOid,
+    path: value.path,
+    diffBaseOid: value.diffBaseOid ?? null,
+    oldPath: value.oldPath ?? null,
+    newPath: value.newPath ?? null,
+    hasDiff: value.hasDiff,
+  };
+}
+
+function parseReferenceContext(value: unknown): ReferenceDocumentContext | null | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !isRecord(value) ||
+    (value.outcome !== "latest" && value.outcome !== "source-fallback") ||
+    typeof value.walkthroughId !== "string" ||
+    typeof value.referenceId !== "string" ||
+    typeof value.anchorSourceOid !== "string" ||
+    typeof value.latestHeadOid !== "string" ||
+    typeof value.referenceFingerprint !== "string" ||
+    !optionalNullableString(value.diffBaseOid) ||
+    typeof value.hasDiff !== "boolean"
+  ) {
+    return null;
+  }
+  const latestFile = value.latestFile === null ? null : parseReferenceFileTarget(value.latestFile);
+  if (value.latestFile !== null && latestFile === null) return null;
+  return {
+    outcome: value.outcome,
+    walkthroughId: value.walkthroughId,
+    referenceId: value.referenceId,
+    anchorSourceOid: value.anchorSourceOid,
+    latestHeadOid: value.latestHeadOid,
+    referenceFingerprint: value.referenceFingerprint,
+    diffBaseOid: value.diffBaseOid ?? null,
+    hasDiff: value.hasDiff,
+    latestFile,
+  };
 }
 
 function parseDocument(value: unknown): ActiveDocument | null {
@@ -63,10 +121,13 @@ function parseDocument(value: unknown): ActiveDocument | null {
     (value.sourceOid !== undefined && typeof value.sourceOid !== "string") ||
     (value.comparisonPolicy !== undefined &&
       value.comparisonPolicy !== "selected-range" &&
-      value.comparisonPolicy !== "exact-source")
+      value.comparisonPolicy !== "exact-source" &&
+      value.comparisonPolicy !== "reference-target")
   ) {
     return null;
   }
+  const referenceContext = parseReferenceContext(value.referenceContext);
+  if (referenceContext === null) return null;
   return {
     kind: "repository-file",
     path: value.path,
@@ -74,6 +135,7 @@ function parseDocument(value: unknown): ActiveDocument | null {
     ...(value.newPath === undefined ? {} : { newPath: value.newPath }),
     ...(value.sourceOid === undefined ? {} : { sourceOid: value.sourceOid }),
     ...(value.comparisonPolicy === undefined ? {} : { comparisonPolicy: value.comparisonPolicy }),
+    ...(referenceContext === undefined ? {} : { referenceContext }),
   };
 }
 

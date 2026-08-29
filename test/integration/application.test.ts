@@ -1083,6 +1083,254 @@ describe("RvwService commit workflow", () => {
     expect(service.listComments(opened.pullRequest.id)).toEqual([]);
   });
 
+  it("maps a Walkthrough reference directly from its anchor to the latest head", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-walkthrough-reference-latest-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Latest source flow",
+      body: "Inspect [the second line](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "second line",
+          path: "src.txt",
+          startLine: 2,
+          endLine: 2,
+          description: null,
+        },
+      ],
+    });
+    const latestHead = commitFile(
+      repository,
+      "src.txt",
+      "inserted\nfirst\nsecond\n",
+      "insert line",
+    );
+    fake.pullRequest = { ...fake.pullRequest, headOid: latestHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    const changedFiles = vi.spyOn(service.git, "changedFiles");
+    const changedFilesWithCopies = vi.spyOn(service.git, "changedFilesWithCopies");
+    const firstParent = vi.spyOn(service.git, "firstParent");
+    await expect(
+      service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
+    ).resolves.toMatchObject({
+      outcome: "latest",
+      anchorSourceOid: firstHead,
+      latestHeadOid: latestHead,
+      target: {
+        sourceOid: latestHead,
+        path: "src.txt",
+        diffBaseOid: null,
+        oldPath: "src.txt",
+        newPath: "src.txt",
+        hasDiff: false,
+        startLine: 3,
+        endLine: 3,
+      },
+      latestFile: null,
+      document: {
+        ref: { sourceOid: latestHead, path: "src.txt" },
+        text: "inserted\nfirst\nsecond\n",
+      },
+    });
+    expect(changedFiles).not.toHaveBeenCalled();
+    expect(changedFilesWithCopies).not.toHaveBeenCalled();
+    expect(firstParent).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the anchor and offers the latest file when the range changed", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-walkthrough-reference-fallback-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Fallback source flow",
+      body: "Inspect [the second line](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "second line",
+          path: "src.txt",
+          startLine: 2,
+          endLine: 2,
+          description: null,
+        },
+      ],
+    });
+    const latestHead = commitFile(repository, "src.txt", "first\nchanged\n", "change line");
+    fake.pullRequest = { ...fake.pullRequest, headOid: latestHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    await expect(
+      service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
+    ).resolves.toMatchObject({
+      outcome: "source-fallback",
+      target: {
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 2,
+        endLine: 2,
+      },
+      latestFile: {
+        sourceOid: latestHead,
+        path: "src.txt",
+        diffBaseOid: null,
+        hasDiff: false,
+      },
+      document: {
+        ref: { sourceOid: firstHead, path: "src.txt" },
+        text: "first\nsecond\n",
+      },
+    });
+  });
+
+  it.each([
+    ["binary", Buffer.from([0, 1, 2, 3])],
+    ["too-large", "x".repeat(1024 * 1024 + 1)],
+  ])("falls back for a file-level reference when latest is %s", async (availability, content) => {
+    const { repository, firstHead, fake, service } = setup(
+      `rvw-walkthrough-reference-${availability}-`,
+    );
+    const opened = await service.openPullRequest(undefined, repository);
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "File-level fallback",
+      body: "Inspect [the source file](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "source file",
+          path: "src.txt",
+          startLine: null,
+          endLine: null,
+          description: null,
+        },
+      ],
+    });
+    writeFileSync(path.join(repository, "src.txt"), content);
+    git(repository, "add", "--", "src.txt");
+    git(repository, "commit", "-m", `make source ${availability}`);
+    const latestHead = git(repository, "rev-parse", "HEAD");
+    fake.pullRequest = { ...fake.pullRequest, headOid: latestHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    await expect(
+      service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
+    ).resolves.toMatchObject({
+      outcome: "source-fallback",
+      target: {
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: null,
+        endLine: null,
+      },
+      latestFile: {
+        sourceOid: latestHead,
+        path: "src.txt",
+      },
+      document: {
+        availability: "available",
+        ref: { sourceOid: firstHead, path: "src.txt" },
+        text: "first\nsecond\n",
+      },
+    });
+  });
+
+  it("follows a directly detectable rename at the latest head", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-walkthrough-reference-rename-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Renamed source flow",
+      body: "Inspect [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "source",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 2,
+          description: null,
+        },
+      ],
+    });
+    git(repository, "mv", "src.txt", "renamed.txt");
+    git(repository, "commit", "-m", "rename source");
+    const latestHead = git(repository, "rev-parse", "HEAD");
+    fake.pullRequest = { ...fake.pullRequest, headOid: latestHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    await expect(
+      service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
+    ).resolves.toMatchObject({
+      outcome: "latest",
+      target: {
+        sourceOid: latestHead,
+        path: "renamed.txt",
+        diffBaseOid: null,
+        oldPath: "renamed.txt",
+        newPath: "renamed.txt",
+        hasDiff: false,
+        startLine: 1,
+        endLine: 2,
+      },
+    });
+  });
+
+  it("falls back when a removed source has multiple identical successor paths", async () => {
+    const { repository, firstHead, fake, service } = setup(
+      "rvw-walkthrough-reference-ambiguous-copy-",
+    );
+    const opened = await service.openPullRequest(undefined, repository);
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Ambiguous successor flow",
+      body: "Inspect [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "source",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 2,
+          description: null,
+        },
+      ],
+    });
+    git(repository, "rm", "--", "src.txt");
+    writeFileSync(path.join(repository, "successor-a.txt"), "first\nsecond\n");
+    writeFileSync(path.join(repository, "successor-b.txt"), "first\nsecond\n");
+    git(repository, "add", "-A");
+    git(repository, "commit", "-m", "replace source with two copies");
+    const latestHead = git(repository, "rev-parse", "HEAD");
+    fake.pullRequest = { ...fake.pullRequest, headOid: latestHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    const copyAwareChanges = vi.spyOn(service.git, "changedFilesWithCopies");
+    await expect(
+      service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
+    ).resolves.toMatchObject({
+      outcome: "source-fallback",
+      target: {
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 1,
+        endLine: 2,
+      },
+      latestFile: null,
+      document: {
+        ref: { sourceOid: firstHead, path: "src.txt" },
+      },
+    });
+    expect(copyAwareChanges).toHaveBeenCalledOnce();
+  });
+
   it("rejects walkthrough references that no Markdown link or Mermaid binding uses", async () => {
     const { repository, firstHead, service } = setup("rvw-walkthrough-unused-reference-");
     const opened = await service.openPullRequest(undefined, repository);

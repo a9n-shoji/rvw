@@ -63,9 +63,10 @@ viewerはAgentを起動せず、codeを編集せず、testを実行せず、acti
 
 ### Agentの説明はnavigation命令ではなく、検証可能なindexにする
 
-Agentが実装やarchitectureを説明する場合、commit固定のcode referenceとdiagramを提示できる。
+Agentが実装やarchitectureを説明する場合、成立を保証するsource anchor付きcode referenceとdiagramを提示できる。
 ただしAgentはbrowser、active tab、scroll位置を操作しない。どのclaimをいつ確認するかは人間が選び、
-説明tabを残したままexact sourceを開く。必要なら人間が二ペインへ並べ、説明とcodeやcallerとdefinitionを
+説明tabを残したまま最新HEAD上の対応codeを開き、確実に追跡できない場合だけ明示されたanchor sourceへ戻る。
+必要なら人間が二ペインへ並べ、説明とcodeやcallerとdefinitionを
 同時に読む。pane配置も開くタイミングもbrowser内の人間の状態であり、Agentへは渡さない。説明は理解の
 入口であり、正本はcommit済みcodeである。説明へのfeedbackはstable Walkthrough IDへ結び付け、
 必要ならparser由来のMarkdown source line rangeとexact quoteを持つ。DOMや生成SVGのrender位置は

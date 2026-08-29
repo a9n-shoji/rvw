@@ -349,6 +349,19 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }),
   );
 
+  app.get(
+    "/api/pull-requests/:id/walkthroughs/:walkthroughId/references/:referenceId/resolve",
+    async (context) =>
+      context.json({
+        ok: true,
+        resolution: await service.resolveWalkthroughReference(
+          context.req.param("id"),
+          context.req.param("walkthroughId"),
+          context.req.param("referenceId"),
+        ),
+      }),
+  );
+
   app.get("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) =>
     context.json({
       ok: true,

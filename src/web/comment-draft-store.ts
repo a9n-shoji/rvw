@@ -57,6 +57,8 @@ function documentIdentity(document: ActiveDocument): unknown[] {
     document.newPath ?? null,
     document.sourceOid ?? null,
     document.comparisonPolicy ?? null,
+    document.referenceContext?.latestHeadOid ?? null,
+    document.referenceContext?.outcome ?? null,
   ];
 }
 

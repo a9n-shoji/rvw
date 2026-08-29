@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-reference.js";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryWalkthrough = "注文作成フロー：HTTPからtransactional outboxまで";
@@ -67,7 +68,7 @@ async function dragNativeText(page: Page, start: Locator, end: Locator = start):
   return duringDrag;
 }
 
-test("keeps agent explanation passive until a human opens an exact code reference", async ({
+test("keeps agent explanation passive until a human opens a current code reference", async ({
   page,
 }) => {
   await page.emulateMedia({ colorScheme: "light" });
@@ -291,15 +292,19 @@ test("keeps agent explanation passive until a human opens an exact code referenc
   await expect(handlerTab).toBeVisible();
 });
 
-test("falls back to full text for an unchanged file opened from a Walkthrough reference", async ({
-  page,
-}) => {
+test("uses the global PR comparison for a latest Walkthrough reference", async ({ page }) => {
   const historicalWalkthroughOid = "b".repeat(40);
+  const referencePath = "src/bootstrap/application.ts";
   await page.route("**/api/pull-requests/*/walkthroughs**", async (route) => {
     const response = await route.fetch();
     const body = (await response.json()) as {
       walkthroughs?: Array<{ title: string; sourceOid: string }>;
       walkthrough?: { title: string; sourceOid: string };
+      resolution?: {
+        anchorSourceOid: string;
+        referenceFingerprint: string;
+        target: { path: string; startLine: number | null; endLine: number | null };
+      };
     };
     if (body.walkthroughs) {
       body.walkthroughs = body.walkthroughs.map((walkthrough) =>
@@ -311,6 +316,25 @@ test("falls back to full text for an unchanged file opened from a Walkthrough re
     if (body.walkthrough?.title === primaryWalkthrough) {
       body.walkthrough = { ...body.walkthrough, sourceOid: historicalWalkthroughOid };
     }
+    if (body.resolution) {
+      body.resolution.anchorSourceOid = historicalWalkthroughOid;
+      body.resolution.referenceFingerprint = walkthroughReferenceFingerprint(
+        historicalWalkthroughOid,
+        body.resolution.target,
+      );
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.route("**/api/pull-requests/*/changed-files?*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { files: Array<Record<string, unknown>> };
+    body.files.push({
+      kind: "modified",
+      status: "M",
+      similarity: null,
+      oldPath: referencePath,
+      newPath: referencePath,
+    });
     await route.fulfill({ response, json: body });
   });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
@@ -320,31 +344,360 @@ test("falls back to full text for an unchanged file opened from a Walkthrough re
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
   await openWalkthroughFromSidebar(page, primaryWalkthrough);
-  const destinationDocumentRequest = page.waitForRequest((request) => {
+  const resolutionRequest = page.waitForRequest((request) => {
     const url = new URL(request.url());
-    return (
-      url.pathname.endsWith("/document") &&
-      url.searchParams.get("path") === "src/bootstrap/application.ts" &&
-      url.searchParams.get("sourceOid") === "c".repeat(40)
-    );
+    return url.pathname.includes("/references/") && url.pathname.endsWith("/resolve");
+  });
+  const diffRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname.endsWith("/diff") && url.searchParams.get("newPath") === referencePath;
   });
   await page
     .locator(".walkthrough-markdown .walkthrough-inline-reference")
     .filter({ hasText: "application composition" })
     .click();
-  await destinationDocumentRequest;
+  await resolutionRequest;
+  const requestedDiff = new URL((await diffRequest).url());
 
-  await expect(page.getByRole("tab", { name: "src/bootstrap/application.ts" })).toHaveAttribute(
+  expect(requestedDiff.searchParams.get("oldOid")).toBe("a".repeat(40));
+  expect(requestedDiff.searchParams.get("newOid")).toBe("c".repeat(40));
+  await expect(page.getByRole("tab", { name: referencePath })).toHaveAttribute(
     "aria-selected",
     "true",
   );
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("差分なし · 全文表示", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".reference-fallback-banner")).toHaveCount(0);
+  await expect(page.locator('.document-pane[data-pane="left"] diffs-container')).toBeVisible();
+  await expect(reviewScope.getByRole("button", { name: "stacked", exact: true })).toBeEnabled();
+  await expect(reviewScope.getByRole("button", { name: "split", exact: true })).toBeEnabled();
+});
+
+test("shows the resolved latest full text when the selected comparison is historical", async ({
+  page,
+}) => {
+  const latestMarker = "// resolved from the latest head";
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.route("**/references/wiring/resolve", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        target: { startLine: number | null; endLine: number | null };
+        document: { text: string | null; byteLength: number | null };
+      };
+    };
+    const text = `${latestMarker}\n${body.resolution.document.text ?? ""}`;
+    body.resolution.target.startLine = 1;
+    body.resolution.target.endLine = 1;
+    body.resolution.document.text = text;
+    body.resolution.document.byteLength = Buffer.byteLength(text);
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
+  const displayDiffButton = reviewScope.getByRole("button", { name: "変更", exact: true });
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await commitPicker.click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("option", { name: /Add fixture function/ })
+    .click();
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
+  await page
+    .locator(".walkthrough-markdown .walkthrough-inline-reference")
+    .filter({ hasText: "application composition" })
+    .click();
+
   await expect(
-    page.getByText(/参照元 b{8} ≠ 対象 c{8} · 差分なし · 全文表示/, { exact: true }),
+    page.getByText("選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示", {
+      exact: true,
+    }),
   ).toBeVisible();
-  await expect(page.getByText("export const application = {", { exact: true })).toBeVisible();
-  await expect(reviewScope.getByRole("button", { name: "stacked", exact: true })).toBeDisabled();
-  await expect(reviewScope.getByRole("button", { name: "split", exact: true })).toBeDisabled();
+  await expect(page.getByText(latestMarker, { exact: true })).toBeVisible();
+  await expect(page.locator('.document-pane[data-pane="left"] diffs-container')).toHaveAttribute(
+    "data-search-target-line",
+    "1",
+  );
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+});
+
+test("opens the exact latest file from an anchor fallback while a historical range is selected", async ({
+  page,
+}) => {
+  const anchorOid = "b".repeat(40);
+  const latestOid = "c".repeat(40);
+  const filePath = "src/application/orders/create-order.ts";
+  const latestFilePath = "src/new.ts";
+  await page.route("**/references/handler/resolve", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        outcome: string;
+        anchorSourceOid: string;
+        latestHeadOid: string;
+        target: Record<string, unknown>;
+        latestFile: Record<string, unknown> | null;
+        document: { ref: Record<string, unknown> };
+      };
+    };
+    body.resolution = {
+      ...body.resolution,
+      outcome: "source-fallback",
+      anchorSourceOid: anchorOid,
+      latestHeadOid: latestOid,
+      target: {
+        ...body.resolution.target,
+        sourceOid: anchorOid,
+        path: filePath,
+        diffBaseOid: "a".repeat(40),
+        oldPath: filePath,
+        newPath: filePath,
+        hasDiff: true,
+        startLine: 9,
+        endLine: 39,
+      },
+      latestFile: {
+        sourceOid: latestOid,
+        path: latestFilePath,
+        diffBaseOid: anchorOid,
+        oldPath: filePath,
+        newPath: latestFilePath,
+        hasDiff: false,
+      },
+      document: {
+        ...body.resolution.document,
+        ref: { ...body.resolution.document.ref, sourceOid: anchorOid, path: filePath },
+      },
+    };
+    await route.fulfill({ response, json: body });
+  });
+
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
+  const displayDiffButton = reviewScope.getByRole("button", { name: "変更", exact: true });
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await commitPicker.click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("option", { name: /Add fixture function/ })
+    .click();
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
+  await page
+    .locator(".walkthrough-markdown .walkthrough-inline-reference")
+    .filter({ hasText: "CreateOrderHandler.execute" })
+    .click();
+
+  const banner = page.locator(".reference-fallback-banner");
+  await expect(banner.getByText(`参照時点のコード · ${anchorOid.slice(0, 8)}`)).toBeVisible();
+  await expect(
+    banner.getByText("最新コード上の対応位置を確実に特定できませんでした。"),
+  ).toBeVisible();
+  await expect(page.locator('.document-pane[data-pane="left"] diffs-container')).toHaveAttribute(
+    "data-search-target-line",
+    "9",
+  );
+
+  const latestDocumentRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return (
+      url.pathname === `/api/pull-requests/${pullRequestId}/document` &&
+      url.searchParams.get("sourceOid") === latestOid &&
+      url.searchParams.get("path") === latestFilePath
+    );
+  });
+  await banner.getByRole("button", { name: "最新のファイルを見る" }).click();
+  await latestDocumentRequest;
+  await expect(banner).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: latestFilePath })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByText("export const added = true;", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(`参照元 ${latestOid.slice(0, 8)} ≠ 対象 ${anchorOid.slice(0, 8)} · 全文表示`, {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.locator('.document-pane[data-pane="left"] diffs-container'),
+  ).not.toHaveAttribute("data-search-target-line");
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+});
+
+test("marks an open reference stale after a head update and re-resolves it on demand", async ({
+  page,
+  request,
+}) => {
+  const anchorOid = "b".repeat(40);
+  const oldHead = "c".repeat(40);
+  const newHead = "e".repeat(40);
+  let exposeNewHead = false;
+  type TestPullRequestView = {
+    pullRequest: { latestHeadOid: string } & Record<string, unknown>;
+    comparisonBaseOid: string;
+    headOid: string;
+    commits: Array<{
+      oid: string;
+      parentOids: string[];
+      subject: string;
+      authorName: string;
+      authoredAt: string;
+    }>;
+  };
+  await page.route("**/references/*/resolve", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        outcome: "latest" | "source-fallback";
+        anchorSourceOid: string;
+        latestHeadOid: string;
+        target: {
+          sourceOid: string;
+          path: string;
+          diffBaseOid: string | null;
+          oldPath: string | null;
+          newPath: string | null;
+          hasDiff: boolean;
+        };
+        latestFile: {
+          sourceOid: string;
+          path: string;
+          diffBaseOid: string | null;
+          oldPath: string | null;
+          newPath: string | null;
+          hasDiff: boolean;
+        } | null;
+        document: { ref: { sourceOid: string } };
+      };
+    };
+    if (exposeNewHead) {
+      body.resolution.outcome = "latest";
+      body.resolution.latestHeadOid = newHead;
+      body.resolution.target.sourceOid = newHead;
+      body.resolution.target.diffBaseOid = null;
+      body.resolution.latestFile = null;
+      body.resolution.document.ref.sourceOid = newHead;
+    } else {
+      body.resolution.outcome = "source-fallback";
+      body.resolution.anchorSourceOid = anchorOid;
+      body.resolution.latestHeadOid = oldHead;
+      body.resolution.target.sourceOid = anchorOid;
+      body.resolution.target.diffBaseOid = "a".repeat(40);
+      body.resolution.target.hasDiff = true;
+      body.resolution.latestFile = {
+        sourceOid: oldHead,
+        path: body.resolution.target.path,
+        diffBaseOid: null,
+        oldPath: body.resolution.target.path,
+        newPath: body.resolution.target.path,
+        hasDiff: false,
+      };
+      body.resolution.document.ref.sourceOid = anchorOid;
+    }
+    await route.fulfill({ response, json: body });
+  });
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
+  await page
+    .locator(".walkthrough-markdown .walkthrough-inline-reference")
+    .filter({ hasText: "application composition" })
+    .click();
+  await expect(page.getByRole("tab", { name: "src/bootstrap/application.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByRole("button", { name: "最新のファイルを見る" })).toBeVisible();
+
+  const currentResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  const current = (await currentResponse.json()) as TestPullRequestView;
+  expect(current.headOid).toBe(oldHead);
+  const withNewHead = <View extends TestPullRequestView>(view: View): View => ({
+    ...view,
+    pullRequest: { ...view.pullRequest, latestHeadOid: newHead },
+    headOid: newHead,
+    commits: [
+      ...view.commits,
+      {
+        oid: newHead,
+        parentOids: [oldHead],
+        subject: "Post-reference update",
+        authorName: "Fixture Author",
+        authoredAt: "2026-08-08T03:00:00.000Z",
+      },
+    ],
+  });
+
+  await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
+    const response = await route.fetch();
+    const view = (await response.json()) as TestPullRequestView;
+    await route.fulfill({ response, json: exposeNewHead ? withNewHead(view) : view });
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    const response = await route.fetch();
+    const view = (await response.json()) as TestPullRequestView & {
+      commentUpdatesApplied: number;
+    };
+    exposeNewHead = true;
+    await route.fulfill({ response, json: withNewHead(view) });
+  });
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "GitHubと同期" }).click();
+
+  const staleBanner = page.locator(".reference-stale-banner");
+  await expect(staleBanner).toContainText(
+    `解決時 ${oldHead.slice(0, 8)} → 現在 ${newHead.slice(0, 8)}`,
+  );
+  await expect(staleBanner).toContainText(`参照時点のコード · ${anchorOid.slice(0, 8)} を表示中`);
+  await expect(page.locator(".reference-anchor-fallback-banner")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "最新のファイルを見る" })).toHaveCount(0);
+  await expect(
+    page.getByText("最新コード上の対応位置を確実に特定できませんでした。", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  const reresolution = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/resolve"),
+  );
+  await staleBanner.getByRole("button", { name: "最新へ再解決" }).click();
+  await reresolution;
+  await expect(staleBanner).toHaveCount(0);
 });
 
 test("keeps the PR range while switching a Walkthrough reference diff to split", async ({
@@ -356,6 +709,11 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
     const body = (await response.json()) as {
       walkthroughs?: Array<{ title: string; sourceOid: string }>;
       walkthrough?: { title: string; sourceOid: string };
+      resolution?: {
+        anchorSourceOid: string;
+        referenceFingerprint: string;
+        target: { path: string; startLine: number | null; endLine: number | null };
+      };
     };
     if (body.walkthroughs) {
       body.walkthroughs = body.walkthroughs.map((walkthrough) =>
@@ -366,6 +724,13 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
     }
     if (body.walkthrough?.title === primaryWalkthrough) {
       body.walkthrough = { ...body.walkthrough, sourceOid: historicalWalkthroughOid };
+    }
+    if (body.resolution) {
+      body.resolution.anchorSourceOid = historicalWalkthroughOid;
+      body.resolution.referenceFingerprint = walkthroughReferenceFingerprint(
+        historicalWalkthroughOid,
+        body.resolution.target,
+      );
     }
     await route.fulfill({ response, json: body });
   });
@@ -387,6 +752,39 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
       oldPath: "src/application/orders/create-order.ts",
       newPath: "src/application/orders/create-order.ts",
     });
+    await route.fulfill({ response, json: body });
+  });
+  await page.route("**/references/handler/resolve", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        anchorSourceOid: string;
+        referenceFingerprint: string;
+        target: {
+          sourceOid: string;
+          path: string;
+          diffBaseOid: string | null;
+          oldPath: string | null;
+          newPath: string | null;
+          hasDiff: boolean;
+          startLine: number | null;
+          endLine: number | null;
+        };
+      };
+    };
+    body.resolution.target = {
+      ...body.resolution.target,
+      sourceOid: "c".repeat(40),
+      diffBaseOid: "b".repeat(40),
+      oldPath: "src/application/orders/create-order.ts",
+      newPath: "src/application/orders/create-order.ts",
+      hasDiff: true,
+    };
+    body.resolution.anchorSourceOid = historicalWalkthroughOid;
+    body.resolution.referenceFingerprint = walkthroughReferenceFingerprint(
+      historicalWalkthroughOid,
+      body.resolution.target,
+    );
     await route.fulfill({ response, json: body });
   });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
@@ -412,7 +810,7 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
 
   const rightDiff = page.locator('.document-pane[data-pane="right"] diffs-container');
   await expect(rightDiff).toBeVisible();
-  await expect(page.getByText(/参照元 b{8} ≠ 対象 c{8}/, { exact: true })).toBeVisible();
+  await expect(page.locator(".reference-fallback-banner")).toHaveCount(0);
   await expect(commitPicker).toHaveAttribute("aria-label", initialCommitSelection!);
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
   const splitButton = reviewScope.getByRole("button", { name: "split", exact: true });
@@ -518,6 +916,45 @@ test("reveals an entire code reference range and nearby context in the changes v
     }
     await route.fulfill({ response, json: body });
   });
+  await page.route(`**/references/${referenceId}/resolve`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: true,
+        resolution: {
+          outcome: "latest",
+          anchorSourceOid: "b".repeat(40),
+          latestHeadOid: "c".repeat(40),
+          target: {
+            sourceOid: "c".repeat(40),
+            path: filePath,
+            diffBaseOid: "b".repeat(40),
+            oldPath: filePath,
+            newPath: filePath,
+            hasDiff: true,
+            startLine: 20,
+            endLine: 300,
+          },
+          latestFile: null,
+          document: {
+            ref: {
+              kind: "repository-file",
+              pullRequestId,
+              sourceOid: "c".repeat(40),
+              path: filePath,
+            },
+            availability: "available",
+            text: newText,
+            byteLength: Buffer.byteLength(newText),
+            entryKind: "file",
+            normalizedLineEndings: false,
+            oid: "d".repeat(40),
+          },
+        },
+      }),
+    });
+  });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
@@ -544,31 +981,13 @@ test("keeps the review scope and reports a broken Walkthrough reference temporar
   page,
 }) => {
   const missingPath = "src/application/orders/create-order.ts";
-  await page.route("**/api/pull-requests/*/document?*", async (route) => {
-    const url = new URL(route.request().url());
-    if (url.searchParams.get("path") !== missingPath) {
-      await route.continue();
-      return;
-    }
+  await page.route("**/references/handler/resolve", async (route) => {
     await route.fulfill({
-      status: 200,
+      status: 404,
       contentType: "application/json",
       body: JSON.stringify({
-        ok: true,
-        document: {
-          ref: {
-            kind: "repository-file",
-            pullRequestId,
-            sourceOid: url.searchParams.get("sourceOid"),
-            path: missingPath,
-          },
-          availability: "missing",
-          text: null,
-          byteLength: null,
-          entryKind: "file",
-          normalizedLineEndings: false,
-          oid: null,
-        },
+        ok: false,
+        error: { code: "NOT_FOUND", message: "missing reference source" },
       }),
     });
   });
@@ -596,14 +1015,7 @@ test("reports a Walkthrough reference load failure without calling it a broken l
   page,
 }) => {
   const unavailablePath = "src/application/orders/create-order.ts";
-  await page.route("**/api/pull-requests/*/document?*", async (route) => {
-    const url = new URL(route.request().url());
-    if (url.searchParams.get("path") === unavailablePath) {
-      await route.abort("failed");
-      return;
-    }
-    await route.continue();
-  });
+  await page.route("**/references/handler/resolve", (route) => route.abort("failed"));
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await openWalkthroughFromSidebar(page, primaryWalkthrough);
@@ -628,12 +1040,7 @@ test("resolves concurrent Walkthrough references independently in each pane", as
   const requestStarted = new Promise<void>((resolve) => {
     markRequestStarted = resolve;
   });
-  await page.route("**/api/pull-requests/*/document?*", async (route) => {
-    const url = new URL(route.request().url());
-    if (url.searchParams.get("path") !== delayedPath) {
-      await route.continue();
-      return;
-    }
+  await page.route("**/references/handler/resolve", async (route) => {
     markRequestStarted();
     await requestMayContinue;
     await route.continue();
@@ -679,12 +1086,7 @@ test("does not let a delayed Walkthrough reference replace navigation that retur
   const requestStarted = new Promise<void>((resolve) => {
     markRequestStarted = resolve;
   });
-  await page.route("**/api/pull-requests/*/document?*", async (route) => {
-    const url = new URL(route.request().url());
-    if (url.searchParams.get("path") !== delayedPath) {
-      await route.continue();
-      return;
-    }
+  await page.route("**/references/handler/resolve", async (route) => {
     markRequestStarted();
     await requestMayContinue;
     await route.continue();
@@ -713,7 +1115,7 @@ test("does not let a delayed Walkthrough reference replace navigation that retur
 
     const delayedResponse = page.waitForResponse((response) => {
       const url = new URL(response.url());
-      return url.pathname.endsWith("/document") && url.searchParams.get("path") === delayedPath;
+      return url.pathname.endsWith("/references/handler/resolve");
     });
     releaseRequest();
     await delayedResponse;
@@ -1511,7 +1913,7 @@ test("keeps readable minimum widths on a narrow viewport", async ({ page }) => {
   expect(twoPaneScrollOwnership.mainScrollWidth).toBe(twoPaneScrollOwnership.mainClientWidth);
 });
 
-test("refreshes an open walkthrough in place after an agent update", async ({ page }) => {
+test("refreshes a Walkthrough in place and marks its open reference stale", async ({ page }) => {
   const walkthroughId = "70000000-0000-4000-8000-000000000002";
   const originalTitle = "障害とretry：どこまで自動回復できるか";
   const updatedTitle = "障害とretry：レビュー反映版";
@@ -1522,11 +1924,23 @@ test("refreshes an open walkthrough in place after an agent update", async ({ pa
     "aria-selected",
     "true",
   );
+  await page
+    .locator(".walkthrough-inline-reference")
+    .filter({ hasText: "PostgresIdempotencyStore.run" })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "src/infrastructure/db/idempotency-store.ts" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: `${originalTitle}を閉じる` }).click();
+  await expect(page.getByRole("tab", { name: originalTitle })).toHaveCount(0);
 
   const response = await page.request.post(`/api/fixture/walkthroughs/${walkthroughId}/update`, {
     data: {
       title: updatedTitle,
       referenceLabel: updatedReferenceLabel,
+      referencePath: "src/application/orders/create-order.ts",
+      referenceStartLine: 1,
+      referenceEndLine: 1,
       body: [
         "# 利用者フィードバックを反映した障害説明",
         "",
@@ -1536,18 +1950,41 @@ test("refreshes an open walkthrough in place after an agent update", async ({ pa
   });
   expect(response.ok()).toBe(true);
 
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await expect(reviewTree.getByRole("button", { name: updatedTitle })).toBeVisible();
+  await expect(reviewTree.getByRole("button", { name: originalTitle })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: updatedTitle })).toHaveCount(0);
+  const staleBanner = page.locator(".reference-stale-banner");
+  await expect(staleBanner).toContainText("Walkthroughが更新されています");
+  await expect(staleBanner).toContainText(
+    "このコード参照はWalkthroughの更新前に解決されています。",
+  );
+  await expect(
+    page.getByText("選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  const reresolution = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/resolve"),
+  );
+  await staleBanner.getByRole("button", { name: "最新へ再解決" }).click();
+  await reresolution;
+  await expect(staleBanner).toHaveCount(0);
+  await expect(
+    page.getByRole("tab", { name: "src/application/orders/create-order.ts" }),
+  ).toHaveAttribute("aria-selected", "true");
+
+  await openWalkthroughFromSidebar(page, updatedTitle);
   await expect(page.getByRole("tab", { name: updatedTitle })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await expect(page.getByRole("tab", { name: originalTitle })).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "利用者フィードバックを反映した障害説明" }),
   ).toBeVisible();
   await expect(
     page.locator(".walkthrough-inline-reference").filter({ hasText: updatedReferenceLabel }),
   ).toBeVisible();
-  await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
 });
 
 test("comments on the walkthrough as a whole", async ({ page }) => {

@@ -13,7 +13,7 @@
 利用者は最新PRタイトル・本文から変更の意図を読み、PRを構成するGit commitから実装の進行を読み、
 変更箇所を入口に選択commit時点のrepository全体へ移動する。コード全文、変更されていないfile、
 検索結果を含む任意の文書へコメントでき、その判断をCodex / Claude Codeへ共通Skill経由で受け渡す。
-Agentが実装やarchitectureを説明する場合は、commit固定のWalkthroughとしてcode reference、
+Agentが実装やarchitectureを説明する場合は、source commitをanchorに持つWalkthroughとしてcode reference、
 Mermaid図、staticなHTML visualを提示できる。どの参照をいつ開くかは人間が選び、rvwの最大二ペインの
 document workspaceで確認する。
 
@@ -53,7 +53,7 @@ rvwが担うもの:
 - `rvw://comment/<uuid>`参照とSkill用CLI
 - comment postごとのexact commit固定typed code reference
 - 新規comment postのDB-wide event順序、opaque cursor、10秒pollのwatch CLI
-- commit固定のAgent Walkthrough、typed code reference、Mermaid図、static HTML visual
+- source commitをanchorに持つAgent Walkthrough、typed code reference、Mermaid図、static HTML visual
 - platform非依存の`rvw` / `rvw-walkthrough` / `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
 
 rvwが担わないもの:
@@ -297,12 +297,21 @@ empty fileは従来どおり明示的に扱う。
   同一Markdown内の見出しlinkは表示中pane内を移動する。新しい右paneを初めて作る場合も、code
   referenceの選択範囲を描画完了後にviewport中央へfocusする。
 - Walkthrough reference、repository Markdownの相対link、comment targetを開いても、repository全体の
-  commit範囲、全文／変更、stacked / split、tree modeを変更しない。Walkthrough referenceは全文では
-  retained exact source、変更では現在選択中のcommit範囲を同じpathへ適用し、stacked / splitを
-  切り替えられる。repository Markdownの相対linkとcomment targetはglobal表示が変更でも、そのpaneだけ
-  retained exact sourceの全文を表示する。参照元と対象commitが異なる場合は両方のshort SHAを控えめに
-  明示する。Walkthrough referenceのexact sourceを取得できない場合はtabやpaneを開かず、操作元の
-  Walkthroughへ一時chipを表示し、リンク切れと一時的な取得失敗を区別する。
+  commit範囲、全文／変更、stacked / split、tree modeを変更しない。Walkthrough referenceはclick時に
+  `sourceOid + path + line range`から最新`latestHeadOid`へ直接解決し、成功すれば最新commit、失敗すれば
+  `sourceOid`を対象にする。全文では対象commitのfull fileを表示する。latest解決後の変更表示は
+  `selectedOid === latestHeadOid`の場合だけ、reference解決と独立してtop barのglobalな
+  `effectiveOldOid → selectedOid`を使う。global比較がhistorical commitで終わる場合はlatestで解決したpathと
+  lineを別revisionへ適用せず、そのpaneだけlatest全文を表示して理由を明示する。anchor fallbackだけは
+  参照時点を明示したうえでsource commitの比較を使う。現在の全文／変更とstacked / split設定は切り替えず、
+  global比較でfileに差分がなければ通常の`差分なし · 全文表示`を使う。repository Markdownの相対linkとcomment targetはglobal表示が変更でも、
+  そのpaneだけretained exact sourceの全文を表示する。Walkthrough referenceのfallbackでは
+  `参照時点のコード · <short SHA>`と最新で対応位置を確実に特定できなかったことを明示し、同一pathまたは明確なrename先が
+  存在するときだけ、line対応を保証しない`最新のファイルを見る`を提供する。このactionはglobal比較の
+  `selectedOid`がtargetのlatest OIDと一致する場合だけ変更表示を使い、historical範囲ではtarget latestの
+  exact source全文を開く。anchor commitまたはpathを
+  取得できない場合はtabやpaneを開かず、操作元のWalkthroughへ一時chipを表示し、リンク切れと一時的な
+  取得失敗を区別する。
 - Markdown内の画像はrepository Markdownまたはcomment postから、後述する基準commit内の相対pathを
   参照する場合だけexact commit assetとして自動取得する。PR本文ではmodernな
   `https://github.com/user-attachments/assets/<uuid>`だけをlocalhost endpointへ書き換えて取得する。
@@ -437,7 +446,7 @@ private attachmentをCI fixtureへ保存しないため、release前に次を人
 
 ### 5.4 Agent Walkthrough
 
-Walkthroughは、外部AgentがCLIで登録するcommit固定のMarkdown documentである。rvwは説明を生成せず、
+Walkthroughは、外部AgentがCLIで登録するsource anchor付きMarkdown documentである。rvwは説明を生成せず、
 Agentを起動せず、登録時にもbrowserを開いたりactive tabやscroll位置を変更したりしない。
 
 ```typescript
@@ -461,7 +470,9 @@ interface Walkthrough {
 }
 ```
 
-- `sourceOid`は対象PRで利用可能なcommitであり、全referenceはその一つのsnapshotへ固定する。
+- `sourceOid`は対象PRで利用可能なcommitであり、全referenceの`path + line range`が確実に成立した
+  元座標と、latest mapping失敗時に本文との対応を保証するfallback snapshotを表す。通常表示commitを
+  固定する値ではない。
 - publish成功前に`refs/rvw/pr/<number>/commits/oid-<sourceOid>`でobjectを保持する。
 - 登録時に各pathがそのcommitで読めるUTF-8 documentであることを検証する。`startLine`と`endLine`は
   両方指定したinclusiveな単行／複数行range、または両方`null`のfile-level referenceとする。
@@ -492,7 +503,7 @@ interface Walkthrough {
   handler、frame、form送信、network、font、media、worker、外部resourceは実行・取得させず、sandboxへ
   `allow-scripts`を付けない。CSPを最終防衛線としてscriptと全networkを拒否する。
 - HTML visual内の`rvw-ref:<referenceId>`はMarkdown linkと同じreference lifecycleへ統合し、人間が選んだ
-  時だけexact sourceを開く。repository相対画像はWalkthroughのexact `sourceOid`からparent documentが取得し、
+  時だけ同じlatest/fallback解決でcodeを開く。repository相対画像はWalkthroughのexact `sourceOid`からparent documentが取得し、
   許可された画像data URLへ変換してiframeへ渡す。外部画像、stylesheet、その他の外部resourceは拒否する。
 - HTML要素とtext selectionは生成DOM identityを保存せず、parser由来のWalkthrough source line rangeへ戻す。
   新規comment composerは選択したtextまたはvisualの近くへparent overlayとして表示し、既存commentはvisual
@@ -501,10 +512,23 @@ interface Walkthrough {
   markerはiframe内部scrollにも追従する。本文更新後のmappingとOutdatedは通常のWalkthrough line comment規則に従う。
 - same-origin iframe documentはPane Findの検索・highlight対象へ登録し、iframe内にfocusがある時の
   Cmd/Ctrl+F、Cmd/Ctrl+P、Cmd/Ctrl+Shift+Fをparentの同じglobal shortcutへrelayする。
-- 人間がreferenceを選んだ時だけ、そのexact `sourceOid + path`を事前確認してdocument workspaceへ開く。
-  このnavigationはglobalなcommit範囲と表示controlを変更しない。exact sourceのcommitまたはpathが
-  missingならtabを開かず一時chipでリンク切れを示し、通信や一時的な取得失敗はリンク切れと区別する。
-  line rangeがある場合は範囲全体を強調し、file-level referenceでは行を選択しない。
+- 人間がreferenceを選んだ時だけ、`sourceOid + path + line range`を最新`latestHeadOid`へ一度だけ直接
+  mappingする。file全体が同一なら元の座標を維持し、fileが異なる場合は同一codeとして変更されず、連続し、
+  sourceとlatestの双方で一意に追跡できるrange、または存在するfile-level
+  referenceだけを成功とする。file-level referenceもlatest documentが`available`の場合だけ成功とし、
+  binary、too-large、missingは表示可能なanchorへfallbackする。元pathがlatestにも存在すればそのpathを維持する。
+  元pathが消えた場合だけ`git diff --find-renames --find-copies --find-copies-harder`を1回実行し、anchor path由来の
+  rename/copy候補がちょうど1件なら新pathへ追従する。複数候補はGitが1件をrenameとして選んでも曖昧とする。
+  変更、重複候補、削除、読取不能など確実でない場合は推測せず`sourceOid`へfallbackし、途中commitや
+  「成立していた最後のcommit」を探索しない。このnavigationはglobalなcommit範囲と表示controlを変更しない。
+  anchor sourceのcommitまたはpathがmissingならtabを開かず一時chipでリンク切れを示し、通信や一時的な
+  取得失敗はリンク切れと区別する。解決したline rangeは範囲全体を強調し、file-level referenceでは行を
+  選択しない。解決結果と`sourceOid + path + line range`のcanonical fingerprintは閲覧時の一時状態であり、
+  DBへlatest/resolved OID、version、flagを保存しない。解決後にPR headが進んだtabは旧headを無言で最新扱いせず、`解決時 <old> → 現在 <new>`と
+  `最新へ再解決`を表示する。staleなsource fallbackでは表示中のanchor OIDだけを残し、旧headに対する
+  fallback判断と`最新のファイルを見る`を隠す。同じWalkthrough IDのreference fingerprintが変わった場合も
+  `Walkthroughが更新されています`としてstaleにする。stale理由は専用bannerへ集約し、historical range用noticeは表示しない。
+  初期実装では閲覧位置を自動で置換せず、人間がactionを選んだ時だけ同じreference IDを再解決する。
 - 説明本文やdiagramはAgentのclaimであり、code referenceとGit objectが検証可能な根拠である。
 - 人間はstableなWalkthrough IDへ文書全体コメントを作成できるほか、render済みMarkdownの文字列を選択して
   parser由来のsource line rangeへコメントできる。Mermaidは生成SVG要素ではなく、元のfenced code block
@@ -1171,6 +1195,7 @@ GET /api/pull-requests/:id/diff?oldOid=...&newOid=...&oldPath=...&newPath=...
 GET /api/pull-requests/:id/search?oid=<oid>&q=<query>&matchCase=<bool>&wholeWord=<bool>
 GET /api/pull-requests/:id/walkthroughs
 GET /api/pull-requests/:id/walkthroughs/:walkthroughId
+GET /api/pull-requests/:id/walkthroughs/:walkthroughId/references/:referenceId/resolve
 DELETE /api/pull-requests/:id/walkthroughs/:walkthroughId
 
 GET  /api/pull-requests/:id/comments
@@ -1263,10 +1288,11 @@ tab row
 virtual rowとして表示し、Walkthrough folderを展開して選択すると説明tabを開く。本文検索はExplorer headerから
 Search viewへ切り替える。説明tabはMarkdown本文とdiagramを持ち、重複するcode reference indexは持たない。本文のinline
 referenceまたはbinding済みdiagram nodeを選んだ時だけ
-exact source tabへ移動し、説明tabと既に開いているcode tabはworking setとして残す。必要なら最大二つの
+最新HEAD上の対応箇所、またはmapping不能時のanchor source tabへ移動し、説明tabと既に開いているcode tabはworking setとして残す。必要なら最大二つの
 横ペインへtabを移動し、Walkthroughとsource、二つのsource、Markdown previewとcodeを並べて読む。
-exact source tabを開く操作は対象commitやglobal表示を変更せず、参照先を取得できない場合はtabを開かず
-Walkthrough上の一時chipで通知する。
+reference tabを開く操作はglobalな対象commit範囲や表示modeを変更せず、参照anchorを取得できない場合は
+tabを開かずWalkthrough上の一時chipで通知する。fallback時はanchor表示であることと、利用可能なら
+line保証のない最新fileへのactionをpane内で明示する。
 CLIによる同一ID更新はpoll後に開いているtabへ反映する。viewerの削除actionは紐づくcommentとpostの件数、
 参照が無効になること、不可逆性を確認してから実行し、成功後はtabとsidebar itemを閉じる。
 
@@ -1359,7 +1385,7 @@ Integration（実git + fake GitHub）:
 - Agent socket経由のwrite、implicit fallback、explicit fail-closed、diagnostic、process間単一runtime owner、
   同一databaseのopen再利用、異なるdatabaseの独立runtime、stale owner/socket recovery、明示port conflict
 - doctorのDB write transactionとAgent疎通
-- commit固定Walkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
+- source anchor付きWalkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
 - worktree間共有
 
 E2Eで登録済みPR一覧、Closed / Merged filterと状態未取得行、empty state、URLに保持するpagination、
@@ -1377,12 +1403,15 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
 8. 既存PR本文commentのinline位置とOutdated表示を同じrefreshで更新
 9. old code commentのtrackingまたはOutdated
 10. Walkthroughを開いてもcode tabを自動で開かず、inline referenceまたはMermaid nodeを人間が
-    選んだ時だけ対象commitを変えずexact source行へ移動し、説明tabを保持。missing時はtabを開かず
-    一時的なリンク切れchip、通信や一時的な取得失敗では区別したstatusを表示
+    選んだ時だけanchorから最新HEADへ直接mappingする。成功時はrenameとline shiftを含む最新位置、
+    変更・曖昧・削除時は途中commitを探索せずanchorへfallbackし、説明tabを保持する。fallbackはshort SHA、
+    最新で変更済みの説明、利用可能な最新file actionを表示する。latest解決の変更表示はglobalなcommit
+    比較範囲を維持し、head更新後は旧／新SHAと再解決actionを表示する。anchor missing時はtabを開かず一時的な
+    リンク切れchip、通信や一時的な取得失敗では区別したstatusを表示
 11. tabをdragまたはpane menuで左右へ移し、通常clickでreferenceを左pane、`Cmd` / `Ctrl`+clickで
     右paneへ開く。同じfileを参照している場合も左右に一つずつ保持し、参照先paneだけを指定行へ移動する
 12. repository MarkdownをSource / Previewで切り替え、Previewの文字列選択からsource行commentを作成する
-13. flowchartとclass diagramのbinding済み要素からexact sourceを開く
+13. flowchartとclass diagramのbinding済み要素から同じlatest/fallback解決でcodeを開く
 14. CLI更新したWalkthroughのtitle、本文、referenceを同じopen tabへpoll反映
 15. Walkthroughの文字列選択へ行comment、Mermaid fenced block全体へcommentを作成し、Mermaid composerは
     入力中に同じtextarea DOMとcaretを維持して正順に入力でき、本文置換後に一意なquoteは再配置、
@@ -1523,8 +1552,9 @@ Functional:
 - URLまたはcurrent branchからopen/draft PRを開き、登録済みPRはofflineでも状態badge付きで再表示できる。
 - destination commit選択、PR全体diff、複数commit range、changed/all tree、全文、検索を利用できる。
 - `Pull Request.md`は常に最後に成功した同期の最新内容だけを表示する。
-- Agentがcommit固定WalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の
-  referenceだけを最大二ペインのtabで検証できる。不要なWalkthroughは件数確認後に削除できる。
+- Agentがsource anchor付きWalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の
+  referenceだけを最新HEAD上の対応箇所、または明示されたanchor fallbackとして最大二ペインのtabで検証できる。
+  不要なWalkthroughは件数確認後に削除できる。
 - PR全体、PR本文、file、line/range comment、reply、post edit/delete、resolve/reopen、sidebar、Outdatedが機能し、
   postはsafe GFM、repository link／相対画像、表示専用Mermaidとしてrenderされる。
 - 一件／一覧／選択comment参照をcopyし、Codex / Claude Codeへ同じ`rvw` Skillを配置してCLIで解決・返信できる。

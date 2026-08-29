@@ -58,4 +58,39 @@ describe("reading history", () => {
     expect(sameReadingDocument(current, { ...current })).toBe(true);
     expect(sameReadingDocument(current, exact)).toBe(false);
   });
+
+  it("round-trips the session-only Walkthrough reference resolution context", () => {
+    const referenceDocument = {
+      kind: "repository-file" as const,
+      path: "src/reference.ts",
+      oldPath: "src/reference.ts",
+      newPath: "src/reference.ts",
+      sourceOid: "a".repeat(40),
+      comparisonPolicy: "reference-target" as const,
+      referenceContext: {
+        outcome: "source-fallback" as const,
+        walkthroughId: "walkthrough",
+        referenceId: "reference",
+        anchorSourceOid: "a".repeat(40),
+        latestHeadOid: "c".repeat(40),
+        referenceFingerprint: "fingerprint",
+        diffBaseOid: "0".repeat(40),
+        hasDiff: true,
+        latestFile: {
+          sourceOid: "c".repeat(40),
+          path: "src/reference.ts",
+          diffBaseOid: "b".repeat(40),
+          oldPath: "src/reference.ts",
+          newPath: "src/reference.ts",
+          hasDiff: true,
+        },
+      },
+    };
+    const value = entry({ document: referenceDocument, locator: { kind: "line", line: 8 } });
+
+    expect(parseReadingHistoryEntry(readingHistoryState(null, value), pullRequestId)).toEqual(
+      value,
+    );
+    expect(sameReadingDocument(referenceDocument, { ...referenceDocument })).toBe(true);
+  });
 });

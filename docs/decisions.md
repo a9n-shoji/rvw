@@ -1,5 +1,54 @@
 # Architecture decisions
 
+## 2026-08-29: Resolve Walkthrough code references against the latest Pull Request head
+
+### Problem
+
+Walkthrough references stored one `sourceOid`, path, and line range and always opened that historical
+snapshot. After new commits reached a Pull Request, the explanation remained verifiable but no longer
+helped the reviewer see the corresponding current code without manually changing commits. Treating
+`sourceOid` as both an anchor and the display revision also made current review and historical evidence
+the same concern.
+
+### Choice
+
+Treat `sourceOid + path + line range` as the coordinate where the reference is guaranteed to have
+existed. Resolve a clicked reference lazily and directly from that anchor to the saved Pull Request's
+latest head. Follow a rename only when the direct Git comparison detects it. Keep line coordinates when
+the complete source and destination documents are identical; otherwise map a range only when every
+selected line survives unchanged and contiguously and the selected range is unique in both source and
+destination. Prefer the original path while it still exists. If it disappeared, use one
+copy-aware direct Git comparison and follow a successor only when exactly one rename/copy candidate
+originates from the anchor path. Open the latest target when that succeeds. Otherwise open the anchor
+snapshot, identify it as reference-time code, state neutrally that the current location could not be
+resolved with confidence, and offer a line-unanchored latest-file action when the same or renamed file is
+available. That action uses the global Diff comparison only when its selected end is the target latest
+head; a historical selection opens the exact latest snapshot instead.
+
+Do not inspect intermediate commits or search for a latest-valid revision. Keep Full versus Diff and
+stacked versus split as user display settings. Full shows the resolved latest snapshot. For a latest
+outcome, Diff remains the globally selected review comparison instead of silently substituting the
+latest commit's first-parent comparison, but only when that global comparison ends at the resolved
+latest head. A historical global range cannot safely use a path or line mapped at latest, so that pane
+shows the resolved latest full text and explains why. An anchor fallback keeps its explicit source
+comparison. Keep the result and a canonical fingerprint of `sourceOid + path + line range` in
+browser-session state only. Do not add database columns, reference versions, resolved OIDs, or latest
+flags. If the Pull Request head advances or the stable Walkthrough ID now exposes a different reference
+fingerprint, identify the open resolution as stale and offer an explicit re-resolution action rather
+than silently changing a document under review. While stale, retain the factual anchor snapshot
+currently displayed, but suppress cached fallback claims and latest-file actions.
+
+### Trade-offs
+
+- Normal review navigation reaches current code while the anchor still guarantees a truthful fallback.
+- Conservative mapping intentionally falls back for edited or ambiguous code instead of guessing.
+- A direct source-to-head comparison keeps click cost independent of Pull Request commit count, but a
+  fallback can be older than an intermediate commit where the range still happened to exist.
+- Re-resolution is user-triggered so an explicit GitHub refresh does not unexpectedly replace an open
+  document or line position; until then the stale resolved head is visibly identified.
+- The latest-file action preserves access after a changed range, but deliberately makes no line-location
+  promise.
+
 ## 2026-08-28: Own one browser-managed runtime per database
 
 ### Problem

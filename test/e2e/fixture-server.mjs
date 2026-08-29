@@ -4,6 +4,7 @@ import path from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-reference.ts";
 import {
   walkthroughRepositoryPaths,
   walkthroughRepositorySources,
@@ -989,6 +990,52 @@ app.get("/api/pull-requests/:id/walkthroughs", (context) =>
   }),
 );
 
+app.get(
+  "/api/pull-requests/:id/walkthroughs/:walkthroughId/references/:referenceId/resolve",
+  (context) => {
+    const walkthrough = activeWalkthroughs.find(
+      (candidate) => candidate.id === context.req.param("walkthroughId"),
+    );
+    const reference = walkthrough?.references.find(
+      (candidate) => candidate.id === context.req.param("referenceId"),
+    );
+    if (!walkthrough || !reference) {
+      return context.json(
+        { ok: false, error: { code: "NOT_FOUND", message: "missing reference" } },
+        404,
+      );
+    }
+    const latestHeadOid = currentView().headOid;
+    const ref = {
+      kind: "repository-file",
+      pullRequestId,
+      sourceOid: latestHeadOid,
+      path: reference.path,
+    };
+    return context.json({
+      ok: true,
+      resolution: {
+        outcome: "latest",
+        anchorSourceOid: walkthrough.sourceOid,
+        latestHeadOid,
+        referenceFingerprint: walkthroughReferenceFingerprint(walkthrough.sourceOid, reference),
+        target: {
+          sourceOid: latestHeadOid,
+          path: reference.path,
+          diffBaseOid: null,
+          oldPath: reference.path,
+          newPath: reference.path,
+          hasDiff: false,
+          startLine: reference.startLine,
+          endLine: reference.endLine,
+        },
+        latestFile: null,
+        document: repositoryDocument(ref),
+      },
+    });
+  },
+);
+
 app.get("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
   const walkthrough = activeWalkthroughs.find(
     (candidate) => candidate.id === context.req.param("walkthroughId"),
@@ -1015,6 +1062,15 @@ app.post("/api/fixture/walkthroughs/:walkthroughId/update", async (context) => {
   walkthrough.title = input.title;
   walkthrough.body = input.body;
   walkthrough.references[0].label = input.referenceLabel;
+  if (typeof input.referencePath === "string") {
+    walkthrough.references[0].path = input.referencePath;
+  }
+  if (input.referenceStartLine === null || Number.isInteger(input.referenceStartLine)) {
+    walkthrough.references[0].startLine = input.referenceStartLine;
+  }
+  if (input.referenceEndLine === null || Number.isInteger(input.referenceEndLine)) {
+    walkthrough.references[0].endLine = input.referenceEndLine;
+  }
   for (const comment of comments) {
     if (comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id) {
       comment.target.walkthroughTitle = walkthrough.title;

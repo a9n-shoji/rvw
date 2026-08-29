@@ -1748,6 +1748,38 @@ code {
   min-height: 100%;
   padding-bottom: 24px;
 }
+.reference-fallback-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 16px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning-text) 24%, var(--line));
+  border-radius: 8px;
+  background: var(--warning);
+  color: var(--warning-text);
+}
+.reference-fallback-banner > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.reference-fallback-banner strong {
+  font-size: 12px;
+}
+.reference-fallback-banner span {
+  font-size: 11px;
+}
+.reference-fallback-banner button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  border-color: color-mix(in srgb, var(--warning-text) 30%, var(--line));
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
 .diff-style-modes button {
   min-width: 54px;
 }

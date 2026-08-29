@@ -457,6 +457,11 @@ export class GitClient {
     return parseCommitLog(output);
   }
 
+  async firstParent(cwd: string, oid: string): Promise<string | null> {
+    const parents = await runText("git", ["show", "-s", "--format=%P", oid], { cwd });
+    return parents.split(" ").filter(Boolean)[0] ?? null;
+  }
+
   async tree(cwd: string, oid: string): Promise<TreeEntry[]> {
     const result = await runProcess("git", ["ls-tree", "-r", "-z", "--long", oid], { cwd });
     return parseLsTree(result.stdout);
@@ -466,6 +471,28 @@ export class GitClient {
     const result = await runProcess(
       "git",
       ["diff", "--name-status", "-z", "--find-renames", oldOid, newOid],
+      { cwd },
+    );
+    return parseNameStatus(result.stdout);
+  }
+
+  async changedFilesWithCopies(
+    cwd: string,
+    oldOid: string,
+    newOid: string,
+  ): Promise<ChangedFile[]> {
+    const result = await runProcess(
+      "git",
+      [
+        "diff",
+        "--name-status",
+        "-z",
+        "--find-renames",
+        "--find-copies",
+        "--find-copies-harder",
+        oldOid,
+        newOid,
+      ],
       { cwd },
     );
     return parseNameStatus(result.stdout);

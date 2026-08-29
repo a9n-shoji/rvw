@@ -13,7 +13,7 @@ Agent and human write channels.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
-commit-fixed explanation back to the human. It is not an
+source-anchored explanation back to the human. It is not an
 Agent-session, prompt, or browser-control protocol: the viewer stores durable review artifacts while
 all navigation remains a human action.
 
@@ -408,7 +408,9 @@ The stdin value is:
 ```
 
 `pullRequest`, `sourceOid`, `title`, `body`, and one or more references are required. `sourceOid`
-must be a 40–64 digit hex commit available to the saved pull request. Reference IDs and Mermaid node
+must be a 40–64 digit hex commit available to the saved pull request. It is the coordinate where every
+declared path and line range is guaranteed to exist and the fallback revision when current-head mapping
+is not certain; it is not necessarily the revision the viewer will display. Reference IDs and Mermaid node
 IDs use `[A-Za-z][A-Za-z0-9_-]{0,63}`. Every repository-relative path must be an available UTF-8
 document at that commit. A reference may omit both `startLine` and `endLine` to target the whole file;
 otherwise both are required and define an existing inclusive single-line or multi-line range. Omitted
@@ -431,7 +433,10 @@ publication protects `sourceOid` with rvw's immutable commit ref. The response c
 Walkthrough and its `rvw://walkthrough/<uuid>` reference. Publication is
 not a viewer command: it does not open a browser, activate a document, choose a commit, or change any
 tab or scroll position. The human later chooses which inline reference or bound diagram node to open;
-the viewer does not duplicate all references in a side or bottom index.
+the viewer then tries one direct conservative mapping from `sourceOid` to the saved Pull Request's latest
+head. It opens the latest code after an unambiguous unchanged-range or file/rename match, otherwise it
+opens the identified source fallback and may offer the latest file without a line guarantee. It does not
+scan intermediate commits or duplicate all references in a side or bottom index.
 
 ### Update in place
 

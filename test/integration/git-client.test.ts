@@ -102,6 +102,7 @@ describe("GitClient with real git", () => {
 
     const commits = await client.commits(repository, base, withGitlink);
     expect(commits.map(({ subject }) => subject)).toEqual(["special files", "rename", "gitlink"]);
+    expect(await client.firstParent(repository, special)).toBe(base);
 
     chmodSync(repository, 0o755);
   });

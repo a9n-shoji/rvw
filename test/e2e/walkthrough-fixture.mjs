@@ -829,7 +829,7 @@ export const walkthroughs = [
     body: markdown(
       "# 注文作成フローの全体像",
       "",
-      "> この文書は Agent が実装時点の commit に固定して生成した説明です。リンクや図の node を選ぶまで、rvw の表示位置は変わりません。",
+      "> この文書は Agent が実装時点の commit を source anchor として生成した説明です。リンクや図の node を選ぶまで、rvw の表示位置は変わりません。選ぶと、rvw は現在のPR上の対応箇所を開きます。",
       "",
       "この変更は、注文作成を単なる HTTP handler ではなく、**認可・在庫確保・決済与信・永続化・event 配信**までを一つの application flow として組み立てています。入口は [POST /orders](rvw-ref:route) で、payload は [createOrderSchema](rvw-ref:schema) によって境界で確定します。",
       "",

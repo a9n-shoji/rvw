@@ -1,6 +1,6 @@
 ---
 name: rvw-walkthrough
-description: Read, publish, improve in place, or explicitly delete a commit-fixed Markdown explanation with exact code references and optional Mermaid bindings through the local rvw CLI. Use when the user asks to create, present, publish, revise, update, or remove an implementation, surrounding-code, flow, or architecture walkthrough in rvw. Do not use this Skill for rvw comment handling or PR synchronization.
+description: Read, publish, improve in place, or explicitly delete a source-anchored Markdown explanation with code references and optional Mermaid bindings through the local rvw CLI. Use when the user asks to create, present, publish, revise, update, or remove an implementation, surrounding-code, flow, or architecture walkthrough in rvw. Do not use this Skill for rvw comment handling or PR synchronization.
 ---
 
 # rvw Walkthrough management
@@ -40,7 +40,7 @@ Read the complete current body, source OID, diagram bindings, references, and Pu
 
 1. Inspect the explicit instructions and relevant committed repository state. Determine whether the request explains a change or a standalone implementation, flow, or architecture subject. Use available Pull Request context when it contains authoring directions or establishes purpose.
 2. When explicit instructions leave authoring choices unresolved, read [the authoring guide](references/walkthrough-authoring.md). Apply its workflow, adaptation rules, anti-patterns, example, and completion check only as defaults for those choices.
-3. Choose one exact commit containing every referenced path. Do not publish an explanation of uncommitted code.
+3. Choose one exact commit containing every referenced path and range. Treat it as the coordinate where the references are guaranteed to exist and the viewer's fallback if latest-head mapping is uncertain, not as a request to keep normal viewing historical. Do not publish an explanation of uncommitted code.
 4. For a change-focused Walkthrough, inspect the diff and enough surrounding code to identify the change's center and connections. For a standalone subject, inspect its central responsibility, contract, entry points, and connections without inventing a before/after story. Include unchanged callers, callees, contracts, models, or tests when they materially reduce the reader's exploration cost; do not include them merely because they are related.
 5. Compose the smallest useful reading path in the order that best builds the mental model, rather than file order or diff order. Connect each step to concrete code, explain why it comes next, expose meaningful uncertainty, and leave useful starting points for exploration beyond the Walkthrough.
 6. Generate the completed Walkthrough in one pass unless the user explicitly requests an interactive process. Do not ask for approval of an intermediate review plan.

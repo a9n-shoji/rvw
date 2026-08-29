@@ -26,6 +26,8 @@ import type {
   Walkthrough,
   WalkthroughDeleteCounts,
   WalkthroughReference,
+  WalkthroughReferenceFileTarget,
+  WalkthroughReferenceResolution,
   WalkthroughSummary,
 } from "../domain/models.js";
 import { parseCommentUri } from "../domain/comment-uri.js";
@@ -35,6 +37,7 @@ import {
 } from "../domain/comment-watch-cursor.js";
 import { parseWalkthroughUri } from "../domain/walkthrough-uri.js";
 import { mapUnchangedLineRange, placeMutableDocumentComment } from "../domain/line-mapping.js";
+import { walkthroughReferenceFingerprint } from "../domain/walkthrough-reference.js";
 import { buildPullRequestMarkdown, hashDocument, selectedLineText } from "../domain/pr-markdown.js";
 import { createSourceExcerpt, type SourceExcerpt } from "../domain/source-excerpt.js";
 import {
@@ -1538,6 +1541,171 @@ export class RvwService {
       throw new RvwError("NOT_FOUND", "Walkthroughが見つかりません。", { status: 404 });
     }
     return walkthrough;
+  }
+
+  private async walkthroughReferenceFallbackTarget(
+    pullRequest: PullRequest,
+    sourceOid: string,
+    filePath: string,
+  ): Promise<WalkthroughReferenceFileTarget> {
+    const diffBaseOid = await this.git.firstParent(pullRequest.localRepositoryPath, sourceOid);
+    if (!diffBaseOid) {
+      return {
+        sourceOid,
+        path: filePath,
+        diffBaseOid: null,
+        oldPath: filePath,
+        newPath: filePath,
+        hasDiff: false,
+      };
+    }
+    const change = (
+      await this.git.changedFiles(pullRequest.localRepositoryPath, diffBaseOid, sourceOid)
+    ).find((candidate) => candidate.newPath === filePath);
+    return {
+      sourceOid,
+      path: filePath,
+      diffBaseOid,
+      oldPath: change?.oldPath ?? filePath,
+      newPath: change?.newPath ?? filePath,
+      hasDiff: change !== undefined,
+    };
+  }
+
+  async resolveWalkthroughReference(
+    pullRequestId: string,
+    walkthroughId: string,
+    referenceId: string,
+  ): Promise<WalkthroughReferenceResolution> {
+    const pullRequest = this.getPullRequest(pullRequestId);
+    const walkthrough = this.getWalkthrough(pullRequestId, walkthroughId);
+    const reference = walkthrough.references.find((candidate) => candidate.id === referenceId);
+    if (!reference) {
+      throw new RvwError("NOT_FOUND", "Walkthroughのcode referenceが見つかりません。", {
+        status: 404,
+      });
+    }
+    const referenceFingerprint = walkthroughReferenceFingerprint(walkthrough.sourceOid, reference);
+
+    const sourceDocument = await this.getDocument({
+      kind: "repository-file",
+      pullRequestId,
+      sourceOid: walkthrough.sourceOid,
+      path: reference.path,
+    });
+    const latestHeadOid = pullRequest.latestHeadOid;
+    let latestPath: string | null = reference.path;
+    let latestDocument: DocumentContent | null;
+    if (walkthrough.sourceOid === latestHeadOid) {
+      latestDocument = sourceDocument;
+    } else {
+      latestDocument = await this.getDocument({
+        kind: "repository-file",
+        pullRequestId,
+        sourceOid: latestHeadOid,
+        path: reference.path,
+      });
+      if (latestDocument.availability === "missing") {
+        const successorPaths = [
+          ...new Set(
+            (
+              await this.git.changedFilesWithCopies(
+                pullRequest.localRepositoryPath,
+                walkthrough.sourceOid,
+                latestHeadOid,
+              )
+            )
+              .filter(
+                (candidate) =>
+                  (candidate.status.startsWith("R") || candidate.status.startsWith("C")) &&
+                  candidate.oldPath === reference.path &&
+                  candidate.newPath !== null,
+              )
+              .map((candidate) => candidate.newPath!),
+          ),
+        ];
+        latestPath = successorPaths.length === 1 ? successorPaths[0]! : null;
+        latestDocument =
+          latestPath === null
+            ? null
+            : await this.getDocument({
+                kind: "repository-file",
+                pullRequestId,
+                sourceOid: latestHeadOid,
+                path: latestPath,
+              });
+      }
+    }
+    const latestFileExists = latestDocument !== null && latestDocument.availability !== "missing";
+    const latestFileDisplayable = latestDocument?.availability === "available";
+    const mappedRange =
+      reference.startLine === null || reference.endLine === null
+        ? latestFileDisplayable
+          ? null
+          : undefined
+        : sourceDocument.availability === "available" &&
+            latestDocument?.availability === "available"
+          ? mapUnchangedLineRange(
+              sourceDocument.text ?? "",
+              latestDocument.text ?? "",
+              reference.startLine,
+              reference.endLine,
+            )
+          : null;
+    const resolvedToLatest =
+      latestFileDisplayable &&
+      (reference.startLine === null || reference.endLine === null || mappedRange !== null);
+
+    if (resolvedToLatest && latestPath !== null && latestDocument !== null) {
+      return {
+        outcome: "latest",
+        anchorSourceOid: walkthrough.sourceOid,
+        latestHeadOid,
+        referenceFingerprint,
+        target: {
+          sourceOid: latestHeadOid,
+          path: latestPath,
+          diffBaseOid: null,
+          oldPath: latestPath,
+          newPath: latestPath,
+          hasDiff: false,
+          startLine: mappedRange?.startLine ?? reference.startLine,
+          endLine: mappedRange?.endLine ?? reference.endLine,
+        },
+        latestFile: null,
+        document: latestDocument,
+      };
+    }
+
+    const targetFile = await this.walkthroughReferenceFallbackTarget(
+      pullRequest,
+      walkthrough.sourceOid,
+      reference.path,
+    );
+    const latestFile =
+      latestFileExists && latestPath !== null
+        ? {
+            sourceOid: latestHeadOid,
+            path: latestPath,
+            diffBaseOid: null,
+            oldPath: latestPath,
+            newPath: latestPath,
+            hasDiff: false,
+          }
+        : null;
+    return {
+      outcome: "source-fallback",
+      anchorSourceOid: walkthrough.sourceOid,
+      latestHeadOid,
+      referenceFingerprint,
+      target: {
+        ...targetFile,
+        startLine: reference.startLine,
+        endLine: reference.endLine,
+      },
+      latestFile,
+      document: sourceDocument,
+    };
   }
 
   getWalkthroughByUri(uri: string): { pullRequest: PullRequest; walkthrough: Walkthrough } {
