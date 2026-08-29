@@ -22,6 +22,9 @@ import type {
   DocumentRef,
   ReviewComment,
   SearchResult,
+  SourceAnchor,
+  Structure,
+  StructureSummary,
   Walkthrough,
   WalkthroughReference,
   WalkthroughReferenceFileTarget,
@@ -38,6 +41,8 @@ import {
   jsonRequest,
   type PullRequestResponse,
   type SearchResponse,
+  type StructureResponse,
+  type StructuresResponse,
   type ThemePreferenceResponse,
   type TreeResponse,
   type WalkthroughResponse,
@@ -111,6 +116,10 @@ const DocumentViewer = lazy(async () => {
 const WalkthroughViewer = lazy(async () => {
   const module = await import("../components/WalkthroughViewer.js");
   return { default: module.WalkthroughViewer };
+});
+const StructureViewer = lazy(async () => {
+  const module = await import("../components/StructureViewer.js");
+  return { default: module.StructureViewer };
 });
 
 function changePath(change: ChangedFile): string {
@@ -1463,6 +1472,8 @@ export function PullRequestReviewScreen({
     void queryClient.invalidateQueries({ queryKey: ["search"] });
     void queryClient.invalidateQueries({ queryKey: ["walkthroughs"] });
     void queryClient.invalidateQueries({ queryKey: ["walkthrough"] });
+    void queryClient.invalidateQueries({ queryKey: ["structures"] });
+    void queryClient.invalidateQueries({ queryKey: ["structure"] });
   }, [changeSequence.data?.changeSequence, queryClient]);
   const commentsQuery = useQuery({
     queryKey: ["comments", pullRequestId, changeSequence.data?.changeSequence],
@@ -1510,6 +1521,13 @@ export function PullRequestReviewScreen({
     enabled: Boolean(pullRequestId),
   });
   const walkthroughs = walkthroughsQuery.data?.walkthroughs ?? [];
+  const structuresQuery = useQuery({
+    queryKey: ["structures", pullRequestId],
+    queryFn: async () =>
+      await api<StructuresResponse>(`/api/pull-requests/${pullRequestId}/structures`),
+    enabled: Boolean(pullRequestId),
+  });
+  const structures = structuresQuery.data?.structures ?? [];
   useEffect(() => {
     if (!walkthroughsQuery.isSuccess) return;
     const summaries = new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough]));
@@ -1563,6 +1581,59 @@ export function PullRequestReviewScreen({
     walkthroughsQuery.data?.walkthroughs,
     walkthroughsQuery.isSuccess,
   ]);
+  useEffect(() => {
+    if (!structuresQuery.isSuccess) return;
+    const summaries = new Map(structures.map((structure) => [structure.id, structure]));
+    const current = documentWorkspaceRef.current;
+    const rebind = (document: ActiveDocument | null): ActiveDocument | null => {
+      if (document?.kind !== "structure") return document;
+      const summary = summaries.get(document.id);
+      return summary
+        ? {
+            kind: "structure",
+            id: summary.id,
+            title: summary.title,
+            sourceOid: summary.sourceOid,
+          }
+        : null;
+    };
+    const documents = {
+      left: current.documents.left
+        .map(rebind)
+        .filter((document): document is ActiveDocument => document !== null),
+      right: current.documents.right
+        .map(rebind)
+        .filter((document): document is ActiveDocument => document !== null),
+    };
+    const activeDocument = (
+      paneId: DocumentPaneId,
+      document: ActiveDocument | null,
+    ): ActiveDocument | null => {
+      const rebound = rebind(document);
+      if (
+        rebound &&
+        documents[paneId].some((candidate) => documentTabKey(candidate) === documentTabKey(rebound))
+      ) {
+        return rebound;
+      }
+      return documents[paneId][0] ?? null;
+    };
+    applyDocumentWorkspaceTransition(
+      normalizeDocumentPanes({
+        ...current,
+        documents,
+        active: {
+          left: activeDocument("left", current.active.left),
+          right: activeDocument("right", current.active.right),
+        },
+      }),
+    );
+  }, [
+    applyDocumentWorkspaceTransition,
+    documentWorkspaceRef,
+    structuresQuery.data?.structures,
+    structuresQuery.isSuccess,
+  ]);
   const openWalkthroughIds = useMemo(
     () => [
       ...new Set(
@@ -1594,6 +1665,32 @@ export function PullRequestReviewScreen({
     const walkthrough = query?.data?.walkthrough;
     if (walkthrough) walkthroughDetails.set(walkthroughId, walkthrough);
     if (query?.isPending) loadingWalkthroughIds.add(walkthroughId);
+  });
+  const openStructureIds = useMemo(
+    () => [
+      ...new Set(
+        openDocuments.flatMap((document) => (document.kind === "structure" ? [document.id] : [])),
+      ),
+    ],
+    [openDocuments],
+  );
+  const structureDetailQueries = useQueries({
+    queries: openStructureIds.map((structureId) => ({
+      queryKey: ["structure", pullRequestId, structureId],
+      queryFn: async () =>
+        await api<StructureResponse>(
+          `/api/pull-requests/${pullRequestId}/structures/${structureId}`,
+        ),
+      enabled: Boolean(pullRequestId),
+    })),
+  });
+  const structureDetails = new Map<string, Structure>();
+  const loadingStructureIds = new Set<string>();
+  openStructureIds.forEach((structureId, index) => {
+    const query = structureDetailQueries[index];
+    const structure = query?.data?.structure;
+    if (structure) structureDetails.set(structureId, structure);
+    if (query?.isPending) loadingStructureIds.add(structureId);
   });
 
   const allFiles = useMemo<FileTreeFile[]>(() => {
@@ -1755,7 +1852,7 @@ export function PullRequestReviewScreen({
       }
       const counts = preview.counts;
       const confirmed = window.confirm(
-        `ローカルレビュー状態を削除して再構築します。\n\nコメント ${counts.comments ?? 0}\n返信 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\n対象 ${counts.targets ?? 0}\nウォークスルー ${counts.walkthroughs ?? 0}\nウォークスルーコード参照 ${counts.walkthroughReferences ?? 0}\nGit ref ${counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
+        `ローカルレビュー状態を削除して再構築します。\n\nコメント ${counts.comments ?? 0}\n返信 ${counts.posts ?? 0}\nコメント内コード参照 ${counts.commentReferences ?? 0}\n対象 ${counts.targets ?? 0}\nウォークスルー ${counts.walkthroughs ?? 0}\nウォークスルーコード参照 ${counts.walkthroughReferences ?? 0}\nStructure ${counts.structures ?? 0}\nGit ref ${counts.gitRefs ?? 0}\n\nこの操作は元に戻せません。`,
       );
       if (!confirmed) return null;
       return await api<{
@@ -1892,6 +1989,20 @@ export function PullRequestReviewScreen({
           id: walkthrough.id,
           title: walkthrough.title,
           sourceOid: walkthrough.sourceOid,
+        },
+        openInRightPane ? "right" : undefined,
+      );
+    },
+    [openDocument],
+  );
+  const openStructure = useCallback(
+    (structure: StructureSummary, openInRightPane = false): void => {
+      openDocument(
+        {
+          kind: "structure",
+          id: structure.id,
+          title: structure.title,
+          sourceOid: structure.sourceOid,
         },
         openInRightPane ? "right" : undefined,
       );
@@ -2088,6 +2199,26 @@ export function PullRequestReviewScreen({
       openCommentCodeReference(sourceOid, reference, openInRightPane ? "right" : "left"),
     [openCommentCodeReference],
   );
+  const openStructureAnchor = useCallback(
+    (structure: Structure, anchor: SourceAnchor, openInRightPane: boolean) => {
+      if (!pullRequestId) return Promise.resolve(`参照先を開けません · ${anchor.path}`);
+      return openCodeReference(
+        pullRequestId,
+        structure.sourceOid,
+        {
+          id: "structure-source",
+          label: anchor.path,
+          path: anchor.path,
+          startLine: anchor.startLine,
+          endLine: anchor.endLine,
+          description: null,
+        },
+        openInRightPane ? "right" : "left",
+        "exact-source",
+      );
+    },
+    [openCodeReference, pullRequestId],
+  );
   const openLatestReferenceFile = useCallback(
     (target: WalkthroughReferenceFileTarget, targetPane: DocumentPaneId): void => {
       const document: ActiveDocument = {
@@ -2150,6 +2281,8 @@ export function PullRequestReviewScreen({
     changedFilesLoaded: changedQuery.isSuccess,
     walkthroughDetails,
     loadingWalkthroughIds,
+    structureDetails,
+    loadingStructureIds,
   };
   const paneViewerStates = {
     left: deriveDocumentViewerState(documentWorkspace.active.left, viewerStateContext),
@@ -2161,7 +2294,8 @@ export function PullRequestReviewScreen({
     effectiveOldOid &&
     effectiveOldOid !== selectedOid &&
     Object.values(documentWorkspace.active).some(
-      (document) => document !== null && document.kind !== "walkthrough",
+      (document) =>
+        document !== null && document.kind !== "walkthrough" && document.kind !== "structure",
     ),
   );
   const diffViewAvailable = Boolean(
@@ -2280,7 +2414,32 @@ export function PullRequestReviewScreen({
             });
           }}
         />
-        {paneViewerDocument?.kind === "walkthrough" && paneViewerState.walkthrough ? (
+        {paneViewerDocument?.kind === "structure" && paneViewerState.structure ? (
+          <LazyLoadBoundary label="Structure">
+            <Suspense fallback={<div className="viewer-loading">Structureを準備しています…</div>}>
+              <StructureViewer
+                pullRequestId={pullRequest.id}
+                structure={paneViewerState.structure}
+                changedFiles={changedQuery.data?.files ?? []}
+                onOpenAnchor={(anchor, openInRightPane) =>
+                  openStructureAnchor(paneViewerState.structure!, anchor, openInRightPane)
+                }
+                onDeleted={() => {
+                  closeDocumentWithDrafts(paneViewerDocument, paneId);
+                  void queryClient.invalidateQueries({ queryKey: ["structures", pullRequestId] });
+                }}
+              />
+            </Suspense>
+          </LazyLoadBoundary>
+        ) : paneViewerDocument?.kind === "structure" ? (
+          <div className="empty-document-viewer">
+            <strong>
+              {paneViewerState.structureLoading
+                ? "Structureを読み込んでいます…"
+                : "Structureを読み込めませんでした。"}
+            </strong>
+          </div>
+        ) : paneViewerDocument?.kind === "walkthrough" && paneViewerState.walkthrough ? (
           <LazyLoadBoundary label="ウォークスルー">
             <Suspense
               fallback={<div className="viewer-loading">ウォークスルーを準備しています…</div>}
@@ -2601,9 +2760,13 @@ export function PullRequestReviewScreen({
               <div className="file-panel">
                 <ReviewTreeItems
                   walkthroughs={walkthroughs}
+                  structures={structures}
                   pullRequestActive={activeDocument?.kind === "pull-request-markdown"}
                   activeWalkthroughId={
                     activeDocument?.kind === "walkthrough" ? activeDocument.id : null
+                  }
+                  activeStructureId={
+                    activeDocument?.kind === "structure" ? activeDocument.id : null
                   }
                   onOpenPullRequest={(openInRightPane) => {
                     if (openInRightPane) {
@@ -2613,8 +2776,10 @@ export function PullRequestReviewScreen({
                     openDocument({ kind: "pull-request-markdown" });
                   }}
                   onOpen={openWalkthrough}
+                  onOpenStructure={openStructure}
                 />
                 <ErrorNotice error={walkthroughsQuery.error} />
+                <ErrorNotice error={structuresQuery.error} />
                 <input
                   value={fileFilter}
                   onChange={(event) => setFileFilter(event.target.value)}

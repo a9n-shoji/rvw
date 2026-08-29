@@ -6,6 +6,8 @@ repository全体を行き来し、PR本文、変更されたコード、変更�
 Agentが実装やarchitectureの説明を提示した場合は、説明を独立したtabに残したまま、inline linkや
 Mermaid図から人間が選んだcodeだけを開けます。文書は最大2ペインへ並べられるため、
 説明と実装、callerとdefinition、Markdown previewとcodeを同時に読めます。
+順序より関係が重要なsubjectは、Agentがsource anchor付きStructureとして提示でき、同じworkspaceで
+nodeとrelationを自由に辿れます。
 
 diffは変更を見つける入口であり、レビュー対象の境界ではありません。人間が結果を読み、影響を追い、
 次に直すべきことを判断します。Codex / Claude Codeは、その判断を同梱された共通Skillと`rvw` CLI
@@ -16,7 +18,7 @@ Agentが実装
     ↓
 Git commit / GitHub Pull Request
     ↓
-Agentが任意でsource anchor付きWalkthroughを提示
+Agentが任意でsource anchor付きWalkthrough / Structureを提示
     ↓
 rvwで意図・説明・変更・repository全体を読む
     ↓
@@ -107,6 +109,7 @@ viewerはこの流れのために次を提供します。
 - 未解決／解決済み、返信、Outdated追跡
 - Agentへ渡す一件・一覧・複数選択した`rvw://comment/<uuid>`参照のコピー
 - Agentが提示したWalkthrough、exact code reference、選択可能なMermaid node
+- Agentが提示したStructure、focus近傍、source anchor付きnode / relation
 - Walkthrough commentをAgentが読むときの、元の説明本文とcode referenceの同時取得
 - 同じ参照を保ったWalkthroughの改善と、確認付きの不要Walkthrough削除
 
@@ -154,10 +157,35 @@ Agentは現在内容を読み、同じ`rvw://walkthrough/<uuid>`を更新して�
 同じ説明へ残り、viewerはpollで本文、参照、titleを再取得します。不要なWalkthroughはviewerの削除action、
 または削除件数を確認したCLIで、紐づくコメントと返信を含めて削除できます。
 
+## codeの関係を空間として検証する
+
+外部Agentは`rvw-structure` SkillとCLIを使い、boundedなcode-centered subjectをnodeとrelationの
+空間として提示できます。必須の読み順を持つ説明はWalkthrough、dependency、ownership、contract、
+data modelなど任意の方向へ探索する対象はStructureです。
+
+```bash
+rvw structure publish --stdin --json
+rvw structure get rvw://structure/<uuid> --json
+rvw structure update rvw://structure/<uuid> --stdin --json
+rvw structure delete rvw://structure/<uuid> --json
+```
+
+Structureは一つのexact `sourceOid`、宣言されたtitle / scope、stableなNode / Edge IDからなります。
+Nodeは0または1件、Edgeは0件以上のsource anchorを持ち、rvwはcommit、UTF-8 path、line pair、endpoint、
+focus、重複ID、sizeを保存前に検証します。publish / updateはbrowserやnavigationを操作しません。
+
+viewerでは1-hop / 2-hop / Allを切り替え、focus、pan、zoom、fit、node dragで探索できます。高次数nodeの
+relationは意味やlabelではなくstable Edge ID順で可逆的に折りたたみ、inspectorには全relationと全anchorを
+残します。通常clickでexact sourceを左、`Cmd` / `Ctrl`+clickで右ペインへ開きます。globalなcommit選択は
+変えません。node位置とviewportは同じbrowser sessionで保持しますが、SQLiteやAgent protocolへ座標を
+保存しません。同じsubjectの更新は同じURIを完全置換し、存続するIDの位置を保ちます。別subjectは新しい
+Structureとしてpublishします。
+
 ## Codex / Claude Code Skills
 
 アプリ本体からローカルSkillをインストールします。一度のinstallで、コメント処理用の`rvw`、
-Walkthroughのpublish・改善・削除用の`rvw-walkthrough`、新規コメント監視用の
+Walkthroughのpublish・改善・削除用の`rvw-walkthrough`、Structureのpublish・置換・削除用の
+`rvw-structure`、新規コメント監視用の
 `rvw-watch-comments`が入ります。Skill名と内容はCodex / Claude Codeで共通で、
 platform指定は配置先だけを選びます。
 
@@ -169,8 +197,8 @@ rvw skill status
 
 既定の配置先は次です。
 
-- Codex: `~/.agents/skills/rvw`、`~/.agents/skills/rvw-walkthrough`、`~/.agents/skills/rvw-watch-comments`
-- Claude Code: `~/.claude/skills/rvw`、`~/.claude/skills/rvw-walkthrough`、`~/.claude/skills/rvw-watch-comments`
+- Codex: `~/.agents/skills/rvw`、`~/.agents/skills/rvw-walkthrough`、`~/.agents/skills/rvw-structure`、`~/.agents/skills/rvw-watch-comments`
+- Claude Code: `~/.claude/skills/rvw`、`~/.claude/skills/rvw-walkthrough`、`~/.claude/skills/rvw-structure`、`~/.claude/skills/rvw-watch-comments`
 
 rvwがインストールしたSkillには同梱版digestを記録します。`skill status --json`と`doctor --json`は、
 管理済みの旧版なら`updateAvailable: true`、ローカル編集なら`locallyModified: true`、記録のない差異なら
@@ -208,6 +236,11 @@ mental modelを作るための最初の読解経路を構成します。文書�
 reference付きartifactとして検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、
 現在内容を取得して同じURIを更新し、重複した「改訂版」を追加しません。
 
+Structureを作る場合は、subject、scope、含める／除外する関係を伝えて`rvw-structure` Skillを使います。
+Skillは実際のcommit済みcodeを調査し、labelではなくclaimのidentityとしてstable IDを割り当てます。
+読み順が本質ならStructureへ押し込まず、Walkthroughを提案します。producer authoringの実地評価は
+[Structure producer evaluation](docs/structure-producer-evaluation.md)に記録しています。
+
 新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRを
 同梱driverから約1秒間隔で監視し、起動前の既存未解決commentは処理しません。自分のPRのfix-and-pushを起動taskへ
 明示許可した場合だけ、live PR authorと起動時のGitHub loginが一致するPRで修正・test・commit・pushを
@@ -223,8 +256,9 @@ queue、retry、batch内のthread単位status post、自己返信抑制をtransa
 調査結果、実装内容、test結果が具体的なcodeに基づく場合、Skillは最終replyからexact commitの有用な
 line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動できるようにします。
 
-三つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
-`rvw walkthrough get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`だけを利用します。
+四つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
+`rvw walkthrough get/update/publish/delete ... --json`、`rvw structure get/update/publish/delete ... --json`、
+`rvw pr sync --stdin --json`だけを利用します。
 ローカルDBやrepositoryへアクセスできないCloud Agentは対象外です。
 
 ## 復旧
@@ -239,7 +273,7 @@ rvw pr reset https://github.com/owner/repository/pull/123 --json
 rvw pr reset https://github.com/owner/repository/pull/123 --yes --json
 ```
 
-resetは対象PRのコメント、返信、コメント対象、コメント投稿とWalkthroughのcode reference、
+resetは対象PRのコメント、返信、コメント対象、コメント投稿、Walkthroughのcode reference、Structure、
 `refs/rvw/pr/<number>/...`を削除し、現在のGitHub状態からcacheとhead refを再構築します。
 バックアップや旧コメント移行は行わず、元に戻せません。
 

@@ -1,0 +1,127 @@
+{
+  "sourceOid": "e1702ec717f2c9eae88ab9debd63a7a8e7e70864",
+  "title": "Bundled Skill distribution boundary",
+  "scope": "The committed package, discovery, status, install, and smoke-test relationships that distribute rvw Skills to supported Agent platforms. Individual Skill behavior is excluded.",
+  "initialFocus": "skill-installer",
+  "nodes": [
+    {
+      "id": "package-skill-assets",
+      "label": "Published Skill assets",
+      "description": "Includes the bundled skills directory in the npm package contract.",
+      "kind": "package",
+      "anchor": { "path": "package.json", "startLine": 26, "endLine": 37 }
+    },
+    {
+      "id": "skill-bundle-discovery",
+      "label": "Bundled Skill discovery",
+      "description": "Finds a package root only when every declared Skill entrypoint is present.",
+      "kind": "boundary",
+      "anchor": {
+        "path": "src/infrastructure/skills/skill-installer.ts",
+        "startLine": 143,
+        "endLine": 155
+      }
+    },
+    {
+      "id": "skill-status",
+      "label": "Skill status inspection",
+      "description": "Compares installed content and managed metadata with the bundled digest.",
+      "kind": "service",
+      "anchor": {
+        "path": "src/infrastructure/skills/skill-installer.ts",
+        "startLine": 182,
+        "endLine": 285
+      }
+    },
+    {
+      "id": "skill-installer",
+      "label": "Atomic Skill installer",
+      "description": "Stages each declared Skill and preserves divergent local content unless forced.",
+      "kind": "service",
+      "anchor": {
+        "path": "src/infrastructure/skills/skill-installer.ts",
+        "startLine": 287,
+        "endLine": 350
+      }
+    },
+    {
+      "id": "skill-cli",
+      "label": "Skill CLI commands",
+      "description": "Exposes platform-specific install and status operations.",
+      "kind": "command",
+      "anchor": { "path": "src/cli/main.ts", "startLine": 1329, "endLine": 1364 }
+    },
+    {
+      "id": "package-smoke",
+      "label": "Packaged Skill smoke test",
+      "description": "Verifies required Skill files survive packing and can be installed from the built CLI.",
+      "kind": "test",
+      "anchor": { "path": "scripts/package-smoke.mjs", "startLine": 236, "endLine": 278 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "package-assets-supply-discovery",
+      "from": "package-skill-assets",
+      "to": "skill-bundle-discovery",
+      "label": "supplies assets to",
+      "directed": true,
+      "anchors": [
+        { "path": "package.json", "startLine": 26, "endLine": 37 },
+        { "path": "src/infrastructure/skills/skill-installer.ts", "startLine": 143, "endLine": 155 }
+      ]
+    },
+    {
+      "id": "skill-installer-uses-discovery",
+      "from": "skill-installer",
+      "to": "skill-bundle-discovery",
+      "label": "loads bundle through",
+      "directed": true,
+      "anchors": [
+        { "path": "src/infrastructure/skills/skill-installer.ts", "startLine": 157, "endLine": 179 }
+      ]
+    },
+    {
+      "id": "skill-installer-checks-status",
+      "from": "skill-installer",
+      "to": "skill-status",
+      "label": "checks",
+      "directed": true,
+      "anchors": [
+        { "path": "src/infrastructure/skills/skill-installer.ts", "startLine": 287, "endLine": 308 }
+      ]
+    },
+    {
+      "id": "skill-cli-invokes-installer",
+      "from": "skill-cli",
+      "to": "skill-installer",
+      "label": "invokes",
+      "directed": true,
+      "anchors": [{ "path": "src/cli/main.ts", "startLine": 1329, "endLine": 1350 }]
+    },
+    {
+      "id": "skill-cli-reads-status",
+      "from": "skill-cli",
+      "to": "skill-status",
+      "label": "reads",
+      "directed": true,
+      "anchors": [{ "path": "src/cli/main.ts", "startLine": 1352, "endLine": 1364 }]
+    },
+    {
+      "id": "package-smoke-verifies-assets",
+      "from": "package-smoke",
+      "to": "package-skill-assets",
+      "label": "verifies",
+      "directed": true,
+      "anchors": [{ "path": "scripts/package-smoke.mjs", "startLine": 236, "endLine": 278 }]
+    },
+    {
+      "id": "package-smoke-exercises-installer",
+      "from": "package-smoke",
+      "to": "skill-installer",
+      "label": "exercises through built CLI",
+      "directed": true,
+      "anchors": [{ "path": "scripts/package-smoke.mjs", "startLine": 383, "endLine": 396 }]
+    }
+  ]
+}

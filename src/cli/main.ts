@@ -56,6 +56,8 @@ import {
   commentReplyInputSchema,
   commentWatchOptionsSchema,
   pullRequestSyncInputSchema,
+  structurePublishInputSchema,
+  structureUpdateInputSchema,
   walkthroughPublishInputSchema,
   walkthroughUpdateInputSchema,
 } from "./schemas.js";
@@ -849,6 +851,10 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "comment.resolve",
           "comment.reopen",
           "pullRequest.sync",
+          "structure.read",
+          "structure.publish",
+          "structure.update",
+          "structure.delete",
           "walkthrough.read",
           "walkthrough.publish",
           "walkthrough.update",
@@ -1010,7 +1016,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         writeOutput(
           options,
           result,
-          `削除対象: コメント${preview.counts.comments}、返信${preview.counts.posts}、コメント内コード参照${preview.counts.commentReferences}、対象${preview.counts.targets}、Walkthrough${preview.counts.walkthroughs}、Walkthroughコード参照${preview.counts.walkthroughReferences}、Git ref${preview.counts.gitRefs}\n続行するには --yes を指定してください。`,
+          `削除対象: コメント${preview.counts.comments}、返信${preview.counts.posts}、コメント内コード参照${preview.counts.commentReferences}、対象${preview.counts.targets}、Walkthrough${preview.counts.walkthroughs}、Walkthroughコード参照${preview.counts.walkthroughReferences}、Structure${preview.counts.structures}、Git ref${preview.counts.gitRefs}\n続行するには --yes を指定してください。`,
         );
         process.exitCode = 2;
         return;
@@ -1028,6 +1034,79 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     });
 
   const comment = program.command("comment").description("保存済みコメントを操作");
+
+  const structure = program.command("structure").description("source anchor付きStructureを管理");
+  structure
+    .command("publish")
+    .requiredOption("--stdin", "stdinからJSONを読む")
+    .requiredOption("--json", "JSONで出力")
+    .description("Structureを登録（viewerは開かずnavigationも変更しない）")
+    .action(async () => {
+      const input = structurePublishInputSchema.parse(await readStdinJson());
+      const published = await callService(
+        "structure.publish",
+        input,
+        async () => await getRuntime().service.publishStructure(input),
+      );
+      writeJson({ ok: true, structure: published });
+    });
+
+  structure
+    .command("get")
+    .argument("<structure-uri>")
+    .requiredOption("--json", "JSONで出力")
+    .description("Structureの現在内容を取得")
+    .action(async (uri: string) => {
+      const result = await callService("structure.get", { uri }, () =>
+        getRuntime().service.getStructureByUri(uri),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
+  structure
+    .command("update")
+    .argument("<structure-uri>")
+    .requiredOption("--stdin", "stdinからJSONを読む")
+    .requiredOption("--json", "JSONで出力")
+    .description("Structureを同じ参照のまま完全置換")
+    .action(async (uri: string) => {
+      const content = structureUpdateInputSchema.parse(await readStdinJson());
+      const updated = await callService(
+        "structure.update",
+        { uri, content },
+        async () => await getRuntime().service.updateStructure(uri, content),
+      );
+      writeJson({ ok: true, structure: updated });
+    });
+
+  structure
+    .command("delete")
+    .argument("<structure-uri>")
+    .option("--yes", "不可逆な削除を確認")
+    .requiredOption("--json", "JSONで出力")
+    .description("Structureを削除")
+    .action(async (uri: string, options: OutputOptions & { yes?: boolean }) => {
+      if (!options.yes) {
+        const preview = await callService("structure.delete.preview", { uri }, () =>
+          getRuntime().service.getStructureDeletePreview(uri),
+        );
+        writeJson({
+          ok: false,
+          error: {
+            code: "STRUCTURE_DELETE_CONFIRMATION_REQUIRED",
+            message: "structure deleteには--yesが必要です。",
+            suggestions: [`rvw structure delete ${uri} --yes --json`],
+          },
+          ...preview,
+        });
+        process.exitCode = 2;
+        return;
+      }
+      const deleted = await callService("structure.delete", { uri, confirmed: true }, () =>
+        getRuntime().service.deleteStructureByUri(uri),
+      );
+      writeJson({ ok: true, deleted });
+    });
 
   const walkthrough = program.command("walkthrough").description("コード参照付きwalkthroughを管理");
   walkthrough

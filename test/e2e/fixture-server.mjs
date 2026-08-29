@@ -36,6 +36,110 @@ const comments = repositoryDemo ? structuredClone(repositoryDemo.comments) : [];
 const activeWalkthroughs = repositoryDemo
   ? structuredClone(repositoryDemo.walkthroughs)
   : walkthroughs;
+const primaryStructureId = "80000000-0000-4000-8000-000000000001";
+const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
+const primaryStructureNodes = [
+  {
+    id: "hub",
+    label: "Fixture boundary",
+    description: "The code-centered subject shared by its direct contracts and consumers.",
+    kind: "boundary",
+    anchor: { path: "src/fixture.ts", startLine: 1, endLine: 3 },
+  },
+  ...Array.from({ length: 13 }, (_, index) => {
+    const sequence = String(index + 1).padStart(2, "0");
+    return {
+      id: `leaf-${sequence}`,
+      label: `Direct relation ${sequence}`,
+      description: `A distinct claim related directly to the fixture boundary (${sequence}).`,
+      kind: index % 2 === 0 ? "contract" : "consumer",
+      anchor: index === 0 ? { path: "README.md", startLine: 13, endLine: 19 } : null,
+    };
+  }),
+  {
+    id: "deep-node",
+    label: "Second-hop detail",
+    description: "A claim reachable only after expanding the first direct relation.",
+    kind: "detail",
+    anchor: { path: "src/fixture.ts", startLine: 5, endLine: 8 },
+  },
+];
+const primaryStructureEdges = [
+  ...Array.from({ length: 13 }, (_, index) => {
+    const sequence = String(index + 1).padStart(2, "0");
+    return {
+      id: `edge-${sequence}`,
+      from: "hub",
+      to: `leaf-${sequence}`,
+      label: index % 2 === 0 ? "validates with" : "provides to",
+      directed: true,
+      anchors: index === 0 ? [{ path: "src/fixture.ts", startLine: 1, endLine: 3 }] : [],
+    };
+  }),
+  {
+    id: "edge-deep",
+    from: "leaf-01",
+    to: "deep-node",
+    label: "explains",
+    directed: true,
+    anchors: [{ path: "README.md", startLine: 13, endLine: 19 }],
+  },
+];
+const activeStructures = repositoryDemo
+  ? []
+  : [
+      {
+        id: primaryStructureId,
+        ref: `rvw://structure/${primaryStructureId}`,
+        pullRequestId,
+        sourceOid: firstHead,
+        title: "Fixture code relationships",
+        scope:
+          "The fixture boundary and its direct committed relationships; transport startup is excluded.",
+        initialFocus: "hub",
+        nodes: primaryStructureNodes,
+        edges: primaryStructureEdges,
+        createdAt: "2026-08-08T01:00:00.000Z",
+        updatedAt: "2026-08-08T01:00:00.000Z",
+      },
+      {
+        id: secondaryStructureId,
+        ref: `rvw://structure/${secondaryStructureId}`,
+        pullRequestId,
+        sourceOid: firstHead,
+        title: "Source document relationship",
+        scope: "A second independent Structure retained beside the primary map.",
+        initialFocus: null,
+        nodes: [
+          {
+            id: "source",
+            label: "Fixture source",
+            description: "Defines the fixture function.",
+            kind: "module",
+            anchor: { path: "src/fixture.ts", startLine: 1, endLine: 3 },
+          },
+          {
+            id: "documentation",
+            label: "Repository documentation",
+            description: "Documents the repository subject.",
+            kind: "document",
+            anchor: { path: "README.md", startLine: 1, endLine: 7 },
+          },
+        ],
+        edges: [
+          {
+            id: "source-documented-by-readme",
+            from: "source",
+            to: "documentation",
+            label: "documented by",
+            directed: true,
+            anchors: [],
+          },
+        ],
+        createdAt: "2026-08-08T01:05:00.000Z",
+        updatedAt: "2026-08-08T01:05:00.000Z",
+      },
+    ];
 const activeViewers = new Set();
 const releasedViewers = new Set();
 let changeSequence = 0;
@@ -989,6 +1093,101 @@ app.get("/api/pull-requests/:id/walkthroughs", (context) =>
     })),
   }),
 );
+
+app.get("/api/pull-requests/:id/structures", (context) =>
+  context.json({
+    ok: true,
+    structures: activeStructures.map((structure) => ({
+      id: structure.id,
+      pullRequestId: structure.pullRequestId,
+      sourceOid: structure.sourceOid,
+      title: structure.title,
+      scope: structure.scope,
+      nodeCount: structure.nodes.length,
+      edgeCount: structure.edges.length,
+      createdAt: structure.createdAt,
+      updatedAt: structure.updatedAt,
+    })),
+  }),
+);
+
+app.get("/api/pull-requests/:id/structures/:structureId", (context) => {
+  const structure = activeStructures.find(
+    (candidate) => candidate.id === context.req.param("structureId"),
+  );
+  return structure
+    ? context.json({ ok: true, structure })
+    : context.json({ ok: false, error: { code: "NOT_FOUND", message: "missing structure" } }, 404);
+});
+
+app.post("/api/fixture/structures/:structureId/update", async (context) => {
+  const structure = activeStructures.find(
+    (candidate) => candidate.id === context.req.param("structureId"),
+  );
+  if (!structure) {
+    return context.json(
+      { ok: false, error: { code: "NOT_FOUND", message: "missing structure" } },
+      404,
+    );
+  }
+  const input = await context.req.json();
+  structure.title = input.title ?? "Fixture code relationships updated";
+  structure.scope = input.scope ?? `${structure.scope} Updated without changing subject identity.`;
+  structure.nodes = [
+    ...structure.nodes
+      .filter((node) => node.id !== "leaf-13" && node.id !== "new-neighbor")
+      .map((node) =>
+        node.id === "hub" ? { ...node, label: input.hubLabel ?? "Fixture boundary updated" } : node,
+      ),
+    {
+      id: "new-neighbor",
+      label: "New direct relation",
+      description: "A new claim introduced by whole-value replacement.",
+      kind: "consumer",
+      anchor: { path: "src/fixture.ts", startLine: 10, endLine: 13 },
+    },
+  ];
+  structure.edges = [
+    ...structure.edges.filter((edge) => edge.id !== "edge-13" && edge.id !== "edge-new"),
+    {
+      id: "edge-new",
+      from: "hub",
+      to: "new-neighbor",
+      label: "provides to",
+      directed: true,
+      anchors: [{ path: "src/fixture.ts", startLine: 10, endLine: 13 }],
+    },
+  ];
+  structure.updatedAt = "2026-08-08T04:00:00.000Z";
+  changeSequence += 1;
+  return context.json({ ok: true, structure });
+});
+
+app.delete("/api/pull-requests/:id/structures/:structureId", (context) => {
+  const structureIndex = activeStructures.findIndex(
+    (candidate) => candidate.id === context.req.param("structureId"),
+  );
+  if (structureIndex < 0) {
+    return context.json(
+      { ok: false, error: { code: "NOT_FOUND", message: "missing structure" } },
+      404,
+    );
+  }
+  const [structure] = activeStructures.splice(structureIndex, 1);
+  const anchors =
+    structure.nodes.filter((node) => node.anchor !== null).length +
+    structure.edges.reduce((count, edge) => count + edge.anchors.length, 0);
+  changeSequence += 1;
+  return context.json({
+    ok: true,
+    deleted: {
+      id: structure.id,
+      ref: structure.ref,
+      pullRequestId,
+      counts: { nodes: structure.nodes.length, edges: structure.edges.length, anchors },
+    },
+  });
+});
 
 app.get(
   "/api/pull-requests/:id/walkthroughs/:walkthroughId/references/:referenceId/resolve",

@@ -1895,4 +1895,136 @@ describe("RvwService commit workflow", () => {
       }),
     ).toEqual({ outdated: false, range: { startLine: 4, endLine: 4 }, path: "Pull Request.md" });
   });
+
+  it("publishes, replaces, reads, and deletes an exact-source Structure", async () => {
+    const { repository, firstHead, fake, database, service } = setup("rvw-structure-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const structure = await service.publishStructure({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Source relationships",
+      scope: "Relationships around src.txt. Build configuration is excluded.",
+      initialFocus: "source",
+      nodes: [
+        {
+          id: "source",
+          label: "src.txt",
+          description: "The exact source document",
+          kind: "document",
+          anchor: { path: "src.txt", startLine: 1, endLine: 2 },
+        },
+        { id: "consumer", label: "Consumer", kind: "concept" },
+      ],
+      edges: [
+        {
+          id: "reads-source",
+          from: "consumer",
+          to: "source",
+          label: "reads",
+          directed: true,
+          anchors: [{ path: "src.txt" }],
+        },
+      ],
+    });
+
+    expect(structure).toMatchObject({
+      ref: `rvw://structure/${structure.id}`,
+      pullRequestId: opened.pullRequest.id,
+      sourceOid: firstHead,
+      initialFocus: "source",
+      nodes: [
+        { id: "source", anchor: { path: "src.txt", startLine: 1, endLine: 2 } },
+        { id: "consumer", anchor: null },
+      ],
+      edges: [{ id: "reads-source", anchors: [{ startLine: null, endLine: null }] }],
+    });
+    expect(service.listStructures(opened.pullRequest.id)).toEqual([
+      {
+        id: structure.id,
+        pullRequestId: opened.pullRequest.id,
+        sourceOid: firstHead,
+        title: "Source relationships",
+        scope: "Relationships around src.txt. Build configuration is excluded.",
+        nodeCount: 2,
+        edgeCount: 1,
+        createdAt: structure.createdAt,
+        updatedAt: structure.updatedAt,
+      },
+    ]);
+    expect(service.getStructureByUri(structure.ref).structure).toEqual(structure);
+
+    const updated = await service.updateStructure(structure.ref, {
+      sourceOid: firstHead,
+      title: "Source boundary",
+      scope: "The same subject with a corrected consumer claim.",
+      initialFocus: "source",
+      nodes: [
+        {
+          id: "source",
+          label: "src.txt",
+          description: "The exact source document",
+          anchor: { path: "src.txt", startLine: 1, endLine: 2 },
+        },
+        { id: "consumer", label: "Updated consumer" },
+        { id: "validator", label: "Validator", anchor: { path: "src.txt" } },
+      ],
+      edges: [
+        {
+          id: "validates-source",
+          from: "validator",
+          to: "source",
+          label: "validates",
+          directed: true,
+        },
+      ],
+    });
+    expect(updated).toMatchObject({
+      id: structure.id,
+      ref: structure.ref,
+      createdAt: structure.createdAt,
+      title: "Source boundary",
+      nodes: [{ id: "source" }, { id: "consumer" }, { id: "validator" }],
+      edges: [{ id: "validates-source" }],
+    });
+    expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse(structure.updatedAt));
+    expect(updated.edges.some((edge) => edge.id === "reads-source")).toBe(false);
+
+    await expect(
+      service.updateStructure(structure.ref, {
+        sourceOid: firstHead,
+        title: "Invalid source",
+        scope: "Reject an out-of-document anchor.",
+        nodes: [
+          {
+            id: "source",
+            label: "src.txt",
+            anchor: { path: "src.txt", startLine: 99, endLine: 99 },
+          },
+        ],
+        edges: [],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(service.getStructureByUri(structure.ref).structure).toEqual(updated);
+
+    const secondPr = database.upsertPullRequest(
+      { ...fake.pullRequest, number: 8, url: "https://github.com/acme/review-repo/pull/8" },
+      {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      opened.pullRequest.latestComparisonBaseOid,
+    );
+    expect(() => service.getStructure(secondPr.id, structure.id)).toThrow(/見つかりません/);
+    expect(service.getStructureDeletePreview(structure.ref)).toMatchObject({
+      counts: { nodes: 3, edges: 1, anchors: 2 },
+      confirmationRequired: true,
+    });
+    expect(service.deleteStructureByUri(structure.ref)).toMatchObject({
+      id: structure.id,
+      ref: structure.ref,
+      counts: { nodes: 3, edges: 1, anchors: 2 },
+    });
+    expect(service.listStructures(opened.pullRequest.id)).toEqual([]);
+    expect(git(repository, "rev-parse", `refs/rvw/pr/7/commits/oid-${firstHead}`)).toBe(firstHead);
+  });
 });

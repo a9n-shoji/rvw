@@ -4,12 +4,15 @@ import type {
   CommentPlacement,
   CommentTarget,
   DeletedWalkthrough,
+  DeletedStructure,
   DocumentContent,
   DocumentRef,
   PullRequest,
   PullRequestSummary,
   ReviewComment,
   SearchResponse,
+  Structure,
+  StructureSummary,
   TreeEntry,
   Walkthrough,
   WalkthroughReferenceResolution,
@@ -158,6 +161,18 @@ export interface WalkthroughReferenceResolutionResponse {
 
 export interface DeleteWalkthroughResponse {
   deleted: DeletedWalkthrough;
+}
+
+export interface StructuresResponse {
+  structures: StructureSummary[];
+}
+
+export interface StructureResponse {
+  structure: Structure;
+}
+
+export interface DeleteStructureResponse {
+  deleted: DeletedStructure;
 }
 
 export interface PlacementResponse {

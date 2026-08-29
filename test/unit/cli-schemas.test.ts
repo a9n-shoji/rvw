@@ -5,6 +5,8 @@ import {
   commentReplyInputSchema,
   commentWatchOptionsSchema,
   pullRequestSyncInputSchema,
+  structurePublishInputSchema,
+  structureUpdateInputSchema,
   walkthroughPublishInputSchema,
   walkthroughUpdateInputSchema,
 } from "../../src/cli/schemas.js";
@@ -309,5 +311,87 @@ describe("CLI input schemas", () => {
         ],
       }),
     ).toMatchObject({ title: "Improved request flow", references: [{ id: "handler" }] });
+  });
+
+  it("normalizes a Structure graph and requires explicit directed edges", () => {
+    expect(
+      structurePublishInputSchema.parse({
+        pullRequest: "https://github.com/acme/review-repo/pull/7",
+        sourceOid: "a".repeat(40),
+        title: "Authorization boundary",
+        scope: "Code relationships around authorization. Analytics is excluded.",
+        initialFocus: "controller",
+        nodes: [
+          {
+            id: "controller",
+            label: "JobsController",
+            anchor: { path: "src/controller.ts", startLine: 2, endLine: 5 },
+          },
+          { id: "policy", label: "JobPolicy" },
+        ],
+        edges: [
+          {
+            id: "checks-policy",
+            from: "controller",
+            to: "policy",
+            label: "checks",
+            directed: true,
+          },
+        ],
+      }),
+    ).toMatchObject({
+      initialFocus: "controller",
+      nodes: [
+        { description: null, kind: null, anchor: { startLine: 2, endLine: 5 } },
+        { anchor: null },
+      ],
+      edges: [{ directed: true, anchors: [] }],
+    });
+  });
+
+  it("rejects invalid Structure identity, endpoints, focus, and SourceAnchor ranges", () => {
+    const valid = {
+      sourceOid: "b".repeat(40),
+      title: "Boundary",
+      scope: "One bounded code relationship.",
+      nodes: [{ id: "entry", label: "Entry" }],
+      edges: [] as Array<{
+        id: string;
+        from: string;
+        to: string;
+        label: string;
+        directed?: boolean;
+      }>,
+    };
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [...valid.nodes, { id: "entry", label: "Duplicate" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        initialFocus: "missing",
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        edges: [{ id: "bad", from: "entry", to: "missing", label: "uses" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [
+          {
+            id: "entry",
+            label: "Entry",
+            anchor: { path: "src/entry.ts", startLine: 3 },
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });

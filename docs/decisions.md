@@ -42,6 +42,74 @@ detail into an unstable identity.
 - Only the source-identified top sequence participant/actor is interactive; the visually duplicated lower
   rendering remains passive rather than receiving a guessed identity.
 
+## 2026-08-30: Add Structure as a separate exact-source relationship space
+
+### Problem
+
+Walkthrough gives a reviewer a deliberately ordered reading path, while repository files and search
+leave the reviewer to reconstruct every relationship independently. The Phase 0 graph UX spike showed
+that a bounded, code-centered subject can benefit from a spatial map, but its temporary renderer,
+fixture-only data, custom layout experiment, and optional notation did not establish a production
+artifact contract. Promoting the spike wholesale would mix an interaction probe with durable domain,
+persistence, CLI, Skill, and update semantics.
+
+### Choice
+
+Add `Structure` as its own production document and Agent capability rather than a generic Artifact
+framework or a Walkthrough rendering mode. A Structure declares a title, bounded scope, exact
+`sourceOid`, optional initial focus, stable-ID nodes, and stable-ID edges. Nodes carry zero or one
+source anchor; edges carry zero or more. Every anchor is a repository-relative UTF-8 path with either
+both inclusive line bounds or neither, and every anchor is validated at the one exact source commit.
+The graph is a producer claim about a code-centered subject; Git remains the evidence and history
+source of truth.
+
+Persist one current graph value per stable `rvw://structure/<uuid>` in a dedicated `structures` table.
+Store graph content as JSON because nodes and edges are an atomically replaced value and Phase 1 has no
+node-level comments, reverse lookup, or partial update query. Publish, get, whole-value update, preview
+delete, and confirmed delete use the same application service over CLI direct access or Agent socket.
+These commands are additive protocol-v4 capabilities and never navigate the viewer. A different
+subject is a new Structure; an update is allowed only for the same subject and must preserve IDs for
+surviving claims.
+
+Render Structure as a first-class document tab beside Walkthrough and code. The production layout is a
+content-neutral, deterministic topology-and-stable-ID layout with direct node drag, pan, zoom, fit, and
+focus controls. It does not use labels, kinds, descriptions, paths, or inferred semantics to position
+content. Stable node IDs retain session-local positions across navigation and whole-value updates; new
+nodes are placed near retained neighbors. No coordinates enter SQLite or the Agent protocol. For large
+visible neighborhoods, the viewer culls offscreen nodes.
+
+Use 1-hop, 2-hop, and All neighborhoods. When the focused node has more than twelve relations, show at
+most four incoming, four outgoing, and four undirected/self relations selected by lexical stable Edge
+ID, with explicit reversible expansion. The inspector still lists every incident relationship and
+every edge anchor. This rule is deterministic, content-neutral, and does not imply importance.
+
+Do not add notation in Phase 1. The spike's notation improved scanning, but a controlled vocabulary
+would add semantic authoring policy before producer evaluation established one. The optional `kind`
+string may provide a factual badge without affecting layout or behavior. Do not add comments, groups,
+AI inference, semantic graph extraction, durable coordinates, or reverse source lookup.
+
+### Alternatives considered
+
+- Promote the Phase 0 temporary renderer and fixture format: rejected because it had no production
+  lifecycle, persistence, transport, exact-source validation, or stable update contract.
+- Express Structure as Mermaid inside Walkthrough: rejected because a Walkthrough is a path and its
+  diagram belongs to prose, while Structure is an independently explorable relationship space.
+- Introduce a generic Artifact table and viewer dispatch: rejected because there is only one new domain
+  with distinct invariants and no demonstrated shared abstraction.
+- Add a graph layout dependency immediately: rejected because the bounded Phase 1 interaction needs are
+  met by the smaller content-neutral layout; a dependency can be reconsidered if measured graph scale or
+  quality makes it necessary.
+
+### Trade-offs and unresolved questions
+
+The simple layout is predictable and preserves context but will not optimize every dense topology.
+Lexical Edge ID collapse is neutral but not a claim of relevance. Session continuity ends at reload,
+and Structure has no independent revision history; Git commits remain the way to compare code history.
+Producer evaluation must continue to test scope, granularity, concept-node restraint, and relationship
+labels before a future notation vocabulary, grouping model, or larger-scale layout is considered. The
+initial evaluation and three generated exact-commit examples are recorded in
+`docs/structure-producer-evaluation.md`.
+
 ## 2026-08-29: Resolve Walkthrough code references against the latest Pull Request head
 
 ### Problem

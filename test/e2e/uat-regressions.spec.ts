@@ -558,6 +558,7 @@ test("makes reset destructive intent explicit and honors confirmation cancellati
           targets: 3,
           walkthroughs: 2,
           walkthroughReferences: 7,
+          structures: 2,
           gitRefs: 4,
         },
       },
@@ -567,6 +568,7 @@ test("makes reset destructive intent explicit and honors confirmation cancellati
     expect(dialog.message()).toContain("ローカルレビュー状態を削除して再構築します。");
     expect(dialog.message()).toContain("コメント 3");
     expect(dialog.message()).toContain("返信 5");
+    expect(dialog.message()).toContain("Structure 2");
     expect(dialog.message()).toContain("この操作は元に戻せません。");
     await dialog.dismiss();
   });
@@ -613,6 +615,7 @@ test("discards in-memory comment drafts after a confirmed reset", async ({ page,
             targets: 0,
             walkthroughs: 0,
             walkthroughReferences: 0,
+            structures: 0,
             gitRefs: 1,
           },
         },

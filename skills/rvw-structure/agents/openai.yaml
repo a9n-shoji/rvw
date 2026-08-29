@@ -1,0 +1,4 @@
+interface:
+  display_name: "rvw Structure"
+  short_description: "Map source-anchored code relationships"
+  default_prompt: "Use $rvw-structure to publish a bounded source-anchored relationship map in rvw."

@@ -11,6 +11,7 @@ import type {
   CommentTarget,
   CommitSummary,
   DiffDocumentRef,
+  DeletedStructure,
   DocumentAvailability,
   DocumentContent,
   DocumentRef,
@@ -21,6 +22,12 @@ import type {
   ReviewComment,
   SearchResponse,
   SearchOptions,
+  SourceAnchor,
+  Structure,
+  StructureDeleteCounts,
+  StructureEdge,
+  StructureNode,
+  StructureSummary,
   TreeEntry,
   DeletedWalkthrough,
   Walkthrough,
@@ -36,6 +43,7 @@ import {
   parseCommentWatchCursor,
 } from "../domain/comment-watch-cursor.js";
 import { parseWalkthroughUri } from "../domain/walkthrough-uri.js";
+import { parseStructureUri } from "../domain/structure-uri.js";
 import { mapUnchangedLineRange, placeMutableDocumentComment } from "../domain/line-mapping.js";
 import { walkthroughReferenceFingerprint } from "../domain/walkthrough-reference.js";
 import { buildPullRequestMarkdown, hashDocument, selectedLineText } from "../domain/pr-markdown.js";
@@ -54,6 +62,16 @@ import {
   MAX_SEARCH_QUERY_BYTES,
   MAX_SEARCH_RESULTS,
   MAX_SEARCH_STDOUT_BYTES,
+  MAX_STRUCTURE_DESCRIPTION_CHARACTERS,
+  MAX_STRUCTURE_EDGE_ANCHORS,
+  MAX_STRUCTURE_EDGES,
+  MAX_STRUCTURE_ID_CHARACTERS,
+  MAX_STRUCTURE_KIND_CHARACTERS,
+  MAX_STRUCTURE_LABEL_CHARACTERS,
+  MAX_STRUCTURE_NODES,
+  MAX_STRUCTURE_PAYLOAD_BYTES,
+  MAX_STRUCTURE_SCOPE_CHARACTERS,
+  MAX_STRUCTURE_TITLE_CHARACTERS,
   MAX_WALKTHROUGH_BODY_BYTES,
   MAX_CODE_REFERENCE_DESCRIPTION_CHARACTERS,
   MAX_CODE_REFERENCE_LABEL_CHARACTERS,
@@ -213,6 +231,50 @@ export type WalkthroughUpdateRequest = WalkthroughContentRequest;
 export interface WalkthroughDeletePreview {
   walkthrough: Walkthrough;
   counts: WalkthroughDeleteCounts;
+  confirmationRequired: true;
+}
+
+export interface SourceAnchorRequest {
+  path: string;
+  startLine?: number | null;
+  endLine?: number | null;
+}
+
+export interface StructureNodeRequest {
+  id: string;
+  label: string;
+  description?: string | null;
+  kind?: string | null;
+  anchor?: SourceAnchorRequest | null;
+}
+
+export interface StructureEdgeRequest {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+  directed: boolean;
+  anchors?: SourceAnchorRequest[];
+}
+
+export interface StructureContentRequest {
+  sourceOid: string;
+  title: string;
+  scope: string;
+  initialFocus?: string | null;
+  nodes: StructureNodeRequest[];
+  edges: StructureEdgeRequest[];
+}
+
+export interface StructurePublishRequest extends StructureContentRequest {
+  pullRequest: string;
+}
+
+export type StructureUpdateRequest = StructureContentRequest;
+
+export interface StructureDeletePreview {
+  structure: Structure;
+  counts: StructureDeleteCounts;
   confirmationRequired: true;
 }
 
@@ -1632,6 +1694,244 @@ export class RvwService {
     return this.database.listWalkthroughs(pullRequestId);
   }
 
+  listStructures(pullRequestId: string): StructureSummary[] {
+    this.getPullRequest(pullRequestId);
+    return this.database.listStructures(pullRequestId);
+  }
+
+  getStructure(pullRequestId: string, structureId: string): Structure {
+    this.getPullRequest(pullRequestId);
+    const structure = this.database.getStructure(structureId);
+    if (!structure || structure.pullRequestId !== pullRequestId) {
+      throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
+    }
+    return structure;
+  }
+
+  getStructureByUri(uri: string): { pullRequest: PullRequest; structure: Structure } {
+    const structure = this.database.getStructure(parseStructureUri(uri));
+    if (!structure) {
+      throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
+    }
+    return {
+      pullRequest: this.getPullRequest(structure.pullRequestId),
+      structure,
+    };
+  }
+
+  private async validateSourceAnchor(
+    pullRequest: PullRequest,
+    sourceOid: string,
+    anchor: SourceAnchorRequest,
+    subject: string,
+    documents: Map<string, DocumentContent>,
+  ): Promise<SourceAnchor> {
+    assertCodeReferencePath(anchor.path);
+    const startLine = anchor.startLine ?? null;
+    const endLine = anchor.endLine ?? null;
+    assertLinePair(startLine, endLine);
+    let content = documents.get(anchor.path);
+    if (!content) {
+      content = await this.getDocument({
+        kind: "repository-file",
+        pullRequestId: pullRequest.id,
+        sourceOid,
+        path: anchor.path,
+      });
+      documents.set(anchor.path, content);
+    }
+    if (content.availability !== "available") {
+      throw new RvwError("INVALID_INPUT", `${subject}のsourceを表示できません: ${anchor.path}`);
+    }
+    this.validateLineRange(content.text ?? "", startLine, endLine, subject);
+    return { path: anchor.path, startLine, endLine };
+  }
+
+  private assertStructureText(value: string, maximum: number, subject: string): string {
+    const normalized = value.trim();
+    if (normalized.length === 0 || value.length > maximum) {
+      throw new RvwError("INVALID_INPUT", `${subject}は1〜${maximum}文字にしてください。`);
+    }
+    return normalized;
+  }
+
+  private assertStructureId(value: string, subject: string): string {
+    if (value.trim().length === 0 || value.length > MAX_STRUCTURE_ID_CHARACTERS) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `${subject}は空白以外の1〜${MAX_STRUCTURE_ID_CHARACTERS}文字にしてください。`,
+      );
+    }
+    return value;
+  }
+
+  private async validateStructureContent(
+    pullRequest: PullRequest,
+    input: StructureContentRequest,
+  ): Promise<Omit<Structure, "id" | "ref" | "pullRequestId" | "createdAt" | "updatedAt">> {
+    await this.assertCommitAvailable(pullRequest, input.sourceOid);
+    const title = this.assertStructureText(
+      input.title,
+      MAX_STRUCTURE_TITLE_CHARACTERS,
+      "Structure title",
+    );
+    const scope = this.assertStructureText(
+      input.scope,
+      MAX_STRUCTURE_SCOPE_CHARACTERS,
+      "Structure scope",
+    );
+    if (input.nodes.length < 1 || input.nodes.length > MAX_STRUCTURE_NODES) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `Structure Nodeは1〜${MAX_STRUCTURE_NODES}件にしてください。`,
+      );
+    }
+    if (input.edges.length > MAX_STRUCTURE_EDGES) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `Structure Edgeは${MAX_STRUCTURE_EDGES}件以下にしてください。`,
+      );
+    }
+    const documents = new Map<string, DocumentContent>();
+    const nodeIds = new Set<string>();
+    const nodes: StructureNode[] = [];
+    for (const node of input.nodes) {
+      const id = this.assertStructureId(node.id, "Structure Node ID");
+      if (nodeIds.has(id)) {
+        throw new RvwError("INVALID_INPUT", `Structure Node IDが重複しています: ${id}`);
+      }
+      nodeIds.add(id);
+      const label = this.assertStructureText(
+        node.label,
+        MAX_STRUCTURE_LABEL_CHARACTERS,
+        `Structure Node ${id} label`,
+      );
+      if (
+        node.description !== null &&
+        node.description !== undefined &&
+        node.description.length > MAX_STRUCTURE_DESCRIPTION_CHARACTERS
+      ) {
+        throw new RvwError("INVALID_INPUT", `Structure Node ${id} descriptionが長すぎます。`);
+      }
+      if (
+        node.kind !== null &&
+        node.kind !== undefined &&
+        node.kind.length > MAX_STRUCTURE_KIND_CHARACTERS
+      ) {
+        throw new RvwError("INVALID_INPUT", `Structure Node ${id} kindが長すぎます。`);
+      }
+      nodes.push({
+        id,
+        label,
+        description: node.description ?? null,
+        kind: node.kind ?? null,
+        anchor: node.anchor
+          ? await this.validateSourceAnchor(
+              pullRequest,
+              input.sourceOid,
+              node.anchor,
+              `Structure Node ${id}`,
+              documents,
+            )
+          : null,
+      });
+    }
+    const edgeIds = new Set<string>();
+    const edges: StructureEdge[] = [];
+    for (const edge of input.edges) {
+      const id = this.assertStructureId(edge.id, "Structure Edge ID");
+      if (edgeIds.has(id)) {
+        throw new RvwError("INVALID_INPUT", `Structure Edge IDが重複しています: ${id}`);
+      }
+      edgeIds.add(id);
+      if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `Structure Edge ${id} のendpointが存在しません: ${edge.from} → ${edge.to}`,
+        );
+      }
+      if (typeof edge.directed !== "boolean") {
+        throw new RvwError("INVALID_INPUT", `Structure Edge ${id} のdirectedが必要です。`);
+      }
+      const anchors = edge.anchors ?? [];
+      if (anchors.length > MAX_STRUCTURE_EDGE_ANCHORS) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `Structure Edge ${id} のanchorは${MAX_STRUCTURE_EDGE_ANCHORS}件以下にしてください。`,
+        );
+      }
+      edges.push({
+        id,
+        from: edge.from,
+        to: edge.to,
+        label: this.assertStructureText(
+          edge.label,
+          MAX_STRUCTURE_LABEL_CHARACTERS,
+          `Structure Edge ${id} label`,
+        ),
+        directed: edge.directed,
+        anchors: await Promise.all(
+          anchors.map((anchor, index) =>
+            this.validateSourceAnchor(
+              pullRequest,
+              input.sourceOid,
+              anchor,
+              `Structure Edge ${id} anchor ${index + 1}`,
+              documents,
+            ),
+          ),
+        ),
+      });
+    }
+    const initialFocus = input.initialFocus ?? null;
+    if (initialFocus !== null && !nodeIds.has(initialFocus)) {
+      throw new RvwError("INVALID_INPUT", `initialFocus Nodeが存在しません: ${initialFocus}`);
+    }
+    const graph = { initialFocus, nodes, edges };
+    if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `Structure payloadは${MAX_STRUCTURE_PAYLOAD_BYTES} UTF-8 bytes以下にしてください。`,
+      );
+    }
+    return { sourceOid: input.sourceOid, title, scope, ...graph };
+  }
+
+  async publishStructure(input: StructurePublishRequest): Promise<Structure> {
+    const pullRequest = this.resolveStoredPullRequest(input.pullRequest);
+    const content = await this.validateStructureContent(pullRequest, input);
+    return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, "Structure", () =>
+      this.database.createStructure({ pullRequestId: pullRequest.id, ...content }),
+    );
+  }
+
+  async updateStructure(uri: string, input: StructureUpdateRequest): Promise<Structure> {
+    const { pullRequest, structure } = this.getStructureByUri(uri);
+    const content = await this.validateStructureContent(pullRequest, input);
+    return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, "Structure", () =>
+      this.database.updateStructure(structure.id, content),
+    );
+  }
+
+  getStructureDeletePreview(uri: string): StructureDeletePreview {
+    const { structure } = this.getStructureByUri(uri);
+    return {
+      structure,
+      counts: this.database.getStructureDeleteCounts(structure.id),
+      confirmationRequired: true,
+    };
+  }
+
+  deleteStructureByUri(uri: string): DeletedStructure {
+    const { structure } = this.getStructureByUri(uri);
+    return this.database.deleteStructure(structure.id);
+  }
+
+  deleteStructure(pullRequestId: string, structureId: string): DeletedStructure {
+    this.getStructure(pullRequestId, structureId);
+    return this.database.deleteStructure(structureId);
+  }
+
   getWalkthrough(pullRequestId: string, walkthroughId: string): Walkthrough {
     this.getPullRequest(pullRequestId);
     const walkthrough = this.database.getWalkthrough(walkthroughId);
@@ -1890,7 +2190,7 @@ export class RvwService {
   private async writeWithRetainedCommit<T>(
     pullRequest: PullRequest,
     sourceOid: string,
-    subject: "comment" | "Walkthrough",
+    subject: "comment" | "Walkthrough" | "Structure",
     write: () => T,
   ): Promise<T> {
     const commitRef = await this.git.ensureCommitRef(

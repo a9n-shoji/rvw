@@ -1364,6 +1364,7 @@ test("keeps virtual review nodes compact and useful height for code navigation",
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await expect(page.getByRole("button", { name: "ウォークスルー 6" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Structure 2" })).toBeVisible();
 
   const stackHeights = await page.locator(".sidebar-stack").evaluateAll((stacks) =>
     stacks.map((stack) => ({
@@ -1377,7 +1378,7 @@ test("keeps virtual review nodes compact and useful height for code navigation",
   const reviewNodeHeights = await page
     .locator(".review-tree-items > .review-tree-item")
     .evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().height)));
-  expect(reviewNodeHeights).toEqual([31, 31]);
+  expect(reviewNodeHeights).toEqual([31, 31, 31]);
 });
 
 test("opens a fuzzy-matched file from Cmd/Ctrl+P in the left pane", async ({ page }) => {

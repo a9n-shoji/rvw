@@ -184,6 +184,68 @@ export interface WalkthroughSummary {
   createdAt: string;
 }
 
+export interface SourceAnchor {
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+}
+
+export interface StructureNode {
+  id: string;
+  label: string;
+  description: string | null;
+  kind: string | null;
+  anchor: SourceAnchor | null;
+}
+
+export interface StructureEdge {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+  directed: boolean;
+  anchors: SourceAnchor[];
+}
+
+export interface Structure {
+  id: string;
+  ref: string;
+  pullRequestId: string;
+  sourceOid: string;
+  title: string;
+  scope: string;
+  initialFocus: string | null;
+  nodes: StructureNode[];
+  edges: StructureEdge[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StructureSummary {
+  id: string;
+  pullRequestId: string;
+  sourceOid: string;
+  title: string;
+  scope: string;
+  nodeCount: number;
+  edgeCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StructureDeleteCounts {
+  nodes: number;
+  edges: number;
+  anchors: number;
+}
+
+export interface DeletedStructure {
+  id: string;
+  ref: string;
+  pullRequestId: string;
+  counts: StructureDeleteCounts;
+}
+
 export interface WalkthroughReferenceFileTarget {
   sourceOid: string;
   path: string;
@@ -301,5 +363,6 @@ export interface ResetCounts {
   targets: number;
   walkthroughs: number;
   walkthroughReferences: number;
+  structures: number;
   gitRefs: number;
 }

@@ -16,7 +16,7 @@ import {
 } from "../document-workspace.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { ChangeIcon } from "./FileTree.js";
-import { WalkthroughIcon } from "./WalkthroughPanel.js";
+import { StructureIcon, WalkthroughIcon } from "./WalkthroughPanel.js";
 
 function CloseIcon() {
   return (
@@ -195,6 +195,8 @@ export function DocumentTabs({
                 <span className="document-tab-icon-group" aria-hidden="true">
                   {document.kind === "walkthrough" ? (
                     <WalkthroughIcon />
+                  ) : document.kind === "structure" ? (
+                    <StructureIcon />
                   ) : (
                     <FileEntryIcon path={path} kind="file" />
                   )}
@@ -284,6 +286,8 @@ export function DocumentTabs({
                     <span className="document-tab-icon-group" aria-hidden="true">
                       {document.kind === "walkthrough" ? (
                         <WalkthroughIcon />
+                      ) : document.kind === "structure" ? (
+                        <StructureIcon />
                       ) : (
                         <FileEntryIcon path={documentTabPath(document)} kind="file" />
                       )}

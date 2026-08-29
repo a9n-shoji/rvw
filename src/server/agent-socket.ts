@@ -402,6 +402,26 @@ export async function dispatchAgentSocketRequest(
       const input = parseOperationInput("walkthrough.delete", request.input);
       return service.deleteWalkthroughByUri(input.uri);
     }
+    case "structure.get": {
+      const input = parseOperationInput("structure.get", request.input);
+      return service.getStructureByUri(input.uri);
+    }
+    case "structure.publish": {
+      const input = parseOperationInput("structure.publish", request.input);
+      return await service.publishStructure(input);
+    }
+    case "structure.update": {
+      const input = parseOperationInput("structure.update", request.input);
+      return await service.updateStructure(input.uri, input.content);
+    }
+    case "structure.delete.preview": {
+      const input = parseOperationInput("structure.delete.preview", request.input);
+      return service.getStructureDeletePreview(input.uri);
+    }
+    case "structure.delete": {
+      const input = parseOperationInput("structure.delete", request.input);
+      return service.deleteStructureByUri(input.uri);
+    }
   }
 }
 
@@ -421,7 +441,7 @@ function uncertainOutcome(operation: string, cause: unknown, timedOut = false): 
       cause,
       details: { agentSocketOutcomeUncertain: true, operation },
       suggestions: [
-        "現在のコメント・Walkthrough・PR同期状態を読み直し、未反映の場合だけ再実行してください。",
+        "現在のコメント・Walkthrough・Structure・PR同期状態を読み直し、未反映の場合だけ再実行してください。",
       ],
     },
   );

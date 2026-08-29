@@ -20,7 +20,7 @@ Agentが実装
     ↓
 Git commit / GitHub Pull Request
     ↓
-Agentが任意で実装Walkthroughを提示
+Agentが任意で実装Walkthrough / Structureを提示
     ↓
 rvwで意図・説明・変更・結果のrepositoryを読む
     ↓
@@ -61,7 +61,7 @@ Commentは特定modelやsessionへ結び付いたchat messageではなくreview 
 別のAI session stateを作らない。
 viewerはAgentを起動せず、codeを編集せず、testを実行せず、actionをautonomous loopへ隠さない。
 
-### Agentの説明はnavigation命令ではなく、検証可能なindexにする
+### Agentの説明と関係mapはnavigation命令ではなく、検証可能なindexにする
 
 Agentが実装やarchitectureを説明する場合、成立を保証するsource anchor付きcode referenceとdiagramを提示できる。
 ただしAgentはbrowser、active tab、scroll位置を操作しない。どのclaimをいつ確認するかは人間が選び、
@@ -73,6 +73,12 @@ Agentが実装やarchitectureを説明する場合、成立を保証するsource
 正本にしない。Agentが読むときは現在の本文とcode reference、rvwが導出した配置も同時に渡す。説明は同じIDの
 まま改善できるが、独自の版履歴は作らない。不要になった説明とそこだけに属するfeedbackは、明示確認後に
 削除できる。
+
+Walkthroughは、人間がmental modelを組み立てるための意図的なpathである。Structureは、boundedな
+code-centered subjectのnodeとrelationを任意の方向へ辿るspaceである。Agentはsubjectとscopeを宣言し、
+stableなNode / Edge IDとexact source anchorを提示するが、layout、focus、pan、zoom、開く順序は人間の
+一時的なreading stateに留める。高次数relationの折りたたみは意味的な重要度を推測せず、stable Edge ID
+だけで決めて可逆にする。Structureも独自の履歴やsemantic truthを持たず、claimを検証する正本はGitである。
 
 ### 実装が変わってもorientationを保つ
 

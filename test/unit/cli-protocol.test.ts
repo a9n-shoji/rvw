@@ -171,7 +171,7 @@ describe("CLI protocol discovery", () => {
     vi.restoreAllMocks();
   });
 
-  it("advertises the current Walkthrough lifecycle capabilities", async () => {
+  it("advertises the current artifact lifecycle capabilities", async () => {
     const readStdout = captureStdout();
     const program = createProgram(() => {
       throw new Error("protocol discovery must not initialize the runtime");
@@ -194,6 +194,10 @@ describe("CLI protocol discovery", () => {
         "comment.resolve",
         "comment.reopen",
         "pullRequest.sync",
+        "structure.read",
+        "structure.publish",
+        "structure.update",
+        "structure.delete",
         "walkthrough.read",
         "walkthrough.publish",
         "walkthrough.update",
@@ -209,6 +213,11 @@ describe("CLI protocol discovery", () => {
     expect(
       program.commands
         .find((command) => command.name() === "walkthrough")
+        ?.commands.map((command) => command.name()),
+    ).toEqual(["publish", "get", "update", "delete"]);
+    expect(
+      program.commands
+        .find((command) => command.name() === "structure")
         ?.commands.map((command) => command.name()),
     ).toEqual(["publish", "get", "update", "delete"]);
     expect(
@@ -798,6 +807,114 @@ describe("CLI protocol discovery", () => {
       deleted: { ref: uri, counts: { comments: 1, posts: 2, references: 3 } },
     });
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("publishes and reads a Structure through the CLI", async () => {
+    const uri = "rvw://structure/70000000-0000-4000-8000-000000000002";
+    const input = {
+      pullRequest: pullRequest.url,
+      sourceOid: "b".repeat(40),
+      title: "Authorization boundary",
+      scope: "Relationships around authorization.",
+      initialFocus: "entry",
+      nodes: [{ id: "entry", label: "Entry" }],
+      edges: [],
+    };
+    const publishStructure = vi.fn().mockResolvedValue({ ref: uri, ...input });
+    const getStructureByUri = vi.fn().mockReturnValue({
+      pullRequest: { id: pullRequest.id },
+      structure: { ref: uri, ...input },
+    });
+    const { runtime } = mockRuntime({ publishStructure, getStructureByUri });
+    const readPublish = captureStdout();
+    provideStdin(input);
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "structure",
+      "publish",
+      "--stdin",
+      "--json",
+    ]);
+    expect(publishStructure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...input,
+        nodes: [expect.objectContaining({ description: null, kind: null, anchor: null })],
+      }),
+    );
+    expect(readPublish()).toMatchObject({ ok: true, structure: { ref: uri } });
+
+    vi.restoreAllMocks();
+    const readGet = captureStdout();
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "structure",
+      "get",
+      uri,
+      "--json",
+    ]);
+    expect(getStructureByUri).toHaveBeenCalledWith(uri);
+    expect(readGet()).toMatchObject({ ok: true, structure: { ref: uri } });
+  });
+
+  it("passes a complete Structure replacement and requires delete confirmation", async () => {
+    const uri = "rvw://structure/70000000-0000-4000-8000-000000000002";
+    const input = {
+      sourceOid: "b".repeat(40),
+      title: "Updated boundary",
+      scope: "The same declared subject.",
+      initialFocus: "entry",
+      nodes: [{ id: "entry", label: "Updated entry" }],
+      edges: [],
+    };
+    const updateStructure = vi.fn().mockResolvedValue({ ref: uri, ...input });
+    const getStructureDeletePreview = vi.fn().mockReturnValue({
+      structure: { ref: uri, ...input },
+      counts: { nodes: 1, edges: 0, anchors: 0 },
+      confirmationRequired: true,
+    });
+    const deleteStructureByUri = vi.fn();
+    const { runtime } = mockRuntime({
+      updateStructure,
+      getStructureDeletePreview,
+      deleteStructureByUri,
+    });
+    const readUpdate = captureStdout();
+    provideStdin(input);
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "structure",
+      "update",
+      uri,
+      "--stdin",
+      "--json",
+    ]);
+    expect(updateStructure).toHaveBeenCalledWith(
+      uri,
+      expect.objectContaining({ nodes: [expect.objectContaining({ id: "entry" })] }),
+    );
+    expect(readUpdate()).toMatchObject({ ok: true, structure: { ref: uri } });
+
+    vi.restoreAllMocks();
+    const readDeletePreview = captureStdout();
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "structure",
+      "delete",
+      uri,
+      "--json",
+    ]);
+    expect(getStructureDeletePreview).toHaveBeenCalledWith(uri);
+    expect(deleteStructureByUri).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(2);
+    expect(readDeletePreview()).toMatchObject({
+      ok: false,
+      error: { code: "STRUCTURE_DELETE_CONFIRMATION_REQUIRED" },
+      counts: { nodes: 1, edges: 0, anchors: 0 },
+    });
   });
 });
 

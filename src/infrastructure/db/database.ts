@@ -19,6 +19,7 @@ import type {
   CommentPostModifier,
   CommentPostEvent,
   CommentTarget,
+  DeletedStructure,
   DeletedWalkthrough,
   GitHubPullRequest,
   GitHubPullRequestState,
@@ -26,12 +27,19 @@ import type {
   PullRequestSummary,
   ResetCounts,
   ReviewComment,
+  SourceAnchor,
+  Structure,
+  StructureDeleteCounts,
+  StructureEdge,
+  StructureNode,
+  StructureSummary,
   Walkthrough,
   WalkthroughDeleteCounts,
   WalkthroughReference,
   WalkthroughSummary,
 } from "../../domain/models.js";
 import { formatCommentUri } from "../../domain/comment-uri.js";
+import { formatStructureUri } from "../../domain/structure-uri.js";
 import { formatWalkthroughUri } from "../../domain/walkthrough-uri.js";
 import { RvwError } from "../../shared/errors.js";
 import { isThemePreference, type ThemePreference } from "../../shared/preferences.js";
@@ -124,6 +132,70 @@ function stringRecordValue(row: DbRow, key: string): Record<string, string> {
     return value as Record<string, string>;
   } catch (error) {
     throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`, { cause: error });
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function isSourceAnchor(value: unknown): value is SourceAnchor {
+  return (
+    isRecord(value) &&
+    typeof value.path === "string" &&
+    (value.startLine === null || typeof value.startLine === "number") &&
+    (value.endLine === null || typeof value.endLine === "number")
+  );
+}
+
+function isStructureNode(value: unknown): value is StructureNode {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.label === "string" &&
+    isNullableString(value.description) &&
+    isNullableString(value.kind) &&
+    (value.anchor === null || isSourceAnchor(value.anchor))
+  );
+}
+
+function isStructureEdge(value: unknown): value is StructureEdge {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.from === "string" &&
+    typeof value.to === "string" &&
+    typeof value.label === "string" &&
+    typeof value.directed === "boolean" &&
+    Array.isArray(value.anchors) &&
+    value.anchors.every(isSourceAnchor)
+  );
+}
+
+function structureGraphValue(row: DbRow): Pick<Structure, "initialFocus" | "nodes" | "edges"> {
+  try {
+    const value: unknown = JSON.parse(stringValue(row, "graph_json"));
+    if (
+      !isRecord(value) ||
+      !isNullableString(value.initialFocus) ||
+      !Array.isArray(value.nodes) ||
+      !value.nodes.every(isStructureNode) ||
+      !Array.isArray(value.edges) ||
+      !value.edges.every(isStructureEdge)
+    ) {
+      throw new Error("invalid Structure graph");
+    }
+    return {
+      initialFocus: value.initialFocus,
+      nodes: value.nodes,
+      edges: value.edges,
+    };
+  } catch (error) {
+    throw new RvwError("DATABASE_ERROR", "Structure graph_jsonが不正です。", { cause: error });
   }
 }
 
@@ -349,6 +421,16 @@ export interface NewWalkthroughInput {
   authorLabel?: string | null;
   diagramBindings: Record<string, string>;
   references: WalkthroughReference[];
+}
+
+export interface NewStructureInput {
+  pullRequestId: string;
+  sourceOid: string;
+  title: string;
+  scope: string;
+  initialFocus: string | null;
+  nodes: StructureNode[];
+  edges: StructureEdge[];
 }
 
 export class RvwDatabase {
@@ -906,6 +988,9 @@ export class RvwDatabase {
         "SELECT count(*) AS count FROM walkthrough_references WHERE walkthrough_id IN (SELECT id FROM walkthroughs WHERE pull_request_id = ?)",
       )
       .get(pullRequestId) as DbRow;
+    const structures = this.database
+      .prepare("SELECT count(*) AS count FROM structures WHERE pull_request_id = ?")
+      .get(pullRequestId) as DbRow;
     return {
       comments: numberValue(comments, "count"),
       posts: numberValue(posts, "count"),
@@ -913,6 +998,7 @@ export class RvwDatabase {
       targets: numberValue(targets, "count"),
       walkthroughs: numberValue(walkthroughs, "count"),
       walkthroughReferences: numberValue(walkthroughReferences, "count"),
+      structures: numberValue(structures, "count"),
       gitRefs,
     };
   }
@@ -920,6 +1006,148 @@ export class RvwDatabase {
   deletePullRequestHistory(pullRequestId: string): void {
     this.database.prepare("DELETE FROM comments WHERE pull_request_id = ?").run(pullRequestId);
     this.database.prepare("DELETE FROM walkthroughs WHERE pull_request_id = ?").run(pullRequestId);
+    this.database.prepare("DELETE FROM structures WHERE pull_request_id = ?").run(pullRequestId);
+  }
+
+  private mapStructure(row: DbRow): Structure {
+    const id = stringValue(row, "id");
+    return {
+      id,
+      ref: formatStructureUri(id),
+      pullRequestId: stringValue(row, "pull_request_id"),
+      sourceOid: stringValue(row, "source_oid"),
+      title: stringValue(row, "title"),
+      scope: stringValue(row, "scope"),
+      ...structureGraphValue(row),
+      createdAt: stringValue(row, "created_at"),
+      updatedAt: stringValue(row, "updated_at"),
+    };
+  }
+
+  getStructure(id: string): Structure | null {
+    const row = this.database.prepare("SELECT * FROM structures WHERE id = ?").get(id) as
+      DbRow | undefined;
+    return row ? this.mapStructure(row) : null;
+  }
+
+  listStructures(pullRequestId: string): StructureSummary[] {
+    return (
+      this.database
+        .prepare(
+          `SELECT * FROM structures
+           WHERE pull_request_id = ?
+           ORDER BY created_at DESC, id DESC`,
+        )
+        .all(pullRequestId) as DbRow[]
+    ).map((row) => {
+      const graph = structureGraphValue(row);
+      return {
+        id: stringValue(row, "id"),
+        pullRequestId: stringValue(row, "pull_request_id"),
+        sourceOid: stringValue(row, "source_oid"),
+        title: stringValue(row, "title"),
+        scope: stringValue(row, "scope"),
+        nodeCount: graph.nodes.length,
+        edgeCount: graph.edges.length,
+        createdAt: stringValue(row, "created_at"),
+        updatedAt: stringValue(row, "updated_at"),
+      };
+    });
+  }
+
+  createStructure(input: NewStructureInput): Structure {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    const graphJson = JSON.stringify({
+      initialFocus: input.initialFocus,
+      nodes: input.nodes,
+      edges: input.edges,
+    });
+    this.immediateTransaction(() => {
+      this.database
+        .prepare(
+          `INSERT INTO structures(
+             id, pull_request_id, source_oid, title, scope, graph_json, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          input.pullRequestId,
+          input.sourceOid,
+          input.title,
+          input.scope,
+          graphJson,
+          now,
+          now,
+        );
+      this.incrementChangeSequence();
+    });
+    const structure = this.getStructure(id);
+    if (!structure) throw new RvwError("DATABASE_ERROR", "保存したStructureを読み出せません。");
+    return structure;
+  }
+
+  updateStructure(id: string, input: Omit<NewStructureInput, "pullRequestId">): Structure {
+    const current = this.getStructure(id);
+    if (!current) {
+      throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
+    }
+    const currentUpdatedAt = Date.parse(current.updatedAt);
+    const observedNow = Date.now();
+    const now = new Date(
+      Number.isNaN(currentUpdatedAt) ? observedNow : Math.max(observedNow, currentUpdatedAt + 1),
+    ).toISOString();
+    const graphJson = JSON.stringify({
+      initialFocus: input.initialFocus,
+      nodes: input.nodes,
+      edges: input.edges,
+    });
+    this.immediateTransaction(() => {
+      const result = this.database
+        .prepare(
+          `UPDATE structures
+           SET source_oid = ?, title = ?, scope = ?, graph_json = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(input.sourceOid, input.title, input.scope, graphJson, now, id);
+      if (Number(result.changes) === 0) {
+        throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
+      }
+      this.incrementChangeSequence();
+    });
+    const structure = this.getStructure(id);
+    if (!structure) throw new RvwError("DATABASE_ERROR", "更新したStructureを読み出せません。");
+    return structure;
+  }
+
+  getStructureDeleteCounts(id: string): StructureDeleteCounts {
+    const structure = this.getStructure(id);
+    if (!structure) throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
+    return {
+      nodes: structure.nodes.length,
+      edges: structure.edges.length,
+      anchors:
+        structure.nodes.filter((node) => node.anchor !== null).length +
+        structure.edges.reduce((count, edge) => count + edge.anchors.length, 0),
+    };
+  }
+
+  deleteStructure(id: string): DeletedStructure {
+    return this.immediateTransaction(() => {
+      const structure = this.getStructure(id);
+      if (!structure) {
+        throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
+      }
+      const counts = this.getStructureDeleteCounts(id);
+      this.database.prepare("DELETE FROM structures WHERE id = ?").run(id);
+      this.incrementChangeSequence();
+      return {
+        id: structure.id,
+        ref: structure.ref,
+        pullRequestId: structure.pullRequestId,
+        counts,
+      };
+    });
   }
 
   private codeReferenceStorage(kind: "comment-post" | "walkthrough"): {

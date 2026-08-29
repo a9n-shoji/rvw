@@ -26,6 +26,9 @@ export function sameReadingDocument(left: ActiveDocument, right: ActiveDocument)
   if (left.kind === "walkthrough" || right.kind === "walkthrough") {
     return left.kind === "walkthrough" && right.kind === "walkthrough" && left.id === right.id;
   }
+  if (left.kind === "structure" || right.kind === "structure") {
+    return left.kind === "structure" && right.kind === "structure" && left.id === right.id;
+  }
   return (
     left.path === right.path &&
     left.oldPath === right.oldPath &&
@@ -111,6 +114,13 @@ function parseDocument(value: unknown): ActiveDocument | null {
           title: value.title,
           sourceOid: value.sourceOid,
         }
+      : null;
+  }
+  if (value.kind === "structure") {
+    return typeof value.id === "string" &&
+      typeof value.title === "string" &&
+      typeof value.sourceOid === "string"
+      ? { kind: "structure", id: value.id, title: value.title, sourceOid: value.sourceOid }
       : null;
   }
   if (

@@ -17,6 +17,7 @@ export interface ReferenceDocumentContext {
 export type ActiveDocument =
   | { kind: "pull-request-markdown" }
   | { kind: "walkthrough"; id: string; title: string; sourceOid: string }
+  | { kind: "structure"; id: string; title: string; sourceOid: string }
   | {
       kind: "repository-file";
       path: string;
@@ -46,6 +47,7 @@ const initialDocument: ActiveDocument = { kind: "pull-request-markdown" };
 export function documentTabKey(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "pull-request-markdown";
   if (document.kind === "walkthrough") return `walkthrough:${document.id}`;
+  if (document.kind === "structure") return `structure:${document.id}`;
   return `file:${document.path}`;
 }
 
@@ -56,6 +58,7 @@ export function documentPaneTabKey(paneId: DocumentPaneId, document: ActiveDocum
 export function documentTabPath(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "Pull Request.md";
   if (document.kind === "walkthrough") return document.title;
+  if (document.kind === "structure") return document.title;
   return document.path;
 }
 
@@ -254,7 +257,7 @@ export function removeDocumentFromWorkspace(
 
 export function currentCommitDocument(document: ActiveDocument): ActiveDocument {
   if (document.kind === "pull-request-markdown") return { kind: "pull-request-markdown" };
-  if (document.kind === "walkthrough") return document;
+  if (document.kind === "walkthrough" || document.kind === "structure") return document;
   if (document.comparisonPolicy === "reference-target") return document;
   return { kind: "repository-file", path: document.path };
 }

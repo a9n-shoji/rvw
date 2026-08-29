@@ -12,6 +12,9 @@ export {
   commentPostEditInputSchema,
   commentReplyInputSchema,
   pullRequestSyncInputSchema,
+  sourceAnchorInputSchema,
+  structurePublishInputSchema,
+  structureUpdateInputSchema,
   walkthroughPublishInputSchema,
   walkthroughUpdateInputSchema,
 } from "../application/agent-command-schemas.js";
