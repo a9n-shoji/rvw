@@ -4,6 +4,8 @@ export type DocumentPaneId = "left" | "right";
 
 export interface ReferenceDocumentContext {
   outcome: "latest" | "source-fallback";
+  walkthroughId: string;
+  referenceId: string;
   anchorSourceOid: string;
   latestHeadOid: string;
   diffBaseOid: string | null;

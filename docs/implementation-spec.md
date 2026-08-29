@@ -299,9 +299,10 @@ empty fileは従来どおり明示的に扱う。
 - Walkthrough reference、repository Markdownの相対link、comment targetを開いても、repository全体の
   commit範囲、全文／変更、stacked / split、tree modeを変更しない。Walkthrough referenceはclick時に
   `sourceOid + path + line range`から最新`latestHeadOid`へ直接解決し、成功すれば最新commit、失敗すれば
-  `sourceOid`を対象にする。全文では対象commitのfull file、変更では対象commitのdiffを表示し、現在の
-  全文／変更とstacked / split設定を切り替えない。対象commitでfileに差分がなければ通常の
-  `差分なし · 全文表示`を使う。repository Markdownの相対linkとcomment targetはglobal表示が変更でも、
+  `sourceOid`を対象にする。全文では対象commitのfull fileを表示する。latest解決後の変更表示は
+  reference解決と独立して、top barのglobalな`effectiveOldOid → selectedOid`を使う。anchor fallbackだけは
+  参照時点を明示したうえでsource commitの比較を使う。現在の全文／変更とstacked / split設定は切り替えず、
+  global比較でfileに差分がなければ通常の`差分なし · 全文表示`を使う。repository Markdownの相対linkとcomment targetはglobal表示が変更でも、
   そのpaneだけretained exact sourceの全文を表示する。Walkthrough referenceのfallbackでは
   `参照時点のコード · <short SHA>`と最新では変更済みであることを明示し、同一pathまたは明確なrename先が
   存在するときだけ、line対応を保証しない`最新のファイルを見る`を提供する。anchor commitまたはpathを
@@ -509,12 +510,15 @@ interface Walkthrough {
   Cmd/Ctrl+F、Cmd/Ctrl+P、Cmd/Ctrl+Shift+Fをparentの同じglobal shortcutへrelayする。
 - 人間がreferenceを選んだ時だけ、`sourceOid + path + line range`を最新`latestHeadOid`へ一度だけ直接
   mappingする。同一codeとして変更されず、連続かつ一意に追跡できるrange、または存在するfile-level
-  referenceだけを成功とする。`git diff --find-renames`で明確に検出できるrenameは新pathへ追従する。
+  referenceだけを成功とする。file-level referenceもlatest documentが`available`の場合だけ成功とし、
+  binary、too-large、missingは表示可能なanchorへfallbackする。`git diff --find-renames`で明確に検出できるrenameは新pathへ追従する。
   変更、重複候補、削除、読取不能など確実でない場合は推測せず`sourceOid`へfallbackし、途中commitや
   「成立していた最後のcommit」を探索しない。このnavigationはglobalなcommit範囲と表示controlを変更しない。
   anchor sourceのcommitまたはpathがmissingならtabを開かず一時chipでリンク切れを示し、通信や一時的な
   取得失敗はリンク切れと区別する。解決したline rangeは範囲全体を強調し、file-level referenceでは行を
   選択しない。解決結果は閲覧時の一時状態であり、DBへlatest/resolved OID、version、flagを保存しない。
+  解決後にPR headが進んだtabは旧headを無言で最新扱いせず、旧／新short SHAと`最新へ再解決`を表示する。
+  初期実装では閲覧位置を自動で置換せず、人間がactionを選んだ時だけ同じreference IDを再解決する。
 - 説明本文やdiagramはAgentのclaimであり、code referenceとGit objectが検証可能な根拠である。
 - 人間はstableなWalkthrough IDへ文書全体コメントを作成できるほか、render済みMarkdownの文字列を選択して
   parser由来のsource line rangeへコメントできる。Mermaidは生成SVG要素ではなく、元のfenced code block
@@ -1391,7 +1395,8 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
 10. Walkthroughを開いてもcode tabを自動で開かず、inline referenceまたはMermaid nodeを人間が
     選んだ時だけanchorから最新HEADへ直接mappingする。成功時はrenameとline shiftを含む最新位置、
     変更・曖昧・削除時は途中commitを探索せずanchorへfallbackし、説明tabを保持する。fallbackはshort SHA、
-    最新で変更済みの説明、利用可能な最新file actionを表示する。anchor missing時はtabを開かず一時的な
+    最新で変更済みの説明、利用可能な最新file actionを表示する。latest解決の変更表示はglobalなcommit
+    比較範囲を維持し、head更新後は旧／新SHAと再解決actionを表示する。anchor missing時はtabを開かず一時的な
     リンク切れchip、通信や一時的な取得失敗では区別したstatusを表示
 11. tabをdragまたはpane menuで左右へ移し、通常clickでreferenceを左pane、`Cmd` / `Ctrl`+clickで
     右paneへ開く。同じfileを参照している場合も左右に一つずつ保持し、参照先paneだけを指定行へ移動する

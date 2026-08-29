@@ -10,6 +10,8 @@ describe("document workspace commit rebinding", () => {
       comparisonPolicy: "reference-target",
       referenceContext: {
         outcome: "latest",
+        walkthroughId: "walkthrough",
+        referenceId: "reference",
         anchorSourceOid: "a".repeat(40),
         latestHeadOid: "c".repeat(40),
         diffBaseOid: "b".repeat(40),

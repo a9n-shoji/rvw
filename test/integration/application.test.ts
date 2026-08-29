@@ -1112,6 +1112,7 @@ describe("RvwService commit workflow", () => {
     await service.refreshPullRequest(opened.pullRequest.id);
 
     const changedFiles = vi.spyOn(service.git, "changedFiles");
+    const firstParent = vi.spyOn(service.git, "firstParent");
     await expect(
       service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
     ).resolves.toMatchObject({
@@ -1121,10 +1122,10 @@ describe("RvwService commit workflow", () => {
       target: {
         sourceOid: latestHead,
         path: "src.txt",
-        diffBaseOid: firstHead,
+        diffBaseOid: null,
         oldPath: "src.txt",
         newPath: "src.txt",
-        hasDiff: true,
+        hasDiff: false,
         startLine: 3,
         endLine: 3,
       },
@@ -1135,6 +1136,8 @@ describe("RvwService commit workflow", () => {
       },
     });
     expect(changedFiles).toHaveBeenCalledWith(expect.any(String), firstHead, latestHead);
+    expect(changedFiles).toHaveBeenCalledTimes(1);
+    expect(firstParent).not.toHaveBeenCalled();
   });
 
   it("falls back to the anchor and offers the latest file when the range changed", async () => {
@@ -1173,10 +1176,63 @@ describe("RvwService commit workflow", () => {
       latestFile: {
         sourceOid: latestHead,
         path: "src.txt",
-        diffBaseOid: firstHead,
-        hasDiff: true,
+        diffBaseOid: null,
+        hasDiff: false,
       },
       document: {
+        ref: { sourceOid: firstHead, path: "src.txt" },
+        text: "first\nsecond\n",
+      },
+    });
+  });
+
+  it.each([
+    ["binary", Buffer.from([0, 1, 2, 3])],
+    ["too-large", "x".repeat(1024 * 1024 + 1)],
+  ])("falls back for a file-level reference when latest is %s", async (availability, content) => {
+    const { repository, firstHead, fake, service } = setup(
+      `rvw-walkthrough-reference-${availability}-`,
+    );
+    const opened = await service.openPullRequest(undefined, repository);
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "File-level fallback",
+      body: "Inspect [the source file](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "source file",
+          path: "src.txt",
+          startLine: null,
+          endLine: null,
+          description: null,
+        },
+      ],
+    });
+    writeFileSync(path.join(repository, "src.txt"), content);
+    git(repository, "add", "--", "src.txt");
+    git(repository, "commit", "-m", `make source ${availability}`);
+    const latestHead = git(repository, "rev-parse", "HEAD");
+    fake.pullRequest = { ...fake.pullRequest, headOid: latestHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    await expect(
+      service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
+    ).resolves.toMatchObject({
+      outcome: "source-fallback",
+      target: {
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: null,
+        endLine: null,
+      },
+      latestFile: {
+        sourceOid: latestHead,
+        path: "src.txt",
+      },
+      document: {
+        availability: "available",
         ref: { sourceOid: firstHead, path: "src.txt" },
         text: "first\nsecond\n",
       },
@@ -1215,10 +1271,10 @@ describe("RvwService commit workflow", () => {
       target: {
         sourceOid: latestHead,
         path: "renamed.txt",
-        diffBaseOid: firstHead,
-        oldPath: "src.txt",
+        diffBaseOid: null,
+        oldPath: "renamed.txt",
         newPath: "renamed.txt",
-        hasDiff: true,
+        hasDiff: false,
         startLine: 1,
         endLine: 2,
       },

@@ -1542,7 +1542,7 @@ export class RvwService {
     return walkthrough;
   }
 
-  private async walkthroughReferenceFileTarget(
+  private async walkthroughReferenceFallbackTarget(
     pullRequest: PullRequest,
     sourceOid: string,
     filePath: string,
@@ -1618,9 +1618,10 @@ export class RvwService {
               path: latestPath,
             });
     const latestFileExists = latestDocument !== null && latestDocument.availability !== "missing";
+    const latestFileDisplayable = latestDocument?.availability === "available";
     const mappedRange =
       reference.startLine === null || reference.endLine === null
-        ? latestFileExists
+        ? latestFileDisplayable
           ? null
           : undefined
         : sourceDocument.availability === "available" &&
@@ -1633,21 +1634,21 @@ export class RvwService {
             )
           : null;
     const resolvedToLatest =
-      latestFileExists &&
+      latestFileDisplayable &&
       (reference.startLine === null || reference.endLine === null || mappedRange !== null);
 
     if (resolvedToLatest && latestPath !== null && latestDocument !== null) {
-      const targetFile = await this.walkthroughReferenceFileTarget(
-        pullRequest,
-        latestHeadOid,
-        latestPath,
-      );
       return {
         outcome: "latest",
         anchorSourceOid: walkthrough.sourceOid,
         latestHeadOid,
         target: {
-          ...targetFile,
+          sourceOid: latestHeadOid,
+          path: latestPath,
+          diffBaseOid: null,
+          oldPath: latestPath,
+          newPath: latestPath,
+          hasDiff: false,
           startLine: mappedRange?.startLine ?? reference.startLine,
           endLine: mappedRange?.endLine ?? reference.endLine,
         },
@@ -1656,12 +1657,22 @@ export class RvwService {
       };
     }
 
-    const [targetFile, latestFile] = await Promise.all([
-      this.walkthroughReferenceFileTarget(pullRequest, walkthrough.sourceOid, reference.path),
+    const targetFile = await this.walkthroughReferenceFallbackTarget(
+      pullRequest,
+      walkthrough.sourceOid,
+      reference.path,
+    );
+    const latestFile =
       latestFileExists && latestPath !== null
-        ? this.walkthroughReferenceFileTarget(pullRequest, latestHeadOid, latestPath)
-        : Promise.resolve(null),
-    ]);
+        ? {
+            sourceOid: latestHeadOid,
+            path: latestPath,
+            diffBaseOid: null,
+            oldPath: latestPath,
+            newPath: latestPath,
+            hasDiff: false,
+          }
+        : null;
     return {
       outcome: "source-fallback",
       anchorSourceOid: walkthrough.sourceOid,

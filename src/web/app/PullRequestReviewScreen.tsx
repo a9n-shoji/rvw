@@ -80,6 +80,7 @@ import {
   type ActiveDocument,
   type DocumentPaneId,
   type DocumentWorkspaceState,
+  type ReferenceDocumentContext,
 } from "../document-workspace.js";
 import {
   clearCommentDraftsForPullRequest,
@@ -1955,12 +1956,14 @@ export function PullRequestReviewScreen({
     },
     [navigateToDocument, queryClient],
   );
-  const openWalkthroughReference = useCallback(
+  const resolveWalkthroughReference = useCallback(
     async (
-      walkthrough: Walkthrough,
-      reference: WalkthroughReference,
+      walkthroughId: string,
+      referenceId: string,
+      referencePath: string,
       targetPane: DocumentPaneId,
     ): Promise<string | null> => {
+      if (!pullRequestId) return `参照先を開けません · ${referencePath}`;
       codeReferenceRequestSequence.current[targetPane] += 1;
       const requestSequence = codeReferenceRequestSequence.current[targetPane];
       const targetNavigationRevision = documentWorkspaceRef.current.navigationRevision[targetPane];
@@ -1969,13 +1972,13 @@ export function PullRequestReviewScreen({
         documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
       try {
         const { resolution } = await api<WalkthroughReferenceResolutionResponse>(
-          `/api/pull-requests/${walkthrough.pullRequestId}/walkthroughs/${walkthrough.id}/references/${encodeURIComponent(reference.id)}/resolve`,
+          `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}/references/${encodeURIComponent(referenceId)}/resolve`,
         );
         if (!requestIsCurrent()) return null;
         if (resolution.document.availability !== "available") {
           return resolution.document.availability === "missing"
-            ? `リンク切れ · ${reference.path}`
-            : `参照先を表示できません · ${reference.path}`;
+            ? `リンク切れ · ${referencePath}`
+            : `参照先を表示できません · ${referencePath}`;
         }
         queryClient.setQueryData(["document", resolution.document.ref], resolution.document);
         const target = resolution.target;
@@ -1988,6 +1991,8 @@ export function PullRequestReviewScreen({
           comparisonPolicy: "reference-target",
           referenceContext: {
             outcome: resolution.outcome,
+            walkthroughId,
+            referenceId,
             anchorSourceOid: resolution.anchorSourceOid,
             latestHeadOid: resolution.latestHeadOid,
             diffBaseOid: target.diffBaseOid,
@@ -2013,11 +2018,20 @@ export function PullRequestReviewScreen({
         if (!requestIsCurrent()) return null;
         return error instanceof ApiError &&
           ["COMMIT_NOT_FOUND", "DOCUMENT_NOT_FOUND", "NOT_FOUND"].includes(error.code)
-          ? `リンク切れ · ${reference.path}`
-          : `参照先を開けません · ${reference.path}`;
+          ? `リンク切れ · ${referencePath}`
+          : `参照先を開けません · ${referencePath}`;
       }
     },
-    [navigateToDocument, queryClient],
+    [navigateToDocument, pullRequestId, queryClient],
+  );
+  const openWalkthroughReference = useCallback(
+    (
+      walkthrough: Walkthrough,
+      reference: WalkthroughReference,
+      targetPane: DocumentPaneId,
+    ): Promise<string | null> =>
+      resolveWalkthroughReference(walkthrough.id, reference.id, reference.path, targetPane),
+    [resolveWalkthroughReference],
   );
   const openWalkthroughReferenceFromInteraction = useCallback(
     (walkthrough: Walkthrough, reference: WalkthroughReference, openInRightPane: boolean) =>
@@ -2050,15 +2064,7 @@ export function PullRequestReviewScreen({
         oldPath: target.oldPath,
         newPath: target.newPath,
         sourceOid: target.sourceOid,
-        comparisonPolicy: "reference-target",
-        referenceContext: {
-          outcome: "latest",
-          anchorSourceOid: target.sourceOid,
-          latestHeadOid: target.sourceOid,
-          diffBaseOid: target.diffBaseOid,
-          hasDiff: target.hasDiff,
-          latestFile: null,
-        },
+        comparisonPolicy: "selected-range",
       };
       const activeTarget = documentWorkspaceRef.current.active[targetPane];
       navigateToDocument(
@@ -2069,6 +2075,20 @@ export function PullRequestReviewScreen({
       );
     },
     [navigateToDocument],
+  );
+  const reresolveWalkthroughReference = useCallback(
+    (
+      context: ReferenceDocumentContext,
+      referencePath: string,
+      targetPane: DocumentPaneId,
+    ): Promise<string | null> =>
+      resolveWalkthroughReference(
+        context.walkthroughId,
+        context.referenceId,
+        referencePath,
+        targetPane,
+      ),
+    [resolveWalkthroughReference],
   );
 
   if (pullRequestQuery.isLoading) {
@@ -2116,7 +2136,9 @@ export function PullRequestReviewScreen({
     Object.values(paneViewerStates).some(
       (state) =>
         state.viewerDocument?.kind === "repository-file" &&
-        (state.activeChange || state.viewerDocument.referenceContext?.hasDiff),
+        (state.activeChange ||
+          (state.viewerDocument.referenceContext?.outcome === "source-fallback" &&
+            state.viewerDocument.referenceContext.hasDiff)),
     ),
   );
   const actionError =
@@ -2140,11 +2162,18 @@ export function PullRequestReviewScreen({
       paneViewerDocument?.kind === "repository-file"
         ? paneViewerDocument.referenceContext
         : undefined;
+    const referenceUsesGlobalComparison =
+      referenceContext?.outcome === "latest" && paneViewerState.effectiveDisplayMode !== "full";
     const paneSelectedOid =
-      paneViewerDocument?.kind === "repository-file" && referenceContext
+      paneViewerDocument?.kind === "repository-file" &&
+      referenceContext &&
+      !referenceUsesGlobalComparison
         ? (paneViewerDocument.sourceOid ?? selectedOid)
         : selectedOid;
-    const paneOldOid = referenceContext ? referenceContext.diffBaseOid : effectiveOldOid;
+    const paneOldOid =
+      referenceContext?.outcome === "source-fallback"
+        ? referenceContext.diffBaseOid
+        : effectiveOldOid;
     return (
       <section
         ref={(element) => {
@@ -2261,6 +2290,7 @@ export function PullRequestReviewScreen({
                 key={`${reviewStateRevision}:${draftWorkspaceRevision}:${paneId}:${paneSelectedOid}:${paneOldOid ?? ""}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}:${paneViewerDocument.referenceContext?.latestHeadOid ?? ""}` : ""}`}
                 pullRequestId={pullRequest.id}
                 paneId={paneId}
+                latestHeadOid={pullRequest.latestHeadOid}
                 selectedOid={paneSelectedOid}
                 oldOid={paneOldOid}
                 activeDocument={paneViewerDocument}
@@ -2285,6 +2315,15 @@ export function PullRequestReviewScreen({
                 onOpenCodeReference={openCommentCodeReferenceFromInteraction}
                 onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
                 onOpenLatestReferenceFile={(target) => openLatestReferenceFile(target, paneId)}
+                onReresolveWalkthroughReference={(context) =>
+                  reresolveWalkthroughReference(
+                    context,
+                    paneViewerDocument.kind === "repository-file"
+                      ? paneViewerDocument.path
+                      : "Pull Request.md",
+                    paneId,
+                  )
+                }
               />
             </Suspense>
           </LazyLoadBoundary>

@@ -1005,17 +1005,6 @@ app.get(
       );
     }
     const latestHeadOid = currentView().headOid;
-    const commits = currentView().commits;
-    const latestCommit = commits.find((candidate) => candidate.oid === latestHeadOid);
-    const diffBaseOid = latestCommit?.parentOids[0] ?? null;
-    const hasDiff = repositoryDemo
-      ? Boolean(
-          diffBaseOid &&
-          repositoryDemo
-            .changedFiles(diffBaseOid, latestHeadOid)
-            .some((change) => change.newPath === reference.path),
-        )
-      : ["src/fixture.ts", "README.md"].includes(reference.path);
     const ref = {
       kind: "repository-file",
       pullRequestId,
@@ -1031,10 +1020,10 @@ app.get(
         target: {
           sourceOid: latestHeadOid,
           path: reference.path,
-          diffBaseOid,
+          diffBaseOid: null,
           oldPath: reference.path,
           newPath: reference.path,
-          hasDiff,
+          hasDiff: false,
           startLine: reference.startLine,
           endLine: reference.endLine,
         },

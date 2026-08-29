@@ -45,7 +45,11 @@ import {
   readCommentDraft,
   writeCommentDraft,
 } from "../comment-draft-store.js";
-import type { ActiveDocument, DocumentPaneId } from "../document-workspace.js";
+import type {
+  ActiveDocument,
+  DocumentPaneId,
+  ReferenceDocumentContext,
+} from "../document-workspace.js";
 import { fileContentsForRenderer } from "../file-rendering.js";
 import {
   api,
@@ -713,6 +717,7 @@ function Unavailable({
 export function DocumentViewer({
   pullRequestId,
   paneId,
+  latestHeadOid,
   selectedOid,
   oldOid,
   activeDocument,
@@ -730,9 +735,11 @@ export function DocumentViewer({
   onOpenCodeReference,
   onOpenRepositoryLink,
   onOpenLatestReferenceFile,
+  onReresolveWalkthroughReference,
 }: {
   pullRequestId: string;
   paneId: DocumentPaneId;
+  latestHeadOid: string;
   selectedOid: string;
   oldOid: string | null;
   activeDocument: ActiveDocument;
@@ -754,6 +761,7 @@ export function DocumentViewer({
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onOpenLatestReferenceFile: (target: WalkthroughReferenceFileTarget) => void;
+  onReresolveWalkthroughReference: (context: ReferenceDocumentContext) => Promise<string | null>;
 }) {
   if (activeDocument.kind === "walkthrough") {
     throw new Error("walkthroughはWalkthroughViewerで表示してください。");
@@ -767,6 +775,8 @@ export function DocumentViewer({
   const [markdownView, setMarkdownViewState] = useState<"source" | "preview">(
     () => markdownViewByDocument.get(activeMarkdownViewKey) ?? "preview",
   );
+  const [referenceResolutionPending, setReferenceResolutionPending] = useState(false);
+  const [referenceResolutionError, setReferenceResolutionError] = useState<string | null>(null);
   const setMarkdownView = (view: "source" | "preview"): void => {
     markdownViewByDocument.set(activeMarkdownViewKey, view);
     setMarkdownViewState(view);
@@ -1798,9 +1808,42 @@ export function DocumentViewer({
     activeDocument.referenceContext?.outcome === "source-fallback"
       ? activeDocument.referenceContext
       : null;
+  const staleReference =
+    activeDocument.kind === "repository-file" &&
+    activeDocument.referenceContext &&
+    activeDocument.referenceContext.latestHeadOid !== latestHeadOid
+      ? activeDocument.referenceContext
+      : null;
+  const reresolveReference = async (context: ReferenceDocumentContext): Promise<void> => {
+    setReferenceResolutionPending(true);
+    setReferenceResolutionError(null);
+    const error = await onReresolveWalkthroughReference(context);
+    setReferenceResolutionPending(false);
+    setReferenceResolutionError(error);
+  };
   return (
     <div className="document-viewer">
       <ErrorNotice error={annotationQuery.error} />
+      {staleReference && (
+        <div className="reference-fallback-banner reference-stale-banner" role="status">
+          <div>
+            <strong>
+              表示中 {staleReference.latestHeadOid.slice(0, 8)} ≠ 最新 {latestHeadOid.slice(0, 8)}
+            </strong>
+            <span>
+              このコード参照はPR更新前に解決されています。
+              {referenceResolutionError ? ` ${referenceResolutionError}` : ""}
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={referenceResolutionPending}
+            onClick={() => void reresolveReference(staleReference)}
+          >
+            {referenceResolutionPending ? "再解決中…" : "最新へ再解決"}
+          </button>
+        </div>
+      )}
       {referenceFallback && (
         <div className="reference-fallback-banner" role="status">
           <div>

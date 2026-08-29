@@ -36,9 +36,12 @@ export function deriveDocumentViewerState(
   const usesSelectedRange =
     document?.kind === "repository-file" &&
     document.comparisonPolicy !== "exact-source" &&
-    document.comparisonPolicy !== "reference-target";
-  const usesReferenceTarget =
-    document?.kind === "repository-file" && document.comparisonPolicy === "reference-target";
+    (document.comparisonPolicy !== "reference-target" ||
+      document.referenceContext?.outcome === "latest");
+  const usesFallbackReferenceTarget =
+    document?.kind === "repository-file" &&
+    document.comparisonPolicy === "reference-target" &&
+    document.referenceContext?.outcome === "source-fallback";
   const activeChange = usesSelectedRange
     ? context.changedFiles?.find((candidate) => {
         const path = changedFilePath(candidate);
@@ -55,7 +58,8 @@ export function deriveDocumentViewerState(
     document.comparisonPolicy === "exact-source";
   const referenceSourceOid = document?.kind === "repository-file" ? document.sourceOid : undefined;
   const referenceSourceDiffers =
-    !usesReferenceTarget &&
+    document?.kind === "repository-file" &&
+    document.comparisonPolicy !== "reference-target" &&
     referenceSourceOid !== undefined &&
     referenceSourceOid !== context.selectedOid;
   const selectedRangeFullFallback =
@@ -65,7 +69,7 @@ export function deriveDocumentViewerState(
     !activeChange;
   const referenceTargetFullFallback =
     context.documentDisplayMode !== "full" &&
-    usesReferenceTarget &&
+    usesFallbackReferenceTarget &&
     document.referenceContext?.hasDiff === false;
   const showingFullFallback =
     (context.documentDisplayMode !== "full" && document?.kind === "pull-request-markdown") ||

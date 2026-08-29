@@ -291,10 +291,9 @@ test("keeps agent explanation passive until a human opens a current code referen
   await expect(handlerTab).toBeVisible();
 });
 
-test("opens latest full text for an unchanged file from a historical Walkthrough anchor", async ({
-  page,
-}) => {
+test("uses the global PR comparison for a latest Walkthrough reference", async ({ page }) => {
   const historicalWalkthroughOid = "b".repeat(40);
+  const referencePath = "src/bootstrap/application.ts";
   await page.route("**/api/pull-requests/*/walkthroughs**", async (route) => {
     const response = await route.fetch();
     const body = (await response.json()) as {
@@ -313,6 +312,18 @@ test("opens latest full text for an unchanged file from a historical Walkthrough
     }
     await route.fulfill({ response, json: body });
   });
+  await page.route("**/api/pull-requests/*/changed-files?*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { files: Array<Record<string, unknown>> };
+    body.files.push({
+      kind: "modified",
+      status: "M",
+      similarity: null,
+      oldPath: referencePath,
+      newPath: referencePath,
+    });
+    await route.fulfill({ response, json: body });
+  });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
   const displayDiffButton = reviewScope.getByRole("button", { name: "変更", exact: true });
@@ -324,22 +335,29 @@ test("opens latest full text for an unchanged file from a historical Walkthrough
     const url = new URL(request.url());
     return url.pathname.includes("/references/") && url.pathname.endsWith("/resolve");
   });
+  const diffRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname.endsWith("/diff") && url.searchParams.get("newPath") === referencePath;
+  });
   await page
     .locator(".walkthrough-markdown .walkthrough-inline-reference")
     .filter({ hasText: "application composition" })
     .click();
   await resolutionRequest;
+  const requestedDiff = new URL((await diffRequest).url());
 
-  await expect(page.getByRole("tab", { name: "src/bootstrap/application.ts" })).toHaveAttribute(
+  expect(requestedDiff.searchParams.get("oldOid")).toBe("a".repeat(40));
+  expect(requestedDiff.searchParams.get("newOid")).toBe("c".repeat(40));
+  await expect(page.getByRole("tab", { name: referencePath })).toHaveAttribute(
     "aria-selected",
     "true",
   );
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByText("差分なし · 全文表示", { exact: true })).toBeVisible();
+  await expect(page.getByText("差分なし · 全文表示", { exact: true })).toHaveCount(0);
   await expect(page.locator(".reference-fallback-banner")).toHaveCount(0);
-  await expect(page.getByText("export const application = {", { exact: true })).toBeVisible();
-  await expect(reviewScope.getByRole("button", { name: "stacked", exact: true })).toBeDisabled();
-  await expect(reviewScope.getByRole("button", { name: "split", exact: true })).toBeDisabled();
+  await expect(page.locator('.document-pane[data-pane="left"] diffs-container')).toBeVisible();
+  await expect(reviewScope.getByRole("button", { name: "stacked", exact: true })).toBeEnabled();
+  await expect(reviewScope.getByRole("button", { name: "split", exact: true })).toBeEnabled();
 });
 
 test("shows an explicit anchor fallback and opens the latest file without a line promise", async ({
@@ -413,6 +431,108 @@ test("shows an explicit anchor fallback and opens the latest file without a line
   await expect(
     page.locator('.document-pane[data-pane="left"] diffs-container'),
   ).not.toHaveAttribute("data-search-target-line");
+});
+
+test("marks an open reference stale after a head update and re-resolves it on demand", async ({
+  page,
+  request,
+}) => {
+  type TestPullRequestView = {
+    pullRequest: { latestHeadOid: string } & Record<string, unknown>;
+    comparisonBaseOid: string;
+    headOid: string;
+    commits: Array<{
+      oid: string;
+      parentOids: string[];
+      subject: string;
+      authorName: string;
+      authoredAt: string;
+    }>;
+  };
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
+  await page
+    .locator(".walkthrough-markdown .walkthrough-inline-reference")
+    .filter({ hasText: "application composition" })
+    .click();
+  await expect(page.getByRole("tab", { name: "src/bootstrap/application.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  const currentResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  const current = (await currentResponse.json()) as TestPullRequestView;
+  const oldHead = current.headOid;
+  const newHead = "e".repeat(40);
+  const withNewHead = <View extends TestPullRequestView>(view: View): View => ({
+    ...view,
+    pullRequest: { ...view.pullRequest, latestHeadOid: newHead },
+    headOid: newHead,
+    commits: [
+      ...view.commits,
+      {
+        oid: newHead,
+        parentOids: [oldHead],
+        subject: "Post-reference update",
+        authorName: "Fixture Author",
+        authoredAt: "2026-08-08T03:00:00.000Z",
+      },
+    ],
+  });
+
+  let exposeNewHead = false;
+  await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
+    const response = await route.fetch();
+    const view = (await response.json()) as TestPullRequestView;
+    await route.fulfill({ response, json: exposeNewHead ? withNewHead(view) : view });
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    const response = await route.fetch();
+    const view = (await response.json()) as TestPullRequestView & {
+      commentUpdatesApplied: number;
+    };
+    exposeNewHead = true;
+    await route.fulfill({ response, json: withNewHead(view) });
+  });
+  await page.route("**/references/*/resolve", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        latestHeadOid: string;
+        target: { sourceOid: string; diffBaseOid: string | null };
+        document: { ref: { sourceOid: string } };
+      };
+    };
+    if (exposeNewHead) {
+      body.resolution.latestHeadOid = newHead;
+      body.resolution.target.sourceOid = newHead;
+      body.resolution.target.diffBaseOid = oldHead;
+      body.resolution.document.ref.sourceOid = newHead;
+    }
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "GitHubと同期" }).click();
+
+  const staleBanner = page.locator(".reference-stale-banner");
+  await expect(staleBanner).toContainText(
+    `表示中 ${oldHead.slice(0, 8)} ≠ 最新 ${newHead.slice(0, 8)}`,
+  );
+  const reresolution = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/resolve"),
+  );
+  await staleBanner.getByRole("button", { name: "最新へ再解決" }).click();
+  await reresolution;
+  await expect(staleBanner).toHaveCount(0);
 });
 
 test("keeps the PR range while switching a Walkthrough reference diff to split", async ({

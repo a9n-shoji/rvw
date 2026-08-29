@@ -69,6 +69,8 @@ describe("reading history", () => {
       comparisonPolicy: "reference-target" as const,
       referenceContext: {
         outcome: "source-fallback" as const,
+        walkthroughId: "walkthrough",
+        referenceId: "reference",
         anchorSourceOid: "a".repeat(40),
         latestHeadOid: "c".repeat(40),
         diffBaseOid: "0".repeat(40),

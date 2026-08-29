@@ -21,17 +21,21 @@ latest code changed, and offer a line-unanchored latest-file action when the sam
 available.
 
 Do not inspect intermediate commits or search for a latest-valid revision. Keep Full versus Diff and
-stacked versus split as user display settings; the resolved target supplies the commit shown by that
-mode. Keep the result in browser-session state only. Do not add database columns, reference versions,
-resolved OIDs, or latest flags.
+stacked versus split as user display settings. Full shows the resolved latest snapshot. For a latest
+outcome, Diff remains the globally selected review comparison instead of silently substituting the
+latest commit's first-parent comparison. An anchor fallback keeps its explicit source comparison. Keep
+the result in browser-session state only. Do not add database columns, reference versions, resolved
+OIDs, or latest flags. If the Pull Request head later advances, identify the open result as stale and
+offer an explicit re-resolution action rather than silently changing a document under review.
 
 ### Trade-offs
 
 - Normal review navigation reaches current code while the anchor still guarantees a truthful fallback.
 - Conservative mapping intentionally falls back for edited or ambiguous code instead of guessing.
-- A direct source-to-head comparison and target-commit display metadata keep click cost independent of
-  Pull Request commit count, but a fallback can be older than an intermediate commit where the range
-  still happened to exist.
+- A direct source-to-head comparison keeps click cost independent of Pull Request commit count, but a
+  fallback can be older than an intermediate commit where the range still happened to exist.
+- Re-resolution is user-triggered so an explicit GitHub refresh does not unexpectedly replace an open
+  document or line position; until then the stale resolved head is visibly identified.
 - The latest-file action preserves access after a changed range, but deliberately makes no line-location
   promise.
 

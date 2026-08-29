@@ -72,16 +72,18 @@ describe("document viewer state", () => {
     );
   });
 
-  it("keeps a resolved Walkthrough reference on its target commit in changes mode", () => {
+  it("uses the selected global comparison for a latest Walkthrough reference", () => {
     const sourceOid = "c".repeat(40);
     const state = deriveDocumentViewerState(
       {
         kind: "repository-file",
-        path: "src/reference.ts",
+        path: "src/new.ts",
         sourceOid,
         comparisonPolicy: "reference-target",
         referenceContext: {
           outcome: "latest",
+          walkthroughId: "walkthrough",
+          referenceId: "reference",
           anchorSourceOid: "a".repeat(40),
           latestHeadOid: sourceOid,
           diffBaseOid: selectedOid,
@@ -92,10 +94,15 @@ describe("document viewer state", () => {
       context(),
     );
 
-    expect(state.activeChange).toBeUndefined();
+    expect(state.activeChange).toBe(changedFile);
     expect(state.effectiveDisplayMode).toBe("range");
     expect(state.fullViewNotice).toBeNull();
-    expect(state.viewerDocument).toMatchObject({ sourceOid, comparisonPolicy: "reference-target" });
+    expect(state.viewerDocument).toMatchObject({
+      sourceOid,
+      comparisonPolicy: "reference-target",
+      oldPath: "src/old.ts",
+      newPath: "src/new.ts",
+    });
   });
 
   it("shows the resolved target as full text locally when its commit has no file diff", () => {
@@ -107,6 +114,8 @@ describe("document viewer state", () => {
         comparisonPolicy: "reference-target",
         referenceContext: {
           outcome: "source-fallback",
+          walkthroughId: "walkthrough",
+          referenceId: "reference",
           anchorSourceOid: "a".repeat(40),
           latestHeadOid: "c".repeat(40),
           diffBaseOid: selectedOid,

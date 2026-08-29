@@ -118,7 +118,7 @@ viewerはこの流れのために次を提供します。
 
 ## Agentの説明を人間の順序で検証する
 
-外部Agentは`rvw-walkthrough` SkillとCLIを使い、実装説明を一つのcommitへ固定してrvwへ提示できます。
+外部Agentは`rvw-walkthrough` SkillとCLIを使い、実装説明を一つのsource commitをanchorとしてrvwへ提示できます。
 
 ```bash
 rvw walkthrough publish --stdin --json
@@ -130,7 +130,9 @@ path、指定された行範囲を検証します。publishしてもbrowserは�
 active tabやscroll位置も変わりません。人間がviewerのWalkthroughを開き、必要なreferenceを選んだ
 時だけ、`sourceOid`のanchorから最新PR headへcode位置を保守的に解決します。追跡できれば最新code、
 変更や曖昧さがあれば参照時点のcodeを明示して開き、行指定があれば解決した範囲全体を強調します。
-fallbackでは、同じfileまたは明確なrename先があればline保証なしで最新fileも開けます。通常clickは左ペイン、
+変更表示はtop barで選択中のPR比較範囲をそのまま使います。fallbackでは、同じfileまたは明確なrename先が
+あればline保証なしで最新fileも開けます。解決後にPR headが進んだ場合は旧／新SHAを示し、明示的に最新へ
+再解決できます。通常clickは左ペイン、
 `Cmd` / `Ctrl`を押しながら選べば右ペインへ開きます。説明tabは残るため、
 複数のclaimと実装を任意の順序・任意のタイミングで往復できます。
 

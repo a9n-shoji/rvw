@@ -73,6 +73,8 @@ function parseReferenceContext(value: unknown): ReferenceDocumentContext | null 
   if (
     !isRecord(value) ||
     (value.outcome !== "latest" && value.outcome !== "source-fallback") ||
+    typeof value.walkthroughId !== "string" ||
+    typeof value.referenceId !== "string" ||
     typeof value.anchorSourceOid !== "string" ||
     typeof value.latestHeadOid !== "string" ||
     !optionalNullableString(value.diffBaseOid) ||
@@ -84,6 +86,8 @@ function parseReferenceContext(value: unknown): ReferenceDocumentContext | null 
   if (value.latestFile !== null && latestFile === null) return null;
   return {
     outcome: value.outcome,
+    walkthroughId: value.walkthroughId,
+    referenceId: value.referenceId,
     anchorSourceOid: value.anchorSourceOid,
     latestHeadOid: value.latestHeadOid,
     diffBaseOid: value.diffBaseOid ?? null,
