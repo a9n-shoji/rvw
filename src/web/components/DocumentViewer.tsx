@@ -485,6 +485,7 @@ function MarkdownMermaidDiagram({
                 placement={placement}
                 markdownSourceOid={sourceOid}
                 themePreference={themePreference}
+                cancelDraftOnEscape
                 onActiveChange={onCommentActiveChange}
                 onOpenCodeReference={openReference}
                 onOpenRepositoryLink={onOpenRepositoryLink}
@@ -1536,32 +1537,32 @@ export function DocumentViewer({
     createMutation.mutate({ target, location, body });
   };
 
-  const createDiagramComment = async (
-    range: MarkdownSourceRange,
-    commentBody: string,
-  ): Promise<void> => {
-    const target =
-      fullRef.kind === "pull-request-markdown"
-        ? {
-            kind: "document" as const,
-            documentKind: "pull-request-markdown" as const,
-            startLine: range.startLine,
-            endLine: range.endLine,
-          }
-        : {
-            kind: "document" as const,
-            documentKind: "repository-file" as const,
-            sourceOid: fullRef.sourceOid,
-            path: fullRef.path,
-            startLine: range.startLine,
-            endLine: range.endLine,
-          };
-    await createMutation.mutateAsync({
-      target,
-      body: commentBody,
-      location: { mode: "full", lineNumber: range.endLine },
-    });
-  };
+  const createDiagramComment = useCallback(
+    async (range: MarkdownSourceRange, commentBody: string): Promise<void> => {
+      const target =
+        fullRef.kind === "pull-request-markdown"
+          ? {
+              kind: "document" as const,
+              documentKind: "pull-request-markdown" as const,
+              startLine: range.startLine,
+              endLine: range.endLine,
+            }
+          : {
+              kind: "document" as const,
+              documentKind: "repository-file" as const,
+              sourceOid: fullRef.sourceOid,
+              path: fullRef.path,
+              startLine: range.startLine,
+              endLine: range.endLine,
+            };
+      await createMutation.mutateAsync({
+        target,
+        body: commentBody,
+        location: { mode: "full", lineNumber: range.endLine },
+      });
+    },
+    [createMutation.mutateAsync, fullRef],
+  );
 
   const closeComposer = (): void => {
     createMutation.reset();

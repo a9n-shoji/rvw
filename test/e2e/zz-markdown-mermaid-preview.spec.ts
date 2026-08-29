@@ -150,7 +150,7 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
         endLine: 7,
       },
       body: [
-        "Existing diagram review with [fixture implementation](rvw-ref:fixture-source).",
+        "Existing diagram review with [fixture implementation](rvw-ref:fixture-source) and [single-line target](rvw-ref:single-line).",
         "",
         "```mermaid",
         "flowchart LR",
@@ -165,6 +165,13 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
           path: "src/fixture.ts",
           startLine: 1,
           endLine: 2,
+        },
+        {
+          id: "single-line",
+          label: "Single-line target",
+          path: "src/single-line.ts",
+          startLine: 42,
+          endLine: null,
         },
       ],
       authorLabel: "Codex · Expanded Mermaid",
@@ -188,6 +195,27 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
       return;
     }
     const path = url.searchParams.get("path");
+    if (path === "src/single-line.ts") {
+      const text = Array.from({ length: 50 }, (_, index) =>
+        index === 41 ? "const referencedLine = 42;" : `// context ${index + 1}`,
+      ).join("\n");
+      const sourceOid = url.searchParams.get("sourceOid") ?? headOid;
+      await route.fulfill({
+        json: {
+          ok: true,
+          document: {
+            ref: { kind: "repository-file", pullRequestId, sourceOid, path },
+            availability: "available",
+            text,
+            byteLength: Buffer.byteLength(text),
+            entryKind: "file",
+            normalizedLineEndings: false,
+            oid: "f".repeat(40),
+          },
+        },
+      });
+      return;
+    }
     if (path !== "README.md") {
       await route.continue();
       return;
@@ -242,6 +270,10 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
       "aria-pressed",
       "true",
     );
+    const commentsToggle = dialog.getByRole("button", { name: /Comments/ });
+    await expect(commentsToggle).toHaveAttribute("aria-pressed", "false");
+    await expect(dialog.getByRole("complementary", { name: "Diagram review" })).toHaveCount(0);
+    await commentsToggle.click();
     await expect(dialog.getByText("Existing diagram review", { exact: false })).toBeVisible();
 
     const reviewRail = dialog.getByRole("complementary", { name: "Diagram review" });
@@ -302,7 +334,6 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
       .toBe(true);
     await dialog.getByRole("button", { name: "Fit" }).click();
 
-    const commentsToggle = dialog.getByRole("button", { name: /Comments/ });
     await commentsToggle.click();
     await expect(dialog.getByRole("complementary", { name: "Diagram review" })).toHaveCount(0);
     await commentsToggle.click();
@@ -338,6 +369,14 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
     await expect(dialog.getByPlaceholder("返信を入力")).toHaveValue(
       "Draft survives reference peek",
     );
+    await dialog.getByRole("button", { name: /single-line target/i }).click();
+    await expect(dialog.getByText("src/single-line.ts", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("L42", { exact: true })).toBeVisible();
+    const singleLineExcerpt = dialog.getByLabel(/src\/single-line\.ts L42 のソース抜粋/);
+    await expect(singleLineExcerpt.locator('[data-line="42"]')).toContainText(
+      "const referencedLine = 42;",
+    );
+    await page.keyboard.press("Escape");
     await dialog.getByPlaceholder("返信を入力").press("Escape");
     await expect(dialog).toBeVisible();
     await expect(dialog.getByPlaceholder("返信を入力")).toHaveValue("");
@@ -358,6 +397,7 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
     await inlineDiagram.getByRole("button", { name: "Mermaid diagramを拡大" }).click();
     dialog = page.getByRole("dialog", { name: "Mermaid diagram" });
     await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: /Comments/ }).click();
 
     await dialog.getByRole("button", { name: /fixture implementation/i }).click();
     await expect(dialog.getByRole("button", { name: "← Comments" })).toBeVisible();
@@ -377,6 +417,7 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
     await inlineDiagram.getByRole("button", { name: "Mermaid diagramを拡大" }).click();
     dialog = page.getByRole("dialog", { name: "Mermaid diagram" });
     await expect(dialog).toBeVisible();
+    await dialog.getByRole("button", { name: /Comments/ }).click();
     await dialog.getByPlaceholder("返信を入力").fill("Expanded reply");
     await dialog.getByRole("button", { name: /から返信を送信/ }).click();
     await expect(dialog.getByText("Expanded reply", { exact: true })).toBeVisible();

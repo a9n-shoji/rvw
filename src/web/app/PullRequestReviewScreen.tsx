@@ -25,6 +25,7 @@ import type {
   Walkthrough,
   WalkthroughReference,
   WalkthroughReferenceFileTarget,
+  WalkthroughReferenceResolution,
   WalkthroughSummary,
 } from "../../domain/models.js";
 import {
@@ -60,6 +61,7 @@ import { QuickOpenPalette } from "../components/QuickOpenPalette.js";
 import { applyThemePreference, storeThemePreference, type ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
+import type { MermaidReferencePeekResolution } from "../components/MermaidExpandedView.js";
 import {
   commitRangeOldOid,
   earliestIncludedCommitOid,
@@ -1957,6 +1959,16 @@ export function PullRequestReviewScreen({
     },
     [navigateToDocument, queryClient],
   );
+  const fetchWalkthroughReferenceResolution = useCallback(
+    async (walkthroughId: string, referenceId: string): Promise<WalkthroughReferenceResolution> => {
+      if (!pullRequestId) throw new Error("Pull Requestが選択されていません。");
+      const { resolution } = await api<WalkthroughReferenceResolutionResponse>(
+        `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}/references/${encodeURIComponent(referenceId)}/resolve`,
+      );
+      return resolution;
+    },
+    [pullRequestId],
+  );
   const resolveWalkthroughReference = useCallback(
     async (
       walkthroughId: string,
@@ -1972,9 +1984,7 @@ export function PullRequestReviewScreen({
         requestSequence === codeReferenceRequestSequence.current[targetPane] &&
         documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
       try {
-        const { resolution } = await api<WalkthroughReferenceResolutionResponse>(
-          `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}/references/${encodeURIComponent(referenceId)}/resolve`,
-        );
+        const resolution = await fetchWalkthroughReferenceResolution(walkthroughId, referenceId);
         if (!requestIsCurrent()) return null;
         if (resolution.document.availability !== "available") {
           return resolution.document.availability === "missing"
@@ -2024,7 +2034,27 @@ export function PullRequestReviewScreen({
           : `参照先を開けません · ${referencePath}`;
       }
     },
-    [navigateToDocument, pullRequestId, queryClient],
+    [fetchWalkthroughReferenceResolution, navigateToDocument, pullRequestId, queryClient],
+  );
+  const resolveWalkthroughReferenceForPeek = useCallback(
+    async (
+      walkthrough: Walkthrough,
+      reference: WalkthroughReference,
+    ): Promise<MermaidReferencePeekResolution> => {
+      const resolution = await fetchWalkthroughReferenceResolution(walkthrough.id, reference.id);
+      const target = resolution.target;
+      return {
+        sourceOid: target.sourceOid,
+        reference: {
+          ...reference,
+          path: target.path,
+          startLine: target.startLine,
+          endLine: target.endLine,
+        },
+        document: resolution.document,
+      };
+    },
+    [fetchWalkthroughReferenceResolution],
   );
   const openWalkthroughReference = useCallback(
     (
@@ -2271,6 +2301,7 @@ export function PullRequestReviewScreen({
                 onCommentActiveChange={handleCommentActiveChange}
                 onActivateComment={activateSidebarComment}
                 onOpenReference={openWalkthroughReferenceFromInteraction}
+                onResolveReferenceForPeek={resolveWalkthroughReferenceForPeek}
                 onOpenCommentCodeReference={openCommentCodeReferenceFromInteraction}
                 onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
                 onDeleted={() => closeDocumentWithDrafts(paneViewerDocument, paneId)}

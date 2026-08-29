@@ -190,6 +190,7 @@ function CommentPostMarkdown({
                 markdownSourceOid={markdownSourceOid}
                 themePreference={themePreference}
                 mermaidReviewDisabled
+                cancelDraftOnEscape
                 onOpenCodeReference={openReference}
               />
             ),
@@ -232,6 +233,7 @@ export function CommentThread({
   onDeleted,
   onActiveChange,
   mermaidReviewDisabled = false,
+  cancelDraftOnEscape = false,
 }: {
   comment: ReviewComment;
   variant?: CommentThreadVariant;
@@ -253,6 +255,7 @@ export function CommentThread({
   onDeleted?: () => void;
   onActiveChange?: (commentId: string, active: boolean) => void;
   mermaidReviewDisabled?: boolean;
+  cancelDraftOnEscape?: boolean;
 }) {
   const queryClient = useQueryClient();
   const replyDraftKey = [variant, draftScope, comment.id].filter(Boolean).join(":");
@@ -726,7 +729,11 @@ export function CommentThread({
                       aria-label={post.isRoot ? "コメントを編集" : "返信を編集"}
                       onChange={(event) => setEditBody(event.target.value)}
                       onKeyDown={(event) => {
-                        if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+                        if (
+                          cancelDraftOnEscape &&
+                          event.key === "Escape" &&
+                          !event.nativeEvent.isComposing
+                        ) {
                           event.preventDefault();
                           event.stopPropagation();
                           setEditingPostId(null);
@@ -803,7 +810,11 @@ export function CommentThread({
                 });
               }}
               onKeyDown={(event) => {
-                if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+                if (
+                  cancelDraftOnEscape &&
+                  event.key === "Escape" &&
+                  !event.nativeEvent.isComposing
+                ) {
                   event.preventDefault();
                   event.stopPropagation();
                   const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);

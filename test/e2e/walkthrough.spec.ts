@@ -306,7 +306,12 @@ test("peeks a bound Mermaid node from the expanded diagram before opening it in 
   await expect(dialog).toBeVisible();
   const expandedNode = dialog.getByRole("button", { name: "Order.placeをコードで開く" });
   await expect(expandedNode).toBeVisible();
+  const peekResolutionRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname.includes("/references/") && url.pathname.endsWith("/resolve");
+  });
   await expandedNode.click();
+  await peekResolutionRequest;
 
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("src/domain/orders/order.ts", { exact: true })).toBeVisible();
@@ -2334,6 +2339,8 @@ test("keeps same-Walkthrough reply input isolated by pane and moves it with the 
     await expect(leftReply).toHaveValue("k");
     await expect(rightReply).toHaveValue("");
     await expect(leftReply).toBeFocused();
+    await leftReply.press("Escape");
+    await expect(leftReply).toHaveValue("k");
 
     await page
       .locator('.document-pane[data-pane="left"]')
@@ -2666,7 +2673,9 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   expect(await page.evaluate(() => "__rvwUnsafeCommentExecuted" in window)).toBe(false);
   const sidebarDiagram = sidebarMarkdown.locator(".comment-mermaid-shell");
   await sidebarDiagram.evaluate((element) => element.scrollIntoView({ block: "center" }));
-  await expect(sidebarDiagram.locator("svg")).toBeVisible();
+  await expect(
+    sidebarDiagram.getByRole("img", { name: "Mermaid diagram" }).locator("svg"),
+  ).toBeVisible();
   await expect(sidebarDiagram.locator("[data-walkthrough-reference-id]")).toHaveCount(0);
 
   const commitPicker = page.getByRole("button", { name: /^対象commit:/ });

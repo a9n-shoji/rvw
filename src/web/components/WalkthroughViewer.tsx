@@ -57,7 +57,10 @@ import {
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import { PreviewMarkdownTable } from "./MarkdownTable.js";
 import { MermaidDiagram as ExpandableMermaidDiagram } from "./MermaidDiagram.js";
-import type { MermaidCodeReferenceOpen } from "./MermaidExpandedView.js";
+import type {
+  MermaidCodeReferenceOpen,
+  MermaidReferencePeekResolution,
+} from "./MermaidExpandedView.js";
 import { MermaidSurface } from "./MermaidSurface.js";
 import { WalkthroughHtmlPreview } from "./WalkthroughHtmlPreview.js";
 import { WalkthroughIcon } from "./WalkthroughPanel.js";
@@ -175,6 +178,7 @@ function WalkthroughMermaidDiagram({
           sourceOid: reviewContext.sourceOid,
           onRendered: prepareSvg,
           referenceFromTarget,
+          resolveForPeek: reviewContext.onResolveReferenceForPeek,
           onOpenInReview: onOpenReference,
         },
         renderComments: (openReference: MermaidCodeReferenceOpen) => (
@@ -191,6 +195,7 @@ function WalkthroughMermaidDiagram({
                 placement={placement}
                 markdownSourceOid={reviewContext.sourceOid}
                 themePreference={themePreference}
+                cancelDraftOnEscape
                 onActiveChange={reviewContext.onCommentActiveChange}
                 onOpenCodeReference={openReference}
                 onOpenRepositoryLink={reviewContext.onOpenRepositoryLink}
@@ -318,6 +323,9 @@ interface MermaidMarkdownRenderContext {
   diagramCommentRange: MarkdownSourceRange | null;
   themePreference: ThemePreference;
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
+  onResolveReferenceForPeek: (
+    reference: WalkthroughReference,
+  ) => Promise<MermaidReferencePeekResolution>;
   onOpenCommentCodeReference: (
     sourceOid: string,
     reference: CodeReference,
@@ -479,6 +487,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   draftScope,
   themePreference,
   onOpenReference,
+  onResolveReferenceForPeek,
   onOpenCommentCodeReference,
   onOpenRepositoryLink,
   onCommentActiveChange,
@@ -504,6 +513,9 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   draftScope: string;
   themePreference: ThemePreference;
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
+  onResolveReferenceForPeek: (
+    reference: WalkthroughReference,
+  ) => Promise<MermaidReferencePeekResolution>;
   onOpenCommentCodeReference: (
     sourceOid: string,
     reference: CodeReference,
@@ -601,6 +613,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
         diagramCommentRange,
         themePreference,
         onOpenReference,
+        onResolveReferenceForPeek,
         onOpenCommentCodeReference,
         onOpenRepositoryLink,
         onCommentActiveChange,
@@ -674,6 +687,7 @@ export function WalkthroughViewer({
   onCommentActiveChange,
   onActivateComment,
   onOpenReference,
+  onResolveReferenceForPeek,
   onOpenCommentCodeReference,
   onOpenRepositoryLink,
   onDeleted,
@@ -692,6 +706,10 @@ export function WalkthroughViewer({
     reference: WalkthroughReference,
     openInRightPane: boolean,
   ) => Promise<string | null>;
+  onResolveReferenceForPeek: (
+    walkthrough: Walkthrough,
+    reference: WalkthroughReference,
+  ) => Promise<MermaidReferencePeekResolution>;
   onOpenCommentCodeReference: (
     sourceOid: string,
     reference: CodeReference,
@@ -778,6 +796,10 @@ export function WalkthroughViewer({
       });
     },
     [onOpenReference, walkthrough],
+  );
+  const resolveReferenceForPeek = useCallback(
+    (reference: WalkthroughReference) => onResolveReferenceForPeek(walkthrough, reference),
+    [onResolveReferenceForPeek, walkthrough],
   );
   useEffect(
     () => () => {
@@ -945,6 +967,7 @@ export function WalkthroughViewer({
       draftScope={replyDraftScope}
       themePreference={themePreference}
       onOpenReference={openReference}
+      onResolveReferenceForPeek={resolveReferenceForPeek}
       onOpenCommentCodeReference={onOpenCommentCodeReference}
       onOpenRepositoryLink={onOpenRepositoryLink}
       onCommentActiveChange={onCommentActiveChange}

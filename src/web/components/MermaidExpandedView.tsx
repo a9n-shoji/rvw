@@ -24,6 +24,12 @@ export type MermaidCodeReferenceOpen = (
   openInRightPane: boolean,
 ) => Promise<string | null>;
 
+export interface MermaidReferencePeekResolution {
+  sourceOid: string;
+  reference: CodeReference;
+  document: DocumentContent;
+}
+
 export interface MermaidReviewWorkspace {
   pullRequestId: string;
   commentCount: number;
@@ -33,6 +39,7 @@ export interface MermaidReviewWorkspace {
     sourceOid: string;
     onRendered: (container: HTMLDivElement) => void;
     referenceFromTarget: (target: EventTarget | null) => CodeReference | undefined;
+    resolveForPeek?: (reference: CodeReference) => Promise<MermaidReferencePeekResolution>;
     onOpenInReview: (reference: CodeReference, openInRightPane: boolean) => void;
   };
 }
@@ -45,6 +52,7 @@ interface DiagramSize {
 interface ReferencePeek {
   sourceOid: string;
   reference: CodeReference;
+  resolveForPeek?: (reference: CodeReference) => Promise<MermaidReferencePeekResolution>;
   onOpenInReview?: (reference: CodeReference, openInRightPane: boolean) => void;
 }
 
@@ -84,7 +92,10 @@ function referenceLines(document: DocumentContent | undefined, reference: CodeRe
   if (document?.availability !== "available" || document.text === null) return null;
   const lines = document.text.split("\n");
   const referencedStart = reference.startLine ?? 1;
-  const referencedEnd = reference.endLine ?? Math.min(lines.length, 32);
+  const referencedEnd =
+    reference.startLine === null
+      ? Math.min(lines.length, 32)
+      : (reference.endLine ?? reference.startLine);
   const start = Math.max(1, referencedStart - referenceContextLines);
   const end = Math.min(lines.length, referencedEnd + referenceContextLines);
   return {
@@ -154,12 +165,14 @@ function ReferencePeekPanel({
     () => referenceLines(document, peek.reference),
     [document, peek.reference],
   );
+  const normalizedEndLine =
+    peek.reference.startLine === null ? null : (peek.reference.endLine ?? peek.reference.startLine);
   const lineLabel =
     peek.reference.startLine === null
       ? "File"
-      : peek.reference.startLine === peek.reference.endLine
+      : peek.reference.startLine === normalizedEndLine
         ? `L${peek.reference.startLine}`
-        : `L${peek.reference.startLine}–L${peek.reference.endLine}`;
+        : `L${peek.reference.startLine}–L${normalizedEndLine}`;
   useEffect(() => {
     backButtonRef.current?.focus();
   }, []);
@@ -318,7 +331,7 @@ export function MermaidExpandedView({
   const diagramReferenceBindingsRef = useRef(review?.diagramReferenceBindings);
   closeRef.current = onClose;
   diagramReferenceBindingsRef.current = review?.diagramReferenceBindings;
-  const [railOpen, setRailOpen] = useState(Boolean(review));
+  const [railOpen, setRailOpen] = useState(false);
   const [railWidth, setRailWidth] = useState(defaultRailWidth);
   const [resizingRail, setResizingRail] = useState(false);
   const [reference, setReference] = useState<ReferencePeek | null>(null);
@@ -397,20 +410,46 @@ export function MermaidExpandedView({
     );
     setRailWidth(clamp(bounds.right - clientX, minRailWidth, availableMax));
   }, []);
-  const referenceDocument = reference
-    ? ({
+  const referenceQuery = useQuery({
+    queryKey: [
+      "mermaid-reference-peek",
+      review?.pullRequestId,
+      reference?.sourceOid,
+      reference?.reference.id,
+      reference?.reference.path,
+      reference?.reference.startLine,
+      reference?.reference.endLine,
+      Boolean(reference?.resolveForPeek),
+    ],
+    queryFn: async (): Promise<MermaidReferencePeekResolution> => {
+      if (!reference || !review) throw new Error("参照先がありません。");
+      if (reference.resolveForPeek) {
+        return await reference.resolveForPeek(reference.reference);
+      }
+      const referenceDocument = {
         kind: "repository-file",
-        pullRequestId: review?.pullRequestId ?? "",
+        pullRequestId: review.pullRequestId,
         sourceOid: reference.sourceOid,
         path: reference.reference.path,
-      } as const)
-    : null;
-  const referenceQuery = useQuery({
-    queryKey: ["mermaid-reference-peek", referenceDocument],
-    queryFn: async () => (await api<DocumentResponse>(documentUrl(referenceDocument!))).document,
-    enabled: referenceDocument !== null && Boolean(review),
-    staleTime: Number.POSITIVE_INFINITY,
+      } as const;
+      const { document } = await api<DocumentResponse>(documentUrl(referenceDocument));
+      return {
+        sourceOid: reference.sourceOid,
+        reference: reference.reference,
+        document,
+      };
+    },
+    enabled: reference !== null && Boolean(review),
+    staleTime: reference?.resolveForPeek ? 0 : Number.POSITIVE_INFINITY,
   });
+  const displayedReference =
+    reference && referenceQuery.data
+      ? {
+          ...reference,
+          sourceOid: referenceQuery.data.sourceOid,
+          reference: referenceQuery.data.reference,
+        }
+      : reference;
   const openReference: MermaidCodeReferenceOpen = useCallback((sourceOid, codeReference) => {
     setRailOpen(true);
     setReference({ sourceOid, reference: codeReference });
@@ -424,6 +463,7 @@ export function MermaidExpandedView({
     setReference({
       sourceOid: bindings.sourceOid,
       reference: codeReference,
+      ...(bindings.resolveForPeek ? { resolveForPeek: bindings.resolveForPeek } : {}),
       onOpenInReview: bindings.onOpenInReview,
     });
     return true;
@@ -649,10 +689,10 @@ export function MermaidExpandedView({
                 }}
               />
               <aside className="mermaid-review-rail" aria-label="Diagram review">
-                {reference ? (
+                {reference && displayedReference ? (
                   <ReferencePeekPanel
-                    peek={reference}
-                    document={referenceQuery.data}
+                    peek={displayedReference}
+                    document={referenceQuery.data?.document}
                     loading={referenceQuery.isLoading}
                     error={referenceQuery.error}
                     onBack={showComments}
