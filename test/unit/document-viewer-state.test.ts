@@ -73,7 +73,7 @@ describe("document viewer state", () => {
   });
 
   it("uses the selected global comparison for a latest Walkthrough reference", () => {
-    const sourceOid = "c".repeat(40);
+    const sourceOid = selectedOid;
     const state = deriveDocumentViewerState(
       {
         kind: "repository-file",
@@ -103,6 +103,41 @@ describe("document viewer state", () => {
       oldPath: "src/old.ts",
       newPath: "src/new.ts",
     });
+  });
+
+  it("keeps latest full text when the global comparison ends at a historical commit", () => {
+    const sourceOid = "c".repeat(40);
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/new.ts",
+        sourceOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "latest",
+          walkthroughId: "walkthrough",
+          referenceId: "reference",
+          anchorSourceOid: "a".repeat(40),
+          latestHeadOid: sourceOid,
+          diffBaseOid: null,
+          hasDiff: false,
+          latestFile: null,
+        },
+      },
+      context(),
+    );
+
+    expect(state.activeChange).toBeUndefined();
+    expect(state.effectiveDisplayMode).toBe("full");
+    expect(state.fullViewNotice).toBe(
+      "選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示",
+    );
+    expect(state.viewerDocument).toMatchObject({
+      path: "src/new.ts",
+      sourceOid,
+      comparisonPolicy: "reference-target",
+    });
+    expect(state.viewerDocument).not.toHaveProperty("oldPath");
   });
 
   it("shows the resolved target as full text locally when its commit has no file diff", () => {

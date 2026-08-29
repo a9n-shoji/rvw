@@ -1828,7 +1828,7 @@ export function DocumentViewer({
         <div className="reference-fallback-banner reference-stale-banner" role="status">
           <div>
             <strong>
-              表示中 {staleReference.latestHeadOid.slice(0, 8)} ≠ 最新 {latestHeadOid.slice(0, 8)}
+              解決時 {staleReference.latestHeadOid.slice(0, 8)} → 現在 {latestHeadOid.slice(0, 8)}
             </strong>
             <span>
               このコード参照はPR更新前に解決されています。
@@ -1844,8 +1844,8 @@ export function DocumentViewer({
           </button>
         </div>
       )}
-      {referenceFallback && (
-        <div className="reference-fallback-banner" role="status">
+      {referenceFallback && !staleReference && (
+        <div className="reference-fallback-banner reference-anchor-fallback-banner" role="status">
           <div>
             <strong>参照時点のコード · {referenceFallback.anchorSourceOid.slice(0, 8)}</strong>
             <span>この参照箇所は最新コードでは変更されています。</span>

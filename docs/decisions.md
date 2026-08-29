@@ -23,10 +23,13 @@ available.
 Do not inspect intermediate commits or search for a latest-valid revision. Keep Full versus Diff and
 stacked versus split as user display settings. Full shows the resolved latest snapshot. For a latest
 outcome, Diff remains the globally selected review comparison instead of silently substituting the
-latest commit's first-parent comparison. An anchor fallback keeps its explicit source comparison. Keep
-the result in browser-session state only. Do not add database columns, reference versions, resolved
-OIDs, or latest flags. If the Pull Request head later advances, identify the open result as stale and
-offer an explicit re-resolution action rather than silently changing a document under review.
+latest commit's first-parent comparison, but only when that global comparison ends at the resolved
+latest head. A historical global range cannot safely use a path or line mapped at latest, so that pane
+shows the resolved latest full text and explains why. An anchor fallback keeps its explicit source
+comparison. Keep the result in browser-session state only. Do not add database columns, reference
+versions, resolved OIDs, or latest flags. If the Pull Request head later advances, identify the last
+resolved head as stale and offer an explicit re-resolution action rather than silently changing a
+document under review. While stale, suppress cached fallback claims and latest-file actions.
 
 ### Trade-offs
 

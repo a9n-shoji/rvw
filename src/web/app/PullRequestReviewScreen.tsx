@@ -2163,7 +2163,9 @@ export function PullRequestReviewScreen({
         ? paneViewerDocument.referenceContext
         : undefined;
     const referenceUsesGlobalComparison =
-      referenceContext?.outcome === "latest" && paneViewerState.effectiveDisplayMode !== "full";
+      referenceContext?.outcome === "latest" &&
+      referenceContext.latestHeadOid === selectedOid &&
+      paneViewerState.effectiveDisplayMode !== "full";
     const paneSelectedOid =
       paneViewerDocument?.kind === "repository-file" &&
       referenceContext &&

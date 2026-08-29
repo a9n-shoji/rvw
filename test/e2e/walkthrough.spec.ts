@@ -360,6 +360,67 @@ test("uses the global PR comparison for a latest Walkthrough reference", async (
   await expect(reviewScope.getByRole("button", { name: "split", exact: true })).toBeEnabled();
 });
 
+test("shows the resolved latest full text when the selected comparison is historical", async ({
+  page,
+}) => {
+  const latestMarker = "// resolved from the latest head";
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.route("**/references/wiring/resolve", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        target: { startLine: number | null; endLine: number | null };
+        document: { text: string | null; byteLength: number | null };
+      };
+    };
+    const text = `${latestMarker}\n${body.resolution.document.text ?? ""}`;
+    body.resolution.target.startLine = 1;
+    body.resolution.target.endLine = 1;
+    body.resolution.document.text = text;
+    body.resolution.document.byteLength = Buffer.byteLength(text);
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
+  const displayDiffButton = reviewScope.getByRole("button", { name: "変更", exact: true });
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await commitPicker.click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("option", { name: /Add fixture function/ })
+    .click();
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
+  await page
+    .locator(".walkthrough-markdown .walkthrough-inline-reference")
+    .filter({ hasText: "application composition" })
+    .click();
+
+  await expect(
+    page.getByText("選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByText(latestMarker, { exact: true })).toBeVisible();
+  await expect(page.locator('.document-pane[data-pane="left"] diffs-container')).toHaveAttribute(
+    "data-search-target-line",
+    "1",
+  );
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+});
+
 test("shows an explicit anchor fallback and opens the latest file without a line promise", async ({
   page,
 }) => {
@@ -437,6 +498,10 @@ test("marks an open reference stale after a head update and re-resolves it on de
   page,
   request,
 }) => {
+  const anchorOid = "b".repeat(40);
+  const oldHead = "c".repeat(40);
+  const newHead = "e".repeat(40);
+  let exposeNewHead = false;
   type TestPullRequestView = {
     pullRequest: { latestHeadOid: string } & Record<string, unknown>;
     comparisonBaseOid: string;
@@ -449,6 +514,58 @@ test("marks an open reference stale after a head update and re-resolves it on de
       authoredAt: string;
     }>;
   };
+  await page.route("**/references/*/resolve", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        outcome: "latest" | "source-fallback";
+        anchorSourceOid: string;
+        latestHeadOid: string;
+        target: {
+          sourceOid: string;
+          path: string;
+          diffBaseOid: string | null;
+          oldPath: string | null;
+          newPath: string | null;
+          hasDiff: boolean;
+        };
+        latestFile: {
+          sourceOid: string;
+          path: string;
+          diffBaseOid: string | null;
+          oldPath: string | null;
+          newPath: string | null;
+          hasDiff: boolean;
+        } | null;
+        document: { ref: { sourceOid: string } };
+      };
+    };
+    if (exposeNewHead) {
+      body.resolution.outcome = "latest";
+      body.resolution.latestHeadOid = newHead;
+      body.resolution.target.sourceOid = newHead;
+      body.resolution.target.diffBaseOid = null;
+      body.resolution.latestFile = null;
+      body.resolution.document.ref.sourceOid = newHead;
+    } else {
+      body.resolution.outcome = "source-fallback";
+      body.resolution.anchorSourceOid = anchorOid;
+      body.resolution.latestHeadOid = oldHead;
+      body.resolution.target.sourceOid = anchorOid;
+      body.resolution.target.diffBaseOid = "a".repeat(40);
+      body.resolution.target.hasDiff = true;
+      body.resolution.latestFile = {
+        sourceOid: oldHead,
+        path: body.resolution.target.path,
+        diffBaseOid: null,
+        oldPath: body.resolution.target.path,
+        newPath: body.resolution.target.path,
+        hasDiff: false,
+      };
+      body.resolution.document.ref.sourceOid = anchorOid;
+    }
+    await route.fulfill({ response, json: body });
+  });
   const initialRefresh = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return (
@@ -467,11 +584,11 @@ test("marks an open reference stale after a head update and re-resolves it on de
     "aria-selected",
     "true",
   );
+  await expect(page.getByRole("button", { name: "最新のファイルを見る" })).toBeVisible();
 
   const currentResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
   const current = (await currentResponse.json()) as TestPullRequestView;
-  const oldHead = current.headOid;
-  const newHead = "e".repeat(40);
+  expect(current.headOid).toBe(oldHead);
   const withNewHead = <View extends TestPullRequestView>(view: View): View => ({
     ...view,
     pullRequest: { ...view.pullRequest, latestHeadOid: newHead },
@@ -488,7 +605,6 @@ test("marks an open reference stale after a head update and re-resolves it on de
     ],
   });
 
-  let exposeNewHead = false;
   await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
     const response = await route.fetch();
     const view = (await response.json()) as TestPullRequestView;
@@ -502,31 +618,18 @@ test("marks an open reference stale after a head update and re-resolves it on de
     exposeNewHead = true;
     await route.fulfill({ response, json: withNewHead(view) });
   });
-  await page.route("**/references/*/resolve", async (route) => {
-    const response = await route.fetch();
-    const body = (await response.json()) as {
-      resolution: {
-        latestHeadOid: string;
-        target: { sourceOid: string; diffBaseOid: string | null };
-        document: { ref: { sourceOid: string } };
-      };
-    };
-    if (exposeNewHead) {
-      body.resolution.latestHeadOid = newHead;
-      body.resolution.target.sourceOid = newHead;
-      body.resolution.target.diffBaseOid = oldHead;
-      body.resolution.document.ref.sourceOid = newHead;
-    }
-    await route.fulfill({ response, json: body });
-  });
-
   await page.getByRole("button", { name: "その他の操作", exact: true }).click();
   await page.getByRole("menuitem", { name: "GitHubと同期" }).click();
 
   const staleBanner = page.locator(".reference-stale-banner");
   await expect(staleBanner).toContainText(
-    `表示中 ${oldHead.slice(0, 8)} ≠ 最新 ${newHead.slice(0, 8)}`,
+    `解決時 ${oldHead.slice(0, 8)} → 現在 ${newHead.slice(0, 8)}`,
   );
+  await expect(page.locator(".reference-anchor-fallback-banner")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "最新のファイルを見る" })).toHaveCount(0);
+  await expect(
+    page.getByText("この参照箇所は最新コードでは変更されています。", { exact: true }),
+  ).toHaveCount(0);
   const reresolution = page.waitForResponse((response) =>
     new URL(response.url()).pathname.endsWith("/resolve"),
   );

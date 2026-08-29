@@ -300,7 +300,9 @@ empty fileは従来どおり明示的に扱う。
   commit範囲、全文／変更、stacked / split、tree modeを変更しない。Walkthrough referenceはclick時に
   `sourceOid + path + line range`から最新`latestHeadOid`へ直接解決し、成功すれば最新commit、失敗すれば
   `sourceOid`を対象にする。全文では対象commitのfull fileを表示する。latest解決後の変更表示は
-  reference解決と独立して、top barのglobalな`effectiveOldOid → selectedOid`を使う。anchor fallbackだけは
+  `selectedOid === latestHeadOid`の場合だけ、reference解決と独立してtop barのglobalな
+  `effectiveOldOid → selectedOid`を使う。global比較がhistorical commitで終わる場合はlatestで解決したpathと
+  lineを別revisionへ適用せず、そのpaneだけlatest全文を表示して理由を明示する。anchor fallbackだけは
   参照時点を明示したうえでsource commitの比較を使う。現在の全文／変更とstacked / split設定は切り替えず、
   global比較でfileに差分がなければ通常の`差分なし · 全文表示`を使う。repository Markdownの相対linkとcomment targetはglobal表示が変更でも、
   そのpaneだけretained exact sourceの全文を表示する。Walkthrough referenceのfallbackでは
@@ -517,7 +519,8 @@ interface Walkthrough {
   anchor sourceのcommitまたはpathがmissingならtabを開かず一時chipでリンク切れを示し、通信や一時的な
   取得失敗はリンク切れと区別する。解決したline rangeは範囲全体を強調し、file-level referenceでは行を
   選択しない。解決結果は閲覧時の一時状態であり、DBへlatest/resolved OID、version、flagを保存しない。
-  解決後にPR headが進んだtabは旧headを無言で最新扱いせず、旧／新short SHAと`最新へ再解決`を表示する。
+  解決後にPR headが進んだtabは旧headを無言で最新扱いせず、`解決時 <old> → 現在 <new>`と
+  `最新へ再解決`を表示する。stale中は旧headに対するfallback説明と`最新のファイルを見る`を隠す。
   初期実装では閲覧位置を自動で置換せず、人間がactionを選んだ時だけ同じreference IDを再解決する。
 - 説明本文やdiagramはAgentのclaimであり、code referenceとGit objectが検証可能な根拠である。
 - 人間はstableなWalkthrough IDへ文書全体コメントを作成できるほか、render済みMarkdownの文字列を選択して
