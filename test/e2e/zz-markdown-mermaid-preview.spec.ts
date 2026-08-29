@@ -151,6 +151,7 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
       },
       body: [
         "Existing diagram review with [fixture implementation](rvw-ref:fixture-source) and [single-line target](rvw-ref:single-line).",
+        "Repository link: [fixture repository file](src/fixture.ts).",
         "",
         "```mermaid",
         "flowchart LR",
@@ -306,6 +307,31 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
     await expect
       .poll(async () => reviewRail.evaluate((rail) => rail.getBoundingClientRect().width))
       .toBeLessThan(railWidthAfterDrag);
+
+    const originalViewport = page.viewportSize();
+    expect(originalViewport).not.toBeNull();
+    for (let count = 0; count < 24; count += 1) await railResizeHandle.press("ArrowLeft");
+    await page.setViewportSize({ width: 900, height: originalViewport!.height });
+    const workspace = dialog.locator(".mermaid-expanded-workspace");
+    await expect
+      .poll(async () => {
+        const workspaceWidth = await workspace.evaluate(
+          (element) => element.getBoundingClientRect().width,
+        );
+        const currentRailWidth = await reviewRail.evaluate(
+          (rail) => rail.getBoundingClientRect().width,
+        );
+        return workspaceWidth - currentRailWidth;
+      })
+      .toBeGreaterThanOrEqual(365);
+    const constrainedRailWidth = await reviewRail.evaluate(
+      (rail) => rail.getBoundingClientRect().width,
+    );
+    await railResizeHandle.press("ArrowLeft");
+    await expect
+      .poll(async () => reviewRail.evaluate((rail) => rail.getBoundingClientRect().width))
+      .toBeLessThanOrEqual(constrainedRailWidth + 1);
+    await page.setViewportSize(originalViewport!);
 
     const fitWidth = await expandedSvg.evaluate((svg) => svg.getBoundingClientRect().width);
     await dialog.getByRole("button", { name: "Zoom in" }).click();
@@ -466,8 +492,20 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
         .getByRole("dialog", { name: "Mermaid diagram" })
         .getByRole("img", { name: "Expanded Mermaid diagram" }),
     ).toBeVisible();
+    const commentDialog = page.getByRole("dialog", { name: "Mermaid diagram" });
+    await commentDialog.getByRole("button", { name: /Comments/ }).click();
+    const repositoryLink = commentDialog.getByRole("link", {
+      name: "fixture repository file",
+    });
+    await expect(repositoryLink).toBeVisible();
+    await repositoryLink.click();
+    await expect(commentDialog).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog", { name: "Mermaid diagram" })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   } finally {
     if (createdCommentId) {
       expect((await request.delete(`/api/comments/${createdCommentId}`, { data: {} })).ok()).toBe(

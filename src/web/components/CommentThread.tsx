@@ -192,10 +192,18 @@ function CommentPostMarkdown({
                 mermaidReviewDisabled
                 cancelDraftOnEscape
                 onOpenCodeReference={openReference}
+                onOpenRepositoryLink={onOpenRepositoryLink}
               />
             ),
           },
-    [comment, markdownSourceOid, mermaidReviewDisabled, onOpenCodeReference, themePreference],
+    [
+      comment,
+      markdownSourceOid,
+      mermaidReviewDisabled,
+      onOpenCodeReference,
+      onOpenRepositoryLink,
+      themePreference,
+    ],
   );
   return (
     <>

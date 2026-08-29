@@ -1,4 +1,3 @@
-import { getFiletypeFromFileName, getSharedHighlighter } from "@pierre/diffs";
 import { useQuery } from "@tanstack/react-query";
 import {
   useCallback,
@@ -66,6 +65,13 @@ const railResizeHandleWidth = 6;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function availableRailMaxWidth(workspaceWidth: number): number {
+  return Math.max(
+    minRailWidth,
+    Math.min(maxRailWidth, workspaceWidth - minCanvasWidth - railResizeHandleWidth),
+  );
 }
 
 function focusableElements(root: HTMLElement): HTMLElement[] {
@@ -262,6 +268,7 @@ function HighlightedReferenceExcerpt({
     let active = true;
     setHighlightedHtml(null);
     const highlight = async (): Promise<void> => {
+      const { getFiletypeFromFileName, getSharedHighlighter } = await import("@pierre/diffs");
       const lang = getFiletypeFromFileName(path);
       const highlighter = await getSharedHighlighter({
         langs: [lang],
@@ -338,6 +345,7 @@ export function MermaidExpandedView({
   const [zoom, setZoom] = useState<"fit" | number>("fit");
   const [naturalSize, setNaturalSize] = useState<DiagramSize | null>(null);
   const [canvasSize, setCanvasSize] = useState<DiagramSize>({ width: 0, height: 0 });
+  const [workspaceWidth, setWorkspaceWidth] = useState(0);
   referenceRef.current = reference;
 
   useEffect(() => {
@@ -382,6 +390,22 @@ export function MermaidExpandedView({
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const workspace = workspaceRef.current;
+    if (!workspace) return;
+    const updateSize = (): void => setWorkspaceWidth(workspace.clientWidth);
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(workspace);
+    return () => observer.disconnect();
+  }, []);
+
+  const availableRailMax =
+    workspaceWidth > 0 ? availableRailMaxWidth(workspaceWidth) : maxRailWidth;
+  useEffect(() => {
+    setRailWidth((width) => clamp(width, minRailWidth, availableRailMax));
+  }, [availableRailMax]);
+
   const fitScale = naturalSize
     ? Math.min(
         1,
@@ -404,10 +428,7 @@ export function MermaidExpandedView({
     const workspace = workspaceRef.current;
     if (!workspace) return;
     const bounds = workspace.getBoundingClientRect();
-    const availableMax = Math.max(
-      minRailWidth,
-      Math.min(maxRailWidth, bounds.width - minCanvasWidth - railResizeHandleWidth),
-    );
+    const availableMax = availableRailMaxWidth(bounds.width);
     setRailWidth(clamp(bounds.right - clientX, minRailWidth, availableMax));
   }, []);
   const referenceQuery = useQuery({
@@ -648,7 +669,7 @@ export function MermaidExpandedView({
                 aria-label="Comments railの幅を変更"
                 aria-orientation="vertical"
                 aria-valuemin={minRailWidth}
-                aria-valuemax={maxRailWidth}
+                aria-valuemax={Math.round(availableRailMax)}
                 aria-valuenow={Math.round(railWidth)}
                 tabIndex={0}
                 onPointerDown={(event) => {
@@ -675,7 +696,9 @@ export function MermaidExpandedView({
                   setResizingRail(false);
                 }}
                 onLostPointerCapture={() => setResizingRail(false)}
-                onDoubleClick={() => setRailWidth(defaultRailWidth)}
+                onDoubleClick={() =>
+                  setRailWidth(clamp(defaultRailWidth, minRailWidth, availableRailMax))
+                }
                 onKeyDown={(event) => {
                   if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
                   event.preventDefault();
@@ -683,7 +706,7 @@ export function MermaidExpandedView({
                     clamp(
                       width + (event.key === "ArrowLeft" ? 16 : -16),
                       minRailWidth,
-                      maxRailWidth,
+                      availableRailMax,
                     ),
                   );
                 }}

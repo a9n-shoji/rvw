@@ -1,6 +1,11 @@
-import { useState, type ReactNode } from "react";
+import { lazy, Suspense, useState, type ReactNode } from "react";
 import type { ThemePreference } from "../theme.js";
-import { MermaidExpandedView, type MermaidReviewWorkspace } from "./MermaidExpandedView.js";
+import type { MermaidReviewWorkspace } from "./MermaidExpandedView.js";
+
+const MermaidExpandedView = lazy(async () => {
+  const module = await import("./MermaidExpandedView.js");
+  return { default: module.MermaidExpandedView };
+});
 
 function ExpandIcon() {
   return (
@@ -47,13 +52,15 @@ export function MermaidDiagram({
     <>
       {renderInline(expandButton)}
       {expanded && (
-        <MermaidExpandedView
-          source={source}
-          themePreference={themePreference}
-          renderIdPrefix={renderIdPrefix}
-          review={review}
-          onClose={() => setExpanded(false)}
-        />
+        <Suspense fallback={null}>
+          <MermaidExpandedView
+            source={source}
+            themePreference={themePreference}
+            renderIdPrefix={renderIdPrefix}
+            review={review}
+            onClose={() => setExpanded(false)}
+          />
+        </Suspense>
       )}
     </>
   );
