@@ -292,6 +292,59 @@ test("keeps agent explanation passive until a human opens a current code referen
   await expect(handlerTab).toBeVisible();
 });
 
+test("peeks a bound Mermaid node from the expanded diagram before opening it in review", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
+
+  const inlineNode = page.getByRole("button", { name: "Order.placeをコードで開く" });
+  const diagram = page.locator(".walkthrough-diagram-shell").filter({ has: inlineNode });
+  await diagram.getByRole("button", { name: "Mermaid diagramを拡大" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Mermaid diagram" });
+  await expect(dialog).toBeVisible();
+  const expandedNode = dialog.getByRole("button", { name: "Order.placeをコードで開く" });
+  await expect(expandedNode).toBeVisible();
+  await expandedNode.click();
+
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("src/domain/orders/order.ts", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Open in review" })).toBeVisible();
+  await dialog.getByRole("button", { name: "← Comments" }).click();
+  await expect(expandedNode).toBeVisible();
+
+  await expandedNode.click();
+  const resolutionRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname.includes("/references/") && url.pathname.endsWith("/resolve");
+  });
+  await dialog.getByRole("button", { name: "Open in review" }).click();
+  await resolutionRequest;
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "src/domain/orders/order.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  await page.getByRole("tab", { name: primaryWalkthrough }).click();
+  await diagram.getByRole("button", { name: "Mermaid diagramを拡大" }).click();
+  await expect(dialog).toBeVisible();
+  await expandedNode.click();
+  const rightPaneResolutionRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname.includes("/references/") && url.pathname.endsWith("/resolve");
+  });
+  await dialog.getByRole("button", { name: "Open in review" }).click({ modifiers: ["Meta"] });
+  await rightPaneResolutionRequest;
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page
+      .locator('.document-pane[data-pane="right"]')
+      .getByRole("tab", { name: "src/domain/orders/order.ts" }),
+  ).toHaveAttribute("aria-selected", "true");
+});
+
 test("uses the global PR comparison for a latest Walkthrough reference", async ({ page }) => {
   const historicalWalkthroughOid = "b".repeat(40);
   const referencePath = "src/bootstrap/application.ts";
@@ -1734,7 +1787,7 @@ test("keeps Markdown comment menus reachable across narrow viewports", async ({ 
 test("normalizes mixed Markdown selections and ignores comment UI text", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await openWalkthroughFromSidebar(page, markdownShowcase);
-  await expect(page.locator(".walkthrough-diagram-shell svg")).toHaveCount(2);
+  await expect(page.locator(".walkthrough-diagram > svg")).toBeVisible();
 
   const selectBetween = async (
     startSelector: string,
