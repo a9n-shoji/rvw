@@ -18,7 +18,8 @@ latest head. Follow a rename only when the direct Git comparison detects it, and
 when every selected line survives unchanged, contiguously, and uniquely. Open the latest target when
 that succeeds. Otherwise open the anchor snapshot, identify it as reference-time code, state that the
 latest code changed, and offer a line-unanchored latest-file action when the same or renamed file is
-available.
+available. That action uses the global Diff comparison only when its selected end is the target latest
+head; a historical selection opens the exact latest snapshot instead.
 
 Do not inspect intermediate commits or search for a latest-valid revision. Keep Full versus Diff and
 stacked versus split as user display settings. Full shows the resolved latest snapshot. For a latest
@@ -29,7 +30,8 @@ shows the resolved latest full text and explains why. An anchor fallback keeps i
 comparison. Keep the result in browser-session state only. Do not add database columns, reference
 versions, resolved OIDs, or latest flags. If the Pull Request head later advances, identify the last
 resolved head as stale and offer an explicit re-resolution action rather than silently changing a
-document under review. While stale, suppress cached fallback claims and latest-file actions.
+document under review. While stale, retain the factual anchor snapshot currently displayed, but
+suppress cached fallback claims and latest-file actions.
 
 ### Trade-offs
 

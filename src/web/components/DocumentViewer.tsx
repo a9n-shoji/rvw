@@ -1831,7 +1831,9 @@ export function DocumentViewer({
               解決時 {staleReference.latestHeadOid.slice(0, 8)} → 現在 {latestHeadOid.slice(0, 8)}
             </strong>
             <span>
-              このコード参照はPR更新前に解決されています。
+              {referenceFallback
+                ? `参照時点のコード · ${referenceFallback.anchorSourceOid.slice(0, 8)} を表示中。このコード参照はPR更新前に解決されています。`
+                : "このコード参照はPR更新前に解決されています。"}
               {referenceResolutionError ? ` ${referenceResolutionError}` : ""}
             </span>
           </div>

@@ -9,6 +9,7 @@ export interface DocumentViewerStateContext {
   documentDisplayMode: DocumentDisplayMode;
   displayMode: ViewerDisplayMode;
   selectedOid: string;
+  latestHeadOid: string;
   changedFiles: readonly ChangedFile[] | undefined;
   changedFilesLoaded: boolean;
   walkthroughDetails: ReadonlyMap<string, Walkthrough>;
@@ -38,6 +39,11 @@ export function deriveDocumentViewerState(
     document.comparisonPolicy === "reference-target" &&
     document.referenceContext?.outcome === "latest" &&
     document.referenceContext.latestHeadOid === context.selectedOid;
+  const referenceIsStale =
+    document?.kind === "repository-file" &&
+    document.comparisonPolicy === "reference-target" &&
+    document.referenceContext !== undefined &&
+    document.referenceContext.latestHeadOid !== context.latestHeadOid;
   const usesSelectedRange =
     document?.kind === "repository-file" &&
     document.comparisonPolicy !== "exact-source" &&
@@ -75,32 +81,36 @@ export function deriveDocumentViewerState(
     context.documentDisplayMode !== "full" &&
     usesFallbackReferenceTarget &&
     document.referenceContext?.hasDiff === false;
-  const historicalRangeReferenceFullFallback =
+  const latestReferenceFullFallback =
     context.documentDisplayMode !== "full" &&
     document?.kind === "repository-file" &&
     document.comparisonPolicy === "reference-target" &&
     document.referenceContext?.outcome === "latest" &&
     !latestReferenceMatchesSelection;
+  const historicalRangeReferenceFullFallback = latestReferenceFullFallback && !referenceIsStale;
   const showingFullFallback =
     (context.documentDisplayMode !== "full" && document?.kind === "pull-request-markdown") ||
     selectedRangeFullFallback ||
     referenceTargetFullFallback ||
-    historicalRangeReferenceFullFallback;
-  const fullViewNotice = historicalRangeReferenceFullFallback
-    ? "選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示"
-    : referenceSourceDiffers
-      ? `参照元 ${shortOid(referenceSourceOid)} ≠ 対象 ${shortOid(context.selectedOid)}${
-          forceExactSourceFullView
-            ? " · 全文表示"
+    latestReferenceFullFallback;
+  const fullViewNotice =
+    referenceIsStale && latestReferenceFullFallback
+      ? null
+      : historicalRangeReferenceFullFallback
+        ? "選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示"
+        : referenceSourceDiffers
+          ? `参照元 ${shortOid(referenceSourceOid)} ≠ 対象 ${shortOid(context.selectedOid)}${
+              forceExactSourceFullView
+                ? " · 全文表示"
+                : showingFullFallback
+                  ? " · 差分なし · 全文表示"
+                  : ""
+            }`
+          : forceExactSourceFullView
+            ? "参照元commit · 全文表示"
             : showingFullFallback
-              ? " · 差分なし · 全文表示"
-              : ""
-        }`
-      : forceExactSourceFullView
-        ? "参照元commit · 全文表示"
-        : showingFullFallback
-          ? "差分なし · 全文表示"
-          : null;
+              ? "差分なし · 全文表示"
+              : null;
   const fullViewUnavailableMessage =
     context.documentDisplayMode === "full" && activeChange?.kind === "deleted"
       ? "このファイルは選択範囲の末尾で削除されているため、全文は利用できません。変更表示で削除前の内容を確認してください。"

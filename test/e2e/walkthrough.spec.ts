@@ -421,12 +421,13 @@ test("shows the resolved latest full text when the selected comparison is histor
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
 });
 
-test("shows an explicit anchor fallback and opens the latest file without a line promise", async ({
+test("opens the exact latest file from an anchor fallback while a historical range is selected", async ({
   page,
 }) => {
   const anchorOid = "b".repeat(40);
   const latestOid = "c".repeat(40);
   const filePath = "src/application/orders/create-order.ts";
+  const latestFilePath = "src/new.ts";
   await page.route("**/references/handler/resolve", async (route) => {
     const response = await route.fetch();
     const body = (await response.json()) as {
@@ -457,10 +458,10 @@ test("shows an explicit anchor fallback and opens the latest file without a line
       },
       latestFile: {
         sourceOid: latestOid,
-        path: filePath,
+        path: latestFilePath,
         diffBaseOid: anchorOid,
         oldPath: filePath,
-        newPath: filePath,
+        newPath: latestFilePath,
         hasDiff: false,
       },
       document: {
@@ -471,7 +472,27 @@ test("shows an explicit anchor fallback and opens the latest file without a line
     await route.fulfill({ response, json: body });
   });
 
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
+  const displayDiffButton = reviewScope.getByRole("button", { name: "変更", exact: true });
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await commitPicker.click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("option", { name: /Add fixture function/ })
+    .click();
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+
   await openWalkthroughFromSidebar(page, primaryWalkthrough);
   await page
     .locator(".walkthrough-markdown .walkthrough-inline-reference")
@@ -486,12 +507,32 @@ test("shows an explicit anchor fallback and opens the latest file without a line
     "9",
   );
 
+  const latestDocumentRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return (
+      url.pathname === `/api/pull-requests/${pullRequestId}/document` &&
+      url.searchParams.get("sourceOid") === latestOid &&
+      url.searchParams.get("path") === latestFilePath
+    );
+  });
   await banner.getByRole("button", { name: "最新のファイルを見る" }).click();
+  await latestDocumentRequest;
   await expect(banner).toHaveCount(0);
-  await expect(page.getByRole("tab", { name: filePath })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: latestFilePath })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByText("export const added = true;", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(`参照元 ${latestOid.slice(0, 8)} ≠ 対象 ${anchorOid.slice(0, 8)} · 全文表示`, {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(
     page.locator('.document-pane[data-pane="left"] diffs-container'),
   ).not.toHaveAttribute("data-search-target-line");
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
 });
 
 test("marks an open reference stale after a head update and re-resolves it on demand", async ({
@@ -625,10 +666,16 @@ test("marks an open reference stale after a head update and re-resolves it on de
   await expect(staleBanner).toContainText(
     `解決時 ${oldHead.slice(0, 8)} → 現在 ${newHead.slice(0, 8)}`,
   );
+  await expect(staleBanner).toContainText(`参照時点のコード · ${anchorOid.slice(0, 8)} を表示中`);
   await expect(page.locator(".reference-anchor-fallback-banner")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "最新のファイルを見る" })).toHaveCount(0);
   await expect(
     page.getByText("この参照箇所は最新コードでは変更されています。", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByText("選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示", {
+      exact: true,
+    }),
   ).toHaveCount(0);
   const reresolution = page.waitForResponse((response) =>
     new URL(response.url()).pathname.endsWith("/resolve"),

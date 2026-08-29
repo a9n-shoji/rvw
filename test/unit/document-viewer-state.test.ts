@@ -16,6 +16,7 @@ function context(overrides: Record<string, unknown> = {}) {
     documentDisplayMode: "diff" as const,
     displayMode: "range" as const,
     selectedOid,
+    latestHeadOid: selectedOid,
     changedFiles: [changedFile],
     changedFilesLoaded: true,
     walkthroughDetails: new Map(),
@@ -124,7 +125,7 @@ describe("document viewer state", () => {
           latestFile: null,
         },
       },
-      context(),
+      context({ latestHeadOid: sourceOid }),
     );
 
     expect(state.activeChange).toBeUndefined();
@@ -138,6 +139,38 @@ describe("document viewer state", () => {
       comparisonPolicy: "reference-target",
     });
     expect(state.viewerDocument).not.toHaveProperty("oldPath");
+  });
+
+  it("keeps a stale latest reference full without calling the current range historical", () => {
+    const resolvedHeadOid = "c".repeat(40);
+    const currentHeadOid = "d".repeat(40);
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/latest-at-resolution.ts",
+        sourceOid: resolvedHeadOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "latest",
+          walkthroughId: "walkthrough",
+          referenceId: "reference",
+          anchorSourceOid: "a".repeat(40),
+          latestHeadOid: resolvedHeadOid,
+          diffBaseOid: null,
+          hasDiff: false,
+          latestFile: null,
+        },
+      },
+      context({ selectedOid: currentHeadOid, latestHeadOid: currentHeadOid }),
+    );
+
+    expect(state.activeChange).toBeUndefined();
+    expect(state.effectiveDisplayMode).toBe("full");
+    expect(state.fullViewNotice).toBeNull();
+    expect(state.viewerDocument).toMatchObject({
+      path: "src/latest-at-resolution.ts",
+      sourceOid: resolvedHeadOid,
+    });
   });
 
   it("shows the resolved target as full text locally when its commit has no file diff", () => {

@@ -307,7 +307,9 @@ empty fileは従来どおり明示的に扱う。
   global比較でfileに差分がなければ通常の`差分なし · 全文表示`を使う。repository Markdownの相対linkとcomment targetはglobal表示が変更でも、
   そのpaneだけretained exact sourceの全文を表示する。Walkthrough referenceのfallbackでは
   `参照時点のコード · <short SHA>`と最新では変更済みであることを明示し、同一pathまたは明確なrename先が
-  存在するときだけ、line対応を保証しない`最新のファイルを見る`を提供する。anchor commitまたはpathを
+  存在するときだけ、line対応を保証しない`最新のファイルを見る`を提供する。このactionはglobal比較の
+  `selectedOid`がtargetのlatest OIDと一致する場合だけ変更表示を使い、historical範囲ではtarget latestの
+  exact source全文を開く。anchor commitまたはpathを
   取得できない場合はtabやpaneを開かず、操作元のWalkthroughへ一時chipを表示し、リンク切れと一時的な
   取得失敗を区別する。
 - Markdown内の画像はrepository Markdownまたはcomment postから、後述する基準commit内の相対pathを
@@ -520,7 +522,8 @@ interface Walkthrough {
   取得失敗はリンク切れと区別する。解決したline rangeは範囲全体を強調し、file-level referenceでは行を
   選択しない。解決結果は閲覧時の一時状態であり、DBへlatest/resolved OID、version、flagを保存しない。
   解決後にPR headが進んだtabは旧headを無言で最新扱いせず、`解決時 <old> → 現在 <new>`と
-  `最新へ再解決`を表示する。stale中は旧headに対するfallback説明と`最新のファイルを見る`を隠す。
+  `最新へ再解決`を表示する。staleなsource fallbackでは表示中のanchor OIDだけを残し、旧headに対する
+  fallback判断と`最新のファイルを見る`を隠す。stale理由は専用bannerへ集約し、historical range用noticeは表示しない。
   初期実装では閲覧位置を自動で置換せず、人間がactionを選んだ時だけ同じreference IDを再解決する。
 - 説明本文やdiagramはAgentのclaimであり、code referenceとGit objectが検証可能な根拠である。
 - 人間はstableなWalkthrough IDへ文書全体コメントを作成できるほか、render済みMarkdownの文字列を選択して

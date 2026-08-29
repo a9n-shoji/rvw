@@ -2064,7 +2064,7 @@ export function PullRequestReviewScreen({
         oldPath: target.oldPath,
         newPath: target.newPath,
         sourceOid: target.sourceOid,
-        comparisonPolicy: "selected-range",
+        comparisonPolicy: target.sourceOid === selectedOid ? "selected-range" : "exact-source",
       };
       const activeTarget = documentWorkspaceRef.current.active[targetPane];
       navigateToDocument(
@@ -2074,7 +2074,7 @@ export function PullRequestReviewScreen({
         !activeTarget || documentTabKey(activeTarget) !== documentTabKey(document),
       );
     },
-    [navigateToDocument],
+    [navigateToDocument, selectedOid],
   );
   const reresolveWalkthroughReference = useCallback(
     (
@@ -2113,6 +2113,7 @@ export function PullRequestReviewScreen({
     documentDisplayMode,
     displayMode,
     selectedOid,
+    latestHeadOid: pullRequest.latestHeadOid,
     changedFiles: changedQuery.data?.files,
     changedFilesLoaded: changedQuery.isSuccess,
     walkthroughDetails,
