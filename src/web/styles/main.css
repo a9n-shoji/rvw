@@ -1984,6 +1984,11 @@ code {
     0 3px 14px var(--shadow-small);
 }
 .markdown-mermaid-toolbar {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--line);
   background: var(--panel-2);
@@ -3254,6 +3259,11 @@ diffs-container > [slot="header-metadata"] {
   background: var(--panel);
 }
 .comment-mermaid-toolbar {
+  display: flex;
+  min-height: 29px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
   padding: 5px 7px;
   border-bottom: 1px solid var(--line);
   background: var(--panel-2);
@@ -3283,6 +3293,419 @@ diffs-container > [slot="header-metadata"] {
 .comment-mermaid-error {
   background: var(--warning);
   color: var(--warning-text);
+}
+
+.mermaid-expand-button {
+  display: grid;
+  width: 26px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 4px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.mermaid-expand-button:hover,
+.mermaid-expand-button:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--panel);
+  color: var(--text);
+}
+.mermaid-expand-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.mermaid-expanded-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: clamp(10px, 2vw, 24px);
+  background: color-mix(in srgb, #000 42%, transparent);
+}
+.mermaid-expanded-view {
+  display: grid;
+  width: min(1680px, calc(100vw - clamp(20px, 4vw, 48px)));
+  height: min(1040px, calc(100vh - clamp(20px, 4vw, 48px)));
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 24px 72px color-mix(in srgb, #000 48%, transparent);
+}
+.mermaid-expanded-toolbar {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 7px 8px 7px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.mermaid-expanded-toolbar > strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mermaid-expanded-actions,
+.mermaid-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.mermaid-zoom-controls {
+  padding-right: 5px;
+  border-right: 1px solid var(--line);
+}
+.mermaid-expanded-actions button {
+  display: inline-flex;
+  min-height: 31px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border-color: var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+.mermaid-expanded-actions button:hover:not(:disabled),
+.mermaid-expanded-actions button.active,
+.mermaid-expanded-actions button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.mermaid-expanded-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.mermaid-expanded-actions button svg {
+  width: 15px;
+  height: 15px;
+}
+.mermaid-expanded-actions .mermaid-expanded-close {
+  width: 32px;
+  padding: 5px;
+}
+.mermaid-comments-toggle > span {
+  display: inline-grid;
+  min-width: 17px;
+  height: 17px;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 9px;
+}
+.mermaid-expanded-workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+.mermaid-expanded-view.has-rail .mermaid-expanded-workspace {
+  grid-template-columns:
+    minmax(0, 1fr) 6px
+    var(--mermaid-review-rail-width, 380px);
+}
+.mermaid-expanded-workspace.is-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.mermaid-rail-resize-handle {
+  background: var(--panel-2);
+}
+.mermaid-expanded-canvas {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background:
+    radial-gradient(
+        circle,
+        color-mix(in srgb, var(--line) 42%, transparent) 0.7px,
+        transparent 0.8px
+      )
+      0 0 / 18px 18px,
+    var(--bg);
+}
+.mermaid-expanded-canvas:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.mermaid-expanded-stage {
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+  place-items: center;
+  padding: 24px;
+}
+.mermaid-expanded-diagram {
+  flex: 0 0 auto;
+}
+.mermaid-expanded-diagram svg {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+.mermaid-expanded-error {
+  max-width: 680px;
+  padding: 16px;
+  border: 1px solid var(--warning-line);
+  border-radius: 8px;
+  background: var(--warning);
+  color: var(--warning-text);
+  font-size: 12px;
+}
+.mermaid-review-rail {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+.mermaid-comments-mode,
+.mermaid-reference-peek {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.mermaid-comments-mode > header {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+  font-size: 12px;
+}
+.mermaid-comments-mode > header > span {
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.mermaid-comments-scroll {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+}
+.mermaid-diagram-comments {
+  display: grid;
+  gap: 10px;
+}
+.mermaid-diagram-comments > .comment-thread {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.mermaid-diagram-comments .inline-comment-composer--line {
+  width: 100%;
+  margin: 0;
+}
+.mermaid-comments-empty {
+  margin: 20px 8px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+.mermaid-comment-action {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  justify-self: stretch;
+  font-size: 12px;
+}
+.mermaid-comment-action svg {
+  width: 14px;
+  height: 14px;
+}
+.mermaid-reference-peek {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.mermaid-reference-peek > header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.mermaid-reference-peek .button--back {
+  display: block;
+  min-height: 24px;
+  margin-bottom: 8px;
+  padding: 0;
+  font-size: 11px;
+}
+.mermaid-reference-location {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+.mermaid-reference-location > svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+.mermaid-reference-location > span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.mermaid-reference-location strong {
+  overflow: hidden;
+  font: 650 11px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mermaid-reference-location small {
+  color: var(--muted);
+  font: 10px var(--mono);
+}
+.mermaid-reference-source {
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+.mermaid-reference-source > p {
+  margin: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mermaid-reference-source pre {
+  min-width: max-content;
+  margin: 0;
+  padding: 10px 0;
+  font: 11px/1.65 var(--mono);
+}
+.mermaid-reference-source pre > span {
+  display: grid;
+  grid-template-columns: 5ch minmax(max-content, 1fr);
+}
+.mermaid-reference-source pre > span > span {
+  padding: 0 10px 0 4px;
+  color: var(--muted);
+  text-align: right;
+  user-select: none;
+}
+.mermaid-reference-source pre code {
+  padding: 0 14px 0 10px;
+  border-left: 1px solid var(--line);
+  color: var(--text);
+  white-space: pre;
+}
+.mermaid-reference-source pre > span.is-referenced {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.mermaid-reference-source pre > span.is-referenced code {
+  border-left: 2px solid var(--accent);
+  padding-left: 9px;
+}
+.mermaid-reference-highlight .shiki {
+  min-width: max-content;
+}
+.mermaid-reference-highlight .shiki code {
+  display: block;
+  padding: 0;
+  border: 0;
+  color: inherit;
+}
+.mermaid-reference-highlight .mermaid-reference-code-line {
+  display: inline-block;
+  min-width: 100%;
+  min-height: 1.65em;
+  padding-right: 14px;
+  white-space: pre;
+}
+.mermaid-reference-highlight .mermaid-reference-code-line::before {
+  display: inline-block;
+  width: 5ch;
+  margin-right: 10px;
+  padding-right: 10px;
+  border-right: 1px solid var(--line);
+  color: var(--muted);
+  content: attr(data-line);
+  text-align: right;
+  user-select: none;
+}
+.mermaid-reference-highlight .mermaid-reference-code-line.is-referenced {
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.mermaid-reference-highlight .mermaid-reference-code-line.is-referenced::before {
+  border-right: 2px solid var(--accent);
+  padding-right: 9px;
+}
+:root[data-theme="dark"] .mermaid-reference-highlight .shiki,
+:root[data-theme="dark"] .mermaid-reference-highlight .shiki span {
+  background-color: var(--shiki-dark-bg) !important;
+  color: var(--shiki-dark) !important;
+}
+.mermaid-reference-peek > footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.mermaid-reference-peek > footer button {
+  font-size: 11px;
+}
+
+@media (max-width: 820px) {
+  .mermaid-expanded-view.has-rail .mermaid-expanded-workspace {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .mermaid-rail-resize-handle {
+    display: none;
+  }
+  .mermaid-review-rail {
+    position: absolute;
+    z-index: 2;
+    inset: 0 0 0 auto;
+    width: min(var(--mermaid-review-rail-width, 380px), 100%);
+    box-shadow: -12px 0 28px var(--shadow-medium);
+  }
+  .mermaid-expanded-toolbar {
+    padding-left: 10px;
+  }
+  .mermaid-expanded-toolbar > strong {
+    display: none;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] .mermaid-reference-highlight .shiki,
+  :root[data-theme="system"] .mermaid-reference-highlight .shiki span {
+    background-color: var(--shiki-dark-bg) !important;
+    color: var(--shiki-dark) !important;
+  }
 }
 .comment-reply-composer {
   display: grid;

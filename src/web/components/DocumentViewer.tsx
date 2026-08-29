@@ -14,8 +14,10 @@ import type {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Children,
+  createContext,
   isValidElement,
   useCallback,
+  useContext,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -86,6 +88,7 @@ import { FileEntryIcon } from "./FileIcon.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import { MarkdownImage } from "./MarkdownImage.js";
 import { PreviewMarkdownTable } from "./MarkdownTable.js";
+import { MermaidDiagram } from "./MermaidDiagram.js";
 import { MermaidSurface } from "./MermaidSurface.js";
 import { RepositoryImageViewer } from "./RepositoryImageViewer.js";
 
@@ -402,6 +405,237 @@ function markdownNavigationElement(root: HTMLElement | null, line: number): HTML
   return best?.element ?? null;
 }
 
+function sameMarkdownRange(
+  left: MarkdownSourceRange | null,
+  right: MarkdownSourceRange | null,
+): boolean {
+  return Boolean(
+    left && right && left.startLine === right.startLine && left.endLine === right.endLine,
+  );
+}
+
+function MarkdownMermaidDiagram({
+  source,
+  sourceRange,
+  sourceAttributes,
+  sourceHighlighted,
+  sourceSelected,
+  sourceOid,
+  pullRequestId,
+  placedComments,
+  replyDraftScope,
+  themePreference,
+  onCommentActiveChange,
+  onOpenCodeReference,
+  onOpenRepositoryLink,
+  onCreateComment,
+  createPending,
+  createError,
+  onResetCreate,
+}: {
+  source: string;
+  sourceRange: MarkdownSourceRange | null;
+  sourceAttributes: Record<string, number>;
+  sourceHighlighted: boolean;
+  sourceSelected: boolean;
+  sourceOid: string;
+  pullRequestId: string;
+  placedComments: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+  replyDraftScope: string;
+  themePreference: ThemePreference;
+  onCommentActiveChange: (commentId: string, active: boolean) => void;
+  onOpenCodeReference: (
+    sourceOid: string,
+    reference: CodeReference,
+    openInRightPane: boolean,
+  ) => Promise<string | null>;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
+  onCreateComment: (range: MarkdownSourceRange, body: string) => Promise<void>;
+  createPending: boolean;
+  createError: unknown;
+  onResetCreate: () => void;
+}) {
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [body, setBody] = useState("");
+  const diagramComments = sourceRange
+    ? placedComments.filter(({ placement }) => sameMarkdownRange(placement.range, sourceRange))
+    : [];
+  const review = sourceRange
+    ? {
+        pullRequestId,
+        commentCount: diagramComments.length,
+        onOpenCodeReference,
+        renderComments: (
+          openReference: (
+            sourceOid: string,
+            reference: CodeReference,
+            openInRightPane: boolean,
+          ) => Promise<string | null>,
+        ) => (
+          <div className="mermaid-diagram-comments">
+            {diagramComments.length === 0 && !composerOpen && (
+              <p className="mermaid-comments-empty">この diagram へのコメントはありません。</p>
+            )}
+            {diagramComments.map(({ comment, placement }) => (
+              <CommentThread
+                key={comment.id}
+                comment={comment}
+                variant="sidebar"
+                draftScope={`${replyDraftScope}:mermaid:${sourceRange.startLine}-${sourceRange.endLine}`}
+                placement={placement}
+                markdownSourceOid={sourceOid}
+                themePreference={themePreference}
+                cancelDraftOnEscape
+                onActiveChange={onCommentActiveChange}
+                onOpenCodeReference={openReference}
+                onOpenRepositoryLink={onOpenRepositoryLink}
+              />
+            ))}
+            {composerOpen ? (
+              <InlineCommentComposer
+                body={body}
+                label="Comment on diagram"
+                pending={createPending}
+                error={createError}
+                validationError={undefined}
+                placement="line"
+                onBodyChange={setBody}
+                onCancel={() => {
+                  setBody("");
+                  setComposerOpen(false);
+                  onResetCreate();
+                }}
+                onSubmit={() => {
+                  void onCreateComment(sourceRange, body)
+                    .then(() => {
+                      setBody("");
+                      setComposerOpen(false);
+                    })
+                    .catch(() => undefined);
+                }}
+              />
+            ) : (
+              <button
+                className="mermaid-comment-action"
+                onClick={() => {
+                  onResetCreate();
+                  setComposerOpen(true);
+                }}
+              >
+                <CommentIcon />
+                Comment on diagram
+              </button>
+            )}
+          </div>
+        ),
+      }
+    : undefined;
+  return (
+    <MermaidDiagram
+      source={source}
+      themePreference={themePreference}
+      renderIdPrefix="rvwMarkdown"
+      review={review}
+      renderInline={(expandButton) => (
+        <div
+          className={`markdown-mermaid-shell${sourceHighlighted ? " is-source-highlighted" : ""}${sourceSelected ? " is-source-selected" : ""}`}
+          data-rvw-source-leaf="true"
+          {...sourceAttributes}
+        >
+          <div className="markdown-mermaid-toolbar">
+            <span>Mermaid diagram</span>
+            {expandButton}
+          </div>
+          <MermaidSurface
+            className="markdown-mermaid"
+            role="img"
+            aria-label="Mermaid diagram"
+            source={source}
+            themePreference={themePreference}
+            renderIdPrefix="rvwMarkdown"
+            errorClassName="markdown-mermaid-error"
+          />
+        </div>
+      )}
+    />
+  );
+}
+
+interface RepositoryMermaidRenderContext {
+  annotations: MarkdownCommentAnnotation[];
+  activeCommentId: string | null;
+  selectedRange: MarkdownSourceRange | null;
+  navigationRange: MarkdownSourceRange | null;
+  sourceRef: DocumentRef;
+  selectedOid: string;
+  pullRequestId: string;
+  themePreference: ThemePreference;
+  placedComments: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+  replyDraftScope: string;
+  onCommentActiveChange: (commentId: string, active: boolean) => void;
+  onOpenCodeReference: (
+    sourceOid: string,
+    reference: CodeReference,
+    openInRightPane: boolean,
+  ) => Promise<string | null>;
+  onCreateDiagramComment: (range: MarkdownSourceRange, body: string) => Promise<void>;
+  diagramCommentPending: boolean;
+  diagramCommentError: unknown;
+  onResetDiagramComment: () => void;
+  onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
+}
+
+const RepositoryMermaidRenderContext = createContext<RepositoryMermaidRenderContext | null>(null);
+
+const RepositoryMarkdownPre: NonNullable<Components["pre"]> = ({ children, node, ...props }) => {
+  const context = useContext(RepositoryMermaidRenderContext);
+  const childParts = Children.toArray(children);
+  const child = childParts.length === 1 ? childParts[0] : null;
+  if (
+    !context ||
+    !isValidElement<{ className?: string; children?: ReactNode }>(child) ||
+    !child.props.className?.split(/\s+/u).includes("language-mermaid")
+  ) {
+    return <pre {...props}>{children}</pre>;
+  }
+  const sourceRange = markdownNodeSourceRange(node);
+  const sourceHighlighted =
+    markdownRangesOverlap(sourceRange, context.navigationRange) ||
+    Boolean(
+      context.activeCommentId &&
+      context.annotations.some(
+        (annotation) =>
+          annotation.id === context.activeCommentId &&
+          markdownRangesOverlap(sourceRange, annotation.range),
+      ),
+    );
+  return (
+    <MarkdownMermaidDiagram
+      source={markdownNodeText(child.props.children).trim()}
+      sourceRange={sourceRange}
+      sourceAttributes={markdownSourceDataAttributes(node)}
+      sourceHighlighted={sourceHighlighted}
+      sourceSelected={markdownRangesOverlap(sourceRange, context.selectedRange)}
+      sourceOid={
+        context.sourceRef.kind === "repository-file"
+          ? context.sourceRef.sourceOid
+          : context.selectedOid
+      }
+      pullRequestId={context.pullRequestId}
+      placedComments={context.placedComments}
+      replyDraftScope={context.replyDraftScope}
+      themePreference={context.themePreference}
+      onCommentActiveChange={context.onCommentActiveChange}
+      onOpenCodeReference={context.onOpenCodeReference}
+      onOpenRepositoryLink={context.onOpenRepositoryLink}
+      onCreateComment={context.onCreateDiagramComment}
+      createPending={context.diagramCommentPending}
+      createError={context.diagramCommentError}
+      onResetCreate={context.onResetDiagramComment}
+    />
+  );
+};
+
 function renderRepositoryMarkdown({
   text,
   pullRequestMarkdown,
@@ -415,7 +649,15 @@ function renderRepositoryMarkdown({
   selectedOid,
   pullRequestId,
   themePreference,
+  placedComments,
+  replyDraftScope,
   linkPointerStart,
+  onCommentActiveChange,
+  onOpenCodeReference,
+  onCreateDiagramComment,
+  diagramCommentPending,
+  diagramCommentError,
+  onResetDiagramComment,
   onOpenRepositoryLink,
   onOpenMarkdownFragment,
 }: {
@@ -431,12 +673,43 @@ function renderRepositoryMarkdown({
   selectedOid: string;
   pullRequestId: string;
   themePreference: ThemePreference;
+  placedComments: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+  replyDraftScope: string;
   linkPointerStart: { current: PointerPosition | null };
+  onCommentActiveChange: (commentId: string, active: boolean) => void;
+  onOpenCodeReference: (
+    sourceOid: string,
+    reference: CodeReference,
+    openInRightPane: boolean,
+  ) => Promise<string | null>;
+  onCreateDiagramComment: (range: MarkdownSourceRange, body: string) => Promise<void>;
+  diagramCommentPending: boolean;
+  diagramCommentError: unknown;
+  onResetDiagramComment: () => void;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onOpenMarkdownFragment: (line: number, hash: string) => void;
 }): ReactNode {
   const headingCounts = new Map<string, number>();
-  return (
+  const mermaidContext: RepositoryMermaidRenderContext = {
+    annotations,
+    activeCommentId,
+    selectedRange,
+    navigationRange,
+    sourceRef,
+    selectedOid,
+    pullRequestId,
+    themePreference,
+    placedComments,
+    replyDraftScope,
+    onCommentActiveChange,
+    onOpenCodeReference,
+    onCreateDiagramComment,
+    diagramCommentPending,
+    diagramCommentError,
+    onResetDiagramComment,
+    onOpenRepositoryLink,
+  };
+  const markdown = (
     <ReactMarkdown
       rehypePlugins={[
         rehypeRaw,
@@ -629,50 +902,16 @@ function renderRepositoryMarkdown({
             />
           );
         },
-        pre: ({ children, node: _node, ...props }) => {
-          const childParts = Children.toArray(children);
-          const child = childParts.length === 1 ? childParts[0] : null;
-          if (
-            !isValidElement<{ className?: string; children?: ReactNode }>(child) ||
-            !child.props.className?.split(/\s+/u).includes("language-mermaid")
-          ) {
-            return <pre {...props}>{children}</pre>;
-          }
-          const sourceRange = markdownNodeSourceRange(_node);
-          const sourceHighlighted =
-            markdownRangesOverlap(sourceRange, navigationRange) ||
-            Boolean(
-              activeCommentId &&
-              annotations.some(
-                (annotation) =>
-                  annotation.id === activeCommentId &&
-                  markdownRangesOverlap(sourceRange, annotation.range),
-              ),
-            );
-          const sourceSelected = markdownRangesOverlap(sourceRange, selectedRange);
-          return (
-            <div
-              className={`markdown-mermaid-shell${sourceHighlighted ? " is-source-highlighted" : ""}${sourceSelected ? " is-source-selected" : ""}`}
-              data-rvw-source-leaf="true"
-              {...markdownSourceDataAttributes(_node)}
-            >
-              <div className="markdown-mermaid-toolbar">Mermaid diagram</div>
-              <MermaidSurface
-                className="markdown-mermaid"
-                role="img"
-                aria-label="Mermaid diagram"
-                source={markdownNodeText(child.props.children).trim()}
-                themePreference={themePreference}
-                renderIdPrefix="rvwMarkdown"
-                errorClassName="markdown-mermaid-error"
-              />
-            </div>
-          );
-        },
+        pre: RepositoryMarkdownPre,
       }}
     >
       {text}
     </ReactMarkdown>
+  );
+  return (
+    <RepositoryMermaidRenderContext.Provider value={mermaidContext}>
+      {markdown}
+    </RepositoryMermaidRenderContext.Provider>
   );
 }
 
@@ -1158,16 +1397,18 @@ export function DocumentViewer({
   const createMutation = useMutation({
     mutationFn: async ({
       target,
+      body: commentBody,
     }: {
       target: CreateCommentTarget;
       location: OptimisticCommentLocation;
+      body: string;
     }) =>
       await api<{ comment: ReviewComment }>(
         "/api/comments",
         jsonRequest({
           pullRequestId,
           target,
-          body,
+          body: commentBody,
           authorLabel: "You",
         }),
       ),
@@ -1293,8 +1534,35 @@ export function DocumentViewer({
                 : "additions",
             lineNumber,
           };
-    createMutation.mutate({ target, location });
+    createMutation.mutate({ target, location, body });
   };
+
+  const createDiagramComment = useCallback(
+    async (range: MarkdownSourceRange, commentBody: string): Promise<void> => {
+      const target =
+        fullRef.kind === "pull-request-markdown"
+          ? {
+              kind: "document" as const,
+              documentKind: "pull-request-markdown" as const,
+              startLine: range.startLine,
+              endLine: range.endLine,
+            }
+          : {
+              kind: "document" as const,
+              documentKind: "repository-file" as const,
+              sourceOid: fullRef.sourceOid,
+              path: fullRef.path,
+              startLine: range.startLine,
+              endLine: range.endLine,
+            };
+      await createMutation.mutateAsync({
+        target,
+        body: commentBody,
+        location: { mode: "full", lineNumber: range.endLine },
+      });
+    },
+    [createMutation.mutateAsync, fullRef],
+  );
 
   const closeComposer = (): void => {
     createMutation.reset();
@@ -1552,7 +1820,15 @@ export function DocumentViewer({
             selectedOid,
             pullRequestId,
             themePreference,
+            placedComments: markdownComments,
+            replyDraftScope,
             linkPointerStart: markdownLinkPointerStart,
+            onCommentActiveChange,
+            onOpenCodeReference,
+            onCreateDiagramComment: createDiagramComment,
+            diagramCommentPending: createMutation.isPending,
+            diagramCommentError: createMutation.error,
+            onResetDiagramComment: createMutation.reset,
             onOpenRepositoryLink: openRepositoryLink,
             onOpenMarkdownFragment: openMarkdownFragment,
           }),
@@ -1561,15 +1837,23 @@ export function DocumentViewer({
       activeDocument.kind,
       composerEndLine,
       composerStartLine,
+      createDiagramComment,
+      createMutation.error,
+      createMutation.isPending,
+      createMutation.reset,
       fullRef,
       markdownCommentAnnotations,
       markdownComposerOpen,
       markdownNavigationRange,
       markdownDiv,
+      markdownComments,
       markdownText,
+      onCommentActiveChange,
+      onOpenCodeReference,
       openMarkdownFragment,
       openRepositoryLink,
       pullRequestId,
+      replyDraftScope,
       selectedOid,
       themePreference,
     ],

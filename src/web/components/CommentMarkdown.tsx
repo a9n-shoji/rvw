@@ -29,6 +29,8 @@ import {
 } from "./CodeReferenceLink.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import { MarkdownImage } from "./MarkdownImage.js";
+import { MermaidDiagram } from "./MermaidDiagram.js";
+import type { MermaidReviewWorkspace } from "./MermaidExpandedView.js";
 import { MermaidSurface } from "./MermaidSurface.js";
 
 function codeText(content: ReactNode): string {
@@ -43,9 +45,11 @@ function codeText(content: ReactNode): string {
 function CommentMermaidDiagram({
   source,
   themePreference,
+  review,
 }: {
   source: string;
   themePreference: ThemePreference;
+  review?: MermaidReviewWorkspace | undefined;
 }) {
   const shellRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -70,22 +74,33 @@ function CommentMermaidDiagram({
   }, []);
 
   return (
-    <div className="comment-mermaid-shell" ref={shellRef}>
-      <div className="comment-mermaid-toolbar">Mermaid diagram</div>
-      {visible ? (
-        <MermaidSurface
-          className="comment-mermaid"
-          role="img"
-          aria-label="Mermaid diagram"
-          source={source}
-          themePreference={themePreference}
-          renderIdPrefix="rvwComment"
-          errorClassName="comment-mermaid-error"
-        />
-      ) : (
-        <div className="comment-mermaid-placeholder">diagramを準備しています…</div>
+    <MermaidDiagram
+      source={source}
+      themePreference={themePreference}
+      renderIdPrefix="rvwComment"
+      review={review}
+      renderInline={(expandButton) => (
+        <div className="comment-mermaid-shell" ref={shellRef}>
+          <div className="comment-mermaid-toolbar">
+            <span>Mermaid diagram</span>
+            {expandButton}
+          </div>
+          {visible ? (
+            <MermaidSurface
+              className="comment-mermaid"
+              role="img"
+              aria-label="Mermaid diagram"
+              source={source}
+              themePreference={themePreference}
+              renderIdPrefix="rvwComment"
+              errorClassName="comment-mermaid-error"
+            />
+          ) : (
+            <div className="comment-mermaid-placeholder">diagramを準備しています…</div>
+          )}
+        </div>
       )}
-    </div>
+    />
   );
 }
 
@@ -96,6 +111,7 @@ export function CommentMarkdown({
   sourcePath,
   references,
   themePreference,
+  mermaidReview,
   onOpenCodeReference,
   onOpenRepositoryLink,
 }: {
@@ -105,6 +121,7 @@ export function CommentMarkdown({
   sourcePath: string | null;
   references: CodeReference[];
   themePreference: ThemePreference;
+  mermaidReview?: MermaidReviewWorkspace | undefined;
   onOpenCodeReference?: ((reference: CodeReference, openInRightPane: boolean) => void) | undefined;
   onOpenRepositoryLink?:
     ((path: string, sourceOid: string, openInRightPane: boolean) => void) | undefined;
@@ -238,6 +255,7 @@ export function CommentMarkdown({
           <CommentMermaidDiagram
             source={codeText(child.props.children).trim()}
             themePreference={themePreference}
+            review={mermaidReview}
           />
         );
       },
@@ -247,6 +265,7 @@ export function CommentMarkdown({
       onOpenRepositoryLink,
       pullRequestId,
       referencesById,
+      mermaidReview,
       sourceOid,
       sourcePath,
       themePreference,

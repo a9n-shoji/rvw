@@ -1,5 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type {
   CodeReference,
   CommentPlacement,
@@ -17,6 +25,7 @@ import type { ThemePreference } from "../theme.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
 import { CommentMarkdown } from "./CommentMarkdown.js";
 import { ErrorNotice } from "./ErrorNotice.js";
+import type { MermaidReviewWorkspace } from "./MermaidExpandedView.js";
 
 type CommentThreadVariant = "inline" | "sidebar";
 type DiffSide = "additions" | "deletions" | null;
@@ -104,6 +113,7 @@ function CommentPostMarkdown({
   post,
   markdownSourceOid,
   themePreference,
+  mermaidReviewDisabled,
   onOpenCodeReference,
   onOpenRepositoryLink,
 }: {
@@ -111,6 +121,7 @@ function CommentPostMarkdown({
   post: CommentPost;
   markdownSourceOid?: string | undefined;
   themePreference: ThemePreference;
+  mermaidReviewDisabled: boolean;
   onOpenCodeReference?:
     | ((
         sourceOid: string,
@@ -140,22 +151,60 @@ function CommentPostMarkdown({
     },
     [],
   );
-  const openCodeReference = async (
-    reference: CodeReference,
-    openInRightPane: boolean,
-  ): Promise<void> => {
-    if (!onOpenCodeReference) return;
-    const notice = await onOpenCodeReference(sourceOid, reference, openInRightPane);
-    if (!notice) return;
-    if (referenceNoticeTimeout.current !== null) {
-      window.clearTimeout(referenceNoticeTimeout.current);
-    }
-    setReferenceNotice(notice);
-    referenceNoticeTimeout.current = window.setTimeout(() => {
-      setReferenceNotice(null);
-      referenceNoticeTimeout.current = null;
-    }, referenceNoticeDurationMs);
-  };
+  const openCodeReference = useCallback(
+    async (reference: CodeReference, openInRightPane: boolean): Promise<void> => {
+      if (!onOpenCodeReference) return;
+      const notice = await onOpenCodeReference(sourceOid, reference, openInRightPane);
+      if (!notice) return;
+      if (referenceNoticeTimeout.current !== null) {
+        window.clearTimeout(referenceNoticeTimeout.current);
+      }
+      setReferenceNotice(notice);
+      referenceNoticeTimeout.current = window.setTimeout(() => {
+        setReferenceNotice(null);
+        referenceNoticeTimeout.current = null;
+      }, referenceNoticeDurationMs);
+    },
+    [onOpenCodeReference, sourceOid],
+  );
+  const handleOpenCodeReference = useCallback(
+    (reference: CodeReference, openInRightPane: boolean): void => {
+      void openCodeReference(reference, openInRightPane);
+    },
+    [openCodeReference],
+  );
+  const mermaidReview = useMemo<MermaidReviewWorkspace | undefined>(
+    () =>
+      mermaidReviewDisabled
+        ? undefined
+        : {
+            pullRequestId: comment.pullRequestId,
+            commentCount: 1,
+            onOpenCodeReference:
+              onOpenCodeReference ?? (() => Promise.resolve("参照先を開けません。")),
+            renderComments: (openReference) => (
+              <CommentThread
+                comment={comment}
+                variant="sidebar"
+                draftScope={`mermaid-expanded:${comment.id}`}
+                markdownSourceOid={markdownSourceOid}
+                themePreference={themePreference}
+                mermaidReviewDisabled
+                cancelDraftOnEscape
+                onOpenCodeReference={openReference}
+                onOpenRepositoryLink={onOpenRepositoryLink}
+              />
+            ),
+          },
+    [
+      comment,
+      markdownSourceOid,
+      mermaidReviewDisabled,
+      onOpenCodeReference,
+      onOpenRepositoryLink,
+      themePreference,
+    ],
+  );
   return (
     <>
       <CommentMarkdown
@@ -165,9 +214,8 @@ function CommentPostMarkdown({
         sourcePath={repositoryTarget?.path ?? null}
         references={post.references}
         themePreference={themePreference}
-        onOpenCodeReference={(reference, openInRightPane) => {
-          void openCodeReference(reference, openInRightPane);
-        }}
+        mermaidReview={mermaidReview}
+        onOpenCodeReference={handleOpenCodeReference}
         onOpenRepositoryLink={onOpenRepositoryLink}
       />
       {referenceNotice && (
@@ -192,6 +240,8 @@ export function CommentThread({
   onOpenRepositoryLink,
   onDeleted,
   onActiveChange,
+  mermaidReviewDisabled = false,
+  cancelDraftOnEscape = false,
 }: {
   comment: ReviewComment;
   variant?: CommentThreadVariant;
@@ -212,6 +262,8 @@ export function CommentThread({
     ((path: string, sourceOid: string, openInRightPane: boolean) => void) | undefined;
   onDeleted?: () => void;
   onActiveChange?: (commentId: string, active: boolean) => void;
+  mermaidReviewDisabled?: boolean;
+  cancelDraftOnEscape?: boolean;
 }) {
   const queryClient = useQueryClient();
   const replyDraftKey = [variant, draftScope, comment.id].filter(Boolean).join(":");
@@ -532,6 +584,16 @@ export function CommentThread({
             aria-label={menuLabel}
             popover="manual"
             onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                event.currentTarget
+                  .closest<HTMLElement>("[data-comment-menu]")
+                  ?.querySelector<HTMLElement>(".comment-more-trigger")
+                  ?.focus();
+                setOpenMenuPostId(null);
+                return;
+              }
               if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
               const items = Array.from(
                 event.currentTarget.querySelectorAll<HTMLElement>("[role=menuitem]"),
@@ -684,13 +746,25 @@ export function CommentThread({
                       value={editBody}
                       aria-label={post.isRoot ? "コメントを編集" : "返信を編集"}
                       onChange={(event) => setEditBody(event.target.value)}
-                      onKeyDown={(event) =>
+                      onKeyDown={(event) => {
+                        if (
+                          cancelDraftOnEscape &&
+                          event.key === "Escape" &&
+                          !event.nativeEvent.isComposing
+                        ) {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setEditingPostId(null);
+                          setEditBody("");
+                          editMutation.reset();
+                          return;
+                        }
                         handleCommentSubmitShortcut(
                           event,
                           Boolean(editBody.trim()) && !editMutation.isPending,
                           () => editMutation.mutate({ postId: post.id, body: editBody }),
-                        )
-                      }
+                        );
+                      }}
                     />
                     <div className="comment-edit-actions">
                       <button
@@ -718,6 +792,7 @@ export function CommentThread({
                     post={post}
                     markdownSourceOid={markdownSourceOid}
                     themePreference={themePreference}
+                    mermaidReviewDisabled={mermaidReviewDisabled}
                     onOpenCodeReference={onOpenCodeReference}
                     onOpenRepositoryLink={onOpenRepositoryLink}
                   />
@@ -752,13 +827,29 @@ export function CommentThread({
                   focused: false,
                 });
               }}
-              onKeyDown={(event) =>
+              onKeyDown={(event) => {
+                if (
+                  cancelDraftOnEscape &&
+                  event.key === "Escape" &&
+                  !event.nativeEvent.isComposing
+                ) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
+                  writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
+                    ...current,
+                    body: "",
+                    focused: false,
+                  });
+                  event.currentTarget.blur();
+                  return;
+                }
                 handleCommentSubmitShortcut(
                   event,
                   Boolean(reply.trim()) && !replyMutation.isPending,
                   () => replyMutation.mutate(),
-                )
-              }
+                );
+              }}
               placeholder="返信を入力"
               aria-label={`${label}へ返信`}
               rows={1}

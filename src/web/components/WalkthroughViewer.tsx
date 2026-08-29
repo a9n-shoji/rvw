@@ -56,6 +56,11 @@ import {
 } from "./CodeReferenceLink.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import { PreviewMarkdownTable } from "./MarkdownTable.js";
+import { MermaidDiagram as ExpandableMermaidDiagram } from "./MermaidDiagram.js";
+import type {
+  MermaidCodeReferenceOpen,
+  MermaidReferencePeekResolution,
+} from "./MermaidExpandedView.js";
 import { MermaidSurface } from "./MermaidSurface.js";
 import { WalkthroughHtmlPreview } from "./WalkthroughHtmlPreview.js";
 import { WalkthroughIcon } from "./WalkthroughPanel.js";
@@ -87,7 +92,7 @@ function DeleteIcon() {
   );
 }
 
-function MermaidDiagram({
+function WalkthroughMermaidDiagram({
   source,
   sourceRange,
   commented,
@@ -97,6 +102,7 @@ function MermaidDiagram({
   onOpenReference,
   onCommentRange,
   commentComposer,
+  reviewContext,
 }: {
   source: string;
   sourceRange: MarkdownSourceRange | null;
@@ -107,9 +113,12 @@ function MermaidDiagram({
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
   commentComposer: ReactNode;
+  reviewContext: MermaidMarkdownRenderContext;
 }) {
   const commentComposerRef = useRef<HTMLDivElement>(null);
   const composerOpen = Boolean(commentComposer);
+  const [expandedComposerOpen, setExpandedComposerOpen] = useState(false);
+  const [expandedCommentBody, setExpandedCommentBody] = useState("");
   useLayoutEffect(() => {
     if (!composerOpen) return;
     const frame = window.requestAnimationFrame(() => {
@@ -155,64 +164,151 @@ function MermaidDiagram({
     [bindings, references],
   );
 
+  const diagramComments = sourceRange
+    ? reviewContext.placedComments.filter(({ placement }) =>
+        sameRange(placement.range, sourceRange),
+      )
+    : [];
+  const review = sourceRange
+    ? {
+        pullRequestId: reviewContext.pullRequestId,
+        commentCount: diagramComments.length,
+        onOpenCodeReference: reviewContext.onOpenCommentCodeReference,
+        diagramReferenceBindings: {
+          sourceOid: reviewContext.sourceOid,
+          onRendered: prepareSvg,
+          referenceFromTarget,
+          resolveForPeek: reviewContext.onResolveReferenceForPeek,
+          onOpenInReview: onOpenReference,
+        },
+        renderComments: (openReference: MermaidCodeReferenceOpen) => (
+          <div className="mermaid-diagram-comments">
+            {diagramComments.length === 0 && !expandedComposerOpen && (
+              <p className="mermaid-comments-empty">この diagram へのコメントはありません。</p>
+            )}
+            {diagramComments.map(({ comment, placement }) => (
+              <CommentThread
+                key={comment.id}
+                comment={comment}
+                variant="sidebar"
+                draftScope={`${reviewContext.draftScope}:mermaid:${sourceRange.startLine}-${sourceRange.endLine}`}
+                placement={placement}
+                markdownSourceOid={reviewContext.sourceOid}
+                themePreference={themePreference}
+                cancelDraftOnEscape
+                onActiveChange={reviewContext.onCommentActiveChange}
+                onOpenCodeReference={openReference}
+                onOpenRepositoryLink={reviewContext.onOpenRepositoryLink}
+              />
+            ))}
+            {expandedComposerOpen ? (
+              <InlineCommentComposer
+                body={expandedCommentBody}
+                label="Comment on diagram"
+                pending={reviewContext.diagramCommentPending}
+                error={reviewContext.diagramCommentError}
+                validationError={undefined}
+                placement="line"
+                onBodyChange={setExpandedCommentBody}
+                onCancel={() => {
+                  setExpandedComposerOpen(false);
+                  setExpandedCommentBody("");
+                  reviewContext.onCancelDiagramComment();
+                }}
+                onSubmit={() => {
+                  void reviewContext
+                    .onCreateExpandedDiagramComment(sourceRange, expandedCommentBody)
+                    .then(() => {
+                      setExpandedComposerOpen(false);
+                      setExpandedCommentBody("");
+                    })
+                    .catch(() => undefined);
+                }}
+              />
+            ) : (
+              <button
+                className="mermaid-comment-action"
+                onClick={() => {
+                  reviewContext.onCancelDiagramComment();
+                  setExpandedComposerOpen(true);
+                }}
+              >
+                <CommentIcon />
+                Comment on diagram
+              </button>
+            )}
+          </div>
+        ),
+      }
+    : undefined;
+
   return (
-    <div
-      className={`walkthrough-diagram-shell${commented ? " has-comment" : ""}`}
-      {...(sourceRange
-        ? {
-            "data-rvw-navigation-start-line": sourceRange.startLine,
-            "data-rvw-navigation-end-line": sourceRange.endLine,
-          }
-        : {})}
-    >
-      <div className="walkthrough-diagram-toolbar">
-        <span>Mermaid diagram</span>
-        <span>nodeを選択して開く · Cmd/Ctrlで反対のペイン</span>
-        {sourceRange && (
-          <button
-            className="button--quiet walkthrough-diagram-comment"
+    <ExpandableMermaidDiagram
+      source={source}
+      themePreference={themePreference}
+      renderIdPrefix="rvwWalkthrough"
+      review={review}
+      renderInline={(expandButton) => (
+        <div
+          className={`walkthrough-diagram-shell${commented ? " has-comment" : ""}`}
+          {...(sourceRange
+            ? {
+                "data-rvw-navigation-start-line": sourceRange.startLine,
+                "data-rvw-navigation-end-line": sourceRange.endLine,
+              }
+            : {})}
+        >
+          <div className="walkthrough-diagram-toolbar">
+            <span>Mermaid diagram</span>
+            <span>nodeを選択して開く · Cmd/Ctrlで反対のペイン</span>
+            {sourceRange && (
+              <button
+                className="button--quiet walkthrough-diagram-comment"
+                onPointerDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.preventDefault();
+                  onCommentRange(sourceRange);
+                }}
+                onClick={(event) => {
+                  if (event.detail === 0) onCommentRange(sourceRange);
+                }}
+              >
+                <CommentIcon />
+                図全体へコメント
+              </button>
+            )}
+            {expandButton}
+          </div>
+          <MermaidSurface
+            className="walkthrough-diagram"
+            source={source}
+            themePreference={themePreference}
+            renderIdPrefix="rvwWalkthrough"
+            errorClassName="walkthrough-diagram-error"
+            onRendered={prepareSvg}
             onPointerDown={(event) => {
-              if (event.button !== 0) return;
+              const reference = referenceFromTarget(event.target);
+              if (!reference) return;
               event.preventDefault();
-              onCommentRange(sourceRange);
+              event.stopPropagation();
+              onOpenReference(reference, event.metaKey || event.ctrlKey);
             }}
-            onClick={(event) => {
-              if (event.detail === 0) onCommentRange(sourceRange);
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              const reference = referenceFromTarget(event.target);
+              if (!reference) return;
+              event.preventDefault();
+              onOpenReference(reference, false);
             }}
-          >
-            <CommentIcon />
-            図全体へコメント
-          </button>
-        )}
-      </div>
-      <MermaidSurface
-        className="walkthrough-diagram"
-        source={source}
-        themePreference={themePreference}
-        renderIdPrefix="rvwWalkthrough"
-        errorClassName="walkthrough-diagram-error"
-        onRendered={prepareSvg}
-        onPointerDown={(event) => {
-          const reference = referenceFromTarget(event.target);
-          if (!reference) return;
-          event.preventDefault();
-          event.stopPropagation();
-          onOpenReference(reference, event.metaKey || event.ctrlKey);
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" && event.key !== " ") return;
-          const reference = referenceFromTarget(event.target);
-          if (!reference) return;
-          event.preventDefault();
-          onOpenReference(reference, false);
-        }}
-      />
-      {commentComposer && (
-        <div className="walkthrough-diagram-comment-composer" ref={commentComposerRef}>
-          {commentComposer}
+          />
+          {commentComposer && (
+            <div className="walkthrough-diagram-comment-composer" ref={commentComposerRef}>
+              {commentComposer}
+            </div>
+          )}
         </div>
       )}
-    </div>
+    />
   );
 }
 
@@ -227,6 +323,14 @@ interface MermaidMarkdownRenderContext {
   diagramCommentRange: MarkdownSourceRange | null;
   themePreference: ThemePreference;
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
+  onResolveReferenceForPeek: (
+    reference: WalkthroughReference,
+  ) => Promise<MermaidReferencePeekResolution>;
+  onOpenCommentCodeReference: (
+    sourceOid: string,
+    reference: CodeReference,
+    openInRightPane: boolean,
+  ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onActivateComment: (commentId: string) => void;
@@ -235,6 +339,8 @@ interface MermaidMarkdownRenderContext {
   diagramCommentError: unknown;
   onCancelDiagramComment: () => void;
   onSubmitDiagramComment: (range: MarkdownSourceRange, body: string) => void;
+  onCreateExpandedDiagramComment: (range: MarkdownSourceRange, body: string) => Promise<void>;
+  draftScope: string;
 }
 
 const MermaidMarkdownRenderContext = createContext<MermaidMarkdownRenderContext | null>(null);
@@ -330,7 +436,7 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
     return <pre {...props}>{children}</pre>;
   }
   return (
-    <MermaidDiagram
+    <WalkthroughMermaidDiagram
       source={codeText(child.props.children).trim()}
       sourceRange={sourceRange}
       commented={Boolean(
@@ -361,6 +467,7 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
           />
         ) : null
       }
+      reviewContext={context}
     />
   );
 };
@@ -380,6 +487,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   draftScope,
   themePreference,
   onOpenReference,
+  onResolveReferenceForPeek,
   onOpenCommentCodeReference,
   onOpenRepositoryLink,
   onCommentActiveChange,
@@ -389,6 +497,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   diagramCommentError,
   onCancelDiagramComment,
   onSubmitDiagramComment,
+  onCreateExpandedDiagramComment,
 }: {
   pullRequestId: string;
   body: string;
@@ -404,6 +513,9 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   draftScope: string;
   themePreference: ThemePreference;
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
+  onResolveReferenceForPeek: (
+    reference: WalkthroughReference,
+  ) => Promise<MermaidReferencePeekResolution>;
   onOpenCommentCodeReference: (
     sourceOid: string,
     reference: CodeReference,
@@ -417,6 +529,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   diagramCommentError: unknown;
   onCancelDiagramComment: () => void;
   onSubmitDiagramComment: (range: MarkdownSourceRange, body: string) => void;
+  onCreateExpandedDiagramComment: (range: MarkdownSourceRange, body: string) => Promise<void>;
 }) {
   const htmlPreviewRanges = useMemo(() => walkthroughHtmlPreviewSourceRanges(body), [body]);
   const markdownPlacedComments = useMemo(
@@ -500,6 +613,8 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
         diagramCommentRange,
         themePreference,
         onOpenReference,
+        onResolveReferenceForPeek,
+        onOpenCommentCodeReference,
         onOpenRepositoryLink,
         onCommentActiveChange,
         onActivateComment,
@@ -508,6 +623,8 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
         diagramCommentError,
         onCancelDiagramComment,
         onSubmitDiagramComment,
+        onCreateExpandedDiagramComment,
+        draftScope,
       }}
     >
       <article className="walkthrough-markdown">
@@ -570,6 +687,7 @@ export function WalkthroughViewer({
   onCommentActiveChange,
   onActivateComment,
   onOpenReference,
+  onResolveReferenceForPeek,
   onOpenCommentCodeReference,
   onOpenRepositoryLink,
   onDeleted,
@@ -588,6 +706,10 @@ export function WalkthroughViewer({
     reference: WalkthroughReference,
     openInRightPane: boolean,
   ) => Promise<string | null>;
+  onResolveReferenceForPeek: (
+    walkthrough: Walkthrough,
+    reference: WalkthroughReference,
+  ) => Promise<MermaidReferencePeekResolution>;
   onOpenCommentCodeReference: (
     sourceOid: string,
     reference: CodeReference,
@@ -674,6 +796,10 @@ export function WalkthroughViewer({
       });
     },
     [onOpenReference, walkthrough],
+  );
+  const resolveReferenceForPeek = useCallback(
+    (reference: WalkthroughReference) => onResolveReferenceForPeek(walkthrough, reference),
+    [onResolveReferenceForPeek, walkthrough],
   );
   useEffect(
     () => () => {
@@ -841,6 +967,7 @@ export function WalkthroughViewer({
       draftScope={replyDraftScope}
       themePreference={themePreference}
       onOpenReference={openReference}
+      onResolveReferenceForPeek={resolveReferenceForPeek}
       onOpenCommentCodeReference={onOpenCommentCodeReference}
       onOpenRepositoryLink={onOpenRepositoryLink}
       onCommentActiveChange={onCommentActiveChange}
@@ -850,6 +977,9 @@ export function WalkthroughViewer({
       diagramCommentError={createComment.error}
       onCancelDiagramComment={closeLineComposer}
       onSubmitDiagramComment={(range, body) => createComment.mutate({ range, body })}
+      onCreateExpandedDiagramComment={async (range, body) => {
+        await createComment.mutateAsync({ range, body });
+      }}
     />
   );
 
