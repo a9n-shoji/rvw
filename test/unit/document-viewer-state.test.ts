@@ -72,6 +72,55 @@ describe("document viewer state", () => {
     );
   });
 
+  it("keeps a resolved Walkthrough reference on its target commit in changes mode", () => {
+    const sourceOid = "c".repeat(40);
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/reference.ts",
+        sourceOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "latest",
+          anchorSourceOid: "a".repeat(40),
+          latestHeadOid: sourceOid,
+          diffBaseOid: selectedOid,
+          hasDiff: true,
+          latestFile: null,
+        },
+      },
+      context(),
+    );
+
+    expect(state.activeChange).toBeUndefined();
+    expect(state.effectiveDisplayMode).toBe("range");
+    expect(state.fullViewNotice).toBeNull();
+    expect(state.viewerDocument).toMatchObject({ sourceOid, comparisonPolicy: "reference-target" });
+  });
+
+  it("shows the resolved target as full text locally when its commit has no file diff", () => {
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/reference.ts",
+        sourceOid: "c".repeat(40),
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "source-fallback",
+          anchorSourceOid: "a".repeat(40),
+          latestHeadOid: "c".repeat(40),
+          diffBaseOid: selectedOid,
+          hasDiff: false,
+          latestFile: null,
+        },
+      },
+      context(),
+    );
+
+    expect(state.effectiveDisplayMode).toBe("full");
+    expect(state.fullViewNotice).toBe("差分なし · 全文表示");
+  });
+
   it("explains why a deleted destination has no full view", () => {
     const deleted = { ...changedFile, kind: "deleted" as const, newPath: null };
     const state = deriveDocumentViewerState(

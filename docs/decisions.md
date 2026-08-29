@@ -1,5 +1,40 @@
 # Architecture decisions
 
+## 2026-08-29: Resolve Walkthrough code references against the latest Pull Request head
+
+### Problem
+
+Walkthrough references stored one `sourceOid`, path, and line range and always opened that historical
+snapshot. After new commits reached a Pull Request, the explanation remained verifiable but no longer
+helped the reviewer see the corresponding current code without manually changing commits. Treating
+`sourceOid` as both an anchor and the display revision also made current review and historical evidence
+the same concern.
+
+### Choice
+
+Treat `sourceOid + path + line range` as the coordinate where the reference is guaranteed to have
+existed. Resolve a clicked reference lazily and directly from that anchor to the saved Pull Request's
+latest head. Follow a rename only when the direct Git comparison detects it, and map a line range only
+when every selected line survives unchanged, contiguously, and uniquely. Open the latest target when
+that succeeds. Otherwise open the anchor snapshot, identify it as reference-time code, state that the
+latest code changed, and offer a line-unanchored latest-file action when the same or renamed file is
+available.
+
+Do not inspect intermediate commits or search for a latest-valid revision. Keep Full versus Diff and
+stacked versus split as user display settings; the resolved target supplies the commit shown by that
+mode. Keep the result in browser-session state only. Do not add database columns, reference versions,
+resolved OIDs, or latest flags.
+
+### Trade-offs
+
+- Normal review navigation reaches current code while the anchor still guarantees a truthful fallback.
+- Conservative mapping intentionally falls back for edited or ambiguous code instead of guessing.
+- A direct source-to-head comparison and target-commit display metadata keep click cost independent of
+  Pull Request commit count, but a fallback can be older than an intermediate commit where the range
+  still happened to exist.
+- The latest-file action preserves access after a changed range, but deliberately makes no line-location
+  promise.
+
 ## 2026-08-28: Own one browser-managed runtime per database
 
 ### Problem

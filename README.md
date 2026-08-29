@@ -16,7 +16,7 @@ Agentが実装
     ↓
 Git commit / GitHub Pull Request
     ↓
-Agentが任意でcommit固定のWalkthroughを提示
+Agentが任意でsource anchor付きWalkthroughを提示
     ↓
 rvwで意図・説明・変更・repository全体を読む
     ↓
@@ -128,7 +128,9 @@ rvw walkthrough publish --stdin --json
 構成されます。参照は意味のある複数行range、単行、またはfile全体を指せます。rvwは登録時にcommit、
 path、指定された行範囲を検証します。publishしてもbrowserは開かれず、
 active tabやscroll位置も変わりません。人間がviewerのWalkthroughを開き、必要なreferenceを選んだ
-時だけ、exact sourceがdocument tabへ開き、行指定があれば範囲全体が強調されます。通常clickは左ペイン、
+時だけ、`sourceOid`のanchorから最新PR headへcode位置を保守的に解決します。追跡できれば最新code、
+変更や曖昧さがあれば参照時点のcodeを明示して開き、行指定があれば解決した範囲全体を強調します。
+fallbackでは、同じfileまたは明確なrename先があればline保証なしで最新fileも開けます。通常clickは左ペイン、
 `Cmd` / `Ctrl`を押しながら選べば右ペインへ開きます。説明tabは残るため、
 複数のclaimと実装を任意の順序・任意のタイミングで往復できます。
 
@@ -197,7 +199,7 @@ rvw Skillを使って、https://github.com/owner/repository/pull/123 をreview�
 
 Walkthroughを作る場合は、説明したい対象と必要な作成指示をセッションへ伝えて`rvw-walkthrough` Skillを使います。
 Skillは明示された指示を優先し、未指定の作成判断だけを既定guideで補って、reviewerが変更または実装対象の
-mental modelを作るための最初の読解経路を構成します。文書の見出しや説明順序は固定せず、commit固定の
+mental modelを作るための最初の読解経路を構成します。文書の見出しや説明順序は固定せず、source anchorを持つ
 reference付きartifactとして検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、
 現在内容を取得して同じURIを更新し、重複した「改訂版」を追加しません。
 

@@ -457,6 +457,11 @@ export class GitClient {
     return parseCommitLog(output);
   }
 
+  async firstParent(cwd: string, oid: string): Promise<string | null> {
+    const parents = await runText("git", ["show", "-s", "--format=%P", oid], { cwd });
+    return parents.split(" ").filter(Boolean)[0] ?? null;
+  }
+
   async tree(cwd: string, oid: string): Promise<TreeEntry[]> {
     const result = await runProcess("git", ["ls-tree", "-r", "-z", "--long", oid], { cwd });
     return parseLsTree(result.stdout);

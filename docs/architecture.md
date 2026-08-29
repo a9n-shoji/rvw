@@ -92,7 +92,7 @@ Policy and sandbox so direct navigation cannot execute repository-controlled scr
 
 The bundled Skills are named by capability rather than Agent host. `rvw` handles review comments and
 synchronization; `rvw-walkthrough` converts the current session's explanation into a validated,
-commit-fixed publication without prescribing its document structure; `rvw-watch-comments` keeps an
+source-anchored publication without prescribing its document structure; `rvw-watch-comments` keeps an
 external Agent task subscribed to newly created posts and fails closed on PR ownership. Codex and Claude Code receive
 the same Skill directories under their respective local Skill roots. Platform selection is a packaging
 concern only and does not fork the Agent protocol or workflow instructions. Installer metadata records

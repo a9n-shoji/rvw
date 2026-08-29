@@ -184,6 +184,29 @@ export interface WalkthroughSummary {
   createdAt: string;
 }
 
+export interface WalkthroughReferenceFileTarget {
+  sourceOid: string;
+  path: string;
+  diffBaseOid: string | null;
+  oldPath: string | null;
+  newPath: string | null;
+  hasDiff: boolean;
+}
+
+export interface WalkthroughReferenceTarget extends WalkthroughReferenceFileTarget {
+  startLine: number | null;
+  endLine: number | null;
+}
+
+export interface WalkthroughReferenceResolution {
+  outcome: "latest" | "source-fallback";
+  anchorSourceOid: string;
+  latestHeadOid: string;
+  target: WalkthroughReferenceTarget;
+  latestFile: WalkthroughReferenceFileTarget | null;
+  document: DocumentContent;
+}
+
 export interface WalkthroughDeleteCounts {
   comments: number;
   posts: number;

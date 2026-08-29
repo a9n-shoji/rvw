@@ -34,6 +34,7 @@ import type {
   DocumentContent,
   DocumentRef,
   ReviewComment,
+  WalkthroughReferenceFileTarget,
 } from "../../domain/models.js";
 import { isSupportedImagePath } from "../../shared/image-assets.js";
 import {
@@ -728,6 +729,7 @@ export function DocumentViewer({
   onOpenMarkdownFragment,
   onOpenCodeReference,
   onOpenRepositoryLink,
+  onOpenLatestReferenceFile,
 }: {
   pullRequestId: string;
   paneId: DocumentPaneId;
@@ -751,6 +753,7 @@ export function DocumentViewer({
     openInRightPane: boolean,
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
+  onOpenLatestReferenceFile: (target: WalkthroughReferenceFileTarget) => void;
 }) {
   if (activeDocument.kind === "walkthrough") {
     throw new Error("walkthroughはWalkthroughViewerで表示してください。");
@@ -1790,9 +1793,30 @@ export function DocumentViewer({
         }}
       />
     ) : null;
+  const referenceFallback =
+    activeDocument.kind === "repository-file" &&
+    activeDocument.referenceContext?.outcome === "source-fallback"
+      ? activeDocument.referenceContext
+      : null;
   return (
     <div className="document-viewer">
       <ErrorNotice error={annotationQuery.error} />
+      {referenceFallback && (
+        <div className="reference-fallback-banner" role="status">
+          <div>
+            <strong>参照時点のコード · {referenceFallback.anchorSourceOid.slice(0, 8)}</strong>
+            <span>この参照箇所は最新コードでは変更されています。</span>
+          </div>
+          {referenceFallback.latestFile && (
+            <button
+              type="button"
+              onClick={() => onOpenLatestReferenceFile(referenceFallback.latestFile!)}
+            >
+              最新のファイルを見る
+            </button>
+          )}
+        </div>
+      )}
       {markdownCapable && effectiveDisplayMode === "full" && (
         <div className="markdown-view-toolbar" aria-label="Markdown表示">
           <span>

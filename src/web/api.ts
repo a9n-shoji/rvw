@@ -12,6 +12,7 @@ import type {
   SearchResponse,
   TreeEntry,
   Walkthrough,
+  WalkthroughReferenceResolution,
   WalkthroughSummary,
 } from "../domain/models.js";
 import type { ThemePreference } from "../shared/preferences.js";
@@ -149,6 +150,10 @@ export interface WalkthroughsResponse {
 
 export interface WalkthroughResponse {
   walkthrough: Walkthrough;
+}
+
+export interface WalkthroughReferenceResolutionResponse {
+  resolution: WalkthroughReferenceResolution;
 }
 
 export interface DeleteWalkthroughResponse {

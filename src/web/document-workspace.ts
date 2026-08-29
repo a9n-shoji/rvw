@@ -1,4 +1,15 @@
+import type { WalkthroughReferenceFileTarget } from "../domain/models.js";
+
 export type DocumentPaneId = "left" | "right";
+
+export interface ReferenceDocumentContext {
+  outcome: "latest" | "source-fallback";
+  anchorSourceOid: string;
+  latestHeadOid: string;
+  diffBaseOid: string | null;
+  hasDiff: boolean;
+  latestFile: WalkthroughReferenceFileTarget | null;
+}
 
 export type ActiveDocument =
   | { kind: "pull-request-markdown" }
@@ -9,7 +20,8 @@ export type ActiveDocument =
       oldPath?: string | null;
       newPath?: string | null;
       sourceOid?: string;
-      comparisonPolicy?: "selected-range" | "exact-source";
+      comparisonPolicy?: "selected-range" | "exact-source" | "reference-target";
+      referenceContext?: ReferenceDocumentContext;
     };
 
 export interface DocumentWorkspaceState {
@@ -240,5 +252,6 @@ export function removeDocumentFromWorkspace(
 export function currentCommitDocument(document: ActiveDocument): ActiveDocument {
   if (document.kind === "pull-request-markdown") return { kind: "pull-request-markdown" };
   if (document.kind === "walkthrough") return document;
+  if (document.comparisonPolicy === "reference-target") return document;
   return { kind: "repository-file", path: document.path };
 }

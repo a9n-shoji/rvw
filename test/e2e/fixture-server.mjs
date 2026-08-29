@@ -989,6 +989,62 @@ app.get("/api/pull-requests/:id/walkthroughs", (context) =>
   }),
 );
 
+app.get(
+  "/api/pull-requests/:id/walkthroughs/:walkthroughId/references/:referenceId/resolve",
+  (context) => {
+    const walkthrough = activeWalkthroughs.find(
+      (candidate) => candidate.id === context.req.param("walkthroughId"),
+    );
+    const reference = walkthrough?.references.find(
+      (candidate) => candidate.id === context.req.param("referenceId"),
+    );
+    if (!walkthrough || !reference) {
+      return context.json(
+        { ok: false, error: { code: "NOT_FOUND", message: "missing reference" } },
+        404,
+      );
+    }
+    const latestHeadOid = currentView().headOid;
+    const commits = currentView().commits;
+    const latestCommit = commits.find((candidate) => candidate.oid === latestHeadOid);
+    const diffBaseOid = latestCommit?.parentOids[0] ?? null;
+    const hasDiff = repositoryDemo
+      ? Boolean(
+          diffBaseOid &&
+          repositoryDemo
+            .changedFiles(diffBaseOid, latestHeadOid)
+            .some((change) => change.newPath === reference.path),
+        )
+      : ["src/fixture.ts", "README.md"].includes(reference.path);
+    const ref = {
+      kind: "repository-file",
+      pullRequestId,
+      sourceOid: latestHeadOid,
+      path: reference.path,
+    };
+    return context.json({
+      ok: true,
+      resolution: {
+        outcome: "latest",
+        anchorSourceOid: walkthrough.sourceOid,
+        latestHeadOid,
+        target: {
+          sourceOid: latestHeadOid,
+          path: reference.path,
+          diffBaseOid,
+          oldPath: reference.path,
+          newPath: reference.path,
+          hasDiff,
+          startLine: reference.startLine,
+          endLine: reference.endLine,
+        },
+        latestFile: null,
+        document: repositoryDocument(ref),
+      },
+    });
+  },
+);
+
 app.get("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
   const walkthrough = activeWalkthroughs.find(
     (candidate) => candidate.id === context.req.param("walkthroughId"),

@@ -34,7 +34,11 @@ export function deriveDocumentViewerState(
   context: DocumentViewerStateContext,
 ): DerivedDocumentViewerState {
   const usesSelectedRange =
-    document?.kind === "repository-file" && document.comparisonPolicy !== "exact-source";
+    document?.kind === "repository-file" &&
+    document.comparisonPolicy !== "exact-source" &&
+    document.comparisonPolicy !== "reference-target";
+  const usesReferenceTarget =
+    document?.kind === "repository-file" && document.comparisonPolicy === "reference-target";
   const activeChange = usesSelectedRange
     ? context.changedFiles?.find((candidate) => {
         const path = changedFilePath(candidate);
@@ -51,15 +55,22 @@ export function deriveDocumentViewerState(
     document.comparisonPolicy === "exact-source";
   const referenceSourceOid = document?.kind === "repository-file" ? document.sourceOid : undefined;
   const referenceSourceDiffers =
-    referenceSourceOid !== undefined && referenceSourceOid !== context.selectedOid;
+    !usesReferenceTarget &&
+    referenceSourceOid !== undefined &&
+    referenceSourceOid !== context.selectedOid;
   const selectedRangeFullFallback =
     context.documentDisplayMode !== "full" &&
     usesSelectedRange &&
     context.changedFilesLoaded &&
     !activeChange;
+  const referenceTargetFullFallback =
+    context.documentDisplayMode !== "full" &&
+    usesReferenceTarget &&
+    document.referenceContext?.hasDiff === false;
   const showingFullFallback =
     (context.documentDisplayMode !== "full" && document?.kind === "pull-request-markdown") ||
-    selectedRangeFullFallback;
+    selectedRangeFullFallback ||
+    referenceTargetFullFallback;
   const fullViewNotice = referenceSourceDiffers
     ? `参照元 ${shortOid(referenceSourceOid)} ≠ 対象 ${shortOid(context.selectedOid)}${
         forceExactSourceFullView
