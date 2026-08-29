@@ -1387,7 +1387,7 @@ describe("RvwService commit workflow", () => {
       }),
     ).rejects.toMatchObject({
       code: "INVALID_INPUT",
-      message: "Mermaid nodeが本文のflowchartまたはclassDiagramに見つかりません: Diagram",
+      message: "Mermaid binding対象が本文の対応diagramに見つかりません: Diagram",
     });
 
     await expect(
@@ -1425,6 +1425,70 @@ describe("RvwService commit workflow", () => {
         references,
       }),
     ).resolves.toMatchObject({ diagramBindings: { Actual: "diagram" } });
+
+    for (const supported of [
+      {
+        title: "Sequence diagram bindings",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "sequenceDiagram",
+          "  participant C as Controller",
+          "  actor U as User",
+          "  U->>C: request",
+          "```",
+        ].join("\n"),
+        diagramBindings: { C: "diagram", U: "source" },
+      },
+      {
+        title: "State diagram binding",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "stateDiagram-v2",
+          '  state "Approved" as Approved',
+          "  Draft --> Approved : approve",
+          "```",
+        ].join("\n"),
+        diagramBindings: { Approved: "diagram" },
+      },
+      {
+        title: "ER diagram binding",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "erDiagram",
+          "  USER ||--o{ ORDER : places",
+          "```",
+        ].join("\n"),
+        diagramBindings: { ORDER: "diagram" },
+      },
+      {
+        title: "Architecture diagram binding",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "architecture-beta",
+          "  group app(cloud)[Application]",
+          "  service worker(server)[Worker] in app",
+          "```",
+        ].join("\n"),
+        diagramBindings: { worker: "diagram" },
+      },
+    ]) {
+      await expect(
+        service.publishWalkthrough({
+          pullRequest: opened.pullRequest.url,
+          sourceOid: firstHead,
+          ...supported,
+          references,
+        }),
+      ).resolves.toMatchObject({ diagramBindings: supported.diagramBindings });
+    }
 
     await expect(
       service.updateWalkthrough(walkthrough.ref, {

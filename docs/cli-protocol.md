@@ -416,7 +416,10 @@ document at that commit. A reference may omit both `startLine` and `endLine` to 
 otherwise both are required and define an existing inclusive single-line or multi-line range. Omitted
 input fields are normalized to `null`, and saved references always return both fields as numbers or `null`. Markdown uses
 `rvw-ref:<referenceId>` links. Every `diagramBindings` value must name a supplied reference, and its
-key must identify a node or class that actually occurs in a flowchart or classDiagram fence. Every
+key must identify an actual flowchart node, classDiagram class, sequenceDiagram participant/actor,
+stateDiagram-v2 state, erDiagram entity, or architecture-beta service in a Mermaid fence. Keys use the
+explicit source ID rather than a display alias; messages, transitions, relationships, architecture
+edges/groups, and other edge-like elements are not valid binding targets. Every
 supplied reference must be used by at least one Markdown or HTML `rvw-ref:` link or valid diagram binding. Unused or
 phantom-bound references are rejected because the viewer has no separate reference index.
 

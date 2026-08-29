@@ -46,6 +46,14 @@ when spatial layout, an ELI5 visual hierarchy or metaphor, a UI mock, or a Befor
 materially lowers the reader's comprehension cost. The Walkthrough may consist mostly or entirely of
 one HTML preview when that is the clearest requested format; it remains a Markdown document.
 
+For an interactive Mermaid code reference, put the explicit Mermaid source ID in `diagramBindings`.
+The supported targets are flowchart nodes, classDiagram classes, sequenceDiagram participants and actors,
+stateDiagram-v2 states, erDiagram entities, and architecture-beta services. For example, bind `C`, not
+the `Controller` display alias in `participant C as Controller`, and bind `worker`, not `Worker` in
+`service worker(server)[Worker]`. Do not bind sequence messages, state transitions, ER relationships,
+architecture edges/groups, or Mermaid-generated sequence numbers. If Mermaid does not retain a stable
+source ID for an element, leave it passive instead of deriving a key from its label or DOM order.
+
 Keep HTML visuals static and self-contained:
 
 - Author an HTML fragment only: do not include `<!doctype>`, `<html>`, `<head>`, or `<body>`.

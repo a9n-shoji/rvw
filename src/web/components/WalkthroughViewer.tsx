@@ -44,6 +44,7 @@ import {
 } from "../markdown-source-map.js";
 import type { ThemePreference } from "../theme.js";
 import type { DocumentPaneId } from "../document-workspace.js";
+import { mermaidBindingTargets } from "../mermaid-binding-resolver.js";
 import { commentReplyDraftScope } from "../comment-draft-store.js";
 import type { ViewerNavigationTarget } from "./DocumentViewer.js";
 import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
@@ -138,30 +139,22 @@ function WalkthroughMermaidDiagram({
 
   const prepareSvg = useCallback(
     (container: HTMLDivElement): void => {
-      for (const node of container.querySelectorAll<SVGGElement>(
-        "g.node, g.classGroup, g[data-id], g[id^='classId-']",
+      for (const { bindingKey, element } of mermaidBindingTargets(
+        source,
+        container,
+        Object.keys(bindings),
       )) {
-        const nodeId =
-          node.dataset.id ??
-          Object.keys(bindings).find(
-            (candidate) =>
-              node.id === candidate ||
-              node.id.includes(`-${candidate}`) ||
-              node.id.includes(`-${candidate}-`) ||
-              node.id.endsWith(`-${candidate}`),
-          );
-        if (!nodeId) continue;
-        const referenceId = bindings[nodeId];
+        const referenceId = bindings[bindingKey];
         const reference = referenceId ? references.get(referenceId) : undefined;
         if (!reference) continue;
-        node.classList.add("walkthrough-diagram-node--linked");
-        node.setAttribute("role", "button");
-        node.setAttribute("tabindex", "0");
-        node.setAttribute("aria-label", `${reference.label}をコードで開く`);
-        node.dataset.walkthroughReferenceId = reference.id;
+        element.classList.add("walkthrough-diagram-node--linked");
+        element.setAttribute("role", "button");
+        element.setAttribute("tabindex", "0");
+        element.setAttribute("aria-label", `${reference.label}をコードで開く`);
+        element.dataset.walkthroughReferenceId = reference.id;
       }
     },
-    [bindings, references],
+    [bindings, references, source],
   );
 
   const diagramComments = sourceRange

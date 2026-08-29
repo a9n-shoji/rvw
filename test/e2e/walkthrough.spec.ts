@@ -4,6 +4,7 @@ import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-re
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryWalkthrough = "注文作成フロー：HTTPからtransactional outboxまで";
 const markdownShowcase = "Markdown表現デモ：レビューコメントのショーケース";
+const mermaidBindingWalkthrough = "Mermaid binding対応図種";
 
 async function openWalkthroughFromSidebar(page: Page, title: string): Promise<void> {
   const walkthroughsFolder = page.getByRole("button", { name: /^ウォークスルー \d+$/ });
@@ -78,14 +79,14 @@ test("keeps agent explanation passive until a human opens a current code referen
   ).toBeVisible();
 
   const walkthroughShortcut = page.getByRole("button", {
-    name: "ウォークスルー 5",
+    name: "ウォークスルー 6",
     exact: true,
   });
   await expect(page.getByRole("button", { name: "Pull Request.md", exact: true })).toBeVisible();
   await expect(walkthroughShortcut).toHaveAttribute("aria-expanded", "false");
   await walkthroughShortcut.click();
   const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
-  await expect(reviewTree.locator(".review-tree-walkthrough")).toHaveCount(5);
+  await expect(reviewTree.locator(".review-tree-walkthrough")).toHaveCount(6);
   await reviewTree.getByRole("button", { name: primaryWalkthrough, exact: true }).click();
 
   await expect(page.getByRole("tab", { name: primaryWalkthrough })).toHaveAttribute(
@@ -93,7 +94,7 @@ test("keeps agent explanation passive until a human opens a current code referen
     "true",
   );
   await expect(walkthroughShortcut).toHaveAttribute("aria-expanded", "true");
-  await expect(reviewTree.locator(".review-tree-walkthrough")).toHaveCount(5);
+  await expect(reviewTree.locator(".review-tree-walkthrough")).toHaveCount(6);
   await expect(
     reviewTree.getByRole("button", { name: primaryWalkthrough, exact: true }),
   ).toHaveAttribute(
@@ -1612,6 +1613,65 @@ test("renders a class diagram with code-bound classes", async ({ page }) => {
   );
 });
 
+test("binds node-like elements across supported Mermaid diagram types", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openWalkthroughFromSidebar(page, mermaidBindingWalkthrough);
+
+  await expect(page.locator(".walkthrough-diagram > svg")).toHaveCount(6);
+  await expect(page.locator(".walkthrough-diagram-node--linked")).toHaveCount(7);
+  for (const label of [
+    "POST /orders route",
+    "createOrderController",
+    "CreateOrderHandler.execute",
+    "requireActor",
+    "TransactionRunner.run",
+    "Order.place",
+    "OutboxDispatcher.tick",
+  ]) {
+    const target = page.getByRole("button", { name: `${label}をコードで開く` });
+    await expect(target).toBeVisible();
+    await expect(target).toHaveAttribute("tabindex", "0");
+  }
+
+  await page.getByRole("button", { name: "POST /orders routeをコードで開く" }).click();
+  await expect(page.getByRole("tab", { name: "src/http/routes/orders.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await page.getByRole("tab", { name: mermaidBindingWalkthrough }).click();
+
+  const participant = page.getByRole("button", {
+    name: "CreateOrderHandler.executeをコードで開く",
+  });
+  await participant.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("tab", { name: "src/application/orders/create-order.ts" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: mermaidBindingWalkthrough }).click();
+
+  const state = page.getByRole("button", { name: "TransactionRunner.runをコードで開く" });
+  await state.focus();
+  await page.keyboard.press("Space");
+  await expect(
+    page.getByRole("tab", { name: "src/infrastructure/db/transaction.ts" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: mermaidBindingWalkthrough }).click();
+
+  const service = page.getByRole("button", { name: "OutboxDispatcher.tickをコードで開く" });
+  const architectureDiagram = page.locator(".walkthrough-diagram-shell").filter({ has: service });
+  await architectureDiagram.getByRole("button", { name: "Mermaid diagramを拡大" }).click();
+  const dialog = page.getByRole("dialog", { name: "Mermaid diagram" });
+  const expandedService = dialog.getByRole("button", {
+    name: "OutboxDispatcher.tickをコードで開く",
+  });
+  await expect(expandedService).toBeVisible();
+  await expandedService.click();
+  await expect(dialog.getByText("src/workers/outbox-dispatcher.ts", { exact: true })).toBeVisible();
+  await expect(dialog.locator(".mermaid-reference-location small")).toHaveText("L7–L16");
+  await expect(dialog.getByRole("button", { name: "Open in review" })).toBeVisible();
+});
+
 test("renders the Markdown walkthrough showcase and keeps every expression commentable", async ({
   page,
 }) => {
@@ -2259,7 +2319,7 @@ test("deletes an unnecessary walkthrough and its whole-document feedback after c
   await page.getByRole("button", { name: "ウォークスルーを削除" }).click();
 
   await expect(page.getByRole("tab", { name: title })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "ウォークスルー 4", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "ウォークスルー 5", exact: true })).toBeVisible();
   await expect(page.getByText(feedback)).toHaveCount(0);
 });
 
