@@ -1390,6 +1390,46 @@ describe("RvwService commit workflow", () => {
       message: "Mermaid binding対象が本文の対応diagramに見つかりません: Diagram",
     });
 
+    for (const phantomStyle of [
+      {
+        title: "State style is not a binding target",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "stateDiagram-v2",
+          "  Still:::notMoving --> Moving:::movement",
+          "```",
+        ].join("\n"),
+        diagramBindings: { notMoving: "diagram" },
+      },
+      {
+        title: "ER style is not a binding target",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "erDiagram",
+          "  PERSON:::model ||--|| CAR : owns",
+          "```",
+        ].join("\n"),
+        diagramBindings: { model: "diagram" },
+      },
+    ]) {
+      const [phantomId] = Object.keys(phantomStyle.diagramBindings);
+      await expect(
+        service.publishWalkthrough({
+          pullRequest: opened.pullRequest.url,
+          sourceOid: firstHead,
+          ...phantomStyle,
+          references,
+        }),
+      ).rejects.toMatchObject({
+        code: "INVALID_INPUT",
+        message: `Mermaid binding対象が本文の対応diagramに見つかりません: ${phantomId}`,
+      });
+    }
+
     await expect(
       service.publishWalkthrough({
         pullRequest: opened.pullRequest.url,
@@ -1434,7 +1474,7 @@ describe("RvwService commit workflow", () => {
           "",
           "```mermaid",
           "flowchart LR",
-          "  service[Service] --> state[State]",
+          "  service[Service]:::backend --> state[State]:::workflow",
           "```",
         ].join("\n"),
         diagramBindings: { service: "diagram", state: "source" },
@@ -1460,11 +1500,11 @@ describe("RvwService commit workflow", () => {
           "",
           "```mermaid",
           "stateDiagram-v2",
-          "  Approved",
-          "  Draft --> Approved : approve",
+          "  Idle",
+          "  Draft:::notMoving --> Approved:::movement",
           "```",
         ].join("\n"),
-        diagramBindings: { Approved: "diagram" },
+        diagramBindings: { Idle: "source", Draft: "diagram", Approved: "source" },
       },
       {
         title: "ER diagram binding",
@@ -1477,9 +1517,11 @@ describe("RvwService commit workflow", () => {
           "    string name",
           "  }",
           "  p 1 to zero or more ORDER : places",
+          "  HOUSE",
+          "  PERSON:::model ||--|| CAR:::vehicle : owns",
           "```",
         ].join("\n"),
-        diagramBindings: { p: "diagram", ORDER: "source" },
+        diagramBindings: { p: "diagram", ORDER: "source", HOUSE: "diagram", PERSON: "source" },
       },
       {
         title: "Architecture diagram binding",

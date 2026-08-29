@@ -313,6 +313,7 @@ export interface WalkthroughMarkdownAnalysis {
 
 const mermaidIdentifierPattern = /[A-Za-z][A-Za-z0-9_-]{0,63}/g;
 const mermaidEdgePattern = /[<|o*x]*[-.=~]{2,}[|o*x>]*/g;
+const mermaidClassShorthandPattern = /:::[A-Za-z][A-Za-z0-9_-]*/g;
 const flowchartAndClassKeywords = new Set([
   "class",
   "classDef",
@@ -336,6 +337,10 @@ function mermaidIdentifiers(value: string, excludedKeywords: ReadonlySet<string>
 function mermaidLineWithoutComment(value: string): string {
   const commentIndex = value.indexOf("%%");
   return commentIndex === -1 ? value : value.slice(0, commentIndex);
+}
+
+function mermaidLineWithoutClassShorthand(value: string): string {
+  return value.replace(mermaidClassShorthandPattern, "");
 }
 
 function mermaidLineWithoutLabels(value: string): string {
@@ -375,15 +380,16 @@ function addMermaidEdgeEndpoints(
   nodeIds: Set<string>,
   excludedKeywords: ReadonlySet<string>,
 ): void {
-  const edges = [...line.matchAll(mermaidEdgePattern)];
+  const endpointLine = mermaidLineWithoutClassShorthand(line);
+  const edges = [...endpointLine.matchAll(mermaidEdgePattern)];
   for (let index = 0; index < edges.length; index += 1) {
     const edge = edges[index]!;
     const edgeStart = edge.index;
     const edgeEnd = edgeStart + edge[0].length;
     const leftStart = index === 0 ? 0 : edges[index - 1]!.index + edges[index - 1]![0].length;
-    const rightEnd = index + 1 === edges.length ? line.length : edges[index + 1]!.index;
-    const left = line.slice(leftStart, edgeStart);
-    const right = line.slice(edgeEnd, rightEnd);
+    const rightEnd = index + 1 === edges.length ? endpointLine.length : edges[index + 1]!.index;
+    const left = endpointLine.slice(leftStart, edgeStart);
+    const right = endpointLine.slice(edgeEnd, rightEnd);
     const leftIdentifiers = mermaidIdentifiers(left, excludedKeywords);
     const rightIdentifiers = mermaidIdentifiers(right, excludedKeywords);
     const leftEndpoints = left.includes("&") ? leftIdentifiers : leftIdentifiers.slice(-1);
@@ -479,8 +485,11 @@ function addMermaidDiagramNodes(source: string, nodeIds: Set<string>): void {
         continue;
       }
       if (diagramType === "erDiagram") {
-        addErRelationshipEntities(line, nodeIds);
-        const entity = line.match(/^([A-Za-z][A-Za-z0-9_-]{0,63})(?:\s*\[[^\]\n]+\])?\s*\{/)?.[1];
+        const entityLine = mermaidLineWithoutClassShorthand(line);
+        addErRelationshipEntities(entityLine, nodeIds);
+        const entity = entityLine.match(
+          /^([A-Za-z][A-Za-z0-9_-]{0,63})(?:\s*\[[^\]\n]+\])?\s*(?:\{|$)/,
+        )?.[1];
         if (entity) nodeIds.add(entity);
         continue;
       }
