@@ -278,6 +278,20 @@ test("reviews a Mermaid block in the expanded workspace without losing diagram c
     await expect(dialog.getByText("Existing diagram review", { exact: false })).toBeVisible();
 
     const reviewRail = dialog.getByRole("complementary", { name: "Diagram review" });
+    const commentMenuButton = reviewRail.getByRole("button", {
+      name: "コメントのその他の操作",
+    });
+    await commentMenuButton.click();
+    const commentMenu = reviewRail.getByRole("menu", {
+      name: "コメントのその他の操作",
+    });
+    await expect(commentMenu).toBeVisible();
+    await expect(commentMenu.getByRole("menuitem", { name: "参照をコピー" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(commentMenu).toBeHidden();
+    await expect(commentMenuButton).toBeFocused();
+    await expect(dialog).toBeVisible();
+
     const railResizeHandle = dialog.getByRole("separator", {
       name: "Comments railの幅を変更",
     });

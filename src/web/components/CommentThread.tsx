@@ -584,6 +584,16 @@ export function CommentThread({
             aria-label={menuLabel}
             popover="manual"
             onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                event.currentTarget
+                  .closest<HTMLElement>("[data-comment-menu]")
+                  ?.querySelector<HTMLElement>(".comment-more-trigger")
+                  ?.focus();
+                setOpenMenuPostId(null);
+                return;
+              }
               if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
               const items = Array.from(
                 event.currentTarget.querySelectorAll<HTMLElement>("[role=menuitem]"),
