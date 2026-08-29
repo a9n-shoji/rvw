@@ -306,7 +306,7 @@ empty fileは従来どおり明示的に扱う。
   参照時点を明示したうえでsource commitの比較を使う。現在の全文／変更とstacked / split設定は切り替えず、
   global比較でfileに差分がなければ通常の`差分なし · 全文表示`を使う。repository Markdownの相対linkとcomment targetはglobal表示が変更でも、
   そのpaneだけretained exact sourceの全文を表示する。Walkthrough referenceのfallbackでは
-  `参照時点のコード · <short SHA>`と最新では変更済みであることを明示し、同一pathまたは明確なrename先が
+  `参照時点のコード · <short SHA>`と最新で対応位置を確実に特定できなかったことを明示し、同一pathまたは明確なrename先が
   存在するときだけ、line対応を保証しない`最新のファイルを見る`を提供する。このactionはglobal比較の
   `selectedOid`がtargetのlatest OIDと一致する場合だけ変更表示を使い、historical範囲ではtarget latestの
   exact source全文を開く。anchor commitまたはpathを
@@ -513,17 +513,21 @@ interface Walkthrough {
 - same-origin iframe documentはPane Findの検索・highlight対象へ登録し、iframe内にfocusがある時の
   Cmd/Ctrl+F、Cmd/Ctrl+P、Cmd/Ctrl+Shift+Fをparentの同じglobal shortcutへrelayする。
 - 人間がreferenceを選んだ時だけ、`sourceOid + path + line range`を最新`latestHeadOid`へ一度だけ直接
-  mappingする。同一codeとして変更されず、連続かつ一意に追跡できるrange、または存在するfile-level
+  mappingする。file全体が同一なら元の座標を維持し、fileが異なる場合は同一codeとして変更されず、連続し、
+  sourceとlatestの双方で一意に追跡できるrange、または存在するfile-level
   referenceだけを成功とする。file-level referenceもlatest documentが`available`の場合だけ成功とし、
-  binary、too-large、missingは表示可能なanchorへfallbackする。`git diff --find-renames`で明確に検出できるrenameは新pathへ追従する。
+  binary、too-large、missingは表示可能なanchorへfallbackする。元pathがlatestにも存在すればそのpathを維持する。
+  元pathが消えた場合だけ`git diff --find-renames --find-copies --find-copies-harder`を1回実行し、anchor path由来の
+  rename/copy候補がちょうど1件なら新pathへ追従する。複数候補はGitが1件をrenameとして選んでも曖昧とする。
   変更、重複候補、削除、読取不能など確実でない場合は推測せず`sourceOid`へfallbackし、途中commitや
   「成立していた最後のcommit」を探索しない。このnavigationはglobalなcommit範囲と表示controlを変更しない。
   anchor sourceのcommitまたはpathがmissingならtabを開かず一時chipでリンク切れを示し、通信や一時的な
   取得失敗はリンク切れと区別する。解決したline rangeは範囲全体を強調し、file-level referenceでは行を
-  選択しない。解決結果は閲覧時の一時状態であり、DBへlatest/resolved OID、version、flagを保存しない。
-  解決後にPR headが進んだtabは旧headを無言で最新扱いせず、`解決時 <old> → 現在 <new>`と
+  選択しない。解決結果と`sourceOid + path + line range`のcanonical fingerprintは閲覧時の一時状態であり、
+  DBへlatest/resolved OID、version、flagを保存しない。解決後にPR headが進んだtabは旧headを無言で最新扱いせず、`解決時 <old> → 現在 <new>`と
   `最新へ再解決`を表示する。staleなsource fallbackでは表示中のanchor OIDだけを残し、旧headに対する
-  fallback判断と`最新のファイルを見る`を隠す。stale理由は専用bannerへ集約し、historical range用noticeは表示しない。
+  fallback判断と`最新のファイルを見る`を隠す。同じWalkthrough IDのreference fingerprintが変わった場合も
+  `Walkthroughが更新されています`としてstaleにする。stale理由は専用bannerへ集約し、historical range用noticeは表示しない。
   初期実装では閲覧位置を自動で置換せず、人間がactionを選んだ時だけ同じreference IDを再解決する。
 - 説明本文やdiagramはAgentのclaimであり、code referenceとGit objectが検証可能な根拠である。
 - 人間はstableなWalkthrough IDへ文書全体コメントを作成できるほか、render済みMarkdownの文字列を選択して

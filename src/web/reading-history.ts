@@ -77,6 +77,7 @@ function parseReferenceContext(value: unknown): ReferenceDocumentContext | null 
     typeof value.referenceId !== "string" ||
     typeof value.anchorSourceOid !== "string" ||
     typeof value.latestHeadOid !== "string" ||
+    typeof value.referenceFingerprint !== "string" ||
     !optionalNullableString(value.diffBaseOid) ||
     typeof value.hasDiff !== "boolean"
   ) {
@@ -90,6 +91,7 @@ function parseReferenceContext(value: unknown): ReferenceDocumentContext | null 
     referenceId: value.referenceId,
     anchorSourceOid: value.anchorSourceOid,
     latestHeadOid: value.latestHeadOid,
+    referenceFingerprint: value.referenceFingerprint,
     diffBaseOid: value.diffBaseOid ?? null,
     hasDiff: value.hasDiff,
     latestFile,

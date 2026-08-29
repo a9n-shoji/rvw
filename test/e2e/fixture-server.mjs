@@ -4,6 +4,7 @@ import path from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-reference.ts";
 import {
   walkthroughRepositoryPaths,
   walkthroughRepositorySources,
@@ -1017,6 +1018,7 @@ app.get(
         outcome: "latest",
         anchorSourceOid: walkthrough.sourceOid,
         latestHeadOid,
+        referenceFingerprint: walkthroughReferenceFingerprint(walkthrough.sourceOid, reference),
         target: {
           sourceOid: latestHeadOid,
           path: reference.path,
@@ -1060,6 +1062,15 @@ app.post("/api/fixture/walkthroughs/:walkthroughId/update", async (context) => {
   walkthrough.title = input.title;
   walkthrough.body = input.body;
   walkthrough.references[0].label = input.referenceLabel;
+  if (typeof input.referencePath === "string") {
+    walkthrough.references[0].path = input.referencePath;
+  }
+  if (input.referenceStartLine === null || Number.isInteger(input.referenceStartLine)) {
+    walkthrough.references[0].startLine = input.referenceStartLine;
+  }
+  if (input.referenceEndLine === null || Number.isInteger(input.referenceEndLine)) {
+    walkthrough.references[0].endLine = input.referenceEndLine;
+  }
   for (const comment of comments) {
     if (comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id) {
       comment.target.walkthroughTitle = walkthrough.title;

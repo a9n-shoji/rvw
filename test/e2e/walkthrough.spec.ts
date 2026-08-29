@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-reference.js";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryWalkthrough = "注文作成フロー：HTTPからtransactional outboxまで";
@@ -299,6 +300,11 @@ test("uses the global PR comparison for a latest Walkthrough reference", async (
     const body = (await response.json()) as {
       walkthroughs?: Array<{ title: string; sourceOid: string }>;
       walkthrough?: { title: string; sourceOid: string };
+      resolution?: {
+        anchorSourceOid: string;
+        referenceFingerprint: string;
+        target: { path: string; startLine: number | null; endLine: number | null };
+      };
     };
     if (body.walkthroughs) {
       body.walkthroughs = body.walkthroughs.map((walkthrough) =>
@@ -309,6 +315,13 @@ test("uses the global PR comparison for a latest Walkthrough reference", async (
     }
     if (body.walkthrough?.title === primaryWalkthrough) {
       body.walkthrough = { ...body.walkthrough, sourceOid: historicalWalkthroughOid };
+    }
+    if (body.resolution) {
+      body.resolution.anchorSourceOid = historicalWalkthroughOid;
+      body.resolution.referenceFingerprint = walkthroughReferenceFingerprint(
+        historicalWalkthroughOid,
+        body.resolution.target,
+      );
     }
     await route.fulfill({ response, json: body });
   });
@@ -501,7 +514,9 @@ test("opens the exact latest file from an anchor fallback while a historical ran
 
   const banner = page.locator(".reference-fallback-banner");
   await expect(banner.getByText(`参照時点のコード · ${anchorOid.slice(0, 8)}`)).toBeVisible();
-  await expect(banner.getByText("この参照箇所は最新コードでは変更されています。")).toBeVisible();
+  await expect(
+    banner.getByText("最新コード上の対応位置を確実に特定できませんでした。"),
+  ).toBeVisible();
   await expect(page.locator('.document-pane[data-pane="left"] diffs-container')).toHaveAttribute(
     "data-search-target-line",
     "9",
@@ -670,7 +685,7 @@ test("marks an open reference stale after a head update and re-resolves it on de
   await expect(page.locator(".reference-anchor-fallback-banner")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "最新のファイルを見る" })).toHaveCount(0);
   await expect(
-    page.getByText("この参照箇所は最新コードでは変更されています。", { exact: true }),
+    page.getByText("最新コード上の対応位置を確実に特定できませんでした。", { exact: true }),
   ).toHaveCount(0);
   await expect(
     page.getByText("選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示", {
@@ -694,6 +709,11 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
     const body = (await response.json()) as {
       walkthroughs?: Array<{ title: string; sourceOid: string }>;
       walkthrough?: { title: string; sourceOid: string };
+      resolution?: {
+        anchorSourceOid: string;
+        referenceFingerprint: string;
+        target: { path: string; startLine: number | null; endLine: number | null };
+      };
     };
     if (body.walkthroughs) {
       body.walkthroughs = body.walkthroughs.map((walkthrough) =>
@@ -704,6 +724,13 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
     }
     if (body.walkthrough?.title === primaryWalkthrough) {
       body.walkthrough = { ...body.walkthrough, sourceOid: historicalWalkthroughOid };
+    }
+    if (body.resolution) {
+      body.resolution.anchorSourceOid = historicalWalkthroughOid;
+      body.resolution.referenceFingerprint = walkthroughReferenceFingerprint(
+        historicalWalkthroughOid,
+        body.resolution.target,
+      );
     }
     await route.fulfill({ response, json: body });
   });
@@ -731,12 +758,17 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
     const response = await route.fetch();
     const body = (await response.json()) as {
       resolution: {
+        anchorSourceOid: string;
+        referenceFingerprint: string;
         target: {
           sourceOid: string;
+          path: string;
           diffBaseOid: string | null;
           oldPath: string | null;
           newPath: string | null;
           hasDiff: boolean;
+          startLine: number | null;
+          endLine: number | null;
         };
       };
     };
@@ -748,6 +780,11 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
       newPath: "src/application/orders/create-order.ts",
       hasDiff: true,
     };
+    body.resolution.anchorSourceOid = historicalWalkthroughOid;
+    body.resolution.referenceFingerprint = walkthroughReferenceFingerprint(
+      historicalWalkthroughOid,
+      body.resolution.target,
+    );
     await route.fulfill({ response, json: body });
   });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
@@ -1876,7 +1913,7 @@ test("keeps readable minimum widths on a narrow viewport", async ({ page }) => {
   expect(twoPaneScrollOwnership.mainScrollWidth).toBe(twoPaneScrollOwnership.mainClientWidth);
 });
 
-test("refreshes an open walkthrough in place after an agent update", async ({ page }) => {
+test("refreshes a Walkthrough in place and marks its open reference stale", async ({ page }) => {
   const walkthroughId = "70000000-0000-4000-8000-000000000002";
   const originalTitle = "障害とretry：どこまで自動回復できるか";
   const updatedTitle = "障害とretry：レビュー反映版";
@@ -1887,11 +1924,23 @@ test("refreshes an open walkthrough in place after an agent update", async ({ pa
     "aria-selected",
     "true",
   );
+  await page
+    .locator(".walkthrough-inline-reference")
+    .filter({ hasText: "PostgresIdempotencyStore.run" })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "src/infrastructure/db/idempotency-store.ts" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: `${originalTitle}を閉じる` }).click();
+  await expect(page.getByRole("tab", { name: originalTitle })).toHaveCount(0);
 
   const response = await page.request.post(`/api/fixture/walkthroughs/${walkthroughId}/update`, {
     data: {
       title: updatedTitle,
       referenceLabel: updatedReferenceLabel,
+      referencePath: "src/application/orders/create-order.ts",
+      referenceStartLine: 1,
+      referenceEndLine: 1,
       body: [
         "# 利用者フィードバックを反映した障害説明",
         "",
@@ -1901,18 +1950,41 @@ test("refreshes an open walkthrough in place after an agent update", async ({ pa
   });
   expect(response.ok()).toBe(true);
 
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await expect(reviewTree.getByRole("button", { name: updatedTitle })).toBeVisible();
+  await expect(reviewTree.getByRole("button", { name: originalTitle })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: updatedTitle })).toHaveCount(0);
+  const staleBanner = page.locator(".reference-stale-banner");
+  await expect(staleBanner).toContainText("Walkthroughが更新されています");
+  await expect(staleBanner).toContainText(
+    "このコード参照はWalkthroughの更新前に解決されています。",
+  );
+  await expect(
+    page.getByText("選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示", {
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  const reresolution = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/resolve"),
+  );
+  await staleBanner.getByRole("button", { name: "最新へ再解決" }).click();
+  await reresolution;
+  await expect(staleBanner).toHaveCount(0);
+  await expect(
+    page.getByRole("tab", { name: "src/application/orders/create-order.ts" }),
+  ).toHaveAttribute("aria-selected", "true");
+
+  await openWalkthroughFromSidebar(page, updatedTitle);
   await expect(page.getByRole("tab", { name: updatedTitle })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await expect(page.getByRole("tab", { name: originalTitle })).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "利用者フィードバックを反映した障害説明" }),
   ).toBeVisible();
   await expect(
     page.locator(".walkthrough-inline-reference").filter({ hasText: updatedReferenceLabel }),
   ).toBeVisible();
-  await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
 });
 
 test("comments on the walkthrough as a whole", async ({ page }) => {

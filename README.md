@@ -129,12 +129,13 @@ rvw walkthrough publish --stdin --json
 path、指定された行範囲を検証します。publishしてもbrowserは開かれず、
 active tabやscroll位置も変わりません。人間がviewerのWalkthroughを開き、必要なreferenceを選んだ
 時だけ、`sourceOid`のanchorから最新PR headへcode位置を保守的に解決します。追跡できれば最新code、
-変更や曖昧さがあれば参照時点のcodeを明示して開き、行指定があれば解決した範囲全体を強調します。
+変更や曖昧さがあれば参照時点のcodeを明示して開きます。行指定はfile全体が同一、または選択範囲が
+source/latest双方で一意な場合だけ解決し、範囲全体を強調します。元pathが消えたrenameはcopy候補も含めて後継が1件のときだけ追従します。
 変更表示は選択中の比較がlatestで終わる場合だけtop barのPR比較範囲を使い、historical範囲では別revisionへ
 lineを誤適用せずlatest全文を表示します。fallbackでは、同じfileまたは明確なrename先があればline保証なしで
 最新fileも開けます。このactionも比較終端がlatestと一致するときだけ変更表示を使い、historical範囲ではlatest全文を
-開きます。解決後にPR headが進んだ場合は解決時／現在のSHAと表示中のanchorを示し、staleな判断とlatest file actionを
-隠して明示的な再解決だけを提供します。通常clickは左ペイン、
+開きます。解決後にPR headが進んだ場合、または同じWalkthrough IDのreference座標が変わった場合はstaleとし、
+解決時／現在のSHAと表示中のanchorを示します。staleな判断とlatest file actionを隠して明示的な再解決だけを提供します。通常clickは左ペイン、
 `Cmd` / `Ctrl`を押しながら選べば右ペインへ開きます。説明tabは残るため、
 複数のclaimと実装を任意の順序・任意のタイミングで往復できます。
 

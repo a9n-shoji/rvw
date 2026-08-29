@@ -1112,6 +1112,7 @@ describe("RvwService commit workflow", () => {
     await service.refreshPullRequest(opened.pullRequest.id);
 
     const changedFiles = vi.spyOn(service.git, "changedFiles");
+    const changedFilesWithCopies = vi.spyOn(service.git, "changedFilesWithCopies");
     const firstParent = vi.spyOn(service.git, "firstParent");
     await expect(
       service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
@@ -1135,8 +1136,8 @@ describe("RvwService commit workflow", () => {
         text: "inserted\nfirst\nsecond\n",
       },
     });
-    expect(changedFiles).toHaveBeenCalledWith(expect.any(String), firstHead, latestHead);
-    expect(changedFiles).toHaveBeenCalledTimes(1);
+    expect(changedFiles).not.toHaveBeenCalled();
+    expect(changedFilesWithCopies).not.toHaveBeenCalled();
     expect(firstParent).not.toHaveBeenCalled();
   });
 
@@ -1279,6 +1280,55 @@ describe("RvwService commit workflow", () => {
         endLine: 2,
       },
     });
+  });
+
+  it("falls back when a removed source has multiple identical successor paths", async () => {
+    const { repository, firstHead, fake, service } = setup(
+      "rvw-walkthrough-reference-ambiguous-copy-",
+    );
+    const opened = await service.openPullRequest(undefined, repository);
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Ambiguous successor flow",
+      body: "Inspect [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "source",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 2,
+          description: null,
+        },
+      ],
+    });
+    git(repository, "rm", "--", "src.txt");
+    writeFileSync(path.join(repository, "successor-a.txt"), "first\nsecond\n");
+    writeFileSync(path.join(repository, "successor-b.txt"), "first\nsecond\n");
+    git(repository, "add", "-A");
+    git(repository, "commit", "-m", "replace source with two copies");
+    const latestHead = git(repository, "rev-parse", "HEAD");
+    fake.pullRequest = { ...fake.pullRequest, headOid: latestHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    const copyAwareChanges = vi.spyOn(service.git, "changedFilesWithCopies");
+    await expect(
+      service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
+    ).resolves.toMatchObject({
+      outcome: "source-fallback",
+      target: {
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 1,
+        endLine: 2,
+      },
+      latestFile: null,
+      document: {
+        ref: { sourceOid: firstHead, path: "src.txt" },
+      },
+    });
+    expect(copyAwareChanges).toHaveBeenCalledOnce();
   });
 
   it("rejects walkthrough references that no Markdown link or Mermaid binding uses", async () => {

@@ -14,6 +14,7 @@ describe("document workspace commit rebinding", () => {
         referenceId: "reference",
         anchorSourceOid: "a".repeat(40),
         latestHeadOid: "c".repeat(40),
+        referenceFingerprint: "fingerprint",
         diffBaseOid: "b".repeat(40),
         hasDiff: true,
         latestFile: null,

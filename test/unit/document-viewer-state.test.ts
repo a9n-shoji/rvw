@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChangedFile } from "../../src/domain/models.js";
+import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-reference.js";
 import { deriveDocumentViewerState } from "../../src/web/document-viewer-state.js";
 
 const selectedOid = "b".repeat(40);
@@ -87,6 +88,7 @@ describe("document viewer state", () => {
           referenceId: "reference",
           anchorSourceOid: "a".repeat(40),
           latestHeadOid: sourceOid,
+          referenceFingerprint: "fingerprint",
           diffBaseOid: selectedOid,
           hasDiff: true,
           latestFile: null,
@@ -120,6 +122,7 @@ describe("document viewer state", () => {
           referenceId: "reference",
           anchorSourceOid: "a".repeat(40),
           latestHeadOid: sourceOid,
+          referenceFingerprint: "fingerprint",
           diffBaseOid: null,
           hasDiff: false,
           latestFile: null,
@@ -156,6 +159,7 @@ describe("document viewer state", () => {
           referenceId: "reference",
           anchorSourceOid: "a".repeat(40),
           latestHeadOid: resolvedHeadOid,
+          referenceFingerprint: "fingerprint",
           diffBaseOid: null,
           hasDiff: false,
           latestFile: null,
@@ -173,6 +177,69 @@ describe("document viewer state", () => {
     });
   });
 
+  it("marks a resolution stale when its Walkthrough reference coordinates change", () => {
+    const sourceOid = selectedOid;
+    const resolvedReference = {
+      id: "reference",
+      label: "Original reference",
+      path: "src/original.ts",
+      startLine: 4,
+      endLine: 8,
+      description: null,
+    };
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: resolvedReference.path,
+        sourceOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "latest",
+          walkthroughId: "walkthrough",
+          referenceId: resolvedReference.id,
+          anchorSourceOid: sourceOid,
+          latestHeadOid: sourceOid,
+          referenceFingerprint: walkthroughReferenceFingerprint(sourceOid, resolvedReference),
+          diffBaseOid: null,
+          hasDiff: false,
+          latestFile: null,
+        },
+      },
+      context({
+        walkthroughDetails: new Map([
+          [
+            "walkthrough",
+            {
+              id: "walkthrough",
+              ref: "rvw://walkthrough/walkthrough",
+              pullRequestId: "pull-request",
+              sourceOid,
+              title: "Updated Walkthrough",
+              body: "Updated body",
+              authorLabel: "Codex",
+              diagramBindings: {},
+              references: [
+                {
+                  ...resolvedReference,
+                  path: "src/updated.ts",
+                  startLine: 12,
+                  endLine: 16,
+                },
+              ],
+              createdAt: "2026-08-29T00:00:00.000Z",
+            },
+          ],
+        ]),
+      }),
+    );
+
+    expect(state.referenceStaleness).toEqual({
+      headChanged: false,
+      walkthroughChanged: true,
+    });
+    expect(state.fullViewNotice).toBeNull();
+  });
+
   it("shows the resolved target as full text locally when its commit has no file diff", () => {
     const state = deriveDocumentViewerState(
       {
@@ -186,12 +253,13 @@ describe("document viewer state", () => {
           referenceId: "reference",
           anchorSourceOid: "a".repeat(40),
           latestHeadOid: "c".repeat(40),
+          referenceFingerprint: "fingerprint",
           diffBaseOid: selectedOid,
           hasDiff: false,
           latestFile: null,
         },
       },
-      context(),
+      context({ latestHeadOid: "c".repeat(40) }),
     );
 
     expect(state.effectiveDisplayMode).toBe("full");

@@ -202,6 +202,7 @@ export interface WalkthroughReferenceResolution {
   outcome: "latest" | "source-fallback";
   anchorSourceOid: string;
   latestHeadOid: string;
+  referenceFingerprint: string;
   target: WalkthroughReferenceTarget;
   latestFile: WalkthroughReferenceFileTarget | null;
   document: DocumentContent;

@@ -1564,12 +1564,13 @@ export function PullRequestReviewScreen({
   const openWalkthroughIds = useMemo(
     () => [
       ...new Set(
-        openDocuments
-          .filter(
-            (document): document is Extract<ActiveDocument, { kind: "walkthrough" }> =>
-              document.kind === "walkthrough",
-          )
-          .map((document) => document.id),
+        openDocuments.flatMap((document) =>
+          document.kind === "walkthrough"
+            ? [document.id]
+            : document.kind === "repository-file" && document.referenceContext
+              ? [document.referenceContext.walkthroughId]
+              : [],
+        ),
       ),
     ],
     [openDocuments],
@@ -1995,6 +1996,7 @@ export function PullRequestReviewScreen({
             referenceId,
             anchorSourceOid: resolution.anchorSourceOid,
             latestHeadOid: resolution.latestHeadOid,
+            referenceFingerprint: resolution.referenceFingerprint,
             diffBaseOid: target.diffBaseOid,
             hasDiff: target.hasDiff,
             latestFile: resolution.latestFile,
@@ -2303,6 +2305,7 @@ export function PullRequestReviewScreen({
                 activeCommentId={activeCommentId}
                 fullViewNotice={paneViewerState.fullViewNotice}
                 fullViewUnavailableMessage={paneViewerState.fullViewUnavailableMessage}
+                referenceStaleness={paneViewerState.referenceStaleness}
                 themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}
                 navigationTarget={

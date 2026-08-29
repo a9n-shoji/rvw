@@ -8,6 +8,7 @@ export interface ReferenceDocumentContext {
   referenceId: string;
   anchorSourceOid: string;
   latestHeadOid: string;
+  referenceFingerprint: string;
   diffBaseOid: string | null;
   hasDiff: boolean;
   latestFile: WalkthroughReferenceFileTarget | null;

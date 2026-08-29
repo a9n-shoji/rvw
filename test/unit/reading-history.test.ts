@@ -73,6 +73,7 @@ describe("reading history", () => {
         referenceId: "reference",
         anchorSourceOid: "a".repeat(40),
         latestHeadOid: "c".repeat(40),
+        referenceFingerprint: "fingerprint",
         diffBaseOid: "0".repeat(40),
         hasDiff: true,
         latestFile: {

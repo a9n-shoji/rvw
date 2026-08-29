@@ -476,6 +476,28 @@ export class GitClient {
     return parseNameStatus(result.stdout);
   }
 
+  async changedFilesWithCopies(
+    cwd: string,
+    oldOid: string,
+    newOid: string,
+  ): Promise<ChangedFile[]> {
+    const result = await runProcess(
+      "git",
+      [
+        "diff",
+        "--name-status",
+        "-z",
+        "--find-renames",
+        "--find-copies",
+        "--find-copies-harder",
+        oldOid,
+        newOid,
+      ],
+      { cwd },
+    );
+    return parseNameStatus(result.stdout);
+  }
+
   async readDocument(cwd: string, sourceOid: string, filePath: string): Promise<BlobContent> {
     assertGitPath(filePath);
     const result = await runProcess("git", ["ls-tree", "-z", "--long", sourceOid, "--", filePath], {

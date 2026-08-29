@@ -37,6 +37,7 @@ import {
 } from "../domain/comment-watch-cursor.js";
 import { parseWalkthroughUri } from "../domain/walkthrough-uri.js";
 import { mapUnchangedLineRange, placeMutableDocumentComment } from "../domain/line-mapping.js";
+import { walkthroughReferenceFingerprint } from "../domain/walkthrough-reference.js";
 import { buildPullRequestMarkdown, hashDocument, selectedLineText } from "../domain/pr-markdown.js";
 import { createSourceExcerpt, type SourceExcerpt } from "../domain/source-excerpt.js";
 import {
@@ -1584,6 +1585,7 @@ export class RvwService {
         status: 404,
       });
     }
+    const referenceFingerprint = walkthroughReferenceFingerprint(walkthrough.sourceOid, reference);
 
     const sourceDocument = await this.getDocument({
       kind: "repository-file",
@@ -1593,30 +1595,47 @@ export class RvwService {
     });
     const latestHeadOid = pullRequest.latestHeadOid;
     let latestPath: string | null = reference.path;
-    if (walkthrough.sourceOid !== latestHeadOid) {
-      const change = (
-        await this.git.changedFiles(
-          pullRequest.localRepositoryPath,
-          walkthrough.sourceOid,
-          latestHeadOid,
-        )
-      ).find((candidate) => candidate.oldPath === reference.path);
-      latestPath =
-        change?.kind === "deleted" || (change && change.newPath === null)
-          ? null
-          : (change?.newPath ?? reference.path);
+    let latestDocument: DocumentContent | null;
+    if (walkthrough.sourceOid === latestHeadOid) {
+      latestDocument = sourceDocument;
+    } else {
+      latestDocument = await this.getDocument({
+        kind: "repository-file",
+        pullRequestId,
+        sourceOid: latestHeadOid,
+        path: reference.path,
+      });
+      if (latestDocument.availability === "missing") {
+        const successorPaths = [
+          ...new Set(
+            (
+              await this.git.changedFilesWithCopies(
+                pullRequest.localRepositoryPath,
+                walkthrough.sourceOid,
+                latestHeadOid,
+              )
+            )
+              .filter(
+                (candidate) =>
+                  (candidate.status.startsWith("R") || candidate.status.startsWith("C")) &&
+                  candidate.oldPath === reference.path &&
+                  candidate.newPath !== null,
+              )
+              .map((candidate) => candidate.newPath!),
+          ),
+        ];
+        latestPath = successorPaths.length === 1 ? successorPaths[0]! : null;
+        latestDocument =
+          latestPath === null
+            ? null
+            : await this.getDocument({
+                kind: "repository-file",
+                pullRequestId,
+                sourceOid: latestHeadOid,
+                path: latestPath,
+              });
+      }
     }
-    const latestDocument =
-      latestPath === null
-        ? null
-        : walkthrough.sourceOid === latestHeadOid && latestPath === reference.path
-          ? sourceDocument
-          : await this.getDocument({
-              kind: "repository-file",
-              pullRequestId,
-              sourceOid: latestHeadOid,
-              path: latestPath,
-            });
     const latestFileExists = latestDocument !== null && latestDocument.availability !== "missing";
     const latestFileDisplayable = latestDocument?.availability === "available";
     const mappedRange =
@@ -1642,6 +1661,7 @@ export class RvwService {
         outcome: "latest",
         anchorSourceOid: walkthrough.sourceOid,
         latestHeadOid,
+        referenceFingerprint,
         target: {
           sourceOid: latestHeadOid,
           path: latestPath,
@@ -1677,6 +1697,7 @@ export class RvwService {
       outcome: "source-fallback",
       anchorSourceOid: walkthrough.sourceOid,
       latestHeadOid,
+      referenceFingerprint,
       target: {
         ...targetFile,
         startLine: reference.startLine,

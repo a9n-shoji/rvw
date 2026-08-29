@@ -50,6 +50,7 @@ import type {
   DocumentPaneId,
   ReferenceDocumentContext,
 } from "../document-workspace.js";
+import type { ReferenceStaleness } from "../document-viewer-state.js";
 import { fileContentsForRenderer } from "../file-rendering.js";
 import {
   api,
@@ -727,6 +728,7 @@ export function DocumentViewer({
   activeCommentId,
   fullViewNotice = null,
   fullViewUnavailableMessage = null,
+  referenceStaleness,
   themePreference,
   onCommentActiveChange,
   navigationTarget = null,
@@ -749,6 +751,7 @@ export function DocumentViewer({
   activeCommentId: string | null;
   fullViewNotice?: string | null;
   fullViewUnavailableMessage?: string | null;
+  referenceStaleness: ReferenceStaleness | null;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   navigationTarget?: ViewerNavigationTarget | null;
@@ -1811,7 +1814,7 @@ export function DocumentViewer({
   const staleReference =
     activeDocument.kind === "repository-file" &&
     activeDocument.referenceContext &&
-    activeDocument.referenceContext.latestHeadOid !== latestHeadOid
+    referenceStaleness
       ? activeDocument.referenceContext
       : null;
   const reresolveReference = async (context: ReferenceDocumentContext): Promise<void> => {
@@ -1824,15 +1827,26 @@ export function DocumentViewer({
   return (
     <div className="document-viewer">
       <ErrorNotice error={annotationQuery.error} />
-      {staleReference && (
+      {staleReference && referenceStaleness && (
         <div className="reference-fallback-banner reference-stale-banner" role="status">
           <div>
             <strong>
-              解決時 {staleReference.latestHeadOid.slice(0, 8)} → 現在 {latestHeadOid.slice(0, 8)}
+              {referenceStaleness.walkthroughChanged
+                ? `Walkthroughが更新されています${
+                    referenceStaleness.headChanged
+                      ? ` · 解決時 ${staleReference.latestHeadOid.slice(0, 8)} → 現在 ${latestHeadOid.slice(0, 8)}`
+                      : ""
+                  }`
+                : `解決時 ${staleReference.latestHeadOid.slice(0, 8)} → 現在 ${latestHeadOid.slice(0, 8)}`}
             </strong>
             <span>
               {referenceFallback
-                ? `参照時点のコード · ${referenceFallback.anchorSourceOid.slice(0, 8)} を表示中。このコード参照はPR更新前に解決されています。`
+                ? `参照時点のコード · ${referenceFallback.anchorSourceOid.slice(0, 8)} を表示中。`
+                : ""}
+              {referenceStaleness.walkthroughChanged
+                ? referenceStaleness.headChanged
+                  ? "このコード参照はWalkthroughとPRの更新前に解決されています。"
+                  : "このコード参照はWalkthroughの更新前に解決されています。"
                 : "このコード参照はPR更新前に解決されています。"}
               {referenceResolutionError ? ` ${referenceResolutionError}` : ""}
             </span>
@@ -1850,7 +1864,7 @@ export function DocumentViewer({
         <div className="reference-fallback-banner reference-anchor-fallback-banner" role="status">
           <div>
             <strong>参照時点のコード · {referenceFallback.anchorSourceOid.slice(0, 8)}</strong>
-            <span>この参照箇所は最新コードでは変更されています。</span>
+            <span>最新コード上の対応位置を確実に特定できませんでした。</span>
           </div>
           {referenceFallback.latestFile && (
             <button
