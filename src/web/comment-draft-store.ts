@@ -50,6 +50,9 @@ function documentIdentity(document: ActiveDocument): unknown[] {
   if (document.kind === "walkthrough") {
     return ["walkthrough", document.id, document.sourceOid];
   }
+  if (document.kind === "structure-spike") {
+    return ["structure-spike", document.id, document.sourceOid];
+  }
   return [
     "repository-file",
     document.path,
@@ -67,6 +70,9 @@ function documentIdentityTabKey(identity: unknown): string | null {
   if (identity[0] === "pull-request-markdown") return "pull-request-markdown";
   if (identity[0] === "walkthrough" && typeof identity[1] === "string") {
     return `walkthrough:${identity[1]}`;
+  }
+  if (identity[0] === "structure-spike" && typeof identity[1] === "string") {
+    return `structure-spike:${identity[1]}`;
   }
   if (identity[0] === "repository-file" && typeof identity[1] === "string") {
     return `file:${identity[1]}`;

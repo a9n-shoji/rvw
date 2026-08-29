@@ -1,0 +1,7 @@
+<main>
+  <h1>求人検索</h1>
+  <div id="jobs-page-root"></div>
+  <script id="jobs-page-props" type="application/json">
+    <%= raw(json_escape(@page_payload.to_json)) %>
+  </script>
+</main>

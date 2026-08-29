@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { WalkthroughSummary } from "../../domain/models.js";
+import type { StructureFixture } from "../structure-spike/model.js";
 import { FileEntryIcon } from "./FileIcon.js";
+import { StructureFixtureTree } from "./StructurePanel.js";
 
 export function WalkthroughIcon({ className = "" }: { className?: string }) {
   return (
@@ -15,16 +17,22 @@ export function WalkthroughIcon({ className = "" }: { className?: string }) {
 
 export function ReviewTreeItems({
   walkthroughs,
+  structureFixtures,
   pullRequestActive,
   activeWalkthroughId,
+  activeStructureId,
   onOpenPullRequest,
   onOpen,
+  onOpenStructure,
 }: {
   walkthroughs: WalkthroughSummary[];
+  structureFixtures: StructureFixture[];
   pullRequestActive: boolean;
   activeWalkthroughId: string | null;
+  activeStructureId: string | null;
   onOpenPullRequest: (openInRightPane: boolean) => void;
   onOpen: (walkthrough: WalkthroughSummary, openInRightPane: boolean) => void;
+  onOpenStructure: (fixture: StructureFixture, openInRightPane: boolean) => void;
 }) {
   const [walkthroughsExpanded, setWalkthroughsExpanded] = useState(false);
 
@@ -109,6 +117,11 @@ export function ReviewTreeItems({
           ))}
         </div>
       )}
+      <StructureFixtureTree
+        fixtures={structureFixtures}
+        activeStructureId={activeStructureId}
+        onOpen={onOpenStructure}
+      />
     </nav>
   );
 }

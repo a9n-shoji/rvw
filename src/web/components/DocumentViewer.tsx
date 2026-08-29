@@ -135,6 +135,7 @@ const markdownViewByDocument = new Map<string, "source" | "preview">();
 function markdownViewKey(document: ActiveDocument): string {
   if (document.kind === "pull-request-markdown") return "pull-request-markdown";
   if (document.kind === "walkthrough") return `walkthrough:${document.id}`;
+  if (document.kind === "structure-spike") return `structure-spike:${document.id}`;
   return `repository-file:${document.path}`;
 }
 
@@ -1005,8 +1006,8 @@ export function DocumentViewer({
   onOpenLatestReferenceFile: (target: WalkthroughReferenceFileTarget) => void;
   onReresolveWalkthroughReference: (context: ReferenceDocumentContext) => Promise<string | null>;
 }) {
-  if (activeDocument.kind === "walkthrough") {
-    throw new Error("walkthroughはWalkthroughViewerで表示してください。");
+  if (activeDocument.kind === "walkthrough" || activeDocument.kind === "structure-spike") {
+    throw new Error("専用reading surfaceは対応するviewerで表示してください。");
   }
   const queryClient = useQueryClient();
   const markdownCapable =

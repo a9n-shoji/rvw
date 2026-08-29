@@ -1,5 +1,41 @@
 # Architecture decisions
 
+## 2026-08-29: Keep the Structure graph experiment fixture-only and session-local
+
+### Problem
+
+The main uncertainty around a proposed Structure reading surface is whether a reader-controlled graph
+offers a capability distinct from an author-controlled Walkthrough Mermaid diagram. Designing
+persistence, commands, Skills, or generic artifact infrastructure before testing that interaction would
+turn an uncertain product hypothesis into production architecture.
+
+### Choice
+
+Run Phase 0 as a fixture-only `structure-spike` document in the existing workspace. Reuse normal-left and
+Cmd/Ctrl-right exact-source navigation. Give node focus, neighborhood depth, pan/zoom, reversible
+content-neutral relation collapse, a minimap, and a Mermaid comparison first-class UI. Keep all graph,
+viewport, focus, and layout state in the browser module session. Preserve common Node ID positions when a
+fixture simulates a current-value replacement. Use a deterministic custom HTML/SVG renderer without a
+new dependency; render only a padded viewport window for large All views.
+
+Treat this document kind, Viewer, fixture panel, model, CSS, and integration branches as temporary spike
+code. Do not add tables, CLI protocol, a Structure Skill, comments, framework semantics, inference,
+durable layout, generic Artifact abstractions, or a production schema. Record the evaluation and the
+conditional Go decision in `docs/spikes/structure-graph-ux.md` rather than changing the implementation
+spec as though the product contract were settled.
+
+### Trade-offs
+
+- The actual navigation and reading workspace are exercised, while database and producer protocols remain
+  intentionally untested.
+- The custom layout is small and removable but is not a production graph-layout recommendation.
+- Session continuity is observable across source round trips and graph replacement, but not across reloads
+  or RVW restarts.
+- Viewport culling keeps a 500-node semantic graph interactive, but nodes and edges enter the DOM as the
+  reader pans.
+- A conditional Go justifies a contract-design phase; it does not authorize promoting temporary code or
+  generalizing artifacts.
+
 ## 2026-08-29: Resolve Walkthrough code references against the latest Pull Request head
 
 ### Problem

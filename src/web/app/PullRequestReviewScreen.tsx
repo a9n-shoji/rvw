@@ -62,6 +62,8 @@ import { applyThemePreference, storeThemePreference, type ThemePreference } from
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
 import type { MermaidReferencePeekResolution } from "../components/MermaidExpandedView.js";
+import { structureFixtureById, structureFixtures } from "../structure-spike/fixtures.js";
+import type { SourceAnchor, StructureFixture } from "../structure-spike/model.js";
 import {
   commitRangeOldOid,
   earliestIncludedCommitOid,
@@ -111,6 +113,10 @@ const DocumentViewer = lazy(async () => {
 const WalkthroughViewer = lazy(async () => {
   const module = await import("../components/WalkthroughViewer.js");
   return { default: module.WalkthroughViewer };
+});
+const StructureViewer = lazy(async () => {
+  const module = await import("../components/StructureViewer.js");
+  return { default: module.StructureViewer };
 });
 
 function changePath(change: ChangedFile): string {
@@ -1898,6 +1904,21 @@ export function PullRequestReviewScreen({
     },
     [openDocument],
   );
+  const openStructure = useCallback(
+    (fixture: StructureFixture, openInRightPane = false): void => {
+      if (!latestHeadOid) return;
+      openDocument(
+        {
+          kind: "structure-spike",
+          id: fixture.structure.id,
+          title: fixture.structure.title,
+          sourceOid: latestHeadOid,
+        },
+        openInRightPane ? "right" : undefined,
+      );
+    },
+    [latestHeadOid, openDocument],
+  );
   const openCodeReference = useCallback(
     async (
       pullRequestId: string,
@@ -2088,6 +2109,27 @@ export function PullRequestReviewScreen({
       openCommentCodeReference(sourceOid, reference, openInRightPane ? "right" : "left"),
     [openCommentCodeReference],
   );
+  const openStructureSource = useCallback(
+    (sourceOid: string, anchor: SourceAnchor, openInRightPane: boolean): Promise<string | null> => {
+      if (!pullRequestId) return Promise.resolve(`参照先を開けません · ${anchor.path}`);
+      const hasRange = anchor.startLine !== undefined && anchor.endLine !== undefined;
+      return openCodeReference(
+        pullRequestId,
+        sourceOid,
+        {
+          id: `structure-spike:${anchor.path}:${anchor.startLine ?? "file"}`,
+          label: anchor.path,
+          path: anchor.path,
+          startLine: hasRange ? anchor.startLine! : null,
+          endLine: hasRange ? anchor.endLine! : null,
+          description: null,
+        },
+        openInRightPane ? "right" : "left",
+        "exact-source",
+      );
+    },
+    [openCodeReference, pullRequestId],
+  );
   const openLatestReferenceFile = useCallback(
     (target: WalkthroughReferenceFileTarget, targetPane: DocumentPaneId): void => {
       const document: ActiveDocument = {
@@ -2161,7 +2203,8 @@ export function PullRequestReviewScreen({
     effectiveOldOid &&
     effectiveOldOid !== selectedOid &&
     Object.values(documentWorkspace.active).some(
-      (document) => document !== null && document.kind !== "walkthrough",
+      (document) =>
+        document !== null && document.kind !== "walkthrough" && document.kind !== "structure-spike",
     ),
   );
   const diffViewAvailable = Boolean(
@@ -2191,6 +2234,10 @@ export function PullRequestReviewScreen({
     const paneDocument = documentWorkspace.active[paneId];
     const paneViewerState = paneViewerStates[paneId];
     const paneViewerDocument = paneViewerState.viewerDocument;
+    const paneStructureFixture =
+      paneViewerDocument?.kind === "structure-spike"
+        ? structureFixtureById(paneViewerDocument.id)
+        : undefined;
     const referenceContext =
       paneViewerDocument?.kind === "repository-file"
         ? paneViewerDocument.referenceContext
@@ -2280,7 +2327,26 @@ export function PullRequestReviewScreen({
             });
           }}
         />
-        {paneViewerDocument?.kind === "walkthrough" && paneViewerState.walkthrough ? (
+        {paneViewerDocument?.kind === "structure-spike" && paneStructureFixture ? (
+          <LazyLoadBoundary label="Structure Spike">
+            <Suspense fallback={<div className="viewer-loading">Structureを準備しています…</div>}>
+              <StructureViewer
+                key={`${pullRequest.id}:${paneViewerDocument.id}:${paneViewerDocument.sourceOid}`}
+                fixture={paneStructureFixture}
+                sourceOid={paneViewerDocument.sourceOid}
+                sessionKey={`${pullRequest.id}:${paneViewerDocument.id}:${paneViewerDocument.sourceOid}`}
+                themePreference={themePreference}
+                changeKindsByPath={tabChangeKinds}
+                onOpenSource={openStructureSource}
+              />
+            </Suspense>
+          </LazyLoadBoundary>
+        ) : paneViewerDocument?.kind === "structure-spike" ? (
+          <div className="empty-document-viewer">
+            <strong>Structure fixtureを読み込めませんでした。</strong>
+            <span>このPhase 0 Spikeはfixtureだけを表示します。</span>
+          </div>
+        ) : paneViewerDocument?.kind === "walkthrough" && paneViewerState.walkthrough ? (
           <LazyLoadBoundary label="ウォークスルー">
             <Suspense
               fallback={<div className="viewer-loading">ウォークスルーを準備しています…</div>}
@@ -2427,7 +2493,11 @@ export function PullRequestReviewScreen({
           latestHeadOid={latestHeadOid}
           specialSelected={specialSelected}
           specialSelectionLabel={
-            activeDocument?.kind === "walkthrough" ? "Walkthrough source" : "コメント元"
+            activeDocument?.kind === "walkthrough"
+              ? "Walkthrough source"
+              : activeDocument?.kind === "structure-spike"
+                ? "Structure source"
+                : "コメント元"
           }
           documentDisplayMode={documentDisplayMode}
           diffStyle={diffStyle}
@@ -2601,9 +2671,13 @@ export function PullRequestReviewScreen({
               <div className="file-panel">
                 <ReviewTreeItems
                   walkthroughs={walkthroughs}
+                  structureFixtures={structureFixtures}
                   pullRequestActive={activeDocument?.kind === "pull-request-markdown"}
                   activeWalkthroughId={
                     activeDocument?.kind === "walkthrough" ? activeDocument.id : null
+                  }
+                  activeStructureId={
+                    activeDocument?.kind === "structure-spike" ? activeDocument.id : null
                   }
                   onOpenPullRequest={(openInRightPane) => {
                     if (openInRightPane) {
@@ -2613,6 +2687,7 @@ export function PullRequestReviewScreen({
                     openDocument({ kind: "pull-request-markdown" });
                   }}
                   onOpen={openWalkthrough}
+                  onOpenStructure={openStructure}
                 />
                 <ErrorNotice error={walkthroughsQuery.error} />
                 <input

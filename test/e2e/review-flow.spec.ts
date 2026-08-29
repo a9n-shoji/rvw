@@ -1377,7 +1377,7 @@ test("keeps virtual review nodes compact and useful height for code navigation",
   const reviewNodeHeights = await page
     .locator(".review-tree-items > .review-tree-item")
     .evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().height)));
-  expect(reviewNodeHeights).toEqual([31, 31]);
+  expect(reviewNodeHeights).toEqual([31, 31, 31]);
 });
 
 test("opens a fuzzy-matched file from Cmd/Ctrl+P in the left pane", async ({ page }) => {

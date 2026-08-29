@@ -26,6 +26,14 @@ export function sameReadingDocument(left: ActiveDocument, right: ActiveDocument)
   if (left.kind === "walkthrough" || right.kind === "walkthrough") {
     return left.kind === "walkthrough" && right.kind === "walkthrough" && left.id === right.id;
   }
+  if (left.kind === "structure-spike" || right.kind === "structure-spike") {
+    return (
+      left.kind === "structure-spike" &&
+      right.kind === "structure-spike" &&
+      left.id === right.id &&
+      left.sourceOid === right.sourceOid
+    );
+  }
   return (
     left.path === right.path &&
     left.oldPath === right.oldPath &&
@@ -107,6 +115,18 @@ function parseDocument(value: unknown): ActiveDocument | null {
       typeof value.sourceOid === "string"
       ? {
           kind: "walkthrough",
+          id: value.id,
+          title: value.title,
+          sourceOid: value.sourceOid,
+        }
+      : null;
+  }
+  if (value.kind === "structure-spike") {
+    return typeof value.id === "string" &&
+      typeof value.title === "string" &&
+      typeof value.sourceOid === "string"
+      ? {
+          kind: "structure-spike",
           id: value.id,
           title: value.title,
           sourceOid: value.sourceOid,

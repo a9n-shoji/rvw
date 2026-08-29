@@ -93,4 +93,25 @@ describe("reading history", () => {
     );
     expect(sameReadingDocument(referenceDocument, { ...referenceDocument })).toBe(true);
   });
+
+  it("round-trips a fixture Structure reading and keeps exact source revisions distinct", () => {
+    const structureDocument = {
+      kind: "structure-spike" as const,
+      id: "rvw-comment-watch-flow",
+      title: "Comment watch flow",
+      sourceOid: "b".repeat(40),
+    };
+    const value = entry({ document: structureDocument, locator: { kind: "scroll", top: 0 } });
+
+    expect(parseReadingHistoryEntry(readingHistoryState(null, value), pullRequestId)).toEqual(
+      value,
+    );
+    expect(sameReadingDocument(structureDocument, { ...structureDocument })).toBe(true);
+    expect(
+      sameReadingDocument(structureDocument, {
+        ...structureDocument,
+        sourceOid: "c".repeat(40),
+      }),
+    ).toBe(false);
+  });
 });

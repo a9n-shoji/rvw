@@ -31,4 +31,15 @@ describe("document workspace commit rebinding", () => {
       }),
     ).toEqual({ kind: "repository-file", path: "src/reference.ts" });
   });
+
+  it("keeps a fixture Structure pinned to its exact spike source commit", () => {
+    const structure: ActiveDocument = {
+      kind: "structure-spike",
+      id: "rvw-comment-watch-flow",
+      title: "Comment watch flow",
+      sourceOid: "b".repeat(40),
+    };
+
+    expect(currentCommitDocument(structure)).toBe(structure);
+  });
 });

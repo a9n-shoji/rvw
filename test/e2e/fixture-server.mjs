@@ -14,6 +14,57 @@ import {
 
 const host = "127.0.0.1";
 const port = Number(process.env.RVW_E2E_PORT ?? 43117);
+// Phase 0 only: let the fixture-backed Structure surface inspect the RVW source it models.
+// Keep this explicit allowlist out of the ordinary repository tree/search fixture.
+const structureSpikeSourceRoot = path.resolve(import.meta.dirname, "../..");
+const structureSpikeSourcePaths = new Set([
+  "docs/implementation-spec.md",
+  "skills/rvw-walkthrough/SKILL.md",
+  "skills/rvw-watch-comments/SKILL.md",
+  "skills/rvw-watch-comments/scripts/watch-driver.mjs",
+  "skills/rvw-watch-comments/scripts/watch-state.mjs",
+  "src/application/agent-command-schemas.ts",
+  "src/application/runtime.ts",
+  "src/application/rvw-service.ts",
+  "src/cli/main.ts",
+  "src/domain/line-mapping.ts",
+  "src/domain/models.ts",
+  "src/domain/pr-markdown.ts",
+  "src/domain/source-excerpt.ts",
+  "src/infrastructure/db/database.ts",
+  "src/infrastructure/git/git-client.ts",
+  "src/infrastructure/github/github-client.ts",
+  "src/infrastructure/process/run-process.ts",
+  "src/server/app.ts",
+  "src/server/agent-socket.ts",
+  "src/shared/constants.ts",
+  "src/shared/errors.ts",
+  "src/web/agent-notifications.ts",
+  "src/web/app/PullRequestReviewScreen.tsx",
+  "src/web/comment-draft-store.ts",
+  "src/web/components/CodeReferenceLink.tsx",
+  "src/web/components/DocumentTabs.tsx",
+  "src/web/components/DocumentViewer.tsx",
+  "src/web/components/WalkthroughViewer.tsx",
+  "src/web/document-tab-presentation.ts",
+  "src/web/document-viewer-state.ts",
+  "src/web/document-workspace.ts",
+  "src/web/reading-history.ts",
+  "src/web/use-document-workspace.ts",
+  "test/fixtures/structure-spike/rails-react-page/app/controllers/jobs_controller.rb",
+  "test/fixtures/structure-spike/rails-react-page/app/frontend/components/JobCard.tsx",
+  "test/fixtures/structure-spike/rails-react-page/app/frontend/components/JobsPage.tsx",
+  "test/fixtures/structure-spike/rails-react-page/app/frontend/components/ResultsList.tsx",
+  "test/fixtures/structure-spike/rails-react-page/app/frontend/components/SearchForm.tsx",
+  "test/fixtures/structure-spike/rails-react-page/app/frontend/entries/jobs.tsx",
+  "test/fixtures/structure-spike/rails-react-page/app/frontend/jobs-page-contract.ts",
+  "test/fixtures/structure-spike/rails-react-page/app/models/job.rb",
+  "test/fixtures/structure-spike/rails-react-page/app/policies/job_policy.rb",
+  "test/fixtures/structure-spike/rails-react-page/app/serializers/jobs_page_serializer.rb",
+  "test/fixtures/structure-spike/rails-react-page/app/services/job_search_service.rb",
+  "test/fixtures/structure-spike/rails-react-page/app/views/jobs/index.html.erb",
+  "test/fixtures/structure-spike/rails-react-page/config/routes.rb",
+]);
 const repositoryDemo =
   process.env.RVW_FIXTURE_MODE === "repository-demo"
     ? (await import("../../scripts/repository-demo-fixture.ts")).createRepositoryDemoFixture(
@@ -164,6 +215,9 @@ function repositoryText(oid) {
 }
 
 function repositoryDocumentText(oid, filePath) {
+  if (!repositoryDemo && structureSpikeSourcePaths.has(filePath)) {
+    return readFileSync(path.join(structureSpikeSourceRoot, filePath), "utf8");
+  }
   if (repositoryDemo) return repositoryDemo.repositoryDocumentAt(oid, filePath).text ?? "";
   if (filePath === "binary.bin" || filePath === "large.txt") return "";
   if (/\.(?:png|jpe?g|gif|webp|avif|svg)$/i.test(filePath)) return "";
@@ -827,7 +881,9 @@ app.get("/api/pull-requests/:id/document", (context) => {
     imageTextRequestCount += 1;
   }
   const ref = { kind: "repository-file", pullRequestId, sourceOid, path: filePath };
-  if (!repositoryPathsAt(sourceOid).includes(filePath)) {
+  const structureSpikeSource =
+    !repositoryDemo && typeof filePath === "string" && structureSpikeSourcePaths.has(filePath);
+  if (!structureSpikeSource && !repositoryPathsAt(sourceOid).includes(filePath)) {
     return context.json({
       ok: true,
       document: missingRepositoryDocument(ref),
