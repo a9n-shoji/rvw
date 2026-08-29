@@ -253,7 +253,7 @@ function WalkthroughMermaidDiagram({
         >
           <div className="walkthrough-diagram-toolbar">
             <span>Mermaid diagram</span>
-            <span>nodeを選択して開く · Cmd/Ctrlで反対のペイン</span>
+            <span>強調された要素を選択してコードを開く · Cmd/Ctrlで反対のペイン</span>
             {sourceRange && (
               <button
                 className="button--quiet walkthrough-diagram-comment"

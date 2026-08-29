@@ -53,11 +53,6 @@ function generatedIdTargets(
   });
 }
 
-function isSequenceParticipantOrActor(element: SVGGElement): boolean {
-  if (element.matches("g.actor-man.actor-top[data-id]")) return true;
-  return Array.from(element.children).some((child) => child.matches("rect.actor.actor-top"));
-}
-
 const bindingAdapters: Record<MermaidBindingDiagramType, MermaidBindingAdapter> = {
   flowchart: {
     targets: (container, bindingKeys) =>
@@ -70,12 +65,12 @@ const bindingAdapters: Record<MermaidBindingDiagramType, MermaidBindingAdapter> 
   sequenceDiagram: {
     targets: (container, bindingKeys) => {
       const bindingKeySet = new Set(bindingKeys);
-      return Array.from(container.querySelectorAll<SVGGElement>("g[data-id]"))
-        .filter(isSequenceParticipantOrActor)
-        .flatMap((element) => {
-          const bindingKey = element.dataset.id;
-          return bindingKey && bindingKeySet.has(bindingKey) ? [{ bindingKey, element }] : [];
-        });
+      return Array.from(
+        container.querySelectorAll<SVGGElement>('g[data-et="participant"][data-id]'),
+      ).flatMap((element) => {
+        const bindingKey = element.dataset.id;
+        return bindingKey && bindingKeySet.has(bindingKey) ? [{ bindingKey, element }] : [];
+      });
     },
   },
   "stateDiagram-v2": {

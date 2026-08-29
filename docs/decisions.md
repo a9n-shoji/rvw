@@ -16,8 +16,14 @@ Keep the external `diagramBindings` contract as `Mermaid source element ID -> Wa
 Move SVG interpretation into a diagram-specific resolver covering flowchart nodes, classDiagram classes,
 sequenceDiagram participants/actors, stateDiagram-v2 states, erDiagram entities, and architecture-beta
 services. For Mermaid 11.16.1, read flowchart, class, state, and ER IDs from the typed segment of the
-generated group ID; read sequence participant/actor IDs from `g[data-id]` whose shape is the top actor or
-participant; and read architecture service IDs from `g.architecture-service` generated IDs.
+generated group ID; read sequence participant/actor IDs from the top rendering's
+`g[data-et="participant"][data-id]` semantic metadata; and read architecture service IDs from
+`g.architecture-service` generated IDs.
+
+The `diagramBindings` map is Walkthrough-global. Reusing one source ID in multiple Mermaid fences binds
+every matching element to the same reference. Authors use distinct source IDs when visually similar
+elements in separate diagrams need different references; fence identity is not added to the schema until
+that distinction is required by a concrete use case.
 
 Validate the same source-authored element kinds during Walkthrough publish/update. Do not accept sequence
 messages, state transitions, ER relationships, architecture edges/groups, or other edge-like elements as
@@ -31,7 +37,7 @@ detail into an unstable identity.
   knowing Mermaid selectors or generated-ID formats.
 - Adding another node-like diagram requires one resolver adapter and matching source validation, without
   introducing a generic Mermaid framework.
-- A Mermaid upgrade can still change generated-ID markers, classes, or sequence `data-id` placement. The
+- A Mermaid upgrade can still change generated-ID markers, classes, or sequence semantic metadata. The
   six diagram-type E2E fixture is the compatibility alarm for those DOM dependencies.
 - Only the source-identified top sequence participant/actor is interactive; the visually duplicated lower
   rendering remains passive rather than receiving a guessed identity.

@@ -482,7 +482,9 @@ interface Walkthrough {
 - 全reference IDはMarkdownまたはHTML内の`rvw-ref:` link、または`diagramBindings`のvalueとして最低一度使う。
   binding keyは本文中のflowchart node、class diagram class、sequence participant / actor、state、ER entity、
   architecture serviceのいずれかとして実在するsource IDであることも検証する。message、transition、relationship、
-  architecture edge / groupはbinding対象にしない。存在しないnode-like elementへのbindingを含め、どちらからも実際に到達できないreferenceは、重複indexのないviewerでは
+  architecture edge / groupはbinding対象にしない。`diagramBindings`はWalkthrough全体へ適用し、複数のMermaid
+  fenceで同じsource IDを使った場合はすべて同じreferenceへbindする。別referenceが必要ならsource IDを分ける。
+  存在しないnode-like elementへのbindingを含め、どちらからも実際に到達できないreferenceは、重複indexのないviewerでは
   開けないため登録を拒否する。
 - sidebar一覧はtitle、current source OID、author、reference件数だけを返し、現在の本文・参照・diagram
   bindingは人間がWalkthrough tabを開いた時に取得する。CLI更新をpollで検出した場合は、開いているtabも

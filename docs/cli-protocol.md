@@ -419,7 +419,9 @@ input fields are normalized to `null`, and saved references always return both f
 key must identify an actual flowchart node, classDiagram class, sequenceDiagram participant/actor,
 stateDiagram-v2 state, erDiagram entity, or architecture-beta service in a Mermaid fence. Keys use the
 explicit source ID rather than a display alias; messages, transitions, relationships, architecture
-edges/groups, and other edge-like elements are not valid binding targets. Every
+edges/groups, and other edge-like elements are not valid binding targets. `diagramBindings` applies to
+the whole Walkthrough, so the same source ID in multiple Mermaid fences always resolves to the same
+reference. Every
 supplied reference must be used by at least one Markdown or HTML `rvw-ref:` link or valid diagram binding. Unused or
 phantom-bound references are rejected because the viewer has no separate reference index.
 

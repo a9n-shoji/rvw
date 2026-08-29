@@ -53,6 +53,9 @@ the `Controller` display alias in `participant C as Controller`, and bind `worke
 `service worker(server)[Worker]`. Do not bind sequence messages, state transitions, ER relationships,
 architecture edges/groups, or Mermaid-generated sequence numbers. If Mermaid does not retain a stable
 source ID for an element, leave it passive instead of deriving a key from its label or DOM order.
+Bindings apply across the whole Walkthrough: if multiple Mermaid fences reuse one source ID, every match
+opens the same reference. Use distinct IDs such as `orderDb` and `analyticsDb` when those elements should
+open different references.
 
 Keep HTML visuals static and self-contained:
 
