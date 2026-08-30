@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
@@ -14,6 +14,153 @@ async function openStructure(page: Page, title: string): Promise<void> {
     .getByRole("button", { name: title, exact: true })
     .click();
 }
+
+interface StructureReadingState {
+  focusedNodeId: string | null;
+  depth: string | null;
+  detailsOpen: boolean;
+  hubPosition: { left: string; top: string };
+  viewportScale: string | null;
+}
+
+async function structureReadingState(viewer: Locator): Promise<StructureReadingState> {
+  return {
+    focusedNodeId: await viewer.locator(".structure-node.focused").getAttribute("data-node-id"),
+    depth: await viewer
+      .getByRole("button", { name: "2-hop", exact: true })
+      .getAttribute("aria-pressed"),
+    detailsOpen: (await viewer.locator(".structure-details").count()) === 1,
+    hubPosition: await viewer
+      .locator('.structure-node[data-node-id="hub"]')
+      .evaluate((element) => ({
+        left: (element as HTMLElement).style.left,
+        top: (element as HTMLElement).style.top,
+      })),
+    viewportScale: await viewer.getAttribute("data-viewport-scale"),
+  };
+}
+
+async function expectFocusedNodeVisible(viewer: Locator): Promise<void> {
+  await expect
+    .poll(async () => {
+      const [canvasBox, focusedBox] = await Promise.all([
+        viewer.locator(".structure-canvas").boundingBox(),
+        viewer.locator(".structure-node.focused").boundingBox(),
+      ]);
+      if (!canvasBox || !focusedBox) return false;
+      return (
+        focusedBox.x + focusedBox.width > canvasBox.x &&
+        focusedBox.x < canvasBox.x + canvasBox.width &&
+        focusedBox.y + focusedBox.height > canvasBox.y &&
+        focusedBox.y < canvasBox.y + canvasBox.height
+      );
+    })
+    .toBe(true);
+}
+
+async function customizeStructureReading(
+  page: Page,
+  viewer: Locator,
+): Promise<StructureReadingState> {
+  const hub = viewer.locator('.structure-node[data-node-id="hub"]');
+  const beforeDrag = await hub.evaluate((element) => ({
+    left: (element as HTMLElement).style.left,
+    top: (element as HTMLElement).style.top,
+  }));
+  const hubBox = await hub.boundingBox();
+  expect(hubBox).not.toBeNull();
+  await page.mouse.move(hubBox!.x + 30, hubBox!.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(hubBox!.x + 105, hubBox!.y + 82, { steps: 6 });
+  await page.mouse.up();
+  await expect
+    .poll(
+      async () =>
+        await hub.evaluate((element) => ({
+          left: (element as HTMLElement).style.left,
+          top: (element as HTMLElement).style.top,
+        })),
+    )
+    .not.toEqual(beforeDrag);
+
+  await viewer.locator('.structure-node[data-node-id="order-aggregate"]').click();
+  await viewer.getByRole("button", { name: "2-hop", exact: true }).click();
+  await viewer.getByRole("button", { name: "詳細サイドバーを表示" }).click();
+  await viewer.getByRole("button", { name: "focusを中央へ", exact: true }).click();
+  await viewer.getByRole("button", { name: "拡大" }).click();
+  const canvas = viewer.locator(".structure-canvas");
+  const canvasBox = await canvas.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  const transformBeforePan = await viewer
+    .locator(".structure-world")
+    .evaluate((element) => (element as HTMLElement).style.transform);
+  await page.mouse.move(canvasBox!.x + canvasBox!.width / 2, canvasBox!.y + canvasBox!.height / 2);
+  await page.mouse.wheel(42, 58);
+  await expect
+    .poll(
+      async () =>
+        await viewer
+          .locator(".structure-world")
+          .evaluate((element) => (element as HTMLElement).style.transform),
+    )
+    .not.toBe(transformBeforePan);
+  return await structureReadingState(viewer);
+}
+
+test("preserves Structure reading state when its tab is dragged to the other pane", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, primaryTitle);
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await reviewTree
+    .getByRole("button", { name: "Pull Request.md", exact: true })
+    .click({ modifiers: ["Meta"] });
+
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  const leftViewer = leftPane.locator(`[data-structure-id="${primaryStructureId}"]`);
+  const expectedState = await customizeStructureReading(page, leftViewer);
+
+  await leftPane
+    .getByRole("tab", { name: primaryTitle })
+    .dragTo(page.locator('.document-tabs-shell[data-pane="right"]'));
+
+  const rightViewer = rightPane.locator(`[data-structure-id="${primaryStructureId}"]`);
+  await expect(rightViewer).toBeVisible();
+  await expect(leftViewer).toHaveCount(0);
+  await expect.poll(async () => await structureReadingState(rightViewer)).toEqual(expectedState);
+  await expectFocusedNodeVisible(rightViewer);
+});
+
+test("preserves Structure reading state when closing the last left tab normalizes panes", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const structureFolder = page.getByRole("button", { name: "Structure 2", exact: true });
+  await structureFolder.click();
+  await page
+    .getByRole("navigation", { name: "レビュー文書" })
+    .getByRole("button", { name: primaryTitle, exact: true })
+    .click({ modifiers: ["Meta"] });
+
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  const rightViewer = rightPane.locator(`[data-structure-id="${primaryStructureId}"]`);
+  const expectedState = await customizeStructureReading(page, rightViewer);
+
+  await page
+    .locator('.document-pane[data-pane="left"]')
+    .getByRole("button", { name: "Pull Request.mdを閉じる", exact: true })
+    .click();
+
+  const leftViewer = page
+    .locator('.document-pane[data-pane="left"]')
+    .locator(`[data-structure-id="${primaryStructureId}"]`);
+  await expect(page.locator('.document-pane[data-pane="right"]')).toHaveCount(0);
+  await expect(leftViewer).toBeVisible();
+  await expect.poll(async () => await structureReadingState(leftViewer)).toEqual(expectedState);
+  await expectFocusedNodeVisible(leftViewer);
+});
 
 test("explores source-exact Structures and preserves spatial context across navigation and update", async ({
   page,

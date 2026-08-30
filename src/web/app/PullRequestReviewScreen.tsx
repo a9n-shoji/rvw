@@ -982,6 +982,11 @@ export function PullRequestReviewScreen({
         }
         if (result.commentDraftsMoved) setDraftWorkspaceRevision((revision) => revision + 1);
       }
+      for (const { sourceDocument, sourcePane, targetPane } of paneTransitions) {
+        if (sourceDocument.kind === "structure") {
+          transferStructureSession(sourceDocument.id, sourcePane, targetPane);
+        }
+      }
       resetViewerNavigation([
         ...new Set([
           ...navigationPanes,
@@ -2394,12 +2399,7 @@ export function PullRequestReviewScreen({
           onClose={(document) => closeDocumentWithDrafts(document, paneId)}
           onCloseOthers={(document) => closePaneDocumentsWithDrafts(paneId, document)}
           onCloseAll={() => closePaneDocumentsWithDrafts(paneId)}
-          onMove={(document, targetPane) => {
-            if (document.kind === "structure") {
-              transferStructureSession(document.id, paneId, targetPane);
-            }
-            moveDocumentWithDrafts(document, paneId, targetPane);
-          }}
+          onMove={(document, targetPane) => moveDocumentWithDrafts(document, paneId, targetPane)}
           onDropDocument={dropDocument}
           onDragStartDocument={setDraggedDocumentKey}
           onDragEndDocument={() => setDraggedDocumentKey(null)}
