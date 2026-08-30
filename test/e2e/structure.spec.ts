@@ -3,8 +3,8 @@ import { expect, test, type Page } from "@playwright/test";
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
-const primaryTitle = "Fixture code relationships";
-const secondaryTitle = "Source document relationship";
+const primaryTitle = "Order placement architecture";
+const secondaryTitle = "Failure recovery and evidence";
 
 async function openStructure(page: Page, title: string): Promise<void> {
   const folder = page.getByRole("button", { name: /^Structure \d+$/ });
@@ -28,7 +28,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   await expect(reviewTree.locator(".review-tree-structure")).toHaveCount(2);
   await expect(reviewTree.getByRole("button", { name: primaryTitle })).toHaveAttribute(
     "title",
-    `${primaryTitle}\nThe fixture boundary and its direct committed relationships; transport startup is excluded.\nbbbbbbbb`,
+    `${primaryTitle}\nOrder creation from the authenticated HTTP boundary through domain decisions, remote side effects, transactional persistence, and event delivery; read paths are excluded.\nbbbbbbbb`,
   );
   await reviewTree.getByRole("button", { name: primaryTitle }).click();
 
@@ -38,13 +38,9 @@ test("explores source-exact Structures and preserves spatial context across navi
   );
   const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
   await expect(viewer.getByRole("heading", { name: primaryTitle })).toBeVisible();
-  await expect(viewer.getByText("14/15 Node · 13/14 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.getByText("11/18 Node · 12/21 Relation", { exact: true })).toBeVisible();
   await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/);
-  await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveAttribute(
-    "data-source-change-kind",
-    "modified",
-  );
-  await expect(viewer.locator(".structure-edge")).toHaveCount(13);
+  await expect(viewer.locator(".structure-edge")).toHaveCount(12);
   await expect(viewer.locator(".structure-minimap")).toBeVisible();
   await expect(viewer.locator(".structure-details")).toHaveCount(0);
 
@@ -65,12 +61,12 @@ test("explores source-exact Structures and preserves spatial context across navi
 
   await openStructure(page, secondaryTitle);
   const secondaryViewer = page.locator(`[data-structure-id="${secondaryStructureId}"]`);
-  await expect(secondaryViewer.locator(".structure-node")).toHaveCount(2);
-  await expect(secondaryViewer.locator(".structure-edge")).toHaveCount(1);
+  await expect(secondaryViewer.locator(".structure-node")).toHaveCount(10);
+  await expect(secondaryViewer.locator(".structure-edge")).toHaveCount(14);
   await openStructure(page, primaryTitle);
   await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/);
-  await expect(viewer.locator(".structure-node")).toHaveCount(14);
-  await expect(viewer.locator(".structure-edge")).toHaveCount(13);
+  await expect(viewer.locator(".structure-node")).toHaveCount(11);
+  await expect(viewer.locator(".structure-edge")).toHaveCount(12);
 
   await page.setViewportSize({ width: 900, height: 700 });
   await expect
@@ -94,8 +90,11 @@ test("explores source-exact Structures and preserves spatial context across navi
   const hubSourceAction = viewer.locator(
     '.structure-node[data-node-id="hub"] > .structure-source.compact',
   );
-  await expect(hubIdentity).toHaveAttribute("data-source-path", "src/fixture.ts");
-  await expect(hubIdentity.locator(".structure-source-name")).toHaveText("fixture.ts");
+  await expect(hubIdentity).toHaveAttribute(
+    "data-source-path",
+    "src/application/orders/create-order.ts",
+  );
+  await expect(hubIdentity.locator(".structure-source-name")).toHaveText("create-order.ts");
   const [identityBox, titleTextBox, sourceActionBox] = await Promise.all([
     hubIdentity.boundingBox(),
     hubTitleText.boundingBox(),
@@ -107,13 +106,15 @@ test("explores source-exact Structures and preserves spatial context across navi
   expect(identityBox!.x).toBeLessThan(titleTextBox!.x);
   expect(sourceActionBox!.x).toBeGreaterThan(titleTextBox!.x);
 
-  const firstEdge = viewer.locator('.structure-edge[data-edge-id="edge-01"]');
+  const firstEdge = viewer.locator('.structure-edge[data-edge-id="controller-executes-handler"]');
   await expect(firstEdge).toHaveAttribute("d", / C /);
   await expect(firstEdge).toHaveAttribute("marker-end", /structure-left-.+-arrow/);
   const endpointsAreOutsideNodes = await firstEdge.evaluate((element) => {
     const path = element as SVGPathElement;
     const viewerElement = path.closest(".structure-viewer")!;
-    const leaf = viewerElement.querySelector<HTMLElement>('[data-node-id="leaf-01"]')!;
+    const controller = viewerElement.querySelector<HTMLElement>(
+      '[data-node-id="http-controller"]',
+    )!;
     const hub = viewerElement.querySelector<HTMLElement>('[data-node-id="hub"]')!;
     const pointOutside = (x: number, y: number, node: HTMLElement): boolean => {
       const left = Number.parseFloat(node.style.left);
@@ -121,24 +122,25 @@ test("explores source-exact Structures and preserves spatial context across navi
       return x < left || x > left + 228 || y < top || y > top + 112;
     };
     return (
-      pointOutside(Number(path.dataset.startX), Number(path.dataset.startY), leaf) &&
+      pointOutside(Number(path.dataset.startX), Number(path.dataset.startY), controller) &&
       pointOutside(Number(path.dataset.endX), Number(path.dataset.endY), hub)
     );
   });
   expect(endpointsAreOutsideNodes).toBe(true);
 
-  const firstEdgeLabel = viewer.locator('.structure-edge-label[data-edge-id="edge-01"]');
+  const firstEdgeLabel = viewer.locator(
+    '.structure-edge-label[data-edge-id="controller-executes-handler"]',
+  );
   await expect(firstEdgeLabel).toHaveAttribute("data-source-anchor-count", "2");
-  await expect(firstEdgeLabel).toHaveAttribute("data-source-change-kind", "modified");
   await expect(firstEdgeLabel.locator(".structure-source-identity")).toHaveAttribute(
     "data-source-path",
-    "README.md",
+    "src/http/controllers/create-order.ts",
   );
-  await expect(firstEdgeLabel.locator(".structure-source-name")).toHaveText("README.md");
+  await expect(firstEdgeLabel.locator(".structure-source-name")).toHaveText("create-order.ts");
   await expect(firstEdgeLabel.locator(".structure-source-count")).toHaveText("+1");
   await expect(firstEdgeLabel.locator(".structure-source.compact")).toHaveAttribute(
     "aria-label",
-    "README.md:13-19を開く（ほか1件は詳細サイドバー）",
+    "src/http/controllers/create-order.ts:10-16を開く（ほか1件は詳細サイドバー）",
   );
   const [edgeIdentityBox, edgeTextBox] = await Promise.all([
     firstEdgeLabel.locator(".structure-source-identity").boundingBox(),
@@ -185,25 +187,27 @@ test("explores source-exact Structures and preserves spatial context across navi
   });
 
   await viewer.getByRole("button", { name: "詳細サイドバーを表示" }).click();
-  await expect(viewer.locator(".structure-relation-list > li")).toHaveCount(13);
+  await expect(viewer.locator(".structure-relation-list > li")).toHaveCount(11);
 
   await viewer
     .locator(".structure-relation-list > li > button")
-    .filter({ hasText: "HTTP requestをuse caseへ変換する" })
+    .filter({ hasText: "HTTP commandとして実行する" })
     .click();
-  await expect(viewer.locator('.structure-node[data-node-id="leaf-01"]')).toHaveClass(/focused/);
-  await expect(viewer.getByRole("heading", { name: "HTTP route adapter" })).toBeVisible();
+  await expect(viewer.locator('.structure-node[data-node-id="http-controller"]')).toHaveClass(
+    /focused/,
+  );
+  await expect(viewer.getByRole("heading", { name: "Create order controller" })).toBeVisible();
   await viewer
-    .locator(".structure-focus-trail button")
-    .filter({ hasText: "UpdateStructureUseCase.execute" })
+    .locator(".structure-focus-trail")
+    .getByRole("button", { name: "Create order", exact: true })
     .click();
   await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/);
 
   await viewer.getByRole("button", { name: "2-hop", exact: true }).click();
-  await expect(viewer.getByText("15/15 Node · 14/14 Relation", { exact: true })).toBeVisible();
-  await expect(viewer.locator('.structure-node[data-node-id="deep-node"]')).toBeVisible();
+  await expect(viewer.getByText("17/18 Node · 20/21 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.locator('.structure-node[data-node-id="pricing-policy"]')).toBeVisible();
   await viewer.getByRole("button", { name: "全体", exact: true }).click();
-  await expect(viewer.getByText("15/15 Node · 14/14 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.getByText("18/18 Node · 21/21 Relation", { exact: true })).toBeVisible();
   await viewer.getByRole("button", { name: "1-hop", exact: true }).click();
 
   const world = viewer.locator(".structure-world");
@@ -273,15 +277,17 @@ test("explores source-exact Structures and preserves spatial context across navi
     .getByRole("button", { name: /^対象commit:/ })
     .getAttribute("aria-label");
   const focusedNodeSource = viewer.locator(".structure-details > .structure-source");
-  await expect(focusedNodeSource).toHaveAttribute("aria-label", "src/fixture.ts:1-3を開く");
-  await focusedNodeSource.click();
-  await expect(page.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
-    "aria-selected",
-    "true",
+  await expect(focusedNodeSource).toHaveAttribute(
+    "aria-label",
+    "src/application/orders/create-order.ts:9-37を開く",
   );
+  await focusedNodeSource.click();
+  await expect(
+    page.getByRole("tab", { name: "src/application/orders/create-order.ts" }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(page.locator('.document-pane[data-pane="left"] diffs-container')).toHaveAttribute(
     "data-search-target-line",
-    "1",
+    "9",
   );
   await expect(page.getByRole("button", { name: /^対象commit:/ })).toHaveAttribute(
     "aria-label",
@@ -298,7 +304,9 @@ test("explores source-exact Structures and preserves spatial context across navi
   await focusedNodeSource.click({ modifiers: ["Meta"] });
   await expect(page.locator('.document-pane[data-pane="right"]')).toBeVisible();
   await expect(
-    page.locator('.document-pane[data-pane="right"]').getByRole("tab", { name: "src/fixture.ts" }),
+    page
+      .locator('.document-pane[data-pane="right"]')
+      .getByRole("tab", { name: "src/application/orders/create-order.ts" }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(
     page.locator('.document-pane[data-pane="left"]').getByRole("tab", { name: primaryTitle }),
@@ -337,8 +345,8 @@ test("explores source-exact Structures and preserves spatial context across navi
     .locator(`[data-structure-id="${primaryStructureId}"]`);
   await expect(rightViewer).toBeVisible();
   await rightViewer.getByRole("button", { name: "全体", exact: true }).click();
-  await expect(rightViewer.getByText("15/15 Node · 14/14 Relation", { exact: true })).toBeVisible();
-  await expect(leftViewer.getByText("14/15 Node · 13/14 Relation", { exact: true })).toBeVisible();
+  await expect(rightViewer.getByText("18/18 Node · 21/21 Relation", { exact: true })).toBeVisible();
+  await expect(leftViewer.getByText("11/18 Node · 12/21 Relation", { exact: true })).toBeVisible();
   expect(
     await page
       .locator(".structure-edges marker")
@@ -352,15 +360,19 @@ test("explores source-exact Structures and preserves spatial context across navi
     data: {},
   });
   expect(update.ok()).toBe(true);
-  const updatedTitle = "Fixture code relationships updated";
+  const updatedTitle = "Order placement architecture updated";
   await expect(leftViewer.locator('.structure-node[data-node-id="hub"]')).toContainText(
-    "UpdateStructureUseCase.execute updated",
+    "Create order updated",
   );
   await expect(rightViewer.locator('.structure-node[data-node-id="hub"]')).toContainText(
-    "UpdateStructureUseCase.execute updated",
+    "Create order updated",
   );
-  await expect(leftViewer.locator('.structure-node[data-node-id="leaf-13"]')).toHaveCount(0);
-  await expect(rightViewer.locator('.structure-node[data-node-id="leaf-13"]')).toHaveCount(0);
+  await expect(
+    leftViewer.locator('.structure-node[data-node-id="payment-reconciliation"]'),
+  ).toHaveCount(0);
+  await expect(
+    rightViewer.locator('.structure-node[data-node-id="payment-reconciliation"]'),
+  ).toHaveCount(0);
   await expect(leftViewer.locator('.structure-node[data-node-id="new-neighbor"]')).toBeVisible();
   await expect(rightViewer.locator('.structure-node[data-node-id="new-neighbor"]')).toBeVisible();
   const retained = await leftViewer
@@ -390,7 +402,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   );
   expect(clearFocus.ok()).toBe(true);
   await expect(
-    page.getByRole("tab", { name: "Fixture code relationships without focus" }),
+    page.getByRole("tab", { name: "Order placement architecture without focus" }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(viewer.locator(".structure-node.focused")).toHaveCount(0);
   await expect(viewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
@@ -399,7 +411,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   );
   await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toBeDisabled();
   await expect(viewer.getByRole("button", { name: "2-hop", exact: true })).toBeDisabled();
-  await expect(viewer.getByText("14/14 Node · 1/1 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.getByText("17/17 Node · 9/9 Relation", { exact: true })).toBeVisible();
 
   await openStructure(page, secondaryTitle);
   await expect(page.getByRole("tab", { name: secondaryTitle })).toHaveAttribute(
@@ -412,7 +424,7 @@ test("explores source-exact Structures and preserves spatial context across navi
     "true",
   );
   await expect(secondaryViewer.getByRole("button", { name: "1-hop", exact: true })).toBeDisabled();
-  await expect(secondaryViewer.locator(".structure-edge-label")).toHaveCount(1);
+  await expect(secondaryViewer.locator(".structure-edge-label")).toHaveCount(14);
   await page.setViewportSize({ width: 900, height: 700 });
   await secondaryViewer.getByRole("button", { name: "詳細サイドバーを表示" }).click();
   const [toolbarBox, canvasBox, detailsBox, viewerBox] = await Promise.all([

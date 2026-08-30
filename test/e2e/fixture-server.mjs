@@ -38,73 +38,413 @@ const activeWalkthroughs = repositoryDemo
   : walkthroughs;
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
-const primaryStructureClaims = [
-  ["HTTP route adapter", "HTTP requestをuse caseへ変換する", "adapter"],
-  ["Agent operation dispatcher", "operationをapplication methodへdispatchする", "adapter"],
-  ["Runtime.service facade", "実行contextからuse caseを呼び出す", "facade"],
-  ["Application composition root", "具象dependencyを注入して生成する", "composition"],
-  ["Structure update poller", "current valueの更新を検出する", "observer"],
-  ["StructureRepository port", "constructorで永続化dependencyを要求する", "port"],
-  ["GitObjectReader port", "exact sourceをcommitから読み取る", "port"],
-  ["GitHubGateway port", "GitHub操作の境界だけを要求する", "port"],
-  ["StructureInput / StructureOutput", "use caseの入出力型としてimportする", "contract"],
-  ["SourceAnchorValidator", "exact source anchorの範囲を検証する", "policy"],
-  ["RetainedCommitResolver", "retained commit refを管理する", "policy"],
-  ["SqliteStructureRepository", "Structure current valueを永続化する", "adapter"],
-  ["ApplicationPolicyError", "application policy errorを共有する", "error"],
-];
 const primaryStructureNodes = [
   {
     id: "hub",
-    label: "UpdateStructureUseCase.execute",
-    description: "Structureのcurrent valueをexact source commitへ同期するapplication boundary。",
+    label: "Create order",
+    description: "注文の認可から外部side effect、永続化までを調停するapplication boundary。",
     kind: "use-case",
-    anchor: { path: "src/fixture.ts", startLine: 1, endLine: 3 },
+    anchor: { path: "src/application/orders/create-order.ts", startLine: 9, endLine: 37 },
   },
-  ...primaryStructureClaims.map(([label, description, kind], index) => {
-    const sequence = String(index + 1).padStart(2, "0");
-    return {
-      id: `leaf-${sequence}`,
-      label,
-      description,
-      kind,
-      anchor: index === 0 ? { path: "README.md", startLine: 13, endLine: 19 } : null,
-    };
-  }),
   {
-    id: "deep-node",
-    label: "parseUpdateStructureRequest",
-    description: "transport固有のpayloadをapplication inputへ変換する。",
-    kind: "parser",
-    anchor: { path: "src/fixture.ts", startLine: 5, endLine: 8 },
+    id: "http-routes",
+    label: "Orders HTTP routes",
+    description: "認証middlewareと注文commandのHTTP entry pointを構成する。",
+    kind: "route",
+    anchor: { path: "src/http/routes/orders.ts", startLine: 6, endLine: 14 },
+  },
+  {
+    id: "auth-middleware",
+    label: "Actor authentication",
+    description: "access tokenを検証し、認可に必要なactor contextを組み立てる。",
+    kind: "middleware",
+    anchor: { path: "src/http/middleware/require-actor.ts", startLine: 4, endLine: 18 },
+  },
+  {
+    id: "http-controller",
+    label: "Create order controller",
+    description: "HTTP payloadとheaderをapplication commandへ変換する。",
+    kind: "controller",
+    anchor: { path: "src/http/controllers/create-order.ts", startLine: 5, endLine: 19 },
+  },
+  {
+    id: "request-schema",
+    label: "Request validation",
+    description: "注文requestの識別子、明細数、数量をtransport boundaryで検証する。",
+    kind: "schema",
+    anchor: { path: "src/http/schemas/create-order.ts", startLine: 3, endLine: 12 },
+  },
+  {
+    id: "composition-root",
+    label: "Application wiring",
+    description: "application portを具象adapterへ結線し、handlerを構築する。",
+    kind: "composition",
+    anchor: { path: "src/bootstrap/application.ts", startLine: 10, endLine: 22 },
+  },
+  {
+    id: "authorization-policy",
+    label: "Order authorization",
+    description: "orders:create権限とcustomer scopeをapplication boundaryで保証する。",
+    kind: "policy",
+    anchor: { path: "src/application/authorization/order-policy.ts", startLine: 4, endLine: 11 },
+  },
+  {
+    id: "idempotency-store",
+    label: "Idempotent retry",
+    description: "同じidempotency keyの再試行を元の結果へ収束させる。",
+    kind: "adapter",
+    anchor: { path: "src/infrastructure/db/idempotency-store.ts", startLine: 3, endLine: 18 },
+  },
+  {
+    id: "inventory-client",
+    label: "Inventory reservation",
+    description: "注文明細の在庫をtimeout付きHTTP requestで予約する。",
+    kind: "gateway",
+    anchor: {
+      path: "src/infrastructure/inventory/http-inventory-client.ts",
+      startLine: 4,
+      endLine: 18,
+    },
+  },
+  {
+    id: "order-aggregate",
+    label: "Order aggregate",
+    description: "注文totalとplaced/payment eventを保持するdomain aggregate。",
+    kind: "aggregate",
+    anchor: { path: "src/domain/orders/order.ts", startLine: 5, endLine: 41 },
+  },
+  {
+    id: "pricing-policy",
+    label: "Order total",
+    description: "catalog priceを使って単一通貨の注文totalを計算する。",
+    kind: "policy",
+    anchor: { path: "src/domain/orders/pricing.ts", startLine: 1, endLine: 14 },
+  },
+  {
+    id: "payment-gateway",
+    label: "Payment authorization",
+    description: "order IDをidempotency keyとして決済を手動capture前まで認証する。",
+    kind: "gateway",
+    anchor: { path: "src/infrastructure/payments/stripe-gateway.ts", startLine: 4, endLine: 21 },
+  },
+  {
+    id: "transaction-runner",
+    label: "Database transaction",
+    description: "orderとoutboxのwriteを同じPostgres transactionへ閉じ込める。",
+    kind: "adapter",
+    anchor: { path: "src/infrastructure/db/transaction.ts", startLine: 3, endLine: 20 },
+  },
+  {
+    id: "order-repository",
+    label: "Order record",
+    description: "domain snapshotをorders tableへ永続化する。",
+    kind: "repository",
+    anchor: { path: "src/infrastructure/db/order-repository.ts", startLine: 4, endLine: 16 },
+  },
+  {
+    id: "outbox",
+    label: "Transactional outbox",
+    description: "domain eventをtransactional outboxへ追記する。",
+    kind: "repository",
+    anchor: { path: "src/infrastructure/events/postgres-outbox.ts", startLine: 4, endLine: 13 },
+  },
+  {
+    id: "outbox-dispatcher",
+    label: "Outbox delivery",
+    description: "未送信eventを排他的にclaimし、event busへ配送する。",
+    kind: "worker",
+    anchor: { path: "src/workers/outbox-dispatcher.ts", startLine: 4, endLine: 16 },
+  },
+  {
+    id: "payment-reconciliation",
+    label: "Payment recovery",
+    description: "注文が残らなかった認証済みpaymentを検出してvoidする。",
+    kind: "worker",
+    anchor: { path: "src/workers/payment-reconciliation.ts", startLine: 3, endLine: 13 },
+  },
+  {
+    id: "database-schema",
+    label: "Orders data model",
+    description: "order recordと配送待ちeventの永続化境界を定義する。",
+    kind: "migration",
+    anchor: { path: "migrations/018_orders_and_outbox.sql", startLine: 1, endLine: 18 },
   },
 ];
 const primaryStructureEdges = [
-  ...Array.from({ length: 13 }, (_, index) => {
-    const sequence = String(index + 1).padStart(2, "0");
-    return {
-      id: `edge-${sequence}`,
-      from: index < 5 ? `leaf-${sequence}` : "hub",
-      to: index < 5 ? "hub" : `leaf-${sequence}`,
-      label: primaryStructureClaims[index][1],
-      directed: true,
-      anchors:
-        index === 0
-          ? [
-              { path: "README.md", startLine: 13, endLine: 19 },
-              { path: "src/fixture.ts", startLine: 1, endLine: 3 },
-            ]
-          : [],
-    };
-  }),
   {
-    id: "edge-deep",
-    from: "leaf-01",
-    to: "deep-node",
-    label: "transport payloadを変換する",
+    id: "routes-use-auth",
+    from: "http-routes",
+    to: "auth-middleware",
+    label: "すべてのrouteでactorを認証する",
     directed: true,
-    anchors: [{ path: "README.md", startLine: 13, endLine: 19 }],
+    anchors: [{ path: "src/http/routes/orders.ts", startLine: 9, endLine: 9 }],
   },
+  {
+    id: "routes-post-controller",
+    from: "http-routes",
+    to: "http-controller",
+    label: "POST /ordersを委譲する",
+    directed: true,
+    anchors: [{ path: "src/http/routes/orders.ts", startLine: 10, endLine: 10 }],
+  },
+  {
+    id: "controller-validates-request",
+    from: "http-controller",
+    to: "request-schema",
+    label: "request bodyを検証する",
+    directed: true,
+    anchors: [
+      { path: "src/http/controllers/create-order.ts", startLine: 7, endLine: 7 },
+      { path: "src/http/schemas/create-order.ts", startLine: 3, endLine: 12 },
+    ],
+  },
+  {
+    id: "controller-executes-handler",
+    from: "http-controller",
+    to: "hub",
+    label: "HTTP commandとして実行する",
+    directed: true,
+    anchors: [
+      { path: "src/http/controllers/create-order.ts", startLine: 10, endLine: 16 },
+      { path: "src/application/orders/create-order.ts", startLine: 9, endLine: 37 },
+    ],
+  },
+  {
+    id: "composition-constructs-handler",
+    from: "composition-root",
+    to: "hub",
+    label: "具象portを注入して構築する",
+    directed: true,
+    anchors: [{ path: "src/bootstrap/application.ts", startLine: 10, endLine: 22 }],
+  },
+  {
+    id: "handler-authorizes-actor",
+    from: "hub",
+    to: "authorization-policy",
+    label: "作成権限を検証する",
+    directed: true,
+    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 10, endLine: 10 }],
+  },
+  {
+    id: "handler-idempotency-envelope",
+    from: "hub",
+    to: "idempotency-store",
+    label: "再試行を束ねる",
+    directed: true,
+    anchors: [
+      { path: "src/application/orders/create-order.ts", startLine: 12, endLine: 37 },
+      { path: "src/infrastructure/db/idempotency-store.ts", startLine: 6, endLine: 16 },
+    ],
+  },
+  {
+    id: "handler-reserves-inventory",
+    from: "hub",
+    to: "inventory-client",
+    label: "在庫を予約する",
+    directed: true,
+    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 16, endLine: 16 }],
+  },
+  {
+    id: "handler-places-order",
+    from: "hub",
+    to: "order-aggregate",
+    label: "Orderを生成する",
+    directed: true,
+    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 17, endLine: 22 }],
+  },
+  {
+    id: "order-calculates-total",
+    from: "order-aggregate",
+    to: "pricing-policy",
+    label: "注文totalを計算する",
+    directed: true,
+    anchors: [
+      { path: "src/domain/orders/order.ts", startLine: 12, endLine: 18 },
+      { path: "src/domain/orders/pricing.ts", startLine: 1, endLine: 14 },
+    ],
+  },
+  {
+    id: "handler-authorizes-payment",
+    from: "hub",
+    to: "payment-gateway",
+    label: "決済を認証する",
+    directed: true,
+    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 24, endLine: 29 }],
+  },
+  {
+    id: "handler-opens-transaction",
+    from: "hub",
+    to: "transaction-runner",
+    label: "transactionを開始する",
+    directed: true,
+    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 31, endLine: 34 }],
+  },
+  {
+    id: "handler-persists-order",
+    from: "hub",
+    to: "order-repository",
+    label: "Orderを保存する",
+    directed: true,
+    anchors: [
+      { path: "src/application/orders/create-order.ts", startLine: 32, endLine: 32 },
+      { path: "src/infrastructure/db/order-repository.ts", startLine: 4, endLine: 11 },
+    ],
+  },
+  {
+    id: "handler-appends-events",
+    from: "hub",
+    to: "outbox",
+    label: "eventを追記する",
+    directed: true,
+    anchors: [
+      { path: "src/application/orders/create-order.ts", startLine: 33, endLine: 33 },
+      { path: "src/infrastructure/events/postgres-outbox.ts", startLine: 4, endLine: 12 },
+    ],
+  },
+  {
+    id: "order-returns-snapshot",
+    from: "order-aggregate",
+    to: "hub",
+    label: "response snapshotを返す",
+    directed: true,
+    anchors: [
+      { path: "src/domain/orders/order.ts", startLine: 39, endLine: 41 },
+      { path: "src/application/orders/create-order.ts", startLine: 36, endLine: 36 },
+    ],
+  },
+  {
+    id: "repositories-share-transaction",
+    from: "order-repository",
+    to: "outbox",
+    label: "同じDB transactionを共有する",
+    directed: false,
+    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 31, endLine: 34 }],
+  },
+  {
+    id: "orders-use-schema",
+    from: "order-repository",
+    to: "database-schema",
+    label: "orders tableへwriteする",
+    directed: true,
+    anchors: [{ path: "migrations/018_orders_and_outbox.sql", startLine: 1, endLine: 7 }],
+  },
+  {
+    id: "outbox-uses-schema",
+    from: "outbox",
+    to: "database-schema",
+    label: "outbox tableへwriteする",
+    directed: true,
+    anchors: [{ path: "migrations/018_orders_and_outbox.sql", startLine: 9, endLine: 18 }],
+  },
+  {
+    id: "dispatcher-claims-outbox",
+    from: "outbox-dispatcher",
+    to: "outbox",
+    label: "未送信eventを排他的にclaimする",
+    directed: true,
+    anchors: [{ path: "src/workers/outbox-dispatcher.ts", startLine: 7, endLine: 14 }],
+  },
+  {
+    id: "reconciliation-checks-payment",
+    from: "payment-reconciliation",
+    to: "payment-gateway",
+    label: "認証済みpaymentを照合してvoidする",
+    directed: true,
+    anchors: [{ path: "src/workers/payment-reconciliation.ts", startLine: 6, endLine: 11 }],
+  },
+  {
+    id: "reconciliation-checks-order",
+    from: "payment-reconciliation",
+    to: "order-repository",
+    label: "対応するorderの有無を照合する",
+    directed: true,
+    anchors: [{ path: "src/workers/payment-reconciliation.ts", startLine: 6, endLine: 11 }],
+  },
+];
+
+const secondaryStructureNodes = primaryStructureNodes.filter((node) =>
+  [
+    "hub",
+    "idempotency-store",
+    "inventory-client",
+    "payment-gateway",
+    "transaction-runner",
+    "order-repository",
+    "outbox",
+    "payment-reconciliation",
+  ].includes(node.id),
+);
+secondaryStructureNodes.unshift(
+  {
+    id: "failure-model",
+    label: "Failure model",
+    description: "remote side effectとpartial failureを隠さず、retryと補償の境界を説明する。",
+    kind: "document",
+    anchor: { path: "docs/order-workflow.md", startLine: 1, endLine: 7 },
+  },
+  {
+    id: "integration-evidence",
+    label: "Integration evidence",
+    description: "永続化・event・idempotent retryをobservable behaviorとして検証する。",
+    kind: "test",
+    anchor: { path: "test/integration/create-order.test.ts", startLine: 4, endLine: 21 },
+  },
+);
+
+const secondaryStructureEdges = [
+  {
+    id: "failure-model-explains-handler",
+    from: "failure-model",
+    to: "hub",
+    label: "partial failure boundaryを説明する",
+    directed: true,
+    anchors: [{ path: "docs/order-workflow.md", startLine: 3, endLine: 7 }],
+  },
+  {
+    id: "failure-model-explains-reconciliation",
+    from: "failure-model",
+    to: "payment-reconciliation",
+    label: "補償workerの必要性を説明する",
+    directed: true,
+    anchors: [{ path: "docs/order-workflow.md", startLine: 5, endLine: 7 }],
+  },
+  {
+    id: "integration-verifies-handler",
+    from: "integration-evidence",
+    to: "hub",
+    label: "注文作成のobservable resultを検証する",
+    directed: true,
+    anchors: [{ path: "test/integration/create-order.test.ts", startLine: 5, endLine: 10 }],
+  },
+  {
+    id: "integration-verifies-idempotency",
+    from: "integration-evidence",
+    to: "idempotency-store",
+    label: "再試行で決済を重複させないことを検証する",
+    directed: true,
+    anchors: [{ path: "test/integration/create-order.test.ts", startLine: 13, endLine: 20 }],
+  },
+  {
+    id: "integration-observes-outbox",
+    from: "integration-evidence",
+    to: "outbox",
+    label: "pending domain eventを検証する",
+    directed: true,
+    anchors: [{ path: "test/integration/create-order.test.ts", startLine: 5, endLine: 10 }],
+  },
+  ...primaryStructureEdges.filter((edge) =>
+    [
+      "handler-idempotency-envelope",
+      "handler-reserves-inventory",
+      "handler-authorizes-payment",
+      "handler-opens-transaction",
+      "handler-persists-order",
+      "handler-appends-events",
+      "repositories-share-transaction",
+      "reconciliation-checks-payment",
+      "reconciliation-checks-order",
+    ].includes(edge.id),
+  ),
 ];
 const activeStructures = repositoryDemo
   ? []
@@ -114,9 +454,9 @@ const activeStructures = repositoryDemo
         ref: `rvw://structure/${primaryStructureId}`,
         pullRequestId,
         sourceOid: firstHead,
-        title: "Fixture code relationships",
+        title: "Order placement architecture",
         scope:
-          "The fixture boundary and its direct committed relationships; transport startup is excluded.",
+          "Order creation from the authenticated HTTP boundary through domain decisions, remote side effects, transactional persistence, and event delivery; read paths are excluded.",
         initialFocus: "hub",
         nodes: primaryStructureNodes,
         edges: primaryStructureEdges,
@@ -128,35 +468,12 @@ const activeStructures = repositoryDemo
         ref: `rvw://structure/${secondaryStructureId}`,
         pullRequestId,
         sourceOid: firstHead,
-        title: "Source document relationship",
-        scope: "A second independent Structure retained beside the primary map.",
+        title: "Failure recovery and evidence",
+        scope:
+          "The retry, atomicity, and compensation mechanisms that make order placement recoverable, with the committed evidence that verifies those claims.",
         initialFocus: null,
-        nodes: [
-          {
-            id: "source",
-            label: "Fixture source",
-            description: "Defines the fixture function.",
-            kind: "module",
-            anchor: { path: "src/fixture.ts", startLine: 1, endLine: 3 },
-          },
-          {
-            id: "documentation",
-            label: "Repository documentation",
-            description: "Documents the repository subject.",
-            kind: "document",
-            anchor: { path: "README.md", startLine: 1, endLine: 7 },
-          },
-        ],
-        edges: [
-          {
-            id: "source-documented-by-readme",
-            from: "source",
-            to: "documentation",
-            label: "documented by",
-            directed: true,
-            anchors: [],
-          },
-        ],
+        nodes: secondaryStructureNodes,
+        edges: secondaryStructureEdges,
         createdAt: "2026-08-08T01:05:00.000Z",
         updatedAt: "2026-08-08T01:05:00.000Z",
       },
@@ -1151,7 +1468,7 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
   }
   const input = await context.req.json();
   if (input.clearFocus) {
-    structure.title = input.title ?? "Fixture code relationships without focus";
+    structure.title = input.title ?? "Order placement architecture without focus";
     structure.initialFocus = null;
     structure.nodes = structure.nodes.filter((node) => node.id !== "hub");
     structure.edges = structure.edges.filter((edge) => edge.from !== "hub" && edge.to !== "hub");
@@ -1159,33 +1476,51 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
     changeSequence += 1;
     return context.json({ ok: true, structure });
   }
-  structure.title = input.title ?? "Fixture code relationships updated";
+  structure.title = input.title ?? "Order placement architecture updated";
   structure.scope = input.scope ?? `${structure.scope} Updated without changing subject identity.`;
   structure.nodes = [
     ...structure.nodes
-      .filter((node) => node.id !== "leaf-13" && node.id !== "new-neighbor")
+      .filter((node) => node.id !== "payment-reconciliation" && node.id !== "new-neighbor")
       .map((node) =>
-        node.id === "hub"
-          ? { ...node, label: input.hubLabel ?? "UpdateStructureUseCase.execute updated" }
-          : node,
+        node.id === "hub" ? { ...node, label: input.hubLabel ?? "Create order updated" } : node,
       ),
     {
       id: "new-neighbor",
-      label: "StructureEventPublisher",
-      description: "whole-value replacement後の更新eventをpublishする。",
-      kind: "port",
-      anchor: { path: "src/fixture.ts", startLine: 10, endLine: 13 },
+      label: "Order domain events",
+      description: "placedとpayment.authorizedをaggregateからoutboxへ受け渡す。",
+      kind: "event",
+      anchor: { path: "src/domain/orders/order.ts", startLine: 14, endLine: 36 },
     },
   ];
   structure.edges = [
-    ...structure.edges.filter((edge) => edge.id !== "edge-13" && edge.id !== "edge-new"),
+    ...structure.edges.filter(
+      (edge) =>
+        edge.id !== "reconciliation-checks-payment" &&
+        edge.id !== "reconciliation-checks-order" &&
+        edge.id !== "edge-new" &&
+        edge.id !== "event-flows-to-outbox",
+    ),
     {
       id: "edge-new",
       from: "hub",
       to: "new-neighbor",
-      label: "更新完了eventをpublishする",
+      label: "aggregateからeventをreleaseする",
       directed: true,
-      anchors: [{ path: "src/fixture.ts", startLine: 10, endLine: 13 }],
+      anchors: [
+        { path: "src/application/orders/create-order.ts", startLine: 31, endLine: 34 },
+        { path: "src/domain/orders/order.ts", startLine: 35, endLine: 37 },
+      ],
+    },
+    {
+      id: "event-flows-to-outbox",
+      from: "new-neighbor",
+      to: "outbox",
+      label: "transaction内でreleaseして追記する",
+      directed: true,
+      anchors: [
+        { path: "src/domain/orders/order.ts", startLine: 35, endLine: 37 },
+        { path: "src/application/orders/create-order.ts", startLine: 31, endLine: 34 },
+      ],
     },
   ];
   structure.updatedAt = "2026-08-08T04:00:00.000Z";
