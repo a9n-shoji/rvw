@@ -27,7 +27,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   await expect(reviewTree.locator(".review-tree-structure")).toHaveCount(2);
   await expect(reviewTree.getByRole("button", { name: primaryTitle })).toHaveAttribute(
     "title",
-    `${primaryTitle}\nThe fixture boundary and its direct committed relationships; transport startup is excluded.\n15 Nodes · 14 Edges · bbbbbbbb`,
+    `${primaryTitle}\nThe fixture boundary and its direct committed relationships; transport startup is excluded.\nbbbbbbbb`,
   );
   await reviewTree.getByRole("button", { name: primaryTitle }).click();
 
@@ -117,6 +117,17 @@ test("explores source-exact Structures and preserves spatial context across navi
   expect(endpointsAreOutsideNodes).toBe(true);
 
   const firstEdgeLabel = viewer.locator('.structure-edge-label[data-edge-id="edge-01"]');
+  await expect(firstEdgeLabel).toHaveAttribute("data-source-anchor-count", "2");
+  await expect(firstEdgeLabel).toHaveAttribute("data-source-change-kind", "modified");
+  await expect(firstEdgeLabel.locator(".structure-source-identity")).toHaveAttribute(
+    "data-source-path",
+    "README.md",
+  );
+  await expect(firstEdgeLabel.locator(".structure-source-count")).toHaveText("+1");
+  await expect(firstEdgeLabel.locator(".structure-source.compact")).toHaveAttribute(
+    "aria-label",
+    "README.md:13-19を開く（ほか1件は詳細サイドバー）",
+  );
   const [edgeIdentityBox, edgeTextBox] = await Promise.all([
     firstEdgeLabel.locator(".structure-source-identity").boundingBox(),
     firstEdgeLabel.locator(".structure-edge-label-text").boundingBox(),
@@ -304,6 +315,21 @@ test("explores source-exact Structures and preserves spatial context across navi
     }));
   expect(Number.isFinite(newPosition.left)).toBe(true);
   expect(Number.isFinite(newPosition.top)).toBe(true);
+
+  const clearFocus = await page.request.post(
+    `/api/fixture/structures/${primaryStructureId}/update`,
+    { data: { clearFocus: true } },
+  );
+  expect(clearFocus.ok()).toBe(true);
+  await expect(
+    page.getByRole("tab", { name: "Fixture code relationships without focus" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(viewer.locator(".structure-node.focused")).toHaveCount(0);
+  await expect(viewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(viewer.getByText("14/14 Node · 1/1 Relation", { exact: true })).toBeVisible();
 
   await openStructure(page, secondaryTitle);
   await expect(page.getByRole("tab", { name: secondaryTitle })).toHaveAttribute(

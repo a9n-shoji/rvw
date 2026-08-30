@@ -1945,8 +1945,6 @@ describe("RvwService commit workflow", () => {
         sourceOid: firstHead,
         title: "Source relationships",
         scope: "Relationships around src.txt. Build configuration is excluded.",
-        nodeCount: 2,
-        edgeCount: 1,
         createdAt: structure.createdAt,
         updatedAt: structure.updatedAt,
       },

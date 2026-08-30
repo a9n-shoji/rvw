@@ -88,7 +88,13 @@ const primaryStructureEdges = [
       to: index < 5 ? "hub" : `leaf-${sequence}`,
       label: primaryStructureClaims[index][1],
       directed: true,
-      anchors: index === 0 ? [{ path: "src/fixture.ts", startLine: 1, endLine: 3 }] : [],
+      anchors:
+        index === 0
+          ? [
+              { path: "README.md", startLine: 13, endLine: 19 },
+              { path: "src/fixture.ts", startLine: 1, endLine: 3 },
+            ]
+          : [],
     };
   }),
   {
@@ -1118,8 +1124,6 @@ app.get("/api/pull-requests/:id/structures", (context) =>
       sourceOid: structure.sourceOid,
       title: structure.title,
       scope: structure.scope,
-      nodeCount: structure.nodes.length,
-      edgeCount: structure.edges.length,
       createdAt: structure.createdAt,
       updatedAt: structure.updatedAt,
     })),
@@ -1146,6 +1150,15 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
     );
   }
   const input = await context.req.json();
+  if (input.clearFocus) {
+    structure.title = input.title ?? "Fixture code relationships without focus";
+    structure.initialFocus = null;
+    structure.nodes = structure.nodes.filter((node) => node.id !== "hub");
+    structure.edges = structure.edges.filter((edge) => edge.from !== "hub" && edge.to !== "hub");
+    structure.updatedAt = "2026-08-08T05:00:00.000Z";
+    changeSequence += 1;
+    return context.json({ ok: true, structure });
+  }
   structure.title = input.title ?? "Fixture code relationships updated";
   structure.scope = input.scope ?? `${structure.scope} Updated without changing subject identity.`;
   structure.nodes = [

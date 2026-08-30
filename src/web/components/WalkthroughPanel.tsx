@@ -160,7 +160,7 @@ export function ReviewTreeItems({
                 if (event.metaKey || event.ctrlKey) return;
                 onOpenStructure(structure, false);
               }}
-              title={`${structure.title}\n${structure.scope}\n${structure.nodeCount} Nodes · ${structure.edgeCount} Edges · ${structure.sourceOid.slice(0, 8)}`}
+              title={`${structure.title}\n${structure.scope}\n${structure.sourceOid.slice(0, 8)}`}
               aria-label={structure.title}
             >
               <span className="directory-chevron" aria-hidden="true" />

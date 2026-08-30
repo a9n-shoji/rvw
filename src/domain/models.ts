@@ -227,8 +227,6 @@ export interface StructureSummary {
   sourceOid: string;
   title: string;
   scope: string;
-  nodeCount: number;
-  edgeCount: number;
   createdAt: string;
   updatedAt: string;
 }

@@ -126,6 +126,69 @@ describe("Structure domain presentation rules", () => {
     expect(layout["node-02"]!.x).toBeGreaterThan(layout.hub!.x);
   });
 
+  it("keeps undirected and reciprocal relations on a neutral rank", () => {
+    const base = structureWithHub();
+    const structure: Structure = {
+      ...base,
+      nodes: base.nodes.slice(0, 5),
+      edges: [
+        {
+          id: "incoming",
+          from: "node-01",
+          to: "hub",
+          label: "enters",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "outgoing",
+          from: "hub",
+          to: "node-02",
+          label: "leaves",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "undirected",
+          from: "hub",
+          to: "node-03",
+          label: "peers with",
+          directed: false,
+          anchors: [],
+        },
+        {
+          id: "reciprocal-a",
+          from: "hub",
+          to: "node-04",
+          label: "sends",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "reciprocal-b",
+          from: "node-04",
+          to: "hub",
+          label: "returns",
+          directed: true,
+          anchors: [],
+        },
+      ],
+    };
+    const layout = initialStructureLayout(structure);
+    expect(layout["node-01"]!.x).toBeLessThan(layout.hub!.x);
+    expect(layout["node-02"]!.x).toBeGreaterThan(layout.hub!.x);
+    expect(layout["node-03"]!.x).toBe(layout.hub!.x);
+    expect(layout["node-04"]!.x).toBe(layout.hub!.x);
+
+    const reversedUndirected = initialStructureLayout({
+      ...structure,
+      edges: structure.edges.map((edge) =>
+        edge.id === "undirected" ? { ...edge, from: edge.to, to: edge.from } : edge,
+      ),
+    });
+    expect(reversedUndirected).toEqual(layout);
+  });
+
   it("keeps dense parallel and self-relation lanes within the readable canvas", () => {
     const edges = Array.from({ length: 5_000 }, (_, index) => ({
       id: `edge-${String(index).padStart(4, "0")}`,

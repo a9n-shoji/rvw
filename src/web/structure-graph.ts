@@ -17,6 +17,10 @@ function stableCompare(left: string, right: string): number {
   return left.localeCompare(right, "en");
 }
 
+function unorderedNodePairKey(left: string, right: string): string {
+  return [left, right].sort(stableCompare).join("\0");
+}
+
 function adjacency(structure: Structure): Map<string, string[]> {
   const result = new Map(structure.nodes.map((node) => [node.id, [] as string[]]));
   for (const edge of [...structure.edges].sort((left, right) => stableCompare(left.id, right.id))) {
@@ -179,6 +183,23 @@ function bidirectionalInitialLayout(
   structure: Structure,
   focusId: string,
 ): Record<string, StructurePoint> {
+  const pairDirections = new Map<string, Set<"forward" | "reverse" | "undirected">>();
+  for (const edge of structure.edges) {
+    if (edge.from === edge.to) continue;
+    const pairKey = unorderedNodePairKey(edge.from, edge.to);
+    const directions = pairDirections.get(pairKey) ?? new Set();
+    if (!edge.directed) directions.add("undirected");
+    else directions.add(stableCompare(edge.from, edge.to) < 0 ? "forward" : "reverse");
+    pairDirections.set(pairKey, directions);
+  }
+  const neutralPairs = new Set(
+    [...pairDirections]
+      .filter(
+        ([, directions]) =>
+          directions.has("undirected") || (directions.has("forward") && directions.has("reverse")),
+      )
+      .map(([pairKey]) => pairKey),
+  );
   const levels = new Map([[focusId, 0]]);
   const queue = [focusId];
   for (let index = 0; index < queue.length; index += 1) {
@@ -189,7 +210,8 @@ function bidirectionalInitialLayout(
     )) {
       const neighbor = edge.from === current ? edge.to : edge.to === current ? edge.from : null;
       if (!neighbor || levels.has(neighbor)) continue;
-      levels.set(neighbor, currentLevel + (edge.from === current ? 1 : -1));
+      const neutral = !edge.directed || neutralPairs.has(unorderedNodePairKey(edge.from, edge.to));
+      levels.set(neighbor, currentLevel + (neutral ? 0 : edge.from === current ? 1 : -1));
       queue.push(neighbor);
     }
   }
@@ -235,7 +257,8 @@ function bidirectionalInitialLayout(
  * Content-neutral viewer layout. IDs and directed topology are the only inputs;
  * labels, kinds, descriptions, paths, and relation semantics never influence
  * position. A declared initial focus forms the center rank, so incoming and
- * outgoing relations remain visually distinguishable without layout metadata.
+ * outgoing relations remain visually distinguishable without layout metadata;
+ * undirected and reciprocal pairs stay neutral rather than inventing a side.
  */
 export function initialStructureLayout(structure: Structure): Record<string, StructurePoint> {
   if (structure.nodes.length === 0) return {};
@@ -337,7 +360,7 @@ export function structureEdgeRouteOffsets(
   const offsets = new Map(edges.map((edge) => [edge.id, 0]));
   const pairs = new Map<string, StructureEdge[]>();
   for (const edge of edges) {
-    const pairKey = [edge.from, edge.to].sort(stableCompare).join("\0");
+    const pairKey = unorderedNodePairKey(edge.from, edge.to);
     const pair = pairs.get(pairKey) ?? [];
     pair.push(edge);
     pairs.set(pairKey, pair);

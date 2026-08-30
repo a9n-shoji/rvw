@@ -1034,25 +1034,21 @@ export class RvwDatabase {
     return (
       this.database
         .prepare(
-          `SELECT * FROM structures
+          `SELECT id, pull_request_id, source_oid, title, scope, created_at, updated_at
+           FROM structures
            WHERE pull_request_id = ?
            ORDER BY created_at DESC, id DESC`,
         )
         .all(pullRequestId) as DbRow[]
-    ).map((row) => {
-      const graph = structureGraphValue(row);
-      return {
-        id: stringValue(row, "id"),
-        pullRequestId: stringValue(row, "pull_request_id"),
-        sourceOid: stringValue(row, "source_oid"),
-        title: stringValue(row, "title"),
-        scope: stringValue(row, "scope"),
-        nodeCount: graph.nodes.length,
-        edgeCount: graph.edges.length,
-        createdAt: stringValue(row, "created_at"),
-        updatedAt: stringValue(row, "updated_at"),
-      };
-    });
+    ).map((row) => ({
+      id: stringValue(row, "id"),
+      pullRequestId: stringValue(row, "pull_request_id"),
+      sourceOid: stringValue(row, "source_oid"),
+      title: stringValue(row, "title"),
+      scope: stringValue(row, "scope"),
+      createdAt: stringValue(row, "created_at"),
+      updatedAt: stringValue(row, "updated_at"),
+    }));
   }
 
   createStructure(input: NewStructureInput): Structure {

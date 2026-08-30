@@ -628,7 +628,8 @@ actionを選んだ時だけ、Structureのexact `sourceOid`とanchorで左ペイ
 探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。layoutはtopologyと
 stable IDだけを入力とするcontent-neutralなdeterministic配置で、label、kind、description、path、変更種別、
 relation semanticsを位置決定へ使わない。`initialFocus`がある場合はdirected topology上のincomingを左、
-outgoingを右へ置いてfocusを中央にするが、producer指定のlayout hintや座標は受け取らない。Node位置、focus、
+outgoingを右へ置き、undirectedまたはreciprocalな関係は方向が曖昧なneutral rankへ置いてfocusを中央にするが、
+producer指定のlayout hintや座標は受け取らない。Node位置、focus、
 depth、relation展開、viewportはbrowser session
 内だけで同じStructure IDへ保持し、tab往復とcurrent-value更新後もsurviving IDの位置を保つ。新規Nodeは
 retained neighbor付近へ置く。reload、別browser、CLI、SQLiteへ座標を持ち越さない。100件を超える可視Nodeは

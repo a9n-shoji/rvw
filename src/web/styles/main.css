@@ -4697,6 +4697,10 @@ diffs-container > [slot="header-metadata"] {
   --structure-edge-label-active-outline: var(--info);
 }
 
+.structure-edge-label[data-source-change-kind="mixed"] {
+  --structure-edge-label-active-outline: var(--attention);
+}
+
 .structure-edge-select {
   display: flex;
   flex: 0 0 auto;
@@ -4749,6 +4753,26 @@ diffs-container > [slot="header-metadata"] {
 .structure-source-identity > .file-change-icon svg {
   width: 12px;
   height: 12px;
+}
+
+.structure-source-count,
+.structure-source-change-aggregate {
+  display: inline-grid;
+  min-width: 17px;
+  height: 14px;
+  place-items: center;
+  padding: 0 3px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--bg-subtle);
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.structure-source-change-aggregate {
+  color: var(--attention);
 }
 
 .structure-canvas-status {

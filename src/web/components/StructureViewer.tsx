@@ -81,18 +81,21 @@ function anchorLabel(anchor: SourceAnchor): string {
 function SourceButton({
   anchor,
   compact = false,
+  relatedAnchorCount = 0,
   onOpen,
 }: {
   anchor: SourceAnchor;
   compact?: boolean;
+  relatedAnchorCount?: number;
   onOpen: (openInRightPane: boolean) => void;
 }) {
+  const label = `${anchorLabel(anchor)}を開く${relatedAnchorCount > 0 ? `（ほか${relatedAnchorCount}件は詳細サイドバー）` : ""}`;
   return (
     <button
       type="button"
       className={`structure-source${compact ? " compact" : ""}`}
-      title={`${anchorLabel(anchor)}を開く`}
-      aria-label={`${anchorLabel(anchor)}を開く`}
+      title={label}
+      aria-label={label}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => {
         event.stopPropagation();
@@ -121,6 +124,71 @@ function SourceIdentity({
     >
       <FileEntryIcon path={anchor.path} kind="file" />
       {changeKind && <ChangeIcon kind={changeKind} />}
+    </span>
+  );
+}
+
+type EdgeSourceChangeKind = ChangeKind | "mixed";
+
+interface EdgeSourcePresentation {
+  anchor: SourceAnchor | null;
+  anchorCount: number;
+  additionalAnchorCount: number;
+  changeKind: EdgeSourceChangeKind | null;
+  changedAnchorCount: number;
+  title: string;
+}
+
+function edgeSourcePresentation(
+  edge: StructureEdge,
+  sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
+): EdgeSourcePresentation {
+  const changedKinds = edge.anchors.flatMap((anchor) => {
+    const kind = sourceChangeKinds.get(anchor.path);
+    return kind ? [kind] : [];
+  });
+  const distinctKinds = [...new Set(changedKinds)].sort((left, right) =>
+    left.localeCompare(right, "en"),
+  );
+  return {
+    anchor: edge.anchors[0] ?? null,
+    anchorCount: edge.anchors.length,
+    additionalAnchorCount: Math.max(0, edge.anchors.length - 1),
+    changeKind:
+      distinctKinds.length > 1 ? "mixed" : distinctKinds.length === 1 ? distinctKinds[0]! : null,
+    changedAnchorCount: changedKinds.length,
+    title: edge.anchors.map(anchorLabel).join("\n"),
+  };
+}
+
+function EdgeSourceIdentity({ presentation }: { presentation: EdgeSourcePresentation }) {
+  const { anchor, additionalAnchorCount, changeKind, changedAnchorCount, title } = presentation;
+  if (!anchor) return null;
+  return (
+    <span
+      className="structure-source-identity"
+      data-source-path={anchor.path}
+      data-source-anchor-count={presentation.anchorCount}
+      data-source-change-kind={changeKind ?? undefined}
+      title={title}
+    >
+      <FileEntryIcon path={anchor.path} kind="file" />
+      {additionalAnchorCount > 0 && changedAnchorCount > 0 ? (
+        <span
+          className="structure-source-change-aggregate"
+          role="img"
+          aria-label={`変更対象のsource ${changedAnchorCount}件${changeKind === "mixed" ? "（複数種別）" : ""}`}
+        >
+          Δ{changedAnchorCount}
+        </span>
+      ) : (
+        changeKind && changeKind !== "mixed" && <ChangeIcon kind={changeKind} />
+      )}
+      {additionalAnchorCount > 0 && (
+        <span className="structure-source-count" aria-label={`ほか${additionalAnchorCount}件`}>
+          +{additionalAnchorCount}
+        </span>
+      )}
     </span>
   );
 }
@@ -230,6 +298,7 @@ interface StructureBox {
 
 interface StructureEdgeLabelPlacement {
   edge: StructureEdge;
+  source: EdgeSourcePresentation;
   x: number;
   y: number;
   selectWidth: number;
@@ -243,6 +312,8 @@ const EDGE_LABEL_HORIZONTAL_PADDING = 14;
 const EDGE_LABEL_SOURCE_WIDTH = 25;
 const EDGE_LABEL_FILE_ICON_WIDTH = 19;
 const EDGE_LABEL_CHANGE_ICON_WIDTH = 16;
+const EDGE_LABEL_AGGREGATE_CHANGE_WIDTH = 24;
+const EDGE_LABEL_SOURCE_COUNT_WIDTH = 25;
 const EDGE_LABEL_LINE_HEIGHT = 11;
 
 function boxesOverlap(left: StructureBox, right: StructureBox): boolean {
@@ -266,7 +337,12 @@ function labelBox(x: number, y: number, width: number, height: number, padding =
 function edgeLabelSize(
   edge: StructureEdge,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
-): { selectWidth: number; boxWidth: number; height: number } {
+): {
+  selectWidth: number;
+  boxWidth: number;
+  height: number;
+  source: EdgeSourcePresentation;
+} {
   const textUnits = [...edge.label].reduce(
     (total, character) =>
       total +
@@ -280,16 +356,22 @@ function edgeLabelSize(
   );
   const lineCount = Math.max(1, Math.ceil(naturalTextWidth / textWidth));
   const height = Math.max(24, lineCount * EDGE_LABEL_LINE_HEIGHT + 10);
-  const anchor = edge.anchors[0];
-  const sourceIdentityWidth = anchor
+  const source = edgeSourcePresentation(edge, sourceChangeKinds);
+  const sourceIdentityWidth = source.anchor
     ? EDGE_LABEL_FILE_ICON_WIDTH +
-      (sourceChangeKinds.has(anchor.path) ? EDGE_LABEL_CHANGE_ICON_WIDTH : 0)
+      (source.additionalAnchorCount > 0 && source.changedAnchorCount > 0
+        ? EDGE_LABEL_AGGREGATE_CHANGE_WIDTH
+        : source.changeKind
+          ? EDGE_LABEL_CHANGE_ICON_WIDTH
+          : 0) +
+      (source.additionalAnchorCount > 0 ? EDGE_LABEL_SOURCE_COUNT_WIDTH : 0)
     : 0;
   const selectWidth = textWidth + sourceIdentityWidth;
   return {
     selectWidth,
-    boxWidth: selectWidth + (anchor ? EDGE_LABEL_SOURCE_WIDTH : 0),
+    boxWidth: selectWidth + (source.anchor ? EDGE_LABEL_SOURCE_WIDTH : 0),
     height,
+    source,
   };
 }
 
@@ -396,6 +478,7 @@ function placeEdgeLabels(
     occupyLabel(labelBox(chosen.x, chosen.y, size.boxWidth, size.height, 4));
     placements.push({
       edge,
+      source: size.source,
       x: chosen.x,
       y: chosen.y,
       selectWidth: size.selectWidth,
@@ -566,15 +649,22 @@ export function StructureViewer({
     if (previous?.updatedAt === structure.updatedAt) return;
     setPositions((current) => reconcileStructureLayout(structure, current));
     const fallbackFocus = structure.initialFocus ?? null;
-    setFocusId((current) =>
-      current && structure.nodes.some((node) => node.id === current) ? current : fallbackFocus,
-    );
+    const retainedFocus =
+      focusIdRef.current && structure.nodes.some((node) => node.id === focusIdRef.current)
+        ? focusIdRef.current
+        : null;
+    const nextFocus = retainedFocus ?? fallbackFocus;
+    setFocusId(nextFocus);
+    if (nextFocus === null) {
+      setDepth("all");
+      setExpanded(false);
+    }
     setFocusTrail((current) => {
       const retained = current.filter((nodeId) =>
         structure.nodes.some((node) => node.id === nodeId),
       );
-      return fallbackFocus && !retained.includes(fallbackFocus)
-        ? [...retained, fallbackFocus].slice(-6)
+      return nextFocus && !retained.includes(nextFocus)
+        ? [...retained, nextFocus].slice(-6)
         : retained;
     });
   }, [structure, structure.updatedAt]);
@@ -1017,14 +1107,15 @@ export function StructureViewer({
                   );
                 })}
               </svg>
-              {edgeLabelPlacements.map(({ edge, x, y, selectWidth, height, crowded }) => {
-                const anchor = edge.anchors[0];
-                const changeKind = anchor ? (sourceChangeKinds.get(anchor.path) ?? null) : null;
+              {edgeLabelPlacements.map(({ edge, source, x, y, selectWidth, height, crowded }) => {
+                const anchor = source.anchor;
+                const changeKind = source.changeKind;
                 return (
                   <div
                     key={`label:${edge.id}`}
                     className={`structure-edge-label${crowded ? " crowded" : ""}`}
                     data-edge-id={edge.id}
+                    data-source-anchor-count={source.anchorCount}
                     data-source-change-kind={changeKind ?? undefined}
                     style={{ left: x, top: y, minHeight: height }}
                   >
@@ -1038,13 +1129,14 @@ export function StructureViewer({
                         focusNode(nextId);
                       }}
                     >
-                      {anchor && <SourceIdentity anchor={anchor} changeKind={changeKind} />}
+                      {anchor && <EdgeSourceIdentity presentation={source} />}
                       <span className="structure-edge-label-text">{edge.label}</span>
                     </button>
                     {anchor && (
                       <SourceButton
                         compact
                         anchor={anchor}
+                        relatedAnchorCount={source.additionalAnchorCount}
                         onOpen={(right) => void openAnchor(anchor, right)}
                       />
                     )}
