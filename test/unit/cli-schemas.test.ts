@@ -326,6 +326,7 @@ describe("CLI input schemas", () => {
           {
             id: "controller",
             label: "JobsController",
+            notation: "class",
             anchor: { path: "src/controller.ts", startLine: 2, endLine: 5 },
           },
           { id: "policy", label: "JobPolicy" },
@@ -343,8 +344,13 @@ describe("CLI input schemas", () => {
     ).toMatchObject({
       initialFocus: "controller",
       nodes: [
-        { description: null, kind: null, anchor: { startLine: 2, endLine: 5 } },
-        { anchor: null },
+        {
+          description: null,
+          kind: null,
+          notation: "class",
+          anchor: { startLine: 2, endLine: 5 },
+        },
+        { notation: "plain", anchor: null },
       ],
       edges: [{ directed: true, anchors: [] }],
     });
@@ -433,6 +439,12 @@ describe("CLI input schemas", () => {
       structureUpdateInputSchema.safeParse({
         ...valid,
         nodes: [{ id: "entry", label: "Entry", anchor: null }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [{ id: "entry", label: "Entry", notation: "server" }],
       }).success,
     ).toBe(false);
     expect(

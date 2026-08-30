@@ -195,7 +195,7 @@ describe("Agent socket", () => {
     expect(publishStructure).toHaveBeenCalledWith(
       expect.objectContaining({
         ...input,
-        nodes: [expect.objectContaining({ description: null, kind: null })],
+        nodes: [expect.objectContaining({ description: null, kind: null, notation: "plain" })],
       }),
     );
   });

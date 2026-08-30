@@ -105,7 +105,7 @@ describe("Structure domain presentation rules", () => {
     expect(reconciled["node-14"]).toBeUndefined();
   });
 
-  it("keeps adjacent ranks separate when one rank needs multiple columns", () => {
+  it("keeps a branched topology collision-free in topology-derived ranks", () => {
     const base = structureWithHub();
     const siblings = Array.from({ length: 11 }, (_, index) => ({
       id: `sibling-${String(index).padStart(2, "0")}`,
@@ -141,7 +141,10 @@ describe("Structure domain presentation rules", () => {
         },
       ],
     };
-    expectNoNodeOverlap(initialStructureLayout(structure));
+    const layout = initialStructureLayout(structure);
+    expectNoNodeOverlap(layout);
+    expect(siblings.every((node) => layout.root!.x < layout[node.id]!.x)).toBe(true);
+    expect(layout[siblings[0]!.id]!.x).toBeLessThan(layout["third-rank"]!.x);
   });
 
   it("places newly added siblings without colliding with retained or new Nodes", () => {
@@ -170,22 +173,108 @@ describe("Structure domain presentation rules", () => {
     const reconciled = reconcileStructureLayout(updated, previous);
     expect(reconciled.hub).toEqual(previous.hub);
     expectNoNodeOverlap(reconciled);
+    const added = newNodes.map((node) => reconciled[node.id]!);
+    expect(Math.min(...added.map((point) => point.x))).toBeLessThan(previous.hub.x);
+    expect(Math.max(...added.map((point) => point.x))).toBeGreaterThan(previous.hub.x);
+    expect(Math.min(...added.map((point) => point.y))).toBeLessThan(previous.hub.y);
+    expect(Math.max(...added.map((point) => point.y))).toBeGreaterThan(previous.hub.y);
   });
 
-  it("places incoming and outgoing relations on opposite sides of initial focus", () => {
+  it("keeps authored display content, parallel relations, and self-relations out of layout", () => {
     const base = structureWithHub();
+    const layout = initialStructureLayout(base);
+    const alternateProjectionInputs: Structure = {
+      ...base,
+      nodes: base.nodes.map((node) => ({
+        ...node,
+        label: `Changed ${node.label}`,
+        description: "Different authored content",
+        kind: "different-kind",
+        notation: node.id === "hub" ? "database" : "component",
+      })),
+      edges: [
+        ...base.edges.map((edge) => ({
+          ...edge,
+          label: `Changed ${edge.label}`,
+        })),
+        {
+          id: "parallel",
+          from: "hub",
+          to: "node-01",
+          label: "parallel claim",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "self",
+          from: "hub",
+          to: "hub",
+          label: "self claim",
+          directed: true,
+          anchors: [],
+        },
+      ],
+    };
+    expect(initialStructureLayout(alternateProjectionInputs)).toEqual(layout);
+  });
+
+  it("uses the entrypoint and factual direction as a soft left-to-right tendency", () => {
+    const base = structureWithHub();
+    const nodes = ["entry", "parse", "execute", "persist", "peer"].map((id) => ({
+      id,
+      label: id,
+      description: null,
+      kind: null,
+      anchor: null,
+    }));
     const structure: Structure = {
       ...base,
-      edges: base.edges.map((edge) =>
-        edge.to === "node-01" ? { ...edge, from: "node-01", to: "hub" } : edge,
-      ),
+      initialFocus: "entry",
+      nodes,
+      edges: [
+        {
+          id: "entry-parse",
+          from: "entry",
+          to: "parse",
+          label: "parses with",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "parse-execute",
+          from: "parse",
+          to: "execute",
+          label: "invokes",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "execute-persist",
+          from: "execute",
+          to: "persist",
+          label: "persists through",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "execute-peer",
+          from: "execute",
+          to: "peer",
+          label: "shares a boundary with",
+          directed: false,
+          anchors: [],
+        },
+      ],
     };
     const layout = initialStructureLayout(structure);
-    expect(layout["node-01"]!.x).toBeLessThan(layout.hub!.x);
-    expect(layout["node-02"]!.x).toBeGreaterThan(layout.hub!.x);
+    expect(layout.entry!.x).toBeLessThan(layout.parse!.x);
+    expect(layout.parse!.x).toBeLessThan(layout.execute!.x);
+    expect(layout.execute!.x).toBeLessThan(layout.persist!.x);
+    expectNoNodeOverlap(layout);
+    expect(initialStructureLayout(structure)).toEqual(layout);
   });
 
-  it("keeps a 50-Node focused Structure in bounded non-overlapping columns", () => {
+  it("keeps a 50-Node topology finite and collision-free", () => {
     const base = structureWithHub();
     const nodes = Array.from({ length: 50 }, (_, index) => ({
       id: index === 0 ? "hub" : `node-${String(index).padStart(2, "0")}`,
@@ -207,14 +296,12 @@ describe("Structure domain presentation rules", () => {
       })),
     };
     const layout = initialStructureLayout(structure);
-    const yValues = Object.values(layout).map((point) => point.y);
     expectNoNodeOverlap(layout);
-    expect(Math.max(...yValues) - Math.min(...yValues)).toBeLessThanOrEqual(
-      4 * (STRUCTURE_NODE_HEIGHT + 72),
-    );
+    expect(Object.values(layout).every((point) => Number.isFinite(point.x + point.y))).toBe(true);
+    expect(initialStructureLayout(structure)).toEqual(layout);
   });
 
-  it("keeps undirected and reciprocal relations on a neutral rank", () => {
+  it("uses stable IDs only to resolve otherwise symmetric topology", () => {
     const base = structureWithHub();
     const structure: Structure = {
       ...base,
@@ -263,11 +350,6 @@ describe("Structure domain presentation rules", () => {
       ],
     };
     const layout = initialStructureLayout(structure);
-    expect(layout["node-01"]!.x).toBeLessThan(layout.hub!.x);
-    expect(layout["node-02"]!.x).toBeGreaterThan(layout.hub!.x);
-    expect(layout["node-03"]!.x).toBe(layout.hub!.x);
-    expect(layout["node-04"]!.x).toBe(layout.hub!.x);
-
     const reversedUndirected = initialStructureLayout({
       ...structure,
       edges: structure.edges.map((edge) =>
@@ -275,6 +357,7 @@ describe("Structure domain presentation rules", () => {
       ),
     });
     expect(reversedUndirected).toEqual(layout);
+    expectNoNodeOverlap(layout);
   });
 
   it("keeps supported parallel and self-relation lanes within the route bounds", () => {

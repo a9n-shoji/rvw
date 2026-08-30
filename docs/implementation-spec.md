@@ -14,7 +14,7 @@
 変更箇所を入口に選択commit時点のrepository全体へ移動する。コード全文、変更されていないfile、
 検索結果を含む任意の文書へコメントでき、その判断をCodex / Claude Codeへ共通Skill経由で受け渡す。
 Agentが実装やarchitectureを説明する場合は、source commitをanchorに持つWalkthroughとしてcode reference、
-Mermaid図、staticなHTML visualを提示できる。code-centeredなsubjectを順序より関係として説明する場合は、
+Mermaid図、staticなHTML visualを提示できる。PRに関係するbehaviorをentrypointから周辺relationへ説明する場合は、
 同じくexact sourceを持つStructureとしてstableなnodeとedgeを提示できる。どの参照をいつ開くかは人間が選び、
 rvwの最大二ペインのdocument workspaceで確認する。
 
@@ -56,7 +56,7 @@ rvwが担うもの:
 - comment postごとのexact commit固定typed code reference
 - 新規comment postのDB-wide event順序、opaque cursor、10秒pollのwatch CLI
 - source commitをanchorに持つAgent Walkthrough、typed code reference、Mermaid図、static HTML visual
-- boundedなcode-centered subjectを表すAgent Structure、stable Node / Edge ID、source anchor
+- boundedなPR-relevant behaviorをentrypointから表すAgent Structure、stable Node / Edge ID、source anchor
 - platform非依存の`rvw` / `rvw-walkthrough` / `rvw-structure` / `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
 
 rvwが担わないもの:
@@ -560,10 +560,11 @@ interface Walkthrough {
 
 ## 5.5 Structure
 
-Structureはboundedなcode-centered subjectを、任意の方向へ探索できるrelationship spaceとして表す。
-Walkthroughは意図的な読解pathであり、Structureは読解順を規定しない。flowをgraphへ押し込まず、順番が
-理解の本体ならWalkthroughを使う。Structureはgeneric Artifact system、semantic code graph、AI推論結果、
-review finding、completeness保証ではない。
+StructureはPRに関係するboundedなbehaviorを、source-establishedなentrypointから依存、contract、side effectへ
+任意の方向に探索できるrelationship spaceとして表す。Walkthroughは意図的な読解pathであり、Structureは
+読解順を規定しない。flowをgraphへ押し込まず、順番が理解の本体ならWalkthroughを使う。entrypointを持たない
+静的なarchitecture／責務inventoryはPR reviewの停止条件を失うためStructureの対象にしない。Structureは
+generic Artifact system、semantic code graph、AI推論結果、review finding、completeness保証ではない。
 
 一つのStructureは次を持つ。
 
@@ -579,6 +580,7 @@ type StructureNode = {
   label: string;
   description: string | null;
   kind: string | null;
+  notation: "plain" | "class" | "database" | "interface" | "component" | "external" | "concept";
   anchor: SourceAnchor | null;
 };
 
@@ -617,10 +619,16 @@ type Structure = {
   Structure全体ではsource anchorを1件以上400件以下とする。
 - Node 1件以上50件以下、Edge 200件以下、payload 2 MiB以下とする。endpointと`initialFocus`は実在Nodeを
   指し、parallel Edgeはそれぞれstable IDを持つ。`directed`は必須booleanである。
+- `initialFocus`は新規authoringでは対象behaviorを検証し始めるsource-establishedなentrypointを指す。
+  HTTP routeに限らずpublic API、command handler、worker trigger、event subscriber、composition call、
+  migration execution pointを含む。wire／storageは既存current値の互換性のためnullableを維持するが、
+  production Skillは新規publishへ`null`を生成しない。
 - Node descriptionとEdge labelはproducer claimであり、source anchorはそのclaimを検証する根拠である。
   Edge labelは関係を表すverb / verb phraseを使い、directionを読解順には使わない。
-- `kind`は任意の短いfactual badgeであり、controlled vocabularyやlayout hintではない。Phase 1はnotationを
-  導入しない。comment、group、reverse lookup、durable layout、confidence、severityも持たない。
+- `kind`は任意の短いfactual badgeであり、controlled vocabularyやlayout hintではない。`notation`は
+  `plain | class | database | interface | component | external | concept`のcontrolledな任意表示で、未指定は
+  `plain`とする。producerが明示し、viewerは`kind`やpathから推論せず、layoutにも使わない。comment、group、
+  reverse lookup、durable layout、confidence、severityは持たない。
 - SQLiteはstable identityと一つのcurrent graph値だけを保持する。updateは`expectedUpdatedAt`を条件にした
   atomicなwhole-value replacementで、node/edge単位patch、過去値、Structure revision、version selectorを
   持たない。deleteもpreviewで読んだ`updatedAt`がcurrent値と一致する場合だけ実行する。
@@ -632,30 +640,48 @@ actionを選んだ時だけ、Structureのexact `sourceOid`とanchorで左ペイ
 行わない。
 
 探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。trackpadの通常wheelは
-pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱う。layoutはtopologyと
-stable IDだけを入力とするcontent-neutralなdeterministic配置で、label、kind、description、path、変更種別、
-relation semanticsを位置決定へ使わない。`initialFocus`がある場合はdirected topology上のincomingを左、
-outgoingを右へ置き、undirectedまたはreciprocalな関係は方向が曖昧なneutral rankへ置いてfocusを中央にするが、
-producer指定のlayout hintや座標は受け取らない。Node位置、focus、
+pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱う。layoutはtopology、
+factualなEdge direction、`initialFocus` entrypoint、stable IDを入力とするdeterministicなbehavior projectionと
+する。entrypointからdirected relationで到達できるunambiguousなEdge pairを左から右のrankへ置き、分岐は
+vertical whitespaceとtopology由来の順序で並べる。このrankは処理順や推奨読解順のproducer claimではなく、
+viewerがfactualなoriginとrelation directionから導出するprojectionである。undirected／reciprocal Edge、
+relation、parallel Edge数、self relationは方向軸へ影響させない。label、kind、description、path、変更種別も
+位置決定へ使わない。stable IDは対称な配置を決定するtie-breakerに限り、rootを選ばない。producer指定の
+座標やpresentation hintは受け取らない。
+
+base mapはcurrent Structureだけから決定的に導出するcanonical layoutで、新しいsessionと明示的なlayout resetに
+使う。session layoutはそれを起点にした人間のreading stateであり、Node dragとwhole-value update後もretained
+Nodeの位置を維持する。削除後の空間を自動で詰めたり、filterやfocus変更でreflowしたりしない。新規Nodeは
+retained neighborの重心を起点に全方向の空き候補を調べ、既存のmental mapを壊さず発見できる位置へ置く。
+Node位置、focus、
 depth、viewportはbrowser session内だけでpaneとStructure IDの組へ保持し、tab往復とcurrent-value更新後も
-surviving IDの位置を保つ。新規Nodeはretained neighbor付近の空いている矩形へ置く。左右paneで同じStructureを
+surviving IDの位置を保つ。左右paneで同じStructureを
 開いてもreading stateとDOM参照を共有しない。reload、別browser、CLI、SQLiteへ座標を持ち越さない。drag後は
-deterministicな初期配置へ戻せる。
-`initialFocus`は新しいreading sessionの初期化時だけ使う。current-value更新でfocus Nodeが消えた場合は、
+canonical layoutへ戻せる。
+`initialFocus`は新しいreading sessionの初期highlight、orientation、canonical behavior projectionのentrypointに
+使い、初期depthはAllとする。
+current-value更新でfocus Nodeが消えた場合は、
 producerの新しい`initialFocus`へ移動せずfocusなしのAllへ戻す。人間は明示buttonまたはEscapeでfocusを解除できる。
+新しいsessionは全Node / Edgeを描画しながら`initialFocus`を等倍でcanvas中央へ置き、全体を自動fitしない。
+focusがない場合もbase map中央を等倍で示す。1-hop / 2-hop / Allの切り替えはNode座標とcameraを変えず、
+表示するsubgraphだけを変更する。局所へ絞る時も読みやすい倍率とorientationを失わず、Allへ戻れば同じcameraで
+全体へ位置付け直せる。表示中のgraphを一枚へ圧縮するのは「表示中を収める」という明示操作だけとする。
+poll updateもNode位置とviewportを維持し、自動fitしない。
 
 directed EdgeはNode外周より外で始点／終点を止め、arrowheadをNodeの下へ隠さない緩いBézier曲線で描く。
-parallel / reciprocal Edgeはstable IDでlaneを分ける。1-hop / 2-hopではfocused Nodeのincident Edge、Allまたは
-focusなしでは表示中の全Edge labelをNodeと既存labelを避けて配置し、
-Edge labelは実際のBézier曲線付近へ置く。Edge labelを選ぶと対応する線と両端Nodeを強調し、inspectorを開いて
-全source evidenceを表示する。canvas上はrelation labelを主役にしてsource file名とsource actionを載せない。
+parallel / reciprocal Edgeはstable IDでlaneを分ける。focusがある時はdepthによらずfocused Nodeのincident Edge
+（および選択中のEdge）、focusなしでは表示中の全Edge labelをNodeと既存labelを避けて配置し、
+Edge labelは実際のBézier曲線付近へ置く。Edge labelを選ぶと対応する線と両端Nodeを強調する。
+relation labelの右にNodeと同型のexact source actionを置く。anchorが1件なら直接開き、複数ならlabel付近の
+compact chooserから全source evidenceを選べる。Relation上へsource file名は常時表示しない。
 Nodeはsource file identityをclaim titleと別の行に置き、source actionを右上へ分け、長いidentifierやlabelは
 省略せず固定card内で改行する。canvasはfocus名、可視／全体件数、
-zoom率とminimapを常時提示する。inspectorはgraph幅を優先して初期状態を閉じ、明示操作で開閉できる。
+zoom率とminimapを常時提示する。zoomは同じcardとRelation labelを一体として拡大縮小し、表示情報を暗黙に
+増減させない。広域の位置関係はminimap、局所の読解はpan / zoom、全体把握は明示的なfitで使い分ける。
 
 1-hop / 2-hopはfocusがある時だけ選べる。focusなしはAllへ戻し、Allは全Nodeと全Edgeを表示する。relationを
-stable IDや件数で自動的に隠さない。bounded graphを超えるsubjectはproducerがscopeを分ける。inspectorは
-focused Nodeのclaimと全incident relation、または選択したRelationの両端と全source anchorを表示する。選択commit範囲に対する変更file
+stable IDや件数で自動的に隠さない。bounded graphを超えるsubjectはproducerがscopeを分ける。別のoriginから
+独立してtriggerされるbehaviorへ到達した時点も分割境界とし、静的なsubsystem inventoryへ拡張しない。選択commit範囲に対する変更file
 presentationはbadge / borderだけへ反映し、source identityとlayoutへ影響させない。
 
 publish / update / deleteはpassiveでbrowserを開かずnavigationを変更しない。publishは一つのlogical operationに
@@ -1476,7 +1502,7 @@ CLIによる同一ID更新はpoll後に開いているtabへ反映する。viewe
 参照が無効になること、不可逆性を確認してから実行し、成功後はtabとsidebar itemを閉じる。
 
 Structureは別のvirtual folderへ同じPRのcurrent artifactを複数表示する。選択するとdedicated graph viewerを
-同じdocument workspaceへ開き、1/2-hop / All、focus、pan / zoom / fit / drag、全relation inspector、
+同じdocument workspaceへ開き、1/2-hop / All、focus、pan / zoom / fit / drag、Relation選択、
 exact source actionを提供する。Walkthrough Markdown viewer、Mermaid renderer、Phase 0 fixture rendererを
 再利用してStructureの意味を擬似実装しない。poll updateではopen tabのtitle / contentを置き換え、sessionの
 stable-ID位置とviewportをreconcileする。source actionとpane移動後にStructureへ戻ってもorientationを保つ。
@@ -1549,7 +1575,7 @@ Unit:
 - line mapping、rename、Outdated
 - comment resolve/reopen、URI、CLI/API schema
 - Walkthrough schema、URI、Markdown reference / HTML preview validation、行comment placement
-- Structure schema、URI、neighborhood completeness、Node非衝突、content-neutral layout reconciliation
+- Structure schema、URI、neighborhood completeness、Node非衝突、entrypoint／direction-biased canonical layoutとsession reconciliation
 - DB migration 001→current
 - Pull Request一覧のGitHub更新日時順、stable tie-breaker、aggregate count、Closed / Merged filter適用後の
   pagination、既存行の不明な作成日時と状態、Open／状態未取得だけを対象とする明示的な一括status更新と部分失敗
@@ -1620,7 +1646,7 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
     確認する。composerはtarget付近へ表示し、HTML内部threadは外側Markdown inlineへ重複せず、markerから
     Comments sidebarのthreadをactivateできる。Pane Findはiframe本文を検索・highlight・前後移動できる
 21. 同じPRのStructureを2件以上一覧し、片方を開いてもcodeを自動表示せず、1/2-hop / All、focus、
-    全relation表示、inspector、pan / zoom / fit / drag / layout resetを操作できる
+    全relation表示、Relation選択、pan / zoom / fit / drag / layout resetを操作できる
 22. StructureのNode / Edge anchorを通常clickで左、modifier-clickで右へexact sourceとして開き、global
     commit選択を変えず、Structureへ戻った時とsame-subject poll update後にstable-ID位置とviewportを維持する
 23. focusなしとAllで全Node / Edgeが表示され、同じStructureを左右paneへ開いてもsessionとDOM IDが競合しない
@@ -1690,7 +1716,7 @@ rvw skill status
 
 Skill sourceはcwdではなく実行中CLIのpackage rootを基準に解決する。`--force`でも対象Skill
 directory以外を削除しない。一度のinstallでコメント取得・返信・sync用の`rvw`と、Walkthroughの
-検証・publish・current値更新・確認付き削除用の`rvw-walkthrough`、Structureのsubject選択・検証・publish・
+検証・publish・current値更新・確認付き削除用の`rvw-walkthrough`、Structureのbehavior／entrypoint選択・検証・publish・
 current値更新・確認付き削除用の`rvw-structure`、新規post監視用の`rvw-watch-comments`を配置する。四つの
 Skillの名前と内容はCodex / Claude Codeで共通とし、
 platform adapterが変えるのは既定のSkill rootだけとする。Agent名はSkillへhardcodeせず、CLIの任意
@@ -1703,11 +1729,11 @@ requestとrepository contextへ委ね、固定の文書templateを要求しな�
 既定guideで補う。diffやfileの一覧、網羅的なAI review、完全性の保証にはしない。更新時は既存artifactを読んで完全置換し、
 改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への明示authorizationなしに実行しない。
 
-`rvw-structure`は「Structureはspace、Walkthroughはpath」をrouting boundaryとする。user / caller / PR本文の
-明示subjectとscopeを最優先し、実際のcommit済みrepositoryを調査して不足だけを補う。code-centeredな同じ
+`rvw-structure`は「Structureはbehavior space、Walkthroughはpath」をrouting boundaryとする。user / caller / PR本文の
+明示behavior、entrypoint、scopeを最優先し、実際のcommit済みrepositoryを調査して不足だけを補う。code-centeredな同じ
 abstraction levelのNode、verb-based Edge label、stable claim ID、一つのexact `sourceOid`を要求する。
 concept-only Nodeは明示authorityまたは必要な接続に限定し、巨大graph、file inventory、AI推論edge、layout hint、
-review conclusionを作らない。同じsubjectだけをsame URIへ完全置換し、別subjectは新規publishする。viewerを
+review conclusion、静的なarchitecture／責務inventoryを作らない。同じsubjectだけをsame URIへ完全置換し、別subjectは新規publishする。viewerを
 開かず、削除preview後の明示authorizationなしにdeleteしない。producer品質はfixture転記ではなくAgentが
 repositoryを調査して作った2〜3件のStructureでscope、granularity、concept-node使用、Edge label、anchorを
 評価し、結果をdocsへ記録する。
@@ -1761,7 +1787,7 @@ Functional:
 - Agentがsource anchor付きWalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の
   referenceだけを最新HEAD上の対応箇所、または明示されたanchor fallbackとして最大二ペインのtabで検証できる。
   不要なWalkthroughは件数確認後に削除できる。
-- Agentがboundedなcode-centered subjectをStructureとしてCLIで提示し、人間が1/2-hop / Allとinspectorを
+- AgentがboundedなPR-relevant behaviorをentrypoint付きStructureとしてCLIで提示し、人間が1/2-hop / AllとRelation選択を
   自由に探索し、Node / Edge anchorをexact sourceで開ける。同じsubjectの更新ではstable IDに基づく空間を
   session内で維持し、別subjectは別artifactにする。不要なStructureは件数確認後に削除できる。
 - PR全体、PR本文、file、line/range comment、reply、post edit/delete、resolve/reopen、sidebar、Outdatedが機能し、
@@ -1785,7 +1811,7 @@ Manual acceptance:
 2. 変更fileを入口に全文、all files、検索を使い、関連するdiff外fileまで辿って結果の実装を理解する。
 3. Agentが実装説明をWalkthroughとしてpublishし、viewerの表示位置が勝手に変わらないことを確認する。
 4. 人間が説明内の一部referenceとdiagram nodeだけを選び、説明tabを残したままexact codeを読む。
-5. Agentがcode-centered subjectをStructureとしてpublishし、人間がfocusと近傍を変えながらNode / Edgeの
+5. AgentがPR-relevant behaviorをentrypoint付きStructureとしてpublishし、人間がfocusと近傍を変えながらNode / Edgeの
    exact sourceを左右ペインへ開く。tab往復とcurrent値更新でorientationが保たれることを確認する。
 6. diff外fileを含む具体的なsourceへline commentを作り、そのURIをAgentへ渡す。
 7. Agentが対象sourceと周辺contextを調査し、authorizedな修正、test、commit、push、必要なPR本文更新を行う。

@@ -2,7 +2,7 @@
   "sourceOid": "e1702ec717f2c9eae88ab9debd63a7a8e7e70864",
   "title": "Markdown source mapping",
   "scope": "The committed mapping between Markdown AST positions, rendered selection, highlights, and comment anchors. Markdown parsing and comment persistence are excluded.",
-  "initialFocus": "source-position-decoration",
+  "initialFocus": "source-map-plugin",
   "nodes": [
     {
       "id": "source-position-model",

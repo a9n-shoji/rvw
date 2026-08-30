@@ -62,5 +62,8 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureAuthoring).toContain("Never recycle an ID");
     expect(structureAuthoring).toMatch(/Stop and recommend a\s+Walkthrough/);
     expect(structureAuthoring).toContain("Do not create giant graphs");
+    expect(structureAuthoring).toContain("factual code entrypoint");
+    expect(structureAuthoring).toContain("static inventory");
+    expect(structureAuthoring).toContain("Do not publish");
   });
 });

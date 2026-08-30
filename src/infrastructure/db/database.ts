@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { STRUCTURE_NODE_NOTATIONS } from "../../domain/models.js";
 import {
   chmodSync,
   closeSync,
@@ -159,6 +160,8 @@ function isStructureNode(value: unknown): value is StructureNode {
     typeof value.label === "string" &&
     isNullableString(value.description) &&
     isNullableString(value.kind) &&
+    (value.notation === undefined ||
+      STRUCTURE_NODE_NOTATIONS.some((notation) => notation === value.notation)) &&
     (value.anchor === null || isSourceAnchor(value.anchor))
   );
 }
@@ -191,7 +194,7 @@ function structureGraphValue(row: DbRow): Pick<Structure, "initialFocus" | "node
     }
     return {
       initialFocus: value.initialFocus,
-      nodes: value.nodes,
+      nodes: value.nodes.map((node) => ({ ...node, notation: node.notation ?? "plain" })),
       edges: value.edges,
     };
   } catch (error) {

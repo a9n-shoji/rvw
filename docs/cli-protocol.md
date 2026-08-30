@@ -482,8 +482,9 @@ resolving. Deletion does not remove the retained Git commit ref because other re
 ## Structure lifecycle
 
 Structures expose one current relationship graph under a stable URI. A Structure is a bounded
-code-centered space, while a Walkthrough is an ordered path. rvw does not infer nodes or edges, store
-layout coordinates, retain Structure revisions, or provide a version selector.
+PR-relevant behavior space with a factual code entrypoint, while a Walkthrough is an ordered path.
+Generic static architecture and responsibility inventories are outside the producer contract. rvw does
+not infer nodes or edges, store layout coordinates, retain Structure revisions, or provide a version selector.
 
 Read the current value before replacing or deleting it:
 
@@ -515,6 +516,7 @@ The stdin value is:
       "label": "RequestPolicy",
       "description": "Owns the allow/deny decision.",
       "kind": "service",
+      "notation": "class",
       "anchor": {
         "path": "src/request-policy.ts",
         "startLine": 8,
@@ -526,6 +528,7 @@ The stdin value is:
       "label": "PolicyInput",
       "description": "The committed input contract.",
       "kind": "contract",
+      "notation": "interface",
       "anchor": { "path": "src/types.ts" }
     }
   ],
@@ -550,13 +553,17 @@ The stdin value is:
 
 `idempotencyKey`, `pullRequest`, `sourceOid`, nonblank `title` and `scope`, one or more nodes, and
 `edges` are required.
-`initialFocus` may be `null` or an existing Node ID. Node and Edge IDs match
+`initialFocus` may be `null` or an existing Node ID at the wire boundary for compatibility. The
+production authoring contract uses an existing source-established Node as the behavior entrypoint and
+does not publish new values with `null`. Node and Edge IDs match
 `^[A-Za-z][A-Za-z0-9_-]{0,63}$`, are unique within their own collections, and are stable claim
 identities rather than labels. Every edge
 endpoint must exist and `directed` is required. Nodes may contain zero or one anchor; edges may contain
 zero to twenty anchors. Every anchor is a repository-relative available UTF-8 document at `sourceOid`
 and either omits both line fields or supplies both as an existing positive inclusive range. Omitted
 nullable fields normalize to `null`; omitted edge anchors normalize to an empty array.
+Node `notation` is optional and normalizes to `plain`; accepted values are `plain`, `class`,
+`database`, `interface`, `component`, `external`, and `concept`. It affects presentation only.
 
 Limits are 50 nodes, 200 edges, a 200-character title, a 4000-character scope, 200-character labels,
 2000-character descriptions, 100-character kinds, and 2 MiB for the normalized Structure content.
@@ -646,7 +653,7 @@ Skill status.
 
 `rvw skill install codex` and `rvw skill install claude` each install the same four capability-named
 Skills: `rvw` for comment creation, handling, and synchronization, `rvw-walkthrough` for publication,
-`rvw-structure` for bounded relationship maps, and `rvw-watch-comments` for continuous new-post intake. The
+`rvw-structure` for bounded behavior maps from factual code entrypoints, and `rvw-watch-comments` for continuous new-post intake. The
 platform argument selects only the destination Skill root. No Skill hardcodes an Agent identity;
 the current Agent may supply an accurate optional `authorLabel`.
 
@@ -672,9 +679,10 @@ a first reading path for building a mental model of a change or requested implem
 follows explicit authoring instructions first, and uses a flexible default guide only for unspecified
 choices. It deliberately avoids a fixed template, an exhaustive review boundary, and AI-review conclusions.
 
-`rvw-structure` selects Structure only for relationship spaces, gives explicit subject and scope
-authority priority, inspects committed code, and publishes stable-ID Node and Edge claims at one exact
-commit. It rejects giant or inferred graphs, vague relationships, layout instructions, implicit
+`rvw-structure` selects Structure only for PR-relevant behavior spaces with a factual code entrypoint,
+gives explicit subject and scope authority priority, inspects committed code, and publishes stable-ID
+Node and Edge claims at one exact commit. It rejects static responsibility inventories, giant or
+inferred graphs, vague relationships, layout instructions, implicit
 same-URI subject changes, browser control, and deletion without exact preview authorization.
 
 ## Protocol discovery

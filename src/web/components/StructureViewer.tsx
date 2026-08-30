@@ -5,9 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import { changedFilePath } from "../../domain/changed-file.js";
 import type {
@@ -70,15 +68,13 @@ function shortestUniqueSourceLabels(paths: readonly string[]): Map<string, strin
 function SourceButton({
   anchor,
   compact = false,
-  relatedAnchorCount = 0,
   onOpen,
 }: {
   anchor: SourceAnchor;
   compact?: boolean;
-  relatedAnchorCount?: number;
   onOpen: (openInRightPane: boolean) => void;
 }) {
-  const label = `${anchorLabel(anchor)}を開く${relatedAnchorCount > 0 ? `（ほか${relatedAnchorCount}件は詳細サイドバー）` : ""}`;
+  const label = `${anchorLabel(anchor)}を開く`;
   return (
     <button
       type="button"
@@ -94,6 +90,48 @@ function SourceButton({
       <span aria-hidden="true">&lt;/&gt;</span>
       {!compact && <span>{anchorLabel(anchor)}</span>}
     </button>
+  );
+}
+
+function EdgeSourceAction({
+  edge,
+  onOpen,
+}: {
+  edge: StructureEdge;
+  onOpen: (anchor: SourceAnchor, openInRightPane: boolean) => void;
+}) {
+  if (edge.anchors.length === 0) return null;
+  if (edge.anchors.length === 1) {
+    return (
+      <SourceButton
+        compact
+        anchor={edge.anchors[0]!}
+        onOpen={(right) => onOpen(edge.anchors[0]!, right)}
+      />
+    );
+  }
+  return (
+    <details className="structure-edge-sources">
+      <summary
+        className="structure-source compact"
+        aria-label={`${edge.label}のsource evidence ${edge.anchors.length}件を表示`}
+        title={`source evidence ${edge.anchors.length}件`}
+      >
+        <span aria-hidden="true">&lt;/&gt;</span>
+        <span className="structure-edge-source-count" aria-hidden="true">
+          {edge.anchors.length}
+        </span>
+      </summary>
+      <div className="structure-edge-source-menu">
+        {edge.anchors.map((anchor, index) => (
+          <SourceButton
+            key={`${edge.id}:${index}`}
+            anchor={anchor}
+            onOpen={(right) => onOpen(anchor, right)}
+          />
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -114,8 +152,8 @@ function SourceIdentity({
       title={anchor.path}
     >
       <FileEntryIcon path={anchor.path} kind="file" />
-      <span className="structure-source-name">{sourceLabel}</span>
       {changeKind && <ChangeIcon kind={changeKind} />}
+      <span className="structure-source-name">{sourceLabel}</span>
     </span>
   );
 }
@@ -315,14 +353,15 @@ interface StructureEdgeLabelPlacement {
   x: number;
   y: number;
   selectWidth: number;
+  boxWidth: number;
   height: number;
   crowded: boolean;
 }
 
 const EDGE_LABEL_MAX_TEXT_WIDTH = 210;
 const EDGE_LABEL_MIN_TEXT_WIDTH = 64;
-const EDGE_LABEL_HORIZONTAL_PADDING = 14;
-const EDGE_LABEL_WIDTH_SAFETY = 4;
+const EDGE_LABEL_HORIZONTAL_PADDING = 11;
+const EDGE_LABEL_WIDTH_SAFETY = 2;
 const EDGE_LABEL_LINE_HEIGHT = 14;
 
 function boxesOverlap(left: StructureBox, right: StructureBox): boolean {
@@ -378,11 +417,17 @@ function edgeLabelSize(
   );
   const contentWidth = Math.max(1, textWidth - EDGE_LABEL_HORIZONTAL_PADDING);
   const lineCount = Math.max(1, Math.ceil(naturalTextWidth / contentWidth));
-  const height = Math.max(24, lineCount * EDGE_LABEL_LINE_HEIGHT + 10);
+  const textHeight = Math.max(24, lineCount * EDGE_LABEL_LINE_HEIGHT + 10);
   const source = edgeSourcePresentation(edge, sourceChangeKinds);
+  const sourceBadgeOverflow = source.anchorCount > 1 ? 4 : 0;
+  const sourceActionWidth = source.anchorCount > 0 ? 29 + sourceBadgeOverflow : 0;
+  const height = Math.max(
+    textHeight,
+    source.anchorCount > 1 ? 34 : source.anchorCount === 1 ? 26 : 0,
+  );
   return {
     selectWidth: textWidth,
-    boxWidth: textWidth,
+    boxWidth: textWidth + sourceActionWidth,
     height,
     source,
   };
@@ -451,8 +496,10 @@ function placeEdgeLabels(
     }
   };
   const placements: StructureEdgeLabelPlacement[] = [];
-  const candidateFractions = [0.5, 0.38, 0.62, 0.26, 0.74, 0.14, 0.86, 0.08, 0.92] as const;
-  const candidateOffsets = [0, 16, -16, 30, -30, 40, -40, 48, -48] as const;
+  const candidateFractions = Array.from({ length: 22 }, (_, index) => 0.08 + index * 0.04).sort(
+    (left, right) => Math.abs(left - 0.5) - Math.abs(right - 0.5),
+  );
+  const candidateOffsets = [0, 12, -12, 24, -24, 36, -36, 48, -48] as const;
   const candidates = candidateOffsets.flatMap((offset) =>
     candidateFractions.map((fraction) => [fraction, offset] as const),
   );
@@ -489,6 +536,7 @@ function placeEdgeLabels(
       x: chosen.x,
       y: chosen.y,
       selectWidth: size.selectWidth,
+      boxWidth: size.boxWidth,
       height: size.height,
       crowded: !available,
     });
@@ -582,8 +630,6 @@ export function StructureViewer({
   const [focusId, setFocusId] = useState(initial.focusId);
   const [selectedEdgeId, setSelectedEdgeId] = useState(initial.selectedEdgeId);
   const [depth, setDepth] = useState<StructureNeighborhoodDepth>(initial.depth);
-  const [focusTrail, setFocusTrail] = useState(initial.focusTrail);
-  const [detailsOpen, setDetailsOpen] = useState(initial.detailsOpen);
   const [positions, setPositions] = useState(initial.positions);
   const [viewport, setViewport] = useState(initial.viewport);
   const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 });
@@ -597,7 +643,9 @@ export function StructureViewer({
     sourceOid: structure.sourceOid,
     updatedAt: structure.updatedAt,
   });
-  const initialCenterPendingRef = useRef(!cachedSession && initial.focusId !== null);
+  const pendingViewportActionRef = useRef<"initial" | "reset" | null>(
+    cachedSession ? null : "initial",
+  );
   const panRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const dragRef = useRef<{
     pointerId: number;
@@ -659,6 +707,48 @@ export function StructureViewer({
   }, []);
 
   useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const handleWheel = (event: WheelEvent): void => {
+      event.preventDefault();
+      event.stopPropagation();
+      const deltaUnit =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? 16
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? Math.max(1, surface.clientHeight)
+            : 1;
+      if (!event.ctrlKey && !event.metaKey) {
+        setViewport((current) => ({
+          ...current,
+          x: current.x - event.deltaX * deltaUnit,
+          y: current.y - event.deltaY * deltaUnit,
+        }));
+        return;
+      }
+      const rectangle = surface.getBoundingClientRect();
+      const pointerX = event.clientX - rectangle.left;
+      const pointerY = event.clientY - rectangle.top;
+      setViewport((current) => {
+        const sensitivity = event.ctrlKey && !event.metaKey ? 0.0025 : 0.001;
+        const nextScale = Math.min(
+          2.5,
+          Math.max(0.15, current.scale * Math.exp(-event.deltaY * deltaUnit * sensitivity)),
+        );
+        const worldX = (pointerX - current.x) / current.scale;
+        const worldY = (pointerY - current.y) / current.scale;
+        return {
+          scale: nextScale,
+          x: pointerX - worldX * nextScale,
+          y: pointerY - worldY * nextScale,
+        };
+      });
+    };
+    surface.addEventListener("wheel", handleWheel, { passive: false });
+    return () => surface.removeEventListener("wheel", handleWheel);
+  }, []);
+
+  useEffect(() => {
     const previous = getStructureSession(paneId, structure.id);
     if (previous?.updatedAt === structure.updatedAt) return;
     const observed = observedStructureRef.current;
@@ -683,14 +773,6 @@ export function StructureViewer({
     if (nextFocus === null) {
       setDepth("all");
     }
-    setFocusTrail((current) => {
-      const retained = current.filter((nodeId) =>
-        structure.nodes.some((node) => node.id === nodeId),
-      );
-      return nextFocus && !retained.includes(nextFocus)
-        ? [...retained, nextFocus].slice(-6)
-        : retained;
-    });
     setSelectedEdgeId((current) =>
       current && structure.edges.some((edge) => edge.id === current) ? current : null,
     );
@@ -701,43 +783,12 @@ export function StructureViewer({
       focusId,
       selectedEdgeId,
       depth,
-      focusTrail,
-      detailsOpen,
       positions,
       viewport,
       surfaceSize: surfaceSizeRef.current,
       updatedAt: structure.updatedAt,
     });
-  }, [
-    depth,
-    detailsOpen,
-    focusId,
-    focusTrail,
-    positions,
-    paneId,
-    selectedEdgeId,
-    structure.updatedAt,
-    viewport,
-  ]);
-
-  useLayoutEffect(() => {
-    if (
-      !initialCenterPendingRef.current ||
-      !focusId ||
-      surfaceSize.width === 0 ||
-      surfaceSize.height === 0
-    ) {
-      return;
-    }
-    const point = positions[focusId];
-    if (!point) return;
-    initialCenterPendingRef.current = false;
-    setViewport({
-      scale: 1,
-      x: surfaceSize.width / 2 - (point.x + STRUCTURE_NODE_WIDTH / 2),
-      y: surfaceSize.height / 2 - (point.y + STRUCTURE_NODE_HEIGHT / 2),
-    });
-  }, [focusId, positions, surfaceSize]);
+  }, [depth, focusId, positions, paneId, selectedEdgeId, structure.updatedAt, viewport]);
 
   const visible = useMemo(
     () => visibleStructureGraph(structure, focusId, depth),
@@ -803,10 +854,12 @@ export function StructureViewer({
   );
   const labeledEdges = useMemo(
     () =>
-      focusId && depth !== "all"
-        ? renderedEdges.filter((edge) => edge.from === focusId || edge.to === focusId)
+      focusId
+        ? renderedEdges.filter(
+            (edge) => edge.from === focusId || edge.to === focusId || edge.id === selectedEdgeId,
+          )
         : renderedEdges,
-    [depth, focusId, renderedEdges],
+    [focusId, renderedEdges, selectedEdgeId],
   );
   const edgeLabelPlacements = useMemo(
     () =>
@@ -840,18 +893,16 @@ export function StructureViewer({
       if (geometry) boxes.push(geometry.bounds);
     }
     for (const placement of edgeLabelPlacements) {
-      boxes.push(
-        labelBox(placement.x, placement.y, placement.selectWidth + 28, placement.height, 4),
-      );
+      boxes.push(labelBox(placement.x, placement.y, placement.boxWidth, placement.height, 4));
     }
     return mergedBounds(boxes);
   }, [edgeLabelPlacements, nodeBounds, positions, reciprocalEdgeIds, renderedEdges, routeOffsets]);
   const worldWidth = Math.max(1_200, (displayBounds?.right ?? 1_000) + 180);
   const worldHeight = Math.max(800, (displayBounds?.bottom ?? 600) + 180);
 
-  const fitVisible = (): void => {
-    if (!displayBounds || surfaceSize.width === 0 || surfaceSize.height === 0) return;
-    const padding = 72;
+  const fittedViewport = (): StructureViewport | null => {
+    if (!displayBounds || surfaceSize.width === 0 || surfaceSize.height === 0) return null;
+    const padding = 36;
     const scale = Math.min(
       1.25,
       Math.max(
@@ -863,12 +914,38 @@ export function StructureViewer({
         ),
       ),
     );
-    setViewport({
+    const width = (displayBounds.right - displayBounds.left) * scale;
+    const height = (displayBounds.bottom - displayBounds.top) * scale;
+    return {
       scale,
-      x: padding - displayBounds.left * scale,
-      y: padding - displayBounds.top * scale,
-    });
+      x: (surfaceSize.width - width) / 2 - displayBounds.left * scale,
+      y: (surfaceSize.height - height) / 2 - displayBounds.top * scale,
+    };
   };
+
+  const fitVisible = (): void => {
+    const fitted = fittedViewport();
+    if (!fitted) return;
+    setViewport(fitted);
+  };
+
+  useLayoutEffect(() => {
+    const action = pendingViewportActionRef.current;
+    if (!action || !displayBounds || surfaceSize.width === 0 || surfaceSize.height === 0) return;
+    const point = focusId ? positions[focusId] : undefined;
+    const centerX = point
+      ? point.x + STRUCTURE_NODE_WIDTH / 2
+      : (displayBounds.left + displayBounds.right) / 2;
+    const centerY = point
+      ? point.y + STRUCTURE_NODE_HEIGHT / 2
+      : (displayBounds.top + displayBounds.bottom) / 2;
+    pendingViewportActionRef.current = null;
+    setViewport({
+      scale: 1,
+      x: surfaceSize.width / 2 - centerX,
+      y: surfaceSize.height / 2 - centerY,
+    });
+  }, [displayBounds, focusId, positions, surfaceSize.height, surfaceSize.width]);
 
   const centerNode = (nodeId: string, scale?: number): void => {
     const point = positions[nodeId];
@@ -886,26 +963,13 @@ export function StructureViewer({
 
   const resetLayout = (): void => {
     const nextPositions = initialStructureLayout(structure);
+    pendingViewportActionRef.current = "reset";
     setPositions(nextPositions);
-    const focusedPoint = focusId ? nextPositions[focusId] : undefined;
-    setViewport(
-      focusedPoint && surfaceSize.width > 0 && surfaceSize.height > 0
-        ? {
-            scale: 1,
-            x: surfaceSize.width / 2 - (focusedPoint.x + STRUCTURE_NODE_WIDTH / 2),
-            y: surfaceSize.height / 2 - (focusedPoint.y + STRUCTURE_NODE_HEIGHT / 2),
-          }
-        : { x: 110, y: 90, scale: 1 },
-    );
   };
 
   const focusNode = (nodeId: string, recenter = false): void => {
     setSelectedEdgeId(null);
-    if (!focusId && depth === "all") setDepth(1);
     setFocusId(nodeId);
-    setFocusTrail((current) =>
-      [...current.filter((candidate) => candidate !== nodeId), nodeId].slice(-6),
-    );
     if (recenter) centerNode(nodeId);
   };
 
@@ -913,6 +977,11 @@ export function StructureViewer({
     setSelectedEdgeId(null);
     setFocusId(null);
     setDepth("all");
+  };
+
+  const selectDepth = (nextDepth: StructureNeighborhoodDepth): void => {
+    if (nextDepth === depth) return;
+    setDepth(nextDepth);
   };
 
   const copyStructureRef = async (): Promise<void> => {
@@ -935,34 +1004,6 @@ export function StructureViewer({
         scale: nextScale,
         x: centerX - worldX * nextScale,
         y: centerY - worldY * nextScale,
-      };
-    });
-  };
-
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>): void => {
-    event.preventDefault();
-    if (!event.ctrlKey && !event.metaKey) {
-      setViewport((current) => ({
-        ...current,
-        x: current.x - event.deltaX,
-        y: current.y - event.deltaY,
-      }));
-      return;
-    }
-    const rectangle = event.currentTarget.getBoundingClientRect();
-    const pointerX = event.clientX - rectangle.left;
-    const pointerY = event.clientY - rectangle.top;
-    setViewport((current) => {
-      const nextScale = Math.min(
-        2.5,
-        Math.max(0.15, current.scale * Math.exp(-event.deltaY * 0.001)),
-      );
-      const worldX = (pointerX - current.x) / current.scale;
-      const worldY = (pointerY - current.y) / current.scale;
-      return {
-        scale: nextScale,
-        x: pointerX - worldX * nextScale,
-        y: pointerY - worldY * nextScale,
       };
     });
   };
@@ -1072,9 +1113,6 @@ export function StructureViewer({
           <p>{structure.scope}</p>
         </div>
         <div className="structure-header-side">
-          <div className="structure-claim-note">
-            Producerのclaim · source anchorは確認可能にする入口で、意味的正しさを保証しません。
-          </div>
           <button
             type="button"
             className="structure-header-action"
@@ -1102,7 +1140,7 @@ export function StructureViewer({
               className={depth === candidate ? "active" : ""}
               aria-pressed={depth === candidate}
               disabled={!focusId && candidate !== "all"}
-              onClick={() => setDepth(candidate)}
+              onClick={() => selectDepth(candidate)}
             >
               {candidate === "all" ? "全体" : `${candidate}-hop`}
             </button>
@@ -1129,24 +1167,13 @@ export function StructureViewer({
             レイアウトを戻す
           </button>
         </div>
-        <div className="structure-toolbar-group structure-toolbar-group--end">
-          <button
-            type="button"
-            className={detailsOpen ? "active" : ""}
-            aria-expanded={detailsOpen}
-            aria-controls={`${domId}-details`}
-            onClick={() => setDetailsOpen((open) => !open)}
-          >
-            {detailsOpen ? "詳細サイドバーを隠す" : "詳細サイドバーを表示"}
-          </button>
-        </div>
       </div>
       {status && (
         <div className="structure-status" role="status" aria-live="polite">
           {status}
         </div>
       )}
-      <div className={`structure-body${detailsOpen ? " with-details" : ""}`}>
+      <div className="structure-body">
         <section className="structure-canvas-shell" aria-label={`${structure.title} graph`}>
           <div
             ref={surfaceRef}
@@ -1158,7 +1185,6 @@ export function StructureViewer({
               if (selectedEdgeId) setSelectedEdgeId(null);
               else clearFocus();
             }}
-            onWheel={handleWheel}
             onPointerDown={(event) => {
               if (
                 event.button !== 0 ||
@@ -1179,14 +1205,11 @@ export function StructureViewer({
           >
             <div
               className="structure-world"
-              style={
-                {
-                  width: worldWidth,
-                  height: worldHeight,
-                  transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
-                  "--structure-scale": viewport.scale,
-                } as CSSProperties
-              }
+              style={{
+                width: worldWidth,
+                height: worldHeight,
+                transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
+              }}
             >
               <svg
                 className="structure-edges"
@@ -1218,11 +1241,13 @@ export function StructureViewer({
                   const focused = edge.from === focusId || edge.to === focusId;
                   const selected = edge.id === selectedEdgeId;
                   const muted = selectedEdgeId !== null && !selected;
+                  const changeKind = edgeSourcePresentation(edge, sourceChangeKinds).changeKind;
                   return (
                     <path
                       key={edge.id}
                       className={`structure-edge${focused ? " focused" : ""}${selected ? " selected" : ""}${muted ? " muted" : ""}`}
                       data-edge-id={edge.id}
+                      data-source-change-kind={changeKind ?? undefined}
                       data-start-x={route.startX}
                       data-start-y={route.startY}
                       data-end-x={route.endX}
@@ -1257,14 +1282,17 @@ export function StructureViewer({
                       title={edge.label}
                       aria-label={relationLabel}
                       aria-pressed={selected}
-                      style={{ width: selectWidth }}
-                      onClick={() => {
-                        setSelectedEdgeId(edge.id);
-                        setDetailsOpen(true);
-                      }}
+                      style={{ maxWidth: selectWidth }}
+                      onClick={() =>
+                        setSelectedEdgeId((current) => (current === edge.id ? null : edge.id))
+                      }
                     >
                       <span className="structure-edge-label-text">{edge.label}</span>
                     </button>
+                    <EdgeSourceAction
+                      edge={edge}
+                      onOpen={(anchor, right) => void openAnchor(anchor, right)}
+                    />
                   </div>
                 );
               })}
@@ -1281,8 +1309,9 @@ export function StructureViewer({
                 return (
                   <div
                     key={node.id}
-                    className={`structure-node${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
+                    className={`structure-node notation-${node.notation ?? "plain"}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
                     data-node-id={node.id}
+                    data-node-notation={node.notation ?? "plain"}
                     data-source-change-kind={changeKind ?? undefined}
                     style={{ left: point.x, top: point.y }}
                     onPointerDown={(event) => {
@@ -1350,109 +1379,6 @@ export function StructureViewer({
             />
           </div>
         </section>
-        {detailsOpen && (
-          <aside
-            id={`${domId}-details`}
-            className="structure-details"
-            aria-label="Structure details"
-          >
-            {selectedEdge ? (
-              <>
-                <span className="structure-details-label">Selected Relation</span>
-                <h3>{selectedEdge.label}</h3>
-                <div className="structure-selected-relation" aria-label="Relation endpoints">
-                  <button type="button" onClick={() => focusNode(selectedEdge.from, true)}>
-                    {nodesById.get(selectedEdge.from)?.label ?? selectedEdge.from}
-                  </button>
-                  <span aria-hidden="true">{selectedEdge.directed ? "→" : "—"}</span>
-                  <button type="button" onClick={() => focusNode(selectedEdge.to, true)}>
-                    {nodesById.get(selectedEdge.to)?.label ?? selectedEdge.to}
-                  </button>
-                </div>
-                <div className="structure-relations-heading">
-                  <strong>Source evidence</strong>
-                  <span>{selectedEdge.anchors.length}</span>
-                </div>
-                {selectedEdge.anchors.length > 0 ? (
-                  <div className="structure-relation-sources">
-                    {selectedEdge.anchors.map((anchor, index) => (
-                      <SourceButton
-                        key={`${selectedEdge.id}:${index}`}
-                        anchor={anchor}
-                        onOpen={(right) => void openAnchor(anchor, right)}
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <span className="structure-unanchored">source anchorなし</span>
-                )}
-                <button
-                  type="button"
-                  className="structure-clear-relation"
-                  onClick={() => setSelectedEdgeId(null)}
-                >
-                  Relation選択を解除
-                </button>
-              </>
-            ) : focusedNode ? (
-              <>
-                <span className="structure-details-label">Focused Node</span>
-                <h3>{focusedNode.label}</h3>
-                {focusedNode.kind && <span className="structure-kind">{focusedNode.kind}</span>}
-                <p>{focusedNode.description ?? "説明はありません。"}</p>
-                {focusedNode.anchor ? (
-                  <SourceButton
-                    anchor={focusedNode.anchor}
-                    onOpen={(right) => void openAnchor(focusedNode.anchor!, right)}
-                  />
-                ) : (
-                  <span className="structure-unanchored">source anchorなし</span>
-                )}
-                <div className="structure-focus-trail" aria-label="focus履歴">
-                  <span>focus履歴</span>
-                  <div>
-                    {focusTrail.map((nodeId) => {
-                      const trailNode = structure.nodes.find((node) => node.id === nodeId);
-                      return trailNode ? (
-                        <button type="button" key={nodeId} onClick={() => focusNode(nodeId, true)}>
-                          {trailNode.label}
-                        </button>
-                      ) : null;
-                    })}
-                  </div>
-                </div>
-                <div className="structure-relations-heading">
-                  <strong>Relations</strong>
-                  <span>{incident.length}</span>
-                </div>
-                <ul className="structure-relation-list">
-                  {incident.map((edge) => {
-                    const otherId = edge.from === focusId ? edge.to : edge.from;
-                    const other = nodesById.get(otherId);
-                    return (
-                      <li key={edge.id}>
-                        <button type="button" onClick={() => focusNode(otherId, true)}>
-                          <span>{edge.directed ? (edge.from === focusId ? "→" : "←") : "—"}</span>
-                          <strong>{edge.label}</strong>
-                          <span>{other?.label ?? otherId}</span>
-                        </button>
-                        {edge.anchors.map((anchor, index) => (
-                          <SourceButton
-                            key={`${edge.id}:${index}`}
-                            anchor={anchor}
-                            onOpen={(right) => void openAnchor(anchor, right)}
-                          />
-                        ))}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </>
-            ) : (
-              <p>Nodeを選ぶとclaimとrelationを確認できます。</p>
-            )}
-          </aside>
-        )}
       </div>
     </article>
   );

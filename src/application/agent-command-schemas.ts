@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { STRUCTURE_NODE_NOTATIONS } from "../domain/models.js";
 import {
   DEFAULT_COMMENT_LIST_LIMIT,
   GIT_OBJECT_ID_PATTERN,
@@ -256,6 +257,7 @@ const structureNodeInputSchema = z
       .optional()
       .default(null),
     kind: z.string().max(MAX_STRUCTURE_KIND_CHARACTERS).nullable().optional().default(null),
+    notation: z.enum(STRUCTURE_NODE_NOTATIONS).optional().default("plain"),
     anchor: sourceAnchorInputSchema.nullable().optional().default(null),
   })
   .strict();

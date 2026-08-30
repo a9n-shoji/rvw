@@ -191,11 +191,24 @@ export interface SourceAnchor {
   endLine: number | null;
 }
 
+export const STRUCTURE_NODE_NOTATIONS = [
+  "plain",
+  "class",
+  "database",
+  "interface",
+  "component",
+  "external",
+  "concept",
+] as const;
+
+export type StructureNodeNotation = (typeof STRUCTURE_NODE_NOTATIONS)[number];
+
 export interface StructureNode {
   id: string;
   label: string;
   description: string | null;
   kind: string | null;
+  notation?: StructureNodeNotation;
   anchor: SourceAnchor | null;
 }
 

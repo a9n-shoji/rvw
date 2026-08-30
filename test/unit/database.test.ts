@@ -184,7 +184,7 @@ describe("RvwDatabase", () => {
       diagramBindings: {},
       references: [],
     });
-    database.createStructure({
+    const structure = database.createStructure({
       pullRequestId: newer.id,
       sourceOid: newerGithub.headOid,
       title: "Architecture space",
@@ -203,6 +203,7 @@ describe("RvwDatabase", () => {
       idempotencyKey: "summary-structure",
       idempotencyRequestHash: "summary-structure-request",
     });
+    expect(structure.nodes[0]?.notation).toBe("plain");
 
     expect(unresolved.resolvedAt).toBeNull();
     expect(database.listPullRequestSummaries(0, 1)).toEqual({

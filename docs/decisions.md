@@ -56,13 +56,16 @@ persistence, CLI, Skill, and update semantics.
 ### Choice
 
 Add `Structure` as its own production document and Agent capability rather than a generic Artifact
-framework or a Walkthrough rendering mode. A Structure declares a title, bounded scope, exact
-`sourceOid`, optional initial focus, stable-ID nodes, and stable-ID edges. Nodes carry zero or one
+framework or a Walkthrough rendering mode. A Structure declares a title, bounded PR-relevant behavior,
+exact `sourceOid`, behavior entrypoint in `initialFocus`, stable-ID nodes, and stable-ID edges. Nodes carry zero or one
 source anchor; edges carry zero or more. Every anchor is a repository-relative UTF-8 path with either
 both inclusive line bounds or neither, and every anchor is validated at the one exact source commit.
 At least one and at most 400 anchors must exist across the graph.
-The graph is a producer claim about a code-centered subject; Git remains the evidence and history
-source of truth.
+The graph is a producer claim about the responsibilities, dependencies, contracts, and side effects
+needed to verify that behavior; Git remains the evidence and history source of truth. A generic static
+architecture or responsibility inventory has no PR-review stopping condition and is out of scope.
+The wire and stored field remain nullable so existing current values still render and can be replaced,
+but the production authoring Skill requires a source-established entrypoint for every new Structure.
 
 Persist one current graph value per stable `rvw://structure/<uuid>` in a dedicated `structures` table.
 Store graph content as JSON because nodes and edges are an atomically replaced value and Phase 1 has no
@@ -80,37 +83,61 @@ surviving claims.
 Retain only removed Node and Edge IDs in small tombstone tables so a later whole-value update cannot
 reuse a stable identity for another claim. This does not retain prior graph values or expose history.
 
-Render Structure as a first-class document tab beside Walkthrough and code. The production layout is a
-content-neutral, deterministic topology-and-stable-ID layout with direct node drag, pan, zoom, fit, and
-focus controls. When an initial focus exists, directed topology places incoming and outgoing ranks on
-opposite sides without accepting producer layout metadata. It does not use labels, kinds, descriptions,
-paths, or inferred semantics to position content. Stable node IDs retain pane-local session positions
-across navigation and whole-value updates; new nodes are placed in a non-overlapping slot near retained
-neighbors. No coordinates enter SQLite or the Agent protocol. The deterministic layout can be restored
-after manual drag.
+Render Structure as a first-class document tab beside Walkthrough and code. The production base map is
+a deterministic behavior projection with direct node drag, pan, zoom, fit, and focus controls. Factual,
+unambiguous directed relations starting at the authored entrypoint form left-to-right ranks, while
+branches use vertical whitespace and topology-derived ordering. Reciprocal, undirected, parallel-count,
+and self relations do not force an axis. This direction bias is a viewer projection of source-established
+relation direction, not producer-authored coordinates, temporal order, importance, or a prescribed
+reading path. Labels, kinds, descriptions, paths, and inferred semantics do not position content; stable
+IDs only break otherwise symmetric choices.
+
+Distinguish canonical and session layout explicitly. The canonical layout is a pure projection of the
+current graph facts and entrypoint used for a new session and Reset. Session layout begins there, keeps manual positions for
+retained stable IDs across navigation and whole-value updates, and places new Nodes around retained
+neighbors without an axis bias. Filtering never reflows Nodes. A new session renders All but centers
+the behavior entrypoint at a readable 100% scale instead of compressing the whole graph. The
+1-hop / 2-hop / All actions filter the visible graph without moving the camera, so even a high-degree
+neighborhood is not compressed into an unreadable overview. Only the explicit Fit action compresses
+the visible graph. Poll updates preserve the camera. No coordinates enter SQLite or the Agent protocol.
 
 Keep the spike's reading aids that do not expand the artifact contract: curved perimeter-to-perimeter
 edges with visible arrowheads, stable lanes for parallel and reciprocal relations, curve-adjacent edge
 labels, relation selection that highlights the corresponding line and endpoints, separate Node source
-identity and source action placement, non-ellipsized identifiers, a minimap,
-visible focus/count/zoom state, and a collapsible inspector that starts closed. These are renderer
+identity and source action placement, non-ellipsized identifiers, a minimap, and visible
+focus/count/zoom state. Relation source actions live beside their labels; one anchor opens directly and
+multiple anchors use a compact local chooser instead of taking graph width with a persistent inspector.
+Zoom scales the same
+Node cards and relation labels without hiding description or source identity; the minimap and explicit
+Fit action provide optional overview without changing the information contract. These are renderer
 behavior over the production Node, Edge, source anchor, and change-file data; none become producer hints
 or persisted graph semantics.
 
-Plain trackpad wheel movement pans the canvas; pinch-style Ctrl/Meta wheel input zooms around the
-pointer. This preserves native two-finger navigation while keeping precise zoom available.
+The canvas consumes trackpad input with a non-passive native listener: plain wheel movement pans,
+pinch-style Ctrl/Meta wheel input zooms around the pointer, and neither chains into the containing page
+or browser zoom while the gesture remains over the map. Trackpad pinch (`ctrlKey`) uses a higher
+sensitivity than explicit Cmd+wheel so small finger movement remains responsive without making mouse
+wheel zoom abrupt.
 
 Use 1-hop, 2-hop, and All neighborhoods. 1-hop and 2-hop require a focus; All always shows every Node
-and Edge plus every relation label. `initialFocus` seeds only a new human reading session; a producer
-update never transfers focus to another Node. The human can clear focus explicitly. Do not automatically
+and Edge. While a Node is focused, canvas labels stay local to its incident relations even in All; the
+complete labels are available by clearing focus. This is label disclosure, never relation collapse.
+`initialFocus` seeds the canonical behavior projection and a new
+human reading session; a producer update never reflows retained positions or transfers focus to another
+Node. The human can clear focus explicitly. Do not automatically
 collapse relations: lexical ID ordering is content-neutral but still
 makes producer naming determine what a reviewer notices. Keep the MVP bounded to 50 Nodes and 200
 Edges, and split a subject instead of treating a large dense graph as a renderer problem.
+Split when another independently triggered behavior introduces a different origin, not merely when a
+Node count threshold is reached. This is the producer stopping condition that prevents Structure from
+expanding into a static subsystem inventory.
 
-Do not add notation in Phase 1. The spike's notation improved scanning, but a controlled vocabulary
-would add semantic authoring policy before producer evaluation established one. The optional `kind`
-string may provide a factual badge without affecting layout or behavior. Do not add comments, groups,
-AI inference, semantic graph extraction, durable coordinates, or reverse source lookup.
+Retain the spike's small controlled notation vocabulary (`plain`, `class`, `database`, `interface`,
+`component`, `external`, and `concept`) as an optional producer-selected scanning aid. Notation affects
+only Node rendering; it does not affect layout, relation semantics, or identity, and the viewer never
+infers it from the open-ended factual `kind` badge. Existing values without notation render as `plain`.
+Do not add comments, groups, AI inference, semantic graph extraction, durable coordinates, or reverse
+source lookup.
 
 ### Alternatives considered
 
@@ -121,17 +148,19 @@ AI inference, semantic graph extraction, durable coordinates, or reverse source 
 - Introduce a generic Artifact table and viewer dispatch: rejected because there is only one new domain
   with distinct invariants and no demonstrated shared abstraction.
 - Add a graph layout dependency immediately: rejected because the bounded Phase 1 interaction needs are
-  met by the smaller content-neutral layout; a dependency can be reconsidered if measured graph scale or
+  met by the smaller behavior-oriented layout; a dependency can be reconsidered if measured graph scale or
   quality makes it necessary.
 
 ### Trade-offs and unresolved questions
 
-The small built-in layout is predictable and preserves context but will not optimize every dense
-topology. Directed ranks improve an initial-focus view but cycles may still need manual Node movement.
+The small fixed-iteration layout is predictable and preserves context but will not optimize every dense
+topology or every Edge-label crossing. It intentionally favors a stable base map and manual correction
+over automatic reflow after each interaction.
 Session continuity ends at reload, is independent for each pane, and Structure has no independent
 revision history; Git commits remain the way to compare code history.
-Producer evaluation must continue to test scope, granularity, concept-node restraint, and relationship
-labels before a future notation vocabulary, grouping model, or larger-scale layout is considered. The
+Producer evaluation must continue to test scope, granularity, concept-node restraint, relationship
+labels, and whether explicit notation improves scanning without becoming an ontology. Grouping or a
+larger-scale layout can be considered only after real use. The
 initial evaluation and three generated exact-commit examples are recorded in
 `docs/structure-producer-evaluation.md`.
 

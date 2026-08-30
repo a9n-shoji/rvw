@@ -1364,7 +1364,7 @@ test("keeps virtual review nodes compact and useful height for code navigation",
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await expect(page.getByRole("button", { name: "ウォークスルー 6" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Structure 2" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Structure 3" })).toBeVisible();
 
   const stackHeights = await page.locator(".sidebar-stack").evaluateAll((stacks) =>
     stacks.map((stack) => ({

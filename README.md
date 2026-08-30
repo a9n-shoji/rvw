@@ -159,9 +159,9 @@ Agentは現在内容を読み、同じ`rvw://walkthrough/<uuid>`を更新して�
 
 ## codeの関係を空間として検証する
 
-外部Agentは`rvw-structure` SkillとCLIを使い、boundedなcode-centered subjectをnodeとrelationの
-空間として提示できます。必須の読み順を持つ説明はWalkthrough、dependency、ownership、contract、
-data modelなど任意の方向へ探索する対象はStructureです。
+外部Agentは`rvw-structure` SkillとCLIを使い、PRに関係するboundedなbehaviorをfactualなcode entrypointから
+dependency、contract、side effectへ辿る空間として提示できます。必須の読み順を持つ説明はWalkthroughです。
+entrypointを置けない静的なarchitecture／責務inventoryはStructureへ広げません。
 
 ```bash
 rvw structure publish --stdin --json
@@ -170,7 +170,7 @@ rvw structure update rvw://structure/<uuid> --stdin --json
 rvw structure delete rvw://structure/<uuid> --json
 ```
 
-Structureは一つのexact `sourceOid`、宣言されたtitle / scope、stableなNode / Edge IDからなります。
+Structureは一つのexact `sourceOid`、宣言されたtitle / scope、entrypoint、stableなNode / Edge IDからなります。
 Nodeは0または1件、Edgeは0件以上のsource anchorを持ち、rvwはcommit、UTF-8 path、line pair、endpoint、
 focus、重複ID、sizeを保存前に検証します。publish / updateはbrowserやnavigationを操作しません。
 
@@ -236,9 +236,9 @@ mental modelを作るための最初の読解経路を構成します。文書�
 reference付きartifactとして検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、
 現在内容を取得して同じURIを更新し、重複した「改訂版」を追加しません。
 
-Structureを作る場合は、subject、scope、含める／除外する関係を伝えて`rvw-structure` Skillを使います。
+Structureを作る場合は、behavior、entrypoint、scope、含める／除外する関係を伝えて`rvw-structure` Skillを使います。
 Skillは実際のcommit済みcodeを調査し、labelではなくclaimのidentityとしてstable IDを割り当てます。
-読み順が本質ならStructureへ押し込まず、Walkthroughを提案します。producer authoringの実地評価は
+読み順が本質ならWalkthroughを提案し、静的なarchitecture inventoryならStructureを作りません。producer authoringの実地評価は
 [Structure producer evaluation](docs/structure-producer-evaluation.md)に記録しています。
 
 新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRを

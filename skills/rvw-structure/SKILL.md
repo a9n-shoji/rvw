@@ -1,14 +1,16 @@
 ---
 name: rvw-structure
-description: Read, publish, replace in place, or explicitly delete a source-anchored relationship map through the local rvw CLI. Use when the user asks to map the stable structure around a bounded code-centered subject. Use rvw-walkthrough instead when the explanation is primarily an ordered path or flow.
+description: Read, publish, replace in place, or explicitly delete a source-anchored relationship map through the local rvw CLI. Use when a reviewer needs to inspect the dependencies and side effects around a bounded PR-relevant behavior from a factual code entrypoint. Use rvw-walkthrough when the explanation is primarily an ordered path, and do not create a Structure for a generic static architecture or responsibility inventory.
 ---
 
 # rvw Structure management
 
-Create a review space that lets a human inspect a bounded subject through explicit nodes and
-relationships. A Structure is a space; a Walkthrough is a path. Prefer a Structure for code-centered
-dependency, ownership, contract, data-model, or subsystem relationships. If the clearest explanation
-has a required reading order, beginning, and end, stop and recommend `rvw-walkthrough` instead.
+Create a review space that lets a human inspect one bounded PR-relevant behavior from a factual code
+entrypoint through the responsibilities, dependencies, contracts, and side effects needed to verify
+it. A Structure is a space; a Walkthrough is a path. If the clearest explanation has a required reading
+order, beginning, and end, stop and recommend `rvw-walkthrough` instead. If there is no defensible
+entrypoint and the result would be a generic static architecture, subsystem catalog, or responsibility
+inventory, do not publish a Structure.
 
 Follow explicit subject, scope, inclusion, exclusion, and emphasis instructions from the user, caller,
 Pull Request body, or upstream Skill. Fill only their gaps with verified committed code and tests. Do
@@ -77,6 +79,7 @@ rvw structure publish --stdin --json <<'RVW_JSON'
       "label": "RequestPolicy",
       "description": "Owns the allow/deny decision.",
       "kind": "service",
+      "notation": "class",
       "anchor": { "path": "src/request-policy.ts", "startLine": 8, "endLine": 34 }
     },
     {
@@ -84,6 +87,7 @@ rvw structure publish --stdin --json <<'RVW_JSON'
       "label": "PolicyInput",
       "description": "Committed input contract consumed by RequestPolicy.",
       "kind": "contract",
+      "notation": "interface",
       "anchor": { "path": "src/types.ts", "startLine": 3, "endLine": 12 }
     }
   ],

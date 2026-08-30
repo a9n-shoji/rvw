@@ -25,6 +25,12 @@ function structure(id: string): Structure {
 }
 
 describe("Structure pane sessions", () => {
+  it("starts from the complete map while highlighting the authored behavior entrypoint", () => {
+    const session = createStructureSession(structure("70000000-0000-4000-8000-000000000098"));
+    expect(session.focusId).toBe("entry");
+    expect(session.depth).toBe("all");
+  });
+
   it("moves the current reading state between panes without sharing both entries", () => {
     const value = structure("70000000-0000-4000-8000-000000000099");
     const session = {

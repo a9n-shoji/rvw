@@ -16,8 +16,6 @@ export interface StructureSession {
   focusId: string | null;
   selectedEdgeId: string | null;
   depth: StructureNeighborhoodDepth;
-  focusTrail: string[];
-  detailsOpen: boolean;
   positions: Record<string, StructurePoint>;
   viewport: StructureViewport;
   surfaceSize: { width: number; height: number };
@@ -38,9 +36,7 @@ export function createStructureSession(structure: Structure): StructureSession {
   return {
     focusId,
     selectedEdgeId: null,
-    depth: focusId ? 1 : "all",
-    focusTrail: focusId ? [focusId] : [],
-    detailsOpen: false,
+    depth: "all",
     positions: initialStructureLayout(structure),
     viewport: { x: 110, y: 90, scale: 1 },
     surfaceSize: { width: 0, height: 0 },

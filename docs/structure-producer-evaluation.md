@@ -13,7 +13,8 @@ object.
 
 - Example: [agent-transport-boundary.json](examples/structures/agent-transport-boundary.json)
 - Result: six nodes and six edges represented the CLI selection, socket client, validation, schemas,
-  dispatch, and diagnostic policy at one consistent boundary level.
+  dispatch, and diagnostic policy at one consistent boundary level, beginning at the CLI service-call
+  entrypoint.
 - Scope/granularity observation: excluding socket ownership and viewer lifecycle kept the subject a
   relationship space. Adding those lifecycle operations made the graph turn into a startup sequence
   and would be better handled by a Walkthrough.
@@ -25,8 +26,8 @@ object.
 ### Markdown source mapping
 
 - Example: [markdown-source-mapping.json](examples/structures/markdown-source-mapping.json)
-- Result: six nodes and seven edges exposed one shared source-position contract used by decoration,
-  highlights, comment placement, selection recovery, and plugin composition.
+- Result: six nodes and seven edges exposed how the source-map plugin entrypoint establishes one shared
+  source-position contract used by decoration, highlights, comment placement, and selection recovery.
 - Scope/granularity observation: function-level nodes were appropriate because each represented a
   distinct mapping responsibility around one contract; splitting helpers such as `overlaps` or
   `addClass` would only mirror implementation detail.
@@ -38,8 +39,8 @@ object.
 ### Bundled Skill distribution boundary
 
 - Example: [skill-distribution-boundary.json](examples/structures/skill-distribution-boundary.json)
-- Result: six nodes and seven edges connected package inclusion, bundle discovery, status comparison,
-  atomic install, CLI exposure, and the package smoke test.
+- Result: six nodes and seven edges connected the Skill CLI entrypoint to bundle discovery, status
+  comparison, atomic install, package inclusion, and the package smoke test.
 - Scope/granularity observation: the individual behavior of the three bundled Skills at the evaluated
   commit was excluded. Including their workflows would mix distribution mechanics with unrelated
   authoring domains.
@@ -50,11 +51,13 @@ object.
 
 ## Producer contract adjustments
 
-The trial confirmed that subject and scope must be declared before graph expansion, stable IDs must
-identify claims rather than labels, and relationship labels should use factual verbs. It also exposed
-one rejected candidate: “viewer startup from command to browser connection” was naturally a required
-ordered flow, so it is intentionally not represented as a Structure and belongs in a Walkthrough.
+The trial confirmed that behavior, entrypoint, and scope must be declared before graph expansion,
+stable IDs must identify claims rather than labels, and relationship labels should use factual verbs.
+It also exposed two rejection boundaries: “viewer startup from command to browser connection” was a
+required ordered flow and belongs in a Walkthrough, while a timeless subsystem responsibility catalog
+had no PR-review stopping condition and does not belong in Structure.
 
-The production Skill therefore makes the Structure/Walkthrough choice explicit, permits unanchored
-concept nodes only under declared authority, treats all anchors as claims at one exact commit, and
-requires in-place updates to retain IDs only for surviving claims of the same subject.
+The production Skill therefore makes the Structure/Walkthrough choice explicit, requires a factual
+entrypoint for new authoring, permits unanchored concept nodes only under declared authority, treats all
+anchors as claims at one exact commit, and requires in-place updates to retain IDs only for surviving
+claims of the same subject.

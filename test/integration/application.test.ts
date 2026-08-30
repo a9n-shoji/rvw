@@ -1912,6 +1912,7 @@ describe("RvwService commit workflow", () => {
           label: "src.txt",
           description: "The exact source document",
           kind: "document",
+          notation: "class" as const,
           anchor: { path: "src.txt", startLine: 1, endLine: 2 },
         },
         { id: "consumer", label: "Consumer", description: "   ", kind: " concept " },
@@ -1940,9 +1941,13 @@ describe("RvwService commit workflow", () => {
       sourceOid: firstHead,
       initialFocus: "source",
       nodes: [
-        { id: "source", anchor: { path: "src.txt", startLine: 1, endLine: 2 } },
-        { id: "consumer", description: null, kind: "concept", anchor: null },
-        { id: "obsolete", anchor: null },
+        {
+          id: "source",
+          notation: "class",
+          anchor: { path: "src.txt", startLine: 1, endLine: 2 },
+        },
+        { id: "consumer", description: null, kind: "concept", notation: "plain", anchor: null },
+        { id: "obsolete", notation: "plain", anchor: null },
       ],
       edges: [{ id: "reads-source", anchors: [{ startLine: null, endLine: null }] }],
     });

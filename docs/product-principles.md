@@ -74,12 +74,22 @@ Agentが実装やarchitectureを説明する場合、成立を保証するsource
 まま改善できるが、独自の版履歴は作らない。不要になった説明とそこだけに属するfeedbackは、明示確認後に
 削除できる。
 
-Walkthroughは、人間がmental modelを組み立てるための意図的なpathである。Structureは、boundedな
-code-centered subjectのnodeとrelationを任意の方向へ辿るspaceである。Agentはsubjectとscopeを宣言し、
-stableなNode / Edge IDとexact source anchorを提示するが、layout、focus、pan、zoom、開く順序は人間の
-一時的なreading stateに留める。表示範囲を1-hop / 2-hopへ明示的に絞ることはできるが、Allでrelationを
-暗黙に隠さない。高次数になるsubjectはscopeを分ける。Structureも独自の履歴やsemantic truthを持たず、
-claimを検証する正本はGitである。
+Walkthroughは、人間がmental modelを組み立てるための意図的なpathである。Structureは、PRに関係する
+boundedなbehaviorをfactualなcode entrypointから依存、contract、side effectへ任意の方向に辿るspaceである。
+Agentはsubject、scope、entrypoint、stableなNode / Edge ID、exact source anchorを提示するが、座標、pan、zoom、
+開く順序は人間の一時的なreading stateに留める。表示範囲を1-hop / 2-hopへ明示的に絞ることはできるが、
+Allでrelationを暗黙に隠さない。高次数になるsubjectはscopeを分ける。PRで検証するbehaviorに接地しない
+静的なarchitecture／責務inventoryは扱わない。Structureも独自の履歴やsemantic truthを持たず、claimを
+検証する正本はGitである。
+
+Structureはneutralなgraph viewerではなく、Walkthroughやcode readingで形成したmental modelを、変更された
+behaviorを成立させる責務とrelationへ位置付け直すreading surfaceである。viewerはproducerのfactsとentrypoint
+からbehavior-orientedなbase mapを作り、factual directionをsoftに左から右へ寄せる。これは厳密な処理順や
+重要度ではない。人間は同じ空間を俯瞰、局所探索、exact source確認、再俯瞰の順に往復する。
+filterで配置を組み替えず、Allへ戻ってもcameraを維持することで、局所で確かめたことを同じ全体像へ戻して
+補強できるようにする。全体を自動で一画面へ詰め込まず、zoomでも情報を暗黙に省略しない。人間は読みやすい
+局所をpan / zoomし、必要な時だけminimapや明示的なfitで広域を確認する。viewer由来のgeometryと人間のmanual
+layoutはStructureのclaimではない。
 
 ### 実装が変わってもorientationを保つ
 

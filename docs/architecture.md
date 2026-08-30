@@ -78,14 +78,15 @@ Inline references and bound Mermaid nodes remain interactive, but the viewer doe
 complete reference set in a side or bottom index.
 
 Structures cross the same one-way CLI boundary as a separate domain. An Agent declares a bounded
-code-centered subject as stable-ID nodes and edges fixed to one exact source commit. SQLite keeps one
+PR-relevant behavior and factual code entrypoint as stable-ID nodes and edges fixed to one exact source commit. SQLite keeps one
 current graph JSON value per stable Structure ID; publication and whole-value replacement validate all
 paths, ranges, endpoints, focus, identities, and Pull Request ownership before retaining the commit.
 The graph is a set of producer claims, not a semantic code index. It has no revision history, comments,
 groups, reverse lookup, inferred edges, or persisted coordinates. HTTP lists and reads current values;
 human-confirmed delete is the only write exposed to the browser.
 
-The Structure viewer uses topology and stable IDs—not content—to produce an initial layout. Pane-local
+The Structure viewer uses topology, factual direction reachable from the entrypoint, and stable IDs—not
+display content—to produce an initial layout. Pane-local
 browser session state preserves focus, neighborhood depth, node positions, and viewport across tab
 navigation and current-value updates, and moves with a Structure tab between panes. Surviving IDs keep
 positions and new nodes take a non-overlapping slot near retained neighbors. 1-hop and 2-hop require a
@@ -109,7 +110,8 @@ Policy and sandbox so direct navigation cannot execute repository-controlled scr
 The bundled Skills are named by capability rather than Agent host. `rvw` handles review comments and
 synchronization; `rvw-walkthrough` converts the current session's explanation into a validated,
 source-anchored path without prescribing its document structure; `rvw-structure` maps a declared
-code-centered subject into stable source-anchored relationships; `rvw-watch-comments` keeps an
+PR-relevant behavior from its code entrypoint into stable source-anchored relationships;
+`rvw-watch-comments` keeps an
 external Agent task subscribed to newly created posts and fails closed on PR ownership. Codex and Claude Code receive
 the same Skill directories under their respective local Skill roots. Platform selection is a packaging
 concern only and does not fork the Agent protocol or workflow instructions. Installer metadata records

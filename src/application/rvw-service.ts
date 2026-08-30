@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { STRUCTURE_NODE_NOTATIONS } from "../domain/models.js";
 import type {
   ChangedFile,
   CodeReference,
@@ -27,6 +28,7 @@ import type {
   StructureDeleteCounts,
   StructureEdge,
   StructureNode,
+  StructureNodeNotation,
   StructureSummary,
   TreeEntry,
   DeletedWalkthrough,
@@ -247,6 +249,7 @@ export interface StructureNodeRequest {
   label: string;
   description?: string | null;
   kind?: string | null;
+  notation?: StructureNodeNotation;
   anchor?: SourceAnchorRequest | null;
 }
 
@@ -1832,6 +1835,10 @@ export class RvwService {
         MAX_STRUCTURE_LABEL_CHARACTERS,
         `Structure Node ${id} label`,
       );
+      const notation = node.notation ?? "plain";
+      if (!STRUCTURE_NODE_NOTATIONS.includes(notation)) {
+        throw new RvwError("INVALID_INPUT", `Structure Node ${id} notationが不正です。`);
+      }
       nodes.push({
         id,
         label,
@@ -1845,6 +1852,7 @@ export class RvwService {
           MAX_STRUCTURE_KIND_CHARACTERS,
           `Structure Node ${id} kind`,
         ),
+        notation,
         anchor: node.anchor
           ? await this.validateSourceAnchor(
               pullRequest,

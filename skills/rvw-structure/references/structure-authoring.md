@@ -13,13 +13,17 @@ Apply inputs in this order:
 3. Put hypotheses, uncertain connections, and relations that are not directly established by source or
    explicit authority in the Agent's normal response, not in the Structure.
 
-Do not substitute a broader architecture tour for a bounded subject. A useful subject can be stated as
-one code-centered responsibility, boundary, contract, data model, or subsystem. A useful scope says
-what the map includes and, when ambiguity is likely, what it deliberately excludes.
+Do not substitute a broader architecture tour for a bounded subject. A useful subject states one
+PR-relevant behavior and the code entrypoint from which a reviewer can begin verifying it. A useful
+scope says which direct responsibilities, dependencies, contracts, and side effects are needed to
+understand that behavior and what it deliberately excludes. A data model, subsystem, or responsibility
+belongs only when it clarifies that behavior; a static inventory of them is not a Structure subject.
 
 Before authoring, test the requested shape: if the explanation becomes clearer only when its elements
 are arranged as step 1, then step 2, then step 3, the subject is a path. Stop and recommend a
-Walkthrough. A Structure may contain directed relationships, but direction is not a reading order.
+Walkthrough. A Structure may contain directed relationships, but direction is not a reading order. If
+the subject has no factual code entrypoint and is useful only as a timeless architecture diagram, stop
+without publishing a Structure.
 
 ## Select nodes as claims
 
@@ -36,11 +40,17 @@ can verify in committed code.
   recommendation, or generated summary of the whole file.
 - `kind` is an optional producer label for scanning, not a controlled ontology. Use a short factual
   noun such as `service`, `contract`, `store`, `command`, or `view`; omit it when it adds no signal.
+- `notation` is an optional controlled scanning aid: `plain`, `class`, `database`, `interface`,
+  `component`, `external`, or `concept`. Choose it only when the familiar visual pattern helps a reviewer
+  distinguish the claim. Do not infer it mechanically from `kind`; omit it for the default `plain` card.
 - Prefer the smallest meaningful multi-line anchor that verifies the node claim. Use a file anchor only
   for genuinely file-wide responsibility and a single-line range only for a line-local declaration.
 
 Do not create giant graphs, file inventories, one node per function, inferred runtime call graphs,
 dependency graphs obtained only from import syntax, or concept-only diagrams detached from code.
+When following the current behavior reaches another independently triggered behavior with its own
+origin, stop and author that behavior as a separate Structure if it is review-relevant. Do not keep
+expanding merely because more static responsibilities are connected.
 
 ## State relationships precisely
 
@@ -66,14 +76,19 @@ IDs identify claims across whole-value replacements; labels are presentation.
 
 - Choose concise semantic IDs matching `^[A-Za-z][A-Za-z0-9_-]{0,63}$` at first publication. They need
   not match a symbol exactly.
-- Preserve an ID when the same claim survives an update, even if its label, description, kind, anchor,
+- Preserve an ID when the same claim survives an update, even if its label, description, kind, notation, anchor,
   or endpoint details change.
 - Assign a new ID for a genuinely new claim. Never recycle an ID removed from this Structure for a
   different node or edge. rvw retains retired Node and Edge IDs as tombstones and rejects their
   reintroduction without retaining prior graph values.
 - Give every edge its own stable ID, including parallel edges between the same endpoints.
-- Use `initialFocus` for the subject's most useful entry concept, or `null` when no single node is the
-  natural center. It is not persisted viewer state.
+- Use `initialFocus` for the subject's factual code entrypoint. The entrypoint is the place a reviewer
+  starts verifying the declared behavior: for example an HTTP route, public API, command handler,
+  worker trigger, event subscriber, composition call, or migration execution point. It is not required
+  to be an HTTP/runtime boundary, but it must be an existing Node established by source. Do not publish
+  a newly authored Structure with `initialFocus: null`; the nullable wire shape remains only for
+  compatibility with older current values. It is not persisted viewer state or a claim of architectural
+  importance.
 
 Use an in-place update only while the declared subject identity is unchanged. A different subject,
 even inside the same Pull Request, requires a new publication.
@@ -98,7 +113,7 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] Concept-only nodes are necessary and do not invent semantics.
 - [ ] Every edge label states a precise relationship and direction is factual.
 - [ ] IDs are unique, semantic, and stable across updates; removed IDs are not recycled.
-- [ ] `initialFocus` names an existing node or is `null`.
+- [ ] `initialFocus` names the existing source-established Node where review of this behavior starts.
 - [ ] Every edge endpoint exists and parallel relationships have distinct IDs.
 - [ ] Every path and range is exact at the single committed `sourceOid`.
 - [ ] The graph contains at least one source anchor and no more than 400 across all nodes and edges.

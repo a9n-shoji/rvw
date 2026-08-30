@@ -38,12 +38,14 @@ const activeWalkthroughs = repositoryDemo
   : walkthroughs;
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
+const fullStackStructureId = "80000000-0000-4000-8000-000000000003";
 const primaryStructureNodes = [
   {
     id: "hub",
     label: "Create order",
     description: "注文の認可から外部side effect、永続化までを調停するapplication boundary。",
     kind: "use-case",
+    notation: "class",
     anchor: { path: "src/application/orders/create-order.ts", startLine: 9, endLine: 37 },
   },
   {
@@ -51,6 +53,7 @@ const primaryStructureNodes = [
     label: "Orders HTTP routes",
     description: "認証middlewareと注文commandのHTTP entry pointを構成する。",
     kind: "route",
+    notation: "external",
     anchor: { path: "src/http/routes/orders.ts", startLine: 6, endLine: 14 },
   },
   {
@@ -58,6 +61,7 @@ const primaryStructureNodes = [
     label: "Actor authentication",
     description: "access tokenを検証し、認可に必要なactor contextを組み立てる。",
     kind: "middleware",
+    notation: "component",
     anchor: { path: "src/http/middleware/require-actor.ts", startLine: 4, endLine: 18 },
   },
   {
@@ -65,6 +69,7 @@ const primaryStructureNodes = [
     label: "Create order controller",
     description: "HTTP payloadとheaderをapplication commandへ変換する。",
     kind: "controller",
+    notation: "class",
     anchor: { path: "src/http/controllers/create-order.ts", startLine: 5, endLine: 19 },
   },
   {
@@ -72,6 +77,7 @@ const primaryStructureNodes = [
     label: "Request validation",
     description: "注文requestの識別子、明細数、数量をtransport boundaryで検証する。",
     kind: "schema",
+    notation: "interface",
     anchor: { path: "src/http/schemas/create-order.ts", startLine: 3, endLine: 12 },
   },
   {
@@ -79,6 +85,7 @@ const primaryStructureNodes = [
     label: "Application wiring",
     description: "application portを具象adapterへ結線し、handlerを構築する。",
     kind: "composition",
+    notation: "component",
     anchor: { path: "src/bootstrap/application.ts", startLine: 10, endLine: 22 },
   },
   {
@@ -86,6 +93,7 @@ const primaryStructureNodes = [
     label: "Order authorization",
     description: "orders:create権限とcustomer scopeをapplication boundaryで保証する。",
     kind: "policy",
+    notation: "class",
     anchor: { path: "src/application/authorization/order-policy.ts", startLine: 4, endLine: 11 },
   },
   {
@@ -93,6 +101,7 @@ const primaryStructureNodes = [
     label: "Idempotent retry",
     description: "同じidempotency keyの再試行を元の結果へ収束させる。",
     kind: "adapter",
+    notation: "database",
     anchor: { path: "src/infrastructure/db/idempotency-store.ts", startLine: 3, endLine: 18 },
   },
   {
@@ -100,6 +109,7 @@ const primaryStructureNodes = [
     label: "Inventory reservation",
     description: "注文明細の在庫をtimeout付きHTTP requestで予約する。",
     kind: "gateway",
+    notation: "external",
     anchor: {
       path: "src/infrastructure/inventory/http-inventory-client.ts",
       startLine: 4,
@@ -111,6 +121,7 @@ const primaryStructureNodes = [
     label: "Order aggregate",
     description: "注文totalとplaced/payment eventを保持するdomain aggregate。",
     kind: "aggregate",
+    notation: "class",
     anchor: { path: "src/domain/orders/order.ts", startLine: 5, endLine: 41 },
   },
   {
@@ -118,6 +129,7 @@ const primaryStructureNodes = [
     label: "Order total",
     description: "catalog priceを使って単一通貨の注文totalを計算する。",
     kind: "policy",
+    notation: "class",
     anchor: { path: "src/domain/orders/pricing.ts", startLine: 1, endLine: 14 },
   },
   {
@@ -125,6 +137,7 @@ const primaryStructureNodes = [
     label: "Payment authorization",
     description: "order IDをidempotency keyとして決済を手動capture前まで認証する。",
     kind: "gateway",
+    notation: "external",
     anchor: { path: "src/infrastructure/payments/stripe-gateway.ts", startLine: 4, endLine: 21 },
   },
   {
@@ -132,6 +145,7 @@ const primaryStructureNodes = [
     label: "Database transaction",
     description: "orderとoutboxのwriteを同じPostgres transactionへ閉じ込める。",
     kind: "adapter",
+    notation: "component",
     anchor: { path: "src/infrastructure/db/transaction.ts", startLine: 3, endLine: 20 },
   },
   {
@@ -139,6 +153,7 @@ const primaryStructureNodes = [
     label: "Order record",
     description: "domain snapshotをorders tableへ永続化する。",
     kind: "repository",
+    notation: "class",
     anchor: { path: "src/infrastructure/db/order-repository.ts", startLine: 4, endLine: 16 },
   },
   {
@@ -146,6 +161,7 @@ const primaryStructureNodes = [
     label: "Transactional outbox",
     description: "domain eventをtransactional outboxへ追記する。",
     kind: "repository",
+    notation: "database",
     anchor: { path: "src/infrastructure/events/postgres-outbox.ts", startLine: 4, endLine: 13 },
   },
   {
@@ -153,6 +169,7 @@ const primaryStructureNodes = [
     label: "Outbox delivery",
     description: "未送信eventを排他的にclaimし、event busへ配送する。",
     kind: "worker",
+    notation: "component",
     anchor: { path: "src/workers/outbox-dispatcher.ts", startLine: 4, endLine: 16 },
   },
   {
@@ -160,6 +177,7 @@ const primaryStructureNodes = [
     label: "Payment recovery",
     description: "注文が残らなかった認証済みpaymentを検出してvoidする。",
     kind: "worker",
+    notation: "component",
     anchor: { path: "src/workers/payment-reconciliation.ts", startLine: 3, endLine: 13 },
   },
   {
@@ -167,6 +185,7 @@ const primaryStructureNodes = [
     label: "Orders data model",
     description: "order recordと配送待ちeventの永続化境界を定義する。",
     kind: "migration",
+    notation: "database",
     anchor: { path: "migrations/018_orders_and_outbox.sql", startLine: 1, endLine: 18 },
   },
 ];
@@ -281,9 +300,9 @@ const primaryStructureEdges = [
   },
   {
     id: "handler-persists-order",
-    from: "hub",
+    from: "transaction-runner",
     to: "order-repository",
-    label: "Orderを保存する",
+    label: "transaction内でOrderを保存する",
     directed: true,
     anchors: [
       { path: "src/application/orders/create-order.ts", startLine: 32, endLine: 32 },
@@ -292,9 +311,9 @@ const primaryStructureEdges = [
   },
   {
     id: "handler-appends-events",
-    from: "hub",
+    from: "transaction-runner",
     to: "outbox",
-    label: "eventを追記する",
+    label: "transaction内でeventを追記する",
     directed: true,
     anchors: [
       { path: "src/application/orders/create-order.ts", startLine: 33, endLine: 33 },
@@ -362,6 +381,18 @@ const primaryStructureEdges = [
   },
 ];
 
+const orderPlacementStructureNodes = primaryStructureNodes.filter(
+  (node) => !["outbox-dispatcher", "payment-reconciliation"].includes(node.id),
+);
+const orderPlacementStructureEdges = primaryStructureEdges.filter(
+  (edge) =>
+    ![
+      "dispatcher-claims-outbox",
+      "reconciliation-checks-payment",
+      "reconciliation-checks-order",
+    ].includes(edge.id),
+);
+
 const secondaryStructureNodes = primaryStructureNodes.filter((node) =>
   [
     "hub",
@@ -380,6 +411,7 @@ secondaryStructureNodes.unshift(
     label: "Failure model",
     description: "remote side effectとpartial failureを隠さず、retryと補償の境界を説明する。",
     kind: "document",
+    notation: "concept",
     anchor: { path: "docs/order-workflow.md", startLine: 1, endLine: 7 },
   },
   {
@@ -387,6 +419,7 @@ secondaryStructureNodes.unshift(
     label: "Integration evidence",
     description: "永続化・event・idempotent retryをobservable behaviorとして検証する。",
     kind: "test",
+    notation: "interface",
     anchor: { path: "test/integration/create-order.test.ts", startLine: 4, endLine: 21 },
   },
 );
@@ -454,6 +487,312 @@ const secondaryStructureEdges = [
     ].includes(edge.id),
   ),
 ];
+const fullStackStructureNodes = [
+  {
+    id: "order-detail-route",
+    label: "GET /orders/:orderId",
+    description: "注文詳細requestを受け取るbackend entrypoint。",
+    kind: "route",
+    notation: "external",
+    anchor: { path: "src/http/routes/order-detail.ts", startLine: 6, endLine: 14 },
+  },
+  {
+    id: "detail-actor-auth",
+    label: "Actor authentication",
+    description: "閲覧者を認証してcustomer scopeを確定する。",
+    kind: "middleware",
+    notation: "component",
+    anchor: { path: "src/http/middleware/require-actor.ts", startLine: 4, endLine: 18 },
+  },
+  {
+    id: "detail-params",
+    label: "Order ID validation",
+    description: "path parameterを注文IDとして検証する。",
+    kind: "schema",
+    notation: "interface",
+    anchor: { path: "src/http/schemas/order-detail.ts", startLine: 3, endLine: 10 },
+  },
+  {
+    id: "get-order-query",
+    label: "Get order detail",
+    description: "閲覧権限のある注文詳細を取得するquery boundary。",
+    kind: "query",
+    notation: "class",
+    anchor: { path: "src/application/orders/get-order-detail.ts", startLine: 8, endLine: 29 },
+  },
+  {
+    id: "order-read-repository",
+    label: "Order read repository",
+    description: "注文詳細projectionをcustomer scope付きで読み出す。",
+    kind: "repository",
+    notation: "class",
+    anchor: { path: "src/infrastructure/db/order-read-repository.ts", startLine: 5, endLine: 24 },
+  },
+  {
+    id: "orders-read-model",
+    label: "Orders read model",
+    description: "注文、明細、statusを結合したread projection。",
+    kind: "database",
+    notation: "database",
+    anchor: { path: "migrations/021_order_detail_view.sql", startLine: 1, endLine: 22 },
+  },
+  {
+    id: "order-response-presenter",
+    label: "Order detail presenter",
+    description: "query resultを公開HTTP responseへ写像する。",
+    kind: "presenter",
+    notation: "class",
+    anchor: { path: "src/http/presenters/order-detail.ts", startLine: 4, endLine: 25 },
+  },
+  {
+    id: "order-not-found",
+    label: "Not-found response",
+    description: "見つからない注文を404 problem responseへ変換する。",
+    kind: "error",
+    notation: "concept",
+    anchor: { path: "src/http/controllers/order-detail.ts", startLine: 18, endLine: 25 },
+  },
+  {
+    id: "order-detail-contract",
+    label: "OrderDetailResponse",
+    description: "backend responseとfrontend clientが共有するJSON contract。",
+    kind: "contract",
+    notation: "interface",
+    anchor: { path: "src/shared/contracts/order-detail.ts", startLine: 1, endLine: 24 },
+  },
+  {
+    id: "order-api-client",
+    label: "Order API client",
+    description: "HTTP responseをtyped frontend resultとして受け取る。",
+    kind: "client",
+    notation: "component",
+    anchor: { path: "src/frontend/api/orders.ts", startLine: 7, endLine: 18 },
+  },
+  {
+    id: "order-detail-query-hook",
+    label: "useOrderDetail",
+    description: "注文詳細の取得、cache、loading/error stateを公開する。",
+    kind: "hook",
+    notation: "component",
+    anchor: { path: "src/frontend/orders/use-order-detail.ts", startLine: 6, endLine: 22 },
+  },
+  {
+    id: "order-query-cache",
+    label: "Order query cache",
+    description: "order IDごとのresponseと再取得状態を保持する。",
+    kind: "cache",
+    notation: "database",
+    anchor: { path: "src/frontend/query/query-client.ts", startLine: 3, endLine: 16 },
+  },
+  {
+    id: "order-detail-page",
+    label: "OrderDetailPage",
+    description: "query stateを注文詳細のReact component treeへ分配する。",
+    kind: "component",
+    notation: "component",
+    anchor: { path: "src/frontend/orders/OrderDetailPage.tsx", startLine: 9, endLine: 38 },
+  },
+  {
+    id: "order-summary-card",
+    label: "OrderSummaryCard",
+    description: "注文番号、customer、totalを表示する。",
+    kind: "component",
+    notation: "component",
+    anchor: { path: "src/frontend/orders/OrderSummaryCard.tsx", startLine: 5, endLine: 21 },
+  },
+  {
+    id: "order-line-items",
+    label: "OrderLineItems",
+    description: "responseの明細を商品行として描画する。",
+    kind: "component",
+    notation: "component",
+    anchor: { path: "src/frontend/orders/OrderLineItems.tsx", startLine: 5, endLine: 24 },
+  },
+  {
+    id: "order-status-badge",
+    label: "OrderStatusBadge",
+    description: "backend statusをreviewerが識別できる表示へ変換する。",
+    kind: "component",
+    notation: "component",
+    anchor: { path: "src/frontend/orders/OrderStatusBadge.tsx", startLine: 4, endLine: 17 },
+  },
+  {
+    id: "order-detail-error",
+    label: "OrderDetailError",
+    description: "404と一時的な取得失敗を区別して表示する。",
+    kind: "component",
+    notation: "component",
+    anchor: { path: "src/frontend/orders/OrderDetailError.tsx", startLine: 5, endLine: 20 },
+  },
+];
+const fullStackStructureEdges = [
+  {
+    id: "detail-route-authenticates",
+    from: "order-detail-route",
+    to: "detail-actor-auth",
+    label: "閲覧者を認証する",
+    directed: true,
+    anchors: [{ path: "src/http/routes/order-detail.ts", startLine: 8, endLine: 8 }],
+  },
+  {
+    id: "detail-route-validates-id",
+    from: "order-detail-route",
+    to: "detail-params",
+    label: "order IDを検証する",
+    directed: true,
+    anchors: [{ path: "src/http/controllers/order-detail.ts", startLine: 7, endLine: 9 }],
+  },
+  {
+    id: "detail-route-executes-query",
+    from: "order-detail-route",
+    to: "get-order-query",
+    label: "detail queryを実行する",
+    directed: true,
+    anchors: [{ path: "src/http/controllers/order-detail.ts", startLine: 10, endLine: 17 }],
+  },
+  {
+    id: "detail-auth-scopes-query",
+    from: "detail-actor-auth",
+    to: "get-order-query",
+    label: "customer scopeを渡す",
+    directed: true,
+    anchors: [{ path: "src/http/controllers/order-detail.ts", startLine: 10, endLine: 13 }],
+  },
+  {
+    id: "detail-params-supply-query",
+    from: "detail-params",
+    to: "get-order-query",
+    label: "validated IDを渡す",
+    directed: true,
+    anchors: [{ path: "src/http/controllers/order-detail.ts", startLine: 10, endLine: 13 }],
+  },
+  {
+    id: "detail-query-loads-read-model",
+    from: "get-order-query",
+    to: "order-read-repository",
+    label: "注文projectionを読み出す",
+    directed: true,
+    anchors: [{ path: "src/application/orders/get-order-detail.ts", startLine: 13, endLine: 18 }],
+  },
+  {
+    id: "detail-repository-queries-view",
+    from: "order-read-repository",
+    to: "orders-read-model",
+    label: "read viewをqueryする",
+    directed: true,
+    anchors: [
+      { path: "src/infrastructure/db/order-read-repository.ts", startLine: 8, endLine: 22 },
+    ],
+  },
+  {
+    id: "detail-query-presents-result",
+    from: "get-order-query",
+    to: "order-response-presenter",
+    label: "resultをresponseへ写像する",
+    directed: true,
+    anchors: [{ path: "src/application/orders/get-order-detail.ts", startLine: 20, endLine: 27 }],
+  },
+  {
+    id: "detail-query-maps-not-found",
+    from: "get-order-query",
+    to: "order-not-found",
+    label: "missing resultを404へ写像する",
+    directed: true,
+    anchors: [{ path: "src/http/controllers/order-detail.ts", startLine: 18, endLine: 25 }],
+  },
+  {
+    id: "detail-presenter-returns-contract",
+    from: "order-response-presenter",
+    to: "order-detail-contract",
+    label: "200 JSONを返す",
+    directed: true,
+    anchors: [
+      { path: "src/http/presenters/order-detail.ts", startLine: 8, endLine: 24 },
+      { path: "src/shared/contracts/order-detail.ts", startLine: 1, endLine: 24 },
+    ],
+  },
+  {
+    id: "detail-not-found-returns-contract",
+    from: "order-not-found",
+    to: "order-detail-contract",
+    label: "404 problemを返す",
+    directed: true,
+    anchors: [{ path: "src/http/controllers/order-detail.ts", startLine: 18, endLine: 25 }],
+  },
+  {
+    id: "detail-client-consumes-contract",
+    from: "order-detail-contract",
+    to: "order-api-client",
+    label: "typed responseとして受け取る",
+    directed: true,
+    anchors: [
+      { path: "src/shared/contracts/order-detail.ts", startLine: 1, endLine: 24 },
+      { path: "src/frontend/api/orders.ts", startLine: 7, endLine: 18 },
+    ],
+  },
+  {
+    id: "detail-hook-calls-client",
+    from: "order-api-client",
+    to: "order-detail-query-hook",
+    label: "query functionとして呼ばれる",
+    directed: true,
+    anchors: [{ path: "src/frontend/orders/use-order-detail.ts", startLine: 9, endLine: 15 }],
+  },
+  {
+    id: "detail-hook-uses-cache",
+    from: "order-detail-query-hook",
+    to: "order-query-cache",
+    label: "order ID単位でcacheする",
+    directed: true,
+    anchors: [{ path: "src/frontend/orders/use-order-detail.ts", startLine: 9, endLine: 18 }],
+  },
+  {
+    id: "detail-hook-renders-page",
+    from: "order-detail-query-hook",
+    to: "order-detail-page",
+    label: "query stateを渡す",
+    directed: true,
+    anchors: [{ path: "src/frontend/orders/OrderDetailPage.tsx", startLine: 11, endLine: 18 }],
+  },
+  {
+    id: "detail-page-renders-summary",
+    from: "order-detail-page",
+    to: "order-summary-card",
+    label: "summaryを描画する",
+    directed: true,
+    anchors: [{ path: "src/frontend/orders/OrderDetailPage.tsx", startLine: 24, endLine: 24 }],
+  },
+  {
+    id: "detail-page-renders-items",
+    from: "order-detail-page",
+    to: "order-line-items",
+    label: "line itemsを描画する",
+    directed: true,
+    anchors: [{ path: "src/frontend/orders/OrderDetailPage.tsx", startLine: 25, endLine: 25 }],
+  },
+  {
+    id: "detail-page-renders-status",
+    from: "order-detail-page",
+    to: "order-status-badge",
+    label: "statusを描画する",
+    directed: true,
+    anchors: [{ path: "src/frontend/orders/OrderDetailPage.tsx", startLine: 23, endLine: 23 }],
+  },
+  {
+    id: "detail-hook-renders-error",
+    from: "order-detail-query-hook",
+    to: "order-detail-error",
+    label: "error stateを描画する",
+    directed: true,
+    anchors: [{ path: "src/frontend/orders/OrderDetailPage.tsx", startLine: 15, endLine: 18 }],
+  },
+];
+const fullStackRepositoryPaths = [
+  ...new Set([
+    ...fullStackStructureNodes.flatMap((node) => (node.anchor ? [node.anchor.path] : [])),
+    ...fullStackStructureEdges.flatMap((edge) => edge.anchors.map((anchor) => anchor.path)),
+  ]),
+];
 const activeStructures = repositoryDemo
   ? []
   : [
@@ -462,12 +801,12 @@ const activeStructures = repositoryDemo
         ref: `rvw://structure/${primaryStructureId}`,
         pullRequestId,
         sourceOid: firstHead,
-        title: "Order placement architecture",
+        title: "Order placement behavior",
         scope:
-          "Order creation from the authenticated HTTP boundary through domain decisions, remote side effects, transactional persistence, and event delivery; read paths are excluded.",
-        initialFocus: "hub",
-        nodes: primaryStructureNodes,
-        edges: primaryStructureEdges,
+          "Order creation from the authenticated HTTP boundary through domain decisions, remote side effects, transactional persistence, and event handoff; background delivery, recovery, and read paths are excluded.",
+        initialFocus: "http-routes",
+        nodes: orderPlacementStructureNodes,
+        edges: orderPlacementStructureEdges,
         createdAt: "2026-08-08T01:00:00.000Z",
         updatedAt: "2026-08-08T01:00:00.000Z",
       },
@@ -479,11 +818,25 @@ const activeStructures = repositoryDemo
         title: "Failure recovery and evidence",
         scope:
           "The retry, atomicity, and compensation mechanisms that make order placement recoverable, with the committed evidence that verifies those claims.",
-        initialFocus: null,
+        initialFocus: "payment-reconciliation",
         nodes: secondaryStructureNodes,
         edges: secondaryStructureEdges,
         createdAt: "2026-08-08T01:05:00.000Z",
         updatedAt: "2026-08-08T01:05:00.000Z",
+      },
+      {
+        id: fullStackStructureId,
+        ref: `rvw://structure/${fullStackStructureId}`,
+        pullRequestId,
+        sourceOid: firstHead,
+        title: "Order detail response rendering",
+        scope:
+          "GET /orders/:orderId from the backend HTTP entrypoint through read-model lookup and the shared response contract into the React query and component rendering boundary.",
+        initialFocus: "order-detail-route",
+        nodes: fullStackStructureNodes,
+        edges: fullStackStructureEdges,
+        createdAt: "2026-08-08T01:10:00.000Z",
+        updatedAt: "2026-08-08T01:10:00.000Z",
       },
     ];
 const activeViewers = new Set();
@@ -687,6 +1040,16 @@ function repositoryDocumentText(oid, filePath) {
       ? `${source.trimEnd()}\n\n// Updated orchestration path.\n`
       : source;
   }
+  if (fullStackRepositoryPaths.includes(filePath)) {
+    return [
+      `// Full-stack Structure demonstration source: ${filePath}`,
+      ...Array.from(
+        { length: 47 },
+        (_, index) => `export const demonstrationLine${index + 2} = ${index + 2};`,
+      ),
+      "",
+    ].join("\n");
+  }
   return repositoryText(oid);
 }
 
@@ -710,6 +1073,7 @@ function repositoryPathsAt(oid) {
         : []),
       ...(oid === baseOid ? [] : ["assets/added.png", "assets/new-name.png", "docs/hybrid.md"]),
       ...walkthroughRepositoryPaths,
+      ...fullStackRepositoryPaths,
     ]),
   ];
 }
@@ -1213,6 +1577,48 @@ app.get("/api/pull-requests/:id/changed-files", (context) => {
       kind: "modified",
       status: "M",
       similarity: null,
+      oldPath: "src/http/routes/orders.ts",
+      newPath: "src/http/routes/orders.ts",
+    },
+    {
+      kind: "modified",
+      status: "M",
+      similarity: null,
+      oldPath: "src/application/orders/create-order.ts",
+      newPath: "src/application/orders/create-order.ts",
+    },
+    {
+      kind: "added",
+      status: "A",
+      similarity: null,
+      oldPath: null,
+      newPath: "src/infrastructure/events/postgres-outbox.ts",
+    },
+    {
+      kind: "modified",
+      status: "M",
+      similarity: null,
+      oldPath: "src/http/routes/order-detail.ts",
+      newPath: "src/http/routes/order-detail.ts",
+    },
+    {
+      kind: "modified",
+      status: "M",
+      similarity: null,
+      oldPath: "src/shared/contracts/order-detail.ts",
+      newPath: "src/shared/contracts/order-detail.ts",
+    },
+    {
+      kind: "added",
+      status: "A",
+      similarity: null,
+      oldPath: null,
+      newPath: "src/frontend/orders/OrderDetailPage.tsx",
+    },
+    {
+      kind: "modified",
+      status: "M",
+      similarity: null,
       oldPath: "assets/modified.png",
       newPath: "assets/modified.png",
     },
@@ -1483,7 +1889,7 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
   }
   const input = await context.req.json();
   if (input.clearFocus) {
-    structure.title = input.title ?? "Order placement architecture without focus";
+    structure.title = input.title ?? "Order placement behavior without focus";
     structure.initialFocus = input.replacementFocus ?? null;
     structure.nodes = structure.nodes.filter((node) => node.id !== "hub");
     structure.edges = structure.edges.filter((edge) => edge.from !== "hub" && edge.to !== "hub");
@@ -1491,7 +1897,7 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
     changeSequence += 1;
     return context.json({ ok: true, structure });
   }
-  structure.title = input.title ?? "Order placement architecture updated";
+  structure.title = input.title ?? "Order placement behavior updated";
   structure.scope = input.scope ?? `${structure.scope} Updated without changing subject identity.`;
   structure.nodes = [
     ...structure.nodes

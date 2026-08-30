@@ -39,7 +39,7 @@ test("lists saved Pull Requests and navigates through browser history", async ({
   await expect(rows.nth(1)).toContainText("5 resolved");
   await expect(rows.nth(1)).toContainText("2 walkthroughs");
   await expect(rows.nth(1)).toContainText("1 structure");
-  await expect(rows.first()).toContainText("2 structures");
+  await expect(rows.first()).toContainText("3 structures");
   await expect(rows.nth(1).getByText("不明")).toBeVisible();
   await expect(page.getByText("1–2 / 2")).toBeVisible();
   const browserCloseGuard = await page.evaluate(() => {
@@ -84,9 +84,13 @@ test("opens the Pull Request list in a new tab from a modified logo click", asyn
   const logo = page.getByRole("link", { name: "Pull Request一覧へ" });
   await expect(logo).toHaveAttribute("href", "/");
 
-  const newPagePromise = context.waitForEvent("page");
-  await logo.click({ modifiers: ["ControlOrMeta"] });
-  const listPage = await newPagePromise;
+  const [listPage] = await Promise.all([
+    context.waitForEvent("page"),
+    logo.click({ modifiers: ["ControlOrMeta"] }),
+  ]);
+  await listPage.waitForURL((url) => url.pathname === "/" && url.search === "", {
+    timeout: 15_000,
+  });
 
   await expect(listPage.getByRole("heading", { name: "Pull Requests" })).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`pullRequestId=${pullRequestId}`));
