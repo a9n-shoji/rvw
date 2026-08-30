@@ -60,6 +60,7 @@ export interface PullRequestSummary {
   unresolvedCommentCount: number;
   resolvedCommentCount: number;
   walkthroughCount: number;
+  structureCount: number;
 }
 
 export interface CommitSummary {

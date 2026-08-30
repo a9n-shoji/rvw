@@ -69,8 +69,8 @@ IDs identify claims across whole-value replacements; labels are presentation.
 - Preserve an ID when the same claim survives an update, even if its label, description, kind, anchor,
   or endpoint details change.
 - Assign a new ID for a genuinely new claim. Never recycle an ID removed from this Structure for a
-  different node or edge. Because rvw stores only the current value, this is a producer authoring
-  convention checked against the producer's prior value, not a runtime tombstone invariant.
+  different node or edge. rvw retains retired Node and Edge IDs as tombstones and rejects their
+  reintroduction without retaining prior graph values.
 - Give every edge its own stable ID, including parallel edges between the same endpoints.
 - Use `initialFocus` for the subject's most useful entry concept, or `null` when no single node is the
   natural center. It is not persisted viewer state.
@@ -101,6 +101,7 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] `initialFocus` names an existing node or is `null`.
 - [ ] Every edge endpoint exists and parallel relationships have distinct IDs.
 - [ ] Every path and range is exact at the single committed `sourceOid`.
+- [ ] The graph contains at least one source anchor and no more than 400 across all nodes and edges.
 - [ ] The map contains no hidden review conclusion, presentation layout, inferred confidence, or
       exhaustive-completeness claim.
 - [ ] The graph is small enough that a reviewer can explore it as a coherent subject.

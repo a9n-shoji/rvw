@@ -185,6 +185,35 @@ describe("Structure domain presentation rules", () => {
     expect(layout["node-02"]!.x).toBeGreaterThan(layout.hub!.x);
   });
 
+  it("keeps a 50-Node focused Structure in bounded non-overlapping columns", () => {
+    const base = structureWithHub();
+    const nodes = Array.from({ length: 50 }, (_, index) => ({
+      id: index === 0 ? "hub" : `node-${String(index).padStart(2, "0")}`,
+      label: index === 0 ? "Hub" : `Node ${index}`,
+      description: null,
+      kind: null,
+      anchor: null,
+    }));
+    const structure: Structure = {
+      ...base,
+      nodes,
+      edges: nodes.slice(1).map((node) => ({
+        id: `edge-${node.id}`,
+        from: "hub",
+        to: node.id,
+        label: "uses",
+        directed: true,
+        anchors: [],
+      })),
+    };
+    const layout = initialStructureLayout(structure);
+    const yValues = Object.values(layout).map((point) => point.y);
+    expectNoNodeOverlap(layout);
+    expect(Math.max(...yValues) - Math.min(...yValues)).toBeLessThanOrEqual(
+      4 * (STRUCTURE_NODE_HEIGHT + 72),
+    );
+  });
+
   it("keeps undirected and reciprocal relations on a neutral rank", () => {
     const base = structureWithHub();
     const structure: Structure = {

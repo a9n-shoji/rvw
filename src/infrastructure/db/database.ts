@@ -752,6 +752,11 @@ export class RvwDatabase {
            FROM walkthroughs
            JOIN page ON page.id = walkthroughs.pull_request_id
            GROUP BY walkthroughs.pull_request_id
+         ), structure_counts AS (
+           SELECT structures.pull_request_id, COUNT(*) AS structure_count
+           FROM structures
+           JOIN page ON page.id = structures.pull_request_id
+           GROUP BY structures.pull_request_id
          )
          SELECT
            pr.id AS pull_request_id,
@@ -765,10 +770,12 @@ export class RvwDatabase {
            pr.github_is_draft,
            COALESCE(comment_counts.unresolved_count, 0) AS unresolved_comment_count,
            COALESCE(comment_counts.resolved_count, 0) AS resolved_comment_count,
-           COALESCE(walkthrough_counts.walkthrough_count, 0) AS walkthrough_count
+           COALESCE(walkthrough_counts.walkthrough_count, 0) AS walkthrough_count,
+           COALESCE(structure_counts.structure_count, 0) AS structure_count
          FROM page AS pr
          LEFT JOIN comment_counts ON comment_counts.pull_request_id = pr.id
          LEFT JOIN walkthrough_counts ON walkthrough_counts.pull_request_id = pr.id
+         LEFT JOIN structure_counts ON structure_counts.pull_request_id = pr.id
          ORDER BY pr.github_updated_at DESC, pr.id DESC`,
       )
       .all(hideClosedOrMergedValue, limit, offset) as DbRow[];
@@ -792,6 +799,7 @@ export class RvwDatabase {
         unresolvedCommentCount: numberValue(row, "unresolved_comment_count"),
         resolvedCommentCount: numberValue(row, "resolved_comment_count"),
         walkthroughCount: numberValue(row, "walkthrough_count"),
+        structureCount: numberValue(row, "structure_count"),
       })),
       total: numberValue(totalRow, "total"),
     };
@@ -1136,18 +1144,11 @@ export class RvwDatabase {
       edges: input.edges,
     });
     this.immediateTransaction(() => {
-      const result = this.database
-        .prepare(
-          `UPDATE structures
-           SET source_oid = ?, title = ?, scope = ?, graph_json = ?, updated_at = ?
-           WHERE id = ? AND updated_at = ?`,
-        )
-        .run(input.sourceOid, input.title, input.scope, graphJson, now, id, expectedUpdatedAt);
-      if (Number(result.changes) === 0) {
-        const current = this.getStructure(id);
-        if (!current) {
-          throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
-        }
+      const current = this.getStructure(id);
+      if (!current) {
+        throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
+      }
+      if (current.updatedAt !== expectedUpdatedAt) {
         throw new RvwError(
           "STRUCTURE_CONFLICT",
           "Structureが取得後に更新されています。現在値を読み直してください。",
@@ -1157,6 +1158,67 @@ export class RvwDatabase {
           },
         );
       }
+      const retiredNodeIds = new Set(
+        (
+          this.database
+            .prepare("SELECT node_id FROM structure_retired_node_ids WHERE structure_id = ?")
+            .all(id) as DbRow[]
+        ).map((row) => stringValue(row, "node_id")),
+      );
+      const retiredEdgeIds = new Set(
+        (
+          this.database
+            .prepare("SELECT edge_id FROM structure_retired_edge_ids WHERE structure_id = ?")
+            .all(id) as DbRow[]
+        ).map((row) => stringValue(row, "edge_id")),
+      );
+      const reusedNode = input.nodes.find((node) => retiredNodeIds.has(node.id));
+      if (reusedNode) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `削除済みのStructure Node IDは再利用できません: ${reusedNode.id}`,
+        );
+      }
+      const reusedEdge = input.edges.find((edge) => retiredEdgeIds.has(edge.id));
+      if (reusedEdge) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `削除済みのStructure Edge IDは再利用できません: ${reusedEdge.id}`,
+        );
+      }
+      const nextNodeIds = new Set(input.nodes.map((node) => node.id));
+      const nextEdgeIds = new Set(input.edges.map((edge) => edge.id));
+      const retiredAtThisUpdate = current.nodes
+        .map((node) => node.id)
+        .filter((nodeId) => !nextNodeIds.has(nodeId));
+      const retiredEdgesAtThisUpdate = current.edges
+        .map((edge) => edge.id)
+        .filter((edgeId) => !nextEdgeIds.has(edgeId));
+      const result = this.database
+        .prepare(
+          `UPDATE structures
+           SET source_oid = ?, title = ?, scope = ?, graph_json = ?, updated_at = ?
+           WHERE id = ? AND updated_at = ?`,
+        )
+        .run(input.sourceOid, input.title, input.scope, graphJson, now, id, expectedUpdatedAt);
+      if (Number(result.changes) === 0) {
+        throw new RvwError(
+          "STRUCTURE_CONFLICT",
+          "Structureが取得後に更新されています。現在値を読み直してください。",
+          {
+            status: 409,
+            details: { expectedUpdatedAt, currentUpdatedAt: current.updatedAt },
+          },
+        );
+      }
+      const retireNode = this.database.prepare(
+        "INSERT OR IGNORE INTO structure_retired_node_ids(structure_id, node_id, retired_at) VALUES (?, ?, ?)",
+      );
+      for (const nodeId of retiredAtThisUpdate) retireNode.run(id, nodeId, now);
+      const retireEdge = this.database.prepare(
+        "INSERT OR IGNORE INTO structure_retired_edge_ids(structure_id, edge_id, retired_at) VALUES (?, ?, ?)",
+      );
+      for (const edgeId of retiredEdgesAtThisUpdate) retireEdge.run(id, edgeId, now);
       this.incrementChangeSequence();
     });
     const structure = this.getStructure(id);

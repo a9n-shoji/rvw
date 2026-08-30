@@ -20,6 +20,7 @@ import {
   MAX_STRUCTURE_NODES,
   MAX_STRUCTURE_PAYLOAD_BYTES,
   MAX_STRUCTURE_SCOPE_CHARACTERS,
+  MAX_STRUCTURE_SOURCE_ANCHORS,
   MAX_STRUCTURE_TITLE_CHARACTERS,
   STRUCTURE_ID_PATTERN,
   MAX_WALKTHROUGH_BODY_BYTES,
@@ -292,8 +293,13 @@ const structureContentShape = {
 function refineStructureContent(
   value: {
     initialFocus: string | null;
-    nodes: Array<{ id: string }>;
-    edges: Array<{ id: string; from: string; to: string }>;
+    nodes: Array<{ id: string; anchor: Record<string, unknown> | null }>;
+    edges: Array<{
+      id: string;
+      from: string;
+      to: string;
+      anchors: Array<Record<string, unknown>>;
+    }>;
   },
   context: z.RefinementCtx,
 ): void {
@@ -338,6 +344,21 @@ function refineStructureContent(
       code: "custom",
       path: ["initialFocus"],
       message: "initialFocus Nodeが存在しません。",
+    });
+  }
+  const anchorCount =
+    value.nodes.filter((node) => node.anchor !== null).length +
+    value.edges.reduce((count, edge) => count + edge.anchors.length, 0);
+  if (anchorCount < 1) {
+    context.addIssue({
+      code: "custom",
+      message: "Structureにはsource anchorを少なくとも1件含めてください。",
+    });
+  }
+  if (anchorCount > MAX_STRUCTURE_SOURCE_ANCHORS) {
+    context.addIssue({
+      code: "custom",
+      message: `Structureのsource anchorは合計${MAX_STRUCTURE_SOURCE_ANCHORS}件以下にしてください。`,
     });
   }
   const graph = { initialFocus: value.initialFocus, nodes: value.nodes, edges: value.edges };

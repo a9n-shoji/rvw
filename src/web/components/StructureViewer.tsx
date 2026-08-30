@@ -123,19 +123,13 @@ function SourceIdentity({
 type EdgeSourceChangeKind = ChangeKind | "mixed";
 
 interface EdgeSourcePresentation {
-  anchor: SourceAnchor | null;
   anchorCount: number;
-  additionalAnchorCount: number;
   changeKind: EdgeSourceChangeKind | null;
-  changedAnchorCount: number;
-  title: string;
-  sourceLabel: string;
 }
 
 function edgeSourcePresentation(
   edge: StructureEdge,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
-  sourceLabels: ReadonlyMap<string, string>,
 ): EdgeSourcePresentation {
   const changedKinds = edge.anchors.flatMap((anchor) => {
     const kind = sourceChangeKinds.get(anchor.path);
@@ -145,50 +139,10 @@ function edgeSourcePresentation(
     left.localeCompare(right, "en"),
   );
   return {
-    anchor: edge.anchors[0] ?? null,
     anchorCount: edge.anchors.length,
-    additionalAnchorCount: Math.max(0, edge.anchors.length - 1),
     changeKind:
       distinctKinds.length > 1 ? "mixed" : distinctKinds.length === 1 ? distinctKinds[0]! : null,
-    changedAnchorCount: changedKinds.length,
-    title: edge.anchors.map(anchorLabel).join("\n"),
-    sourceLabel: edge.anchors[0]
-      ? (sourceLabels.get(edge.anchors[0].path) ?? edge.anchors[0].path)
-      : "",
   };
-}
-
-function EdgeSourceIdentity({ presentation }: { presentation: EdgeSourcePresentation }) {
-  const { anchor, additionalAnchorCount, changeKind, changedAnchorCount, title } = presentation;
-  if (!anchor) return null;
-  return (
-    <span
-      className="structure-source-identity"
-      data-source-path={anchor.path}
-      data-source-anchor-count={presentation.anchorCount}
-      data-source-change-kind={changeKind ?? undefined}
-      title={title}
-    >
-      <FileEntryIcon path={anchor.path} kind="file" />
-      <span className="structure-source-name">{presentation.sourceLabel}</span>
-      {additionalAnchorCount > 0 && changedAnchorCount > 0 ? (
-        <span
-          className="structure-source-change-aggregate"
-          role="img"
-          aria-label={`変更対象のsource ${changedAnchorCount}件${changeKind === "mixed" ? "（複数種別）" : ""}`}
-        >
-          Δ{changedAnchorCount}
-        </span>
-      ) : (
-        changeKind && changeKind !== "mixed" && <ChangeIcon kind={changeKind} />
-      )}
-      {additionalAnchorCount > 0 && (
-        <span className="structure-source-count" aria-label={`ほか${additionalAnchorCount}件`}>
-          +{additionalAnchorCount}
-        </span>
-      )}
-    </span>
-  );
 }
 
 function BreakableStructureLabel({ label }: { label: string }) {
@@ -209,16 +163,15 @@ function edgePath(
   edge: StructureEdge,
   positions: Readonly<Record<string, StructurePoint>>,
   laneOffset = 0,
+  reciprocal = false,
 ): {
   path: string;
-  labelX: number;
-  labelY: number;
-  fromX: number;
-  fromY: number;
-  toX: number;
-  toY: number;
   startX: number;
   startY: number;
+  control1X: number;
+  control1Y: number;
+  control2X: number;
+  control2Y: number;
   endX: number;
   endY: number;
   bounds: StructureBox;
@@ -238,14 +191,12 @@ function edgePath(
     const loopReach = 88 + Math.abs(laneOffset) * 0.35;
     return {
       path: `M ${right + gap} ${top + 34 + loopShift} C ${right + loopReach} ${top - 84 + loopShift}, ${right + loopReach} ${top + STRUCTURE_NODE_HEIGHT + 84 + loopShift}, ${right + gap} ${top + STRUCTURE_NODE_HEIGHT - 34 + loopShift}`,
-      labelX: right + 52 + Math.abs(laneOffset) * 0.28,
-      labelY: top - 4 + loopShift,
-      fromX,
-      fromY,
-      toX,
-      toY,
       startX: right + gap,
       startY: top + 34 + loopShift,
+      control1X: right + loopReach,
+      control1Y: top - 84 + loopShift,
+      control2X: right + loopReach,
+      control2Y: top + STRUCTURE_NODE_HEIGHT + 84 + loopShift,
       endX: right + gap,
       endY: top + STRUCTURE_NODE_HEIGHT - 34 + loopShift,
       bounds: {
@@ -272,23 +223,25 @@ function edgePath(
   const startY = fromY + unitY * endpointDistance + perpendicularY * laneOffset;
   const endX = toX - unitX * endpointDistance + perpendicularX * laneOffset;
   const endY = toY - unitY * endpointDistance + perpendicularY * laneOffset;
-  // Every ordinary relation keeps a gentle curve. Stable lane offsets separate
-  // parallel relations, while reversing an edge naturally bends it to the other side.
-  const curve = Math.min(72, Math.max(28, length * 0.1)) + laneOffset * 0.45;
+  // Every ordinary relation keeps a gentle curve. Reciprocal relations get
+  // visibly separate arcs so their labels can stay on their respective paths.
+  const minimumCurve = reciprocal ? 132 : laneOffset === 0 ? 28 : 52;
+  const maximumCurve = reciprocal ? 168 : 96;
+  const curve =
+    Math.min(maximumCurve, Math.max(minimumCurve, length * (reciprocal ? 0.18 : 0.1))) +
+    laneOffset * 0.35;
   const control1X = startX + (endX - startX) * 0.36 + perpendicularX * curve;
   const control1Y = startY + (endY - startY) * 0.36 + perpendicularY * curve;
   const control2X = startX + (endX - startX) * 0.64 + perpendicularX * curve;
   const control2Y = startY + (endY - startY) * 0.64 + perpendicularY * curve;
   return {
     path: `M ${startX} ${startY} C ${control1X} ${control1Y}, ${control2X} ${control2Y}, ${endX} ${endY}`,
-    labelX: (startX + endX) / 2 + perpendicularX * curve * 0.75,
-    labelY: (startY + endY) / 2 + perpendicularY * curve * 0.75,
-    fromX: fromX + perpendicularX * laneOffset,
-    fromY: fromY + perpendicularY * laneOffset,
-    toX: toX + perpendicularX * laneOffset,
-    toY: toY + perpendicularY * laneOffset,
     startX,
     startY,
+    control1X,
+    control1Y,
+    control2X,
+    control2Y,
     endX,
     endY,
     bounds: {
@@ -297,6 +250,55 @@ function edgePath(
       right: Math.max(startX, control1X, control2X, endX),
       bottom: Math.max(startY, control1Y, control2Y, endY),
     },
+  };
+}
+
+function reciprocalStructureEdgeIds(edges: readonly StructureEdge[]): Set<string> {
+  const directions = new Set(
+    edges
+      .filter((edge) => edge.directed && edge.from !== edge.to)
+      .map((edge) => JSON.stringify([edge.from, edge.to])),
+  );
+  return new Set(
+    edges
+      .filter(
+        (edge) =>
+          edge.directed &&
+          edge.from !== edge.to &&
+          directions.has(JSON.stringify([edge.to, edge.from])),
+      )
+      .map((edge) => edge.id),
+  );
+}
+
+function curveLabelCandidate(
+  geometry: NonNullable<ReturnType<typeof edgePath>>,
+  fraction: number,
+  offset: number,
+): { x: number; y: number } {
+  const inverse = 1 - fraction;
+  const x =
+    inverse ** 3 * geometry.startX +
+    3 * inverse ** 2 * fraction * geometry.control1X +
+    3 * inverse * fraction ** 2 * geometry.control2X +
+    fraction ** 3 * geometry.endX;
+  const y =
+    inverse ** 3 * geometry.startY +
+    3 * inverse ** 2 * fraction * geometry.control1Y +
+    3 * inverse * fraction ** 2 * geometry.control2Y +
+    fraction ** 3 * geometry.endY;
+  const tangentX =
+    3 * inverse ** 2 * (geometry.control1X - geometry.startX) +
+    6 * inverse * fraction * (geometry.control2X - geometry.control1X) +
+    3 * fraction ** 2 * (geometry.endX - geometry.control2X);
+  const tangentY =
+    3 * inverse ** 2 * (geometry.control1Y - geometry.startY) +
+    6 * inverse * fraction * (geometry.control2Y - geometry.control1Y) +
+    3 * fraction ** 2 * (geometry.endY - geometry.control2Y);
+  const tangentLength = Math.max(1, Math.hypot(tangentX, tangentY));
+  return {
+    x: x + (-tangentY / tangentLength) * offset,
+    y: y + (tangentX / tangentLength) * offset,
   };
 }
 
@@ -320,11 +322,6 @@ interface StructureEdgeLabelPlacement {
 const EDGE_LABEL_MAX_TEXT_WIDTH = 210;
 const EDGE_LABEL_MIN_TEXT_WIDTH = 64;
 const EDGE_LABEL_HORIZONTAL_PADDING = 14;
-const EDGE_LABEL_SOURCE_WIDTH = 25;
-const EDGE_LABEL_FILE_ICON_WIDTH = 19;
-const EDGE_LABEL_CHANGE_ICON_WIDTH = 16;
-const EDGE_LABEL_AGGREGATE_CHANGE_WIDTH = 24;
-const EDGE_LABEL_SOURCE_COUNT_WIDTH = 25;
 const EDGE_LABEL_LINE_HEIGHT = 11;
 
 function boxesOverlap(left: StructureBox, right: StructureBox): boolean {
@@ -358,7 +355,6 @@ function mergedBounds(boxes: readonly StructureBox[]): StructureBox | null {
 function edgeLabelSize(
   edge: StructureEdge,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
-  sourceLabels: ReadonlyMap<string, string>,
 ): {
   selectWidth: number;
   boxWidth: number;
@@ -378,24 +374,10 @@ function edgeLabelSize(
   );
   const lineCount = Math.max(1, Math.ceil(naturalTextWidth / textWidth));
   const height = Math.max(24, lineCount * EDGE_LABEL_LINE_HEIGHT + 10);
-  const source = edgeSourcePresentation(edge, sourceChangeKinds, sourceLabels);
-  const sourceNameWidth = source.anchor
-    ? Math.min(116, Math.max(28, [...source.sourceLabel].length * 6.4))
-    : 0;
-  const sourceIdentityWidth = source.anchor
-    ? EDGE_LABEL_FILE_ICON_WIDTH +
-      sourceNameWidth +
-      (source.additionalAnchorCount > 0 && source.changedAnchorCount > 0
-        ? EDGE_LABEL_AGGREGATE_CHANGE_WIDTH
-        : source.changeKind
-          ? EDGE_LABEL_CHANGE_ICON_WIDTH
-          : 0) +
-      (source.additionalAnchorCount > 0 ? EDGE_LABEL_SOURCE_COUNT_WIDTH : 0)
-    : 0;
-  const selectWidth = textWidth + sourceIdentityWidth;
+  const source = edgeSourcePresentation(edge, sourceChangeKinds);
   return {
-    selectWidth,
-    boxWidth: selectWidth + (source.anchor ? EDGE_LABEL_SOURCE_WIDTH : 0),
+    selectWidth: textWidth,
+    boxWidth: textWidth,
     height,
     source,
   };
@@ -406,8 +388,8 @@ function placeEdgeLabels(
   nodes: StructureNode[],
   positions: Readonly<Record<string, StructurePoint>>,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
-  sourceLabels: ReadonlyMap<string, string>,
   routeOffsets: ReadonlyMap<string, number>,
+  reciprocalEdgeIds: ReadonlySet<string>,
 ): StructureEdgeLabelPlacement[] {
   const nodeBoxes = nodes.flatMap((node) => {
     const point = positions[node.id];
@@ -464,36 +446,25 @@ function placeEdgeLabels(
     }
   };
   const placements: StructureEdgeLabelPlacement[] = [];
-  const candidateFractions = [0.5, 0.38, 0.62, 0.26, 0.74, 0.14, 0.86] as const;
-  const candidateOffsets = [
-    0, 48, -48, 96, -96, 144, -144, 204, -204, 276, -276, 348, -348, 420, -420,
-  ] as const;
+  const candidateFractions = [0.5, 0.38, 0.62, 0.26, 0.74, 0.14, 0.86, 0.08, 0.92] as const;
+  const candidateOffsets = [0, 16, -16, 30, -30, 40, -40, 48, -48] as const;
   const candidates = candidateOffsets.flatMap((offset) =>
     candidateFractions.map((fraction) => [fraction, offset] as const),
   );
 
   const stableEdges = [...edges].sort((left, right) => left.id.localeCompare(right.id, "en"));
   for (const [edgeIndex, edge] of stableEdges.entries()) {
-    const geometry = edgePath(edge, positions, routeOffsets.get(edge.id) ?? 0);
+    const geometry = edgePath(
+      edge,
+      positions,
+      routeOffsets.get(edge.id) ?? 0,
+      reciprocalEdgeIds.has(edge.id),
+    );
     if (!geometry) continue;
-    const dx = geometry.toX - geometry.fromX;
-    const dy = geometry.toY - geometry.fromY;
-    const length = Math.max(1, Math.hypot(dx, dy));
-    const perpendicularX = -dy / length;
-    const perpendicularY = dx / length;
-    const size = edgeLabelSize(edge, sourceChangeKinds, sourceLabels);
-    const possible =
-      edge.from === edge.to
-        ? [
-            { x: geometry.labelX, y: geometry.labelY },
-            { x: geometry.labelX + 36, y: geometry.labelY - 42 },
-            { x: geometry.labelX + 70, y: geometry.labelY + 24 },
-            { x: geometry.labelX + 92, y: geometry.labelY - 88 },
-          ]
-        : candidates.map(([fraction, offset]) => ({
-            x: geometry.fromX + dx * fraction + perpendicularX * offset,
-            y: geometry.fromY + dy * fraction + perpendicularY * offset,
-          }));
+    const size = edgeLabelSize(edge, sourceChangeKinds);
+    const possible = candidates.map(([fraction, offset]) =>
+      curveLabelCandidate(geometry, fraction, offset),
+    );
     const nodeSafe = possible.filter((candidate) => {
       const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 7);
       return !nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox));
@@ -602,6 +573,7 @@ export function StructureViewer({
   const cachedSession = getStructureSession(paneId, structure.id);
   const initial = cachedSession ?? createStructureSession(structure);
   const [focusId, setFocusId] = useState(initial.focusId);
+  const [selectedEdgeId, setSelectedEdgeId] = useState(initial.selectedEdgeId);
   const [depth, setDepth] = useState<StructureNeighborhoodDepth>(initial.depth);
   const [focusTrail, setFocusTrail] = useState(initial.focusTrail);
   const [detailsOpen, setDetailsOpen] = useState(initial.detailsOpen);
@@ -614,6 +586,10 @@ export function StructureViewer({
   const surfaceSizeRef = useRef(initial.surfaceSize);
   const focusIdRef = useRef(focusId);
   const positionsRef = useRef(positions);
+  const observedStructureRef = useRef({
+    sourceOid: structure.sourceOid,
+    updatedAt: structure.updatedAt,
+  });
   const initialCenterPendingRef = useRef(!cachedSession && initial.focusId !== null);
   const panRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const dragRef = useRef<{
@@ -678,6 +654,18 @@ export function StructureViewer({
   useEffect(() => {
     const previous = getStructureSession(paneId, structure.id);
     if (previous?.updatedAt === structure.updatedAt) return;
+    const observed = observedStructureRef.current;
+    if (observed.updatedAt !== structure.updatedAt) {
+      setStatus(
+        observed.sourceOid === structure.sourceOid
+          ? "Structureが更新されました。閲覧状態を保ったまま最新のclaimへ反映しています。"
+          : `Structureが更新されました。exact source ${observed.sourceOid.slice(0, 8)} → ${structure.sourceOid.slice(0, 8)}`,
+      );
+    }
+    observedStructureRef.current = {
+      sourceOid: structure.sourceOid,
+      updatedAt: structure.updatedAt,
+    };
     setPositions((current) => reconcileStructureLayout(structure, current));
     const retainedFocus =
       focusIdRef.current && structure.nodes.some((node) => node.id === focusIdRef.current)
@@ -696,11 +684,15 @@ export function StructureViewer({
         ? [...retained, nextFocus].slice(-6)
         : retained;
     });
+    setSelectedEdgeId((current) =>
+      current && structure.edges.some((edge) => edge.id === current) ? current : null,
+    );
   }, [paneId, structure, structure.updatedAt]);
 
   useEffect(() => {
     setStructureSession(paneId, structure.id, {
       focusId,
+      selectedEdgeId,
       depth,
       focusTrail,
       detailsOpen,
@@ -709,7 +701,17 @@ export function StructureViewer({
       surfaceSize: surfaceSizeRef.current,
       updatedAt: structure.updatedAt,
     });
-  }, [depth, detailsOpen, focusId, focusTrail, positions, paneId, structure.updatedAt, viewport]);
+  }, [
+    depth,
+    detailsOpen,
+    focusId,
+    focusTrail,
+    positions,
+    paneId,
+    selectedEdgeId,
+    structure.updatedAt,
+    viewport,
+  ]);
 
   useLayoutEffect(() => {
     if (
@@ -739,11 +741,22 @@ export function StructureViewer({
     [structure.nodes],
   );
   const focusedNode = focusId ? (nodesById.get(focusId) ?? null) : null;
+  const selectedEdge = selectedEdgeId
+    ? (structure.edges.find((edge) => edge.id === selectedEdgeId) ?? null)
+    : null;
+  const selectedEdgeNodeIds = useMemo(
+    () => new Set(selectedEdge ? [selectedEdge.from, selectedEdge.to] : []),
+    [selectedEdge],
+  );
   const incident = useMemo(
     () => (focusId ? incidentStructureEdges(structure, focusId) : []),
     [focusId, structure],
   );
   const routeOffsets = useMemo(() => structureEdgeRouteOffsets(structure.edges), [structure.edges]);
+  const reciprocalEdgeIds = useMemo(
+    () => reciprocalStructureEdgeIds(structure.edges),
+    [structure.edges],
+  );
   const sourceChangeKinds = useMemo(() => {
     const result = new Map<string, ChangeKind>();
     for (const change of changedFiles) {
@@ -795,10 +808,10 @@ export function StructureViewer({
         renderedNodes,
         positions,
         sourceChangeKinds,
-        sourceLabels,
         routeOffsets,
+        reciprocalEdgeIds,
       ),
-    [labeledEdges, positions, renderedNodes, routeOffsets, sourceChangeKinds, sourceLabels],
+    [labeledEdges, positions, reciprocalEdgeIds, renderedNodes, routeOffsets, sourceChangeKinds],
   );
   const displayBounds = useMemo(() => {
     const boxes: StructureBox[] = [];
@@ -811,7 +824,12 @@ export function StructureViewer({
       });
     }
     for (const edge of renderedEdges) {
-      const geometry = edgePath(edge, positions, routeOffsets.get(edge.id) ?? 0);
+      const geometry = edgePath(
+        edge,
+        positions,
+        routeOffsets.get(edge.id) ?? 0,
+        reciprocalEdgeIds.has(edge.id),
+      );
       if (geometry) boxes.push(geometry.bounds);
     }
     for (const placement of edgeLabelPlacements) {
@@ -820,7 +838,7 @@ export function StructureViewer({
       );
     }
     return mergedBounds(boxes);
-  }, [edgeLabelPlacements, nodeBounds, positions, renderedEdges, routeOffsets]);
+  }, [edgeLabelPlacements, nodeBounds, positions, reciprocalEdgeIds, renderedEdges, routeOffsets]);
   const worldWidth = Math.max(1_200, (displayBounds?.right ?? 1_000) + 180);
   const worldHeight = Math.max(800, (displayBounds?.bottom ?? 600) + 180);
 
@@ -830,7 +848,7 @@ export function StructureViewer({
     const scale = Math.min(
       1.25,
       Math.max(
-        0.18,
+        0.08,
         Math.min(
           (surfaceSize.width - padding * 2) / Math.max(1, displayBounds.right - displayBounds.left),
           (surfaceSize.height - padding * 2) /
@@ -875,6 +893,7 @@ export function StructureViewer({
   };
 
   const focusNode = (nodeId: string, recenter = false): void => {
+    setSelectedEdgeId(null);
     if (!focusId && depth === "all") setDepth(1);
     setFocusId(nodeId);
     setFocusTrail((current) =>
@@ -884,6 +903,7 @@ export function StructureViewer({
   };
 
   const clearFocus = (): void => {
+    setSelectedEdgeId(null);
     setFocusId(null);
     setDepth("all");
   };
@@ -1034,6 +1054,7 @@ export function StructureViewer({
       data-rendered-node-count={renderedNodes.length}
       data-rendered-edge-count={renderedEdges.length}
       data-viewport-scale={viewport.scale.toFixed(3)}
+      data-selected-edge-id={selectedEdgeId ?? undefined}
     >
       <header className="structure-header">
         <div>
@@ -1125,9 +1146,10 @@ export function StructureViewer({
             className="structure-canvas"
             tabIndex={0}
             onKeyDown={(event) => {
-              if (event.key !== "Escape" || !focusId) return;
+              if (event.key !== "Escape" || (!selectedEdgeId && !focusId)) return;
               event.preventDefault();
-              clearFocus();
+              if (selectedEdgeId) setSelectedEdgeId(null);
+              else clearFocus();
             }}
             onWheel={handleWheel}
             onPointerDown={(event) => {
@@ -1179,13 +1201,20 @@ export function StructureViewer({
                   </marker>
                 </defs>
                 {renderedEdges.map((edge) => {
-                  const route = edgePath(edge, positions, routeOffsets.get(edge.id) ?? 0);
+                  const route = edgePath(
+                    edge,
+                    positions,
+                    routeOffsets.get(edge.id) ?? 0,
+                    reciprocalEdgeIds.has(edge.id),
+                  );
                   if (!route) return null;
                   const focused = edge.from === focusId || edge.to === focusId;
+                  const selected = edge.id === selectedEdgeId;
+                  const muted = selectedEdgeId !== null && !selected;
                   return (
                     <path
                       key={edge.id}
-                      className={`structure-edge${focused ? " focused" : ""}`}
+                      className={`structure-edge${focused ? " focused" : ""}${selected ? " selected" : ""}${muted ? " muted" : ""}`}
                       data-edge-id={edge.id}
                       data-start-x={route.startX}
                       data-start-y={route.startY}
@@ -1198,12 +1227,18 @@ export function StructureViewer({
                 })}
               </svg>
               {edgeLabelPlacements.map(({ edge, source, x, y, selectWidth, height, crowded }) => {
-                const anchor = source.anchor;
                 const changeKind = source.changeKind;
+                const fromNode = nodesById.get(edge.from);
+                const toNode = nodesById.get(edge.to);
+                const relationLabel = edge.directed
+                  ? `${fromNode?.label ?? edge.from} から ${toNode?.label ?? edge.to} へ: ${edge.label}`
+                  : `${fromNode?.label ?? edge.from} と ${toNode?.label ?? edge.to} の関係: ${edge.label}`;
+                const selected = edge.id === selectedEdgeId;
+                const muted = selectedEdgeId !== null && !selected;
                 return (
                   <div
                     key={`label:${edge.id}`}
-                    className={`structure-edge-label${crowded ? " crowded" : ""}`}
+                    className={`structure-edge-label${crowded ? " crowded" : ""}${muted ? " muted" : ""}`}
                     data-edge-id={edge.id}
                     data-source-anchor-count={source.anchorCount}
                     data-source-change-kind={changeKind ?? undefined}
@@ -1211,25 +1246,18 @@ export function StructureViewer({
                   >
                     <button
                       type="button"
-                      className="structure-edge-select"
+                      className={`structure-edge-select${selected ? " selected" : ""}`}
                       title={edge.label}
+                      aria-label={relationLabel}
+                      aria-pressed={selected}
                       style={{ width: selectWidth }}
                       onClick={() => {
-                        const nextId = edge.from === focusId ? edge.to : edge.from;
-                        focusNode(nextId);
+                        setSelectedEdgeId(edge.id);
+                        setDetailsOpen(true);
                       }}
                     >
-                      {anchor && <EdgeSourceIdentity presentation={source} />}
                       <span className="structure-edge-label-text">{edge.label}</span>
                     </button>
-                    {anchor && (
-                      <SourceButton
-                        compact
-                        anchor={anchor}
-                        relatedAnchorCount={source.additionalAnchorCount}
-                        onOpen={(right) => void openAnchor(anchor, right)}
-                      />
-                    )}
                   </div>
                 );
               })}
@@ -1246,7 +1274,7 @@ export function StructureViewer({
                 return (
                   <div
                     key={node.id}
-                    className={`structure-node${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}`}
+                    className={`structure-node${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
                     data-node-id={node.id}
                     data-source-change-kind={changeKind ?? undefined}
                     style={{ left: point.x, top: point.y }}
@@ -1272,14 +1300,14 @@ export function StructureViewer({
                       }}
                     >
                       {node.kind && <span className="structure-kind">{node.kind}</span>}
+                      {node.anchor && (
+                        <SourceIdentity
+                          anchor={node.anchor}
+                          changeKind={changeKind}
+                          sourceLabel={sourceLabels.get(node.anchor.path) ?? node.anchor.path}
+                        />
+                      )}
                       <strong className="structure-node-title">
-                        {node.anchor && (
-                          <SourceIdentity
-                            anchor={node.anchor}
-                            changeKind={changeKind}
-                            sourceLabel={sourceLabels.get(node.anchor.path) ?? node.anchor.path}
-                          />
-                        )}
                         <span className="structure-node-title-text">
                           <BreakableStructureLabel label={node.label} />
                         </span>
@@ -1321,7 +1349,45 @@ export function StructureViewer({
             className="structure-details"
             aria-label="Structure details"
           >
-            {focusedNode ? (
+            {selectedEdge ? (
+              <>
+                <span className="structure-details-label">Selected Relation</span>
+                <h3>{selectedEdge.label}</h3>
+                <div className="structure-selected-relation" aria-label="Relation endpoints">
+                  <button type="button" onClick={() => focusNode(selectedEdge.from, true)}>
+                    {nodesById.get(selectedEdge.from)?.label ?? selectedEdge.from}
+                  </button>
+                  <span aria-hidden="true">{selectedEdge.directed ? "→" : "—"}</span>
+                  <button type="button" onClick={() => focusNode(selectedEdge.to, true)}>
+                    {nodesById.get(selectedEdge.to)?.label ?? selectedEdge.to}
+                  </button>
+                </div>
+                <div className="structure-relations-heading">
+                  <strong>Source evidence</strong>
+                  <span>{selectedEdge.anchors.length}</span>
+                </div>
+                {selectedEdge.anchors.length > 0 ? (
+                  <div className="structure-relation-sources">
+                    {selectedEdge.anchors.map((anchor, index) => (
+                      <SourceButton
+                        key={`${selectedEdge.id}:${index}`}
+                        anchor={anchor}
+                        onOpen={(right) => void openAnchor(anchor, right)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <span className="structure-unanchored">source anchorなし</span>
+                )}
+                <button
+                  type="button"
+                  className="structure-clear-relation"
+                  onClick={() => setSelectedEdgeId(null)}
+                >
+                  Relation選択を解除
+                </button>
+              </>
+            ) : focusedNode ? (
               <>
                 <span className="structure-details-label">Focused Node</span>
                 <h3>{focusedNode.label}</h3>

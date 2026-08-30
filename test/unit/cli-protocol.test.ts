@@ -819,7 +819,13 @@ describe("CLI protocol discovery", () => {
       title: "Authorization boundary",
       scope: "Relationships around authorization.",
       initialFocus: "entry",
-      nodes: [{ id: "entry", label: "Entry" }],
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+      ],
       edges: [],
     };
     const publishStructure = vi.fn().mockResolvedValue({ ref: uri, ...input });
@@ -849,7 +855,7 @@ describe("CLI protocol discovery", () => {
     expect(publishStructure).toHaveBeenCalledWith(
       expect.objectContaining({
         ...input,
-        nodes: [expect.objectContaining({ description: null, kind: null, anchor: null })],
+        nodes: [expect.objectContaining({ description: null, kind: null })],
       }),
     );
     expect(readPublish()).toMatchObject({ ok: true, structure: { ref: uri } });
@@ -889,7 +895,13 @@ describe("CLI protocol discovery", () => {
       title: "Updated boundary",
       scope: "The same declared subject.",
       initialFocus: "entry",
-      nodes: [{ id: "entry", label: "Updated entry" }],
+      nodes: [
+        {
+          id: "entry",
+          label: "Updated entry",
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+      ],
       edges: [],
     };
     const updateStructure = vi.fn().mockResolvedValue({ ref: uri, ...input });

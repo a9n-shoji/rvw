@@ -86,6 +86,7 @@ Commit range
 Pull Request.md
 Code
 Walkthrough
+Structure
 Comment
 Unresolved / Resolved
 ```
@@ -97,7 +98,8 @@ Git ref、full source OID、comment target、SQLite IDは必要なprotocol以外
 生じた質問、修正要求、確認結果をsoftwareの具体的な位置へ結び、Agentとの次の協業単位になる。
 WalkthroughはAgentが説明として提示する読み物であり、事実の正本ではない。人間はinline referenceや
 diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分で照合する。同じ参照を横や下へ
-列挙するindexは表示しない。
+列挙するindexは表示しない。Structureはboundedなsubjectの関係を任意方向へ探索するspaceであり、
+claimを選択してsource evidenceと照合する。
 
 ### 3.1 Commit選択
 
@@ -608,9 +610,11 @@ type Structure = {
   commit済みcodeとtestで未指定部分だけを補う。
 - Node / Edge IDは`^[A-Za-z][A-Za-z0-9_-]{0,63}$`を満たすlabelとは別のclaim identityであり、
   Structure内でuniqueとする。same-subject updateで
-  surviving claimのIDを維持し、削除したIDを別claimへ再利用しない。別subjectは新しいStructureにする。
+  surviving claimのIDを維持し、削除したIDを別claimへ再利用しない。削除済みNode / Edge IDは小さな
+  tombstoneとして保持し、current graphへ再導入するupdateを拒否する。別subjectは新しいStructureにする。
 - Nodeは0または1件、Edgeは0件以上かつ20件以下のanchorを持つ。全anchorは一つの`sourceOid`で検証し、
   repository-relative UTF-8 text pathと、両方nullまたは両方positiveなinclusive line pairだけを受け付ける。
+  Structure全体ではsource anchorを1件以上400件以下とする。
 - Node 1件以上50件以下、Edge 200件以下、payload 2 MiB以下とする。endpointと`initialFocus`は実在Nodeを
   指し、parallel Edgeはそれぞれstable IDを持つ。`directed`は必須booleanである。
 - Node descriptionとEdge labelはproducer claimであり、source anchorはそのclaimを検証する根拠である。
@@ -643,19 +647,22 @@ producerの新しい`initialFocus`へ移動せずfocusなしのAllへ戻す。�
 directed EdgeはNode外周より外で始点／終点を止め、arrowheadをNodeの下へ隠さない緩いBézier曲線で描く。
 parallel / reciprocal Edgeはstable IDでlaneを分ける。1-hop / 2-hopではfocused Nodeのincident Edge、Allまたは
 focusなしでは表示中の全Edge labelをNodeと既存labelを避けて配置し、
-source file identityをlabel左、独立したsource actionを右へ置く。Nodeもsource file identityをtitle左、source
-actionを右上へ分け、長いidentifierやlabelは省略せず固定card内で改行する。canvasはfocus名、可視／全体件数、
+Edge labelは実際のBézier曲線付近へ置く。Edge labelを選ぶと対応する線と両端Nodeを強調し、inspectorを開いて
+全source evidenceを表示する。canvas上はrelation labelを主役にしてsource file名とsource actionを載せない。
+Nodeはsource file identityをclaim titleと別の行に置き、source actionを右上へ分け、長いidentifierやlabelは
+省略せず固定card内で改行する。canvasはfocus名、可視／全体件数、
 zoom率とminimapを常時提示する。inspectorはgraph幅を優先して初期状態を閉じ、明示操作で開閉できる。
 
 1-hop / 2-hopはfocusがある時だけ選べる。focusなしはAllへ戻し、Allは全Nodeと全Edgeを表示する。relationを
 stable IDや件数で自動的に隠さない。bounded graphを超えるsubjectはproducerがscopeを分ける。inspectorは
-focused Nodeのclaim、全incident relation、全Edge anchorを表示する。選択commit範囲に対する変更file
+focused Nodeのclaimと全incident relation、または選択したRelationの両端と全source anchorを表示する。選択commit範囲に対する変更file
 presentationはbadge / borderだけへ反映し、source identityとlayoutへ影響させない。
 
 publish / update / deleteはpassiveでbrowserを開かずnavigationを変更しない。publishは一つのlogical operationに
 保持する`idempotencyKey`を必須とし、同じcanonical payloadの再送は元のstable URIを返す。別payloadへのkey再利用と
 削除済みresultの再生成は拒否する。`structure list`はPRごとのstable URIを含むsummaryを返す。viewerはpollで
-listとcurrent valueを更新し、stable IDでsession空間をreconcileする。削除は対象StructureとNode / Edge / anchor件数を確認
+listとcurrent valueを更新し、stable IDでsession空間をreconcileする。open viewerには更新を明示しながら
+閲覧状態を維持する。削除は対象StructureとNode / Edge / anchor件数を確認
 したhuman action、または同じpreviewを読んだAgentへの明示authorization後だけ実行する。retained commit refは
 共有され得るため個別deleteでは外さず、PR resetをcleanup boundaryとする。
 
@@ -1098,10 +1105,11 @@ publish inputは`idempotencyKey`、`pullRequest`、`sourceOid`、`title`、`scop
 削除済みresultを明示errorにする。`list`はPR selectorからstable `ref`を含むsummaryを返す。updateは
 `expectedUpdatedAt`と`pullRequest`を除く同じcurrent値の完全置換である。CLIとAgent socketは同じschemaと
 application validationを使用し、commit availability、PR ownership、UTF-8 document、line pair、ID、endpoint、
-focus、count、byte上限を検証する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
+focus、anchor総数、count、byte上限を検証する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
 `createdAt`と新しい`updatedAt`を返す。updateはcurrent `updatedAt`がexpected値と一致する時だけ保存し、不一致は
 409の`STRUCTURE_CONFLICT`を返す。どちらもretained commit refを確保してから一つのSQLite transactionで保存し、
-失敗時はref作成をrollbackする。過去graphは保存しない。
+失敗時はref作成をrollbackする。過去graphは保存しないが、削除済みNode / Edge IDのtombstoneは保持して
+stable identityの再利用を拒否する。
 
 `get`はcurrent Structureと対象PR identity、local repository pathを返す。`--yes`なしのdeleteは
 `STRUCTURE_DELETE_CONFIRMATION_REQUIRED`、current Structure、Node / Edge / anchor件数を返してexit 2とする。
@@ -1388,7 +1396,7 @@ pagination前に除外する。Open、Draft、および状態未取得のlegacy�
 github_state IS NULL`の保存済みPRだけを最大4件並列で取得する。対象がなければGitHub認証も行わない。
 成功したstatusは一つのSQLite transactionで反映し、部分失敗を結果へ含める。`attempted`、`updated`、
 `failures`は全登録件数ではなく、この同期対象についての件数と結果を表す。
-各行はPR identity、title、GitHubの作成／更新日時、未解決／解決済みcomment数、Walkthrough数だけを持つ
+各行はPR identity、title、GitHubの作成／更新日時、未解決／解決済みcomment数、Walkthrough数、Structure数だけを持つ
 SQLite専用read modelとする。Git commitを読む`getPullRequestView()`は呼ばず、先に一覧1ページを絞ってから
 その行だけのcountをaggregate queryで取得し、PRごとのN+1 queryを作らない。順序は
 `github_updated_at DESC`の後に永続IDを
@@ -1397,7 +1405,7 @@ tie-breakerとして固定する。
 ## 10. Viewer UX
 
 URLに`pullRequestId`がない場合はuser-global SQLiteへ登録済みのPull Request一覧をworkspace入口として表示する。
-一覧は`owner/repository`、PR番号、title、未解決／解決済みcomment数、Walkthrough数、GitHub上の作成／更新日時を
+一覧は`owner/repository`、PR番号、title、未解決／解決済みcomment数、Walkthrough数、Structure数、GitHub上の作成／更新日時を
 一行にまとめ、未解決comment数は`unresolved`と表示する。PR titleは省略せず、必要な高さまで複数行に
 折り返して全文を表示する。GitHub更新日時の新しい順であることを明示し、
 Closed / Mergedを非表示にするcheckboxは既定ONとする。状態未取得のlegacy行はbadgeなしで表示する。

@@ -55,6 +55,7 @@ completion check.
 Prepare one complete JSON value. `sourceOid` is the single coordinate for all node and edge anchors.
 Each node may have zero or one `anchor`; each edge may have zero or more `anchors`. For any anchor,
 provide both positive inclusive `startLine` and `endLine`, or omit both. Use repository-relative paths.
+The complete Structure must contain at least one source anchor and no more than 400 in total.
 
 Every `--stdin` command reads until EOF. Supply the entire object and close stdin in the same
 non-interactive invocation; do not start an interactive PTY and send only JSON plus a newline.
@@ -111,7 +112,8 @@ Publication is passive.
 
 Use an in-place update only when the requested subject identity remains the same. Preserve IDs for
 surviving nodes and edges even when their labels or anchors change, never recycle removed IDs for new
-claims, and send the complete replacement value:
+claims, and send the complete replacement value. rvw records retired IDs and rejects their
+reintroduction even when the current value no longer contains them:
 
 ```bash
 rvw structure update '<STRUCTURE_URI>' --stdin --json

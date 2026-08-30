@@ -1915,6 +1915,7 @@ describe("RvwService commit workflow", () => {
           anchor: { path: "src.txt", startLine: 1, endLine: 2 },
         },
         { id: "consumer", label: "Consumer", description: "   ", kind: " concept " },
+        { id: "obsolete", label: "Obsolete claim" },
       ],
       edges: [
         {
@@ -1941,6 +1942,7 @@ describe("RvwService commit workflow", () => {
       nodes: [
         { id: "source", anchor: { path: "src.txt", startLine: 1, endLine: 2 } },
         { id: "consumer", description: null, kind: "concept", anchor: null },
+        { id: "obsolete", anchor: null },
       ],
       edges: [{ id: "reads-source", anchors: [{ startLine: null, endLine: null }] }],
     });
@@ -1997,11 +1999,44 @@ describe("RvwService commit workflow", () => {
 
     await expect(
       service.updateStructure(structure.ref, {
+        expectedUpdatedAt: updated.updatedAt,
+        sourceOid: firstHead,
+        title: "Reused retired node",
+        scope: "A retired identity must never point at a new claim.",
+        initialFocus: "source",
+        nodes: [...updated.nodes, { id: "obsolete", label: "Different claim" }],
+        edges: updated.edges,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.updateStructure(structure.ref, {
+        expectedUpdatedAt: updated.updatedAt,
+        sourceOid: firstHead,
+        title: "Reused retired relation",
+        scope: "A retired relation identity must not be rebound.",
+        initialFocus: "source",
+        nodes: updated.nodes,
+        edges: [
+          ...updated.edges,
+          {
+            id: "reads-source",
+            from: "consumer",
+            to: "source",
+            label: "reads again",
+            directed: true,
+            anchors: [{ path: "src.txt" }],
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+    await expect(
+      service.updateStructure(structure.ref, {
         expectedUpdatedAt: structure.updatedAt,
         sourceOid: firstHead,
         title: "Stale replacement",
         scope: "This writer read the previous value.",
-        nodes: [{ id: "source", label: "Stale" }],
+        nodes: [{ id: "source", label: "Stale", anchor: { path: "src.txt" } }],
         edges: [],
       }),
     ).rejects.toMatchObject({

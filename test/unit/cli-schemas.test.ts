@@ -356,7 +356,13 @@ describe("CLI input schemas", () => {
       sourceOid: "b".repeat(40),
       title: "Boundary",
       scope: "One bounded code relationship.",
-      nodes: [{ id: "entry", label: "Entry" }],
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+      ],
       edges: [] as Array<{
         id: string;
         from: string;
@@ -421,6 +427,25 @@ describe("CLI input schemas", () => {
         scope: valid.scope,
         nodes: valid.nodes,
         edges: valid.edges,
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [{ id: "entry", label: "Entry", anchor: null }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        edges: Array.from({ length: 20 }, (_, index) => ({
+          id: `edge-${index}`,
+          from: "entry",
+          to: "entry",
+          label: `Relation ${index}`,
+          directed: false,
+          anchors: Array.from({ length: 20 }, () => ({ path: "src/entry.ts" })),
+        })),
       }).success,
     ).toBe(false);
   });

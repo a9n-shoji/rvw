@@ -124,21 +124,29 @@ function bidirectionalInitialLayout(
     groups.set(level, group);
   }
   for (const group of groups.values()) group.sort(stableCompare);
-  const minLevel = Math.min(0, ...groups.keys());
-  const maxLevel = Math.max(0, ...groups.keys());
-  const rowStride = STRUCTURE_NODE_HEIGHT + 84;
-  const rankStride = STRUCTURE_NODE_WIDTH + 172;
-  const maxRows = Math.max(1, ...[...groups.values()].map((group) => group.length));
+  const rowStride = STRUCTURE_NODE_HEIGHT + 72;
+  const perColumn = 5;
+  const columnStride = STRUCTURE_NODE_WIDTH + 52;
+  const rankGap = 120;
+  const maxRows = Math.max(
+    1,
+    ...[...groups.values()].map((group) => Math.min(perColumn, group.length)),
+  );
   const centerY = 64 + ((maxRows - 1) * rowStride) / 2;
   const positions: Record<string, StructurePoint> = {};
-  for (const [level, nodeIds] of groups) {
-    const top = centerY - ((nodeIds.length - 1) * rowStride) / 2;
+  let rankX = 64;
+  for (const [, nodeIds] of [...groups].sort(([left], [right]) => left - right)) {
+    const rows = Math.min(perColumn, nodeIds.length);
+    const top = centerY - ((rows - 1) * rowStride) / 2;
     nodeIds.forEach((nodeId, index) => {
+      const subcolumn = Math.floor(index / perColumn);
+      const row = index % perColumn;
       positions[nodeId] = {
-        x: 64 + (level - minLevel) * rankStride,
-        y: top + index * rowStride,
+        x: rankX + subcolumn * columnStride,
+        y: top + row * rowStride,
       };
     });
+    rankX += Math.max(1, Math.ceil(nodeIds.length / perColumn)) * columnStride + rankGap;
   }
 
   const unassigned = structure.nodes
@@ -146,9 +154,11 @@ function bidirectionalInitialLayout(
     .filter((nodeId) => positions[nodeId] === undefined)
     .sort(stableCompare);
   unassigned.forEach((nodeId, index) => {
+    const subcolumn = Math.floor(index / perColumn);
+    const row = index % perColumn;
     positions[nodeId] = {
-      x: 64 + (maxLevel - minLevel + 1) * rankStride,
-      y: centerY + index * rowStride,
+      x: rankX + subcolumn * columnStride,
+      y: centerY + row * rowStride,
     };
   });
   return positions;

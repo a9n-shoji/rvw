@@ -71,6 +71,7 @@ import {
   MAX_STRUCTURE_NODES,
   MAX_STRUCTURE_PAYLOAD_BYTES,
   MAX_STRUCTURE_SCOPE_CHARACTERS,
+  MAX_STRUCTURE_SOURCE_ANCHORS,
   MAX_STRUCTURE_TITLE_CHARACTERS,
   STRUCTURE_ID_PATTERN,
   MAX_WALKTHROUGH_BODY_BYTES,
@@ -1905,6 +1906,21 @@ export class RvwService {
     const initialFocus = input.initialFocus ?? null;
     if (initialFocus !== null && !nodeIds.has(initialFocus)) {
       throw new RvwError("INVALID_INPUT", `initialFocus Nodeが存在しません: ${initialFocus}`);
+    }
+    const anchorCount =
+      nodes.filter((node) => node.anchor !== null).length +
+      edges.reduce((count, edge) => count + edge.anchors.length, 0);
+    if (anchorCount < 1) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        "Structureにはsource anchorを少なくとも1件含めてください。",
+      );
+    }
+    if (anchorCount > MAX_STRUCTURE_SOURCE_ANCHORS) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `Structureのsource anchorは合計${MAX_STRUCTURE_SOURCE_ANCHORS}件以下にしてください。`,
+      );
     }
     const graph = { initialFocus, nodes, edges };
     if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {

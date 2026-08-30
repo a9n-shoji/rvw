@@ -965,6 +965,7 @@ app.get("/api/pull-requests", (context) => {
     unresolvedCommentCount: comments.filter((comment) => comment.resolvedAt === null).length,
     resolvedCommentCount: comments.filter((comment) => comment.resolvedAt !== null).length,
     walkthroughCount: activeWalkthroughs.length,
+    structureCount: activeStructures.length,
   };
   const paginatedItems = Array.from({ length: 50 }, (_, index) => ({
     pullRequestId: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
@@ -979,6 +980,7 @@ app.get("/api/pull-requests", (context) => {
     unresolvedCommentCount: 0,
     resolvedCommentCount: 0,
     walkthroughCount: 0,
+    structureCount: 0,
   }));
   const statusFixtureItems = repositoryDemo
     ? [
@@ -995,6 +997,7 @@ app.get("/api/pull-requests", (context) => {
           unresolvedCommentCount: 1,
           resolvedCommentCount: 0,
           walkthroughCount: 1,
+          structureCount: 1,
         },
         {
           pullRequestId,
@@ -1009,6 +1012,7 @@ app.get("/api/pull-requests", (context) => {
           unresolvedCommentCount: 2,
           resolvedCommentCount: 1,
           walkthroughCount: 1,
+          structureCount: 0,
         },
         {
           pullRequestId,
@@ -1023,6 +1027,7 @@ app.get("/api/pull-requests", (context) => {
           unresolvedCommentCount: 2,
           resolvedCommentCount: 3,
           walkthroughCount: 0,
+          structureCount: 0,
         },
         {
           pullRequestId,
@@ -1037,6 +1042,7 @@ app.get("/api/pull-requests", (context) => {
           unresolvedCommentCount: 0,
           resolvedCommentCount: 8,
           walkthroughCount: 2,
+          structureCount: 1,
         },
       ]
     : [
@@ -1057,6 +1063,7 @@ app.get("/api/pull-requests", (context) => {
           unresolvedCommentCount: 3,
           resolvedCommentCount: 5,
           walkthroughCount: 2,
+          structureCount: 1,
         },
       ];
   const allItems = pullRequestListEmpty

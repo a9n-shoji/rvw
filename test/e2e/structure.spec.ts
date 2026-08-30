@@ -59,6 +59,31 @@ async function expectFocusedNodeVisible(viewer: Locator): Promise<void> {
     .toBe(true);
 }
 
+async function dragVisibleStructureNode(page: Page, viewer: Locator, node: Locator): Promise<void> {
+  const [canvasBox, nodeBox] = await Promise.all([
+    viewer.locator(".structure-canvas").boundingBox(),
+    node.boundingBox(),
+  ]);
+  expect(canvasBox).not.toBeNull();
+  expect(nodeBox).not.toBeNull();
+  const visible = {
+    left: Math.max(canvasBox!.x, nodeBox!.x),
+    top: Math.max(canvasBox!.y, nodeBox!.y),
+    right: Math.min(canvasBox!.x + canvasBox!.width, nodeBox!.x + nodeBox!.width),
+    bottom: Math.min(canvasBox!.y + canvasBox!.height, nodeBox!.y + nodeBox!.height),
+  };
+  expect(visible.right - visible.left).toBeGreaterThan(12);
+  expect(visible.bottom - visible.top).toBeGreaterThan(12);
+  const startX = (visible.left + visible.right) / 2;
+  const startY = (visible.top + visible.bottom) / 2;
+  const endX = startX + 75 < canvasBox!.x + canvasBox!.width - 12 ? startX + 75 : startX - 75;
+  const endY = startY + 52 < canvasBox!.y + canvasBox!.height - 12 ? startY + 52 : startY - 52;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(endX, endY, { steps: 6 });
+  await page.mouse.up();
+}
+
 async function customizeStructureReading(
   page: Page,
   viewer: Locator,
@@ -68,12 +93,7 @@ async function customizeStructureReading(
     left: (element as HTMLElement).style.left,
     top: (element as HTMLElement).style.top,
   }));
-  const hubBox = await hub.boundingBox();
-  expect(hubBox).not.toBeNull();
-  await page.mouse.move(hubBox!.x + 30, hubBox!.y + 30);
-  await page.mouse.down();
-  await page.mouse.move(hubBox!.x + 105, hubBox!.y + 82, { steps: 6 });
-  await page.mouse.up();
+  await dragVisibleStructureNode(page, viewer, hub);
   await expect
     .poll(
       async () =>
@@ -287,8 +307,9 @@ test("explores source-exact Structures and preserves spatial context across navi
     .toBeLessThan(3);
   await page.setViewportSize({ width: 1280, height: 720 });
 
-  const hubTitle = viewer.locator('.structure-node[data-node-id="hub"] .structure-node-title');
-  const hubIdentity = hubTitle.locator(".structure-source-identity");
+  const hubNode = viewer.locator('.structure-node[data-node-id="hub"]');
+  const hubTitle = hubNode.locator(".structure-node-title");
+  const hubIdentity = hubNode.locator(".structure-source-identity");
   const hubTitleText = hubTitle.locator(".structure-node-title-text");
   const hubSourceAction = viewer.locator(
     '.structure-node[data-node-id="hub"] > .structure-source.compact',
@@ -306,7 +327,8 @@ test("explores source-exact Structures and preserves spatial context across navi
   expect(identityBox).not.toBeNull();
   expect(titleTextBox).not.toBeNull();
   expect(sourceActionBox).not.toBeNull();
-  expect(identityBox!.x).toBeLessThan(titleTextBox!.x);
+  expect(identityBox!.y + identityBox!.height).toBeLessThanOrEqual(titleTextBox!.y + 1);
+  expect(titleTextBox!.width).toBeGreaterThan(150);
   expect(sourceActionBox!.x).toBeGreaterThan(titleTextBox!.x);
 
   const firstEdge = viewer.locator('.structure-edge[data-edge-id="controller-executes-handler"]');
@@ -335,25 +357,11 @@ test("explores source-exact Structures and preserves spatial context across navi
     '.structure-edge-label[data-edge-id="controller-executes-handler"]',
   );
   await expect(firstEdgeLabel).toHaveAttribute("data-source-anchor-count", "2");
-  await expect(firstEdgeLabel.locator(".structure-source-identity")).toHaveAttribute(
-    "data-source-path",
-    "src/http/controllers/create-order.ts",
+  await expect(firstEdgeLabel.locator(".structure-source-identity")).toHaveCount(0);
+  await expect(firstEdgeLabel.locator(".structure-source")).toHaveCount(0);
+  await expect(firstEdgeLabel.getByRole("button")).toHaveAccessibleName(
+    "Create order controller から Create order へ: HTTP commandとして実行する",
   );
-  await expect(firstEdgeLabel.locator(".structure-source-name")).toHaveText(
-    "controllers/create-order.ts",
-  );
-  await expect(firstEdgeLabel.locator(".structure-source-count")).toHaveText("+1");
-  await expect(firstEdgeLabel.locator(".structure-source.compact")).toHaveAttribute(
-    "aria-label",
-    "src/http/controllers/create-order.ts:10-16を開く（ほか1件は詳細サイドバー）",
-  );
-  const [edgeIdentityBox, edgeTextBox] = await Promise.all([
-    firstEdgeLabel.locator(".structure-source-identity").boundingBox(),
-    firstEdgeLabel.locator(".structure-edge-label-text").boundingBox(),
-  ]);
-  expect(edgeIdentityBox).not.toBeNull();
-  expect(edgeTextBox).not.toBeNull();
-  expect(edgeTextBox!.x - (edgeIdentityBox!.x + edgeIdentityBox!.width)).toBeLessThanOrEqual(4);
 
   const graphCollisions = await viewer.evaluate((element) => {
     const boxes = (selector: string) =>
@@ -383,13 +391,48 @@ test("explores source-exact Structures and preserves spatial context across navi
       allEdgesAreCurved: [...element.querySelectorAll<SVGPathElement>(".structure-edge")].every(
         (path) => path.getAttribute("d")?.includes(" C "),
       ),
+      maxLabelDistance: Math.max(
+        ...labels.map((label) => {
+          const path = element.querySelector<SVGPathElement>(
+            `.structure-edge[data-edge-id="${label.id}"]`,
+          )!;
+          const x = Number.parseFloat(
+            element.querySelector<HTMLElement>(`.structure-edge-label[data-edge-id="${label.id}"]`)!
+              .style.left,
+          );
+          const y = Number.parseFloat(
+            element.querySelector<HTMLElement>(`.structure-edge-label[data-edge-id="${label.id}"]`)!
+              .style.top,
+          );
+          const length = path.getTotalLength();
+          return Math.min(
+            ...Array.from({ length: 81 }, (_, index) => {
+              const point = path.getPointAtLength((length * index) / 80);
+              return Math.hypot(point.x - x, point.y - y);
+            }),
+          );
+        }),
+      ),
     };
   });
-  expect(graphCollisions).toEqual({
-    labelNodes: [],
-    labelPairs: [],
-    allEdgesAreCurved: true,
-  });
+  expect(graphCollisions.labelNodes).toEqual([]);
+  expect(graphCollisions.labelPairs).toEqual([]);
+  expect(graphCollisions.allEdgesAreCurved).toBe(true);
+  expect(graphCollisions.maxLabelDistance).toBeLessThanOrEqual(49);
+
+  await firstEdgeLabel.getByRole("button").click();
+  await expect(firstEdge).toHaveClass(/selected/);
+  await expect(viewer.locator(".structure-edge.muted")).not.toHaveCount(0);
+  await expect(viewer.locator(".structure-edge-label.muted")).not.toHaveCount(0);
+  await expect(firstEdgeLabel.getByRole("button")).toHaveAttribute("aria-pressed", "true");
+  await expect(viewer.locator('.structure-node[data-node-id="http-controller"]')).toHaveClass(
+    /edge-endpoint/,
+  );
+  await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/edge-endpoint/);
+  await expect(viewer.getByRole("heading", { name: "HTTP commandとして実行する" })).toBeVisible();
+  await expect(viewer.locator(".structure-relation-sources .structure-source")).toHaveCount(2);
+  await viewer.getByRole("button", { name: "Relation選択を解除" }).click();
+  await viewer.getByRole("button", { name: "詳細サイドバーを隠す" }).click();
 
   await viewer.getByRole("button", { name: "詳細サイドバーを表示" }).click();
   await expect(viewer.locator(".structure-relation-list > li")).toHaveCount(11);
@@ -455,12 +498,7 @@ test("explores source-exact Structures and preserves spatial context across navi
     left: (element as HTMLElement).style.left,
     top: (element as HTMLElement).style.top,
   }));
-  const hubBox = await hub.boundingBox();
-  expect(hubBox).not.toBeNull();
-  await page.mouse.move(hubBox!.x + 30, hubBox!.y + 30);
-  await page.mouse.down();
-  await page.mouse.move(hubBox!.x + 110, hubBox!.y + 90, { steps: 6 });
-  await page.mouse.up();
+  await dragVisibleStructureNode(page, viewer, hub);
   let dragged = await hub.evaluate((element) => ({
     left: (element as HTMLElement).style.left,
     top: (element as HTMLElement).style.top,
@@ -476,12 +514,7 @@ test("explores source-exact Structures and preserves spatial context across navi
         })),
     )
     .toEqual(beforeDrag);
-  const resetHubBox = await hub.boundingBox();
-  expect(resetHubBox).not.toBeNull();
-  await page.mouse.move(resetHubBox!.x + 30, resetHubBox!.y + 30);
-  await page.mouse.down();
-  await page.mouse.move(resetHubBox!.x + 110, resetHubBox!.y + 90, { steps: 6 });
-  await page.mouse.up();
+  await dragVisibleStructureNode(page, viewer, hub);
   dragged = await hub.evaluate((element) => ({
     left: (element as HTMLElement).style.left,
     top: (element as HTMLElement).style.top,
@@ -582,6 +615,8 @@ test("explores source-exact Structures and preserves spatial context across navi
   await expect(rightViewer.locator('.structure-node[data-node-id="hub"]')).toContainText(
     "Create order updated",
   );
+  await expect(leftViewer.getByRole("status")).toContainText("Structureが更新されました");
+  await expect(rightViewer.getByRole("status")).toContainText("Structureが更新されました");
   await expect(
     leftViewer.locator('.structure-node[data-node-id="payment-reconciliation"]'),
   ).toHaveCount(0);

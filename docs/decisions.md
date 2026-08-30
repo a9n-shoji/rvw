@@ -60,6 +60,7 @@ framework or a Walkthrough rendering mode. A Structure declares a title, bounded
 `sourceOid`, optional initial focus, stable-ID nodes, and stable-ID edges. Nodes carry zero or one
 source anchor; edges carry zero or more. Every anchor is a repository-relative UTF-8 path with either
 both inclusive line bounds or neither, and every anchor is validated at the one exact source commit.
+At least one and at most 400 anchors must exist across the graph.
 The graph is a producer claim about a code-centered subject; Git remains the evidence and history
 source of truth.
 
@@ -76,6 +77,8 @@ Structure revision history or user-facing version selector. `structure list` exp
 for recovery after an uncertain publish response. These commands never navigate the viewer. A different
 subject is a new Structure; an update is allowed only for the same subject and must preserve IDs for
 surviving claims.
+Retain only removed Node and Edge IDs in small tombstone tables so a later whole-value update cannot
+reuse a stable identity for another claim. This does not retain prior graph values or expose history.
 
 Render Structure as a first-class document tab beside Walkthrough and code. The production layout is a
 content-neutral, deterministic topology-and-stable-ID layout with direct node drag, pan, zoom, fit, and
@@ -87,8 +90,9 @@ neighbors. No coordinates enter SQLite or the Agent protocol. The deterministic 
 after manual drag.
 
 Keep the spike's reading aids that do not expand the artifact contract: curved perimeter-to-perimeter
-edges with visible arrowheads, stable lanes for parallel and reciprocal relations, collision-aware edge
-labels, separate source identity and source action placement, non-ellipsized identifiers, a minimap,
+edges with visible arrowheads, stable lanes for parallel and reciprocal relations, curve-adjacent edge
+labels, relation selection that highlights the corresponding line and endpoints, separate Node source
+identity and source action placement, non-ellipsized identifiers, a minimap,
 visible focus/count/zoom state, and a collapsible inspector that starts closed. These are renderer
 behavior over the production Node, Edge, source anchor, and change-file data; none become producer hints
 or persisted graph semantics.

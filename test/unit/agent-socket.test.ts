@@ -174,7 +174,13 @@ describe("Agent socket", () => {
       title: "Authorization boundary",
       scope: "Relationships around authorization.",
       initialFocus: "entry",
-      nodes: [{ id: "entry", label: "Entry" }],
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+      ],
       edges: [],
     };
     await expect(
@@ -189,7 +195,7 @@ describe("Agent socket", () => {
     expect(publishStructure).toHaveBeenCalledWith(
       expect.objectContaining({
         ...input,
-        nodes: [expect.objectContaining({ description: null, kind: null, anchor: null })],
+        nodes: [expect.objectContaining({ description: null, kind: null })],
       }),
     );
   });
