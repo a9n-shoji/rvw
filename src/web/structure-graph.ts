@@ -117,16 +117,46 @@ export function visibleStructureGraph(
   depth: StructureNeighborhoodDepth,
   expanded: boolean,
 ): VisibleStructureGraph {
-  const nodeIds = structureNeighborhood(structure, focusedNodeId, depth);
+  const neighborhood = structureNeighborhood(structure, focusedNodeId, depth);
   const collapse = collapsedStructureRelations(structure, focusedNodeId, expanded);
   const edgeIds = new Set(
     structure.edges
       .filter(
         (edge) =>
-          nodeIds.has(edge.from) && nodeIds.has(edge.to) && !collapse.hiddenEdgeIds.has(edge.id),
+          neighborhood.has(edge.from) &&
+          neighborhood.has(edge.to) &&
+          !collapse.hiddenEdgeIds.has(edge.id),
       )
       .map((edge) => edge.id),
   );
+  if (depth === "all" || !focusedNodeId) {
+    return {
+      nodeIds: neighborhood,
+      edgeIds,
+      hiddenRelationCount: collapse.hiddenEdgeIds.size,
+      relationsCollapsed: collapse.collapsed,
+    };
+  }
+
+  // A collapsed relation must not leave an apparently unrelated Node floating in
+  // the local view. Keep Nodes that remain reachable through visible relations;
+  // Nodes connected by another visible path are intentionally retained.
+  const visibleAdjacency = new Map([...neighborhood].map((nodeId) => [nodeId, [] as string[]]));
+  for (const edge of structure.edges) {
+    if (!edgeIds.has(edge.id)) continue;
+    visibleAdjacency.get(edge.from)?.push(edge.to);
+    if (edge.from !== edge.to) visibleAdjacency.get(edge.to)?.push(edge.from);
+  }
+  const nodeIds = new Set([focusedNodeId]);
+  const queue = [focusedNodeId];
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index]!;
+    for (const neighbor of visibleAdjacency.get(current) ?? []) {
+      if (nodeIds.has(neighbor)) continue;
+      nodeIds.add(neighbor);
+      queue.push(neighbor);
+    }
+  }
   return {
     nodeIds,
     edgeIds,
@@ -144,12 +174,76 @@ function stableHash(value: string): number {
   return hash >>> 0;
 }
 
+function bidirectionalInitialLayout(
+  structure: Structure,
+  focusId: string,
+): Record<string, StructurePoint> {
+  const levels = new Map([[focusId, 0]]);
+  const queue = [focusId];
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index]!;
+    const currentLevel = levels.get(current) ?? 0;
+    for (const edge of [...structure.edges].sort((left, right) =>
+      stableCompare(left.id, right.id),
+    )) {
+      const neighbor = edge.from === current ? edge.to : edge.to === current ? edge.from : null;
+      if (!neighbor || levels.has(neighbor)) continue;
+      levels.set(neighbor, currentLevel + (edge.from === current ? 1 : -1));
+      queue.push(neighbor);
+    }
+  }
+
+  const groups = new Map<number, string[]>();
+  for (const [nodeId, level] of levels) {
+    const group = groups.get(level) ?? [];
+    group.push(nodeId);
+    groups.set(level, group);
+  }
+  for (const group of groups.values()) group.sort(stableCompare);
+  const minLevel = Math.min(0, ...groups.keys());
+  const maxLevel = Math.max(0, ...groups.keys());
+  const rowStride = STRUCTURE_NODE_HEIGHT + 84;
+  const rankStride = STRUCTURE_NODE_WIDTH + 172;
+  const maxRows = Math.max(1, ...[...groups.values()].map((group) => group.length));
+  const centerY = 64 + ((maxRows - 1) * rowStride) / 2;
+  const positions: Record<string, StructurePoint> = {};
+  for (const [level, nodeIds] of groups) {
+    const top = centerY - ((nodeIds.length - 1) * rowStride) / 2;
+    nodeIds.forEach((nodeId, index) => {
+      positions[nodeId] = {
+        x: 64 + (level - minLevel) * rankStride,
+        y: top + index * rowStride,
+      };
+    });
+  }
+
+  const unassigned = structure.nodes
+    .map((node) => node.id)
+    .filter((nodeId) => positions[nodeId] === undefined)
+    .sort(stableCompare);
+  unassigned.forEach((nodeId, index) => {
+    positions[nodeId] = {
+      x: 64 + (maxLevel - minLevel + 1) * rankStride,
+      y: centerY + index * rowStride,
+    };
+  });
+  return positions;
+}
+
 /**
- * Content-neutral viewer layout. IDs and topology are the only inputs; labels,
- * kinds, descriptions, paths, and relation semantics never influence position.
+ * Content-neutral viewer layout. IDs and directed topology are the only inputs;
+ * labels, kinds, descriptions, paths, and relation semantics never influence
+ * position. A declared initial focus forms the center rank, so incoming and
+ * outgoing relations remain visually distinguishable without layout metadata.
  */
 export function initialStructureLayout(structure: Structure): Record<string, StructurePoint> {
   if (structure.nodes.length === 0) return {};
+  if (
+    structure.initialFocus &&
+    structure.nodes.some((node) => node.id === structure.initialFocus)
+  ) {
+    return bidirectionalInitialLayout(structure, structure.initialFocus);
+  }
   const graph = adjacency(structure);
   const ids = structure.nodes.map((node) => node.id).sort(stableCompare);
   const roots = [

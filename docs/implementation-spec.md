@@ -627,10 +627,18 @@ actionを選んだ時だけ、Structureのexact `sourceOid`とanchorで左ペイ
 
 探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。layoutはtopologyと
 stable IDだけを入力とするcontent-neutralなdeterministic配置で、label、kind、description、path、変更種別、
-relation semanticsを位置決定へ使わない。Node位置、focus、depth、relation展開、viewportはbrowser session
+relation semanticsを位置決定へ使わない。`initialFocus`がある場合はdirected topology上のincomingを左、
+outgoingを右へ置いてfocusを中央にするが、producer指定のlayout hintや座標は受け取らない。Node位置、focus、
+depth、relation展開、viewportはbrowser session
 内だけで同じStructure IDへ保持し、tab往復とcurrent-value更新後もsurviving IDの位置を保つ。新規Nodeは
 retained neighbor付近へ置く。reload、別browser、CLI、SQLiteへ座標を持ち越さない。100件を超える可視Nodeは
 viewport外をoverscan付きでcullするが、artifactやinspectorから削除しない。
+
+directed EdgeはNode外周より外で始点／終点を止め、arrowheadをNodeの下へ隠さない緩いBézier曲線で描く。
+parallel / reciprocal Edgeはstable IDでlaneを分ける。focused NodeのEdge labelはNodeと既存labelを避けて配置し、
+source file identityをlabel左、独立したsource actionを右へ置く。Nodeもsource file identityをtitle左、source
+actionを右上へ分け、長いidentifierやlabelは省略せず固定card内で改行する。canvasはfocus名、可視／全体件数、
+zoom率とminimapを常時提示する。inspectorはgraph幅を優先して初期状態を閉じ、明示操作で開閉できる。
 
 focused Nodeのincident relationが12件を超える場合、incoming / outgoing / undirected-or-selfごとにstable
 Edge ID lexical orderの先頭4件までをgraph上へ表示する。非表示件数と展開actionを明示し、展開／再折りたたみを

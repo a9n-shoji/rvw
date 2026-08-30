@@ -38,29 +38,44 @@ const activeWalkthroughs = repositoryDemo
   : walkthroughs;
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
+const primaryStructureClaims = [
+  ["HTTP route adapter", "HTTP requestをuse caseへ変換する", "adapter"],
+  ["Agent operation dispatcher", "operationをapplication methodへdispatchする", "adapter"],
+  ["Runtime.service facade", "実行contextからuse caseを呼び出す", "facade"],
+  ["Application composition root", "具象dependencyを注入して生成する", "composition"],
+  ["Structure update poller", "current valueの更新を検出する", "observer"],
+  ["StructureRepository port", "constructorで永続化dependencyを要求する", "port"],
+  ["GitObjectReader port", "exact sourceをcommitから読み取る", "port"],
+  ["GitHubGateway port", "GitHub操作の境界だけを要求する", "port"],
+  ["StructureInput / StructureOutput", "use caseの入出力型としてimportする", "contract"],
+  ["SourceAnchorValidator", "exact source anchorの範囲を検証する", "policy"],
+  ["RetainedCommitResolver", "retained commit refを管理する", "policy"],
+  ["SqliteStructureRepository", "Structure current valueを永続化する", "adapter"],
+  ["ApplicationPolicyError", "application policy errorを共有する", "error"],
+];
 const primaryStructureNodes = [
   {
     id: "hub",
-    label: "Fixture boundary",
-    description: "The code-centered subject shared by its direct contracts and consumers.",
-    kind: "boundary",
+    label: "UpdateStructureUseCase.execute",
+    description: "Structureのcurrent valueをexact source commitへ同期するapplication boundary。",
+    kind: "use-case",
     anchor: { path: "src/fixture.ts", startLine: 1, endLine: 3 },
   },
-  ...Array.from({ length: 13 }, (_, index) => {
+  ...primaryStructureClaims.map(([label, description, kind], index) => {
     const sequence = String(index + 1).padStart(2, "0");
     return {
       id: `leaf-${sequence}`,
-      label: `Direct relation ${sequence}`,
-      description: `A distinct claim related directly to the fixture boundary (${sequence}).`,
-      kind: index % 2 === 0 ? "contract" : "consumer",
+      label,
+      description,
+      kind,
       anchor: index === 0 ? { path: "README.md", startLine: 13, endLine: 19 } : null,
     };
   }),
   {
     id: "deep-node",
-    label: "Second-hop detail",
-    description: "A claim reachable only after expanding the first direct relation.",
-    kind: "detail",
+    label: "parseUpdateStructureRequest",
+    description: "transport固有のpayloadをapplication inputへ変換する。",
+    kind: "parser",
     anchor: { path: "src/fixture.ts", startLine: 5, endLine: 8 },
   },
 ];
@@ -69,9 +84,9 @@ const primaryStructureEdges = [
     const sequence = String(index + 1).padStart(2, "0");
     return {
       id: `edge-${sequence}`,
-      from: "hub",
-      to: `leaf-${sequence}`,
-      label: index % 2 === 0 ? "validates with" : "provides to",
+      from: index < 5 ? `leaf-${sequence}` : "hub",
+      to: index < 5 ? "hub" : `leaf-${sequence}`,
+      label: primaryStructureClaims[index][1],
       directed: true,
       anchors: index === 0 ? [{ path: "src/fixture.ts", startLine: 1, endLine: 3 }] : [],
     };
@@ -80,7 +95,7 @@ const primaryStructureEdges = [
     id: "edge-deep",
     from: "leaf-01",
     to: "deep-node",
-    label: "explains",
+    label: "transport payloadを変換する",
     directed: true,
     anchors: [{ path: "README.md", startLine: 13, endLine: 19 }],
   },
@@ -1137,13 +1152,15 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
     ...structure.nodes
       .filter((node) => node.id !== "leaf-13" && node.id !== "new-neighbor")
       .map((node) =>
-        node.id === "hub" ? { ...node, label: input.hubLabel ?? "Fixture boundary updated" } : node,
+        node.id === "hub"
+          ? { ...node, label: input.hubLabel ?? "UpdateStructureUseCase.execute updated" }
+          : node,
       ),
     {
       id: "new-neighbor",
-      label: "New direct relation",
-      description: "A new claim introduced by whole-value replacement.",
-      kind: "consumer",
+      label: "StructureEventPublisher",
+      description: "whole-value replacement後の更新eventをpublishする。",
+      kind: "port",
       anchor: { path: "src/fixture.ts", startLine: 10, endLine: 13 },
     },
   ];
@@ -1153,7 +1170,7 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
       id: "edge-new",
       from: "hub",
       to: "new-neighbor",
-      label: "provides to",
+      label: "更新完了eventをpublishする",
       directed: true,
       anchors: [{ path: "src/fixture.ts", startLine: 10, endLine: 13 }],
     },

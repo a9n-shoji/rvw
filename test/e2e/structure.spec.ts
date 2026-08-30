@@ -37,32 +37,141 @@ test("explores source-exact Structures and preserves spatial context across navi
   );
   const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
   await expect(viewer.getByRole("heading", { name: primaryTitle })).toBeVisible();
-  await expect(viewer.getByText("14 / 15 Nodes", { exact: true })).toBeVisible();
+  await expect(viewer.getByText("9/15 Node · 8/14 Relation", { exact: true })).toBeVisible();
   await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/);
-  await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(
-    /change-modified/,
+  await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveAttribute(
+    "data-source-change-kind",
+    "modified",
   );
-  await expect(viewer.locator(".structure-edge")).toHaveCount(4);
-  await expect(viewer.getByRole("button", { name: "9件のrelationを表示" })).toBeVisible();
-  await expect(viewer.locator(".structure-relation-list > li.collapsed")).toHaveCount(9);
+  await expect(viewer.locator(".structure-edge")).toHaveCount(8);
+  await expect(viewer.locator(".structure-minimap")).toBeVisible();
+  await expect(viewer.locator(".structure-details")).toHaveCount(0);
 
-  await viewer.locator('.structure-node[data-node-id="leaf-01"] .structure-node-focus').click();
+  const canvas = viewer.locator(".structure-canvas");
+  await expect
+    .poll(async () => {
+      const [canvasBox, hubBox] = await Promise.all([
+        canvas.boundingBox(),
+        viewer.locator('.structure-node[data-node-id="hub"]').boundingBox(),
+      ]);
+      if (!canvasBox || !hubBox) return Number.POSITIVE_INFINITY;
+      return Math.max(
+        Math.abs(hubBox.x + hubBox.width / 2 - (canvasBox.x + canvasBox.width / 2)),
+        Math.abs(hubBox.y + hubBox.height / 2 - (canvasBox.y + canvasBox.height / 2)),
+      );
+    })
+    .toBeLessThan(3);
+
+  const hubTitle = viewer.locator('.structure-node[data-node-id="hub"] .structure-node-title');
+  const hubIdentity = hubTitle.locator(".structure-source-identity");
+  const hubTitleText = hubTitle.locator(".structure-node-title-text");
+  const hubSourceAction = viewer.locator(
+    '.structure-node[data-node-id="hub"] > .structure-source.compact',
+  );
+  await expect(hubIdentity).toHaveAttribute("data-source-path", "src/fixture.ts");
+  const [identityBox, titleTextBox, sourceActionBox] = await Promise.all([
+    hubIdentity.boundingBox(),
+    hubTitleText.boundingBox(),
+    hubSourceAction.boundingBox(),
+  ]);
+  expect(identityBox).not.toBeNull();
+  expect(titleTextBox).not.toBeNull();
+  expect(sourceActionBox).not.toBeNull();
+  expect(identityBox!.x).toBeLessThan(titleTextBox!.x);
+  expect(sourceActionBox!.x).toBeGreaterThan(titleTextBox!.x);
+
+  const firstEdge = viewer.locator('.structure-edge[data-edge-id="edge-01"]');
+  await expect(firstEdge).toHaveAttribute("d", / C /);
+  await expect(firstEdge).toHaveAttribute("marker-end", /structure-arrow/);
+  const endpointsAreOutsideNodes = await firstEdge.evaluate((element) => {
+    const path = element as SVGPathElement;
+    const viewerElement = path.closest(".structure-viewer")!;
+    const leaf = viewerElement.querySelector<HTMLElement>('[data-node-id="leaf-01"]')!;
+    const hub = viewerElement.querySelector<HTMLElement>('[data-node-id="hub"]')!;
+    const pointOutside = (x: number, y: number, node: HTMLElement): boolean => {
+      const left = Number.parseFloat(node.style.left);
+      const top = Number.parseFloat(node.style.top);
+      return x < left || x > left + 228 || y < top || y > top + 112;
+    };
+    return (
+      pointOutside(Number(path.dataset.startX), Number(path.dataset.startY), leaf) &&
+      pointOutside(Number(path.dataset.endX), Number(path.dataset.endY), hub)
+    );
+  });
+  expect(endpointsAreOutsideNodes).toBe(true);
+
+  const firstEdgeLabel = viewer.locator('.structure-edge-label[data-edge-id="edge-01"]');
+  const [edgeIdentityBox, edgeTextBox] = await Promise.all([
+    firstEdgeLabel.locator(".structure-source-identity").boundingBox(),
+    firstEdgeLabel.locator(".structure-edge-label-text").boundingBox(),
+  ]);
+  expect(edgeIdentityBox).not.toBeNull();
+  expect(edgeTextBox).not.toBeNull();
+  expect(edgeTextBox!.x - (edgeIdentityBox!.x + edgeIdentityBox!.width)).toBeLessThanOrEqual(4);
+
+  const graphCollisions = await viewer.evaluate((element) => {
+    const boxes = (selector: string) =>
+      [...element.querySelectorAll<HTMLElement>(selector)].map((item) => ({
+        id: item.dataset.edgeId ?? item.dataset.nodeId,
+        rect: item.getBoundingClientRect(),
+      }));
+    const labels = boxes(".structure-edge-label");
+    const nodes = boxes(".structure-node");
+    const overlaps = (left: { rect: DOMRect }, right: { rect: DOMRect }): boolean =>
+      !(
+        left.rect.right < right.rect.left ||
+        left.rect.left > right.rect.right ||
+        left.rect.bottom < right.rect.top ||
+        left.rect.top > right.rect.bottom
+      );
+    return {
+      labelNodes: labels.flatMap((label) =>
+        nodes.filter((node) => overlaps(label, node)).map((node) => `${label.id}:${node.id}`),
+      ),
+      labelPairs: labels.flatMap((label, index) =>
+        labels
+          .slice(index + 1)
+          .filter((other) => overlaps(label, other))
+          .map((other) => `${label.id}:${other.id}`),
+      ),
+      allEdgesAreCurved: [...element.querySelectorAll<SVGPathElement>(".structure-edge")].every(
+        (path) => path.getAttribute("d")?.includes(" C "),
+      ),
+    };
+  });
+  expect(graphCollisions).toEqual({
+    labelNodes: [],
+    labelPairs: [],
+    allEdgesAreCurved: true,
+  });
+
+  await viewer.getByRole("button", { name: "詳細サイドバーを表示" }).click();
+  await expect(viewer.getByRole("button", { name: "5件のrelationを表示" })).toBeVisible();
+  await expect(viewer.locator(".structure-relation-list > li.collapsed")).toHaveCount(5);
+
+  await viewer
+    .locator(".structure-relation-list > li > button")
+    .filter({ hasText: "HTTP requestをuse caseへ変換する" })
+    .click();
   await expect(viewer.locator('.structure-node[data-node-id="leaf-01"]')).toHaveClass(/focused/);
-  await expect(viewer.getByRole("heading", { name: "Direct relation 01" })).toBeVisible();
-  await viewer.locator('.structure-node[data-node-id="hub"] .structure-node-focus').click();
+  await expect(viewer.getByRole("heading", { name: "HTTP route adapter" })).toBeVisible();
+  await viewer
+    .locator(".structure-focus-trail button")
+    .filter({ hasText: "UpdateStructureUseCase.execute" })
+    .click();
   await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/);
 
-  await viewer.getByRole("button", { name: "9件のrelationを表示" }).click();
+  await viewer.getByRole("button", { name: "5件のrelationを表示" }).click();
   await expect(viewer.locator(".structure-edge")).toHaveCount(13);
   await expect(viewer.getByRole("button", { name: "stable Edge ID順に折りたたむ" })).toBeVisible();
   await viewer.getByRole("button", { name: "stable Edge ID順に折りたたむ" }).click();
-  await expect(viewer.locator(".structure-edge")).toHaveCount(4);
+  await expect(viewer.locator(".structure-edge")).toHaveCount(8);
 
   await viewer.getByRole("button", { name: "2-hop", exact: true }).click();
-  await expect(viewer.getByText("15 / 15 Nodes", { exact: true })).toBeVisible();
+  await expect(viewer.getByText("10/15 Node · 9/14 Relation", { exact: true })).toBeVisible();
   await expect(viewer.locator('.structure-node[data-node-id="deep-node"]')).toBeVisible();
-  await viewer.getByRole("button", { name: "All", exact: true }).click();
-  await expect(viewer.getByText("15 / 15 Nodes", { exact: true })).toBeVisible();
+  await viewer.getByRole("button", { name: "全体", exact: true }).click();
+  await expect(viewer.getByText("15/15 Node · 9/14 Relation", { exact: true })).toBeVisible();
   await viewer.getByRole("button", { name: "1-hop", exact: true }).click();
 
   const world = viewer.locator(".structure-world");
@@ -134,9 +243,11 @@ test("explores source-exact Structures and preserves spatial context across navi
     "true",
   );
   await expect(viewer.locator('.structure-node[data-node-id="hub"] strong')).toHaveText(
-    "Fixture boundary updated",
+    "UpdateStructureUseCase.execute updated",
   );
   await expect(viewer.locator('.structure-node[data-node-id="leaf-13"]')).toHaveCount(0);
+  await expect(viewer.locator('.structure-node[data-node-id="new-neighbor"]')).toHaveCount(0);
+  await viewer.getByRole("button", { name: "5件のrelationを表示" }).click();
   await expect(viewer.locator('.structure-node[data-node-id="new-neighbor"]')).toBeVisible();
   const retained = await viewer
     .locator('.structure-node[data-node-id="hub"]')
@@ -161,20 +272,26 @@ test("explores source-exact Structures and preserves spatial context across navi
   );
   const secondaryViewer = page.locator(`[data-structure-id="${secondaryStructureId}"]`);
   await expect(secondaryViewer.locator(".structure-node.focused")).toHaveCount(0);
-  await expect(secondaryViewer.getByRole("button", { name: "All", exact: true })).toHaveAttribute(
+  await expect(secondaryViewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   await page.setViewportSize({ width: 900, height: 700 });
-  const [toolbarBox, canvasBox] = await Promise.all([
+  await secondaryViewer.getByRole("button", { name: "詳細サイドバーを表示" }).click();
+  const [toolbarBox, canvasBox, detailsBox, viewerBox] = await Promise.all([
     secondaryViewer.locator(".structure-toolbar").boundingBox(),
     secondaryViewer.locator(".structure-canvas-shell").boundingBox(),
+    secondaryViewer.locator(".structure-details").boundingBox(),
+    secondaryViewer.boundingBox(),
   ]);
   expect(toolbarBox).not.toBeNull();
   expect(canvasBox).not.toBeNull();
+  expect(detailsBox).not.toBeNull();
+  expect(viewerBox).not.toBeNull();
   expect(toolbarBox!.x + toolbarBox!.width).toBeLessThanOrEqual(
-    canvasBox!.x + canvasBox!.width + 1,
+    viewerBox!.x + viewerBox!.width + 1,
   );
+  expect(detailsBox!.y).toBeGreaterThanOrEqual(canvasBox!.y + canvasBox!.height - 1);
   page.once("dialog", (dialog) => dialog.accept());
   await page
     .locator(`[data-structure-id="${secondaryStructureId}"]`)

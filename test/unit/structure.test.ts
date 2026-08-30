@@ -73,9 +73,12 @@ describe("Structure domain presentation rules", () => {
     expect(structureNeighborhood(structure, "node-01", 1)).toEqual(new Set(["node-01", "hub"]));
     expect(structureNeighborhood(structure, "node-01", 2).size).toBe(structure.nodes.length);
     const visible = visibleStructureGraph(structure, "hub", 1, false);
-    expect(visible.nodeIds.size).toBe(structure.nodes.length);
+    expect(visible.nodeIds.size).toBe(5);
     expect(visible.edgeIds.size).toBe(4);
     expect(visible.hiddenRelationCount).toBe(10);
+    expect(visibleStructureGraph(structure, "hub", "all", false).nodeIds.size).toBe(
+      structure.nodes.length,
+    );
   });
 
   it("preserves common Node positions across current-value replacement", () => {
@@ -106,5 +109,18 @@ describe("Structure domain presentation rules", () => {
     expect(reconciled["node-01"]).toEqual(initial["node-01"]);
     expect(reconciled["node-new"]).toBeDefined();
     expect(reconciled["node-14"]).toBeUndefined();
+  });
+
+  it("places incoming and outgoing relations on opposite sides of initial focus", () => {
+    const base = structureWithHub();
+    const structure: Structure = {
+      ...base,
+      edges: base.edges.map((edge) =>
+        edge.to === "node-01" ? { ...edge, from: "node-01", to: "hub" } : edge,
+      ),
+    };
+    const layout = initialStructureLayout(structure);
+    expect(layout["node-01"]!.x).toBeLessThan(layout.hub!.x);
+    expect(layout["node-02"]!.x).toBeGreaterThan(layout.hub!.x);
   });
 });

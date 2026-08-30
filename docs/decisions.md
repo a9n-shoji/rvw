@@ -73,10 +73,18 @@ surviving claims.
 
 Render Structure as a first-class document tab beside Walkthrough and code. The production layout is a
 content-neutral, deterministic topology-and-stable-ID layout with direct node drag, pan, zoom, fit, and
-focus controls. It does not use labels, kinds, descriptions, paths, or inferred semantics to position
-content. Stable node IDs retain session-local positions across navigation and whole-value updates; new
-nodes are placed near retained neighbors. No coordinates enter SQLite or the Agent protocol. For large
-visible neighborhoods, the viewer culls offscreen nodes.
+focus controls. When an initial focus exists, directed topology places incoming and outgoing ranks on
+opposite sides without accepting producer layout metadata. It does not use labels, kinds, descriptions,
+paths, or inferred semantics to position content. Stable node IDs retain session-local positions across
+navigation and whole-value updates; new nodes are placed near retained neighbors. No coordinates enter
+SQLite or the Agent protocol. For large visible neighborhoods, the viewer culls offscreen nodes.
+
+Keep the spike's reading aids that do not expand the artifact contract: curved perimeter-to-perimeter
+edges with visible arrowheads, stable lanes for parallel and reciprocal relations, collision-aware edge
+labels, separate source identity and source action placement, non-ellipsized identifiers, a minimap,
+visible focus/count/zoom state, and a collapsible inspector that starts closed. These are renderer
+behavior over the production Node, Edge, source anchor, and change-file data; none become producer hints
+or persisted graph semantics.
 
 Use 1-hop, 2-hop, and All neighborhoods. When the focused node has more than twelve relations, show at
 most four incoming, four outgoing, and four undirected/self relations selected by lexical stable Edge
@@ -102,7 +110,8 @@ AI inference, semantic graph extraction, durable coordinates, or reverse source 
 
 ### Trade-offs and unresolved questions
 
-The simple layout is predictable and preserves context but will not optimize every dense topology.
+The small built-in layout is predictable and preserves context but will not optimize every dense
+topology. Directed ranks improve an initial-focus view but cycles may still need manual Node movement.
 Lexical Edge ID collapse is neutral but not a claim of relevance. Session continuity ends at reload,
 and Structure has no independent revision history; Git commits remain the way to compare code history.
 Producer evaluation must continue to test scope, granularity, concept-node restraint, and relationship
