@@ -5,6 +5,8 @@ import {
   collapsedStructureRelations,
   initialStructureLayout,
   reconcileStructureLayout,
+  STRUCTURE_MAX_EDGE_LANE_OFFSET,
+  structureEdgeRouteOffsets,
   structureNeighborhood,
   visibleStructureGraph,
 } from "../../src/web/structure-graph.js";
@@ -122,5 +124,22 @@ describe("Structure domain presentation rules", () => {
     const layout = initialStructureLayout(structure);
     expect(layout["node-01"]!.x).toBeLessThan(layout.hub!.x);
     expect(layout["node-02"]!.x).toBeGreaterThan(layout.hub!.x);
+  });
+
+  it("keeps dense parallel and self-relation lanes within the readable canvas", () => {
+    const edges = Array.from({ length: 5_000 }, (_, index) => ({
+      id: `edge-${String(index).padStart(4, "0")}`,
+      from: index < 2_500 ? "left" : "self",
+      to: index < 2_500 ? "right" : "self",
+      label: "relates to",
+      directed: true,
+      anchors: [],
+    }));
+    const offsets = structureEdgeRouteOffsets(edges);
+    expect(offsets.size).toBe(edges.length);
+    expect(Math.max(...offsets.values())).toBeLessThanOrEqual(STRUCTURE_MAX_EDGE_LANE_OFFSET);
+    expect(Math.min(...offsets.values())).toBeGreaterThanOrEqual(-STRUCTURE_MAX_EDGE_LANE_OFFSET);
+    expect(new Set(edges.slice(0, 2_500).map((edge) => offsets.get(edge.id))).size).toBe(2_500);
+    expect(new Set(edges.slice(2_500).map((edge) => offsets.get(edge.id))).size).toBe(2_500);
   });
 });

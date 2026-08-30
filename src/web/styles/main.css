@@ -4285,7 +4285,7 @@ diffs-container > [slot="header-metadata"] {
   display: flex;
   min-width: 0;
   height: calc(100% - 40px);
-  min-height: 620px;
+  min-height: 0;
   flex-direction: column;
   overflow: hidden;
   color: var(--text);
@@ -4318,7 +4318,9 @@ diffs-container > [slot="header-metadata"] {
 
 .structure-header p {
   max-width: 980px;
+  max-height: calc(1.45em * 4);
   margin: 5px 0 0;
+  overflow: auto;
   color: var(--muted);
   font-size: 11px;
   line-height: 1.45;
@@ -4906,6 +4908,8 @@ diffs-container > [slot="header-metadata"] {
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--bg);
+  contain-intrinsic-size: 72px;
+  content-visibility: auto;
 }
 
 .structure-relation-list li.collapsed {
@@ -4950,7 +4954,17 @@ diffs-container > [slot="header-metadata"] {
 
   .structure-body.with-details {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(360px, 1fr) minmax(180px, 240px);
+    grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
+  }
+
+  .structure-toolbar {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    overflow-x: hidden;
+  }
+
+  .structure-canvas {
+    min-height: 0;
   }
 
   .structure-body.with-details .structure-canvas-shell {
@@ -4965,5 +4979,16 @@ diffs-container > [slot="header-metadata"] {
 
   .structure-toolbar-group--end {
     margin-left: 0;
+  }
+}
+
+@container (max-width: 360px) {
+  .structure-toolbar-group {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .structure-toolbar-group:nth-child(2) {
+    flex: 1 1 100%;
   }
 }

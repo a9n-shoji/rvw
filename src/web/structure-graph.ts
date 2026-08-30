@@ -11,6 +11,7 @@ export const STRUCTURE_NODE_WIDTH = 228;
 export const STRUCTURE_NODE_HEIGHT = 112;
 export const STRUCTURE_COLLAPSE_THRESHOLD = 12;
 export const STRUCTURE_COLLAPSE_LIMIT_PER_DIRECTION = 4;
+export const STRUCTURE_MAX_EDGE_LANE_OFFSET = 96;
 
 function stableCompare(left: string, right: string): number {
   return left.localeCompare(right, "en");
@@ -336,7 +337,6 @@ export function structureEdgeRouteOffsets(
   const offsets = new Map(edges.map((edge) => [edge.id, 0]));
   const pairs = new Map<string, StructureEdge[]>();
   for (const edge of edges) {
-    if (edge.from === edge.to) continue;
     const pairKey = [edge.from, edge.to].sort(stableCompare).join("\0");
     const pair = pairs.get(pairKey) ?? [];
     pair.push(edge);
@@ -346,7 +346,8 @@ export function structureEdgeRouteOffsets(
     if (pair.length < 2) continue;
     const sorted = pair.sort((left, right) => stableCompare(left.id, right.id));
     const center = (sorted.length - 1) / 2;
-    sorted.forEach((edge, index) => offsets.set(edge.id, (index - center) * 18));
+    const step = Math.min(18, center === 0 ? 0 : STRUCTURE_MAX_EDGE_LANE_OFFSET / center);
+    sorted.forEach((edge, index) => offsets.set(edge.id, (index - center) * step));
   }
   return offsets;
 }

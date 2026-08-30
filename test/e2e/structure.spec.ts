@@ -62,6 +62,22 @@ test("explores source-exact Structures and preserves spatial context across navi
     })
     .toBeLessThan(3);
 
+  await page.setViewportSize({ width: 900, height: 700 });
+  await expect
+    .poll(async () => {
+      const [canvasBox, focusedBox] = await Promise.all([
+        canvas.boundingBox(),
+        viewer.locator(".structure-node.focused").boundingBox(),
+      ]);
+      if (!canvasBox || !focusedBox) return Number.POSITIVE_INFINITY;
+      return Math.max(
+        Math.abs(focusedBox.x + focusedBox.width / 2 - (canvasBox.x + canvasBox.width / 2)),
+        Math.abs(focusedBox.y + focusedBox.height / 2 - (canvasBox.y + canvasBox.height / 2)),
+      );
+    })
+    .toBeLessThan(3);
+  await page.setViewportSize({ width: 1280, height: 720 });
+
   const hubTitle = viewer.locator('.structure-node[data-node-id="hub"] .structure-node-title');
   const hubIdentity = hubTitle.locator(".structure-source-identity");
   const hubTitleText = hubTitle.locator(".structure-node-title-text");
@@ -232,6 +248,30 @@ test("explores source-exact Structures and preserves spatial context across navi
   await expect(
     page.locator('.document-pane[data-pane="left"]').getByRole("tab", { name: primaryTitle }),
   ).toHaveAttribute("aria-selected", "true");
+  await expect
+    .poll(async () => {
+      const [viewerBox, toolbarBox, canvasBox, detailsBox, focusedBox] = await Promise.all([
+        viewer.boundingBox(),
+        viewer.locator(".structure-toolbar").boundingBox(),
+        viewer.locator(".structure-canvas").boundingBox(),
+        viewer.locator(".structure-details").boundingBox(),
+        viewer.locator(".structure-node.focused").boundingBox(),
+      ]);
+      if (!viewerBox || !toolbarBox || !canvasBox || !detailsBox || !focusedBox) return false;
+      const toolbarFits = await viewer
+        .locator(".structure-toolbar")
+        .evaluate((element) => element.scrollWidth <= element.clientWidth + 1);
+      return (
+        toolbarFits &&
+        toolbarBox.x + toolbarBox.width <= viewerBox.x + viewerBox.width + 1 &&
+        detailsBox.y + detailsBox.height <= viewerBox.y + viewerBox.height + 1 &&
+        focusedBox.x >= canvasBox.x - 1 &&
+        focusedBox.x + focusedBox.width <= canvasBox.x + canvasBox.width + 1 &&
+        focusedBox.y >= canvasBox.y - 1 &&
+        focusedBox.y + focusedBox.height <= canvasBox.y + canvasBox.height + 1
+      );
+    })
+    .toBe(true);
 
   const update = await page.request.post(`/api/fixture/structures/${primaryStructureId}/update`, {
     data: {},
@@ -291,7 +331,15 @@ test("explores source-exact Structures and preserves spatial context across navi
   expect(toolbarBox!.x + toolbarBox!.width).toBeLessThanOrEqual(
     viewerBox!.x + viewerBox!.width + 1,
   );
+  expect(
+    await secondaryViewer
+      .locator(".structure-toolbar")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+  ).toBe(true);
   expect(detailsBox!.y).toBeGreaterThanOrEqual(canvasBox!.y + canvasBox!.height - 1);
+  expect(detailsBox!.y + detailsBox!.height).toBeLessThanOrEqual(
+    viewerBox!.y + viewerBox!.height + 1,
+  );
   page.once("dialog", (dialog) => dialog.accept());
   await page
     .locator(`[data-structure-id="${secondaryStructureId}"]`)
