@@ -25,7 +25,7 @@ import { asRvwError, RvwError } from "../shared/errors.js";
 // pr sync may contain hundreds of valid 64 KiB replies. Reserve framing space above the stdin cap.
 export const MAX_CLI_STDIN_BYTES = 40 * 1024 * 1024;
 export const MAX_AGENT_MESSAGE_BYTES = MAX_CLI_STDIN_BYTES + 64 * 1024;
-export const AGENT_SOCKET_PROTOCOL_VERSION = 4;
+export const AGENT_SOCKET_PROTOCOL_VERSION = 5;
 export const RUNTIME_VIEWER_OPEN_OPERATION = "viewer.open";
 const AGENT_SOCKET_RESTART_SUGGESTION =
   "起動中のrvw viewerを停止し、更新後のrvw openで再起動してください。";
@@ -406,6 +406,10 @@ export async function dispatchAgentSocketRequest(
       const input = parseOperationInput("structure.get", request.input);
       return service.getStructureByUri(input.uri);
     }
+    case "structure.list": {
+      const input = parseOperationInput("structure.list", request.input);
+      return service.listStructuresByReference(input.reference);
+    }
     case "structure.publish": {
       const input = parseOperationInput("structure.publish", request.input);
       return await service.publishStructure(input);
@@ -420,7 +424,7 @@ export async function dispatchAgentSocketRequest(
     }
     case "structure.delete": {
       const input = parseOperationInput("structure.delete", request.input);
-      return service.deleteStructureByUri(input.uri);
+      return service.deleteStructureByUri(input.uri, input.expectedUpdatedAt);
     }
   }
 }
@@ -440,9 +444,15 @@ function uncertainOutcome(operation: string, cause: unknown, timedOut = false): 
     {
       cause,
       details: { agentSocketOutcomeUncertain: true, operation },
-      suggestions: [
-        "現在のコメント・Walkthrough・Structure・PR同期状態を読み直し、未反映の場合だけ再実行してください。",
-      ],
+      suggestions:
+        operation === "structure.publish"
+          ? [
+              "同じidempotencyKeyと同じpayloadでpublishを再実行すると、既存のStructureへ収束します。",
+              "rvw structure list <PR> --jsonでもstable URIを確認できます。",
+            ]
+          : [
+              "現在のコメント・Walkthrough・Structure・PR同期状態を読み直し、未反映の場合だけ再実行してください。",
+            ],
     },
   );
 }

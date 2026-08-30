@@ -316,6 +316,7 @@ describe("CLI input schemas", () => {
   it("normalizes a Structure graph and requires explicit directed edges", () => {
     expect(
       structurePublishInputSchema.parse({
+        idempotencyKey: "structure-publish-auth-boundary",
         pullRequest: "https://github.com/acme/review-repo/pull/7",
         sourceOid: "a".repeat(40),
         title: "Authorization boundary",
@@ -351,6 +352,7 @@ describe("CLI input schemas", () => {
 
   it("rejects invalid Structure identity, endpoints, focus, and SourceAnchor ranges", () => {
     const valid = {
+      expectedUpdatedAt: "2026-08-30T00:00:00.000Z",
       sourceOid: "b".repeat(40),
       title: "Boundary",
       scope: "One bounded code relationship.",
@@ -403,6 +405,22 @@ describe("CLI input schemas", () => {
             anchor: { path: "src/entry.ts", startLine: 3 },
           },
         ],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        expectedUpdatedAt: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      structurePublishInputSchema.safeParse({
+        pullRequest: "https://github.com/acme/review-repo/pull/7",
+        sourceOid: valid.sourceOid,
+        title: valid.title,
+        scope: valid.scope,
+        nodes: valid.nodes,
+        edges: valid.edges,
       }).success,
     ).toBe(false);
   });

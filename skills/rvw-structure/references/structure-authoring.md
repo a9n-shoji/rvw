@@ -69,7 +69,8 @@ IDs identify claims across whole-value replacements; labels are presentation.
 - Preserve an ID when the same claim survives an update, even if its label, description, kind, anchor,
   or endpoint details change.
 - Assign a new ID for a genuinely new claim. Never recycle an ID removed from this Structure for a
-  different node or edge.
+  different node or edge. Because rvw stores only the current value, this is a producer authoring
+  convention checked against the producer's prior value, not a runtime tombstone invariant.
 - Give every edge its own stable ID, including parallel edges between the same endpoints.
 - Use `initialFocus` for the subject's most useful entry concept, or `null` when no single node is the
   natural center. It is not persisted viewer state.

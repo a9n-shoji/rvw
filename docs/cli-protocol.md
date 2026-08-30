@@ -1,4 +1,4 @@
-# CLI protocol v4
+# CLI protocol v5
 
 Version 1 is the first public compatibility contract. Pre-public internal version numbers were not
 released or supported; after the first public release, protocol versions only increase for breaking
@@ -11,6 +11,10 @@ idempotency keys are additive fields and do not change existing callers. Version
 nullable `lastModifiedBy` provenance to comment-post output so consumers can distinguish trusted
 Agent and human write channels. Structure read, publish, update, and delete are additive version-4
 capabilities and do not change existing command schemas.
+Version 5 makes Structure publication idempotent and Structure update/delete compare-and-swap
+operations. It adds required `idempotencyKey` and `expectedUpdatedAt` fields plus additive
+`structure.list`, so a caller can recover a stable URI after an uncertain publish without risking a
+duplicate artifact.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
@@ -372,6 +376,7 @@ The stdin value is:
 
 ```json
 {
+  "idempotencyKey": "task-stable-key-for-this-structure-publication",
   "pullRequest": "https://github.com/owner/repository/pull/123",
   "sourceOid": "0123456789abcdef0123456789abcdef01234567",
   "title": "Request flow",
@@ -543,7 +548,8 @@ The stdin value is:
 }
 ```
 
-`pullRequest`, `sourceOid`, nonblank `title` and `scope`, one or more nodes, and `edges` are required.
+`idempotencyKey`, `pullRequest`, `sourceOid`, nonblank `title` and `scope`, one or more nodes, and
+`edges` are required.
 `initialFocus` may be `null` or an existing Node ID. Node and Edge IDs match
 `^[A-Za-z][A-Za-z0-9_-]{0,63}$`, are unique within their own collections, and are stable claim
 identities rather than labels. Every edge
@@ -555,8 +561,19 @@ nullable fields normalize to `null`; omitted edge anchors normalize to an empty 
 Limits are 50 nodes, 200 edges, a 200-character title, a 4000-character scope, 200-character labels,
 2000-character descriptions, 100-character kinds, and 2 MiB for the normalized Structure content.
 The application validates commit availability and Pull Request ownership before saving one transaction
-and retaining `sourceOid`. Success returns the saved Structure and `rvw://structure/<uuid>`. Publication
+and retaining `sourceOid`. An exact retry with the same idempotency key returns the original Structure;
+reusing the key for another canonical payload fails, and retrying after that Structure was deleted
+reports a deleted result. Success returns the saved Structure and `rvw://structure/<uuid>`. Publication
 is passive: it never opens a browser or changes a tab, commit range, focus, viewport, or scroll position.
+
+### List and recover references
+
+```bash
+rvw structure list <PR> --json
+```
+
+The result includes the saved Pull Request identity and Structure summaries with their stable `ref`,
+title, scope, source OID, and timestamps. Use it to recover the URI after an uncertain publish result.
 
 ### Replace in place
 
@@ -564,22 +581,25 @@ is passive: it never opens a browser or changes a tab, commit range, focus, view
 rvw structure update <STRUCTURE_URI> --stdin --json
 ```
 
-Update accepts the complete `sourceOid`, `title`, `scope`, `initialFocus`, `nodes`, and `edges` value but
-does not accept `pullRequest`. It performs the same validation and atomically replaces the graph while
+Update accepts `expectedUpdatedAt` from the value that was read plus the complete `sourceOid`, `title`,
+`scope`, `initialFocus`, `nodes`, and `edges` value, but does not accept `pullRequest`. It performs the
+same validation and atomically replaces the graph only while `updatedAt` still matches, while
 keeping the Structure ID, URI, Pull Request, and `createdAt`; `updatedAt` changes. No previous graph is
-retained. Producers preserve IDs for surviving claims of the same subject, never recycle removed IDs,
+retained. A mismatch returns `STRUCTURE_CONFLICT` and the caller must read and reconcile the current
+value. Producers preserve IDs for surviving claims of the same subject, never recycle removed IDs,
 and publish a new Structure when the declared subject changes. Update is also passive.
 
 ### Delete
 
 ```bash
 rvw structure delete <STRUCTURE_URI> --json
-rvw structure delete <STRUCTURE_URI> --yes --json
+rvw structure delete <STRUCTURE_URI> --yes --expected-updated-at <PREVIEW_UPDATED_AT> --json
 ```
 
 The first form returns `STRUCTURE_DELETE_CONFIRMATION_REQUIRED`, the current Structure, and Node, Edge,
-and source-anchor counts. The confirmed form permanently deletes the Structure. The retained commit ref
-is not removed because other review state may share it; `rvw pr reset` remains the cleanup boundary.
+and source-anchor counts. The confirmed form requires that preview's exact `updatedAt` and permanently
+deletes only the unchanged Structure. A stale preview returns `STRUCTURE_CONFLICT`. The retained commit
+ref is not removed because other review state may share it; `rvw pr reset` remains the cleanup boundary.
 
 ## Local transport and database path
 
@@ -664,7 +684,7 @@ current `walkthrough` object. This gives the Agent the explanation body and exac
 discussed without relying on rendered browser positions. If the Walkthrough is updated, the same
 comment URI subsequently returns the updated current object.
 
-`rvw protocol --json` returns `protocolVersion: 4`, the application version, and these capabilities:
+`rvw protocol --json` returns `protocolVersion: 5`, the application version, and these capabilities:
 
 ```text
 agent.transport
@@ -678,6 +698,7 @@ comment.codeReferences
 comment.resolve
 comment.reopen
 pullRequest.sync
+structure.list
 structure.read
 structure.publish
 structure.update

@@ -209,12 +209,18 @@ test("keeps the surviving pane session when closing a duplicate Structure tab", 
 });
 
 test("explores source-exact Structures and preserves spatial context across navigation and update", async ({
+  context,
   page,
 }) => {
   test.setTimeout(45_000);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto(`/?pullRequestId=${pullRequestId}`);
 
   const structureFolder = page.getByRole("button", { name: "Structure 2", exact: true });
+  await expect(structureFolder).toHaveAttribute("aria-expanded", "false");
+  await structureFolder.click();
+  await expect(structureFolder).toHaveAttribute("aria-expanded", "true");
+  await structureFolder.press("Escape");
   await expect(structureFolder).toHaveAttribute("aria-expanded", "false");
   await structureFolder.click();
   const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
@@ -236,6 +242,10 @@ test("explores source-exact Structures and preserves spatial context across navi
   await expect(viewer.locator(".structure-edge")).toHaveCount(12);
   await expect(viewer.locator(".structure-minimap")).toBeVisible();
   await expect(viewer.locator(".structure-details")).toHaveCount(0);
+  await viewer.getByRole("button", { name: "参照をコピー" }).click();
+  await expect
+    .poll(async () => await page.evaluate(() => navigator.clipboard.readText()))
+    .toBe(`rvw://structure/${primaryStructureId}`);
 
   const canvas = viewer.locator(".structure-canvas");
   await expect
@@ -255,7 +265,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   await openStructure(page, secondaryTitle);
   const secondaryViewer = page.locator(`[data-structure-id="${secondaryStructureId}"]`);
   await expect(secondaryViewer.locator(".structure-node")).toHaveCount(10);
-  await expect(secondaryViewer.locator(".structure-edge")).toHaveCount(14);
+  await expect(secondaryViewer.locator(".structure-edge")).toHaveCount(15);
   await openStructure(page, primaryTitle);
   await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/);
   await expect(viewer.locator(".structure-node")).toHaveCount(11);
@@ -287,7 +297,7 @@ test("explores source-exact Structures and preserves spatial context across navi
     "data-source-path",
     "src/application/orders/create-order.ts",
   );
-  await expect(hubIdentity.locator(".structure-source-name")).toHaveText("create-order.ts");
+  await expect(hubIdentity.locator(".structure-source-name")).toHaveText("orders/create-order.ts");
   const [identityBox, titleTextBox, sourceActionBox] = await Promise.all([
     hubIdentity.boundingBox(),
     hubTitleText.boundingBox(),
@@ -329,7 +339,9 @@ test("explores source-exact Structures and preserves spatial context across navi
     "data-source-path",
     "src/http/controllers/create-order.ts",
   );
-  await expect(firstEdgeLabel.locator(".structure-source-name")).toHaveText("create-order.ts");
+  await expect(firstEdgeLabel.locator(".structure-source-name")).toHaveText(
+    "controllers/create-order.ts",
+  );
   await expect(firstEdgeLabel.locator(".structure-source-count")).toHaveText("+1");
   await expect(firstEdgeLabel.locator(".structure-source.compact")).toHaveAttribute(
     "aria-label",
@@ -401,6 +413,16 @@ test("explores source-exact Structures and preserves spatial context across navi
   await expect(viewer.locator('.structure-node[data-node-id="pricing-policy"]')).toBeVisible();
   await viewer.getByRole("button", { name: "全体", exact: true }).click();
   await expect(viewer.getByText("18/18 Node · 21/21 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.locator(".structure-edge-label")).toHaveCount(21);
+  await viewer.getByRole("button", { name: "focusを解除" }).click();
+  await expect(viewer.locator(".structure-node.focused")).toHaveCount(0);
+  await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toBeDisabled();
+  await expect(viewer.locator(".structure-edge-label")).toHaveCount(21);
+  await viewer.locator('.structure-node[data-node-id="hub"]').click();
+  await canvas.focus();
+  await page.keyboard.press("Escape");
+  await expect(viewer.locator(".structure-node.focused")).toHaveCount(0);
+  await viewer.locator('.structure-node[data-node-id="hub"]').click();
   await viewer.getByRole("button", { name: "1-hop", exact: true }).click();
 
   const world = viewer.locator(".structure-world");
@@ -591,7 +613,7 @@ test("explores source-exact Structures and preserves spatial context across navi
 
   const clearFocus = await page.request.post(
     `/api/fixture/structures/${primaryStructureId}/update`,
-    { data: { clearFocus: true } },
+    { data: { clearFocus: true, replacementFocus: "http-controller" } },
   );
   expect(clearFocus.ok()).toBe(true);
   await expect(
@@ -617,7 +639,29 @@ test("explores source-exact Structures and preserves spatial context across navi
     "true",
   );
   await expect(secondaryViewer.getByRole("button", { name: "1-hop", exact: true })).toBeDisabled();
-  await expect(secondaryViewer.locator(".structure-edge-label")).toHaveCount(14);
+  await expect(secondaryViewer.locator(".structure-edge-label")).toHaveCount(15);
+  await secondaryViewer.getByRole("button", { name: "表示中を収める" }).click();
+  await expect
+    .poll(async () => {
+      const [canvasBounds, loopBounds, labelBounds] = await Promise.all([
+        secondaryViewer.locator(".structure-canvas").boundingBox(),
+        secondaryViewer
+          .locator('.structure-edge[data-edge-id="idempotency-reuses-result"]')
+          .boundingBox(),
+        secondaryViewer
+          .locator('.structure-edge-label[data-edge-id="idempotency-reuses-result"]')
+          .boundingBox(),
+      ]);
+      if (!canvasBounds || !loopBounds || !labelBounds) return false;
+      return [loopBounds, labelBounds].every(
+        (bounds) =>
+          bounds.x >= canvasBounds.x - 1 &&
+          bounds.y >= canvasBounds.y - 1 &&
+          bounds.x + bounds.width <= canvasBounds.x + canvasBounds.width + 1 &&
+          bounds.y + bounds.height <= canvasBounds.y + canvasBounds.height + 1,
+      );
+    })
+    .toBe(true);
   await page.setViewportSize({ width: 900, height: 700 });
   await secondaryViewer.getByRole("button", { name: "詳細サイドバーを表示" }).click();
   const [toolbarBox, canvasBox, detailsBox, viewerBox] = await Promise.all([

@@ -48,8 +48,23 @@ function anchorLabel(anchor: SourceAnchor): string {
     : `${anchor.path}:${anchor.startLine}${anchor.endLine === anchor.startLine ? "" : `-${anchor.endLine}`}`;
 }
 
-function sourceBasename(path: string): string {
-  return path.split("/").at(-1) ?? path;
+function shortestUniqueSourceLabels(paths: readonly string[]): Map<string, string> {
+  const distinctPaths = [...new Set(paths)];
+  const segments = new Map(distinctPaths.map((path) => [path, path.split("/")]));
+  return new Map(
+    distinctPaths.map((path) => {
+      const parts = segments.get(path)!;
+      for (let length = 1; length <= parts.length; length += 1) {
+        const suffix = parts.slice(-length).join("/");
+        const unique = distinctPaths.every(
+          (candidate) =>
+            candidate === path || segments.get(candidate)!.slice(-length).join("/") !== suffix,
+        );
+        if (unique) return [path, suffix];
+      }
+      return [path, path];
+    }),
+  );
 }
 
 function SourceButton({
@@ -85,9 +100,11 @@ function SourceButton({
 function SourceIdentity({
   anchor,
   changeKind,
+  sourceLabel,
 }: {
   anchor: SourceAnchor;
   changeKind: ChangeKind | null;
+  sourceLabel: string;
 }) {
   return (
     <span
@@ -97,7 +114,7 @@ function SourceIdentity({
       title={anchor.path}
     >
       <FileEntryIcon path={anchor.path} kind="file" />
-      <span className="structure-source-name">{sourceBasename(anchor.path)}</span>
+      <span className="structure-source-name">{sourceLabel}</span>
       {changeKind && <ChangeIcon kind={changeKind} />}
     </span>
   );
@@ -112,11 +129,13 @@ interface EdgeSourcePresentation {
   changeKind: EdgeSourceChangeKind | null;
   changedAnchorCount: number;
   title: string;
+  sourceLabel: string;
 }
 
 function edgeSourcePresentation(
   edge: StructureEdge,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
+  sourceLabels: ReadonlyMap<string, string>,
 ): EdgeSourcePresentation {
   const changedKinds = edge.anchors.flatMap((anchor) => {
     const kind = sourceChangeKinds.get(anchor.path);
@@ -133,6 +152,9 @@ function edgeSourcePresentation(
       distinctKinds.length > 1 ? "mixed" : distinctKinds.length === 1 ? distinctKinds[0]! : null,
     changedAnchorCount: changedKinds.length,
     title: edge.anchors.map(anchorLabel).join("\n"),
+    sourceLabel: edge.anchors[0]
+      ? (sourceLabels.get(edge.anchors[0].path) ?? edge.anchors[0].path)
+      : "",
   };
 }
 
@@ -148,7 +170,7 @@ function EdgeSourceIdentity({ presentation }: { presentation: EdgeSourcePresenta
       title={title}
     >
       <FileEntryIcon path={anchor.path} kind="file" />
-      <span className="structure-source-name">{sourceBasename(anchor.path)}</span>
+      <span className="structure-source-name">{presentation.sourceLabel}</span>
       {additionalAnchorCount > 0 && changedAnchorCount > 0 ? (
         <span
           className="structure-source-change-aggregate"
@@ -199,6 +221,7 @@ function edgePath(
   startY: number;
   endX: number;
   endY: number;
+  bounds: StructureBox;
 } | null {
   const from = positions[edge.from];
   const to = positions[edge.to];
@@ -225,6 +248,12 @@ function edgePath(
       startY: top + 34 + loopShift,
       endX: right + gap,
       endY: top + STRUCTURE_NODE_HEIGHT - 34 + loopShift,
+      bounds: {
+        left: right + gap,
+        top: top - 84 + loopShift,
+        right: right + loopReach,
+        bottom: top + STRUCTURE_NODE_HEIGHT + 84 + loopShift,
+      },
     };
   }
   const dx = toX - fromX;
@@ -262,6 +291,12 @@ function edgePath(
     startY,
     endX,
     endY,
+    bounds: {
+      left: Math.min(startX, control1X, control2X, endX),
+      top: Math.min(startY, control1Y, control2Y, endY),
+      right: Math.max(startX, control1X, control2X, endX),
+      bottom: Math.max(startY, control1Y, control2Y, endY),
+    },
   };
 }
 
@@ -310,9 +345,20 @@ function labelBox(x: number, y: number, width: number, height: number, padding =
   };
 }
 
+function mergedBounds(boxes: readonly StructureBox[]): StructureBox | null {
+  if (boxes.length === 0) return null;
+  return {
+    left: Math.min(...boxes.map((box) => box.left)),
+    top: Math.min(...boxes.map((box) => box.top)),
+    right: Math.max(...boxes.map((box) => box.right)),
+    bottom: Math.max(...boxes.map((box) => box.bottom)),
+  };
+}
+
 function edgeLabelSize(
   edge: StructureEdge,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
+  sourceLabels: ReadonlyMap<string, string>,
 ): {
   selectWidth: number;
   boxWidth: number;
@@ -325,16 +371,16 @@ function edgeLabelSize(
       (/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(character) ? 1 : 0.56),
     0,
   );
-  const naturalTextWidth = Math.ceil(textUnits * 9) + EDGE_LABEL_HORIZONTAL_PADDING;
+  const naturalTextWidth = Math.ceil(textUnits * 10.5) + EDGE_LABEL_HORIZONTAL_PADDING;
   const textWidth = Math.min(
     EDGE_LABEL_MAX_TEXT_WIDTH,
     Math.max(EDGE_LABEL_MIN_TEXT_WIDTH, naturalTextWidth),
   );
   const lineCount = Math.max(1, Math.ceil(naturalTextWidth / textWidth));
   const height = Math.max(24, lineCount * EDGE_LABEL_LINE_HEIGHT + 10);
-  const source = edgeSourcePresentation(edge, sourceChangeKinds);
+  const source = edgeSourcePresentation(edge, sourceChangeKinds, sourceLabels);
   const sourceNameWidth = source.anchor
-    ? Math.min(86, Math.max(28, [...sourceBasename(source.anchor.path)].length * 5.2))
+    ? Math.min(116, Math.max(28, [...source.sourceLabel].length * 6.4))
     : 0;
   const sourceIdentityWidth = source.anchor
     ? EDGE_LABEL_FILE_ICON_WIDTH +
@@ -360,6 +406,7 @@ function placeEdgeLabels(
   nodes: StructureNode[],
   positions: Readonly<Record<string, StructurePoint>>,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
+  sourceLabels: ReadonlyMap<string, string>,
   routeOffsets: ReadonlyMap<string, number>,
 ): StructureEdgeLabelPlacement[] {
   const nodeBoxes = nodes.flatMap((node) => {
@@ -417,8 +464,10 @@ function placeEdgeLabels(
     }
   };
   const placements: StructureEdgeLabelPlacement[] = [];
-  const candidateFractions = [0.5, 0.38, 0.62, 0.26, 0.74] as const;
-  const candidateOffsets = [0, 48, -48, 96, -96, 144, -144, 204, -204, 276, -276] as const;
+  const candidateFractions = [0.5, 0.38, 0.62, 0.26, 0.74, 0.14, 0.86] as const;
+  const candidateOffsets = [
+    0, 48, -48, 96, -96, 144, -144, 204, -204, 276, -276, 348, -348, 420, -420,
+  ] as const;
   const candidates = candidateOffsets.flatMap((offset) =>
     candidateFractions.map((fraction) => [fraction, offset] as const),
   );
@@ -432,7 +481,7 @@ function placeEdgeLabels(
     const length = Math.max(1, Math.hypot(dx, dy));
     const perpendicularX = -dy / length;
     const perpendicularY = dx / length;
-    const size = edgeLabelSize(edge, sourceChangeKinds);
+    const size = edgeLabelSize(edge, sourceChangeKinds, sourceLabels);
     const possible =
       edge.from === edge.to
         ? [
@@ -630,12 +679,11 @@ export function StructureViewer({
     const previous = getStructureSession(paneId, structure.id);
     if (previous?.updatedAt === structure.updatedAt) return;
     setPositions((current) => reconcileStructureLayout(structure, current));
-    const fallbackFocus = structure.initialFocus ?? null;
     const retainedFocus =
       focusIdRef.current && structure.nodes.some((node) => node.id === focusIdRef.current)
         ? focusIdRef.current
         : null;
-    const nextFocus = retainedFocus ?? fallbackFocus;
+    const nextFocus = retainedFocus;
     setFocusId(nextFocus);
     if (nextFocus === null) {
       setDepth("all");
@@ -706,7 +754,15 @@ export function StructureViewer({
     }
     return result;
   }, [changedFiles]);
-  const bounds = useMemo(
+  const sourceLabels = useMemo(
+    () =>
+      shortestUniqueSourceLabels([
+        ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor.path] : [])),
+        ...structure.edges.flatMap((edge) => edge.anchors.map((anchor) => anchor.path)),
+      ]),
+    [structure.edges, structure.nodes],
+  );
+  const nodeBounds = useMemo(
     () => structureLayoutBounds(visible.nodeIds, positions),
     [positions, visible.nodeIds],
   );
@@ -727,35 +783,65 @@ export function StructureViewer({
   );
   const labeledEdges = useMemo(
     () =>
-      focusId
+      focusId && depth !== "all"
         ? renderedEdges.filter((edge) => edge.from === focusId || edge.to === focusId)
         : renderedEdges,
-    [focusId, renderedEdges],
+    [depth, focusId, renderedEdges],
   );
   const edgeLabelPlacements = useMemo(
-    () => placeEdgeLabels(labeledEdges, renderedNodes, positions, sourceChangeKinds, routeOffsets),
-    [labeledEdges, positions, renderedNodes, routeOffsets, sourceChangeKinds],
+    () =>
+      placeEdgeLabels(
+        labeledEdges,
+        renderedNodes,
+        positions,
+        sourceChangeKinds,
+        sourceLabels,
+        routeOffsets,
+      ),
+    [labeledEdges, positions, renderedNodes, routeOffsets, sourceChangeKinds, sourceLabels],
   );
-  const worldWidth = Math.max(1_200, (bounds?.maxX ?? 1_000) + 180);
-  const worldHeight = Math.max(800, (bounds?.maxY ?? 600) + 180);
+  const displayBounds = useMemo(() => {
+    const boxes: StructureBox[] = [];
+    if (nodeBounds) {
+      boxes.push({
+        left: nodeBounds.minX,
+        top: nodeBounds.minY,
+        right: nodeBounds.maxX,
+        bottom: nodeBounds.maxY,
+      });
+    }
+    for (const edge of renderedEdges) {
+      const geometry = edgePath(edge, positions, routeOffsets.get(edge.id) ?? 0);
+      if (geometry) boxes.push(geometry.bounds);
+    }
+    for (const placement of edgeLabelPlacements) {
+      boxes.push(
+        labelBox(placement.x, placement.y, placement.selectWidth + 28, placement.height, 4),
+      );
+    }
+    return mergedBounds(boxes);
+  }, [edgeLabelPlacements, nodeBounds, positions, renderedEdges, routeOffsets]);
+  const worldWidth = Math.max(1_200, (displayBounds?.right ?? 1_000) + 180);
+  const worldHeight = Math.max(800, (displayBounds?.bottom ?? 600) + 180);
 
   const fitVisible = (): void => {
-    if (!bounds || surfaceSize.width === 0 || surfaceSize.height === 0) return;
+    if (!displayBounds || surfaceSize.width === 0 || surfaceSize.height === 0) return;
     const padding = 72;
     const scale = Math.min(
       1.25,
       Math.max(
         0.18,
         Math.min(
-          (surfaceSize.width - padding * 2) / Math.max(1, bounds.maxX - bounds.minX),
-          (surfaceSize.height - padding * 2) / Math.max(1, bounds.maxY - bounds.minY),
+          (surfaceSize.width - padding * 2) / Math.max(1, displayBounds.right - displayBounds.left),
+          (surfaceSize.height - padding * 2) /
+            Math.max(1, displayBounds.bottom - displayBounds.top),
         ),
       ),
     );
     setViewport({
       scale,
-      x: padding - bounds.minX * scale,
-      y: padding - bounds.minY * scale,
+      x: padding - displayBounds.left * scale,
+      y: padding - displayBounds.top * scale,
     });
   };
 
@@ -795,6 +881,20 @@ export function StructureViewer({
       [...current.filter((candidate) => candidate !== nodeId), nodeId].slice(-6),
     );
     if (recenter) centerNode(nodeId);
+  };
+
+  const clearFocus = (): void => {
+    setFocusId(null);
+    setDepth("all");
+  };
+
+  const copyStructureRef = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(structure.ref);
+      setStatus("Structure参照をコピーしました。");
+    } catch {
+      setStatus("Structure参照をコピーできませんでした。");
+    }
   };
 
   const zoomAtCenter = (factor: number): void => {
@@ -867,7 +967,11 @@ export function StructureViewer({
     try {
       await api<DeleteStructureResponse>(
         `/api/pull-requests/${pullRequestId}/structures/${structure.id}`,
-        { method: "DELETE", headers: { "content-type": "application/json" } },
+        {
+          method: "DELETE",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ expectedUpdatedAt: structure.updatedAt }),
+        },
       );
       deleteStructureSessions(structure.id);
       onDeleted();
@@ -945,6 +1049,13 @@ export function StructureViewer({
           </div>
           <button
             type="button"
+            className="structure-header-action"
+            onClick={() => void copyStructureRef()}
+          >
+            参照をコピー
+          </button>
+          <button
+            type="button"
             className="danger structure-delete"
             disabled={deleting}
             onClick={() => void deleteStructure()}
@@ -983,6 +1094,9 @@ export function StructureViewer({
           <button type="button" disabled={!focusId} onClick={centerFocus}>
             focusを中央へ
           </button>
+          <button type="button" disabled={!focusId} onClick={clearFocus}>
+            focusを解除
+          </button>
           <button type="button" onClick={resetLayout}>
             レイアウトを戻す
           </button>
@@ -1009,6 +1123,12 @@ export function StructureViewer({
           <div
             ref={surfaceRef}
             className="structure-canvas"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || !focusId) return;
+              event.preventDefault();
+              clearFocus();
+            }}
             onWheel={handleWheel}
             onPointerDown={(event) => {
               if (
@@ -1154,7 +1274,11 @@ export function StructureViewer({
                       {node.kind && <span className="structure-kind">{node.kind}</span>}
                       <strong className="structure-node-title">
                         {node.anchor && (
-                          <SourceIdentity anchor={node.anchor} changeKind={changeKind} />
+                          <SourceIdentity
+                            anchor={node.anchor}
+                            changeKind={changeKind}
+                            sourceLabel={sourceLabels.get(node.anchor.path) ?? node.anchor.path}
+                          />
                         )}
                         <span className="structure-node-title-text">
                           <BreakableStructureLabel label={node.label} />

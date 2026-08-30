@@ -393,6 +393,14 @@ secondaryStructureNodes.unshift(
 
 const secondaryStructureEdges = [
   {
+    id: "idempotency-reuses-result",
+    from: "idempotency-store",
+    to: "idempotency-store",
+    label: "同じkeyの保存済みresultを再利用する",
+    directed: true,
+    anchors: [{ path: "src/infrastructure/db/idempotency-store.ts", startLine: 6, endLine: 16 }],
+  },
+  {
     id: "failure-model-explains-handler",
     from: "failure-model",
     to: "hub",
@@ -1469,7 +1477,7 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
   const input = await context.req.json();
   if (input.clearFocus) {
     structure.title = input.title ?? "Order placement architecture without focus";
-    structure.initialFocus = null;
+    structure.initialFocus = input.replacementFocus ?? null;
     structure.nodes = structure.nodes.filter((node) => node.id !== "hub");
     structure.edges = structure.edges.filter((edge) => edge.from !== "hub" && edge.to !== "hub");
     structure.updatedAt = "2026-08-08T05:00:00.000Z";
@@ -1528,7 +1536,7 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
   return context.json({ ok: true, structure });
 });
 
-app.delete("/api/pull-requests/:id/structures/:structureId", (context) => {
+app.delete("/api/pull-requests/:id/structures/:structureId", async (context) => {
   const structureIndex = activeStructures.findIndex(
     (candidate) => candidate.id === context.req.param("structureId"),
   );
@@ -1536,6 +1544,13 @@ app.delete("/api/pull-requests/:id/structures/:structureId", (context) => {
     return context.json(
       { ok: false, error: { code: "NOT_FOUND", message: "missing structure" } },
       404,
+    );
+  }
+  const input = await context.req.json();
+  if (input.expectedUpdatedAt !== activeStructures[structureIndex].updatedAt) {
+    return context.json(
+      { ok: false, error: { code: "STRUCTURE_CONFLICT", message: "stale structure" } },
+      409,
     );
   }
   const [structure] = activeStructures.splice(structureIndex, 1);

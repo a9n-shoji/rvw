@@ -851,6 +851,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "comment.resolve",
           "comment.reopen",
           "pullRequest.sync",
+          "structure.list",
           "structure.read",
           "structure.publish",
           "structure.update",
@@ -1064,6 +1065,18 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     });
 
   structure
+    .command("list")
+    .argument("<pull-request>")
+    .requiredOption("--json", "JSONで出力")
+    .description("Pull RequestのStructure一覧とstable URIを取得")
+    .action(async (reference: string) => {
+      const result = await callService("structure.list", { reference }, () =>
+        getRuntime().service.listStructuresByReference(reference),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
+  structure
     .command("update")
     .argument("<structure-uri>")
     .requiredOption("--stdin", "stdinからJSONを読む")
@@ -1083,30 +1096,47 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .command("delete")
     .argument("<structure-uri>")
     .option("--yes", "不可逆な削除を確認")
+    .option("--expected-updated-at <timestamp>", "previewで取得したupdatedAt")
     .requiredOption("--json", "JSONで出力")
     .description("Structureを削除")
-    .action(async (uri: string, options: OutputOptions & { yes?: boolean }) => {
-      if (!options.yes) {
-        const preview = await callService("structure.delete.preview", { uri }, () =>
-          getRuntime().service.getStructureDeletePreview(uri),
+    .action(
+      async (
+        uri: string,
+        options: OutputOptions & { yes?: boolean; expectedUpdatedAt?: string },
+      ) => {
+        if (!options.yes) {
+          const preview = await callService("structure.delete.preview", { uri }, () =>
+            getRuntime().service.getStructureDeletePreview(uri),
+          );
+          writeJson({
+            ok: false,
+            error: {
+              code: "STRUCTURE_DELETE_CONFIRMATION_REQUIRED",
+              message: "structure deleteには--yesが必要です。",
+              suggestions: [
+                `rvw structure delete ${uri} --yes --expected-updated-at '${preview.structure.updatedAt}' --json`,
+              ],
+            },
+            ...preview,
+          });
+          process.exitCode = 2;
+          return;
+        }
+        if (!options.expectedUpdatedAt) {
+          throw new RvwError(
+            "INVALID_INPUT",
+            "confirmed structure deleteにはpreviewのexpectedUpdatedAtが必要です。",
+            { suggestions: [`rvw structure delete ${uri} --json で現在値を確認してください。`] },
+          );
+        }
+        const deleted = await callService(
+          "structure.delete",
+          { uri, expectedUpdatedAt: options.expectedUpdatedAt, confirmed: true },
+          () => getRuntime().service.deleteStructureByUri(uri, options.expectedUpdatedAt!),
         );
-        writeJson({
-          ok: false,
-          error: {
-            code: "STRUCTURE_DELETE_CONFIRMATION_REQUIRED",
-            message: "structure deleteには--yesが必要です。",
-            suggestions: [`rvw structure delete ${uri} --yes --json`],
-          },
-          ...preview,
-        });
-        process.exitCode = 2;
-        return;
-      }
-      const deleted = await callService("structure.delete", { uri, confirmed: true }, () =>
-        getRuntime().service.deleteStructureByUri(uri),
-      );
-      writeJson({ ok: true, deleted });
-    });
+        writeJson({ ok: true, deleted });
+      },
+    );
 
   const walkthrough = program.command("walkthrough").description("コード参照付きwalkthroughを管理");
   walkthrough

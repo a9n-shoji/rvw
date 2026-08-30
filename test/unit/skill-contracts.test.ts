@@ -53,7 +53,7 @@ describe("bundled Skill code-reference guidance", () => {
 
   it("keeps Structure authoring code-centered, source-exact, and identity-stable", () => {
     expect(structureSkill).toContain("A Structure is a space; a Walkthrough is a path");
-    expect(structureSkill).toContain("Require `protocolVersion` 4");
+    expect(structureSkill).toContain("Require `protocolVersion` 5");
     expect(structureSkill).toContain("structure.publish");
     expect(structureSkill).toContain("Never access SQLite directly");
     expect(structureSkill).toContain("Preserve IDs");

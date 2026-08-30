@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RvwService } from "../../src/application/rvw-service.js";
 import { formatCommentWatchCursor } from "../../src/domain/comment-watch-cursor.js";
-import type { GitHubPullRequest } from "../../src/domain/models.js";
+import type { GitHubPullRequest, Structure } from "../../src/domain/models.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
@@ -1899,7 +1899,8 @@ describe("RvwService commit workflow", () => {
   it("publishes, replaces, reads, and deletes an exact-source Structure", async () => {
     const { repository, firstHead, fake, database, service } = setup("rvw-structure-");
     const opened = await service.openPullRequest(undefined, repository);
-    const structure = await service.publishStructure({
+    const publishInput = {
+      idempotencyKey: "structure-publish-source-relationships",
       pullRequest: opened.pullRequest.url,
       sourceOid: firstHead,
       title: "Source relationships",
@@ -1925,7 +1926,12 @@ describe("RvwService commit workflow", () => {
           anchors: [{ path: "src.txt" }],
         },
       ],
-    });
+    };
+    const structure = await service.publishStructure(publishInput);
+    await expect(service.publishStructure(publishInput)).resolves.toEqual(structure);
+    await expect(
+      service.publishStructure({ ...publishInput, title: "Conflicting retry" }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
 
     expect(structure).toMatchObject({
       ref: `rvw://structure/${structure.id}`,
@@ -1941,6 +1947,7 @@ describe("RvwService commit workflow", () => {
     expect(service.listStructures(opened.pullRequest.id)).toEqual([
       {
         id: structure.id,
+        ref: structure.ref,
         pullRequestId: opened.pullRequest.id,
         sourceOid: firstHead,
         title: "Source relationships",
@@ -1952,6 +1959,7 @@ describe("RvwService commit workflow", () => {
     expect(service.getStructureByUri(structure.ref).structure).toEqual(structure);
 
     const updated = await service.updateStructure(structure.ref, {
+      expectedUpdatedAt: structure.updatedAt,
       sourceOid: firstHead,
       title: "Source boundary",
       scope: "The same subject with a corrected consumer claim.",
@@ -1989,6 +1997,22 @@ describe("RvwService commit workflow", () => {
 
     await expect(
       service.updateStructure(structure.ref, {
+        expectedUpdatedAt: structure.updatedAt,
+        sourceOid: firstHead,
+        title: "Stale replacement",
+        scope: "This writer read the previous value.",
+        nodes: [{ id: "source", label: "Stale" }],
+        edges: [],
+      }),
+    ).rejects.toMatchObject({
+      code: "STRUCTURE_CONFLICT",
+      status: 409,
+      details: { expectedUpdatedAt: structure.updatedAt, currentUpdatedAt: updated.updatedAt },
+    });
+
+    await expect(
+      service.updateStructure(structure.ref, {
+        expectedUpdatedAt: updated.updatedAt,
         sourceOid: firstHead,
         title: "Invalid source",
         scope: "Reject an out-of-document anchor.",
@@ -2013,16 +2037,48 @@ describe("RvwService commit workflow", () => {
       opened.pullRequest.latestComparisonBaseOid,
     );
     expect(() => service.getStructure(secondPr.id, structure.id)).toThrow(/見つかりません/);
-    expect(service.getStructureDeletePreview(structure.ref)).toMatchObject({
+    const deletePreview = service.getStructureDeletePreview(structure.ref);
+    expect(deletePreview).toMatchObject({
       counts: { nodes: 3, edges: 1, anchors: 2 },
       confirmationRequired: true,
     });
-    expect(service.deleteStructureByUri(structure.ref)).toMatchObject({
+    const concurrentResults = await Promise.allSettled(
+      ["First", "Second"].map((writer) =>
+        service.updateStructure(structure.ref, {
+          expectedUpdatedAt: updated.updatedAt,
+          sourceOid: firstHead,
+          title: `${writer} concurrent replacement`,
+          scope: "Only one writer from the same current value may succeed.",
+          nodes: updated.nodes,
+          edges: updated.edges,
+          initialFocus: updated.initialFocus,
+        }),
+      ),
+    );
+    const fulfilled = concurrentResults.filter(
+      (result): result is PromiseFulfilledResult<Structure> => result.status === "fulfilled",
+    );
+    const rejected = concurrentResults.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: "STRUCTURE_CONFLICT", status: 409 });
+    const concurrentlyUpdated = fulfilled[0]!.value;
+    expect(() =>
+      service.deleteStructureByUri(structure.ref, deletePreview.structure.updatedAt),
+    ).toThrowError(expect.objectContaining({ code: "STRUCTURE_CONFLICT", status: 409 }));
+    expect(
+      service.deleteStructureByUri(structure.ref, concurrentlyUpdated.updatedAt),
+    ).toMatchObject({
       id: structure.id,
       ref: structure.ref,
       counts: { nodes: 3, edges: 1, anchors: 2 },
     });
     expect(service.listStructures(opened.pullRequest.id)).toEqual([]);
+    await expect(service.publishStructure(publishInput)).rejects.toMatchObject({
+      code: "IDEMPOTENCY_RESULT_DELETED",
+    });
     expect(git(repository, "rev-parse", `refs/rvw/pr/7/commits/oid-${firstHead}`)).toBe(firstHead);
   });
 });

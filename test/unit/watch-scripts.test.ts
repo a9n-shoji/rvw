@@ -51,7 +51,7 @@ const json = (value, code = 0) => {
   process.exitCode = code;
 };
 if (args[0] === "protocol") {
-  json({ protocolVersion: 4, appVersion: "9.9.9", capabilities: [
+  json({ protocolVersion: 5, appVersion: "9.9.9", capabilities: [
     "agent.transport", "comment.watch", "comment.read", "comment.reply",
     "comment.edit", "comment.codeReferences", "pullRequest.sync"
   ] });
@@ -184,7 +184,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       ok: true,
       node: { ok: true },
-      rvw: { appVersion: "9.9.9", protocolVersion: 4, missingCapabilities: [] },
+      rvw: { appVersion: "9.9.9", protocolVersion: 5, missingCapabilities: [] },
       checks: { agentStatus: true, agentPingConnected: true },
     });
     const calls = readFakeCalls(fake.log).map((call) => call.args);

@@ -134,6 +134,11 @@ export function ReviewTreeItems({
         aria-label={`Structure ${structures.length}`}
         disabled={structures.length === 0}
         onClick={() => setStructuresExpanded((expanded) => !expanded)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || !structuresExpanded) return;
+          event.preventDefault();
+          setStructuresExpanded(false);
+        }}
       >
         <span className="directory-chevron" aria-hidden="true">
           {structuresExpanded ? "▾" : "▸"}

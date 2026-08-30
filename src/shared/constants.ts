@@ -1,5 +1,5 @@
 export const APP_VERSION = "0.3.1";
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 export const VIEWER_ID_HEADER = "x-rvw-viewer-id";
 export const VIEWER_OPEN_LEASE_HEADER = "x-rvw-viewer-open-lease";
 export const VIEWER_OPEN_LEASE_QUERY = "viewerLease";

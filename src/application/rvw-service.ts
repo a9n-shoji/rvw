@@ -269,9 +269,12 @@ export interface StructureContentRequest {
 
 export interface StructurePublishRequest extends StructureContentRequest {
   pullRequest: string;
+  idempotencyKey: string;
 }
 
-export type StructureUpdateRequest = StructureContentRequest;
+export interface StructureUpdateRequest extends StructureContentRequest {
+  expectedUpdatedAt: string;
+}
 
 export interface StructureDeletePreview {
   structure: Structure;
@@ -1700,6 +1703,14 @@ export class RvwService {
     return this.database.listStructures(pullRequestId);
   }
 
+  listStructuresByReference(reference: string): {
+    pullRequest: PullRequest;
+    structures: StructureSummary[];
+  } {
+    const pullRequest = this.resolveStoredPullRequest(reference);
+    return { pullRequest, structures: this.database.listStructures(pullRequest.id) };
+  }
+
   getStructure(pullRequestId: string, structureId: string): Structure {
     this.getPullRequest(pullRequestId);
     const structure = this.database.getStructure(structureId);
@@ -1725,22 +1736,23 @@ export class RvwService {
     sourceOid: string,
     anchor: SourceAnchorRequest,
     subject: string,
-    documents: Map<string, DocumentContent>,
+    documents: Map<string, Promise<DocumentContent>>,
   ): Promise<SourceAnchor> {
     assertCodeReferencePath(anchor.path);
     const startLine = anchor.startLine ?? null;
     const endLine = anchor.endLine ?? null;
     assertLinePair(startLine, endLine);
-    let content = documents.get(anchor.path);
-    if (!content) {
-      content = await this.getDocument({
+    let contentPromise = documents.get(anchor.path);
+    if (!contentPromise) {
+      contentPromise = this.getDocument({
         kind: "repository-file",
         pullRequestId: pullRequest.id,
         sourceOid,
         path: anchor.path,
       });
-      documents.set(anchor.path, content);
+      documents.set(anchor.path, contentPromise);
     }
+    const content = await contentPromise;
     if (content.availability !== "available") {
       throw new RvwError("INVALID_INPUT", `${subject}のsourceを表示できません: ${anchor.path}`);
     }
@@ -1805,7 +1817,7 @@ export class RvwService {
         `Structure Edgeは${MAX_STRUCTURE_EDGES}件以下にしてください。`,
       );
     }
-    const documents = new Map<string, DocumentContent>();
+    const documents = new Map<string, Promise<DocumentContent>>();
     const nodeIds = new Set<string>();
     const nodes: StructureNode[] = [];
     for (const node of input.nodes) {
@@ -1905,18 +1917,34 @@ export class RvwService {
   }
 
   async publishStructure(input: StructurePublishRequest): Promise<Structure> {
+    if (typeof input.idempotencyKey !== "string") {
+      throw new RvwError("INVALID_INPUT", "idempotencyKeyが必要です。");
+    }
+    assertIdempotencyKey(input.idempotencyKey);
     const pullRequest = this.resolveStoredPullRequest(input.pullRequest);
     const content = await this.validateStructureContent(pullRequest, input);
     return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, "Structure", () =>
-      this.database.createStructure({ pullRequestId: pullRequest.id, ...content }),
+      this.database.createStructure({
+        pullRequestId: pullRequest.id,
+        ...content,
+        idempotencyKey: input.idempotencyKey,
+        idempotencyRequestHash: idempotencyRequestHash({
+          operation: "structure.publish",
+          pullRequestId: pullRequest.id,
+          content,
+        }),
+      }),
     );
   }
 
   async updateStructure(uri: string, input: StructureUpdateRequest): Promise<Structure> {
     const { pullRequest, structure } = this.getStructureByUri(uri);
+    if (typeof input.expectedUpdatedAt !== "string" || input.expectedUpdatedAt.length === 0) {
+      throw new RvwError("INVALID_INPUT", "expectedUpdatedAtが必要です。");
+    }
     const content = await this.validateStructureContent(pullRequest, input);
     return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, "Structure", () =>
-      this.database.updateStructure(structure.id, content),
+      this.database.updateStructure(structure.id, input.expectedUpdatedAt, content),
     );
   }
 
@@ -1929,14 +1957,18 @@ export class RvwService {
     };
   }
 
-  deleteStructureByUri(uri: string): DeletedStructure {
+  deleteStructureByUri(uri: string, expectedUpdatedAt: string): DeletedStructure {
     const { structure } = this.getStructureByUri(uri);
-    return this.database.deleteStructure(structure.id);
+    return this.database.deleteStructure(structure.id, expectedUpdatedAt);
   }
 
-  deleteStructure(pullRequestId: string, structureId: string): DeletedStructure {
+  deleteStructure(
+    pullRequestId: string,
+    structureId: string,
+    expectedUpdatedAt: string,
+  ): DeletedStructure {
     this.getStructure(pullRequestId, structureId);
-    return this.database.deleteStructure(structureId);
+    return this.database.deleteStructure(structureId, expectedUpdatedAt);
   }
 
   getWalkthrough(pullRequestId: string, walkthroughId: string): Walkthrough {

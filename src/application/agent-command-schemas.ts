@@ -32,6 +32,8 @@ const walkthroughUri = z.string().regex(/^rvw:\/\/walkthrough\//);
 const structureUri = z.string().regex(/^rvw:\/\/structure\//);
 const nullableCommentLine = z.number().int().positive().nullable().optional().default(null);
 const idempotencyKey = z.string().min(1).max(MAX_IDEMPOTENCY_KEY_CHARACTERS).optional();
+const requiredIdempotencyKey = z.string().min(1).max(MAX_IDEMPOTENCY_KEY_CHARACTERS);
+const expectedUpdatedAt = z.string().min(1).max(100);
 
 export const commentTargetInputSchema = z
   .union([
@@ -347,13 +349,22 @@ function refineStructureContent(
   }
 }
 
-export const structureUpdateInputSchema = z
+export const structureContentInputSchema = z
   .object(structureContentShape)
   .strict()
   .superRefine(refineStructureContent);
 
+export const structureUpdateInputSchema = z
+  .object({ expectedUpdatedAt, ...structureContentShape })
+  .strict()
+  .superRefine(refineStructureContent);
+
 export const structurePublishInputSchema = z
-  .object({ pullRequest: nonEmptyString, ...structureContentShape })
+  .object({
+    pullRequest: nonEmptyString,
+    idempotencyKey: requiredIdempotencyKey,
+    ...structureContentShape,
+  })
   .strict()
   .superRefine(refineStructureContent);
 
@@ -402,10 +413,13 @@ export const agentCommandInputSchemas = {
   "walkthrough.delete.preview": z.object({ uri: walkthroughUri }).strict(),
   "walkthrough.delete": z.object({ uri: walkthroughUri, confirmed: z.literal(true) }).strict(),
   "structure.get": z.object({ uri: structureUri }).strict(),
+  "structure.list": z.object({ reference: nonEmptyString }).strict(),
   "structure.publish": structurePublishInputSchema,
   "structure.update": z.object({ uri: structureUri, content: structureUpdateInputSchema }).strict(),
   "structure.delete.preview": z.object({ uri: structureUri }).strict(),
-  "structure.delete": z.object({ uri: structureUri, confirmed: z.literal(true) }).strict(),
+  "structure.delete": z
+    .object({ uri: structureUri, expectedUpdatedAt, confirmed: z.literal(true) })
+    .strict(),
 } as const;
 
 export type AgentCommandOperation = keyof typeof agentCommandInputSchemas;

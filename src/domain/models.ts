@@ -223,6 +223,7 @@ export interface Structure {
 
 export interface StructureSummary {
   id: string;
+  ref: string;
   pullRequestId: string;
   sourceOid: string;
   title: string;

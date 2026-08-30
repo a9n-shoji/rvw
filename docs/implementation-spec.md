@@ -617,8 +617,9 @@ type Structure = {
   Edge labelは関係を表すverb / verb phraseを使い、directionを読解順には使わない。
 - `kind`は任意の短いfactual badgeであり、controlled vocabularyやlayout hintではない。Phase 1はnotationを
   導入しない。comment、group、reverse lookup、durable layout、confidence、severityも持たない。
-- SQLiteはstable identityと一つのcurrent graph値だけを保持する。updateはatomicなwhole-value replacementで、
-  node/edge単位patch、過去値、Structure revision、version selectorを持たない。
+- SQLiteはstable identityと一つのcurrent graph値だけを保持する。updateは`expectedUpdatedAt`を条件にした
+  atomicなwhole-value replacementで、node/edge単位patch、過去値、Structure revision、version selectorを
+  持たない。deleteもpreviewで読んだ`updatedAt`がcurrent値と一致する場合だけ実行する。
 
 viewerはStructureをPR / repository file / Walkthroughと同じfirst-class document tabとして扱う。Structure
 folderには同じPRの複数Structureを並べる。開いた時点でcode tabを増やさず、人間がNodeまたはEdgeのsource
@@ -636,10 +637,12 @@ depth、viewportはbrowser session内だけでpaneとStructure IDの組へ保持
 surviving IDの位置を保つ。新規Nodeはretained neighbor付近の空いている矩形へ置く。左右paneで同じStructureを
 開いてもreading stateとDOM参照を共有しない。reload、別browser、CLI、SQLiteへ座標を持ち越さない。drag後は
 deterministicな初期配置へ戻せる。
+`initialFocus`は新しいreading sessionの初期化時だけ使う。current-value更新でfocus Nodeが消えた場合は、
+producerの新しい`initialFocus`へ移動せずfocusなしのAllへ戻す。人間は明示buttonまたはEscapeでfocusを解除できる。
 
 directed EdgeはNode外周より外で始点／終点を止め、arrowheadをNodeの下へ隠さない緩いBézier曲線で描く。
-parallel / reciprocal Edgeはstable IDでlaneを分ける。focused Nodeではincident Edge、focusなしでは表示中の全
-Edge labelをNodeと既存labelを避けて配置し、
+parallel / reciprocal Edgeはstable IDでlaneを分ける。1-hop / 2-hopではfocused Nodeのincident Edge、Allまたは
+focusなしでは表示中の全Edge labelをNodeと既存labelを避けて配置し、
 source file identityをlabel左、独立したsource actionを右へ置く。Nodeもsource file identityをtitle左、source
 actionを右上へ分け、長いidentifierやlabelは省略せず固定card内で改行する。canvasはfocus名、可視／全体件数、
 zoom率とminimapを常時提示する。inspectorはgraph幅を優先して初期状態を閉じ、明示操作で開閉できる。
@@ -649,8 +652,10 @@ stable IDや件数で自動的に隠さない。bounded graphを超えるsubject
 focused Nodeのclaim、全incident relation、全Edge anchorを表示する。選択commit範囲に対する変更file
 presentationはbadge / borderだけへ反映し、source identityとlayoutへ影響させない。
 
-publish / update / deleteはpassiveでbrowserを開かずnavigationを変更しない。viewerはpollでlistとcurrent
-valueを更新し、stable IDでsession空間をreconcileする。削除は対象StructureとNode / Edge / anchor件数を確認
+publish / update / deleteはpassiveでbrowserを開かずnavigationを変更しない。publishは一つのlogical operationに
+保持する`idempotencyKey`を必須とし、同じcanonical payloadの再送は元のstable URIを返す。別payloadへのkey再利用と
+削除済みresultの再生成は拒否する。`structure list`はPRごとのstable URIを含むsummaryを返す。viewerはpollで
+listとcurrent valueを更新し、stable IDでsession空間をreconcileする。削除は対象StructureとNode / Edge / anchor件数を確認
 したhuman action、または同じpreviewを読んだAgentへの明示authorization後だけ実行する。retained commit refは
 共有され得るため個別deleteでは外さず、PR resetをcleanup boundaryとする。
 
@@ -813,6 +818,12 @@ rvw walkthrough publish --stdin --json
 rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
 rvw walkthrough delete <WALKTHROUGH_URI> --json
 rvw walkthrough delete <WALKTHROUGH_URI> --yes --json
+rvw structure get <STRUCTURE_URI> --json
+rvw structure list <PR_REF> --json
+rvw structure publish --stdin --json
+rvw structure update <STRUCTURE_URI> --stdin --json
+rvw structure delete <STRUCTURE_URI> --json
+rvw structure delete <STRUCTURE_URI> --yes --expected-updated-at <PREVIEW_UPDATED_AT> --json
 rvw comment create --stdin --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
@@ -825,7 +836,7 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-current protocol versionは4とし、最初のpublic compatibility contractはversion 1である。公開前に
+current protocol versionは5とし、最初のpublic compatibility contractはversion 1である。公開前に
 使用した内部version番号は互換性保証の対象外とする。public release後は番号を再利用せず、breaking
 changeのたびに単調増加させる。capabilityは次を含む。
 
@@ -841,6 +852,11 @@ comment.codeReferences
 comment.resolve
 comment.reopen
 pullRequest.sync
+structure.list
+structure.read
+structure.publish
+structure.update
+structure.delete
 walkthrough.read
 walkthrough.publish
 walkthrough.update
@@ -1070,22 +1086,27 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
 
 ```bash
 rvw structure get <STRUCTURE_URI> --json
+rvw structure list <PR_REF> --json
 rvw structure publish --stdin --json
 rvw structure update <STRUCTURE_URI> --stdin --json
 rvw structure delete <STRUCTURE_URI> --json
-rvw structure delete <STRUCTURE_URI> --yes --json
+rvw structure delete <STRUCTURE_URI> --yes --expected-updated-at <PREVIEW_UPDATED_AT> --json
 ```
 
-publish inputは`pullRequest`、`sourceOid`、`title`、`scope`、nullableな`initialFocus`、全`nodes`、全`edges`
-を持つ。updateは`pullRequest`を除く同じcurrent値の完全置換である。CLIとAgent socketは同じschemaと
+publish inputは`idempotencyKey`、`pullRequest`、`sourceOid`、`title`、`scope`、nullableな`initialFocus`、全
+`nodes`、全`edges`を持つ。同じkeyとcanonical payloadの再送は元のStructureを返し、別payloadとのkey conflictと
+削除済みresultを明示errorにする。`list`はPR selectorからstable `ref`を含むsummaryを返す。updateは
+`expectedUpdatedAt`と`pullRequest`を除く同じcurrent値の完全置換である。CLIとAgent socketは同じschemaと
 application validationを使用し、commit availability、PR ownership、UTF-8 document、line pair、ID、endpoint、
 focus、count、byte上限を検証する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
-`createdAt`と新しい`updatedAt`を返す。どちらもretained commit refを確保してから一つのSQLite transactionで
-保存し、失敗時はref作成をrollbackする。過去graphは保存しない。
+`createdAt`と新しい`updatedAt`を返す。updateはcurrent `updatedAt`がexpected値と一致する時だけ保存し、不一致は
+409の`STRUCTURE_CONFLICT`を返す。どちらもretained commit refを確保してから一つのSQLite transactionで保存し、
+失敗時はref作成をrollbackする。過去graphは保存しない。
 
 `get`はcurrent Structureと対象PR identity、local repository pathを返す。`--yes`なしのdeleteは
 `STRUCTURE_DELETE_CONFIRMATION_REQUIRED`、current Structure、Node / Edge / anchor件数を返してexit 2とする。
-confirmed deleteだけがcurrent値を物理削除する。全commandはpassiveでviewerを操作しない。
+confirmed deleteはpreviewの`updatedAt`を必須とし、current値が変わっていない場合だけ物理削除する。全commandは
+passiveでviewerを操作しない。
 
 ### 7.6 JSON transport contract
 
@@ -1305,6 +1326,13 @@ CREATE TABLE structures (
   graph_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE structure_publish_idempotency (
+  key_hash TEXT PRIMARY KEY,
+  request_hash TEXT NOT NULL,
+  structure_id TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 ```
 

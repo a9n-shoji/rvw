@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { structureUpdateInputSchema } from "../../src/application/agent-command-schemas.js";
+import { structureContentInputSchema } from "../../src/application/agent-command-schemas.js";
 
 const examples = [
   "docs/examples/structures/agent-transport-boundary.json",
@@ -11,7 +11,7 @@ const examples = [
 
 describe("Structure producer examples", () => {
   it.each(examples)("keeps %s valid and exact at its declared commit", (filePath) => {
-    const structure = structureUpdateInputSchema.parse(JSON.parse(readFileSync(filePath, "utf8")));
+    const structure = structureContentInputSchema.parse(JSON.parse(readFileSync(filePath, "utf8")));
     const anchors = [
       ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor] : [])),
       ...structure.edges.flatMap((edge) => edge.anchors),

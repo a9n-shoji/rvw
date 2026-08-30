@@ -168,6 +168,7 @@ describe("Agent socket", () => {
       ref: "rvw://structure/70000000-0000-4000-8000-000000000001",
     });
     const input = {
+      idempotencyKey: "structure-publish-auth-boundary",
       pullRequest: "https://github.com/acme/review-repo/pull/7",
       sourceOid: "a".repeat(40),
       title: "Authorization boundary",
@@ -190,6 +191,32 @@ describe("Agent socket", () => {
         ...input,
         nodes: [expect.objectContaining({ description: null, kind: null, anchor: null })],
       }),
+    );
+  });
+
+  it("lists Structure references through the shared Agent transport", async () => {
+    const listStructuresByReference = vi.fn().mockReturnValue({
+      pullRequest: { id: "pr-7" },
+      structures: [
+        {
+          ref: "rvw://structure/70000000-0000-4000-8000-000000000001",
+          title: "Authorization boundary",
+        },
+      ],
+    });
+
+    await expect(
+      dispatchAgentSocketRequest({ listStructuresByReference } as unknown as RvwService, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "structure.list",
+        input: { reference: "https://github.com/acme/review-repo/pull/7" },
+      }),
+    ).resolves.toMatchObject({
+      pullRequest: { id: "pr-7" },
+      structures: [{ ref: "rvw://structure/70000000-0000-4000-8000-000000000001" }],
+    });
+    expect(listStructuresByReference).toHaveBeenCalledWith(
+      "https://github.com/acme/review-repo/pull/7",
     );
   });
 

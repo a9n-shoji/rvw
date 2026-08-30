@@ -431,6 +431,8 @@ export interface NewStructureInput {
   initialFocus: string | null;
   nodes: StructureNode[];
   edges: StructureEdge[];
+  idempotencyKey: string;
+  idempotencyRequestHash: string;
 }
 
 export class RvwDatabase {
@@ -1042,6 +1044,7 @@ export class RvwDatabase {
         .all(pullRequestId) as DbRow[]
     ).map((row) => ({
       id: stringValue(row, "id"),
+      ref: formatStructureUri(stringValue(row, "id")),
       pullRequestId: stringValue(row, "pull_request_id"),
       sourceOid: stringValue(row, "source_oid"),
       title: stringValue(row, "title"),
@@ -1052,14 +1055,37 @@ export class RvwDatabase {
   }
 
   createStructure(input: NewStructureInput): Structure {
-    const id = randomUUID();
-    const now = new Date().toISOString();
+    let structureId: string | undefined;
     const graphJson = JSON.stringify({
       initialFocus: input.initialFocus,
       nodes: input.nodes,
       edges: input.edges,
     });
     this.immediateTransaction(() => {
+      const keyHash = hashIdempotencyKey(input.idempotencyKey);
+      const existingRow = this.database
+        .prepare("SELECT * FROM structure_publish_idempotency WHERE key_hash = ?")
+        .get(keyHash) as DbRow | undefined;
+      if (existingRow) {
+        if (stringValue(existingRow, "request_hash") !== input.idempotencyRequestHash) {
+          throw new RvwError(
+            "IDEMPOTENCY_CONFLICT",
+            "同じidempotencyKeyが別のStructure publishに使用されています。",
+          );
+        }
+        const existingId = stringValue(existingRow, "structure_id");
+        if (!this.getStructure(existingId)) {
+          throw new RvwError(
+            "IDEMPOTENCY_RESULT_DELETED",
+            "このidempotencyKeyで作成したStructureは既に削除されています。",
+            { details: { structureId: existingId } },
+          );
+        }
+        structureId = existingId;
+        return;
+      }
+      const id = randomUUID();
+      const now = new Date().toISOString();
       this.database
         .prepare(
           `INSERT INTO structures(
@@ -1076,19 +1102,30 @@ export class RvwDatabase {
           now,
           now,
         );
+      this.database
+        .prepare(
+          `INSERT INTO structure_publish_idempotency(
+             key_hash, request_hash, structure_id, created_at
+           ) VALUES (?, ?, ?, ?)`,
+        )
+        .run(keyHash, input.idempotencyRequestHash, id, now);
       this.incrementChangeSequence();
+      structureId = id;
     });
-    const structure = this.getStructure(id);
+    if (!structureId) {
+      throw new RvwError("DATABASE_ERROR", "保存したStructure IDを確定できません。");
+    }
+    const structure = this.getStructure(structureId);
     if (!structure) throw new RvwError("DATABASE_ERROR", "保存したStructureを読み出せません。");
     return structure;
   }
 
-  updateStructure(id: string, input: Omit<NewStructureInput, "pullRequestId">): Structure {
-    const current = this.getStructure(id);
-    if (!current) {
-      throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
-    }
-    const currentUpdatedAt = Date.parse(current.updatedAt);
+  updateStructure(
+    id: string,
+    expectedUpdatedAt: string,
+    input: Omit<NewStructureInput, "pullRequestId" | "idempotencyKey" | "idempotencyRequestHash">,
+  ): Structure {
+    const currentUpdatedAt = Date.parse(expectedUpdatedAt);
     const observedNow = Date.now();
     const now = new Date(
       Number.isNaN(currentUpdatedAt) ? observedNow : Math.max(observedNow, currentUpdatedAt + 1),
@@ -1103,11 +1140,22 @@ export class RvwDatabase {
         .prepare(
           `UPDATE structures
            SET source_oid = ?, title = ?, scope = ?, graph_json = ?, updated_at = ?
-           WHERE id = ?`,
+           WHERE id = ? AND updated_at = ?`,
         )
-        .run(input.sourceOid, input.title, input.scope, graphJson, now, id);
+        .run(input.sourceOid, input.title, input.scope, graphJson, now, id, expectedUpdatedAt);
       if (Number(result.changes) === 0) {
-        throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
+        const current = this.getStructure(id);
+        if (!current) {
+          throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
+        }
+        throw new RvwError(
+          "STRUCTURE_CONFLICT",
+          "Structureが取得後に更新されています。現在値を読み直してください。",
+          {
+            status: 409,
+            details: { expectedUpdatedAt, currentUpdatedAt: current.updatedAt },
+          },
+        );
       }
       this.incrementChangeSequence();
     });
@@ -1128,14 +1176,33 @@ export class RvwDatabase {
     };
   }
 
-  deleteStructure(id: string): DeletedStructure {
+  deleteStructure(id: string, expectedUpdatedAt: string): DeletedStructure {
     return this.immediateTransaction(() => {
       const structure = this.getStructure(id);
       if (!structure) {
         throw new RvwError("NOT_FOUND", "Structureが見つかりません。", { status: 404 });
       }
+      if (structure.updatedAt !== expectedUpdatedAt) {
+        throw new RvwError(
+          "STRUCTURE_CONFLICT",
+          "Structureがpreview後に更新されています。現在値を読み直してください。",
+          {
+            status: 409,
+            details: { expectedUpdatedAt, currentUpdatedAt: structure.updatedAt },
+          },
+        );
+      }
       const counts = this.getStructureDeleteCounts(id);
-      this.database.prepare("DELETE FROM structures WHERE id = ?").run(id);
+      const result = this.database
+        .prepare("DELETE FROM structures WHERE id = ? AND updated_at = ?")
+        .run(id, expectedUpdatedAt);
+      if (Number(result.changes) === 0) {
+        throw new RvwError(
+          "STRUCTURE_CONFLICT",
+          "Structureがpreview後に更新されています。現在値を読み直してください。",
+          { status: 409, details: { expectedUpdatedAt } },
+        );
+      }
       this.incrementChangeSequence();
       return {
         id: structure.id,

@@ -60,7 +60,7 @@ prevents an interrupted third attempt from leaving `確認中` indefinitely.
 ## Start or resume intake
 
 Run the single preflight command. It concurrently detects `rvw` and verifies Node `>=24.15.0`.
-Require `protocolVersion` 4 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
+Require `protocolVersion` 5 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
 `comment.edit`, `comment.codeReferences`, and `pullRequest.sync`, and report agent status and ping in
 one JSON value. Stop when `ok` is false. A disconnected ping is diagnostic when status safely selects
 direct-database transport; an unavailable selected transport is fatal.

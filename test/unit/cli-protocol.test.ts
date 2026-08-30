@@ -180,7 +180,7 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 4,
+      protocolVersion: 5,
       appVersion: "0.3.1",
       capabilities: [
         "agent.transport",
@@ -194,6 +194,7 @@ describe("CLI protocol discovery", () => {
         "comment.resolve",
         "comment.reopen",
         "pullRequest.sync",
+        "structure.list",
         "structure.read",
         "structure.publish",
         "structure.update",
@@ -219,7 +220,7 @@ describe("CLI protocol discovery", () => {
       program.commands
         .find((command) => command.name() === "structure")
         ?.commands.map((command) => command.name()),
-    ).toEqual(["publish", "get", "update", "delete"]);
+    ).toEqual(["publish", "get", "list", "update", "delete"]);
     expect(
       program.commands
         .find((command) => command.name() === "agent")
@@ -812,6 +813,7 @@ describe("CLI protocol discovery", () => {
   it("publishes and reads a Structure through the CLI", async () => {
     const uri = "rvw://structure/70000000-0000-4000-8000-000000000002";
     const input = {
+      idempotencyKey: "structure-publish-auth-boundary",
       pullRequest: pullRequest.url,
       sourceOid: "b".repeat(40),
       title: "Authorization boundary",
@@ -825,7 +827,15 @@ describe("CLI protocol discovery", () => {
       pullRequest: { id: pullRequest.id },
       structure: { ref: uri, ...input },
     });
-    const { runtime } = mockRuntime({ publishStructure, getStructureByUri });
+    const listStructuresByReference = vi.fn().mockReturnValue({
+      pullRequest: { id: pullRequest.id },
+      structures: [{ ref: uri, title: input.title }],
+    });
+    const { runtime } = mockRuntime({
+      publishStructure,
+      getStructureByUri,
+      listStructuresByReference,
+    });
     const readPublish = captureStdout();
     provideStdin(input);
     await createProgram(() => runtime).parseAsync([
@@ -856,11 +866,25 @@ describe("CLI protocol discovery", () => {
     ]);
     expect(getStructureByUri).toHaveBeenCalledWith(uri);
     expect(readGet()).toMatchObject({ ok: true, structure: { ref: uri } });
+
+    vi.restoreAllMocks();
+    const readList = captureStdout();
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "structure",
+      "list",
+      pullRequest.url,
+      "--json",
+    ]);
+    expect(listStructuresByReference).toHaveBeenCalledWith(pullRequest.url);
+    expect(readList()).toMatchObject({ ok: true, structures: [{ ref: uri }] });
   });
 
   it("passes a complete Structure replacement and requires delete confirmation", async () => {
     const uri = "rvw://structure/70000000-0000-4000-8000-000000000002";
     const input = {
+      expectedUpdatedAt: "2026-08-30T00:00:00.000Z",
       sourceOid: "b".repeat(40),
       title: "Updated boundary",
       scope: "The same declared subject.",
@@ -870,7 +894,7 @@ describe("CLI protocol discovery", () => {
     };
     const updateStructure = vi.fn().mockResolvedValue({ ref: uri, ...input });
     const getStructureDeletePreview = vi.fn().mockReturnValue({
-      structure: { ref: uri, ...input },
+      structure: { ref: uri, ...input, updatedAt: input.expectedUpdatedAt },
       counts: { nodes: 1, edges: 0, anchors: 0 },
       confirmationRequired: true,
     });
@@ -910,11 +934,35 @@ describe("CLI protocol discovery", () => {
     expect(getStructureDeletePreview).toHaveBeenCalledWith(uri);
     expect(deleteStructureByUri).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(2);
-    expect(readDeletePreview()).toMatchObject({
+    const deletePreviewOutput = readDeletePreview() as {
+      error: { suggestions: string[] };
+    };
+    expect(deletePreviewOutput).toMatchObject({
       ok: false,
       error: { code: "STRUCTURE_DELETE_CONFIRMATION_REQUIRED" },
       counts: { nodes: 1, edges: 0, anchors: 0 },
     });
+    expect(deletePreviewOutput.error.suggestions[0]).toContain(
+      `--expected-updated-at '${input.expectedUpdatedAt}'`,
+    );
+
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+    deleteStructureByUri.mockReturnValue({ ref: uri });
+    const readConfirmedDelete = captureStdout();
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "structure",
+      "delete",
+      uri,
+      "--yes",
+      "--expected-updated-at",
+      input.expectedUpdatedAt,
+      "--json",
+    ]);
+    expect(deleteStructureByUri).toHaveBeenCalledWith(uri, input.expectedUpdatedAt);
+    expect(readConfirmedDelete()).toMatchObject({ ok: true, deleted: { ref: uri } });
   });
 });
 

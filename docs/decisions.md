@@ -67,7 +67,13 @@ Persist one current graph value per stable `rvw://structure/<uuid>` in a dedicat
 Store graph content as JSON because nodes and edges are an atomically replaced value and Phase 1 has no
 node-level comments, reverse lookup, or partial update query. Publish, get, whole-value update, preview
 delete, and confirmed delete use the same application service over CLI direct access or Agent socket.
-These commands are additive protocol-v4 capabilities and never navigate the viewer. A different
+Structure first shipped as additive protocol-v4 capabilities; protocol v5 makes publication require a
+durable idempotency key and makes update/delete require the exact `updatedAt` read by the caller.
+An exact publish retry returns the original stable URI, while key reuse for another payload or after
+result deletion fails explicitly. Update/delete compare-and-swap prevents a stale whole-value writer or
+delete preview from silently discarding a newer current value. This is optimistic concurrency, not a
+Structure revision history or user-facing version selector. `structure list` exposes stable references
+for recovery after an uncertain publish response. These commands never navigate the viewer. A different
 subject is a new Structure; an update is allowed only for the same subject and must preserve IDs for
 surviving claims.
 
@@ -91,7 +97,9 @@ Plain trackpad wheel movement pans the canvas; pinch-style Ctrl/Meta wheel input
 pointer. This preserves native two-finger navigation while keeping precise zoom available.
 
 Use 1-hop, 2-hop, and All neighborhoods. 1-hop and 2-hop require a focus; All always shows every Node
-and Edge. Do not automatically collapse relations: lexical ID ordering is content-neutral but still
+and Edge plus every relation label. `initialFocus` seeds only a new human reading session; a producer
+update never transfers focus to another Node. The human can clear focus explicitly. Do not automatically
+collapse relations: lexical ID ordering is content-neutral but still
 makes producer naming determine what a reviewer notices. Keep the MVP bounded to 50 Nodes and 200
 Edges, and split a subject instead of treating a large dense graph as a renderer problem.
 
