@@ -189,13 +189,14 @@ describe("RvwDatabase", () => {
       sourceOid: newerGithub.headOid,
       title: "Architecture space",
       scope: "The bounded relationship under review.",
-      initialFocus: "entry",
+      originNodeId: "entry",
       nodes: [
         {
           id: "entry",
           label: "Entry",
           description: null,
           kind: null,
+          notation: "plain",
           anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
         },
       ],

@@ -600,7 +600,7 @@ type Structure = {
   sourceOid: string;
   title: string;
   scope: string;
-  initialFocus: string | null;
+  originNodeId: string;
   nodes: StructureNode[];
   edges: StructureEdge[];
   createdAt: string;
@@ -617,12 +617,13 @@ type Structure = {
 - Nodeは0または1件、Edgeは0件以上かつ20件以下のanchorを持つ。全anchorは一つの`sourceOid`で検証し、
   repository-relative UTF-8 text pathと、両方nullまたは両方positiveなinclusive line pairだけを受け付ける。
   Structure全体ではsource anchorを1件以上400件以下とする。
-- Node 1件以上50件以下、Edge 200件以下、payload 2 MiB以下とする。endpointと`initialFocus`は実在Nodeを
-  指し、parallel Edgeはそれぞれstable IDを持つ。`directed`は必須booleanである。
-- `initialFocus`は新規authoringでは対象behaviorを検証し始めるsource-establishedなentrypointを指す。
+- Node 1件以上50件以下、Edge 200件以下、payload 2 MiB以下とする。endpointと`originNodeId`は実在Nodeを
+  指し、origin Node自身はsource anchorを持つ。Edge direction、parallel multiplicity、self-loopを無視した
+  simple graphで全Nodeがoriginから到達可能でなければならない。parallel Edgeはそれぞれstable IDを持ち、
+  `directed`は必須booleanである。
+- `originNodeId`は対象behaviorを検証し始めるsource-establishedなentrypointを指す。
   HTTP routeに限らずpublic API、command handler、worker trigger、event subscriber、composition call、
-  migration execution pointを含む。wire／storageは既存current値の互換性のためnullableを維持するが、
-  production Skillは新規publishへ`null`を生成しない。
+  migration execution pointを含む。同一subjectの実装上のentrypointが移動した場合だけupdateで変更できる。
 - Node descriptionとEdge labelはproducer claimであり、source anchorはそのclaimを検証する根拠である。
   Edge labelは関係を表すverb / verb phraseを使い、directionを読解順には使わない。
 - `kind`は任意の短いfactual badgeであり、controlled vocabularyやlayout hintではない。`notation`は
@@ -641,7 +642,7 @@ actionを選んだ時だけ、Structureのexact `sourceOid`とanchorで左ペイ
 
 探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。trackpadの通常wheelは
 pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱う。layoutはtopology、
-factualなEdge direction、`initialFocus` entrypoint、stable IDを入力とするdeterministicなbehavior projectionと
+factualなEdge direction、`originNodeId` entrypoint、stable IDを入力とするdeterministicなbehavior projectionと
 する。entrypointからdirected relationで到達できるunambiguousなEdge pairを左から右のrankへ置き、分岐は
 vertical whitespaceとtopology由来の順序で並べる。このrankは処理順や推奨読解順のproducer claimではなく、
 viewerがfactualなoriginとrelation directionから導出するprojectionである。undirected／reciprocal Edge、
@@ -655,17 +656,20 @@ Nodeの位置を維持する。削除後の空間を自動で詰めたり、filt
 retained neighborの重心を起点に全方向の空き候補を調べ、既存のmental mapを壊さず発見できる位置へ置く。
 Node位置、focus、
 depth、viewportはbrowser session内だけでpaneとStructure IDの組へ保持し、tab往復とcurrent-value更新後も
-surviving IDの位置を保つ。左右paneで同じStructureを
+surviving IDの位置を保つ。layout resetはNode座標だけをcanonical値へ戻し、reviewerのpan / zoomは維持する。
+左右paneで同じStructureを
 開いてもreading stateとDOM参照を共有しない。reload、別browser、CLI、SQLiteへ座標を持ち越さない。drag後は
 canonical layoutへ戻せる。
-`initialFocus`は新しいreading sessionの初期highlight、orientation、canonical behavior projectionのentrypointに
+`originNodeId`は新しいreading sessionの初期highlight、orientation、canonical behavior projectionのentrypointに
 使い、初期depthはAllとする。
 current-value更新でfocus Nodeが消えた場合は、
-producerの新しい`initialFocus`へ移動せずfocusなしのAllへ戻す。人間は明示buttonまたはEscapeでfocusを解除できる。
-新しいsessionは全Node / Edgeを描画しながら`initialFocus`を等倍でcanvas中央へ置き、全体を自動fitしない。
+producerの新しい`originNodeId`へ移動せずfocusなしのAllへ戻す。人間は明示buttonまたはEscapeでfocusを解除できる。
+新しいsessionは全Node / Edgeを描画しながら`originNodeId`を等倍でcanvas幅の25%付近、縦中央へ置き、
+右方向へ広がる読み取り空間を確保して全体を自動fitしない。
 focusがない場合もbase map中央を等倍で示す。1-hop / 2-hop / Allの切り替えはNode座標とcameraを変えず、
 表示するsubgraphだけを変更する。局所へ絞る時も読みやすい倍率とorientationを失わず、Allへ戻れば同じcameraで
 全体へ位置付け直せる。表示中のgraphを一枚へ圧縮するのは「表示中を収める」という明示操作だけとする。
+Fitとtoolbar / wheel zoomは同じminimum scaleを使い、縮小操作がscaleを増加させない。
 poll updateもNode位置とviewportを維持し、自動fitしない。
 
 directed EdgeはNode外周より外で始点／終点を止め、arrowheadをNodeの下へ隠さない緩いBézier曲線で描く。
@@ -689,7 +693,8 @@ presentationはbadge / borderだけへ反映し、source identityとlayoutへ影
 
 publish / update / deleteはpassiveでbrowserを開かずnavigationを変更しない。publishは一つのlogical operationに
 保持する`idempotencyKey`を必須とし、同じcanonical payloadの再送は元のstable URIを返す。別payloadへのkey再利用と
-削除済みresultの再生成は拒否する。`structure list`はPRごとのstable URIを含むsummaryを返す。viewerはpollで
+個別削除済みresultの再生成は拒否する。`pr reset`は対象PRのStructure publication recordも削除し、同じkeyによる
+新しいpublicationを許可する。`structure list`はPRごとのstable URIを含むsummaryを返す。viewerはpollで
 listとcurrent valueを更新し、stable IDでsession空間をreconcileする。open viewerには更新を明示しながら
 閲覧状態を維持する。削除は対象StructureとNode / Edge / anchor件数を確認
 したhuman action、または同じpreviewを読んだAgentへの明示authorization後だけ実行する。retained commit refは
@@ -1129,7 +1134,7 @@ rvw structure delete <STRUCTURE_URI> --json
 rvw structure delete <STRUCTURE_URI> --yes --expected-updated-at <PREVIEW_UPDATED_AT> --json
 ```
 
-publish inputは`idempotencyKey`、`pullRequest`、`sourceOid`、`title`、`scope`、nullableな`initialFocus`、全
+publish inputは`idempotencyKey`、`pullRequest`、`sourceOid`、`title`、`scope`、requiredな`originNodeId`、全
 `nodes`、全`edges`を持つ。同じkeyとcanonical payloadの再送は元のStructureを返し、別payloadとのkey conflictと
 削除済みresultを明示errorにする。`list`はPR selectorからstable `ref`を含むsummaryを返す。updateは
 `expectedUpdatedAt`と`pullRequest`を除く同じcurrent値の完全置換である。CLIとAgent socketは同じschemaと

@@ -2,7 +2,7 @@
   "sourceOid": "e1702ec717f2c9eae88ab9debd63a7a8e7e70864",
   "title": "Bundled Skill distribution boundary",
   "scope": "The committed package, discovery, status, install, and smoke-test relationships that distribute rvw Skills to supported Agent platforms. Individual Skill behavior is excluded.",
-  "initialFocus": "skill-cli",
+  "originNodeId": "skill-cli",
   "nodes": [
     {
       "id": "package-skill-assets",

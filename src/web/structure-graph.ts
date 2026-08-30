@@ -94,16 +94,16 @@ export function incidentStructureEdges(structure: Structure, nodeId: string): St
 
 export function structureNeighborhood(
   structure: Structure,
-  originNodeId: string | null,
+  focusedNodeId: string | null,
   depth: StructureNeighborhoodDepth,
 ): Set<string> {
-  if (depth === "all" || !originNodeId) {
+  if (depth === "all" || !focusedNodeId) {
     return new Set(structure.nodes.map((node) => node.id));
   }
   const graph = adjacency(structure);
-  if (!graph.has(originNodeId)) return new Set(structure.nodes.map((node) => node.id));
-  const distances = new Map([[originNodeId, 0]]);
-  const queue = [originNodeId];
+  if (!graph.has(focusedNodeId)) return new Set(structure.nodes.map((node) => node.id));
+  const distances = new Map([[focusedNodeId, 0]]);
+  const queue = [focusedNodeId];
   for (let index = 0; index < queue.length; index += 1) {
     const current = queue[index]!;
     const distance = distances.get(current) ?? 0;
@@ -346,7 +346,7 @@ export function initialStructureLayout(structure: Structure): Record<string, Str
   const componentGap = 180;
   const outerPadding = 64;
   const components = topologyComponents(topology).map((nodeIds) => {
-    const positions = layoutTopologyComponent(nodeIds, topology, structure.initialFocus);
+    const positions = layoutTopologyComponent(nodeIds, topology, structure.originNodeId);
     const bounds = structureLayoutBounds(nodeIds, positions)!;
     return {
       nodeIds,

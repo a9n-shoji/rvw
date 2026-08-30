@@ -19,6 +19,11 @@ scope says which direct responsibilities, dependencies, contracts, and side effe
 understand that behavior and what it deliberately excludes. A data model, subsystem, or responsibility
 belongs only when it clarifies that behavior; a static inventory of them is not a Structure subject.
 
+If the request starts from a file, symbol, module, or changed source rather than a named behavior, use
+that source only as the discovery entry. Identify the concrete PR-relevant behavior it participates in,
+then locate that behavior's factual origin. A source that participates in multiple independently
+triggered behaviors yields separate Structures; it does not justify a combined module inventory.
+
 Before authoring, test the requested shape: if the explanation becomes clearer only when its elements
 are arranged as step 1, then step 2, then step 3, the subject is a path. Stop and recommend a
 Walkthrough. A Structure may contain directed relationships, but direction is not a reading order. If
@@ -82,13 +87,14 @@ IDs identify claims across whole-value replacements; labels are presentation.
   different node or edge. rvw retains retired Node and Edge IDs as tombstones and rejects their
   reintroduction without retaining prior graph values.
 - Give every edge its own stable ID, including parallel edges between the same endpoints.
-- Use `initialFocus` for the subject's factual code entrypoint. The entrypoint is the place a reviewer
+- Use `originNodeId` for the subject's factual code entrypoint. The entrypoint is the place a reviewer
   starts verifying the declared behavior: for example an HTTP route, public API, command handler,
   worker trigger, event subscriber, composition call, or migration execution point. It is not required
-  to be an HTTP/runtime boundary, but it must be an existing Node established by source. Do not publish
-  a newly authored Structure with `initialFocus: null`; the nullable wire shape remains only for
-  compatibility with older current values. It is not persisted viewer state or a claim of architectural
-  importance.
+  to be an HTTP/runtime boundary, but it must be an existing Node with its own exact source anchor. It
+  is not persisted viewer state or a claim of architectural importance.
+- Ensure every Node is reachable from the origin when direction, parallel multiplicity, and self-loops
+  are ignored. A disconnected component is a different subject or an unsupported inventory, not a
+  second island in the same Structure.
 
 Use an in-place update only while the declared subject identity is unchanged. A different subject,
 even inside the same Pull Request, requires a new publication.
@@ -113,7 +119,8 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] Concept-only nodes are necessary and do not invent semantics.
 - [ ] Every edge label states a precise relationship and direction is factual.
 - [ ] IDs are unique, semantic, and stable across updates; removed IDs are not recycled.
-- [ ] `initialFocus` names the existing source-established Node where review of this behavior starts.
+- [ ] `originNodeId` names the existing source-established Node where review of this behavior starts.
+- [ ] The origin Node has an exact source anchor and every Node is connected to it by declared relations.
 - [ ] Every edge endpoint exists and parallel relationships have distinct IDs.
 - [ ] Every path and range is exact at the single committed `sourceOid`.
 - [ ] The graph contains at least one source anchor and no more than 400 across all nodes and edges.

@@ -266,7 +266,7 @@ export interface StructureContentRequest {
   sourceOid: string;
   title: string;
   scope: string;
-  initialFocus?: string | null;
+  originNodeId: string;
   nodes: StructureNodeRequest[];
   edges: StructureEdgeRequest[];
 }
@@ -1911,9 +1911,38 @@ export class RvwService {
         ),
       });
     }
-    const initialFocus = input.initialFocus ?? null;
-    if (initialFocus !== null && !nodeIds.has(initialFocus)) {
-      throw new RvwError("INVALID_INPUT", `initialFocus Nodeが存在しません: ${initialFocus}`);
+    if (typeof input.originNodeId !== "string") {
+      throw new RvwError("INVALID_INPUT", "originNodeIdが必要です。");
+    }
+    const originNodeId = this.assertStructureId(input.originNodeId, "Structure originNodeId");
+    if (!nodeIds.has(originNodeId)) {
+      throw new RvwError("INVALID_INPUT", `originNodeId Nodeが存在しません: ${originNodeId}`);
+    }
+    const originNode = nodes.find((node) => node.id === originNodeId)!;
+    if (originNode.anchor === null) {
+      throw new RvwError("INVALID_INPUT", "Structure origin Nodeにはsource anchorが必要です。");
+    }
+    const neighbors = new Map(nodes.map((node) => [node.id, new Set<string>()]));
+    for (const edge of edges) {
+      neighbors.get(edge.from)!.add(edge.to);
+      neighbors.get(edge.to)!.add(edge.from);
+    }
+    const reached = new Set([originNodeId]);
+    const queue = [originNodeId];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const neighbor of neighbors.get(current) ?? []) {
+        if (reached.has(neighbor)) continue;
+        reached.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+    const disconnected = nodes.filter((node) => !reached.has(node.id)).map((node) => node.id);
+    if (disconnected.length > 0) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `Structureの全Nodeをoriginから辿れる関係graphにしてください: ${disconnected.join(", ")}`,
+      );
     }
     const anchorCount =
       nodes.filter((node) => node.anchor !== null).length +
@@ -1930,7 +1959,7 @@ export class RvwService {
         `Structureのsource anchorは合計${MAX_STRUCTURE_SOURCE_ANCHORS}件以下にしてください。`,
       );
     }
-    const graph = { initialFocus, nodes, edges };
+    const graph = { originNodeId, nodes, edges };
     if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
       throw new RvwError(
         "INVALID_INPUT",

@@ -35,6 +35,10 @@ object.
   anchored type-level claim.
 - Edge-label observation: repeated `runs` labels were precise for composition edges, while data use
   required different labels (`reads decorated leaves from`, `locates blocks with`).
+- Source-led observation: beginning from the changed source-map plugin file did not make that file the
+  Structure subject. Inspection first identified the concrete source-position mapping behavior and its
+  plugin entrypoint; the resulting map then included only responsibilities participating in that
+  behavior. Unrelated uses of the same Markdown utilities remained outside the Structure.
 
 ### Bundled Skill distribution boundary
 
@@ -53,6 +57,9 @@ object.
 
 The trial confirmed that behavior, entrypoint, and scope must be declared before graph expansion,
 stable IDs must identify claims rather than labels, and relationship labels should use factual verbs.
+Behavior-led requests can establish these directly; source-led requests first reverse-discover the
+concrete behavior and its factual origin from the selected code without widening the artifact into a
+file or module inventory.
 It also exposed two rejection boundaries: “viewer startup from command to browser connection” was a
 required ordered flow and belongs in a Walkthrough, while a timeless subsystem responsibility catalog
 had no PR-review stopping condition and does not belong in Structure.

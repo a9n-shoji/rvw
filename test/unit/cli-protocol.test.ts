@@ -818,7 +818,7 @@ describe("CLI protocol discovery", () => {
       sourceOid: "b".repeat(40),
       title: "Authorization boundary",
       scope: "Relationships around authorization.",
-      initialFocus: "entry",
+      originNodeId: "entry",
       nodes: [
         {
           id: "entry",
@@ -894,7 +894,7 @@ describe("CLI protocol discovery", () => {
       sourceOid: "b".repeat(40),
       title: "Updated boundary",
       scope: "The same declared subject.",
-      initialFocus: "entry",
+      originNodeId: "entry",
       nodes: [
         {
           id: "entry",

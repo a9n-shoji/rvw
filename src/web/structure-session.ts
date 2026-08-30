@@ -12,6 +12,13 @@ export interface StructureViewport {
   scale: number;
 }
 
+export const MIN_STRUCTURE_ZOOM = 0.03;
+export const MAX_STRUCTURE_ZOOM = 2.5;
+
+export function scaledStructureZoom(currentScale: number, factor: number): number {
+  return Math.min(MAX_STRUCTURE_ZOOM, Math.max(MIN_STRUCTURE_ZOOM, currentScale * factor));
+}
+
 export interface StructureSession {
   focusId: string | null;
   selectedEdgeId: string | null;
@@ -29,10 +36,9 @@ function sessionKey(paneId: DocumentPaneId, structureId: string): string {
 }
 
 export function createStructureSession(structure: Structure): StructureSession {
-  const focusId =
-    structure.initialFocus && structure.nodes.some((node) => node.id === structure.initialFocus)
-      ? structure.initialFocus
-      : null;
+  const focusId = structure.nodes.some((node) => node.id === structure.originNodeId)
+    ? structure.originNodeId
+    : null;
   return {
     focusId,
     selectedEdgeId: null,

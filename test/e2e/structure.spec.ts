@@ -208,7 +208,7 @@ test("keeps the surviving pane session when closing a duplicate Structure tab", 
   expect(expectedRightState.focusedNodeId).toBe("http-routes");
   expect(expectedRightState.depth).toBe("全体");
   expect(Number(expectedRightState.viewportScale)).toBeLessThan(initialRightScale);
-  expect(Number(expectedRightState.viewportScale)).toBeGreaterThanOrEqual(0.08);
+  expect(Number(expectedRightState.viewportScale)).toBeGreaterThanOrEqual(0.03);
 
   await customizeStructureReading(page, leftViewer);
   await leftPane.getByRole("button", { name: `${primaryTitle}を閉じる`, exact: true }).click();
@@ -233,6 +233,15 @@ test("keeps the surviving pane session when closing a duplicate Structure tab", 
 });
 
 test("maps a backend response contract into frontend React rendering", async ({ page }) => {
+  const listResponse = await page.request.get(`/api/pull-requests/${pullRequestId}/structures`);
+  expect(listResponse.ok()).toBe(true);
+  await expect(listResponse.json()).resolves.toMatchObject({
+    structures: [
+      { ref: `rvw://structure/${primaryStructureId}` },
+      { ref: `rvw://structure/${secondaryStructureId}` },
+      { ref: `rvw://structure/${fullStackStructureId}` },
+    ],
+  });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await openStructure(page, fullStackTitle);
   const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
@@ -244,15 +253,41 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   await expect(viewer.locator(".structure-claim-note")).toHaveCount(0);
   await expect(viewer.locator(".structure-details")).toHaveCount(0);
 
+  await page.setViewportSize({ width: 760, height: 700 });
   const canvasHeightBeforeScope = (await viewer.locator(".structure-canvas").boundingBox())!.height;
   const scopeToggle = viewer.locator(".structure-scope-details > summary");
   await scopeToggle.click();
-  await expect(viewer.locator(".structure-scope-details > p")).toBeVisible();
+  const scopePanel = viewer.locator(".structure-scope-details > p");
+  await expect(scopePanel).toBeVisible();
+  const [scopePanelBox, viewerBox] = await Promise.all([
+    scopePanel.boundingBox(),
+    viewer.boundingBox(),
+  ]);
+  expect(scopePanelBox).not.toBeNull();
+  expect(viewerBox).not.toBeNull();
+  expect(scopePanelBox!.x).toBeGreaterThanOrEqual(viewerBox!.x);
+  expect(scopePanelBox!.x + scopePanelBox!.width).toBeLessThanOrEqual(
+    viewerBox!.x + viewerBox!.width,
+  );
   expect((await viewer.locator(".structure-canvas").boundingBox())!.height).toBeCloseTo(
     canvasHeightBeforeScope,
     0,
   );
   await scopeToggle.click();
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  const conceptNode = viewer.locator('.structure-node[data-node-id="order-not-found"]');
+  const conceptSourceInsets = await conceptNode.evaluate((node) => {
+    const source = node.querySelector<HTMLElement>(".structure-source.compact")!;
+    const nodeBox = node.getBoundingClientRect();
+    const sourceBox = source.getBoundingClientRect();
+    return {
+      right: nodeBox.right - sourceBox.right,
+      top: sourceBox.top - nodeBox.top,
+    };
+  });
+  expect(conceptSourceInsets.right).toBeGreaterThanOrEqual(25);
+  expect(conceptSourceInsets.top).toBeGreaterThanOrEqual(19);
 
   await viewer.getByRole("button", { name: "表示中を収める" }).click();
   const horizontalFlow = await viewer.evaluate((element) => {
@@ -358,6 +393,11 @@ test("explores source-exact Structures and preserves spatial context across navi
   await expect(viewer.locator('.structure-node[data-node-id="http-routes"]')).toHaveClass(
     /focused/,
   );
+  await expect(viewer.locator('.structure-node[data-node-id="http-routes"]')).toHaveAttribute(
+    "data-origin-node",
+    "true",
+  );
+  await expect(viewer.getByText("origin · Orders HTTP routes", { exact: true })).toBeVisible();
   await expect(viewer.locator(".structure-node")).toHaveCount(16);
   await expect(viewer.locator(".structure-edge")).toHaveCount(18);
   await expect(viewer.locator(".structure-edge-label")).toHaveCount(2);
@@ -378,13 +418,13 @@ test("explores source-exact Structures and preserves spatial context across navi
       ]);
       if (!canvasBox || !focusBox) return null;
       return {
-        xCentered:
-          Math.abs(focusBox.x + focusBox.width / 2 - (canvasBox.x + canvasBox.width / 2)) <= 1,
+        xOriented:
+          Math.abs(focusBox.x + focusBox.width / 2 - (canvasBox.x + canvasBox.width * 0.25)) <= 1,
         yCentered:
           Math.abs(focusBox.y + focusBox.height / 2 - (canvasBox.y + canvasBox.height / 2)) <= 1,
       };
     })
-    .toEqual({ xCentered: true, yCentered: true });
+    .toEqual({ xOriented: true, yCentered: true });
   await expect
     .poll(async () => {
       return await viewer.evaluate((element) => {
@@ -718,6 +758,7 @@ test("explores source-exact Structures and preserves spatial context across navi
     top: (element as HTMLElement).style.top,
   }));
   expect(dragged).not.toEqual(beforeDrag);
+  const viewportBeforeReset = await world.evaluate((element) => element.style.transform);
   await viewer.getByRole("button", { name: "レイアウトを戻す" }).click();
   await expect
     .poll(
@@ -728,6 +769,9 @@ test("explores source-exact Structures and preserves spatial context across navi
         })),
     )
     .toEqual(beforeDrag);
+  await expect
+    .poll(async () => await world.evaluate((element) => element.style.transform))
+    .toBe(viewportBeforeReset);
   await dragVisibleStructureNode(page, viewer, hub);
   dragged = await hub.evaluate((element) => ({
     left: (element as HTMLElement).style.left,
@@ -874,7 +918,7 @@ test("explores source-exact Structures and preserves spatial context across navi
 
   const clearFocus = await page.request.post(
     `/api/fixture/structures/${primaryStructureId}/update`,
-    { data: { clearFocus: true, replacementFocus: "http-controller" } },
+    { data: { clearFocus: true, replacementOrigin: "http-controller" } },
   );
   expect(clearFocus.ok()).toBe(true);
   await expect(
@@ -887,7 +931,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   );
   await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toBeDisabled();
   await expect(viewer.getByRole("button", { name: "2-hop", exact: true })).toBeDisabled();
-  await expect(viewer.getByText("16/16 Node · 10/10 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.getByText("4/4 Node · 3/3 Relation", { exact: true })).toBeVisible();
 
   await openStructure(page, secondaryTitle);
   await expect(page.getByRole("tab", { name: secondaryTitle })).toHaveAttribute(

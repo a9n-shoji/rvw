@@ -4,6 +4,9 @@ import {
   createStructureSession,
   deleteStructureSessions,
   getStructureSession,
+  MAX_STRUCTURE_ZOOM,
+  MIN_STRUCTURE_ZOOM,
+  scaledStructureZoom,
   setStructureSession,
   transferStructureSession,
 } from "../../src/web/structure-session.js";
@@ -16,8 +19,17 @@ function structure(id: string): Structure {
     sourceOid: "a".repeat(40),
     title: "Session boundary",
     scope: "A bounded test Structure.",
-    initialFocus: "entry",
-    nodes: [{ id: "entry", label: "Entry", description: null, kind: null, anchor: null }],
+    originNodeId: "entry",
+    nodes: [
+      {
+        id: "entry",
+        label: "Entry",
+        description: null,
+        kind: null,
+        notation: "plain",
+        anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+      },
+    ],
     edges: [],
     createdAt: "2026-08-30T00:00:00.000Z",
     updatedAt: "2026-08-30T00:00:00.000Z",
@@ -46,5 +58,11 @@ describe("Structure pane sessions", () => {
     expect(getStructureSession("right", value.id)).toEqual(session);
     deleteStructureSessions(value.id);
     expect(getStructureSession("right", value.id)).toBeUndefined();
+  });
+
+  it("uses one zoom range so zoom-out never enlarges a fitted viewport", () => {
+    expect(scaledStructureZoom(MIN_STRUCTURE_ZOOM, 1 / 1.2)).toBe(MIN_STRUCTURE_ZOOM);
+    expect(scaledStructureZoom(0.08, 1 / 1.2)).toBeLessThan(0.08);
+    expect(scaledStructureZoom(MAX_STRUCTURE_ZOOM, 1.2)).toBe(MAX_STRUCTURE_ZOOM);
   });
 });

@@ -7,8 +7,8 @@
 
 ### Added
 
-- boundedなcode-centered subjectをstable Node / Edge IDとexact source anchorで提示し、1/2-hop / All、
-  focus、pan / zoom / drag、relation inspectorから探索できるproduction `Structure` document
+- 一つの具体的なbehavior / processing flowをsource-anchored origin、stable Node / Edge ID、exact source
+  anchorで提示し、1/2-hop / All、focus、pan / zoom / dragから探索できるproduction `Structure` document
 - Structureのpublish / get / whole-value update / confirmation付きdeleteを行うCLI、Agent socket capability、
   SQLite migration、HTTP API、Codex / Claude Code共通の`rvw-structure` Skill
 

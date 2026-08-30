@@ -208,7 +208,7 @@ export interface StructureNode {
   label: string;
   description: string | null;
   kind: string | null;
-  notation?: StructureNodeNotation;
+  notation: StructureNodeNotation;
   anchor: SourceAnchor | null;
 }
 
@@ -228,7 +228,7 @@ export interface Structure {
   sourceOid: string;
   title: string;
   scope: string;
-  initialFocus: string | null;
+  originNodeId: string;
   nodes: StructureNode[];
   edges: StructureEdge[];
   createdAt: string;

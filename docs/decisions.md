@@ -57,15 +57,16 @@ persistence, CLI, Skill, and update semantics.
 
 Add `Structure` as its own production document and Agent capability rather than a generic Artifact
 framework or a Walkthrough rendering mode. A Structure declares a title, bounded PR-relevant behavior,
-exact `sourceOid`, behavior entrypoint in `initialFocus`, stable-ID nodes, and stable-ID edges. Nodes carry zero or one
+exact `sourceOid`, behavior entrypoint in `originNodeId`, stable-ID nodes, and stable-ID edges. Nodes carry zero or one
 source anchor; edges carry zero or more. Every anchor is a repository-relative UTF-8 path with either
 both inclusive line bounds or neither, and every anchor is validated at the one exact source commit.
 At least one and at most 400 anchors must exist across the graph.
 The graph is a producer claim about the responsibilities, dependencies, contracts, and side effects
 needed to verify that behavior; Git remains the evidence and history source of truth. A generic static
 architecture or responsibility inventory has no PR-review stopping condition and is out of scope.
-The wire and stored field remain nullable so existing current values still render and can be replaced,
-but the production authoring Skill requires a source-established entrypoint for every new Structure.
+The write contract requires a source-established origin Node with its own source anchor, and every Node
+must participate in the same undirected relation component as that origin. Semantic scope remains the
+producer's responsibility; the service enforces only those structural invariants.
 
 Persist one current graph value per stable `rvw://structure/<uuid>` in a dedicated `structures` table.
 Store graph content as JSON because nodes and edges are an atomically replaced value and Phase 1 has no
@@ -80,6 +81,9 @@ Structure revision history or user-facing version selector. `structure list` exp
 for recovery after an uncertain publish response. These commands never navigate the viewer. A different
 subject is a new Structure; an update is allowed only for the same subject and must preserve IDs for
 surviving claims.
+An individual delete keeps its publication result dead so an uncertain retry cannot recreate it, while
+`pr reset` removes publication records together with all Structure review state and starts a fresh
+idempotency boundary.
 Retain only removed Node and Edge IDs in small tombstone tables so a later whole-value update cannot
 reuse a stable identity for another claim. This does not retain prior graph values or expose history.
 
@@ -96,7 +100,9 @@ Distinguish canonical and session layout explicitly. The canonical layout is a p
 current graph facts and entrypoint used for a new session and Reset. Session layout begins there, keeps manual positions for
 retained stable IDs across navigation and whole-value updates, and places new Nodes around retained
 neighbors without an axis bias. Filtering never reflows Nodes. A new session renders All but centers
-the behavior entrypoint at a readable 100% scale instead of compressing the whole graph. The
+the behavior entrypoint vertically at a readable 100% scale and places it near 25% of the canvas width
+to leave room for the direction-biased map instead of compressing the whole graph. Reset restores only
+canonical Node positions and keeps the reviewer's camera. The
 1-hop / 2-hop / All actions filter the visible graph without moving the camera, so even a high-degree
 neighborhood is not compressed into an unreadable overview. Only the explicit Fit action compresses
 the visible graph. Poll updates preserve the camera. No coordinates enter SQLite or the Agent protocol.
@@ -126,8 +132,9 @@ wheel zoom abrupt.
 Use 1-hop, 2-hop, and All neighborhoods. 1-hop and 2-hop require a focus; All always shows every Node
 and Edge. While a Node is focused, canvas labels stay local to its incident relations even in All; the
 complete labels are available by clearing focus. This is label disclosure, never relation collapse.
-`initialFocus` seeds the canonical behavior projection and a new
-human reading session; a producer update never reflows retained positions or transfers focus to another
+`originNodeId` seeds the canonical behavior projection and is visually retained as the behavior origin.
+A new human reading session begins focused there, but reviewer focus is separate session state; a
+producer update never reflows retained positions or transfers focus to another
 Node. The human can clear focus explicitly. Do not automatically
 collapse relations: lexical ID ordering is content-neutral but still
 makes producer naming determine what a reviewer notices. Keep the MVP bounded to 50 Nodes and 200

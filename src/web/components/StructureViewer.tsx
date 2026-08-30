@@ -34,6 +34,8 @@ import {
   createStructureSession,
   deleteStructureSessions,
   getStructureSession,
+  MIN_STRUCTURE_ZOOM,
+  scaledStructureZoom,
   setStructureSession,
   type StructureViewport,
 } from "../structure-session.js";
@@ -643,9 +645,7 @@ export function StructureViewer({
     sourceOid: structure.sourceOid,
     updatedAt: structure.updatedAt,
   });
-  const pendingViewportActionRef = useRef<"initial" | "reset" | null>(
-    cachedSession ? null : "initial",
-  );
+  const pendingViewportActionRef = useRef<"initial" | null>(cachedSession ? null : "initial");
   const panRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const dragRef = useRef<{
     pointerId: number;
@@ -731,9 +731,9 @@ export function StructureViewer({
       const pointerY = event.clientY - rectangle.top;
       setViewport((current) => {
         const sensitivity = event.ctrlKey && !event.metaKey ? 0.0025 : 0.001;
-        const nextScale = Math.min(
-          2.5,
-          Math.max(0.15, current.scale * Math.exp(-event.deltaY * deltaUnit * sensitivity)),
+        const nextScale = scaledStructureZoom(
+          current.scale,
+          Math.exp(-event.deltaY * deltaUnit * sensitivity),
         );
         const worldX = (pointerX - current.x) / current.scale;
         const worldY = (pointerY - current.y) / current.scale;
@@ -799,6 +799,7 @@ export function StructureViewer({
     [structure.nodes],
   );
   const focusedNode = focusId ? (nodesById.get(focusId) ?? null) : null;
+  const originNode = nodesById.get(structure.originNodeId)!;
   const selectedEdge = selectedEdgeId
     ? (structure.edges.find((edge) => edge.id === selectedEdgeId) ?? null)
     : null;
@@ -906,7 +907,7 @@ export function StructureViewer({
     const scale = Math.min(
       1.25,
       Math.max(
-        0.08,
+        MIN_STRUCTURE_ZOOM,
         Math.min(
           (surfaceSize.width - padding * 2) / Math.max(1, displayBounds.right - displayBounds.left),
           (surfaceSize.height - padding * 2) /
@@ -932,7 +933,7 @@ export function StructureViewer({
   useLayoutEffect(() => {
     const action = pendingViewportActionRef.current;
     if (!action || !displayBounds || surfaceSize.width === 0 || surfaceSize.height === 0) return;
-    const point = focusId ? positions[focusId] : undefined;
+    const point = positions[structure.originNodeId];
     const centerX = point
       ? point.x + STRUCTURE_NODE_WIDTH / 2
       : (displayBounds.left + displayBounds.right) / 2;
@@ -942,10 +943,10 @@ export function StructureViewer({
     pendingViewportActionRef.current = null;
     setViewport({
       scale: 1,
-      x: surfaceSize.width / 2 - centerX,
+      x: surfaceSize.width * 0.25 - centerX,
       y: surfaceSize.height / 2 - centerY,
     });
-  }, [displayBounds, focusId, positions, surfaceSize.height, surfaceSize.width]);
+  }, [displayBounds, positions, structure.originNodeId, surfaceSize.height, surfaceSize.width]);
 
   const centerNode = (nodeId: string, scale?: number): void => {
     const point = positions[nodeId];
@@ -962,9 +963,7 @@ export function StructureViewer({
   };
 
   const resetLayout = (): void => {
-    const nextPositions = initialStructureLayout(structure);
-    pendingViewportActionRef.current = "reset";
-    setPositions(nextPositions);
+    setPositions(initialStructureLayout(structure));
   };
 
   const focusNode = (nodeId: string, recenter = false): void => {
@@ -995,7 +994,7 @@ export function StructureViewer({
 
   const zoomAtCenter = (factor: number): void => {
     setViewport((current) => {
-      const nextScale = Math.min(2.5, Math.max(0.15, current.scale * factor));
+      const nextScale = scaledStructureZoom(current.scale, factor);
       const centerX = surfaceSize.width / 2;
       const centerY = surfaceSize.height / 2;
       const worldX = (centerX - current.x) / current.scale;
@@ -1336,9 +1335,10 @@ export function StructureViewer({
                 return (
                   <div
                     key={node.id}
-                    className={`structure-node notation-${node.notation ?? "plain"}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
+                    className={`structure-node notation-${node.notation}${node.id === structure.originNodeId ? " origin" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
                     data-node-id={node.id}
-                    data-node-notation={node.notation ?? "plain"}
+                    data-node-notation={node.notation}
+                    data-origin-node={node.id === structure.originNodeId ? "true" : undefined}
                     data-source-change-kind={changeKind ?? undefined}
                     style={{ left: point.x, top: point.y }}
                     onPointerDown={(event) => {
@@ -1392,6 +1392,7 @@ export function StructureViewer({
             </div>
             <div className="structure-canvas-status">
               <strong>{focusedNode?.label ?? "focusなし"}</strong>
+              <span>origin · {originNode.label}</span>
               <span>
                 {visible.nodeIds.size}/{structure.nodes.length} Node · {visible.edgeIds.size}/
                 {structure.edges.length} Relation

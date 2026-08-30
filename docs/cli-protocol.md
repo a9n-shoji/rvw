@@ -509,7 +509,7 @@ The stdin value is:
   "sourceOid": "0123456789abcdef0123456789abcdef01234567",
   "title": "Request policy boundary",
   "scope": "The request policy and the contracts it directly consumes; transport setup is excluded.",
-  "initialFocus": "request-policy",
+  "originNodeId": "request-policy",
   "nodes": [
     {
       "id": "request-policy",
@@ -551,11 +551,9 @@ The stdin value is:
 }
 ```
 
-`idempotencyKey`, `pullRequest`, `sourceOid`, nonblank `title` and `scope`, one or more nodes, and
-`edges` are required.
-`initialFocus` may be `null` or an existing Node ID at the wire boundary for compatibility. The
-production authoring contract uses an existing source-established Node as the behavior entrypoint and
-does not publish new values with `null`. Node and Edge IDs match
+`idempotencyKey`, `pullRequest`, `sourceOid`, nonblank `title` and `scope`, `originNodeId`, one or more
+nodes, and `edges` are required. `originNodeId` names an existing source-anchored Node and every Node
+must be reachable from it when Edge direction, parallel multiplicity, and self-loops are ignored. Node and Edge IDs match
 `^[A-Za-z][A-Za-z0-9_-]{0,63}$`, are unique within their own collections, and are stable claim
 identities rather than labels. Every edge
 endpoint must exist and `directed` is required. Nodes may contain zero or one anchor; edges may contain
@@ -570,7 +568,9 @@ Limits are 50 nodes, 200 edges, a 200-character title, a 4000-character scope, 2
 The application validates commit availability and Pull Request ownership before saving one transaction
 and retaining `sourceOid`. An exact retry with the same idempotency key returns the original Structure;
 reusing the key for another canonical payload fails, and retrying after that Structure was deleted
-reports a deleted result. Success returns the saved Structure and `rvw://structure/<uuid>`. Publication
+reports a deleted result. `rvw pr reset` removes publication records with the rest of the PR review
+state, so the same logical key can begin a fresh publication after reset. Success returns the saved
+Structure and `rvw://structure/<uuid>`. Publication
 is passive: it never opens a browser or changes a tab, commit range, focus, viewport, or scroll position.
 
 ### List and recover references
@@ -589,7 +589,7 @@ rvw structure update <STRUCTURE_URI> --stdin --json
 ```
 
 Update accepts `expectedUpdatedAt` from the value that was read plus the complete `sourceOid`, `title`,
-`scope`, `initialFocus`, `nodes`, and `edges` value, but does not accept `pullRequest`. It performs the
+`scope`, `originNodeId`, `nodes`, and `edges` value, but does not accept `pullRequest`. It performs the
 same validation and atomically replaces the graph only while `updatedAt` still matches, while
 keeping the Structure ID, URI, Pull Request, and `createdAt`; `updatedAt` changes. No previous graph is
 retained. A mismatch returns `STRUCTURE_CONFLICT` and the caller must read and reconcile the current

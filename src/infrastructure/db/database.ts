@@ -179,12 +179,14 @@ function isStructureEdge(value: unknown): value is StructureEdge {
   );
 }
 
-function structureGraphValue(row: DbRow): Pick<Structure, "initialFocus" | "nodes" | "edges"> {
+function structureGraphValue(row: DbRow): Pick<Structure, "originNodeId" | "nodes" | "edges"> {
   try {
     const value: unknown = JSON.parse(stringValue(row, "graph_json"));
+    const originNodeId =
+      isRecord(value) && typeof value.originNodeId === "string" ? value.originNodeId : null;
     if (
       !isRecord(value) ||
-      !isNullableString(value.initialFocus) ||
+      originNodeId === null ||
       !Array.isArray(value.nodes) ||
       !value.nodes.every(isStructureNode) ||
       !Array.isArray(value.edges) ||
@@ -193,7 +195,7 @@ function structureGraphValue(row: DbRow): Pick<Structure, "initialFocus" | "node
       throw new Error("invalid Structure graph");
     }
     return {
-      initialFocus: value.initialFocus,
+      originNodeId,
       nodes: value.nodes.map((node) => ({ ...node, notation: node.notation ?? "plain" })),
       edges: value.edges,
     };
@@ -431,7 +433,7 @@ export interface NewStructureInput {
   sourceOid: string;
   title: string;
   scope: string;
-  initialFocus: string | null;
+  originNodeId: string;
   nodes: StructureNode[];
   edges: StructureEdge[];
   idempotencyKey: string;
@@ -1019,6 +1021,12 @@ export class RvwDatabase {
   deletePullRequestHistory(pullRequestId: string): void {
     this.database.prepare("DELETE FROM comments WHERE pull_request_id = ?").run(pullRequestId);
     this.database.prepare("DELETE FROM walkthroughs WHERE pull_request_id = ?").run(pullRequestId);
+    this.database
+      .prepare(
+        `DELETE FROM structure_publish_idempotency
+         WHERE structure_id IN (SELECT id FROM structures WHERE pull_request_id = ?)`,
+      )
+      .run(pullRequestId);
     this.database.prepare("DELETE FROM structures WHERE pull_request_id = ?").run(pullRequestId);
   }
 
@@ -1068,7 +1076,7 @@ export class RvwDatabase {
   createStructure(input: NewStructureInput): Structure {
     let structureId: string | undefined;
     const graphJson = JSON.stringify({
-      initialFocus: input.initialFocus,
+      originNodeId: input.originNodeId,
       nodes: input.nodes,
       edges: input.edges,
     });
@@ -1142,7 +1150,7 @@ export class RvwDatabase {
       Number.isNaN(currentUpdatedAt) ? observedNow : Math.max(observedNow, currentUpdatedAt + 1),
     ).toISOString();
     const graphJson = JSON.stringify({
-      initialFocus: input.initialFocus,
+      originNodeId: input.originNodeId,
       nodes: input.nodes,
       edges: input.edges,
     });

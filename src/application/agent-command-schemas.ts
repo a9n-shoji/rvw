@@ -281,20 +281,14 @@ const structureContentShape = {
   sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
   title: z.string().min(1).max(MAX_STRUCTURE_TITLE_CHARACTERS),
   scope: z.string().min(1).max(MAX_STRUCTURE_SCOPE_CHARACTERS),
-  initialFocus: z
-    .string()
-    .max(MAX_STRUCTURE_ID_CHARACTERS)
-    .regex(STRUCTURE_ID_PATTERN)
-    .nullable()
-    .optional()
-    .default(null),
+  originNodeId: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
   nodes: z.array(structureNodeInputSchema).min(1).max(MAX_STRUCTURE_NODES),
   edges: z.array(structureEdgeInputSchema).max(MAX_STRUCTURE_EDGES),
 };
 
 function refineStructureContent(
   value: {
-    initialFocus: string | null;
+    originNodeId: string;
     nodes: Array<{ id: string; anchor: Record<string, unknown> | null }>;
     edges: Array<{
       id: string;
@@ -341,12 +335,45 @@ function refineStructureContent(
       });
     }
   }
-  if (value.initialFocus !== null && !nodeIds.has(value.initialFocus)) {
+  const originIndex = value.nodes.findIndex((node) => node.id === value.originNodeId);
+  if (originIndex === -1) {
     context.addIssue({
       code: "custom",
-      path: ["initialFocus"],
-      message: "initialFocus Nodeが存在しません。",
+      path: ["originNodeId"],
+      message: "originNodeId Nodeが存在しません。",
     });
+  } else if (value.nodes[originIndex]?.anchor === null) {
+    context.addIssue({
+      code: "custom",
+      path: ["nodes", originIndex, "anchor"],
+      message: "origin Nodeにはsource anchorが必要です。",
+    });
+  }
+  if (originIndex !== -1) {
+    const neighbors = new Map(value.nodes.map((node) => [node.id, new Set<string>()]));
+    for (const edge of value.edges) {
+      if (!neighbors.has(edge.from) || !neighbors.has(edge.to)) continue;
+      neighbors.get(edge.from)!.add(edge.to);
+      neighbors.get(edge.to)!.add(edge.from);
+    }
+    const reached = new Set([value.originNodeId]);
+    const queue = [value.originNodeId];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const neighbor of neighbors.get(current) ?? []) {
+        if (reached.has(neighbor)) continue;
+        reached.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+    const disconnected = value.nodes.filter((node) => !reached.has(node.id)).map((node) => node.id);
+    if (disconnected.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["nodes"],
+        message: `全Nodeをoriginから辿れる関係graphにしてください: ${disconnected.join(", ")}`,
+      });
+    }
   }
   const anchorCount =
     value.nodes.filter((node) => node.anchor !== null).length +
@@ -363,7 +390,7 @@ function refineStructureContent(
       message: `Structureのsource anchorは合計${MAX_STRUCTURE_SOURCE_ANCHORS}件以下にしてください。`,
     });
   }
-  const graph = { initialFocus: value.initialFocus, nodes: value.nodes, edges: value.edges };
+  const graph = { originNodeId: value.originNodeId, nodes: value.nodes, edges: value.edges };
   if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
     context.addIssue({
       code: "custom",

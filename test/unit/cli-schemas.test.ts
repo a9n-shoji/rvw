@@ -321,7 +321,7 @@ describe("CLI input schemas", () => {
         sourceOid: "a".repeat(40),
         title: "Authorization boundary",
         scope: "Code relationships around authorization. Analytics is excluded.",
-        initialFocus: "controller",
+        originNodeId: "controller",
         nodes: [
           {
             id: "controller",
@@ -342,7 +342,7 @@ describe("CLI input schemas", () => {
         ],
       }),
     ).toMatchObject({
-      initialFocus: "controller",
+      originNodeId: "controller",
       nodes: [
         {
           description: null,
@@ -356,12 +356,13 @@ describe("CLI input schemas", () => {
     });
   });
 
-  it("rejects invalid Structure identity, endpoints, focus, and SourceAnchor ranges", () => {
+  it("rejects invalid Structure identity, origin, connectivity, endpoints, and SourceAnchor ranges", () => {
     const valid = {
       expectedUpdatedAt: "2026-08-30T00:00:00.000Z",
       sourceOid: "b".repeat(40),
       title: "Boundary",
       scope: "One bounded code relationship.",
+      originNodeId: "entry",
       nodes: [
         {
           id: "entry",
@@ -386,7 +387,7 @@ describe("CLI input schemas", () => {
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
-        initialFocus: "missing",
+        originNodeId: "missing",
       }).success,
     ).toBe(false);
     expect(
@@ -439,6 +440,12 @@ describe("CLI input schemas", () => {
       structureUpdateInputSchema.safeParse({
         ...valid,
         nodes: [{ id: "entry", label: "Entry", anchor: null }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [...valid.nodes, { id: "detached", label: "Detached" }],
       }).success,
     ).toBe(false);
     expect(

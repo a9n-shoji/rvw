@@ -2,7 +2,7 @@
   "sourceOid": "e1702ec717f2c9eae88ab9debd63a7a8e7e70864",
   "title": "Agent transport boundary",
   "scope": "The committed CLI-to-service transport selection, request validation, and dispatch boundary. Socket ownership and viewer lifecycle are excluded.",
-  "initialFocus": "cli-service-call",
+  "originNodeId": "cli-service-call",
   "nodes": [
     {
       "id": "cli-service-call",

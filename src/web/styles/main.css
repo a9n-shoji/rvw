@@ -4354,7 +4354,7 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-scope-details {
-  position: relative;
+  position: static;
   flex: 0 0 auto;
 }
 
@@ -4387,8 +4387,8 @@ diffs-container > [slot="header-metadata"] {
   position: absolute;
   z-index: 15;
   top: calc(100% + 8px);
-  right: 0;
-  width: min(560px, calc(100cqw - 24px));
+  right: 12px;
+  width: min(560px, calc(100% - 24px));
   max-height: 180px;
   margin: 0;
   padding: 10px 11px;
@@ -4807,8 +4807,25 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-node.notation-concept .structure-node-focus {
-  padding-right: 42px;
+  padding-right: 60px;
   padding-left: 28px;
+}
+
+.structure-node.notation-concept > .structure-source.compact {
+  top: 20px;
+  right: 26px;
+}
+
+.structure-node.origin .structure-node-focus {
+  box-shadow:
+    inset 4px 0 color-mix(in srgb, var(--accent) 72%, transparent),
+    0 5px 12px var(--shadow-small);
+}
+
+.structure-node.origin.focused .structure-node-focus {
+  box-shadow:
+    inset 4px 0 color-mix(in srgb, var(--accent) 84%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--structure-node-theme) 14%, transparent);
 }
 
 .structure-kind {

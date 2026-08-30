@@ -33,6 +33,7 @@ function structureWithHub(): Structure {
     label: index === 0 ? "Hub" : `Node ${index}`,
     description: index % 2 === 0 ? "semantic text" : null,
     kind: index % 3 === 0 ? "opaque-kind" : null,
+    notation: "plain" as const,
     anchor: null,
   }));
   return {
@@ -42,7 +43,7 @@ function structureWithHub(): Structure {
     sourceOid: "a".repeat(40),
     title: "Hub relationships",
     scope: "A bounded test graph.",
-    initialFocus: "hub",
+    originNodeId: "hub",
     nodes,
     edges: nodes.slice(1).map((node, index) => ({
       id: `edge-${String(14 - index).padStart(2, "0")}`,
@@ -84,7 +85,14 @@ describe("Structure domain presentation rules", () => {
       updatedAt: "2026-08-30T00:01:00.000Z",
       nodes: [
         ...structure.nodes.filter((node) => node.id !== "node-14"),
-        { id: "node-new", label: "New", description: null, kind: null, anchor: null },
+        {
+          id: "node-new",
+          label: "New",
+          description: null,
+          kind: null,
+          notation: "plain",
+          anchor: null,
+        },
       ],
       edges: [
         ...structure.edges.filter((edge) => edge.to !== "node-14"),
@@ -112,15 +120,30 @@ describe("Structure domain presentation rules", () => {
       label: `Sibling ${index}`,
       description: null,
       kind: null,
+      notation: "plain" as const,
       anchor: null,
     }));
     const structure: Structure = {
       ...base,
-      initialFocus: null,
+      originNodeId: "root",
       nodes: [
-        { id: "root", label: "Root", description: null, kind: null, anchor: null },
+        {
+          id: "root",
+          label: "Root",
+          description: null,
+          kind: null,
+          notation: "plain",
+          anchor: null,
+        },
         ...siblings,
-        { id: "third-rank", label: "Third rank", description: null, kind: null, anchor: null },
+        {
+          id: "third-rank",
+          label: "Third rank",
+          description: null,
+          kind: null,
+          notation: "plain",
+          anchor: null,
+        },
       ],
       edges: [
         ...siblings.map((node) => ({
@@ -156,6 +179,7 @@ describe("Structure domain presentation rules", () => {
       label: `New ${index}`,
       description: null,
       kind: null,
+      notation: "plain" as const,
       anchor: null,
     }));
     const updated: Structure = {
@@ -225,11 +249,12 @@ describe("Structure domain presentation rules", () => {
       label: id,
       description: null,
       kind: null,
+      notation: "plain" as const,
       anchor: null,
     }));
     const structure: Structure = {
       ...base,
-      initialFocus: "entry",
+      originNodeId: "entry",
       nodes,
       edges: [
         {
@@ -281,6 +306,7 @@ describe("Structure domain presentation rules", () => {
       label: index === 0 ? "Hub" : `Node ${index}`,
       description: null,
       kind: null,
+      notation: "plain" as const,
       anchor: null,
     }));
     const structure: Structure = {

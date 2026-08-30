@@ -173,7 +173,7 @@ describe("Agent socket", () => {
       sourceOid: "a".repeat(40),
       title: "Authorization boundary",
       scope: "Relationships around authorization.",
-      initialFocus: "entry",
+      originNodeId: "entry",
       nodes: [
         {
           id: "entry",

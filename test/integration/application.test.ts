@@ -1905,7 +1905,7 @@ describe("RvwService commit workflow", () => {
       sourceOid: firstHead,
       title: "Source relationships",
       scope: "Relationships around src.txt. Build configuration is excluded.",
-      initialFocus: "source",
+      originNodeId: "source",
       nodes: [
         {
           id: "source",
@@ -1927,8 +1927,29 @@ describe("RvwService commit workflow", () => {
           directed: true,
           anchors: [{ path: "src.txt" }],
         },
+        {
+          id: "documents-obsolete",
+          from: "source",
+          to: "obsolete",
+          label: "documents",
+          directed: true,
+        },
       ],
     };
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-origin-without-anchor",
+        originNodeId: "consumer",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-disconnected-graph",
+        edges: publishInput.edges.filter((edge) => edge.id === "documents-obsolete"),
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     const structure = await service.publishStructure(publishInput);
     await expect(service.publishStructure(publishInput)).resolves.toEqual(structure);
     await expect(
@@ -1939,7 +1960,7 @@ describe("RvwService commit workflow", () => {
       ref: `rvw://structure/${structure.id}`,
       pullRequestId: opened.pullRequest.id,
       sourceOid: firstHead,
-      initialFocus: "source",
+      originNodeId: "source",
       nodes: [
         {
           id: "source",
@@ -1949,7 +1970,10 @@ describe("RvwService commit workflow", () => {
         { id: "consumer", description: null, kind: "concept", notation: "plain", anchor: null },
         { id: "obsolete", notation: "plain", anchor: null },
       ],
-      edges: [{ id: "reads-source", anchors: [{ startLine: null, endLine: null }] }],
+      edges: [
+        { id: "reads-source", anchors: [{ startLine: null, endLine: null }] },
+        { id: "documents-obsolete" },
+      ],
     });
     expect(service.listStructures(opened.pullRequest.id)).toEqual([
       {
@@ -1970,7 +1994,7 @@ describe("RvwService commit workflow", () => {
       sourceOid: firstHead,
       title: "Source boundary",
       scope: "The same subject with a corrected consumer claim.",
-      initialFocus: "source",
+      originNodeId: "source",
       nodes: [
         {
           id: "source",
@@ -1989,6 +2013,13 @@ describe("RvwService commit workflow", () => {
           label: "validates",
           directed: true,
         },
+        {
+          id: "serves-consumer",
+          from: "source",
+          to: "consumer",
+          label: "serves",
+          directed: true,
+        },
       ],
     });
     expect(updated).toMatchObject({
@@ -1997,7 +2028,7 @@ describe("RvwService commit workflow", () => {
       createdAt: structure.createdAt,
       title: "Source boundary",
       nodes: [{ id: "source" }, { id: "consumer" }, { id: "validator" }],
-      edges: [{ id: "validates-source" }],
+      edges: [{ id: "validates-source" }, { id: "serves-consumer" }],
     });
     expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse(structure.updatedAt));
     expect(updated.edges.some((edge) => edge.id === "reads-source")).toBe(false);
@@ -2008,7 +2039,7 @@ describe("RvwService commit workflow", () => {
         sourceOid: firstHead,
         title: "Reused retired node",
         scope: "A retired identity must never point at a new claim.",
-        initialFocus: "source",
+        originNodeId: "source",
         nodes: [...updated.nodes, { id: "obsolete", label: "Different claim" }],
         edges: updated.edges,
       }),
@@ -2019,7 +2050,7 @@ describe("RvwService commit workflow", () => {
         sourceOid: firstHead,
         title: "Reused retired relation",
         scope: "A retired relation identity must not be rebound.",
-        initialFocus: "source",
+        originNodeId: "source",
         nodes: updated.nodes,
         edges: [
           ...updated.edges,
@@ -2041,6 +2072,7 @@ describe("RvwService commit workflow", () => {
         sourceOid: firstHead,
         title: "Stale replacement",
         scope: "This writer read the previous value.",
+        originNodeId: "source",
         nodes: [{ id: "source", label: "Stale", anchor: { path: "src.txt" } }],
         edges: [],
       }),
@@ -2056,6 +2088,7 @@ describe("RvwService commit workflow", () => {
         sourceOid: firstHead,
         title: "Invalid source",
         scope: "Reject an out-of-document anchor.",
+        originNodeId: "source",
         nodes: [
           {
             id: "source",
@@ -2079,7 +2112,7 @@ describe("RvwService commit workflow", () => {
     expect(() => service.getStructure(secondPr.id, structure.id)).toThrow(/見つかりません/);
     const deletePreview = service.getStructureDeletePreview(structure.ref);
     expect(deletePreview).toMatchObject({
-      counts: { nodes: 3, edges: 1, anchors: 2 },
+      counts: { nodes: 3, edges: 2, anchors: 2 },
       confirmationRequired: true,
     });
     const concurrentResults = await Promise.allSettled(
@@ -2091,7 +2124,7 @@ describe("RvwService commit workflow", () => {
           scope: "Only one writer from the same current value may succeed.",
           nodes: updated.nodes,
           edges: updated.edges,
-          initialFocus: updated.initialFocus,
+          originNodeId: updated.originNodeId,
         }),
       ),
     );
@@ -2113,12 +2146,40 @@ describe("RvwService commit workflow", () => {
     ).toMatchObject({
       id: structure.id,
       ref: structure.ref,
-      counts: { nodes: 3, edges: 1, anchors: 2 },
+      counts: { nodes: 3, edges: 2, anchors: 2 },
     });
     expect(service.listStructures(opened.pullRequest.id)).toEqual([]);
     await expect(service.publishStructure(publishInput)).rejects.toMatchObject({
       code: "IDEMPOTENCY_RESULT_DELETED",
     });
     expect(git(repository, "rev-parse", `refs/rvw/pr/7/commits/oid-${firstHead}`)).toBe(firstHead);
+  });
+
+  it("allows a Structure publish operation to start fresh after PR reset", async () => {
+    const { repository, firstHead, service } = setup("rvw-structure-reset-idempotency-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const publishInput = {
+      idempotencyKey: "structure-reset-republish",
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Resettable behavior",
+      scope: "A single source-established behavior origin.",
+      originNodeId: "entry",
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          anchor: { path: "src.txt", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [],
+    };
+    const beforeReset = await service.publishStructure(publishInput);
+
+    await service.resetPullRequest(opened.pullRequest.id);
+
+    const afterReset = await service.publishStructure(publishInput);
+    expect(afterReset.id).not.toBe(beforeReset.id);
+    expect(afterReset.ref).not.toBe(beforeReset.ref);
   });
 });

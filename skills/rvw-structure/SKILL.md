@@ -12,6 +12,11 @@ order, beginning, and end, stop and recommend `rvw-walkthrough` instead. If ther
 entrypoint and the result would be a generic static architecture, subsystem catalog, or responsibility
 inventory, do not publish a Structure.
 
+The request may begin with a behavior or with a selected file, symbol, or changed source. For a
+source-led request, first identify the concrete PR-relevant behavior in which that source participates,
+then find its factual origin and map only that behavior. If the source participates in independently
+triggered behaviors, publish separate Structures rather than joining them into a static source map.
+
 Follow explicit subject, scope, inclusion, exclusion, and emphasis instructions from the user, caller,
 Pull Request body, or upstream Skill. Fill only their gaps with verified committed code and tests. Do
 not infer product intent, invent architectural semantics, or turn related files into an exhaustive map.
@@ -57,7 +62,8 @@ completion check.
 Prepare one complete JSON value. `sourceOid` is the single coordinate for all node and edge anchors.
 Each node may have zero or one `anchor`; each edge may have zero or more `anchors`. For any anchor,
 provide both positive inclusive `startLine` and `endLine`, or omit both. Use repository-relative paths.
-The complete Structure must contain at least one source anchor and no more than 400 in total.
+`originNodeId` is required, its Node must have a source anchor, and every Node must be reachable from it
+when relation direction is ignored. The complete Structure contains no more than 400 source anchors.
 
 Every `--stdin` command reads until EOF. Supply the entire object and close stdin in the same
 non-interactive invocation; do not start an interactive PTY and send only JSON plus a newline.
@@ -72,7 +78,7 @@ rvw structure publish --stdin --json <<'RVW_JSON'
   "sourceOid": "0123456789abcdef0123456789abcdef01234567",
   "title": "Request policy boundary",
   "scope": "The committed request policy and the code contracts it directly depends on; transport setup and UI callers are excluded.",
-  "initialFocus": "request-policy",
+  "originNodeId": "request-policy",
   "nodes": [
     {
       "id": "request-policy",
@@ -105,7 +111,7 @@ rvw structure publish --stdin --json <<'RVW_JSON'
 RVW_JSON
 ```
 
-Let the CLI reject invalid commits, paths, ranges, identities, endpoints, focus, size, or ownership;
+Let the CLI reject invalid commits, paths, ranges, identities, endpoints, origin, connectivity, size, or ownership;
 never silently remove rejected graph elements. Parse the success response and report the returned
 `rvw://structure/<uuid>` reference. Generate one key for the logical publication and retain it until
 the result is known. After a timeout or connection loss, retry only the identical payload with that
@@ -124,7 +130,7 @@ rvw structure update '<STRUCTURE_URI>' --stdin --json
 ```
 
 The JSON contains the `expectedUpdatedAt` read from the current Structure plus `sourceOid`, `title`,
-`scope`, `initialFocus`, `nodes`, and `edges`; it does not contain `pullRequest`. If a conflict reports
+`scope`, `originNodeId`, `nodes`, and `edges`; it does not contain `pullRequest`. If a conflict reports
 that the current value changed, read it again and reconcile instead of retrying the stale replacement.
 If the subject itself changed, publish a new Structure rather than rewriting the old identity. Updating
 is passive and retains no previous Structure value.

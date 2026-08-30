@@ -804,7 +804,7 @@ const activeStructures = repositoryDemo
         title: "Order placement behavior",
         scope:
           "Order creation from the authenticated HTTP boundary through domain decisions, remote side effects, transactional persistence, and event handoff; background delivery, recovery, and read paths are excluded.",
-        initialFocus: "http-routes",
+        originNodeId: "http-routes",
         nodes: orderPlacementStructureNodes,
         edges: orderPlacementStructureEdges,
         createdAt: "2026-08-08T01:00:00.000Z",
@@ -818,7 +818,7 @@ const activeStructures = repositoryDemo
         title: "Failure recovery and evidence",
         scope:
           "The retry, atomicity, and compensation mechanisms that make order placement recoverable, with the committed evidence that verifies those claims.",
-        initialFocus: "payment-reconciliation",
+        originNodeId: "payment-reconciliation",
         nodes: secondaryStructureNodes,
         edges: secondaryStructureEdges,
         createdAt: "2026-08-08T01:05:00.000Z",
@@ -832,7 +832,7 @@ const activeStructures = repositoryDemo
         title: "Order detail response rendering",
         scope:
           "GET /orders/:orderId from the backend HTTP entrypoint through read-model lookup and the shared response contract into the React query and component rendering boundary.",
-        initialFocus: "order-detail-route",
+        originNodeId: "order-detail-route",
         nodes: fullStackStructureNodes,
         edges: fullStackStructureEdges,
         createdAt: "2026-08-08T01:10:00.000Z",
@@ -1858,6 +1858,7 @@ app.get("/api/pull-requests/:id/structures", (context) =>
     ok: true,
     structures: activeStructures.map((structure) => ({
       id: structure.id,
+      ref: structure.ref,
       pullRequestId: structure.pullRequestId,
       sourceOid: structure.sourceOid,
       title: structure.title,
@@ -1890,9 +1891,30 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
   const input = await context.req.json();
   if (input.clearFocus) {
     structure.title = input.title ?? "Order placement behavior without focus";
-    structure.initialFocus = input.replacementFocus ?? null;
-    structure.nodes = structure.nodes.filter((node) => node.id !== "hub");
-    structure.edges = structure.edges.filter((edge) => edge.from !== "hub" && edge.to !== "hub");
+    structure.originNodeId = input.replacementOrigin ?? "http-controller";
+    const remainingNodes = structure.nodes.filter((node) => node.id !== "hub");
+    const remainingEdges = structure.edges.filter(
+      (edge) => edge.from !== "hub" && edge.to !== "hub",
+    );
+    const neighbors = new Map(remainingNodes.map((node) => [node.id, new Set()]));
+    for (const edge of remainingEdges) {
+      neighbors.get(edge.from)?.add(edge.to);
+      neighbors.get(edge.to)?.add(edge.from);
+    }
+    const reachable = new Set([structure.originNodeId]);
+    const queue = [structure.originNodeId];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      for (const neighbor of neighbors.get(current) ?? []) {
+        if (reachable.has(neighbor)) continue;
+        reachable.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+    structure.nodes = remainingNodes.filter((node) => reachable.has(node.id));
+    structure.edges = remainingEdges.filter(
+      (edge) => reachable.has(edge.from) && reachable.has(edge.to),
+    );
     structure.updatedAt = "2026-08-08T05:00:00.000Z";
     changeSequence += 1;
     return context.json({ ok: true, structure });
