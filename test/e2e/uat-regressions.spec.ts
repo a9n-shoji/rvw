@@ -1152,7 +1152,8 @@ test("enriches PR Markdown comment targets like the production service", async (
 
 test("allows file-level comments while line comments stay unavailable for binary files", async ({
   page,
-}) => {
+}, testInfo) => {
+  const body = `Binary artifact needs a file-level note (${testInfo.repeatEachIndex}-${testInfo.retry}).`;
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "binary.bin", exact: true }).click();
@@ -1161,13 +1162,12 @@ test("allows file-level comments while line comments stay unavailable for binary
 
   await page.getByRole("button", { name: "ファイル全体へコメント" }).click();
   const composer = page.locator(".inline-comment-composer--file");
-  await composer
-    .getByRole("textbox", { name: "ファイル全体へコメント" })
-    .fill("Binary artifact needs a file-level note.");
+  await composer.getByRole("textbox", { name: "ファイル全体へコメント" }).fill(body);
   await composer.getByRole("button", { name: "コメント", exact: true }).click();
-  await expect(
-    page.getByText("Binary artifact needs a file-level note.", { exact: true }),
-  ).toBeVisible();
+  const commentsToggle = page.getByRole("button", { name: /^コメント \d+$/ });
+  await expect(commentsToggle).toHaveAttribute("aria-expanded", "false");
+  await commentsToggle.click();
+  await expect(page.locator(".comment-sidebar").getByText(body, { exact: true })).toBeVisible();
 });
 
 test("shows a recoverable error when the lazy document viewer cannot load", async ({ page }) => {
