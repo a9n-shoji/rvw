@@ -27,8 +27,9 @@ async function structureReadingState(viewer: Locator): Promise<StructureReadingS
   return {
     focusedNodeId: await viewer.locator(".structure-node.focused").getAttribute("data-node-id"),
     depth: await viewer
-      .getByRole("button", { name: "2-hop", exact: true })
-      .getAttribute("aria-pressed"),
+      .getByRole("group", { name: "近傍の深さ" })
+      .locator('button[aria-pressed="true"]')
+      .textContent(),
     detailsOpen: (await viewer.locator(".structure-details").count()) === 1,
     hubPosition: await viewer
       .locator('.structure-node[data-node-id="hub"]')
@@ -160,6 +161,51 @@ test("preserves Structure reading state when closing the last left tab normalize
   await expect(leftViewer).toBeVisible();
   await expect.poll(async () => await structureReadingState(leftViewer)).toEqual(expectedState);
   await expectFocusedNodeVisible(leftViewer);
+});
+
+test("keeps the surviving pane session when closing a duplicate Structure tab", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, primaryTitle);
+  const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
+  await reviewTree
+    .getByRole("button", { name: primaryTitle, exact: true })
+    .click({ modifiers: ["Meta"] });
+
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  const leftViewer = leftPane.locator(`[data-structure-id="${primaryStructureId}"]`);
+  const rightViewer = rightPane.locator(`[data-structure-id="${primaryStructureId}"]`);
+  await rightViewer.getByRole("button", { name: "全体", exact: true }).click();
+  await rightViewer.getByRole("button", { name: "縮小", exact: true }).click();
+  const expectedRightState = await structureReadingState(rightViewer);
+  expect(expectedRightState.focusedNodeId).toBe("hub");
+  expect(expectedRightState.depth).toBe("全体");
+  expect(Number(expectedRightState.viewportScale)).toBeCloseTo(1 / 1.2);
+
+  await customizeStructureReading(page, leftViewer);
+  await leftViewer.getByRole("button", { name: "詳細サイドバーを隠す" }).click();
+
+  await leftPane.getByRole("button", { name: `${primaryTitle}を閉じる`, exact: true }).click();
+  await expect(leftViewer).toHaveCount(0);
+  await expect(rightViewer).toBeVisible();
+
+  await reviewTree
+    .getByRole("button", { name: secondaryTitle, exact: true })
+    .click({ modifiers: ["Meta"] });
+  await expect(rightPane.getByRole("tab", { name: secondaryTitle })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await rightPane.getByRole("tab", { name: primaryTitle }).click();
+
+  const remountedRightViewer = rightPane.locator(`[data-structure-id="${primaryStructureId}"]`);
+  await expect(remountedRightViewer).toBeVisible();
+  await expect
+    .poll(async () => await structureReadingState(remountedRightViewer))
+    .toEqual(expectedRightState);
+  await expectFocusedNodeVisible(remountedRightViewer);
 });
 
 test("explores source-exact Structures and preserves spatial context across navigation and update", async ({

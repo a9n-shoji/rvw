@@ -983,7 +983,11 @@ export function PullRequestReviewScreen({
         if (result.commentDraftsMoved) setDraftWorkspaceRevision((revision) => revision + 1);
       }
       for (const { sourceDocument, sourcePane, targetPane } of paneTransitions) {
-        if (sourceDocument.kind === "structure") {
+        if (sourceDocument.kind !== "structure") continue;
+        const targetAlreadyHadDocument = previousWorkspace.documents[targetPane].some(
+          (document) => documentTabKey(document) === documentTabKey(sourceDocument),
+        );
+        if (!targetAlreadyHadDocument) {
           transferStructureSession(sourceDocument.id, sourcePane, targetPane);
         }
       }
