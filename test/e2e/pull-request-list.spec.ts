@@ -76,25 +76,39 @@ test("lists saved Pull Requests and navigates through browser history", async ({
   await expect(page.locator(".document-tab.active")).toContainText("fixture.ts");
 });
 
-test("opens the Pull Request list in a new tab from a modified logo click", async ({
-  page,
-  context,
-}) => {
+test("leaves modified logo navigation to the browser", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   const logo = page.getByRole("link", { name: "Pull Request一覧へ" });
   await expect(logo).toHaveAttribute("href", "/");
 
-  const [listPage] = await Promise.all([
-    context.waitForEvent("page"),
-    logo.click({ modifiers: ["ControlOrMeta"] }),
-  ]);
-  await listPage.waitForURL((url) => url.pathname === "/" && url.search === "", {
-    timeout: 15_000,
+  const preventedByApp = await logo.evaluate(async (element) => {
+    const dispatchModifiedClick = async (modifier: "metaKey" | "ctrlKey"): Promise<boolean> =>
+      await new Promise((resolve) => {
+        document.addEventListener(
+          "click",
+          (event) => {
+            const prevented = event.defaultPrevented;
+            event.preventDefault();
+            resolve(prevented);
+          },
+          { once: true },
+        );
+        element.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            [modifier]: true,
+          }),
+        );
+      });
+    return {
+      meta: await dispatchModifiedClick("metaKey"),
+      control: await dispatchModifiedClick("ctrlKey"),
+    };
   });
-
-  await expect(listPage.getByRole("heading", { name: "Pull Requests" })).toBeVisible();
+  expect(preventedByApp).toEqual({ meta: false, control: false });
   await expect(page).toHaveURL(new RegExp(`pullRequestId=${pullRequestId}`));
-  await listPage.close();
 });
 
 test("refreshes eligible saved Pull Request statuses only after an explicit click", async ({

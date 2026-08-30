@@ -64,6 +64,9 @@ Each edge is a producer claim about how two nodes relate in this subject.
 - Use a short verb or verb phrase: `calls`, `constructs`, `validates`, `persists`, `loads`, `implements`,
   `emits`, `renders`, or another fact supported by the source. Avoid vague labels such as `related to`,
   `part of`, `connects`, or unlabeled arrows.
+- Write the predicate so the claim reads naturally from the `from` Node as its actor or source to the
+  `to` Node as its target. Choose the factual relationship that best explains the declared behavior,
+  not an inverse or passive restatement chosen to move either endpoint on the canvas.
 - Set `directed: true` only when `from` to `to` expresses a real direction in the claim. Do not use
   direction to force a visual reading order. The viewer may use that factual direction as one input to
   its behavior-map projection; never reverse endpoints or choose active/passive wording to manipulate

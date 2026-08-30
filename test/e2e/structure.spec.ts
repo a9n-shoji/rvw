@@ -310,8 +310,9 @@ test("maps a backend response contract into frontend React rendering", async ({ 
 
   await viewer.locator('.structure-node[data-node-id="order-detail-contract"]').click();
   const contractEdgeLabel = viewer.locator(
-    '.structure-edge-label[data-edge-id="detail-client-consumes-contract"]',
+    '.structure-edge-label[data-edge-id="detail-response-enters-client"]',
   );
+  await expect(contractEdgeLabel).toContainText("typed payloadを渡す");
   const [labelButtonBox, sourceActionBox] = await Promise.all([
     contractEdgeLabel.locator(".structure-edge-select").boundingBox(),
     contractEdgeLabel.locator(".structure-edge-sources > summary").boundingBox(),
@@ -338,6 +339,10 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   ).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("diffs-container")).toHaveAttribute("data-search-target-line", "1");
   await page.getByRole("tab", { name: fullStackTitle }).click();
+  await viewer.locator('.structure-node[data-node-id="order-api-client"]').click();
+  await expect(
+    viewer.locator('.structure-edge-label[data-edge-id="detail-client-provides-hook-result"]'),
+  ).toContainText("typed resultを公開する");
 
   const overlaps = await viewer.evaluate((element) => {
     const nodes = [...element.querySelectorAll<HTMLElement>(".structure-node")].map((node) => ({

@@ -554,8 +554,8 @@ const fullStackStructureNodes = [
   },
   {
     id: "order-detail-contract",
-    label: "OrderDetailResponse",
-    description: "backend responseとfrontend clientが共有するJSON contract。",
+    label: "Order detail response boundary",
+    description: "backendが返しfrontend clientがtyped resultへ変換するJSON response boundary。",
     kind: "contract",
     notation: "interface",
     anchor: { path: "src/shared/contracts/order-detail.ts", startLine: 1, endLine: 24 },
@@ -720,10 +720,10 @@ const fullStackStructureEdges = [
     anchors: [{ path: "src/http/controllers/order-detail.ts", startLine: 18, endLine: 25 }],
   },
   {
-    id: "detail-client-consumes-contract",
+    id: "detail-response-enters-client",
     from: "order-detail-contract",
     to: "order-api-client",
-    label: "typed responseとして受け取る",
+    label: "typed payloadを渡す",
     directed: true,
     anchors: [
       { path: "src/shared/contracts/order-detail.ts", startLine: 1, endLine: 24 },
@@ -731,10 +731,10 @@ const fullStackStructureEdges = [
     ],
   },
   {
-    id: "detail-hook-calls-client",
+    id: "detail-client-provides-hook-result",
     from: "order-api-client",
     to: "order-detail-query-hook",
-    label: "query functionとして呼ばれる",
+    label: "typed resultを公開する",
     directed: true,
     anchors: [{ path: "src/frontend/orders/use-order-detail.ts", startLine: 9, endLine: 15 }],
   },
@@ -747,7 +747,7 @@ const fullStackStructureEdges = [
     anchors: [{ path: "src/frontend/orders/use-order-detail.ts", startLine: 9, endLine: 18 }],
   },
   {
-    id: "detail-hook-renders-page",
+    id: "detail-hook-provides-page-state",
     from: "order-detail-query-hook",
     to: "order-detail-page",
     label: "query stateを渡す",

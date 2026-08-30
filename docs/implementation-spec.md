@@ -625,7 +625,8 @@ type Structure = {
   HTTP routeに限らずpublic API、command handler、worker trigger、event subscriber、composition call、
   migration execution pointを含む。同一subjectの実装上のentrypointが移動した場合だけupdateで変更できる。
 - Node descriptionとEdge labelはproducer claimであり、source anchorはそのclaimを検証する根拠である。
-  Edge labelは関係を表すverb / verb phraseを使い、directionを読解順には使わない。
+  Edge labelは`from`をactor/source、`to`をtargetとして自然に読めるverb / verb phraseを使い、
+  directionを読解順には使わない。配置を操作するためにinverse relationやactive/passive表現を選ばない。
 - `kind`は任意の短いfactual badgeであり、controlled vocabularyやlayout hintではない。`notation`は
   `plain | class | database | interface | component | external | concept`のcontrolledな任意表示で、未指定は
   `plain`とする。producerが明示し、viewerは`kind`やpathから推論せず、layoutにも使わない。comment、group、
