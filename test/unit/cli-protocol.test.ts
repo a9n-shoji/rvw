@@ -181,7 +181,7 @@ describe("CLI protocol discovery", () => {
 
     expect(readStdout()).toEqual({
       protocolVersion: 4,
-      appVersion: "0.3.1",
+      appVersion: "0.3.2",
       capabilities: [
         "agent.transport",
         "comment.create",
