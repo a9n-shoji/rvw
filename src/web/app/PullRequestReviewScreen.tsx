@@ -2418,6 +2418,7 @@ export function PullRequestReviewScreen({
           <LazyLoadBoundary label="Structure">
             <Suspense fallback={<div className="viewer-loading">Structureを準備しています…</div>}>
               <StructureViewer
+                key={paneViewerState.structure.id}
                 pullRequestId={pullRequest.id}
                 structure={paneViewerState.structure}
                 changedFiles={changedQuery.data?.files ?? []}

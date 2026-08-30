@@ -62,6 +62,15 @@ test("explores source-exact Structures and preserves spatial context across navi
     })
     .toBeLessThan(3);
 
+  await openStructure(page, secondaryTitle);
+  const secondaryViewer = page.locator(`[data-structure-id="${secondaryStructureId}"]`);
+  await expect(secondaryViewer.locator(".structure-node")).toHaveCount(2);
+  await expect(secondaryViewer.locator(".structure-edge")).toHaveCount(1);
+  await openStructure(page, primaryTitle);
+  await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/);
+  await expect(viewer.locator(".structure-node")).toHaveCount(9);
+  await expect(viewer.locator(".structure-edge")).toHaveCount(8);
+
   await page.setViewportSize({ width: 900, height: 700 });
   await expect
     .poll(async () => {
@@ -336,7 +345,6 @@ test("explores source-exact Structures and preserves spatial context across navi
     "aria-selected",
     "true",
   );
-  const secondaryViewer = page.locator(`[data-structure-id="${secondaryStructureId}"]`);
   await expect(secondaryViewer.locator(".structure-node.focused")).toHaveCount(0);
   await expect(secondaryViewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
     "aria-pressed",
