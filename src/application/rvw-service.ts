@@ -313,7 +313,7 @@ export interface WalkthroughMarkdownAnalysis {
 
 const mermaidIdentifierPattern = /[A-Za-z][A-Za-z0-9_-]{0,63}/g;
 const mermaidEdgePattern = /[<|o*x]*[-.=~]{2,}[|o*x>]*/g;
-const mermaidClassShorthandPattern = /:::[A-Za-z][A-Za-z0-9_-]*/g;
+const mermaidClassShorthandPattern = /:::[A-Za-z][A-Za-z0-9_-]*(?:,[A-Za-z][A-Za-z0-9_-]*)*/g;
 const flowchartAndClassKeywords = new Set([
   "class",
   "classDef",

@@ -71,7 +71,7 @@ describe("Walkthrough Mermaid binding validation", () => {
         "  }",
         "  CAR 1 to zero or more DRIVER : allows",
         "  HOUSE",
-        "  PERSON:::model ||--|| VEHICLE:::transport : owns",
+        "  PERSON:::model,aggregate ||--|| VEHICLE:::transport,asset : owns",
       ].join("\n"),
       expected: [
         "USER",
@@ -95,7 +95,9 @@ describe("Walkthrough Mermaid binding validation", () => {
         "allows",
         "name",
         "model",
+        "aggregate",
         "transport",
+        "asset",
         "owns",
       ],
     },

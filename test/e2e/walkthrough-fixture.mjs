@@ -1161,7 +1161,7 @@ export const walkthroughs = [
       "  }",
       "  p 1 to zero or more ORDER : places",
       "  HOUSE",
-      "  PERSON:::model ||--|| CAR:::vehicle : owns",
+      "  PERSON:::model,aggregate ||--|| CAR:::vehicle,asset : owns",
       "```",
       "",
       "```mermaid",
