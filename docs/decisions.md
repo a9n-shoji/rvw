@@ -72,13 +72,14 @@ Persist one current graph value per stable `rvw://structure/<uuid>` in a dedicat
 Store graph content as JSON because nodes and edges are an atomically replaced value and Phase 1 has no
 node-level comments, reverse lookup, or partial update query. Publish, get, whole-value update, preview
 delete, and confirmed delete use the same application service over CLI direct access or Agent socket.
-Structure first shipped as additive protocol-v4 capabilities; protocol v5 makes publication require a
-durable idempotency key and makes update/delete require the exact `updatedAt` read by the caller.
-An exact publish retry returns the original stable URI, while key reuse for another payload or after
-result deletion fails explicitly. Update/delete compare-and-swap prevents a stale whole-value writer or
-delete preview from silently discarding a newer current value. This is optimistic concurrency, not a
-Structure revision history or user-facing version selector. `structure list` exposes stable references
-for recovery after an uncertain publish response. These commands never navigate the viewer. A different
+Ship the complete Structure lifecycle as additive protocol-v4 capabilities. Publication requires a
+durable idempotency key and update/delete require the exact `updatedAt` read by the caller, but these
+requirements belong only to the newly introduced Structure commands and do not break existing v4
+callers. An exact publish retry returns the original stable URI, while key reuse for another payload or
+after result deletion fails explicitly. Update/delete compare-and-swap prevents a stale whole-value
+writer or delete preview from silently discarding a newer current value. This is optimistic concurrency,
+not a Structure revision history or user-facing version selector. `structure list` exposes stable
+references for recovery after an uncertain publish response. These commands never navigate the viewer. A different
 subject is a new Structure; an update is allowed only for the same subject and must preserve IDs for
 surviving claims.
 An individual delete keeps its publication result dead so an uncertain retry cannot recreate it, while

@@ -1,4 +1,4 @@
-# CLI protocol v5
+# CLI protocol v4
 
 Version 1 is the first public compatibility contract. Pre-public internal version numbers were not
 released or supported; after the first public release, protocol versions only increase for breaking
@@ -9,12 +9,8 @@ references to comment create, reply, edit, get, and synchronized replies, and ad
 `agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
 idempotency keys are additive fields and do not change existing callers. Version 4 adds required
 nullable `lastModifiedBy` provenance to comment-post output so consumers can distinguish trusted
-Agent and human write channels. Structure read, publish, update, and delete are additive version-4
-capabilities and do not change existing command schemas.
-Version 5 makes Structure publication idempotent and Structure update/delete compare-and-swap
-operations. It adds required `idempotencyKey` and `expectedUpdatedAt` fields plus additive
-`structure.list`, so a caller can recover a stable URI after an uncertain publish without risking a
-duplicate artifact.
+Agent and human write channels. Structure read, list, idempotent publish, compare-and-swap update, and
+compare-and-swap delete are additive version-4 capabilities and do not change existing command schemas.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
@@ -505,6 +501,7 @@ The stdin value is:
 
 ```json
 {
+  "idempotencyKey": "task-stable-key-for-this-structure-publication",
   "pullRequest": "https://github.com/owner/repository/pull/123",
   "sourceOid": "0123456789abcdef0123456789abcdef01234567",
   "title": "Request policy boundary",
@@ -692,7 +689,7 @@ current `walkthrough` object. This gives the Agent the explanation body and exac
 discussed without relying on rendered browser positions. If the Walkthrough is updated, the same
 comment URI subsequently returns the updated current object.
 
-`rvw protocol --json` returns `protocolVersion: 5`, the application version, and these capabilities:
+`rvw protocol --json` returns `protocolVersion: 4`, the application version, and these capabilities:
 
 ```text
 agent.transport

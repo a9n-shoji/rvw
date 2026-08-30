@@ -27,7 +27,7 @@ select a node, or claim that publication changed rvw navigation.
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 5, `agent.transport`, `structure.read`, `structure.list`, and every one of
+2. Require `protocolVersion` 4, `agent.transport`, `structure.read`, `structure.list`, and every one of
    `structure.publish`, `structure.update`, or `structure.delete` needed for the task.
 3. Run `rvw agent status --json`. If `selectedTransport` is `unavailable`, stop and report its
    diagnostic. Otherwise use the reported transport without overriding it.

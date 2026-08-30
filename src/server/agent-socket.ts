@@ -25,7 +25,7 @@ import { asRvwError, RvwError } from "../shared/errors.js";
 // pr sync may contain hundreds of valid 64 KiB replies. Reserve framing space above the stdin cap.
 export const MAX_CLI_STDIN_BYTES = 40 * 1024 * 1024;
 export const MAX_AGENT_MESSAGE_BYTES = MAX_CLI_STDIN_BYTES + 64 * 1024;
-export const AGENT_SOCKET_PROTOCOL_VERSION = 5;
+export const AGENT_SOCKET_PROTOCOL_VERSION = 4;
 export const RUNTIME_VIEWER_OPEN_OPERATION = "viewer.open";
 const AGENT_SOCKET_RESTART_SUGGESTION =
   "起動中のrvw viewerを停止し、更新後のrvw openで再起動してください。";

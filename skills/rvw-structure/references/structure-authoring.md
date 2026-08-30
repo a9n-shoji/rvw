@@ -65,7 +65,9 @@ Each edge is a producer claim about how two nodes relate in this subject.
   `emits`, `renders`, or another fact supported by the source. Avoid vague labels such as `related to`,
   `part of`, `connects`, or unlabeled arrows.
 - Set `directed: true` only when `from` to `to` expresses a real direction in the claim. Do not use
-  direction to force a visual reading order.
+  direction to force a visual reading order. The viewer may use that factual direction as one input to
+  its behavior-map projection; never reverse endpoints or choose active/passive wording to manipulate
+  placement.
 - Add zero or more anchors that directly establish the relationship. Use multiple anchors when the
   relationship is intentionally established at several distinct code sites. An edge without anchors is
   acceptable only when the relationship follows directly from its anchored endpoints or explicit
