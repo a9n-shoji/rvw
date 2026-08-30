@@ -625,6 +625,25 @@ test("explores source-exact Structures and preserves spatial context across navi
   ).toHaveCount(0);
   await expect(leftViewer.locator('.structure-node[data-node-id="new-neighbor"]')).toBeVisible();
   await expect(rightViewer.locator('.structure-node[data-node-id="new-neighbor"]')).toBeVisible();
+  const updatedLabelNodeOverlaps = await rightViewer.evaluate((element) => {
+    const nodes = [...element.querySelectorAll<HTMLElement>(".structure-node")].map((node) => ({
+      id: node.dataset.nodeId,
+      rect: node.getBoundingClientRect(),
+    }));
+    return [...element.querySelectorAll<HTMLElement>(".structure-edge-label")].flatMap((label) => {
+      const labelRect = label.getBoundingClientRect();
+      return nodes
+        .filter(
+          ({ rect }) =>
+            labelRect.right > rect.left &&
+            labelRect.left < rect.right &&
+            labelRect.bottom > rect.top &&
+            labelRect.top < rect.bottom,
+        )
+        .map(({ id }) => `${label.dataset.edgeId}:${id}`);
+    });
+  });
+  expect(updatedLabelNodeOverlaps).toEqual([]);
   const retained = await leftViewer
     .locator('.structure-node[data-node-id="hub"]')
     .evaluate((element) => ({

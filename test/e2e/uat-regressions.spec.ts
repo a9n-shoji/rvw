@@ -1388,7 +1388,7 @@ test("browser back restores the reading position after scrolling away from a lin
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.keyboard.press("Control+Shift+F");
+  await page.getByRole("button", { name: "コード検索を開く", exact: true }).click();
   await page.getByRole("textbox", { name: "全文検索", exact: true }).fill("dispatcher");
   await page.getByRole("button", { name: "README.md 50行", exact: true }).click();
 

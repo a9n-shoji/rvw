@@ -322,7 +322,8 @@ interface StructureEdgeLabelPlacement {
 const EDGE_LABEL_MAX_TEXT_WIDTH = 210;
 const EDGE_LABEL_MIN_TEXT_WIDTH = 64;
 const EDGE_LABEL_HORIZONTAL_PADDING = 14;
-const EDGE_LABEL_LINE_HEIGHT = 11;
+const EDGE_LABEL_WIDTH_SAFETY = 4;
+const EDGE_LABEL_LINE_HEIGHT = 14;
 
 function boxesOverlap(left: StructureBox, right: StructureBox): boolean {
   return !(
@@ -367,12 +368,16 @@ function edgeLabelSize(
       (/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(character) ? 1 : 0.56),
     0,
   );
-  const naturalTextWidth = Math.ceil(textUnits * 10.5) + EDGE_LABEL_HORIZONTAL_PADDING;
+  const naturalTextWidth = Math.ceil(textUnits * 11.5);
   const textWidth = Math.min(
     EDGE_LABEL_MAX_TEXT_WIDTH,
-    Math.max(EDGE_LABEL_MIN_TEXT_WIDTH, naturalTextWidth),
+    Math.max(
+      EDGE_LABEL_MIN_TEXT_WIDTH,
+      naturalTextWidth + EDGE_LABEL_HORIZONTAL_PADDING + EDGE_LABEL_WIDTH_SAFETY,
+    ),
   );
-  const lineCount = Math.max(1, Math.ceil(naturalTextWidth / textWidth));
+  const contentWidth = Math.max(1, textWidth - EDGE_LABEL_HORIZONTAL_PADDING);
+  const lineCount = Math.max(1, Math.ceil(naturalTextWidth / contentWidth));
   const height = Math.max(24, lineCount * EDGE_LABEL_LINE_HEIGHT + 10);
   const source = edgeSourcePresentation(edge, sourceChangeKinds);
   return {
@@ -396,10 +401,10 @@ function placeEdgeLabels(
     return point
       ? [
           {
-            left: point.x - 10,
-            top: point.y - 10,
-            right: point.x + STRUCTURE_NODE_WIDTH + 10,
-            bottom: point.y + STRUCTURE_NODE_HEIGHT + 10,
+            left: point.x,
+            top: point.y,
+            right: point.x + STRUCTURE_NODE_WIDTH,
+            bottom: point.y + STRUCTURE_NODE_HEIGHT,
           },
         ]
       : [];
@@ -466,7 +471,9 @@ function placeEdgeLabels(
       curveLabelCandidate(geometry, fraction, offset),
     );
     const nodeSafe = possible.filter((candidate) => {
-      const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 7);
+      // Keep a small real gap. A large synthetic margin can reject the usable
+      // midpoint of a short Edge and force the fallback underneath a Node.
+      const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 4);
       return !nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox));
     });
     const available = nodeSafe.find((candidate) => {
