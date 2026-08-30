@@ -19,6 +19,7 @@ import type {
   StructureNode,
 } from "../../domain/models.js";
 import { api, type DeleteStructureResponse } from "../api.js";
+import type { DocumentPaneId } from "../document-workspace.js";
 import {
   incidentStructureEdges,
   initialStructureLayout,
@@ -31,51 +32,24 @@ import {
   type StructureNeighborhoodDepth,
   type StructurePoint,
 } from "../structure-graph.js";
+import {
+  createStructureSession,
+  deleteStructureSessions,
+  getStructureSession,
+  setStructureSession,
+  type StructureViewport,
+} from "../structure-session.js";
 import { ChangeIcon } from "./FileTree.js";
 import { FileEntryIcon } from "./FileIcon.js";
-
-interface StructureViewport {
-  x: number;
-  y: number;
-  scale: number;
-}
-
-interface StructureSession {
-  focusId: string | null;
-  depth: StructureNeighborhoodDepth;
-  expanded: boolean;
-  focusTrail: string[];
-  detailsOpen: boolean;
-  positions: Record<string, StructurePoint>;
-  viewport: StructureViewport;
-  surfaceSize: { width: number; height: number };
-  updatedAt: string;
-}
-
-const sessions = new Map<string, StructureSession>();
-
-function initialSession(structure: Structure): StructureSession {
-  const focusId =
-    structure.initialFocus && structure.nodes.some((node) => node.id === structure.initialFocus)
-      ? structure.initialFocus
-      : null;
-  return {
-    focusId,
-    depth: focusId ? 1 : "all",
-    expanded: false,
-    focusTrail: focusId ? [focusId] : [],
-    detailsOpen: false,
-    positions: initialStructureLayout(structure),
-    viewport: { x: 110, y: 90, scale: 1 },
-    surfaceSize: { width: 0, height: 0 },
-    updatedAt: structure.updatedAt,
-  };
-}
 
 function anchorLabel(anchor: SourceAnchor): string {
   return anchor.startLine === null
     ? anchor.path
     : `${anchor.path}:${anchor.startLine}${anchor.endLine === anchor.startLine ? "" : `-${anchor.endLine}`}`;
+}
+
+function sourceBasename(path: string): string {
+  return path.split("/").at(-1) ?? path;
 }
 
 function SourceButton({
@@ -123,6 +97,7 @@ function SourceIdentity({
       title={anchor.path}
     >
       <FileEntryIcon path={anchor.path} kind="file" />
+      <span className="structure-source-name">{sourceBasename(anchor.path)}</span>
       {changeKind && <ChangeIcon kind={changeKind} />}
     </span>
   );
@@ -173,6 +148,7 @@ function EdgeSourceIdentity({ presentation }: { presentation: EdgeSourcePresenta
       title={title}
     >
       <FileEntryIcon path={anchor.path} kind="file" />
+      <span className="structure-source-name">{sourceBasename(anchor.path)}</span>
       {additionalAnchorCount > 0 && changedAnchorCount > 0 ? (
         <span
           className="structure-source-change-aggregate"
@@ -357,8 +333,12 @@ function edgeLabelSize(
   const lineCount = Math.max(1, Math.ceil(naturalTextWidth / textWidth));
   const height = Math.max(24, lineCount * EDGE_LABEL_LINE_HEIGHT + 10);
   const source = edgeSourcePresentation(edge, sourceChangeKinds);
+  const sourceNameWidth = source.anchor
+    ? Math.min(86, Math.max(28, [...sourceBasename(source.anchor.path)].length * 5.2))
+    : 0;
   const sourceIdentityWidth = source.anchor
     ? EDGE_LABEL_FILE_ICON_WIDTH +
+      sourceNameWidth +
       (source.additionalAnchorCount > 0 && source.changedAnchorCount > 0
         ? EDGE_LABEL_AGGREGATE_CHANGE_WIDTH
         : source.changeKind
@@ -555,23 +535,25 @@ function StructureMiniMap({
 }
 
 export function StructureViewer({
+  paneId,
   pullRequestId,
   structure,
   changedFiles,
   onOpenAnchor,
   onDeleted,
 }: {
+  paneId: DocumentPaneId;
   pullRequestId: string;
   structure: Structure;
   changedFiles: readonly ChangedFile[];
   onOpenAnchor: (anchor: SourceAnchor, openInRightPane: boolean) => Promise<string | null>;
   onDeleted: () => void;
 }) {
-  const cachedSession = sessions.get(structure.id);
-  const initial = cachedSession ?? initialSession(structure);
+  const domId = `structure-${paneId}-${structure.id}`;
+  const cachedSession = getStructureSession(paneId, structure.id);
+  const initial = cachedSession ?? createStructureSession(structure);
   const [focusId, setFocusId] = useState(initial.focusId);
   const [depth, setDepth] = useState<StructureNeighborhoodDepth>(initial.depth);
-  const [expanded, setExpanded] = useState(initial.expanded);
   const [focusTrail, setFocusTrail] = useState(initial.focusTrail);
   const [detailsOpen, setDetailsOpen] = useState(initial.detailsOpen);
   const [positions, setPositions] = useState(initial.positions);
@@ -645,7 +627,7 @@ export function StructureViewer({
   }, []);
 
   useEffect(() => {
-    const previous = sessions.get(structure.id);
+    const previous = getStructureSession(paneId, structure.id);
     if (previous?.updatedAt === structure.updatedAt) return;
     setPositions((current) => reconcileStructureLayout(structure, current));
     const fallbackFocus = structure.initialFocus ?? null;
@@ -657,7 +639,6 @@ export function StructureViewer({
     setFocusId(nextFocus);
     if (nextFocus === null) {
       setDepth("all");
-      setExpanded(false);
     }
     setFocusTrail((current) => {
       const retained = current.filter((nodeId) =>
@@ -667,13 +648,12 @@ export function StructureViewer({
         ? [...retained, nextFocus].slice(-6)
         : retained;
     });
-  }, [structure, structure.updatedAt]);
+  }, [paneId, structure, structure.updatedAt]);
 
   useEffect(() => {
-    sessions.set(structure.id, {
+    setStructureSession(paneId, structure.id, {
       focusId,
       depth,
-      expanded,
       focusTrail,
       detailsOpen,
       positions,
@@ -681,17 +661,7 @@ export function StructureViewer({
       surfaceSize: surfaceSizeRef.current,
       updatedAt: structure.updatedAt,
     });
-  }, [
-    depth,
-    detailsOpen,
-    expanded,
-    focusId,
-    focusTrail,
-    positions,
-    structure.id,
-    structure.updatedAt,
-    viewport,
-  ]);
+  }, [depth, detailsOpen, focusId, focusTrail, positions, paneId, structure.updatedAt, viewport]);
 
   useLayoutEffect(() => {
     if (
@@ -713,8 +683,8 @@ export function StructureViewer({
   }, [focusId, positions, surfaceSize]);
 
   const visible = useMemo(
-    () => visibleStructureGraph(structure, focusId, depth, expanded),
-    [depth, expanded, focusId, structure],
+    () => visibleStructureGraph(structure, focusId, depth),
+    [depth, focusId, structure],
   );
   const nodesById = useMemo(
     () => new Map(structure.nodes.map((node) => [node.id, node])),
@@ -740,27 +710,7 @@ export function StructureViewer({
     () => structureLayoutBounds(visible.nodeIds, positions),
     [positions, visible.nodeIds],
   );
-  const renderNodeIds = useMemo(() => {
-    if (visible.nodeIds.size <= 100 || surfaceSize.width === 0) return visible.nodeIds;
-    const overscan = 480;
-    const minX = -viewport.x / viewport.scale - overscan;
-    const minY = -viewport.y / viewport.scale - overscan;
-    const maxX = (surfaceSize.width - viewport.x) / viewport.scale + overscan;
-    const maxY = (surfaceSize.height - viewport.y) / viewport.scale + overscan;
-    return new Set(
-      [...visible.nodeIds].filter((nodeId) => {
-        if (nodeId === focusId) return true;
-        const point = positions[nodeId];
-        return (
-          point &&
-          point.x + STRUCTURE_NODE_WIDTH >= minX &&
-          point.x <= maxX &&
-          point.y + STRUCTURE_NODE_HEIGHT >= minY &&
-          point.y <= maxY
-        );
-      }),
-    );
-  }, [focusId, positions, surfaceSize, viewport, visible.nodeIds]);
+  const renderNodeIds = visible.nodeIds;
   const renderedEdges = useMemo(
     () =>
       structure.edges.filter(
@@ -775,20 +725,16 @@ export function StructureViewer({
     () => structure.nodes.filter((node) => renderNodeIds.has(node.id)),
     [renderNodeIds, structure.nodes],
   );
-  const focusedRenderedEdges = useMemo(
-    () => renderedEdges.filter((edge) => edge.from === focusId || edge.to === focusId),
+  const labeledEdges = useMemo(
+    () =>
+      focusId
+        ? renderedEdges.filter((edge) => edge.from === focusId || edge.to === focusId)
+        : renderedEdges,
     [focusId, renderedEdges],
   );
   const edgeLabelPlacements = useMemo(
-    () =>
-      placeEdgeLabels(
-        focusedRenderedEdges,
-        renderedNodes,
-        positions,
-        sourceChangeKinds,
-        routeOffsets,
-      ),
-    [focusedRenderedEdges, positions, renderedNodes, routeOffsets, sourceChangeKinds],
+    () => placeEdgeLabels(labeledEdges, renderedNodes, positions, sourceChangeKinds, routeOffsets),
+    [labeledEdges, positions, renderedNodes, routeOffsets, sourceChangeKinds],
   );
   const worldWidth = Math.max(1_200, (bounds?.maxX ?? 1_000) + 180);
   const worldHeight = Math.max(800, (bounds?.maxY ?? 600) + 180);
@@ -827,10 +773,24 @@ export function StructureViewer({
     if (focusId) centerNode(focusId);
   };
 
+  const resetLayout = (): void => {
+    const nextPositions = initialStructureLayout(structure);
+    setPositions(nextPositions);
+    const focusedPoint = focusId ? nextPositions[focusId] : undefined;
+    setViewport(
+      focusedPoint && surfaceSize.width > 0 && surfaceSize.height > 0
+        ? {
+            scale: 1,
+            x: surfaceSize.width / 2 - (focusedPoint.x + STRUCTURE_NODE_WIDTH / 2),
+            y: surfaceSize.height / 2 - (focusedPoint.y + STRUCTURE_NODE_HEIGHT / 2),
+          }
+        : { x: 110, y: 90, scale: 1 },
+    );
+  };
+
   const focusNode = (nodeId: string, recenter = false): void => {
     if (!focusId && depth === "all") setDepth(1);
     setFocusId(nodeId);
-    setExpanded(false);
     setFocusTrail((current) =>
       [...current.filter((candidate) => candidate !== nodeId), nodeId].slice(-6),
     );
@@ -854,6 +814,14 @@ export function StructureViewer({
 
   const handleWheel = (event: ReactWheelEvent<HTMLDivElement>): void => {
     event.preventDefault();
+    if (!event.ctrlKey && !event.metaKey) {
+      setViewport((current) => ({
+        ...current,
+        x: current.x - event.deltaX,
+        y: current.y - event.deltaY,
+      }));
+      return;
+    }
     const rectangle = event.currentTarget.getBoundingClientRect();
     const pointerX = event.clientX - rectangle.left;
     const pointerY = event.clientY - rectangle.top;
@@ -901,7 +869,7 @@ export function StructureViewer({
         `/api/pull-requests/${pullRequestId}/structures/${structure.id}`,
         { method: "DELETE", headers: { "content-type": "application/json" } },
       );
-      sessions.delete(structure.id);
+      deleteStructureSessions(structure.id);
       onDeleted();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Structureを削除できませんでした。");
@@ -994,6 +962,7 @@ export function StructureViewer({
               key={candidate}
               className={depth === candidate ? "active" : ""}
               aria-pressed={depth === candidate}
+              disabled={!focusId && candidate !== "all"}
               onClick={() => setDepth(candidate)}
             >
               {candidate === "all" ? "全体" : `${candidate}-hop`}
@@ -1014,13 +983,16 @@ export function StructureViewer({
           <button type="button" disabled={!focusId} onClick={centerFocus}>
             focusを中央へ
           </button>
+          <button type="button" onClick={resetLayout}>
+            レイアウトを戻す
+          </button>
         </div>
         <div className="structure-toolbar-group structure-toolbar-group--end">
           <button
             type="button"
             className={detailsOpen ? "active" : ""}
             aria-expanded={detailsOpen}
-            aria-controls={`structure-details-${structure.id}`}
+            aria-controls={`${domId}-details`}
             onClick={() => setDetailsOpen((open) => !open)}
           >
             {detailsOpen ? "詳細サイドバーを隠す" : "詳細サイドバーを表示"}
@@ -1075,7 +1047,7 @@ export function StructureViewer({
               >
                 <defs>
                   <marker
-                    id={`structure-arrow-${structure.id}`}
+                    id={`${domId}-arrow`}
                     viewBox="0 0 10 10"
                     refX="9"
                     refY="5"
@@ -1100,9 +1072,7 @@ export function StructureViewer({
                       data-end-x={route.endX}
                       data-end-y={route.endY}
                       d={route.path}
-                      markerEnd={
-                        edge.directed ? `url(#structure-arrow-${structure.id})` : undefined
-                      }
+                      markerEnd={edge.directed ? `url(#${domId}-arrow)` : undefined}
                     />
                   );
                 })}
@@ -1223,7 +1193,7 @@ export function StructureViewer({
         </section>
         {detailsOpen && (
           <aside
-            id={`structure-details-${structure.id}`}
+            id={`${domId}-details`}
             className="structure-details"
             aria-label="Structure details"
           >
@@ -1258,30 +1228,12 @@ export function StructureViewer({
                   <strong>Relations</strong>
                   <span>{incident.length}</span>
                 </div>
-                {visible.relationsCollapsed && (
-                  <button
-                    type="button"
-                    className="structure-expand-relations"
-                    onClick={() => setExpanded(true)}
-                  >
-                    {visible.hiddenRelationCount}件のrelationを表示
-                  </button>
-                )}
-                {expanded && incident.length > 12 && (
-                  <button
-                    type="button"
-                    className="structure-expand-relations"
-                    onClick={() => setExpanded(false)}
-                  >
-                    stable Edge ID順に折りたたむ
-                  </button>
-                )}
                 <ul className="structure-relation-list">
                   {incident.map((edge) => {
                     const otherId = edge.from === focusId ? edge.to : edge.from;
                     const other = nodesById.get(otherId);
                     return (
-                      <li key={edge.id} className={visible.edgeIds.has(edge.id) ? "" : "collapsed"}>
+                      <li key={edge.id}>
                         <button type="button" onClick={() => focusNode(otherId, true)}>
                           <span>{edge.directed ? (edge.from === focusId ? "→" : "←") : "—"}</span>
                           <strong>{edge.label}</strong>

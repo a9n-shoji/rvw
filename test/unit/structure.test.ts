@@ -2,14 +2,30 @@ import { describe, expect, it } from "vitest";
 import type { Structure } from "../../src/domain/models.js";
 import { formatStructureUri, parseStructureUri } from "../../src/domain/structure-uri.js";
 import {
-  collapsedStructureRelations,
   initialStructureLayout,
   reconcileStructureLayout,
+  STRUCTURE_NODE_HEIGHT,
+  STRUCTURE_NODE_WIDTH,
   STRUCTURE_MAX_EDGE_LANE_OFFSET,
   structureEdgeRouteOffsets,
   structureNeighborhood,
   visibleStructureGraph,
 } from "../../src/web/structure-graph.js";
+
+function expectNoNodeOverlap(positions: Readonly<Record<string, { x: number; y: number }>>): void {
+  const entries = Object.entries(positions);
+  for (const [index, [leftId, left]] of entries.entries()) {
+    for (const [rightId, right] of entries.slice(index + 1)) {
+      const overlap = !(
+        left.x + STRUCTURE_NODE_WIDTH <= right.x ||
+        right.x + STRUCTURE_NODE_WIDTH <= left.x ||
+        left.y + STRUCTURE_NODE_HEIGHT <= right.y ||
+        right.y + STRUCTURE_NODE_HEIGHT <= left.y
+      );
+      expect(overlap, `${leftId} overlaps ${rightId}`).toBe(false);
+    }
+  }
+}
 
 function structureWithHub(): Structure {
   const nodes = Array.from({ length: 15 }, (_, index) => ({
@@ -49,38 +65,14 @@ describe("Structure domain presentation rules", () => {
     expect(() => parseStructureUri("rvw://structure/not-a-uuid")).toThrow(/URI/);
   });
 
-  it("selects collapsed relations by stable Edge ID, independent of content", () => {
-    const structure = structureWithHub();
-    const initial = collapsedStructureRelations(structure, "hub", false);
-    expect(initial.collapsed).toBe(true);
-    expect([...initial.visibleEdgeIds]).toEqual(["edge-01", "edge-02", "edge-03", "edge-04"]);
-
-    const changedClaims: Structure = {
-      ...structure,
-      nodes: structure.nodes.map((node) => ({
-        ...node,
-        label: `rewritten ${node.label}`,
-        kind: "different-kind",
-      })),
-      edges: structure.edges.map((edge) => ({ ...edge, label: `rewritten ${edge.label}` })),
-    };
-    expect([...collapsedStructureRelations(changedClaims, "hub", false).visibleEdgeIds]).toEqual([
-      ...initial.visibleEdgeIds,
-    ]);
-    expect(collapsedStructureRelations(structure, "hub", true).hiddenEdgeIds.size).toBe(0);
-  });
-
-  it("supports local neighborhoods without deleting the semantic graph", () => {
+  it("keeps every relation in the selected neighborhood", () => {
     const structure = structureWithHub();
     expect(structureNeighborhood(structure, "node-01", 1)).toEqual(new Set(["node-01", "hub"]));
     expect(structureNeighborhood(structure, "node-01", 2).size).toBe(structure.nodes.length);
-    const visible = visibleStructureGraph(structure, "hub", 1, false);
-    expect(visible.nodeIds.size).toBe(5);
-    expect(visible.edgeIds.size).toBe(4);
-    expect(visible.hiddenRelationCount).toBe(10);
-    expect(visibleStructureGraph(structure, "hub", "all", false).nodeIds.size).toBe(
-      structure.nodes.length,
-    );
+    const visible = visibleStructureGraph(structure, "hub", 1);
+    expect(visible.nodeIds.size).toBe(structure.nodes.length);
+    expect(visible.edgeIds.size).toBe(structure.edges.length);
+    expect(visibleStructureGraph(structure, "hub", "all")).toEqual(visible);
   });
 
   it("preserves common Node positions across current-value replacement", () => {
@@ -111,6 +103,73 @@ describe("Structure domain presentation rules", () => {
     expect(reconciled["node-01"]).toEqual(initial["node-01"]);
     expect(reconciled["node-new"]).toBeDefined();
     expect(reconciled["node-14"]).toBeUndefined();
+  });
+
+  it("keeps adjacent ranks separate when one rank needs multiple columns", () => {
+    const base = structureWithHub();
+    const siblings = Array.from({ length: 11 }, (_, index) => ({
+      id: `sibling-${String(index).padStart(2, "0")}`,
+      label: `Sibling ${index}`,
+      description: null,
+      kind: null,
+      anchor: null,
+    }));
+    const structure: Structure = {
+      ...base,
+      initialFocus: null,
+      nodes: [
+        { id: "root", label: "Root", description: null, kind: null, anchor: null },
+        ...siblings,
+        { id: "third-rank", label: "Third rank", description: null, kind: null, anchor: null },
+      ],
+      edges: [
+        ...siblings.map((node) => ({
+          id: `edge-${node.id}`,
+          from: "root",
+          to: node.id,
+          label: "contains",
+          directed: true,
+          anchors: [],
+        })),
+        {
+          id: "edge-third-rank",
+          from: siblings[0]!.id,
+          to: "third-rank",
+          label: "contains",
+          directed: true,
+          anchors: [],
+        },
+      ],
+    };
+    expectNoNodeOverlap(initialStructureLayout(structure));
+  });
+
+  it("places newly added siblings without colliding with retained or new Nodes", () => {
+    const base = structureWithHub();
+    const original: Structure = { ...base, nodes: base.nodes.slice(0, 1), edges: [] };
+    const previous = { hub: { x: 500, y: 300 } };
+    const newNodes = Array.from({ length: 12 }, (_, index) => ({
+      id: `new-${String(index).padStart(2, "0")}`,
+      label: `New ${index}`,
+      description: null,
+      kind: null,
+      anchor: null,
+    }));
+    const updated: Structure = {
+      ...original,
+      nodes: [...original.nodes, ...newNodes],
+      edges: newNodes.map((node) => ({
+        id: `edge-${node.id}`,
+        from: "hub",
+        to: node.id,
+        label: "contains",
+        directed: true,
+        anchors: [],
+      })),
+    };
+    const reconciled = reconcileStructureLayout(updated, previous);
+    expect(reconciled.hub).toEqual(previous.hub);
+    expectNoNodeOverlap(reconciled);
   });
 
   it("places incoming and outgoing relations on opposite sides of initial focus", () => {
@@ -189,11 +248,11 @@ describe("Structure domain presentation rules", () => {
     expect(reversedUndirected).toEqual(layout);
   });
 
-  it("keeps dense parallel and self-relation lanes within the readable canvas", () => {
-    const edges = Array.from({ length: 5_000 }, (_, index) => ({
-      id: `edge-${String(index).padStart(4, "0")}`,
-      from: index < 2_500 ? "left" : "self",
-      to: index < 2_500 ? "right" : "self",
+  it("keeps supported parallel and self-relation lanes within the route bounds", () => {
+    const edges = Array.from({ length: 200 }, (_, index) => ({
+      id: `edge-${String(index).padStart(3, "0")}`,
+      from: index < 100 ? "left" : "self",
+      to: index < 100 ? "right" : "self",
       label: "relates to",
       directed: true,
       anchors: [],
@@ -202,7 +261,7 @@ describe("Structure domain presentation rules", () => {
     expect(offsets.size).toBe(edges.length);
     expect(Math.max(...offsets.values())).toBeLessThanOrEqual(STRUCTURE_MAX_EDGE_LANE_OFFSET);
     expect(Math.min(...offsets.values())).toBeGreaterThanOrEqual(-STRUCTURE_MAX_EDGE_LANE_OFFSET);
-    expect(new Set(edges.slice(0, 2_500).map((edge) => offsets.get(edge.id))).size).toBe(2_500);
-    expect(new Set(edges.slice(2_500).map((edge) => offsets.get(edge.id))).size).toBe(2_500);
+    expect(new Set(edges.slice(0, 100).map((edge) => offsets.get(edge.id))).size).toBe(100);
+    expect(new Set(edges.slice(100).map((edge) => offsets.get(edge.id))).size).toBe(100);
   });
 });

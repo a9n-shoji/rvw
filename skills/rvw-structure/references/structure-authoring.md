@@ -10,7 +10,8 @@ Apply inputs in this order:
 1. Explicit directions from the user, caller, Pull Request body, or upstream Skill define the subject,
    scope, inclusions, exclusions, and emphasis.
 2. Verified committed code, tests, documentation, and Pull Request context fill gaps.
-3. Necessary inference may connect verified facts, but must be labeled as inference or uncertainty.
+3. Put hypotheses, uncertain connections, and relations that are not directly established by source or
+   explicit authority in the Agent's normal response, not in the Structure.
 
 Do not substitute a broader architecture tour for a bounded subject. A useful subject can be stated as
 one code-centered responsibility, boundary, contract, data model, or subsystem. A useful scope says
@@ -54,6 +55,8 @@ Each edge is a producer claim about how two nodes relate in this subject.
   relationship is intentionally established at several distinct code sites. An edge without anchors is
   acceptable only when the relationship follows directly from its anchored endpoints or explicit
   subject authority.
+- Do not publish a hypothesized or uncertain relation. Explain it separately in the Agent response so
+  the map never presents an inference as a source-established fact.
 - Do not encode confidence, severity, inferred risk, reviewer approval, hidden groups, or presentation
   instructions in IDs, labels, kinds, or descriptions.
 
@@ -61,7 +64,8 @@ Each edge is a producer claim about how two nodes relate in this subject.
 
 IDs identify claims across whole-value replacements; labels are presentation.
 
-- Choose concise semantic IDs at first publication. They need not match a symbol exactly.
+- Choose concise semantic IDs matching `^[A-Za-z][A-Za-z0-9_-]{0,63}$` at first publication. They need
+  not match a symbol exactly.
 - Preserve an ID when the same claim survives an update, even if its label, description, kind, anchor,
   or endpoint details change.
 - Assign a new ID for a genuinely new claim. Never recycle an ID removed from this Structure for a
@@ -99,3 +103,5 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] The map contains no hidden review conclusion, presentation layout, inferred confidence, or
       exhaustive-completeness claim.
 - [ ] The graph is small enough that a reviewer can explore it as a coherent subject.
+- [ ] The graph has no more than 50 nodes and 200 edges; a denser subject has been split rather than
+      relying on the viewer to hide relations.

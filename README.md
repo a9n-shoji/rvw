@@ -174,9 +174,9 @@ Structureは一つのexact `sourceOid`、宣言されたtitle / scope、stable�
 Nodeは0または1件、Edgeは0件以上のsource anchorを持ち、rvwはcommit、UTF-8 path、line pair、endpoint、
 focus、重複ID、sizeを保存前に検証します。publish / updateはbrowserやnavigationを操作しません。
 
-viewerでは1-hop / 2-hop / Allを切り替え、focus、pan、zoom、fit、node dragで探索できます。高次数nodeの
-relationは意味やlabelではなくstable Edge ID順で可逆的に折りたたみ、inspectorには全relationと全anchorを
-残します。通常clickでexact sourceを左、`Cmd` / `Ctrl`+clickで右ペインへ開きます。globalなcommit選択は
+viewerではfocusがある時に1-hop / 2-hopへ絞り、Allでは全Node / Edgeを表示します。relationを次数やIDで
+暗黙に隠さず、pan、zoom、fit、node drag、layout resetで探索できます。通常clickでexact sourceを左、
+`Cmd` / `Ctrl`+clickで右ペインへ開きます。globalなcommit選択は
 変えません。node位置とviewportは同じbrowser sessionで保持しますが、SQLiteやAgent protocolへ座標を
 保存しません。同じsubjectの更新は同じURIを完全置換し、存続するIDの位置を保ちます。別subjectは新しい
 Structureとしてpublishします。

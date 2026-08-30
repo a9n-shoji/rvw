@@ -72,6 +72,7 @@ import {
   MAX_STRUCTURE_PAYLOAD_BYTES,
   MAX_STRUCTURE_SCOPE_CHARACTERS,
   MAX_STRUCTURE_TITLE_CHARACTERS,
+  STRUCTURE_ID_PATTERN,
   MAX_WALKTHROUGH_BODY_BYTES,
   MAX_CODE_REFERENCE_DESCRIPTION_CHARACTERS,
   MAX_CODE_REFERENCE_LABEL_CHARACTERS,
@@ -1756,13 +1757,25 @@ export class RvwService {
   }
 
   private assertStructureId(value: string, subject: string): string {
-    if (value.trim().length === 0 || value.length > MAX_STRUCTURE_ID_CHARACTERS) {
+    if (!STRUCTURE_ID_PATTERN.test(value)) {
       throw new RvwError(
         "INVALID_INPUT",
-        `${subject}は空白以外の1〜${MAX_STRUCTURE_ID_CHARACTERS}文字にしてください。`,
+        `${subject}は英字で始まる英数字・_・-の1〜${MAX_STRUCTURE_ID_CHARACTERS}文字にしてください。`,
       );
     }
     return value;
+  }
+
+  private normalizeOptionalStructureText(
+    value: string | null | undefined,
+    maximum: number,
+    subject: string,
+  ): string | null {
+    if (value === null || value === undefined) return null;
+    if (value.length > maximum) {
+      throw new RvwError("INVALID_INPUT", `${subject}が長すぎます。`);
+    }
+    return value.trim() || null;
   }
 
   private async validateStructureContent(
@@ -1806,25 +1819,19 @@ export class RvwService {
         MAX_STRUCTURE_LABEL_CHARACTERS,
         `Structure Node ${id} label`,
       );
-      if (
-        node.description !== null &&
-        node.description !== undefined &&
-        node.description.length > MAX_STRUCTURE_DESCRIPTION_CHARACTERS
-      ) {
-        throw new RvwError("INVALID_INPUT", `Structure Node ${id} descriptionが長すぎます。`);
-      }
-      if (
-        node.kind !== null &&
-        node.kind !== undefined &&
-        node.kind.length > MAX_STRUCTURE_KIND_CHARACTERS
-      ) {
-        throw new RvwError("INVALID_INPUT", `Structure Node ${id} kindが長すぎます。`);
-      }
       nodes.push({
         id,
         label,
-        description: node.description ?? null,
-        kind: node.kind ?? null,
+        description: this.normalizeOptionalStructureText(
+          node.description,
+          MAX_STRUCTURE_DESCRIPTION_CHARACTERS,
+          `Structure Node ${id} description`,
+        ),
+        kind: this.normalizeOptionalStructureText(
+          node.kind,
+          MAX_STRUCTURE_KIND_CHARACTERS,
+          `Structure Node ${id} kind`,
+        ),
         anchor: node.anchor
           ? await this.validateSourceAnchor(
               pullRequest,

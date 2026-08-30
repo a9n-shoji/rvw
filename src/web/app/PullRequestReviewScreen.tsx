@@ -94,6 +94,7 @@ import {
   moveCommentDraftsForWorkspaceTransition,
 } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
+import { transferStructureSession } from "../structure-session.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
 import {
   agentNotificationBody,
@@ -2393,7 +2394,12 @@ export function PullRequestReviewScreen({
           onClose={(document) => closeDocumentWithDrafts(document, paneId)}
           onCloseOthers={(document) => closePaneDocumentsWithDrafts(paneId, document)}
           onCloseAll={() => closePaneDocumentsWithDrafts(paneId)}
-          onMove={(document, targetPane) => moveDocumentWithDrafts(document, paneId, targetPane)}
+          onMove={(document, targetPane) => {
+            if (document.kind === "structure") {
+              transferStructureSession(document.id, paneId, targetPane);
+            }
+            moveDocumentWithDrafts(document, paneId, targetPane);
+          }}
           onDropDocument={dropDocument}
           onDragStartDocument={setDraggedDocumentKey}
           onDragEndDocument={() => setDraggedDocumentKey(null)}
@@ -2418,7 +2424,8 @@ export function PullRequestReviewScreen({
           <LazyLoadBoundary label="Structure">
             <Suspense fallback={<div className="viewer-loading">Structureを準備しています…</div>}>
               <StructureViewer
-                key={paneViewerState.structure.id}
+                key={`${paneId}:${paneViewerState.structure.id}`}
+                paneId={paneId}
                 pullRequestId={pullRequest.id}
                 structure={paneViewerState.structure}
                 changedFiles={changedQuery.data?.files ?? []}

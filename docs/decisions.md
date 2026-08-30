@@ -75,9 +75,10 @@ Render Structure as a first-class document tab beside Walkthrough and code. The 
 content-neutral, deterministic topology-and-stable-ID layout with direct node drag, pan, zoom, fit, and
 focus controls. When an initial focus exists, directed topology places incoming and outgoing ranks on
 opposite sides without accepting producer layout metadata. It does not use labels, kinds, descriptions,
-paths, or inferred semantics to position content. Stable node IDs retain session-local positions across
-navigation and whole-value updates; new nodes are placed near retained neighbors. No coordinates enter
-SQLite or the Agent protocol. For large visible neighborhoods, the viewer culls offscreen nodes.
+paths, or inferred semantics to position content. Stable node IDs retain pane-local session positions
+across navigation and whole-value updates; new nodes are placed in a non-overlapping slot near retained
+neighbors. No coordinates enter SQLite or the Agent protocol. The deterministic layout can be restored
+after manual drag.
 
 Keep the spike's reading aids that do not expand the artifact contract: curved perimeter-to-perimeter
 edges with visible arrowheads, stable lanes for parallel and reciprocal relations, collision-aware edge
@@ -86,10 +87,13 @@ visible focus/count/zoom state, and a collapsible inspector that starts closed. 
 behavior over the production Node, Edge, source anchor, and change-file data; none become producer hints
 or persisted graph semantics.
 
-Use 1-hop, 2-hop, and All neighborhoods. When the focused node has more than twelve relations, show at
-most four incoming, four outgoing, and four undirected/self relations selected by lexical stable Edge
-ID, with explicit reversible expansion. The inspector still lists every incident relationship and
-every edge anchor. This rule is deterministic, content-neutral, and does not imply importance.
+Plain trackpad wheel movement pans the canvas; pinch-style Ctrl/Meta wheel input zooms around the
+pointer. This preserves native two-finger navigation while keeping precise zoom available.
+
+Use 1-hop, 2-hop, and All neighborhoods. 1-hop and 2-hop require a focus; All always shows every Node
+and Edge. Do not automatically collapse relations: lexical ID ordering is content-neutral but still
+makes producer naming determine what a reviewer notices. Keep the MVP bounded to 50 Nodes and 200
+Edges, and split a subject instead of treating a large dense graph as a renderer problem.
 
 Do not add notation in Phase 1. The spike's notation improved scanning, but a controlled vocabulary
 would add semantic authoring policy before producer evaluation established one. The optional `kind`
@@ -112,8 +116,8 @@ AI inference, semantic graph extraction, durable coordinates, or reverse source 
 
 The small built-in layout is predictable and preserves context but will not optimize every dense
 topology. Directed ranks improve an initial-focus view but cycles may still need manual Node movement.
-Lexical Edge ID collapse is neutral but not a claim of relevance. Session continuity ends at reload,
-and Structure has no independent revision history; Git commits remain the way to compare code history.
+Session continuity ends at reload, is independent for each pane, and Structure has no independent
+revision history; Git commits remain the way to compare code history.
 Producer evaluation must continue to test scope, granularity, concept-node restraint, and relationship
 labels before a future notation vocabulary, grouping model, or larger-scale layout is considered. The
 initial evaluation and three generated exact-commit examples are recorded in

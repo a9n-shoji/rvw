@@ -4749,6 +4749,16 @@ diffs-container > [slot="header-metadata"] {
   flex-basis: 14px;
 }
 
+.structure-source-name {
+  max-width: 86px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
 .structure-source-identity > .file-change-icon,
 .structure-source-identity > .file-change-icon svg {
   width: 12px;
@@ -4936,10 +4946,6 @@ diffs-container > [slot="header-metadata"] {
   content-visibility: auto;
 }
 
-.structure-relation-list li.collapsed {
-  opacity: 0.62;
-}
-
 .structure-relation-list li > button {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -4956,11 +4962,6 @@ diffs-container > [slot="header-metadata"] {
 .structure-relation-list li > button span:last-child {
   grid-column: 2;
   color: var(--muted);
-}
-
-.structure-expand-relations {
-  width: 100%;
-  margin-top: 8px;
 }
 
 @container (max-width: 760px) {

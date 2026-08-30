@@ -384,6 +384,18 @@ describe("CLI input schemas", () => {
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
+        nodes: [{ id: "a\0b", label: "Control character" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [{ id: " leading-space", label: "Whitespace" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
         nodes: [
           {
             id: "entry",

@@ -77,8 +77,9 @@ Agentが実装やarchitectureを説明する場合、成立を保証するsource
 Walkthroughは、人間がmental modelを組み立てるための意図的なpathである。Structureは、boundedな
 code-centered subjectのnodeとrelationを任意の方向へ辿るspaceである。Agentはsubjectとscopeを宣言し、
 stableなNode / Edge IDとexact source anchorを提示するが、layout、focus、pan、zoom、開く順序は人間の
-一時的なreading stateに留める。高次数relationの折りたたみは意味的な重要度を推測せず、stable Edge ID
-だけで決めて可逆にする。Structureも独自の履歴やsemantic truthを持たず、claimを検証する正本はGitである。
+一時的なreading stateに留める。表示範囲を1-hop / 2-hopへ明示的に絞ることはできるが、Allでrelationを
+暗黙に隠さない。高次数になるsubjectはscopeを分ける。Structureも独自の履歴やsemantic truthを持たず、
+claimを検証する正本はGitである。
 
 ### 実装が変わってもorientationを保つ
 

@@ -606,11 +606,12 @@ type Structure = {
 
 - `title`と`scope`はsubjectとboundaryを宣言する。producerはuser / caller / PR本文の明示指示を優先し、
   commit済みcodeとtestで未指定部分だけを補う。
-- Node / Edge IDはlabelではなくclaimのidentityであり、Structure内でuniqueとする。same-subject updateで
+- Node / Edge IDは`^[A-Za-z][A-Za-z0-9_-]{0,63}$`を満たすlabelとは別のclaim identityであり、
+  Structure内でuniqueとする。same-subject updateで
   surviving claimのIDを維持し、削除したIDを別claimへ再利用しない。別subjectは新しいStructureにする。
 - Nodeは0または1件、Edgeは0件以上かつ20件以下のanchorを持つ。全anchorは一つの`sourceOid`で検証し、
   repository-relative UTF-8 text pathと、両方nullまたは両方positiveなinclusive line pairだけを受け付ける。
-- Node 1件以上500件以下、Edge 5000件以下、payload 2 MiB以下とする。endpointと`initialFocus`は実在Nodeを
+- Node 1件以上50件以下、Edge 200件以下、payload 2 MiB以下とする。endpointと`initialFocus`は実在Nodeを
   指し、parallel Edgeはそれぞれstable IDを持つ。`directed`は必須booleanである。
 - Node descriptionとEdge labelはproducer claimであり、source anchorはそのclaimを検証する根拠である。
   Edge labelは関係を表すverb / verb phraseを使い、directionを読解順には使わない。
@@ -625,27 +626,28 @@ actionを選んだ時だけ、Structureのexact `sourceOid`とanchorで左ペイ
 ペインへ開き、global commit range、表示mode、Structure focusを変更しない。latest-headへの自動mappingは
 行わない。
 
-探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。layoutはtopologyと
+探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。trackpadの通常wheelは
+pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱う。layoutはtopologyと
 stable IDだけを入力とするcontent-neutralなdeterministic配置で、label、kind、description、path、変更種別、
 relation semanticsを位置決定へ使わない。`initialFocus`がある場合はdirected topology上のincomingを左、
 outgoingを右へ置き、undirectedまたはreciprocalな関係は方向が曖昧なneutral rankへ置いてfocusを中央にするが、
 producer指定のlayout hintや座標は受け取らない。Node位置、focus、
-depth、relation展開、viewportはbrowser session
-内だけで同じStructure IDへ保持し、tab往復とcurrent-value更新後もsurviving IDの位置を保つ。新規Nodeは
-retained neighbor付近へ置く。reload、別browser、CLI、SQLiteへ座標を持ち越さない。100件を超える可視Nodeは
-viewport外をoverscan付きでcullするが、artifactやinspectorから削除しない。
+depth、viewportはbrowser session内だけでpaneとStructure IDの組へ保持し、tab往復とcurrent-value更新後も
+surviving IDの位置を保つ。新規Nodeはretained neighbor付近の空いている矩形へ置く。左右paneで同じStructureを
+開いてもreading stateとDOM参照を共有しない。reload、別browser、CLI、SQLiteへ座標を持ち越さない。drag後は
+deterministicな初期配置へ戻せる。
 
 directed EdgeはNode外周より外で始点／終点を止め、arrowheadをNodeの下へ隠さない緩いBézier曲線で描く。
-parallel / reciprocal Edgeはstable IDでlaneを分ける。focused NodeのEdge labelはNodeと既存labelを避けて配置し、
+parallel / reciprocal Edgeはstable IDでlaneを分ける。focused Nodeではincident Edge、focusなしでは表示中の全
+Edge labelをNodeと既存labelを避けて配置し、
 source file identityをlabel左、独立したsource actionを右へ置く。Nodeもsource file identityをtitle左、source
 actionを右上へ分け、長いidentifierやlabelは省略せず固定card内で改行する。canvasはfocus名、可視／全体件数、
 zoom率とminimapを常時提示する。inspectorはgraph幅を優先して初期状態を閉じ、明示操作で開閉できる。
 
-focused Nodeのincident relationが12件を超える場合、incoming / outgoing / undirected-or-selfごとにstable
-Edge ID lexical orderの先頭4件までをgraph上へ表示する。非表示件数と展開actionを明示し、展開／再折りたたみを
-可逆にする。これはrelevanceやimportanceの推定ではない。inspectorは折りたたみに関係なくfocused Nodeのclaim、
-全incident relation、全Edge anchorを表示する。選択commit範囲に対する変更file presentationはbadge / border
-だけへ反映し、source identityとlayoutへ影響させない。
+1-hop / 2-hopはfocusがある時だけ選べる。focusなしはAllへ戻し、Allは全Nodeと全Edgeを表示する。relationを
+stable IDや件数で自動的に隠さない。bounded graphを超えるsubjectはproducerがscopeを分ける。inspectorは
+focused Nodeのclaim、全incident relation、全Edge anchorを表示する。選択commit範囲に対する変更file
+presentationはbadge / borderだけへ反映し、source identityとlayoutへ影響させない。
 
 publish / update / deleteはpassiveでbrowserを開かずnavigationを変更しない。viewerはpollでlistとcurrent
 valueを更新し、stable IDでsession空間をreconcileする。削除は対象StructureとNode / Edge / anchor件数を確認
@@ -1511,7 +1513,7 @@ Unit:
 - line mapping、rename、Outdated
 - comment resolve/reopen、URI、CLI/API schema
 - Walkthrough schema、URI、Markdown reference / HTML preview validation、行comment placement
-- Structure schema、URI、neighborhood、stable Edge ID collapse、content-neutral layout reconciliation
+- Structure schema、URI、neighborhood completeness、Node非衝突、content-neutral layout reconciliation
 - DB migration 001→current
 - Pull Request一覧のGitHub更新日時順、stable tie-breaker、aggregate count、Closed / Merged filter適用後の
   pagination、既存行の不明な作成日時と状態、Open／状態未取得だけを対象とする明示的な一括status更新と部分失敗
@@ -1582,9 +1584,10 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
     確認する。composerはtarget付近へ表示し、HTML内部threadは外側Markdown inlineへ重複せず、markerから
     Comments sidebarのthreadをactivateできる。Pane Findはiframe本文を検索・highlight・前後移動できる
 21. 同じPRのStructureを2件以上一覧し、片方を開いてもcodeを自動表示せず、1/2-hop / All、focus、
-    stable Edge ID折りたたみ／展開、inspector、pan / zoom / fit / dragを操作できる
+    全relation表示、inspector、pan / zoom / fit / drag / layout resetを操作できる
 22. StructureのNode / Edge anchorを通常clickで左、modifier-clickで右へexact sourceとして開き、global
     commit選択を変えず、Structureへ戻った時とsame-subject poll update後にstable-ID位置とviewportを維持する
+23. focusなしとAllで全Node / Edgeが表示され、同じStructureを左右paneへ開いてもsessionとDOM IDが競合しない
 
 CLI contract:
 

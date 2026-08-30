@@ -9,8 +9,6 @@ export type StructureNeighborhoodDepth = 1 | 2 | "all";
 
 export const STRUCTURE_NODE_WIDTH = 228;
 export const STRUCTURE_NODE_HEIGHT = 112;
-export const STRUCTURE_COLLAPSE_THRESHOLD = 12;
-export const STRUCTURE_COLLAPSE_LIMIT_PER_DIRECTION = 4;
 export const STRUCTURE_MAX_EDGE_LANE_OFFSET = 96;
 
 function stableCompare(left: string, right: string): number {
@@ -18,7 +16,7 @@ function stableCompare(left: string, right: string): number {
 }
 
 function unorderedNodePairKey(left: string, right: string): string {
-  return [left, right].sort(stableCompare).join("\0");
+  return JSON.stringify([left, right].sort(stableCompare));
 }
 
 function adjacency(structure: Structure): Map<string, string[]> {
@@ -63,120 +61,23 @@ export function structureNeighborhood(
   return new Set(distances.keys());
 }
 
-export interface CollapsedStructureRelations {
-  collapsed: boolean;
-  visibleEdgeIds: Set<string>;
-  hiddenEdgeIds: Set<string>;
-}
-
-export function collapsedStructureRelations(
-  structure: Structure,
-  focusedNodeId: string | null,
-  expanded: boolean,
-): CollapsedStructureRelations {
-  const incident = focusedNodeId ? incidentStructureEdges(structure, focusedNodeId) : [];
-  if (!focusedNodeId || expanded || incident.length <= STRUCTURE_COLLAPSE_THRESHOLD) {
-    return {
-      collapsed: false,
-      visibleEdgeIds: new Set(incident.map((edge) => edge.id)),
-      hiddenEdgeIds: new Set(),
-    };
-  }
-  const buckets: Record<"incoming" | "outgoing" | "undirected", StructureEdge[]> = {
-    incoming: [],
-    outgoing: [],
-    undirected: [],
-  };
-  for (const edge of incident) {
-    if (!edge.directed || edge.from === edge.to) buckets.undirected.push(edge);
-    else if (edge.from === focusedNodeId) buckets.outgoing.push(edge);
-    else buckets.incoming.push(edge);
-  }
-  const visibleEdgeIds = new Set(
-    Object.values(buckets).flatMap((edges) =>
-      edges
-        .sort((left, right) => stableCompare(left.id, right.id))
-        .slice(0, STRUCTURE_COLLAPSE_LIMIT_PER_DIRECTION)
-        .map((edge) => edge.id),
-    ),
-  );
-  return {
-    collapsed: true,
-    visibleEdgeIds,
-    hiddenEdgeIds: new Set(
-      incident.filter((edge) => !visibleEdgeIds.has(edge.id)).map((edge) => edge.id),
-    ),
-  };
-}
-
 export interface VisibleStructureGraph {
   nodeIds: Set<string>;
   edgeIds: Set<string>;
-  hiddenRelationCount: number;
-  relationsCollapsed: boolean;
 }
 
 export function visibleStructureGraph(
   structure: Structure,
   focusedNodeId: string | null,
   depth: StructureNeighborhoodDepth,
-  expanded: boolean,
 ): VisibleStructureGraph {
   const neighborhood = structureNeighborhood(structure, focusedNodeId, depth);
-  const collapse = collapsedStructureRelations(structure, focusedNodeId, expanded);
   const edgeIds = new Set(
     structure.edges
-      .filter(
-        (edge) =>
-          neighborhood.has(edge.from) &&
-          neighborhood.has(edge.to) &&
-          !collapse.hiddenEdgeIds.has(edge.id),
-      )
+      .filter((edge) => neighborhood.has(edge.from) && neighborhood.has(edge.to))
       .map((edge) => edge.id),
   );
-  if (depth === "all" || !focusedNodeId) {
-    return {
-      nodeIds: neighborhood,
-      edgeIds,
-      hiddenRelationCount: collapse.hiddenEdgeIds.size,
-      relationsCollapsed: collapse.collapsed,
-    };
-  }
-
-  // A collapsed relation must not leave an apparently unrelated Node floating in
-  // the local view. Keep Nodes that remain reachable through visible relations;
-  // Nodes connected by another visible path are intentionally retained.
-  const visibleAdjacency = new Map([...neighborhood].map((nodeId) => [nodeId, [] as string[]]));
-  for (const edge of structure.edges) {
-    if (!edgeIds.has(edge.id)) continue;
-    visibleAdjacency.get(edge.from)?.push(edge.to);
-    if (edge.from !== edge.to) visibleAdjacency.get(edge.to)?.push(edge.from);
-  }
-  const nodeIds = new Set([focusedNodeId]);
-  const queue = [focusedNodeId];
-  for (let index = 0; index < queue.length; index += 1) {
-    const current = queue[index]!;
-    for (const neighbor of visibleAdjacency.get(current) ?? []) {
-      if (nodeIds.has(neighbor)) continue;
-      nodeIds.add(neighbor);
-      queue.push(neighbor);
-    }
-  }
-  return {
-    nodeIds,
-    edgeIds,
-    hiddenRelationCount: collapse.hiddenEdgeIds.size,
-    relationsCollapsed: collapse.collapsed,
-  };
-}
-
-function stableHash(value: string): number {
-  let hash = 2_166_136_261;
-  for (const character of value) {
-    hash ^= character.charCodeAt(0);
-    hash = Math.imul(hash, 16_777_619);
-  }
-  return hash >>> 0;
+  return { nodeIds: neighborhood, edgeIds };
 }
 
 function bidirectionalInitialLayout(
@@ -300,14 +201,17 @@ export function initialStructureLayout(structure: Structure): Record<string, Str
       ranks.set(rank, group);
     }
     let componentBottom = componentTop;
-    for (const [rank, rankIds] of [...ranks].sort(([left], [right]) => left - right)) {
+    const perColumn = 10;
+    const columnStride = STRUCTURE_NODE_WIDTH + 44;
+    const rankGap = 68;
+    let rankX = 64;
+    for (const [, rankIds] of [...ranks].sort(([left], [right]) => left - right)) {
       rankIds.sort(stableCompare);
-      const perColumn = structure.nodes.length > 150 ? 18 : 10;
       rankIds.forEach((id, index) => {
         const subcolumn = Math.floor(index / perColumn);
         const row = index % perColumn;
         positions[id] = {
-          x: 64 + rank * 340 + subcolumn * 272,
+          x: rankX + subcolumn * columnStride,
           y: componentTop + row * 164,
         };
         componentBottom = Math.max(
@@ -315,6 +219,7 @@ export function initialStructureLayout(structure: Structure): Record<string, Str
           componentTop + row * 164 + STRUCTURE_NODE_HEIGHT,
         );
       });
+      rankX += Math.max(1, Math.ceil(rankIds.length / perColumn)) * columnStride + rankGap;
     }
     componentTop = componentBottom + 180;
   }
@@ -327,9 +232,13 @@ export function reconcileStructureLayout(
 ): Record<string, StructurePoint> {
   const fallback = initialStructureLayout(structure);
   const next: Record<string, StructurePoint> = {};
+  const occupied: StructurePoint[] = [];
   for (const node of structure.nodes) {
     const retained = previous[node.id];
-    if (retained) next[node.id] = retained;
+    if (retained) {
+      next[node.id] = retained;
+      occupied.push(retained);
+    }
   }
   for (const node of [...structure.nodes].sort((left, right) => stableCompare(left.id, right.id))) {
     if (next[node.id]) continue;
@@ -338,20 +247,60 @@ export function reconcileStructureLayout(
       .map((neighborId) => next[neighborId] ?? previous[neighborId])
       .filter((point): point is StructurePoint => point !== undefined);
     if (neighbors.length === 0) {
-      next[node.id] = fallback[node.id] ?? { x: 64, y: 64 };
+      const fallbackPoint = fallback[node.id] ?? { x: 64, y: 64 };
+      const point = positionOverlapsOccupied(occupied, fallbackPoint)
+        ? firstOpenGridPoint(occupied, fallbackPoint)
+        : fallbackPoint;
+      next[node.id] = point;
+      occupied.push(point);
       continue;
     }
     const center = neighbors.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), {
       x: 0,
       y: 0,
     });
-    const hash = stableHash(node.id);
-    next[node.id] = {
-      x: center.x / neighbors.length + 120 + (hash % 5) * 18,
-      y: center.y / neighbors.length - 72 + ((hash >>> 8) % 9) * 18,
-    };
+    const point = firstOpenGridPoint(occupied, {
+      x: center.x / neighbors.length + STRUCTURE_NODE_WIDTH + 112,
+      y: center.y / neighbors.length,
+    });
+    next[node.id] = point;
+    occupied.push(point);
   }
   return next;
+}
+
+function positionOverlapsOccupied(
+  occupied: readonly StructurePoint[],
+  candidate: StructurePoint,
+): boolean {
+  return occupied.some(
+    (point) =>
+      candidate.x < point.x + STRUCTURE_NODE_WIDTH + 44 &&
+      candidate.x + STRUCTURE_NODE_WIDTH + 44 > point.x &&
+      candidate.y < point.y + STRUCTURE_NODE_HEIGHT + 52 &&
+      candidate.y + STRUCTURE_NODE_HEIGHT + 52 > point.y,
+  );
+}
+
+function firstOpenGridPoint(
+  occupied: readonly StructurePoint[],
+  origin: StructurePoint,
+): StructurePoint {
+  const columnStride = STRUCTURE_NODE_WIDTH + 44;
+  const rowStride = STRUCTURE_NODE_HEIGHT + 52;
+  for (let radius = 0; radius <= 50; radius += 1) {
+    for (let row = -radius; row <= radius; row += 1) {
+      for (let column = -radius; column <= radius; column += 1) {
+        if (radius > 0 && Math.max(Math.abs(column), Math.abs(row)) !== radius) continue;
+        const candidate = {
+          x: origin.x + column * columnStride,
+          y: origin.y + row * rowStride,
+        };
+        if (!positionOverlapsOccupied(occupied, candidate)) return candidate;
+      }
+    }
+  }
+  return { x: origin.x + occupied.length * columnStride, y: origin.y };
 }
 
 export function structureEdgeRouteOffsets(

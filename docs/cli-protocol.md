@@ -544,14 +544,15 @@ The stdin value is:
 ```
 
 `pullRequest`, `sourceOid`, nonblank `title` and `scope`, one or more nodes, and `edges` are required.
-`initialFocus` may be `null` or an existing Node ID. Node and Edge IDs are nonblank, unique within their
-own collections, at most 128 characters, and are stable claim identities rather than labels. Every edge
+`initialFocus` may be `null` or an existing Node ID. Node and Edge IDs match
+`^[A-Za-z][A-Za-z0-9_-]{0,63}$`, are unique within their own collections, and are stable claim
+identities rather than labels. Every edge
 endpoint must exist and `directed` is required. Nodes may contain zero or one anchor; edges may contain
 zero to twenty anchors. Every anchor is a repository-relative available UTF-8 document at `sourceOid`
 and either omits both line fields or supplies both as an existing positive inclusive range. Omitted
 nullable fields normalize to `null`; omitted edge anchors normalize to an empty array.
 
-Limits are 500 nodes, 5000 edges, a 200-character title, a 4000-character scope, 200-character labels,
+Limits are 50 nodes, 200 edges, a 200-character title, a 4000-character scope, 200-character labels,
 2000-character descriptions, 100-character kinds, and 2 MiB for the normalized Structure content.
 The application validates commit availability and Pull Request ownership before saving one transaction
 and retaining `sourceOid`. Success returns the saved Structure and `rvw://structure/<uuid>`. Publication

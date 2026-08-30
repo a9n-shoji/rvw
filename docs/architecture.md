@@ -85,13 +85,13 @@ The graph is a set of producer claims, not a semantic code index. It has no revi
 groups, reverse lookup, inferred edges, or persisted coordinates. HTTP lists and reads current values;
 human-confirmed delete is the only write exposed to the browser.
 
-The Structure viewer uses topology and stable IDs—not content—to produce an initial layout. Browser
-session state preserves focus, neighborhood depth, relation expansion, node positions, and viewport
-across tab navigation and current-value updates. Surviving IDs keep positions and new nodes start near
-retained neighbors. 1-hop, 2-hop, and All views remain reversible; a high-degree focus is reduced by
-lexical Edge ID within incoming, outgoing, and undirected buckets, while the inspector retains every
-incident relation and anchor. Culling only changes what is mounted, never the artifact. Source actions
-always open the declared exact `sourceOid` in the chosen pane without changing the global commit range.
+The Structure viewer uses topology and stable IDs—not content—to produce an initial layout. Pane-local
+browser session state preserves focus, neighborhood depth, node positions, and viewport across tab
+navigation and current-value updates, and moves with a Structure tab between panes. Surviving IDs keep
+positions and new nodes take a non-overlapping slot near retained neighbors. 1-hop and 2-hop require a
+focus; All shows every Node and Edge. The bounded MVP does not collapse or cull relations based on ID or
+degree. Source actions always open the declared exact `sourceOid` in the chosen pane without changing
+the global commit range.
 The browser owns an ephemeral two-pane workspace: every document identity may appear once per pane, tabs
 can move between panes, ordinary document-opening clicks target the left pane, and modifier-click targets
 the right pane regardless of focus or origin. Pane placement never enters SQLite or the Agent protocol. Repository Markdown uses

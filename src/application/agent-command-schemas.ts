@@ -21,6 +21,7 @@ import {
   MAX_STRUCTURE_PAYLOAD_BYTES,
   MAX_STRUCTURE_SCOPE_CHARACTERS,
   MAX_STRUCTURE_TITLE_CHARACTERS,
+  STRUCTURE_ID_PATTERN,
   MAX_WALKTHROUGH_BODY_BYTES,
   MAX_WALKTHROUGH_TITLE_CHARACTERS,
 } from "../shared/constants.js";
@@ -243,7 +244,7 @@ export const sourceAnchorInputSchema = z
 
 const structureNodeInputSchema = z
   .object({
-    id: z.string().min(1).max(MAX_STRUCTURE_ID_CHARACTERS),
+    id: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
     label: z.string().min(1).max(MAX_STRUCTURE_LABEL_CHARACTERS),
     description: z
       .string()
@@ -258,9 +259,9 @@ const structureNodeInputSchema = z
 
 const structureEdgeInputSchema = z
   .object({
-    id: z.string().min(1).max(MAX_STRUCTURE_ID_CHARACTERS),
-    from: z.string().min(1).max(MAX_STRUCTURE_ID_CHARACTERS),
-    to: z.string().min(1).max(MAX_STRUCTURE_ID_CHARACTERS),
+    id: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
+    from: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
+    to: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
     label: z.string().min(1).max(MAX_STRUCTURE_LABEL_CHARACTERS),
     directed: z.boolean(),
     anchors: z
@@ -275,7 +276,13 @@ const structureContentShape = {
   sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
   title: z.string().min(1).max(MAX_STRUCTURE_TITLE_CHARACTERS),
   scope: z.string().min(1).max(MAX_STRUCTURE_SCOPE_CHARACTERS),
-  initialFocus: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).nullable().optional().default(null),
+  initialFocus: z
+    .string()
+    .max(MAX_STRUCTURE_ID_CHARACTERS)
+    .regex(STRUCTURE_ID_PATTERN)
+    .nullable()
+    .optional()
+    .default(null),
   nodes: z.array(structureNodeInputSchema).min(1).max(MAX_STRUCTURE_NODES),
   edges: z.array(structureEdgeInputSchema).max(MAX_STRUCTURE_EDGES),
 };
@@ -331,7 +338,8 @@ function refineStructureContent(
       message: "initialFocus Nodeが存在しません。",
     });
   }
-  if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
+  const graph = { initialFocus: value.initialFocus, nodes: value.nodes, edges: value.edges };
+  if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
     context.addIssue({
       code: "custom",
       message: `Structure payloadは${MAX_STRUCTURE_PAYLOAD_BYTES} UTF-8 bytes以下にしてください。`,
