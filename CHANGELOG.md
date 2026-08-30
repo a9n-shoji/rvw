@@ -12,6 +12,21 @@
 - Structureのpublish / get / whole-value update / confirmation付きdeleteを行うCLI、Agent socket capability、
   SQLite migration、HTTP API、Codex / Claude Code共通の`rvw-structure` Skill
 
+## [0.3.2] - 2026-08-31
+
+### Added
+
+- Markdown、comment、WalkthroughのMermaid図をviewportサイズのreview workspaceへ展開し、Fit・zoom・
+  scroll、resizableなcomment rail、code referenceのpeekとreview画面へのnavigationを利用できる機能
+- WalkthroughのMermaid bindingをflowchartとclassDiagramに加え、sequenceDiagramのparticipant / actor、
+  stateDiagram-v2のstate、erDiagramのentity、architecture-betaのserviceへ拡張
+
+### Changed
+
+- Walkthroughのcode referenceを保存済みの最新PR headへ遅延解決し、fileが不変ならexact range、変更時は
+  sourceとdestinationで一意な未変更rangeだけを対応付け。安全に特定できない場合はimmutableなsource commitへ
+  fallbackし、rename / copyも一意な直接successorだけを追跡
+
 ## [0.3.1] - 2026-08-28
 
 ### Added
