@@ -1387,8 +1387,48 @@ describe("RvwService commit workflow", () => {
       }),
     ).rejects.toMatchObject({
       code: "INVALID_INPUT",
-      message: "Mermaid nodeが本文のflowchartまたはclassDiagramに見つかりません: Diagram",
+      message: "Mermaid binding対象が本文の対応diagramに見つかりません: Diagram",
     });
+
+    for (const phantomStyle of [
+      {
+        title: "State style is not a binding target",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "stateDiagram-v2",
+          "  Still:::notMoving --> Moving:::movement",
+          "```",
+        ].join("\n"),
+        diagramBindings: { notMoving: "diagram" },
+      },
+      {
+        title: "ER style is not a binding target",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "erDiagram",
+          "  PERSON:::model,aggregate ||--|| CAR : owns",
+          "```",
+        ].join("\n"),
+        diagramBindings: { model: "diagram" },
+      },
+    ]) {
+      const [phantomId] = Object.keys(phantomStyle.diagramBindings);
+      await expect(
+        service.publishWalkthrough({
+          pullRequest: opened.pullRequest.url,
+          sourceOid: firstHead,
+          ...phantomStyle,
+          references,
+        }),
+      ).rejects.toMatchObject({
+        code: "INVALID_INPUT",
+        message: `Mermaid binding対象が本文の対応diagramに見つかりません: ${phantomId}`,
+      });
+    }
 
     await expect(
       service.publishWalkthrough({
@@ -1425,6 +1465,86 @@ describe("RvwService commit workflow", () => {
         references,
       }),
     ).resolves.toMatchObject({ diagramBindings: { Actual: "diagram" } });
+
+    for (const supported of [
+      {
+        title: "Flowchart IDs overlapping other diagram keywords",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "flowchart LR",
+          "  service[Service]:::backend --> state[State]:::workflow",
+          "```",
+        ].join("\n"),
+        diagramBindings: { service: "diagram", state: "source" },
+      },
+      {
+        title: "Sequence diagram bindings",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "sequenceDiagram",
+          '  participant C@{ "type": "boundary" } as Controller',
+          "  actor U as User",
+          "  U->>C: request",
+          "```",
+        ].join("\n"),
+        diagramBindings: { C: "diagram", U: "source" },
+      },
+      {
+        title: "State diagram binding",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "stateDiagram-v2",
+          "  Idle",
+          "  Draft:::notMoving --> Approved:::movement",
+          "```",
+        ].join("\n"),
+        diagramBindings: { Idle: "source", Draft: "diagram", Approved: "source" },
+      },
+      {
+        title: "ER diagram binding",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "erDiagram",
+          "  p[Person] {",
+          "    string name",
+          "  }",
+          "  p 1 to zero or more ORDER : places",
+          "  HOUSE",
+          "  PERSON:::model,aggregate ||--|| CAR:::vehicle,asset : owns",
+          "```",
+        ].join("\n"),
+        diagramBindings: { p: "diagram", ORDER: "source", HOUSE: "diagram", PERSON: "source" },
+      },
+      {
+        title: "Architecture diagram binding",
+        body: [
+          "Open [the source](rvw-ref:source).",
+          "",
+          "```mermaid",
+          "architecture-beta",
+          "  service worker(server)[Worker]",
+          "```",
+        ].join("\n"),
+        diagramBindings: { worker: "diagram" },
+      },
+    ]) {
+      await expect(
+        service.publishWalkthrough({
+          pullRequest: opened.pullRequest.url,
+          sourceOid: firstHead,
+          ...supported,
+          references,
+        }),
+      ).resolves.toMatchObject({ diagramBindings: supported.diagramBindings });
+    }
 
     await expect(
       service.updateWalkthrough(walkthrough.ref, {

@@ -313,7 +313,8 @@ export interface WalkthroughMarkdownAnalysis {
 
 const mermaidIdentifierPattern = /[A-Za-z][A-Za-z0-9_-]{0,63}/g;
 const mermaidEdgePattern = /[<|o*x]*[-.=~]{2,}[|o*x>]*/g;
-const mermaidKeywords = new Set([
+const mermaidClassShorthandPattern = /:::[A-Za-z][A-Za-z0-9_-]*(?:,[A-Za-z][A-Za-z0-9_-]*)*/g;
+const flowchartAndClassKeywords = new Set([
   "class",
   "classDef",
   "classDiagram",
@@ -325,16 +326,25 @@ const mermaidKeywords = new Set([
   "style",
   "subgraph",
 ]);
+const noMermaidKeywords = new Set<string>();
 
-function mermaidIdentifiers(value: string): string[] {
+function mermaidIdentifiers(value: string, excludedKeywords: ReadonlySet<string>): string[] {
   return [...value.matchAll(mermaidIdentifierPattern)]
     .map(([identifier]) => identifier)
-    .filter((identifier) => !mermaidKeywords.has(identifier));
+    .filter((identifier) => !excludedKeywords.has(identifier));
+}
+
+function mermaidLineWithoutComment(value: string): string {
+  const commentIndex = value.indexOf("%%");
+  return commentIndex === -1 ? value : value.slice(0, commentIndex);
+}
+
+function mermaidLineWithoutClassShorthand(value: string): string {
+  return value.replace(mermaidClassShorthandPattern, "");
 }
 
 function mermaidLineWithoutLabels(value: string): string {
-  const commentIndex = value.indexOf("%%");
-  const uncommented = commentIndex === -1 ? value : value.slice(0, commentIndex);
+  const uncommented = mermaidLineWithoutComment(value);
   const withoutQuotedLabels = uncommented
     .replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, " ")
     .replace(/\|[^|]*\|/g, " ")
@@ -365,22 +375,62 @@ function mermaidLineWithoutLabels(value: string): string {
   return result;
 }
 
-function addMermaidEdgeEndpoints(line: string, nodeIds: Set<string>): void {
-  const edges = [...line.matchAll(mermaidEdgePattern)];
+function addMermaidEdgeEndpoints(
+  line: string,
+  nodeIds: Set<string>,
+  excludedKeywords: ReadonlySet<string>,
+): void {
+  const endpointLine = mermaidLineWithoutClassShorthand(line);
+  const edges = [...endpointLine.matchAll(mermaidEdgePattern)];
   for (let index = 0; index < edges.length; index += 1) {
     const edge = edges[index]!;
     const edgeStart = edge.index;
     const edgeEnd = edgeStart + edge[0].length;
     const leftStart = index === 0 ? 0 : edges[index - 1]!.index + edges[index - 1]![0].length;
-    const rightEnd = index + 1 === edges.length ? line.length : edges[index + 1]!.index;
-    const left = line.slice(leftStart, edgeStart);
-    const right = line.slice(edgeEnd, rightEnd);
-    const leftIdentifiers = mermaidIdentifiers(left);
-    const rightIdentifiers = mermaidIdentifiers(right);
+    const rightEnd = index + 1 === edges.length ? endpointLine.length : edges[index + 1]!.index;
+    const left = endpointLine.slice(leftStart, edgeStart);
+    const right = endpointLine.slice(edgeEnd, rightEnd);
+    const leftIdentifiers = mermaidIdentifiers(left, excludedKeywords);
+    const rightIdentifiers = mermaidIdentifiers(right, excludedKeywords);
     const leftEndpoints = left.includes("&") ? leftIdentifiers : leftIdentifiers.slice(-1);
     const rightEndpoints = right.includes("&") ? rightIdentifiers : rightIdentifiers.slice(0, 1);
     for (const identifier of [...leftEndpoints, ...rightEndpoints]) nodeIds.add(identifier);
   }
+}
+
+function addSequenceMessageParticipants(line: string, nodeIds: Set<string>): void {
+  const message = line.match(
+    /^([A-Za-z][A-Za-z0-9_-]{0,63})\s*<*[-=]+[)>x]+\s*[+-]?([A-Za-z][A-Za-z0-9_-]{0,63})\b/,
+  );
+  if (!message) return;
+  nodeIds.add(message[1]!);
+  nodeIds.add(message[2]!);
+}
+
+const erCardinalitySource = [
+  "one\\s+or\\s+zero",
+  "one\\s+or\\s+(?:more|many)",
+  "zero\\s+or\\s+(?:one|more|many)",
+  "only\\s+one",
+  "many\\([01]\\)",
+  "[01]\\+",
+  "many",
+  "one",
+  "\\d+(?:\\.\\d+)?",
+].join("|");
+const erTextualRelationshipPattern = new RegExp(
+  `^([A-Za-z][A-Za-z0-9_-]{0,63})\\s+(?:${erCardinalitySource})\\s+(?:to|optionally\\s+to)\\s+(?:${erCardinalitySource})\\s+([A-Za-z][A-Za-z0-9_-]{0,63})\\b`,
+  "i",
+);
+
+function addErRelationshipEntities(line: string, nodeIds: Set<string>): void {
+  const relationship =
+    line.match(
+      /^([A-Za-z][A-Za-z0-9_-]{0,63})\s+[|o}{]+[.-]{2}[|o}{]+\s+([A-Za-z][A-Za-z0-9_-]{0,63})\b/,
+    ) ?? line.match(erTextualRelationshipPattern);
+  if (!relationship) return;
+  nodeIds.add(relationship[1]!);
+  nodeIds.add(relationship[2]!);
 }
 
 function addMermaidDiagramNodes(source: string, nodeIds: Set<string>): void {
@@ -388,14 +438,62 @@ function addMermaidDiagramNodes(source: string, nodeIds: Set<string>): void {
   const header = lines
     .map((line) => mermaidLineWithoutLabels(line).trim())
     .find((line) => line.length > 0);
-  const diagramType = header?.match(/^(flowchart|graph|classDiagram)\b/)?.[1];
+  const diagramType = header?.match(
+    /^(flowchart|graph|classDiagram|sequenceDiagram|stateDiagram-v2|erDiagram|architecture-beta)\b/,
+  )?.[1];
   if (!diagramType) return;
 
   for (const rawLine of lines) {
-    for (const statement of mermaidLineWithoutLabels(rawLine).split(";")) {
+    const diagramLine =
+      diagramType === "erDiagram" || diagramType === "sequenceDiagram"
+        ? mermaidLineWithoutComment(rawLine)
+        : mermaidLineWithoutLabels(rawLine);
+    for (const statement of diagramLine.split(";")) {
       const line = statement.trim();
-      if (!line || /^(flowchart|graph|classDiagram)\b/.test(line)) continue;
-      addMermaidEdgeEndpoints(line, nodeIds);
+      if (
+        !line ||
+        /^(flowchart|graph|classDiagram|sequenceDiagram|stateDiagram-v2|erDiagram|architecture-beta)\b/.test(
+          line,
+        )
+      ) {
+        continue;
+      }
+      if (diagramType === "sequenceDiagram") {
+        const participant = line.match(
+          /^(?:participant|actor)\s+([A-Za-z][A-Za-z0-9_-]{0,63})(?:\s*@\s*\{|\s+as\b|\s*$)/,
+        )?.[1];
+        if (participant) nodeIds.add(participant);
+        else addSequenceMessageParticipants(line, nodeIds);
+        continue;
+      }
+      if (diagramType === "architecture-beta") {
+        const service = line.match(/^service\s+([A-Za-z][A-Za-z0-9_-]{0,63})(?:\s|\(|$)/)?.[1];
+        if (service) nodeIds.add(service);
+        continue;
+      }
+      if (diagramType === "stateDiagram-v2") {
+        addMermaidEdgeEndpoints(line, nodeIds, noMermaidKeywords);
+        const alias = line.match(/^state\s+.+?\s+as\s+([A-Za-z][A-Za-z0-9_-]{0,63})\b/)?.[1];
+        const declaration = alias
+          ? undefined
+          : line.match(/^state\s+([A-Za-z][A-Za-z0-9_-]{0,63})(?:\s|\{|$)/)?.[1];
+        const describedState = line.match(/^([A-Za-z][A-Za-z0-9_-]{0,63})\s*:/)?.[1];
+        const standaloneState = line.match(/^([A-Za-z][A-Za-z0-9_-]{0,63})$/)?.[1];
+        for (const identifier of [alias, declaration, describedState, standaloneState]) {
+          if (identifier) nodeIds.add(identifier);
+        }
+        continue;
+      }
+      if (diagramType === "erDiagram") {
+        const entityLine = mermaidLineWithoutClassShorthand(line);
+        addErRelationshipEntities(entityLine, nodeIds);
+        const entity = entityLine.match(
+          /^([A-Za-z][A-Za-z0-9_-]{0,63})(?:\s*\[[^\]\n]+\])?\s*(?:\{|$)/,
+        )?.[1];
+        if (entity) nodeIds.add(entity);
+        continue;
+      }
+      addMermaidEdgeEndpoints(line, nodeIds, flowchartAndClassKeywords);
       if (diagramType === "classDiagram") {
         const declaration = line.match(/^class\s+([A-Za-z][A-Za-z0-9_-]{0,63})\b/)?.[1];
         const memberOwner = line.match(/^([A-Za-z][A-Za-z0-9_-]{0,63})\s*:/)?.[1];
@@ -1767,7 +1865,7 @@ export class RvwService {
       if (!markdown.mermaidNodeIds.has(nodeId)) {
         throw new RvwError(
           "INVALID_INPUT",
-          `Mermaid nodeが本文のflowchartまたはclassDiagramに見つかりません: ${nodeId}`,
+          `Mermaid binding対象が本文の対応diagramに見つかりません: ${nodeId}`,
         );
       }
     }

@@ -156,7 +156,7 @@ test("finds rendered text in a walkthrough without searching its viewer controls
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.getByRole("button", { name: "ウォークスルー 5", exact: true }).click();
+  await page.getByRole("button", { name: "ウォークスルー 6", exact: true }).click();
   await page
     .getByRole("button", { name: "注文作成フロー：HTTPからtransactional outboxまで" })
     .click();

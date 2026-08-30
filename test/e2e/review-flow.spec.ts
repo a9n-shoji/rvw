@@ -193,12 +193,12 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
     ),
   ).toBe(true);
   const walkthroughShortcut = page.getByRole("button", {
-    name: "ウォークスルー 5",
+    name: "ウォークスルー 6",
     exact: true,
   });
   await walkthroughShortcut.click();
   await expect(page.locator(".review-tree-walkthrough-list .review-tree-walkthrough")).toHaveCount(
-    5,
+    6,
   );
   await page.keyboard.press("Escape");
   await fixtureTreeFile.click();
@@ -1171,7 +1171,7 @@ test("searches while typing, groups occurrences, and reveals a result without ch
   ).toBeVisible();
   await expect(diff.locator('[data-line="13"]')).toHaveCount(0);
 
-  const walkthroughFolder = page.getByRole("button", { name: "ウォークスルー 5", exact: true });
+  const walkthroughFolder = page.getByRole("button", { name: "ウォークスルー 6", exact: true });
   await walkthroughFolder.click();
   const srcFolder = page.getByRole("button", { name: "src フォルダ", exact: true });
   await srcFolder.click();
@@ -1363,7 +1363,7 @@ test("keeps virtual review nodes compact and useful height for code navigation",
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("button", { name: "ウォークスルー 5" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "ウォークスルー 6" })).toBeVisible();
 
   const stackHeights = await page.locator(".sidebar-stack").evaluateAll((stacks) =>
     stacks.map((stack) => ({

@@ -1,5 +1,47 @@
 # Architecture decisions
 
+## 2026-08-30: Resolve supported Mermaid node-like bindings through diagram adapters
+
+### Problem
+
+Walkthrough Mermaid rendering accepted many diagram types, but interactive code bindings depended on one
+broad SVG query and substring matching inside generated element IDs. That happened to cover flowchart
+nodes and classDiagram classes, while also mixing Mermaid-specific DOM interpretation into the
+Walkthrough interaction component. Extending that query would make edge-like elements and unstable DOM
+details increasingly difficult to distinguish from source-authored IDs.
+
+### Choice
+
+Keep the external `diagramBindings` contract as `Mermaid source element ID -> Walkthrough reference ID`.
+Move SVG interpretation into a diagram-specific resolver covering flowchart nodes, classDiagram classes,
+sequenceDiagram participants/actors, stateDiagram-v2 states, erDiagram entities, and architecture-beta
+services. For Mermaid 11.16.1, read flowchart, class, state, and ER IDs from the typed segment of the
+generated group ID; read sequence participant/actor IDs from the top rendering's
+`g[data-et="participant"][data-id]` semantic metadata; and read architecture service IDs from
+`g.architecture-service` generated IDs.
+
+The `diagramBindings` map is Walkthrough-global. Reusing one source ID in multiple Mermaid fences binds
+every matching element to the same reference. Authors use distinct source IDs when visually similar
+elements in separate diagrams need different references; fence identity is not added to the schema until
+that distinction is required by a concrete use case.
+
+Validate the same source-authored element kinds during Walkthrough publish/update. Do not accept sequence
+messages, state transitions, ER relationships, architecture edges/groups, or other edge-like elements as
+binding keys. Do not bind the duplicated lower sequence participant/actor rendering because Mermaid does
+not retain the source ID on those groups; label or DOM-order matching would turn a display alias or layout
+detail into an unstable identity.
+
+### Trade-offs
+
+- The Walkthrough interaction component now applies shared linked-state and navigation behavior without
+  knowing Mermaid selectors or generated-ID formats.
+- Adding another node-like diagram requires one resolver adapter and matching source validation, without
+  introducing a generic Mermaid framework.
+- A Mermaid upgrade can still change generated-ID markers, classes, or sequence semantic metadata. The
+  six diagram-type E2E fixture is the compatibility alarm for those DOM dependencies.
+- Only the source-identified top sequence participant/actor is interactive; the visually duplicated lower
+  rendering remains passive rather than receiving a guessed identity.
+
 ## 2026-08-29: Resolve Walkthrough code references against the latest Pull Request head
 
 ### Problem
@@ -1784,8 +1826,10 @@ though the human cannot discover or verify that reference from the rendered arti
 ### Choice
 
 Require every supplied reference ID to appear in at least one parsed Markdown `rvw-ref:` link or as a
-`diagramBindings` value whose key is an actual flowchart node or classDiagram class in the Markdown
-body. Keep the existing inverse validation that every link and binding names a supplied reference.
+`diagramBindings` value whose key is an actual supported node-like Mermaid element in the Markdown
+body. This initially covered flowchart nodes and classDiagram classes; the 2026-08-30 Mermaid adapter
+decision extends the same reachability rule to its additional element kinds. Keep the existing inverse
+validation that every link and binding names a supplied reference.
 Apply the bidirectional rule to both publish and in-place update before persistence; a phantom binding
 does not make a reference reachable.
 

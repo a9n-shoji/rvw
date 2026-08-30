@@ -480,8 +480,11 @@ interface Walkthrough {
 - Markdown内のlink destinationとしてparseされた`rvw-ref:<referenceId>`を登録時に完全一致で検証し、
   typed reference buttonとして表示する。code blockやinline code内の文字列はlinkとして扱わない。
 - 全reference IDはMarkdownまたはHTML内の`rvw-ref:` link、または`diagramBindings`のvalueとして最低一度使う。
-  binding keyは本文中のflowchart nodeまたはclass diagram classとして実在することも検証する。存在しない
-  nodeへのbindingを含め、どちらからも実際に到達できないreferenceは、重複indexのないviewerでは
+  binding keyは本文中のflowchart node、class diagram class、sequence participant / actor、state、ER entity、
+  architecture serviceのいずれかとして実在するsource IDであることも検証する。message、transition、relationship、
+  architecture edge / groupはbinding対象にしない。`diagramBindings`はWalkthrough全体へ適用し、複数のMermaid
+  fenceで同じsource IDを使った場合はすべて同じreferenceへbindする。別referenceが必要ならsource IDを分ける。
+  存在しないnode-like elementへのbindingを含め、どちらからも実際に到達できないreferenceは、重複indexのないviewerでは
   開けないため登録を拒否する。
 - sidebar一覧はtitle、current source OID、author、reference件数だけを返し、現在の本文・参照・diagram
   bindingは人間がWalkthrough tabを開いた時に取得する。CLI更新をpollで検出した場合は、開いているtabも
@@ -491,8 +494,10 @@ interface Walkthrough {
   全referenceを重複表示する`Code references` indexは持たない。sidebar itemにもreference件数を表示しない。
 - `language-mermaid` code blockはstrict security設定でSVG化する。bundled Mermaidが扱うflowchart、
   class、sequence、state、ERなどの記法を描画対象とする。binding済み要素だけを人間が選べる。
-  Phase 1のinteractive bindingはflowchart nodeとclass diagram classをE2E保証し、記法固有のSVG構造を
-  持つ他のdiagramは描画対応とbinding対応を分ける。binding済み要素はdiagram種別にかかわらずaccent枠、
+  interactive bindingはflowchart node、class diagram class、sequence participant / actor、stateDiagram-v2 state、
+  erDiagram entity、architecture-beta serviceをE2E保証する。Mermaid SVGのdiagram固有DOM解釈はUI interactionから
+  分離したresolverへ集約し、source IDがSVGへ保持されない複製要素をlabelやDOM順序で推測しない。
+  binding済み要素はdiagram種別にかかわらずaccent枠、
   薄いaccent背景、hover / focus強調を共通のaffordanceとして表示する。
 - exact `html-preview` fenced blockは、Markdown正本の一部としてstaticなHTML fragmentをvisual explanationへ
   描画する。通常の`html` fenceはcode表示のままとする。Walkthrough本文全体を一つの`html-preview`中心で
@@ -930,7 +935,7 @@ stdinの最小例:
 ```
 
 `pullRequest`と`sourceOid`、title、body、1件以上のreferenceは必須である。CLIはcommit、path、
-任意のline range、Markdown reference、実在するflowchart/classDiagram nodeへのdiagram bindingを検証し、本文linkまたはdiagram bindingから
+任意のline range、Markdown reference、実在する対応済みMermaid node-like elementへのdiagram bindingを検証し、本文linkまたはdiagram bindingから
 一度も参照されないreferenceを拒否してから、一つのSQLite transactionで保存してchange sequenceを
 更新する。成功responseは`rvw://walkthrough/<uuid>`を含むWalkthrough全体を返す。
 このcommandはbrowserを開かず、どのviewerのnavigationも変更しない。
@@ -1411,7 +1416,9 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
 11. tabをdragまたはpane menuで左右へ移し、通常clickでreferenceを左pane、`Cmd` / `Ctrl`+clickで
     右paneへ開く。同じfileを参照している場合も左右に一つずつ保持し、参照先paneだけを指定行へ移動する
 12. repository MarkdownをSource / Previewで切り替え、Previewの文字列選択からsource行commentを作成する
-13. flowchartとclass diagramのbinding済み要素から同じlatest/fallback解決でcodeを開く
+13. flowchart node、class diagram class、sequence participant / actor、state、ER entity、architecture serviceの
+    binding済み要素から同じlatest/fallback解決でcodeを開く。通常表示とexpanded viewのpointer、Enter / Space、
+    reference peekを確認する
 14. CLI更新したWalkthroughのtitle、本文、referenceを同じopen tabへpoll反映
 15. Walkthroughの文字列選択へ行comment、Mermaid fenced block全体へcommentを作成し、Mermaid composerは
     入力中に同じtextarea DOMとcaretを維持して正順に入力でき、本文置換後に一意なquoteは再配置、
