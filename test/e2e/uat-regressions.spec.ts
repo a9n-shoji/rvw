@@ -1048,9 +1048,15 @@ test("handles Unicode empty symlink submodule and very long repository paths", a
   });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  const openFromQuickOpen = async (path: string, query = path) => {
-    await page.keyboard.press("Control+P");
+  const showQuickOpen = async () => {
+    await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+    await page.getByRole("menuitem", { name: /ファイルを開く/ }).click();
     const palette = page.getByRole("dialog", { name: "ファイルを開く" });
+    await expect(palette).toBeVisible();
+    return palette;
+  };
+  const openFromQuickOpen = async (path: string, query = path) => {
+    const palette = await showQuickOpen();
     const input = palette.getByRole("combobox", { name: "ファイル名で検索" });
     await input.fill(query);
     await palette.getByRole("option", { name: path }).click();
@@ -1061,16 +1067,14 @@ test("handles Unicode empty symlink submodule and very long repository paths", a
   await expect(page.locator("diffs-container")).toBeVisible();
   await expect(page.getByText(/本文を表示できません/)).toHaveCount(0);
 
-  await page.keyboard.press("Control+P");
-  let palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  let palette = await showQuickOpen();
   let input = palette.getByRole("combobox", { name: "ファイル名で検索" });
   await input.fill("Caf");
   await expect(palette.getByRole("option", { name: decomposedPath })).toBeVisible();
   await expect(palette.getByRole("option", { name: composedPath })).toBeVisible();
   await input.press("Escape");
 
-  await page.keyboard.press("Control+P");
-  palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  palette = await showQuickOpen();
   input = palette.getByRole("combobox", { name: "ファイル名で検索" });
   await input.fill("current");
   const symlinkOption = palette.getByRole("option", { name: symlinkPath });
@@ -1078,8 +1082,7 @@ test("handles Unicode empty symlink submodule and very long repository paths", a
   await symlinkOption.click();
   await expect(page.getByText("../releases/current", { exact: true })).toBeVisible();
 
-  await page.keyboard.press("Control+P");
-  palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  palette = await showQuickOpen();
   input = palette.getByRole("combobox", { name: "ファイル名で検索" });
   await input.fill("example-module");
   const submoduleOption = palette.getByRole("option", { name: submodulePath });
