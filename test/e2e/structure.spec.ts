@@ -244,6 +244,16 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   await expect(viewer.locator(".structure-claim-note")).toHaveCount(0);
   await expect(viewer.locator(".structure-details")).toHaveCount(0);
 
+  const canvasHeightBeforeScope = (await viewer.locator(".structure-canvas").boundingBox())!.height;
+  const scopeToggle = viewer.locator(".structure-scope-details > summary");
+  await scopeToggle.click();
+  await expect(viewer.locator(".structure-scope-details > p")).toBeVisible();
+  expect((await viewer.locator(".structure-canvas").boundingBox())!.height).toBeCloseTo(
+    canvasHeightBeforeScope,
+    0,
+  );
+  await scopeToggle.click();
+
   await viewer.getByRole("button", { name: "表示中を収める" }).click();
   const horizontalFlow = await viewer.evaluate((element) => {
     const x = (id: string): number =>
@@ -771,12 +781,14 @@ test("explores source-exact Structures and preserves spatial context across navi
         viewer.locator(".structure-node.focused").boundingBox(),
       ]);
       if (!viewerBox || !toolbarBox || !canvasBox || !focusedBox) return false;
-      const toolbarFits = await viewer
+      const toolbarIsSingleRow = await viewer
         .locator(".structure-toolbar")
-        .evaluate((element) => element.scrollWidth <= element.clientWidth + 1);
+        .evaluate((element) => element.getBoundingClientRect().height <= 36);
       return (
-        toolbarFits &&
+        toolbarIsSingleRow &&
         toolbarBox.x + toolbarBox.width <= viewerBox.x + viewerBox.width + 1 &&
+        toolbarBox.y >= canvasBox.y - 1 &&
+        toolbarBox.y + toolbarBox.height <= canvasBox.y + canvasBox.height + 1 &&
         focusedBox.x >= canvasBox.x - 1 &&
         focusedBox.x + focusedBox.width <= canvasBox.x + canvasBox.width + 1 &&
         focusedBox.y >= canvasBox.y - 1 &&
@@ -916,22 +928,26 @@ test("explores source-exact Structures and preserves spatial context across navi
     })
     .toBe(true);
   await page.setViewportSize({ width: 900, height: 700 });
-  const [toolbarBox, canvasBox, viewerBox] = await Promise.all([
+  const [headerBox, toolbarBox, canvasBox, viewerBox] = await Promise.all([
+    secondaryViewer.locator(".structure-header").boundingBox(),
     secondaryViewer.locator(".structure-toolbar").boundingBox(),
     secondaryViewer.locator(".structure-canvas-shell").boundingBox(),
     secondaryViewer.boundingBox(),
   ]);
+  expect(headerBox).not.toBeNull();
   expect(toolbarBox).not.toBeNull();
   expect(canvasBox).not.toBeNull();
   expect(viewerBox).not.toBeNull();
   expect(toolbarBox!.x + toolbarBox!.width).toBeLessThanOrEqual(
     viewerBox!.x + viewerBox!.width + 1,
   );
-  expect(
-    await secondaryViewer
-      .locator(".structure-toolbar")
-      .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
-  ).toBe(true);
+  expect(headerBox!.height).toBeLessThanOrEqual(44);
+  expect(toolbarBox!.height).toBeLessThanOrEqual(36);
+  expect(toolbarBox!.y).toBeGreaterThanOrEqual(canvasBox!.y - 1);
+  expect(toolbarBox!.y + toolbarBox!.height).toBeLessThanOrEqual(
+    canvasBox!.y + canvasBox!.height + 1,
+  );
+  expect(canvasBox!.height).toBeGreaterThanOrEqual(viewerBox!.height - headerBox!.height - 2);
   expect(canvasBox!.y + canvasBox!.height).toBeLessThanOrEqual(
     viewerBox!.y + viewerBox!.height + 1,
   );

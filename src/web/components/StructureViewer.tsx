@@ -1105,20 +1105,26 @@ export function StructureViewer({
       data-selected-edge-id={selectedEdgeId ?? undefined}
     >
       <header className="structure-header">
-        <div>
-          <span className="structure-kicker">
-            Structure · exact source {structure.sourceOid.slice(0, 8)}
+        <div className="structure-header-main">
+          <span className="structure-kicker">Structure</span>
+          <h2 title={structure.title}>{structure.title}</h2>
+          <span className="structure-source-oid" title={`exact source ${structure.sourceOid}`}>
+            {structure.sourceOid.slice(0, 8)}
           </span>
-          <h2>{structure.title}</h2>
-          <p>{structure.scope}</p>
+          <details className="structure-scope-details">
+            <summary aria-label="scopeを表示">scope</summary>
+            <p>{structure.scope}</p>
+          </details>
         </div>
         <div className="structure-header-side">
           <button
             type="button"
             className="structure-header-action"
+            aria-label="参照をコピー"
+            title="Structure参照をコピー"
             onClick={() => void copyStructureRef()}
           >
-            参照をコピー
+            参照
           </button>
           <button
             type="button"
@@ -1130,50 +1136,71 @@ export function StructureViewer({
           </button>
         </div>
       </header>
-      <div className="structure-toolbar" aria-label="Structure表示操作">
-        <div className="structure-toolbar-group" role="group" aria-label="近傍の深さ">
-          <span>近傍</span>
-          {([1, 2, "all"] as const).map((candidate) => (
+      <div className="structure-body">
+        <div className="structure-toolbar" aria-label="Structure表示操作">
+          <div className="structure-toolbar-group" role="group" aria-label="近傍の深さ">
+            {([1, 2, "all"] as const).map((candidate) => (
+              <button
+                type="button"
+                key={candidate}
+                className={depth === candidate ? "active" : ""}
+                aria-pressed={depth === candidate}
+                disabled={!focusId && candidate !== "all"}
+                onClick={() => selectDepth(candidate)}
+              >
+                {candidate === "all" ? "全体" : `${candidate}-hop`}
+              </button>
+            ))}
+          </div>
+          <div className="structure-toolbar-group">
+            <button type="button" onClick={() => zoomAtCenter(1 / 1.2)} aria-label="縮小">
+              −
+            </button>
+            <span>{Math.round(viewport.scale * 100)}%</span>
+            <button type="button" onClick={() => zoomAtCenter(1.2)} aria-label="拡大">
+              ＋
+            </button>
             <button
               type="button"
-              key={candidate}
-              className={depth === candidate ? "active" : ""}
-              aria-pressed={depth === candidate}
-              disabled={!focusId && candidate !== "all"}
-              onClick={() => selectDepth(candidate)}
+              aria-label="表示中を収める"
+              title="表示中を収める"
+              onClick={fitVisible}
             >
-              {candidate === "all" ? "全体" : `${candidate}-hop`}
+              Fit
             </button>
-          ))}
+            <button
+              type="button"
+              aria-label="focusを中央へ"
+              title="focusを中央へ"
+              disabled={!focusId}
+              onClick={centerFocus}
+            >
+              中央
+            </button>
+            <button
+              type="button"
+              aria-label="focusを解除"
+              title="focusを解除"
+              disabled={!focusId}
+              onClick={clearFocus}
+            >
+              解除
+            </button>
+            <button
+              type="button"
+              aria-label="レイアウトを戻す"
+              title="レイアウトを戻す"
+              onClick={resetLayout}
+            >
+              Reset
+            </button>
+          </div>
         </div>
-        <div className="structure-toolbar-group">
-          <button type="button" onClick={() => zoomAtCenter(1 / 1.2)} aria-label="縮小">
-            −
-          </button>
-          <span>{Math.round(viewport.scale * 100)}%</span>
-          <button type="button" onClick={() => zoomAtCenter(1.2)} aria-label="拡大">
-            ＋
-          </button>
-          <button type="button" onClick={fitVisible}>
-            表示中を収める
-          </button>
-          <button type="button" disabled={!focusId} onClick={centerFocus}>
-            focusを中央へ
-          </button>
-          <button type="button" disabled={!focusId} onClick={clearFocus}>
-            focusを解除
-          </button>
-          <button type="button" onClick={resetLayout}>
-            レイアウトを戻す
-          </button>
-        </div>
-      </div>
-      {status && (
-        <div className="structure-status" role="status" aria-live="polite">
-          {status}
-        </div>
-      )}
-      <div className="structure-body">
+        {status && (
+          <div className="structure-status" role="status" aria-live="polite">
+            {status}
+          </div>
+        )}
         <section className="structure-canvas-shell" aria-label={`${structure.title} graph`}>
           <div
             ref={surfaceRef}

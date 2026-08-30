@@ -678,6 +678,9 @@ Nodeはsource file identityをclaim titleと別の行に置き、source action�
 省略せず固定card内で改行する。canvasはfocus名、可視／全体件数、
 zoom率とminimapを常時提示する。zoomは同じcardとRelation labelを一体として拡大縮小し、表示情報を暗黙に
 増減させない。広域の位置関係はminimap、局所の読解はpan / zoom、全体把握は明示的なfitで使い分ける。
+Structure固有のheaderはtitleとexact sourceを一つのcompact rowへ置き、scopeは同じrowから開くnon-modalな
+popoverで確認できるようにする。表示操作はcanvas上のsingle-row overlayとし、狭いpaneでも複数行へwrapして
+canvasの縦幅を奪わず、水平方向にscrollして全操作へ到達できるようにする。
 
 1-hop / 2-hopはfocusがある時だけ選べる。focusなしはAllへ戻し、Allは全Nodeと全Edgeを表示する。relationを
 stable IDや件数で自動的に隠さない。bounded graphを超えるsubjectはproducerがscopeを分ける。別のoriginから

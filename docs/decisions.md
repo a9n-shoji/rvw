@@ -107,6 +107,10 @@ labels, relation selection that highlights the corresponding line and endpoints,
 identity and source action placement, non-ellipsized identifiers, a minimap, and visible
 focus/count/zoom state. Relation source actions live beside their labels; one anchor opens directly and
 multiple anchors use a compact local chooser instead of taking graph width with a persistent inspector.
+Keep Structure-specific chrome subordinate to the map: title and exact source use one compact row,
+scope remains available from a non-modal popover, and the single-row reading controls float over the
+canvas instead of permanently consuming its height. Narrow panes scroll that control row horizontally
+rather than wrapping it into multiple rows.
 Zoom scales the same
 Node cards and relation labels without hiding description or source identity; the minimap and explicit
 Fit action provide optional overview without changing the information contract. These are renderer
