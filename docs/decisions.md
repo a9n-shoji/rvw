@@ -2247,3 +2247,102 @@ the npm dist-tag, rather than an unpublished release branch, distinguishes stabi
   version/tag combinations before registry staging.
 - Other prerelease channels such as `rc` require a separate decision instead of silently sharing the
   beta policy.
+
+## 2026-08-31: Keep Structure Node cards compact and disclose complete content on demand
+
+### Problem
+
+Fixed-size Structure Nodes preserve a stable graph layout, but long labels and descriptions were
+silently clipped. The source action also reserved a full right-hand column even though it occupied
+only the first row, leaving scarce card space unused. The optional `kind` badge consumed another row
+without consistently helping reviewers distinguish claims.
+
+### Choice
+
+Keep the graph's fixed Node dimensions and add an explicit details action to every Node. The action
+opens a non-modal, scrollable canvas overlay containing the complete label, description, source
+identity, and source action. Clamp the card title to two lines and description to three lines. Reserve
+right-hand space only on the source-identity row so title and description can use the card width below
+the actions. Stop rendering `kind` and tell new producers to omit it, while continuing to accept and
+return the field for protocol and persisted-data compatibility.
+
+### Trade-offs
+
+- The stable graph geometry and reviewer layout survive without variable-height Nodes or reflow.
+- Full content takes one explicit action to inspect, but the affordance is visible on every Node and
+  the overlay remains readable independently of graph zoom.
+- `kind` remains temporarily present in the data contract even though it no longer has viewer value;
+  removing it can be considered with a future protocol-breaking change.
+
+## 2026-08-31: Expand Structure Nodes in place for complete-content reading
+
+### Problem
+
+The separate canvas details overlay made complete content readable, but it moved the reviewer's gaze
+away from the Node whose relationships they were tracing. Keeping graph context and content in two
+different visual locations weakened the spatial reading model.
+
+### Choice
+
+Replace the separate details overlay with temporary in-place Node expansion. The expanded Node keeps
+its width and top edge, grows only downward, removes title and description clamping, scrolls its own
+content, and sits above every other graph item. It may temporarily overlap Nodes and Relations;
+closing it restores the fixed card without changing canonical or session coordinates. The Node keeps
+the canvas zoom instead of applying a separate local scale, so opening it does not shift or widen the
+item under the reviewer's gaze.
+
+### Trade-offs
+
+- Reviewers keep their eyes on the same graph location and retain immediate relationship context.
+- Temporary overlap can obscure nearby graph items, but only while the reviewer explicitly reads the
+  expanded Node and the close action restores the map immediately.
+- Edge geometry continues to describe the fixed graph card while expanded; the expanded Node covers
+  the intersecting portions instead of causing a graph reflow.
+
+## 2026-08-31: Keep Structure Nodes fixed and scroll overflow in place
+
+### Problem
+
+Even downward-only expansion changed the apparent graph shape and temporarily covered more of the
+map than needed. The explicit expansion control also competed with the title in an already compact
+card.
+
+### Choice
+
+Remove Node expansion and its action. Nodes keep their fixed graph dimensions at all times, render
+the complete title and description, and scroll their own content only when it exceeds the card. The
+source action stays fixed at the upper right while the text content scrolls beneath it. Wheel input
+over an overflowing Node scrolls that Node instead of panning the canvas.
+
+### Trade-offs
+
+- The graph geometry never changes and there is no temporary overlap state to dismiss.
+- Long content requires scrolling in a small viewport, but it remains inspectable without moving the
+  reviewer's gaze or adding a second UI surface.
+- The complete title can occupy more than two lines inside the scrollable content; the fixed card
+  height, rather than text clamping, remains the compact overview boundary.
+
+## 2026-08-31: Resolve Structure source anchors against the latest PR head
+
+### Problem
+
+Structure source actions opened only the exact authoring commit, while Walkthrough references first
+attempted a conservative mapping to the latest PR head. Under the default PR-wide review range this
+made otherwise current Structure evidence look historical and prevented it from participating in the
+active PR comparison.
+
+### Choice
+
+Resolve a clicked Structure anchor through the same unchanged-range, file-level, and unique-rename
+rules used by Walkthrough references. The service verifies that the requested anchor belongs to the
+current Structure before resolving it. A successful latest resolution uses the current global
+comparison when its destination is the selected commit (including PR-wide review); a historical
+global range opens the latest exact file. An uncertain mapping falls back to the Structure's exact
+source commit and reports that decision without changing the global review controls.
+
+### Trade-offs
+
+- Structure and Walkthrough evidence now agree on what “current source” means.
+- Resolution remains click-time and ephemeral; no resolved OID or line is stored in Structure data.
+- Structure fallback does not add a second latest-file action in this iteration; it preserves the
+  verified anchor instead of guessing when mapping is uncertain.

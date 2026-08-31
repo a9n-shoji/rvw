@@ -710,6 +710,10 @@ export function StructureViewer({
     const surface = surfaceRef.current;
     if (!surface) return;
     const handleWheel = (event: WheelEvent): void => {
+      if (event.target instanceof Element) {
+        const nodeScroller = event.target.closest<HTMLElement>(".structure-node-focus");
+        if (nodeScroller && nodeScroller.scrollHeight > nodeScroller.clientHeight) return;
+      }
       event.preventDefault();
       event.stopPropagation();
       const deltaUnit =
@@ -1335,7 +1339,7 @@ export function StructureViewer({
                 return (
                   <div
                     key={node.id}
-                    className={`structure-node notation-${node.notation}${node.id === structure.originNodeId ? " origin" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
+                    className={`structure-node notation-${node.notation}${node.anchor ? " has-source" : ""}${node.id === structure.originNodeId ? " origin" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
                     data-node-id={node.id}
                     data-node-notation={node.notation}
                     data-origin-node={node.id === structure.originNodeId ? "true" : undefined}
@@ -1362,7 +1366,6 @@ export function StructureViewer({
                         if (event.detail === 0) focusNode(node.id);
                       }}
                     >
-                      {node.kind && <span className="structure-kind">{node.kind}</span>}
                       {node.anchor && (
                         <SourceIdentity
                           anchor={node.anchor}
@@ -1371,11 +1374,14 @@ export function StructureViewer({
                         />
                       )}
                       <strong className="structure-node-title">
-                        <span className="structure-node-title-text">
+                        <span className="structure-node-title-text" title={node.label}>
                           <BreakableStructureLabel label={node.label} />
                         </span>
                       </strong>
-                      <span className="structure-node-description">
+                      <span
+                        className="structure-node-description"
+                        title={node.description ?? "Producerによる説明なし"}
+                      >
                         {node.description ?? "Producerによる説明なし"}
                       </span>
                     </button>

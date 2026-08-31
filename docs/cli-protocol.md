@@ -512,7 +512,6 @@ The stdin value is:
       "id": "request-policy",
       "label": "RequestPolicy",
       "description": "Owns the allow/deny decision.",
-      "kind": "service",
       "notation": "class",
       "anchor": {
         "path": "src/request-policy.ts",
@@ -524,7 +523,6 @@ The stdin value is:
       "id": "policy-input",
       "label": "PolicyInput",
       "description": "The committed input contract.",
-      "kind": "contract",
       "notation": "interface",
       "anchor": { "path": "src/types.ts" }
     }

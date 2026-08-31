@@ -286,8 +286,76 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       top: sourceBox.top - nodeBox.top,
     };
   });
-  expect(conceptSourceInsets.right).toBeGreaterThanOrEqual(25);
-  expect(conceptSourceInsets.top).toBeGreaterThanOrEqual(19);
+  expect(conceptSourceInsets.right).toBeGreaterThanOrEqual(23);
+  expect(conceptSourceInsets.top).toBeGreaterThanOrEqual(11);
+
+  const notationLayoutMetrics = await viewer.evaluate((element) => {
+    const samples = {
+      class: "get-order-query",
+      interface: "detail-params",
+      database: "orders-read-model",
+      component: "detail-actor-auth",
+      external: "order-detail-route",
+      concept: "order-not-found",
+    } as const;
+    return Object.entries(samples).map(([notation, nodeId]) => {
+      const node = element.querySelector<HTMLElement>(`.structure-node[data-node-id="${nodeId}"]`)!;
+      const focus = node.querySelector<HTMLElement>(".structure-node-focus")!;
+      const identity = node.querySelector<HTMLElement>(".structure-source-identity")!;
+      const sourceName = identity.querySelector<HTMLElement>(".structure-source-name")!;
+      const title = node.querySelector<HTMLElement>(".structure-node-title")!;
+      const description = node.querySelector<HTMLElement>(".structure-node-description")!;
+      const source = node.querySelector<HTMLElement>(":scope > .structure-source.compact")!;
+      const focusStyle = getComputedStyle(focus);
+      const identityBox = identity.getBoundingClientRect();
+      const sourceNameBox = sourceName.getBoundingClientRect();
+      const titleBox = title.getBoundingClientRect();
+      const descriptionBox = description.getBoundingClientRect();
+      const sourceBox = source.getBoundingClientRect();
+      const nodeBox = node.getBoundingClientRect();
+      return {
+        notation,
+        padding: [
+          focusStyle.paddingTop,
+          focusStyle.paddingRight,
+          focusStyle.paddingBottom,
+          focusStyle.paddingLeft,
+        ],
+        gap: focusStyle.gap,
+        fileTitleGap: titleBox.top - sourceNameBox.bottom,
+        titleSourceClearance: titleBox.top - sourceBox.bottom,
+        identitySourceClearance: sourceBox.left - identityBox.right,
+        descriptionWidthRatio: descriptionBox.width / nodeBox.width,
+        focusHorizontalOverflow: focus.scrollWidth - focus.clientWidth,
+        titleHorizontalOverflow: title.scrollWidth - title.clientWidth,
+        descriptionHorizontalOverflow: description.scrollWidth - description.clientWidth,
+      };
+    });
+  });
+  expect(
+    notationLayoutMetrics.map(({ notation, padding, gap }) => ({
+      notation,
+      padding,
+      gap,
+    })),
+  ).toEqual([
+    { notation: "class", padding: ["6px", "8px", "6px", "8px"], gap: "2px" },
+    { notation: "interface", padding: ["6px", "8px", "6px", "8px"], gap: "2px" },
+    { notation: "database", padding: ["21px", "10px", "6px", "10px"], gap: "2px" },
+    { notation: "component", padding: ["6px", "8px", "6px", "22px"], gap: "2px" },
+    { notation: "external", padding: ["6px", "18px", "6px", "18px"], gap: "2px" },
+    { notation: "concept", padding: ["12px", "24px", "6px", "24px"], gap: "2px" },
+  ]);
+  for (const metrics of notationLayoutMetrics) {
+    expect(metrics.fileTitleGap, metrics.notation).toBeGreaterThanOrEqual(1.5);
+    expect(metrics.fileTitleGap, metrics.notation).toBeLessThanOrEqual(2.5);
+    expect(metrics.titleSourceClearance, metrics.notation).toBeGreaterThanOrEqual(0);
+    expect(metrics.identitySourceClearance, metrics.notation).toBeGreaterThanOrEqual(0);
+    expect(metrics.descriptionWidthRatio, metrics.notation).toBeGreaterThan(0.75);
+    expect(metrics.focusHorizontalOverflow, metrics.notation).toBeLessThanOrEqual(0);
+    expect(metrics.titleHorizontalOverflow, metrics.notation).toBeLessThanOrEqual(0);
+    expect(metrics.descriptionHorizontalOverflow, metrics.notation).toBeLessThanOrEqual(0);
+  }
 
   await viewer.getByRole("button", { name: "表示中を収める" }).click();
   const horizontalFlow = await viewer.evaluate((element) => {
@@ -365,7 +433,90 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   expect(overlaps).toEqual([]);
 });
 
-test("explores source-exact Structures and preserves spatial context across navigation and update", async ({
+test("scrolls complete long content inside a fixed-size Node", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, secondaryTitle);
+
+  const viewer = page.locator(`[data-structure-id="${secondaryStructureId}"]`);
+  await viewer.getByRole("button", { name: "表示中を収める" }).click();
+  const node = viewer.locator('.structure-node[data-node-id="payment-reconciliation"]');
+  const title = node.locator(".structure-node-title-text");
+  const description = node.locator(".structure-node-description");
+  const sourceAction = node.locator(":scope > .structure-source.compact");
+  const scroller = node.locator(".structure-node-focus");
+
+  await expect(node.locator(".structure-kind")).toHaveCount(0);
+  await expect(node.locator(".structure-node-expand-trigger")).toHaveCount(0);
+  const cardMetrics = await node.evaluate((element) => {
+    const titleElement = element.querySelector<HTMLElement>(".structure-node-title-text")!;
+    const descriptionElement = element.querySelector<HTMLElement>(".structure-node-description")!;
+    const sourceElement = element.querySelector<HTMLElement>(":scope > .structure-source.compact")!;
+    const scrollerElement = element.querySelector<HTMLElement>(".structure-node-focus")!;
+    const titleStyle = getComputedStyle(titleElement);
+    const descriptionStyle = getComputedStyle(descriptionElement);
+    const titleBox = titleElement.getBoundingClientRect();
+    const descriptionBox = descriptionElement.getBoundingClientRect();
+    const sourceBox = sourceElement.getBoundingClientRect();
+    const sourceIdentityElement = element.querySelector<HTMLElement>(".structure-source-identity")!;
+    const sourceIdentityBox = sourceIdentityElement.getBoundingClientRect();
+    const sourceNameElement =
+      sourceIdentityElement.querySelector<HTMLElement>(".structure-source-name")!;
+    return {
+      titleClamp: titleStyle.webkitLineClamp,
+      titleClientHeight: titleElement.clientHeight,
+      titleScrollHeight: titleElement.scrollHeight,
+      titleRight: titleBox.right,
+      titleTop: titleBox.top,
+      sourceLeft: sourceBox.left,
+      sourceBottom: sourceBox.bottom,
+      descriptionClamp: descriptionStyle.webkitLineClamp,
+      descriptionClientHeight: descriptionElement.clientHeight,
+      descriptionScrollHeight: descriptionElement.scrollHeight,
+      descriptionRight: descriptionBox.right,
+      sourceCenter: sourceBox.left + sourceBox.width / 2,
+      sourceIdentityRight: sourceIdentityBox.right,
+      sourceNameMaxWidth: getComputedStyle(sourceNameElement).maxWidth,
+      scrollerOverflow: getComputedStyle(scrollerElement).overflowY,
+      scrollerClientHeight: scrollerElement.clientHeight,
+      scrollerScrollHeight: scrollerElement.scrollHeight,
+    };
+  });
+  expect(cardMetrics.titleClamp).toBe("none");
+  expect(cardMetrics.titleScrollHeight).toBe(cardMetrics.titleClientHeight);
+  expect(cardMetrics.sourceIdentityRight).toBeLessThanOrEqual(cardMetrics.sourceLeft + 0.5);
+  expect(cardMetrics.sourceNameMaxWidth).toBe("none");
+  expect(cardMetrics.titleTop).toBeGreaterThanOrEqual(cardMetrics.sourceBottom - 0.5);
+  expect(cardMetrics.titleRight).toBeGreaterThan(cardMetrics.sourceCenter);
+  expect(cardMetrics.descriptionClamp).toBe("none");
+  expect(cardMetrics.descriptionScrollHeight).toBe(cardMetrics.descriptionClientHeight);
+  expect(cardMetrics.titleRight).toBeCloseTo(cardMetrics.descriptionRight, 0);
+  expect(cardMetrics.descriptionRight).toBeGreaterThan(cardMetrics.sourceCenter);
+  expect(cardMetrics.scrollerOverflow).toBe("auto");
+  expect(cardMetrics.scrollerScrollHeight).toBeGreaterThan(cardMetrics.scrollerClientHeight);
+
+  const fullTitle = (await title.textContent())!.trim();
+  const fullDescription = (await description.textContent())!.trim();
+  expect(fullTitle.length).toBeGreaterThan(60);
+  expect(fullDescription.length).toBeGreaterThan(120);
+  await expect(sourceAction).toBeVisible();
+  const fixedBox = await node.boundingBox();
+  expect(fixedBox).not.toBeNull();
+  const world = viewer.locator(".structure-world");
+  const worldTransform = await world.getAttribute("style");
+  await scroller.hover();
+  await page.mouse.wheel(0, 180);
+  await expect
+    .poll(async () => await scroller.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  expect(await world.getAttribute("style")).toBe(worldTransform);
+  const scrolledBox = await node.boundingBox();
+  expect(scrolledBox!.x).toBeCloseTo(fixedBox!.x, 0);
+  expect(scrolledBox!.y).toBeCloseTo(fixedBox!.y, 0);
+  expect(scrolledBox!.width).toBeCloseTo(fixedBox!.width, 0);
+  expect(scrolledBox!.height).toBeCloseTo(fixedBox!.height, 0);
+});
+
+test("resolves Structure anchors to latest and preserves spatial context across navigation and update", async ({
   context,
   page,
 }) => {
@@ -512,7 +663,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   expect(titleTextBox).not.toBeNull();
   expect(sourceActionBox).not.toBeNull();
   expect(identityBox!.y + identityBox!.height).toBeLessThanOrEqual(titleTextBox!.y + 1);
-  expect(titleTextBox!.width).toBeGreaterThan(150);
+  expect(titleTextBox!.width).toBeGreaterThan(130);
   expect(sourceActionBox!.x).toBeGreaterThan(titleTextBox!.x);
 
   await hubNode.click();
@@ -814,7 +965,29 @@ test("explores source-exact Structures and preserves spatial context across navi
     "aria-label",
     "src/application/orders/create-order.ts:9-37を開く",
   );
+  const resolutionResponsePromise = page.waitForResponse((response) =>
+    response
+      .url()
+      .includes(
+        `/structures/${primaryStructureId}/anchors/resolve?path=src%2Fapplication%2Forders%2Fcreate-order.ts`,
+      ),
+  );
   await hubSourceAction.click();
+  const resolutionResponse = await resolutionResponsePromise;
+  expect(resolutionResponse.ok()).toBe(true);
+  expect(await resolutionResponse.json()).toMatchObject({
+    resolution: {
+      outcome: "latest",
+      anchorSourceOid: "b".repeat(40),
+      latestHeadOid: "c".repeat(40),
+      target: {
+        sourceOid: "c".repeat(40),
+        path: "src/application/orders/create-order.ts",
+        startLine: 9,
+        endLine: 37,
+      },
+    },
+  });
   await expect(
     page.getByRole("tab", { name: "src/application/orders/create-order.ts" }),
   ).toHaveAttribute("aria-selected", "true");

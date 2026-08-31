@@ -84,7 +84,6 @@ rvw structure publish --stdin --json <<'RVW_JSON'
       "id": "request-policy",
       "label": "RequestPolicy",
       "description": "Owns the allow/deny decision.",
-      "kind": "service",
       "notation": "class",
       "anchor": { "path": "src/request-policy.ts", "startLine": 8, "endLine": 34 }
     },
@@ -92,7 +91,6 @@ rvw structure publish --stdin --json <<'RVW_JSON'
       "id": "policy-input",
       "label": "PolicyInput",
       "description": "Committed input contract consumed by RequestPolicy.",
-      "kind": "contract",
       "notation": "interface",
       "anchor": { "path": "src/types.ts", "startLine": 3, "endLine": 12 }
     }

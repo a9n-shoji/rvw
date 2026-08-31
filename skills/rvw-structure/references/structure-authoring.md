@@ -43,11 +43,12 @@ can verify in committed code.
   product semantics.
 - `description` states the claim and its role in this subject. It is not a review finding, approval,
   recommendation, or generated summary of the whole file.
-- `kind` is an optional producer label for scanning, not a controlled ontology. Use a short factual
-  noun such as `service`, `contract`, `store`, `command`, or `view`; omit it when it adds no signal.
+- `kind` is a deprecated compatibility field that the viewer does not display. Do not set it in new
+  Structures.
 - `notation` is an optional controlled scanning aid: `plain`, `class`, `database`, `interface`,
   `component`, `external`, or `concept`. Choose it only when the familiar visual pattern helps a reviewer
-  distinguish the claim. Do not infer it mechanically from `kind`; omit it for the default `plain` card.
+  distinguish the claim. Do not infer it mechanically from legacy `kind`; omit it for the default
+  `plain` card.
 - Prefer the smallest meaningful multi-line anchor that verifies the node claim. Use a file anchor only
   for genuinely file-wide responsibility and a single-line range only for a line-local declaration.
 

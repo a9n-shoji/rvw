@@ -171,6 +171,10 @@ export interface StructureResponse {
   structure: Structure;
 }
 
+export interface StructureAnchorResolutionResponse {
+  resolution: WalkthroughReferenceResolution;
+}
+
 export interface DeleteStructureResponse {
   deleted: DeletedStructure;
 }

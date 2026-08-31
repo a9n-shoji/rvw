@@ -44,6 +44,7 @@ export interface CreateAppOptions {
 }
 
 const oidSchema = z.string().regex(GIT_OBJECT_ID_PATTERN);
+const positiveLineSchema = z.coerce.number().int().positive();
 const svgAssetContentSecurityPolicy =
   "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox";
 
@@ -54,6 +55,15 @@ function requiredQuery(value: string | undefined, name: string): string {
 
 function oidQuery(value: string | undefined, name: string): string {
   return oidSchema.parse(requiredQuery(value, name));
+}
+
+function optionalLineQuery(value: string | undefined, name: string): number | null {
+  if (value === undefined) return null;
+  const result = positiveLineSchema.safeParse(value);
+  if (!result.success) {
+    throw new RvwError("INVALID_INPUT", `${name} queryは正の整数にしてください。`);
+  }
+  return result.data;
 }
 
 function isWriteMethod(method: string): boolean {
@@ -396,6 +406,32 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
       structure: service.getStructure(context.req.param("id"), context.req.param("structureId")),
     }),
   );
+
+  app.get("/api/pull-requests/:id/structures/:structureId/anchors/resolve", async (context) => {
+    const startLine = optionalLineQuery(context.req.query("startLine"), "startLine");
+    const endLine = optionalLineQuery(context.req.query("endLine"), "endLine");
+    if (
+      (startLine === null) !== (endLine === null) ||
+      (startLine !== null && endLine !== null && endLine < startLine)
+    ) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        "startLineとendLineは両方を指定し、endLineはstartLine以上にしてください。",
+      );
+    }
+    return context.json({
+      ok: true,
+      resolution: await service.resolveStructureAnchor(
+        context.req.param("id"),
+        context.req.param("structureId"),
+        {
+          path: requiredQuery(context.req.query("path"), "path"),
+          startLine,
+          endLine,
+        },
+      ),
+    });
+  });
 
   app.delete("/api/pull-requests/:id/structures/:structureId", async (context) => {
     const input = structureDeleteSchema.parse(await context.req.json());

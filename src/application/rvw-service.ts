@@ -2076,22 +2076,65 @@ export class RvwService {
       });
     }
     const referenceFingerprint = walkthroughReferenceFingerprint(walkthrough.sourceOid, reference);
+    return await this.resolveSourceAnchor(
+      pullRequest,
+      walkthrough.sourceOid,
+      reference,
+      referenceFingerprint,
+    );
+  }
 
+  async resolveStructureAnchor(
+    pullRequestId: string,
+    structureId: string,
+    anchor: SourceAnchor,
+  ): Promise<WalkthroughReferenceResolution> {
+    const pullRequest = this.getPullRequest(pullRequestId);
+    const structure = this.getStructure(pullRequestId, structureId);
+    const anchors = [
+      ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor] : [])),
+      ...structure.edges.flatMap((edge) => edge.anchors),
+    ];
+    const belongsToStructure = anchors.some(
+      (candidate) =>
+        candidate.path === anchor.path &&
+        candidate.startLine === anchor.startLine &&
+        candidate.endLine === anchor.endLine,
+    );
+    if (!belongsToStructure) {
+      throw new RvwError("NOT_FOUND", "Structureのsource anchorが見つかりません。", {
+        status: 404,
+      });
+    }
+    return await this.resolveSourceAnchor(
+      pullRequest,
+      structure.sourceOid,
+      anchor,
+      walkthroughReferenceFingerprint(structure.sourceOid, anchor),
+    );
+  }
+
+  private async resolveSourceAnchor(
+    pullRequest: PullRequest,
+    sourceOid: string,
+    reference: SourceAnchor,
+    referenceFingerprint: string,
+  ): Promise<WalkthroughReferenceResolution> {
     const sourceDocument = await this.getDocument({
       kind: "repository-file",
-      pullRequestId,
-      sourceOid: walkthrough.sourceOid,
+      pullRequestId: pullRequest.id,
+      sourceOid,
       path: reference.path,
     });
     const latestHeadOid = pullRequest.latestHeadOid;
     let latestPath: string | null = reference.path;
     let latestDocument: DocumentContent | null;
-    if (walkthrough.sourceOid === latestHeadOid) {
+    if (sourceOid === latestHeadOid) {
       latestDocument = sourceDocument;
     } else {
       latestDocument = await this.getDocument({
         kind: "repository-file",
-        pullRequestId,
+        pullRequestId: pullRequest.id,
         sourceOid: latestHeadOid,
         path: reference.path,
       });
@@ -2101,7 +2144,7 @@ export class RvwService {
             (
               await this.git.changedFilesWithCopies(
                 pullRequest.localRepositoryPath,
-                walkthrough.sourceOid,
+                sourceOid,
                 latestHeadOid,
               )
             )
@@ -2120,7 +2163,7 @@ export class RvwService {
             ? null
             : await this.getDocument({
                 kind: "repository-file",
-                pullRequestId,
+                pullRequestId: pullRequest.id,
                 sourceOid: latestHeadOid,
                 path: latestPath,
               });
@@ -2149,7 +2192,7 @@ export class RvwService {
     if (resolvedToLatest && latestPath !== null && latestDocument !== null) {
       return {
         outcome: "latest",
-        anchorSourceOid: walkthrough.sourceOid,
+        anchorSourceOid: sourceOid,
         latestHeadOid,
         referenceFingerprint,
         target: {
@@ -2169,7 +2212,7 @@ export class RvwService {
 
     const targetFile = await this.walkthroughReferenceFallbackTarget(
       pullRequest,
-      walkthrough.sourceOid,
+      sourceOid,
       reference.path,
     );
     const latestFile =
@@ -2185,7 +2228,7 @@ export class RvwService {
         : null;
     return {
       outcome: "source-fallback",
-      anchorSourceOid: walkthrough.sourceOid,
+      anchorSourceOid: sourceOid,
       latestHeadOid,
       referenceFingerprint,
       target: {

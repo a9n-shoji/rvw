@@ -2155,6 +2155,64 @@ describe("RvwService commit workflow", () => {
     expect(git(repository, "rev-parse", `refs/rvw/pr/7/commits/oid-${firstHead}`)).toBe(firstHead);
   });
 
+  it("maps a verified Structure anchor directly to the latest head", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-structure-anchor-latest-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const structure = await service.publishStructure({
+      idempotencyKey: "structure-anchor-latest",
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Latest source structure",
+      scope: "The source file and its current location.",
+      originNodeId: "source",
+      nodes: [
+        {
+          id: "source",
+          label: "Source range",
+          anchor: { path: "src.txt", startLine: 2, endLine: 2 },
+        },
+      ],
+      edges: [],
+    });
+    const latestHead = commitFile(
+      repository,
+      "src.txt",
+      "inserted\nfirst\nsecond\n",
+      "insert before Structure anchor",
+    );
+    fake.pullRequest = { ...fake.pullRequest, headOid: latestHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    await expect(
+      service.resolveStructureAnchor(opened.pullRequest.id, structure.id, {
+        path: "src.txt",
+        startLine: 2,
+        endLine: 2,
+      }),
+    ).resolves.toMatchObject({
+      outcome: "latest",
+      anchorSourceOid: firstHead,
+      latestHeadOid: latestHead,
+      target: {
+        sourceOid: latestHead,
+        path: "src.txt",
+        startLine: 3,
+        endLine: 3,
+      },
+      document: {
+        ref: { sourceOid: latestHead, path: "src.txt" },
+        text: "inserted\nfirst\nsecond\n",
+      },
+    });
+    await expect(
+      service.resolveStructureAnchor(opened.pullRequest.id, structure.id, {
+        path: "src.txt",
+        startLine: 1,
+        endLine: 1,
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
+  });
+
   it("allows a Structure publish operation to start fresh after PR reset", async () => {
     const { repository, firstHead, service } = setup("rvw-structure-reset-idempotency-");
     const opened = await service.openPullRequest(undefined, repository);

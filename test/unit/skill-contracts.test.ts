@@ -64,6 +64,8 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureAuthoring).toContain("Do not create giant graphs");
     expect(structureAuthoring).toContain("factual code entrypoint");
     expect(structureAuthoring).toContain("static inventory");
+    expect(structureAuthoring).toContain("deprecated compatibility field");
+    expect(structureAuthoring).toContain("Do not set it in new");
     expect(structureAuthoring).toContain("Do not publish");
   });
 });

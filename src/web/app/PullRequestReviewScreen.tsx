@@ -41,6 +41,7 @@ import {
   jsonRequest,
   type PullRequestResponse,
   type SearchResponse,
+  type StructureAnchorResolutionResponse,
   type StructureResponse,
   type StructuresResponse,
   type ThemePreferenceResponse,
@@ -2209,25 +2210,72 @@ export function PullRequestReviewScreen({
       openCommentCodeReference(sourceOid, reference, openInRightPane ? "right" : "left"),
     [openCommentCodeReference],
   );
-  const openStructureAnchor = useCallback(
-    (structure: Structure, anchor: SourceAnchor, openInRightPane: boolean) => {
-      if (!pullRequestId) return Promise.resolve(`参照先を開けません · ${anchor.path}`);
-      return openCodeReference(
-        pullRequestId,
-        structure.sourceOid,
-        {
-          id: "structure-source",
-          label: anchor.path,
-          path: anchor.path,
-          startLine: anchor.startLine,
-          endLine: anchor.endLine,
-          description: null,
-        },
-        openInRightPane ? "right" : "left",
-        "exact-source",
+  const fetchStructureAnchorResolution = useCallback(
+    async (structureId: string, anchor: SourceAnchor): Promise<WalkthroughReferenceResolution> => {
+      if (!pullRequestId) throw new Error("Pull Requestが選択されていません。");
+      const search = new URLSearchParams({ path: anchor.path });
+      if (anchor.startLine !== null && anchor.endLine !== null) {
+        search.set("startLine", String(anchor.startLine));
+        search.set("endLine", String(anchor.endLine));
+      }
+      const { resolution } = await api<StructureAnchorResolutionResponse>(
+        `/api/pull-requests/${pullRequestId}/structures/${structureId}/anchors/resolve?${search.toString()}`,
       );
+      return resolution;
     },
-    [openCodeReference, pullRequestId],
+    [pullRequestId],
+  );
+  const openStructureAnchor = useCallback(
+    async (structure: Structure, anchor: SourceAnchor, openInRightPane: boolean) => {
+      if (!pullRequestId) return Promise.resolve(`参照先を開けません · ${anchor.path}`);
+      const targetPane: DocumentPaneId = openInRightPane ? "right" : "left";
+      codeReferenceRequestSequence.current[targetPane] += 1;
+      const requestSequence = codeReferenceRequestSequence.current[targetPane];
+      const targetNavigationRevision = documentWorkspaceRef.current.navigationRevision[targetPane];
+      const requestIsCurrent = (): boolean =>
+        requestSequence === codeReferenceRequestSequence.current[targetPane] &&
+        documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
+      try {
+        const resolution = await fetchStructureAnchorResolution(structure.id, anchor);
+        if (!requestIsCurrent()) return null;
+        if (resolution.document.availability !== "available") {
+          return resolution.document.availability === "missing"
+            ? `リンク切れ · ${anchor.path}`
+            : `参照先を表示できません · ${anchor.path}`;
+        }
+        queryClient.setQueryData(["document", resolution.document.ref], resolution.document);
+        const target = resolution.target;
+        const document: ActiveDocument = {
+          kind: "repository-file",
+          path: target.path,
+          oldPath: target.oldPath,
+          newPath: target.newPath,
+          sourceOid: target.sourceOid,
+          comparisonPolicy: target.sourceOid === selectedOid ? "selected-range" : "exact-source",
+        };
+        const activeTarget = documentWorkspaceRef.current.active[targetPane];
+        navigateToDocument(
+          document,
+          targetPane,
+          {
+            kind: "line",
+            line: target.startLine,
+            ...(target.endLine === null ? {} : { endLine: target.endLine }),
+          },
+          !activeTarget || documentTabKey(activeTarget) !== documentTabKey(document),
+        );
+        return resolution.outcome === "source-fallback"
+          ? `最新コード上の対応位置を確実に特定できないため、参照時点 ${resolution.anchorSourceOid.slice(0, 8)} を開きました。`
+          : null;
+      } catch (error) {
+        if (!requestIsCurrent()) return null;
+        return error instanceof ApiError &&
+          ["COMMIT_NOT_FOUND", "DOCUMENT_NOT_FOUND", "NOT_FOUND"].includes(error.code)
+          ? `リンク切れ · ${anchor.path}`
+          : `参照先を開けません · ${anchor.path}`;
+      }
+    },
+    [fetchStructureAnchorResolution, navigateToDocument, pullRequestId, queryClient, selectedOid],
   );
   const openLatestReferenceFile = useCallback(
     (target: WalkthroughReferenceFileTarget, targetPane: DocumentPaneId): void => {
