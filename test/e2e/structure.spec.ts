@@ -5,7 +5,7 @@ const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
 const fullStackStructureId = "80000000-0000-4000-8000-000000000003";
 const primaryTitle = "Order placement behavior";
-const secondaryTitle = "Failure recovery and evidence";
+const secondaryTitle = "Payment reconciliation recovery";
 const fullStackTitle = "Order detail response rendering";
 
 async function openStructure(page: Page, title: string): Promise<void> {
@@ -394,7 +394,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   );
   const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
   await expect(viewer.getByRole("heading", { name: primaryTitle })).toBeVisible();
-  await expect(viewer.getByText("16/16 Node · 18/18 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.getByText("16/16 Node · 19/19 Relation", { exact: true })).toBeVisible();
   await expect(viewer.locator('.structure-node[data-node-id="http-routes"]')).toHaveClass(
     /focused/,
   );
@@ -404,7 +404,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   );
   await expect(viewer.getByText("origin · Orders HTTP routes", { exact: true })).toBeVisible();
   await expect(viewer.locator(".structure-node")).toHaveCount(16);
-  await expect(viewer.locator(".structure-edge")).toHaveCount(18);
+  await expect(viewer.locator(".structure-edge")).toHaveCount(19);
   await expect(viewer.locator(".structure-edge-label")).toHaveCount(2);
   await expect(viewer).toHaveAttribute("data-viewport-scale", "1.000");
   await expect(viewer.locator(".structure-minimap")).toBeVisible();
@@ -454,14 +454,14 @@ test("explores source-exact Structures and preserves spatial context across navi
 
   await openStructure(page, secondaryTitle);
   const secondaryViewer = page.locator(`[data-structure-id="${secondaryStructureId}"]`);
-  await expect(secondaryViewer.locator(".structure-node")).toHaveCount(10);
-  await expect(secondaryViewer.locator(".structure-edge")).toHaveCount(15);
+  await expect(secondaryViewer.locator(".structure-node")).toHaveCount(3);
+  await expect(secondaryViewer.locator(".structure-edge")).toHaveCount(2);
   await openStructure(page, primaryTitle);
   await expect(viewer.locator('.structure-node[data-node-id="http-routes"]')).toHaveClass(
     /focused/,
   );
   await expect(viewer.locator(".structure-node")).toHaveCount(16);
-  await expect(viewer.locator(".structure-edge")).toHaveCount(18);
+  await expect(viewer.locator(".structure-edge")).toHaveCount(19);
 
   await page.setViewportSize({ width: 900, height: 700 });
   await expectFocusedNodeVisible(viewer);
@@ -541,6 +541,29 @@ test("explores source-exact Structures and preserves spatial context across navi
     .toBe(true);
   await expect(hubIdentity).toBeVisible();
   await expect(hubNode.locator(".structure-node-description")).toBeVisible();
+
+  await viewer.locator('.structure-node[data-node-id="idempotency-store"]').click();
+  await viewer.getByRole("button", { name: "表示中を収める" }).click();
+  await expect
+    .poll(async () => {
+      const [canvasBounds, loopBounds, labelBounds] = await Promise.all([
+        canvas.boundingBox(),
+        viewer.locator('.structure-edge[data-edge-id="idempotency-reuses-result"]').boundingBox(),
+        viewer
+          .locator('.structure-edge-label[data-edge-id="idempotency-reuses-result"]')
+          .boundingBox(),
+      ]);
+      if (!canvasBounds || !loopBounds || !labelBounds) return false;
+      return [loopBounds, labelBounds].every(
+        (bounds) =>
+          bounds.x >= canvasBounds.x - 1 &&
+          bounds.y >= canvasBounds.y - 1 &&
+          bounds.x + bounds.width <= canvasBounds.x + canvasBounds.width + 1 &&
+          bounds.y + bounds.height <= canvasBounds.y + canvasBounds.height + 1,
+      );
+    })
+    .toBe(true);
+  await hubNode.click();
 
   const firstEdge = viewer.locator('.structure-edge[data-edge-id="controller-executes-handler"]');
   await expect(firstEdge).toHaveAttribute("d", / C /);
@@ -671,14 +694,14 @@ test("explores source-exact Structures and preserves spatial context across navi
     .locator(".structure-world")
     .evaluate((element) => (element as HTMLElement).style.transform);
   await viewer.getByRole("button", { name: "2-hop", exact: true }).click();
-  await expect(viewer.getByText("14/16 Node · 15/18 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.getByText("14/16 Node · 16/19 Relation", { exact: true })).toBeVisible();
   await expect(viewer.locator('.structure-node[data-node-id="pricing-policy"]')).toBeVisible();
   const localViewport = await viewer
     .locator(".structure-world")
     .evaluate((element) => (element as HTMLElement).style.transform);
   expect(localViewport).toBe(viewportBeforeNeighborhood);
   await viewer.getByRole("button", { name: "全体", exact: true }).click();
-  await expect(viewer.getByText("16/16 Node · 18/18 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.getByText("16/16 Node · 19/19 Relation", { exact: true })).toBeVisible();
   await expect(viewer.locator(".structure-edge-label")).toHaveCount(9);
   await expect
     .poll(
@@ -704,7 +727,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   await viewer.getByRole("button", { name: "focusを解除" }).click();
   await expect(viewer.locator(".structure-node.focused")).toHaveCount(0);
   await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toBeDisabled();
-  await expect(viewer.locator(".structure-edge-label")).toHaveCount(18);
+  await expect(viewer.locator(".structure-edge-label")).toHaveCount(19);
   await viewer.locator('.structure-node[data-node-id="hub"]').click();
   await canvas.focus();
   await page.keyboard.press("Escape");
@@ -855,8 +878,8 @@ test("explores source-exact Structures and preserves spatial context across navi
     .locator(`[data-structure-id="${primaryStructureId}"]`);
   await expect(rightViewer).toBeVisible();
   await rightViewer.getByRole("button", { name: "全体", exact: true }).click();
-  await expect(rightViewer.getByText("16/16 Node · 18/18 Relation", { exact: true })).toBeVisible();
-  await expect(leftViewer.getByText("9/16 Node · 9/18 Relation", { exact: true })).toBeVisible();
+  await expect(rightViewer.getByText("16/16 Node · 19/19 Relation", { exact: true })).toBeVisible();
+  await expect(leftViewer.getByText("9/16 Node · 10/19 Relation", { exact: true })).toBeVisible();
   expect(
     await page
       .locator(".structure-edges marker")
@@ -951,31 +974,8 @@ test("explores source-exact Structures and preserves spatial context across navi
     "true",
   );
   await expect(secondaryViewer.getByRole("button", { name: "1-hop", exact: true })).toBeEnabled();
-  await expect(secondaryViewer.locator(".structure-edge-label")).toHaveCount(3);
+  await expect(secondaryViewer.locator(".structure-edge-label")).toHaveCount(2);
   await secondaryViewer.getByRole("button", { name: "表示中を収める" }).click();
-  await secondaryViewer.locator('.structure-node[data-node-id="idempotency-store"]').click();
-  await secondaryViewer.getByRole("button", { name: "表示中を収める" }).click();
-  await expect
-    .poll(async () => {
-      const [canvasBounds, loopBounds, labelBounds] = await Promise.all([
-        secondaryViewer.locator(".structure-canvas").boundingBox(),
-        secondaryViewer
-          .locator('.structure-edge[data-edge-id="idempotency-reuses-result"]')
-          .boundingBox(),
-        secondaryViewer
-          .locator('.structure-edge-label[data-edge-id="idempotency-reuses-result"]')
-          .boundingBox(),
-      ]);
-      if (!canvasBounds || !loopBounds || !labelBounds) return false;
-      return [loopBounds, labelBounds].every(
-        (bounds) =>
-          bounds.x >= canvasBounds.x - 1 &&
-          bounds.y >= canvasBounds.y - 1 &&
-          bounds.x + bounds.width <= canvasBounds.x + canvasBounds.width + 1 &&
-          bounds.y + bounds.height <= canvasBounds.y + canvasBounds.height + 1,
-      );
-    })
-    .toBe(true);
   await page.setViewportSize({ width: 900, height: 700 });
   const [headerBox, toolbarBox, canvasBox, viewerBox] = await Promise.all([
     secondaryViewer.locator(".structure-header").boundingBox(),

@@ -256,6 +256,14 @@ const primaryStructureEdges = [
     ],
   },
   {
+    id: "idempotency-reuses-result",
+    from: "idempotency-store",
+    to: "idempotency-store",
+    label: "同じkeyの保存済みresultを再利用する",
+    directed: true,
+    anchors: [{ path: "src/infrastructure/db/idempotency-store.ts", startLine: 6, endLine: 16 }],
+  },
+  {
     id: "handler-reserves-inventory",
     from: "hub",
     to: "inventory-client",
@@ -394,99 +402,11 @@ const orderPlacementStructureEdges = primaryStructureEdges.filter(
 );
 
 const secondaryStructureNodes = primaryStructureNodes.filter((node) =>
-  [
-    "hub",
-    "idempotency-store",
-    "inventory-client",
-    "payment-gateway",
-    "transaction-runner",
-    "order-repository",
-    "outbox",
-    "payment-reconciliation",
-  ].includes(node.id),
+  ["payment-reconciliation", "payment-gateway", "order-repository"].includes(node.id),
 );
-secondaryStructureNodes.unshift(
-  {
-    id: "failure-model",
-    label: "Failure model",
-    description: "remote side effectとpartial failureを隠さず、retryと補償の境界を説明する。",
-    kind: "document",
-    notation: "concept",
-    anchor: { path: "docs/order-workflow.md", startLine: 1, endLine: 7 },
-  },
-  {
-    id: "integration-evidence",
-    label: "Integration evidence",
-    description: "永続化・event・idempotent retryをobservable behaviorとして検証する。",
-    kind: "test",
-    notation: "interface",
-    anchor: { path: "test/integration/create-order.test.ts", startLine: 4, endLine: 21 },
-  },
+const secondaryStructureEdges = primaryStructureEdges.filter((edge) =>
+  ["reconciliation-checks-payment", "reconciliation-checks-order"].includes(edge.id),
 );
-
-const secondaryStructureEdges = [
-  {
-    id: "idempotency-reuses-result",
-    from: "idempotency-store",
-    to: "idempotency-store",
-    label: "同じkeyの保存済みresultを再利用する",
-    directed: true,
-    anchors: [{ path: "src/infrastructure/db/idempotency-store.ts", startLine: 6, endLine: 16 }],
-  },
-  {
-    id: "failure-model-explains-handler",
-    from: "failure-model",
-    to: "hub",
-    label: "partial failure boundaryを説明する",
-    directed: true,
-    anchors: [{ path: "docs/order-workflow.md", startLine: 3, endLine: 7 }],
-  },
-  {
-    id: "failure-model-explains-reconciliation",
-    from: "failure-model",
-    to: "payment-reconciliation",
-    label: "補償workerの必要性を説明する",
-    directed: true,
-    anchors: [{ path: "docs/order-workflow.md", startLine: 5, endLine: 7 }],
-  },
-  {
-    id: "integration-verifies-handler",
-    from: "integration-evidence",
-    to: "hub",
-    label: "注文作成のobservable resultを検証する",
-    directed: true,
-    anchors: [{ path: "test/integration/create-order.test.ts", startLine: 5, endLine: 10 }],
-  },
-  {
-    id: "integration-verifies-idempotency",
-    from: "integration-evidence",
-    to: "idempotency-store",
-    label: "再試行で決済を重複させないことを検証する",
-    directed: true,
-    anchors: [{ path: "test/integration/create-order.test.ts", startLine: 13, endLine: 20 }],
-  },
-  {
-    id: "integration-observes-outbox",
-    from: "integration-evidence",
-    to: "outbox",
-    label: "pending domain eventを検証する",
-    directed: true,
-    anchors: [{ path: "test/integration/create-order.test.ts", startLine: 5, endLine: 10 }],
-  },
-  ...primaryStructureEdges.filter((edge) =>
-    [
-      "handler-idempotency-envelope",
-      "handler-reserves-inventory",
-      "handler-authorizes-payment",
-      "handler-opens-transaction",
-      "handler-persists-order",
-      "handler-appends-events",
-      "repositories-share-transaction",
-      "reconciliation-checks-payment",
-      "reconciliation-checks-order",
-    ].includes(edge.id),
-  ),
-];
 const fullStackStructureNodes = [
   {
     id: "order-detail-route",
@@ -815,9 +735,9 @@ const activeStructures = repositoryDemo
         ref: `rvw://structure/${secondaryStructureId}`,
         pullRequestId,
         sourceOid: firstHead,
-        title: "Failure recovery and evidence",
+        title: "Payment reconciliation recovery",
         scope:
-          "The retry, atomicity, and compensation mechanisms that make order placement recoverable, with the committed evidence that verifies those claims.",
+          "The payment reconciliation worker that finds an authorized payment without a persisted order and voids it; order placement, retry envelopes, event delivery, and test evidence are excluded.",
         originNodeId: "payment-reconciliation",
         nodes: secondaryStructureNodes,
         edges: secondaryStructureEdges,
