@@ -23,6 +23,7 @@ import {
   useRef,
   useState,
   type ComponentPropsWithoutRef,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -139,25 +140,46 @@ function markdownViewKey(document: ActiveDocument): string {
   return `repository-file:${document.path}`;
 }
 
+const viewerStyle = {
+  "--rvw-diff-addition-line-bg": "light-dark(#dafbe1, rgb(46 160 67 / 0.15))",
+  "--rvw-diff-addition-number-bg": "light-dark(#aceebb, rgb(63 185 80 / 0.3))",
+  "--rvw-diff-addition-word-bg": "light-dark(#aceebb, rgb(46 160 67 / 0.4))",
+  "--rvw-diff-deletion-line-bg": "light-dark(#ffebe9, rgb(248 81 73 / 0.1))",
+  "--rvw-diff-deletion-number-bg": "light-dark(#ffcecb, rgb(248 81 73 / 0.3))",
+  "--rvw-diff-deletion-word-bg": "light-dark(#ffcecb, rgb(248 81 73 / 0.4))",
+  "--diffs-bg": "light-dark(#fff, #0d1117)",
+  "--diffs-fg": "light-dark(#1f2328, #f0f6fc)",
+  "--diffs-light": "#1f2328",
+  "--diffs-dark": "#f0f6fc",
+  "--diffs-light-addition-color": "#1a7f37",
+  "--diffs-dark-addition-color": "#3fb950",
+  "--diffs-light-deletion-color": "#cf222e",
+  "--diffs-dark-deletion-color": "#f85149",
+  "--diffs-fg-number-override": "light-dark(#59636e, #9198a1)",
+  "--diffs-fg-number-addition-override": "var(--diffs-fg)",
+  "--diffs-fg-number-deletion-override": "var(--diffs-fg)",
+  "--diffs-bg-addition-emphasis-override": "var(--rvw-diff-addition-word-bg)",
+  "--diffs-bg-deletion-emphasis-override": "var(--rvw-diff-deletion-word-bg)",
+  backgroundColor: "var(--diffs-bg)",
+  color: "var(--diffs-fg)",
+} as CSSProperties;
+
 const viewerUnsafeCss = `
-  :host {
-    --diffs-bg: light-dark(var(--diffs-light-bg, #fff), #000);
-    --diffs-bg-addition-override: light-dark(
-      color-mix(in lab, var(--diffs-bg) 88%, var(--diffs-addition-base)),
-      color-mix(in lab, var(--diffs-bg) 86%, var(--diffs-addition-base))
-    );
-    --diffs-bg-deletion-override: light-dark(
-      color-mix(in lab, var(--diffs-bg) 88%, var(--diffs-deletion-base)),
-      color-mix(in lab, var(--diffs-bg) 86%, var(--diffs-deletion-base))
-    );
-    --diffs-bg-addition-emphasis-override: light-dark(
-      rgb(from var(--diffs-addition-base) r g b / 0.15),
-      rgb(from var(--diffs-addition-base) r g b / 0.14)
-    );
-    --diffs-bg-deletion-emphasis-override: light-dark(
-      rgb(from var(--diffs-deletion-base) r g b / 0.15),
-      rgb(from var(--diffs-deletion-base) r g b / 0.14)
-    );
+  [data-background]
+    :is([data-line], [data-no-newline])[data-line-type="change-addition"] {
+    --diffs-computed-diff-line-bg: var(--rvw-diff-addition-line-bg) !important;
+  }
+  [data-background]
+    :is([data-line], [data-no-newline])[data-line-type="change-deletion"] {
+    --diffs-computed-diff-line-bg: var(--rvw-diff-deletion-line-bg) !important;
+  }
+  [data-background]
+    :is([data-gutter-buffer], [data-column-number])[data-line-type="change-addition"] {
+    --diffs-computed-diff-line-bg: var(--rvw-diff-addition-number-bg) !important;
+  }
+  [data-background]
+    :is([data-gutter-buffer], [data-column-number])[data-line-type="change-deletion"] {
+    --diffs-computed-diff-line-bg: var(--rvw-diff-deletion-number-bg) !important;
   }
   [data-change-icon="file"] {
     display: none;
@@ -2256,6 +2278,7 @@ export function DocumentViewer({
           fullFile ? (
             <File<ViewerAnnotation>
               file={fullFile}
+              style={viewerStyle}
               disableWorkerPool
               lineAnnotations={fileAnnotations}
               selectedLines={activeSelection}
@@ -2284,6 +2307,7 @@ export function DocumentViewer({
         ) : diffFiles ? (
           <MultiFileDiff<ViewerAnnotation>
             {...diffFiles}
+            style={viewerStyle}
             disableWorkerPool
             lineAnnotations={diffAnnotations}
             selectedLines={activeSelection}
