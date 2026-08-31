@@ -380,6 +380,11 @@ empty fileは従来どおり明示的に扱う。
   copyを維持し、line/range comment selectionはline numberとgutter actionから開始する。file headerは
   paneのscroll中もtab列直下へsticky表示する。
 - diffのline selectionはold/new sideを明示し、両sideをまたぐ一つのcommentを作成しない。
+- `Hide Whitespace`はtop bar右端の`...` menu内へ置き、全文表示ではdisabledにする。browser内だけの
+  一時的な表示設定とし、改行を除く空白を無視して差分を計算する。切り替え前後で同じsource lineを
+  viewport anchorとして保持する。全差分が空白だけで非表示になった場合は、その状態とmenuから解除できることを明示する。
+  whitespaceだけが変わった行は変更として表示せず、残るcontextと変更行はoriginal source textとline番号を
+  保つ。changed files、comment target、source document、追加／削除fileの内容は変更しない。
 - UTF-8以外、1 MiB超、symlink、submodule、missing documentは空本文へsilent fallbackせず、
   理由を明示する。empty UTF-8 fileは有効な文書として扱う。
 - repository内の`.md` / `.markdown`と`Pull Request.md`は全文表示でPreviewを既定とし、Source / Previewを切り替えられる。
@@ -1479,7 +1484,7 @@ Viewerの最優先目的は、選択commitが作るrepositoryの状態を利用�
 理由にreview contextを作り直させない。
 
 最上部のtop barにPR情報と、repository全体へ作用するcommit範囲、表示、diff styleを並べる。
-同期とreset actionは右端の`...` menuへ格納し、通常時の縦幅を増やさない。
+`Hide Whitespace`、同期、reset actionは右端の`...` menuへ格納し、通常時の縦幅を増やさない。
 各paneのtab列はPR、repository file、Walkthrough、Structureの文書navigationだけに使う。
 
 ```text

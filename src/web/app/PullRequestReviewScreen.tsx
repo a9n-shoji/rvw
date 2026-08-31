@@ -570,6 +570,7 @@ export function PullRequestReviewScreen({
   const [rangeStartOid, setRangeStartOid] = useState<string | null>(null);
   const [documentDisplayMode, setDocumentDisplayMode] = useState<DocumentDisplayMode>("full");
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("unified");
+  const [hideWhitespace, setHideWhitespace] = useState(false);
   const [codeExpanded, setCodeExpanded] = useState(true);
   const [commentsExpanded, setCommentsExpanded] = useState(false);
   const [commentsHeight, setCommentsHeight] = useState<number | null>(null);
@@ -2603,6 +2604,7 @@ export function PullRequestReviewScreen({
                 activeDocument={paneViewerDocument}
                 displayMode={paneViewerState.effectiveDisplayMode}
                 diffStyle={diffStyle}
+                hideWhitespace={hideWhitespace}
                 comments={comments}
                 activeCommentId={activeCommentId}
                 fullViewNotice={paneViewerState.fullViewNotice}
@@ -2744,6 +2746,20 @@ export function PullRequestReviewScreen({
               >
                 GitHubと同期
               </button>
+              <div className="topbar-menu-section" role="group" aria-label="Diff設定">
+                <span className="topbar-menu-section-label">Diff設定</span>
+                <button
+                  role="menuitemcheckbox"
+                  aria-checked={hideWhitespace}
+                  disabled={!diffViewAvailable || documentDisplayMode !== "diff"}
+                  onClick={() => setHideWhitespace((hidden) => !hidden)}
+                >
+                  <span>Hide Whitespace</span>
+                  <span className="topbar-menu-check" aria-hidden="true">
+                    {hideWhitespace ? "✓" : ""}
+                  </span>
+                </button>
+              </div>
               <div className="topbar-menu-section" role="group" aria-label="通知">
                 <span className="topbar-menu-section-label">通知</span>
                 <button

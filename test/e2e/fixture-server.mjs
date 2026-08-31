@@ -875,7 +875,11 @@ function currentView() {
 function repositoryText(oid) {
   return [
     "export function fixture(value: string) {",
-    oid === secondHead ? "  return value.trim();" : "  return value.toString();",
+    oid === secondHead
+      ? "  return value.trim();"
+      : oid === baseOid
+        ? "  return   value.toString();"
+        : "  return value.toString();",
     "}",
     "",
     "const stableOne = true;",
@@ -887,6 +891,28 @@ function repositoryText(oid) {
     "const stableSeven = true;",
     "const stableEight = true;",
     'export const fixtureSearchTarget = "fixture";',
+    "",
+  ].join("\n");
+}
+
+function viewportRepositoryText(oid) {
+  return [
+    "export function preserveViewport(input: string) {",
+    oid === baseOid ? "  return   input.toString();" : "  return input.toString();",
+    "}",
+    "",
+    ...Array.from({ length: 755 }, (_, index) => {
+      const lineNumber = index + 5;
+      const value = oid === secondHead && lineNumber % 20 === 0 ? lineNumber + 1 : lineNumber;
+      return `export const viewportLine${lineNumber} = ${value};`;
+    }),
+    oid === secondHead
+      ? 'export const viewportAnchor = "after";'
+      : 'export const viewportAnchor = "before";',
+    ...Array.from(
+      { length: 40 },
+      (_, index) => `export const viewportLine${index + 761} = ${index + 761};`,
+    ),
     "",
   ].join("\n");
 }
@@ -959,6 +985,7 @@ function repositoryDocumentText(oid, filePath) {
   }
   if (filePath === "src/new.ts") return "export const added = true;\n";
   if (filePath === "src/removed.ts") return "export const removed = true;\n";
+  if (filePath === "src/viewport-anchor.ts") return viewportRepositoryText(oid);
   if (filePath in walkthroughRepositorySources || walkthroughRepositoryPaths.includes(filePath)) {
     const source = walkthroughRepositoryText(filePath);
     return filePath === "src/application/orders/create-order.ts" && oid === secondHead
@@ -988,6 +1015,7 @@ function repositoryPathsAt(oid) {
       "binary.bin",
       "large.txt",
       "src/fixture.ts",
+      "src/viewport-anchor.ts",
       ...(oid === secondHead ? ["src/new.ts"] : ["src/removed.ts"]),
       "assets/modified.png",
       "assets/broken.png",
@@ -1473,6 +1501,13 @@ app.get("/api/pull-requests/:id/changed-files", (context) => {
           oldPath: "README.md",
           newPath: "README.md",
         },
+        {
+          kind: "modified",
+          status: "M",
+          similarity: null,
+          oldPath: "src/viewport-anchor.ts",
+          newPath: "src/viewport-anchor.ts",
+        },
       ]
     : [
         {
@@ -1495,6 +1530,13 @@ app.get("/api/pull-requests/:id/changed-files", (context) => {
           similarity: null,
           oldPath: "src/removed.ts",
           newPath: null,
+        },
+        {
+          kind: "modified",
+          status: "M",
+          similarity: null,
+          oldPath: "src/viewport-anchor.ts",
+          newPath: "src/viewport-anchor.ts",
         },
       ];
   files.push(

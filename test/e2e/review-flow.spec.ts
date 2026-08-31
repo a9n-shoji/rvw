@@ -84,6 +84,11 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   const actionsMenuButton = page.getByRole("button", { name: "その他の操作", exact: true });
   await actionsMenuButton.click();
   let actionsMenu = page.getByRole("menu");
+  let hideWhitespaceMenuItem = actionsMenu.getByRole("menuitemcheckbox", {
+    name: "Hide Whitespace",
+    exact: true,
+  });
+  await expect(hideWhitespaceMenuItem).toBeDisabled();
   await expect(actionsMenu.getByRole("menuitemradio", { name: "システム" })).toHaveAttribute(
     "aria-checked",
     "true",
@@ -309,6 +314,7 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
   await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
   await expect(displayFullButton).toBeVisible();
+  await selectCommitOnly(/Add fixture function/);
   const reviewControlLayout = async () => {
     const styleBox = await diffStyleModes.boundingBox();
     const menuBox = await actionsMenuButton.boundingBox();
@@ -325,6 +331,14 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(stackedButton).toBeEnabled();
   await expect(splitButton).toBeEnabled();
   const fullLayout = await reviewControlLayout();
+  await actionsMenuButton.click();
+  actionsMenu = page.getByRole("menu");
+  hideWhitespaceMenuItem = actionsMenu.getByRole("menuitemcheckbox", {
+    name: "Hide Whitespace",
+    exact: true,
+  });
+  await expect(hideWhitespaceMenuItem).toBeDisabled();
+  await actionsMenuButton.click();
   await splitButton.click();
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
   await expect(splitButton).toHaveAttribute("aria-pressed", "true");
@@ -337,7 +351,35 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(stackedButton).toHaveAttribute("aria-pressed", "true");
   expect(await reviewControlLayout()).toEqual(fullLayout);
   const diff = page.locator("diffs-container");
+  const changedDiffLines = diff.locator('[data-line-type^="change-"]');
   await expect(diff.locator("[data-diffs-header]")).toBeVisible();
+  expect(await changedDiffLines.count()).toBeGreaterThan(0);
+  await actionsMenuButton.click();
+  actionsMenu = page.getByRole("menu");
+  hideWhitespaceMenuItem = actionsMenu.getByRole("menuitemcheckbox", {
+    name: "Hide Whitespace",
+    exact: true,
+  });
+  await expect(hideWhitespaceMenuItem).toBeEnabled();
+  await hideWhitespaceMenuItem.click();
+  await expect(hideWhitespaceMenuItem).toHaveAttribute("aria-checked", "true");
+  await actionsMenuButton.click();
+  await expect(changedDiffLines).toHaveCount(0);
+  const whitespaceEmptyState = page.locator(".diff-whitespace-empty");
+  await expect(whitespaceEmptyState).toContainText("空白差分をすべて非表示にしています。");
+  await expect(whitespaceEmptyState).toContainText("…」メニューで Hide Whitespace を解除");
+  await actionsMenuButton.click();
+  hideWhitespaceMenuItem = page
+    .getByRole("menu")
+    .getByRole("menuitemcheckbox", { name: "Hide Whitespace", exact: true });
+  await hideWhitespaceMenuItem.click();
+  await expect(hideWhitespaceMenuItem).toHaveAttribute("aria-checked", "false");
+  await actionsMenuButton.click();
+  await expect(whitespaceEmptyState).toBeHidden();
+  await expect.poll(async () => await changedDiffLines.count()).toBeGreaterThan(0);
+  await commitPicker.click();
+  await commitDialog.getByRole("button", { name: "PR全体", exact: true }).click();
+  await expect(commitPicker).toHaveAccessibleName(/2 commits.*PR全体/);
   await expect(diff.locator("[data-deletions-count]")).toBeVisible();
   await expect(diff.locator("[data-additions-count]")).toBeVisible();
   const renderedDiffColors = () =>
