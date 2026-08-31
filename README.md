@@ -181,6 +181,10 @@ viewerではfocusがある時に1-hop / 2-hopへ絞り、Allでは全Node / Edge
 保存しません。同じsubjectの更新は同じURIを完全置換し、存続するIDの位置を保ちます。別subjectは新しい
 Structureとしてpublishします。
 
+Structure headerの`Export`から、現在のNode配置を保った図全体をstandalone SVGまたは2倍基準のPNGとして
+保存できます。focusや1-hop / 2-hopで画面上に絞り込んでいても、出力には全Node、全Relation、全Edge labelが
+含まれ、pan / zoomや選択状態は持ち込みません。
+
 ## Codex / Claude Code Skills
 
 アプリ本体からローカルSkillをインストールします。一度のinstallで、コメント処理用の`rvw`、

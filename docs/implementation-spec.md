@@ -708,6 +708,17 @@ Structure固有のheaderはtitleとexact sourceを一つのcompact rowへ置き�
 popoverで確認できるようにする。表示操作はcanvas上のsingle-row overlayとし、狭いpaneでも複数行へwrapして
 canvasの縦幅を奪わず、水平方向にscrollして全操作へ到達できるようにする。
 
+Structure headerはdocument単位のExport actionを持ち、現在のpane sessionのNode座標と選択commit範囲に対応する
+change presentationを使ってstandalone SVGまたは2倍基準のPNGを生成する。exportはfocus、depth、selected Edge、
+viewport、Node内scroll位置を無視し、全Node、全Edge、全Edge labelを含む。boundsはNode、Bézier Edge、self-loop、
+arrow marker、全Edge labelを含めて自動trimし、toolbar、minimap、canvas status、source action、grid背景は含めない。
+Nodeは画面と同じ固定寸法とnotationを維持し、source identity、title、descriptionを先頭から描画して収まらない
+Node textだけをellipsisにする。Edge labelは省略せず必要な高さへ広げ、高密度で衝突を避け切れない場合も削除せず
+crowded表示を保つ。SVGは`foreignObject`、外部asset、外部stylesheet、raw markupを使わず、producer由来文字列を
+XML text / attributeとしてescapeする。PNGは同じSVGからbrowser標準Canvas APIで派生し、最大dimensionとpixel
+budgetに収まるscaleへ縮小する。安全な最低scaleを下回る場合は不完全なPNGを生成せず明示的に失敗する。
+exportはbackend、DB、CLI protocol、Structure data modelを変更せず、実行後もreading stateを一切変更しない。
+
 1-hop / 2-hopはfocusがある時だけ選べる。focusなしはAllへ戻し、Allは全Nodeと全Edgeを表示する。relationを
 stable IDや件数で自動的に隠さない。bounded graphを超えるsubjectはproducerがscopeを分ける。別のoriginから
 独立してtriggerされるbehaviorへ到達した時点も分割境界とし、静的なsubsystem inventoryへ拡張しない。選択commit範囲に対する変更file

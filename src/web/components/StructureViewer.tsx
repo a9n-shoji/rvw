@@ -14,7 +14,6 @@ import type {
   SourceAnchor,
   Structure,
   StructureEdge,
-  StructureNode,
   StructureSourceLocator,
 } from "../../domain/models.js";
 import { api, type DeleteStructureResponse } from "../api.js";
@@ -25,7 +24,6 @@ import {
   reconcileStructureLayout,
   STRUCTURE_NODE_HEIGHT,
   STRUCTURE_NODE_WIDTH,
-  structureEdgeRouteOffsets,
   structureLayoutBounds,
   visibleStructureGraph,
   type StructureNeighborhoodDepth,
@@ -40,8 +38,23 @@ import {
   setStructureSession,
   type StructureViewport,
 } from "../structure-session.js";
+import {
+  downloadStructureBlob,
+  planStructurePngRaster,
+  rasterizeStructureSvg,
+  readStructureExportPalette,
+  serializeStructureSvg,
+  structureExportErrorMessage,
+  structureExportFilename,
+  type StructureExportFormat,
+} from "../structure-export.js";
+import {
+  buildFullStructureRenderModel,
+  buildStructureRenderModel,
+} from "../structure-render-model.js";
 import { ChangeIcon } from "./FileTree.js";
 import { FileEntryIcon } from "./FileIcon.js";
+import { StructureExportMenu } from "./StructureExportMenu.js";
 
 const STRUCTURE_WHEEL_PAN_SENSITIVITY = 2;
 const STRUCTURE_TRACKPAD_ZOOM_SENSITIVITY = 0.005;
@@ -51,25 +64,6 @@ function anchorLabel(anchor: SourceAnchor): string {
   return anchor.startLine === null
     ? anchor.path
     : `${anchor.path}:${anchor.startLine}${anchor.endLine === anchor.startLine ? "" : `-${anchor.endLine}`}`;
-}
-
-function shortestUniqueSourceLabels(paths: readonly string[]): Map<string, string> {
-  const distinctPaths = [...new Set(paths)];
-  const segments = new Map(distinctPaths.map((path) => [path, path.split("/")]));
-  return new Map(
-    distinctPaths.map((path) => {
-      const parts = segments.get(path)!;
-      for (let length = 1; length <= parts.length; length += 1) {
-        const suffix = parts.slice(-length).join("/");
-        const unique = distinctPaths.every(
-          (candidate) =>
-            candidate === path || segments.get(candidate)!.slice(-length).join("/") !== suffix,
-        );
-        if (unique) return [path, suffix];
-      }
-      return [path, path];
-    }),
-  );
 }
 
 function SourceButton({
@@ -169,31 +163,6 @@ function SourceIdentity({
   );
 }
 
-type EdgeSourceChangeKind = ChangeKind | "mixed";
-
-interface EdgeSourcePresentation {
-  anchorCount: number;
-  changeKind: EdgeSourceChangeKind | null;
-}
-
-function edgeSourcePresentation(
-  edge: StructureEdge,
-  sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
-): EdgeSourcePresentation {
-  const changedKinds = edge.anchors.flatMap((anchor) => {
-    const kind = sourceChangeKinds.get(anchor.path);
-    return kind ? [kind] : [];
-  });
-  const distinctKinds = [...new Set(changedKinds)].sort((left, right) =>
-    left.localeCompare(right, "en"),
-  );
-  return {
-    anchorCount: edge.anchors.length,
-    changeKind:
-      distinctKinds.length > 1 ? "mixed" : distinctKinds.length === 1 ? distinctKinds[0]! : null,
-  };
-}
-
 function BreakableStructureLabel({ label }: { label: string }) {
   const parts = label.split(/(::|[./_-])/u);
   return (
@@ -206,353 +175,6 @@ function BreakableStructureLabel({ label }: { label: string }) {
       ))}
     </>
   );
-}
-
-function edgePath(
-  edge: StructureEdge,
-  positions: Readonly<Record<string, StructurePoint>>,
-  laneOffset = 0,
-  reciprocal = false,
-): {
-  path: string;
-  startX: number;
-  startY: number;
-  control1X: number;
-  control1Y: number;
-  control2X: number;
-  control2Y: number;
-  endX: number;
-  endY: number;
-  bounds: StructureBox;
-} | null {
-  const from = positions[edge.from];
-  const to = positions[edge.to];
-  if (!from || !to) return null;
-  const fromX = from.x + STRUCTURE_NODE_WIDTH / 2;
-  const fromY = from.y + STRUCTURE_NODE_HEIGHT / 2;
-  const toX = to.x + STRUCTURE_NODE_WIDTH / 2;
-  const toY = to.y + STRUCTURE_NODE_HEIGHT / 2;
-  if (edge.from === edge.to) {
-    const right = from.x + STRUCTURE_NODE_WIDTH;
-    const top = from.y;
-    const gap = 8;
-    const loopShift = laneOffset * 0.3;
-    const loopReach = 88 + Math.abs(laneOffset) * 0.35;
-    return {
-      path: `M ${right + gap} ${top + 34 + loopShift} C ${right + loopReach} ${top - 84 + loopShift}, ${right + loopReach} ${top + STRUCTURE_NODE_HEIGHT + 84 + loopShift}, ${right + gap} ${top + STRUCTURE_NODE_HEIGHT - 34 + loopShift}`,
-      startX: right + gap,
-      startY: top + 34 + loopShift,
-      control1X: right + loopReach,
-      control1Y: top - 84 + loopShift,
-      control2X: right + loopReach,
-      control2Y: top + STRUCTURE_NODE_HEIGHT + 84 + loopShift,
-      endX: right + gap,
-      endY: top + STRUCTURE_NODE_HEIGHT - 34 + loopShift,
-      bounds: {
-        left: right + gap,
-        top: top - 84 + loopShift,
-        right: right + loopReach,
-        bottom: top + STRUCTURE_NODE_HEIGHT + 84 + loopShift,
-      },
-    };
-  }
-  const dx = toX - fromX;
-  const dy = toY - fromY;
-  const length = Math.max(1, Math.hypot(dx, dy));
-  const unitX = dx / length;
-  const unitY = dy / length;
-  const perpendicularX = -unitY;
-  const perpendicularY = unitX;
-  const boundaryDistance = Math.min(
-    STRUCTURE_NODE_WIDTH / 2 / Math.max(0.0001, Math.abs(unitX)),
-    STRUCTURE_NODE_HEIGHT / 2 / Math.max(0.0001, Math.abs(unitY)),
-  );
-  const endpointDistance = boundaryDistance + 8;
-  const startX = fromX + unitX * endpointDistance + perpendicularX * laneOffset;
-  const startY = fromY + unitY * endpointDistance + perpendicularY * laneOffset;
-  const endX = toX - unitX * endpointDistance + perpendicularX * laneOffset;
-  const endY = toY - unitY * endpointDistance + perpendicularY * laneOffset;
-  // Every ordinary relation keeps a gentle curve. Reciprocal relations get
-  // visibly separate arcs so their labels can stay on their respective paths.
-  const minimumCurve = reciprocal ? 132 : laneOffset === 0 ? 28 : 52;
-  const maximumCurve = reciprocal ? 168 : 96;
-  const curve =
-    Math.min(maximumCurve, Math.max(minimumCurve, length * (reciprocal ? 0.18 : 0.1))) +
-    laneOffset * 0.35;
-  const control1X = startX + (endX - startX) * 0.36 + perpendicularX * curve;
-  const control1Y = startY + (endY - startY) * 0.36 + perpendicularY * curve;
-  const control2X = startX + (endX - startX) * 0.64 + perpendicularX * curve;
-  const control2Y = startY + (endY - startY) * 0.64 + perpendicularY * curve;
-  return {
-    path: `M ${startX} ${startY} C ${control1X} ${control1Y}, ${control2X} ${control2Y}, ${endX} ${endY}`,
-    startX,
-    startY,
-    control1X,
-    control1Y,
-    control2X,
-    control2Y,
-    endX,
-    endY,
-    bounds: {
-      left: Math.min(startX, control1X, control2X, endX),
-      top: Math.min(startY, control1Y, control2Y, endY),
-      right: Math.max(startX, control1X, control2X, endX),
-      bottom: Math.max(startY, control1Y, control2Y, endY),
-    },
-  };
-}
-
-function reciprocalStructureEdgeIds(edges: readonly StructureEdge[]): Set<string> {
-  const directions = new Set(
-    edges
-      .filter((edge) => edge.directed && edge.from !== edge.to)
-      .map((edge) => JSON.stringify([edge.from, edge.to])),
-  );
-  return new Set(
-    edges
-      .filter(
-        (edge) =>
-          edge.directed &&
-          edge.from !== edge.to &&
-          directions.has(JSON.stringify([edge.to, edge.from])),
-      )
-      .map((edge) => edge.id),
-  );
-}
-
-function curveLabelCandidate(
-  geometry: NonNullable<ReturnType<typeof edgePath>>,
-  fraction: number,
-  offset: number,
-): { x: number; y: number } {
-  const inverse = 1 - fraction;
-  const x =
-    inverse ** 3 * geometry.startX +
-    3 * inverse ** 2 * fraction * geometry.control1X +
-    3 * inverse * fraction ** 2 * geometry.control2X +
-    fraction ** 3 * geometry.endX;
-  const y =
-    inverse ** 3 * geometry.startY +
-    3 * inverse ** 2 * fraction * geometry.control1Y +
-    3 * inverse * fraction ** 2 * geometry.control2Y +
-    fraction ** 3 * geometry.endY;
-  const tangentX =
-    3 * inverse ** 2 * (geometry.control1X - geometry.startX) +
-    6 * inverse * fraction * (geometry.control2X - geometry.control1X) +
-    3 * fraction ** 2 * (geometry.endX - geometry.control2X);
-  const tangentY =
-    3 * inverse ** 2 * (geometry.control1Y - geometry.startY) +
-    6 * inverse * fraction * (geometry.control2Y - geometry.control1Y) +
-    3 * fraction ** 2 * (geometry.endY - geometry.control2Y);
-  const tangentLength = Math.max(1, Math.hypot(tangentX, tangentY));
-  return {
-    x: x + (-tangentY / tangentLength) * offset,
-    y: y + (tangentX / tangentLength) * offset,
-  };
-}
-
-interface StructureBox {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
-
-interface StructureEdgeLabelPlacement {
-  edge: StructureEdge;
-  source: EdgeSourcePresentation;
-  x: number;
-  y: number;
-  selectWidth: number;
-  boxWidth: number;
-  height: number;
-  crowded: boolean;
-}
-
-const EDGE_LABEL_MAX_TEXT_WIDTH = 210;
-const EDGE_LABEL_MIN_TEXT_WIDTH = 64;
-const EDGE_LABEL_HORIZONTAL_PADDING = 11;
-const EDGE_LABEL_WIDTH_SAFETY = 2;
-const EDGE_LABEL_LINE_HEIGHT = 14;
-
-function boxesOverlap(left: StructureBox, right: StructureBox): boolean {
-  return !(
-    left.right < right.left ||
-    left.left > right.right ||
-    left.bottom < right.top ||
-    left.top > right.bottom
-  );
-}
-
-function labelBox(x: number, y: number, width: number, height: number, padding = 0): StructureBox {
-  return {
-    left: x - width / 2 - padding,
-    top: y - height / 2 - padding,
-    right: x + width / 2 + padding,
-    bottom: y + height / 2 + padding,
-  };
-}
-
-function mergedBounds(boxes: readonly StructureBox[]): StructureBox | null {
-  if (boxes.length === 0) return null;
-  return {
-    left: Math.min(...boxes.map((box) => box.left)),
-    top: Math.min(...boxes.map((box) => box.top)),
-    right: Math.max(...boxes.map((box) => box.right)),
-    bottom: Math.max(...boxes.map((box) => box.bottom)),
-  };
-}
-
-function edgeLabelSize(
-  edge: StructureEdge,
-  sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
-): {
-  selectWidth: number;
-  boxWidth: number;
-  height: number;
-  source: EdgeSourcePresentation;
-} {
-  const textUnits = [...edge.label].reduce(
-    (total, character) =>
-      total +
-      (/\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}/u.test(character) ? 1 : 0.56),
-    0,
-  );
-  const naturalTextWidth = Math.ceil(textUnits * 11.5);
-  const textWidth = Math.min(
-    EDGE_LABEL_MAX_TEXT_WIDTH,
-    Math.max(
-      EDGE_LABEL_MIN_TEXT_WIDTH,
-      naturalTextWidth + EDGE_LABEL_HORIZONTAL_PADDING + EDGE_LABEL_WIDTH_SAFETY,
-    ),
-  );
-  const contentWidth = Math.max(1, textWidth - EDGE_LABEL_HORIZONTAL_PADDING);
-  const lineCount = Math.max(1, Math.ceil(naturalTextWidth / contentWidth));
-  const textHeight = Math.max(24, lineCount * EDGE_LABEL_LINE_HEIGHT + 10);
-  const source = edgeSourcePresentation(edge, sourceChangeKinds);
-  const sourceBadgeOverflow = source.anchorCount > 1 ? 4 : 0;
-  const sourceActionWidth = source.anchorCount > 0 ? 29 + sourceBadgeOverflow : 0;
-  const height = Math.max(
-    textHeight,
-    source.anchorCount > 1 ? 34 : source.anchorCount === 1 ? 26 : 0,
-  );
-  return {
-    selectWidth: textWidth,
-    boxWidth: textWidth + sourceActionWidth,
-    height,
-    source,
-  };
-}
-
-function placeEdgeLabels(
-  edges: StructureEdge[],
-  nodes: StructureNode[],
-  positions: Readonly<Record<string, StructurePoint>>,
-  sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
-  routeOffsets: ReadonlyMap<string, number>,
-  reciprocalEdgeIds: ReadonlySet<string>,
-): StructureEdgeLabelPlacement[] {
-  const nodeBoxes = nodes.flatMap((node) => {
-    const point = positions[node.id];
-    return point
-      ? [
-          {
-            left: point.x,
-            top: point.y,
-            right: point.x + STRUCTURE_NODE_WIDTH,
-            bottom: point.y + STRUCTURE_NODE_HEIGHT,
-          },
-        ]
-      : [];
-  });
-  const collisionCellSize = 128;
-  const collisionCellLimit = 48;
-  const occupiedLabels = new Map<string, { boxes: StructureBox[]; saturated: boolean }>();
-  const cellKeys = (box: StructureBox): string[] => {
-    const keys: string[] = [];
-    const left = Math.floor(box.left / collisionCellSize);
-    const right = Math.floor(box.right / collisionCellSize);
-    const top = Math.floor(box.top / collisionCellSize);
-    const bottom = Math.floor(box.bottom / collisionCellSize);
-    for (let x = left; x <= right; x += 1) {
-      for (let y = top; y <= bottom; y += 1) keys.push(`${x}:${y}`);
-    }
-    return keys;
-  };
-  const overlapsOccupiedLabel = (box: StructureBox): boolean => {
-    const seen = new Set<StructureBox>();
-    for (const key of cellKeys(box)) {
-      const cell = occupiedLabels.get(key);
-      if (!cell) continue;
-      if (cell.saturated) return true;
-      for (const occupied of cell.boxes) {
-        if (seen.has(occupied)) continue;
-        seen.add(occupied);
-        if (boxesOverlap(box, occupied)) return true;
-      }
-    }
-    return false;
-  };
-  const occupyLabel = (box: StructureBox): void => {
-    for (const key of cellKeys(box)) {
-      const cell = occupiedLabels.get(key) ?? { boxes: [], saturated: false };
-      if (!cell.saturated) {
-        cell.boxes.push(box);
-        if (cell.boxes.length >= collisionCellLimit) {
-          cell.boxes = [];
-          cell.saturated = true;
-        }
-      }
-      occupiedLabels.set(key, cell);
-    }
-  };
-  const placements: StructureEdgeLabelPlacement[] = [];
-  const candidateFractions = Array.from({ length: 22 }, (_, index) => 0.08 + index * 0.04).sort(
-    (left, right) => Math.abs(left - 0.5) - Math.abs(right - 0.5),
-  );
-  const candidateOffsets = [0, 12, -12, 24, -24, 36, -36, 48, -48] as const;
-  const candidates = candidateOffsets.flatMap((offset) =>
-    candidateFractions.map((fraction) => [fraction, offset] as const),
-  );
-
-  const stableEdges = [...edges].sort((left, right) => left.id.localeCompare(right.id, "en"));
-  for (const [edgeIndex, edge] of stableEdges.entries()) {
-    const geometry = edgePath(
-      edge,
-      positions,
-      routeOffsets.get(edge.id) ?? 0,
-      reciprocalEdgeIds.has(edge.id),
-    );
-    if (!geometry) continue;
-    const size = edgeLabelSize(edge, sourceChangeKinds);
-    const possible = candidates.map(([fraction, offset]) =>
-      curveLabelCandidate(geometry, fraction, offset),
-    );
-    const nodeSafe = possible.filter((candidate) => {
-      // Keep a small real gap. A large synthetic margin can reject the usable
-      // midpoint of a short Edge and force the fallback underneath a Node.
-      const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 4);
-      return !nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox));
-    });
-    const available = nodeSafe.find((candidate) => {
-      const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 5);
-      return !overlapsOccupiedLabel(box);
-    });
-    const fallback = nodeSafe.length > 0 ? nodeSafe[edgeIndex % nodeSafe.length] : undefined;
-    const chosen = available ?? fallback ?? possible[edgeIndex % possible.length]!;
-    occupyLabel(labelBox(chosen.x, chosen.y, size.boxWidth, size.height, 4));
-    placements.push({
-      edge,
-      source: size.source,
-      x: chosen.x,
-      y: chosen.y,
-      selectWidth: size.selectWidth,
-      boxWidth: size.boxWidth,
-      height: size.height,
-      crowded: !available,
-    });
-  }
-  return placements;
 }
 
 function StructureMiniMap({
@@ -648,6 +270,7 @@ export function StructureViewer({
   const [viewport, setViewport] = useState(initial.viewport);
   const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 });
   const [status, setStatus] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<StructureExportFormat | null>(null);
   const [deleting, setDeleting] = useState(false);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const surfaceSizeRef = useRef(initial.surfaceSize);
@@ -839,11 +462,6 @@ export function StructureViewer({
     () => (focusId ? incidentStructureEdges(structure, focusId) : []),
     [focusId, structure],
   );
-  const routeOffsets = useMemo(() => structureEdgeRouteOffsets(structure.edges), [structure.edges]);
-  const reciprocalEdgeIds = useMemo(
-    () => reciprocalStructureEdgeIds(structure.edges),
-    [structure.edges],
-  );
   const sourceChangeKinds = useMemo(() => {
     const result = new Map<string, ChangeKind>();
     for (const change of changedFiles) {
@@ -854,78 +472,41 @@ export function StructureViewer({
     }
     return result;
   }, [changedFiles]);
-  const sourceLabels = useMemo(
+  const labelEdgeIds = useMemo(
     () =>
-      shortestUniqueSourceLabels([
-        ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor.path] : [])),
-        ...structure.edges.flatMap((edge) => edge.anchors.map((anchor) => anchor.path)),
-      ]),
-    [structure.edges, structure.nodes],
-  );
-  const nodeBounds = useMemo(
-    () => structureLayoutBounds(visible.nodeIds, positions),
-    [positions, visible.nodeIds],
-  );
-  const renderNodeIds = visible.nodeIds;
-  const renderedEdges = useMemo(
-    () =>
-      structure.edges.filter(
-        (edge) =>
-          visible.edgeIds.has(edge.id) &&
-          renderNodeIds.has(edge.from) &&
-          renderNodeIds.has(edge.to),
-      ),
-    [renderNodeIds, structure.edges, visible.edgeIds],
-  );
-  const renderedNodes = useMemo(
-    () => structure.nodes.filter((node) => renderNodeIds.has(node.id)),
-    [renderNodeIds, structure.nodes],
-  );
-  const labeledEdges = useMemo(
-    () =>
-      focusId
-        ? renderedEdges.filter(
-            (edge) => edge.from === focusId || edge.to === focusId || edge.id === selectedEdgeId,
+      new Set(
+        structure.edges
+          .filter(
+            (edge) =>
+              visible.edgeIds.has(edge.id) &&
+              (!focusId ||
+                edge.from === focusId ||
+                edge.to === focusId ||
+                edge.id === selectedEdgeId),
           )
-        : renderedEdges,
-    [focusId, renderedEdges, selectedEdgeId],
+          .map((edge) => edge.id),
+      ),
+    [focusId, selectedEdgeId, structure.edges, visible.edgeIds],
   );
-  const edgeLabelPlacements = useMemo(
+  const renderModel = useMemo(
     () =>
-      placeEdgeLabels(
-        labeledEdges,
-        renderedNodes,
+      buildStructureRenderModel({
+        structure,
         positions,
         sourceChangeKinds,
-        routeOffsets,
-        reciprocalEdgeIds,
-      ),
-    [labeledEdges, positions, reciprocalEdgeIds, renderedNodes, routeOffsets, sourceChangeKinds],
+        selection: {
+          nodeIds: visible.nodeIds,
+          edgeIds: visible.edgeIds,
+          labelEdgeIds,
+        },
+        labelAccessory: "source-actions",
+      }),
+    [labelEdgeIds, positions, sourceChangeKinds, structure, visible.edgeIds, visible.nodeIds],
   );
-  const displayBounds = useMemo(() => {
-    const boxes: StructureBox[] = [];
-    if (nodeBounds) {
-      boxes.push({
-        left: nodeBounds.minX,
-        top: nodeBounds.minY,
-        right: nodeBounds.maxX,
-        bottom: nodeBounds.maxY,
-      });
-    }
-    for (const edge of renderedEdges) {
-      const geometry = edgePath(
-        edge,
-        positions,
-        routeOffsets.get(edge.id) ?? 0,
-        reciprocalEdgeIds.has(edge.id),
-      );
-      if (geometry) boxes.push(geometry.bounds);
-    }
-    for (const placement of edgeLabelPlacements) {
-      boxes.push(labelBox(placement.x, placement.y, placement.boxWidth, placement.height, 4));
-    }
-    return mergedBounds(boxes);
-  }, [edgeLabelPlacements, nodeBounds, positions, reciprocalEdgeIds, renderedEdges, routeOffsets]);
+  const renderedEdges = renderModel.edges.map(({ edge }) => edge);
+  const renderedNodes = renderModel.nodes.map(({ node }) => node);
+  const edgeLabelPlacements = renderModel.labels;
+  const displayBounds = renderModel.bounds;
   const worldWidth = Math.max(1_200, (displayBounds?.right ?? 1_000) + 180);
   const worldHeight = Math.max(800, (displayBounds?.bottom ?? 600) + 180);
 
@@ -1017,6 +598,36 @@ export function StructureViewer({
       setStatus("Structure参照をコピーしました。");
     } catch {
       setStatus("Structure参照をコピーできませんでした。");
+    }
+  };
+
+  const exportStructure = async (format: StructureExportFormat): Promise<void> => {
+    if (exporting) return;
+    setExporting(format);
+    setStatus(null);
+    try {
+      const model = buildFullStructureRenderModel({ structure, positions, sourceChangeKinds });
+      const palette = readStructureExportPalette(document.documentElement);
+      const svg = serializeStructureSvg({ structure, model, palette });
+      if (format === "svg") {
+        downloadStructureBlob(
+          new Blob([svg.source], { type: "image/svg+xml;charset=utf-8" }),
+          structureExportFilename(structure, "svg"),
+        );
+        return;
+      }
+      const rasterPlan = planStructurePngRaster(svg.width, svg.height);
+      const png = await rasterizeStructureSvg(svg, rasterPlan);
+      downloadStructureBlob(png, structureExportFilename(structure, "png"));
+      if (rasterPlan.downscaled) {
+        setStatus(
+          `PNGを${Math.round(rasterPlan.scale * 100)}%で出力しました。より高い解像度にはSVGを使用してください。`,
+        );
+      }
+    } catch (error) {
+      setStatus(structureExportErrorMessage(error));
+    } finally {
+      setExporting(null);
     }
   };
 
@@ -1157,6 +768,11 @@ export function StructureViewer({
           >
             参照
           </button>
+          <StructureExportMenu
+            disabled={deleting || exporting !== null}
+            exporting={exporting}
+            onExport={(format) => void exportStructure(format)}
+          />
           <button
             type="button"
             className="danger structure-delete"
@@ -1288,18 +904,11 @@ export function StructureViewer({
                     <path d="M 0 0 L 10 5 L 0 10 z" />
                   </marker>
                 </defs>
-                {renderedEdges.map((edge) => {
-                  const route = edgePath(
-                    edge,
-                    positions,
-                    routeOffsets.get(edge.id) ?? 0,
-                    reciprocalEdgeIds.has(edge.id),
-                  );
-                  if (!route) return null;
+                {renderModel.edges.map(({ edge, geometry: route, source }) => {
                   const focused = edge.from === focusId || edge.to === focusId;
                   const selected = edge.id === selectedEdgeId;
                   const muted = selectedEdgeId !== null && !selected;
-                  const changeKind = edgeSourcePresentation(edge, sourceChangeKinds).changeKind;
+                  const changeKind = source.changeKind;
                   return (
                     <path
                       key={edge.id}
@@ -1354,16 +963,11 @@ export function StructureViewer({
                   </div>
                 );
               })}
-              {renderedNodes.map((node) => {
-                const point = positions[node.id];
-                if (!point) return null;
+              {renderModel.nodes.map(({ node, point, changeKind, sourceLabel }) => {
                 const selected = node.id === focusId;
                 const incidentToFocus = incident.some(
                   (edge) => edge.from === node.id || edge.to === node.id,
                 );
-                const changeKind = node.anchor
-                  ? (sourceChangeKinds.get(node.anchor.path) ?? null)
-                  : null;
                 return (
                   <div
                     key={node.id}
@@ -1398,7 +1002,7 @@ export function StructureViewer({
                         <SourceIdentity
                           anchor={node.anchor}
                           changeKind={changeKind}
-                          sourceLabel={sourceLabels.get(node.anchor.path) ?? node.anchor.path}
+                          sourceLabel={sourceLabel ?? node.anchor.path}
                         />
                       )}
                       <strong className="structure-node-title">
