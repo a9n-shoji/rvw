@@ -545,7 +545,6 @@ code {
   margin: 3px 0;
   padding: 5px 0 3px;
   border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
 }
 .topbar-menu-section-label {
   padding: 2px 9px 5px;
@@ -564,6 +563,7 @@ code {
   font-weight: 800;
 }
 .topbar-menu-popover .topbar-menu-danger {
+  border-top: 1px solid var(--line);
   color: var(--danger);
 }
 .diff-whitespace-empty {
