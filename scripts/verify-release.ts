@@ -22,6 +22,7 @@ interface ReleaseMetadata {
   appVersion: string;
   changelog: string;
   manifest: ReleaseManifest;
+  npmTag: string;
   tag: string;
 }
 
@@ -33,15 +34,22 @@ export function validateReleaseMetadata({
   appVersion,
   changelog,
   manifest,
+  npmTag,
   tag,
-}: ReleaseMetadata): { name: string; version: string } {
+}: ReleaseMetadata): { name: string; npmTag: string; version: string } {
   requireRelease(manifest.name === PACKAGE_NAME, `package name must be ${PACKAGE_NAME}`);
+  const version = manifest.version;
   requireRelease(
-    typeof manifest.version === "string" && /^\d+\.\d+\.\d+$/u.test(manifest.version),
-    "package version must be a stable semantic version",
+    typeof version === "string" && /^\d+\.\d+\.\d+(?:-beta\.\d+)?$/u.test(version),
+    "package version must be a stable or beta semantic version",
   );
-  requireRelease(tag === `v${manifest.version}`, `release tag must be v${manifest.version}`);
-  requireRelease(appVersion === manifest.version, "APP_VERSION must match package version");
+  const expectedNpmTag = version.includes("-beta.") ? "beta" : "latest";
+  requireRelease(
+    npmTag === expectedNpmTag,
+    `${version} must publish with the ${expectedNpmTag} npm dist-tag`,
+  );
+  requireRelease(tag === `v${version}`, `release tag must be v${version}`);
+  requireRelease(appVersion === version, "APP_VERSION must match package version");
   requireRelease(manifest.private !== true, "release package must not be private");
 
   const repository = manifest.repository as Record<string, unknown> | undefined;
@@ -77,13 +85,12 @@ export function validateReleaseMetadata({
     `release npm CLI must be pinned to ${RELEASE_NPM_VERSION}`,
   );
   requireRelease(
-    new RegExp(
-      `^## \\[${manifest.version.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}$`,
-      "mu",
-    ).test(changelog),
-    `CHANGELOG.md must contain a dated ${manifest.version} section`,
+    new RegExp(`^## \\[${version.replaceAll(".", "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}$`, "mu").test(
+      changelog,
+    ),
+    `CHANGELOG.md must contain a dated ${version} section`,
   );
-  return { name: manifest.name, version: manifest.version };
+  return { name: manifest.name, npmTag, version };
 }
 
 function git(...args: string[]): string {
@@ -95,7 +102,9 @@ function git(...args: string[]): string {
 
 function main(): void {
   const tag = process.env.RVW_RELEASE_TAG;
+  const npmTag = process.env.RVW_RELEASE_NPM_TAG;
   requireRelease(tag, "RVW_RELEASE_TAG is required");
+  requireRelease(npmTag, "RVW_RELEASE_NPM_TAG is required");
   const manifest = JSON.parse(
     readFileSync(path.join(repositoryRoot, "package.json"), "utf8"),
   ) as ReleaseManifest;
@@ -103,6 +112,7 @@ function main(): void {
     appVersion: APP_VERSION,
     changelog: readFileSync(path.join(repositoryRoot, "CHANGELOG.md"), "utf8"),
     manifest,
+    npmTag,
     tag,
   });
 
@@ -111,7 +121,9 @@ function main(): void {
   requireRelease(headOid === tagOid, `${tag} must point to the checked-out commit`);
   git("merge-base", "--is-ancestor", headOid, "origin/main");
   requireRelease(git("status", "--short") === "", "release checkout must be clean");
-  process.stdout.write(`Release metadata verified: ${release.name}@${release.version}\n`);
+  process.stdout.write(
+    `Release metadata verified: ${release.name}@${release.version} (${release.npmTag})\n`,
+  );
 }
 
 const entrypoint = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : undefined;

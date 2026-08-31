@@ -1777,8 +1777,9 @@ GitHub loginと一致し、head repository/branch/OIDとpush先も一致するPR
 Phase 2ではnpm account、scope、2FA、LICENSE、README、CHANGELOG、SECURITY、dependency license、
 macOS/Linux/Windows smokeを確認してから公開する。通常CIはregistryへ書き込まない。release workflowは
 手動dispatch、`npm-production` Environment、GitHub-hosted runner、`id-token: write`を使い、OIDC
-Trusted Publisherには`npm stage publish`だけを許可する。version、APP_VERSION、stable tag、CHANGELOGを
-検証し、package smokeがinstallした同一tarballをstageする。人間が内容を確認し、2FAでapproveするまで
+Trusted Publisherには`npm stage publish`だけを許可する。version、APP_VERSION、exact release tag、
+CHANGELOG、stable=`latest` / beta=`beta`のdist-tag対応を検証し、package smokeがinstallした同一tarballを
+stageする。人間が内容を確認し、2FAでapproveするまで
 publicにはしない。
 
 npmは未作成packageへTrusted Publisherを設定できずstaged publishingも受け付けないため、最初の`0.1.0`

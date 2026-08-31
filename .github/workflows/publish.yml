@@ -4,9 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Stable release tag to stage (for example v0.1.1)
+        description: Release tag to stage (for example v0.4.0-beta.0 or v0.4.0)
         required: true
         type: string
+      npm_tag:
+        description: npm dist-tag; release verification rejects a tag/version mismatch
+        required: true
+        type: choice
+        options:
+          - beta
+          - latest
 
 permissions:
   contents: read
@@ -38,9 +45,10 @@ jobs:
       - run: pnpm release:verify
         env:
           RVW_RELEASE_TAG: ${{ inputs.release_tag }}
+          RVW_RELEASE_NPM_TAG: ${{ inputs.npm_tag }}
       - run: pnpm check
       - run: pnpm test
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
       - run: pnpm test:package -- --pack-destination .release
-      - run: pnpm exec npm stage publish .release/*.tgz
+      - run: pnpm exec npm stage publish .release/*.tgz --tag ${{ inputs.npm_tag }}
