@@ -1,4 +1,8 @@
-import type { SourceAnchor, SourceReferenceFileTarget } from "../domain/models.js";
+import type {
+  SourceAnchor,
+  SourceReferenceFileTarget,
+  StructureSourceLocator,
+} from "../domain/models.js";
 
 export type DocumentPaneId = "left" | "right";
 
@@ -11,7 +15,8 @@ export type SourceReferenceOrigin =
   | {
       kind: "structure";
       structureId: string;
-      anchor: SourceAnchor;
+      locator: StructureSourceLocator;
+      resolvedAnchor: SourceAnchor;
     };
 
 export interface ReferenceDocumentContext {

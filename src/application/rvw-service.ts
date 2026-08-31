@@ -29,6 +29,8 @@ import type {
   StructureEdge,
   StructureNode,
   StructureNodeNotation,
+  StructureSourceLocator,
+  StructureSourceResolution,
   StructureSummary,
   TreeEntry,
   DeletedWalkthrough,
@@ -47,7 +49,7 @@ import {
 import { parseWalkthroughUri } from "../domain/walkthrough-uri.js";
 import { parseStructureUri } from "../domain/structure-uri.js";
 import { mapUnchangedLineRange, placeMutableDocumentComment } from "../domain/line-mapping.js";
-import { sourceAnchorFingerprint } from "../domain/walkthrough-reference.js";
+import { sourceAnchorFingerprint, structureSourceAnchor } from "../domain/source-reference.js";
 import { buildPullRequestMarkdown, hashDocument, selectedLineText } from "../domain/pr-markdown.js";
 import { createSourceExcerpt, type SourceExcerpt } from "../domain/source-excerpt.js";
 import {
@@ -2084,34 +2086,26 @@ export class RvwService {
     );
   }
 
-  async resolveStructureAnchor(
+  async resolveStructureSource(
     pullRequestId: string,
     structureId: string,
-    anchor: SourceAnchor,
-  ): Promise<SourceReferenceResolution> {
+    locator: StructureSourceLocator,
+  ): Promise<StructureSourceResolution> {
     const pullRequest = this.getPullRequest(pullRequestId);
     const structure = this.getStructure(pullRequestId, structureId);
-    const anchors = [
-      ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor] : [])),
-      ...structure.edges.flatMap((edge) => edge.anchors),
-    ];
-    const belongsToStructure = anchors.some(
-      (candidate) =>
-        candidate.path === anchor.path &&
-        candidate.startLine === anchor.startLine &&
-        candidate.endLine === anchor.endLine,
-    );
-    if (!belongsToStructure) {
-      throw new RvwError("NOT_FOUND", "Structureのsource anchorが見つかりません。", {
+    const anchor = structureSourceAnchor(structure, locator);
+    if (!anchor) {
+      throw new RvwError("NOT_FOUND", "Structureの参照元claimが見つかりません。", {
         status: 404,
       });
     }
-    return await this.resolveSourceAnchor(
+    const resolution = await this.resolveSourceAnchor(
       pullRequest,
       structure.sourceOid,
       anchor,
       sourceAnchorFingerprint(structure.sourceOid, anchor),
     );
+    return { ...resolution, resolvedAnchor: anchor };
   }
 
   private async resolveSourceAnchor(

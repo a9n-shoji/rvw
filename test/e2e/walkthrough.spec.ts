@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { sourceAnchorFingerprint } from "../../src/domain/walkthrough-reference.js";
+import { sourceAnchorFingerprint } from "../../src/domain/source-reference.js";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryWalkthrough = "注文作成フロー：HTTPからtransactional outboxまで";

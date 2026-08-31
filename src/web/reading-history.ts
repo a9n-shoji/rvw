@@ -1,4 +1,8 @@
-import type { SourceAnchor, SourceReferenceFileTarget } from "../domain/models.js";
+import type {
+  SourceAnchor,
+  SourceReferenceFileTarget,
+  StructureSourceLocator,
+} from "../domain/models.js";
 import type {
   ActiveDocument,
   DocumentPaneId,
@@ -90,6 +94,21 @@ function parseSourceAnchor(value: unknown): SourceAnchor | null {
   };
 }
 
+function parseStructureSourceLocator(value: unknown): StructureSourceLocator | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === "node") {
+    return typeof value.nodeId === "string" ? { kind: "node", nodeId: value.nodeId } : null;
+  }
+  if (value.kind === "edge") {
+    return typeof value.edgeId === "string" &&
+      Number.isInteger(value.anchorIndex) &&
+      Number(value.anchorIndex) >= 0
+      ? { kind: "edge", edgeId: value.edgeId, anchorIndex: Number(value.anchorIndex) }
+      : null;
+  }
+  return null;
+}
+
 function parseReferenceOrigin(value: unknown): SourceReferenceOrigin | null {
   if (!isRecord(value)) return null;
   if (value.kind === "walkthrough") {
@@ -102,9 +121,10 @@ function parseReferenceOrigin(value: unknown): SourceReferenceOrigin | null {
       : null;
   }
   if (value.kind === "structure") {
-    const anchor = parseSourceAnchor(value.anchor);
-    return typeof value.structureId === "string" && anchor
-      ? { kind: "structure", structureId: value.structureId, anchor }
+    const locator = parseStructureSourceLocator(value.locator);
+    const resolvedAnchor = parseSourceAnchor(value.resolvedAnchor);
+    return typeof value.structureId === "string" && locator && resolvedAnchor
+      ? { kind: "structure", structureId: value.structureId, locator, resolvedAnchor }
       : null;
   }
   return null;

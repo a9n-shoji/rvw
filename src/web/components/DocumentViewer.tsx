@@ -2118,33 +2118,41 @@ export function DocumentViewer({
         <div className="reference-fallback-banner reference-stale-banner" role="status">
           <div>
             <strong>
-              {referenceStaleness.originChanged
-                ? `${referenceOriginLabel}が更新されています${
-                    referenceStaleness.headChanged
-                      ? ` · 解決時 ${staleReference.latestHeadOid.slice(0, 8)} → 現在 ${latestHeadOid.slice(0, 8)}`
-                      : ""
-                  }`
-                : `解決時 ${staleReference.latestHeadOid.slice(0, 8)} → 現在 ${latestHeadOid.slice(0, 8)}`}
+              {referenceStaleness.originMissing
+                ? referenceStaleness.originKind === "structure"
+                  ? "Structureの参照元claimが削除されています"
+                  : "Walkthroughの参照元が削除されています"
+                : referenceStaleness.originChanged
+                  ? `${referenceOriginLabel}が更新されています${
+                      referenceStaleness.headChanged
+                        ? ` · 解決時 ${staleReference.latestHeadOid.slice(0, 8)} → 現在 ${latestHeadOid.slice(0, 8)}`
+                        : ""
+                    }`
+                  : `解決時 ${staleReference.latestHeadOid.slice(0, 8)} → 現在 ${latestHeadOid.slice(0, 8)}`}
             </strong>
             <span>
               {referenceFallback
                 ? `参照時点のコード · ${referenceFallback.anchorSourceOid.slice(0, 8)} を表示中。`
                 : ""}
-              {referenceStaleness.originChanged
-                ? referenceStaleness.headChanged
-                  ? `このコード参照は${referenceOriginLabel}とPRの更新前に解決されています。`
-                  : `このコード参照は${referenceOriginLabel}の更新前に解決されています。`
-                : "このコード参照はPR更新前に解決されています。"}
+              {referenceStaleness.originMissing
+                ? "このコードは削除された参照元から最後に解決された状態です。"
+                : referenceStaleness.originChanged
+                  ? referenceStaleness.headChanged
+                    ? `このコード参照は${referenceOriginLabel}とPRの更新前に解決されています。`
+                    : `このコード参照は${referenceOriginLabel}の更新前に解決されています。`
+                  : "このコード参照はPR更新前に解決されています。"}
               {referenceResolutionError ? ` ${referenceResolutionError}` : ""}
             </span>
           </div>
-          <button
-            type="button"
-            disabled={referenceResolutionPending}
-            onClick={() => void reresolveReference(staleReference)}
-          >
-            {referenceResolutionPending ? "再解決中…" : "最新へ再解決"}
-          </button>
+          {!referenceStaleness.originMissing && (
+            <button
+              type="button"
+              disabled={referenceResolutionPending}
+              onClick={() => void reresolveReference(staleReference)}
+            >
+              {referenceResolutionPending ? "再解決中…" : "最新へ再解決"}
+            </button>
+          )}
         </div>
       )}
       {referenceFallback && !staleReference && (

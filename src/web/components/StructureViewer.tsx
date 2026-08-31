@@ -15,6 +15,7 @@ import type {
   Structure,
   StructureEdge,
   StructureNode,
+  StructureSourceLocator,
 } from "../../domain/models.js";
 import { api, type DeleteStructureResponse } from "../api.js";
 import type { DocumentPaneId } from "../document-workspace.js";
@@ -104,7 +105,7 @@ function EdgeSourceAction({
   onOpen,
 }: {
   edge: StructureEdge;
-  onOpen: (anchor: SourceAnchor, openInRightPane: boolean) => void;
+  onOpen: (locator: StructureSourceLocator, anchor: SourceAnchor, openInRightPane: boolean) => void;
 }) {
   if (edge.anchors.length === 0) return null;
   if (edge.anchors.length === 1) {
@@ -112,7 +113,9 @@ function EdgeSourceAction({
       <SourceButton
         compact
         anchor={edge.anchors[0]!}
-        onOpen={(right) => onOpen(edge.anchors[0]!, right)}
+        onOpen={(right) =>
+          onOpen({ kind: "edge", edgeId: edge.id, anchorIndex: 0 }, edge.anchors[0]!, right)
+        }
       />
     );
   }
@@ -133,7 +136,9 @@ function EdgeSourceAction({
           <SourceButton
             key={`${edge.id}:${index}`}
             anchor={anchor}
-            onOpen={(right) => onOpen(anchor, right)}
+            onOpen={(right) =>
+              onOpen({ kind: "edge", edgeId: edge.id, anchorIndex: index }, anchor, right)
+            }
           />
         ))}
       </div>
@@ -620,14 +625,17 @@ export function StructureViewer({
   pullRequestId,
   structure,
   changedFiles,
-  onOpenAnchor,
+  onOpenSource,
   onDeleted,
 }: {
   paneId: DocumentPaneId;
   pullRequestId: string;
   structure: Structure;
   changedFiles: readonly ChangedFile[];
-  onOpenAnchor: (anchor: SourceAnchor, openInRightPane: boolean) => Promise<string | null>;
+  onOpenSource: (
+    locator: StructureSourceLocator,
+    openInRightPane: boolean,
+  ) => Promise<string | null>;
   onDeleted: () => void;
 }) {
   const domId = `structure-${paneId}-${structure.id}`;
@@ -1027,10 +1035,14 @@ export function StructureViewer({
     });
   };
 
-  const openAnchor = async (anchor: SourceAnchor, openInRightPane: boolean): Promise<void> => {
+  const openSource = async (
+    locator: StructureSourceLocator,
+    anchor: SourceAnchor,
+    openInRightPane: boolean,
+  ): Promise<void> => {
     setStatus(null);
     try {
-      const nextStatus = await onOpenAnchor(anchor, openInRightPane);
+      const nextStatus = await onOpenSource(locator, openInRightPane);
       setStatus(nextStatus);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : `参照先を開けません · ${anchor.path}`);
@@ -1337,7 +1349,7 @@ export function StructureViewer({
                     </button>
                     <EdgeSourceAction
                       edge={edge}
-                      onOpen={(anchor, right) => void openAnchor(anchor, right)}
+                      onOpen={(locator, anchor, right) => void openSource(locator, anchor, right)}
                     />
                   </div>
                 );
@@ -1394,10 +1406,7 @@ export function StructureViewer({
                           <BreakableStructureLabel label={node.label} />
                         </span>
                       </strong>
-                      <span
-                        className="structure-node-description"
-                        title={node.description ?? "Producerによる説明なし"}
-                      >
+                      <span className="structure-node-description">
                         {node.description ?? "Producerによる説明なし"}
                       </span>
                     </button>
@@ -1405,7 +1414,9 @@ export function StructureViewer({
                       <SourceButton
                         compact
                         anchor={node.anchor}
-                        onOpen={(right) => void openAnchor(node.anchor!, right)}
+                        onOpen={(right) =>
+                          void openSource({ kind: "node", nodeId: node.id }, node.anchor!, right)
+                        }
                       />
                     )}
                   </div>

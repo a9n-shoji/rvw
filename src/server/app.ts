@@ -5,7 +5,7 @@ import { Hono } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import type { RvwService } from "../application/rvw-service.js";
-import type { DiffDocumentRef, DocumentRef } from "../domain/models.js";
+import type { DiffDocumentRef, DocumentRef, StructureSourceLocator } from "../domain/models.js";
 import {
   GIT_OBJECT_ID_PATTERN,
   VIEWER_ID_HEADER,
@@ -44,7 +44,7 @@ export interface CreateAppOptions {
 }
 
 const oidSchema = z.string().regex(GIT_OBJECT_ID_PATTERN);
-const positiveLineSchema = z.coerce.number().int().positive();
+const nonnegativeIndexSchema = z.coerce.number().int().nonnegative();
 const svgAssetContentSecurityPolicy =
   "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox";
 
@@ -57,13 +57,27 @@ function oidQuery(value: string | undefined, name: string): string {
   return oidSchema.parse(requiredQuery(value, name));
 }
 
-function optionalLineQuery(value: string | undefined, name: string): number | null {
-  if (value === undefined) return null;
-  const result = positiveLineSchema.safeParse(value);
-  if (!result.success) {
-    throw new RvwError("INVALID_INPUT", `${name} queryは正の整数にしてください。`);
+function structureSourceLocator(query: {
+  locatorKind: string | undefined;
+  nodeId: string | undefined;
+  edgeId: string | undefined;
+  anchorIndex: string | undefined;
+}): StructureSourceLocator {
+  if (query.locatorKind === "node") {
+    return { kind: "node", nodeId: requiredQuery(query.nodeId, "nodeId") };
   }
-  return result.data;
+  if (query.locatorKind === "edge") {
+    const anchorIndex = nonnegativeIndexSchema.safeParse(query.anchorIndex);
+    if (!anchorIndex.success) {
+      throw new RvwError("INVALID_INPUT", "anchorIndex queryは0以上の整数にしてください。");
+    }
+    return {
+      kind: "edge",
+      edgeId: requiredQuery(query.edgeId, "edgeId"),
+      anchorIndex: anchorIndex.data,
+    };
+  }
+  throw new RvwError("INVALID_INPUT", "locatorKind queryはnodeまたはedgeにしてください。");
 }
 
 function isWriteMethod(method: string): boolean {
@@ -408,27 +422,17 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
   );
 
   app.get("/api/pull-requests/:id/structures/:structureId/anchors/resolve", async (context) => {
-    const startLine = optionalLineQuery(context.req.query("startLine"), "startLine");
-    const endLine = optionalLineQuery(context.req.query("endLine"), "endLine");
-    if (
-      (startLine === null) !== (endLine === null) ||
-      (startLine !== null && endLine !== null && endLine < startLine)
-    ) {
-      throw new RvwError(
-        "INVALID_INPUT",
-        "startLineとendLineは両方を指定し、endLineはstartLine以上にしてください。",
-      );
-    }
     return context.json({
       ok: true,
-      resolution: await service.resolveStructureAnchor(
+      resolution: await service.resolveStructureSource(
         context.req.param("id"),
         context.req.param("structureId"),
-        {
-          path: requiredQuery(context.req.query("path"), "path"),
-          startLine,
-          endLine,
-        },
+        structureSourceLocator({
+          locatorKind: context.req.query("locatorKind"),
+          nodeId: context.req.query("nodeId"),
+          edgeId: context.req.query("edgeId"),
+          anchorIndex: context.req.query("anchorIndex"),
+        }),
       ),
     });
   });

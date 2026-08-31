@@ -476,6 +476,7 @@ test("scrolls complete long content inside a fixed-size Node", async ({ page }) 
   const fullDescription = (await description.textContent())!.trim();
   expect(fullTitle.length).toBeGreaterThan(60);
   expect(fullDescription.length).toBeGreaterThan(120);
+  await expect(description).not.toHaveAttribute("title");
   await expect(sourceAction).toBeVisible();
   const fixedBox = await node.boundingBox();
   expect(fixedBox).not.toBeNull();
@@ -730,6 +731,104 @@ test("preserves Structure fallback meaning through commit and head changes", asy
     }),
   ).toBeVisible();
   await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+});
+
+test("re-resolves Structure sources by stable Node and Edge identity", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const nodeSource = viewer.locator(
+    '.structure-node[data-node-id="order-detail-route"] > .structure-source.compact',
+  );
+  await nodeSource.click();
+  await expect(page.getByRole("tab", { name: "src/http/routes/order-detail.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  const movedNodeAnchor = {
+    path: "src/http/routes/order-detail.ts",
+    startLine: 1,
+    endLine: 2,
+  };
+  const moveNode = await page.request.post(
+    `/api/fixture/structures/${fullStackStructureId}/source-lifecycle`,
+    {
+      data: {
+        nodeId: "order-detail-route",
+        anchor: movedNodeAnchor,
+        reusePreviousAnchorOnNodeId: "detail-actor-auth",
+      },
+    },
+  );
+  expect(moveNode.ok()).toBe(true);
+
+  const staleBanner = page.locator(".reference-stale-banner");
+  await expect(staleBanner).toContainText("Structureが更新されています");
+  const nodeResolution = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname.endsWith("/anchors/resolve") &&
+      url.searchParams.get("locatorKind") === "node" &&
+      url.searchParams.get("nodeId") === "order-detail-route"
+    );
+  });
+  await staleBanner.getByRole("button", { name: "最新へ再解決" }).click();
+  expect(await (await nodeResolution).json()).toMatchObject({
+    resolution: { resolvedAnchor: movedNodeAnchor, target: { startLine: 1, endLine: 2 } },
+  });
+  await expect(staleBanner).toHaveCount(0);
+  await expect(page.locator("diffs-container")).toHaveAttribute("data-search-target-line", "1");
+
+  await page.getByRole("tab", { name: fullStackTitle }).click();
+  const edgeSource = viewer.locator(
+    '.structure-edge-label[data-edge-id="detail-route-authenticates"] .structure-source.compact',
+  );
+  await edgeSource.click();
+  const movedEdgeAnchor = {
+    path: "src/http/routes/order-detail.ts",
+    startLine: 3,
+    endLine: 3,
+  };
+  const moveEdge = await page.request.post(
+    `/api/fixture/structures/${fullStackStructureId}/source-lifecycle`,
+    {
+      data: {
+        edgeId: "detail-route-authenticates",
+        anchorIndex: 0,
+        anchor: movedEdgeAnchor,
+      },
+    },
+  );
+  expect(moveEdge.ok()).toBe(true);
+  await expect(staleBanner).toContainText("Structureが更新されています");
+  const edgeResolution = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname.endsWith("/anchors/resolve") &&
+      url.searchParams.get("locatorKind") === "edge" &&
+      url.searchParams.get("edgeId") === "detail-route-authenticates" &&
+      url.searchParams.get("anchorIndex") === "0"
+    );
+  });
+  await staleBanner.getByRole("button", { name: "最新へ再解決" }).click();
+  expect(await (await edgeResolution).json()).toMatchObject({
+    resolution: { resolvedAnchor: movedEdgeAnchor, target: { startLine: 3, endLine: 3 } },
+  });
+  await expect(staleBanner).toHaveCount(0);
+
+  await page.getByRole("tab", { name: fullStackTitle }).click();
+  await viewer
+    .locator('.structure-node[data-node-id="detail-params"] > .structure-source.compact')
+    .click();
+  const removeNode = await page.request.post(
+    `/api/fixture/structures/${fullStackStructureId}/source-lifecycle`,
+    { data: { removeNodeId: "detail-params" } },
+  );
+  expect(removeNode.ok()).toBe(true);
+  await expect(staleBanner).toContainText("Structureの参照元claimが削除されています");
+  await expect(staleBanner).toContainText("削除された参照元から最後に解決された状態です");
+  await expect(staleBanner.getByRole("button", { name: "最新へ再解決" })).toHaveCount(0);
 });
 
 test("resolves Structure anchors to latest and preserves spatial context across navigation and update", async ({
@@ -1185,9 +1284,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   const resolutionResponsePromise = page.waitForResponse((response) =>
     response
       .url()
-      .includes(
-        `/structures/${primaryStructureId}/anchors/resolve?path=src%2Fapplication%2Forders%2Fcreate-order.ts`,
-      ),
+      .includes(`/structures/${primaryStructureId}/anchors/resolve?locatorKind=node&nodeId=hub`),
   );
   await hubSourceAction.click();
   const resolutionResponse = await resolutionResponsePromise;

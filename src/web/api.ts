@@ -12,6 +12,7 @@ import type {
   ReviewComment,
   SearchResponse,
   Structure,
+  StructureSourceResolution,
   StructureSummary,
   TreeEntry,
   Walkthrough,
@@ -171,8 +172,8 @@ export interface StructureResponse {
   structure: Structure;
 }
 
-export interface StructureAnchorResolutionResponse {
-  resolution: SourceReferenceResolution;
+export interface StructureSourceResolutionResponse {
+  resolution: StructureSourceResolution;
 }
 
 export interface DeleteStructureResponse {

@@ -11,7 +11,7 @@ import {
   selectedLineText,
 } from "../../src/domain/pr-markdown.js";
 import { createSourceExcerpt, MAX_SOURCE_EXCERPT_BYTES } from "../../src/domain/source-excerpt.js";
-import { sourceAnchorFingerprint } from "../../src/domain/walkthrough-reference.js";
+import { sourceAnchorFingerprint } from "../../src/domain/source-reference.js";
 
 describe("Pull Request Markdown", () => {
   it("normalizes CRLF and preserves the exact v1 shape", () => {

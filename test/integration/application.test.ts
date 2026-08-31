@@ -2184,10 +2184,9 @@ describe("RvwService commit workflow", () => {
     await service.refreshPullRequest(opened.pullRequest.id);
 
     await expect(
-      service.resolveStructureAnchor(opened.pullRequest.id, structure.id, {
-        path: "src.txt",
-        startLine: 2,
-        endLine: 2,
+      service.resolveStructureSource(opened.pullRequest.id, structure.id, {
+        kind: "node",
+        nodeId: "source",
       }),
     ).resolves.toMatchObject({
       outcome: "latest",
@@ -2203,14 +2202,62 @@ describe("RvwService commit workflow", () => {
         ref: { sourceOid: latestHead, path: "src.txt" },
         text: "inserted\nfirst\nsecond\n",
       },
+      resolvedAnchor: { path: "src.txt", startLine: 2, endLine: 2 },
     });
     await expect(
-      service.resolveStructureAnchor(opened.pullRequest.id, structure.id, {
-        path: "src.txt",
-        startLine: 1,
-        endLine: 1,
+      service.resolveStructureSource(opened.pullRequest.id, structure.id, {
+        kind: "node",
+        nodeId: "missing",
       }),
     ).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
+
+    const updated = await service.updateStructure(structure.ref, {
+      expectedUpdatedAt: structure.updatedAt,
+      sourceOid: firstHead,
+      title: structure.title,
+      scope: structure.scope,
+      originNodeId: "source",
+      nodes: [
+        {
+          id: "source",
+          label: "Source range moved",
+          anchor: { path: "src.txt", startLine: 1, endLine: 1 },
+        },
+        {
+          id: "other",
+          label: "Other claim reusing the old range",
+          anchor: { path: "src.txt", startLine: 2, endLine: 2 },
+        },
+      ],
+      edges: [
+        {
+          id: "source-to-other",
+          from: "source",
+          to: "other",
+          label: "feeds",
+          directed: true,
+          anchors: [{ path: "src.txt", startLine: 1, endLine: 1 }],
+        },
+      ],
+    });
+
+    await expect(
+      service.resolveStructureSource(opened.pullRequest.id, updated.id, {
+        kind: "node",
+        nodeId: "source",
+      }),
+    ).resolves.toMatchObject({
+      resolvedAnchor: { path: "src.txt", startLine: 1, endLine: 1 },
+    });
+    await expect(
+      service.resolveStructureSource(opened.pullRequest.id, updated.id, {
+        kind: "edge",
+        edgeId: "source-to-other",
+        anchorIndex: 0,
+      }),
+    ).resolves.toMatchObject({
+      resolvedAnchor: { path: "src.txt", startLine: 1, endLine: 1 },
+    });
   });
 
   it("allows a Structure publish operation to start fresh after PR reset", async () => {

@@ -2342,18 +2342,29 @@ active PR comparison.
 ### Choice
 
 Resolve a clicked Structure anchor through the same unchanged-range, file-level, and unique-rename
-rules used by Walkthrough references. The service verifies that the requested anchor belongs to the
-current Structure before resolving it. A successful latest resolution uses the current global
-comparison when its destination is the selected commit (including PR-wide review); a historical
-global range opens the latest exact file. An uncertain mapping falls back to the Structure's exact
-source commit and reports that decision without changing the global review controls. Structure and
-Walkthrough carry the same source-reference context into the code tab: fallback reason, anchor SHA,
-latest-file action, resolving HEAD, and fingerprint remain available after navigation. A later HEAD
-or source-anchor change marks that context stale and offers explicit re-resolution.
+rules used by Walkthrough references. A Node source action sends its stable Node ID; an Edge source
+action sends its stable Edge ID and anchor index. The service reads the current Structure and resolves
+the anchor currently owned by that locator instead of accepting mutable path and line coordinates as
+identity. The code-tab context retains the locator and the last resolved anchor. Stale detection
+compares the current locator-owned anchor and fingerprint, so another claim reusing the old range
+cannot mask an update; re-resolution reads the current anchor again. A deleted locator is reported as
+a removed source claim and cannot offer a re-resolution action.
+
+A successful latest resolution uses the current global comparison when its destination is the
+selected commit (including PR-wide review); a historical global range opens the latest exact file. An
+uncertain mapping falls back to the Structure's exact source commit and reports that decision without
+changing the global review controls. Structure and Walkthrough carry the same source-reference
+context into the code tab: fallback reason, anchor SHA, latest-file action, resolving HEAD, and
+fingerprint remain available after navigation. A later HEAD or locator-owned source-anchor change
+marks that context stale and offers explicit re-resolution. Multiple anchors on one Edge use their
+current array index; producers preserve surviving anchor order across same-claim updates rather than
+introducing anchor-level identities.
 
 ### Trade-offs
 
 - Structure and Walkthrough evidence now agree on what “current source” means.
 - Resolution remains click-time and ephemeral; no resolved OID or line is stored in Structure data.
+- Stable Node and Edge identities make actual anchor moves re-resolvable without adding persisted
+  source-reference records; reordering an Edge's anchors is intentionally not identity-preserving.
 - The latest-file action deliberately opens only the known latest file without claiming a mapped line;
   the fallback view continues to preserve the verified anchor.

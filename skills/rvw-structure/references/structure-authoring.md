@@ -79,6 +79,9 @@ Each edge is a producer claim about how two nodes relate in this subject.
   relationship is intentionally established at several distinct code sites. An edge without anchors is
   acceptable only when the relationship follows directly from its anchored endpoints or explicit
   subject authority.
+- Preserve the relative order of surviving anchors on the same Edge across an update. The viewer uses
+  the stable Edge ID plus anchor index to keep an open source action attached to its claim; replace an
+  anchor in place instead of reordering unchanged entries.
 - Do not publish a hypothesized or uncertain relation. Explain it separately in the Agent response so
   the map never presents an inference as a source-established fact.
 - Do not encode confidence, severity, inferred risk, reviewer approval, hidden groups, or presentation

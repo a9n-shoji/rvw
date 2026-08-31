@@ -14,6 +14,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { changedFilePath } from "../../domain/changed-file.js";
+import { structureSourceAnchor } from "../../domain/source-reference.js";
 import type {
   ChangedFile,
   ChangeKind,
@@ -22,10 +23,11 @@ import type {
   DocumentRef,
   ReviewComment,
   SearchResult,
-  SourceAnchor,
   SourceReferenceFileTarget,
   SourceReferenceResolution,
   Structure,
+  StructureSourceLocator,
+  StructureSourceResolution,
   StructureSummary,
   Walkthrough,
   WalkthroughReference,
@@ -41,7 +43,7 @@ import {
   jsonRequest,
   type PullRequestResponse,
   type SearchResponse,
-  type StructureAnchorResolutionResponse,
+  type StructureSourceResolutionResponse,
   type StructureResponse,
   type StructuresResponse,
   type ThemePreferenceResponse,
@@ -2217,24 +2219,34 @@ export function PullRequestReviewScreen({
       openCommentCodeReference(sourceOid, reference, openInRightPane ? "right" : "left"),
     [openCommentCodeReference],
   );
-  const fetchStructureAnchorResolution = useCallback(
-    async (structureId: string, anchor: SourceAnchor): Promise<SourceReferenceResolution> => {
+  const fetchStructureSourceResolution = useCallback(
+    async (
+      structureId: string,
+      locator: StructureSourceLocator,
+    ): Promise<StructureSourceResolution> => {
       if (!pullRequestId) throw new Error("Pull Requestが選択されていません。");
-      const search = new URLSearchParams({ path: anchor.path });
-      if (anchor.startLine !== null && anchor.endLine !== null) {
-        search.set("startLine", String(anchor.startLine));
-        search.set("endLine", String(anchor.endLine));
+      const search = new URLSearchParams({ locatorKind: locator.kind });
+      if (locator.kind === "node") {
+        search.set("nodeId", locator.nodeId);
+      } else {
+        search.set("edgeId", locator.edgeId);
+        search.set("anchorIndex", String(locator.anchorIndex));
       }
-      const { resolution } = await api<StructureAnchorResolutionResponse>(
+      const { resolution } = await api<StructureSourceResolutionResponse>(
         `/api/pull-requests/${pullRequestId}/structures/${structureId}/anchors/resolve?${search.toString()}`,
       );
       return resolution;
     },
     [pullRequestId],
   );
-  const resolveStructureAnchor = useCallback(
-    async (structureId: string, anchor: SourceAnchor, targetPane: DocumentPaneId) => {
-      if (!pullRequestId) return Promise.resolve(`参照先を開けません · ${anchor.path}`);
+  const resolveStructureSource = useCallback(
+    async (
+      structureId: string,
+      locator: StructureSourceLocator,
+      targetPane: DocumentPaneId,
+      fallbackPath: string,
+    ) => {
+      if (!pullRequestId) return Promise.resolve(`参照先を開けません · ${fallbackPath}`);
       codeReferenceRequestSequence.current[targetPane] += 1;
       const requestSequence = codeReferenceRequestSequence.current[targetPane];
       const targetNavigationRevision = documentWorkspaceRef.current.navigationRevision[targetPane];
@@ -2242,12 +2254,12 @@ export function PullRequestReviewScreen({
         requestSequence === codeReferenceRequestSequence.current[targetPane] &&
         documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
       try {
-        const resolution = await fetchStructureAnchorResolution(structureId, anchor);
+        const resolution = await fetchStructureSourceResolution(structureId, locator);
         if (!requestIsCurrent()) return null;
         if (resolution.document.availability !== "available") {
           return resolution.document.availability === "missing"
-            ? `リンク切れ · ${anchor.path}`
-            : `参照先を表示できません · ${anchor.path}`;
+            ? `リンク切れ · ${resolution.resolvedAnchor.path}`
+            : `参照先を表示できません · ${resolution.resolvedAnchor.path}`;
         }
         queryClient.setQueryData(["document", resolution.document.ref], resolution.document);
         const target = resolution.target;
@@ -2260,7 +2272,12 @@ export function PullRequestReviewScreen({
           comparisonPolicy: "reference-target",
           referenceContext: {
             outcome: resolution.outcome,
-            origin: { kind: "structure", structureId, anchor },
+            origin: {
+              kind: "structure",
+              structureId,
+              locator,
+              resolvedAnchor: resolution.resolvedAnchor,
+            },
             anchorSourceOid: resolution.anchorSourceOid,
             latestHeadOid: resolution.latestHeadOid,
             referenceFingerprint: resolution.referenceFingerprint,
@@ -2285,16 +2302,25 @@ export function PullRequestReviewScreen({
         if (!requestIsCurrent()) return null;
         return error instanceof ApiError &&
           ["COMMIT_NOT_FOUND", "DOCUMENT_NOT_FOUND", "NOT_FOUND"].includes(error.code)
-          ? `リンク切れ · ${anchor.path}`
-          : `参照先を開けません · ${anchor.path}`;
+          ? error.code === "NOT_FOUND"
+            ? "Structureの参照元claimが削除されています。"
+            : `リンク切れ · ${fallbackPath}`
+          : `参照先を開けません · ${fallbackPath}`;
       }
     },
-    [fetchStructureAnchorResolution, navigateToDocument, pullRequestId, queryClient],
+    [fetchStructureSourceResolution, navigateToDocument, pullRequestId, queryClient],
   );
-  const openStructureAnchor = useCallback(
-    (structure: Structure, anchor: SourceAnchor, openInRightPane: boolean) =>
-      resolveStructureAnchor(structure.id, anchor, openInRightPane ? "right" : "left"),
-    [resolveStructureAnchor],
+  const openStructureSource = useCallback(
+    (structure: Structure, locator: StructureSourceLocator, openInRightPane: boolean) => {
+      const anchor = structureSourceAnchor(structure, locator);
+      return resolveStructureSource(
+        structure.id,
+        locator,
+        openInRightPane ? "right" : "left",
+        anchor?.path ?? "Structure source",
+      );
+    },
+    [resolveStructureSource],
   );
   const openLatestReferenceFile = useCallback(
     (target: SourceReferenceFileTarget, targetPane: DocumentPaneId): void => {
@@ -2329,8 +2355,13 @@ export function PullRequestReviewScreen({
             referencePath,
             targetPane,
           )
-        : resolveStructureAnchor(context.origin.structureId, context.origin.anchor, targetPane),
-    [resolveStructureAnchor, resolveWalkthroughReference],
+        : resolveStructureSource(
+            context.origin.structureId,
+            context.origin.locator,
+            targetPane,
+            context.origin.resolvedAnchor.path,
+          ),
+    [resolveStructureSource, resolveWalkthroughReference],
   );
 
   if (pullRequestQuery.isLoading) {
@@ -2502,8 +2533,8 @@ export function PullRequestReviewScreen({
                 pullRequestId={pullRequest.id}
                 structure={paneViewerState.structure}
                 changedFiles={changedQuery.data?.files ?? []}
-                onOpenAnchor={(anchor, openInRightPane) =>
-                  openStructureAnchor(paneViewerState.structure!, anchor, openInRightPane)
+                onOpenSource={(locator, openInRightPane) =>
+                  openStructureSource(paneViewerState.structure!, locator, openInRightPane)
                 }
                 onDeleted={() => {
                   closeDocumentWithDrafts(paneViewerDocument, paneId);

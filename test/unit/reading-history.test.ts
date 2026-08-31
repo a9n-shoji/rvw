@@ -108,7 +108,8 @@ describe("reading history", () => {
         origin: {
           kind: "structure" as const,
           structureId: "structure",
-          anchor: { path: "src/structure.ts", startLine: 4, endLine: 9 },
+          locator: { kind: "node" as const, nodeId: "claim" },
+          resolvedAnchor: { path: "src/structure.ts", startLine: 4, endLine: 9 },
         },
         anchorSourceOid: "a".repeat(40),
         latestHeadOid: "c".repeat(40),

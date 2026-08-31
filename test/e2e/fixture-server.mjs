@@ -4,7 +4,10 @@ import path from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import { sourceAnchorFingerprint } from "../../src/domain/walkthrough-reference.ts";
+import {
+  sourceAnchorFingerprint,
+  structureSourceAnchor,
+} from "../../src/domain/source-reference.ts";
 import {
   walkthroughRepositoryPaths,
   walkthroughRepositorySources,
@@ -1804,23 +1807,18 @@ app.get("/api/pull-requests/:id/structures/:structureId/anchors/resolve", (conte
   const structure = activeStructures.find(
     (candidate) => candidate.id === context.req.param("structureId"),
   );
-  const anchor = {
-    path: context.req.query("path"),
-    startLine: context.req.query("startLine") ? Number(context.req.query("startLine")) : null,
-    endLine: context.req.query("endLine") ? Number(context.req.query("endLine")) : null,
-  };
-  const anchors = structure
-    ? [
-        ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor] : [])),
-        ...structure.edges.flatMap((edge) => edge.anchors),
-      ]
-    : [];
-  const sourceAnchor = anchors.find(
-    (candidate) =>
-      candidate.path === anchor.path &&
-      candidate.startLine === anchor.startLine &&
-      candidate.endLine === anchor.endLine,
-  );
+  const locatorKind = context.req.query("locatorKind");
+  const locator =
+    locatorKind === "node"
+      ? { kind: "node", nodeId: context.req.query("nodeId") }
+      : locatorKind === "edge"
+        ? {
+            kind: "edge",
+            edgeId: context.req.query("edgeId"),
+            anchorIndex: Number(context.req.query("anchorIndex")),
+          }
+        : null;
+  const sourceAnchor = structure && locator ? structureSourceAnchor(structure, locator) : null;
   if (!structure || !sourceAnchor) {
     return context.json(
       { ok: false, error: { code: "NOT_FOUND", message: "missing structure anchor" } },
@@ -1841,6 +1839,7 @@ app.get("/api/pull-requests/:id/structures/:structureId/anchors/resolve", (conte
       anchorSourceOid: structure.sourceOid,
       latestHeadOid,
       referenceFingerprint: sourceAnchorFingerprint(structure.sourceOid, sourceAnchor),
+      resolvedAnchor: sourceAnchor,
       target: {
         sourceOid: latestHeadOid,
         path: sourceAnchor.path,
@@ -1946,6 +1945,56 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
     },
   ];
   structure.updatedAt = "2026-08-08T04:00:00.000Z";
+  changeSequence += 1;
+  return context.json({ ok: true, structure });
+});
+
+app.post("/api/fixture/structures/:structureId/source-lifecycle", async (context) => {
+  const structure = activeStructures.find(
+    (candidate) => candidate.id === context.req.param("structureId"),
+  );
+  if (!structure) {
+    return context.json(
+      { ok: false, error: { code: "NOT_FOUND", message: "missing structure" } },
+      404,
+    );
+  }
+  const input = await context.req.json();
+  if (input.nodeId && input.anchor) {
+    const node = structure.nodes.find((candidate) => candidate.id === input.nodeId);
+    if (!node) {
+      return context.json(
+        { ok: false, error: { code: "NOT_FOUND", message: "missing Structure node" } },
+        404,
+      );
+    }
+    const previousAnchor = node.anchor ? structuredClone(node.anchor) : null;
+    node.anchor = input.anchor;
+    if (input.reusePreviousAnchorOnNodeId) {
+      const reuseNode = structure.nodes.find(
+        (candidate) => candidate.id === input.reusePreviousAnchorOnNodeId,
+      );
+      if (reuseNode) reuseNode.anchor = previousAnchor;
+    }
+  }
+  if (input.edgeId && input.anchor) {
+    const edge = structure.edges.find((candidate) => candidate.id === input.edgeId);
+    const anchorIndex = Number(input.anchorIndex ?? 0);
+    if (!edge || !Number.isInteger(anchorIndex) || anchorIndex < 0 || !edge.anchors[anchorIndex]) {
+      return context.json(
+        { ok: false, error: { code: "NOT_FOUND", message: "missing Structure edge anchor" } },
+        404,
+      );
+    }
+    edge.anchors[anchorIndex] = input.anchor;
+  }
+  if (input.removeNodeId) {
+    structure.nodes = structure.nodes.filter((node) => node.id !== input.removeNodeId);
+    structure.edges = structure.edges.filter(
+      (edge) => edge.from !== input.removeNodeId && edge.to !== input.removeNodeId,
+    );
+  }
+  structure.updatedAt = new Date(Date.parse(structure.updatedAt) + 1_000).toISOString();
   changeSequence += 1;
   return context.json({ ok: true, structure });
 });

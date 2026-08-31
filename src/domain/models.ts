@@ -221,6 +221,9 @@ export interface StructureEdge {
   anchors: SourceAnchor[];
 }
 
+export type StructureSourceLocator =
+  { kind: "node"; nodeId: string } | { kind: "edge"; edgeId: string; anchorIndex: number };
+
 export interface Structure {
   id: string;
   ref: string;
@@ -281,6 +284,10 @@ export interface SourceReferenceResolution {
   target: SourceReferenceTarget;
   latestFile: SourceReferenceFileTarget | null;
   document: DocumentContent;
+}
+
+export interface StructureSourceResolution extends SourceReferenceResolution {
+  resolvedAnchor: SourceAnchor;
 }
 
 export interface WalkthroughDeleteCounts {
