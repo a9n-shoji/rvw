@@ -73,3 +73,75 @@ test("opens a repository-scale demo backed by committed Git objects", async ({ p
     page.getByRole("dialog", { name: "対象commitを選択" }).getByRole("option"),
   ).toHaveCount(6);
 });
+
+test("keeps the current source line anchored when whitespace changes are hidden", async ({
+  page,
+}) => {
+  await page.goto(`${demoBaseURL}/?pullRequestId=${pullRequestId}`);
+  await expect(
+    page.getByRole("heading", { name: "Demo: review rvw as a medium-sized repository" }),
+  ).toBeVisible();
+
+  await page.getByRole("textbox", { name: "ファイル名を検索" }).fill("CommentThread.tsx");
+  await page
+    .getByRole("button", { name: "src/web/components/CommentThread.tsx", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "レビュー範囲", exact: true })
+    .getByRole("button", { name: "変更", exact: true })
+    .click();
+
+  const leftPane = page.getByRole("region", { name: "左のコードペイン", exact: true });
+  const diff = leftPane.locator("diffs-container");
+  await expect(diff.locator("[data-diffs-header]")).toBeVisible();
+  const deepSourceLine = diff.locator('[data-line="760"]').last();
+  await expect(deepSourceLine).toHaveCount(1);
+  await deepSourceLine.evaluate((line) => line.scrollIntoView({ block: "center" }));
+
+  const viewportAnchor = async () =>
+    await leftPane.evaluate((pane) => {
+      const container = pane.querySelector<HTMLElement>("diffs-container");
+      const root = container?.shadowRoot;
+      if (!container || !root) return null;
+      const paneRect = pane.getBoundingClientRect();
+      const paneTop = paneRect.top;
+      const viewportTop = [...pane.querySelectorAll<HTMLElement>(".document-tabs-shell")]
+        .map((element) => element.getBoundingClientRect())
+        .filter((rect) => rect.bottom > paneTop && rect.top <= paneTop + 1)
+        .reduce((top, rect) => Math.max(top, rect.bottom), paneTop);
+      const hostRect = container.getBoundingClientRect();
+      const left = Math.max(hostRect.left, paneRect.left);
+      const right = Math.min(hostRect.right, paneRect.right);
+      const top = Math.max(hostRect.top, viewportTop);
+      const bottom = Math.min(hostRect.bottom, paneRect.bottom);
+      const sampleXs = [left + (right - left) * 0.25, left + (right - left) * 0.75];
+      for (let y = top + 1; y < bottom; y += 6) {
+        for (const x of sampleXs) {
+          const line = root.elementFromPoint(x, y)?.closest<HTMLElement>("[data-line]");
+          if (line?.dataset.line) {
+            return { line: line.dataset.line, topOffset: line.getBoundingClientRect().top - top };
+          }
+        }
+      }
+      return null;
+    });
+
+  const before = await viewportAnchor();
+  expect(before).not.toBeNull();
+  const changedLines = diff.locator('[data-line-type^="change-"]');
+  const changedLineCountBefore = await changedLines.count();
+
+  const actionsMenuButton = page.getByRole("button", { name: "その他の操作", exact: true });
+  await actionsMenuButton.click();
+  const hideWhitespaceMenuItem = page
+    .getByRole("menu")
+    .getByRole("menuitemcheckbox", { name: "Hide Whitespace", exact: true });
+  await hideWhitespaceMenuItem.click();
+  await expect(hideWhitespaceMenuItem).toHaveAttribute("aria-checked", "true");
+  await actionsMenuButton.click();
+  await expect.poll(async () => await changedLines.count()).toBeLessThan(changedLineCountBefore);
+  await expect.poll(async () => (await viewportAnchor())?.line ?? null).toBe(before!.line);
+  const after = await viewportAnchor();
+  expect(after).not.toBeNull();
+  expect(Math.abs(after!.topOffset - before!.topOffset)).toBeLessThanOrEqual(3);
+});

@@ -481,25 +481,6 @@ code {
   min-width: 0;
   flex: 1 1 0;
 }
-.review-scope-whitespace-checkbox {
-  display: flex;
-  height: 32px;
-  align-items: center;
-  padding: 0 4px;
-  cursor: pointer;
-}
-.review-scope-whitespace-checkbox:has(input:disabled) {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-.review-scope-whitespace-checkbox > input[type="checkbox"] {
-  width: 15px;
-  height: 15px;
-  flex: 0 0 15px;
-  margin: 0;
-  padding: 0;
-  accent-color: var(--accent);
-}
 .topbar-menu {
   position: relative;
   z-index: 20;
@@ -584,6 +565,18 @@ code {
 }
 .topbar-menu-popover .topbar-menu-danger {
   color: var(--danger);
+}
+.diff-whitespace-empty {
+  display: grid;
+  gap: 6px;
+  padding: 22px 16px 24px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.diff-whitespace-empty strong {
+  color: var(--text);
+  font-size: 13px;
 }
 .button--wide {
   width: 100%;

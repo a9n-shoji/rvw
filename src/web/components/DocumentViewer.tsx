@@ -1261,6 +1261,7 @@ export function DocumentViewer({
       diffFiles ? diffForRenderer(diffFiles.oldFile, diffFiles.newFile, hideWhitespace) : null,
     [diffFiles, hideWhitespace],
   );
+  const renderedDiffCacheKey = renderedDiff?.cacheKey ?? null;
   const repositoryImageRefs = useMemo(() => {
     if (!repositoryImageViewerActive || activeDocument.kind !== "repository-file") return null;
     if (effectiveDisplayMode === "full") {
@@ -1773,7 +1774,7 @@ export function DocumentViewer({
     return () => {
       pendingViewportAnchor.current = captureDiffViewportAnchor(diffSurfaceRef.current);
     };
-  }, [diffAnnotations, fileAnnotations]);
+  }, [diffAnnotations, fileAnnotations, renderedDiffCacheKey]);
   const navigationSelection: SelectedLineRange | null =
     navigationTarget && navigationTarget.line !== null && navigationTarget.endLine !== undefined
       ? {
@@ -2289,31 +2290,39 @@ export function DocumentViewer({
             <Unavailable document={fullQuery.data ?? null} fileCommentAction={fileCommentButton} />
           )
         ) : renderedDiff ? (
-          <FileDiff<ViewerAnnotation>
-            fileDiff={renderedDiff}
-            disableWorkerPool
-            lineAnnotations={diffAnnotations}
-            selectedLines={activeSelection}
-            renderAnnotation={annotationRenderer}
-            renderHeaderPrefix={(file) => <FileEntryIcon path={file.name} kind="file" />}
-            renderHeaderMetadata={() => headerMetadata}
-            options={{
-              stickyHeader: true,
-              diffStyle,
-              enableGutterUtility: true,
-              enableLineSelection: true,
-              lineHoverHighlight: "both",
-              onGutterUtilityClick: setSelectionPreview,
-              onLineSelectionChange: setSelectionPreview,
-              onLineSelectionEnd: handleLineSelectionEnd,
-              onLineSelectionStart: handleLineSelectionStart,
-              overflow: "scroll",
-              theme: { light: "github-light", dark: "github-dark" },
-              themeType: themePreference,
-              unsafeCSS: viewerUnsafeCss,
-              onPostRender: handleDiffPostRender,
-            }}
-          />
+          <>
+            <FileDiff<ViewerAnnotation>
+              fileDiff={renderedDiff}
+              disableWorkerPool
+              lineAnnotations={diffAnnotations}
+              selectedLines={activeSelection}
+              renderAnnotation={annotationRenderer}
+              renderHeaderPrefix={(file) => <FileEntryIcon path={file.name} kind="file" />}
+              renderHeaderMetadata={() => headerMetadata}
+              options={{
+                stickyHeader: true,
+                diffStyle,
+                enableGutterUtility: true,
+                enableLineSelection: true,
+                lineHoverHighlight: "both",
+                onGutterUtilityClick: setSelectionPreview,
+                onLineSelectionChange: setSelectionPreview,
+                onLineSelectionEnd: handleLineSelectionEnd,
+                onLineSelectionStart: handleLineSelectionStart,
+                overflow: "scroll",
+                theme: { light: "github-light", dark: "github-dark" },
+                themeType: themePreference,
+                unsafeCSS: viewerUnsafeCss,
+                onPostRender: handleDiffPostRender,
+              }}
+            />
+            {hideWhitespace && renderedDiff.hunks.length === 0 && (
+              <div className="diff-whitespace-empty" role="status">
+                <strong>空白差分をすべて非表示にしています。</strong>
+                <span>右上の「…」メニューで Hide Whitespace を解除できます。</span>
+              </div>
+            )}
+          </>
         ) : (
           <Unavailable
             document={diffQuery.data?.new ?? diffQuery.data?.old ?? null}

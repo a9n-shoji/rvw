@@ -455,13 +455,11 @@ function ReviewScopeBar({
   specialSelectionLabel,
   documentDisplayMode,
   diffStyle,
-  hideWhitespace,
   comparisonAvailable,
   diffViewAvailable,
   onCommitRangeChange,
   onDisplayModeChange,
   onDiffStyleChange,
-  onHideWhitespaceChange,
 }: {
   selectedOid: string;
   selectedStartOid: string;
@@ -471,13 +469,11 @@ function ReviewScopeBar({
   specialSelectionLabel: string;
   documentDisplayMode: DocumentDisplayMode;
   diffStyle: "unified" | "split";
-  hideWhitespace: boolean;
   comparisonAvailable: boolean;
   diffViewAvailable: boolean;
   onCommitRangeChange: (startOid: string, endOid: string) => void;
   onDisplayModeChange: (mode: DocumentDisplayMode) => void;
   onDiffStyleChange: (diffStyle: "unified" | "split") => void;
-  onHideWhitespaceChange: (hideWhitespace: boolean) => void;
 }) {
   return (
     <section className="review-scope-bar" aria-label="レビュー範囲">
@@ -539,18 +535,6 @@ function ReviewScopeBar({
             split
           </button>
         </div>
-      </div>
-      <div className="review-scope-control review-scope-whitespace">
-        <span id="hide-whitespace-label">Hide Whitespace</span>
-        <label className="review-scope-whitespace-checkbox">
-          <input
-            type="checkbox"
-            aria-labelledby="hide-whitespace-label"
-            checked={hideWhitespace}
-            disabled={!diffViewAvailable || documentDisplayMode !== "diff"}
-            onChange={(event) => onHideWhitespaceChange(event.target.checked)}
-          />
-        </label>
       </div>
     </section>
   );
@@ -2720,13 +2704,11 @@ export function PullRequestReviewScreen({
           }
           documentDisplayMode={documentDisplayMode}
           diffStyle={diffStyle}
-          hideWhitespace={hideWhitespace}
           comparisonAvailable={comparisonAvailable}
           diffViewAvailable={diffViewAvailable}
           onCommitRangeChange={selectCommitRange}
           onDisplayModeChange={setDocumentDisplayMode}
           onDiffStyleChange={setDiffStyle}
-          onHideWhitespaceChange={setHideWhitespace}
         />
         <div className="topbar-menu" ref={actionsMenuRef}>
           <button
@@ -2764,6 +2746,20 @@ export function PullRequestReviewScreen({
               >
                 GitHubと同期
               </button>
+              <div className="topbar-menu-section" role="group" aria-label="Diff設定">
+                <span className="topbar-menu-section-label">Diff設定</span>
+                <button
+                  role="menuitemcheckbox"
+                  aria-checked={hideWhitespace}
+                  disabled={!diffViewAvailable || documentDisplayMode !== "diff"}
+                  onClick={() => setHideWhitespace((hidden) => !hidden)}
+                >
+                  <span>Hide Whitespace</span>
+                  <span className="topbar-menu-check" aria-hidden="true">
+                    {hideWhitespace ? "✓" : ""}
+                  </span>
+                </button>
+              </div>
               <div className="topbar-menu-section" role="group" aria-label="通知">
                 <span className="topbar-menu-section-label">通知</span>
                 <button

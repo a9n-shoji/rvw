@@ -20,8 +20,12 @@ describe("file renderer language selection", () => {
     const oldFile = fileContentsForRenderer("fixture.ts", "  return   value;\n", "old");
     const newFile = fileContentsForRenderer("fixture.ts", " return value;  \n", "new");
 
-    expect(diffForRenderer(oldFile, newFile, false).hunks).toHaveLength(1);
-    expect(diffForRenderer(oldFile, newFile, true).hunks).toHaveLength(0);
+    const visibleWhitespace = diffForRenderer(oldFile, newFile, false);
+    const hiddenWhitespace = diffForRenderer(oldFile, newFile, true);
+
+    expect(visibleWhitespace.hunks).toHaveLength(1);
+    expect(hiddenWhitespace.hunks).toHaveLength(0);
+    expect(hiddenWhitespace.cacheKey).not.toBe(visibleWhitespace.cacheKey);
   });
 
   it("keeps original source text and line numbers when whitespace is hidden", () => {
