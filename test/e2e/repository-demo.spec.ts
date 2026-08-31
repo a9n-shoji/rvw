@@ -1,9 +1,16 @@
 import { expect, test } from "@playwright/test";
 
 const defaultPort = Number(process.env.RVW_E2E_PORT ?? 43117);
+const fixtureBaseURL = `http://127.0.0.1:${defaultPort}`;
 const demoPort = Number(process.env.RVW_DEMO_E2E_PORT ?? defaultPort + 1);
 const demoBaseURL = `http://127.0.0.1:${demoPort}`;
 const pullRequestId = "22222222-2222-4222-8222-222222222222";
+const fixturePullRequestId = "11111111-1111-4111-8111-111111111111";
+
+test.afterEach(async ({ request }) => {
+  const response = await request.post(`${fixtureBaseURL}/api/test/reset-sync-stage`, { data: {} });
+  expect(response.ok()).toBe(true);
+});
 
 test("opens a repository-scale demo backed by committed Git objects", async ({ page, request }) => {
   await page.goto(demoBaseURL);
@@ -76,16 +83,17 @@ test("opens a repository-scale demo backed by committed Git objects", async ({ p
 
 test("keeps the current source line anchored when whitespace changes are hidden", async ({
   page,
+  request,
 }) => {
-  await page.goto(`${demoBaseURL}/?pullRequestId=${pullRequestId}`);
-  await expect(
-    page.getByRole("heading", { name: "Demo: review rvw as a medium-sized repository" }),
-  ).toBeVisible();
+  const refreshResponse = await request.post(
+    `${fixtureBaseURL}/api/pull-requests/${fixturePullRequestId}/refresh`,
+    { data: {} },
+  );
+  expect(refreshResponse.ok()).toBe(true);
+  await page.goto(`${fixtureBaseURL}/?pullRequestId=${fixturePullRequestId}`);
 
-  await page.getByRole("textbox", { name: "ファイル名を検索" }).fill("CommentThread.tsx");
-  await page
-    .getByRole("button", { name: "src/web/components/CommentThread.tsx", exact: true })
-    .click();
+  await page.getByRole("textbox", { name: "ファイル名を検索" }).fill("viewport-anchor.ts");
+  await page.getByRole("button", { name: "src/viewport-anchor.ts", exact: true }).click();
   await page
     .getByRole("region", { name: "レビュー範囲", exact: true })
     .getByRole("button", { name: "変更", exact: true })
