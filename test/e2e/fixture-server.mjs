@@ -4,7 +4,7 @@ import path from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-reference.ts";
+import { sourceAnchorFingerprint } from "../../src/domain/walkthrough-reference.ts";
 import {
   walkthroughRepositoryPaths,
   walkthroughRepositorySources,
@@ -1840,7 +1840,7 @@ app.get("/api/pull-requests/:id/structures/:structureId/anchors/resolve", (conte
       outcome: "latest",
       anchorSourceOid: structure.sourceOid,
       latestHeadOid,
-      referenceFingerprint: walkthroughReferenceFingerprint(structure.sourceOid, sourceAnchor),
+      referenceFingerprint: sourceAnchorFingerprint(structure.sourceOid, sourceAnchor),
       target: {
         sourceOid: latestHeadOid,
         path: sourceAnchor.path,
@@ -2011,7 +2011,7 @@ app.get(
         outcome: "latest",
         anchorSourceOid: walkthrough.sourceOid,
         latestHeadOid,
-        referenceFingerprint: walkthroughReferenceFingerprint(walkthrough.sourceOid, reference),
+        referenceFingerprint: sourceAnchorFingerprint(walkthrough.sourceOid, reference),
         target: {
           sourceOid: latestHeadOid,
           path: reference.path,

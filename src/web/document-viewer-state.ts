@@ -1,6 +1,6 @@
 import { changedFilePath } from "../domain/changed-file.js";
-import type { ChangedFile, Structure, Walkthrough } from "../domain/models.js";
-import { walkthroughReferenceFingerprint } from "../domain/walkthrough-reference.js";
+import type { ChangedFile, SourceAnchor, Structure, Walkthrough } from "../domain/models.js";
+import { sourceAnchorFingerprint } from "../domain/walkthrough-reference.js";
 import type { ActiveDocument } from "./document-workspace.js";
 
 type DocumentDisplayMode = "full" | "diff";
@@ -34,11 +34,27 @@ export interface DerivedDocumentViewerState {
 
 export interface ReferenceStaleness {
   headChanged: boolean;
-  walkthroughChanged: boolean;
+  originChanged: boolean;
+  originKind: "walkthrough" | "structure";
 }
 
 function shortOid(oid: string): string {
   return oid.slice(0, 8);
+}
+
+function sameSourceAnchor(left: SourceAnchor, right: SourceAnchor): boolean {
+  return (
+    left.path === right.path && left.startLine === right.startLine && left.endLine === right.endLine
+  );
+}
+
+function structureHasAnchor(structure: Structure, anchor: SourceAnchor): boolean {
+  return (
+    structure.nodes.some((node) => node.anchor && sameSourceAnchor(node.anchor, anchor)) ||
+    structure.edges.some((edge) =>
+      edge.anchors.some((candidate) => sameSourceAnchor(candidate, anchor)),
+    )
+  );
 }
 
 export function deriveDocumentViewerState(
@@ -56,23 +72,39 @@ export function deriveDocumentViewerState(
     document.referenceContext !== undefined
       ? document.referenceContext
       : null;
-  const currentWalkthrough = referenceContext
-    ? context.walkthroughDetails.get(referenceContext.walkthroughId)
-    : undefined;
-  const currentReference = currentWalkthrough?.references.find(
-    (candidate) => candidate.id === referenceContext?.referenceId,
-  );
+  const referenceOrigin = referenceContext?.origin;
+  const currentWalkthrough =
+    referenceOrigin?.kind === "walkthrough"
+      ? context.walkthroughDetails.get(referenceOrigin.walkthroughId)
+      : undefined;
+  const currentReference =
+    referenceOrigin?.kind === "walkthrough"
+      ? currentWalkthrough?.references.find(
+          (candidate) => candidate.id === referenceOrigin.referenceId,
+        )
+      : undefined;
+  const currentStructure =
+    referenceOrigin?.kind === "structure"
+      ? context.structureDetails?.get(referenceOrigin.structureId)
+      : undefined;
   const headChanged = referenceContext?.latestHeadOid !== context.latestHeadOid;
-  const walkthroughChanged = Boolean(
+  const originChanged = Boolean(
     referenceContext &&
-    currentWalkthrough &&
-    (!currentReference ||
-      walkthroughReferenceFingerprint(currentWalkthrough.sourceOid, currentReference) !==
-        referenceContext.referenceFingerprint),
+    (referenceOrigin?.kind === "walkthrough"
+      ? currentWalkthrough &&
+        (!currentReference ||
+          sourceAnchorFingerprint(currentWalkthrough.sourceOid, currentReference) !==
+            referenceContext.referenceFingerprint)
+      : referenceOrigin?.kind === "structure"
+        ? currentStructure &&
+          (!structureHasAnchor(currentStructure, referenceOrigin.anchor) ||
+            sourceAnchorFingerprint(currentStructure.sourceOid, referenceOrigin.anchor) !==
+              referenceContext.referenceFingerprint)
+        : false),
   );
   const referenceStaleness =
-    referenceContext && (headChanged || walkthroughChanged)
-      ? { headChanged, walkthroughChanged }
+    referenceContext && referenceOrigin && (headChanged || originChanged)
+      ? { headChanged, originChanged, originKind: referenceOrigin.kind }
       : null;
   const referenceIsStale = referenceStaleness !== null;
   const usesSelectedRange =

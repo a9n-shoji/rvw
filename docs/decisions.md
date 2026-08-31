@@ -2250,6 +2250,9 @@ the npm dist-tag, rather than an unpublished release branch, distinguishes stabi
 
 ## 2026-08-31: Keep Structure Node cards compact and disclose complete content on demand
 
+Status: The details-overlay choice is superseded by “Keep Structure Nodes fixed and scroll overflow
+in place.” The `kind` deprecation in this decision remains current.
+
 ### Problem
 
 Fixed-size Structure Nodes preserve a stable graph layout, but long labels and descriptions were
@@ -2275,6 +2278,8 @@ return the field for protocol and persisted-data compatibility.
   removing it can be considered with a future protocol-breaking change.
 
 ## 2026-08-31: Expand Structure Nodes in place for complete-content reading
+
+Status: Superseded by “Keep Structure Nodes fixed and scroll overflow in place.”
 
 ### Problem
 
@@ -2312,7 +2317,10 @@ card.
 Remove Node expansion and its action. Nodes keep their fixed graph dimensions at all times, render
 the complete title and description, and scroll their own content only when it exceeds the card. The
 source action stays fixed at the upper right while the text content scrolls beneath it. Wheel input
-over an overflowing Node scrolls that Node instead of panning the canvas.
+over an overflowing Node scrolls that Node only for an unmodified, primarily vertical gesture while
+the Node can still scroll in that direction. Horizontal wheel input, Ctrl / Meta zoom, and outward
+wheel input at the Node's vertical boundaries continue to control the canvas. Canvas wheel pan and
+trackpad zoom use twice the prior sensitivity.
 
 ### Trade-offs
 
@@ -2338,11 +2346,14 @@ rules used by Walkthrough references. The service verifies that the requested an
 current Structure before resolving it. A successful latest resolution uses the current global
 comparison when its destination is the selected commit (including PR-wide review); a historical
 global range opens the latest exact file. An uncertain mapping falls back to the Structure's exact
-source commit and reports that decision without changing the global review controls.
+source commit and reports that decision without changing the global review controls. Structure and
+Walkthrough carry the same source-reference context into the code tab: fallback reason, anchor SHA,
+latest-file action, resolving HEAD, and fingerprint remain available after navigation. A later HEAD
+or source-anchor change marks that context stale and offers explicit re-resolution.
 
 ### Trade-offs
 
 - Structure and Walkthrough evidence now agree on what “current source” means.
 - Resolution remains click-time and ephemeral; no resolved OID or line is stored in Structure data.
-- Structure fallback does not add a second latest-file action in this iteration; it preserves the
-  verified anchor instead of guessing when mapping is uncertain.
+- The latest-file action deliberately opens only the known latest file without claiming a mapped line;
+  the fallback view continues to preserve the verified anchor.

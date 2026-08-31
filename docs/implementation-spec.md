@@ -642,10 +642,16 @@ actionを選んだ時だけ、Structureの`sourceOid + path + line range`から�
 変更されていない一意なrangeまたはfile-level anchorは最新commitへ開き、mapping不能時はStructureのexact
 `sourceOid`へ保守的にfallbackする。PR全体または最新commitを選択中なら、latest解決したfileは現在のglobal
 比較範囲で表示する。historical rangeではlatestのexact全文、source fallbackではanchor commitを表示する。
+Structureから開いたcode tabもsource-anchor共通contextとして解決結果、anchor時点、解決時HEAD、fingerprint、
+利用可能な最新fileを保持する。fallbackはcode tab上で理由とanchorのshort SHA、最新file actionを表示し、
+HEADまたはStructure anchorの更新後は旧／新SHAと再解決actionを表示する。再解決後もglobal commit rangeを
+変更しない。
 `Cmd` / `Ctrl`+clickは右ペインへ開き、global commit range、表示mode、Structure focusを変更しない。
 
 探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。trackpadの通常wheelは
-pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱う。layoutはtopology、
+pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱い、pan / zoom感度は従来値の
+2倍とする。overflowするNode上では、修飾キーなしの縦wheelをその方向へNode内scrollできる間だけNodeへ渡す。
+横wheel、Ctrl / Meta付きwheel、Node内scrollの上端／下端から外向きのwheelはcanvasへ渡す。layoutはtopology、
 factualなEdge direction、`originNodeId` entrypoint、stable IDを入力とするdeterministicなbehavior projectionと
 する。entrypointからdirected relationで到達できるunambiguousなEdge pairを左から右のrankへ置き、分岐は
 vertical whitespaceとtopology由来の順序で並べる。このrankは処理順や推奨読解順のproducer claimではなく、
@@ -1663,8 +1669,10 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
     Comments sidebarのthreadをactivateできる。Pane Findはiframe本文を検索・highlight・前後移動できる
 21. 同じPRのStructureを2件以上一覧し、片方を開いてもcodeを自動表示せず、1/2-hop / All、focus、
     全relation表示、Relation選択、pan / zoom / fit / drag / layout resetを操作できる
-22. StructureのNode / Edge anchorを通常clickで左、modifier-clickで右へexact sourceとして開き、global
-    commit選択を変えず、Structureへ戻った時とsame-subject poll update後にstable-ID位置とviewportを維持する
+22. StructureのNode / Edge anchorを通常clickで左、modifier-clickで右へsource-anchor共通context付きで開く。
+    latest成功、source fallback、latest file action、historical rangeのlatest exact全文、HEAD更新後のstale表示と
+    再解決を確認し、global commit選択を変えない。Structureへ戻った時とsame-subject poll update後にstable-ID位置と
+    viewportを維持する
 23. focusなしとAllで全Node / Edgeが表示され、同じStructureを左右paneへ開いてもsessionとDOM IDが競合しない
 
 CLI contract:

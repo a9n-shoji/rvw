@@ -35,8 +35,8 @@ import type {
   Walkthrough,
   WalkthroughDeleteCounts,
   WalkthroughReference,
-  WalkthroughReferenceFileTarget,
-  WalkthroughReferenceResolution,
+  SourceReferenceFileTarget,
+  SourceReferenceResolution,
   WalkthroughSummary,
 } from "../domain/models.js";
 import { parseCommentUri } from "../domain/comment-uri.js";
@@ -47,7 +47,7 @@ import {
 import { parseWalkthroughUri } from "../domain/walkthrough-uri.js";
 import { parseStructureUri } from "../domain/structure-uri.js";
 import { mapUnchangedLineRange, placeMutableDocumentComment } from "../domain/line-mapping.js";
-import { walkthroughReferenceFingerprint } from "../domain/walkthrough-reference.js";
+import { sourceAnchorFingerprint } from "../domain/walkthrough-reference.js";
 import { buildPullRequestMarkdown, hashDocument, selectedLineText } from "../domain/pr-markdown.js";
 import { createSourceExcerpt, type SourceExcerpt } from "../domain/source-excerpt.js";
 import {
@@ -2033,11 +2033,11 @@ export class RvwService {
     return walkthrough;
   }
 
-  private async walkthroughReferenceFallbackTarget(
+  private async sourceReferenceFallbackTarget(
     pullRequest: PullRequest,
     sourceOid: string,
     filePath: string,
-  ): Promise<WalkthroughReferenceFileTarget> {
+  ): Promise<SourceReferenceFileTarget> {
     const diffBaseOid = await this.git.firstParent(pullRequest.localRepositoryPath, sourceOid);
     if (!diffBaseOid) {
       return {
@@ -2066,7 +2066,7 @@ export class RvwService {
     pullRequestId: string,
     walkthroughId: string,
     referenceId: string,
-  ): Promise<WalkthroughReferenceResolution> {
+  ): Promise<SourceReferenceResolution> {
     const pullRequest = this.getPullRequest(pullRequestId);
     const walkthrough = this.getWalkthrough(pullRequestId, walkthroughId);
     const reference = walkthrough.references.find((candidate) => candidate.id === referenceId);
@@ -2075,7 +2075,7 @@ export class RvwService {
         status: 404,
       });
     }
-    const referenceFingerprint = walkthroughReferenceFingerprint(walkthrough.sourceOid, reference);
+    const referenceFingerprint = sourceAnchorFingerprint(walkthrough.sourceOid, reference);
     return await this.resolveSourceAnchor(
       pullRequest,
       walkthrough.sourceOid,
@@ -2088,7 +2088,7 @@ export class RvwService {
     pullRequestId: string,
     structureId: string,
     anchor: SourceAnchor,
-  ): Promise<WalkthroughReferenceResolution> {
+  ): Promise<SourceReferenceResolution> {
     const pullRequest = this.getPullRequest(pullRequestId);
     const structure = this.getStructure(pullRequestId, structureId);
     const anchors = [
@@ -2110,7 +2110,7 @@ export class RvwService {
       pullRequest,
       structure.sourceOid,
       anchor,
-      walkthroughReferenceFingerprint(structure.sourceOid, anchor),
+      sourceAnchorFingerprint(structure.sourceOid, anchor),
     );
   }
 
@@ -2119,7 +2119,7 @@ export class RvwService {
     sourceOid: string,
     reference: SourceAnchor,
     referenceFingerprint: string,
-  ): Promise<WalkthroughReferenceResolution> {
+  ): Promise<SourceReferenceResolution> {
     const sourceDocument = await this.getDocument({
       kind: "repository-file",
       pullRequestId: pullRequest.id,
@@ -2210,7 +2210,7 @@ export class RvwService {
       };
     }
 
-    const targetFile = await this.walkthroughReferenceFallbackTarget(
+    const targetFile = await this.sourceReferenceFallbackTarget(
       pullRequest,
       sourceOid,
       reference.path,

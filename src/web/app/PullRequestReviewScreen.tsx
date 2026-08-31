@@ -23,12 +23,12 @@ import type {
   ReviewComment,
   SearchResult,
   SourceAnchor,
+  SourceReferenceFileTarget,
+  SourceReferenceResolution,
   Structure,
   StructureSummary,
   Walkthrough,
   WalkthroughReference,
-  WalkthroughReferenceFileTarget,
-  WalkthroughReferenceResolution,
   WalkthroughSummary,
 } from "../../domain/models.js";
 import {
@@ -1651,8 +1651,9 @@ export function PullRequestReviewScreen({
         openDocuments.flatMap((document) =>
           document.kind === "walkthrough"
             ? [document.id]
-            : document.kind === "repository-file" && document.referenceContext
-              ? [document.referenceContext.walkthroughId]
+            : document.kind === "repository-file" &&
+                document.referenceContext?.origin.kind === "walkthrough"
+              ? [document.referenceContext.origin.walkthroughId]
               : [],
         ),
       ),
@@ -1680,7 +1681,14 @@ export function PullRequestReviewScreen({
   const openStructureIds = useMemo(
     () => [
       ...new Set(
-        openDocuments.flatMap((document) => (document.kind === "structure" ? [document.id] : [])),
+        openDocuments.flatMap((document) =>
+          document.kind === "structure"
+            ? [document.id]
+            : document.kind === "repository-file" &&
+                document.referenceContext?.origin.kind === "structure"
+              ? [document.referenceContext.origin.structureId]
+              : [],
+        ),
       ),
     ],
     [openDocuments],
@@ -2082,7 +2090,7 @@ export function PullRequestReviewScreen({
     [navigateToDocument, queryClient],
   );
   const fetchWalkthroughReferenceResolution = useCallback(
-    async (walkthroughId: string, referenceId: string): Promise<WalkthroughReferenceResolution> => {
+    async (walkthroughId: string, referenceId: string): Promise<SourceReferenceResolution> => {
       if (!pullRequestId) throw new Error("Pull Requestが選択されていません。");
       const { resolution } = await api<WalkthroughReferenceResolutionResponse>(
         `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}/references/${encodeURIComponent(referenceId)}/resolve`,
@@ -2124,8 +2132,7 @@ export function PullRequestReviewScreen({
           comparisonPolicy: "reference-target",
           referenceContext: {
             outcome: resolution.outcome,
-            walkthroughId,
-            referenceId,
+            origin: { kind: "walkthrough", walkthroughId, referenceId },
             anchorSourceOid: resolution.anchorSourceOid,
             latestHeadOid: resolution.latestHeadOid,
             referenceFingerprint: resolution.referenceFingerprint,
@@ -2211,7 +2218,7 @@ export function PullRequestReviewScreen({
     [openCommentCodeReference],
   );
   const fetchStructureAnchorResolution = useCallback(
-    async (structureId: string, anchor: SourceAnchor): Promise<WalkthroughReferenceResolution> => {
+    async (structureId: string, anchor: SourceAnchor): Promise<SourceReferenceResolution> => {
       if (!pullRequestId) throw new Error("Pull Requestが選択されていません。");
       const search = new URLSearchParams({ path: anchor.path });
       if (anchor.startLine !== null && anchor.endLine !== null) {
@@ -2225,10 +2232,9 @@ export function PullRequestReviewScreen({
     },
     [pullRequestId],
   );
-  const openStructureAnchor = useCallback(
-    async (structure: Structure, anchor: SourceAnchor, openInRightPane: boolean) => {
+  const resolveStructureAnchor = useCallback(
+    async (structureId: string, anchor: SourceAnchor, targetPane: DocumentPaneId) => {
       if (!pullRequestId) return Promise.resolve(`参照先を開けません · ${anchor.path}`);
-      const targetPane: DocumentPaneId = openInRightPane ? "right" : "left";
       codeReferenceRequestSequence.current[targetPane] += 1;
       const requestSequence = codeReferenceRequestSequence.current[targetPane];
       const targetNavigationRevision = documentWorkspaceRef.current.navigationRevision[targetPane];
@@ -2236,7 +2242,7 @@ export function PullRequestReviewScreen({
         requestSequence === codeReferenceRequestSequence.current[targetPane] &&
         documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
       try {
-        const resolution = await fetchStructureAnchorResolution(structure.id, anchor);
+        const resolution = await fetchStructureAnchorResolution(structureId, anchor);
         if (!requestIsCurrent()) return null;
         if (resolution.document.availability !== "available") {
           return resolution.document.availability === "missing"
@@ -2251,7 +2257,17 @@ export function PullRequestReviewScreen({
           oldPath: target.oldPath,
           newPath: target.newPath,
           sourceOid: target.sourceOid,
-          comparisonPolicy: target.sourceOid === selectedOid ? "selected-range" : "exact-source",
+          comparisonPolicy: "reference-target",
+          referenceContext: {
+            outcome: resolution.outcome,
+            origin: { kind: "structure", structureId, anchor },
+            anchorSourceOid: resolution.anchorSourceOid,
+            latestHeadOid: resolution.latestHeadOid,
+            referenceFingerprint: resolution.referenceFingerprint,
+            diffBaseOid: target.diffBaseOid,
+            hasDiff: target.hasDiff,
+            latestFile: resolution.latestFile,
+          },
         };
         const activeTarget = documentWorkspaceRef.current.active[targetPane];
         navigateToDocument(
@@ -2264,9 +2280,7 @@ export function PullRequestReviewScreen({
           },
           !activeTarget || documentTabKey(activeTarget) !== documentTabKey(document),
         );
-        return resolution.outcome === "source-fallback"
-          ? `最新コード上の対応位置を確実に特定できないため、参照時点 ${resolution.anchorSourceOid.slice(0, 8)} を開きました。`
-          : null;
+        return null;
       } catch (error) {
         if (!requestIsCurrent()) return null;
         return error instanceof ApiError &&
@@ -2275,10 +2289,15 @@ export function PullRequestReviewScreen({
           : `参照先を開けません · ${anchor.path}`;
       }
     },
-    [fetchStructureAnchorResolution, navigateToDocument, pullRequestId, queryClient, selectedOid],
+    [fetchStructureAnchorResolution, navigateToDocument, pullRequestId, queryClient],
+  );
+  const openStructureAnchor = useCallback(
+    (structure: Structure, anchor: SourceAnchor, openInRightPane: boolean) =>
+      resolveStructureAnchor(structure.id, anchor, openInRightPane ? "right" : "left"),
+    [resolveStructureAnchor],
   );
   const openLatestReferenceFile = useCallback(
-    (target: WalkthroughReferenceFileTarget, targetPane: DocumentPaneId): void => {
+    (target: SourceReferenceFileTarget, targetPane: DocumentPaneId): void => {
       const document: ActiveDocument = {
         kind: "repository-file",
         path: target.path,
@@ -2297,19 +2316,21 @@ export function PullRequestReviewScreen({
     },
     [navigateToDocument, selectedOid],
   );
-  const reresolveWalkthroughReference = useCallback(
+  const reresolveSourceReference = useCallback(
     (
       context: ReferenceDocumentContext,
       referencePath: string,
       targetPane: DocumentPaneId,
     ): Promise<string | null> =>
-      resolveWalkthroughReference(
-        context.walkthroughId,
-        context.referenceId,
-        referencePath,
-        targetPane,
-      ),
-    [resolveWalkthroughReference],
+      context.origin.kind === "walkthrough"
+        ? resolveWalkthroughReference(
+            context.origin.walkthroughId,
+            context.origin.referenceId,
+            referencePath,
+            targetPane,
+          )
+        : resolveStructureAnchor(context.origin.structureId, context.origin.anchor, targetPane),
+    [resolveStructureAnchor, resolveWalkthroughReference],
   );
 
   if (pullRequestQuery.isLoading) {
@@ -2571,8 +2592,8 @@ export function PullRequestReviewScreen({
                 onOpenCodeReference={openCommentCodeReferenceFromInteraction}
                 onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
                 onOpenLatestReferenceFile={(target) => openLatestReferenceFile(target, paneId)}
-                onReresolveWalkthroughReference={(context) =>
-                  reresolveWalkthroughReference(
+                onReresolveSourceReference={(context) =>
+                  reresolveSourceReference(
                     context,
                     paneViewerDocument.kind === "repository-file"
                       ? paneViewerDocument.path

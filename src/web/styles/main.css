@@ -4857,6 +4857,8 @@ diffs-container > [slot="header-metadata"] {
 
 .structure-node-description {
   display: block;
+  width: 100%;
+  min-width: 0;
   overflow: visible;
   color: var(--muted);
   font-size: 9px;

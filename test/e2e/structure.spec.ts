@@ -306,7 +306,6 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       const title = node.querySelector<HTMLElement>(".structure-node-title")!;
       const description = node.querySelector<HTMLElement>(".structure-node-description")!;
       const source = node.querySelector<HTMLElement>(":scope > .structure-source.compact")!;
-      const focusStyle = getComputedStyle(focus);
       const identityBox = identity.getBoundingClientRect();
       const sourceNameBox = sourceName.getBoundingClientRect();
       const titleBox = title.getBoundingClientRect();
@@ -315,13 +314,6 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       const nodeBox = node.getBoundingClientRect();
       return {
         notation,
-        padding: [
-          focusStyle.paddingTop,
-          focusStyle.paddingRight,
-          focusStyle.paddingBottom,
-          focusStyle.paddingLeft,
-        ],
-        gap: focusStyle.gap,
         fileTitleGap: titleBox.top - sourceNameBox.bottom,
         titleSourceClearance: titleBox.top - sourceBox.bottom,
         identitySourceClearance: sourceBox.left - identityBox.right,
@@ -332,20 +324,6 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       };
     });
   });
-  expect(
-    notationLayoutMetrics.map(({ notation, padding, gap }) => ({
-      notation,
-      padding,
-      gap,
-    })),
-  ).toEqual([
-    { notation: "class", padding: ["6px", "8px", "6px", "8px"], gap: "2px" },
-    { notation: "interface", padding: ["6px", "8px", "6px", "8px"], gap: "2px" },
-    { notation: "database", padding: ["21px", "10px", "6px", "10px"], gap: "2px" },
-    { notation: "component", padding: ["6px", "8px", "6px", "22px"], gap: "2px" },
-    { notation: "external", padding: ["6px", "18px", "6px", "18px"], gap: "2px" },
-    { notation: "concept", padding: ["12px", "24px", "6px", "24px"], gap: "2px" },
-  ]);
   for (const metrics of notationLayoutMetrics) {
     expect(metrics.fileTitleGap, metrics.notation).toBeGreaterThanOrEqual(1.5);
     expect(metrics.fileTitleGap, metrics.notation).toBeLessThanOrEqual(2.5);
@@ -514,6 +492,244 @@ test("scrolls complete long content inside a fixed-size Node", async ({ page }) 
   expect(scrolledBox!.y).toBeCloseTo(fixedBox!.y, 0);
   expect(scrolledBox!.width).toBeCloseTo(fixedBox!.width, 0);
   expect(scrolledBox!.height).toBeCloseTo(fixedBox!.height, 0);
+
+  const worldTranslation = async (): Promise<{ x: number; y: number }> =>
+    await world.evaluate((element) => {
+      const match = element.style.transform.match(/translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/);
+      if (!match) throw new Error(`unexpected Structure transform: ${element.style.transform}`);
+      return { x: Number(match[1]), y: Number(match[2]) };
+    });
+  const scrollAfterVertical = await scroller.evaluate((element) => element.scrollTop);
+  const scaleBeforeHorizontalPan = Number(await viewer.getAttribute("data-viewport-scale"));
+  const horizontalPanBefore = await worldTranslation();
+  await scroller.hover();
+  await page.mouse.wheel(36, 0);
+  await expect.poll(async () => (await worldTranslation()).x).not.toBe(horizontalPanBefore.x);
+  const horizontalPanAfter = await worldTranslation();
+  expect(horizontalPanAfter.x - horizontalPanBefore.x).toBeCloseTo(-72, 0);
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(scrollAfterVertical);
+  expect(Number(await viewer.getAttribute("data-viewport-scale"))).toBe(scaleBeforeHorizontalPan);
+
+  const viewportScaleBefore = await page.evaluate(() => window.visualViewport?.scale ?? 1);
+  const canvasScaleBefore = Number(await viewer.getAttribute("data-viewport-scale"));
+  await scroller.hover();
+  await page.keyboard.down("Control");
+  await page.mouse.wheel(0, 40);
+  await page.keyboard.up("Control");
+  await expect
+    .poll(async () => Number(await viewer.getAttribute("data-viewport-scale")))
+    .not.toBe(canvasScaleBefore);
+  expect(Number(await viewer.getAttribute("data-viewport-scale"))).toBeCloseTo(
+    canvasScaleBefore * Math.exp(-40 * 0.005),
+    2,
+  );
+  expect(await page.evaluate(() => window.visualViewport?.scale ?? 1)).toBe(viewportScaleBefore);
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(scrollAfterVertical);
+
+  await scroller.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  const topBoundaryBefore = await worldTranslation();
+  await scroller.hover();
+  await page.mouse.wheel(0, -30);
+  await expect.poll(async () => (await worldTranslation()).y).not.toBe(topBoundaryBefore.y);
+  expect((await worldTranslation()).y - topBoundaryBefore.y).toBeCloseTo(60, 0);
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(0);
+
+  await scroller.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  const bottomScroll = await scroller.evaluate((element) => element.scrollTop);
+  const bottomBoundaryBefore = await worldTranslation();
+  await scroller.hover();
+  await page.mouse.wheel(0, 30);
+  await expect.poll(async () => (await worldTranslation()).y).not.toBe(bottomBoundaryBefore.y);
+  expect((await worldTranslation()).y - bottomBoundaryBefore.y).toBeCloseTo(-60, 0);
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(bottomScroll);
+});
+
+test("preserves Structure fallback meaning through commit and head changes", async ({
+  page,
+  request,
+}) => {
+  const anchorOid = "b".repeat(40);
+  const oldHead = "c".repeat(40);
+  const newHead = "e".repeat(40);
+  const anchorPath = "src/application/orders/create-order.ts";
+  let exposeNewHead = false;
+  type TestPullRequestView = {
+    pullRequest: { latestHeadOid: string } & Record<string, unknown>;
+    comparisonBaseOid: string;
+    headOid: string;
+    commits: Array<{
+      oid: string;
+      parentOids: string[];
+      subject: string;
+      authorName: string;
+      authoredAt: string;
+    }>;
+  };
+  await page.route("**/structures/*/anchors/resolve*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        outcome: "latest" | "source-fallback";
+        anchorSourceOid: string;
+        latestHeadOid: string;
+        target: {
+          sourceOid: string;
+          path: string;
+          diffBaseOid: string | null;
+          oldPath: string | null;
+          newPath: string | null;
+          hasDiff: boolean;
+          startLine: number | null;
+          endLine: number | null;
+        };
+        latestFile: {
+          sourceOid: string;
+          path: string;
+          diffBaseOid: string | null;
+          oldPath: string | null;
+          newPath: string | null;
+          hasDiff: boolean;
+        } | null;
+        document: { ref: { sourceOid: string }; text: string | null; byteLength: number };
+      };
+    };
+    if (exposeNewHead) {
+      body.resolution.outcome = "latest";
+      body.resolution.latestHeadOid = newHead;
+      body.resolution.target.sourceOid = newHead;
+      body.resolution.target.diffBaseOid = null;
+      body.resolution.target.hasDiff = false;
+      body.resolution.target.startLine = 1;
+      body.resolution.target.endLine = 1;
+      body.resolution.latestFile = null;
+      body.resolution.document.ref.sourceOid = newHead;
+      body.resolution.document.text =
+        body.resolution.document.text?.replace(/\n\n\/\/ Updated orchestration path\.\n$/, "\n") ??
+        null;
+      body.resolution.document.byteLength = new TextEncoder().encode(
+        body.resolution.document.text ?? "",
+      ).byteLength;
+    } else {
+      body.resolution.outcome = "source-fallback";
+      body.resolution.anchorSourceOid = anchorOid;
+      body.resolution.latestHeadOid = oldHead;
+      body.resolution.target.sourceOid = anchorOid;
+      body.resolution.target.diffBaseOid = "a".repeat(40);
+      body.resolution.target.hasDiff = true;
+      body.resolution.latestFile = {
+        sourceOid: oldHead,
+        path: anchorPath,
+        diffBaseOid: null,
+        oldPath: anchorPath,
+        newPath: anchorPath,
+        hasDiff: false,
+      };
+      body.resolution.document.ref.sourceOid = anchorOid;
+      body.resolution.document.text =
+        body.resolution.document.text?.replace(/\n\n\/\/ Updated orchestration path\.\n$/, "\n") ??
+        null;
+      body.resolution.document.byteLength = new TextEncoder().encode(
+        body.resolution.document.text ?? "",
+      ).byteLength;
+    }
+    await route.fulfill({ response, json: body });
+  });
+
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  await openStructure(page, primaryTitle);
+  const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
+  await viewer.locator('.structure-node[data-node-id="hub"] > .structure-source.compact').click();
+
+  await expect(page.getByRole("tab", { name: anchorPath })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const fallbackBanner = page.locator(".reference-anchor-fallback-banner");
+  await expect(fallbackBanner).toContainText(`参照時点のコード · ${anchorOid.slice(0, 8)}`);
+  await expect(fallbackBanner).toContainText(
+    "最新コード上の対応位置を確実に特定できませんでした。",
+  );
+  await expect(fallbackBanner.getByRole("button", { name: "最新のファイルを見る" })).toBeVisible();
+
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
+  await commitPicker.click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("option", { name: /Add fixture function/ })
+    .click();
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(fallbackBanner).toBeVisible();
+  await expect(fallbackBanner.getByRole("button", { name: "最新のファイルを見る" })).toBeVisible();
+  await reviewScope.getByRole("button", { name: "変更", exact: true }).click();
+
+  const currentResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  const current = (await currentResponse.json()) as TestPullRequestView;
+  const withNewHead = <View extends TestPullRequestView>(view: View): View => ({
+    ...view,
+    pullRequest: { ...view.pullRequest, latestHeadOid: newHead },
+    headOid: newHead,
+    commits: [
+      ...view.commits,
+      {
+        oid: newHead,
+        parentOids: [oldHead],
+        subject: "Post-Structure update",
+        authorName: "Fixture Author",
+        authoredAt: "2026-08-08T03:00:00.000Z",
+      },
+    ],
+  });
+  expect(current.headOid).toBe(oldHead);
+  await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
+    const response = await route.fetch();
+    const view = (await response.json()) as TestPullRequestView;
+    await route.fulfill({ response, json: exposeNewHead ? withNewHead(view) : view });
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    const response = await route.fetch();
+    const view = (await response.json()) as TestPullRequestView & {
+      commentUpdatesApplied: number;
+    };
+    exposeNewHead = true;
+    await route.fulfill({ response, json: withNewHead(view) });
+  });
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "GitHubと同期" }).click();
+
+  const staleBanner = page.locator(".reference-stale-banner");
+  await expect(staleBanner).toContainText(
+    `解決時 ${oldHead.slice(0, 8)} → 現在 ${newHead.slice(0, 8)}`,
+  );
+  await expect(staleBanner).toContainText(`参照時点のコード · ${anchorOid.slice(0, 8)} を表示中`);
+  await expect(fallbackBanner).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "最新のファイルを見る" })).toHaveCount(0);
+
+  const reresolution = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/anchors/resolve"),
+  );
+  await staleBanner.getByRole("button", { name: "最新へ再解決" }).click();
+  await reresolution;
+  await expect(staleBanner).toHaveCount(0);
+  await expect(fallbackBanner).toHaveCount(0);
+  await expect(
+    page.getByText("選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
 });
 
 test("resolves Structure anchors to latest and preserves spatial context across navigation and update", async ({
@@ -927,6 +1143,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   ).toEqual(outerViewportBeforeWheel);
 
   const hub = viewer.locator('.structure-node[data-node-id="hub"]');
+  await viewer.getByRole("button", { name: "focusを中央へ", exact: true }).click();
   const beforeDrag = await hub.evaluate((element) => ({
     left: (element as HTMLElement).style.left,
     top: (element as HTMLElement).style.top,

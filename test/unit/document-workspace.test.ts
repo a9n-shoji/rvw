@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { currentCommitDocument, type ActiveDocument } from "../../src/web/document-workspace.js";
 
 describe("document workspace commit rebinding", () => {
-  it("keeps a resolved Walkthrough reference pinned while ordinary files follow selection", () => {
+  it("keeps a resolved source reference pinned while ordinary files follow selection", () => {
     const reference: ActiveDocument = {
       kind: "repository-file",
       path: "src/reference.ts",
@@ -10,8 +10,11 @@ describe("document workspace commit rebinding", () => {
       comparisonPolicy: "reference-target",
       referenceContext: {
         outcome: "latest",
-        walkthroughId: "walkthrough",
-        referenceId: "reference",
+        origin: {
+          kind: "walkthrough",
+          walkthroughId: "walkthrough",
+          referenceId: "reference",
+        },
         anchorSourceOid: "a".repeat(40),
         latestHeadOid: "c".repeat(40),
         referenceFingerprint: "fingerprint",

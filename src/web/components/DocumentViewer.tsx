@@ -36,7 +36,7 @@ import type {
   DocumentContent,
   DocumentRef,
   ReviewComment,
-  WalkthroughReferenceFileTarget,
+  SourceReferenceFileTarget,
 } from "../../domain/models.js";
 import { isSupportedImagePath } from "../../shared/image-assets.js";
 import {
@@ -977,7 +977,7 @@ export function DocumentViewer({
   onOpenCodeReference,
   onOpenRepositoryLink,
   onOpenLatestReferenceFile,
-  onReresolveWalkthroughReference,
+  onReresolveSourceReference,
 }: {
   pullRequestId: string;
   paneId: DocumentPaneId;
@@ -1003,8 +1003,8 @@ export function DocumentViewer({
     openInRightPane: boolean,
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
-  onOpenLatestReferenceFile: (target: WalkthroughReferenceFileTarget) => void;
-  onReresolveWalkthroughReference: (context: ReferenceDocumentContext) => Promise<string | null>;
+  onOpenLatestReferenceFile: (target: SourceReferenceFileTarget) => void;
+  onReresolveSourceReference: (context: ReferenceDocumentContext) => Promise<string | null>;
 }) {
   if (activeDocument.kind === "walkthrough" || activeDocument.kind === "structure") {
     throw new Error("この文書は専用Viewerで表示してください。");
@@ -2102,10 +2102,12 @@ export function DocumentViewer({
     referenceStaleness
       ? activeDocument.referenceContext
       : null;
+  const referenceOriginLabel =
+    staleReference?.origin.kind === "structure" ? "Structure" : "Walkthrough";
   const reresolveReference = async (context: ReferenceDocumentContext): Promise<void> => {
     setReferenceResolutionPending(true);
     setReferenceResolutionError(null);
-    const error = await onReresolveWalkthroughReference(context);
+    const error = await onReresolveSourceReference(context);
     setReferenceResolutionPending(false);
     setReferenceResolutionError(error);
   };
@@ -2116,8 +2118,8 @@ export function DocumentViewer({
         <div className="reference-fallback-banner reference-stale-banner" role="status">
           <div>
             <strong>
-              {referenceStaleness.walkthroughChanged
-                ? `Walkthroughが更新されています${
+              {referenceStaleness.originChanged
+                ? `${referenceOriginLabel}が更新されています${
                     referenceStaleness.headChanged
                       ? ` · 解決時 ${staleReference.latestHeadOid.slice(0, 8)} → 現在 ${latestHeadOid.slice(0, 8)}`
                       : ""
@@ -2128,10 +2130,10 @@ export function DocumentViewer({
               {referenceFallback
                 ? `参照時点のコード · ${referenceFallback.anchorSourceOid.slice(0, 8)} を表示中。`
                 : ""}
-              {referenceStaleness.walkthroughChanged
+              {referenceStaleness.originChanged
                 ? referenceStaleness.headChanged
-                  ? "このコード参照はWalkthroughとPRの更新前に解決されています。"
-                  : "このコード参照はWalkthroughの更新前に解決されています。"
+                  ? `このコード参照は${referenceOriginLabel}とPRの更新前に解決されています。`
+                  : `このコード参照は${referenceOriginLabel}の更新前に解決されています。`
                 : "このコード参照はPR更新前に解決されています。"}
               {referenceResolutionError ? ` ${referenceResolutionError}` : ""}
             </span>

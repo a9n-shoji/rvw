@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-reference.js";
+import { sourceAnchorFingerprint } from "../../src/domain/walkthrough-reference.js";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryWalkthrough = "注文作成フロー：HTTPからtransactional outboxまで";
@@ -377,7 +377,7 @@ test("uses the global PR comparison for a latest Walkthrough reference", async (
     }
     if (body.resolution) {
       body.resolution.anchorSourceOid = historicalWalkthroughOid;
-      body.resolution.referenceFingerprint = walkthroughReferenceFingerprint(
+      body.resolution.referenceFingerprint = sourceAnchorFingerprint(
         historicalWalkthroughOid,
         body.resolution.target,
       );
@@ -786,7 +786,7 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
     }
     if (body.resolution) {
       body.resolution.anchorSourceOid = historicalWalkthroughOid;
-      body.resolution.referenceFingerprint = walkthroughReferenceFingerprint(
+      body.resolution.referenceFingerprint = sourceAnchorFingerprint(
         historicalWalkthroughOid,
         body.resolution.target,
       );
@@ -840,7 +840,7 @@ test("keeps the PR range while switching a Walkthrough reference diff to split",
       hasDiff: true,
     };
     body.resolution.anchorSourceOid = historicalWalkthroughOid;
-    body.resolution.referenceFingerprint = walkthroughReferenceFingerprint(
+    body.resolution.referenceFingerprint = sourceAnchorFingerprint(
       historicalWalkthroughOid,
       body.resolution.target,
     );

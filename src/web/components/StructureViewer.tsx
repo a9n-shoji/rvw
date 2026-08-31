@@ -42,6 +42,10 @@ import {
 import { ChangeIcon } from "./FileTree.js";
 import { FileEntryIcon } from "./FileIcon.js";
 
+const STRUCTURE_WHEEL_PAN_SENSITIVITY = 2;
+const STRUCTURE_TRACKPAD_ZOOM_SENSITIVITY = 0.005;
+const STRUCTURE_META_WHEEL_ZOOM_SENSITIVITY = 0.002;
+
 function anchorLabel(anchor: SourceAnchor): string {
   return anchor.startLine === null
     ? anchor.path
@@ -710,9 +714,18 @@ export function StructureViewer({
     const surface = surfaceRef.current;
     if (!surface) return;
     const handleWheel = (event: WheelEvent): void => {
+      const wantsCanvasZoom = event.ctrlKey || event.metaKey;
       if (event.target instanceof Element) {
         const nodeScroller = event.target.closest<HTMLElement>(".structure-node-focus");
-        if (nodeScroller && nodeScroller.scrollHeight > nodeScroller.clientHeight) return;
+        const mostlyVertical = Math.abs(event.deltaY) >= Math.abs(event.deltaX);
+        const canScrollVertically = nodeScroller
+          ? event.deltaY < 0
+            ? nodeScroller.scrollTop > 0
+            : event.deltaY > 0
+              ? nodeScroller.scrollTop + nodeScroller.clientHeight < nodeScroller.scrollHeight - 1
+              : false
+          : false;
+        if (!wantsCanvasZoom && mostlyVertical && canScrollVertically) return;
       }
       event.preventDefault();
       event.stopPropagation();
@@ -722,11 +735,11 @@ export function StructureViewer({
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
             ? Math.max(1, surface.clientHeight)
             : 1;
-      if (!event.ctrlKey && !event.metaKey) {
+      if (!wantsCanvasZoom) {
         setViewport((current) => ({
           ...current,
-          x: current.x - event.deltaX * deltaUnit,
-          y: current.y - event.deltaY * deltaUnit,
+          x: current.x - event.deltaX * deltaUnit * STRUCTURE_WHEEL_PAN_SENSITIVITY,
+          y: current.y - event.deltaY * deltaUnit * STRUCTURE_WHEEL_PAN_SENSITIVITY,
         }));
         return;
       }
@@ -734,7 +747,10 @@ export function StructureViewer({
       const pointerX = event.clientX - rectangle.left;
       const pointerY = event.clientY - rectangle.top;
       setViewport((current) => {
-        const sensitivity = event.ctrlKey && !event.metaKey ? 0.0025 : 0.001;
+        const sensitivity =
+          event.ctrlKey && !event.metaKey
+            ? STRUCTURE_TRACKPAD_ZOOM_SENSITIVITY
+            : STRUCTURE_META_WHEEL_ZOOM_SENSITIVITY;
         const nextScale = scaledStructureZoom(
           current.scale,
           Math.exp(-event.deltaY * deltaUnit * sensitivity),
@@ -1339,7 +1355,7 @@ export function StructureViewer({
                 return (
                   <div
                     key={node.id}
-                    className={`structure-node notation-${node.notation}${node.anchor ? " has-source" : ""}${node.id === structure.originNodeId ? " origin" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
+                    className={`structure-node notation-${node.notation}${node.id === structure.originNodeId ? " origin" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
                     data-node-id={node.id}
                     data-node-notation={node.notation}
                     data-origin-node={node.id === structure.originNodeId ? "true" : undefined}

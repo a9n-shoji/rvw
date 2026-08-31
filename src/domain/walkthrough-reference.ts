@@ -1,8 +1,8 @@
-import type { WalkthroughReference } from "./models.js";
+import type { SourceAnchor } from "./models.js";
 
-export function walkthroughReferenceFingerprint(
+export function sourceAnchorFingerprint(
   sourceOid: string,
-  reference: Pick<WalkthroughReference, "path" | "startLine" | "endLine">,
+  reference: Pick<SourceAnchor, "path" | "startLine" | "endLine">,
 ): string {
   return JSON.stringify([sourceOid, reference.path, reference.startLine, reference.endLine]);
 }

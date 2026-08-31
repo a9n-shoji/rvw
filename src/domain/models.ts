@@ -259,7 +259,7 @@ export interface DeletedStructure {
   counts: StructureDeleteCounts;
 }
 
-export interface WalkthroughReferenceFileTarget {
+export interface SourceReferenceFileTarget {
   sourceOid: string;
   path: string;
   diffBaseOid: string | null;
@@ -268,18 +268,18 @@ export interface WalkthroughReferenceFileTarget {
   hasDiff: boolean;
 }
 
-export interface WalkthroughReferenceTarget extends WalkthroughReferenceFileTarget {
+export interface SourceReferenceTarget extends SourceReferenceFileTarget {
   startLine: number | null;
   endLine: number | null;
 }
 
-export interface WalkthroughReferenceResolution {
+export interface SourceReferenceResolution {
   outcome: "latest" | "source-fallback";
   anchorSourceOid: string;
   latestHeadOid: string;
   referenceFingerprint: string;
-  target: WalkthroughReferenceTarget;
-  latestFile: WalkthroughReferenceFileTarget | null;
+  target: SourceReferenceTarget;
+  latestFile: SourceReferenceFileTarget | null;
   document: DocumentContent;
 }
 

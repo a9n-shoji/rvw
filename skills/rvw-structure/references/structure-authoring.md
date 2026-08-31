@@ -43,6 +43,9 @@ can verify in committed code.
   product semantics.
 - `description` states the claim and its role in this subject. It is not a review finding, approval,
   recommendation, or generated summary of the whole file.
+- Keep the `label` and `description` short enough that a reviewer can grasp the node's main claim at
+  normal zoom. In-node scrolling preserves exceptional detail; it is a fallback, not a reason to make
+  long prose the normal authoring shape.
 - `kind` is a deprecated compatibility field that the viewer does not display. Do not set it in new
   Structures.
 - `notation` is an optional controlled scanning aid: `plain`, `class`, `database`, `interface`,
@@ -122,6 +125,7 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] The declared subject is bounded and is better represented as a space than an ordered path.
 - [ ] Explicit authority controls the requested scope; verified facts fill only its gaps.
 - [ ] Each node is one useful, code-centered claim at a consistent granularity.
+- [ ] Each node's main claim is quickly understandable at normal zoom without relying on scrolling.
 - [ ] Concept-only nodes are necessary and do not invent semantics.
 - [ ] Every edge label states a precise relationship and direction is factual.
 - [ ] IDs are unique, semantic, and stable across updates; removed IDs are not recycled.

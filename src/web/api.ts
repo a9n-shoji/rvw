@@ -15,7 +15,7 @@ import type {
   StructureSummary,
   TreeEntry,
   Walkthrough,
-  WalkthroughReferenceResolution,
+  SourceReferenceResolution,
   WalkthroughSummary,
 } from "../domain/models.js";
 import type { ThemePreference } from "../shared/preferences.js";
@@ -156,7 +156,7 @@ export interface WalkthroughResponse {
 }
 
 export interface WalkthroughReferenceResolutionResponse {
-  resolution: WalkthroughReferenceResolution;
+  resolution: SourceReferenceResolution;
 }
 
 export interface DeleteWalkthroughResponse {
@@ -172,7 +172,7 @@ export interface StructureResponse {
 }
 
 export interface StructureAnchorResolutionResponse {
-  resolution: WalkthroughReferenceResolution;
+  resolution: SourceReferenceResolution;
 }
 
 export interface DeleteStructureResponse {
