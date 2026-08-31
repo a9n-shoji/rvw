@@ -99,17 +99,13 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
       const style = getComputedStyle(element);
       return {
         background: style.backgroundColor,
-        addition: style.getPropertyValue("--diffs-bg-addition"),
-        deletion: style.getPropertyValue("--diffs-bg-deletion"),
-        additionEmphasis: style.getPropertyValue("--diffs-bg-addition-emphasis"),
-        deletionEmphasis: style.getPropertyValue("--diffs-bg-deletion-emphasis"),
+        color: style.color,
       };
     });
-  expect(darkDiffColors.background).toBe("rgb(0, 0, 0)");
-  expect(darkDiffColors.addition).toContain("86%");
-  expect(darkDiffColors.deletion).toContain("86%");
-  expect(darkDiffColors.additionEmphasis).toContain("/ 0.14");
-  expect(darkDiffColors.deletionEmphasis).toContain("/ 0.14");
+  expect(darkDiffColors).toEqual({
+    background: "rgb(13, 17, 23)",
+    color: "rgb(240, 246, 252)",
+  });
   await expect
     .poll(async () => await page.evaluate(() => window.localStorage.getItem("rvw.theme")))
     .toBe("dark");
@@ -119,6 +115,10 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(246, 248, 250)");
   await expect(page.locator(".topbar")).toHaveCSS("background-color", "rgb(36, 41, 47)");
+  await expect(page.locator("diffs-container").first()).toHaveCSS(
+    "background-color",
+    "rgb(255, 255, 255)",
+  );
   await expect
     .poll(
       async () =>
@@ -340,6 +340,60 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(diff.locator("[data-diffs-header]")).toBeVisible();
   await expect(diff.locator("[data-deletions-count]")).toBeVisible();
   await expect(diff.locator("[data-additions-count]")).toBeVisible();
+  const renderedDiffColors = () =>
+    diff.evaluate((element) => {
+      const root = element.shadowRoot!;
+      const background = (selector: string) => {
+        const target = root.querySelector<HTMLElement>(selector);
+        return target ? getComputedStyle(target).backgroundColor : null;
+      };
+      const color = (selector: string) => {
+        const target = root.querySelector<HTMLElement>(selector);
+        return target ? getComputedStyle(target).color : null;
+      };
+      return {
+        background: getComputedStyle(element).backgroundColor,
+        additionLine: background('[data-line][data-line-type="change-addition"]'),
+        additionNumber: background('[data-column-number][data-line-type="change-addition"]'),
+        additionNumberText: color('[data-column-number][data-line-type="change-addition"]'),
+        additionWord: background('[data-line-type="change-addition"] [data-diff-span]'),
+        deletionLine: background('[data-line][data-line-type="change-deletion"]'),
+        deletionNumber: background('[data-column-number][data-line-type="change-deletion"]'),
+        deletionNumberText: color('[data-column-number][data-line-type="change-deletion"]'),
+        deletionWord: background('[data-line-type="change-deletion"] [data-diff-span]'),
+      };
+    });
+  await actionsMenuButton.click();
+  actionsMenu = page.getByRole("menu");
+  await actionsMenu.getByRole("menuitemradio", { name: "ライトモード" }).click();
+  await expect.poll(renderedDiffColors).toEqual({
+    background: "rgb(255, 255, 255)",
+    additionLine: "rgb(218, 251, 225)",
+    additionNumber: "rgb(172, 238, 187)",
+    additionNumberText: "rgb(31, 35, 40)",
+    additionWord: "rgb(172, 238, 187)",
+    deletionLine: "rgb(255, 235, 233)",
+    deletionNumber: "rgb(255, 206, 203)",
+    deletionNumberText: "rgb(31, 35, 40)",
+    deletionWord: "rgb(255, 206, 203)",
+  });
+  await actionsMenuButton.click();
+  actionsMenu = page.getByRole("menu");
+  await actionsMenu.getByRole("menuitemradio", { name: "ダークモード" }).click();
+  await expect.poll(renderedDiffColors).toEqual({
+    background: "rgb(13, 17, 23)",
+    additionLine: "rgba(46, 160, 67, 0.15)",
+    additionNumber: "rgba(63, 185, 80, 0.3)",
+    additionNumberText: "rgb(240, 246, 252)",
+    additionWord: "rgba(46, 160, 67, 0.4)",
+    deletionLine: "rgba(248, 81, 73, 0.1)",
+    deletionNumber: "rgba(248, 81, 73, 0.3)",
+    deletionNumberText: "rgb(240, 246, 252)",
+    deletionWord: "rgba(248, 81, 73, 0.4)",
+  });
+  await actionsMenuButton.click();
+  actionsMenu = page.getByRole("menu");
+  await actionsMenu.getByRole("menuitemradio", { name: "システム" }).click();
   await expect(
     diff
       .locator('[slot="header-metadata"]')
