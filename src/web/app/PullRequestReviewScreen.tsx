@@ -541,21 +541,18 @@ function ReviewScopeBar({
         </div>
       </div>
       <div className="review-scope-control review-scope-whitespace">
-        <span>空白変更</span>
-        <div className="segmented">
-          <button
-            className={hideWhitespace ? "active" : ""}
-            aria-label="空白変更を非表示"
-            aria-pressed={hideWhitespace}
+        <label className="review-scope-whitespace-checkbox">
+          <input
+            type="checkbox"
+            checked={hideWhitespace}
             disabled={!diffViewAvailable}
-            onClick={() => {
+            onChange={(event) => {
               onDisplayModeChange("diff");
-              onHideWhitespaceChange(!hideWhitespace);
+              onHideWhitespaceChange(event.target.checked);
             }}
-          >
-            非表示
-          </button>
-        </div>
+          />
+          <span>Hide Whitespace</span>
+        </label>
       </div>
     </section>
   );
