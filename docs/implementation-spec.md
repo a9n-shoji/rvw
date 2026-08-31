@@ -380,7 +380,8 @@ empty fileは従来どおり明示的に扱う。
   copyを維持し、line/range comment selectionはline numberとgutter actionから開始する。file headerは
   paneのscroll中もtab列直下へsticky表示する。
 - diffのline selectionはold/new sideを明示し、両sideをまたぐ一つのcommentを作成しない。
-- `Hide Whitespace` checkboxはbrowser内だけの一時的な表示設定とし、改行を除く空白を無視して差分を計算する。
+- `Hide Whitespace`は他のtop bar controlと同様にlabelとcheckboxを縦に並べ、全文表示ではdisabledにする。
+  browser内だけの一時的な表示設定とし、改行を除く空白を無視して差分を計算する。
   whitespaceだけが変わった行は変更として表示せず、残るcontextと変更行はoriginal source textとline番号を
   保つ。changed files、comment target、source document、追加／削除fileの内容は変更しない。
 - UTF-8以外、1 MiB超、symlink、submodule、missing documentは空本文へsilent fallbackせず、
@@ -1487,8 +1488,8 @@ Viewerの最優先目的は、選択commitが作るrepositoryの状態を利用�
 
 ```text
 top bar
-PR情報  対象commit                                      表示            Diff表示           [...]
-        [ subject A … subject D · 4 commits · PR全体 ▼ ] [ 全文 | 変更 ] [ stacked | split ] [x] Hide Whitespace
+PR情報  対象commit                                      表示            Diff表示          Hide Whitespace  [...]
+        [ subject A … subject D · 4 commits · PR全体 ▼ ] [ 全文 | 変更 ] [ stacked | split ] [x]
 
 commit range popover
 [ PR全体 ] [ 最新だけ ]

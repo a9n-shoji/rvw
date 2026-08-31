@@ -60,11 +60,19 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
     name: "Hide Whitespace",
     exact: true,
   });
+  const hideWhitespaceLabel = reviewScope.getByText("Hide Whitespace", { exact: true });
   const diffStyleModes = reviewScope.locator(".diff-style-modes");
   await expect(stackedButton).toBeVisible();
   await expect(stackedButton).toBeDisabled();
   await expect(splitButton).toBeDisabled();
   await expect(hideWhitespaceCheckbox).toBeDisabled();
+  const hideWhitespaceLabelBox = await hideWhitespaceLabel.boundingBox();
+  const hideWhitespaceCheckboxBox = await hideWhitespaceCheckbox.boundingBox();
+  expect(hideWhitespaceLabelBox).not.toBeNull();
+  expect(hideWhitespaceCheckboxBox).not.toBeNull();
+  expect(hideWhitespaceLabelBox!.y + hideWhitespaceLabelBox!.height).toBeLessThanOrEqual(
+    hideWhitespaceCheckboxBox!.y,
+  );
   const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
   const commitDialog = page.getByRole("dialog", { name: "対象commitを選択" });
   const selectCommitOnly = async (name: RegExp): Promise<void> => {
@@ -330,18 +338,21 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(displayFullButton).toHaveAttribute("aria-pressed", "true");
   await expect(stackedButton).toBeEnabled();
   await expect(splitButton).toBeEnabled();
-  await expect(hideWhitespaceCheckbox).toBeEnabled();
+  await expect(hideWhitespaceCheckbox).toBeDisabled();
   const fullLayout = await reviewControlLayout();
   await splitButton.click();
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
   await expect(splitButton).toHaveAttribute("aria-pressed", "true");
+  await expect(hideWhitespaceCheckbox).toBeEnabled();
   expect(await reviewControlLayout()).toEqual(fullLayout);
   await displayFullButton.click();
   await expect(displayFullButton).toHaveAttribute("aria-pressed", "true");
   await expect(stackedButton).toBeEnabled();
+  await expect(hideWhitespaceCheckbox).toBeDisabled();
   await stackedButton.click();
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
   await expect(stackedButton).toHaveAttribute("aria-pressed", "true");
+  await expect(hideWhitespaceCheckbox).toBeEnabled();
   expect(await reviewControlLayout()).toEqual(fullLayout);
   const diff = page.locator("diffs-container");
   const changedDiffLines = diff.locator('[data-line-type^="change-"]');
