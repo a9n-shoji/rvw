@@ -2218,3 +2218,32 @@ changed, added, or removed label before calling rvw.
   state.
 - Existing task databases bind lazily on their first auto-ack claim, so no migration guess is needed.
 - The retry payload remains identical across the reply-success/state-save crash window.
+
+## 2026-08-31: Publish prereleases through an isolated beta dist-tag
+
+### Problem
+
+The staged npm workflow accepted only stable semantic versions and relied on npm's default `latest`
+dist-tag. Structure is ready for external beta use before the complete `0.4.0` stability claim, but
+publishing a prerelease through that path could either fail release verification or accidentally move
+ordinary installs away from the current stable `0.3.2`.
+
+### Choice
+
+Allow only stable versions and numbered `-beta.<number>` prereleases in release metadata. Require an
+explicit npm dist-tag at verification time: stable versions must use `latest`, and beta versions must
+use `beta`. Pass that verified tag to `npm stage publish`, retain the exact-tag, clean-main, changelog,
+full-test, package-smoke, staged approval, and forward-fix gates, and mark matching GitHub beta releases
+as prereleases.
+
+The first Structure package is `0.4.0-beta.0`. Its release commit and annotated tag remain on `main`;
+the npm dist-tag, rather than an unpublished release branch, distinguishes stability.
+
+### Trade-offs
+
+- `npm install @a9n-shoji/rvw` continues to select the prior stable while beta users opt in with
+  `@beta` or the exact version.
+- The workflow adds one explicit operator choice, but release verification rejects the dangerous
+  version/tag combinations before registry staging.
+- Other prerelease channels such as `rc` require a separate decision instead of silently sharing the
+  beta policy.

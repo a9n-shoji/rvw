@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.4.0-beta.0] - 2026-08-31
+
 ### Added
 
 - 一つの具体的なbehavior / processing flowをsource-anchored origin、stable Node / Edge ID、exact source

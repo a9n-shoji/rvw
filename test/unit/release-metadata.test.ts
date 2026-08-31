@@ -25,6 +25,7 @@ describe("release metadata", () => {
         appVersion: "0.1.0",
         changelog: "# Changelog\n\n## [0.1.0] - 2026-08-16\n",
         manifest,
+        npmTag: "latest",
         tag: "v0.1.0",
       }),
     ).not.toThrow();
@@ -36,20 +37,58 @@ describe("release metadata", () => {
         appVersion: "0.1.0",
         changelog: "## [0.1.0] - 2026-08-16\n",
         manifest: { ...manifest, name: "@someone-else/rvw" },
+        npmTag: "latest",
         tag: "v0.1.0",
       }),
     ).toThrow("package name");
   });
 
-  it("rejects prereleases from the stable workflow", () => {
+  it("accepts a beta release with the beta dist-tag", () => {
     expect(() =>
       validateReleaseMetadata({
         appVersion: "0.2.0-beta.1",
         changelog: "## [0.2.0-beta.1] - 2026-08-16\n",
         manifest: { ...manifest, version: "0.2.0-beta.1" },
+        npmTag: "beta",
         tag: "v0.2.0-beta.1",
       }),
-    ).toThrow("stable semantic version");
+    ).not.toThrow();
+  });
+
+  it("rejects publishing a beta release with the latest dist-tag", () => {
+    expect(() =>
+      validateReleaseMetadata({
+        appVersion: "0.2.0-beta.1",
+        changelog: "## [0.2.0-beta.1] - 2026-08-16\n",
+        manifest: { ...manifest, version: "0.2.0-beta.1" },
+        npmTag: "latest",
+        tag: "v0.2.0-beta.1",
+      }),
+    ).toThrow("beta npm dist-tag");
+  });
+
+  it("rejects publishing a stable release with the beta dist-tag", () => {
+    expect(() =>
+      validateReleaseMetadata({
+        appVersion: "0.1.0",
+        changelog: "## [0.1.0] - 2026-08-16\n",
+        manifest,
+        npmTag: "beta",
+        tag: "v0.1.0",
+      }),
+    ).toThrow("latest npm dist-tag");
+  });
+
+  it("rejects an unsupported prerelease channel", () => {
+    expect(() =>
+      validateReleaseMetadata({
+        appVersion: "0.2.0-rc.0",
+        changelog: "## [0.2.0-rc.0] - 2026-08-16\n",
+        manifest: { ...manifest, version: "0.2.0-rc.0" },
+        npmTag: "beta",
+        tag: "v0.2.0-rc.0",
+      }),
+    ).toThrow("stable or beta semantic version");
   });
 
   it("rejects a release missing its changelog section", () => {
@@ -58,6 +97,7 @@ describe("release metadata", () => {
         appVersion: "0.1.0",
         changelog: "# Changelog\n",
         manifest,
+        npmTag: "latest",
         tag: "v0.1.0",
       }),
     ).toThrow("CHANGELOG.md");

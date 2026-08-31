@@ -7,7 +7,8 @@ developmentからpublishしない。
 ## Release invariants
 
 - `package.json`、`src/shared/constants.ts`、Git tag、CHANGELOGのversionを一致させる。
-- stable release tagは`v<major>.<minor>.<patch>`とし、prereleaseを`latest`へ公開しない。
+- stable release tagは`v<major>.<minor>.<patch>`、beta release tagは
+  `v<major>.<minor>.<patch>-beta.<number>`とする。stableは`latest`、betaは`beta`へだけ公開する。
 - release commitは`main`へmerge済みで、tagはそのcommitを直接指す。
 - release checkoutはcleanで、lockfileを変更せずinstallできる。
 - `pnpm test:package`が検証した同一tarballだけをregistryへ送る。
@@ -34,10 +35,11 @@ npm whoami --registry=https://registry.npmjs.org/
 `npm view @a9n-shoji/rvw`の404はpackageが未作成という意味にすぎず、scopeの所有権を証明しない。
 `npm whoami`の結果かorganization membershipを必ず確認する。
 
-## Prepare a stable release
+## Prepare a release
 
 release PRでversionとCHANGELOGを更新する。0.xではcompatible bug fixをpatch、featureまたはbreaking
-changeをminorとする。1.0.0以降はSemVerどおりbreaking changeをmajorとする。
+changeをminorとする。1.0.0以降はSemVerどおりbreaking changeをmajorとする。betaは予定するstable
+versionへ`-beta.<number>`を付け、同じstable version内でnumberを単調増加させる。
 
 ```bash
 pnpm install --frozen-lockfile
@@ -66,7 +68,7 @@ npmは未作成packageへTrusted Publisherを設定できず、未作成package�
 ```bash
 git switch --detach v0.1.0
 pnpm install --frozen-lockfile
-RVW_RELEASE_TAG=v0.1.0 pnpm release:verify
+RVW_RELEASE_TAG=v0.1.0 RVW_RELEASE_NPM_TAG=latest pnpm release:verify
 pnpm check
 pnpm test
 pnpm exec playwright install --with-deps chromium
@@ -103,8 +105,9 @@ environment、permissionも確認する。
 
 ## Publish subsequent releases
 
-1. release PRをmergeしてstable version tagをpushする。
-2. GitHub Actionsの`Stage npm package`を開き、`release_tag`へtag名を入力して実行する。
+1. release PRをmergeしてversion tagをpushする。
+2. GitHub Actionsの`Stage npm package`を開き、`release_tag`へtag名、`npm_tag`へstableなら
+   `latest`、betaなら`beta`を入力して実行する。versionとdist-tagが一致しなければworkflowは失敗する。
 3. `npm-production` Environmentの実行を承認する。
 4. workflowが検証したtarballをstaging areaへ送るまで待つ。
 5. staged metadataとtarballを確認し、2FAでapproveする。
@@ -117,6 +120,7 @@ pnpm exec npm stage approve <stage-id>
 ```
 
 承認後に`npm view`、fresh global install、`rvw doctor`を実行し、同じtagでGitHub Releaseを作成する。
+betaのGitHub Releaseはprereleaseとして作成する。beta公開後も`latest`は直前のstableを指し続ける。
 
 ## User upgrades and bundled Skills
 
