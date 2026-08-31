@@ -60,6 +60,17 @@ const PNG_MAX_PIXELS = 32_000_000;
 const PNG_MIN_ACCEPTABLE_SCALE = 0.5;
 const MONO_FONT = "ui-monospace, SFMono-Regular, Consolas, Liberation Mono, monospace";
 const SANS_FONT = "Arial, Helvetica Neue, sans-serif";
+const EDGE_MARKER_KINDS = [
+  "default",
+  "added",
+  "modified",
+  "deleted",
+  "renamed",
+  "type-changed",
+  "mixed",
+] as const;
+
+type StructureEdgeMarkerKind = (typeof EDGE_MARKER_KINDS)[number];
 
 const paletteProperties: Record<keyof StructureExportPalette, string> = {
   background: "--bg",
@@ -260,9 +271,37 @@ function serializeNode(
     node.notation === "class" || node.notation === "interface"
       ? `<line x1="${finiteNumber(content.x)}" y1="${finiteNumber(descriptionTop - 2)}" x2="${finiteNumber(content.x + content.width)}" y2="${finiteNumber(descriptionTop - 2)}" stroke="${escapeXml(outline)}" stroke-width="1"/>`
       : "";
+  const originMark = (() => {
+    switch (node.notation) {
+      case "external":
+        return {
+          x: point.x + 22,
+          top: point.y + 16,
+          bottom: point.y + STRUCTURE_NODE_HEIGHT - 16,
+        };
+      case "concept":
+        return {
+          x: point.x + 20,
+          top: point.y + 24,
+          bottom: point.y + STRUCTURE_NODE_HEIGHT - 24,
+        };
+      case "database":
+        return {
+          x: point.x + 5,
+          top: point.y + 18,
+          bottom: point.y + STRUCTURE_NODE_HEIGHT - 18,
+        };
+      default:
+        return {
+          x: point.x + 4,
+          top: point.y + 10,
+          bottom: point.y + STRUCTURE_NODE_HEIGHT - 10,
+        };
+    }
+  })();
   const origin =
     node.id === structure.originNodeId
-      ? `<line x1="${finiteNumber(point.x + 4)}" y1="${finiteNumber(point.y + 10)}" x2="${finiteNumber(point.x + 4)}" y2="${finiteNumber(point.y + STRUCTURE_NODE_HEIGHT - 10)}" stroke="${escapeXml(palette.accent)}" stroke-width="4" stroke-linecap="round"/>`
+      ? `<line data-node-origin-mark="true" x1="${finiteNumber(originMark.x)}" y1="${finiteNumber(originMark.top)}" x2="${finiteNumber(originMark.x)}" y2="${finiteNumber(originMark.bottom)}" stroke="${escapeXml(palette.accent)}" stroke-width="4" stroke-linecap="round"/>`
       : "";
   const source =
     sourceLines.length > 0
@@ -335,6 +374,25 @@ function serializeEdgeLabel(
   return `<g data-edge-label-id="${escapeXml(placement.edge.id)}" transform="translate(${finiteNumber(placement.x)} ${finiteNumber(placement.y)})"${placement.crowded ? ' data-crowded="true"' : ""}><rect x="${finiteNumber(-placement.selectWidth / 2)}" y="${finiteNumber(-placement.height / 2)}" width="${finiteNumber(placement.selectWidth)}" height="${finiteNumber(placement.height)}" rx="${finiteNumber(placement.height / 2)}" fill="${escapeXml(palette.panel)}" stroke="${escapeXml(outline)}" stroke-width="1"${placement.crowded ? ' stroke-dasharray="4 3"' : ""}/>${svgTextLines({ lines, x: 0, firstY, lineHeight: EDGE_LABEL_LINE_HEIGHT, fontSize: 10, fontFamily: SANS_FONT, fill: outline, anchor: "middle" })}<title>${escapeXml(placement.edge.label)}</title></g>`;
 }
 
+function edgeMarkerKind(changeKind: EdgeSourceChangeKind | null): StructureEdgeMarkerKind {
+  return changeKind ?? "default";
+}
+
+function edgeMarkerId(kind: StructureEdgeMarkerKind): string {
+  return `rvw-structure-arrow-${kind}`;
+}
+
+function edgeMarkerColor(kind: StructureEdgeMarkerKind, palette: StructureExportPalette): string {
+  return colorForChangeKind(kind === "default" ? null : kind, palette, palette.muted);
+}
+
+function serializeEdgeMarkerDefs(palette: StructureExportPalette): string {
+  return EDGE_MARKER_KINDS.map((kind) => {
+    const color = edgeMarkerColor(kind, palette);
+    return `<marker id="${edgeMarkerId(kind)}" data-edge-marker-kind="${kind}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 10 5 L 0 10 z" fill="${escapeXml(color)}"/></marker>`;
+  }).join("");
+}
+
 export function serializeStructureSvg(input: {
   structure: Structure;
   model: StructureRenderModel;
@@ -354,15 +412,16 @@ export function serializeStructureSvg(input: {
   }
   const edges = model.edges
     .map(({ edge, geometry, source }) => {
-      const stroke = colorForChangeKind(source.changeKind, palette, palette.muted);
-      return `<path data-edge-id="${escapeXml(edge.id)}" d="${escapeXml(geometry.path)}" fill="none" stroke="${escapeXml(stroke)}" stroke-width="1.4" opacity="${source.changeKind ? "0.76" : "0.58"}"${edge.directed ? ' marker-end="url(#rvw-structure-arrow)"' : ""}/>`;
+      const markerKind = edgeMarkerKind(source.changeKind);
+      const stroke = edgeMarkerColor(markerKind, palette);
+      return `<path data-edge-id="${escapeXml(edge.id)}" d="${escapeXml(geometry.path)}" fill="none" stroke="${escapeXml(stroke)}" stroke-width="1.4" opacity="${source.changeKind ? "0.76" : "0.58"}"${edge.directed ? ` marker-end="url(#${edgeMarkerId(markerKind)})"` : ""}/>`;
     })
     .join("");
   const labels = model.labels.map((placement) => serializeEdgeLabel(placement, palette)).join("");
   const nodes = model.nodes
     .map((renderNode) => serializeNode(renderNode, structure, palette))
     .join("");
-  const source = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}" role="img" aria-labelledby="rvw-structure-title rvw-structure-description" data-rvw-structure-id="${escapeXml(structure.id)}" data-rvw-source-oid="${escapeXml(structure.sourceOid)}"><title id="rvw-structure-title">${escapeXml(structure.title)}</title><desc id="rvw-structure-description">${escapeXml(structure.scope)}</desc><defs><marker id="rvw-structure-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"/></marker></defs><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${escapeXml(palette.background)}"/><g data-layer="edges">${edges}</g><g data-layer="edge-labels">${labels}</g><g data-layer="nodes">${nodes}</g></svg>`;
+  const source = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}" role="img" aria-labelledby="rvw-structure-title rvw-structure-description" data-rvw-structure-id="${escapeXml(structure.id)}" data-rvw-source-oid="${escapeXml(structure.sourceOid)}"><title id="rvw-structure-title">${escapeXml(structure.title)}</title><desc id="rvw-structure-description">${escapeXml(structure.scope)}</desc><defs>${serializeEdgeMarkerDefs(palette)}</defs><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${escapeXml(palette.background)}"/><g data-layer="edges">${edges}</g><g data-layer="edge-labels">${labels}</g><g data-layer="nodes">${nodes}</g></svg>`;
   return { source, width, height, viewBox: { x, y, width, height } };
 }
 

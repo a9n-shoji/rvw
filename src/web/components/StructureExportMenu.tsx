@@ -19,7 +19,6 @@ export function StructureExportMenu({
     <details className="structure-export-menu" ref={detailsRef}>
       <summary
         className="structure-header-action"
-        role="button"
         aria-label="Structureをエクスポート"
         aria-disabled={disabled}
         onClick={(event) => {
@@ -29,12 +28,12 @@ export function StructureExportMenu({
         {exporting ? `${exporting.toUpperCase()}…` : "Export"}
         <span aria-hidden="true">▾</span>
       </summary>
-      <div className="structure-export-popover" role="menu">
-        <button type="button" role="menuitem" disabled={disabled} onClick={() => choose("svg")}>
+      <div className="structure-export-popover">
+        <button type="button" disabled={disabled} onClick={() => choose("svg")}>
           <strong>SVG</strong>
           <span>全体・ベクター</span>
         </button>
-        <button type="button" role="menuitem" disabled={disabled} onClick={() => choose("png")}>
+        <button type="button" disabled={disabled} onClick={() => choose("png")}>
           <strong>PNG</strong>
           <span>全体・2×</span>
         </button>

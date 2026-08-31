@@ -2387,8 +2387,10 @@ selection, viewport, and Node scroll position. Require all Nodes, Edges, and Edg
 export can succeed.
 
 Serialize that model as a standalone SVG made only from SVG primitives, escaped text, resolved theme
-colors, and embedded metadata. Keep fixed-size notation-specific Node cards; prioritize Node title
-content and ellipsize overflow, but expand every Edge label to retain its complete text. Derive PNG
+colors, and embedded metadata. Give each Edge change presentation an explicit same-color arrow marker
+instead of requiring context-dependent SVG paint, and keep the origin cue inside each notation shape.
+Keep fixed-size notation-specific Node cards; prioritize Node title content and ellipsize overflow, but
+expand every Edge label to retain its complete text. Derive PNG
 only by rasterizing the same SVG at a preferred 2x scale, with conservative dimension and pixel
 budgets. Place the Export menu between the existing reference and delete actions because it operates
 on the complete Structure document. Do not add a backend endpoint, database state, CLI capability, or

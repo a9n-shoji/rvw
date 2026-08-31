@@ -715,7 +715,9 @@ arrow marker、全Edge labelを含めて自動trimし、toolbar、minimap、canv
 Nodeは画面と同じ固定寸法とnotationを維持し、source identity、title、descriptionを先頭から描画して収まらない
 Node textだけをellipsisにする。Edge labelは省略せず必要な高さへ広げ、高密度で衝突を避け切れない場合も削除せず
 crowded表示を保つ。SVGは`foreignObject`、外部asset、外部stylesheet、raw markupを使わず、producer由来文字列を
-XML text / attributeとしてescapeする。PNGは同じSVGからbrowser標準Canvas APIで派生し、最大dimensionとpixel
+XML text / attributeとしてescapeする。directed Edgeのarrowheadはchange presentationごとのresolved colorを持つ
+明示markerを参照し、context依存paintを要求しない。origin cueはnotation固有のshape境界内へ収める。
+PNGは同じSVGからbrowser標準Canvas APIで派生し、最大dimensionとpixel
 budgetに収まるscaleへ縮小する。安全な最低scaleを下回る場合は不完全なPNGを生成せず明示的に失敗する。
 exportはbackend、DB、CLI protocol、Structure data modelを変更せず、実行後もreading stateを一切変更しない。
 

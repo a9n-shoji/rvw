@@ -8,7 +8,7 @@ import {
   structureExportFilename,
   type StructureExportPalette,
 } from "../../src/web/structure-export.js";
-import { initialStructureLayout } from "../../src/web/structure-graph.js";
+import { initialStructureLayout, STRUCTURE_NODE_HEIGHT } from "../../src/web/structure-graph.js";
 import {
   buildFullStructureRenderModel,
   wrapStructureText,
@@ -101,6 +101,24 @@ describe("Structure SVG export", () => {
     expect(source.match(/marker-end=/gu)).toHaveLength(
       structure.edges.filter((edge) => edge.directed).length,
     );
+    expect(source.match(/data-edge-marker-kind=/gu)).toHaveLength(7);
+    for (const [kind, color] of [
+      ["default", palette.muted],
+      ["added", palette.success],
+      ["modified", palette.attention],
+      ["deleted", palette.danger],
+      ["renamed", palette.done],
+      ["type-changed", palette.info],
+      ["mixed", palette.attention],
+    ]) {
+      expect(source).toMatch(
+        new RegExp(`<marker id="rvw-structure-arrow-${kind}"[^>]*><path[^>]*fill="${color}"`, "u"),
+      );
+    }
+    expect(source).toMatch(
+      /<path data-edge-id="edge-0"[^>]*stroke="#d29922"[^>]*marker-end="url\(#rvw-structure-arrow-modified\)"/u,
+    );
+    expect(source).not.toContain("context-stroke");
     for (const notation of structure.nodes.map((node) => node.notation)) {
       expect(source).toContain(`data-node-notation="${notation}"`);
     }
@@ -114,6 +132,35 @@ describe("Structure SVG export", () => {
     expect(source).not.toContain("<image");
     expect(source).not.toContain("var(");
     expect(source).toBe(second.source);
+  });
+
+  it("keeps rounded and angled notation origin marks inside their shapes", () => {
+    for (const expected of [
+      { nodeId: "node-5", insetX: 22, insetY: 16 },
+      { nodeId: "node-6", insetX: 20, insetY: 24 },
+    ]) {
+      const structure = exportStructure();
+      structure.originNodeId = expected.nodeId;
+      const positions = initialStructureLayout(structure);
+      const { document } = documentFor(structure);
+      const groupStart = document.source.indexOf(`<g data-node-id="${expected.nodeId}"`);
+      const markStart = document.source.indexOf('<line data-node-origin-mark="true"', groupStart);
+      const contentStart = document.source.indexOf('<g data-node-content="true">', groupStart);
+      expect(groupStart).toBeGreaterThanOrEqual(0);
+      expect(markStart).toBeGreaterThan(groupStart);
+      expect(markStart).toBeLessThan(contentStart);
+      const mark = document.source.slice(markStart, document.source.indexOf("/>", markStart));
+      const attribute = (name: string): number => {
+        const match = mark.match(new RegExp(`${name}="([^"]+)"`, "u"));
+        expect(match).not.toBeNull();
+        return Number(match![1]);
+      };
+      const point = positions[expected.nodeId]!;
+      expect(attribute("x1")).toBe(point.x + expected.insetX);
+      expect(attribute("x2")).toBe(point.x + expected.insetX);
+      expect(attribute("y1")).toBe(point.y + expected.insetY);
+      expect(attribute("y2")).toBe(point.y + STRUCTURE_NODE_HEIGHT - expected.insetY);
+    }
   });
 
   it("keeps complete Edge label text available without ellipsis", () => {

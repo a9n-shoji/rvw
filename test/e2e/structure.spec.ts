@@ -436,13 +436,15 @@ test("exports the complete Structure as standalone SVG and 2x PNG without changi
   const nodeCount = Number(await viewer.getAttribute("data-total-node-count"));
   const edgeCount = Number(await viewer.getAttribute("data-total-edge-count"));
 
-  const exportMenu = viewer.getByRole("button", { name: "Structureをエクスポート" });
+  const exportMenu = viewer.locator('summary[aria-label="Structureをエクスポート"]');
   await exportMenu.click();
   await expect(viewer.locator(".structure-export-popover")).toContainText(
     "現在の配置で、全Node・全Relation・全Edge labelを書き出します。",
   );
+  await expect(viewer.locator(".structure-export-popover")).not.toHaveAttribute("role");
+  await expect(viewer.locator(".structure-export-popover").getByRole("button")).toHaveCount(2);
   const svgDownloadPromise = page.waitForEvent("download");
-  await viewer.getByRole("menuitem", { name: /SVG.*全体・ベクター/u }).click();
+  await viewer.getByRole("button", { name: /SVG.*全体・ベクター/u }).click();
   const svgDownload = await svgDownloadPromise;
   expect(svgDownload.suggestedFilename()).toMatch(
     /^rvw-structure-Order-placement-behavior-[a-f0-9]{8}\.svg$/u,
@@ -471,7 +473,7 @@ test("exports the complete Structure as standalone SVG and 2x PNG without changi
 
   await exportMenu.click();
   const pngDownloadPromise = page.waitForEvent("download");
-  await viewer.getByRole("menuitem", { name: /PNG.*全体・2×/u }).click();
+  await viewer.getByRole("button", { name: /PNG.*全体・2×/u }).click();
   const pngDownload = await pngDownloadPromise;
   expect(pngDownload.suggestedFilename()).toMatch(
     /^rvw-structure-Order-placement-behavior-[a-f0-9]{8}\.png$/u,
@@ -623,6 +625,19 @@ test("scrolls complete long content inside a fixed-size Node", async ({ page }) 
   await expect.poll(async () => (await worldTranslation()).y).not.toBe(bottomBoundaryBefore.y);
   expect((await worldTranslation()).y - bottomBoundaryBefore.y).toBeCloseTo(-60, 0);
   expect(await scroller.evaluate((element) => element.scrollTop)).toBe(bottomScroll);
+
+  const scrollBeforeExport = await scroller.evaluate((element) => element.scrollTop);
+  const svgDownloadPromise = page.waitForEvent("download");
+  await viewer.locator('summary[aria-label="Structureをエクスポート"]').click();
+  await viewer.getByRole("button", { name: /SVG.*全体・ベクター/u }).click();
+  const svgDownload = await svgDownloadPromise;
+  const svgPath = await svgDownload.path();
+  expect(svgPath).not.toBeNull();
+  const svg = await readFile(svgPath, "utf8");
+  expect(svg).toMatch(
+    /<g data-node-id="payment-reconciliation"[\s\S]*?<text[^>]*font-size="11"[^>]*font-weight="700"[^>]*><tspan[^>]*>Payment/u,
+  );
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(scrollBeforeExport);
 });
 
 test("preserves Structure fallback meaning through commit and head changes", async ({
