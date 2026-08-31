@@ -103,6 +103,9 @@ function PullRequestRow({
         <span className="pull-request-count pull-request-count--walkthrough">
           {item.walkthroughCount} walkthroughs
         </span>
+        <span className="pull-request-count pull-request-count--structure">
+          {item.structureCount} {item.structureCount === 1 ? "structure" : "structures"}
+        </span>
       </span>
       <span className="pull-request-row__date">
         <span>作成</span>

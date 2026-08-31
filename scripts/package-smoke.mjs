@@ -250,6 +250,9 @@ try {
     "skills/rvw-walkthrough/SKILL.md",
     "skills/rvw-walkthrough/agents/openai.yaml",
     "skills/rvw-walkthrough/references/walkthrough-authoring.md",
+    "skills/rvw-structure/SKILL.md",
+    "skills/rvw-structure/agents/openai.yaml",
+    "skills/rvw-structure/references/structure-authoring.md",
     "skills/rvw-watch-comments/SKILL.md",
     "skills/rvw-watch-comments/agents/openai.yaml",
     "skills/rvw-watch-comments/scripts/auto-ack.mjs",
@@ -391,7 +394,7 @@ try {
   );
   assert.deepEqual(
     installedSkills.skills.map((skill) => skill.name),
-    ["rvw", "rvw-walkthrough", "rvw-watch-comments"],
+    ["rvw", "rvw-walkthrough", "rvw-structure", "rvw-watch-comments"],
   );
   assert.ok(installedSkills.skills.every((skill) => skill.matchesBundled));
   const installedWatchState = path.join(

@@ -4,6 +4,11 @@ import { describe, expect, it } from "vitest";
 const rvwSkill = readFileSync("skills/rvw/SKILL.md", "utf8");
 const watchSkill = readFileSync("skills/rvw-watch-comments/SKILL.md", "utf8");
 const walkthroughSkill = readFileSync("skills/rvw-walkthrough/SKILL.md", "utf8");
+const structureSkill = readFileSync("skills/rvw-structure/SKILL.md", "utf8");
+const structureAuthoring = readFileSync(
+  "skills/rvw-structure/references/structure-authoring.md",
+  "utf8",
+);
 const walkthroughAuthoring = readFileSync(
   "skills/rvw-walkthrough/references/walkthrough-authoring.md",
   "utf8",
@@ -44,5 +49,21 @@ describe("bundled Skill code-reference guidance", () => {
     expect(walkthroughAuthoring).toContain("data-rvw-commentable");
     expect(walkthroughAuthoring).toContain("meaningful `aria-label`");
     expect(walkthroughAuthoring).toContain("repository root");
+  });
+
+  it("keeps Structure authoring code-centered, source-exact, and identity-stable", () => {
+    expect(structureSkill).toContain("A Structure is a space; a Walkthrough is a path");
+    expect(structureSkill).toContain("Require `protocolVersion` 4");
+    expect(structureSkill).toContain("structure.publish");
+    expect(structureSkill).toContain("Never access SQLite directly");
+    expect(structureSkill).toContain("Preserve IDs");
+    expect(structureAuthoring).toContain("Explicit directions from the user");
+    expect(structureAuthoring).toContain("one exact `sourceOid`");
+    expect(structureAuthoring).toContain("Never recycle an ID");
+    expect(structureAuthoring).toMatch(/Stop and recommend a\s+Walkthrough/);
+    expect(structureAuthoring).toContain("Do not create giant graphs");
+    expect(structureAuthoring).toContain("factual code entrypoint");
+    expect(structureAuthoring).toContain("static inventory");
+    expect(structureAuthoring).toContain("Do not publish");
   });
 });

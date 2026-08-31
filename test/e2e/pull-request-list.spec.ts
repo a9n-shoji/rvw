@@ -38,6 +38,8 @@ test("lists saved Pull Requests and navigates through browser history", async ({
   await expect(rows.nth(1)).toContainText("3 unresolved");
   await expect(rows.nth(1)).toContainText("5 resolved");
   await expect(rows.nth(1)).toContainText("2 walkthroughs");
+  await expect(rows.nth(1)).toContainText("1 structure");
+  await expect(rows.first()).toContainText("3 structures");
   await expect(rows.nth(1).getByText("不明")).toBeVisible();
   await expect(page.getByText("1–2 / 2")).toBeVisible();
   const browserCloseGuard = await page.evaluate(() => {
@@ -74,21 +76,39 @@ test("lists saved Pull Requests and navigates through browser history", async ({
   await expect(page.locator(".document-tab.active")).toContainText("fixture.ts");
 });
 
-test("opens the Pull Request list in a new tab from a modified logo click", async ({
-  page,
-  context,
-}) => {
+test("leaves modified logo navigation to the browser", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   const logo = page.getByRole("link", { name: "Pull Request一覧へ" });
   await expect(logo).toHaveAttribute("href", "/");
 
-  const newPagePromise = context.waitForEvent("page");
-  await logo.click({ modifiers: ["ControlOrMeta"] });
-  const listPage = await newPagePromise;
-
-  await expect(listPage.getByRole("heading", { name: "Pull Requests" })).toBeVisible();
+  const preventedByApp = await logo.evaluate(async (element) => {
+    const dispatchModifiedClick = async (modifier: "metaKey" | "ctrlKey"): Promise<boolean> =>
+      await new Promise((resolve) => {
+        document.addEventListener(
+          "click",
+          (event) => {
+            const prevented = event.defaultPrevented;
+            event.preventDefault();
+            resolve(prevented);
+          },
+          { once: true },
+        );
+        element.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            [modifier]: true,
+          }),
+        );
+      });
+    return {
+      meta: await dispatchModifiedClick("metaKey"),
+      control: await dispatchModifiedClick("ctrlKey"),
+    };
+  });
+  expect(preventedByApp).toEqual({ meta: false, control: false });
   await expect(page).toHaveURL(new RegExp(`pullRequestId=${pullRequestId}`));
-  await listPage.close();
 });
 
 test("refreshes eligible saved Pull Request statuses only after an explicit click", async ({
@@ -212,7 +232,7 @@ test("preserves drafts and the latest reading position when returning to the lis
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.keyboard.press("Control+Shift+F");
+  await page.getByRole("button", { name: "コード検索を開く" }).click();
   await page.getByRole("textbox", { name: "全文検索", exact: true }).fill("dispatcher");
   await page.getByRole("button", { name: "README.md 50行", exact: true }).click();
 

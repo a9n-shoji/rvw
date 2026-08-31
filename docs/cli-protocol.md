@@ -9,11 +9,12 @@ references to comment create, reply, edit, get, and synchronized replies, and ad
 `agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
 idempotency keys are additive fields and do not change existing callers. Version 4 adds required
 nullable `lastModifiedBy` provenance to comment-post output so consumers can distinguish trusted
-Agent and human write channels.
+Agent and human write channels. Structure read, list, idempotent publish, compare-and-swap update, and
+compare-and-swap delete are additive version-4 capabilities and do not change existing command schemas.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
-source-anchored explanation back to the human. It is not an
+source-anchored explanation or relationship map back to the human. It is not an
 Agent-session, prompt, or browser-control protocol: the viewer stores durable review artifacts while
 all navigation remains a human action.
 
@@ -371,6 +372,7 @@ The stdin value is:
 
 ```json
 {
+  "idempotencyKey": "task-stable-key-for-this-structure-publication",
   "pullRequest": "https://github.com/owner/repository/pull/123",
   "sourceOid": "0123456789abcdef0123456789abcdef01234567",
   "title": "Request flow",
@@ -473,11 +475,141 @@ Walkthrough, its references, and those comments and posts. Copied Walkthrough an
 resolving. Deletion does not remove the retained Git commit ref because other review state may share it;
 `rvw pr reset` remains the ref cleanup boundary.
 
+## Structure lifecycle
+
+Structures expose one current relationship graph under a stable URI. A Structure is a bounded
+PR-relevant behavior space with a factual code entrypoint, while a Walkthrough is an ordered path.
+Generic static architecture and responsibility inventories are outside the producer contract. rvw does
+not infer nodes or edges, store layout coordinates, retain Structure revisions, or provide a version selector.
+
+Read the current value before replacing or deleting it:
+
+```bash
+rvw structure get <STRUCTURE_URI> --json
+```
+
+The response contains the complete Structure and its Pull Request identity, including the local
+repository path. It does not contain browser focus, positions, viewport, or expansion state.
+
+### Publish
+
+```bash
+rvw structure publish --stdin --json
+```
+
+The stdin value is:
+
+```json
+{
+  "idempotencyKey": "task-stable-key-for-this-structure-publication",
+  "pullRequest": "https://github.com/owner/repository/pull/123",
+  "sourceOid": "0123456789abcdef0123456789abcdef01234567",
+  "title": "Request policy boundary",
+  "scope": "The request policy and the contracts it directly consumes; transport setup is excluded.",
+  "originNodeId": "request-policy",
+  "nodes": [
+    {
+      "id": "request-policy",
+      "label": "RequestPolicy",
+      "description": "Owns the allow/deny decision.",
+      "kind": "service",
+      "notation": "class",
+      "anchor": {
+        "path": "src/request-policy.ts",
+        "startLine": 8,
+        "endLine": 34
+      }
+    },
+    {
+      "id": "policy-input",
+      "label": "PolicyInput",
+      "description": "The committed input contract.",
+      "kind": "contract",
+      "notation": "interface",
+      "anchor": { "path": "src/types.ts" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-policy-consumes-input",
+      "from": "request-policy",
+      "to": "policy-input",
+      "label": "consumes",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "src/request-policy.ts",
+          "startLine": 10,
+          "endLine": 15
+        }
+      ]
+    }
+  ]
+}
+```
+
+`idempotencyKey`, `pullRequest`, `sourceOid`, nonblank `title` and `scope`, `originNodeId`, one or more
+nodes, and `edges` are required. `originNodeId` names an existing source-anchored Node and every Node
+must be reachable from it when Edge direction, parallel multiplicity, and self-loops are ignored. Node and Edge IDs match
+`^[A-Za-z][A-Za-z0-9_-]{0,63}$`, are unique within their own collections, and are stable claim
+identities rather than labels. Every edge
+endpoint must exist and `directed` is required. Nodes may contain zero or one anchor; edges may contain
+zero to twenty anchors. Every anchor is a repository-relative available UTF-8 document at `sourceOid`
+and either omits both line fields or supplies both as an existing positive inclusive range. Omitted
+nullable fields normalize to `null`; omitted edge anchors normalize to an empty array.
+Node `notation` is optional and normalizes to `plain`; accepted values are `plain`, `class`,
+`database`, `interface`, `component`, `external`, and `concept`. It affects presentation only.
+
+Limits are 50 nodes, 200 edges, a 200-character title, a 4000-character scope, 200-character labels,
+2000-character descriptions, 100-character kinds, and 2 MiB for the normalized Structure content.
+The application validates commit availability and Pull Request ownership before saving one transaction
+and retaining `sourceOid`. An exact retry with the same idempotency key returns the original Structure;
+reusing the key for another canonical payload fails, and retrying after that Structure was deleted
+reports a deleted result. `rvw pr reset` removes publication records with the rest of the PR review
+state, so the same logical key can begin a fresh publication after reset. Success returns the saved
+Structure and `rvw://structure/<uuid>`. Publication
+is passive: it never opens a browser or changes a tab, commit range, focus, viewport, or scroll position.
+
+### List and recover references
+
+```bash
+rvw structure list <PR> --json
+```
+
+The result includes the saved Pull Request identity and Structure summaries with their stable `ref`,
+title, scope, source OID, and timestamps. Use it to recover the URI after an uncertain publish result.
+
+### Replace in place
+
+```bash
+rvw structure update <STRUCTURE_URI> --stdin --json
+```
+
+Update accepts `expectedUpdatedAt` from the value that was read plus the complete `sourceOid`, `title`,
+`scope`, `originNodeId`, `nodes`, and `edges` value, but does not accept `pullRequest`. It performs the
+same validation and atomically replaces the graph only while `updatedAt` still matches, while
+keeping the Structure ID, URI, Pull Request, and `createdAt`; `updatedAt` changes. No previous graph is
+retained. A mismatch returns `STRUCTURE_CONFLICT` and the caller must read and reconcile the current
+value. Producers preserve IDs for surviving claims of the same subject, never recycle removed IDs,
+and publish a new Structure when the declared subject changes. Update is also passive.
+
+### Delete
+
+```bash
+rvw structure delete <STRUCTURE_URI> --json
+rvw structure delete <STRUCTURE_URI> --yes --expected-updated-at <PREVIEW_UPDATED_AT> --json
+```
+
+The first form returns `STRUCTURE_DELETE_CONFIRMATION_REQUIRED`, the current Structure, and Node, Edge,
+and source-anchor counts. The confirmed form requires that preview's exact `updatedAt` and permanently
+deletes only the unchanged Structure. A stale preview returns `STRUCTURE_CONFLICT`. The retained commit
+ref is not removed because other review state may share it; `rvw pr reset` remains the cleanup boundary.
+
 ## Local transport and database path
 
 When a normally launched rvw viewer is running, its database-scoped runtime exposes a Unix socket
 with mode `0600` inside a per-user `0700` temporary directory. Agent CLI commands try that socket
-first, so writes such as comment creation, reply, resolve, Walkthrough update,
+first, so writes such as comment creation, reply, resolve, Walkthrough update, Structure update,
 and repository attachment execute through the already-authorized rvw process instead of requiring the
 Agent sandbox to open SQLite for writing. Without `RVW_AGENT_SOCKET_PATH`, a connection failure before
 request transmission may fall back to the selected direct database. When `RVW_AGENT_SOCKET_PATH` is
@@ -516,10 +648,10 @@ Skill status.
 
 ## Bundled Skills
 
-`rvw skill install codex` and `rvw skill install claude` each install the same three capability-named
+`rvw skill install codex` and `rvw skill install claude` each install the same four capability-named
 Skills: `rvw` for comment creation, handling, and synchronization, `rvw-walkthrough` for publication,
-and `rvw-watch-comments` for continuous new-post intake. The
-platform argument selects only the destination Skill root. Neither Skill hardcodes an Agent identity;
+`rvw-structure` for bounded behavior maps from factual code entrypoints, and `rvw-watch-comments` for continuous new-post intake. The
+platform argument selects only the destination Skill root. No Skill hardcodes an Agent identity;
 the current Agent may supply an accurate optional `authorLabel`.
 
 `rvw-watch-comments` documents the complete state-script stdin/stdout contract. Its driver derives
@@ -544,6 +676,12 @@ a first reading path for building a mental model of a change or requested implem
 follows explicit authoring instructions first, and uses a flexible default guide only for unspecified
 choices. It deliberately avoids a fixed template, an exhaustive review boundary, and AI-review conclusions.
 
+`rvw-structure` selects Structure only for PR-relevant behavior spaces with a factual code entrypoint,
+gives explicit subject and scope authority priority, inspects committed code, and publishes stable-ID
+Node and Edge claims at one exact commit. It rejects static responsibility inventories, giant or
+inferred graphs, vague relationships, layout instructions, implicit
+same-URI subject changes, browser control, and deletion without exact preview authorization.
+
 ## Protocol discovery
 
 For a comment whose target is `kind: "walkthrough"`, `rvw comment get` also returns the complete
@@ -565,6 +703,11 @@ comment.codeReferences
 comment.resolve
 comment.reopen
 pullRequest.sync
+structure.list
+structure.read
+structure.publish
+structure.update
+structure.delete
 walkthrough.read
 walkthrough.publish
 walkthrough.update

@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RvwService } from "../../src/application/rvw-service.js";
 import { formatCommentWatchCursor } from "../../src/domain/comment-watch-cursor.js";
-import type { GitHubPullRequest } from "../../src/domain/models.js";
+import type { GitHubPullRequest, Structure } from "../../src/domain/models.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
@@ -1894,5 +1894,292 @@ describe("RvwService commit workflow", () => {
         pullRequestId: opened.pullRequest.id,
       }),
     ).toEqual({ outdated: false, range: { startLine: 4, endLine: 4 }, path: "Pull Request.md" });
+  });
+
+  it("publishes, replaces, reads, and deletes an exact-source Structure", async () => {
+    const { repository, firstHead, fake, database, service } = setup("rvw-structure-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const publishInput = {
+      idempotencyKey: "structure-publish-source-relationships",
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Source relationships",
+      scope: "Relationships around src.txt. Build configuration is excluded.",
+      originNodeId: "source",
+      nodes: [
+        {
+          id: "source",
+          label: "src.txt",
+          description: "The exact source document",
+          kind: "document",
+          notation: "class" as const,
+          anchor: { path: "src.txt", startLine: 1, endLine: 2 },
+        },
+        { id: "consumer", label: "Consumer", description: "   ", kind: " concept " },
+        { id: "obsolete", label: "Obsolete claim" },
+      ],
+      edges: [
+        {
+          id: "reads-source",
+          from: "consumer",
+          to: "source",
+          label: "reads",
+          directed: true,
+          anchors: [{ path: "src.txt" }],
+        },
+        {
+          id: "documents-obsolete",
+          from: "source",
+          to: "obsolete",
+          label: "documents",
+          directed: true,
+        },
+      ],
+    };
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-origin-without-anchor",
+        originNodeId: "consumer",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-disconnected-graph",
+        edges: publishInput.edges.filter((edge) => edge.id === "documents-obsolete"),
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    const structure = await service.publishStructure(publishInput);
+    await expect(service.publishStructure(publishInput)).resolves.toEqual(structure);
+    await expect(
+      service.publishStructure({ ...publishInput, title: "Conflicting retry" }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+
+    expect(structure).toMatchObject({
+      ref: `rvw://structure/${structure.id}`,
+      pullRequestId: opened.pullRequest.id,
+      sourceOid: firstHead,
+      originNodeId: "source",
+      nodes: [
+        {
+          id: "source",
+          notation: "class",
+          anchor: { path: "src.txt", startLine: 1, endLine: 2 },
+        },
+        { id: "consumer", description: null, kind: "concept", notation: "plain", anchor: null },
+        { id: "obsolete", notation: "plain", anchor: null },
+      ],
+      edges: [
+        { id: "reads-source", anchors: [{ startLine: null, endLine: null }] },
+        { id: "documents-obsolete" },
+      ],
+    });
+    expect(service.listStructures(opened.pullRequest.id)).toEqual([
+      {
+        id: structure.id,
+        ref: structure.ref,
+        pullRequestId: opened.pullRequest.id,
+        sourceOid: firstHead,
+        title: "Source relationships",
+        scope: "Relationships around src.txt. Build configuration is excluded.",
+        createdAt: structure.createdAt,
+        updatedAt: structure.updatedAt,
+      },
+    ]);
+    expect(service.getStructureByUri(structure.ref).structure).toEqual(structure);
+
+    const updated = await service.updateStructure(structure.ref, {
+      expectedUpdatedAt: structure.updatedAt,
+      sourceOid: firstHead,
+      title: "Source boundary",
+      scope: "The same subject with a corrected consumer claim.",
+      originNodeId: "source",
+      nodes: [
+        {
+          id: "source",
+          label: "src.txt",
+          description: "The exact source document",
+          anchor: { path: "src.txt", startLine: 1, endLine: 2 },
+        },
+        { id: "consumer", label: "Updated consumer" },
+        { id: "validator", label: "Validator", anchor: { path: "src.txt" } },
+      ],
+      edges: [
+        {
+          id: "validates-source",
+          from: "validator",
+          to: "source",
+          label: "validates",
+          directed: true,
+        },
+        {
+          id: "serves-consumer",
+          from: "source",
+          to: "consumer",
+          label: "serves",
+          directed: true,
+        },
+      ],
+    });
+    expect(updated).toMatchObject({
+      id: structure.id,
+      ref: structure.ref,
+      createdAt: structure.createdAt,
+      title: "Source boundary",
+      nodes: [{ id: "source" }, { id: "consumer" }, { id: "validator" }],
+      edges: [{ id: "validates-source" }, { id: "serves-consumer" }],
+    });
+    expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse(structure.updatedAt));
+    expect(updated.edges.some((edge) => edge.id === "reads-source")).toBe(false);
+
+    await expect(
+      service.updateStructure(structure.ref, {
+        expectedUpdatedAt: updated.updatedAt,
+        sourceOid: firstHead,
+        title: "Reused retired node",
+        scope: "A retired identity must never point at a new claim.",
+        originNodeId: "source",
+        nodes: [...updated.nodes, { id: "obsolete", label: "Different claim" }],
+        edges: updated.edges,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.updateStructure(structure.ref, {
+        expectedUpdatedAt: updated.updatedAt,
+        sourceOid: firstHead,
+        title: "Reused retired relation",
+        scope: "A retired relation identity must not be rebound.",
+        originNodeId: "source",
+        nodes: updated.nodes,
+        edges: [
+          ...updated.edges,
+          {
+            id: "reads-source",
+            from: "consumer",
+            to: "source",
+            label: "reads again",
+            directed: true,
+            anchors: [{ path: "src.txt" }],
+          },
+        ],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+    await expect(
+      service.updateStructure(structure.ref, {
+        expectedUpdatedAt: structure.updatedAt,
+        sourceOid: firstHead,
+        title: "Stale replacement",
+        scope: "This writer read the previous value.",
+        originNodeId: "source",
+        nodes: [{ id: "source", label: "Stale", anchor: { path: "src.txt" } }],
+        edges: [],
+      }),
+    ).rejects.toMatchObject({
+      code: "STRUCTURE_CONFLICT",
+      status: 409,
+      details: { expectedUpdatedAt: structure.updatedAt, currentUpdatedAt: updated.updatedAt },
+    });
+
+    await expect(
+      service.updateStructure(structure.ref, {
+        expectedUpdatedAt: updated.updatedAt,
+        sourceOid: firstHead,
+        title: "Invalid source",
+        scope: "Reject an out-of-document anchor.",
+        originNodeId: "source",
+        nodes: [
+          {
+            id: "source",
+            label: "src.txt",
+            anchor: { path: "src.txt", startLine: 99, endLine: 99 },
+          },
+        ],
+        edges: [],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(service.getStructureByUri(structure.ref).structure).toEqual(updated);
+
+    const secondPr = database.upsertPullRequest(
+      { ...fake.pullRequest, number: 8, url: "https://github.com/acme/review-repo/pull/8" },
+      {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      opened.pullRequest.latestComparisonBaseOid,
+    );
+    expect(() => service.getStructure(secondPr.id, structure.id)).toThrow(/見つかりません/);
+    const deletePreview = service.getStructureDeletePreview(structure.ref);
+    expect(deletePreview).toMatchObject({
+      counts: { nodes: 3, edges: 2, anchors: 2 },
+      confirmationRequired: true,
+    });
+    const concurrentResults = await Promise.allSettled(
+      ["First", "Second"].map((writer) =>
+        service.updateStructure(structure.ref, {
+          expectedUpdatedAt: updated.updatedAt,
+          sourceOid: firstHead,
+          title: `${writer} concurrent replacement`,
+          scope: "Only one writer from the same current value may succeed.",
+          nodes: updated.nodes,
+          edges: updated.edges,
+          originNodeId: updated.originNodeId,
+        }),
+      ),
+    );
+    const fulfilled = concurrentResults.filter(
+      (result): result is PromiseFulfilledResult<Structure> => result.status === "fulfilled",
+    );
+    const rejected = concurrentResults.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: "STRUCTURE_CONFLICT", status: 409 });
+    const concurrentlyUpdated = fulfilled[0]!.value;
+    expect(() =>
+      service.deleteStructureByUri(structure.ref, deletePreview.structure.updatedAt),
+    ).toThrowError(expect.objectContaining({ code: "STRUCTURE_CONFLICT", status: 409 }));
+    expect(
+      service.deleteStructureByUri(structure.ref, concurrentlyUpdated.updatedAt),
+    ).toMatchObject({
+      id: structure.id,
+      ref: structure.ref,
+      counts: { nodes: 3, edges: 2, anchors: 2 },
+    });
+    expect(service.listStructures(opened.pullRequest.id)).toEqual([]);
+    await expect(service.publishStructure(publishInput)).rejects.toMatchObject({
+      code: "IDEMPOTENCY_RESULT_DELETED",
+    });
+    expect(git(repository, "rev-parse", `refs/rvw/pr/7/commits/oid-${firstHead}`)).toBe(firstHead);
+  });
+
+  it("allows a Structure publish operation to start fresh after PR reset", async () => {
+    const { repository, firstHead, service } = setup("rvw-structure-reset-idempotency-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const publishInput = {
+      idempotencyKey: "structure-reset-republish",
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Resettable behavior",
+      scope: "A single source-established behavior origin.",
+      originNodeId: "entry",
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          anchor: { path: "src.txt", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [],
+    };
+    const beforeReset = await service.publishStructure(publishInput);
+
+    await service.resetPullRequest(opened.pullRequest.id);
+
+    const afterReset = await service.publishStructure(publishInput);
+    expect(afterReset.id).not.toBe(beforeReset.id);
+    expect(afterReset.ref).not.toBe(beforeReset.ref);
   });
 });

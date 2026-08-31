@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { WalkthroughSummary } from "../../domain/models.js";
+import type { StructureSummary, WalkthroughSummary } from "../../domain/models.js";
 import { FileEntryIcon } from "./FileIcon.js";
 
 export function WalkthroughIcon({ className = "" }: { className?: string }) {
@@ -13,20 +13,38 @@ export function WalkthroughIcon({ className = "" }: { className?: string }) {
   );
 }
 
+export function StructureIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} aria-hidden="true" viewBox="0 0 16 16" width="16" height="16">
+      <path
+        fill="currentColor"
+        d="M3 1.5A1.5 1.5 0 1 0 3 4.5 1.5 1.5 0 0 0 3 1.5Zm10 0A1.5 1.5 0 1 0 13 4.5 1.5 1.5 0 0 0 13 1.5ZM8 6.5A1.5 1.5 0 1 0 8 9.5 1.5 1.5 0 0 0 8 6.5Zm-5 5A1.5 1.5 0 1 0 3 14.5 1.5 1.5 0 0 0 3 11.5Zm10 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3ZM4.1 4.05l2.8 2.8.7-.7-2.8-2.8-.7.7Zm7.8 0-.7-.7-2.8 2.8.7.7 2.8-2.8Zm-5 5.1-2.8 2.8.7.7 2.8-2.8-.7-.7Zm2.2 0-.7.7 2.8 2.8.7-.7-2.8-2.8Z"
+      />
+    </svg>
+  );
+}
+
 export function ReviewTreeItems({
   walkthroughs,
+  structures,
   pullRequestActive,
   activeWalkthroughId,
+  activeStructureId,
   onOpenPullRequest,
   onOpen,
+  onOpenStructure,
 }: {
   walkthroughs: WalkthroughSummary[];
+  structures: StructureSummary[];
   pullRequestActive: boolean;
   activeWalkthroughId: string | null;
+  activeStructureId: string | null;
   onOpenPullRequest: (openInRightPane: boolean) => void;
   onOpen: (walkthrough: WalkthroughSummary, openInRightPane: boolean) => void;
+  onOpenStructure: (structure: StructureSummary, openInRightPane: boolean) => void;
 }) {
   const [walkthroughsExpanded, setWalkthroughsExpanded] = useState(false);
+  const [structuresExpanded, setStructuresExpanded] = useState(false);
 
   return (
     <nav className="review-tree-items" aria-label="レビュー文書">
@@ -105,6 +123,56 @@ export function ReviewTreeItems({
                 <WalkthroughIcon />
               </span>
               <span className="file-tree-label">{walkthrough.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      <button
+        type="button"
+        className="file-tree-row review-tree-item review-tree-structures"
+        aria-expanded={structuresExpanded}
+        aria-label={`Structure ${structures.length}`}
+        disabled={structures.length === 0}
+        onClick={() => setStructuresExpanded((expanded) => !expanded)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || !structuresExpanded) return;
+          event.preventDefault();
+          setStructuresExpanded(false);
+        }}
+      >
+        <span className="directory-chevron" aria-hidden="true">
+          {structuresExpanded ? "▾" : "▸"}
+        </span>
+        <span className="file-tree-icon-group review-tree-structure-icon" aria-hidden="true">
+          <StructureIcon />
+        </span>
+        <span className="file-tree-label">Structure</span>
+        <span className="review-tree-count">{structures.length}</span>
+      </button>
+      {structuresExpanded && (
+        <div className="review-tree-structure-list">
+          {structures.map((structure) => (
+            <button
+              type="button"
+              key={structure.id}
+              className={`file-tree-row review-tree-item review-tree-structure${activeStructureId === structure.id ? " active" : ""}`}
+              onMouseDown={(event) => {
+                if (!event.metaKey && !event.ctrlKey) return;
+                event.preventDefault();
+                onOpenStructure(structure, true);
+              }}
+              onClick={(event) => {
+                if (event.metaKey || event.ctrlKey) return;
+                onOpenStructure(structure, false);
+              }}
+              title={`${structure.title}\n${structure.scope}\n${structure.sourceOid.slice(0, 8)}`}
+              aria-label={structure.title}
+            >
+              <span className="directory-chevron" aria-hidden="true" />
+              <span className="file-tree-icon-group review-tree-structure-icon" aria-hidden="true">
+                <StructureIcon />
+              </span>
+              <span className="file-tree-label">{structure.title}</span>
             </button>
           ))}
         </div>

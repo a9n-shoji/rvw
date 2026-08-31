@@ -41,6 +41,7 @@ export const openPullRequestSchema = z.object({
 });
 
 export const resetSchema = z.object({ yes: z.boolean() });
+export const structureDeleteSchema = z.object({ expectedUpdatedAt: z.string().min(1).max(100) });
 
 export const viewerIdSchema = z.uuid();
 export const viewerReleaseSchema = z.object({ viewerId: viewerIdSchema });

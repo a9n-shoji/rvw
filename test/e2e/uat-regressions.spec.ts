@@ -558,6 +558,7 @@ test("makes reset destructive intent explicit and honors confirmation cancellati
           targets: 3,
           walkthroughs: 2,
           walkthroughReferences: 7,
+          structures: 3,
           gitRefs: 4,
         },
       },
@@ -567,6 +568,7 @@ test("makes reset destructive intent explicit and honors confirmation cancellati
     expect(dialog.message()).toContain("ローカルレビュー状態を削除して再構築します。");
     expect(dialog.message()).toContain("コメント 3");
     expect(dialog.message()).toContain("返信 5");
+    expect(dialog.message()).toContain("Structure 3");
     expect(dialog.message()).toContain("この操作は元に戻せません。");
     await dialog.dismiss();
   });
@@ -613,6 +615,7 @@ test("discards in-memory comment drafts after a confirmed reset", async ({ page,
             targets: 0,
             walkthroughs: 0,
             walkthroughReferences: 0,
+            structures: 0,
             gitRefs: 1,
           },
         },
@@ -920,8 +923,10 @@ test("distinguishes virtual and repository documents with the same path", async 
   });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.keyboard.press("Control+P");
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: /ファイルを開く/ }).click();
   const palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  await expect(palette).toBeVisible();
   await palette.getByRole("combobox", { name: "ファイル名で検索" }).fill(duplicatePath);
   await expect(palette.getByRole("option", { name: /Pull Request\.md（PR本文）/ })).toBeVisible();
   await palette.getByRole("option", { name: "Pull Request.md（repository）", exact: true }).click();
@@ -1045,9 +1050,15 @@ test("handles Unicode empty symlink submodule and very long repository paths", a
   });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  const openFromQuickOpen = async (path: string, query = path) => {
-    await page.keyboard.press("Control+P");
+  const showQuickOpen = async () => {
+    await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+    await page.getByRole("menuitem", { name: /ファイルを開く/ }).click();
     const palette = page.getByRole("dialog", { name: "ファイルを開く" });
+    await expect(palette).toBeVisible();
+    return palette;
+  };
+  const openFromQuickOpen = async (path: string, query = path) => {
+    const palette = await showQuickOpen();
     const input = palette.getByRole("combobox", { name: "ファイル名で検索" });
     await input.fill(query);
     await palette.getByRole("option", { name: path }).click();
@@ -1058,16 +1069,14 @@ test("handles Unicode empty symlink submodule and very long repository paths", a
   await expect(page.locator("diffs-container")).toBeVisible();
   await expect(page.getByText(/本文を表示できません/)).toHaveCount(0);
 
-  await page.keyboard.press("Control+P");
-  let palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  let palette = await showQuickOpen();
   let input = palette.getByRole("combobox", { name: "ファイル名で検索" });
   await input.fill("Caf");
   await expect(palette.getByRole("option", { name: decomposedPath })).toBeVisible();
   await expect(palette.getByRole("option", { name: composedPath })).toBeVisible();
   await input.press("Escape");
 
-  await page.keyboard.press("Control+P");
-  palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  palette = await showQuickOpen();
   input = palette.getByRole("combobox", { name: "ファイル名で検索" });
   await input.fill("current");
   const symlinkOption = palette.getByRole("option", { name: symlinkPath });
@@ -1075,8 +1084,7 @@ test("handles Unicode empty symlink submodule and very long repository paths", a
   await symlinkOption.click();
   await expect(page.getByText("../releases/current", { exact: true })).toBeVisible();
 
-  await page.keyboard.press("Control+P");
-  palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  palette = await showQuickOpen();
   input = palette.getByRole("combobox", { name: "ファイル名で検索" });
   await input.fill("example-module");
   const submoduleOption = palette.getByRole("option", { name: submodulePath });
@@ -1146,7 +1154,8 @@ test("enriches PR Markdown comment targets like the production service", async (
 
 test("allows file-level comments while line comments stay unavailable for binary files", async ({
   page,
-}) => {
+}, testInfo) => {
+  const body = `Binary artifact needs a file-level note (${testInfo.repeatEachIndex}-${testInfo.retry}).`;
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();
   await page.getByRole("button", { name: "binary.bin", exact: true }).click();
@@ -1155,13 +1164,12 @@ test("allows file-level comments while line comments stay unavailable for binary
 
   await page.getByRole("button", { name: "ファイル全体へコメント" }).click();
   const composer = page.locator(".inline-comment-composer--file");
-  await composer
-    .getByRole("textbox", { name: "ファイル全体へコメント" })
-    .fill("Binary artifact needs a file-level note.");
+  await composer.getByRole("textbox", { name: "ファイル全体へコメント" }).fill(body);
   await composer.getByRole("button", { name: "コメント", exact: true }).click();
-  await expect(
-    page.getByText("Binary artifact needs a file-level note.", { exact: true }),
-  ).toBeVisible();
+  const commentsToggle = page.getByRole("button", { name: /^コメント \d+$/ });
+  await expect(commentsToggle).toHaveAttribute("aria-expanded", "false");
+  await commentsToggle.click();
+  await expect(page.locator(".comment-sidebar").getByText(body, { exact: true })).toBeVisible();
 });
 
 test("shows a recoverable error when the lazy document viewer cannot load", async ({ page }) => {
@@ -1382,7 +1390,7 @@ test("browser back restores the reading position after scrolling away from a lin
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.keyboard.press("Control+Shift+F");
+  await page.getByRole("button", { name: "コード検索を開く", exact: true }).click();
   await page.getByRole("textbox", { name: "全文検索", exact: true }).fill("dispatcher");
   await page.getByRole("button", { name: "README.md 50行", exact: true }).click();
 

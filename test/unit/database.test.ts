@@ -184,6 +184,27 @@ describe("RvwDatabase", () => {
       diagramBindings: {},
       references: [],
     });
+    const structure = database.createStructure({
+      pullRequestId: newer.id,
+      sourceOid: newerGithub.headOid,
+      title: "Architecture space",
+      scope: "The bounded relationship under review.",
+      originNodeId: "entry",
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          description: null,
+          kind: null,
+          notation: "plain",
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [],
+      idempotencyKey: "summary-structure",
+      idempotencyRequestHash: "summary-structure-request",
+    });
+    expect(structure.nodes[0]?.notation).toBe("plain");
 
     expect(unresolved.resolvedAt).toBeNull();
     expect(database.listPullRequestSummaries(0, 1)).toEqual({
@@ -201,6 +222,7 @@ describe("RvwDatabase", () => {
           unresolvedCommentCount: 1,
           resolvedCommentCount: 1,
           walkthroughCount: 1,
+          structureCount: 1,
         },
       ],
       total: 2,
@@ -212,6 +234,7 @@ describe("RvwDatabase", () => {
           unresolvedCommentCount: 0,
           resolvedCommentCount: 0,
           walkthroughCount: 0,
+          structureCount: 0,
         },
       ],
       total: 2,

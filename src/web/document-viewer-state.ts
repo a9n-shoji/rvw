@@ -1,5 +1,5 @@
 import { changedFilePath } from "../domain/changed-file.js";
-import type { ChangedFile, Walkthrough } from "../domain/models.js";
+import type { ChangedFile, Structure, Walkthrough } from "../domain/models.js";
 import { walkthroughReferenceFingerprint } from "../domain/walkthrough-reference.js";
 import type { ActiveDocument } from "./document-workspace.js";
 
@@ -15,6 +15,8 @@ export interface DocumentViewerStateContext {
   changedFilesLoaded: boolean;
   walkthroughDetails: ReadonlyMap<string, Walkthrough>;
   loadingWalkthroughIds: ReadonlySet<string>;
+  structureDetails?: ReadonlyMap<string, Structure>;
+  loadingStructureIds?: ReadonlySet<string>;
 }
 
 export interface DerivedDocumentViewerState {
@@ -26,6 +28,8 @@ export interface DerivedDocumentViewerState {
   viewerDocument: ActiveDocument | null;
   walkthrough: Walkthrough | undefined;
   walkthroughLoading: boolean;
+  structure: Structure | undefined;
+  structureLoading: boolean;
 }
 
 export interface ReferenceStaleness {
@@ -160,6 +164,13 @@ export function deriveDocumentViewerState(
       : undefined;
   const walkthroughLoading =
     viewerDocument?.kind === "walkthrough" && context.loadingWalkthroughIds.has(viewerDocument.id);
+  const structure =
+    viewerDocument?.kind === "structure"
+      ? context.structureDetails?.get(viewerDocument.id)
+      : undefined;
+  const structureLoading =
+    viewerDocument?.kind === "structure" &&
+    (context.loadingStructureIds?.has(viewerDocument.id) ?? false);
   return {
     activeChange,
     fullViewNotice,
@@ -169,5 +180,7 @@ export function deriveDocumentViewerState(
     viewerDocument,
     walkthrough,
     walkthroughLoading,
+    structure,
+    structureLoading,
   };
 }

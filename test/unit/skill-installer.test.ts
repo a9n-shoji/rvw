@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SkillInstaller } from "../../src/infrastructure/skills/skill-installer.js";
 
-const expectedSkillNames = ["rvw", "rvw-walkthrough", "rvw-watch-comments"];
+const expectedSkillNames = ["rvw", "rvw-walkthrough", "rvw-structure", "rvw-watch-comments"];
 
 describe("SkillInstaller", () => {
   it("installs every bundled skill idempotently and requires force for divergent content", () => {
@@ -32,6 +32,15 @@ describe("SkillInstaller", () => {
       },
       {
         name: "rvw-walkthrough",
+        installed: true,
+        matchesBundled: true,
+        locallyModified: false,
+        updateAvailable: false,
+        updateRequired: false,
+        state: "current",
+      },
+      {
+        name: "rvw-structure",
         installed: true,
         matchesBundled: true,
         locallyModified: false,
@@ -102,6 +111,10 @@ describe("SkillInstaller", () => {
     const authoringGuide = path.join("rvw-walkthrough", "references", "walkthrough-authoring.md");
     expect(readFileSync(path.join(codexTarget, authoringGuide), "utf8")).toBe(
       readFileSync(path.join(claudeTarget, authoringGuide), "utf8"),
+    );
+    const structureAuthoring = path.join("rvw-structure", "references", "structure-authoring.md");
+    expect(readFileSync(path.join(codexTarget, structureAuthoring), "utf8")).toBe(
+      readFileSync(path.join(claudeTarget, structureAuthoring), "utf8"),
     );
   });
 

@@ -163,6 +163,69 @@ describe("Agent socket", () => {
     });
   });
 
+  it("routes Structure publication through the shared Agent transport", async () => {
+    const publishStructure = vi.fn().mockResolvedValue({
+      ref: "rvw://structure/70000000-0000-4000-8000-000000000001",
+    });
+    const input = {
+      idempotencyKey: "structure-publish-auth-boundary",
+      pullRequest: "https://github.com/acme/review-repo/pull/7",
+      sourceOid: "a".repeat(40),
+      title: "Authorization boundary",
+      scope: "Relationships around authorization.",
+      originNodeId: "entry",
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [],
+    };
+    await expect(
+      dispatchAgentSocketRequest({ publishStructure } as unknown as RvwService, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "structure.publish",
+        input,
+      }),
+    ).resolves.toEqual({
+      ref: "rvw://structure/70000000-0000-4000-8000-000000000001",
+    });
+    expect(publishStructure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...input,
+        nodes: [expect.objectContaining({ description: null, kind: null, notation: "plain" })],
+      }),
+    );
+  });
+
+  it("lists Structure references through the shared Agent transport", async () => {
+    const listStructuresByReference = vi.fn().mockReturnValue({
+      pullRequest: { id: "pr-7" },
+      structures: [
+        {
+          ref: "rvw://structure/70000000-0000-4000-8000-000000000001",
+          title: "Authorization boundary",
+        },
+      ],
+    });
+
+    await expect(
+      dispatchAgentSocketRequest({ listStructuresByReference } as unknown as RvwService, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "structure.list",
+        input: { reference: "https://github.com/acme/review-repo/pull/7" },
+      }),
+    ).resolves.toMatchObject({
+      pullRequest: { id: "pr-7" },
+      structures: [{ ref: "rvw://structure/70000000-0000-4000-8000-000000000001" }],
+    });
+    expect(listStructuresByReference).toHaveBeenCalledWith(
+      "https://github.com/acme/review-repo/pull/7",
+    );
+  });
+
   it("rejects mixed socket protocol versions and tells the caller to restart the viewer", async () => {
     const setCommentResolved = vi.fn();
     await expect(
@@ -251,10 +314,12 @@ describe("Agent socket", () => {
   it("requires server-side confirmation for destructive operations", async () => {
     const resetPullRequest = vi.fn();
     const deleteWalkthroughByUri = vi.fn();
+    const deleteStructureByUri = vi.fn();
     const service = {
       resolveStoredPullRequest: vi.fn().mockReturnValue({ id: "pr-1" }),
       resetPullRequest,
       deleteWalkthroughByUri,
+      deleteStructureByUri,
     } as unknown as RvwService;
 
     await expect(
@@ -267,12 +332,20 @@ describe("Agent socket", () => {
     await expect(
       dispatchAgentSocketRequest(service, {
         protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "structure.delete",
+        input: { uri: "rvw://structure/10000000-0000-4000-8000-000000000001" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
         operation: "walkthrough.delete",
         input: { uri: "rvw://walkthrough/10000000-0000-4000-8000-000000000001" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     expect(resetPullRequest).not.toHaveBeenCalled();
     expect(deleteWalkthroughByUri).not.toHaveBeenCalled();
+    expect(deleteStructureByUri).not.toHaveBeenCalled();
   });
 
   it("rejects inherited object property names as unsupported operations", async () => {

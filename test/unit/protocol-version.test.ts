@@ -20,6 +20,10 @@ const contractFiles = [
     pattern: (version: number) => `Require \`protocolVersion\` ${version}`,
   },
   {
+    path: "skills/rvw-structure/SKILL.md",
+    pattern: (version: number) => `Require \`protocolVersion\` ${version}`,
+  },
+  {
     path: "skills/rvw-watch-comments/SKILL.md",
     pattern: (version: number) => `Require \`protocolVersion\` ${version}`,
   },

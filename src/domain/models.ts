@@ -60,6 +60,7 @@ export interface PullRequestSummary {
   unresolvedCommentCount: number;
   resolvedCommentCount: number;
   walkthroughCount: number;
+  structureCount: number;
 }
 
 export interface CommitSummary {
@@ -184,6 +185,80 @@ export interface WalkthroughSummary {
   createdAt: string;
 }
 
+export interface SourceAnchor {
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+}
+
+export const STRUCTURE_NODE_NOTATIONS = [
+  "plain",
+  "class",
+  "database",
+  "interface",
+  "component",
+  "external",
+  "concept",
+] as const;
+
+export type StructureNodeNotation = (typeof STRUCTURE_NODE_NOTATIONS)[number];
+
+export interface StructureNode {
+  id: string;
+  label: string;
+  description: string | null;
+  kind: string | null;
+  notation: StructureNodeNotation;
+  anchor: SourceAnchor | null;
+}
+
+export interface StructureEdge {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+  directed: boolean;
+  anchors: SourceAnchor[];
+}
+
+export interface Structure {
+  id: string;
+  ref: string;
+  pullRequestId: string;
+  sourceOid: string;
+  title: string;
+  scope: string;
+  originNodeId: string;
+  nodes: StructureNode[];
+  edges: StructureEdge[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StructureSummary {
+  id: string;
+  ref: string;
+  pullRequestId: string;
+  sourceOid: string;
+  title: string;
+  scope: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StructureDeleteCounts {
+  nodes: number;
+  edges: number;
+  anchors: number;
+}
+
+export interface DeletedStructure {
+  id: string;
+  ref: string;
+  pullRequestId: string;
+  counts: StructureDeleteCounts;
+}
+
 export interface WalkthroughReferenceFileTarget {
   sourceOid: string;
   path: string;
@@ -301,5 +376,6 @@ export interface ResetCounts {
   targets: number;
   walkthroughs: number;
   walkthroughReferences: number;
+  structures: number;
   gitRefs: number;
 }

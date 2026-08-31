@@ -6,9 +6,9 @@
 互換性を意識するsurfaceは次です。
 
 - `rvw` CLIのcommand、flag、exit status
-- `rvw://comment/<uuid>`と`rvw://walkthrough/<uuid>`
+- `rvw://comment/<uuid>`、`rvw://walkthrough/<uuid>`、`rvw://structure/<uuid>`
 - `--json` responseと`rvw protocol --json`が公開するmachine protocol version / capability
-- bundled `rvw` / `rvw-walkthrough` / `rvw-watch-comments` SkillとCLI protocolの組み合わせ
+- bundled `rvw` / `rvw-walkthrough` / `rvw-structure` / `rvw-watch-comments` SkillとCLI protocolの組み合わせ
 - user dataを新しいversionへ引き継ぐforward migration
 
 machine-readable contractへbreaking changeが必要な場合はprotocol versionを進め、同梱Skillと文書を同じ

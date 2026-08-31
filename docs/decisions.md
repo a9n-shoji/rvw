@@ -42,6 +42,140 @@ detail into an unstable identity.
 - Only the source-identified top sequence participant/actor is interactive; the visually duplicated lower
   rendering remains passive rather than receiving a guessed identity.
 
+## 2026-08-30: Add Structure as a separate exact-source relationship space
+
+### Problem
+
+Walkthrough gives a reviewer a deliberately ordered reading path, while repository files and search
+leave the reviewer to reconstruct every relationship independently. The Phase 0 graph UX spike showed
+that a bounded, code-centered subject can benefit from a spatial map, but its temporary renderer,
+fixture-only data, custom layout experiment, and optional notation did not establish a production
+artifact contract. Promoting the spike wholesale would mix an interaction probe with durable domain,
+persistence, CLI, Skill, and update semantics.
+
+### Choice
+
+Add `Structure` as its own production document and Agent capability rather than a generic Artifact
+framework or a Walkthrough rendering mode. A Structure declares a title, bounded PR-relevant behavior,
+exact `sourceOid`, behavior entrypoint in `originNodeId`, stable-ID nodes, and stable-ID edges. Nodes carry zero or one
+source anchor; edges carry zero or more. Every anchor is a repository-relative UTF-8 path with either
+both inclusive line bounds or neither, and every anchor is validated at the one exact source commit.
+At least one and at most 400 anchors must exist across the graph.
+The graph is a producer claim about the responsibilities, dependencies, contracts, and side effects
+needed to verify that behavior; Git remains the evidence and history source of truth. A generic static
+architecture or responsibility inventory has no PR-review stopping condition and is out of scope.
+The write contract requires a source-established origin Node with its own source anchor, and every Node
+must participate in the same undirected relation component as that origin. Semantic scope remains the
+producer's responsibility; the service enforces only those structural invariants.
+
+Persist one current graph value per stable `rvw://structure/<uuid>` in a dedicated `structures` table.
+Store graph content as JSON because nodes and edges are an atomically replaced value and Phase 1 has no
+node-level comments, reverse lookup, or partial update query. Publish, get, whole-value update, preview
+delete, and confirmed delete use the same application service over CLI direct access or Agent socket.
+Ship the complete Structure lifecycle as additive protocol-v4 capabilities. Publication requires a
+durable idempotency key and update/delete require the exact `updatedAt` read by the caller, but these
+requirements belong only to the newly introduced Structure commands and do not break existing v4
+callers. An exact publish retry returns the original stable URI, while key reuse for another payload or
+after result deletion fails explicitly. Update/delete compare-and-swap prevents a stale whole-value
+writer or delete preview from silently discarding a newer current value. This is optimistic concurrency,
+not a Structure revision history or user-facing version selector. `structure list` exposes stable
+references for recovery after an uncertain publish response. These commands never navigate the viewer. A different
+subject is a new Structure; an update is allowed only for the same subject and must preserve IDs for
+surviving claims.
+An individual delete keeps its publication result dead so an uncertain retry cannot recreate it, while
+`pr reset` removes publication records together with all Structure review state and starts a fresh
+idempotency boundary.
+Retain only removed Node and Edge IDs in small tombstone tables so a later whole-value update cannot
+reuse a stable identity for another claim. This does not retain prior graph values or expose history.
+
+Render Structure as a first-class document tab beside Walkthrough and code. The production base map is
+a deterministic behavior projection with direct node drag, pan, zoom, fit, and focus controls. Factual,
+unambiguous directed relations starting at the authored entrypoint form left-to-right ranks, while
+branches use vertical whitespace and topology-derived ordering. Reciprocal, undirected, parallel-count,
+and self relations do not force an axis. This direction bias is a viewer projection of source-established
+relation direction, not producer-authored coordinates, temporal order, importance, or a prescribed
+reading path. Labels, kinds, descriptions, paths, and inferred semantics do not position content; stable
+IDs only break otherwise symmetric choices.
+
+Distinguish canonical and session layout explicitly. The canonical layout is a pure projection of the
+current graph facts and entrypoint used for a new session and Reset. Session layout begins there, keeps manual positions for
+retained stable IDs across navigation and whole-value updates, and places new Nodes around retained
+neighbors without an axis bias. Filtering never reflows Nodes. A new session renders All but centers
+the behavior entrypoint vertically at a readable 100% scale and places it near 25% of the canvas width
+to leave room for the direction-biased map instead of compressing the whole graph. Reset restores only
+canonical Node positions and keeps the reviewer's camera. The
+1-hop / 2-hop / All actions filter the visible graph without moving the camera, so even a high-degree
+neighborhood is not compressed into an unreadable overview. Only the explicit Fit action compresses
+the visible graph. Poll updates preserve the camera. No coordinates enter SQLite or the Agent protocol.
+
+Keep the spike's reading aids that do not expand the artifact contract: curved perimeter-to-perimeter
+edges with visible arrowheads, stable lanes for parallel and reciprocal relations, curve-adjacent edge
+labels, relation selection that highlights the corresponding line and endpoints, separate Node source
+identity and source action placement, non-ellipsized identifiers, a minimap, and visible
+focus/count/zoom state. Relation source actions live beside their labels; one anchor opens directly and
+multiple anchors use a compact local chooser instead of taking graph width with a persistent inspector.
+Keep Structure-specific chrome subordinate to the map: title and exact source use one compact row,
+scope remains available from a non-modal popover, and the single-row reading controls float over the
+canvas instead of permanently consuming its height. Narrow panes scroll that control row horizontally
+rather than wrapping it into multiple rows.
+Zoom scales the same
+Node cards and relation labels without hiding description or source identity; the minimap and explicit
+Fit action provide optional overview without changing the information contract. These are renderer
+behavior over the production Node, Edge, source anchor, and change-file data; none become producer hints
+or persisted graph semantics.
+
+The canvas consumes trackpad input with a non-passive native listener: plain wheel movement pans,
+pinch-style Ctrl/Meta wheel input zooms around the pointer, and neither chains into the containing page
+or browser zoom while the gesture remains over the map. Trackpad pinch (`ctrlKey`) uses a higher
+sensitivity than explicit Cmd+wheel so small finger movement remains responsive without making mouse
+wheel zoom abrupt.
+
+Use 1-hop, 2-hop, and All neighborhoods. 1-hop and 2-hop require a focus; All always shows every Node
+and Edge. While a Node is focused, canvas labels stay local to its incident relations even in All; the
+complete labels are available by clearing focus. This is label disclosure, never relation collapse.
+`originNodeId` seeds the canonical behavior projection and is visually retained as the behavior origin.
+A new human reading session begins focused there, but reviewer focus is separate session state; a
+producer update never reflows retained positions or transfers focus to another
+Node. The human can clear focus explicitly. Do not automatically
+collapse relations: lexical ID ordering is content-neutral but still
+makes producer naming determine what a reviewer notices. Keep the MVP bounded to 50 Nodes and 200
+Edges, and split a subject instead of treating a large dense graph as a renderer problem.
+Split when another independently triggered behavior introduces a different origin, not merely when a
+Node count threshold is reached. This is the producer stopping condition that prevents Structure from
+expanding into a static subsystem inventory.
+
+Retain the spike's small controlled notation vocabulary (`plain`, `class`, `database`, `interface`,
+`component`, `external`, and `concept`) as an optional producer-selected scanning aid. Notation affects
+only Node rendering; it does not affect layout, relation semantics, or identity, and the viewer never
+infers it from the open-ended factual `kind` badge. Existing values without notation render as `plain`.
+Do not add comments, groups, AI inference, semantic graph extraction, durable coordinates, or reverse
+source lookup.
+
+### Alternatives considered
+
+- Promote the Phase 0 temporary renderer and fixture format: rejected because it had no production
+  lifecycle, persistence, transport, exact-source validation, or stable update contract.
+- Express Structure as Mermaid inside Walkthrough: rejected because a Walkthrough is a path and its
+  diagram belongs to prose, while Structure is an independently explorable relationship space.
+- Introduce a generic Artifact table and viewer dispatch: rejected because there is only one new domain
+  with distinct invariants and no demonstrated shared abstraction.
+- Add a graph layout dependency immediately: rejected because the bounded Phase 1 interaction needs are
+  met by the smaller behavior-oriented layout; a dependency can be reconsidered if measured graph scale or
+  quality makes it necessary.
+
+### Trade-offs and unresolved questions
+
+The small fixed-iteration layout is predictable and preserves context but will not optimize every dense
+topology or every Edge-label crossing. It intentionally favors a stable base map and manual correction
+over automatic reflow after each interaction.
+Session continuity ends at reload, is independent for each pane, and Structure has no independent
+revision history; Git commits remain the way to compare code history.
+Producer evaluation must continue to test scope, granularity, concept-node restraint, relationship
+labels, and whether explicit notation improves scanning without becoming an ontology. Grouping or a
+larger-scale layout can be considered only after real use. The
+initial evaluation and three generated exact-commit examples are recorded in
+`docs/structure-producer-evaluation.md`.
+
 ## 2026-08-29: Resolve Walkthrough code references against the latest Pull Request head
 
 ### Problem

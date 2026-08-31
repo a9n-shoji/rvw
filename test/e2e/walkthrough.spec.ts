@@ -1194,14 +1194,14 @@ test("does not let a delayed Walkthrough reference replace navigation that retur
 test("moves document tabs between at most two panes and previews repository Markdown", async ({
   page,
   request,
-}) => {
+}, testInfo) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const runMarker = `${testInfo.repeatEachIndex}-${testInfo.retry}`;
+  const previewCommentBody = `PreviewからREADMEの説明へコメントしました。(${runMarker})`;
+  const tableCommentBody = `表の確認状況についてコメントしました。(${runMarker})`;
+  const detailsCommentBody = `折りたたみ内の説明へコメントしました。(${runMarker})`;
 
-  const sidebarStackLabels = await page.locator(".sidebar-stack-toggle").allTextContents();
-  expect(sidebarStackLabels.map((label) => label.replace(/\s+/g, "").replace(/\d+$/, ""))).toEqual([
-    "エクスプローラー",
-    "コメント",
-  ]);
+  await expect(page.locator(".sidebar-stack-toggle")).toHaveText([/エクスプローラー/, /コメント/]);
   await expect(page.getByRole("navigation", { name: "レビュー文書" })).toBeVisible();
 
   await openWalkthroughFromSidebar(page, primaryWalkthrough);
@@ -1296,10 +1296,10 @@ test("moves document tabs between at most two panes and previews repository Mark
   );
   await page
     .getByRole("textbox", { name: "README.md · L6へコメント" })
-    .pressSequentially("PreviewからREADMEの説明へコメントしました。");
+    .pressSequentially(previewCommentBody);
   await page.getByRole("textbox", { name: "README.md · L6へコメント" }).press("Control+Enter");
-  const previewComment = page.locator(".markdown-inline-comments").filter({
-    hasText: "PreviewからREADMEの説明へコメントしました。",
+  const previewComment = page.locator(".markdown-inline-comments .comment-thread").filter({
+    hasText: previewCommentBody,
   });
   await expect(previewComment).toBeVisible();
   await expect(previewComment.getByText("L6", { exact: true })).toBeVisible();
@@ -1321,10 +1321,10 @@ test("moves document tabs between at most two panes and previews repository Mark
   await page.getByRole("button", { name: "L34へコメント", exact: true }).click();
   await page
     .getByRole("textbox", { name: "README.md · L34へコメント" })
-    .pressSequentially("表の確認状況についてコメントしました。");
+    .pressSequentially(tableCommentBody);
   await page.getByRole("textbox", { name: "README.md · L34へコメント" }).press("Control+Enter");
-  const tableComment = page.locator(".markdown-inline-comments").filter({
-    hasText: "表の確認状況についてコメントしました。",
+  const tableComment = page.locator(".markdown-inline-comments .comment-thread").filter({
+    hasText: tableCommentBody,
   });
   await expect(tableComment).toBeVisible();
   await expect(tableComment.getByText("L34", { exact: true })).toBeVisible();
@@ -1374,10 +1374,10 @@ test("moves document tabs between at most two panes and previews repository Mark
   await page.getByRole("button", { name: "L42へコメント", exact: true }).click();
   await page
     .getByRole("textbox", { name: "README.md · L42へコメント" })
-    .pressSequentially("折りたたみ内の説明へコメントしました。");
+    .pressSequentially(detailsCommentBody);
   await page.getByRole("textbox", { name: "README.md · L42へコメント" }).press("Control+Enter");
-  const detailsComment = page.locator(".markdown-inline-comments").filter({
-    hasText: "折りたたみ内の説明へコメントしました。",
+  const detailsComment = page.locator(".markdown-inline-comments .comment-thread").filter({
+    hasText: detailsCommentBody,
   });
   await expect(detailsComment).toBeVisible();
   await operationalDetails.getByText("Operational details", { exact: true }).click();
@@ -1387,7 +1387,7 @@ test("moves document tabs between at most two panes and previews repository Mark
   await openCommentsSidebar(page);
   await expect(
     page.locator(".comment-list-item").filter({
-      hasText: "折りたたみ内の説明へコメントしました。",
+      hasText: detailsCommentBody,
     }),
   ).toBeVisible();
   await operationalDetails.getByText("Operational details", { exact: true }).click();

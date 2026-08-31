@@ -7,6 +7,11 @@ description: Read, publish, improve in place, or explicitly delete a source-anch
 
 Create a first reading path that helps a reviewer build a mental model of a committed change or requested implementation subject and continue into the code. Treat the Walkthrough as orientation, not as the code's source of truth, an exhaustive change log, a completed AI review, a review-scope guarantee, or an approval plan.
 
+When the requested output is a navigable map of responsibilities and relations participating in one
+concrete behavior or processing flow, route the task to `rvw-structure` instead. A request that starts
+from a file or symbol still belongs there when it asks which concrete behavior that source participates
+in rather than for an authored reading sequence.
+
 Follow explicit instructions from the user, caller, Pull Request body, or an upstream Skill before any default in this Skill. Instructions may set the reading order, focus, format, detail, scope, exclusions, assumed knowledge, design decisions to explain, or non-code evidence to include. Apply the default authoring guide only where those instructions are silent. Add only the minimum context needed to keep the requested Walkthrough understandable; never replace the requested purpose with a different one.
 
 Prefer verified repository and subject facts. Use the smallest necessary inference when facts do not establish intent, label the uncertainty, and never invent business requirements or off-repository constraints.

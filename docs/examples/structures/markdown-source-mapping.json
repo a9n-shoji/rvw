@@ -1,0 +1,108 @@
+{
+  "sourceOid": "e1702ec717f2c9eae88ab9debd63a7a8e7e70864",
+  "title": "Markdown source mapping",
+  "scope": "The committed mapping between Markdown AST positions, rendered selection, highlights, and comment anchors. Markdown parsing and comment persistence are excluded.",
+  "originNodeId": "source-map-plugin",
+  "nodes": [
+    {
+      "id": "source-position-model",
+      "label": "Markdown source positions",
+      "description": "Represents inclusive source coordinates carried by HAST nodes.",
+      "kind": "contract",
+      "anchor": { "path": "src/web/markdown-source-map.tsx", "startLine": 14, "endLine": 32 }
+    },
+    {
+      "id": "source-position-decoration",
+      "label": "Rendered source decoration",
+      "description": "Projects AST positions onto rendered leaf spans and data attributes.",
+      "kind": "transform",
+      "anchor": { "path": "src/web/markdown-source-map.tsx", "startLine": 149, "endLine": 174 }
+    },
+    {
+      "id": "range-highlights",
+      "label": "Range highlights",
+      "description": "Marks leaves intersecting active comment, navigation, or selection ranges.",
+      "kind": "transform",
+      "anchor": { "path": "src/web/markdown-source-map.tsx", "startLine": 182, "endLine": 209 }
+    },
+    {
+      "id": "comment-anchor-placement",
+      "label": "Comment anchor placement",
+      "description": "Chooses the most useful rendered block and inserts comment host markers.",
+      "kind": "transform",
+      "anchor": { "path": "src/web/markdown-source-map.tsx", "startLine": 211, "endLine": 288 }
+    },
+    {
+      "id": "selection-source-range",
+      "label": "Selection to source range",
+      "description": "Converts a DOM selection back to an inclusive Markdown line range.",
+      "kind": "interaction",
+      "anchor": { "path": "src/web/markdown-source-map.tsx", "startLine": 352, "endLine": 425 }
+    },
+    {
+      "id": "source-map-plugin",
+      "label": "Source map plugin",
+      "description": "Composes decoration, highlighting, comment anchors, and composer placement.",
+      "kind": "composition",
+      "anchor": { "path": "src/web/markdown-source-map.tsx", "startLine": 336, "endLine": 350 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "decoration-materializes-source-model",
+      "from": "source-position-decoration",
+      "to": "source-position-model",
+      "label": "materializes",
+      "directed": true,
+      "anchors": [{ "path": "src/web/markdown-source-map.tsx", "startLine": 149, "endLine": 173 }]
+    },
+    {
+      "id": "highlights-consume-decoration",
+      "from": "range-highlights",
+      "to": "source-position-decoration",
+      "label": "reads decorated leaves from",
+      "directed": true,
+      "anchors": [{ "path": "src/web/markdown-source-map.tsx", "startLine": 182, "endLine": 209 }]
+    },
+    {
+      "id": "comment-anchors-use-source-model",
+      "from": "comment-anchor-placement",
+      "to": "source-position-model",
+      "label": "locates blocks with",
+      "directed": true,
+      "anchors": [{ "path": "src/web/markdown-source-map.tsx", "startLine": 211, "endLine": 252 }]
+    },
+    {
+      "id": "selection-reads-decoration",
+      "from": "selection-source-range",
+      "to": "source-position-decoration",
+      "label": "reads data attributes from",
+      "directed": true,
+      "anchors": [{ "path": "src/web/markdown-source-map.tsx", "startLine": 352, "endLine": 425 }]
+    },
+    {
+      "id": "plugin-runs-decoration",
+      "from": "source-map-plugin",
+      "to": "source-position-decoration",
+      "label": "runs",
+      "directed": true,
+      "anchors": [{ "path": "src/web/markdown-source-map.tsx", "startLine": 336, "endLine": 340 }]
+    },
+    {
+      "id": "plugin-runs-highlights",
+      "from": "source-map-plugin",
+      "to": "range-highlights",
+      "label": "runs",
+      "directed": true,
+      "anchors": [{ "path": "src/web/markdown-source-map.tsx", "startLine": 340, "endLine": 346 }]
+    },
+    {
+      "id": "plugin-runs-comment-anchors",
+      "from": "source-map-plugin",
+      "to": "comment-anchor-placement",
+      "label": "runs",
+      "directed": true,
+      "anchors": [{ "path": "src/web/markdown-source-map.tsx", "startLine": 347, "endLine": 348 }]
+    }
+  ]
+}

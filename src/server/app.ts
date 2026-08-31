@@ -25,6 +25,7 @@ import {
   pullRequestListQuerySchema,
   replySchema,
   resetSchema,
+  structureDeleteSchema,
   themePreferenceSchema,
   viewerIdSchema,
   viewerReleaseSchema,
@@ -381,6 +382,32 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
       ),
     }),
   );
+
+  app.get("/api/pull-requests/:id/structures", (context) =>
+    context.json({
+      ok: true,
+      structures: service.listStructures(context.req.param("id")),
+    }),
+  );
+
+  app.get("/api/pull-requests/:id/structures/:structureId", (context) =>
+    context.json({
+      ok: true,
+      structure: service.getStructure(context.req.param("id"), context.req.param("structureId")),
+    }),
+  );
+
+  app.delete("/api/pull-requests/:id/structures/:structureId", async (context) => {
+    const input = structureDeleteSchema.parse(await context.req.json());
+    return context.json({
+      ok: true,
+      deleted: service.deleteStructure(
+        context.req.param("id"),
+        context.req.param("structureId"),
+        input.expectedUpdatedAt,
+      ),
+    });
+  });
 
   app.post("/api/comments", async (context) => {
     const input = createCommentSchema.parse(await context.req.json());

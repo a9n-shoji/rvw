@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { STRUCTURE_NODE_NOTATIONS } from "../domain/models.js";
 import {
   DEFAULT_COMMENT_LIST_LIMIT,
   GIT_OBJECT_ID_PATTERN,
@@ -11,6 +12,18 @@ import {
   MAX_COMMENT_LIST_LIMIT,
   MAX_COMMENT_WATCH_LIMIT,
   MAX_IDEMPOTENCY_KEY_CHARACTERS,
+  MAX_STRUCTURE_DESCRIPTION_CHARACTERS,
+  MAX_STRUCTURE_EDGE_ANCHORS,
+  MAX_STRUCTURE_EDGES,
+  MAX_STRUCTURE_ID_CHARACTERS,
+  MAX_STRUCTURE_KIND_CHARACTERS,
+  MAX_STRUCTURE_LABEL_CHARACTERS,
+  MAX_STRUCTURE_NODES,
+  MAX_STRUCTURE_PAYLOAD_BYTES,
+  MAX_STRUCTURE_SCOPE_CHARACTERS,
+  MAX_STRUCTURE_SOURCE_ANCHORS,
+  MAX_STRUCTURE_TITLE_CHARACTERS,
+  STRUCTURE_ID_PATTERN,
   MAX_WALKTHROUGH_BODY_BYTES,
   MAX_WALKTHROUGH_TITLE_CHARACTERS,
 } from "../shared/constants.js";
@@ -18,8 +31,11 @@ import {
 const nonEmptyString = z.string().min(1);
 const commentUri = z.string().regex(/^rvw:\/\/comment\//);
 const walkthroughUri = z.string().regex(/^rvw:\/\/walkthrough\//);
+const structureUri = z.string().regex(/^rvw:\/\/structure\//);
 const nullableCommentLine = z.number().int().positive().nullable().optional().default(null);
 const idempotencyKey = z.string().min(1).max(MAX_IDEMPOTENCY_KEY_CHARACTERS).optional();
+const requiredIdempotencyKey = z.string().min(1).max(MAX_IDEMPOTENCY_KEY_CHARACTERS);
+const expectedUpdatedAt = z.string().min(1).max(100);
 
 export const commentTargetInputSchema = z
   .union([
@@ -210,6 +226,198 @@ export const walkthroughPublishInputSchema = walkthroughContentInputSchema.exten
 
 export const walkthroughUpdateInputSchema = walkthroughContentInputSchema;
 
+export const sourceAnchorInputSchema = z
+  .object({
+    path: z.string().min(1).max(MAX_CODE_REFERENCE_PATH_CHARACTERS),
+    startLine: z.number().int().positive().nullable().optional().default(null),
+    endLine: z.number().int().positive().nullable().optional().default(null),
+  })
+  .strict()
+  .superRefine((anchor, context) => {
+    if ((anchor.startLine === null) !== (anchor.endLine === null)) {
+      context.addIssue({
+        code: "custom",
+        message: "startLineとendLineは両方指定するか、両方省略してください。",
+      });
+      return;
+    }
+    if (anchor.startLine !== null && anchor.endLine !== null && anchor.endLine < anchor.startLine) {
+      context.addIssue({ code: "custom", message: "endLineはstartLine以上にしてください。" });
+    }
+  });
+
+const structureNodeInputSchema = z
+  .object({
+    id: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
+    label: z.string().min(1).max(MAX_STRUCTURE_LABEL_CHARACTERS),
+    description: z
+      .string()
+      .max(MAX_STRUCTURE_DESCRIPTION_CHARACTERS)
+      .nullable()
+      .optional()
+      .default(null),
+    kind: z.string().max(MAX_STRUCTURE_KIND_CHARACTERS).nullable().optional().default(null),
+    notation: z.enum(STRUCTURE_NODE_NOTATIONS).optional().default("plain"),
+    anchor: sourceAnchorInputSchema.nullable().optional().default(null),
+  })
+  .strict();
+
+const structureEdgeInputSchema = z
+  .object({
+    id: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
+    from: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
+    to: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
+    label: z.string().min(1).max(MAX_STRUCTURE_LABEL_CHARACTERS),
+    directed: z.boolean(),
+    anchors: z
+      .array(sourceAnchorInputSchema)
+      .max(MAX_STRUCTURE_EDGE_ANCHORS)
+      .optional()
+      .default([]),
+  })
+  .strict();
+
+const structureContentShape = {
+  sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
+  title: z.string().min(1).max(MAX_STRUCTURE_TITLE_CHARACTERS),
+  scope: z.string().min(1).max(MAX_STRUCTURE_SCOPE_CHARACTERS),
+  originNodeId: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
+  nodes: z.array(structureNodeInputSchema).min(1).max(MAX_STRUCTURE_NODES),
+  edges: z.array(structureEdgeInputSchema).max(MAX_STRUCTURE_EDGES),
+};
+
+function refineStructureContent(
+  value: {
+    originNodeId: string;
+    nodes: Array<{ id: string; anchor: Record<string, unknown> | null }>;
+    edges: Array<{
+      id: string;
+      from: string;
+      to: string;
+      anchors: Array<Record<string, unknown>>;
+    }>;
+  },
+  context: z.RefinementCtx,
+): void {
+  const nodeIds = new Set<string>();
+  for (const [index, node] of value.nodes.entries()) {
+    if (nodeIds.has(node.id)) {
+      context.addIssue({
+        code: "custom",
+        path: ["nodes", index, "id"],
+        message: "Node IDが重複しています。",
+      });
+    }
+    nodeIds.add(node.id);
+  }
+  const edgeIds = new Set<string>();
+  for (const [index, edge] of value.edges.entries()) {
+    if (edgeIds.has(edge.id)) {
+      context.addIssue({
+        code: "custom",
+        path: ["edges", index, "id"],
+        message: "Edge IDが重複しています。",
+      });
+    }
+    edgeIds.add(edge.id);
+    if (!nodeIds.has(edge.from)) {
+      context.addIssue({
+        code: "custom",
+        path: ["edges", index, "from"],
+        message: "Edgeのfrom Nodeが存在しません。",
+      });
+    }
+    if (!nodeIds.has(edge.to)) {
+      context.addIssue({
+        code: "custom",
+        path: ["edges", index, "to"],
+        message: "Edgeのto Nodeが存在しません。",
+      });
+    }
+  }
+  const originIndex = value.nodes.findIndex((node) => node.id === value.originNodeId);
+  if (originIndex === -1) {
+    context.addIssue({
+      code: "custom",
+      path: ["originNodeId"],
+      message: "originNodeId Nodeが存在しません。",
+    });
+  } else if (value.nodes[originIndex]?.anchor === null) {
+    context.addIssue({
+      code: "custom",
+      path: ["nodes", originIndex, "anchor"],
+      message: "origin Nodeにはsource anchorが必要です。",
+    });
+  }
+  if (originIndex !== -1) {
+    const neighbors = new Map(value.nodes.map((node) => [node.id, new Set<string>()]));
+    for (const edge of value.edges) {
+      if (!neighbors.has(edge.from) || !neighbors.has(edge.to)) continue;
+      neighbors.get(edge.from)!.add(edge.to);
+      neighbors.get(edge.to)!.add(edge.from);
+    }
+    const reached = new Set([value.originNodeId]);
+    const queue = [value.originNodeId];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const neighbor of neighbors.get(current) ?? []) {
+        if (reached.has(neighbor)) continue;
+        reached.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+    const disconnected = value.nodes.filter((node) => !reached.has(node.id)).map((node) => node.id);
+    if (disconnected.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["nodes"],
+        message: `全Nodeをoriginから辿れる関係graphにしてください: ${disconnected.join(", ")}`,
+      });
+    }
+  }
+  const anchorCount =
+    value.nodes.filter((node) => node.anchor !== null).length +
+    value.edges.reduce((count, edge) => count + edge.anchors.length, 0);
+  if (anchorCount < 1) {
+    context.addIssue({
+      code: "custom",
+      message: "Structureにはsource anchorを少なくとも1件含めてください。",
+    });
+  }
+  if (anchorCount > MAX_STRUCTURE_SOURCE_ANCHORS) {
+    context.addIssue({
+      code: "custom",
+      message: `Structureのsource anchorは合計${MAX_STRUCTURE_SOURCE_ANCHORS}件以下にしてください。`,
+    });
+  }
+  const graph = { originNodeId: value.originNodeId, nodes: value.nodes, edges: value.edges };
+  if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
+    context.addIssue({
+      code: "custom",
+      message: `Structure payloadは${MAX_STRUCTURE_PAYLOAD_BYTES} UTF-8 bytes以下にしてください。`,
+    });
+  }
+}
+
+export const structureContentInputSchema = z
+  .object(structureContentShape)
+  .strict()
+  .superRefine(refineStructureContent);
+
+export const structureUpdateInputSchema = z
+  .object({ expectedUpdatedAt, ...structureContentShape })
+  .strict()
+  .superRefine(refineStructureContent);
+
+export const structurePublishInputSchema = z
+  .object({
+    pullRequest: nonEmptyString,
+    idempotencyKey: requiredIdempotencyKey,
+    ...structureContentShape,
+  })
+  .strict()
+  .superRefine(refineStructureContent);
+
 export const agentCommandInputSchemas = {
   doctor: z.object({ cwd: nonEmptyString }).strict(),
   "pr.refresh": z.object({ reference: nonEmptyString }).strict(),
@@ -254,6 +462,14 @@ export const agentCommandInputSchemas = {
     .strict(),
   "walkthrough.delete.preview": z.object({ uri: walkthroughUri }).strict(),
   "walkthrough.delete": z.object({ uri: walkthroughUri, confirmed: z.literal(true) }).strict(),
+  "structure.get": z.object({ uri: structureUri }).strict(),
+  "structure.list": z.object({ reference: nonEmptyString }).strict(),
+  "structure.publish": structurePublishInputSchema,
+  "structure.update": z.object({ uri: structureUri, content: structureUpdateInputSchema }).strict(),
+  "structure.delete.preview": z.object({ uri: structureUri }).strict(),
+  "structure.delete": z
+    .object({ uri: structureUri, expectedUpdatedAt, confirmed: z.literal(true) })
+    .strict(),
 } as const;
 
 export type AgentCommandOperation = keyof typeof agentCommandInputSchemas;

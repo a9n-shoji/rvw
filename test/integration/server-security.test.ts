@@ -103,6 +103,7 @@ describe("local HTTP security", () => {
           unresolvedCommentCount: 0,
           resolvedCommentCount: 0,
           walkthroughCount: 0,
+          structureCount: 0,
         },
       ],
       pagination: {

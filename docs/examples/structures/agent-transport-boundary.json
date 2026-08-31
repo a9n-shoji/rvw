@@ -1,0 +1,100 @@
+{
+  "sourceOid": "e1702ec717f2c9eae88ab9debd63a7a8e7e70864",
+  "title": "Agent transport boundary",
+  "scope": "The committed CLI-to-service transport selection, request validation, and dispatch boundary. Socket ownership and viewer lifecycle are excluded.",
+  "originNodeId": "cli-service-call",
+  "nodes": [
+    {
+      "id": "cli-service-call",
+      "label": "CLI service call boundary",
+      "description": "Attempts the running Agent socket before invoking the same operation directly.",
+      "kind": "command",
+      "anchor": { "path": "src/cli/main.ts", "startLine": 760, "endLine": 777 }
+    },
+    {
+      "id": "operation-schemas",
+      "label": "Agent operation schemas",
+      "description": "Declares the accepted input contract for each CLI operation.",
+      "kind": "contract",
+      "anchor": { "path": "src/application/agent-command-schemas.ts" }
+    },
+    {
+      "id": "socket-request-validation",
+      "label": "Socket request validation",
+      "description": "Checks the envelope, protocol version, and expected database identity.",
+      "kind": "boundary",
+      "anchor": { "path": "src/server/agent-socket.ts", "startLine": 224, "endLine": 279 }
+    },
+    {
+      "id": "socket-client",
+      "label": "Agent socket client",
+      "description": "Frames requests, classifies availability failures, and preserves uncertain outcomes.",
+      "kind": "transport",
+      "anchor": { "path": "src/server/agent-socket.ts", "startLine": 459, "endLine": 623 }
+    },
+    {
+      "id": "socket-dispatch",
+      "label": "Agent socket dispatch",
+      "description": "Routes validated operation inputs to the shared application service.",
+      "kind": "transport",
+      "anchor": { "path": "src/server/agent-socket.ts", "startLine": 290, "endLine": 405 }
+    },
+    {
+      "id": "transport-status",
+      "label": "Transport status selection",
+      "description": "Reports socket, direct-database, or unavailable without hiding an explicit socket failure.",
+      "kind": "policy",
+      "anchor": { "path": "src/server/agent-socket.ts", "startLine": 664, "endLine": 724 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "cli-attempts-socket-client",
+      "from": "cli-service-call",
+      "to": "socket-client",
+      "label": "attempts through",
+      "directed": true,
+      "anchors": [{ "path": "src/cli/main.ts", "startLine": 764, "endLine": 776 }]
+    },
+    {
+      "id": "socket-client-sends-validation-envelope",
+      "from": "socket-client",
+      "to": "socket-request-validation",
+      "label": "sends envelope checked by",
+      "directed": true,
+      "anchors": [{ "path": "src/server/agent-socket.ts", "startLine": 513, "endLine": 535 }]
+    },
+    {
+      "id": "request-validation-uses-operation-schemas",
+      "from": "socket-request-validation",
+      "to": "operation-schemas",
+      "label": "validates operation input with",
+      "directed": true,
+      "anchors": [{ "path": "src/server/agent-socket.ts", "startLine": 237, "endLine": 247 }]
+    },
+    {
+      "id": "request-validation-gates-dispatch",
+      "from": "socket-request-validation",
+      "to": "socket-dispatch",
+      "label": "gates",
+      "directed": true,
+      "anchors": [{ "path": "src/server/agent-socket.ts", "startLine": 290, "endLine": 304 }]
+    },
+    {
+      "id": "transport-status-probes-socket-client",
+      "from": "transport-status",
+      "to": "socket-client",
+      "label": "probes with",
+      "directed": true,
+      "anchors": [{ "path": "src/server/agent-socket.ts", "startLine": 664, "endLine": 679 }]
+    },
+    {
+      "id": "transport-status-guides-cli-service-call",
+      "from": "transport-status",
+      "to": "cli-service-call",
+      "label": "reports policy for",
+      "directed": true,
+      "anchors": [{ "path": "src/cli/main.ts", "startLine": 791, "endLine": 811 }]
+    }
+  ]
+}

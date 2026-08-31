@@ -7,7 +7,7 @@ not limit which repository documents can be opened, searched, or commented on.
 
 rvw is a local Node.js application with four boundaries:
 
-- `domain`: pure commit/document, shared code-reference, comment, Walkthrough, and line-mapping rules.
+- `domain`: pure commit/document, shared source-anchor, comment, Walkthrough, Structure, and line-mapping rules.
 - `application`: use cases shared by HTTP and CLI transports.
 - `infrastructure`: SQLite, Git, GitHub CLI, filesystem, and subprocess adapters.
 - `server`, `cli`, and `web`: transport and presentation only.
@@ -76,6 +76,23 @@ include viewer state and cannot navigate a browser. The React viewer treats a
 Walkthrough as another document tab, and only a human action opens the referenced exact Git document.
 Inline references and bound Mermaid nodes remain interactive, but the viewer does not duplicate the
 complete reference set in a side or bottom index.
+
+Structures cross the same one-way CLI boundary as a separate domain. An Agent declares a bounded
+PR-relevant behavior and factual code entrypoint as stable-ID nodes and edges fixed to one exact source commit. SQLite keeps one
+current graph JSON value per stable Structure ID; publication and whole-value replacement validate all
+paths, ranges, endpoints, focus, identities, and Pull Request ownership before retaining the commit.
+The graph is a set of producer claims, not a semantic code index. It has no revision history, comments,
+groups, reverse lookup, inferred edges, or persisted coordinates. HTTP lists and reads current values;
+human-confirmed delete is the only write exposed to the browser.
+
+The Structure viewer uses topology, factual direction reachable from the entrypoint, and stable IDs—not
+display content—to produce an initial layout. Pane-local
+browser session state preserves focus, neighborhood depth, node positions, and viewport across tab
+navigation and current-value updates, and moves with a Structure tab between panes. Surviving IDs keep
+positions and new nodes take a non-overlapping slot near retained neighbors. 1-hop and 2-hop require a
+focus; All shows every Node and Edge. The bounded MVP does not collapse or cull relations based on ID or
+degree. Source actions always open the declared exact `sourceOid` in the chosen pane without changing
+the global commit range.
 The browser owns an ephemeral two-pane workspace: every document identity may appear once per pane, tabs
 can move between panes, ordinary document-opening clicks target the left pane, and modifier-click targets
 the right pane regardless of focus or origin. Pane placement never enters SQLite or the Agent protocol. Repository Markdown uses
@@ -92,7 +109,9 @@ Policy and sandbox so direct navigation cannot execute repository-controlled scr
 
 The bundled Skills are named by capability rather than Agent host. `rvw` handles review comments and
 synchronization; `rvw-walkthrough` converts the current session's explanation into a validated,
-source-anchored publication without prescribing its document structure; `rvw-watch-comments` keeps an
+source-anchored path without prescribing its document structure; `rvw-structure` maps a declared
+PR-relevant behavior from its code entrypoint into stable source-anchored relationships;
+`rvw-watch-comments` keeps an
 external Agent task subscribed to newly created posts and fails closed on PR ownership. Codex and Claude Code receive
 the same Skill directories under their respective local Skill roots. Platform selection is a packaging
 concern only and does not fork the Agent protocol or workflow instructions. Installer metadata records

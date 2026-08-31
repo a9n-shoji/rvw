@@ -5,6 +5,8 @@ import {
   commentReplyInputSchema,
   commentWatchOptionsSchema,
   pullRequestSyncInputSchema,
+  structurePublishInputSchema,
+  structureUpdateInputSchema,
   walkthroughPublishInputSchema,
   walkthroughUpdateInputSchema,
 } from "../../src/cli/schemas.js";
@@ -309,5 +311,161 @@ describe("CLI input schemas", () => {
         ],
       }),
     ).toMatchObject({ title: "Improved request flow", references: [{ id: "handler" }] });
+  });
+
+  it("normalizes a Structure graph and requires explicit directed edges", () => {
+    expect(
+      structurePublishInputSchema.parse({
+        idempotencyKey: "structure-publish-auth-boundary",
+        pullRequest: "https://github.com/acme/review-repo/pull/7",
+        sourceOid: "a".repeat(40),
+        title: "Authorization boundary",
+        scope: "Code relationships around authorization. Analytics is excluded.",
+        originNodeId: "controller",
+        nodes: [
+          {
+            id: "controller",
+            label: "JobsController",
+            notation: "class",
+            anchor: { path: "src/controller.ts", startLine: 2, endLine: 5 },
+          },
+          { id: "policy", label: "JobPolicy" },
+        ],
+        edges: [
+          {
+            id: "checks-policy",
+            from: "controller",
+            to: "policy",
+            label: "checks",
+            directed: true,
+          },
+        ],
+      }),
+    ).toMatchObject({
+      originNodeId: "controller",
+      nodes: [
+        {
+          description: null,
+          kind: null,
+          notation: "class",
+          anchor: { startLine: 2, endLine: 5 },
+        },
+        { notation: "plain", anchor: null },
+      ],
+      edges: [{ directed: true, anchors: [] }],
+    });
+  });
+
+  it("rejects invalid Structure identity, origin, connectivity, endpoints, and SourceAnchor ranges", () => {
+    const valid = {
+      expectedUpdatedAt: "2026-08-30T00:00:00.000Z",
+      sourceOid: "b".repeat(40),
+      title: "Boundary",
+      scope: "One bounded code relationship.",
+      originNodeId: "entry",
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [] as Array<{
+        id: string;
+        from: string;
+        to: string;
+        label: string;
+        directed?: boolean;
+      }>,
+    };
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [...valid.nodes, { id: "entry", label: "Duplicate" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        originNodeId: "missing",
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        edges: [{ id: "bad", from: "entry", to: "missing", label: "uses" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [{ id: "a\0b", label: "Control character" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [{ id: " leading-space", label: "Whitespace" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [
+          {
+            id: "entry",
+            label: "Entry",
+            anchor: { path: "src/entry.ts", startLine: 3 },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        expectedUpdatedAt: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      structurePublishInputSchema.safeParse({
+        pullRequest: "https://github.com/acme/review-repo/pull/7",
+        sourceOid: valid.sourceOid,
+        title: valid.title,
+        scope: valid.scope,
+        nodes: valid.nodes,
+        edges: valid.edges,
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [{ id: "entry", label: "Entry", anchor: null }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [...valid.nodes, { id: "detached", label: "Detached" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        nodes: [{ id: "entry", label: "Entry", notation: "server" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        edges: Array.from({ length: 20 }, (_, index) => ({
+          id: `edge-${index}`,
+          from: "entry",
+          to: "entry",
+          label: `Relation ${index}`,
+          directed: false,
+          anchors: Array.from({ length: 20 }, () => ({ path: "src/entry.ts" })),
+        })),
+      }).success,
+    ).toBe(false);
   });
 });
