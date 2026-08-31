@@ -59,7 +59,7 @@ describe("reading history", () => {
     expect(sameReadingDocument(current, exact)).toBe(false);
   });
 
-  it("round-trips the session-only Walkthrough reference resolution context", () => {
+  it("round-trips a session-only source reference resolution context", () => {
     const referenceDocument = {
       kind: "repository-file" as const,
       path: "src/reference.ts",
@@ -69,8 +69,11 @@ describe("reading history", () => {
       comparisonPolicy: "reference-target" as const,
       referenceContext: {
         outcome: "source-fallback" as const,
-        walkthroughId: "walkthrough",
-        referenceId: "reference",
+        origin: {
+          kind: "walkthrough" as const,
+          walkthroughId: "walkthrough",
+          referenceId: "reference",
+        },
         anchorSourceOid: "a".repeat(40),
         latestHeadOid: "c".repeat(40),
         referenceFingerprint: "fingerprint",
@@ -92,5 +95,34 @@ describe("reading history", () => {
       value,
     );
     expect(sameReadingDocument(referenceDocument, { ...referenceDocument })).toBe(true);
+  });
+
+  it("round-trips a Structure source reference origin", () => {
+    const referenceDocument = {
+      kind: "repository-file" as const,
+      path: "src/structure.ts",
+      sourceOid: "c".repeat(40),
+      comparisonPolicy: "reference-target" as const,
+      referenceContext: {
+        outcome: "latest" as const,
+        origin: {
+          kind: "structure" as const,
+          structureId: "structure",
+          locator: { kind: "node" as const, nodeId: "claim" },
+          resolvedAnchor: { path: "src/structure.ts", startLine: 4, endLine: 9 },
+        },
+        anchorSourceOid: "a".repeat(40),
+        latestHeadOid: "c".repeat(40),
+        referenceFingerprint: "fingerprint",
+        diffBaseOid: null,
+        hasDiff: false,
+        latestFile: null,
+      },
+    };
+    const value = entry({ document: referenceDocument, locator: { kind: "line", line: 4 } });
+
+    expect(parseReadingHistoryEntry(readingHistoryState(null, value), pullRequestId)).toEqual(
+      value,
+    );
   });
 });

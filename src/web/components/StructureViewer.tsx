@@ -15,6 +15,7 @@ import type {
   Structure,
   StructureEdge,
   StructureNode,
+  StructureSourceLocator,
 } from "../../domain/models.js";
 import { api, type DeleteStructureResponse } from "../api.js";
 import type { DocumentPaneId } from "../document-workspace.js";
@@ -41,6 +42,10 @@ import {
 } from "../structure-session.js";
 import { ChangeIcon } from "./FileTree.js";
 import { FileEntryIcon } from "./FileIcon.js";
+
+const STRUCTURE_WHEEL_PAN_SENSITIVITY = 2;
+const STRUCTURE_TRACKPAD_ZOOM_SENSITIVITY = 0.005;
+const STRUCTURE_META_WHEEL_ZOOM_SENSITIVITY = 0.002;
 
 function anchorLabel(anchor: SourceAnchor): string {
   return anchor.startLine === null
@@ -100,7 +105,7 @@ function EdgeSourceAction({
   onOpen,
 }: {
   edge: StructureEdge;
-  onOpen: (anchor: SourceAnchor, openInRightPane: boolean) => void;
+  onOpen: (locator: StructureSourceLocator, anchor: SourceAnchor, openInRightPane: boolean) => void;
 }) {
   if (edge.anchors.length === 0) return null;
   if (edge.anchors.length === 1) {
@@ -108,7 +113,9 @@ function EdgeSourceAction({
       <SourceButton
         compact
         anchor={edge.anchors[0]!}
-        onOpen={(right) => onOpen(edge.anchors[0]!, right)}
+        onOpen={(right) =>
+          onOpen({ kind: "edge", edgeId: edge.id, anchorIndex: 0 }, edge.anchors[0]!, right)
+        }
       />
     );
   }
@@ -129,7 +136,9 @@ function EdgeSourceAction({
           <SourceButton
             key={`${edge.id}:${index}`}
             anchor={anchor}
-            onOpen={(right) => onOpen(anchor, right)}
+            onOpen={(right) =>
+              onOpen({ kind: "edge", edgeId: edge.id, anchorIndex: index }, anchor, right)
+            }
           />
         ))}
       </div>
@@ -616,14 +625,17 @@ export function StructureViewer({
   pullRequestId,
   structure,
   changedFiles,
-  onOpenAnchor,
+  onOpenSource,
   onDeleted,
 }: {
   paneId: DocumentPaneId;
   pullRequestId: string;
   structure: Structure;
   changedFiles: readonly ChangedFile[];
-  onOpenAnchor: (anchor: SourceAnchor, openInRightPane: boolean) => Promise<string | null>;
+  onOpenSource: (
+    locator: StructureSourceLocator,
+    openInRightPane: boolean,
+  ) => Promise<string | null>;
   onDeleted: () => void;
 }) {
   const domId = `structure-${paneId}-${structure.id}`;
@@ -710,6 +722,19 @@ export function StructureViewer({
     const surface = surfaceRef.current;
     if (!surface) return;
     const handleWheel = (event: WheelEvent): void => {
+      const wantsCanvasZoom = event.ctrlKey || event.metaKey;
+      if (event.target instanceof Element) {
+        const nodeScroller = event.target.closest<HTMLElement>(".structure-node-focus");
+        const mostlyVertical = Math.abs(event.deltaY) >= Math.abs(event.deltaX);
+        const canScrollVertically = nodeScroller
+          ? event.deltaY < 0
+            ? nodeScroller.scrollTop > 0
+            : event.deltaY > 0
+              ? nodeScroller.scrollTop + nodeScroller.clientHeight < nodeScroller.scrollHeight - 1
+              : false
+          : false;
+        if (!wantsCanvasZoom && mostlyVertical && canScrollVertically) return;
+      }
       event.preventDefault();
       event.stopPropagation();
       const deltaUnit =
@@ -718,11 +743,11 @@ export function StructureViewer({
           : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
             ? Math.max(1, surface.clientHeight)
             : 1;
-      if (!event.ctrlKey && !event.metaKey) {
+      if (!wantsCanvasZoom) {
         setViewport((current) => ({
           ...current,
-          x: current.x - event.deltaX * deltaUnit,
-          y: current.y - event.deltaY * deltaUnit,
+          x: current.x - event.deltaX * deltaUnit * STRUCTURE_WHEEL_PAN_SENSITIVITY,
+          y: current.y - event.deltaY * deltaUnit * STRUCTURE_WHEEL_PAN_SENSITIVITY,
         }));
         return;
       }
@@ -730,7 +755,10 @@ export function StructureViewer({
       const pointerX = event.clientX - rectangle.left;
       const pointerY = event.clientY - rectangle.top;
       setViewport((current) => {
-        const sensitivity = event.ctrlKey && !event.metaKey ? 0.0025 : 0.001;
+        const sensitivity =
+          event.ctrlKey && !event.metaKey
+            ? STRUCTURE_TRACKPAD_ZOOM_SENSITIVITY
+            : STRUCTURE_META_WHEEL_ZOOM_SENSITIVITY;
         const nextScale = scaledStructureZoom(
           current.scale,
           Math.exp(-event.deltaY * deltaUnit * sensitivity),
@@ -1007,10 +1035,14 @@ export function StructureViewer({
     });
   };
 
-  const openAnchor = async (anchor: SourceAnchor, openInRightPane: boolean): Promise<void> => {
+  const openSource = async (
+    locator: StructureSourceLocator,
+    anchor: SourceAnchor,
+    openInRightPane: boolean,
+  ): Promise<void> => {
     setStatus(null);
     try {
-      const nextStatus = await onOpenAnchor(anchor, openInRightPane);
+      const nextStatus = await onOpenSource(locator, openInRightPane);
       setStatus(nextStatus);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : `参照先を開けません · ${anchor.path}`);
@@ -1317,7 +1349,7 @@ export function StructureViewer({
                     </button>
                     <EdgeSourceAction
                       edge={edge}
-                      onOpen={(anchor, right) => void openAnchor(anchor, right)}
+                      onOpen={(locator, anchor, right) => void openSource(locator, anchor, right)}
                     />
                   </div>
                 );
@@ -1362,7 +1394,6 @@ export function StructureViewer({
                         if (event.detail === 0) focusNode(node.id);
                       }}
                     >
-                      {node.kind && <span className="structure-kind">{node.kind}</span>}
                       {node.anchor && (
                         <SourceIdentity
                           anchor={node.anchor}
@@ -1371,7 +1402,7 @@ export function StructureViewer({
                         />
                       )}
                       <strong className="structure-node-title">
-                        <span className="structure-node-title-text">
+                        <span className="structure-node-title-text" title={node.label}>
                           <BreakableStructureLabel label={node.label} />
                         </span>
                       </strong>
@@ -1383,7 +1414,9 @@ export function StructureViewer({
                       <SourceButton
                         compact
                         anchor={node.anchor}
-                        onOpen={(right) => void openAnchor(node.anchor!, right)}
+                        onOpen={(right) =>
+                          void openSource({ kind: "node", nodeId: node.id }, node.anchor!, right)
+                        }
                       />
                     )}
                   </div>

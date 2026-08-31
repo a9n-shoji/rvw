@@ -1,8 +1,13 @@
-import type { WalkthroughReferenceFileTarget } from "../domain/models.js";
+import type {
+  SourceAnchor,
+  SourceReferenceFileTarget,
+  StructureSourceLocator,
+} from "../domain/models.js";
 import type {
   ActiveDocument,
   DocumentPaneId,
   ReferenceDocumentContext,
+  SourceReferenceOrigin,
 } from "./document-workspace.js";
 
 export const READING_HISTORY_STATE_KEY = "rvwReading";
@@ -49,7 +54,7 @@ function optionalNullableString(value: unknown): value is string | null | undefi
   return value === undefined || value === null || typeof value === "string";
 }
 
-function parseReferenceFileTarget(value: unknown): WalkthroughReferenceFileTarget | null {
+function parseReferenceFileTarget(value: unknown): SourceReferenceFileTarget | null {
   if (
     !isRecord(value) ||
     typeof value.sourceOid !== "string" ||
@@ -71,13 +76,65 @@ function parseReferenceFileTarget(value: unknown): WalkthroughReferenceFileTarge
   };
 }
 
+function parseSourceAnchor(value: unknown): SourceAnchor | null {
+  if (!isRecord(value) || typeof value.path !== "string") return null;
+  const startLine = value.startLine;
+  const endLine = value.endLine;
+  const fileLevel = startLine === null && endLine === null;
+  const lineRange =
+    Number.isInteger(startLine) &&
+    Number(startLine) > 0 &&
+    Number.isInteger(endLine) &&
+    Number(endLine) >= Number(startLine);
+  if (!fileLevel && !lineRange) return null;
+  return {
+    path: value.path,
+    startLine: startLine as number | null,
+    endLine: endLine as number | null,
+  };
+}
+
+function parseStructureSourceLocator(value: unknown): StructureSourceLocator | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === "node") {
+    return typeof value.nodeId === "string" ? { kind: "node", nodeId: value.nodeId } : null;
+  }
+  if (value.kind === "edge") {
+    return typeof value.edgeId === "string" &&
+      Number.isInteger(value.anchorIndex) &&
+      Number(value.anchorIndex) >= 0
+      ? { kind: "edge", edgeId: value.edgeId, anchorIndex: Number(value.anchorIndex) }
+      : null;
+  }
+  return null;
+}
+
+function parseReferenceOrigin(value: unknown): SourceReferenceOrigin | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === "walkthrough") {
+    return typeof value.walkthroughId === "string" && typeof value.referenceId === "string"
+      ? {
+          kind: "walkthrough",
+          walkthroughId: value.walkthroughId,
+          referenceId: value.referenceId,
+        }
+      : null;
+  }
+  if (value.kind === "structure") {
+    const locator = parseStructureSourceLocator(value.locator);
+    const resolvedAnchor = parseSourceAnchor(value.resolvedAnchor);
+    return typeof value.structureId === "string" && locator && resolvedAnchor
+      ? { kind: "structure", structureId: value.structureId, locator, resolvedAnchor }
+      : null;
+  }
+  return null;
+}
+
 function parseReferenceContext(value: unknown): ReferenceDocumentContext | null | undefined {
   if (value === undefined) return undefined;
   if (
     !isRecord(value) ||
     (value.outcome !== "latest" && value.outcome !== "source-fallback") ||
-    typeof value.walkthroughId !== "string" ||
-    typeof value.referenceId !== "string" ||
     typeof value.anchorSourceOid !== "string" ||
     typeof value.latestHeadOid !== "string" ||
     typeof value.referenceFingerprint !== "string" ||
@@ -86,12 +143,21 @@ function parseReferenceContext(value: unknown): ReferenceDocumentContext | null 
   ) {
     return null;
   }
+  const origin =
+    parseReferenceOrigin(value.origin) ??
+    (typeof value.walkthroughId === "string" && typeof value.referenceId === "string"
+      ? {
+          kind: "walkthrough" as const,
+          walkthroughId: value.walkthroughId,
+          referenceId: value.referenceId,
+        }
+      : null);
+  if (!origin) return null;
   const latestFile = value.latestFile === null ? null : parseReferenceFileTarget(value.latestFile);
   if (value.latestFile !== null && latestFile === null) return null;
   return {
     outcome: value.outcome,
-    walkthroughId: value.walkthroughId,
-    referenceId: value.referenceId,
+    origin,
     anchorSourceOid: value.anchorSourceOid,
     latestHeadOid: value.latestHeadOid,
     referenceFingerprint: value.referenceFingerprint,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChangedFile } from "../../src/domain/models.js";
-import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-reference.js";
+import { sourceAnchorFingerprint } from "../../src/domain/source-reference.js";
 import { deriveDocumentViewerState } from "../../src/web/document-viewer-state.js";
 
 const selectedOid = "b".repeat(40);
@@ -84,8 +84,11 @@ describe("document viewer state", () => {
         comparisonPolicy: "reference-target",
         referenceContext: {
           outcome: "latest",
-          walkthroughId: "walkthrough",
-          referenceId: "reference",
+          origin: {
+            kind: "walkthrough",
+            walkthroughId: "walkthrough",
+            referenceId: "reference",
+          },
           anchorSourceOid: "a".repeat(40),
           latestHeadOid: sourceOid,
           referenceFingerprint: "fingerprint",
@@ -118,8 +121,11 @@ describe("document viewer state", () => {
         comparisonPolicy: "reference-target",
         referenceContext: {
           outcome: "latest",
-          walkthroughId: "walkthrough",
-          referenceId: "reference",
+          origin: {
+            kind: "walkthrough",
+            walkthroughId: "walkthrough",
+            referenceId: "reference",
+          },
           anchorSourceOid: "a".repeat(40),
           latestHeadOid: sourceOid,
           referenceFingerprint: "fingerprint",
@@ -155,8 +161,11 @@ describe("document viewer state", () => {
         comparisonPolicy: "reference-target",
         referenceContext: {
           outcome: "latest",
-          walkthroughId: "walkthrough",
-          referenceId: "reference",
+          origin: {
+            kind: "walkthrough",
+            walkthroughId: "walkthrough",
+            referenceId: "reference",
+          },
           anchorSourceOid: "a".repeat(40),
           latestHeadOid: resolvedHeadOid,
           referenceFingerprint: "fingerprint",
@@ -195,11 +204,14 @@ describe("document viewer state", () => {
         comparisonPolicy: "reference-target",
         referenceContext: {
           outcome: "latest",
-          walkthroughId: "walkthrough",
-          referenceId: resolvedReference.id,
+          origin: {
+            kind: "walkthrough",
+            walkthroughId: "walkthrough",
+            referenceId: resolvedReference.id,
+          },
           anchorSourceOid: sourceOid,
           latestHeadOid: sourceOid,
-          referenceFingerprint: walkthroughReferenceFingerprint(sourceOid, resolvedReference),
+          referenceFingerprint: sourceAnchorFingerprint(sourceOid, resolvedReference),
           diffBaseOid: null,
           hasDiff: false,
           latestFile: null,
@@ -235,9 +247,234 @@ describe("document viewer state", () => {
 
     expect(state.referenceStaleness).toEqual({
       headChanged: false,
-      walkthroughChanged: true,
+      originChanged: true,
+      originMissing: false,
+      originKind: "walkthrough",
     });
     expect(state.fullViewNotice).toBeNull();
+  });
+
+  it("marks a resolution stale when its Structure source anchor changes", () => {
+    const sourceOid = "a".repeat(40);
+    const resolvedAnchor = { path: "src/structure.ts", startLine: 4, endLine: 8 };
+    const currentAnchor = { path: "src/structure.ts", startLine: 12, endLine: 18 };
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: resolvedAnchor.path,
+        sourceOid: selectedOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "latest",
+          origin: {
+            kind: "structure",
+            structureId: "structure",
+            locator: { kind: "node", nodeId: "node" },
+            resolvedAnchor,
+          },
+          anchorSourceOid: sourceOid,
+          latestHeadOid: selectedOid,
+          referenceFingerprint: sourceAnchorFingerprint(sourceOid, resolvedAnchor),
+          diffBaseOid: null,
+          hasDiff: false,
+          latestFile: null,
+        },
+      },
+      context({
+        structureDetails: new Map([
+          [
+            "structure",
+            {
+              id: "structure",
+              ref: "rvw://structure/structure",
+              pullRequestId: "pull-request",
+              sourceOid,
+              title: "Updated Structure",
+              scope: "Updated scope",
+              originNodeId: "node",
+              nodes: [
+                {
+                  id: "node",
+                  label: "Node",
+                  description: null,
+                  kind: null,
+                  notation: "plain",
+                  anchor: currentAnchor,
+                },
+                {
+                  id: "other-node",
+                  label: "Other claim now using the old range",
+                  description: null,
+                  kind: null,
+                  notation: "plain",
+                  anchor: resolvedAnchor,
+                },
+              ],
+              edges: [],
+              createdAt: "2026-08-29T00:00:00.000Z",
+              updatedAt: "2026-08-29T00:00:01.000Z",
+            },
+          ],
+        ]),
+      }),
+    );
+
+    expect(state.referenceStaleness).toEqual({
+      headChanged: false,
+      originChanged: true,
+      originMissing: false,
+      originKind: "structure",
+    });
+    expect(state.fullViewNotice).toBeNull();
+  });
+
+  it("marks a Structure source as missing when its stable claim is deleted", () => {
+    const sourceOid = "a".repeat(40);
+    const resolvedAnchor = { path: "src/structure.ts", startLine: 4, endLine: 8 };
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: resolvedAnchor.path,
+        sourceOid: selectedOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "latest",
+          origin: {
+            kind: "structure",
+            structureId: "structure",
+            locator: { kind: "node", nodeId: "deleted-node" },
+            resolvedAnchor,
+          },
+          anchorSourceOid: sourceOid,
+          latestHeadOid: selectedOid,
+          referenceFingerprint: sourceAnchorFingerprint(sourceOid, resolvedAnchor),
+          diffBaseOid: null,
+          hasDiff: false,
+          latestFile: null,
+        },
+      },
+      context({
+        structureDetails: new Map([
+          [
+            "structure",
+            {
+              id: "structure",
+              ref: "rvw://structure/structure",
+              pullRequestId: "pull-request",
+              sourceOid,
+              title: "Updated Structure",
+              scope: "The original claim was deleted.",
+              originNodeId: "remaining-node",
+              nodes: [
+                {
+                  id: "remaining-node",
+                  label: "Remaining claim",
+                  description: null,
+                  kind: null,
+                  notation: "plain",
+                  anchor: resolvedAnchor,
+                },
+              ],
+              edges: [],
+              createdAt: "2026-08-29T00:00:00.000Z",
+              updatedAt: "2026-08-29T00:00:01.000Z",
+            },
+          ],
+        ]),
+      }),
+    );
+
+    expect(state.referenceStaleness).toEqual({
+      headChanged: false,
+      originChanged: true,
+      originMissing: true,
+      originKind: "structure",
+    });
+  });
+
+  it("tracks an Edge anchor by edge ID and index across Structure and HEAD updates", () => {
+    const resolvedHeadOid = selectedOid;
+    const currentHeadOid = "c".repeat(40);
+    const resolvedAnchor = { path: "src/edge.ts", startLine: 3, endLine: 5 };
+    const currentAnchor = { path: "src/edge.ts", startLine: 20, endLine: 24 };
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: resolvedAnchor.path,
+        sourceOid: resolvedHeadOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "latest",
+          origin: {
+            kind: "structure",
+            structureId: "structure",
+            locator: { kind: "edge", edgeId: "edge", anchorIndex: 0 },
+            resolvedAnchor,
+          },
+          anchorSourceOid: resolvedHeadOid,
+          latestHeadOid: resolvedHeadOid,
+          referenceFingerprint: sourceAnchorFingerprint(resolvedHeadOid, resolvedAnchor),
+          diffBaseOid: null,
+          hasDiff: false,
+          latestFile: null,
+        },
+      },
+      context({
+        selectedOid: currentHeadOid,
+        latestHeadOid: currentHeadOid,
+        structureDetails: new Map([
+          [
+            "structure",
+            {
+              id: "structure",
+              ref: "rvw://structure/structure",
+              pullRequestId: "pull-request",
+              sourceOid: resolvedHeadOid,
+              title: "Updated Structure",
+              scope: "The edge source moved.",
+              originNodeId: "from",
+              nodes: [
+                {
+                  id: "from",
+                  label: "From",
+                  description: null,
+                  kind: null,
+                  notation: "plain",
+                  anchor: null,
+                },
+                {
+                  id: "to",
+                  label: "To",
+                  description: null,
+                  kind: null,
+                  notation: "plain",
+                  anchor: null,
+                },
+              ],
+              edges: [
+                {
+                  id: "edge",
+                  from: "from",
+                  to: "to",
+                  label: "moves",
+                  directed: true,
+                  anchors: [currentAnchor],
+                },
+              ],
+              createdAt: "2026-08-29T00:00:00.000Z",
+              updatedAt: "2026-08-29T00:00:01.000Z",
+            },
+          ],
+        ]),
+      }),
+    );
+
+    expect(state.referenceStaleness).toEqual({
+      headChanged: true,
+      originChanged: true,
+      originMissing: false,
+      originKind: "structure",
+    });
   });
 
   it("shows the resolved target as full text locally when its commit has no file diff", () => {
@@ -249,8 +486,11 @@ describe("document viewer state", () => {
         comparisonPolicy: "reference-target",
         referenceContext: {
           outcome: "source-fallback",
-          walkthroughId: "walkthrough",
-          referenceId: "reference",
+          origin: {
+            kind: "walkthrough",
+            walkthroughId: "walkthrough",
+            referenceId: "reference",
+          },
           anchorSourceOid: "a".repeat(40),
           latestHeadOid: "c".repeat(40),
           referenceFingerprint: "fingerprint",

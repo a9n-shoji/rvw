@@ -43,11 +43,15 @@ can verify in committed code.
   product semantics.
 - `description` states the claim and its role in this subject. It is not a review finding, approval,
   recommendation, or generated summary of the whole file.
-- `kind` is an optional producer label for scanning, not a controlled ontology. Use a short factual
-  noun such as `service`, `contract`, `store`, `command`, or `view`; omit it when it adds no signal.
+- Keep the `label` and `description` short enough that a reviewer can grasp the node's main claim at
+  normal zoom. In-node scrolling preserves exceptional detail; it is a fallback, not a reason to make
+  long prose the normal authoring shape.
+- `kind` is a deprecated compatibility field that the viewer does not display. Do not set it in new
+  Structures.
 - `notation` is an optional controlled scanning aid: `plain`, `class`, `database`, `interface`,
   `component`, `external`, or `concept`. Choose it only when the familiar visual pattern helps a reviewer
-  distinguish the claim. Do not infer it mechanically from `kind`; omit it for the default `plain` card.
+  distinguish the claim. Do not infer it mechanically from legacy `kind`; omit it for the default
+  `plain` card.
 - Prefer the smallest meaningful multi-line anchor that verifies the node claim. Use a file anchor only
   for genuinely file-wide responsibility and a single-line range only for a line-local declaration.
 
@@ -75,6 +79,9 @@ Each edge is a producer claim about how two nodes relate in this subject.
   relationship is intentionally established at several distinct code sites. An edge without anchors is
   acceptable only when the relationship follows directly from its anchored endpoints or explicit
   subject authority.
+- Preserve the relative order of surviving anchors on the same Edge across an update. The viewer uses
+  the stable Edge ID plus anchor index to keep an open source action attached to its claim; replace an
+  anchor in place instead of reordering unchanged entries.
 - Do not publish a hypothesized or uncertain relation. Explain it separately in the Agent response so
   the map never presents an inference as a source-established fact.
 - Do not encode confidence, severity, inferred risk, reviewer approval, hidden groups, or presentation
@@ -121,6 +128,7 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] The declared subject is bounded and is better represented as a space than an ordered path.
 - [ ] Explicit authority controls the requested scope; verified facts fill only its gaps.
 - [ ] Each node is one useful, code-centered claim at a consistent granularity.
+- [ ] Each node's main claim is quickly understandable at normal zoom without relying on scrolling.
 - [ ] Concept-only nodes are necessary and do not invent semantics.
 - [ ] Every edge label states a precise relationship and direction is factual.
 - [ ] IDs are unique, semantic, and stable across updates; removed IDs are not recycled.

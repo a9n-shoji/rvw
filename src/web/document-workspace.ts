@@ -1,17 +1,33 @@
-import type { WalkthroughReferenceFileTarget } from "../domain/models.js";
+import type {
+  SourceAnchor,
+  SourceReferenceFileTarget,
+  StructureSourceLocator,
+} from "../domain/models.js";
 
 export type DocumentPaneId = "left" | "right";
 
+export type SourceReferenceOrigin =
+  | {
+      kind: "walkthrough";
+      walkthroughId: string;
+      referenceId: string;
+    }
+  | {
+      kind: "structure";
+      structureId: string;
+      locator: StructureSourceLocator;
+      resolvedAnchor: SourceAnchor;
+    };
+
 export interface ReferenceDocumentContext {
   outcome: "latest" | "source-fallback";
-  walkthroughId: string;
-  referenceId: string;
+  origin: SourceReferenceOrigin;
   anchorSourceOid: string;
   latestHeadOid: string;
   referenceFingerprint: string;
   diffBaseOid: string | null;
   hasDiff: boolean;
-  latestFile: WalkthroughReferenceFileTarget | null;
+  latestFile: SourceReferenceFileTarget | null;
 }
 
 export type ActiveDocument =

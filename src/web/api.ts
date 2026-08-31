@@ -12,10 +12,11 @@ import type {
   ReviewComment,
   SearchResponse,
   Structure,
+  StructureSourceResolution,
   StructureSummary,
   TreeEntry,
   Walkthrough,
-  WalkthroughReferenceResolution,
+  SourceReferenceResolution,
   WalkthroughSummary,
 } from "../domain/models.js";
 import type { ThemePreference } from "../shared/preferences.js";
@@ -156,7 +157,7 @@ export interface WalkthroughResponse {
 }
 
 export interface WalkthroughReferenceResolutionResponse {
-  resolution: WalkthroughReferenceResolution;
+  resolution: SourceReferenceResolution;
 }
 
 export interface DeleteWalkthroughResponse {
@@ -169,6 +170,10 @@ export interface StructuresResponse {
 
 export interface StructureResponse {
   structure: Structure;
+}
+
+export interface StructureSourceResolutionResponse {
+  resolution: StructureSourceResolution;
 }
 
 export interface DeleteStructureResponse {

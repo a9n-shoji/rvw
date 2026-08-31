@@ -221,6 +221,9 @@ export interface StructureEdge {
   anchors: SourceAnchor[];
 }
 
+export type StructureSourceLocator =
+  { kind: "node"; nodeId: string } | { kind: "edge"; edgeId: string; anchorIndex: number };
+
 export interface Structure {
   id: string;
   ref: string;
@@ -259,7 +262,7 @@ export interface DeletedStructure {
   counts: StructureDeleteCounts;
 }
 
-export interface WalkthroughReferenceFileTarget {
+export interface SourceReferenceFileTarget {
   sourceOid: string;
   path: string;
   diffBaseOid: string | null;
@@ -268,19 +271,23 @@ export interface WalkthroughReferenceFileTarget {
   hasDiff: boolean;
 }
 
-export interface WalkthroughReferenceTarget extends WalkthroughReferenceFileTarget {
+export interface SourceReferenceTarget extends SourceReferenceFileTarget {
   startLine: number | null;
   endLine: number | null;
 }
 
-export interface WalkthroughReferenceResolution {
+export interface SourceReferenceResolution {
   outcome: "latest" | "source-fallback";
   anchorSourceOid: string;
   latestHeadOid: string;
   referenceFingerprint: string;
-  target: WalkthroughReferenceTarget;
-  latestFile: WalkthroughReferenceFileTarget | null;
+  target: SourceReferenceTarget;
+  latestFile: SourceReferenceFileTarget | null;
   document: DocumentContent;
+}
+
+export interface StructureSourceResolution extends SourceReferenceResolution {
+  resolvedAnchor: SourceAnchor;
 }
 
 export interface WalkthroughDeleteCounts {

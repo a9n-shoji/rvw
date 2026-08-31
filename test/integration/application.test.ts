@@ -2155,6 +2155,111 @@ describe("RvwService commit workflow", () => {
     expect(git(repository, "rev-parse", `refs/rvw/pr/7/commits/oid-${firstHead}`)).toBe(firstHead);
   });
 
+  it("maps a verified Structure anchor directly to the latest head", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-structure-anchor-latest-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const structure = await service.publishStructure({
+      idempotencyKey: "structure-anchor-latest",
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Latest source structure",
+      scope: "The source file and its current location.",
+      originNodeId: "source",
+      nodes: [
+        {
+          id: "source",
+          label: "Source range",
+          anchor: { path: "src.txt", startLine: 2, endLine: 2 },
+        },
+      ],
+      edges: [],
+    });
+    const latestHead = commitFile(
+      repository,
+      "src.txt",
+      "inserted\nfirst\nsecond\n",
+      "insert before Structure anchor",
+    );
+    fake.pullRequest = { ...fake.pullRequest, headOid: latestHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    await expect(
+      service.resolveStructureSource(opened.pullRequest.id, structure.id, {
+        kind: "node",
+        nodeId: "source",
+      }),
+    ).resolves.toMatchObject({
+      outcome: "latest",
+      anchorSourceOid: firstHead,
+      latestHeadOid: latestHead,
+      target: {
+        sourceOid: latestHead,
+        path: "src.txt",
+        startLine: 3,
+        endLine: 3,
+      },
+      document: {
+        ref: { sourceOid: latestHead, path: "src.txt" },
+        text: "inserted\nfirst\nsecond\n",
+      },
+      resolvedAnchor: { path: "src.txt", startLine: 2, endLine: 2 },
+    });
+    await expect(
+      service.resolveStructureSource(opened.pullRequest.id, structure.id, {
+        kind: "node",
+        nodeId: "missing",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
+
+    const updated = await service.updateStructure(structure.ref, {
+      expectedUpdatedAt: structure.updatedAt,
+      sourceOid: firstHead,
+      title: structure.title,
+      scope: structure.scope,
+      originNodeId: "source",
+      nodes: [
+        {
+          id: "source",
+          label: "Source range moved",
+          anchor: { path: "src.txt", startLine: 1, endLine: 1 },
+        },
+        {
+          id: "other",
+          label: "Other claim reusing the old range",
+          anchor: { path: "src.txt", startLine: 2, endLine: 2 },
+        },
+      ],
+      edges: [
+        {
+          id: "source-to-other",
+          from: "source",
+          to: "other",
+          label: "feeds",
+          directed: true,
+          anchors: [{ path: "src.txt", startLine: 1, endLine: 1 }],
+        },
+      ],
+    });
+
+    await expect(
+      service.resolveStructureSource(opened.pullRequest.id, updated.id, {
+        kind: "node",
+        nodeId: "source",
+      }),
+    ).resolves.toMatchObject({
+      resolvedAnchor: { path: "src.txt", startLine: 1, endLine: 1 },
+    });
+    await expect(
+      service.resolveStructureSource(opened.pullRequest.id, updated.id, {
+        kind: "edge",
+        edgeId: "source-to-other",
+        anchorIndex: 0,
+      }),
+    ).resolves.toMatchObject({
+      resolvedAnchor: { path: "src.txt", startLine: 1, endLine: 1 },
+    });
+  });
+
   it("allows a Structure publish operation to start fresh after PR reset", async () => {
     const { repository, firstHead, service } = setup("rvw-structure-reset-idempotency-");
     const opened = await service.openPullRequest(undefined, repository);

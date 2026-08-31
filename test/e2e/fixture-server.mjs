@@ -4,7 +4,10 @@ import path from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
-import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-reference.ts";
+import {
+  sourceAnchorFingerprint,
+  structureSourceAnchor,
+} from "../../src/domain/source-reference.ts";
 import {
   walkthroughRepositoryPaths,
   walkthroughRepositorySources,
@@ -174,8 +177,10 @@ const primaryStructureNodes = [
   },
   {
     id: "payment-reconciliation",
-    label: "Payment recovery",
-    description: "注文が残らなかった認証済みpaymentを検出してvoidする。",
+    label:
+      "Payment reconciliation worker for authorized payments without a matching persisted order",
+    description:
+      "注文が残らなかった認証済みpaymentを定期的に検出し、providerの現在状態と注文repositoryを照合して、安全にvoidできる対象だけを回収する。再試行時はすでにvoid済みのpaymentを成功として扱い、一時的なprovider障害は次回実行へ残す。処理対象と判断根拠は監査logへ記録し、通常の注文作成transactionから独立したrecovery boundaryとして動作する。候補ごとに取得したprovider responseと照合時刻を保持し、同じpaymentを並列workerが重複処理しないようleaseを確認する。注文が遅れて永続化された場合はvoidせず正常系へ戻し、timeoutやrate limitは失敗として確定せず再試行可能な状態を維持する。batch全体では一件の失敗が残りの候補を止めないよう分離し、終了時に成功、延期、調査対象の件数を集約する。",
     kind: "worker",
     notation: "component",
     anchor: { path: "src/workers/payment-reconciliation.ts", startLine: 3, endLine: 13 },
@@ -1798,6 +1803,59 @@ app.get("/api/pull-requests/:id/structures/:structureId", (context) => {
     : context.json({ ok: false, error: { code: "NOT_FOUND", message: "missing structure" } }, 404);
 });
 
+app.get("/api/pull-requests/:id/structures/:structureId/anchors/resolve", (context) => {
+  const structure = activeStructures.find(
+    (candidate) => candidate.id === context.req.param("structureId"),
+  );
+  const locatorKind = context.req.query("locatorKind");
+  const locator =
+    locatorKind === "node"
+      ? { kind: "node", nodeId: context.req.query("nodeId") }
+      : locatorKind === "edge"
+        ? {
+            kind: "edge",
+            edgeId: context.req.query("edgeId"),
+            anchorIndex: Number(context.req.query("anchorIndex")),
+          }
+        : null;
+  const sourceAnchor = structure && locator ? structureSourceAnchor(structure, locator) : null;
+  if (!structure || !sourceAnchor) {
+    return context.json(
+      { ok: false, error: { code: "NOT_FOUND", message: "missing structure anchor" } },
+      404,
+    );
+  }
+  const latestHeadOid = currentView().headOid;
+  const ref = {
+    kind: "repository-file",
+    pullRequestId,
+    sourceOid: latestHeadOid,
+    path: sourceAnchor.path,
+  };
+  return context.json({
+    ok: true,
+    resolution: {
+      outcome: "latest",
+      anchorSourceOid: structure.sourceOid,
+      latestHeadOid,
+      referenceFingerprint: sourceAnchorFingerprint(structure.sourceOid, sourceAnchor),
+      resolvedAnchor: sourceAnchor,
+      target: {
+        sourceOid: latestHeadOid,
+        path: sourceAnchor.path,
+        diffBaseOid: null,
+        oldPath: sourceAnchor.path,
+        newPath: sourceAnchor.path,
+        hasDiff: false,
+        startLine: sourceAnchor.startLine,
+        endLine: sourceAnchor.endLine,
+      },
+      latestFile: null,
+      document: repositoryDocument(ref),
+    },
+  });
+});
+
 app.post("/api/fixture/structures/:structureId/update", async (context) => {
   const structure = activeStructures.find(
     (candidate) => candidate.id === context.req.param("structureId"),
@@ -1891,6 +1949,56 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
   return context.json({ ok: true, structure });
 });
 
+app.post("/api/fixture/structures/:structureId/source-lifecycle", async (context) => {
+  const structure = activeStructures.find(
+    (candidate) => candidate.id === context.req.param("structureId"),
+  );
+  if (!structure) {
+    return context.json(
+      { ok: false, error: { code: "NOT_FOUND", message: "missing structure" } },
+      404,
+    );
+  }
+  const input = await context.req.json();
+  if (input.nodeId && input.anchor) {
+    const node = structure.nodes.find((candidate) => candidate.id === input.nodeId);
+    if (!node) {
+      return context.json(
+        { ok: false, error: { code: "NOT_FOUND", message: "missing Structure node" } },
+        404,
+      );
+    }
+    const previousAnchor = node.anchor ? structuredClone(node.anchor) : null;
+    node.anchor = input.anchor;
+    if (input.reusePreviousAnchorOnNodeId) {
+      const reuseNode = structure.nodes.find(
+        (candidate) => candidate.id === input.reusePreviousAnchorOnNodeId,
+      );
+      if (reuseNode) reuseNode.anchor = previousAnchor;
+    }
+  }
+  if (input.edgeId && input.anchor) {
+    const edge = structure.edges.find((candidate) => candidate.id === input.edgeId);
+    const anchorIndex = Number(input.anchorIndex ?? 0);
+    if (!edge || !Number.isInteger(anchorIndex) || anchorIndex < 0 || !edge.anchors[anchorIndex]) {
+      return context.json(
+        { ok: false, error: { code: "NOT_FOUND", message: "missing Structure edge anchor" } },
+        404,
+      );
+    }
+    edge.anchors[anchorIndex] = input.anchor;
+  }
+  if (input.removeNodeId) {
+    structure.nodes = structure.nodes.filter((node) => node.id !== input.removeNodeId);
+    structure.edges = structure.edges.filter(
+      (edge) => edge.from !== input.removeNodeId && edge.to !== input.removeNodeId,
+    );
+  }
+  structure.updatedAt = new Date(Date.parse(structure.updatedAt) + 1_000).toISOString();
+  changeSequence += 1;
+  return context.json({ ok: true, structure });
+});
+
 app.delete("/api/pull-requests/:id/structures/:structureId", async (context) => {
   const structureIndex = activeStructures.findIndex(
     (candidate) => candidate.id === context.req.param("structureId"),
@@ -1952,7 +2060,7 @@ app.get(
         outcome: "latest",
         anchorSourceOid: walkthrough.sourceOid,
         latestHeadOid,
-        referenceFingerprint: walkthroughReferenceFingerprint(walkthrough.sourceOid, reference),
+        referenceFingerprint: sourceAnchorFingerprint(walkthrough.sourceOid, reference),
         target: {
           sourceOid: latestHeadOid,
           path: reference.path,

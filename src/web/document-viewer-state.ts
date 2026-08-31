@@ -1,6 +1,6 @@
 import { changedFilePath } from "../domain/changed-file.js";
 import type { ChangedFile, Structure, Walkthrough } from "../domain/models.js";
-import { walkthroughReferenceFingerprint } from "../domain/walkthrough-reference.js";
+import { sourceAnchorFingerprint, structureSourceAnchor } from "../domain/source-reference.js";
 import type { ActiveDocument } from "./document-workspace.js";
 
 type DocumentDisplayMode = "full" | "diff";
@@ -34,7 +34,9 @@ export interface DerivedDocumentViewerState {
 
 export interface ReferenceStaleness {
   headChanged: boolean;
-  walkthroughChanged: boolean;
+  originChanged: boolean;
+  originMissing: boolean;
+  originKind: "walkthrough" | "structure";
 }
 
 function shortOid(oid: string): string {
@@ -56,23 +58,51 @@ export function deriveDocumentViewerState(
     document.referenceContext !== undefined
       ? document.referenceContext
       : null;
-  const currentWalkthrough = referenceContext
-    ? context.walkthroughDetails.get(referenceContext.walkthroughId)
-    : undefined;
-  const currentReference = currentWalkthrough?.references.find(
-    (candidate) => candidate.id === referenceContext?.referenceId,
-  );
+  const referenceOrigin = referenceContext?.origin;
+  const currentWalkthrough =
+    referenceOrigin?.kind === "walkthrough"
+      ? context.walkthroughDetails.get(referenceOrigin.walkthroughId)
+      : undefined;
+  const currentReference =
+    referenceOrigin?.kind === "walkthrough"
+      ? currentWalkthrough?.references.find(
+          (candidate) => candidate.id === referenceOrigin.referenceId,
+        )
+      : undefined;
+  const currentStructure =
+    referenceOrigin?.kind === "structure"
+      ? context.structureDetails?.get(referenceOrigin.structureId)
+      : undefined;
+  const currentStructureAnchor =
+    referenceOrigin?.kind === "structure" && currentStructure
+      ? structureSourceAnchor(currentStructure, referenceOrigin.locator)
+      : undefined;
   const headChanged = referenceContext?.latestHeadOid !== context.latestHeadOid;
-  const walkthroughChanged = Boolean(
+  const originMissing = Boolean(
     referenceContext &&
-    currentWalkthrough &&
-    (!currentReference ||
-      walkthroughReferenceFingerprint(currentWalkthrough.sourceOid, currentReference) !==
-        referenceContext.referenceFingerprint),
+    (referenceOrigin?.kind === "walkthrough"
+      ? currentWalkthrough && !currentReference
+      : referenceOrigin?.kind === "structure"
+        ? currentStructure && currentStructureAnchor === null
+        : false),
+  );
+  const originChanged = Boolean(
+    referenceContext &&
+    (referenceOrigin?.kind === "walkthrough"
+      ? currentWalkthrough &&
+        (!currentReference ||
+          sourceAnchorFingerprint(currentWalkthrough.sourceOid, currentReference) !==
+            referenceContext.referenceFingerprint)
+      : referenceOrigin?.kind === "structure"
+        ? currentStructure &&
+          (!currentStructureAnchor ||
+            sourceAnchorFingerprint(currentStructure.sourceOid, currentStructureAnchor) !==
+              referenceContext.referenceFingerprint)
+        : false),
   );
   const referenceStaleness =
-    referenceContext && (headChanged || walkthroughChanged)
-      ? { headChanged, walkthroughChanged }
+    referenceContext && referenceOrigin && (headChanged || originChanged)
+      ? { headChanged, originChanged, originMissing, originKind: referenceOrigin.kind }
       : null;
   const referenceIsStale = referenceStaleness !== null;
   const usesSelectedRange =

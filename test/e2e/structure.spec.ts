@@ -286,8 +286,54 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       top: sourceBox.top - nodeBox.top,
     };
   });
-  expect(conceptSourceInsets.right).toBeGreaterThanOrEqual(25);
-  expect(conceptSourceInsets.top).toBeGreaterThanOrEqual(19);
+  expect(conceptSourceInsets.right).toBeGreaterThanOrEqual(23);
+  expect(conceptSourceInsets.top).toBeGreaterThanOrEqual(11);
+
+  const notationLayoutMetrics = await viewer.evaluate((element) => {
+    const samples = {
+      class: "get-order-query",
+      interface: "detail-params",
+      database: "orders-read-model",
+      component: "detail-actor-auth",
+      external: "order-detail-route",
+      concept: "order-not-found",
+    } as const;
+    return Object.entries(samples).map(([notation, nodeId]) => {
+      const node = element.querySelector<HTMLElement>(`.structure-node[data-node-id="${nodeId}"]`)!;
+      const focus = node.querySelector<HTMLElement>(".structure-node-focus")!;
+      const identity = node.querySelector<HTMLElement>(".structure-source-identity")!;
+      const sourceName = identity.querySelector<HTMLElement>(".structure-source-name")!;
+      const title = node.querySelector<HTMLElement>(".structure-node-title")!;
+      const description = node.querySelector<HTMLElement>(".structure-node-description")!;
+      const source = node.querySelector<HTMLElement>(":scope > .structure-source.compact")!;
+      const identityBox = identity.getBoundingClientRect();
+      const sourceNameBox = sourceName.getBoundingClientRect();
+      const titleBox = title.getBoundingClientRect();
+      const descriptionBox = description.getBoundingClientRect();
+      const sourceBox = source.getBoundingClientRect();
+      const nodeBox = node.getBoundingClientRect();
+      return {
+        notation,
+        fileTitleGap: titleBox.top - sourceNameBox.bottom,
+        titleSourceClearance: titleBox.top - sourceBox.bottom,
+        identitySourceClearance: sourceBox.left - identityBox.right,
+        descriptionWidthRatio: descriptionBox.width / nodeBox.width,
+        focusHorizontalOverflow: focus.scrollWidth - focus.clientWidth,
+        titleHorizontalOverflow: title.scrollWidth - title.clientWidth,
+        descriptionHorizontalOverflow: description.scrollWidth - description.clientWidth,
+      };
+    });
+  });
+  for (const metrics of notationLayoutMetrics) {
+    expect(metrics.fileTitleGap, metrics.notation).toBeGreaterThanOrEqual(1.5);
+    expect(metrics.fileTitleGap, metrics.notation).toBeLessThanOrEqual(2.5);
+    expect(metrics.titleSourceClearance, metrics.notation).toBeGreaterThanOrEqual(0);
+    expect(metrics.identitySourceClearance, metrics.notation).toBeGreaterThanOrEqual(0);
+    expect(metrics.descriptionWidthRatio, metrics.notation).toBeGreaterThan(0.75);
+    expect(metrics.focusHorizontalOverflow, metrics.notation).toBeLessThanOrEqual(0);
+    expect(metrics.titleHorizontalOverflow, metrics.notation).toBeLessThanOrEqual(0);
+    expect(metrics.descriptionHorizontalOverflow, metrics.notation).toBeLessThanOrEqual(0);
+  }
 
   await viewer.getByRole("button", { name: "表示中を収める" }).click();
   const horizontalFlow = await viewer.evaluate((element) => {
@@ -365,7 +411,427 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   expect(overlaps).toEqual([]);
 });
 
-test("explores source-exact Structures and preserves spatial context across navigation and update", async ({
+test("scrolls complete long content inside a fixed-size Node", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, secondaryTitle);
+
+  const viewer = page.locator(`[data-structure-id="${secondaryStructureId}"]`);
+  await viewer.getByRole("button", { name: "表示中を収める" }).click();
+  const node = viewer.locator('.structure-node[data-node-id="payment-reconciliation"]');
+  const title = node.locator(".structure-node-title-text");
+  const description = node.locator(".structure-node-description");
+  const sourceAction = node.locator(":scope > .structure-source.compact");
+  const scroller = node.locator(".structure-node-focus");
+
+  await expect(node.locator(".structure-kind")).toHaveCount(0);
+  await expect(node.locator(".structure-node-expand-trigger")).toHaveCount(0);
+  const cardMetrics = await node.evaluate((element) => {
+    const titleElement = element.querySelector<HTMLElement>(".structure-node-title-text")!;
+    const descriptionElement = element.querySelector<HTMLElement>(".structure-node-description")!;
+    const sourceElement = element.querySelector<HTMLElement>(":scope > .structure-source.compact")!;
+    const scrollerElement = element.querySelector<HTMLElement>(".structure-node-focus")!;
+    const titleStyle = getComputedStyle(titleElement);
+    const descriptionStyle = getComputedStyle(descriptionElement);
+    const titleBox = titleElement.getBoundingClientRect();
+    const descriptionBox = descriptionElement.getBoundingClientRect();
+    const sourceBox = sourceElement.getBoundingClientRect();
+    const sourceIdentityElement = element.querySelector<HTMLElement>(".structure-source-identity")!;
+    const sourceIdentityBox = sourceIdentityElement.getBoundingClientRect();
+    const sourceNameElement =
+      sourceIdentityElement.querySelector<HTMLElement>(".structure-source-name")!;
+    return {
+      titleClamp: titleStyle.webkitLineClamp,
+      titleClientHeight: titleElement.clientHeight,
+      titleScrollHeight: titleElement.scrollHeight,
+      titleRight: titleBox.right,
+      titleTop: titleBox.top,
+      sourceLeft: sourceBox.left,
+      sourceBottom: sourceBox.bottom,
+      descriptionClamp: descriptionStyle.webkitLineClamp,
+      descriptionClientHeight: descriptionElement.clientHeight,
+      descriptionScrollHeight: descriptionElement.scrollHeight,
+      descriptionRight: descriptionBox.right,
+      sourceCenter: sourceBox.left + sourceBox.width / 2,
+      sourceIdentityRight: sourceIdentityBox.right,
+      sourceNameMaxWidth: getComputedStyle(sourceNameElement).maxWidth,
+      scrollerOverflow: getComputedStyle(scrollerElement).overflowY,
+      scrollerClientHeight: scrollerElement.clientHeight,
+      scrollerScrollHeight: scrollerElement.scrollHeight,
+    };
+  });
+  expect(cardMetrics.titleClamp).toBe("none");
+  expect(cardMetrics.titleScrollHeight).toBe(cardMetrics.titleClientHeight);
+  expect(cardMetrics.sourceIdentityRight).toBeLessThanOrEqual(cardMetrics.sourceLeft + 0.5);
+  expect(cardMetrics.sourceNameMaxWidth).toBe("none");
+  expect(cardMetrics.titleTop).toBeGreaterThanOrEqual(cardMetrics.sourceBottom - 0.5);
+  expect(cardMetrics.titleRight).toBeGreaterThan(cardMetrics.sourceCenter);
+  expect(cardMetrics.descriptionClamp).toBe("none");
+  expect(cardMetrics.descriptionScrollHeight).toBe(cardMetrics.descriptionClientHeight);
+  expect(cardMetrics.titleRight).toBeCloseTo(cardMetrics.descriptionRight, 0);
+  expect(cardMetrics.descriptionRight).toBeGreaterThan(cardMetrics.sourceCenter);
+  expect(cardMetrics.scrollerOverflow).toBe("auto");
+  expect(cardMetrics.scrollerScrollHeight).toBeGreaterThan(cardMetrics.scrollerClientHeight);
+
+  const fullTitle = (await title.textContent())!.trim();
+  const fullDescription = (await description.textContent())!.trim();
+  expect(fullTitle.length).toBeGreaterThan(60);
+  expect(fullDescription.length).toBeGreaterThan(120);
+  await expect(description).not.toHaveAttribute("title");
+  await expect(sourceAction).toBeVisible();
+  const fixedBox = await node.boundingBox();
+  expect(fixedBox).not.toBeNull();
+  const world = viewer.locator(".structure-world");
+  const worldTransform = await world.getAttribute("style");
+  await scroller.hover();
+  await page.mouse.wheel(0, 180);
+  await expect
+    .poll(async () => await scroller.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  expect(await world.getAttribute("style")).toBe(worldTransform);
+  const scrolledBox = await node.boundingBox();
+  expect(scrolledBox!.x).toBeCloseTo(fixedBox!.x, 0);
+  expect(scrolledBox!.y).toBeCloseTo(fixedBox!.y, 0);
+  expect(scrolledBox!.width).toBeCloseTo(fixedBox!.width, 0);
+  expect(scrolledBox!.height).toBeCloseTo(fixedBox!.height, 0);
+
+  const worldTranslation = async (): Promise<{ x: number; y: number }> =>
+    await world.evaluate((element) => {
+      const match = element.style.transform.match(/translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)/);
+      if (!match) throw new Error(`unexpected Structure transform: ${element.style.transform}`);
+      return { x: Number(match[1]), y: Number(match[2]) };
+    });
+  const scrollAfterVertical = await scroller.evaluate((element) => element.scrollTop);
+  const scaleBeforeHorizontalPan = Number(await viewer.getAttribute("data-viewport-scale"));
+  const horizontalPanBefore = await worldTranslation();
+  await scroller.hover();
+  await page.mouse.wheel(36, 0);
+  await expect.poll(async () => (await worldTranslation()).x).not.toBe(horizontalPanBefore.x);
+  const horizontalPanAfter = await worldTranslation();
+  expect(horizontalPanAfter.x - horizontalPanBefore.x).toBeCloseTo(-72, 0);
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(scrollAfterVertical);
+  expect(Number(await viewer.getAttribute("data-viewport-scale"))).toBe(scaleBeforeHorizontalPan);
+
+  const viewportScaleBefore = await page.evaluate(() => window.visualViewport?.scale ?? 1);
+  const canvasScaleBefore = Number(await viewer.getAttribute("data-viewport-scale"));
+  await scroller.hover();
+  await page.keyboard.down("Control");
+  await page.mouse.wheel(0, 40);
+  await page.keyboard.up("Control");
+  await expect
+    .poll(async () => Number(await viewer.getAttribute("data-viewport-scale")))
+    .not.toBe(canvasScaleBefore);
+  expect(Number(await viewer.getAttribute("data-viewport-scale"))).toBeCloseTo(
+    canvasScaleBefore * Math.exp(-40 * 0.005),
+    2,
+  );
+  expect(await page.evaluate(() => window.visualViewport?.scale ?? 1)).toBe(viewportScaleBefore);
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(scrollAfterVertical);
+
+  await scroller.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  const topBoundaryBefore = await worldTranslation();
+  await scroller.hover();
+  await page.mouse.wheel(0, -30);
+  await expect.poll(async () => (await worldTranslation()).y).not.toBe(topBoundaryBefore.y);
+  expect((await worldTranslation()).y - topBoundaryBefore.y).toBeCloseTo(60, 0);
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(0);
+
+  await scroller.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  const bottomScroll = await scroller.evaluate((element) => element.scrollTop);
+  const bottomBoundaryBefore = await worldTranslation();
+  await scroller.hover();
+  await page.mouse.wheel(0, 30);
+  await expect.poll(async () => (await worldTranslation()).y).not.toBe(bottomBoundaryBefore.y);
+  expect((await worldTranslation()).y - bottomBoundaryBefore.y).toBeCloseTo(-60, 0);
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(bottomScroll);
+});
+
+test("preserves Structure fallback meaning through commit and head changes", async ({
+  page,
+  request,
+}) => {
+  const anchorOid = "b".repeat(40);
+  const oldHead = "c".repeat(40);
+  const newHead = "e".repeat(40);
+  const anchorPath = "src/application/orders/create-order.ts";
+  let exposeNewHead = false;
+  type TestPullRequestView = {
+    pullRequest: { latestHeadOid: string } & Record<string, unknown>;
+    comparisonBaseOid: string;
+    headOid: string;
+    commits: Array<{
+      oid: string;
+      parentOids: string[];
+      subject: string;
+      authorName: string;
+      authoredAt: string;
+    }>;
+  };
+  await page.route("**/structures/*/anchors/resolve*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        outcome: "latest" | "source-fallback";
+        anchorSourceOid: string;
+        latestHeadOid: string;
+        target: {
+          sourceOid: string;
+          path: string;
+          diffBaseOid: string | null;
+          oldPath: string | null;
+          newPath: string | null;
+          hasDiff: boolean;
+          startLine: number | null;
+          endLine: number | null;
+        };
+        latestFile: {
+          sourceOid: string;
+          path: string;
+          diffBaseOid: string | null;
+          oldPath: string | null;
+          newPath: string | null;
+          hasDiff: boolean;
+        } | null;
+        document: { ref: { sourceOid: string }; text: string | null; byteLength: number };
+      };
+    };
+    if (exposeNewHead) {
+      body.resolution.outcome = "latest";
+      body.resolution.latestHeadOid = newHead;
+      body.resolution.target.sourceOid = newHead;
+      body.resolution.target.diffBaseOid = null;
+      body.resolution.target.hasDiff = false;
+      body.resolution.target.startLine = 1;
+      body.resolution.target.endLine = 1;
+      body.resolution.latestFile = null;
+      body.resolution.document.ref.sourceOid = newHead;
+      body.resolution.document.text =
+        body.resolution.document.text?.replace(/\n\n\/\/ Updated orchestration path\.\n$/, "\n") ??
+        null;
+      body.resolution.document.byteLength = new TextEncoder().encode(
+        body.resolution.document.text ?? "",
+      ).byteLength;
+    } else {
+      body.resolution.outcome = "source-fallback";
+      body.resolution.anchorSourceOid = anchorOid;
+      body.resolution.latestHeadOid = oldHead;
+      body.resolution.target.sourceOid = anchorOid;
+      body.resolution.target.diffBaseOid = "a".repeat(40);
+      body.resolution.target.hasDiff = true;
+      body.resolution.latestFile = {
+        sourceOid: oldHead,
+        path: anchorPath,
+        diffBaseOid: null,
+        oldPath: anchorPath,
+        newPath: anchorPath,
+        hasDiff: false,
+      };
+      body.resolution.document.ref.sourceOid = anchorOid;
+      body.resolution.document.text =
+        body.resolution.document.text?.replace(/\n\n\/\/ Updated orchestration path\.\n$/, "\n") ??
+        null;
+      body.resolution.document.byteLength = new TextEncoder().encode(
+        body.resolution.document.text ?? "",
+      ).byteLength;
+    }
+    await route.fulfill({ response, json: body });
+  });
+
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  await openStructure(page, primaryTitle);
+  const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
+  await viewer.locator('.structure-node[data-node-id="hub"] > .structure-source.compact').click();
+
+  await expect(page.getByRole("tab", { name: anchorPath })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const fallbackBanner = page.locator(".reference-anchor-fallback-banner");
+  await expect(fallbackBanner).toContainText(`参照時点のコード · ${anchorOid.slice(0, 8)}`);
+  await expect(fallbackBanner).toContainText(
+    "最新コード上の対応位置を確実に特定できませんでした。",
+  );
+  await expect(fallbackBanner.getByRole("button", { name: "最新のファイルを見る" })).toBeVisible();
+
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
+  await commitPicker.click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("option", { name: /Add fixture function/ })
+    .click();
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(fallbackBanner).toBeVisible();
+  await expect(fallbackBanner.getByRole("button", { name: "最新のファイルを見る" })).toBeVisible();
+  await reviewScope.getByRole("button", { name: "変更", exact: true }).click();
+
+  const currentResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  const current = (await currentResponse.json()) as TestPullRequestView;
+  const withNewHead = <View extends TestPullRequestView>(view: View): View => ({
+    ...view,
+    pullRequest: { ...view.pullRequest, latestHeadOid: newHead },
+    headOid: newHead,
+    commits: [
+      ...view.commits,
+      {
+        oid: newHead,
+        parentOids: [oldHead],
+        subject: "Post-Structure update",
+        authorName: "Fixture Author",
+        authoredAt: "2026-08-08T03:00:00.000Z",
+      },
+    ],
+  });
+  expect(current.headOid).toBe(oldHead);
+  await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
+    const response = await route.fetch();
+    const view = (await response.json()) as TestPullRequestView;
+    await route.fulfill({ response, json: exposeNewHead ? withNewHead(view) : view });
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    const response = await route.fetch();
+    const view = (await response.json()) as TestPullRequestView & {
+      commentUpdatesApplied: number;
+    };
+    exposeNewHead = true;
+    await route.fulfill({ response, json: withNewHead(view) });
+  });
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "GitHubと同期" }).click();
+
+  const staleBanner = page.locator(".reference-stale-banner");
+  await expect(staleBanner).toContainText(
+    `解決時 ${oldHead.slice(0, 8)} → 現在 ${newHead.slice(0, 8)}`,
+  );
+  await expect(staleBanner).toContainText(`参照時点のコード · ${anchorOid.slice(0, 8)} を表示中`);
+  await expect(fallbackBanner).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "最新のファイルを見る" })).toHaveCount(0);
+
+  const reresolution = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.endsWith("/anchors/resolve"),
+  );
+  await staleBanner.getByRole("button", { name: "最新へ再解決" }).click();
+  await reresolution;
+  await expect(staleBanner).toHaveCount(0);
+  await expect(fallbackBanner).toHaveCount(0);
+  await expect(
+    page.getByText("選択中の比較範囲は最新HEADで終わっていないため · 最新の全文表示", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+});
+
+test("re-resolves Structure sources by stable Node and Edge identity", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const nodeSource = viewer.locator(
+    '.structure-node[data-node-id="order-detail-route"] > .structure-source.compact',
+  );
+  await nodeSource.click();
+  await expect(page.getByRole("tab", { name: "src/http/routes/order-detail.ts" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  const movedNodeAnchor = {
+    path: "src/http/routes/order-detail.ts",
+    startLine: 1,
+    endLine: 2,
+  };
+  const moveNode = await page.request.post(
+    `/api/fixture/structures/${fullStackStructureId}/source-lifecycle`,
+    {
+      data: {
+        nodeId: "order-detail-route",
+        anchor: movedNodeAnchor,
+        reusePreviousAnchorOnNodeId: "detail-actor-auth",
+      },
+    },
+  );
+  expect(moveNode.ok()).toBe(true);
+
+  const staleBanner = page.locator(".reference-stale-banner");
+  await expect(staleBanner).toContainText("Structureが更新されています");
+  const nodeResolution = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname.endsWith("/anchors/resolve") &&
+      url.searchParams.get("locatorKind") === "node" &&
+      url.searchParams.get("nodeId") === "order-detail-route"
+    );
+  });
+  await staleBanner.getByRole("button", { name: "最新へ再解決" }).click();
+  expect(await (await nodeResolution).json()).toMatchObject({
+    resolution: { resolvedAnchor: movedNodeAnchor, target: { startLine: 1, endLine: 2 } },
+  });
+  await expect(staleBanner).toHaveCount(0);
+  await expect(page.locator("diffs-container")).toHaveAttribute("data-search-target-line", "1");
+
+  await page.getByRole("tab", { name: fullStackTitle }).click();
+  const edgeSource = viewer.locator(
+    '.structure-edge-label[data-edge-id="detail-route-authenticates"] .structure-source.compact',
+  );
+  await edgeSource.click();
+  const movedEdgeAnchor = {
+    path: "src/http/routes/order-detail.ts",
+    startLine: 3,
+    endLine: 3,
+  };
+  const moveEdge = await page.request.post(
+    `/api/fixture/structures/${fullStackStructureId}/source-lifecycle`,
+    {
+      data: {
+        edgeId: "detail-route-authenticates",
+        anchorIndex: 0,
+        anchor: movedEdgeAnchor,
+      },
+    },
+  );
+  expect(moveEdge.ok()).toBe(true);
+  await expect(staleBanner).toContainText("Structureが更新されています");
+  const edgeResolution = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      url.pathname.endsWith("/anchors/resolve") &&
+      url.searchParams.get("locatorKind") === "edge" &&
+      url.searchParams.get("edgeId") === "detail-route-authenticates" &&
+      url.searchParams.get("anchorIndex") === "0"
+    );
+  });
+  await staleBanner.getByRole("button", { name: "最新へ再解決" }).click();
+  expect(await (await edgeResolution).json()).toMatchObject({
+    resolution: { resolvedAnchor: movedEdgeAnchor, target: { startLine: 3, endLine: 3 } },
+  });
+  await expect(staleBanner).toHaveCount(0);
+
+  await page.getByRole("tab", { name: fullStackTitle }).click();
+  await viewer
+    .locator('.structure-node[data-node-id="detail-params"] > .structure-source.compact')
+    .click();
+  const removeNode = await page.request.post(
+    `/api/fixture/structures/${fullStackStructureId}/source-lifecycle`,
+    { data: { removeNodeId: "detail-params" } },
+  );
+  expect(removeNode.ok()).toBe(true);
+  await expect(staleBanner).toContainText("Structureの参照元claimが削除されています");
+  await expect(staleBanner).toContainText("削除された参照元から最後に解決された状態です");
+  await expect(staleBanner.getByRole("button", { name: "最新へ再解決" })).toHaveCount(0);
+});
+
+test("resolves Structure anchors to latest and preserves spatial context across navigation and update", async ({
   context,
   page,
 }) => {
@@ -512,7 +978,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   expect(titleTextBox).not.toBeNull();
   expect(sourceActionBox).not.toBeNull();
   expect(identityBox!.y + identityBox!.height).toBeLessThanOrEqual(titleTextBox!.y + 1);
-  expect(titleTextBox!.width).toBeGreaterThan(150);
+  expect(titleTextBox!.width).toBeGreaterThan(130);
   expect(sourceActionBox!.x).toBeGreaterThan(titleTextBox!.x);
 
   await hubNode.click();
@@ -776,6 +1242,7 @@ test("explores source-exact Structures and preserves spatial context across navi
   ).toEqual(outerViewportBeforeWheel);
 
   const hub = viewer.locator('.structure-node[data-node-id="hub"]');
+  await viewer.getByRole("button", { name: "focusを中央へ", exact: true }).click();
   const beforeDrag = await hub.evaluate((element) => ({
     left: (element as HTMLElement).style.left,
     top: (element as HTMLElement).style.top,
@@ -814,7 +1281,27 @@ test("explores source-exact Structures and preserves spatial context across navi
     "aria-label",
     "src/application/orders/create-order.ts:9-37を開く",
   );
+  const resolutionResponsePromise = page.waitForResponse((response) =>
+    response
+      .url()
+      .includes(`/structures/${primaryStructureId}/anchors/resolve?locatorKind=node&nodeId=hub`),
+  );
   await hubSourceAction.click();
+  const resolutionResponse = await resolutionResponsePromise;
+  expect(resolutionResponse.ok()).toBe(true);
+  expect(await resolutionResponse.json()).toMatchObject({
+    resolution: {
+      outcome: "latest",
+      anchorSourceOid: "b".repeat(40),
+      latestHeadOid: "c".repeat(40),
+      target: {
+        sourceOid: "c".repeat(40),
+        path: "src/application/orders/create-order.ts",
+        startLine: 9,
+        endLine: 37,
+      },
+    },
+  });
   await expect(
     page.getByRole("tab", { name: "src/application/orders/create-order.ts" }),
   ).toHaveAttribute("aria-selected", "true");

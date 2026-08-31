@@ -4673,9 +4673,10 @@ diffs-container > [slot="header-metadata"] {
   align-items: flex-start;
   width: 100%;
   height: 100%;
-  gap: 3px;
-  padding: 8px 38px 8px 10px;
-  overflow: hidden;
+  gap: 2px;
+  padding: 6px 8px;
+  overflow: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--structure-node-outline);
   border-radius: 8px;
   color: inherit;
@@ -4684,7 +4685,8 @@ diffs-container > [slot="header-metadata"] {
   text-align: left;
   cursor: grab;
   box-shadow: 0 5px 12px var(--shadow-small);
-  touch-action: none;
+  touch-action: pan-y;
+  scrollbar-width: thin;
 }
 
 .structure-node-focus:focus-visible {
@@ -4716,7 +4718,7 @@ diffs-container > [slot="header-metadata"] {
 .structure-node.notation-class .structure-node-description,
 .structure-node.notation-interface .structure-node-description {
   width: 100%;
-  padding-top: 4px;
+  padding-top: 3px;
   border-top: 1px solid var(--structure-node-outline);
 }
 
@@ -4725,8 +4727,17 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-node.notation-database .structure-node-focus {
-  padding-top: 24px;
+  padding: 21px 10px 6px;
   border-radius: 50% / 14%;
+}
+
+.structure-node.notation-database > .structure-source.compact {
+  top: 8px;
+  right: 8px;
+}
+
+.structure-node.notation-database .structure-node-focus > .structure-source-identity {
+  min-height: 14px;
 }
 
 .structure-node.notation-database::before {
@@ -4748,7 +4759,7 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-node.notation-component .structure-node-focus {
-  padding-left: 29px;
+  padding-left: 22px;
   border-radius: 3px;
   box-shadow:
     inset 7px 0 color-mix(in srgb, var(--structure-node-theme) 18%, transparent),
@@ -4783,8 +4794,7 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-node.notation-external .structure-node-focus {
-  padding-right: 44px;
-  padding-left: 24px;
+  padding: 6px 18px;
   border: 0;
   border-radius: 0;
   clip-path: polygon(9% 0, 91% 0, 100% 50%, 91% 100%, 9% 100%, 0 50%);
@@ -4807,13 +4817,12 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-node.notation-concept .structure-node-focus {
-  padding-right: 60px;
-  padding-left: 28px;
+  padding: 12px 24px 6px;
 }
 
 .structure-node.notation-concept > .structure-source.compact {
-  top: 20px;
-  right: 26px;
+  top: 12px;
+  right: 24px;
 }
 
 .structure-node.origin .structure-node-focus {
@@ -4828,20 +4837,6 @@ diffs-container > [slot="header-metadata"] {
     0 0 0 3px color-mix(in srgb, var(--structure-node-theme) 14%, transparent);
 }
 
-.structure-kind {
-  display: inline-flex;
-  max-width: 100%;
-  padding: 1px 5px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .structure-node-title {
   display: block;
   width: 100%;
@@ -4851,6 +4846,7 @@ diffs-container > [slot="header-metadata"] {
 .structure-node-title-text {
   display: block;
   min-width: 0;
+  overflow: visible;
   font-family: var(--mono);
   font-size: 11px;
   font-weight: 700;
@@ -4860,14 +4856,15 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-node-description {
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: visible;
   color: var(--muted);
   font-size: 9px;
   line-height: 1.42;
   text-align: left;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  white-space: pre-wrap;
 }
 
 .structure-source {
@@ -4896,11 +4893,11 @@ diffs-container > [slot="header-metadata"] {
 .structure-source.compact {
   position: absolute;
   z-index: 3;
-  top: 8px;
-  right: 8px;
+  top: 6px;
+  right: 6px;
   display: grid;
   width: 28px;
-  height: 26px;
+  height: 24px;
   min-height: 0;
   place-items: center;
   padding: 0;
@@ -5074,11 +5071,17 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-node-focus > .structure-source-identity {
-  max-width: 100%;
+  width: calc(100% - 30px);
+  min-width: 0;
+  min-height: 24px;
+  max-width: none;
+  align-items: flex-end;
 }
 
 .structure-node-focus > .structure-source-identity .structure-source-name {
-  max-width: 158px;
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 auto;
 }
 
 .structure-source-identity > .file-change-icon,

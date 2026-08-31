@@ -11,7 +11,7 @@ import {
   selectedLineText,
 } from "../../src/domain/pr-markdown.js";
 import { createSourceExcerpt, MAX_SOURCE_EXCERPT_BYTES } from "../../src/domain/source-excerpt.js";
-import { walkthroughReferenceFingerprint } from "../../src/domain/walkthrough-reference.js";
+import { sourceAnchorFingerprint } from "../../src/domain/source-reference.js";
 
 describe("Pull Request Markdown", () => {
   it("normalizes CRLF and preserves the exact v1 shape", () => {
@@ -53,7 +53,7 @@ describe("conservative line mapping", () => {
   });
 });
 
-describe("Walkthrough reference fingerprint", () => {
+describe("source anchor fingerprint", () => {
   it("tracks anchor coordinates but ignores presentation metadata", () => {
     const reference = {
       id: "source",
@@ -63,13 +63,13 @@ describe("Walkthrough reference fingerprint", () => {
       endLine: 8,
       description: null,
     };
-    const fingerprint = walkthroughReferenceFingerprint("a".repeat(40), reference);
+    const fingerprint = sourceAnchorFingerprint("a".repeat(40), reference);
     const relabeledReference = { ...reference, label: "Updated label" };
 
-    expect(walkthroughReferenceFingerprint("a".repeat(40), relabeledReference)).toBe(fingerprint);
-    expect(walkthroughReferenceFingerprint("b".repeat(40), reference)).not.toBe(fingerprint);
+    expect(sourceAnchorFingerprint("a".repeat(40), relabeledReference)).toBe(fingerprint);
+    expect(sourceAnchorFingerprint("b".repeat(40), reference)).not.toBe(fingerprint);
     expect(
-      walkthroughReferenceFingerprint("a".repeat(40), {
+      sourceAnchorFingerprint("a".repeat(40), {
         ...reference,
         path: "src/updated.ts",
       }),

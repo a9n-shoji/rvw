@@ -579,7 +579,7 @@ type StructureNode = {
   id: string;
   label: string;
   description: string | null;
-  kind: string | null;
+  kind: string | null; // deprecated compatibility input; viewerは表示しない
   notation: "plain" | "class" | "database" | "interface" | "component" | "external" | "concept";
   anchor: SourceAnchor | null;
 };
@@ -627,9 +627,10 @@ type Structure = {
 - Node descriptionとEdge labelはproducer claimであり、source anchorはそのclaimを検証する根拠である。
   Edge labelは`from`をactor/source、`to`をtargetとして自然に読めるverb / verb phraseを使い、
   directionを読解順には使わない。配置を操作するためにinverse relationやactive/passive表現を選ばない。
-- `kind`は任意の短いfactual badgeであり、controlled vocabularyやlayout hintではない。`notation`は
-  `plain | class | database | interface | component | external | concept`のcontrolledな任意表示で、未指定は
-  `plain`とする。producerが明示し、viewerは`kind`やpathから推論せず、layoutにも使わない。comment、group、
+- `kind`は既存producerとの互換性のため入力とcurrent valueに残すdeprecated fieldであり、viewerは表示せず、
+  新しいproducerは省略する。`notation`は`plain | class | database | interface | component | external | concept`の
+  controlledな任意表示で、未指定は`plain`とする。producerが明示し、viewerは`kind`やpathから推論せず、
+  layoutにも使わない。comment、group、
   reverse lookup、durable layout、confidence、severityは持たない。
 - SQLiteはstable identityと一つのcurrent graph値だけを保持する。updateは`expectedUpdatedAt`を条件にした
   atomicなwhole-value replacementで、node/edge単位patch、過去値、Structure revision、version selectorを
@@ -637,12 +638,24 @@ type Structure = {
 
 viewerはStructureをPR / repository file / Walkthroughと同じfirst-class document tabとして扱う。Structure
 folderには同じPRの複数Structureを並べる。開いた時点でcode tabを増やさず、人間がNodeまたはEdgeのsource
-actionを選んだ時だけ、Structureのexact `sourceOid`とanchorで左ペインへ開く。`Cmd` / `Ctrl`+clickは右
-ペインへ開き、global commit range、表示mode、Structure focusを変更しない。latest-headへの自動mappingは
-行わない。
+actionを選んだ時だけ、Node IDまたはEdge ID + anchor indexをstable locatorとしてcurrent Structureからanchorを
+取得し、Structureの`sourceOid + path + line range`から最新`latestHeadOid`へ直接mappingする。
+変更されていない一意なrangeまたはfile-level anchorは最新commitへ開き、mapping不能時はStructureのexact
+`sourceOid`へ保守的にfallbackする。PR全体または最新commitを選択中なら、latest解決したfileは現在のglobal
+比較範囲で表示する。historical rangeではlatestのexact全文、source fallbackではanchor commitを表示する。
+Structureから開いたcode tabもsource-anchor共通contextとしてstable locator、最後に解決したanchor、解決結果、
+anchor時点、解決時HEAD、fingerprint、利用可能な最新fileを保持する。fallbackはcode tab上で理由とanchorの
+short SHA、最新file actionを表示する。HEADまたは同じstable claimのStructure anchor更新後は旧／新SHAと
+再解決actionを表示し、再解決時はbackendがcurrent Structureからlocatorの現在anchorを取得する。locatorのNode
+またはEdgeが削除された場合は、最後に解決したcodeを残して参照元claimの削除を説明し、解決不能な再解決actionを
+表示しない。Edgeの複数anchorはEdge ID + current配列indexで識別し、same-claim updateではsurviving anchorの順序を
+維持する。anchor単位のstable IDは持たない。再解決後もglobal commit rangeを変更しない。
+`Cmd` / `Ctrl`+clickは右ペインへ開き、global commit range、表示mode、Structure focusを変更しない。
 
 探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。trackpadの通常wheelは
-pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱う。layoutはtopology、
+pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱い、pan / zoom感度は従来値の
+2倍とする。overflowするNode上では、修飾キーなしの縦wheelをその方向へNode内scrollできる間だけNodeへ渡す。
+横wheel、Ctrl / Meta付きwheel、Node内scrollの上端／下端から外向きのwheelはcanvasへ渡す。layoutはtopology、
 factualなEdge direction、`originNodeId` entrypoint、stable IDを入力とするdeterministicなbehavior projectionと
 する。entrypointからdirected relationで到達できるunambiguousなEdge pairを左から右のrankへ置き、分岐は
 vertical whitespaceとtopology由来の順序で並べる。このrankは処理順や推奨読解順のproducer claimではなく、
@@ -679,8 +692,11 @@ parallel / reciprocal Edgeはstable IDでlaneを分ける。focusがある時は
 Edge labelは実際のBézier曲線付近へ置く。Edge labelを選ぶと対応する線と両端Nodeを強調する。
 relation labelの右にNodeと同型のexact source actionを置く。anchorが1件なら直接開き、複数ならlabel付近の
 compact chooserから全source evidenceを選べる。Relation上へsource file名は常時表示しない。
-Nodeはsource file identityをclaim titleと別の行に置き、source actionを右上へ分け、長いidentifierやlabelは
-省略せず固定card内で改行する。canvasはfocus名、可視／全体件数、
+Nodeはsource file identityをclaim titleと別の行に置き、source actionを右上の先頭行へ分ける。Nodeは固定cardの
+大きさを変えず、titleとdescriptionを省略しない。内容がcardを超える場合はNode内を縦scrollして全文を確認でき、
+descriptionの本文領域はsource actionの下も含めて右端まで使う。Node内scrollはlayout座標、Edge route、session座標、
+canvas zoomを変更しない。
+canvasはfocus名、可視／全体件数、
 zoom率とminimapを常時提示する。zoomは同じcardとRelation labelを一体として拡大縮小し、表示情報を暗黙に
 増減させない。広域の位置関係はminimap、局所の読解はpan / zoom、全体把握は明示的なfitで使い分ける。
 Structure固有のheaderはtitleとexact sourceを一つのcompact rowへ置き、scopeは同じrowから開くnon-modalな
@@ -1625,7 +1641,8 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
 7. headを変えないPR本文だけのrefreshで、行数が変わった最新本文を末尾まで表示
 8. 既存PR本文commentのinline位置とOutdated表示を同じrefreshで更新
 9. old code commentのtrackingまたはOutdated
-10. Walkthroughを開いてもcode tabを自動で開かず、inline referenceまたはMermaid nodeを人間が
+10. WalkthroughまたはStructureを開いてもcode tabを自動で開かず、Walkthroughのinline reference／Mermaid
+    nodeまたはStructureのNode／Edge source actionを人間が
     選んだ時だけanchorから最新HEADへ直接mappingする。成功時はrenameとline shiftを含む最新位置、
     変更・曖昧・削除時は途中commitを探索せずanchorへfallbackし、説明tabを保持する。fallbackはshort SHA、
     最新で変更済みの説明、利用可能な最新file actionを表示する。latest解決の変更表示はglobalなcommit
@@ -1656,8 +1673,11 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
     Comments sidebarのthreadをactivateできる。Pane Findはiframe本文を検索・highlight・前後移動できる
 21. 同じPRのStructureを2件以上一覧し、片方を開いてもcodeを自動表示せず、1/2-hop / All、focus、
     全relation表示、Relation選択、pan / zoom / fit / drag / layout resetを操作できる
-22. StructureのNode / Edge anchorを通常clickで左、modifier-clickで右へexact sourceとして開き、global
-    commit選択を変えず、Structureへ戻った時とsame-subject poll update後にstable-ID位置とviewportを維持する
+22. StructureのNode / Edge anchorを通常clickで左、modifier-clickで右へsource-anchor共通context付きで開く。
+    latest成功、source fallback、latest file action、historical rangeのlatest exact全文、HEAD更新後のstale表示と
+    再解決を確認し、global commit選択を変えない。同じNode IDのanchor変更、旧anchorの別claimでの再利用、Edge ID +
+    anchor indexの変更、参照元claim削除、HEADとStructureの同時更新をstable locatorで判定する。Structureへ戻った時と
+    same-subject poll update後にstable-ID位置とviewportを維持する
 23. focusなしとAllで全Node / Edgeが表示され、同じStructureを左右paneへ開いてもsessionとDOM IDが競合しない
 
 CLI contract:
