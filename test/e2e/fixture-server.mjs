@@ -875,7 +875,11 @@ function currentView() {
 function repositoryText(oid) {
   return [
     "export function fixture(value: string) {",
-    oid === secondHead ? "  return value.trim();" : "  return value;",
+    oid === secondHead
+      ? "  return value.trim();"
+      : oid === baseOid
+        ? "  return   value;"
+        : "  return value;",
     "}",
     "",
     "const stableOne = true;",

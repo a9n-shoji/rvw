@@ -481,6 +481,13 @@ code {
   min-width: 0;
   flex: 1 1 0;
 }
+.review-scope-whitespace .segmented {
+  width: 68px;
+}
+.review-scope-bar .review-scope-whitespace button {
+  min-width: 0;
+  width: 100%;
+}
 .topbar-menu {
   position: relative;
   z-index: 20;

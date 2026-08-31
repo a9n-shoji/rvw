@@ -255,7 +255,7 @@ empty fileは従来どおり明示的に扱う。
 
 ### 5.2 Viewer navigation
 
-- 連続commit range picker、全文／変更、diff styleは最上部top bar内へ置く。range pickerは
+- 連続commit range picker、全文／変更、diff style、空白変更の表示切り替えは最上部top bar内へ置く。range pickerは
   subject、short SHA、commit日時、選択件数を表示する。PR全commitを選択中なら`PR全体`、それ以外でlatest headが
   選択範囲のlatest側なら`最新`を明示する。
 - range picker内はclickで一件、pointer dragまたはShift+clickで両端を含む連続範囲を選択する。
@@ -380,6 +380,9 @@ empty fileは従来どおり明示的に扱う。
   copyを維持し、line/range comment selectionはline numberとgutter actionから開始する。file headerは
   paneのscroll中もtab列直下へsticky表示する。
 - diffのline selectionはold/new sideを明示し、両sideをまたぐ一つのcommentを作成しない。
+- `空白変更を非表示`はbrowser内だけの一時的な表示設定とし、改行を除く空白を無視して差分を計算する。
+  whitespaceだけが変わった行は変更として表示せず、残るcontextと変更行はoriginal source textとline番号を
+  保つ。changed files、comment target、source document、追加／削除fileの内容は変更しない。
 - UTF-8以外、1 MiB超、symlink、submodule、missing documentは空本文へsilent fallbackせず、
   理由を明示する。empty UTF-8 fileは有効な文書として扱う。
 - repository内の`.md` / `.markdown`と`Pull Request.md`は全文表示でPreviewを既定とし、Source / Previewを切り替えられる。
@@ -1478,14 +1481,14 @@ Viewerの最優先目的は、選択commitが作るrepositoryの状態を利用�
 関連file、test、設定、documentへ移動してもcommit範囲とopen documentを維持し、diff外へ出たことを
 理由にreview contextを作り直させない。
 
-最上部のtop barにPR情報と、repository全体へ作用するcommit範囲、表示、diff styleを並べる。
+最上部のtop barにPR情報と、repository全体へ作用するcommit範囲、表示、diff style、空白変更の表示切り替えを並べる。
 同期とreset actionは右端の`...` menuへ格納し、通常時の縦幅を増やさない。
 各paneのtab列はPR、repository file、Walkthrough、Structureの文書navigationだけに使う。
 
 ```text
 top bar
 PR情報  対象commit                                      表示            Diff表示           [...]
-        [ subject A … subject D · 4 commits · PR全体 ▼ ] [ 全文 | 変更 ] [ stacked | split ]
+        [ subject A … subject D · 4 commits · PR全体 ▼ ] [ 全文 | 変更 ] [ stacked | split ] [ 空白変更: 非表示 ]
 
 commit range popover
 [ PR全体 ] [ 最新だけ ]

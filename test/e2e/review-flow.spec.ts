@@ -56,10 +56,15 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   const displayDiffButton = reviewScope.getByRole("button", { name: "変更", exact: true });
   const stackedButton = reviewScope.getByRole("button", { name: "stacked", exact: true });
   const splitButton = reviewScope.getByRole("button", { name: "split", exact: true });
+  const hideWhitespaceButton = reviewScope.getByRole("button", {
+    name: "空白変更を非表示",
+    exact: true,
+  });
   const diffStyleModes = reviewScope.locator(".diff-style-modes");
   await expect(stackedButton).toBeVisible();
   await expect(stackedButton).toBeDisabled();
   await expect(splitButton).toBeDisabled();
+  await expect(hideWhitespaceButton).toBeDisabled();
   const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
   const commitDialog = page.getByRole("dialog", { name: "対象commitを選択" });
   const selectCommitOnly = async (name: RegExp): Promise<void> => {
@@ -309,6 +314,7 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
   await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
   await expect(displayFullButton).toBeVisible();
+  await selectCommitOnly(/Add fixture function/);
   const reviewControlLayout = async () => {
     const styleBox = await diffStyleModes.boundingBox();
     const menuBox = await actionsMenuButton.boundingBox();
@@ -324,6 +330,7 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(displayFullButton).toHaveAttribute("aria-pressed", "true");
   await expect(stackedButton).toBeEnabled();
   await expect(splitButton).toBeEnabled();
+  await expect(hideWhitespaceButton).toBeEnabled();
   const fullLayout = await reviewControlLayout();
   await splitButton.click();
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
@@ -337,7 +344,18 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(stackedButton).toHaveAttribute("aria-pressed", "true");
   expect(await reviewControlLayout()).toEqual(fullLayout);
   const diff = page.locator("diffs-container");
+  const changedDiffLines = diff.locator('[data-line-type^="change-"]');
   await expect(diff.locator("[data-diffs-header]")).toBeVisible();
+  expect(await changedDiffLines.count()).toBeGreaterThan(0);
+  await hideWhitespaceButton.click();
+  await expect(hideWhitespaceButton).toHaveAttribute("aria-pressed", "true");
+  await expect(changedDiffLines).toHaveCount(0);
+  await hideWhitespaceButton.click();
+  await expect(hideWhitespaceButton).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(async () => await changedDiffLines.count()).toBeGreaterThan(0);
+  await commitPicker.click();
+  await commitDialog.getByRole("button", { name: "PR全体", exact: true }).click();
+  await expect(commitPicker).toHaveAccessibleName(/2 commits.*PR全体/);
   await expect(diff.locator("[data-deletions-count]")).toBeVisible();
   await expect(diff.locator("[data-additions-count]")).toBeVisible();
   await expect(

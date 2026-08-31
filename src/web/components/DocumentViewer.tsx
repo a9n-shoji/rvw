@@ -1,6 +1,6 @@
 import {
   File,
-  MultiFileDiff,
+  FileDiff,
   type DiffFileInput,
   type DiffLineAnnotation,
   type LineAnnotation,
@@ -53,7 +53,7 @@ import type {
   ReferenceDocumentContext,
 } from "../document-workspace.js";
 import type { ReferenceStaleness } from "../document-viewer-state.js";
-import { fileContentsForRenderer } from "../file-rendering.js";
+import { diffForRenderer, fileContentsForRenderer } from "../file-rendering.js";
 import {
   api,
   documentUrl,
@@ -964,6 +964,7 @@ export function DocumentViewer({
   activeDocument,
   displayMode,
   diffStyle,
+  hideWhitespace,
   comments,
   activeCommentId,
   fullViewNotice = null,
@@ -987,6 +988,7 @@ export function DocumentViewer({
   activeDocument: ActiveDocument;
   displayMode: DisplayMode;
   diffStyle: "unified" | "split";
+  hideWhitespace: boolean;
   comments: ReviewComment[];
   activeCommentId: string | null;
   fullViewNotice?: string | null;
@@ -1253,6 +1255,11 @@ export function DocumentViewer({
           ? { oldFile: null, newFile }
           : null,
     [newFile, oldFile],
+  );
+  const renderedDiff = useMemo(
+    () =>
+      diffFiles ? diffForRenderer(diffFiles.oldFile, diffFiles.newFile, hideWhitespace) : null,
+    [diffFiles, hideWhitespace],
   );
   const repositoryImageRefs = useMemo(() => {
     if (!repositoryImageViewerActive || activeDocument.kind !== "repository-file") return null;
@@ -2281,9 +2288,9 @@ export function DocumentViewer({
           ) : (
             <Unavailable document={fullQuery.data ?? null} fileCommentAction={fileCommentButton} />
           )
-        ) : diffFiles ? (
-          <MultiFileDiff<ViewerAnnotation>
-            {...diffFiles}
+        ) : renderedDiff ? (
+          <FileDiff<ViewerAnnotation>
+            fileDiff={renderedDiff}
             disableWorkerPool
             lineAnnotations={diffAnnotations}
             selectedLines={activeSelection}

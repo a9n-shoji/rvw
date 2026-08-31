@@ -455,11 +455,13 @@ function ReviewScopeBar({
   specialSelectionLabel,
   documentDisplayMode,
   diffStyle,
+  hideWhitespace,
   comparisonAvailable,
   diffViewAvailable,
   onCommitRangeChange,
   onDisplayModeChange,
   onDiffStyleChange,
+  onHideWhitespaceChange,
 }: {
   selectedOid: string;
   selectedStartOid: string;
@@ -469,11 +471,13 @@ function ReviewScopeBar({
   specialSelectionLabel: string;
   documentDisplayMode: DocumentDisplayMode;
   diffStyle: "unified" | "split";
+  hideWhitespace: boolean;
   comparisonAvailable: boolean;
   diffViewAvailable: boolean;
   onCommitRangeChange: (startOid: string, endOid: string) => void;
   onDisplayModeChange: (mode: DocumentDisplayMode) => void;
   onDiffStyleChange: (diffStyle: "unified" | "split") => void;
+  onHideWhitespaceChange: (hideWhitespace: boolean) => void;
 }) {
   return (
     <section className="review-scope-bar" aria-label="レビュー範囲">
@@ -536,6 +540,23 @@ function ReviewScopeBar({
           </button>
         </div>
       </div>
+      <div className="review-scope-control review-scope-whitespace">
+        <span>空白変更</span>
+        <div className="segmented">
+          <button
+            className={hideWhitespace ? "active" : ""}
+            aria-label="空白変更を非表示"
+            aria-pressed={hideWhitespace}
+            disabled={!diffViewAvailable}
+            onClick={() => {
+              onDisplayModeChange("diff");
+              onHideWhitespaceChange(!hideWhitespace);
+            }}
+          >
+            非表示
+          </button>
+        </div>
+      </div>
     </section>
   );
 }
@@ -570,6 +591,7 @@ export function PullRequestReviewScreen({
   const [rangeStartOid, setRangeStartOid] = useState<string | null>(null);
   const [documentDisplayMode, setDocumentDisplayMode] = useState<DocumentDisplayMode>("full");
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("unified");
+  const [hideWhitespace, setHideWhitespace] = useState(false);
   const [codeExpanded, setCodeExpanded] = useState(true);
   const [commentsExpanded, setCommentsExpanded] = useState(false);
   const [commentsHeight, setCommentsHeight] = useState<number | null>(null);
@@ -2603,6 +2625,7 @@ export function PullRequestReviewScreen({
                 activeDocument={paneViewerDocument}
                 displayMode={paneViewerState.effectiveDisplayMode}
                 diffStyle={diffStyle}
+                hideWhitespace={hideWhitespace}
                 comments={comments}
                 activeCommentId={activeCommentId}
                 fullViewNotice={paneViewerState.fullViewNotice}
@@ -2702,11 +2725,13 @@ export function PullRequestReviewScreen({
           }
           documentDisplayMode={documentDisplayMode}
           diffStyle={diffStyle}
+          hideWhitespace={hideWhitespace}
           comparisonAvailable={comparisonAvailable}
           diffViewAvailable={diffViewAvailable}
           onCommitRangeChange={selectCommitRange}
           onDisplayModeChange={setDocumentDisplayMode}
           onDiffStyleChange={setDiffStyle}
+          onHideWhitespaceChange={setHideWhitespace}
         />
         <div className="topbar-menu" ref={actionsMenuRef}>
           <button
