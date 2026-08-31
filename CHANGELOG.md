@@ -5,6 +5,24 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-01
+
+### Added
+
+- 一つの具体的なbehavior / processing flowをsource-anchored origin、stable Node / Edge ID、exact source
+  anchorで提示し、1/2-hop / All、focus、pan / zoom / dragから探索できるproduction `Structure` document
+- Structureのpublish / get / whole-value update / confirmation付きdeleteを行うCLI、Agent socket capability、
+  SQLite migration、HTTP API、Codex / Claude Code共通の`rvw-structure` Skill
+- 変更表示の原文と行番号を保ちながら、追加・削除fileを除く空白だけの変更を`…`メニューから非表示にする
+  `Hide Whitespace`設定
+
+### Changed
+
+- 固定サイズのStructure Node内をscroll可能にし、表記ごとの余白、canvasのpan / zoom感度、source anchorの
+  fallback、stale判定、明示的な再解決を改善
+- light / dark themeのdiff canvas、文字、追加・削除行、gutter、inline emphasisの配色をGitHubへ合わせる
+- Hide Whitespace切替時に現在のsource lineをviewportへ保持し、空白差分がすべて隠れた場合は解除方法を表示
+
 ## [0.4.0-beta.0] - 2026-08-31
 
 ### Added
