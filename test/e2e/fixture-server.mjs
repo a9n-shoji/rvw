@@ -878,8 +878,8 @@ function repositoryText(oid) {
     oid === secondHead
       ? "  return value.trim();"
       : oid === baseOid
-        ? "  return   value;"
-        : "  return value;",
+        ? "  return   value.toString();"
+        : "  return value.toString();",
     "}",
     "",
     "const stableOne = true;",
