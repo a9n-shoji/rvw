@@ -923,8 +923,10 @@ test("distinguishes virtual and repository documents with the same path", async 
   });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await page.keyboard.press("Control+P");
+  await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: /ファイルを開く/ }).click();
   const palette = page.getByRole("dialog", { name: "ファイルを開く" });
+  await expect(palette).toBeVisible();
   await palette.getByRole("combobox", { name: "ファイル名で検索" }).fill(duplicatePath);
   await expect(palette.getByRole("option", { name: /Pull Request\.md（PR本文）/ })).toBeVisible();
   await palette.getByRole("option", { name: "Pull Request.md（repository）", exact: true }).click();
