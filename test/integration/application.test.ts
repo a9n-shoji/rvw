@@ -2260,6 +2260,209 @@ describe("RvwService commit workflow", () => {
     });
   });
 
+  it("derives ordered rename-aware file backlinks from Node anchors", async () => {
+    const { repository, base, fake, database, service } = setup("rvw-structure-backlinks-");
+    const opened = await service.openPullRequest(undefined, repository);
+    writeFileSync(
+      path.join(repository, "src.txt"),
+      Array.from({ length: 10 }, (_, index) => `source line ${index + 1}`).join("\n") + "\n",
+    );
+    writeFileSync(path.join(repository, "origin.txt"), "behavior origin\n");
+    writeFileSync(path.join(repository, "edge-only.txt"), "edge evidence\n");
+    writeFileSync(
+      path.join(repository, "copy-source.txt"),
+      Array.from({ length: 10 }, (_, index) => `copy line ${index + 1}`).join("\n") + "\n",
+    );
+    git(repository, "add", "src.txt", "origin.txt", "edge-only.txt", "copy-source.txt");
+    git(repository, "commit", "-m", "add Structure backlink sources");
+    const sourceOid = git(repository, "rev-parse", "HEAD");
+
+    const nearestStructure = await service.publishStructure({
+      idempotencyKey: "structure-backlink-nearest",
+      pullRequest: opened.pullRequest.url,
+      sourceOid,
+      title: "Nearest matching claim",
+      scope: "Select the source claim nearest to the behavior origin.",
+      originNodeId: "origin",
+      nodes: [
+        { id: "origin", label: "Origin", anchor: { path: "origin.txt" } },
+        {
+          id: "near",
+          label: "Near source",
+          anchor: { path: "src.txt", startLine: 5, endLine: 5 },
+        },
+        { id: "middle", label: "Middle" },
+        {
+          id: "far",
+          label: "Far source",
+          anchor: { path: "src.txt", startLine: 6, endLine: 6 },
+        },
+      ],
+      edges: [
+        { id: "origin-near", from: "near", to: "origin", label: "enters", directed: true },
+        { id: "origin-middle", from: "origin", to: "middle", label: "uses", directed: true },
+        { id: "middle-far", from: "middle", to: "far", label: "uses", directed: true },
+      ],
+    });
+    const edgeOnlyStructure = await service.publishStructure({
+      idempotencyKey: "structure-backlink-edge-only",
+      pullRequest: opened.pullRequest.url,
+      sourceOid,
+      title: "Edge-only evidence",
+      scope: "The target file appears only on an Edge.",
+      originNodeId: "origin",
+      nodes: [{ id: "origin", label: "Edge origin", anchor: { path: "edge-only.txt" } }],
+      edges: [
+        {
+          id: "self-evidence",
+          from: "origin",
+          to: "origin",
+          label: "documents",
+          directed: false,
+          anchors: [{ path: "src.txt" }],
+        },
+      ],
+    });
+    const originStructure = await service.publishStructure({
+      idempotencyKey: "structure-backlink-origin",
+      pullRequest: opened.pullRequest.url,
+      sourceOid,
+      title: "Matching origin",
+      scope: "The behavior origin itself is in the target file.",
+      originNodeId: "source-origin",
+      nodes: [
+        { id: "source-origin", label: "Source origin", anchor: { path: "src.txt" } },
+        { id: "other", label: "Other" },
+      ],
+      edges: [
+        {
+          id: "source-other",
+          from: "source-origin",
+          to: "other",
+          label: "uses",
+          directed: true,
+        },
+      ],
+    });
+    const ambiguousStructure = await service.publishStructure({
+      idempotencyKey: "structure-backlink-ambiguous-copy",
+      pullRequest: opened.pullRequest.url,
+      sourceOid,
+      title: "Ambiguous copy source",
+      scope: "A copied file must not be guessed.",
+      originNodeId: "copy-origin",
+      nodes: [{ id: "copy-origin", label: "Copy origin", anchor: { path: "copy-source.txt" } }],
+      edges: [],
+    });
+
+    const exactReferences = await service.listFileStructureReferences(
+      opened.pullRequest.id,
+      sourceOid,
+      "src.txt",
+    );
+    expect(exactReferences.map((reference) => reference.structure.id)).toEqual(
+      service
+        .listStructures(opened.pullRequest.id)
+        .filter((summary) => [nearestStructure.id, originStructure.id].includes(summary.id))
+        .map((summary) => summary.id),
+    );
+    expect(
+      exactReferences.find((reference) => reference.structure.id === nearestStructure.id),
+    ).toMatchObject({
+      structure: { id: nearestStructure.id },
+      targetNodeId: "near",
+      targetNodeLabel: "Near source",
+      matchingNodeCount: 2,
+    });
+    expect(
+      exactReferences.find((reference) => reference.structure.id === originStructure.id),
+    ).toMatchObject({
+      structure: { id: originStructure.id },
+      targetNodeId: "source-origin",
+      targetNodeLabel: "Source origin",
+      matchingNodeCount: 1,
+    });
+
+    git(repository, "mv", "src.txt", "renamed-src.txt");
+    writeFileSync(
+      path.join(repository, "renamed-src.txt"),
+      Array.from({ length: 10 }, (_, index) =>
+        index === 4 ? "updated source line five" : `source line ${index + 1}`,
+      ).join("\n") + "\n",
+    );
+    git(repository, "rm", "copy-source.txt");
+    const copiedContents =
+      Array.from({ length: 10 }, (_, index) => `copy line ${index + 1}`).join("\n") + "\n";
+    writeFileSync(path.join(repository, "copy-a.txt"), copiedContents);
+    writeFileSync(path.join(repository, "copy-b.txt"), copiedContents);
+    git(repository, "add", "renamed-src.txt", "copy-a.txt", "copy-b.txt");
+    git(repository, "commit", "-m", "rename and copy backlink sources");
+    const targetOid = git(repository, "rev-parse", "HEAD");
+
+    const renamedReferences = await service.listFileStructureReferences(
+      opened.pullRequest.id,
+      targetOid,
+      "renamed-src.txt",
+    );
+    expect(renamedReferences.map((reference) => reference.structure.id)).toEqual(
+      service
+        .listStructures(opened.pullRequest.id)
+        .filter((summary) => [nearestStructure.id, originStructure.id].includes(summary.id))
+        .map((summary) => summary.id),
+    );
+    expect(
+      renamedReferences.find((reference) => reference.structure.id === nearestStructure.id),
+    ).toMatchObject({
+      structure: { id: nearestStructure.id },
+      targetNodeId: "near",
+      matchingNodeCount: 2,
+    });
+    expect(
+      renamedReferences.find((reference) => reference.structure.id === originStructure.id),
+    ).toMatchObject({
+      structure: { id: originStructure.id },
+      targetNodeId: "source-origin",
+      matchingNodeCount: 1,
+    });
+    expect(
+      renamedReferences.some((reference) => reference.structure.id === edgeOnlyStructure.id),
+    ).toBe(false);
+    const ambiguousReferences = await service.listFileStructureReferences(
+      opened.pullRequest.id,
+      targetOid,
+      "copy-a.txt",
+    );
+    expect(
+      ambiguousReferences.some((reference) => reference.structure.id === ambiguousStructure.id),
+    ).toBe(false);
+    await expect(
+      service.listFileStructureReferences(opened.pullRequest.id, targetOid, "missing.txt"),
+    ).resolves.toEqual([]);
+
+    const secondPullRequest = database.upsertPullRequest(
+      {
+        ...fake.pullRequest,
+        number: 8,
+        url: "https://github.com/acme/review-repo/pull/8",
+        headOid: targetOid,
+      },
+      {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      base,
+    );
+    await expect(
+      service.listFileStructureReferences(secondPullRequest.id, targetOid, "renamed-src.txt"),
+    ).resolves.toEqual([]);
+    await expect(
+      service.listFileStructureReferences(opened.pullRequest.id, "f".repeat(40), "src.txt"),
+    ).rejects.toMatchObject({ code: "COMMIT_NOT_FOUND", status: 404 });
+    await expect(
+      service.listFileStructureReferences(opened.pullRequest.id, targetOid, "../src.txt"),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
   it("allows a Structure publish operation to start fresh after PR reset", async () => {
     const { repository, firstHead, service } = setup("rvw-structure-reset-idempotency-");
     const opened = await service.openPullRequest(undefined, repository);

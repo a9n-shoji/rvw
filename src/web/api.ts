@@ -7,6 +7,7 @@ import type {
   DeletedStructure,
   DocumentContent,
   DocumentRef,
+  FileStructureReference,
   PullRequest,
   PullRequestSummary,
   ReviewComment,
@@ -166,6 +167,10 @@ export interface DeleteWalkthroughResponse {
 
 export interface StructuresResponse {
   structures: StructureSummary[];
+}
+
+export interface FileStructureReferencesResponse {
+  references: FileStructureReference[];
 }
 
 export interface StructureResponse {

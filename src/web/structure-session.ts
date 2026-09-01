@@ -12,6 +12,13 @@ export interface StructureViewport {
   scale: number;
 }
 
+export interface StructureNavigationTarget {
+  structureId: string;
+  pane: DocumentPaneId;
+  nodeId: string;
+  requestId: number;
+}
+
 export const MIN_STRUCTURE_ZOOM = 0.03;
 export const MAX_STRUCTURE_ZOOM = 2.5;
 

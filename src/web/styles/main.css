@@ -2257,6 +2257,93 @@ diffs-container > [slot="header-metadata"] {
   background: var(--accent-soft);
   color: var(--accent);
 }
+.diff-header-file-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+.file-structure-references {
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+}
+.file-structure-references-trigger[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.file-structure-references-trigger.is-error {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--line));
+  color: var(--danger);
+}
+.file-structure-references-error-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: grid;
+  width: 13px;
+  height: 13px;
+  place-items: center;
+  border: 1px solid var(--panel);
+  border-radius: 999px;
+  background: var(--danger);
+  color: white;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  pointer-events: none;
+}
+.file-structure-references-popover {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  width: min(340px, calc(100vw - 16px));
+  max-height: min(420px, calc(100vh - 24px));
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: 0 14px 36px var(--shadow-medium);
+}
+.file-structure-references-popover > button {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  justify-items: start;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.file-structure-references-popover > button:hover,
+.file-structure-references-popover > button:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+}
+.file-structure-references-popover strong,
+.file-structure-references-popover > button > span {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-structure-references-popover strong {
+  font-size: 12px;
+}
+.file-structure-references-popover > button > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.file-structure-references-additional {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--accent);
+  font-weight: 750;
+}
 .inline-comment-composer {
   display: grid;
   gap: 9px;

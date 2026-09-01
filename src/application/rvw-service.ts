@@ -16,6 +16,7 @@ import type {
   DocumentAvailability,
   DocumentContent,
   DocumentRef,
+  FileStructureReference,
   GitHubPullRequest,
   PullRequest,
   PullRequestSummary,
@@ -49,7 +50,11 @@ import {
 import { parseWalkthroughUri } from "../domain/walkthrough-uri.js";
 import { parseStructureUri } from "../domain/structure-uri.js";
 import { mapUnchangedLineRange, placeMutableDocumentComment } from "../domain/line-mapping.js";
-import { sourceAnchorFingerprint, structureSourceAnchor } from "../domain/source-reference.js";
+import {
+  closestMatchingStructureNode,
+  sourceAnchorFingerprint,
+  structureSourceAnchor,
+} from "../domain/source-reference.js";
 import { buildPullRequestMarkdown, hashDocument, selectedLineText } from "../domain/pr-markdown.js";
 import { createSourceExcerpt, type SourceExcerpt } from "../domain/source-excerpt.js";
 import {
@@ -1709,6 +1714,60 @@ export class RvwService {
     return this.database.listStructures(pullRequestId);
   }
 
+  async listFileStructureReferences(
+    pullRequestId: string,
+    targetSourceOid: string,
+    targetPath: string,
+  ): Promise<FileStructureReference[]> {
+    const pullRequest = this.getPullRequest(pullRequestId);
+    await this.assertCommitAvailable(pullRequest, targetSourceOid);
+    const targetDocument = await this.getDocument({
+      kind: "repository-file",
+      pullRequestId,
+      sourceOid: targetSourceOid,
+      path: targetPath,
+    });
+    if (targetDocument.availability === "missing") return [];
+
+    const resolutions = new Map<string, Promise<string | null>>();
+    const resolvePath = (sourceOid: string, sourcePath: string): Promise<string | null> => {
+      const key = JSON.stringify([sourceOid, sourcePath]);
+      const cached = resolutions.get(key);
+      if (cached) return cached;
+      const resolution = this.resolveSourceFilePathAtCommit(
+        pullRequest,
+        sourceOid,
+        sourcePath,
+        targetSourceOid,
+      );
+      resolutions.set(key, resolution);
+      return resolution;
+    };
+
+    const references: FileStructureReference[] = [];
+    for (const summary of this.database.listStructures(pullRequestId)) {
+      const structure = this.database.getStructure(summary.id);
+      if (!structure || structure.pullRequestId !== pullRequestId) continue;
+      const matchingNodeIds = new Set<string>();
+      await Promise.all(
+        structure.nodes.map(async (node) => {
+          if (!node.anchor) return;
+          const resolvedPath = await resolvePath(structure.sourceOid, node.anchor.path);
+          if (resolvedPath === targetPath) matchingNodeIds.add(node.id);
+        }),
+      );
+      const targetNode = closestMatchingStructureNode(structure, matchingNodeIds);
+      if (!targetNode) continue;
+      references.push({
+        structure: summary,
+        targetNodeId: targetNode.id,
+        targetNodeLabel: targetNode.label,
+        matchingNodeCount: matchingNodeIds.size,
+      });
+    }
+    return references;
+  }
+
   listStructuresByReference(reference: string): {
     pullRequest: PullRequest;
     structures: StructureSummary[];
@@ -2121,48 +2180,23 @@ export class RvwService {
       path: reference.path,
     });
     const latestHeadOid = pullRequest.latestHeadOid;
-    let latestPath: string | null = reference.path;
-    let latestDocument: DocumentContent | null;
-    if (sourceOid === latestHeadOid) {
-      latestDocument = sourceDocument;
-    } else {
-      latestDocument = await this.getDocument({
-        kind: "repository-file",
-        pullRequestId: pullRequest.id,
-        sourceOid: latestHeadOid,
-        path: reference.path,
-      });
-      if (latestDocument.availability === "missing") {
-        const successorPaths = [
-          ...new Set(
-            (
-              await this.git.changedFilesWithCopies(
-                pullRequest.localRepositoryPath,
-                sourceOid,
-                latestHeadOid,
-              )
-            )
-              .filter(
-                (candidate) =>
-                  (candidate.status.startsWith("R") || candidate.status.startsWith("C")) &&
-                  candidate.oldPath === reference.path &&
-                  candidate.newPath !== null,
-              )
-              .map((candidate) => candidate.newPath!),
-          ),
-        ];
-        latestPath = successorPaths.length === 1 ? successorPaths[0]! : null;
-        latestDocument =
-          latestPath === null
-            ? null
-            : await this.getDocument({
-                kind: "repository-file",
-                pullRequestId: pullRequest.id,
-                sourceOid: latestHeadOid,
-                path: latestPath,
-              });
-      }
-    }
+    const latestPath = await this.resolveSourceFilePathAtCommit(
+      pullRequest,
+      sourceOid,
+      reference.path,
+      latestHeadOid,
+    );
+    const latestDocument =
+      latestPath === null
+        ? null
+        : sourceOid === latestHeadOid && latestPath === reference.path
+          ? sourceDocument
+          : await this.getDocument({
+              kind: "repository-file",
+              pullRequestId: pullRequest.id,
+              sourceOid: latestHeadOid,
+              path: latestPath,
+            });
     const latestFileExists = latestDocument !== null && latestDocument.availability !== "missing";
     const latestFileDisplayable = latestDocument?.availability === "available";
     const mappedRange =
@@ -2233,6 +2267,49 @@ export class RvwService {
       latestFile,
       document: sourceDocument,
     };
+  }
+
+  private async resolveSourceFilePathAtCommit(
+    pullRequest: PullRequest,
+    sourceOid: string,
+    sourcePath: string,
+    targetSourceOid: string,
+  ): Promise<string | null> {
+    const directDocument = await this.getDocument({
+      kind: "repository-file",
+      pullRequestId: pullRequest.id,
+      sourceOid: targetSourceOid,
+      path: sourcePath,
+    });
+    if (directDocument.availability !== "missing") return sourcePath;
+    if (sourceOid === targetSourceOid) return null;
+    const successorPaths = [
+      ...new Set(
+        (
+          await this.git.changedFilesWithCopies(
+            pullRequest.localRepositoryPath,
+            sourceOid,
+            targetSourceOid,
+          )
+        )
+          .filter(
+            (candidate) =>
+              (candidate.status.startsWith("R") || candidate.status.startsWith("C")) &&
+              candidate.oldPath === sourcePath &&
+              candidate.newPath !== null,
+          )
+          .map((candidate) => candidate.newPath!),
+      ),
+    ];
+    if (successorPaths.length !== 1) return null;
+    const successorPath = successorPaths[0]!;
+    const successorDocument = await this.getDocument({
+      kind: "repository-file",
+      pullRequestId: pullRequest.id,
+      sourceOid: targetSourceOid,
+      path: successorPath,
+    });
+    return successorDocument.availability === "missing" ? null : successorPath;
   }
 
   getWalkthroughByUri(uri: string): { pullRequest: PullRequest; walkthrough: Walkthrough } {

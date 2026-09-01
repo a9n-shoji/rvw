@@ -414,6 +414,19 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }),
   );
 
+  app.get("/api/pull-requests/:id/structure-references", async (context) => {
+    const sourceOid = oidQuery(context.req.query("sourceOid"), "sourceOid");
+    const filePath = requiredQuery(context.req.query("path"), "path");
+    return context.json({
+      ok: true,
+      references: await service.listFileStructureReferences(
+        context.req.param("id"),
+        sourceOid,
+        filePath,
+      ),
+    });
+  });
+
   app.get("/api/pull-requests/:id/structures/:structureId", (context) =>
     context.json({
       ok: true,

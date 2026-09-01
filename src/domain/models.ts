@@ -249,6 +249,13 @@ export interface StructureSummary {
   updatedAt: string;
 }
 
+export interface FileStructureReference {
+  structure: StructureSummary;
+  targetNodeId: string;
+  targetNodeLabel: string;
+  matchingNodeCount: number;
+}
+
 export interface StructureDeleteCounts {
   nodes: number;
   edges: number;

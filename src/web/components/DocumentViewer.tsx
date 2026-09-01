@@ -36,6 +36,7 @@ import type {
   CommentPlacement,
   DocumentContent,
   DocumentRef,
+  FileStructureReference,
   ReviewComment,
   SourceReferenceFileTarget,
 } from "../../domain/models.js";
@@ -86,6 +87,7 @@ import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
 import { ErrorNotice } from "./ErrorNotice.js";
 import { FileEntryIcon } from "./FileIcon.js";
+import { FileStructureReferencesButton } from "./FileStructureReferencesButton.js";
 import { MarkdownImagePlaceholder } from "./MarkdownImagePlaceholder.js";
 import { MarkdownImage } from "./MarkdownImage.js";
 import { PreviewMarkdownTable } from "./MarkdownTable.js";
@@ -1008,6 +1010,7 @@ export function DocumentViewer({
   onOpenRepositoryLink,
   onOpenLatestReferenceFile,
   onReresolveSourceReference,
+  onOpenStructureReference,
 }: {
   pullRequestId: string;
   paneId: DocumentPaneId;
@@ -1036,6 +1039,7 @@ export function DocumentViewer({
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onOpenLatestReferenceFile: (target: SourceReferenceFileTarget) => void;
   onReresolveSourceReference: (context: ReferenceDocumentContext) => Promise<string | null>;
+  onOpenStructureReference: (reference: FileStructureReference) => void;
 }) {
   if (activeDocument.kind === "walkthrough" || activeDocument.kind === "structure") {
     throw new Error("この文書は専用Viewerで表示してください。");
@@ -1939,10 +1943,24 @@ export function DocumentViewer({
       <CommentIcon />
     </button>
   );
+  const fileStructureReferencesButton =
+    fileLevelRef?.kind === "repository-file" ? (
+      <FileStructureReferencesButton
+        pullRequestId={pullRequestId}
+        fileRef={fileLevelRef}
+        onSelect={onOpenStructureReference}
+      />
+    ) : null;
+  const fileHeaderActions = (
+    <span className="diff-header-file-actions">
+      {fileStructureReferencesButton}
+      {fileCommentButton}
+    </span>
+  );
   const headerMetadata = (
     <>
       {fullViewNotice && <span className="diff-fallback-badge">{fullViewNotice}</span>}
-      {fileCommentButton}
+      {fileHeaderActions}
     </>
   );
   if (effectiveDisplayMode === "full" && fullViewUnavailableMessage) {
@@ -2098,7 +2116,7 @@ export function DocumentViewer({
                 emptyMessage: oldPath
                   ? "変更前は対応画像ではありません。"
                   : "変更前の画像はありません。",
-                action: repositoryImageRefs.new ? null : fileCommentButton,
+                action: repositoryImageRefs.new ? null : fileHeaderActions,
                 comments: repositoryImageCommentNodes("old", "deletions"),
               }
         }
@@ -2120,7 +2138,7 @@ export function DocumentViewer({
               : newPath
                 ? "変更後は対応画像ではありません。"
                 : "変更後の画像はありません。",
-          action: repositoryImageRefs.new ? fileCommentButton : null,
+          action: repositoryImageRefs.new ? fileHeaderActions : null,
           comments: repositoryImageCommentNodes(
             "new",
             effectiveDisplayMode === "full" ? null : "additions",
@@ -2255,7 +2273,7 @@ export function DocumentViewer({
                 <span>Rendered Markdown</span>
                 <span>テキストを選択して行コメント</span>
                 {fullViewNotice && <span className="diff-fallback-badge">{fullViewNotice}</span>}
-                {fileCommentButton}
+                {fileHeaderActions}
               </header>
               <MarkdownSelectionSurface
                 selectedRange={markdownSelectedRange}
@@ -2287,7 +2305,7 @@ export function DocumentViewer({
               </MarkdownSelectionSurface>
             </div>
           ) : (
-            <Unavailable document={fullQuery.data ?? null} fileCommentAction={fileCommentButton} />
+            <Unavailable document={fullQuery.data ?? null} fileCommentAction={fileHeaderActions} />
           )
         ) : effectiveDisplayMode === "full" ? (
           fullFile ? (
@@ -2317,7 +2335,7 @@ export function DocumentViewer({
               }}
             />
           ) : (
-            <Unavailable document={fullQuery.data ?? null} fileCommentAction={fileCommentButton} />
+            <Unavailable document={fullQuery.data ?? null} fileCommentAction={fileHeaderActions} />
           )
         ) : renderedDiff ? (
           <>
@@ -2357,7 +2375,7 @@ export function DocumentViewer({
         ) : (
           <Unavailable
             document={diffQuery.data?.new ?? diffQuery.data?.old ?? null}
-            fileCommentAction={fileCommentButton}
+            fileCommentAction={fileHeaderActions}
           />
         )}
       </div>
