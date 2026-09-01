@@ -340,8 +340,8 @@ empty fileは従来どおり明示的に扱う。
   通常の選択commit文書へ結び直す。current PR commit列外のexact sourceを開く場合はfull viewだけにする。
 - app shellはviewportを上限とし、Explorerのfile／Search view、Comments本文、中央viewerを独立してscroll
   させる。viewportが足りない場合もExplorerとCommentsの両見出しを下端まで常に表示する。Commentsは初期状態を
-  collapsedとし、明示操作またはcomment target navigationだけで開く。browser tabのclose、reload、navigationは
-  `beforeunload`で標準確認を出すが、in-app tab closeは確認しない。
+  collapsedとし、明示操作またはcomment target navigationだけで開く。browser tabのclose、reload、navigationと
+  in-app tab closeはいずれも確認を出さず、browser標準の操作に委ねる。
 - top barのPR titleはGitHubのPR pageを別tabで開くlinkとする。その他menuではUI themeを
   light / dark / systemから選べる。選択はOS user data directoryの共通DBへ保存し、異なるPRや
   自動割り当てportで新しく起動したviewerにも引き継ぐ。browser storageは初期表示用cacheに限る。

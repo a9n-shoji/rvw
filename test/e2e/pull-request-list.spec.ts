@@ -260,7 +260,7 @@ test("preserves drafts and the latest reading position when returning to the lis
     const dispatchAllowed = window.dispatchEvent(event);
     return { dispatchAllowed, defaultPrevented: event.defaultPrevented };
   });
-  expect(browserCloseGuard).toEqual({ dispatchAllowed: false, defaultPrevented: true });
+  expect(browserCloseGuard).toEqual({ dispatchAllowed: true, defaultPrevented: false });
 
   await page.goBack();
   await expect(page.locator(".pr-heading h1")).toContainText("Fixture review");

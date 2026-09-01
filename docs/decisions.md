@@ -2406,3 +2406,28 @@ dependency.
   positions or silently removing claims.
 - PNG may be downscaled or rejected for extremely sparse manual layouts; SVG remains the lossless
   fallback.
+
+## 2026-09-01: Let browser navigation leave rvw without confirmation
+
+### Problem
+
+The persistent `beforeunload` guard interrupted every close, reload, and external navigation from a
+Pull Request review, even though review state is reconstructed from local application state. It also
+continued to interrupt navigation from the Pull Request list when an in-memory comment draft existed.
+The browser-owned warning therefore added friction to ordinary viewer navigation and could not explain
+which state, if any, motivated the warning.
+
+### Choice
+
+Do not register a `beforeunload` guard. Browser-tab close, reload, and navigation leave rvw without a
+confirmation dialog, including while a comment draft exists. Keep the independent `pagehide` viewer
+release notification and heartbeat timeout used to stop automatically opened servers; lifecycle cleanup
+does not require blocking browser navigation.
+
+This supersedes the browser-tab confirmation portion of the 2026-08-09 document-tabs decision.
+
+### Trade-offs
+
+- Closing or reloading a tab with a comment draft no longer receives a last-moment browser warning.
+- Navigation is predictable and remains under browser control without a generic interruption.
+- Best-effort viewer release and timeout fallback continue to clean up automatically opened servers.
