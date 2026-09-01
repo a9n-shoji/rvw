@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  CONTENT_FINGERPRINT_PATTERN,
   DEFAULT_PULL_REQUEST_LIST_LIMIT,
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
@@ -122,6 +123,7 @@ const placementDocumentRefSchema = z.discriminatedUnion("kind", [
 
 export const resolveCommentPlacementsSchema = z.object({
   commentIds: z.array(z.uuid()),
+  expectedPullRequestContentFingerprint: z.string().regex(CONTENT_FINGERPRINT_PATTERN).optional(),
   destinations: z
     .array(
       z.union([

@@ -63,6 +63,7 @@ import type { ReferenceStaleness } from "../document-viewer-state.js";
 import { diffForRenderer, fileContentsForRenderer } from "../file-rendering.js";
 import {
   api,
+  ApiError,
   type CommentPlacementBatchResponse,
   documentUrl,
   type DiffResponse,
@@ -985,7 +986,7 @@ export function DocumentViewer({
   latestHeadOid,
   selectedOid,
   oldOid,
-  pullRequestContentRevision,
+  pullRequestContentFingerprint,
   structureFingerprint,
   structuresLoaded,
   activeDocument,
@@ -1013,7 +1014,7 @@ export function DocumentViewer({
   latestHeadOid: string;
   selectedOid: string;
   oldOid: string | null;
-  pullRequestContentRevision: number | undefined;
+  pullRequestContentFingerprint: string | undefined;
   structureFingerprint: string;
   structuresLoaded: boolean;
   activeDocument: ActiveDocument;
@@ -1237,17 +1238,28 @@ export function DocumentViewer({
       : Boolean(
           (oldPath && isSupportedImagePath(oldPath)) || (newPath && isSupportedImagePath(newPath)),
         ));
-  const fullDocumentContentRevision =
-    fullRef.kind === "pull-request-markdown" ? pullRequestContentRevision : null;
+  const fullDocumentContentFingerprint =
+    fullRef.kind === "pull-request-markdown" ? pullRequestContentFingerprint : null;
   const fullQuery = useQuery({
-    queryKey: ["document", fullRef, fullDocumentContentRevision],
-    queryFn: async ({ signal }) =>
-      (await api<DocumentResponse>(documentUrl(fullRef), { signal })).document,
+    queryKey: ["document", fullRef, fullDocumentContentFingerprint],
+    queryFn: async ({ signal }) => {
+      const response = await api<DocumentResponse>(
+        documentUrl(fullRef, fullDocumentContentFingerprint ?? undefined),
+        { signal },
+      );
+      if (
+        fullDocumentContentFingerprint !== null &&
+        response.pullRequestContentFingerprint !== fullDocumentContentFingerprint
+      ) {
+        throw new ApiError("Pull Request本文が更新されています。", "STALE_CONTENT");
+      }
+      return response.document;
+    },
     enabled:
       effectiveDisplayMode === "full" &&
       !repositoryImageViewerActive &&
       !fullViewUnavailableMessage &&
-      fullDocumentContentRevision !== undefined,
+      fullDocumentContentFingerprint !== undefined,
     staleTime: Number.POSITIVE_INFINITY,
   });
   const diffSearch = new URLSearchParams({ kind: activeDocument.kind });
@@ -1371,10 +1383,10 @@ export function DocumentViewer({
     () => placementComments.map((comment) => [comment.id, comment.target]),
     [placementComments],
   );
-  const annotationContentRevision =
+  const annotationContentFingerprint =
     renderedRefs.new?.kind === "pull-request-markdown" ||
     renderedRefs.old?.kind === "pull-request-markdown"
-      ? pullRequestContentRevision
+      ? pullRequestContentFingerprint
       : null;
   const annotationQuery = useQuery({
     queryKey: [
@@ -1383,44 +1395,55 @@ export function DocumentViewer({
       pullRequestId,
       commentTargetFingerprint,
       renderedRefs,
-      annotationContentRevision,
+      annotationContentFingerprint,
     ],
     queryFn: async ({ signal }) =>
       ({
-        contentRevision: annotationContentRevision,
+        contentFingerprint: annotationContentFingerprint,
         response: await resolveCommentPlacements(
           pullRequestId,
           placementComments.map(({ id }) => id),
           placementDestinations,
           signal,
+          annotationContentFingerprint ?? undefined,
         ),
       }) satisfies {
-        contentRevision: number | null | undefined;
+        contentFingerprint: string | null | undefined;
         response: CommentPlacementBatchResponse;
       },
     enabled:
       placementComments.length > 0 &&
       placementDestinations.length > 0 &&
-      annotationContentRevision !== undefined,
+      annotationContentFingerprint !== undefined,
     staleTime: Number.POSITIVE_INFINITY,
     placeholderData: (previousData) =>
-      previousData?.contentRevision === annotationContentRevision ? previousData : undefined,
+      previousData?.contentFingerprint === annotationContentFingerprint ? previousData : undefined,
   });
   const retainedAnnotationData = useRef(annotationQuery.data);
   useLayoutEffect(() => {
-    if (annotationQuery.data?.contentRevision === annotationContentRevision) {
+    if (annotationQuery.data?.contentFingerprint === annotationContentFingerprint) {
       retainedAnnotationData.current = annotationQuery.data;
     }
-  }, [annotationContentRevision, annotationQuery.data]);
+  }, [annotationContentFingerprint, annotationQuery.data]);
   const annotationQueryData = annotationQuery.data;
   const retainedAnnotationQueryData = retainedAnnotationData.current;
   const currentAnnotationResponse =
-    annotationQueryData && annotationQueryData.contentRevision === annotationContentRevision
+    annotationQueryData && annotationQueryData.contentFingerprint === annotationContentFingerprint
       ? annotationQueryData.response
       : retainedAnnotationQueryData &&
-          retainedAnnotationQueryData.contentRevision === annotationContentRevision
+          retainedAnnotationQueryData.contentFingerprint === annotationContentFingerprint
         ? retainedAnnotationQueryData.response
         : undefined;
+  useLayoutEffect(() => {
+    if (!optimisticComment || annotationQuery.isFetching || !currentAnnotationResponse) return;
+    const commentId = optimisticComment.comment.id;
+    const settled =
+      currentAnnotationResponse.comments.some((result) => result.commentId === commentId) ||
+      currentAnnotationResponse.missingCommentIds.includes(commentId);
+    if (!settled) return;
+    loadedOptimisticCommentId.current = commentId;
+    setOptimisticComment(null);
+  }, [annotationQuery.isFetching, currentAnnotationResponse, optimisticComment]);
   const annotationData = useMemo(() => {
     const fileAnnotations: LineAnnotation<ViewerAnnotation>[] = [];
     const diffAnnotations: DiffLineAnnotation<ViewerAnnotation>[] = [];

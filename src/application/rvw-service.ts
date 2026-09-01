@@ -58,7 +58,12 @@ import {
   sourceAnchorFingerprint,
   structureSourceAnchor,
 } from "../domain/source-reference.js";
-import { buildPullRequestMarkdown, hashDocument, selectedLineText } from "../domain/pr-markdown.js";
+import {
+  buildPullRequestMarkdown,
+  hashDocument,
+  pullRequestContentFingerprint,
+  selectedLineText,
+} from "../domain/pr-markdown.js";
 import { createSourceExcerpt, type SourceExcerpt } from "../domain/source-excerpt.js";
 import {
   DEFAULT_COMMENT_LIST_LIMIT,
@@ -105,7 +110,11 @@ import {
   MAX_WALKTHROUGH_HTML_IMAGES,
   type HtmlPreviewAnalysis,
 } from "../shared/walkthrough-html.js";
-import { RvwDatabase, type CommentUpdateInput } from "../infrastructure/db/database.js";
+import {
+  RvwDatabase,
+  type CommentUpdateInput,
+  type RevisionSnapshot,
+} from "../infrastructure/db/database.js";
 import { GitClient, type RepositoryContext } from "../infrastructure/git/git-client.js";
 import { parsePullRequestUrl, type GitHubPort } from "../infrastructure/github/github-client.js";
 
@@ -116,9 +125,12 @@ export interface OpenResult {
 
 export interface PullRequestView {
   pullRequest: PullRequest;
+  pullRequestContentFingerprint: string;
   comparisonBaseOid: string;
   headOid: string;
   commits: CommitSummary[];
+  changeSequence: number;
+  revisions: RevisionSnapshot["revisions"];
 }
 
 export interface PullRequestList {
@@ -1169,7 +1181,10 @@ export class RvwService {
   }
 
   async getPullRequestView(id: string): Promise<PullRequestView> {
-    const pullRequest = this.getPullRequest(id);
+    const { pullRequest, revisionSnapshot } = this.database.getPullRequestRevisionSnapshot(id);
+    if (!pullRequest) {
+      throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。", { status: 404 });
+    }
     const commits = await this.git.commits(
       pullRequest.localRepositoryPath,
       pullRequest.latestComparisonBaseOid,
@@ -1177,10 +1192,33 @@ export class RvwService {
     );
     return {
       pullRequest,
+      pullRequestContentFingerprint: pullRequestContentFingerprint(
+        pullRequest.latestTitle,
+        pullRequest.latestBody,
+      ),
       comparisonBaseOid: pullRequest.latestComparisonBaseOid,
       headOid: pullRequest.latestHeadOid,
       commits,
+      ...revisionSnapshot,
     };
+  }
+
+  private assertPullRequestContentFingerprint(
+    pullRequest: PullRequest,
+    expectedFingerprint: string | undefined,
+  ): string {
+    const actualFingerprint = pullRequestContentFingerprint(
+      pullRequest.latestTitle,
+      pullRequest.latestBody,
+    );
+    if (expectedFingerprint !== undefined && expectedFingerprint !== actualFingerprint) {
+      throw new RvwError("STALE_CONTENT", "Pull Request本文が更新されています。", {
+        status: 409,
+        details: { expectedFingerprint, actualFingerprint },
+        suggestions: ["最新のPull Request本文を再取得してください。"],
+      });
+    }
+    return actualFingerprint;
   }
 
   private async assertCommitAvailable(pullRequest: PullRequest, oid: string): Promise<void> {
@@ -1258,6 +1296,30 @@ export class RvwService {
     return { ref, ...content };
   }
 
+  async getDocumentWithContentFingerprint(
+    ref: DocumentRef,
+    expectedFingerprint?: string,
+  ): Promise<{ document: DocumentContent; pullRequestContentFingerprint: string | null }> {
+    if (ref.kind !== "pull-request-markdown") {
+      return { document: await this.getDocument(ref), pullRequestContentFingerprint: null };
+    }
+    const pullRequest = this.getPullRequest(ref.pullRequestId);
+    const fingerprint = this.assertPullRequestContentFingerprint(pullRequest, expectedFingerprint);
+    const text = buildPullRequestMarkdown(pullRequest.latestTitle, pullRequest.latestBody);
+    return {
+      document: {
+        ref,
+        availability: "available",
+        text,
+        byteLength: Buffer.byteLength(text, "utf8"),
+        entryKind: "virtual",
+        normalizedLineEndings: false,
+        oid: null,
+      },
+      pullRequestContentFingerprint: fingerprint,
+    };
+  }
+
   async getRepositoryAsset(pullRequestId: string, sourceOid: string, filePath: string) {
     const pullRequest = this.getPullRequest(pullRequestId);
     await this.assertCommitAvailable(pullRequest, sourceOid);
@@ -1300,7 +1362,8 @@ export class RvwService {
     oid: string,
     query: string,
     options: SearchOptions,
-  ): Promise<SearchResponse> {
+    expectedPullRequestContentFingerprint?: string,
+  ): Promise<SearchResponse & { pullRequestContentFingerprint: string }> {
     const queryBytes = Buffer.byteLength(query, "utf8");
     if (
       queryBytes === 0 ||
@@ -1314,6 +1377,10 @@ export class RvwService {
       );
     }
     const pullRequest = this.getPullRequest(pullRequestId);
+    const contentFingerprint = this.assertPullRequestContentFingerprint(
+      pullRequest,
+      expectedPullRequestContentFingerprint,
+    );
     await this.assertCommitAvailable(pullRequest, oid);
     const prMarkdown = buildPullRequestMarkdown(pullRequest.latestTitle, pullRequest.latestBody);
     const results: SearchResponse["results"] = [];
@@ -1339,6 +1406,7 @@ export class RvwService {
       });
     }
     return {
+      pullRequestContentFingerprint: contentFingerprint,
       results,
       matchCount: results.reduce((count, result) => count + result.matches.length, 0),
       truncated:
@@ -2939,8 +3007,13 @@ export class RvwService {
     pullRequestId: string,
     commentIds: readonly string[],
     destinations: readonly CommentPlacementDestination[],
+    expectedPullRequestContentFingerprint?: string,
   ): Promise<CommentPlacementBatchResult> {
     const pullRequest = this.getPullRequest(pullRequestId);
+    const contentFingerprint = this.assertPullRequestContentFingerprint(
+      pullRequest,
+      expectedPullRequestContentFingerprint,
+    );
     const uniqueCommentIds = [...new Set(commentIds)];
     const comments: ReviewComment[] = [];
     const missingCommentIds: string[] = [];
@@ -2973,6 +3046,7 @@ export class RvwService {
       }
     }
     return {
+      pullRequestContentFingerprint: contentFingerprint,
       comments: await mapWithConcurrency(comments, 4, async (comment) => {
         const placements = [];
         const failures = [];

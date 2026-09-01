@@ -101,7 +101,10 @@ import {
 } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { gitBackedQueryBelongsToPullRequest } from "../git-backed-query.js";
-import { cancelAndInvalidateQueries } from "../query-invalidation.js";
+import {
+  cancelAndInvalidateQueries,
+  invalidateFailedPlacementQueries,
+} from "../query-invalidation.js";
 import { transferStructureSession, type StructureNavigationTarget } from "../structure-session.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
 import {
@@ -1197,6 +1200,7 @@ export function PullRequestReviewScreen({
     queryFn: async ({ signal }) =>
       await api<PullRequestResponse>(`/api/pull-requests/${pullRequestId}`, { signal }),
     enabled: Boolean(pullRequestId && changeSequence.data?.revisions),
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const commits = pullRequestQuery.data?.commits ?? [];
   const comparisonBaseOid = pullRequestQuery.data?.comparisonBaseOid ?? null;
@@ -1835,7 +1839,7 @@ export function PullRequestReviewScreen({
       "search",
       pullRequestId,
       selectedOid,
-      changeSequence.data?.revisions.pullRequestContent,
+      pullRequestQuery.data?.pullRequestContentFingerprint,
       debouncedSearch,
       searchMatchCase,
       searchWholeWord,
@@ -1846,13 +1850,26 @@ export function PullRequestReviewScreen({
         q: debouncedSearch,
         matchCase: String(searchMatchCase),
         wholeWord: String(searchWholeWord),
+        expectedPullRequestContentFingerprint: pullRequestQuery.data!.pullRequestContentFingerprint,
       });
-      return await api<SearchResponse>(
+      const response = await api<SearchResponse & { pullRequestContentFingerprint: string }>(
         `/api/pull-requests/${pullRequestId}/search?${parameters.toString()}`,
         { signal },
       );
+      if (
+        response.pullRequestContentFingerprint !==
+        pullRequestQuery.data!.pullRequestContentFingerprint
+      ) {
+        throw new ApiError("Pull Request本文が更新されています。", "STALE_CONTENT");
+      }
+      return response;
     },
-    enabled: Boolean(pullRequestId && selectedOid && debouncedSearch),
+    enabled: Boolean(
+      pullRequestId &&
+      selectedOid &&
+      debouncedSearch &&
+      pullRequestQuery.data?.pullRequestContentFingerprint,
+    ),
     staleTime: Number.POSITIVE_INFINITY,
   });
 
@@ -1873,7 +1890,20 @@ export function PullRequestReviewScreen({
         rangeStartOid,
       };
     },
-    onSuccess: (result, options, refreshStart) => {
+    onSuccess: async (result, options, refreshStart) => {
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: ["pull-request", pullRequestId], exact: true }),
+        queryClient.cancelQueries({ queryKey: ["change-sequence"], exact: true }),
+      ]);
+      const currentSnapshot = queryClient.getQueryData<ChangeSequenceResponse>(["change-sequence"]);
+      if (currentSnapshot && result.changeSequence < currentSnapshot.changeSequence) {
+        await queryClient.invalidateQueries({
+          queryKey: ["pull-request", pullRequestId],
+          exact: true,
+        });
+        await invalidateFailedPlacementQueries(queryClient);
+        return;
+      }
       const revisionSnapshot: ChangeSequenceResponse = {
         changeSequence: result.changeSequence,
         revisions: result.revisions,
@@ -1888,6 +1918,7 @@ export function PullRequestReviewScreen({
       }
       queryClient.setQueryData<ChangeSequenceResponse>(["change-sequence"], revisionSnapshot);
       queryClient.setQueryData(["pull-request", pullRequestId], result);
+      await invalidateFailedPlacementQueries(queryClient);
       const commitRangeUnchanged =
         refreshStart.commitRangeInteractionRevision === commitRangeInteractionRevision.current;
       const wasAtLatest = refreshStart.selectedOid === refreshStart.latestHeadOid;
@@ -2210,10 +2241,15 @@ export function PullRequestReviewScreen({
     [navigateToDocument, queryClient],
   );
   const fetchWalkthroughReferenceResolution = useCallback(
-    async (walkthroughId: string, referenceId: string): Promise<SourceReferenceResolution> => {
+    async (
+      walkthroughId: string,
+      referenceId: string,
+      signal?: AbortSignal,
+    ): Promise<SourceReferenceResolution> => {
       if (!pullRequestId) throw new Error("Pull Requestが選択されていません。");
       const { resolution } = await api<WalkthroughReferenceResolutionResponse>(
         `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}/references/${encodeURIComponent(referenceId)}/resolve`,
+        signal ? { signal } : undefined,
       );
       return resolution;
     },
@@ -2289,8 +2325,13 @@ export function PullRequestReviewScreen({
     async (
       walkthrough: Walkthrough,
       reference: WalkthroughReference,
+      signal?: AbortSignal,
     ): Promise<MermaidReferencePeekResolution> => {
-      const resolution = await fetchWalkthroughReferenceResolution(walkthrough.id, reference.id);
+      const resolution = await fetchWalkthroughReferenceResolution(
+        walkthrough.id,
+        reference.id,
+        signal,
+      );
       const target = resolution.target;
       return {
         sourceOid: target.sourceOid,
@@ -2729,7 +2770,7 @@ export function PullRequestReviewScreen({
                 latestHeadOid={pullRequest.latestHeadOid}
                 selectedOid={paneSelectedOid}
                 oldOid={paneOldOid}
-                pullRequestContentRevision={changeSequence.data?.revisions.pullRequestContent}
+                pullRequestContentFingerprint={pullRequestQuery.data?.pullRequestContentFingerprint}
                 structureFingerprint={structureFingerprint}
                 structuresLoaded={structuresQuery.isSuccess}
                 activeDocument={paneViewerDocument}
@@ -3158,7 +3199,7 @@ export function PullRequestReviewScreen({
                 expanded={commentsExpanded}
                 pullRequestId={pullRequest.id}
                 selectedOid={selectedOid}
-                pullRequestContentRevision={changeSequence.data?.revisions.pullRequestContent}
+                pullRequestContentFingerprint={pullRequestQuery.data?.pullRequestContentFingerprint}
                 walkthroughRevision={changeSequence.data?.revisions.walkthroughs}
                 themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}

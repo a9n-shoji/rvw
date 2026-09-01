@@ -30,6 +30,7 @@ function CommentCard({
   comment,
   placement,
   placementError,
+  onRetryPlacement,
   selected,
   markdownSourceOid,
   themePreference,
@@ -43,6 +44,7 @@ function CommentCard({
   comment: ReviewComment;
   placement: CommentPlacement | null;
   placementError: SerializedRvwError | null;
+  onRetryPlacement: () => void;
   selected: boolean;
   markdownSourceOid?: string | undefined;
   themePreference: ThemePreference;
@@ -79,6 +81,11 @@ function CommentCard({
       </label>
       <div className="comment-list-item-content">
         <ErrorNotice error={placementError} />
+        {placementError && (
+          <button className="button--quiet placement-retry" onClick={onRetryPlacement}>
+            配置を再試行
+          </button>
+        )}
         <CommentThread
           comment={comment}
           variant="sidebar"
@@ -102,7 +109,7 @@ export function CommentSidebar({
   expanded,
   pullRequestId,
   selectedOid,
-  pullRequestContentRevision,
+  pullRequestContentFingerprint,
   walkthroughRevision,
   themePreference,
   onCommentActiveChange,
@@ -115,7 +122,7 @@ export function CommentSidebar({
   expanded: boolean;
   pullRequestId: string;
   selectedOid: string;
-  pullRequestContentRevision: number | undefined;
+  pullRequestContentFingerprint: string | undefined;
   walkthroughRevision: number | undefined;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
@@ -181,19 +188,19 @@ export function CommentSidebar({
   )
     ? walkthroughRevision
     : null;
+  const placementContentFingerprint = placementComments.some(
+    (comment) =>
+      comment.target.kind === "document" && comment.target.documentKind === "pull-request-markdown",
+  )
+    ? pullRequestContentFingerprint
+    : null;
   const placementQuery = useQuery({
     queryKey: [
       "comment-placements",
       "sidebar",
       pullRequestId,
       selectedOid,
-      placementComments.some(
-        (comment) =>
-          comment.target.kind === "document" &&
-          comment.target.documentKind === "pull-request-markdown",
-      )
-        ? pullRequestContentRevision
-        : null,
+      placementContentFingerprint,
       placementWalkthroughRevision,
       visibleTargetFingerprint,
     ],
@@ -203,8 +210,9 @@ export function CommentSidebar({
         placementComments.map(({ id }) => id),
         [{ kind: "commit", oid: selectedOid }],
         signal,
+        placementContentFingerprint ?? undefined,
       ),
-    enabled: expanded && placementComments.length > 0,
+    enabled: expanded && placementComments.length > 0 && placementContentFingerprint !== undefined,
     staleTime: Number.POSITIVE_INFINITY,
   });
   const placements = useMemo(
@@ -362,6 +370,7 @@ export function CommentSidebar({
                   : (placements.get(comment.id) ?? null)
               }
               placementError={placementFailures.get(comment.id) ?? null}
+              onRetryPlacement={() => void placementQuery.refetch()}
               selected={selected.has(comment.id)}
               markdownSourceOid={
                 comment.target.kind === "walkthrough"

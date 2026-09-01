@@ -1028,6 +1028,9 @@ test("handles Unicode empty symlink submodule and very long repository paths", a
     await route.fulfill({
       json: {
         ok: true,
+        pullRequestContentFingerprint: url.searchParams.get(
+          "expectedPullRequestContentFingerprint",
+        ),
         query: "注文",
         matchCount: 1,
         truncated: false,

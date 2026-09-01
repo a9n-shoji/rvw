@@ -7,6 +7,7 @@ import { createApp } from "../../src/server/app.js";
 import { ViewerLifecycle } from "../../src/server/viewer-lifecycle.js";
 import { VIEWER_ID_HEADER, VIEWER_OPEN_LEASE_HEADER } from "../../src/shared/constants.js";
 import { RvwError } from "../../src/shared/errors.js";
+import { createGitRepository, git } from "../fixtures/git-repository.js";
 
 const github: GitHubPort = {
   doctor() {
@@ -71,6 +72,66 @@ function registerPullRequest(
 }
 
 describe("local HTTP security", () => {
+  it("preserves single-placement error semantics when a comment source commit is missing", async () => {
+    const repository = createGitRepository("rvw-single-placement-");
+    const headOid = git(repository, "rev-parse", "HEAD");
+    const gitClient = new GitClient();
+    const repositoryContext = await gitClient.repositoryContext(repository);
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      {
+        host: "github.com",
+        owner: "acme",
+        repository: "review-repo",
+        number: 7,
+        url: "https://github.com/acme/review-repo/pull/7",
+        authorLogin: "reviewer",
+        headRepositoryOwner: "acme",
+        headRepositoryName: "review-repo",
+        title: "Review",
+        body: "Body",
+        baseRefName: "main",
+        baseOid: headOid,
+        headRefName: "feature",
+        headOid,
+        createdAt: "2026-08-20T00:00:00.000Z",
+        updatedAt: "2026-08-21T00:00:00.000Z",
+        state: "OPEN",
+        isDraft: false,
+      },
+      {
+        localRepositoryPath: repositoryContext.worktreePath,
+        gitCommonDir: repositoryContext.gitCommonDir,
+      },
+      headOid,
+    );
+    const comment = database.createComment({
+      pullRequestId: pullRequest.id,
+      createdHeadOid: headOid,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: "f".repeat(40),
+        path: "README.md",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Unavailable source",
+    });
+    const app = createApp(new RvwService(database, gitClient, github), {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+
+    const response = await app.request(
+      `http://127.0.0.1:4321/api/comments/${comment.id}/placement?pullRequestId=${pullRequest.id}&kind=commit&oid=${headOid}`,
+      { headers: { host: "127.0.0.1:4321" } },
+    );
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { code: "COMMIT_NOT_FOUND" } });
+    database.close();
+  });
+
   it("returns a bounded SQLite-only Pull Request summary page", async () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const pullRequestId = registerPullRequest(database);

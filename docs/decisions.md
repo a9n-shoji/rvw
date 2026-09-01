@@ -2454,7 +2454,7 @@ together and include only repository-file or Pull Request Markdown targets match
 An expanded sidebar sends the stable set of all non-PR targets independently of its unresolved /
 resolved presentation filter, and the browser no longer uses the compatible single-comment endpoint.
 Placement query identity contains comment ID plus target,
-destination identity, and the relevant mutable-document revision; post timestamps are deliberately
+destination identity, and the relevant mutable-document fingerprint or revision; post timestamps are deliberately
 excluded. Batch input is sorted by stable comment ID so `updatedAt` display reordering does not change
 placement identity, and current comment content is joined after placement lookup.
 
@@ -2491,11 +2491,17 @@ derive their mutable title from the current summary by stable Walkthrough ID. Im
 queries use infinite freshness only when their complete identity is in the key. Placement batch queries
 also propagate cancellation through their HTTP request. Delay the stable comments query until the
 initial domain-revision snapshot exists so an external write cannot be swallowed by baseline adoption.
-Pull Request refresh responses carry the post-sync revision snapshot; the viewer advances its heartbeat
-cache so content and placement switch revisions together. PR Markdown document, search, and placement
-queries include the content revision in their identity. They do not retain document or placement data
-across that revision boundary, while placement continuity remains available for comment-set changes
-inside one content revision. Sidebar
+Read the global change sequence and all domain revisions in one SQL snapshot. Pull Request views read
+their row and revision vector in one short transaction before Git commit enumeration. Refresh responses
+therefore never combine an older row with a newer revision vector. Before adopting a refresh, cancel the
+stable PR and heartbeat queries and reject a response older than the already observed sequence. Keep the
+PR query infinitely fresh so focus does not repeat commit enumeration.
+
+Use a SHA-256 fingerprint of the exact `Pull Request.md` title/body text as the per-PR content token.
+PR Markdown document, search, and placement requests send the expected fingerprint and responses identify
+the fingerprint actually read; the server rejects a mismatch with `STALE_CONTENT`. They do not retain
+document or placement data across that fingerprint boundary, while placement continuity remains available
+for comment-set changes inside one content epoch. Sidebar
 placement includes the Walkthrough revision only when a Walkthrough target participates. Batch sync
 advances the comments revision only when a reply was newly inserted or resolution actually changed;
 an idempotent retry reuses its post without producing revision churn. When a document placement key
@@ -2515,7 +2521,9 @@ before comment workers begin, and keep destination or unexpected internal failur
 an expected unavailable source commit discovered while resolving one comment into a destination-scoped
 failure on that comment's result. The sidebar renders that error with the affected thread, including
 only when its resolved/unresolved filter makes that thread visible, while healthy placements and
-annotations remain usable.
+annotations remain usable. Expose an affected-thread retry and, after successful refresh, invalidate only
+placement queries whose cached result contains item failures. End optimistic annotation state once the
+canonical batch settles even if its result is outdated or failed.
 
 ### Trade-offs
 

@@ -929,16 +929,20 @@ comment ID件数にUIより小さい固定上限を設けない。別PRのcommen
 同じ一requestへ含め、repository paneにはrepository-file commentだけ、`Pull Request.md` paneには
 pull-request-markdown commentだけを渡してpaneごとに最大1回とする。展開中sidebarは未解決／解決済みfilterと
 独立した全non-PR comment集合に対して最大1回とし、sidebarを閉じている間は呼ばない。sidebarのplacement identityは
-PR Markdown targetがある場合だけ`pullRequestContent` revision、Walkthrough targetがある場合だけWalkthrough revisionを
+PR Markdown targetがある場合だけtitle/bodyから導出したcontent fingerprint、Walkthrough targetがある場合だけWalkthrough revisionを
 含み、無関係なdomain更新ではbatchを再実行しない。document placementのquery identityがcomment追加／削除で変わる間は
-同じmutable-document revisionの直前placement responseだけを保持し、current commentsに存在するIDだけをjoinする。
+同じcontent fingerprintの直前placement responseだけを保持し、current commentsに存在するIDだけをjoinする。
 これにより既存annotationを再計算中も表示し、削除済みcommentは旧responseに残っていても表示しない。
-`Pull Request.md`のdocument本文とplacementは同じ`pullRequestContent` revisionをquery identityへ含め、revision変更時は
-旧本文と旧placementをplaceholderへ使わない。本文とplacementのresponse順序にかかわらず異なるrevisionを同時表示しない。
-旧`GET /api/comments/:id/placement`は互換・parity oracleとして同じresolverを使うがbrowserからは呼ばない。
+`Pull Request.md`のdocument本文、search、placementは同じcontent fingerprintをquery identityとrequestのexpected tokenへ
+含める。serverは実際に読んだtitle/bodyのfingerprintをresponseへ返し、不一致を`STALE_CONTENT`で拒否する。fingerprint変更時は
+旧本文と旧placementをplaceholderへ使わず、response順序にかかわらず異なる本文epochを同時表示しない。
+旧`GET /api/comments/:id/placement`は互換・parity oracleとしてsingle resolverを直接使い、元のerror semanticsを維持するがbrowserからは呼ばない。
 resolverはrequest内でcommit availability、source/destination pairのchanged files、PR/OID/pathのdocumentを
 Promiseごと共有し、最大4commentの固定並列度で処理する。cacheへPromiseを登録してからawaitし、同じGit処理の
 同時missを重複起動しない。
+item failureは成功cacheに含まれるため、affected threadに明示的な再試行を表示する。GitHub同期成功時もfailureを含む
+placement queryだけをinvalidateする。optimistic annotationはbatchが当該commentの成功、failure、missingを返した時点で終了し、
+outdatedまたはfailureなら仮の行表示を残さない。
 
 ### 6.5 Comment navigationとコピー
 
@@ -1369,7 +1373,8 @@ document/search、comments、Walkthrough、Structure/indexをそれぞれ独立�
 理由に全queryをinvalidateしない。PR metadata、comments、Walkthrough、Structureのmutable queryは初回domain revision
 snapshot取得後にだけenableする。stable keyのmutable queryでrevision変更を検出した場合は、data未取得の初回fetchも含めて
 対象fetchをcancelしてからinvalidateし、旧requestの成功が新revisionの再取得を消さないようにする。
-`Pull Request.md`本文、本文search、placementはcontent revisionをquery identityへ含めて新generationへ切り替える。
+heartbeatはglobal sequenceと全domain revisionを1 SQL statementでsnapshot化する。
+`Pull Request.md`本文、本文search、placementはcontent fingerprintをquery identityへ含めて新generationへ切り替える。
 stable keyを使うcomments queryは
 `comments GET → 外部write → 初回revision baseline`の順序で更新を取りこぼさない。snapshot前のwriteは初回GETへ入り、
 snapshot後のwriteは次heartbeatが検出する。repository locationはGit object availabilityを変え得るため、
@@ -1634,9 +1639,10 @@ tab row
 - 未送信comment draftはPR、pane、文書、exact source、commit範囲、表示modeごとに分離し、tab切替や
   tabの閉じ直しでは保持する。送信、明示cancel、comment targetへのnavigation、reset成功時に破棄する。
 - 明示capture button、未取り込みbanner、version selectorは存在しない。
-- refreshは取得・ref保持・cache更新を一度に行い、responseへ更新後の`changeSequence`とdomain revisionsを含める。
-  viewerは同期成功時にheartbeat cacheをこのsnapshotへ進めてからPR document/searchをinvalidateし、PR本文と
-  comment placementを同じ`pullRequestContent` revisionへ切り替える。
+- refreshは取得・ref保持・cache更新を一度に行い、Pull Request行と同じ短いDB snapshotで読んだ
+  `changeSequence`、domain revisions、content fingerprintをresponseへ含める。長いGit commit列挙中はtransactionを保持しない。
+  viewerは採用前に同じPR GETとheartbeat GETをcancelし、既に観測したsequenceより古いrefresh responseをcacheへ書かない。
+  PR metadata queryはinfinite freshとし、domain revisionと明示refreshだけで更新する。
 
 ファイル、コメント、検索、diff style、line selectionの既存UXは維持する。PR本文とWalkthroughはExplorer先頭の
 virtual rowとして表示し、Walkthrough folderを展開して選択すると説明tabを開く。本文検索はExplorer headerから

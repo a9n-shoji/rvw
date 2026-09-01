@@ -98,6 +98,90 @@ describe("RvwService commit workflow", () => {
     expect(database.getChangeSequence()).toBe(changeSequence);
   });
 
+  it("keeps a Pull Request view and its revision snapshot on the same database version", async () => {
+    const { repository, fake, database, service } = setup("rvw-view-snapshot-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const expectedSnapshot = database.getRevisionSnapshot();
+    let releaseCommits = (): void => undefined;
+    let commitsStarted = (): void => undefined;
+    const commitsStartedPromise = new Promise<void>((resolve) => {
+      commitsStarted = resolve;
+    });
+    vi.spyOn(service.git, "commits").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          commitsStarted();
+          releaseCommits = () => resolve([]);
+        }),
+    );
+
+    const pendingView = service.getPullRequestView(opened.pullRequest.id);
+    await commitsStartedPromise;
+    database.upsertPullRequest(
+      {
+        ...fake.pullRequest,
+        title: "Newer concurrent title",
+        body: "Newer concurrent body",
+        updatedAt: "2026-08-08T02:00:00.000Z",
+      },
+      {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      opened.pullRequest.latestComparisonBaseOid,
+    );
+    releaseCommits();
+
+    const view = await pendingView;
+    expect(view.pullRequest.latestTitle).toBe("Initial review");
+    expect({ changeSequence: view.changeSequence, revisions: view.revisions }).toEqual(
+      expectedSnapshot,
+    );
+    expect(database.getPullRequest(opened.pullRequest.id)?.latestTitle).toBe(
+      "Newer concurrent title",
+    );
+    expect(database.getRevisionSnapshot().changeSequence).toBeGreaterThan(view.changeSequence);
+  });
+
+  it("rejects PR Markdown work when its expected content fingerprint is stale", async () => {
+    const { repository, fake, database, service } = setup("rvw-content-fingerprint-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const initialView = await service.getPullRequestView(opened.pullRequest.id);
+    const initialDocument = await service.getDocumentWithContentFingerprint(
+      { kind: "pull-request-markdown", pullRequestId: opened.pullRequest.id },
+      initialView.pullRequestContentFingerprint,
+    );
+    expect(initialDocument.document.text).toContain("Please review.");
+
+    database.upsertPullRequest(
+      {
+        ...fake.pullRequest,
+        title: "Concurrent title",
+        body: "Concurrent body",
+        updatedAt: "2026-08-08T03:00:00.000Z",
+      },
+      {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      opened.pullRequest.latestComparisonBaseOid,
+    );
+
+    await expect(
+      service.resolveCommentPlacements(
+        opened.pullRequest.id,
+        [],
+        [
+          {
+            kind: "document",
+            ref: { kind: "pull-request-markdown", pullRequestId: opened.pullRequest.id },
+          },
+        ],
+        initialView.pullRequestContentFingerprint,
+      ),
+    ).rejects.toMatchObject({ code: "STALE_CONTENT", status: 409 });
+  });
+
   it("refreshes the Open status working set and preserves content on partial failure", async () => {
     const { repository, base, firstHead, fake, database, service } = setup();
     const opened = await service.openPullRequest(undefined, repository);

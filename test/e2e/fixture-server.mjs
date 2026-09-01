@@ -878,18 +878,46 @@ function currentPullRequest() {
   };
 }
 
+function pullRequestContentFingerprint(pullRequest = currentPullRequest()) {
+  return createHash("sha256")
+    .update(`# ${pullRequest.latestTitle}\n\n${pullRequest.latestBody}`, "utf8")
+    .digest("hex");
+}
+
+function rejectStaleContent(context, actualFingerprint) {
+  const expectedFingerprint = context.req.query("expectedPullRequestContentFingerprint");
+  if (!expectedFingerprint || expectedFingerprint === actualFingerprint) return null;
+  return context.json(
+    {
+      ok: false,
+      error: {
+        code: "STALE_CONTENT",
+        message: "Pull Request本文が更新されています。",
+        suggestions: ["最新のPull Request本文を再取得してください。"],
+        details: { expectedFingerprint, actualFingerprint },
+      },
+    },
+    409,
+  );
+}
+
 function currentView() {
   if (repositoryDemo) {
+    const pullRequest = repositoryDemo.pullRequest;
     return {
-      pullRequest: repositoryDemo.pullRequest,
+      pullRequest,
+      pullRequestContentFingerprint: pullRequestContentFingerprint(pullRequest),
       comparisonBaseOid: repositoryDemo.baseOid,
       headOid: repositoryDemo.headOid,
       commits: repositoryDemo.commits,
+      changeSequence,
+      revisions,
     };
   }
   const pullRequest = currentPullRequest();
   return {
     pullRequest,
+    pullRequestContentFingerprint: pullRequestContentFingerprint(pullRequest),
     comparisonBaseOid: baseOid,
     headOid: pullRequest.latestHeadOid,
     commits:
@@ -899,6 +927,8 @@ function currentView() {
             commit(secondHead, firstHead, "Trim fixture input", 2),
           ]
         : [commit(firstHead, baseOid, "Add fixture function", 1)],
+    changeSequence,
+    revisions,
   };
 }
 
@@ -1715,10 +1745,14 @@ app.get("/api/pull-requests/:id/changed-files", (context) => {
 app.get("/api/pull-requests/:id/document", (context) => {
   if (context.req.query("kind") === "pull-request-markdown") {
     const pullRequest = currentPullRequest();
+    const contentFingerprint = pullRequestContentFingerprint(pullRequest);
+    const stale = rejectStaleContent(context, contentFingerprint);
+    if (stale) return stale;
     const ref = { kind: "pull-request-markdown", pullRequestId };
     return context.json({
       ok: true,
       document: document(ref, `# ${pullRequest.latestTitle}\n\n${pullRequest.latestBody}`, true),
+      pullRequestContentFingerprint: contentFingerprint,
     });
   }
   const sourceOid = context.req.query("sourceOid");
@@ -1733,7 +1767,11 @@ app.get("/api/pull-requests/:id/document", (context) => {
       document: missingRepositoryDocument(ref),
     });
   }
-  return context.json({ ok: true, document: repositoryDocument(ref) });
+  return context.json({
+    ok: true,
+    document: repositoryDocument(ref),
+    pullRequestContentFingerprint: null,
+  });
 });
 
 app.on(["GET", "HEAD"], "/api/pull-requests/:id/markdown-asset", (context) => {
@@ -1831,6 +1869,9 @@ app.get("/api/pull-requests/:id/search", (context) => {
   const matchCase = context.req.query("matchCase") === "true";
   const wholeWord = context.req.query("wholeWord") === "true";
   const pullRequest = currentPullRequest();
+  const contentFingerprint = pullRequestContentFingerprint(pullRequest);
+  const stale = rejectStaleContent(context, contentFingerprint);
+  if (stale) return stale;
   const documents = [
     {
       document: { kind: "pull-request-markdown", pullRequestId },
@@ -1866,6 +1907,7 @@ app.get("/api/pull-requests/:id/search", (context) => {
   );
   return context.json({
     ok: true,
+    pullRequestContentFingerprint: contentFingerprint,
     results,
     matchCount: results.reduce((count, result) => count + result.matches.length, 0),
     truncated: false,
@@ -2444,10 +2486,28 @@ function fixtureCommentPlacement(comment, destination) {
 
 app.post("/api/pull-requests/:id/comment-placements/resolve", async (context) => {
   const input = await context.req.json();
+  const contentFingerprint = pullRequestContentFingerprint();
+  if (
+    input.expectedPullRequestContentFingerprint &&
+    input.expectedPullRequestContentFingerprint !== contentFingerprint
+  ) {
+    return context.json(
+      {
+        ok: false,
+        error: {
+          code: "STALE_CONTENT",
+          message: "Pull Request本文が更新されています。",
+          suggestions: ["最新のPull Request本文を再取得してください。"],
+        },
+      },
+      409,
+    );
+  }
   const uniqueIds = [...new Set(input.commentIds)];
   const found = new Map(comments.map((comment) => [comment.id, comment]));
   return context.json({
     ok: true,
+    pullRequestContentFingerprint: contentFingerprint,
     comments: uniqueIds.flatMap((commentId) => {
       const comment = found.get(commentId);
       return comment

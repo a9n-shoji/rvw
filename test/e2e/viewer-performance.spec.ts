@@ -333,6 +333,249 @@ test("restores existing comments after a mutation cancels the initial comments G
   }
 });
 
+test("does not refetch the stable Pull Request view on window focus", async ({ page }) => {
+  let pullRequestGets = 0;
+  page.on("request", (browserRequest) => {
+    const url = new URL(browserRequest.url());
+    if (
+      browserRequest.method() === "GET" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}`
+    ) {
+      pullRequestGets += 1;
+    }
+  });
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  await expect(page.getByText(/Fixture review/u).first()).toBeVisible();
+  const initialGets = pullRequestGets;
+
+  for (let index = 0; index < 3; index += 1) {
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await page.waitForTimeout(250);
+  }
+
+  expect(pullRequestGets).toBe(initialGets);
+});
+
+test("does not let an older Pull Request GET overwrite a completed refresh", async ({
+  page,
+  request,
+}) => {
+  const resetSync = await request.post("/api/test/reset-sync-stage", { data: {} });
+  expect(resetSync.ok()).toBe(true);
+  let holdNextPullRequestGet = false;
+  let releaseGet = (): void => undefined;
+  const getGate = new Promise<void>((resolve) => {
+    releaseGet = resolve;
+  });
+  let capturedGet = (): void => undefined;
+  const capturedGetPromise = new Promise<void>((resolve) => {
+    capturedGet = resolve;
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
+    if (!holdNextPullRequestGet || route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    holdNextPullRequestGet = false;
+    const response = await route.fetch();
+    capturedGet();
+    await getGate;
+    try {
+      await route.fulfill({ response });
+    } catch {
+      // Refresh adoption cancels the obsolete GET generation.
+    }
+  });
+
+  try {
+    const initialRefresh = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "POST" &&
+        url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+      );
+    });
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await initialRefresh;
+    await expect(
+      page.getByText("This is always the latest PR body.", { exact: true }),
+    ).toBeVisible();
+
+    holdNextPullRequestGet = true;
+    const revisionResponse = await request.post("/api/test/bump-revision", {
+      data: { domains: ["pullRequests"] },
+    });
+    expect(revisionResponse.ok()).toBe(true);
+    await capturedGetPromise;
+
+    const completedRefresh = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "POST" &&
+        url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+      );
+    });
+    await page.getByRole("button", { name: "その他の操作", exact: true }).click();
+    await page.getByRole("menuitem", { name: "GitHubと同期" }).click();
+    await completedRefresh;
+    await expect(page.getByText("The PR body was rewritten.", { exact: true })).toBeVisible();
+
+    releaseGet();
+    await page.waitForTimeout(300);
+    await expect(page.getByText("The PR body was rewritten.", { exact: true })).toBeVisible();
+    await expect(page.getByText("This is always the latest PR body.", { exact: true })).toHaveCount(
+      0,
+    );
+  } finally {
+    releaseGet();
+  }
+});
+
+test("rejects placement read after PR Markdown changes while an older document response is pending", async ({
+  page,
+  request,
+}) => {
+  const resetSync = await request.post("/api/test/reset-sync-stage", { data: {} });
+  expect(resetSync.ok()).toBe(true);
+  const commentResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "document",
+        documentKind: "pull-request-markdown",
+        sourceDocumentHash: "stale-after-external-refresh",
+        quotedText: "Review the fixture application.",
+        startLine: 3,
+        endLine: 3,
+      },
+      body: "Content fingerprint epoch fixture",
+      authorLabel: "Performance fixture",
+    },
+  });
+  expect(commentResponse.ok()).toBe(true);
+  const commentId = ((await commentResponse.json()) as { comment: { id: string } }).comment.id;
+  let releaseAutomaticRefresh = (): void => undefined;
+  const automaticRefreshGate = new Promise<void>((resolve) => {
+    releaseAutomaticRefresh = resolve;
+  });
+  let automaticRefreshStarted = (): void => undefined;
+  const automaticRefreshStartedPromise = new Promise<void>((resolve) => {
+    automaticRefreshStarted = resolve;
+  });
+  let releaseDocument = (): void => undefined;
+  const documentGate = new Promise<void>((resolve) => {
+    releaseDocument = resolve;
+  });
+  let documentRead = (): void => undefined;
+  const documentReadPromise = new Promise<void>((resolve) => {
+    documentRead = resolve;
+  });
+  let releasePlacement = (): void => undefined;
+  const placementGate = new Promise<void>((resolve) => {
+    releasePlacement = resolve;
+  });
+  let placementStarted = (): void => undefined;
+  const placementStartedPromise = new Promise<void>((resolve) => {
+    placementStarted = resolve;
+  });
+  let placementStatus: number | null = null;
+  let capturePlacement = true;
+  let placementFinished = (): void => undefined;
+  const placementFinishedPromise = new Promise<void>((resolve) => {
+    placementFinished = resolve;
+  });
+
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    automaticRefreshStarted();
+    await automaticRefreshGate;
+    await route.abort("aborted");
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/document?*`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("kind") !== "pull-request-markdown") {
+      await route.fallback();
+      return;
+    }
+    const response = await route.fetch();
+    documentRead();
+    await documentGate;
+    try {
+      await route.fulfill({ response });
+    } catch {
+      // A later content fingerprint may cancel this old document generation.
+    }
+  });
+  await page.route(
+    `**/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
+    async (route) => {
+      const input = route.request().postDataJSON() as {
+        commentIds?: string[];
+        destinations?: Array<{ kind?: string; ref?: { kind?: string } }>;
+      };
+      if (
+        !capturePlacement ||
+        !input.commentIds?.includes(commentId) ||
+        !input.destinations?.some(
+          (destination) =>
+            destination.kind === "document" && destination.ref?.kind === "pull-request-markdown",
+        )
+      ) {
+        await route.fallback();
+        return;
+      }
+      capturePlacement = false;
+      placementStarted();
+      await placementGate;
+      const response = await route.fetch();
+      placementStatus = response.status();
+      try {
+        await route.fulfill({ response });
+      } finally {
+        placementFinished();
+      }
+    },
+  );
+
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await Promise.all([
+      automaticRefreshStartedPromise,
+      documentReadPromise,
+      placementStartedPromise,
+    ]);
+
+    const externalRefresh = await request.post(`/api/pull-requests/${pullRequestId}/refresh`, {
+      data: {},
+    });
+    expect(externalRefresh.ok()).toBe(true);
+    releasePlacement();
+    await placementFinishedPromise;
+    expect(placementStatus).toBe(409);
+    releaseDocument();
+    releaseAutomaticRefresh();
+
+    await expect(page.getByText("This is always the latest PR body.", { exact: true })).toBeVisible(
+      { timeout: 10_000 },
+    );
+    await expect(
+      page.locator(`.comment-thread--inline[data-comment-id="${commentId}"]`),
+    ).toHaveCount(0);
+  } finally {
+    releasePlacement();
+    releaseDocument();
+    releaseAutomaticRefresh();
+    await deleteComments(request, [commentId]);
+  }
+});
+
 test("loads an external comment written before the initial revision snapshot", async ({
   page,
   request,
@@ -501,6 +744,7 @@ test("keeps healthy sidebar placements when one hidden comment cannot be resolve
   const brokenId = await createRepositoryComment(request, brokenBody);
   const resolved = await request.post(`/api/comments/${brokenId}/resolve`, { data: {} });
   expect(resolved.ok()).toBe(true);
+  let failBrokenPlacement = true;
 
   await page.route(
     `**/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
@@ -509,10 +753,15 @@ test("keeps healthy sidebar placements when one hidden comment cannot be resolve
         commentIds?: string[];
         destinations?: Array<{ kind: string }>;
       };
-      if (input.destinations?.[0]?.kind !== "commit" || !input.commentIds?.includes(brokenId)) {
+      if (
+        !failBrokenPlacement ||
+        input.destinations?.[0]?.kind !== "commit" ||
+        !input.commentIds?.includes(brokenId)
+      ) {
         await route.fallback();
         return;
       }
+      failBrokenPlacement = false;
       const response = await route.fetch();
       const payload = (await response.json()) as {
         comments: Array<{
@@ -576,6 +825,9 @@ test("keeps healthy sidebar placements when one hidden comment cannot be resolve
       "コメント作成時のcommitを取得できません。",
     );
     await expect(brokenCard.getByRole("alert")).toContainText("COMMIT_NOT_FOUND");
+    await brokenCard.getByRole("button", { name: "配置を再試行" }).click();
+    await expect(brokenCard.getByRole("alert")).toHaveCount(0);
+    await expect(brokenCard.getByRole("button", { name: "配置を再試行" })).toHaveCount(0);
   } finally {
     await deleteComments(request, [validId, brokenId]);
   }

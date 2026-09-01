@@ -417,6 +417,7 @@ export interface CommentPlacementResolution {
 }
 
 export interface CommentPlacementBatchResult {
+  pullRequestContentFingerprint: string;
   comments: CommentPlacementResolution[];
   missingCommentIds: string[];
 }

@@ -448,6 +448,11 @@ export interface DomainRevisions {
   structures: number;
 }
 
+export interface RevisionSnapshot {
+  changeSequence: number;
+  revisions: DomainRevisions;
+}
+
 type DomainRevision = keyof DomainRevisions;
 
 const domainRevisionMetaKeys: Record<DomainRevision, string> = {
@@ -650,18 +655,63 @@ export class RvwDatabase {
     return Number(stringValue(row, "value"));
   }
 
+  getRevisionSnapshot(): RevisionSnapshot {
+    const rows = this.database
+      .prepare(
+        `SELECT key, value
+         FROM app_meta
+         WHERE key IN (
+           'change_sequence',
+           'revision_pull_requests',
+           'revision_pull_request_content',
+           'revision_comments',
+           'revision_walkthroughs',
+           'revision_structures'
+         )`,
+      )
+      .all() as DbRow[];
+    const values = new Map(rows.map((row) => [stringValue(row, "key"), stringValue(row, "value")]));
+    const value = (key: string): number => {
+      const raw = values.get(key);
+      if (raw === undefined) throw new RvwError("DATABASE_ERROR", `revisionがありません: ${key}`);
+      return Number(raw);
+    };
+    return {
+      changeSequence: value("change_sequence"),
+      revisions: {
+        pullRequests: value(domainRevisionMetaKeys.pullRequests),
+        pullRequestContent: value(domainRevisionMetaKeys.pullRequestContent),
+        comments: value(domainRevisionMetaKeys.comments),
+        walkthroughs: value(domainRevisionMetaKeys.walkthroughs),
+        structures: value(domainRevisionMetaKeys.structures),
+      },
+    };
+  }
+
   getDomainRevisions(): DomainRevisions {
-    const revisions = {} as DomainRevisions;
-    for (const [domain, key] of Object.entries(domainRevisionMetaKeys) as [
-      DomainRevision,
-      string,
-    ][]) {
-      const row = this.database.prepare("SELECT value FROM app_meta WHERE key = ?").get(key) as
-        DbRow | undefined;
-      if (!row) throw new RvwError("DATABASE_ERROR", `domain revisionがありません: ${domain}`);
-      revisions[domain] = Number(stringValue(row, "value"));
+    return this.getRevisionSnapshot().revisions;
+  }
+
+  getPullRequestRevisionSnapshot(id: string): {
+    pullRequest: PullRequest | null;
+    revisionSnapshot: RevisionSnapshot;
+  } {
+    this.database.exec("BEGIN");
+    try {
+      const result = {
+        pullRequest: this.getPullRequest(id),
+        revisionSnapshot: this.getRevisionSnapshot(),
+      };
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        this.database.exec("ROLLBACK");
+      } catch {
+        // Preserve the read error.
+      }
+      throw error;
     }
-    return revisions;
   }
 
   getCommentWatchDatabaseId(): string {

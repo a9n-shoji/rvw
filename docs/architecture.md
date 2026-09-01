@@ -82,7 +82,8 @@ PR-relevant behavior and factual code entrypoint as stable-ID nodes and edges fi
 current graph JSON value per stable Structure ID; publication and whole-value replacement validate all
 paths, ranges, endpoints, focus, identities, and Pull Request ownership before retaining the commit.
 The graph is a set of producer claims, not a semantic code index. It has no revision history, comments,
-groups, reverse lookup, inferred edges, or persisted coordinates. HTTP lists and reads current values;
+groups, persisted semantic reverse index, inferred edges, or persisted coordinates. The viewer may
+derive an ephemeral backlink index from explicit Node anchors in the current values. HTTP lists and reads current values;
 human-confirmed delete is the only write exposed to the browser.
 
 The Structure viewer uses topology, factual direction reachable from the entrypoint, and stable IDs—not

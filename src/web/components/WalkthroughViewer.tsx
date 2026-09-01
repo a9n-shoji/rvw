@@ -323,6 +323,7 @@ interface MermaidMarkdownRenderContext {
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
   onResolveReferenceForPeek: (
     reference: WalkthroughReference,
+    signal?: AbortSignal,
   ) => Promise<MermaidReferencePeekResolution>;
   onOpenCommentCodeReference: (
     sourceOid: string,
@@ -513,6 +514,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
   onResolveReferenceForPeek: (
     reference: WalkthroughReference,
+    signal?: AbortSignal,
   ) => Promise<MermaidReferencePeekResolution>;
   onOpenCommentCodeReference: (
     sourceOid: string,
@@ -712,6 +714,7 @@ export function WalkthroughViewer({
   onResolveReferenceForPeek: (
     walkthrough: Walkthrough,
     reference: WalkthroughReference,
+    signal?: AbortSignal,
   ) => Promise<MermaidReferencePeekResolution>;
   onOpenCommentCodeReference: (
     sourceOid: string,
@@ -821,8 +824,12 @@ export function WalkthroughViewer({
     [],
   );
   const resolveReferenceForPeek = useCallback(
-    (reference: WalkthroughReference) =>
-      viewerCallbacksRef.current.onResolveReferenceForPeek(walkthroughRef.current, reference),
+    (reference: WalkthroughReference, signal?: AbortSignal) =>
+      viewerCallbacksRef.current.onResolveReferenceForPeek(
+        walkthroughRef.current,
+        reference,
+        signal,
+      ),
     [],
   );
   const openCommentCodeReference = useCallback(

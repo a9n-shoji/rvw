@@ -5,6 +5,7 @@ export const VIEWER_OPEN_LEASE_HEADER = "x-rvw-viewer-open-lease";
 export const VIEWER_OPEN_LEASE_QUERY = "viewerLease";
 
 export const GIT_OBJECT_ID_PATTERN = /^[0-9a-f]{40,64}$/i;
+export const CONTENT_FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
 
 export const MAX_TEXT_DOCUMENT_BYTES = 1024 * 1024;
 export const MAX_MARKDOWN_ASSET_BYTES = 5 * 1024 * 1024;

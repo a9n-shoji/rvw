@@ -42,12 +42,13 @@ export function FileStructureReferencesButton({
       fileRef?.sourceOid,
       structureFingerprint,
     ],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const search = new URLSearchParams({
         sourceOid: fileRef!.sourceOid,
       });
       return await api<FileStructureReferenceIndexResponse>(
         `/api/pull-requests/${pullRequestId}/structure-reference-index?${search.toString()}`,
+        { signal },
       );
     },
     enabled: fileRef !== null && structuresLoaded,
