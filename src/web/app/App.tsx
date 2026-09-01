@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api.js";
-import { hasPendingCommentDrafts } from "../comment-draft-store.js";
 import type { ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { PullRequestListScreen } from "./PullRequestListScreen.js";
@@ -61,16 +60,6 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
-
-  useEffect(() => {
-    const warnBeforeBrowserClose = (event: BeforeUnloadEvent): void => {
-      if (route.kind !== "review" && !hasPendingCommentDrafts()) return;
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", warnBeforeBrowserClose);
-    return () => window.removeEventListener("beforeunload", warnBeforeBrowserClose);
-  }, [route.kind]);
 
   const navigateToList = useCallback((): void => {
     const nextRoute = {

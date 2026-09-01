@@ -48,7 +48,7 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
     const dispatchAllowed = window.dispatchEvent(event);
     return { dispatchAllowed, defaultPrevented: event.defaultPrevented };
   });
-  expect(browserCloseGuard).toEqual({ dispatchAllowed: false, defaultPrevented: true });
+  expect(browserCloseGuard).toEqual({ dispatchAllowed: true, defaultPrevented: false });
   await expect(page.getByText("Pull Request.md", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "Source", exact: true }).click();
   const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
