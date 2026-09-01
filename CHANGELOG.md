@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-02
+
+### Changed
+
+- comment placementをpane／sidebar単位のbatchへ集約し、100 commentsでもrequest数とGit subprocess数を
+  destination数に応じた一定量へ削減
+- Pull Request本文、comment、Walkthrough、Structureのcache更新をdomainごとに分離し、無関係な更新や
+  window focusでdocument、search、placement、Git commit列挙を再実行しないよう改善
+- Structureのfile逆引きをrequestごとのindexへ集約し、同じsource／targetのGit処理を共有
+
+### Fixed
+
+- Pull Request本文更新、comment mutation、poll、repository location変更が競合した場合に、古い本文、
+  comment、annotation、Git object availabilityがcacheへ残る問題
+- Comments欄を閉じた際のPR全体comment draft消失、mutation直後の並び順の乱れ、500 comments超の
+  placement失敗、部分的なplacement失敗から再試行できない問題
+
 ## [0.4.1] - 2026-09-01
 
 ### Added
