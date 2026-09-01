@@ -1764,7 +1764,7 @@ export class RvwDatabase {
           FROM comments c
           JOIN comment_targets t ON t.comment_id = c.id
           LEFT JOIN walkthroughs w ON w.id = t.walkthrough_id
-          WHERE c.pull_request_id = ?${where} ORDER BY c.updated_at DESC`,
+          WHERE c.pull_request_id = ?${where} ORDER BY c.updated_at DESC, c.id DESC`,
         )
         .all(pullRequestId) as DbRow[]
     ).map((row) => this.mapComment(row));

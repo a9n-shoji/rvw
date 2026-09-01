@@ -139,7 +139,10 @@ export function CommentSidebar({
   );
   const selectedComments = visible.filter((comment) => selected.has(comment.id));
   const placementComments = useMemo(
-    () => visible.filter((comment) => comment.target.kind !== "pull-request"),
+    () =>
+      visible
+        .filter((comment) => comment.target.kind !== "pull-request")
+        .sort((left, right) => left.id.localeCompare(right.id)),
     [visible],
   );
   const visibleTargetFingerprint = useMemo(

@@ -2453,10 +2453,12 @@ availability, changed-file pairs, and documents. Document panes send new and old
 together, an expanded sidebar sends only its visible nontrivial targets, and the browser no longer
 uses the compatible single-comment endpoint. Placement query identity contains comment ID plus target,
 destination identity, and the relevant mutable-document revision; post timestamps are deliberately
-excluded, and current comment content is joined after placement lookup.
+excluded. Batch input is sorted by stable comment ID so `updatedAt` display reordering does not change
+placement identity, and current comment content is joined after placement lookup.
 
 Keep the Comments shell mounted while collapsed so PR-level composer text, filter, and selection
 state survive a temporary collapse. Gate the expensive thread list and placement query on expansion.
+PR-wide comments are excluded from both placement batches because they have no document annotation.
 
 Compute Structure backlinks as one source-OID reverse index keyed by the current Structure
 ID/`updatedAt` fingerprint. The index returns before Git work when there are no Structures, reads the

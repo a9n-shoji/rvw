@@ -34,8 +34,8 @@ work on expansion.
 
 | Scenario                              |                                                                               Budget |              Observed locally |
 | ------------------------------------- | -----------------------------------------------------------------------------------: | ----------------------------: |
-| 100 comments, one document pane       |                                                            1 batch placement request |    1 request, 152 ms to ready |
-| 100 visible sidebar comments          |                                                            1 batch placement request |    1 request, 137 ms to ready |
+| 100 comments, one document pane       |                                                            1 batch placement request |    1 request, 141 ms to ready |
+| 100 visible sidebar comments          |                                                            1 batch placement request |    1 request, 135 ms to ready |
 | Collapsed sidebar                     |                                                          0 commit placement requests |                             0 |
 | Browser old single-placement endpoint |                                                                                    0 |                             0 |
 | 100 comments, new + old batch         |                                    `hasObject` 2, `changedFiles` 1, `readDocument` 2 |                     2 / 1 / 2 |
@@ -51,7 +51,8 @@ remaining inside the same request-count budgets.
 ## Query and mutation boundary
 
 - Placement cache identity is comment ID + immutable target + destination, plus PR or Walkthrough
-  revision when mutable content participates. Post `updatedAt` is excluded.
+  revision when mutable content participates. Post `updatedAt` and display ordering are excluded; each
+  batch uses stable comment-ID order so a thread moving to the front does not invalidate placement.
 - Repository document, diff, tree, changed-file, search, placement, and Structure-index queries use
   infinite freshness only when the key contains their complete immutable or revision-qualified
   identity.
@@ -59,8 +60,8 @@ remaining inside the same request-count budgets.
   They cancel the exact query before the write and again before the canonical update, propagate the
   query `AbortSignal` through `fetch`, seed an initially missing cache, and preserve server
   `updatedAt DESC` ordering without replacing unrelated thread objects.
-  The performance E2E permits at most one related document placement and one related sidebar
-  placement after a create, with no immediate comments-list refetch.
+  A PR-wide comment has no document placement identity, so its creation triggers no document or
+  sidebar placement request and no immediate comments-list refetch.
 - The one-second poll remains the external synchronization mechanism. Domain revisions prevent a
   comment-only external update from refetching PR documents, Walkthroughs, Structures, or Structure
   backlinks.

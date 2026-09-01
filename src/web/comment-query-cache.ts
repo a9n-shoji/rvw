@@ -12,7 +12,7 @@ export async function cancelCommentQuery(
 }
 
 function byMostRecentlyUpdated(left: ReviewComment, right: ReviewComment): number {
-  return right.updatedAt.localeCompare(left.updatedAt);
+  return right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id);
 }
 
 export async function putCommentInCache(

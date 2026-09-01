@@ -1341,9 +1341,16 @@ export function DocumentViewer({
       ),
     [renderedRefs],
   );
-  const commentTargetFingerprint = useMemo(
-    () => comments.map((comment) => [comment.id, comment.target]),
+  const placementComments = useMemo(
+    () =>
+      comments
+        .filter((comment) => comment.target.kind !== "pull-request")
+        .sort((left, right) => left.id.localeCompare(right.id)),
     [comments],
+  );
+  const commentTargetFingerprint = useMemo(
+    () => placementComments.map((comment) => [comment.id, comment.target]),
+    [placementComments],
   );
   const annotationQuery = useQuery({
     queryKey: [
@@ -1360,10 +1367,10 @@ export function DocumentViewer({
     queryFn: async () =>
       await resolveCommentPlacements(
         pullRequestId,
-        comments.map(({ id }) => id),
+        placementComments.map(({ id }) => id),
         placementDestinations,
       ),
-    enabled: comments.length > 0 && placementDestinations.length > 0,
+    enabled: placementComments.length > 0 && placementDestinations.length > 0,
     staleTime: Number.POSITIVE_INFINITY,
   });
   const annotationData = useMemo(() => {

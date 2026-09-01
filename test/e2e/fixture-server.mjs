@@ -1837,7 +1837,15 @@ app.get("/api/pull-requests/:id/search", (context) => {
   });
 });
 
-app.get("/api/pull-requests/:id/comments", (context) => context.json({ ok: true, comments }));
+app.get("/api/pull-requests/:id/comments", (context) =>
+  context.json({
+    ok: true,
+    comments: [...comments].sort(
+      (left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id),
+    ),
+  }),
+);
 
 app.get("/api/pull-requests/:id/walkthroughs", (context) =>
   context.json({

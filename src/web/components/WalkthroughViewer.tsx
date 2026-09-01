@@ -861,20 +861,24 @@ export function WalkthroughViewer({
     (count, comment) => count + comment.posts.length,
     0,
   );
+  const placementComments = useMemo(
+    () => [...walkthroughComments].sort((left, right) => left.id.localeCompare(right.id)),
+    [walkthroughComments],
+  );
   const placementQuery = useQuery({
     queryKey: [
       "walkthrough-comment-placements",
       walkthrough.id,
       walkthrough.body,
-      walkthroughComments.map((comment) => [comment.id, comment.target]),
+      placementComments.map((comment) => [comment.id, comment.target]),
     ],
     queryFn: async () =>
       await resolveCommentPlacements(
         walkthrough.pullRequestId,
-        walkthroughComments.map(({ id }) => id),
+        placementComments.map(({ id }) => id),
         [{ kind: "walkthrough", walkthroughId: walkthrough.id }],
       ),
-    enabled: walkthroughComments.length > 0,
+    enabled: placementComments.length > 0,
     staleTime: Number.POSITIVE_INFINITY,
   });
   const placedComments = useMemo(() => {
