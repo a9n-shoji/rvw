@@ -668,13 +668,18 @@ popoverは通常のmenu keyboard操作、outside pointer、Escapeとtriggerへ�
 change sequenceやtab復帰だけでは再取得しない。cached resultのbackground refresh中もpopoverとkeyboard focusを
 維持し、結果消滅により自動で閉じる場合はmenu内のfocusをtriggerへ戻す。
 
-`GET /api/pull-requests/:id/structure-references?sourceOid=<oid>&path=<path>`は一つのeffective fileをbulkに解決し、
-`{ ok: true, references: FileStructureReference[] }`を返す。current StructureのNode anchorだけを対象とし、Edge
+`GET /api/pull-requests/:id/structure-reference-index?sourceOid=<oid>`はtarget commit上の全effective fileを
+一度に解決し、`{ ok: true, index: { sourceOid, entries: Array<{ path, references }> } }`を返す。viewerは
+`pullRequestId + sourceOid + Structure ID/updatedAt fingerprint`をquery identityとし、file pathをidentityへ
+含めず、左右paneと同じOID上のfile間で一つのindexを共有する。Structureが0件ならcommit存在確認、tree、diffを
+実行せず空indexを返す。旧
+`GET /api/pull-requests/:id/structure-references?sourceOid=<oid>&path=<path>`は互換用に残し、同じindex resolverから
+指定pathだけを抽出する。current StructureのNode anchorだけを対象とし、Edge
 anchor、label／description内のpathらしい文字列、heuristic relationは含めない。Node anchorの
 `structure.sourceOid + anchor.path`からtarget commitへ、同じpathが存在すればそれを優先し、消えた場合だけ
 既存のcopy-aware Git比較でrename／copy successorが一意な時に追従する。caseは保持し、候補が複数、target fileが
 missing、line rangeだけがstaleの各場合は、それぞれ推測しない、matchしない、file-level matchを維持する。
-永続reverse indexは持たない。一requestではtarget commitのtreeを一度だけ取得してpath存在確認を本文読込なしで
+永続reverse indexは持たない。一index requestではtarget commitのtreeを一度だけ取得してpath存在確認を本文読込なしで
 行い、copy-aware Git比較も`structure.sourceOid + targetSourceOid`のcommit pairごとに一度だけ実行して
 `oldPath -> unique successor` indexを共有する。Node数に比例して同じ`--find-copies-harder`を起動しない。
 
@@ -898,6 +903,21 @@ unresolved/resolved状態を変えない。
 誤投稿を取り消すため、reply postは個別に物理削除できる。root postの削除はcomment targetと
 `rvw://comment/<uuid>`のanchorを含むthread全体の削除として扱い、返信があれば同じtransactionで
 すべて削除する。確認画面は返信も削除されることを明示する。編集・削除はchange sequenceを更新する。
+
+viewerのcomment create/reply/edit/delete/resolve/reopenは、HTTP成功responseにcanonicalなcurrent commentを
+含める。clientはstableな`["comments", pullRequestId]` cacheへfunctional updaterで対象threadだけを置換・追加・
+削除し、無関係なthread objectのidentityを維持する。mutation完了はこのresponseとlocal cache反映までであり、
+change sequenceの手動invalidateや別endpointのrefetchを待たない。pollは外部CLI更新を取り込むため継続する。
+
+viewerのplacementは
+`POST /api/pull-requests/:pullRequestId/comment-placements/resolve`へcomment ID列と最大4件のdestination
+（document、commit、Walkthrough）を渡して一括解決する。comment IDはfirst-seen順に重複排除し、responseも同順、
+missing IDは`missingCommentIds`へ明示する。別PRのcommentは混在させない。document viewerはnew/oldを同じ一requestへ
+含めてpaneごとに最大1回、展開中sidebarは表示集合に対して最大1回とし、sidebarを閉じている間は呼ばない。
+旧`GET /api/comments/:id/placement`は互換・parity oracleとして同じresolverを使うがbrowserからは呼ばない。
+resolverはrequest内でcommit availability、source/destination pairのchanged files、PR/OID/pathのdocumentを
+Promiseごと共有し、最大4commentの固定並列度で処理する。cacheへPromiseを登録してからawaitし、同じGit処理の
+同時missを重複起動しない。
 
 ### 6.5 Comment navigationとコピー
 
@@ -1308,7 +1328,15 @@ CREATE TABLE app_meta (
   value TEXT NOT NULL
 );
 
--- change_sequence、global theme_preference、comment_watch_database_idを保持する。
+-- change_sequence、revision_pull_requests、revision_comments、revision_walkthroughs、
+-- revision_structures、global theme_preference、comment_watch_database_idを保持する。
+
+`GET /api/meta/change-sequence`はglobal `changeSequence`を互換用に維持し、加えて
+`revisions: { pullRequests, comments, walkthroughs, structures }`を返す。migration時は四つのrevisionを既存の
+global sequenceから初期化し、旧DBの初回pollを安全側に倒す。各logical write transactionはglobalを一度、実際に
+変更したdomainだけを一度進める。Walkthrough削除で紐づくcommentが存在する場合とresetだけが複数domainを進める。
+viewerはdomain revisionを比較し、PR metadata/virtual document/search、comments、Walkthrough、Structure/indexを
+それぞれ独立にinvalidateする。global sequence変化だけを理由に全queryをinvalidateしない。
 
 CREATE TABLE pull_requests (
   id TEXT PRIMARY KEY,
@@ -1455,6 +1483,7 @@ version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元�
 主なHTTP API:
 
 ```text
+GET  /api/meta/change-sequence
 GET  /api/pull-requests?offset=<offset>&limit=<limit>&hideClosedOrMerged=<bool>
 POST /api/pull-requests/refresh-statuses
 GET  /api/pull-requests/:id
@@ -1476,9 +1505,12 @@ GET /api/pull-requests/:id/walkthroughs/:walkthroughId/references/:referenceId/r
 DELETE /api/pull-requests/:id/walkthroughs/:walkthroughId
 GET /api/pull-requests/:id/structures
 GET /api/pull-requests/:id/structures/:structureId
+GET /api/pull-requests/:id/structure-reference-index?sourceOid=...
+GET /api/pull-requests/:id/structure-references?sourceOid=...&path=... # compatibility
 DELETE /api/pull-requests/:id/structures/:structureId
 
 GET  /api/pull-requests/:id/comments
+POST /api/pull-requests/:id/comment-placements/resolve
 POST /api/comments
 POST /api/comments/:id/posts
 PATCH /api/comments/:id/posts/:postId
@@ -1486,7 +1518,7 @@ DELETE /api/comments/:id/posts/:postId
 POST /api/comments/:id/resolve
 POST /api/comments/:id/reopen
 DELETE /api/comments/:id
-GET  /api/comments/:id/placement?...
+GET  /api/comments/:id/placement?... # compatibility
 ```
 
 HTTP/CLIは同じapplication serviceを使用し、transportへbusiness logicを書かない。

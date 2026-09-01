@@ -779,6 +779,11 @@ const activeStructures = repositoryDemo
 const activeViewers = new Set();
 const releasedViewers = new Set();
 let changeSequence = 0;
+const revisions = { pullRequests: 0, comments: 0, walkthroughs: 0, structures: 0 };
+function bump(...domains) {
+  changeSequence += 1;
+  for (const domain of new Set(domains)) revisions[domain] += 1;
+}
 let syncStage = 0;
 let themePreference = "system";
 let blockedImageRequestCount = 0;
@@ -1194,7 +1199,7 @@ app.get("/api/meta/change-sequence", (context) => {
   }
   activeViewers.add(viewerId);
   releasedViewers.delete(viewerId);
-  return context.json({ ok: true, changeSequence });
+  return context.json({ ok: true, changeSequence, revisions });
 });
 
 app.post("/api/meta/viewers/release", async (context) => {
@@ -1278,6 +1283,12 @@ app.get("/api/test/pull-request-status-refresh-count", (context) =>
 app.post("/api/test/reset-sync-stage", (context) => {
   syncStage = 0;
   return context.json({ ok: true });
+});
+
+app.post("/api/test/bump-revision", async (context) => {
+  const { domains } = await context.req.json();
+  bump(...domains);
+  return context.json({ ok: true, changeSequence, revisions });
 });
 
 app.get("/api/pull-requests", (context) => {
@@ -1428,7 +1439,7 @@ app.get("/api/pull-requests/:id", (context) => context.json({ ok: true, ...curre
 app.post("/api/pull-requests/refresh-statuses", async (context) => {
   await new Promise((resolve) => setTimeout(resolve, 100));
   pullRequestStatusRefreshCount += 1;
-  changeSequence += 1;
+  bump("pullRequests");
   return context.json({
     ok: true,
     attempted: 2,
@@ -1454,7 +1465,7 @@ app.post("/api/pull-requests/refresh-statuses", async (context) => {
 app.post("/api/pull-requests/:id/refresh", async (context) => {
   await new Promise((resolve) => setTimeout(resolve, 100));
   if (!repositoryDemo) syncStage = Math.min(syncStage + 1, 2);
-  changeSequence += 1;
+  bump("pullRequests");
   return context.json({ ok: true, ...currentView(), commentUpdatesApplied: 0 });
 });
 
@@ -1891,19 +1902,11 @@ function closestMatchingStructureNode(structure, matchingNodeIds) {
     })[0];
 }
 
-app.get("/api/pull-requests/:id/structure-references", (context) => {
-  const sourceOid = context.req.query("sourceOid");
-  const targetPath = context.req.query("path");
-  if (!sourceOid || !targetPath) {
-    return context.json(
-      { ok: false, error: { code: "INVALID_INPUT", message: "sourceOidとpathが必要です" } },
-      400,
-    );
-  }
+function fixtureStructureReferences(sourceOid, targetPath) {
   if (!repositoryPathsAt(sourceOid).includes(targetPath)) {
-    return context.json({ ok: true, references: [] });
+    return [];
   }
-  const references = activeStructures.flatMap((structure) => {
+  return activeStructures.flatMap((structure) => {
     const matchingNodeIds = new Set(
       structure.nodes
         .filter(
@@ -1934,7 +1937,38 @@ app.get("/api/pull-requests/:id/structure-references", (context) => {
         ]
       : [];
   });
-  return context.json({ ok: true, references });
+}
+
+app.get("/api/pull-requests/:id/structure-references", (context) => {
+  const sourceOid = context.req.query("sourceOid");
+  const targetPath = context.req.query("path");
+  if (!sourceOid || !targetPath) {
+    return context.json(
+      { ok: false, error: { code: "INVALID_INPUT", message: "sourceOidとpathが必要です" } },
+      400,
+    );
+  }
+  return context.json({ ok: true, references: fixtureStructureReferences(sourceOid, targetPath) });
+});
+
+app.get("/api/pull-requests/:id/structure-reference-index", (context) => {
+  const sourceOid = context.req.query("sourceOid");
+  if (!sourceOid) {
+    return context.json(
+      { ok: false, error: { code: "INVALID_INPUT", message: "sourceOidが必要です" } },
+      400,
+    );
+  }
+  return context.json({
+    ok: true,
+    index: {
+      sourceOid,
+      entries: repositoryPathsAt(sourceOid).flatMap((path) => {
+        const references = fixtureStructureReferences(sourceOid, path);
+        return references.length > 0 ? [{ path, references }] : [];
+      }),
+    },
+  });
 });
 
 app.get("/api/pull-requests/:id/structures/:structureId", (context) => {
@@ -2037,7 +2071,7 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
       (edge) => reachable.has(edge.from) && reachable.has(edge.to),
     );
     structure.updatedAt = "2026-08-08T05:00:00.000Z";
-    changeSequence += 1;
+    bump("structures");
     return context.json({ ok: true, structure });
   }
   structure.title = input.title ?? "Order placement behavior updated";
@@ -2088,7 +2122,7 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
     },
   ];
   structure.updatedAt = "2026-08-08T04:00:00.000Z";
-  changeSequence += 1;
+  bump("structures");
   return context.json({ ok: true, structure });
 });
 
@@ -2138,7 +2172,7 @@ app.post("/api/fixture/structures/:structureId/source-lifecycle", async (context
     );
   }
   structure.updatedAt = new Date(Date.parse(structure.updatedAt) + 1_000).toISOString();
-  changeSequence += 1;
+  bump("structures");
   return context.json({ ok: true, structure });
 });
 
@@ -2163,7 +2197,7 @@ app.delete("/api/pull-requests/:id/structures/:structureId", async (context) => 
   const anchors =
     structure.nodes.filter((node) => node.anchor !== null).length +
     structure.edges.reduce((count, edge) => count + edge.anchors.length, 0);
-  changeSequence += 1;
+  bump("structures");
   return context.json({
     ok: true,
     deleted: {
@@ -2261,7 +2295,7 @@ app.post("/api/fixture/walkthroughs/:walkthroughId/update", async (context) => {
       comment.target.walkthroughTitle = walkthrough.title;
     }
   }
-  changeSequence += 1;
+  bump("walkthroughs");
   return context.json({ ok: true, walkthrough });
 });
 
@@ -2285,7 +2319,7 @@ app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
   for (let index = comments.length - 1; index >= 0; index -= 1) {
     if (associatedCommentIds.has(comments[index].id)) comments.splice(index, 1);
   }
-  changeSequence += 1;
+  bump("walkthroughs", ...(associatedComments.length > 0 ? ["comments"] : []));
   return context.json({
     ok: true,
     deleted: {
@@ -2301,16 +2335,9 @@ app.delete("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
   });
 });
 
-app.get("/api/comments/:id/placement", (context) => {
-  const comment = comments.find((item) => item.id === context.req.param("id"));
-  if (!comment) {
-    return context.json(
-      { ok: false, error: { code: "COMMENT_NOT_FOUND", message: "missing comment" } },
-      404,
-    );
-  }
+function fixtureCommentPlacement(comment, destination) {
   if (comment.target.kind === "pull-request") {
-    return context.json({ ok: true, placement: { outdated: false, range: null, path: null } });
+    return { outdated: false, range: null, path: null };
   }
   if (comment.target.kind === "walkthrough") {
     const walkthrough = activeWalkthroughs.find(
@@ -2318,31 +2345,29 @@ app.get("/api/comments/:id/placement", (context) => {
     );
     if (
       !walkthrough ||
-      (context.req.query("walkthroughId") && context.req.query("walkthroughId") !== walkthrough.id)
+      (destination.kind === "walkthrough" && destination.walkthroughId !== walkthrough.id)
     ) {
-      return context.json({ ok: true, placement: { outdated: true, range: null, path: null } });
+      return { outdated: true, range: null, path: null };
     }
     if (comment.target.startLine === null) {
-      return context.json({ ok: true, placement: { outdated: false, range: null, path: null } });
+      return { outdated: false, range: null, path: null };
     }
     const range =
       comment.target.sourceDocumentHash === hashDocument(walkthrough.body)
         ? { startLine: comment.target.startLine, endLine: comment.target.endLine }
         : findUniqueQuotedLineRange(comment.target.quotedText, walkthrough.body);
-    return context.json({
-      ok: true,
-      placement: range
-        ? { outdated: false, range, path: null }
-        : { outdated: true, range: null, path: null },
-    });
+    return range
+      ? { outdated: false, range, path: null }
+      : { outdated: true, range: null, path: null };
   }
   const targetPath =
     comment.target.documentKind === "pull-request-markdown"
       ? "Pull Request.md"
       : comment.target.path;
-  const requestedKind = context.req.query("kind");
-  const requestedPath = context.req.query("path");
-  const kindMatches = requestedKind === "commit" || requestedKind === comment.target.documentKind;
+  const requestedRef = destination.kind === "document" ? destination.ref : null;
+  const kindMatches =
+    destination.kind === "commit" || requestedRef?.kind === comment.target.documentKind;
+  const requestedPath = requestedRef?.kind === "repository-file" ? requestedRef.path : null;
   const pathMatches = !requestedPath || requestedPath === targetPath;
   let range =
     comment.target.startLine === null
@@ -2359,14 +2384,62 @@ app.get("/api/comments/:id/placement", (context) => {
       targetOutdated = range === null;
     }
   }
+  return {
+    outdated: !kindMatches || !pathMatches || targetOutdated,
+    range: !kindMatches || !pathMatches || targetOutdated ? null : range,
+    path: targetPath,
+  };
+}
+
+app.post("/api/pull-requests/:id/comment-placements/resolve", async (context) => {
+  const input = await context.req.json();
+  const uniqueIds = [...new Set(input.commentIds)];
+  const found = new Map(comments.map((comment) => [comment.id, comment]));
   return context.json({
     ok: true,
-    placement: {
-      outdated: !kindMatches || !pathMatches || targetOutdated,
-      range: !kindMatches || !pathMatches || targetOutdated ? null : range,
-      path: targetPath,
-    },
+    comments: uniqueIds.flatMap((commentId) => {
+      const comment = found.get(commentId);
+      return comment
+        ? [
+            {
+              commentId,
+              placements: input.destinations.map((destination) => ({
+                destination,
+                placement: fixtureCommentPlacement(comment, destination),
+              })),
+            },
+          ]
+        : [];
+    }),
+    missingCommentIds: uniqueIds.filter((commentId) => !found.has(commentId)),
   });
+});
+
+app.get("/api/comments/:id/placement", (context) => {
+  const comment = comments.find((item) => item.id === context.req.param("id"));
+  if (!comment) {
+    return context.json(
+      { ok: false, error: { code: "COMMENT_NOT_FOUND", message: "missing comment" } },
+      404,
+    );
+  }
+  const destination =
+    context.req.query("kind") === "commit"
+      ? { kind: "commit", oid: context.req.query("oid") }
+      : context.req.query("kind") === "walkthrough"
+        ? { kind: "walkthrough", walkthroughId: context.req.query("walkthroughId") }
+        : context.req.query("kind") === "pull-request-markdown"
+          ? { kind: "document", ref: { kind: "pull-request-markdown", pullRequestId } }
+          : {
+              kind: "document",
+              ref: {
+                kind: "repository-file",
+                pullRequestId,
+                sourceOid: context.req.query("sourceOid"),
+                path: context.req.query("path"),
+              },
+            };
+  return context.json({ ok: true, placement: fixtureCommentPlacement(comment, destination) });
 });
 
 app.post("/api/comments", async (context) => {
@@ -2423,7 +2496,7 @@ app.post("/api/comments", async (context) => {
     ],
   };
   comments.push(comment);
-  changeSequence += 1;
+  bump("comments");
   return context.json({ ok: true, comment }, 201);
 });
 
@@ -2445,8 +2518,8 @@ app.post("/api/comments/:id/posts", async (context) => {
   };
   comment.posts.push(post);
   comment.updatedAt = post.createdAt;
-  changeSequence += 1;
-  return context.json({ ok: true, post }, 201);
+  bump("comments");
+  return context.json({ ok: true, post, comment }, 201);
 });
 
 app.patch("/api/comments/:id/posts/:postId", async (context) => {
@@ -2466,8 +2539,8 @@ app.patch("/api/comments/:id/posts/:postId", async (context) => {
     context.req.header("x-rvw-fixture-modifier") === "agent" ? "agent" : "human";
   post.updatedAt = now;
   comment.updatedAt = now;
-  changeSequence += 1;
-  return context.json({ ok: true, post });
+  bump("comments");
+  return context.json({ ok: true, post, comment });
 });
 
 app.delete("/api/comments/:id/posts/:postId", (context) => {
@@ -2494,8 +2567,12 @@ app.delete("/api/comments/:id/posts/:postId", (context) => {
   }
   const [post] = comment.posts.splice(postIndex, 1);
   comment.updatedAt = new Date().toISOString();
-  changeSequence += 1;
-  return context.json({ ok: true, deleted: { commentId: comment.id, postId: post.id } });
+  bump("comments");
+  return context.json({
+    ok: true,
+    deleted: { commentId: comment.id, postId: post.id },
+    comment,
+  });
 });
 
 for (const action of ["resolve", "reopen"]) {
@@ -2503,7 +2580,7 @@ for (const action of ["resolve", "reopen"]) {
     const comment = comments.find((item) => item.id === context.req.param("id"));
     comment.resolvedAt = action === "resolve" ? new Date().toISOString() : null;
     comment.updatedAt = new Date().toISOString();
-    changeSequence += 1;
+    bump("comments");
     return context.json({ ok: true, comment });
   });
 }
@@ -2518,7 +2595,7 @@ app.delete("/api/comments/:id", (context) => {
   }
   const comment = comments[index];
   comments.splice(index, 1);
-  changeSequence += 1;
+  bump("comments");
   return context.json({ ok: true, deleted: { id: comment.id, ref: comment.ref } });
 });
 

@@ -317,6 +317,88 @@ describe("RvwService commit workflow", () => {
     expect((await service.getResetPreview(opened.pullRequest.id)).counts.gitRefs).toBe(1);
   });
 
+  it("resolves 100 comment placements with request-scoped Git and document caches", async () => {
+    const { repository, firstHead, fake, service } = setup("rvw-placement-batch-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const comments = [];
+    for (let index = 0; index < 100; index += 1) {
+      comments.push(
+        await service.createComment({
+          pullRequestId: opened.pullRequest.id,
+          target: {
+            kind: "document",
+            documentKind: "repository-file",
+            sourceOid: firstHead,
+            path: "src.txt",
+            startLine: 2,
+            endLine: 2,
+          },
+          body: `Comment ${index + 1}`,
+          authorLabel: "You",
+        }),
+      );
+    }
+    const secondHead = commitFile(
+      repository,
+      "src.txt",
+      "inserted\nfirst\nsecond\n",
+      "move placement source",
+    );
+    fake.pullRequest = { ...fake.pullRequest, headOid: secondHead };
+    await service.refreshPullRequest(opened.pullRequest.id);
+    const hasObject = vi.spyOn(service.git, "hasObject");
+    const changedFiles = vi.spyOn(service.git, "changedFiles");
+    const readDocument = vi.spyOn(service.git, "readDocument");
+    const missingId = "00000000-0000-4000-8000-000000000099";
+
+    for (const comment of comments) {
+      await service.placeCommentAtCommit(comment, secondHead);
+    }
+    expect(hasObject).toHaveBeenCalledTimes(200);
+    expect(changedFiles).toHaveBeenCalledTimes(100);
+    expect(readDocument).toHaveBeenCalledTimes(200);
+    hasObject.mockClear();
+    changedFiles.mockClear();
+    readDocument.mockClear();
+
+    const resolved = await service.resolveCommentPlacements(
+      opened.pullRequest.id,
+      [...comments.map((comment) => comment.id), comments[0]!.id, missingId],
+      [
+        {
+          kind: "document",
+          ref: {
+            kind: "repository-file",
+            pullRequestId: opened.pullRequest.id,
+            sourceOid: secondHead,
+            path: "src.txt",
+          },
+        },
+        {
+          kind: "document",
+          ref: {
+            kind: "repository-file",
+            pullRequestId: opened.pullRequest.id,
+            sourceOid: firstHead,
+            path: "src.txt",
+          },
+        },
+      ],
+    );
+
+    expect(resolved.comments.map(({ commentId }) => commentId)).toEqual(
+      comments.map(({ id }) => id),
+    );
+    expect(resolved.missingCommentIds).toEqual([missingId]);
+    expect(resolved.comments[0]!.placements.map(({ placement }) => placement)).toEqual([
+      { outdated: false, range: { startLine: 3, endLine: 3 }, path: "src.txt" },
+      { outdated: false, range: { startLine: 2, endLine: 2 }, path: "src.txt" },
+    ]);
+    expect(hasObject).toHaveBeenCalledTimes(2);
+    expect(changedFiles).toHaveBeenCalledOnce();
+    expect(readDocument).toHaveBeenCalledTimes(2);
+  }, 20_000);
+
   it("reopens an explicitly registered PR outside a repository", async () => {
     const { repository, fake, service } = setup("rvw-open-outside-");
     const opened = await service.openPullRequest(undefined, repository);
@@ -2486,6 +2568,21 @@ describe("RvwService commit workflow", () => {
     await expect(
       service.listFileStructureReferences(opened.pullRequest.id, targetOid, "../src.txt"),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("returns an empty Structure backlink index without Git work when no Structure exists", async () => {
+    const { repository, firstHead, service } = setup("rvw-empty-structure-index-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const hasObject = vi.spyOn(service.git, "hasObject");
+    const tree = vi.spyOn(service.git, "tree");
+    const changedFilesWithCopies = vi.spyOn(service.git, "changedFilesWithCopies");
+
+    await expect(
+      service.listFileStructureReferenceIndex(opened.pullRequest.id, firstHead),
+    ).resolves.toEqual({ sourceOid: firstHead, entries: [] });
+    expect(hasObject).not.toHaveBeenCalled();
+    expect(tree).not.toHaveBeenCalled();
+    expect(changedFilesWithCopies).not.toHaveBeenCalled();
   });
 
   it("uses one Structure revision for each file backlink while Git resolution is pending", async () => {

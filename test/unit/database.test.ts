@@ -416,6 +416,12 @@ describe("RvwDatabase", () => {
   it("applies migrations and increments change sequence per write transaction", () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     expect(database.getChangeSequence()).toBe(0);
+    expect(database.getDomainRevisions()).toEqual({
+      pullRequests: 0,
+      comments: 0,
+      walkthroughs: 0,
+      structures: 0,
+    });
     expect(database.writeProbe()).toEqual({ ok: true, error: null });
     expect(database.getChangeSequence()).toBe(0);
     const pullRequest = database.upsertPullRequest(
@@ -427,6 +433,12 @@ describe("RvwDatabase", () => {
       "c".repeat(40),
     );
     expect(database.getChangeSequence()).toBe(1);
+    expect(database.getDomainRevisions()).toEqual({
+      pullRequests: 1,
+      comments: 0,
+      walkthroughs: 0,
+      structures: 0,
+    });
     expect(database.getPullRequest(pullRequest.id)?.latestHeadOid).toBe(github.headOid);
     expect(database.getPullRequest(pullRequest.id)?.latestComparisonBaseOid).toBe("c".repeat(40));
     expect(database.getPullRequest(pullRequest.id)).toMatchObject({

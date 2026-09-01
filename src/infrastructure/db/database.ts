@@ -440,6 +440,22 @@ export interface NewStructureInput {
   idempotencyRequestHash: string;
 }
 
+export interface DomainRevisions {
+  pullRequests: number;
+  comments: number;
+  walkthroughs: number;
+  structures: number;
+}
+
+type DomainRevision = keyof DomainRevisions;
+
+const domainRevisionMetaKeys: Record<DomainRevision, string> = {
+  pullRequests: "revision_pull_requests",
+  comments: "revision_comments",
+  walkthroughs: "revision_walkthroughs",
+  structures: "revision_structures",
+};
+
 export class RvwDatabase {
   readonly filePath: string;
   readonly configuredPath: boolean;
@@ -615,11 +631,35 @@ export class RvwDatabase {
     return this.getChangeSequence();
   }
 
+  incrementDomainRevisions(domains: readonly DomainRevision[]): number {
+    const uniqueDomains = [...new Set(domains)];
+    this.incrementChangeSequence();
+    const increment = this.database.prepare(
+      "UPDATE app_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = ?",
+    );
+    for (const domain of uniqueDomains) increment.run(domainRevisionMetaKeys[domain]);
+    return this.getChangeSequence();
+  }
+
   getChangeSequence(): number {
     const row = this.database
       .prepare("SELECT value FROM app_meta WHERE key = 'change_sequence'")
       .get() as DbRow;
     return Number(stringValue(row, "value"));
+  }
+
+  getDomainRevisions(): DomainRevisions {
+    const revisions = {} as DomainRevisions;
+    for (const [domain, key] of Object.entries(domainRevisionMetaKeys) as [
+      DomainRevision,
+      string,
+    ][]) {
+      const row = this.database.prepare("SELECT value FROM app_meta WHERE key = ?").get(key) as
+        DbRow | undefined;
+      if (!row) throw new RvwError("DATABASE_ERROR", `domain revisionがありません: ${domain}`);
+      revisions[domain] = Number(stringValue(row, "value"));
+    }
+    return revisions;
   }
 
   getCommentWatchDatabaseId(): string {
@@ -826,7 +866,7 @@ export class RvwDatabase {
           );
         }
       }
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["pullRequests"]);
     });
   }
 
@@ -842,7 +882,7 @@ export class RvwDatabase {
         .run(repository.localRepositoryPath, repository.gitCommonDir, new Date().toISOString(), id);
       if (Number(result.changes) === 0)
         throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["pullRequests"]);
     });
     const pullRequest = this.getPullRequest(id);
     if (!pullRequest) throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
@@ -925,7 +965,7 @@ export class RvwDatabase {
   ): PullRequest {
     const id = this.immediateTransaction(() => {
       const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["pullRequests"]);
       return writtenId;
     });
     const pullRequest = this.getPullRequest(id);
@@ -943,7 +983,11 @@ export class RvwDatabase {
     const id = this.immediateTransaction(() => {
       const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
       this.applyCommentUpdates(updates, github.headOid);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(
+        updates.some((update) => update.resolve || update.reply.trim().length > 0)
+          ? ["pullRequests", "comments"]
+          : ["pullRequests"],
+      );
       return writtenId;
     });
     const pullRequest = this.getPullRequest(id);
@@ -960,7 +1004,7 @@ export class RvwDatabase {
     const id = this.immediateTransaction(() => {
       const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
       this.deletePullRequestHistory(writtenId);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["pullRequests", "comments", "walkthroughs", "structures"]);
       return writtenId;
     });
     const pullRequest = this.getPullRequest(id);
@@ -1128,7 +1172,7 @@ export class RvwDatabase {
            ) VALUES (?, ?, ?, ?)`,
         )
         .run(keyHash, input.idempotencyRequestHash, id, now);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["structures"]);
       structureId = id;
     });
     if (!structureId) {
@@ -1230,7 +1274,7 @@ export class RvwDatabase {
         "INSERT OR IGNORE INTO structure_retired_edge_ids(structure_id, edge_id, retired_at) VALUES (?, ?, ?)",
       );
       for (const edgeId of retiredEdgesAtThisUpdate) retireEdge.run(id, edgeId, now);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["structures"]);
     });
     const structure = this.getStructure(id);
     if (!structure) throw new RvwError("DATABASE_ERROR", "更新したStructureを読み出せません。");
@@ -1276,7 +1320,7 @@ export class RvwDatabase {
           { status: 409, details: { expectedUpdatedAt } },
         );
       }
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["structures"]);
       return {
         id: structure.id,
         ref: structure.ref,
@@ -1402,7 +1446,7 @@ export class RvwDatabase {
           now,
         );
       this.insertCodeReferences("walkthrough", id, input.references);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["walkthroughs"]);
     });
     const walkthrough = this.getWalkthrough(id);
     if (!walkthrough) {
@@ -1432,7 +1476,7 @@ export class RvwDatabase {
       }
       this.database.prepare("DELETE FROM walkthrough_references WHERE walkthrough_id = ?").run(id);
       this.insertCodeReferences("walkthrough", id, input.references);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["walkthroughs"]);
     });
     const walkthrough = this.getWalkthrough(id);
     if (!walkthrough) {
@@ -1478,7 +1522,9 @@ export class RvwDatabase {
         )
         .run(id);
       this.database.prepare("DELETE FROM walkthroughs WHERE id = ?").run(id);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(
+        counts.comments === 0 ? ["walkthroughs"] : ["walkthroughs", "comments"],
+      );
       return {
         id: walkthrough.id,
         ref: walkthrough.ref,
@@ -1523,7 +1569,7 @@ export class RvwDatabase {
           ) VALUES (?, ?, ?, ?)`,
         )
         .run(postId, formatCommentUri(id), pullRequest.url, now);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["comments"]);
     });
     const comment = this.getComment(id);
     if (!comment) throw new RvwError("DATABASE_ERROR", "保存したコメントを読み出せません。");
@@ -1842,7 +1888,7 @@ export class RvwDatabase {
           .run(idempotencyKeyHash, idempotencyRequestHash, id, now);
       }
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
-      if (incrementSequence) this.incrementChangeSequence();
+      if (incrementSequence) this.incrementDomainRevisions(["comments"]);
       result = {
         id,
         commentId,
@@ -1887,7 +1933,7 @@ export class RvwDatabase {
       this.database.prepare("DELETE FROM comment_post_references WHERE post_id = ?").run(postId);
       this.insertCodeReferences("comment-post", postId, references);
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["comments"]);
     });
     const post = this.getCommentPost(postId);
     if (!post) {
@@ -1922,7 +1968,7 @@ export class RvwDatabase {
         .prepare("DELETE FROM comment_posts WHERE id = ? AND comment_id = ?")
         .run(postId, commentId);
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["comments"]);
     });
     return { commentId, postId };
   }
@@ -1939,7 +1985,7 @@ export class RvwDatabase {
         .run(resolved ? now : null, now, commentId);
       if (Number(result.changes) === 0)
         throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
-      if (incrementSequence) this.incrementChangeSequence();
+      if (incrementSequence) this.incrementDomainRevisions(["comments"]);
     };
     if (incrementSequence) this.immediateTransaction(write);
     else write();
@@ -1955,7 +2001,7 @@ export class RvwDatabase {
     }
     this.immediateTransaction(() => {
       this.database.prepare("DELETE FROM comments WHERE id = ?").run(commentId);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["comments"]);
     });
     return { id: comment.id, ref: comment.ref };
   }

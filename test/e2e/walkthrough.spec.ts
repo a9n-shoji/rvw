@@ -2749,9 +2749,13 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await expect(
     page.locator('diffs-container [data-line="1"][data-selected-line="first"]'),
   ).toBeVisible();
-  await expect(
-    page.locator('diffs-container [data-line="2"][data-selected-line="last"]'),
-  ).toBeVisible();
+  // @pierre/diffs moves the `last` marker to a following annotation row when
+  // the range ends on a line with an inline comment. The code row remains
+  // selected with an empty marker in that case.
+  await expect(page.locator('diffs-container [data-line="2"][data-selected-line]')).toHaveAttribute(
+    "data-selected-line",
+    /^(?:last)?$/,
+  );
   await expect(commitPicker).toHaveAttribute("aria-label", initialCommitSelection!);
 
   await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();

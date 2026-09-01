@@ -109,3 +109,27 @@ export const editCommentPostSchema = z.object({
     .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
   references: z.array(codeReferenceInputSchema).optional(),
 });
+
+const placementDocumentRefSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("pull-request-markdown"), pullRequestId: z.uuid() }),
+  z.object({
+    kind: z.literal("repository-file"),
+    pullRequestId: z.uuid(),
+    sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
+    path: z.string().min(1),
+  }),
+]);
+
+export const resolveCommentPlacementsSchema = z.object({
+  commentIds: z.array(z.uuid()).max(500),
+  destinations: z
+    .array(
+      z.union([
+        z.object({ kind: z.literal("document"), ref: placementDocumentRefSchema }),
+        z.object({ kind: z.literal("commit"), oid: z.string().regex(GIT_OBJECT_ID_PATTERN) }),
+        z.object({ kind: z.literal("walkthrough"), walkthroughId: z.uuid() }),
+      ]),
+    )
+    .min(1)
+    .max(4),
+});

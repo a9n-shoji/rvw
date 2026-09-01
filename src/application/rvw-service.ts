@@ -6,6 +6,8 @@ import type {
   ChangedFile,
   CodeReference,
   CommentPlacement,
+  CommentPlacementBatchResult,
+  CommentPlacementDestination,
   CommentPost,
   CommentPostModifier,
   CommentPostEvent,
@@ -17,6 +19,7 @@ import type {
   DocumentContent,
   DocumentRef,
   FileStructureReference,
+  FileStructureReferenceIndex,
   GitHubPullRequest,
   PullRequest,
   PullRequestSummary,
@@ -681,6 +684,31 @@ function assertCodeReferencePath(filePath: string): void {
   ) {
     throw new RvwError("INVALID_INPUT", `code referenceのpathが不正です: ${filePath}`);
   }
+}
+
+interface CommentPlacementRequestContext {
+  commitAvailability: Map<string, Promise<void>>;
+  changedFiles: Map<string, Promise<ChangedFile[]>>;
+  documents: Map<string, Promise<DocumentContent>>;
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const worker = async (): Promise<void> => {
+    while (nextIndex < values.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(values[index]!, index);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, async () => await worker()),
+  );
+  return results;
 }
 
 export class RvwService {
@@ -1737,19 +1765,26 @@ export class RvwService {
     targetSourceOid: string,
     targetPath: string,
   ): Promise<FileStructureReference[]> {
-    const pullRequest = this.getPullRequest(pullRequestId);
     assertCodeReferencePath(targetPath);
+    const index = await this.listFileStructureReferenceIndex(pullRequestId, targetSourceOid);
+    return index.entries.find(({ path: candidate }) => candidate === targetPath)?.references ?? [];
+  }
+
+  async listFileStructureReferenceIndex(
+    pullRequestId: string,
+    targetSourceOid: string,
+  ): Promise<FileStructureReferenceIndex> {
+    const pullRequest = this.getPullRequest(pullRequestId);
     const structures = this.database.listStructures(pullRequestId).flatMap((summary) => {
       const structure = this.database.getStructure(summary.id);
       return structure?.pullRequestId === pullRequestId ? [structure] : [];
     });
+    if (structures.length === 0) return { sourceOid: targetSourceOid, entries: [] };
     await this.assertCommitAvailable(pullRequest, targetSourceOid);
-    const targetPaths = new Set(
-      (await this.git.tree(pullRequest.localRepositoryPath, targetSourceOid)).map(
-        (entry) => entry.path,
-      ),
+    const treePaths = (await this.git.tree(pullRequest.localRepositoryPath, targetSourceOid)).map(
+      (entry) => entry.path,
     );
-    if (!targetPaths.has(targetPath)) return [];
+    const targetPaths = new Set(treePaths);
 
     const successorIndexes = new Map<string, Promise<Map<string, ReadonlySet<string>>>>();
     const successorIndex = (sourceOid: string): Promise<Map<string, ReadonlySet<string>>> => {
@@ -1788,26 +1823,37 @@ export class RvwService {
       });
     };
 
-    const references: FileStructureReference[] = [];
+    const referencesByPath = new Map<string, FileStructureReference[]>();
     for (const structure of structures) {
-      const matchingNodeIds = new Set<string>();
-      await Promise.all(
-        structure.nodes.map(async (node) => {
-          if (!node.anchor) return;
-          const resolvedPath = await resolvePath(structure.sourceOid, node.anchor.path);
-          if (resolvedPath === targetPath) matchingNodeIds.add(node.id);
-        }),
-      );
-      const targetNode = closestMatchingStructureNode(structure, matchingNodeIds);
-      if (!targetNode) continue;
-      references.push({
-        structure: structureSummary(structure),
-        targetNodeId: targetNode.id,
-        targetNodeLabel: targetNode.label,
-        matchingNodeCount: matchingNodeIds.size,
-      });
+      const matchingNodeIdsByPath = new Map<string, Set<string>>();
+      for (const node of structure.nodes) {
+        if (!node.anchor) continue;
+        const resolvedPath = await resolvePath(structure.sourceOid, node.anchor.path);
+        if (!resolvedPath) continue;
+        const nodeIds = matchingNodeIdsByPath.get(resolvedPath) ?? new Set<string>();
+        nodeIds.add(node.id);
+        matchingNodeIdsByPath.set(resolvedPath, nodeIds);
+      }
+      for (const [resolvedPath, matchingNodeIds] of matchingNodeIdsByPath) {
+        const targetNode = closestMatchingStructureNode(structure, matchingNodeIds);
+        if (!targetNode) continue;
+        const references = referencesByPath.get(resolvedPath) ?? [];
+        references.push({
+          structure: structureSummary(structure),
+          targetNodeId: targetNode.id,
+          targetNodeLabel: targetNode.label,
+          matchingNodeCount: matchingNodeIds.size,
+        });
+        referencesByPath.set(resolvedPath, references);
+      }
     }
-    return references;
+    return {
+      sourceOid: targetSourceOid,
+      entries: treePaths.flatMap((path) => {
+        const references = referencesByPath.get(path);
+        return references ? [{ path, references }] : [];
+      }),
+    };
   }
 
   listStructuresByReference(reference: string): {
@@ -2677,15 +2723,22 @@ export class RvwService {
     pullRequest: PullRequest,
     source: RepositoryCommentTarget,
     destinationOid: string,
+    context: CommentPlacementRequestContext,
   ): Promise<{ path: string; deleted: boolean }> {
     if (source.sourceOid === destinationOid) {
       return { path: source.path, deleted: false };
     }
-    const changes = await this.git.changedFiles(
-      pullRequest.localRepositoryPath,
-      source.sourceOid,
-      destinationOid,
-    );
+    const key = JSON.stringify([source.sourceOid, destinationOid]);
+    let changesPromise = context.changedFiles.get(key);
+    if (!changesPromise) {
+      changesPromise = this.git.changedFiles(
+        pullRequest.localRepositoryPath,
+        source.sourceOid,
+        destinationOid,
+      );
+      context.changedFiles.set(key, changesPromise);
+    }
+    const changes = await changesPromise;
     const change = changes.find((candidate) => candidate.oldPath === source.path);
     if (change?.kind === "deleted" || (change && change.newPath === null)) {
       return { path: source.path, deleted: true };
@@ -2698,13 +2751,18 @@ export class RvwService {
     source: RepositoryCommentTarget,
     destinationOid: string,
     destinationPath: string,
+    context: CommentPlacementRequestContext,
   ): Promise<CommentPlacement> {
-    const destinationContent = await this.getDocument({
-      kind: "repository-file",
-      pullRequestId: pullRequest.id,
-      sourceOid: destinationOid,
-      path: destinationPath,
-    });
+    const destinationContent = await this.getPlacementDocument(
+      pullRequest,
+      {
+        kind: "repository-file",
+        pullRequestId: pullRequest.id,
+        sourceOid: destinationOid,
+        path: destinationPath,
+      },
+      context,
+    );
     if (source.startLine === null || source.endLine === null) {
       return destinationContent.availability === "missing"
         ? { outdated: true, range: null, path: destinationPath }
@@ -2713,12 +2771,16 @@ export class RvwService {
     if (destinationContent.availability !== "available") {
       return { outdated: true, range: null, path: destinationPath };
     }
-    const sourceContent = await this.getDocument({
-      kind: "repository-file",
-      pullRequestId: pullRequest.id,
-      sourceOid: source.sourceOid,
-      path: source.path,
-    });
+    const sourceContent = await this.getPlacementDocument(
+      pullRequest,
+      {
+        kind: "repository-file",
+        pullRequestId: pullRequest.id,
+        sourceOid: source.sourceOid,
+        path: source.path,
+      },
+      context,
+    );
     if (sourceContent.availability !== "available") {
       return { outdated: true, range: null, path: destinationPath };
     }
@@ -2737,35 +2799,125 @@ export class RvwService {
     comment: Pick<ReviewComment, "pullRequestId" | "target">,
     destination: DocumentRef,
   ): Promise<CommentPlacement> {
-    if (comment.pullRequestId !== destination.pullRequestId) {
+    const pullRequest = this.getPullRequest(comment.pullRequestId);
+    return await this.placeCommentForDestination(
+      comment,
+      pullRequest,
+      { kind: "document", ref: destination },
+      this.createCommentPlacementRequestContext(),
+    );
+  }
+
+  private createCommentPlacementRequestContext(): CommentPlacementRequestContext {
+    return {
+      commitAvailability: new Map(),
+      changedFiles: new Map(),
+      documents: new Map(),
+    };
+  }
+
+  private async assertPlacementCommitAvailable(
+    pullRequest: PullRequest,
+    oid: string,
+    context: CommentPlacementRequestContext,
+  ): Promise<void> {
+    let available = context.commitAvailability.get(oid);
+    if (!available) {
+      available = this.assertCommitAvailable(pullRequest, oid);
+      context.commitAvailability.set(oid, available);
+    }
+    await available;
+  }
+
+  private async getPlacementDocument(
+    pullRequest: PullRequest,
+    ref: DocumentRef,
+    context: CommentPlacementRequestContext,
+  ): Promise<DocumentContent> {
+    const key = JSON.stringify(ref);
+    let document = context.documents.get(key);
+    if (!document) {
+      document = (async () => {
+        if (ref.kind === "pull-request-markdown") {
+          const text = buildPullRequestMarkdown(pullRequest.latestTitle, pullRequest.latestBody);
+          return {
+            ref,
+            availability: "available" as const,
+            text,
+            byteLength: Buffer.byteLength(text, "utf8"),
+            entryKind: "virtual" as const,
+            normalizedLineEndings: false,
+            oid: null,
+          };
+        }
+        await this.assertPlacementCommitAvailable(pullRequest, ref.sourceOid, context);
+        const content = await this.git.readDocument(
+          pullRequest.localRepositoryPath,
+          ref.sourceOid,
+          ref.path,
+        );
+        return { ref, ...content };
+      })();
+      context.documents.set(key, document);
+    }
+    return await document;
+  }
+
+  private async placeCommentForDestination(
+    comment: Pick<ReviewComment, "pullRequestId" | "target">,
+    pullRequest: PullRequest,
+    destination: CommentPlacementDestination,
+    context: CommentPlacementRequestContext,
+  ): Promise<CommentPlacement> {
+    if (destination.kind === "walkthrough") {
+      return this.placeWalkthroughComment(comment, destination.walkthroughId);
+    }
+    if (destination.kind === "commit") {
+      await this.assertPlacementCommitAvailable(pullRequest, destination.oid, context);
+    }
+    const documentDestination = destination.kind === "document" ? destination.ref : null;
+    const destinationOid =
+      destination.kind === "commit"
+        ? destination.oid
+        : documentDestination?.kind === "repository-file"
+          ? documentDestination.sourceOid
+          : null;
+    if (
+      documentDestination !== null &&
+      comment.pullRequestId !== documentDestination.pullRequestId
+    ) {
       return { outdated: true, range: null, path: null };
     }
     if (comment.target.kind === "pull-request") return { outdated: false, range: null, path: null };
     if (comment.target.kind === "walkthrough") {
       return this.placeWalkthroughComment(comment);
     }
-    const pullRequest = this.getPullRequest(comment.pullRequestId);
     if (comment.target.documentKind === "pull-request-markdown") {
-      return destination.kind === "pull-request-markdown"
+      return destination.kind === "commit" || documentDestination?.kind === "pull-request-markdown"
         ? this.placePullRequestMarkdownComment(comment, pullRequest)
         : { outdated: true, range: null, path: null };
     }
-    if (destination.kind !== "repository-file") return { outdated: true, range: null, path: null };
+    if (destinationOid === null) return { outdated: true, range: null, path: null };
     const source = comment.target;
     const resolved = await this.resolveRepositoryCommentPath(
       pullRequest,
       source,
-      destination.sourceOid,
+      destinationOid,
+      context,
     );
     if (resolved.deleted) return { outdated: true, range: null, path: source.path };
-    if (resolved.path !== destination.path) {
+    if (
+      documentDestination?.kind === "repository-file" &&
+      resolved.path !== documentDestination.path
+    ) {
       return { outdated: true, range: null, path: resolved.path };
     }
     return await this.placeRepositoryCommentAtPath(
       pullRequest,
       source,
-      destination.sourceOid,
+      destinationOid,
       resolved.path,
+      context,
     );
   }
 
@@ -2774,23 +2926,56 @@ export class RvwService {
     destinationOid: string,
   ): Promise<CommentPlacement> {
     const pullRequest = this.getPullRequest(comment.pullRequestId);
-    await this.assertCommitAvailable(pullRequest, destinationOid);
-    if (comment.target.kind === "pull-request") return { outdated: false, range: null, path: null };
-    if (comment.target.kind === "walkthrough") {
-      return this.placeWalkthroughComment(comment);
-    }
-    if (comment.target.documentKind === "pull-request-markdown") {
-      return this.placePullRequestMarkdownComment(comment, pullRequest);
-    }
-    const source = comment.target;
-    const resolved = await this.resolveRepositoryCommentPath(pullRequest, source, destinationOid);
-    if (resolved.deleted) return { outdated: true, range: null, path: source.path };
-    return await this.placeRepositoryCommentAtPath(
+    return await this.placeCommentForDestination(
+      comment,
       pullRequest,
-      source,
-      destinationOid,
-      resolved.path,
+      { kind: "commit", oid: destinationOid },
+      this.createCommentPlacementRequestContext(),
     );
+  }
+
+  async resolveCommentPlacements(
+    pullRequestId: string,
+    commentIds: readonly string[],
+    destinations: readonly CommentPlacementDestination[],
+  ): Promise<CommentPlacementBatchResult> {
+    const pullRequest = this.getPullRequest(pullRequestId);
+    const uniqueCommentIds = [...new Set(commentIds)];
+    const comments: ReviewComment[] = [];
+    const missingCommentIds: string[] = [];
+    for (const commentId of uniqueCommentIds) {
+      const comment = this.database.getComment(commentId);
+      if (!comment) {
+        missingCommentIds.push(commentId);
+        continue;
+      }
+      if (comment.pullRequestId !== pullRequestId) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `別のPull Requestのコメントは一括解決できません: ${commentId}`,
+        );
+      }
+      comments.push(comment);
+    }
+    const context = this.createCommentPlacementRequestContext();
+    return {
+      comments: await mapWithConcurrency(comments, 4, async (comment) => {
+        const placements = [];
+        for (const destination of destinations) {
+          placements.push({
+            destination,
+            placement: await this.placeCommentForDestination(
+              comment,
+              pullRequest,
+              destination,
+              context,
+            ),
+          });
+        }
+        return { commentId: comment.id, placements };
+      }),
+      missingCommentIds,
+    };
   }
 
   async getResetPreview(pullRequestId: string): Promise<ResetPreview> {

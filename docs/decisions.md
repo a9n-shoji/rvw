@@ -2431,3 +2431,51 @@ This supersedes the browser-tab confirmation portion of the 2026-08-09 document-
 - Closing or reloading a tab with a comment draft no longer receives a last-moment browser warning.
 - Navigation is predictable and remains under browser control without a generic interruption.
 - Best-effort viewer release and timeout fallback continue to clean up automatically opened servers.
+
+## 2026-09-01: Bound viewer work by destinations and domain revisions
+
+### Problem
+
+Comment placement was fetched once per comment and destination. A two-sided document could therefore
+issue two HTTP requests and repeat commit validation, changed-file discovery, and document reads for
+every comment. The collapsed comment sidebar still mounted all cards and started another request per
+thread. Structure backlinks repeated a tree and copy-aware diff for each opened file. Finally, one
+global change sequence invalidated PR documents, comments, Walkthroughs, Structures, search, and
+placement together; a reply could re-run immutable Git reads and reconstruct unrelated viewer state.
+
+### Choice
+
+Make placement a bounded application operation. One batch accepts ordered comment IDs and up to four
+document, commit, or Walkthrough destinations. It preserves first-seen comment order, reports missing
+IDs, uses a fixed comment concurrency of four, and shares request-scoped Promise caches for commit
+availability, changed-file pairs, and documents. Document panes send new and old destinations
+together, an expanded sidebar sends only its visible nontrivial targets, and the browser no longer
+uses the compatible single-comment endpoint. Placement query identity contains comment ID plus target,
+destination identity, and the relevant mutable-document revision; post timestamps are deliberately
+excluded, and current comment content is joined after placement lookup.
+
+Compute Structure backlinks as one source-OID reverse index keyed by the current Structure
+ID/`updatedAt` fingerprint. The index returns before Git work when there are no Structures, reads the
+target tree once, and runs one copy-aware comparison per distinct Structure source/target pair. The
+path endpoint remains a compatibility projection of the same index.
+
+Keep the global change sequence for compatibility and add independent Pull Request, comment,
+Walkthrough, and Structure revisions. Initialize them from the existing sequence during migration and
+advance only the domains changed by each logical transaction. Viewer polling invalidates only queries
+owned by changed domains. Comment mutations return the canonical thread and update the stable
+Pull-Request comment cache with functional updates, preserving unrelated object identities; mutation
+completion no longer waits for a change-sequence refetch. Immutable OID/path/range queries use infinite
+freshness only when their complete identity is in the key.
+
+### Trade-offs
+
+- A placement response is larger than one old per-comment response, but request count and Git work are
+  constant with respect to comments sharing the same sources and destinations.
+- Request-scoped caches intentionally do not become process-global caches, so separate HTTP requests
+  still revalidate their own Git inputs and cannot leak state across repositories or PRs.
+- Domain revisions add write-path bookkeeping and migration state, but preserve the existing polling
+  and global sequence contract without introducing WebSockets or another synchronization model.
+- The Structure index may contain entries for files not currently open. It avoids repeated tree/diff
+  processes and is shared across panes, while remaining derived and non-persistent.
+- Local canonical cache updates make UI mutations immediate. An external writer is still observed on
+  the existing one-second poll and reconciled through the same domain-specific query.

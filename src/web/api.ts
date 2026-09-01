@@ -2,12 +2,15 @@ import type {
   ChangedFile,
   CommitSummary,
   CommentPlacement,
+  CommentPlacementBatchResult,
+  CommentPlacementDestination,
   CommentTarget,
   DeletedWalkthrough,
   DeletedStructure,
   DocumentContent,
   DocumentRef,
   FileStructureReference,
+  FileStructureReferenceIndex,
   PullRequest,
   PullRequestSummary,
   ReviewComment,
@@ -123,6 +126,16 @@ export interface ThemePreferenceResponse {
   themePreference: ThemePreference;
 }
 
+export interface ChangeSequenceResponse {
+  changeSequence: number;
+  revisions: {
+    pullRequests: number;
+    comments: number;
+    walkthroughs: number;
+    structures: number;
+  };
+}
+
 export interface TreeResponse {
   virtual: "Pull Request.md";
   entries: TreeEntry[];
@@ -173,6 +186,10 @@ export interface FileStructureReferencesResponse {
   references: FileStructureReference[];
 }
 
+export interface FileStructureReferenceIndexResponse {
+  index: FileStructureReferenceIndex;
+}
+
 export interface StructureResponse {
   structure: Structure;
 }
@@ -187,6 +204,19 @@ export interface DeleteStructureResponse {
 
 export interface PlacementResponse {
   placement: CommentPlacement;
+}
+
+export type CommentPlacementBatchResponse = CommentPlacementBatchResult;
+
+export async function resolveCommentPlacements(
+  pullRequestId: string,
+  commentIds: readonly string[],
+  destinations: readonly CommentPlacementDestination[],
+): Promise<CommentPlacementBatchResponse> {
+  return await api<CommentPlacementBatchResponse>(
+    `/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
+    jsonRequest({ commentIds, destinations }),
+  );
 }
 
 export type { CommentTarget, SearchResponse };

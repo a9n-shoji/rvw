@@ -31,7 +31,7 @@ import {
   api,
   type DeleteWalkthroughResponse,
   jsonRequest,
-  type PlacementResponse,
+  resolveCommentPlacements,
 } from "../api.js";
 import {
   MarkdownSelectionSurface,
@@ -46,6 +46,7 @@ import type { ThemePreference } from "../theme.js";
 import type { DocumentPaneId } from "../document-workspace.js";
 import { mermaidBindingTargets } from "../mermaid-binding-resolver.js";
 import { commentReplyDraftScope } from "../comment-draft-store.js";
+import { putCommentInCache } from "../comment-query-cache.js";
 import type { ViewerNavigationTarget } from "./DocumentViewer.js";
 import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
@@ -627,7 +628,12 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
             [rehypeSanitize, codeReferenceMarkdownSanitizeSchema],
             [
               rehypeRvwSourceMap,
-              { annotations, activeCommentId, selectedRange, composerOpen: selectionComposerOpen },
+              {
+                annotations,
+                activeCommentId,
+                selectedRange,
+                composerOpen: selectionComposerOpen,
+              },
             ],
           ]}
           remarkPlugins={[remarkGfm]}
@@ -732,6 +738,24 @@ export function WalkthroughViewer({
   const [referenceNotice, setReferenceNotice] = useState<string | null>(null);
   const referenceRequestSequence = useRef(0);
   const referenceNoticeTimeout = useRef<number | null>(null);
+  const walkthroughRef = useRef(walkthrough);
+  walkthroughRef.current = walkthrough;
+  const viewerCallbacksRef = useRef({
+    onOpenReference,
+    onResolveReferenceForPeek,
+    onOpenCommentCodeReference,
+    onOpenRepositoryLink,
+    onCommentActiveChange,
+    onActivateComment,
+  });
+  viewerCallbacksRef.current = {
+    onOpenReference,
+    onResolveReferenceForPeek,
+    onOpenCommentCodeReference,
+    onOpenRepositoryLink,
+    onCommentActiveChange,
+    onActivateComment,
+  };
   const references = useMemo(
     () => new Map(walkthrough.references.map((reference) => [reference.id, reference])),
     [walkthrough.references],
@@ -779,20 +803,42 @@ export function WalkthroughViewer({
         referenceNoticeTimeout.current = null;
       }
       setReferenceNotice(null);
-      void onOpenReference(walkthrough, reference, openInRightPane).then((notice) => {
-        if (requestSequence !== referenceRequestSequence.current || !notice) return;
-        setReferenceNotice(notice);
-        referenceNoticeTimeout.current = window.setTimeout(() => {
-          setReferenceNotice(null);
-          referenceNoticeTimeout.current = null;
-        }, referenceNoticeDurationMs);
-      });
+      void viewerCallbacksRef.current
+        .onOpenReference(walkthroughRef.current, reference, openInRightPane)
+        .then((notice) => {
+          if (requestSequence !== referenceRequestSequence.current || !notice) return;
+          setReferenceNotice(notice);
+          referenceNoticeTimeout.current = window.setTimeout(() => {
+            setReferenceNotice(null);
+            referenceNoticeTimeout.current = null;
+          }, referenceNoticeDurationMs);
+        });
     },
-    [onOpenReference, walkthrough],
+    [],
   );
   const resolveReferenceForPeek = useCallback(
-    (reference: WalkthroughReference) => onResolveReferenceForPeek(walkthrough, reference),
-    [onResolveReferenceForPeek, walkthrough],
+    (reference: WalkthroughReference) =>
+      viewerCallbacksRef.current.onResolveReferenceForPeek(walkthroughRef.current, reference),
+    [],
+  );
+  const openCommentCodeReference = useCallback(
+    (sourceOid: string, reference: CodeReference, openInRightPane: boolean) =>
+      viewerCallbacksRef.current.onOpenCommentCodeReference(sourceOid, reference, openInRightPane),
+    [],
+  );
+  const openRepositoryLink = useCallback(
+    (path: string, sourceOid: string, openInRightPane: boolean): void =>
+      viewerCallbacksRef.current.onOpenRepositoryLink(path, sourceOid, openInRightPane),
+    [],
+  );
+  const changeCommentActive = useCallback(
+    (commentId: string, active: boolean): void =>
+      viewerCallbacksRef.current.onCommentActiveChange(commentId, active),
+    [],
+  );
+  const activateComment = useCallback(
+    (commentId: string): void => viewerCallbacksRef.current.onActivateComment(commentId),
+    [],
   );
   useEffect(
     () => () => {
@@ -803,9 +849,13 @@ export function WalkthroughViewer({
     },
     [],
   );
-  const walkthroughComments = comments.filter(
-    (comment) =>
-      comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id,
+  const walkthroughComments = useMemo(
+    () =>
+      comments.filter(
+        (comment) =>
+          comment.target.kind === "walkthrough" && comment.target.walkthroughId === walkthrough.id,
+      ),
+    [comments, walkthrough.id],
   );
   const associatedPostCount = walkthroughComments.reduce(
     (count, comment) => count + comment.posts.length,
@@ -816,28 +866,29 @@ export function WalkthroughViewer({
       "walkthrough-comment-placements",
       walkthrough.id,
       walkthrough.body,
-      walkthroughComments.map((comment) => `${comment.id}:${comment.updatedAt}`),
+      walkthroughComments.map((comment) => [comment.id, comment.target]),
     ],
-    queryFn: async () => {
-      const search = new URLSearchParams({
-        kind: "walkthrough",
-        pullRequestId: walkthrough.pullRequestId,
-        walkthroughId: walkthrough.id,
-      });
-      return await Promise.all(
-        walkthroughComments.map(async (comment) => ({
-          comment,
-          placement: (
-            await api<PlacementResponse>(
-              `/api/comments/${comment.id}/placement?${search.toString()}`,
-            )
-          ).placement,
-        })),
-      );
-    },
+    queryFn: async () =>
+      await resolveCommentPlacements(
+        walkthrough.pullRequestId,
+        walkthroughComments.map(({ id }) => id),
+        [{ kind: "walkthrough", walkthroughId: walkthrough.id }],
+      ),
     enabled: walkthroughComments.length > 0,
+    staleTime: Number.POSITIVE_INFINITY,
   });
-  const placedComments = useMemo(() => placementQuery.data ?? [], [placementQuery.data]);
+  const placedComments = useMemo(() => {
+    const placements = new Map(
+      placementQuery.data?.comments.map(({ commentId, placements: resolved }) => [
+        commentId,
+        resolved[0]?.placement,
+      ]) ?? [],
+    );
+    return walkthroughComments.flatMap((comment) => {
+      const placement = placements.get(comment.id);
+      return placement ? [{ comment, placement }] : [];
+    });
+  }, [placementQuery.data, walkthroughComments]);
   const markdownComments = useMemo(
     () => placedComments.filter(({ placement }) => !placement.outdated && placement.range !== null),
     [placedComments],
@@ -853,7 +904,7 @@ export function WalkthroughViewer({
   );
   const createComment = useMutation({
     mutationFn: async ({ range, body }: { range: MarkdownSourceRange | null; body: string }) =>
-      await api(
+      await api<{ comment: ReviewComment }>(
         "/api/comments",
         jsonRequest({
           pullRequestId: walkthrough.pullRequestId,
@@ -867,17 +918,18 @@ export function WalkthroughViewer({
           authorLabel: "You",
         }),
       ),
-    onSuccess: async () => {
+    onSuccess: ({ comment }) => {
       window.getSelection()?.removeAllRanges();
       setCommentBody("");
       setComposerOpen(false);
       setSelectedRange(null);
       setDiagramRange(null);
       setLineComposerPlacement(null);
-      await queryClient.invalidateQueries({ queryKey: ["comments"] });
-      await queryClient.invalidateQueries({ queryKey: ["change-sequence"] });
+      putCommentInCache(queryClient, walkthrough.pullRequestId, comment);
     },
   });
+  const createCommentRef = useRef(createComment);
+  createCommentRef.current = createComment;
   const deleteWalkthrough = useMutation({
     mutationFn: async () =>
       await api<DeleteWalkthroughResponse>(
@@ -915,22 +967,31 @@ export function WalkthroughViewer({
       ? `L${selectedRange.startLine}`
       : `L${selectedRange.startLine}–${selectedRange.endLine}`
     : null;
-  const closeLineComposer = (): void => {
+  const closeLineComposer = useCallback((): void => {
     window.getSelection()?.removeAllRanges();
-    createComment.reset();
+    createCommentRef.current.reset();
     setCommentBody("");
     setSelectedRange(null);
     setDiagramRange(null);
     setLineComposerPlacement(null);
-  };
-  const openDiagramComposer = (range: MarkdownSourceRange): void => {
-    createComment.reset();
+  }, []);
+  const openDiagramComposer = useCallback((range: MarkdownSourceRange): void => {
+    createCommentRef.current.reset();
     setCommentBody("");
     setComposerOpen(false);
     setSelectedRange(null);
     setDiagramRange(range);
     setLineComposerPlacement("diagram");
-  };
+  }, []);
+  const submitDiagramComment = useCallback((range: MarkdownSourceRange, body: string): void => {
+    createCommentRef.current.mutate({ range, body });
+  }, []);
+  const createExpandedDiagramComment = useCallback(
+    async (range: MarkdownSourceRange, body: string): Promise<void> => {
+      await createCommentRef.current.mutateAsync({ range, body });
+    },
+    [],
+  );
   const selectionComposer = selectedRange ? (
     <InlineCommentComposer
       body={commentBody}
@@ -961,18 +1022,16 @@ export function WalkthroughViewer({
       themePreference={themePreference}
       onOpenReference={openReference}
       onResolveReferenceForPeek={resolveReferenceForPeek}
-      onOpenCommentCodeReference={onOpenCommentCodeReference}
-      onOpenRepositoryLink={onOpenRepositoryLink}
-      onCommentActiveChange={onCommentActiveChange}
-      onActivateComment={onActivateComment}
+      onOpenCommentCodeReference={openCommentCodeReference}
+      onOpenRepositoryLink={openRepositoryLink}
+      onCommentActiveChange={changeCommentActive}
+      onActivateComment={activateComment}
       onCommentRange={openDiagramComposer}
       diagramCommentPending={createComment.isPending}
       diagramCommentError={createComment.error}
       onCancelDiagramComment={closeLineComposer}
-      onSubmitDiagramComment={(range, body) => createComment.mutate({ range, body })}
-      onCreateExpandedDiagramComment={async (range, body) => {
-        await createComment.mutateAsync({ range, body });
-      }}
+      onSubmitDiagramComment={submitDiagramComment}
+      onCreateExpandedDiagramComment={createExpandedDiagramComment}
     />
   );
 

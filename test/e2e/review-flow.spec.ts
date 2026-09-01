@@ -1398,7 +1398,7 @@ test("keeps every sidebar section heading visible in a short viewport", async ({
 test("resizes the expanded comments stack from its top edge", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Fixture review", exact: true })).toBeVisible();
 
   const commentsToggle = page.locator(".sidebar-stack--comments > .sidebar-stack-toggle");
   await commentsToggle.click();

@@ -9,7 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { DocumentRef, FileStructureReference } from "../../domain/models.js";
-import { api, type FileStructureReferencesResponse } from "../api.js";
+import { api, type FileStructureReferenceIndexResponse } from "../api.js";
 import { StructureIcon } from "./WalkthroughPanel.js";
 
 type RepositoryFileRef = Extract<DocumentRef, { kind: "repository-file" }>;
@@ -17,10 +17,12 @@ type RepositoryFileRef = Extract<DocumentRef, { kind: "repository-file" }>;
 export function FileStructureReferencesButton({
   pullRequestId,
   fileRef,
+  structureFingerprint,
   onSelect,
 }: {
   pullRequestId: string;
   fileRef: RepositoryFileRef | null;
+  structureFingerprint: string;
   onSelect: (reference: FileStructureReference) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -32,21 +34,28 @@ export function FileStructureReferencesButton({
   const focusedStructureIdRef = useRef<string | null>(null);
   const previousReferenceIdsRef = useRef<string[]>([]);
   const query = useQuery({
-    queryKey: ["structure-references", pullRequestId, fileRef?.sourceOid, fileRef?.path],
+    queryKey: [
+      "structure-reference-index",
+      pullRequestId,
+      fileRef?.sourceOid,
+      structureFingerprint,
+    ],
     queryFn: async () => {
       const search = new URLSearchParams({
         sourceOid: fileRef!.sourceOid,
-        path: fileRef!.path,
       });
-      return await api<FileStructureReferencesResponse>(
-        `/api/pull-requests/${pullRequestId}/structure-references?${search.toString()}`,
+      return await api<FileStructureReferenceIndexResponse>(
+        `/api/pull-requests/${pullRequestId}/structure-reference-index?${search.toString()}`,
       );
     },
     enabled: fileRef !== null,
     retry: false,
     staleTime: Number.POSITIVE_INFINITY,
+    placeholderData: (previousData) =>
+      previousData?.index.sourceOid === fileRef?.sourceOid ? previousData : undefined,
   });
-  const references = query.data?.references ?? [];
+  const references =
+    query.data?.index.entries.find(({ path }) => path === fileRef?.path)?.references ?? [];
   const initialLoading = fileRef !== null && query.isPending;
   const refreshing = fileRef !== null && query.isFetching && query.data !== undefined;
   const initialFailed = fileRef !== null && query.isLoadingError;
