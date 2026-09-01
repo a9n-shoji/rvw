@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-01
+
 ### Added
 
 - repository fileから、そのfileをNode sourceとして参照するStructureをrename-awareに逆引きし、対応Nodeへ
