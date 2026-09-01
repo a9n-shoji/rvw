@@ -393,16 +393,27 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
         const target = root.querySelector<HTMLElement>(selector);
         return target ? getComputedStyle(target).color : null;
       };
+      const colorFor = (target: HTMLElement) => getComputedStyle(target).color;
+      const emphasisTextColors = (selector: string) => {
+        const emphasis = root.querySelector<HTMLElement>(selector);
+        if (!emphasis) return null;
+        const tokens = [...emphasis.querySelectorAll<HTMLElement>("span")];
+        return [
+          ...new Set((tokens.length > 0 ? tokens : [emphasis]).map((token) => colorFor(token))),
+        ];
+      };
       return {
         background: getComputedStyle(element).backgroundColor,
         additionLine: background('[data-line][data-line-type="change-addition"]'),
         additionNumber: background('[data-column-number][data-line-type="change-addition"]'),
         additionNumberText: color('[data-column-number][data-line-type="change-addition"]'),
         additionWord: background('[data-line-type="change-addition"] [data-diff-span]'),
+        additionWordText: emphasisTextColors('[data-line-type="change-addition"] [data-diff-span]'),
         deletionLine: background('[data-line][data-line-type="change-deletion"]'),
         deletionNumber: background('[data-column-number][data-line-type="change-deletion"]'),
         deletionNumberText: color('[data-column-number][data-line-type="change-deletion"]'),
         deletionWord: background('[data-line-type="change-deletion"] [data-diff-span]'),
+        deletionWordText: emphasisTextColors('[data-line-type="change-deletion"] [data-diff-span]'),
       };
     });
   await actionsMenuButton.click();
@@ -414,10 +425,12 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
     additionNumber: "rgb(172, 238, 187)",
     additionNumberText: "rgb(31, 35, 40)",
     additionWord: "rgb(172, 238, 187)",
+    additionWordText: ["rgb(31, 35, 40)"],
     deletionLine: "rgb(255, 235, 233)",
     deletionNumber: "rgb(255, 206, 203)",
     deletionNumberText: "rgb(31, 35, 40)",
     deletionWord: "rgb(255, 206, 203)",
+    deletionWordText: ["rgb(31, 35, 40)"],
   });
   await actionsMenuButton.click();
   actionsMenu = page.getByRole("menu");
@@ -428,10 +441,12 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
     additionNumber: "rgba(63, 185, 80, 0.3)",
     additionNumberText: "rgb(240, 246, 252)",
     additionWord: "rgba(46, 160, 67, 0.4)",
+    additionWordText: ["rgb(240, 246, 252)"],
     deletionLine: "rgba(248, 81, 73, 0.1)",
     deletionNumber: "rgba(248, 81, 73, 0.3)",
     deletionNumberText: "rgb(240, 246, 252)",
     deletionWord: "rgba(248, 81, 73, 0.4)",
+    deletionWordText: ["rgb(240, 246, 252)"],
   });
   await actionsMenuButton.click();
   actionsMenu = page.getByRole("menu");

@@ -379,6 +379,8 @@ empty fileは従来どおり明示的に扱う。
   file-level comment action、line/range selectionを提供する。コード本文はbrowser標準の文字列選択と
   copyを維持し、line/range comment selectionはline numberとgutter actionから開始する。file headerは
   paneのscroll中もtab列直下へsticky表示する。
+- diffの追加・削除行内で濃い背景色によって強調する変更範囲は、tokenごとのsyntax色を使わず、
+  light/dark themeの標準前景色で表示する。
 - diffのline selectionはold/new sideを明示し、両sideをまたぐ一つのcommentを作成しない。
 - `Hide Whitespace`はtop bar右端の`...` menu内へ置き、全文表示ではdisabledにする。browser内だけの
   一時的な表示設定とし、改行を除く空白を無視して差分を計算する。切り替え前後で同じsource lineを
