@@ -147,6 +147,7 @@ const viewerStyle = {
   "--rvw-diff-deletion-line-bg": "light-dark(#ffebe9, rgb(248 81 73 / 0.1))",
   "--rvw-diff-deletion-number-bg": "light-dark(#ffcecb, rgb(248 81 73 / 0.3))",
   "--rvw-diff-deletion-word-bg": "light-dark(#ffcecb, rgb(248 81 73 / 0.4))",
+  "--rvw-diff-emphasis-fg": "light-dark(#1f2328, #f0f6fc)",
   "--diffs-bg": "light-dark(#fff, #0d1117)",
   "--diffs-fg": "light-dark(#1f2328, #f0f6fc)",
   "--diffs-light": "#1f2328",
@@ -180,6 +181,12 @@ const viewerUnsafeCss = `
   [data-background]
     :is([data-gutter-buffer], [data-column-number])[data-line-type="change-deletion"] {
     --diffs-computed-diff-line-bg: var(--rvw-diff-deletion-number-bg) !important;
+  }
+  :is([data-line-type="change-addition"], [data-line-type="change-deletion"])
+    [data-diff-span],
+  :is([data-line-type="change-addition"], [data-line-type="change-deletion"])
+    [data-diff-span] span {
+    color: var(--rvw-diff-emphasis-fg) !important;
   }
   [data-change-icon="file"] {
     display: none;
