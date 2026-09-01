@@ -47,6 +47,9 @@ test("renders Mermaid diagrams and navigates from a comment reference to an inte
       await route.fulfill({
         json: {
           ok: true,
+          pullRequestContentFingerprint: url.searchParams.get(
+            "expectedPullRequestContentFingerprint",
+          ),
           document: {
             ref: { kind, pullRequestId },
             availability: "available",
@@ -66,6 +69,7 @@ test("renders Mermaid diagrams and navigates from a comment reference to an inte
       await route.fulfill({
         json: {
           ok: true,
+          pullRequestContentFingerprint: null,
           document: {
             ref: { kind, pullRequestId, sourceOid, path },
             availability: "available",

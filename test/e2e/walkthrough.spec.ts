@@ -2286,6 +2286,8 @@ test("comments on selected walkthrough lines and marks them Outdated after repla
   const sidebarLineComment = page.locator(".comment-list-item").filter({
     hasText: "この責務の説明をもう少し具体化してください。",
   });
+  await expect(sidebarLineComment.getByText(updatedTitle, { exact: false })).toBeVisible();
+  await expect(sidebarLineComment.getByText(primaryWalkthrough, { exact: true })).toHaveCount(0);
   await expect(sidebarLineComment.locator(".badge--outdated")).toBeVisible();
   await expect(
     sidebarLineComment.getByText("コメント作成時の選択範囲", { exact: true }),
@@ -2348,7 +2350,9 @@ test("removes both pane copies when a walkthrough is deleted externally", async 
   );
   expect(response.ok()).toBe(true);
   await expect(page.getByRole("tab", { name: title })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+  await expect(
+    page.locator(".pr-heading").getByRole("heading", { name: /^Fixture review(?: updated)?$/ }),
+  ).toBeVisible();
 });
 
 test("keeps same-Walkthrough reply input isolated by pane and moves it with the tab", async ({
@@ -2749,9 +2753,13 @@ test("renders safe context-bound Markdown in sidebar and inline comment posts", 
   await expect(
     page.locator('diffs-container [data-line="1"][data-selected-line="first"]'),
   ).toBeVisible();
-  await expect(
-    page.locator('diffs-container [data-line="2"][data-selected-line="last"]'),
-  ).toBeVisible();
+  // @pierre/diffs moves the `last` marker to a following annotation row when
+  // the range ends on a line with an inline comment. The code row remains
+  // selected with an empty marker in that case.
+  await expect(page.locator('diffs-container [data-line="2"][data-selected-line]')).toHaveAttribute(
+    "data-selected-line",
+    /^(?:last)?$/,
+  );
   await expect(commitPicker).toHaveAttribute("aria-label", initialCommitSelection!);
 
   await page.getByRole("checkbox", { name: "変更のないファイルも表示" }).check();

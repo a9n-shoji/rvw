@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  CONTENT_FINGERPRINT_PATTERN,
   DEFAULT_PULL_REQUEST_LIST_LIMIT,
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
@@ -108,4 +109,29 @@ export const editCommentPostSchema = z.object({
     .min(1)
     .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
   references: z.array(codeReferenceInputSchema).optional(),
+});
+
+const placementDocumentRefSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("pull-request-markdown"), pullRequestId: z.uuid() }),
+  z.object({
+    kind: z.literal("repository-file"),
+    pullRequestId: z.uuid(),
+    sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
+    path: z.string().min(1),
+  }),
+]);
+
+export const resolveCommentPlacementsSchema = z.object({
+  commentIds: z.array(z.uuid()),
+  expectedPullRequestContentFingerprint: z.string().regex(CONTENT_FINGERPRINT_PATTERN).optional(),
+  destinations: z
+    .array(
+      z.union([
+        z.object({ kind: z.literal("document"), ref: placementDocumentRefSchema }),
+        z.object({ kind: z.literal("commit"), oid: z.string().regex(GIT_OBJECT_ID_PATTERN) }),
+        z.object({ kind: z.literal("walkthrough"), walkthroughId: z.uuid() }),
+      ]),
+    )
+    .min(1)
+    .max(4),
 });

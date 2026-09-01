@@ -7,6 +7,7 @@ import { z } from "zod";
 import type { RvwService } from "../application/rvw-service.js";
 import type { DiffDocumentRef, DocumentRef, StructureSourceLocator } from "../domain/models.js";
 import {
+  CONTENT_FINGERPRINT_PATTERN,
   GIT_OBJECT_ID_PATTERN,
   VIEWER_ID_HEADER,
   VIEWER_OPEN_LEASE_HEADER,
@@ -24,6 +25,7 @@ import {
   openPullRequestSchema,
   pullRequestListQuerySchema,
   replySchema,
+  resolveCommentPlacementsSchema,
   resetSchema,
   structureDeleteSchema,
   themePreferenceSchema,
@@ -44,6 +46,7 @@ export interface CreateAppOptions {
 }
 
 const oidSchema = z.string().regex(GIT_OBJECT_ID_PATTERN);
+const contentFingerprintSchema = z.string().regex(CONTENT_FINGERPRINT_PATTERN);
 const nonnegativeIndexSchema = z.coerce.number().int().nonnegative();
 const svgAssetContentSecurityPolicy =
   "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox";
@@ -55,6 +58,10 @@ function requiredQuery(value: string | undefined, name: string): string {
 
 function oidQuery(value: string | undefined, name: string): string {
   return oidSchema.parse(requiredQuery(value, name));
+}
+
+function optionalContentFingerprint(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : contentFingerprintSchema.parse(value);
 }
 
 function structureSourceLocator(query: {
@@ -190,7 +197,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
         rawViewerLease === undefined ? undefined : viewerIdSchema.parse(rawViewerLease),
       );
     }
-    return context.json({ ok: true, changeSequence: service.database.getChangeSequence() });
+    return context.json({ ok: true, ...service.database.getRevisionSnapshot() });
   });
 
   app.post("/api/meta/viewers/release", async (context) => {
@@ -236,9 +243,10 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     });
   });
 
-  app.post("/api/pull-requests/:id/refresh", async (context) =>
-    context.json({ ok: true, ...(await service.refreshPullRequest(context.req.param("id"))) }),
-  );
+  app.post("/api/pull-requests/:id/refresh", async (context) => {
+    const result = await service.refreshPullRequest(context.req.param("id"));
+    return context.json({ ok: true, ...result });
+  });
 
   app.post("/api/pull-requests/:id/reset", async (context) => {
     const input = resetSchema.parse(await context.req.json());
@@ -280,7 +288,13 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
 
   app.get("/api/pull-requests/:id/document", async (context) => {
     const ref = documentRefFromQuery(context.req.param("id"), context.req.query());
-    return context.json({ ok: true, document: await service.getDocument(ref) });
+    return context.json({
+      ok: true,
+      ...(await service.getDocumentWithContentFingerprint(
+        ref,
+        optionalContentFingerprint(context.req.query("expectedPullRequestContentFingerprint")),
+      )),
+    });
   });
 
   app.on(["GET", "HEAD"], "/api/pull-requests/:id/markdown-asset", async (context) => {
@@ -352,10 +366,16 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     const wholeWord = parseBooleanQuery(context.req.query("wholeWord"), "wholeWord");
     return context.json({
       ok: true,
-      ...(await service.search(context.req.param("id"), oid, query, {
-        matchCase,
-        wholeWord,
-      })),
+      ...(await service.search(
+        context.req.param("id"),
+        oid,
+        query,
+        {
+          matchCase,
+          wholeWord,
+        },
+        optionalContentFingerprint(context.req.query("expectedPullRequestContentFingerprint")),
+      )),
     });
   });
 
@@ -427,6 +447,14 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     });
   });
 
+  app.get("/api/pull-requests/:id/structure-reference-index", async (context) => {
+    const sourceOid = oidQuery(context.req.query("sourceOid"), "sourceOid");
+    return context.json({
+      ok: true,
+      index: await service.listFileStructureReferenceIndex(context.req.param("id"), sourceOid),
+    });
+  });
+
   app.get("/api/pull-requests/:id/structures/:structureId", (context) =>
     context.json({
       ok: true,
@@ -485,18 +513,19 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
 
   app.post("/api/comments/:id/posts", async (context) => {
     const input = replySchema.parse(await context.req.json());
+    const commentId = context.req.param("id");
+    const post = await service.replyToComment(commentId, {
+      body: input.body,
+      ...(input.relatedCommitOid === undefined ? {} : { relatedCommitOid: input.relatedCommitOid }),
+      ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
+      lastModifiedBy: "human",
+      ...(input.references === undefined ? {} : { references: input.references }),
+    });
     return context.json(
       {
         ok: true,
-        post: await service.replyToComment(context.req.param("id"), {
-          body: input.body,
-          ...(input.relatedCommitOid === undefined
-            ? {}
-            : { relatedCommitOid: input.relatedCommitOid }),
-          ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
-          lastModifiedBy: "human",
-          ...(input.references === undefined ? {} : { references: input.references }),
-        }),
+        post,
+        comment: service.database.getComment(commentId)!,
       },
       201,
     );
@@ -504,30 +533,36 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
 
   app.patch("/api/comments/:id/posts/:postId", async (context) => {
     const input = editCommentPostSchema.parse(await context.req.json());
+    const commentId = context.req.param("id");
+    const post =
+      input.references === undefined
+        ? await service.updateCommentPost(
+            commentId,
+            context.req.param("postId"),
+            input.body,
+            "human",
+          )
+        : await service.editCommentPost(commentId, context.req.param("postId"), {
+            body: input.body,
+            references: input.references,
+            lastModifiedBy: "human",
+          });
     return context.json({
       ok: true,
-      post:
-        input.references === undefined
-          ? await service.updateCommentPost(
-              context.req.param("id"),
-              context.req.param("postId"),
-              input.body,
-              "human",
-            )
-          : await service.editCommentPost(context.req.param("id"), context.req.param("postId"), {
-              body: input.body,
-              references: input.references,
-              lastModifiedBy: "human",
-            }),
+      post,
+      comment: service.database.getComment(commentId)!,
     });
   });
 
-  app.delete("/api/comments/:id/posts/:postId", (context) =>
-    context.json({
+  app.delete("/api/comments/:id/posts/:postId", (context) => {
+    const commentId = context.req.param("id");
+    const deleted = service.deleteReply(commentId, context.req.param("postId"));
+    return context.json({
       ok: true,
-      deleted: service.deleteReply(context.req.param("id"), context.req.param("postId")),
-    }),
-  );
+      deleted,
+      comment: service.database.getComment(commentId)!,
+    });
+  });
 
   app.post("/api/comments/:id/resolve", (context) =>
     context.json({ ok: true, comment: service.setCommentResolved(context.req.param("id"), true) }),
@@ -541,6 +576,19 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     context.json({ ok: true, deleted: service.deleteComment(context.req.param("id")) }),
   );
 
+  app.post("/api/pull-requests/:pullRequestId/comment-placements/resolve", async (context) => {
+    const input = resolveCommentPlacementsSchema.parse(await context.req.json());
+    return context.json({
+      ok: true,
+      ...(await service.resolveCommentPlacements(
+        context.req.param("pullRequestId"),
+        input.commentIds,
+        input.destinations,
+        input.expectedPullRequestContentFingerprint,
+      )),
+    });
+  });
+
   app.get("/api/comments/:id/placement", async (context) => {
     const comment = service.database.getComment(context.req.param("id"));
     if (!comment)
@@ -552,22 +600,26 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
         placement: { outdated: true as const, range: null, path: null },
       });
     }
+    let destination;
     if (context.req.query("kind") === "commit") {
       const oid = oidQuery(context.req.query("oid"), "oid");
-      return context.json({
-        ok: true,
-        placement: await service.placeCommentAtCommit(comment, oid),
-      });
-    }
-    if (context.req.query("kind") === "walkthrough") {
+      destination = { kind: "commit" as const, oid };
+    } else if (context.req.query("kind") === "walkthrough") {
       const walkthroughId = requiredQuery(context.req.query("walkthroughId"), "walkthroughId");
-      return context.json({
-        ok: true,
-        placement: service.placeWalkthroughComment(comment, walkthroughId),
-      });
+      destination = { kind: "walkthrough" as const, walkthroughId };
+    } else {
+      destination = {
+        kind: "document" as const,
+        ref: documentRefFromQuery(pullRequestId, context.req.query()),
+      };
     }
-    const destination = documentRefFromQuery(pullRequestId, context.req.query());
-    return context.json({ ok: true, placement: await service.placeComment(comment, destination) });
+    const placement =
+      destination.kind === "commit"
+        ? await service.placeCommentAtCommit(comment, destination.oid)
+        : destination.kind === "walkthrough"
+          ? service.placeWalkthroughComment(comment, destination.walkthroughId)
+          : await service.placeComment(comment, destination.ref);
+    return context.json({ ok: true, placement });
   });
 
   if (options.staticDirectory && existsSync(options.staticDirectory)) {

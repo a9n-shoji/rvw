@@ -38,7 +38,10 @@ export interface MermaidReviewWorkspace {
     sourceOid: string;
     onRendered: (container: HTMLDivElement) => void;
     referenceFromTarget: (target: EventTarget | null) => CodeReference | undefined;
-    resolveForPeek?: (reference: CodeReference) => Promise<MermaidReferencePeekResolution>;
+    resolveForPeek?: (
+      reference: CodeReference,
+      signal?: AbortSignal,
+    ) => Promise<MermaidReferencePeekResolution>;
     onOpenInReview: (reference: CodeReference, openInRightPane: boolean) => void;
   };
 }
@@ -51,7 +54,10 @@ interface DiagramSize {
 interface ReferencePeek {
   sourceOid: string;
   reference: CodeReference;
-  resolveForPeek?: (reference: CodeReference) => Promise<MermaidReferencePeekResolution>;
+  resolveForPeek?: (
+    reference: CodeReference,
+    signal?: AbortSignal,
+  ) => Promise<MermaidReferencePeekResolution>;
   onOpenInReview?: (reference: CodeReference, openInRightPane: boolean) => void;
 }
 
@@ -442,10 +448,10 @@ export function MermaidExpandedView({
       reference?.reference.endLine,
       Boolean(reference?.resolveForPeek),
     ],
-    queryFn: async (): Promise<MermaidReferencePeekResolution> => {
+    queryFn: async ({ signal }): Promise<MermaidReferencePeekResolution> => {
       if (!reference || !review) throw new Error("参照先がありません。");
       if (reference.resolveForPeek) {
-        return await reference.resolveForPeek(reference.reference);
+        return await reference.resolveForPeek(reference.reference, signal);
       }
       const referenceDocument = {
         kind: "repository-file",
@@ -453,7 +459,7 @@ export function MermaidExpandedView({
         sourceOid: reference.sourceOid,
         path: reference.reference.path,
       } as const;
-      const { document } = await api<DocumentResponse>(documentUrl(referenceDocument));
+      const { document } = await api<DocumentResponse>(documentUrl(referenceDocument), { signal });
       return {
         sourceOid: reference.sourceOid,
         reference: reference.reference,

@@ -49,6 +49,11 @@ import {
   readCommentDraft,
   writeCommentDraft,
 } from "../comment-draft-store.js";
+import {
+  cancelCommentQuery,
+  invalidateCommentQuery,
+  putCommentInCache,
+} from "../comment-query-cache.js";
 import type {
   ActiveDocument,
   DocumentPaneId,
@@ -58,11 +63,13 @@ import type { ReferenceStaleness } from "../document-viewer-state.js";
 import { diffForRenderer, fileContentsForRenderer } from "../file-rendering.js";
 import {
   api,
+  ApiError,
+  type CommentPlacementBatchResponse,
   documentUrl,
   type DiffResponse,
   type DocumentResponse,
   jsonRequest,
-  type PlacementResponse,
+  resolveCommentPlacements,
 } from "../api.js";
 import { DIFF_NAVIGATION_CONTEXT_LINES } from "../diff-navigation.js";
 import {
@@ -346,15 +353,6 @@ function restoreDiffViewportAnchor(surface: HTMLElement | null, anchor: DiffView
   }
   const currentOffset = target.getBoundingClientRect().top - diffViewportTop(pane);
   pane.scrollTop += currentOffset - anchor.topOffset;
-}
-
-function params(ref: DocumentRef): string {
-  const search = new URLSearchParams({ kind: ref.kind, pullRequestId: ref.pullRequestId });
-  if (ref.kind === "repository-file") {
-    search.set("sourceOid", ref.sourceOid);
-    search.set("path", ref.path);
-  }
-  return search.toString();
 }
 
 function markdownNodeText(node: ReactNode): string {
@@ -947,10 +945,6 @@ function renderRepositoryMarkdown({
   );
 }
 
-function placementUrl(commentId: string, ref: DocumentRef): string {
-  return `/api/comments/${commentId}/placement?${params(ref)}`;
-}
-
 function fileValue(document: DocumentContent | null, fallbackName: string) {
   if (!document || document.availability !== "available") return null;
   const name = document.ref.kind === "repository-file" ? document.ref.path : fallbackName;
@@ -992,6 +986,9 @@ export function DocumentViewer({
   latestHeadOid,
   selectedOid,
   oldOid,
+  pullRequestContentFingerprint,
+  structureFingerprint,
+  structuresLoaded,
   activeDocument,
   displayMode,
   diffStyle,
@@ -1017,6 +1014,9 @@ export function DocumentViewer({
   latestHeadOid: string;
   selectedOid: string;
   oldOid: string | null;
+  pullRequestContentFingerprint: string | undefined;
+  structureFingerprint: string;
+  structuresLoaded: boolean;
   activeDocument: ActiveDocument;
   displayMode: DisplayMode;
   diffStyle: "unified" | "split";
@@ -1238,14 +1238,29 @@ export function DocumentViewer({
       : Boolean(
           (oldPath && isSupportedImagePath(oldPath)) || (newPath && isSupportedImagePath(newPath)),
         ));
+  const fullDocumentContentFingerprint =
+    fullRef.kind === "pull-request-markdown" ? pullRequestContentFingerprint : null;
   const fullQuery = useQuery({
-    queryKey: ["document", fullRef],
-    queryFn: async () => (await api<DocumentResponse>(documentUrl(fullRef))).document,
+    queryKey: ["document", fullRef, fullDocumentContentFingerprint],
+    queryFn: async ({ signal }) => {
+      const response = await api<DocumentResponse>(
+        documentUrl(fullRef, fullDocumentContentFingerprint ?? undefined),
+        { signal },
+      );
+      if (
+        fullDocumentContentFingerprint !== null &&
+        response.pullRequestContentFingerprint !== fullDocumentContentFingerprint
+      ) {
+        throw new ApiError("Pull Request本文が更新されています。", "STALE_CONTENT");
+      }
+      return response.document;
+    },
     enabled:
       effectiveDisplayMode === "full" &&
       !repositoryImageViewerActive &&
-      !fullViewUnavailableMessage,
-    staleTime: fullRef.kind === "repository-file" ? Number.POSITIVE_INFINITY : 0,
+      !fullViewUnavailableMessage &&
+      fullDocumentContentFingerprint !== undefined,
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const diffSearch = new URLSearchParams({ kind: activeDocument.kind });
   if (activeDocument.kind === "repository-file") {
@@ -1256,15 +1271,20 @@ export function DocumentViewer({
   }
   const diffQuery = useQuery({
     queryKey: ["diff", pullRequestId, oldOid, selectedOid, activeDocument],
-    queryFn: async () =>
-      (await api<DiffResponse>(`/api/pull-requests/${pullRequestId}/diff?${diffSearch.toString()}`))
-        .diff,
+    queryFn: async ({ signal }) =>
+      (
+        await api<DiffResponse>(
+          `/api/pull-requests/${pullRequestId}/diff?${diffSearch.toString()}`,
+          { signal },
+        )
+      ).diff,
     enabled:
       effectiveDisplayMode !== "full" &&
       !repositoryImageViewerActive &&
       activeDocument.kind === "repository-file" &&
       Boolean(oldOid) &&
       oldOid !== selectedOid,
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const fullFile = useMemo(
     () => fileValue(fullQuery.data ?? null, "Pull Request.md"),
@@ -1341,100 +1361,189 @@ export function DocumentViewer({
       new: diffQuery.data?.new?.ref ?? null,
     };
   }, [effectiveDisplayMode, fullRef, diffQuery.data, repositoryImageRefs]);
+  const placementDestinations = useMemo(
+    () =>
+      [renderedRefs.new, renderedRefs.old].flatMap((ref) =>
+        ref ? [{ kind: "document" as const, ref }] : [],
+      ),
+    [renderedRefs],
+  );
+  const placementComments = useMemo(() => {
+    const documentKinds = new Set(
+      [renderedRefs.new, renderedRefs.old].flatMap((ref) => (ref ? [ref.kind] : [])),
+    );
+    return comments
+      .filter(
+        (comment) =>
+          comment.target.kind === "document" && documentKinds.has(comment.target.documentKind),
+      )
+      .sort((left, right) => left.id.localeCompare(right.id));
+  }, [comments, renderedRefs]);
+  const commentTargetFingerprint = useMemo(
+    () => placementComments.map((comment) => [comment.id, comment.target]),
+    [placementComments],
+  );
+  const annotationContentFingerprint =
+    renderedRefs.new?.kind === "pull-request-markdown" ||
+    renderedRefs.old?.kind === "pull-request-markdown"
+      ? pullRequestContentFingerprint
+      : null;
   const annotationQuery = useQuery({
     queryKey: [
-      "annotations",
-      comments.map((comment) => `${comment.id}:${comment.updatedAt}`),
+      "comment-placements",
+      "document",
+      pullRequestId,
+      commentTargetFingerprint,
       renderedRefs,
-      renderedRefs.new?.kind === "pull-request-markdown" ? fullQuery.data?.text : null,
+      annotationContentFingerprint,
     ],
-    queryFn: async () => {
-      const fileAnnotations: LineAnnotation<ViewerAnnotation>[] = [];
-      const diffAnnotations: DiffLineAnnotation<ViewerAnnotation>[] = [];
-      const markdownComments: Array<{
-        comment: ReviewComment;
-        placement: CommentPlacement;
-      }> = [];
-      const imageComments: {
-        old: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
-        new: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
-      } = { old: [], new: [] };
-      if (repositoryImageRefs) {
-        for (const comment of comments) {
-          const exactOldTarget =
-            comment.target.kind === "document" &&
-            comment.target.documentKind === "repository-file" &&
-            repositoryImageRefs.old?.kind === "repository-file" &&
-            comment.target.sourceOid === repositoryImageRefs.old.sourceOid &&
-            comment.target.path === repositoryImageRefs.old.path;
-          const candidates = exactOldTarget
-            ? ([
-                { side: "old" as const, ref: repositoryImageRefs.old },
-                { side: "new" as const, ref: repositoryImageRefs.new },
-              ] as const)
-            : ([
-                { side: "new" as const, ref: repositoryImageRefs.new },
-                { side: "old" as const, ref: repositoryImageRefs.old },
-              ] as const);
-          for (const candidate of candidates) {
-            if (!candidate.ref) continue;
-            const { placement } = await api<PlacementResponse>(
-              placementUrl(comment.id, candidate.ref),
-            );
-            if (!placement.outdated && placement.path === candidate.ref.path) {
-              imageComments[candidate.side].push({ comment, placement });
-              break;
-            }
-          }
-        }
-        return { fileAnnotations, diffAnnotations, markdownComments, imageComments };
-      }
+    queryFn: async ({ signal }) =>
+      ({
+        contentFingerprint: annotationContentFingerprint,
+        response: await resolveCommentPlacements(
+          pullRequestId,
+          placementComments.map(({ id }) => id),
+          placementDestinations,
+          signal,
+          annotationContentFingerprint ?? undefined,
+        ),
+      }) satisfies {
+        contentFingerprint: string | null | undefined;
+        response: CommentPlacementBatchResponse;
+      },
+    enabled:
+      placementComments.length > 0 &&
+      placementDestinations.length > 0 &&
+      annotationContentFingerprint !== undefined,
+    staleTime: Number.POSITIVE_INFINITY,
+    placeholderData: (previousData) =>
+      previousData?.contentFingerprint === annotationContentFingerprint ? previousData : undefined,
+  });
+  const retainedAnnotationData = useRef(annotationQuery.data);
+  useLayoutEffect(() => {
+    if (annotationQuery.data?.contentFingerprint === annotationContentFingerprint) {
+      retainedAnnotationData.current = annotationQuery.data;
+    }
+  }, [annotationContentFingerprint, annotationQuery.data]);
+  const annotationQueryData = annotationQuery.data;
+  const retainedAnnotationQueryData = retainedAnnotationData.current;
+  const currentAnnotationResponse =
+    annotationQueryData && annotationQueryData.contentFingerprint === annotationContentFingerprint
+      ? annotationQueryData.response
+      : retainedAnnotationQueryData &&
+          retainedAnnotationQueryData.contentFingerprint === annotationContentFingerprint
+        ? retainedAnnotationQueryData.response
+        : undefined;
+  useLayoutEffect(() => {
+    if (!optimisticComment || annotationQuery.isFetching || !currentAnnotationResponse) return;
+    const commentId = optimisticComment.comment.id;
+    const settled =
+      currentAnnotationResponse.comments.some((result) => result.commentId === commentId) ||
+      currentAnnotationResponse.missingCommentIds.includes(commentId);
+    if (!settled) return;
+    loadedOptimisticCommentId.current = commentId;
+    setOptimisticComment(null);
+  }, [annotationQuery.isFetching, currentAnnotationResponse, optimisticComment]);
+  const annotationData = useMemo(() => {
+    const fileAnnotations: LineAnnotation<ViewerAnnotation>[] = [];
+    const diffAnnotations: DiffLineAnnotation<ViewerAnnotation>[] = [];
+    const markdownComments: Array<{
+      comment: ReviewComment;
+      placement: CommentPlacement;
+    }> = [];
+    const imageComments: {
+      old: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+      new: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
+    } = { old: [], new: [] };
+    const placementsByComment = new Map(
+      currentAnnotationResponse?.comments.map(({ commentId, placements }) => [
+        commentId,
+        placements,
+      ]) ?? [],
+    );
+    const placementFor = (commentId: string, ref: DocumentRef): CommentPlacement | null =>
+      placementsByComment
+        .get(commentId)
+        ?.find(
+          ({ destination }) =>
+            destination.kind === "document" &&
+            JSON.stringify(destination.ref) === JSON.stringify(ref),
+        )?.placement ?? null;
+    if (repositoryImageRefs) {
       for (const comment of comments) {
-        let added = false;
-        if (renderedRefs.new) {
-          const { placement } = await api<PlacementResponse>(
-            placementUrl(comment.id, renderedRefs.new),
-          );
-          if (
-            !placement.outdated &&
-            placement.path ===
-              (renderedRefs.new.kind === "repository-file"
-                ? renderedRefs.new.path
-                : "Pull Request.md")
-          ) {
-            const lineNumber = placement.range?.endLine ?? 0;
-            const metadata = { kind: "comment", comment, placement } as const;
-            if (effectiveDisplayMode === "full") {
-              fileAnnotations.push({ lineNumber, metadata });
-              markdownComments.push({ comment, placement });
-            } else diffAnnotations.push({ side: "additions", lineNumber, metadata });
-            added = true;
-          }
-        }
-        if (!added && renderedRefs.old) {
-          const { placement } = await api<PlacementResponse>(
-            placementUrl(comment.id, renderedRefs.old),
-          );
-          if (
-            !placement.outdated &&
-            placement.path ===
-              (renderedRefs.old.kind === "repository-file"
-                ? renderedRefs.old.path
-                : "Pull Request.md")
-          ) {
-            diffAnnotations.push({
-              side: "deletions",
-              lineNumber: placement.range?.endLine ?? 0,
-              metadata: { kind: "comment", comment, placement },
-            });
+        const exactOldTarget =
+          comment.target.kind === "document" &&
+          comment.target.documentKind === "repository-file" &&
+          repositoryImageRefs.old?.kind === "repository-file" &&
+          comment.target.sourceOid === repositoryImageRefs.old.sourceOid &&
+          comment.target.path === repositoryImageRefs.old.path;
+        const candidates = exactOldTarget
+          ? ([
+              { side: "old" as const, ref: repositoryImageRefs.old },
+              { side: "new" as const, ref: repositoryImageRefs.new },
+            ] as const)
+          : ([
+              { side: "new" as const, ref: repositoryImageRefs.new },
+              { side: "old" as const, ref: repositoryImageRefs.old },
+            ] as const);
+        for (const candidate of candidates) {
+          if (!candidate.ref) continue;
+          const placement = placementFor(comment.id, candidate.ref);
+          if (placement && !placement.outdated && placement.path === candidate.ref.path) {
+            imageComments[candidate.side].push({ comment, placement });
+            break;
           }
         }
       }
       return { fileAnnotations, diffAnnotations, markdownComments, imageComments };
-    },
-    enabled: Boolean(renderedRefs.new || renderedRefs.old),
-    placeholderData: (previousData) => previousData,
-  });
+    }
+    for (const comment of comments) {
+      let added = false;
+      if (renderedRefs.new) {
+        const placement = placementFor(comment.id, renderedRefs.new);
+        if (
+          placement &&
+          !placement.outdated &&
+          placement.path ===
+            (renderedRefs.new.kind === "repository-file"
+              ? renderedRefs.new.path
+              : "Pull Request.md")
+        ) {
+          const lineNumber = placement.range?.endLine ?? 0;
+          const metadata = { kind: "comment", comment, placement } as const;
+          if (effectiveDisplayMode === "full") {
+            fileAnnotations.push({ lineNumber, metadata });
+            markdownComments.push({ comment, placement });
+          } else diffAnnotations.push({ side: "additions", lineNumber, metadata });
+          added = true;
+        }
+      }
+      if (!added && renderedRefs.old) {
+        const placement = placementFor(comment.id, renderedRefs.old);
+        if (
+          placement &&
+          !placement.outdated &&
+          placement.path ===
+            (renderedRefs.old.kind === "repository-file"
+              ? renderedRefs.old.path
+              : "Pull Request.md")
+        ) {
+          diffAnnotations.push({
+            side: "deletions",
+            lineNumber: placement.range?.endLine ?? 0,
+            metadata: { kind: "comment", comment, placement },
+          });
+        }
+      }
+    }
+    return { fileAnnotations, diffAnnotations, markdownComments, imageComments };
+  }, [
+    comments,
+    currentAnnotationResponse,
+    effectiveDisplayMode,
+    renderedRefs,
+    repositoryImageRefs,
+  ]);
 
   const createMutation = useMutation({
     mutationFn: async ({
@@ -1454,7 +1563,9 @@ export function DocumentViewer({
           authorLabel: "You",
         }),
       ),
-    onSuccess: async ({ comment }, { target, location }) => {
+    onMutate: async () => await cancelCommentQuery(queryClient, pullRequestId),
+    onError: () => invalidateCommentQuery(queryClient, pullRequestId),
+    onSuccess: ({ comment }, { target, location }) => {
       window.getSelection()?.removeAllRanges();
       const range =
         target.kind === "document" && target.startLine !== null && target.endLine !== null
@@ -1477,8 +1588,7 @@ export function DocumentViewer({
       setSelectionPreview(null);
       setMarkdownComposerOpen(false);
       setFileComposerOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["comments"] });
-      await queryClient.invalidateQueries({ queryKey: ["change-sequence"] });
+      putCommentInCache(queryClient, pullRequestId, comment);
     },
   });
 
@@ -1642,15 +1752,15 @@ export function DocumentViewer({
     [resetCreateMutation],
   );
   const { fileAnnotations, diffAnnotations } = useMemo(() => {
-    const fileAnnotations = [...(annotationQuery.data?.fileAnnotations ?? [])];
-    const diffAnnotations = [...(annotationQuery.data?.diffAnnotations ?? [])];
+    const fileAnnotations = [...annotationData.fileAnnotations];
+    const diffAnnotations = [...annotationData.diffAnnotations];
     const optimisticAlreadyLoaded =
       [...fileAnnotations, ...diffAnnotations].some(
         (annotation) =>
           annotation.metadata?.kind === "comment" &&
           annotation.metadata.comment.id === optimisticComment?.comment.id,
       ) ||
-      annotationQuery.data?.markdownComments.some(
+      annotationData.markdownComments.some(
         ({ comment }) => comment.id === optimisticComment?.comment.id,
       );
     if (
@@ -1693,9 +1803,9 @@ export function DocumentViewer({
       }
     }
     return { fileAnnotations, diffAnnotations };
-  }, [annotationQuery.data, effectiveDisplayMode, optimisticComment, selection]);
+  }, [annotationData, effectiveDisplayMode, optimisticComment, selection]);
   const markdownComments = useMemo(() => {
-    const placed = [...(annotationQuery.data?.markdownComments ?? [])];
+    const placed = [...annotationData.markdownComments];
     if (
       optimisticComment &&
       !placed.some(({ comment }) => comment.id === optimisticComment.comment.id)
@@ -1706,11 +1816,11 @@ export function DocumentViewer({
       });
     }
     return placed;
-  }, [annotationQuery.data?.markdownComments, optimisticComment]);
+  }, [annotationData.markdownComments, optimisticComment]);
   const repositoryImageComments = useMemo(() => {
     const placed = {
-      old: [...(annotationQuery.data?.imageComments.old ?? [])],
-      new: [...(annotationQuery.data?.imageComments.new ?? [])],
+      old: [...annotationData.imageComments.old],
+      new: [...annotationData.imageComments.new],
     };
     if (
       optimisticComment &&
@@ -1729,7 +1839,7 @@ export function DocumentViewer({
       });
     }
     return placed;
-  }, [annotationQuery.data?.imageComments, optimisticComment]);
+  }, [annotationData.imageComments, optimisticComment]);
   const markdownCommentAnnotations = useMemo<MarkdownCommentAnnotation[]>(
     () =>
       markdownComments.map(({ comment, placement }) => ({
@@ -1787,19 +1897,16 @@ export function DocumentViewer({
   useLayoutEffect(() => {
     if (!optimisticComment) return;
     const loaded =
-      [
-        ...(annotationQuery.data?.fileAnnotations ?? []),
-        ...(annotationQuery.data?.diffAnnotations ?? []),
-      ].some(
+      [...annotationData.fileAnnotations, ...annotationData.diffAnnotations].some(
         (annotation) =>
           annotation.metadata?.kind === "comment" &&
           annotation.metadata.comment.id === optimisticComment.comment.id,
       ) ||
-      annotationQuery.data?.markdownComments.some(
+      annotationData.markdownComments.some(
         ({ comment }) => comment.id === optimisticComment.comment.id,
       );
     if (loaded) loadedOptimisticCommentId.current = optimisticComment.comment.id;
-  }, [annotationQuery.data, optimisticComment]);
+  }, [annotationData, optimisticComment]);
   useLayoutEffect(() => {
     const anchor = pendingViewportAnchor.current;
     pendingViewportAnchor.current = null;
@@ -1948,6 +2055,8 @@ export function DocumentViewer({
       <FileStructureReferencesButton
         pullRequestId={pullRequestId}
         fileRef={fileLevelRef}
+        structureFingerprint={structureFingerprint}
+        structuresLoaded={structuresLoaded}
         onSelect={onOpenStructureReference}
       />
     ) : null;

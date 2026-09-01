@@ -2431,3 +2431,122 @@ This supersedes the browser-tab confirmation portion of the 2026-08-09 document-
 - Closing or reloading a tab with a comment draft no longer receives a last-moment browser warning.
 - Navigation is predictable and remains under browser control without a generic interruption.
 - Best-effort viewer release and timeout fallback continue to clean up automatically opened servers.
+
+## 2026-09-01: Bound viewer work by destinations and domain revisions
+
+### Problem
+
+Comment placement was fetched once per comment and destination. A two-sided document could therefore
+issue two HTTP requests and repeat commit validation, changed-file discovery, and document reads for
+every comment. The collapsed comment sidebar still mounted all cards and started another request per
+thread. Structure backlinks repeated a tree and copy-aware diff for each opened file. Finally, one
+global change sequence invalidated PR documents, comments, Walkthroughs, Structures, search, and
+placement together; a reply could re-run immutable Git reads and reconstruct unrelated viewer state.
+
+### Choice
+
+Make placement a bounded application operation. One batch accepts ordered comment IDs and up to four
+document, commit, or Walkthrough destinations. It preserves first-seen comment order, reports missing
+IDs, accepts the complete comment set held by the viewer without a 500-item product limit, uses a
+fixed comment concurrency of four, and shares request-scoped Promise caches for commit
+availability, changed-file pairs, and documents. Document panes send new and old destinations
+together and include only repository-file or Pull Request Markdown targets matching the pane kind.
+An expanded sidebar sends the stable set of all non-PR targets independently of its unresolved /
+resolved presentation filter, and the browser no longer uses the compatible single-comment endpoint.
+Placement query identity contains comment ID plus target,
+destination identity, and the relevant mutable-document fingerprint or revision; post timestamps are deliberately
+excluded. Batch input is sorted by stable comment ID so `updatedAt` display reordering does not change
+placement identity, and current comment content is joined after placement lookup.
+
+Keep the Comments shell mounted while collapsed so PR-level composer text, filter, and selection
+state survive a temporary collapse. Gate the expensive thread list and placement query on expansion.
+PR-wide comments are excluded from both placement batches because they have no document annotation.
+
+Compute Structure backlinks as one source-OID reverse index keyed by the current Structure
+ID/`updatedAt` fingerprint. The index returns before Git work when there are no Structures, reads the
+target tree once, and runs one copy-aware comparison per distinct Structure source/target pair. The
+path endpoint remains a compatibility projection of the same index. Wait for the Structure summary
+list before enabling the browser query, and let fingerprint changes be its only refresh trigger; the
+domain poll and successful Structure deletion do not also invalidate the old fingerprint query.
+
+Keep the global change sequence for compatibility and add independent Pull Request metadata,
+Pull Request title/body content, comment, Walkthrough, and Structure revisions. Initialize them from
+the existing sequence during migration and advance only the domains changed by each logical
+transaction. No-op synchronization advances neither Pull Request revision, and status-only changes do
+not discard PR Markdown or search. Location changes do not discard PR Markdown, while repository search
+is handled with the other Git-backed queries below. Viewer polling invalidates only queries owned by
+changed domains. After a Pull Request refetch, compare the saved local repository path and Git common directory;
+only an actual location change invalidates that PR's Git-backed tree, changed-file, repository-document,
+diff, search, Structure-index, Mermaid-peek, and repository-file placement queries. This repairs cached
+missing/object availability without putting the broad Pull Request revision into every immutable query
+key or making status changes repeat Git work. Comment mutations cancel the exact in-flight query and
+propagate its abort signal to HTTP, then update the stable Pull-Request comment cache from the canonical
+thread. The updater preserves
+unrelated object identities, restores `updatedAt DESC` order, and seeds a cache that was not yet loaded.
+Immediately after that local update, start but do not await a comments-query invalidation as a cheap
+consistency barrier. Errors invalidate the same query. Do not infer causality from a client-side local
+revision credit: the barrier recovers the complete initial list, external writes, reversed concurrent
+mutation responses, and server ordering from the canonical server snapshot. Walkthrough comment labels
+derive their mutable title from the current summary by stable Walkthrough ID. Immutable OID/path/range
+queries use infinite freshness only when their complete identity is in the key. Placement batch queries
+also propagate cancellation through their HTTP request. Delay the stable comments query until the
+initial domain-revision snapshot exists so an external write cannot be swallowed by baseline adoption.
+Read the global change sequence and all domain revisions in one SQL snapshot. Pull Request views read
+their row and revision vector in one short transaction before Git commit enumeration. Refresh responses
+therefore never combine an older row with a newer revision vector. Before adopting a refresh, cancel the
+stable PR and heartbeat queries and reject a response older than the already observed sequence. Keep the
+PR query infinitely fresh so focus does not repeat commit enumeration.
+
+Use a SHA-256 fingerprint of the exact `Pull Request.md` title/body text as the per-PR content token.
+PR Markdown document, search, and placement requests send the expected fingerprint and responses identify
+the fingerprint actually read; the server rejects a mismatch with `STALE_CONTENT`. They do not retain
+document or placement data across that fingerprint boundary, while placement continuity remains available
+for comment-set changes inside one content epoch. Sidebar
+placement includes the Walkthrough revision only when a Walkthrough target participates. Batch sync
+advances the comments revision only when a reply was newly inserted or resolution actually changed;
+an idempotent retry reuses its post without producing revision churn. When a document placement key
+changes with the current target set, retain the previous response while loading and join only comment IDs
+still present in the current comment list, keeping surviving annotations visible without resurrecting a
+deleted thread.
+
+Take the initial domain-revision snapshot before enabling Pull Request metadata, comments,
+Walkthrough, or Structure queries. When a later revision or repository-location change invalidates a
+stable query key, cancel its current fetch before invalidating it. This creates a new fetch generation
+even when the old query has no cached data, so completion of an older initial request cannot clear the
+newer invalidation. Propagate the query abort signal through mutable and Git-backed HTTP reads where
+available.
+
+Treat batch placement failures according to their scope. Validate repository-backed destinations once
+before comment workers begin, and keep destination or unexpected internal failures batch-wide. Convert
+an expected unavailable source commit discovered while resolving one comment into a destination-scoped
+failure on that comment's result. The sidebar renders that error with the affected thread, including
+only when its resolved/unresolved filter makes that thread visible, while healthy placements and
+annotations remain usable. Expose an affected-thread retry and, after successful refresh, invalidate only
+placement queries whose cached result contains item failures. End optimistic annotation state once the
+canonical batch settles even if its result is outdated or failed.
+
+### Trade-offs
+
+- A placement response is larger than one old per-comment response, but request count and Git work are
+  constant with respect to comments sharing the same sources and destinations.
+- Request-scoped caches intentionally do not become process-global caches, so separate HTTP requests
+  still revalidate their own Git inputs and cannot leak state across repositories or PRs.
+- Domain revisions add write-path bookkeeping and migration state, but preserve the existing polling
+  and global sequence contract without introducing WebSockets or another synchronization model.
+- Separating PR content from other metadata adds one revision, but prevents status churn and
+  no-op refreshes from rebuilding PR Markdown, search, or placement.
+- Repository location is deliberately handled by value comparison after the scoped PR metadata refetch
+  instead of another persisted revision. A location change invalidates all cached Git availability for
+  that PR once; ordinary metadata changes do not.
+- The Structure index may contain entries for files not currently open. It avoids repeated tree/diff
+  processes and is shared across panes, while remaining derived and non-persistent.
+- Local canonical cache updates make UI mutations immediate. Each mutation starts one immediate,
+  lightweight comments consistency GET, but no document, search, or placement work; the subsequent
+  domain poll may revalidate comments again after observing the same server revision. This replaces
+  stateful causal bookkeeping with an explicit consistency boundary. External writers are also
+  observed on the existing one-second poll and reconciled through the same domain-specific query.
+- Cancel-before-invalidate adds a second explicit cache operation at mutable generation boundaries,
+  but prevents a no-data in-flight Promise from being reused as the refetch for a newer revision.
+- Per-comment placement failures make the batch response slightly richer and can leave one thread
+  without derived location, but they avoid expanding a recoverable source-ref problem into a complete
+  sidebar or document-placement outage.

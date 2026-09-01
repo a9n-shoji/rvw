@@ -416,6 +416,13 @@ describe("RvwDatabase", () => {
   it("applies migrations and increments change sequence per write transaction", () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     expect(database.getChangeSequence()).toBe(0);
+    expect(database.getDomainRevisions()).toEqual({
+      pullRequests: 0,
+      pullRequestContent: 0,
+      comments: 0,
+      walkthroughs: 0,
+      structures: 0,
+    });
     expect(database.writeProbe()).toEqual({ ok: true, error: null });
     expect(database.getChangeSequence()).toBe(0);
     const pullRequest = database.upsertPullRequest(
@@ -427,12 +434,104 @@ describe("RvwDatabase", () => {
       "c".repeat(40),
     );
     expect(database.getChangeSequence()).toBe(1);
+    expect(database.getDomainRevisions()).toEqual({
+      pullRequests: 1,
+      pullRequestContent: 1,
+      comments: 0,
+      walkthroughs: 0,
+      structures: 0,
+    });
     expect(database.getPullRequest(pullRequest.id)?.latestHeadOid).toBe(github.headOid);
     expect(database.getPullRequest(pullRequest.id)?.latestComparisonBaseOid).toBe("c".repeat(40));
     expect(database.getPullRequest(pullRequest.id)).toMatchObject({
       githubState: "OPEN",
       githubIsDraft: false,
     });
+    database.close();
+  });
+
+  it("advances Pull Request revisions only for semantic metadata and content changes", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const repository = { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" };
+    const comparisonBaseOid = "c".repeat(40);
+    const pullRequest = database.upsertPullRequest(github, repository, comparisonBaseOid);
+
+    database.upsertPullRequest(github, repository, comparisonBaseOid);
+    database.updatePullRequestGitHubStatuses([
+      { pullRequestId: pullRequest.id, state: "OPEN", isDraft: false },
+    ]);
+    expect(database.getChangeSequence()).toBe(1);
+    expect(database.getDomainRevisions()).toEqual({
+      pullRequests: 1,
+      pullRequestContent: 1,
+      comments: 0,
+      walkthroughs: 0,
+      structures: 0,
+    });
+
+    const changedGithub = {
+      ...github,
+      body: "Updated Pull Request body.",
+      updatedAt: "2026-08-09T00:00:00.000Z",
+    };
+    database.upsertPullRequest(changedGithub, repository, comparisonBaseOid);
+    expect(database.getDomainRevisions()).toMatchObject({
+      pullRequests: 2,
+      pullRequestContent: 2,
+    });
+
+    database.updatePullRequestGitHubStatuses([
+      { pullRequestId: pullRequest.id, state: "CLOSED", isDraft: false },
+    ]);
+    expect(database.getDomainRevisions()).toMatchObject({
+      pullRequests: 3,
+      pullRequestContent: 2,
+    });
+
+    const comment = database.createComment({
+      pullRequestId: pullRequest.id,
+      createdHeadOid: github.headOid,
+      target: { kind: "pull-request" },
+      body: "Please update this.",
+    });
+    const beforeSync = database.getDomainRevisions();
+    database.syncPullRequestAndComments(
+      { ...changedGithub, state: "CLOSED" },
+      repository,
+      comparisonBaseOid,
+      [
+        {
+          commentId: comment.id,
+          reply: "Updated.",
+          resolve: true,
+          authorLabel: "Agent",
+          idempotencyKey: "semantic-sync-retry",
+        },
+      ],
+    );
+    expect(database.getDomainRevisions()).toEqual({
+      ...beforeSync,
+      comments: beforeSync.comments + 1,
+    });
+    const afterFirstSync = database.getDomainRevisions();
+    database.syncPullRequestAndComments(
+      { ...changedGithub, state: "CLOSED" },
+      repository,
+      comparisonBaseOid,
+      [
+        {
+          commentId: comment.id,
+          reply: "Updated.",
+          resolve: true,
+          authorLabel: "Agent",
+          idempotencyKey: "semantic-sync-retry",
+        },
+      ],
+    );
+    expect(database.getDomainRevisions()).toEqual(afterFirstSync);
+    const synchronizedComment = database.getComment(comment.id);
+    expect(synchronizedComment?.resolvedAt).not.toBeNull();
+    expect(synchronizedComment?.posts).toMatchObject([{ isRoot: true }, { body: "Updated." }]);
     database.close();
   });
 
@@ -680,6 +779,7 @@ describe("RvwDatabase", () => {
       "c".repeat(40),
       [update],
     );
+    const commentsRevisionAfterFirstSync = database.getDomainRevisions().comments;
     database.syncPullRequestAndComments(
       { ...github, headOid: "e".repeat(40), updatedAt: "2026-08-09T00:00:00.000Z" },
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
@@ -687,6 +787,7 @@ describe("RvwDatabase", () => {
       [update],
     );
 
+    expect(database.getDomainRevisions().comments).toBe(commentsRevisionAfterFirstSync);
     expect(database.listCommentPosts(comment.id)).toMatchObject([
       { isRoot: true },
       { body: "Updated.", relatedCommitOid: github.headOid },

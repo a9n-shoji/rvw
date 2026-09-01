@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 
@@ -10,9 +10,14 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   test.setTimeout(60_000);
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+  const pullRequestHeading = page
+    .locator(".pr-heading")
+    .getByRole("heading", { name: /^Fixture review(?: updated)?$/ });
+  await expect(pullRequestHeading).toBeVisible();
   await expect(page).toHaveTitle(/^rvw: Fixture review(?: updated)?$/);
-  const pullRequestLink = page.getByRole("link", { name: "Fixture review" });
+  const pullRequestLink = pullRequestHeading.getByRole("link", {
+    name: /^Fixture review(?: updated)?$/,
+  });
   await expect(pullRequestLink).toHaveAttribute(
     "href",
     "https://github.com/acme/review-repo/pull/7",
@@ -764,6 +769,22 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   ).toBeVisible();
   await expect(page.getByText("コメント作成時の選択範囲", { exact: true })).toHaveCount(0);
 
+  let releaseHeartbeat = (): void => {};
+  const heartbeatGate = new Promise<void>((resolve) => {
+    releaseHeartbeat = resolve;
+  });
+  let heartbeatBlocked = (): void => {};
+  const heartbeatBlockedPromise = new Promise<void>((resolve) => {
+    heartbeatBlocked = resolve;
+  });
+  const holdHeartbeat = async (route: Route) => {
+    heartbeatBlocked();
+    await heartbeatGate;
+    await route.fallback();
+  };
+  await page.route("**/api/meta/change-sequence", holdHeartbeat);
+  await heartbeatBlockedPromise;
+
   await actionsMenuButton.click();
   actionsMenu = page.getByRole("menu");
   await expect(actionsMenu.getByRole("menuitem", { name: "GitHubと同期" })).toBeVisible();
@@ -798,6 +819,8 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(prBodyCommentCard.locator(".comment-source-quote pre")).toHaveText(
     "This is always the latest PR body.",
   );
+  releaseHeartbeat();
+  await page.unroute("**/api/meta/change-sequence", holdHeartbeat);
 
   await selectCommitOnly(/Add fixture function/);
   await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
@@ -1366,7 +1389,9 @@ test("searches while typing, groups occurrences, and reveals a result without ch
 test("keeps every sidebar section heading visible in a short viewport", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 320 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+  await expect(
+    page.locator(".pr-heading").getByRole("heading", { name: /^Fixture review(?: updated)?$/ }),
+  ).toBeVisible();
 
   const stackToggles = page.locator(".sidebar-stack-toggle");
   await expect(stackToggles).toHaveCount(2);
@@ -1398,7 +1423,11 @@ test("keeps every sidebar section heading visible in a short viewport", async ({
 test("resizes the expanded comments stack from its top edge", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+  await expect(
+    page.locator(".topbar").getByRole("heading", {
+      name: /^Fixture review(?: updated)?$/,
+    }),
+  ).toBeVisible();
 
   const commentsToggle = page.locator(".sidebar-stack--comments > .sidebar-stack-toggle");
   await commentsToggle.click();
@@ -1467,6 +1496,27 @@ test("resizes the expanded comments stack from its top edge", async ({ page }) =
       Math.abs(((await commentsStack.boundingBox())?.height ?? 0) - commentsBefore!.height),
     )
     .toBeLessThan(3);
+});
+
+test("preserves a Pull Request comment draft while the comments stack is collapsed", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const commentsToggle = page.locator(".sidebar-stack--comments > .sidebar-stack-toggle");
+  await commentsToggle.click();
+  await page.getByRole("button", { name: "＋ PR全体", exact: true }).click();
+  const composer = page.getByPlaceholder("Pull Request全体へのコメント");
+  await composer.fill("折りたたんでも保持するPR全体コメント");
+
+  await commentsToggle.click();
+  await expect(commentsToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(composer).toHaveCount(1);
+  await expect(composer).toHaveValue("折りたたんでも保持するPR全体コメント");
+
+  await commentsToggle.click();
+  await expect(composer).toBeVisible();
+  await expect(composer).toHaveValue("折りたたんでも保持するPR全体コメント");
+  await composer.press("Escape");
 });
 
 test("keeps virtual review nodes compact and useful height for code navigation", async ({

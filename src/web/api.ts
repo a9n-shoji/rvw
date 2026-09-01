@@ -2,12 +2,15 @@ import type {
   ChangedFile,
   CommitSummary,
   CommentPlacement,
+  CommentPlacementBatchResult,
+  CommentPlacementDestination,
   CommentTarget,
   DeletedWalkthrough,
   DeletedStructure,
   DocumentContent,
   DocumentRef,
   FileStructureReference,
+  FileStructureReferenceIndex,
   PullRequest,
   PullRequestSummary,
   ReviewComment,
@@ -79,20 +82,29 @@ export function jsonRequest(value: unknown): RequestInit {
   };
 }
 
-export function documentUrl(ref: DocumentRef): string {
+export function documentUrl(
+  ref: DocumentRef,
+  expectedPullRequestContentFingerprint?: string,
+): string {
   const search = new URLSearchParams({ kind: ref.kind, pullRequestId: ref.pullRequestId });
   if (ref.kind === "repository-file") {
     search.set("sourceOid", ref.sourceOid);
     search.set("path", ref.path);
+  }
+  if (expectedPullRequestContentFingerprint !== undefined) {
+    search.set("expectedPullRequestContentFingerprint", expectedPullRequestContentFingerprint);
   }
   return `/api/pull-requests/${ref.pullRequestId}/document?${search.toString()}`;
 }
 
 export interface PullRequestResponse {
   pullRequest: PullRequest;
+  pullRequestContentFingerprint: string;
   comparisonBaseOid: string;
   headOid: string;
   commits: CommitSummary[];
+  changeSequence: number;
+  revisions: ChangeSequenceResponse["revisions"];
 }
 
 export interface PullRequestListResponse {
@@ -123,6 +135,19 @@ export interface ThemePreferenceResponse {
   themePreference: ThemePreference;
 }
 
+export interface ChangeSequenceResponse {
+  changeSequence: number;
+  revisions: {
+    pullRequests: number;
+    pullRequestContent: number;
+    comments: number;
+    walkthroughs: number;
+    structures: number;
+  };
+}
+
+export interface PullRequestRefreshResponse extends PullRequestResponse, ChangeSequenceResponse {}
+
 export interface TreeResponse {
   virtual: "Pull Request.md";
   entries: TreeEntry[];
@@ -136,6 +161,7 @@ export interface ChangedFilesResponse {
 
 export interface DocumentResponse {
   document: DocumentContent;
+  pullRequestContentFingerprint: string | null;
 }
 
 export interface DiffResponse {
@@ -173,6 +199,10 @@ export interface FileStructureReferencesResponse {
   references: FileStructureReference[];
 }
 
+export interface FileStructureReferenceIndexResponse {
+  index: FileStructureReferenceIndex;
+}
+
 export interface StructureResponse {
   structure: Structure;
 }
@@ -187,6 +217,37 @@ export interface DeleteStructureResponse {
 
 export interface PlacementResponse {
   placement: CommentPlacement;
+}
+
+export type CommentPlacementBatchResponse = CommentPlacementBatchResult;
+
+export async function resolveCommentPlacements(
+  pullRequestId: string,
+  commentIds: readonly string[],
+  destinations: readonly CommentPlacementDestination[],
+  signal?: AbortSignal,
+  expectedPullRequestContentFingerprint?: string,
+): Promise<CommentPlacementBatchResponse> {
+  const response = await api<CommentPlacementBatchResponse>(
+    `/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
+    {
+      ...jsonRequest({
+        commentIds,
+        destinations,
+        ...(expectedPullRequestContentFingerprint === undefined
+          ? {}
+          : { expectedPullRequestContentFingerprint }),
+      }),
+      ...(signal ? { signal } : {}),
+    },
+  );
+  if (
+    expectedPullRequestContentFingerprint !== undefined &&
+    response.pullRequestContentFingerprint !== expectedPullRequestContentFingerprint
+  ) {
+    throw new ApiError("Pull Request本文が更新されています。", "STALE_CONTENT");
+  }
+  return response;
 }
 
 export type { CommentTarget, SearchResponse };

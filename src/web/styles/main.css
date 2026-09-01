@@ -2990,18 +2990,21 @@ diffs-container > [slot="header-metadata"] {
   flex: 0 0 auto;
   margin: 0;
 }
-.comment-list-item > .comment-thread {
+.comment-list-item-content > .comment-thread {
   cursor: pointer;
 }
-.comment-list-item.is-selected > .comment-thread {
+.comment-list-item.is-selected > .comment-list-item-content > .comment-thread {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-soft);
 }
-.comment-list-item > .comment-thread {
+.comment-list-item-content {
   min-width: 0;
   flex: 1;
 }
-.comment-list-item > .error-notice {
+.comment-list-item-content > .comment-thread {
+  min-width: 0;
+}
+.comment-list-item-content > .error-notice {
   margin: 6px 0 0;
 }
 .pr-comment-composer {

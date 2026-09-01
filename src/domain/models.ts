@@ -1,3 +1,5 @@
+import type { SerializedRvwError } from "../shared/errors.js";
+
 export interface PullRequestIdentity {
   host: "github.com";
   owner: string;
@@ -256,6 +258,16 @@ export interface FileStructureReference {
   matchingNodeCount: number;
 }
 
+export interface FileStructureReferenceIndexEntry {
+  path: string;
+  references: FileStructureReference[];
+}
+
+export interface FileStructureReferenceIndex {
+  sourceOid: string;
+  entries: FileStructureReferenceIndexEntry[];
+}
+
 export interface StructureDeleteCounts {
   nodes: number;
   edges: number;
@@ -382,6 +394,33 @@ export interface MappedRange {
 export type CommentPlacement =
   | { outdated: false; range: MappedRange | null; path: string | null }
   | { outdated: true; range: null; path: string | null };
+
+export type CommentPlacementDestination =
+  | { kind: "document"; ref: DocumentRef }
+  | { kind: "commit"; oid: string }
+  | { kind: "walkthrough"; walkthroughId: string };
+
+export interface ResolvedCommentPlacement {
+  destination: CommentPlacementDestination;
+  placement: CommentPlacement;
+}
+
+export interface FailedCommentPlacement {
+  destination: CommentPlacementDestination;
+  error: SerializedRvwError;
+}
+
+export interface CommentPlacementResolution {
+  commentId: string;
+  placements: ResolvedCommentPlacement[];
+  failures: FailedCommentPlacement[];
+}
+
+export interface CommentPlacementBatchResult {
+  pullRequestContentFingerprint: string;
+  comments: CommentPlacementResolution[];
+  missingCommentIds: string[];
+}
 
 export interface ResetCounts {
   comments: number;

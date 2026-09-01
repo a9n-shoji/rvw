@@ -6,7 +6,13 @@ import type {
   ReviewComment,
   WalkthroughSummary,
 } from "../../domain/models.js";
-import { api, jsonRequest, type PlacementResponse } from "../api.js";
+import type { SerializedRvwError } from "../../shared/errors.js";
+import { api, jsonRequest, resolveCommentPlacements } from "../api.js";
+import {
+  cancelCommentQuery,
+  invalidateCommentQuery,
+  putCommentInCache,
+} from "../comment-query-cache.js";
 import type { ThemePreference } from "../theme.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
@@ -22,8 +28,9 @@ function selectionLabel(comment: ReviewComment): string {
 
 function CommentCard({
   comment,
-  pullRequestId,
-  selectedOid,
+  placement,
+  placementError,
+  onRetryPlacement,
   selected,
   markdownSourceOid,
   themePreference,
@@ -35,8 +42,9 @@ function CommentCard({
   onDeleted,
 }: {
   comment: ReviewComment;
-  pullRequestId: string;
-  selectedOid: string;
+  placement: CommentPlacement | null;
+  placementError: SerializedRvwError | null;
+  onRetryPlacement: () => void;
   selected: boolean;
   markdownSourceOid?: string | undefined;
   themePreference: ThemePreference;
@@ -51,13 +59,6 @@ function CommentCard({
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onDeleted: () => void;
 }) {
-  const placement = useQuery({
-    queryKey: ["comment-placement", comment.id, selectedOid],
-    queryFn: async () =>
-      await api<PlacementResponse>(
-        `/api/comments/${comment.id}/placement?kind=commit&pullRequestId=${pullRequestId}&oid=${selectedOid}`,
-      ),
-  });
   return (
     <div
       className={`comment-list-item${selected ? " is-selected" : ""}`}
@@ -78,21 +79,26 @@ function CommentCard({
           onChange={(event) => onSelect(event.target.checked)}
         />
       </label>
-      <CommentThread
-        comment={comment}
-        variant="sidebar"
-        placement={placement.data?.placement ?? null}
-        markdownSourceOid={markdownSourceOid}
-        themePreference={themePreference}
-        onActiveChange={onCommentActiveChange}
-        onOpenCodeReference={onOpenCodeReference}
-        onOpenTarget={(openInRightPane) =>
-          onOpenTarget(placement.data?.placement ?? null, openInRightPane)
-        }
-        onOpenRepositoryLink={onOpenRepositoryLink}
-        onDeleted={onDeleted}
-      />
-      {placement.error && <ErrorNotice error={placement.error} />}
+      <div className="comment-list-item-content">
+        <ErrorNotice error={placementError} />
+        {placementError && (
+          <button className="button--quiet placement-retry" onClick={onRetryPlacement}>
+            配置を再試行
+          </button>
+        )}
+        <CommentThread
+          comment={comment}
+          variant="sidebar"
+          placement={placement}
+          markdownSourceOid={markdownSourceOid}
+          themePreference={themePreference}
+          onActiveChange={onCommentActiveChange}
+          onOpenCodeReference={onOpenCodeReference}
+          onOpenTarget={(openInRightPane) => onOpenTarget(placement, openInRightPane)}
+          onOpenRepositoryLink={onOpenRepositoryLink}
+          onDeleted={onDeleted}
+        />
+      </div>
     </div>
   );
 }
@@ -100,8 +106,11 @@ function CommentCard({
 export function CommentSidebar({
   comments,
   walkthroughs,
+  expanded,
   pullRequestId,
   selectedOid,
+  pullRequestContentFingerprint,
+  walkthroughRevision,
   themePreference,
   onCommentActiveChange,
   onOpenCodeReference,
@@ -110,8 +119,11 @@ export function CommentSidebar({
 }: {
   comments: ReviewComment[];
   walkthroughs: WalkthroughSummary[];
+  expanded: boolean;
   pullRequestId: string;
   selectedOid: string;
+  pullRequestContentFingerprint: string | undefined;
+  walkthroughRevision: number | undefined;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
   onOpenCodeReference: (
@@ -133,16 +145,95 @@ export function CommentSidebar({
   const [prComposerOpen, setPrComposerOpen] = useState(false);
   const [prComment, setPrComment] = useState("");
   const [copyFeedback, setCopyFeedback] = useState(false);
-  const unresolvedCount = comments.filter((comment) => comment.resolvedAt === null).length;
-  const resolvedCount = comments.length - unresolvedCount;
+  const walkthroughTitles = useMemo(
+    () => new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough.title])),
+    [walkthroughs],
+  );
+  const displayComments = useMemo(
+    () =>
+      comments.map((comment) => {
+        if (comment.target.kind !== "walkthrough") return comment;
+        const currentTitle = walkthroughTitles.get(comment.target.walkthroughId);
+        if (!currentTitle || currentTitle === comment.target.walkthroughTitle) return comment;
+        return {
+          ...comment,
+          target: { ...comment.target, walkthroughTitle: currentTitle },
+        };
+      }),
+    [comments, walkthroughTitles],
+  );
+  const unresolvedCount = displayComments.filter((comment) => comment.resolvedAt === null).length;
+  const resolvedCount = displayComments.length - unresolvedCount;
   const visible = useMemo(
     () =>
-      comments.filter((comment) =>
+      displayComments.filter((comment) =>
         showResolved ? comment.resolvedAt !== null : comment.resolvedAt === null,
       ),
-    [comments, showResolved],
+    [displayComments, showResolved],
   );
   const selectedComments = visible.filter((comment) => selected.has(comment.id));
+  const placementComments = useMemo(
+    () =>
+      comments
+        .filter((comment) => comment.target.kind !== "pull-request")
+        .sort((left, right) => left.id.localeCompare(right.id)),
+    [comments],
+  );
+  const visibleTargetFingerprint = useMemo(
+    () => placementComments.map((comment) => [comment.id, comment.target]),
+    [placementComments],
+  );
+  const placementWalkthroughRevision = placementComments.some(
+    (comment) => comment.target.kind === "walkthrough",
+  )
+    ? walkthroughRevision
+    : null;
+  const placementContentFingerprint = placementComments.some(
+    (comment) =>
+      comment.target.kind === "document" && comment.target.documentKind === "pull-request-markdown",
+  )
+    ? pullRequestContentFingerprint
+    : null;
+  const placementQuery = useQuery({
+    queryKey: [
+      "comment-placements",
+      "sidebar",
+      pullRequestId,
+      selectedOid,
+      placementContentFingerprint,
+      placementWalkthroughRevision,
+      visibleTargetFingerprint,
+    ],
+    queryFn: async ({ signal }) =>
+      await resolveCommentPlacements(
+        pullRequestId,
+        placementComments.map(({ id }) => id),
+        [{ kind: "commit", oid: selectedOid }],
+        signal,
+        placementContentFingerprint ?? undefined,
+      ),
+    enabled: expanded && placementComments.length > 0 && placementContentFingerprint !== undefined,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const placements = useMemo(
+    () =>
+      new Map(
+        placementQuery.data?.comments.map(({ commentId, placements: resolved }) => [
+          commentId,
+          resolved[0]?.placement ?? null,
+        ]) ?? [],
+      ),
+    [placementQuery.data],
+  );
+  const placementFailures = useMemo(
+    () =>
+      new Map(
+        placementQuery.data?.comments.flatMap(({ commentId, failures }) =>
+          failures[0] ? [[commentId, failures[0].error] as const] : [],
+        ) ?? [],
+      ),
+    [placementQuery.data],
+  );
   const walkthroughSourceOids = useMemo(
     () => new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough.sourceOid])),
     [walkthroughs],
@@ -156,7 +247,7 @@ export function CommentSidebar({
 
   const createPrComment = useMutation({
     mutationFn: async () =>
-      await api(
+      await api<{ comment: ReviewComment }>(
         "/api/comments",
         jsonRequest({
           pullRequestId,
@@ -165,11 +256,12 @@ export function CommentSidebar({
           authorLabel: "You",
         }),
       ),
-    onSuccess: async () => {
+    onMutate: async () => await cancelCommentQuery(queryClient, pullRequestId),
+    onError: () => invalidateCommentQuery(queryClient, pullRequestId),
+    onSuccess: ({ comment }) => {
       setPrComment("");
       setPrComposerOpen(false);
-      await queryClient.invalidateQueries({ queryKey: ["comments"] });
-      await queryClient.invalidateQueries({ queryKey: ["change-sequence"] });
+      putCommentInCache(queryClient, pullRequestId, comment);
     },
   });
 
@@ -264,43 +356,51 @@ export function CommentSidebar({
           <ErrorNotice error={createPrComment.error} />
         </div>
       )}
-      <div className="comment-list">
-        {visible.length === 0 && <p className="empty-state">コメントはありません。</p>}
-        {visible.map((comment) => (
-          <CommentCard
-            key={comment.id}
-            comment={comment}
-            pullRequestId={pullRequestId}
-            selectedOid={selectedOid}
-            selected={selected.has(comment.id)}
-            markdownSourceOid={
-              comment.target.kind === "walkthrough"
-                ? walkthroughSourceOids.get(comment.target.walkthroughId)
-                : undefined
-            }
-            themePreference={themePreference}
-            onCommentActiveChange={onCommentActiveChange}
-            onOpenCodeReference={onOpenCodeReference}
-            onSelect={(checked) => {
-              const next = new Set(selected);
-              if (checked) next.add(comment.id);
-              else next.delete(comment.id);
-              setSelected(next);
-            }}
-            onOpenTarget={(placement, openInRightPane) =>
-              onOpenTarget(comment, placement, openInRightPane)
-            }
-            onOpenRepositoryLink={onOpenRepositoryLink}
-            onDeleted={() => {
-              setSelected((current) => {
-                const next = new Set(current);
-                next.delete(comment.id);
-                return next;
-              });
-            }}
-          />
-        ))}
-      </div>
+      {expanded && (
+        <div className="comment-list">
+          <ErrorNotice error={placementQuery.error} />
+          {visible.length === 0 && <p className="empty-state">コメントはありません。</p>}
+          {visible.map((comment) => (
+            <CommentCard
+              key={comment.id}
+              comment={comment}
+              placement={
+                comment.target.kind === "pull-request"
+                  ? { outdated: false, range: null, path: null }
+                  : (placements.get(comment.id) ?? null)
+              }
+              placementError={placementFailures.get(comment.id) ?? null}
+              onRetryPlacement={() => void placementQuery.refetch()}
+              selected={selected.has(comment.id)}
+              markdownSourceOid={
+                comment.target.kind === "walkthrough"
+                  ? walkthroughSourceOids.get(comment.target.walkthroughId)
+                  : undefined
+              }
+              themePreference={themePreference}
+              onCommentActiveChange={onCommentActiveChange}
+              onOpenCodeReference={onOpenCodeReference}
+              onSelect={(checked) => {
+                const next = new Set(selected);
+                if (checked) next.add(comment.id);
+                else next.delete(comment.id);
+                setSelected(next);
+              }}
+              onOpenTarget={(placement, openInRightPane) =>
+                onOpenTarget(comment, placement, openInRightPane)
+              }
+              onOpenRepositoryLink={onOpenRepositoryLink}
+              onDeleted={() => {
+                setSelected((current) => {
+                  const next = new Set(current);
+                  next.delete(comment.id);
+                  return next;
+                });
+              }}
+            />
+          ))}
+        </div>
+      )}
       {selectedComments.length > 0 && (
         <button
           className="button--wide comment-copy-selection"

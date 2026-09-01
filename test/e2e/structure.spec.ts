@@ -1609,6 +1609,29 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   expect(canvasBox!.y + canvasBox!.height).toBeLessThanOrEqual(
     viewerBox!.y + viewerBox!.height + 1,
   );
+  let structureReferenceIndexRequests = 0;
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (
+      request.method() === "GET" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/structure-reference-index`
+    ) {
+      structureReferenceIndexRequests += 1;
+    }
+  });
+  await page
+    .getByRole("button", { name: "src/fixture.ts", exact: true })
+    .click({ modifiers: ["Meta"] });
+  const rightFilePane = page.locator('.document-pane[data-pane="right"]');
+  await expect(
+    rightFilePane.getByRole("tab", { name: "src/fixture.ts", exact: true }),
+  ).toBeVisible();
+  await expect(
+    rightFilePane.getByRole("button", {
+      name: /このファイルを参照するStructure|このレビュー版では、このファイルをNodeから参照するStructureはありません/u,
+    }),
+  ).toBeVisible();
+  const requestsBeforeDelete = structureReferenceIndexRequests;
   page.once("dialog", (dialog) => dialog.accept());
   await page
     .locator(`[data-structure-id="${secondaryStructureId}"]`)
@@ -1618,4 +1641,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
     .click();
   await expect(page.getByRole("tab", { name: secondaryTitle })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Structure 2", exact: true })).toBeVisible();
+  await expect.poll(() => structureReferenceIndexRequests).toBe(requestsBeforeDelete + 1);
+  await page.waitForTimeout(250);
+  expect(structureReferenceIndexRequests).toBe(requestsBeforeDelete + 1);
 });

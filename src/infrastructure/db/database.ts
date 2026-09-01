@@ -440,6 +440,29 @@ export interface NewStructureInput {
   idempotencyRequestHash: string;
 }
 
+export interface DomainRevisions {
+  pullRequests: number;
+  pullRequestContent: number;
+  comments: number;
+  walkthroughs: number;
+  structures: number;
+}
+
+export interface RevisionSnapshot {
+  changeSequence: number;
+  revisions: DomainRevisions;
+}
+
+type DomainRevision = keyof DomainRevisions;
+
+const domainRevisionMetaKeys: Record<DomainRevision, string> = {
+  pullRequests: "revision_pull_requests",
+  pullRequestContent: "revision_pull_request_content",
+  comments: "revision_comments",
+  walkthroughs: "revision_walkthroughs",
+  structures: "revision_structures",
+};
+
 export class RvwDatabase {
   readonly filePath: string;
   readonly configuredPath: boolean;
@@ -615,11 +638,80 @@ export class RvwDatabase {
     return this.getChangeSequence();
   }
 
+  incrementDomainRevisions(domains: readonly DomainRevision[]): number {
+    const uniqueDomains = [...new Set(domains)];
+    this.incrementChangeSequence();
+    const increment = this.database.prepare(
+      "UPDATE app_meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = ?",
+    );
+    for (const domain of uniqueDomains) increment.run(domainRevisionMetaKeys[domain]);
+    return this.getChangeSequence();
+  }
+
   getChangeSequence(): number {
     const row = this.database
       .prepare("SELECT value FROM app_meta WHERE key = 'change_sequence'")
       .get() as DbRow;
     return Number(stringValue(row, "value"));
+  }
+
+  getRevisionSnapshot(): RevisionSnapshot {
+    const rows = this.database
+      .prepare(
+        `SELECT key, value
+         FROM app_meta
+         WHERE key IN (
+           'change_sequence',
+           'revision_pull_requests',
+           'revision_pull_request_content',
+           'revision_comments',
+           'revision_walkthroughs',
+           'revision_structures'
+         )`,
+      )
+      .all() as DbRow[];
+    const values = new Map(rows.map((row) => [stringValue(row, "key"), stringValue(row, "value")]));
+    const value = (key: string): number => {
+      const raw = values.get(key);
+      if (raw === undefined) throw new RvwError("DATABASE_ERROR", `revisionがありません: ${key}`);
+      return Number(raw);
+    };
+    return {
+      changeSequence: value("change_sequence"),
+      revisions: {
+        pullRequests: value(domainRevisionMetaKeys.pullRequests),
+        pullRequestContent: value(domainRevisionMetaKeys.pullRequestContent),
+        comments: value(domainRevisionMetaKeys.comments),
+        walkthroughs: value(domainRevisionMetaKeys.walkthroughs),
+        structures: value(domainRevisionMetaKeys.structures),
+      },
+    };
+  }
+
+  getDomainRevisions(): DomainRevisions {
+    return this.getRevisionSnapshot().revisions;
+  }
+
+  getPullRequestRevisionSnapshot(id: string): {
+    pullRequest: PullRequest | null;
+    revisionSnapshot: RevisionSnapshot;
+  } {
+    this.database.exec("BEGIN");
+    try {
+      const result = {
+        pullRequest: this.getPullRequest(id),
+        revisionSnapshot: this.getRevisionSnapshot(),
+      };
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      try {
+        this.database.exec("ROLLBACK");
+      } catch {
+        // Preserve the read error.
+      }
+      throw error;
+    }
   }
 
   getCommentWatchDatabaseId(): string {
@@ -816,7 +908,19 @@ export class RvwDatabase {
       const statement = this.database.prepare(
         "UPDATE pull_requests SET github_state = ?, github_is_draft = ? WHERE id = ?",
       );
+      let changed = false;
       for (const update of updates) {
+        const current = this.getPullRequest(update.pullRequestId);
+        if (!current) {
+          throw new RvwError(
+            "PR_NOT_FOUND",
+            `Pull Requestが見つかりません: ${update.pullRequestId}`,
+            { status: 404 },
+          );
+        }
+        if (current.githubState === update.state && current.githubIsDraft === update.isDraft) {
+          continue;
+        }
         const result = statement.run(update.state, update.isDraft ? 1 : 0, update.pullRequestId);
         if (Number(result.changes) !== 1) {
           throw new RvwError(
@@ -825,8 +929,9 @@ export class RvwDatabase {
             { status: 404 },
           );
         }
+        changed = true;
       }
-      this.incrementChangeSequence();
+      if (changed) this.incrementDomainRevisions(["pullRequests"]);
     });
   }
 
@@ -834,6 +939,14 @@ export class RvwDatabase {
     id: string,
     repository: { localRepositoryPath: string; gitCommonDir: string },
   ): PullRequest {
+    const existing = this.getPullRequest(id);
+    if (!existing) throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
+    if (
+      existing.localRepositoryPath === repository.localRepositoryPath &&
+      existing.gitCommonDir === repository.gitCommonDir
+    ) {
+      return existing;
+    }
     this.immediateTransaction(() => {
       const result = this.database
         .prepare(
@@ -842,7 +955,7 @@ export class RvwDatabase {
         .run(repository.localRepositoryPath, repository.gitCommonDir, new Date().toISOString(), id);
       if (Number(result.changes) === 0)
         throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["pullRequests"]);
     });
     const pullRequest = this.getPullRequest(id);
     if (!pullRequest) throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
@@ -853,10 +966,30 @@ export class RvwDatabase {
     github: GitHubPullRequest,
     repository: { localRepositoryPath: string; gitCommonDir: string },
     comparisonBaseOid: string,
-  ): string {
+  ): { id: string; semanticChanged: boolean; contentChanged: boolean } {
     const now = new Date().toISOString();
     const existing = this.findPullRequestByIdentity(github.owner, github.repository, github.number);
     const id = existing?.id ?? randomUUID();
+    const contentChanged =
+      !existing || existing.latestTitle !== github.title || existing.latestBody !== github.body;
+    const semanticChanged =
+      !existing ||
+      existing.url !== github.url ||
+      existing.latestAuthorLogin !== github.authorLogin ||
+      existing.latestHeadRepositoryOwner !== github.headRepositoryOwner ||
+      existing.latestHeadRepositoryName !== github.headRepositoryName ||
+      existing.localRepositoryPath !== repository.localRepositoryPath ||
+      existing.gitCommonDir !== repository.gitCommonDir ||
+      contentChanged ||
+      existing.latestBaseRefName !== github.baseRefName ||
+      existing.latestHeadRefName !== github.headRefName ||
+      existing.latestBaseOid !== github.baseOid ||
+      existing.latestComparisonBaseOid !== comparisonBaseOid ||
+      existing.latestHeadOid !== github.headOid ||
+      existing.githubCreatedAt !== github.createdAt ||
+      existing.githubUpdatedAt !== github.updatedAt ||
+      existing.githubState !== github.state ||
+      existing.githubIsDraft !== github.isDraft;
     this.database
       .prepare(
         `INSERT INTO pull_requests(
@@ -912,10 +1045,10 @@ export class RvwDatabase {
         github.isDraft ? 1 : 0,
         now,
         existing?.createdAt ?? now,
-        now,
+        semanticChanged ? now : existing.updatedAt,
         comparisonBaseOid,
       );
-    return id;
+    return { id, semanticChanged, contentChanged };
   }
 
   upsertPullRequest(
@@ -924,9 +1057,12 @@ export class RvwDatabase {
     comparisonBaseOid: string,
   ): PullRequest {
     const id = this.immediateTransaction(() => {
-      const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
-      this.incrementChangeSequence();
-      return writtenId;
+      const write = this.writePullRequest(github, repository, comparisonBaseOid);
+      const domains: DomainRevision[] = [];
+      if (write.semanticChanged) domains.push("pullRequests");
+      if (write.contentChanged) domains.push("pullRequestContent");
+      if (domains.length > 0) this.incrementDomainRevisions(domains);
+      return write.id;
     });
     const pullRequest = this.getPullRequest(id);
     if (!pullRequest)
@@ -941,10 +1077,14 @@ export class RvwDatabase {
     updates: CommentUpdateInput[],
   ): PullRequest {
     const id = this.immediateTransaction(() => {
-      const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
-      this.applyCommentUpdates(updates, github.headOid);
-      this.incrementChangeSequence();
-      return writtenId;
+      const write = this.writePullRequest(github, repository, comparisonBaseOid);
+      const commentsChanged = this.applyCommentUpdates(updates, github.headOid);
+      const domains: DomainRevision[] = [];
+      if (write.semanticChanged) domains.push("pullRequests");
+      if (write.contentChanged) domains.push("pullRequestContent");
+      if (commentsChanged) domains.push("comments");
+      if (domains.length > 0) this.incrementDomainRevisions(domains);
+      return write.id;
     });
     const pullRequest = this.getPullRequest(id);
     if (!pullRequest)
@@ -958,10 +1098,16 @@ export class RvwDatabase {
     comparisonBaseOid: string,
   ): PullRequest {
     const id = this.immediateTransaction(() => {
-      const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
-      this.deletePullRequestHistory(writtenId);
-      this.incrementChangeSequence();
-      return writtenId;
+      const write = this.writePullRequest(github, repository, comparisonBaseOid);
+      this.deletePullRequestHistory(write.id);
+      this.incrementDomainRevisions([
+        "pullRequests",
+        "pullRequestContent",
+        "comments",
+        "walkthroughs",
+        "structures",
+      ]);
+      return write.id;
     });
     const pullRequest = this.getPullRequest(id);
     if (!pullRequest)
@@ -1128,7 +1274,7 @@ export class RvwDatabase {
            ) VALUES (?, ?, ?, ?)`,
         )
         .run(keyHash, input.idempotencyRequestHash, id, now);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["structures"]);
       structureId = id;
     });
     if (!structureId) {
@@ -1230,7 +1376,7 @@ export class RvwDatabase {
         "INSERT OR IGNORE INTO structure_retired_edge_ids(structure_id, edge_id, retired_at) VALUES (?, ?, ?)",
       );
       for (const edgeId of retiredEdgesAtThisUpdate) retireEdge.run(id, edgeId, now);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["structures"]);
     });
     const structure = this.getStructure(id);
     if (!structure) throw new RvwError("DATABASE_ERROR", "更新したStructureを読み出せません。");
@@ -1276,7 +1422,7 @@ export class RvwDatabase {
           { status: 409, details: { expectedUpdatedAt } },
         );
       }
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["structures"]);
       return {
         id: structure.id,
         ref: structure.ref,
@@ -1402,7 +1548,7 @@ export class RvwDatabase {
           now,
         );
       this.insertCodeReferences("walkthrough", id, input.references);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["walkthroughs"]);
     });
     const walkthrough = this.getWalkthrough(id);
     if (!walkthrough) {
@@ -1432,7 +1578,7 @@ export class RvwDatabase {
       }
       this.database.prepare("DELETE FROM walkthrough_references WHERE walkthrough_id = ?").run(id);
       this.insertCodeReferences("walkthrough", id, input.references);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["walkthroughs"]);
     });
     const walkthrough = this.getWalkthrough(id);
     if (!walkthrough) {
@@ -1478,7 +1624,9 @@ export class RvwDatabase {
         )
         .run(id);
       this.database.prepare("DELETE FROM walkthroughs WHERE id = ?").run(id);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(
+        counts.comments === 0 ? ["walkthroughs"] : ["walkthroughs", "comments"],
+      );
       return {
         id: walkthrough.id,
         ref: walkthrough.ref,
@@ -1523,7 +1671,7 @@ export class RvwDatabase {
           ) VALUES (?, ?, ?, ?)`,
         )
         .run(postId, formatCommentUri(id), pullRequest.url, now);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["comments"]);
     });
     const comment = this.getComment(id);
     if (!comment) throw new RvwError("DATABASE_ERROR", "保存したコメントを読み出せません。");
@@ -1664,7 +1812,7 @@ export class RvwDatabase {
           FROM comments c
           JOIN comment_targets t ON t.comment_id = c.id
           LEFT JOIN walkthroughs w ON w.id = t.walkthrough_id
-          WHERE c.pull_request_id = ?${where} ORDER BY c.updated_at DESC`,
+          WHERE c.pull_request_id = ?${where} ORDER BY c.updated_at DESC, c.id DESC`,
         )
         .all(pullRequestId) as DbRow[]
     ).map((row) => this.mapComment(row));
@@ -1842,7 +1990,7 @@ export class RvwDatabase {
           .run(idempotencyKeyHash, idempotencyRequestHash, id, now);
       }
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
-      if (incrementSequence) this.incrementChangeSequence();
+      if (incrementSequence) this.incrementDomainRevisions(["comments"]);
       result = {
         id,
         commentId,
@@ -1887,7 +2035,7 @@ export class RvwDatabase {
       this.database.prepare("DELETE FROM comment_post_references WHERE post_id = ?").run(postId);
       this.insertCodeReferences("comment-post", postId, references);
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["comments"]);
     });
     const post = this.getCommentPost(postId);
     if (!post) {
@@ -1922,7 +2070,7 @@ export class RvwDatabase {
         .prepare("DELETE FROM comment_posts WHERE id = ? AND comment_id = ?")
         .run(postId, commentId);
       this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["comments"]);
     });
     return { commentId, postId };
   }
@@ -1939,7 +2087,7 @@ export class RvwDatabase {
         .run(resolved ? now : null, now, commentId);
       if (Number(result.changes) === 0)
         throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
-      if (incrementSequence) this.incrementChangeSequence();
+      if (incrementSequence) this.incrementDomainRevisions(["comments"]);
     };
     if (incrementSequence) this.immediateTransaction(write);
     else write();
@@ -1955,15 +2103,19 @@ export class RvwDatabase {
     }
     this.immediateTransaction(() => {
       this.database.prepare("DELETE FROM comments WHERE id = ?").run(commentId);
-      this.incrementChangeSequence();
+      this.incrementDomainRevisions(["comments"]);
     });
     return { id: comment.id, ref: comment.ref };
   }
 
-  applyCommentUpdates(updates: CommentUpdateInput[], relatedCommitOid: string): void {
+  applyCommentUpdates(updates: CommentUpdateInput[], relatedCommitOid: string): boolean {
+    let changed = false;
     for (const update of updates) {
+      const current = this.getComment(update.commentId);
+      if (!current) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
       if (update.reply.trim().length > 0) {
-        this.insertReply(
+        const existingPostIds = new Set(current.posts.map(({ id }) => id));
+        const reply = this.insertReply(
           update.commentId,
           {
             body: update.reply,
@@ -1980,10 +2132,13 @@ export class RvwDatabase {
           },
           false,
         );
-      } else if (!this.getComment(update.commentId)) {
-        throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
+        if (!existingPostIds.has(reply.id)) changed = true;
       }
-      if (update.resolve) this.setCommentResolved(update.commentId, true, false);
+      if (update.resolve && current.resolvedAt === null) {
+        this.setCommentResolved(update.commentId, true, false);
+        changed = true;
+      }
     }
+    return changed;
   }
 }

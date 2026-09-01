@@ -16,6 +16,12 @@ import type {
 } from "../../domain/models.js";
 import { api, jsonRequest } from "../api.js";
 import {
+  cancelCommentQuery,
+  invalidateCommentQuery,
+  putCommentInCache,
+  removeCommentFromCache,
+} from "../comment-query-cache.js";
+import {
   deleteCommentReplyDraftsForComment,
   readCommentReplyDraft,
   subscribeCommentReplyDrafts,
@@ -436,21 +442,21 @@ export function CommentThread({
     };
   }, [menuPosition, openMenuPostId, showThread]);
 
-  const invalidate = async (): Promise<void> => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["comments"] }),
-      queryClient.invalidateQueries({ queryKey: ["change-sequence"] }),
-      queryClient.invalidateQueries({ queryKey: ["annotations"] }),
-      queryClient.invalidateQueries({ queryKey: ["comment-placement"] }),
-    ]);
-  };
+  const cancelCommentRefetch = async (): Promise<void> =>
+    await cancelCommentQuery(queryClient, comment.pullRequestId);
+  const recoverCommentRefetch = (): void =>
+    invalidateCommentQuery(queryClient, comment.pullRequestId);
+  const cacheComment = (next: ReviewComment): void =>
+    putCommentInCache(queryClient, comment.pullRequestId, next);
   const replyMutation = useMutation({
     mutationFn: async () =>
-      await api(
+      await api<{ post: CommentPost; comment: ReviewComment }>(
         `/api/comments/${comment.id}/posts`,
         jsonRequest({ body: reply, authorLabel: "You", relatedCommitOid: null }),
       ),
-    onSuccess: async () => {
+    onMutate: cancelCommentRefetch,
+    onError: recoverCommentRefetch,
+    onSuccess: ({ comment: next }) => {
       const currentReplyDraft = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
       writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
         revision: currentReplyDraft.revision,
@@ -458,38 +464,50 @@ export function CommentThread({
         focused: currentReplyDraft.focused,
       });
       if (variant === "inline") pendingInlineScrollByComment.add(comment.id);
-      await invalidate();
+      cacheComment(next);
     },
   });
   const stateMutation = useMutation({
     mutationFn: async () =>
-      await api(
+      await api<{ comment: ReviewComment }>(
         `/api/comments/${comment.id}/${comment.resolvedAt ? "reopen" : "resolve"}`,
         jsonRequest({}),
       ),
-    onSuccess: invalidate,
+    onMutate: cancelCommentRefetch,
+    onError: recoverCommentRefetch,
+    onSuccess: ({ comment: next }) => cacheComment(next),
   });
   const editMutation = useMutation({
     mutationFn: async ({ postId, body }: { postId: string; body: string }) =>
-      await api(`/api/comments/${comment.id}/posts/${postId}`, {
-        ...jsonRequest({ body }),
-        method: "PATCH",
-      }),
-    onSuccess: async () => {
+      await api<{ post: CommentPost; comment: ReviewComment }>(
+        `/api/comments/${comment.id}/posts/${postId}`,
+        {
+          ...jsonRequest({ body }),
+          method: "PATCH",
+        },
+      ),
+    onMutate: cancelCommentRefetch,
+    onError: recoverCommentRefetch,
+    onSuccess: ({ comment: next }) => {
       setEditingPostId(null);
       setEditBody("");
-      await invalidate();
+      cacheComment(next);
     },
   });
   const deleteReplyMutation = useMutation({
     mutationFn: async (postId: string) =>
-      await api(`/api/comments/${comment.id}/posts/${postId}`, {
-        ...jsonRequest({}),
-        method: "DELETE",
-      }),
-    onSuccess: async () => {
+      await api<{ deleted: { commentId: string; postId: string }; comment: ReviewComment }>(
+        `/api/comments/${comment.id}/posts/${postId}`,
+        {
+          ...jsonRequest({}),
+          method: "DELETE",
+        },
+      ),
+    onMutate: cancelCommentRefetch,
+    onError: recoverCommentRefetch,
+    onSuccess: ({ comment: next }) => {
       setOpenMenuPostId(null);
-      await invalidate();
+      cacheComment(next);
     },
   });
   const deleteThreadMutation = useMutation({
@@ -498,10 +516,12 @@ export function CommentThread({
         ...jsonRequest({}),
         method: "DELETE",
       }),
-    onSuccess: async () => {
+    onMutate: cancelCommentRefetch,
+    onError: recoverCommentRefetch,
+    onSuccess: () => {
       deleteCommentReplyDraftsForComment(comment.pullRequestId, comment.id);
+      removeCommentFromCache(queryClient, comment.pullRequestId, comment.id);
       onDeleted?.();
-      await invalidate();
     },
   });
 

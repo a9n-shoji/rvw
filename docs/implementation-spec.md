@@ -666,15 +666,24 @@ comment actionの直前へ常設する。`Pull Request.md`、Walkthrough、Struc
 popoverは通常のmenu keyboard操作、outside pointer、Escapeとtriggerへのfocus復帰を提供する。
 逆引き結果はStructure一覧のID + `updatedAt` fingerprintが変わるまでfreshとして扱い、commentなど無関係な
 change sequenceやtab復帰だけでは再取得しない。cached resultのbackground refresh中もpopoverとkeyboard focusを
-維持し、結果消滅により自動で閉じる場合はmenu内のfocusをtriggerへ戻す。
+維持し、結果消滅により自動で閉じる場合はmenu内のfocusをtriggerへ戻す。Structure一覧の初回load完了前は
+逆引きqueryを開始せず、pollは一覧だけをinvalidateする。一覧から導出したfingerprint変更を逆引き更新の唯一の
+triggerとし、同じStructure revisionで旧fingerprintと新fingerprintを二重取得しない。Structure削除成功時も
+逆引きを直接invalidateせず、Structure一覧の更新後に新fingerprintで一度だけ取得する。navigation失敗時の明示retryは
+この制約の対象外とする。
 
-`GET /api/pull-requests/:id/structure-references?sourceOid=<oid>&path=<path>`は一つのeffective fileをbulkに解決し、
-`{ ok: true, references: FileStructureReference[] }`を返す。current StructureのNode anchorだけを対象とし、Edge
+`GET /api/pull-requests/:id/structure-reference-index?sourceOid=<oid>`はtarget commit上の全effective fileを
+一度に解決し、`{ ok: true, index: { sourceOid, entries: Array<{ path, references }> } }`を返す。viewerは
+`pullRequestId + sourceOid + Structure ID/updatedAt fingerprint`をquery identityとし、file pathをidentityへ
+含めず、左右paneと同じOID上のfile間で一つのindexを共有する。Structureが0件ならcommit存在確認、tree、diffを
+実行せず空indexを返す。旧
+`GET /api/pull-requests/:id/structure-references?sourceOid=<oid>&path=<path>`は互換用に残し、同じindex resolverから
+指定pathだけを抽出する。current StructureのNode anchorだけを対象とし、Edge
 anchor、label／description内のpathらしい文字列、heuristic relationは含めない。Node anchorの
 `structure.sourceOid + anchor.path`からtarget commitへ、同じpathが存在すればそれを優先し、消えた場合だけ
 既存のcopy-aware Git比較でrename／copy successorが一意な時に追従する。caseは保持し、候補が複数、target fileが
 missing、line rangeだけがstaleの各場合は、それぞれ推測しない、matchしない、file-level matchを維持する。
-永続reverse indexは持たない。一requestではtarget commitのtreeを一度だけ取得してpath存在確認を本文読込なしで
+永続reverse indexは持たない。一index requestではtarget commitのtreeを一度だけ取得してpath存在確認を本文読込なしで
 行い、copy-aware Git比較も`structure.sourceOid + targetSourceOid`のcommit pairごとに一度だけ実行して
 `oldPath -> unique successor` indexを共有する。Node数に比例して同じ`--find-copies-harder`を起動しない。
 
@@ -899,10 +908,50 @@ unresolved/resolved状態を変えない。
 `rvw://comment/<uuid>`のanchorを含むthread全体の削除として扱い、返信があれば同じtransactionで
 すべて削除する。確認画面は返信も削除されることを明示する。編集・削除はchange sequenceを更新する。
 
+viewerのcomment create/reply/edit/delete/resolve/reopenは、HTTP成功responseにcanonicalなcurrent commentを
+含める。clientはstableな`["comments", pullRequestId]` cacheへfunctional updaterで対象threadだけを置換・追加・
+削除し、`updatedAt`降順へ再配置して無関係なthread objectのidentityを維持する。mutation開始時に同queryを
+cancelし、query functionの`AbortSignal`をHTTP requestへ伝播する。初回GET前にmutationが成功した場合も
+canonical threadをcacheへ作成する。canonical response反映後とmutation失敗時はcomments queryを非同期
+invalidateし、完全なserver一覧をconsistency barrierとして取得する。mutation完了はcanonical responseとlocal
+cache反映までであり、このGETを待たない。これによりinitial GET、外部更新、並行mutation、response逆転の
+いずれも最終server snapshotへ収束する。client側でmutationとserver revisionの因果を推測するrevision creditは
+持たない。pollも外部CLI更新を取り込むため継続し、mutation直後のconsistency GET後に同じrevision変化を観測した
+heartbeatが追加のcomments再検証を行う場合がある。1 mutation = exactly 1 GETは性能契約にしない。
+
+viewerのplacementは
+`POST /api/pull-requests/:pullRequestId/comment-placements/resolve`へcomment ID列と最大4件のdestination
+（document、commit、Walkthrough）を渡して一括解決する。comment IDはfirst-seen順に重複排除し、responseも同順、
+missing IDは`missingCommentIds`へ明示する。viewerが保持するPR内comment全件を一requestへ渡せるものとし、
+comment ID件数にUIより小さい固定上限を設けない。別PRのcommentは混在させない。destination自体が利用不能な場合と
+予期しない内部errorはbatch全体を失敗させる。一方、保持refの外部削除などcomment固有のsource取得失敗は
+そのcommentの`failures`へdestinationとserialized errorを返し、他commentのplacementを維持する。document viewerはnew/oldを
+同じ一requestへ含め、repository paneにはrepository-file commentだけ、`Pull Request.md` paneには
+pull-request-markdown commentだけを渡してpaneごとに最大1回とする。展開中sidebarは未解決／解決済みfilterと
+独立した全non-PR comment集合に対して最大1回とし、sidebarを閉じている間は呼ばない。sidebarのplacement identityは
+PR Markdown targetがある場合だけtitle/bodyから導出したcontent fingerprint、Walkthrough targetがある場合だけWalkthrough revisionを
+含み、無関係なdomain更新ではbatchを再実行しない。document placementのquery identityがcomment追加／削除で変わる間は
+同じcontent fingerprintの直前placement responseだけを保持し、current commentsに存在するIDだけをjoinする。
+これにより既存annotationを再計算中も表示し、削除済みcommentは旧responseに残っていても表示しない。
+`Pull Request.md`のdocument本文、search、placementは同じcontent fingerprintをquery identityとrequestのexpected tokenへ
+含める。serverは実際に読んだtitle/bodyのfingerprintをresponseへ返し、不一致を`STALE_CONTENT`で拒否する。fingerprint変更時は
+旧本文と旧placementをplaceholderへ使わず、response順序にかかわらず異なる本文epochを同時表示しない。
+旧`GET /api/comments/:id/placement`は互換・parity oracleとしてsingle resolverを直接使い、元のerror semanticsを維持するがbrowserからは呼ばない。
+resolverはrequest内でcommit availability、source/destination pairのchanged files、PR/OID/pathのdocumentを
+Promiseごと共有し、最大4commentの固定並列度で処理する。cacheへPromiseを登録してからawaitし、同じGit処理の
+同時missを重複起動しない。
+item failureは成功cacheに含まれるため、affected threadに明示的な再試行を表示する。GitHub同期成功時もfailureを含む
+placement queryだけをinvalidateする。optimistic annotationはbatchが当該commentの成功、failure、missingを返した時点で終了し、
+outdatedまたはfailureなら仮の行表示を残さない。
+
 ### 6.5 Comment navigationとコピー
 
 - sidebarは未解決／解決済みを切り替え、各commentのOutdated状態、全post、常設reply欄を表示する。
+- Comments stackを閉じてもfilter、選択状態、PR全体comment composerとdraftのDOM/stateは保持し、重いthread一覧と
+  placement queryだけを停止する。再展開時は入力途中のPR全体commentをそのまま復元する。
 - sidebarの各threadには常にcheckboxを置き、選択が一件以上ある場合だけ一括copy actionを表示する。
+- Walkthrough commentの表示titleはcomment cache内の値ではなく、stable Walkthrough IDからcurrent
+  Walkthrough summaryのtitleを導出する。titleだけの更新でもpoll後のsidebar表示をcurrent値へ揃える。
 - Diff内のresolved threadは既定で一行に折りたたみ、展開すればpost、reply欄、reopen actionを表示する。
 - 参照copy、post編集、削除は各postの`...` menuへ格納し、resolve/reopenはthread actionとする。
 - commentからexact source documentを開ける。force-push前のrepository sourceも保持refから開く。
@@ -1308,7 +1357,31 @@ CREATE TABLE app_meta (
   value TEXT NOT NULL
 );
 
--- change_sequence、global theme_preference、comment_watch_database_idを保持する。
+-- change_sequence、revision_pull_requests、revision_pull_request_content、revision_comments、revision_walkthroughs、
+-- revision_structures、global theme_preference、comment_watch_database_idを保持する。
+
+`GET /api/meta/change-sequence`はglobal `changeSequence`を互換用に維持し、加えて
+`revisions: { pullRequests, pullRequestContent, comments, walkthroughs, structures }`を返す。migration時は各revisionを
+既存のglobal sequenceから初期化し、旧DBの初回pollを安全側に倒す。`pullRequests`は取得時刻を除く意味的なPR metadata、
+`pullRequestContent`はtitle/bodyだけを所有する。同一GitHub responseの再同期や同じstatus/locationのwriteではどちらも
+進めない。statusだけの変更は`pullRequests`だけを進め、PR Markdownと全文searchをinvalidateしない。
+location変更もPR Markdownはinvalidateしないが、repository availabilityに依存する全文searchは下記の対象とする。
+各logical write transactionはglobalを一度、実際に変更したdomainだけを一度進める。Walkthrough削除で紐づくcommentが
+存在する場合とresetだけが複数domainを進める。冪等key付きcomment replyの再送や既にresolvedのcommentへの同じresolveは
+実変更に数えず、`comments` revisionを進めない。viewerはdomain revisionを比較し、PR metadata、PR virtual
+document/search、comments、Walkthrough、Structure/indexをそれぞれ独立に更新する。global sequence変化だけを
+理由に全queryをinvalidateしない。PR metadata、comments、Walkthrough、Structureのmutable queryは初回domain revision
+snapshot取得後にだけenableする。stable keyのmutable queryでrevision変更を検出した場合は、data未取得の初回fetchも含めて
+対象fetchをcancelしてからinvalidateし、旧requestの成功が新revisionの再取得を消さないようにする。
+heartbeatはglobal sequenceと全domain revisionを1 SQL statementでsnapshot化する。
+`Pull Request.md`本文、本文search、placementはcontent fingerprintをquery identityへ含めて新generationへ切り替える。
+stable keyを使うcomments queryは
+`comments GET → 外部write → 初回revision baseline`の順序で更新を取りこぼさない。snapshot前のwriteは初回GETへ入り、
+snapshot後のwriteは次heartbeatが検出する。repository locationはGit object availabilityを変え得るため、
+`pullRequests` refetch後に`localRepositoryPath`または`gitCommonDir`の実変更を検出した場合だけ、そのPRのtree、changed files、
+repository document/diff/search、Structure reverse index、Mermaid peek、repository-file comment placementのin-flight fetchを
+cancelしてから明示invalidateする。
+statusなど他のPR metadata変更ではこのGit-backed invalidationを行わない。
 
 CREATE TABLE pull_requests (
   id TEXT PRIMARY KEY,
@@ -1455,6 +1528,7 @@ version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元�
 主なHTTP API:
 
 ```text
+GET  /api/meta/change-sequence
 GET  /api/pull-requests?offset=<offset>&limit=<limit>&hideClosedOrMerged=<bool>
 POST /api/pull-requests/refresh-statuses
 GET  /api/pull-requests/:id
@@ -1476,9 +1550,12 @@ GET /api/pull-requests/:id/walkthroughs/:walkthroughId/references/:referenceId/r
 DELETE /api/pull-requests/:id/walkthroughs/:walkthroughId
 GET /api/pull-requests/:id/structures
 GET /api/pull-requests/:id/structures/:structureId
+GET /api/pull-requests/:id/structure-reference-index?sourceOid=...
+GET /api/pull-requests/:id/structure-references?sourceOid=...&path=... # compatibility
 DELETE /api/pull-requests/:id/structures/:structureId
 
 GET  /api/pull-requests/:id/comments
+POST /api/pull-requests/:id/comment-placements/resolve
 POST /api/comments
 POST /api/comments/:id/posts
 PATCH /api/comments/:id/posts/:postId
@@ -1486,7 +1563,7 @@ DELETE /api/comments/:id/posts/:postId
 POST /api/comments/:id/resolve
 POST /api/comments/:id/reopen
 DELETE /api/comments/:id
-GET  /api/comments/:id/placement?...
+GET  /api/comments/:id/placement?... # compatibility
 ```
 
 HTTP/CLIは同じapplication serviceを使用し、transportへbusiness logicを書かない。
@@ -1562,7 +1639,10 @@ tab row
 - 未送信comment draftはPR、pane、文書、exact source、commit範囲、表示modeごとに分離し、tab切替や
   tabの閉じ直しでは保持する。送信、明示cancel、comment targetへのnavigation、reset成功時に破棄する。
 - 明示capture button、未取り込みbanner、version selectorは存在しない。
-- refreshは取得・ref保持・cache更新を一度に行う。
+- refreshは取得・ref保持・cache更新を一度に行い、Pull Request行と同じ短いDB snapshotで読んだ
+  `changeSequence`、domain revisions、content fingerprintをresponseへ含める。長いGit commit列挙中はtransactionを保持しない。
+  viewerは採用前に同じPR GETとheartbeat GETをcancelし、既に観測したsequenceより古いrefresh responseをcacheへ書かない。
+  PR metadata queryはinfinite freshとし、domain revisionと明示refreshだけで更新する。
 
 ファイル、コメント、検索、diff style、line selectionの既存UXは維持する。PR本文とWalkthroughはExplorer先頭の
 virtual rowとして表示し、Walkthrough folderを展開して選択すると説明tabを開く。本文検索はExplorer headerから
