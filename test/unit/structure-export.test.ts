@@ -11,6 +11,7 @@ import {
 import { initialStructureLayout, STRUCTURE_NODE_HEIGHT } from "../../src/web/structure-graph.js";
 import {
   buildFullStructureRenderModel,
+  structureTextUnits,
   wrapStructureText,
 } from "../../src/web/structure-render-model.js";
 
@@ -134,8 +135,9 @@ describe("Structure SVG export", () => {
     expect(source).toBe(second.source);
   });
 
-  it("keeps rounded and angled notation origin marks inside their shapes", () => {
+  it("keeps notation-aware origin marks clear of shaped Node borders", () => {
     for (const expected of [
+      { nodeId: "node-4", insetX: 18, insetY: 10 },
       { nodeId: "node-5", insetX: 22, insetY: 16 },
       { nodeId: "node-6", insetX: 20, insetY: 24 },
     ]) {
@@ -195,6 +197,13 @@ describe("Structure SVG export", () => {
     expect(
       wrapStructureText({ text: "alpha/beta::gamma-delta", maxUnits: 5, ellipsize: false }),
     ).toEqual(["alpha/", "beta::", "gamma-", "delta"]);
+    const namespaceBoundary = wrapStructureText({
+      text: "a::",
+      maxUnits: 1.2,
+      ellipsize: false,
+    });
+    expect(namespaceBoundary).toEqual(["a", "::"]);
+    expect(namespaceBoundary.every((line) => structureTextUnits(line) <= 1.2)).toBe(true);
     const limited = wrapStructureText({
       text: "one two three four five",
       maxUnits: 4,

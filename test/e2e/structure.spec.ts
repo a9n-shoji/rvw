@@ -489,6 +489,37 @@ test("exports the complete Structure as standalone SVG and 2x PNG without changi
   expect(await viewer.getAttribute("data-selected-edge-id")).toBe(selectedEdgeId);
 });
 
+test("keeps the Export popover inside a narrow Structure pane", async ({ page }) => {
+  await page.setViewportSize({ width: 640, height: 720 });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, primaryTitle);
+  await page
+    .getByRole("navigation", { name: "レビュー文書" })
+    .getByRole("button", { name: secondaryTitle, exact: true })
+    .click({ modifiers: ["Meta"] });
+
+  const viewer = page
+    .locator('.document-pane[data-pane="left"]')
+    .locator(`[data-structure-id="${primaryStructureId}"]`);
+  await viewer.locator('summary[aria-label="Structureをエクスポート"]').click();
+  const containment = await viewer.evaluate((element) => {
+    const viewerRect = element.getBoundingClientRect();
+    const popoverRect = element
+      .querySelector<HTMLElement>(".structure-export-popover")!
+      .getBoundingClientRect();
+    return {
+      viewerLeft: viewerRect.left,
+      viewerRight: viewerRect.right,
+      viewerWidth: viewerRect.width,
+      popoverLeft: popoverRect.left,
+      popoverRight: popoverRect.right,
+    };
+  });
+  expect(containment.viewerWidth).toBeLessThan(320);
+  expect(containment.popoverLeft).toBeGreaterThanOrEqual(containment.viewerLeft + 7);
+  expect(containment.popoverRight).toBeLessThanOrEqual(containment.viewerRight - 7);
+});
+
 test("scrolls complete long content inside a fixed-size Node", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await openStructure(page, secondaryTitle);

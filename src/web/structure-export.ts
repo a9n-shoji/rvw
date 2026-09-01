@@ -291,6 +291,12 @@ function serializeNode(
           top: point.y + 18,
           bottom: point.y + STRUCTURE_NODE_HEIGHT - 18,
         };
+      case "component":
+        return {
+          x: point.x + 18,
+          top: point.y + 10,
+          bottom: point.y + STRUCTURE_NODE_HEIGHT - 10,
+        };
       default:
         return {
           x: point.x + 4,

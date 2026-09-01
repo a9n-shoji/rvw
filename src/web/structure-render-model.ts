@@ -319,7 +319,16 @@ function wrapSingleLine(text: string, maxUnits: number): string[] {
       units = nextUnits;
       hardEnd = index + 1;
       if (isWrapOpportunity(character, characters[index + 1])) {
-        preferredEnd = character === ":" && characters[index + 1] === ":" ? index + 2 : index + 1;
+        if (character === ":" && characters[index + 1] === ":") {
+          const tokenUnits = nextUnits + structureTextUnits(characters[index + 1]!);
+          if (tokenUnits <= maxUnits) preferredEnd = index + 2;
+          else if (index > 0) {
+            preferredEnd = index;
+            break;
+          }
+        } else {
+          preferredEnd = index + 1;
+        }
       }
       if (units > maxUnits) break;
     }

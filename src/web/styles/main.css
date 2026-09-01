@@ -4462,7 +4462,7 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-export-menu {
-  position: relative;
+  position: static;
   flex: 0 0 auto;
 }
 
@@ -4491,9 +4491,9 @@ diffs-container > [slot="header-metadata"] {
   position: absolute;
   z-index: 16;
   top: calc(100% + 6px);
-  right: 0;
+  right: 8px;
   display: grid;
-  width: min(272px, 80vw);
+  width: min(272px, calc(100% - 16px));
   gap: 5px;
   padding: 7px;
   border: 1px solid var(--line-strong);
