@@ -442,6 +442,7 @@ export interface NewStructureInput {
 
 export interface DomainRevisions {
   pullRequests: number;
+  pullRequestContent: number;
   comments: number;
   walkthroughs: number;
   structures: number;
@@ -451,6 +452,7 @@ type DomainRevision = keyof DomainRevisions;
 
 const domainRevisionMetaKeys: Record<DomainRevision, string> = {
   pullRequests: "revision_pull_requests",
+  pullRequestContent: "revision_pull_request_content",
   comments: "revision_comments",
   walkthroughs: "revision_walkthroughs",
   structures: "revision_structures",
@@ -856,7 +858,19 @@ export class RvwDatabase {
       const statement = this.database.prepare(
         "UPDATE pull_requests SET github_state = ?, github_is_draft = ? WHERE id = ?",
       );
+      let changed = false;
       for (const update of updates) {
+        const current = this.getPullRequest(update.pullRequestId);
+        if (!current) {
+          throw new RvwError(
+            "PR_NOT_FOUND",
+            `Pull Requestが見つかりません: ${update.pullRequestId}`,
+            { status: 404 },
+          );
+        }
+        if (current.githubState === update.state && current.githubIsDraft === update.isDraft) {
+          continue;
+        }
         const result = statement.run(update.state, update.isDraft ? 1 : 0, update.pullRequestId);
         if (Number(result.changes) !== 1) {
           throw new RvwError(
@@ -865,8 +879,9 @@ export class RvwDatabase {
             { status: 404 },
           );
         }
+        changed = true;
       }
-      this.incrementDomainRevisions(["pullRequests"]);
+      if (changed) this.incrementDomainRevisions(["pullRequests"]);
     });
   }
 
@@ -874,6 +889,14 @@ export class RvwDatabase {
     id: string,
     repository: { localRepositoryPath: string; gitCommonDir: string },
   ): PullRequest {
+    const existing = this.getPullRequest(id);
+    if (!existing) throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
+    if (
+      existing.localRepositoryPath === repository.localRepositoryPath &&
+      existing.gitCommonDir === repository.gitCommonDir
+    ) {
+      return existing;
+    }
     this.immediateTransaction(() => {
       const result = this.database
         .prepare(
@@ -893,10 +916,30 @@ export class RvwDatabase {
     github: GitHubPullRequest,
     repository: { localRepositoryPath: string; gitCommonDir: string },
     comparisonBaseOid: string,
-  ): string {
+  ): { id: string; semanticChanged: boolean; contentChanged: boolean } {
     const now = new Date().toISOString();
     const existing = this.findPullRequestByIdentity(github.owner, github.repository, github.number);
     const id = existing?.id ?? randomUUID();
+    const contentChanged =
+      !existing || existing.latestTitle !== github.title || existing.latestBody !== github.body;
+    const semanticChanged =
+      !existing ||
+      existing.url !== github.url ||
+      existing.latestAuthorLogin !== github.authorLogin ||
+      existing.latestHeadRepositoryOwner !== github.headRepositoryOwner ||
+      existing.latestHeadRepositoryName !== github.headRepositoryName ||
+      existing.localRepositoryPath !== repository.localRepositoryPath ||
+      existing.gitCommonDir !== repository.gitCommonDir ||
+      contentChanged ||
+      existing.latestBaseRefName !== github.baseRefName ||
+      existing.latestHeadRefName !== github.headRefName ||
+      existing.latestBaseOid !== github.baseOid ||
+      existing.latestComparisonBaseOid !== comparisonBaseOid ||
+      existing.latestHeadOid !== github.headOid ||
+      existing.githubCreatedAt !== github.createdAt ||
+      existing.githubUpdatedAt !== github.updatedAt ||
+      existing.githubState !== github.state ||
+      existing.githubIsDraft !== github.isDraft;
     this.database
       .prepare(
         `INSERT INTO pull_requests(
@@ -952,10 +995,10 @@ export class RvwDatabase {
         github.isDraft ? 1 : 0,
         now,
         existing?.createdAt ?? now,
-        now,
+        semanticChanged ? now : existing.updatedAt,
         comparisonBaseOid,
       );
-    return id;
+    return { id, semanticChanged, contentChanged };
   }
 
   upsertPullRequest(
@@ -964,9 +1007,12 @@ export class RvwDatabase {
     comparisonBaseOid: string,
   ): PullRequest {
     const id = this.immediateTransaction(() => {
-      const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
-      this.incrementDomainRevisions(["pullRequests"]);
-      return writtenId;
+      const write = this.writePullRequest(github, repository, comparisonBaseOid);
+      const domains: DomainRevision[] = [];
+      if (write.semanticChanged) domains.push("pullRequests");
+      if (write.contentChanged) domains.push("pullRequestContent");
+      if (domains.length > 0) this.incrementDomainRevisions(domains);
+      return write.id;
     });
     const pullRequest = this.getPullRequest(id);
     if (!pullRequest)
@@ -981,14 +1027,16 @@ export class RvwDatabase {
     updates: CommentUpdateInput[],
   ): PullRequest {
     const id = this.immediateTransaction(() => {
-      const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
+      const write = this.writePullRequest(github, repository, comparisonBaseOid);
       this.applyCommentUpdates(updates, github.headOid);
-      this.incrementDomainRevisions(
-        updates.some((update) => update.resolve || update.reply.trim().length > 0)
-          ? ["pullRequests", "comments"]
-          : ["pullRequests"],
-      );
-      return writtenId;
+      const domains: DomainRevision[] = [];
+      if (write.semanticChanged) domains.push("pullRequests");
+      if (write.contentChanged) domains.push("pullRequestContent");
+      if (updates.some((update) => update.resolve || update.reply.trim().length > 0)) {
+        domains.push("comments");
+      }
+      if (domains.length > 0) this.incrementDomainRevisions(domains);
+      return write.id;
     });
     const pullRequest = this.getPullRequest(id);
     if (!pullRequest)
@@ -1002,10 +1050,16 @@ export class RvwDatabase {
     comparisonBaseOid: string,
   ): PullRequest {
     const id = this.immediateTransaction(() => {
-      const writtenId = this.writePullRequest(github, repository, comparisonBaseOid);
-      this.deletePullRequestHistory(writtenId);
-      this.incrementDomainRevisions(["pullRequests", "comments", "walkthroughs", "structures"]);
-      return writtenId;
+      const write = this.writePullRequest(github, repository, comparisonBaseOid);
+      this.deletePullRequestHistory(write.id);
+      this.incrementDomainRevisions([
+        "pullRequests",
+        "pullRequestContent",
+        "comments",
+        "walkthroughs",
+        "structures",
+      ]);
+      return write.id;
     });
     const pullRequest = this.getPullRequest(id);
     if (!pullRequest)

@@ -15,7 +15,11 @@ import type {
   ReviewComment,
 } from "../../domain/models.js";
 import { api, jsonRequest } from "../api.js";
-import { putCommentInCache, removeCommentFromCache } from "../comment-query-cache.js";
+import {
+  cancelCommentQuery,
+  putCommentInCache,
+  removeCommentFromCache,
+} from "../comment-query-cache.js";
 import {
   deleteCommentReplyDraftsForComment,
   readCommentReplyDraft,
@@ -437,16 +441,18 @@ export function CommentThread({
     };
   }, [menuPosition, openMenuPostId, showThread]);
 
-  const cacheComment = (next: ReviewComment): void => {
-    putCommentInCache(queryClient, comment.pullRequestId, next);
-  };
+  const cancelCommentRefetch = async (): Promise<void> =>
+    await cancelCommentQuery(queryClient, comment.pullRequestId);
+  const cacheComment = async (next: ReviewComment): Promise<void> =>
+    await putCommentInCache(queryClient, comment.pullRequestId, next);
   const replyMutation = useMutation({
     mutationFn: async () =>
       await api<{ post: CommentPost; comment: ReviewComment }>(
         `/api/comments/${comment.id}/posts`,
         jsonRequest({ body: reply, authorLabel: "You", relatedCommitOid: null }),
       ),
-    onSuccess: ({ comment: next }) => {
+    onMutate: cancelCommentRefetch,
+    onSuccess: async ({ comment: next }) => {
       const currentReplyDraft = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
       writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
         revision: currentReplyDraft.revision,
@@ -454,7 +460,7 @@ export function CommentThread({
         focused: currentReplyDraft.focused,
       });
       if (variant === "inline") pendingInlineScrollByComment.add(comment.id);
-      cacheComment(next);
+      await cacheComment(next);
     },
   });
   const stateMutation = useMutation({
@@ -463,7 +469,8 @@ export function CommentThread({
         `/api/comments/${comment.id}/${comment.resolvedAt ? "reopen" : "resolve"}`,
         jsonRequest({}),
       ),
-    onSuccess: ({ comment: next }) => cacheComment(next),
+    onMutate: cancelCommentRefetch,
+    onSuccess: async ({ comment: next }) => await cacheComment(next),
   });
   const editMutation = useMutation({
     mutationFn: async ({ postId, body }: { postId: string; body: string }) =>
@@ -474,10 +481,11 @@ export function CommentThread({
           method: "PATCH",
         },
       ),
-    onSuccess: ({ comment: next }) => {
+    onMutate: cancelCommentRefetch,
+    onSuccess: async ({ comment: next }) => {
       setEditingPostId(null);
       setEditBody("");
-      cacheComment(next);
+      await cacheComment(next);
     },
   });
   const deleteReplyMutation = useMutation({
@@ -489,9 +497,10 @@ export function CommentThread({
           method: "DELETE",
         },
       ),
-    onSuccess: ({ comment: next }) => {
+    onMutate: cancelCommentRefetch,
+    onSuccess: async ({ comment: next }) => {
       setOpenMenuPostId(null);
-      cacheComment(next);
+      await cacheComment(next);
     },
   });
   const deleteThreadMutation = useMutation({
@@ -500,9 +509,10 @@ export function CommentThread({
         ...jsonRequest({}),
         method: "DELETE",
       }),
-    onSuccess: () => {
+    onMutate: cancelCommentRefetch,
+    onSuccess: async () => {
       deleteCommentReplyDraftsForComment(comment.pullRequestId, comment.id);
-      removeCommentFromCache(queryClient, comment.pullRequestId, comment.id);
+      await removeCommentFromCache(queryClient, comment.pullRequestId, comment.id);
       onDeleted?.();
     },
   });

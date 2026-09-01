@@ -26,14 +26,16 @@ counts are the deterministic CI budgets.
 | Old browser placement endpoint                  |                                                                                                                           at least 100 requests per surface |
 
 The dominant work was multiplicative: comment count × destination count × commit/document validation.
-The sidebar also mounted and rendered every full thread while collapsed.
+The sidebar also mounted and rendered every full thread while collapsed. The optimized shell keeps
+only lightweight composer, filter, and selection state mounted while gating the list and placement
+work on expansion.
 
 ## Result and CI budgets
 
 | Scenario                              |                                                                               Budget |              Observed locally |
 | ------------------------------------- | -----------------------------------------------------------------------------------: | ----------------------------: |
-| 100 comments, one document pane       |                                                            1 batch placement request |    1 request, 148 ms to ready |
-| 100 visible sidebar comments          |                                                            1 batch placement request |    1 request, 177 ms to ready |
+| 100 comments, one document pane       |                                                            1 batch placement request |    1 request, 152 ms to ready |
+| 100 visible sidebar comments          |                                                            1 batch placement request |    1 request, 137 ms to ready |
 | Collapsed sidebar                     |                                                          0 commit placement requests |                             0 |
 | Browser old single-placement endpoint |                                                                                    0 |                             0 |
 | 100 comments, new + old batch         |                                    `hasObject` 2, `changedFiles` 1, `readDocument` 2 |                     2 / 1 / 2 |
@@ -43,7 +45,7 @@ The sidebar also mounted and rendered every full thread while collapsed.
 The Playwright timing values are reported but not used as hard CI thresholds. CI enforces network and
 Git-call budgets so slower shared runners do not create false failures. The old single-placement
 operation remains a semantic parity oracle and an explicit baseline characterization path.
-The recorded timing observation is from the final 125-test Playwright run; focused runs varied while
+The recorded timing observation is from the final 126-test Playwright run; focused runs varied while
 remaining inside the same request-count budgets.
 
 ## Query and mutation boundary
@@ -54,11 +56,18 @@ remaining inside the same request-count budgets.
   infinite freshness only when the key contains their complete immutable or revision-qualified
   identity.
 - Comment mutations update the stable Pull Request comment query from the canonical server response.
+  They cancel the exact query before the write and again before the canonical update, propagate the
+  query `AbortSignal` through `fetch`, seed an initially missing cache, and preserve server
+  `updatedAt DESC` ordering without replacing unrelated thread objects.
   The performance E2E permits at most one related document placement and one related sidebar
   placement after a create, with no immediate comments-list refetch.
 - The one-second poll remains the external synchronization mechanism. Domain revisions prevent a
   comment-only external update from refetching PR documents, Walkthroughs, Structures, or Structure
   backlinks.
+- Pull Request metadata and title/body content have separate revisions. A no-op synchronization does
+  not advance either revision; status/location-only changes do not invalidate PR Markdown or search.
+- A placement batch accepts the complete comment list held by the viewer rather than introducing a
+  500-comment product limit. Fixed concurrency and request-scoped caches bound Git subprocess work.
 
 ## Regression commands
 

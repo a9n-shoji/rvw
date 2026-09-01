@@ -779,7 +779,13 @@ const activeStructures = repositoryDemo
 const activeViewers = new Set();
 const releasedViewers = new Set();
 let changeSequence = 0;
-const revisions = { pullRequests: 0, comments: 0, walkthroughs: 0, structures: 0 };
+const revisions = {
+  pullRequests: 0,
+  pullRequestContent: 0,
+  comments: 0,
+  walkthroughs: 0,
+  structures: 0,
+};
 function bump(...domains) {
   changeSequence += 1;
   for (const domain of new Set(domains)) revisions[domain] += 1;
@@ -1464,8 +1470,9 @@ app.post("/api/pull-requests/refresh-statuses", async (context) => {
 
 app.post("/api/pull-requests/:id/refresh", async (context) => {
   await new Promise((resolve) => setTimeout(resolve, 100));
+  const previousSyncStage = syncStage;
   if (!repositoryDemo) syncStage = Math.min(syncStage + 1, 2);
-  bump("pullRequests");
+  if (syncStage !== previousSyncStage) bump("pullRequests", "pullRequestContent");
   return context.json({ ok: true, ...currentView(), commentUpdatesApplied: 0 });
 });
 

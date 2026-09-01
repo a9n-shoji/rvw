@@ -46,7 +46,7 @@ import type { ThemePreference } from "../theme.js";
 import type { DocumentPaneId } from "../document-workspace.js";
 import { mermaidBindingTargets } from "../mermaid-binding-resolver.js";
 import { commentReplyDraftScope } from "../comment-draft-store.js";
-import { putCommentInCache } from "../comment-query-cache.js";
+import { cancelCommentQuery, putCommentInCache } from "../comment-query-cache.js";
 import type { ViewerNavigationTarget } from "./DocumentViewer.js";
 import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
@@ -918,14 +918,15 @@ export function WalkthroughViewer({
           authorLabel: "You",
         }),
       ),
-    onSuccess: ({ comment }) => {
+    onMutate: async () => await cancelCommentQuery(queryClient, walkthrough.pullRequestId),
+    onSuccess: async ({ comment }) => {
       window.getSelection()?.removeAllRanges();
       setCommentBody("");
       setComposerOpen(false);
       setSelectedRange(null);
       setDiagramRange(null);
       setLineComposerPlacement(null);
-      putCommentInCache(queryClient, walkthrough.pullRequestId, comment);
+      await putCommentInCache(queryClient, walkthrough.pullRequestId, comment);
     },
   });
   const createCommentRef = useRef(createComment);

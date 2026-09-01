@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { commentTargetSchema, viewerReleaseSchema } from "../../src/server/schemas.js";
+import {
+  commentTargetSchema,
+  resolveCommentPlacementsSchema,
+  viewerReleaseSchema,
+} from "../../src/server/schemas.js";
 
 describe("commentTargetSchema", () => {
   it.each([
@@ -35,5 +39,20 @@ describe("viewerReleaseSchema", () => {
       }).success,
     ).toBe(true);
     expect(viewerReleaseSchema.safeParse({ viewerId: "not-a-viewer" }).success).toBe(false);
+  });
+});
+
+describe("resolveCommentPlacementsSchema", () => {
+  it("accepts every comment in reviews larger than 500 threads", () => {
+    const commentIds = Array.from(
+      { length: 501 },
+      (_, index) => `00000000-0000-4000-8000-${index.toString().padStart(12, "0")}`,
+    );
+    expect(
+      resolveCommentPlacementsSchema.safeParse({
+        commentIds,
+        destinations: [{ kind: "commit", oid: "a".repeat(40) }],
+      }).success,
+    ).toBe(true);
   });
 });

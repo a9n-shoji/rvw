@@ -130,6 +130,7 @@ export interface ChangeSequenceResponse {
   changeSequence: number;
   revisions: {
     pullRequests: number;
+    pullRequestContent: number;
     comments: number;
     walkthroughs: number;
     structures: number;

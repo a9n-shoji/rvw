@@ -6,7 +6,7 @@ import { putCommentInCache, removeCommentFromCache } from "../../src/web/comment
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 
-function comment(id: string, body: string): ReviewComment {
+function comment(id: string, body: string, updatedAt = "2026-08-08T00:00:00.000Z"): ReviewComment {
   const createdAt = "2026-08-08T00:00:00.000Z";
   return {
     id,
@@ -15,7 +15,7 @@ function comment(id: string, body: string): ReviewComment {
     createdHeadOid: "b".repeat(40),
     resolvedAt: null,
     createdAt,
-    updatedAt: createdAt,
+    updatedAt,
     target: { kind: "pull-request" },
     posts: [
       {
@@ -28,22 +28,26 @@ function comment(id: string, body: string): ReviewComment {
         lastModifiedBy: "human",
         isRoot: true,
         createdAt,
-        updatedAt: createdAt,
+        updatedAt,
       },
     ],
   };
 }
 
 describe("comment query cache", () => {
-  it("replaces only the canonical target and preserves unrelated identities", () => {
+  it("moves the canonical target to updated-at order and preserves unrelated identities", async () => {
     const queryClient = new QueryClient();
     const first = comment("first", "First");
-    const second = comment("second", "Second");
+    const second = comment("second", "Second", "2026-08-08T01:00:00.000Z");
     const response: CommentsResponse = { comments: [first, second] };
     queryClient.setQueryData(["comments", pullRequestId], response);
-    const updated = { ...first, resolvedAt: "2026-08-08T01:00:00.000Z" };
+    const updated = {
+      ...first,
+      resolvedAt: "2026-08-08T02:00:00.000Z",
+      updatedAt: "2026-08-08T02:00:00.000Z",
+    };
 
-    putCommentInCache(queryClient, pullRequestId, updated);
+    await putCommentInCache(queryClient, pullRequestId, updated);
 
     const next = queryClient.getQueryData<CommentsResponse>(["comments", pullRequestId])!;
     expect(next).not.toBe(response);
@@ -52,21 +56,55 @@ describe("comment query cache", () => {
     expect(next.comments[1]).toBe(second);
   });
 
-  it("appends creates and removes deletes without fabricating a missing list", () => {
+  it("places creates first, removes deletes, and seeds a missing list", async () => {
     const queryClient = new QueryClient();
     const first = comment("first", "First");
-    const second = comment("second", "Second");
+    const second = comment("second", "Second", "2026-08-08T01:00:00.000Z");
     queryClient.setQueryData<CommentsResponse>(["comments", pullRequestId], {
       comments: [first],
     });
 
-    putCommentInCache(queryClient, pullRequestId, second);
-    removeCommentFromCache(queryClient, pullRequestId, first.id);
+    await putCommentInCache(queryClient, pullRequestId, second);
+    await removeCommentFromCache(queryClient, pullRequestId, first.id);
 
     expect(queryClient.getQueryData<CommentsResponse>(["comments", pullRequestId])).toEqual({
       comments: [second],
     });
-    putCommentInCache(queryClient, "missing", first);
-    expect(queryClient.getQueryData(["comments", "missing"])).toBeUndefined();
+    await putCommentInCache(queryClient, "missing", first);
+    expect(queryClient.getQueryData(["comments", "missing"])).toEqual({ comments: [first] });
+  });
+
+  it("cancels a deferred stale GET before writing a canonical mutation response", async () => {
+    const queryClient = new QueryClient();
+    const stale = comment("first", "Stale");
+    const canonical = comment("first", "Canonical", "2026-08-08T02:00:00.000Z");
+    let resolveStale: ((response: CommentsResponse) => void) | undefined;
+    let aborted = false;
+    const inFlight = queryClient.fetchQuery({
+      queryKey: ["comments", pullRequestId],
+      queryFn: async ({ signal }) =>
+        await new Promise<CommentsResponse>((resolve, reject) => {
+          resolveStale = resolve;
+          signal.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(new DOMException("aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        }),
+    });
+    const observedInFlight = inFlight.catch((error: unknown) => error);
+    await Promise.resolve();
+
+    await putCommentInCache(queryClient, pullRequestId, canonical);
+    resolveStale?.({ comments: [stale] });
+    await observedInFlight;
+
+    expect(aborted).toBe(true);
+    expect(queryClient.getQueryData(["comments", pullRequestId])).toEqual({
+      comments: [canonical],
+    });
   });
 });

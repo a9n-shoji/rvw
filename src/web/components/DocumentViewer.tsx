@@ -49,7 +49,7 @@ import {
   readCommentDraft,
   writeCommentDraft,
 } from "../comment-draft-store.js";
-import { putCommentInCache } from "../comment-query-cache.js";
+import { cancelCommentQuery, putCommentInCache } from "../comment-query-cache.js";
 import type {
   ActiveDocument,
   DocumentPaneId,
@@ -980,7 +980,7 @@ export function DocumentViewer({
   latestHeadOid,
   selectedOid,
   oldOid,
-  pullRequestRevision,
+  pullRequestContentRevision,
   structureFingerprint,
   activeDocument,
   displayMode,
@@ -1007,7 +1007,7 @@ export function DocumentViewer({
   latestHeadOid: string;
   selectedOid: string;
   oldOid: string | null;
-  pullRequestRevision: number | undefined;
+  pullRequestContentRevision: number | undefined;
   structureFingerprint: string;
   activeDocument: ActiveDocument;
   displayMode: DisplayMode;
@@ -1354,7 +1354,7 @@ export function DocumentViewer({
       renderedRefs,
       renderedRefs.new?.kind === "pull-request-markdown" ||
       renderedRefs.old?.kind === "pull-request-markdown"
-        ? pullRequestRevision
+        ? pullRequestContentRevision
         : null,
     ],
     queryFn: async () =>
@@ -1477,7 +1477,8 @@ export function DocumentViewer({
           authorLabel: "You",
         }),
       ),
-    onSuccess: ({ comment }, { target, location }) => {
+    onMutate: async () => await cancelCommentQuery(queryClient, pullRequestId),
+    onSuccess: async ({ comment }, { target, location }) => {
       window.getSelection()?.removeAllRanges();
       const range =
         target.kind === "document" && target.startLine !== null && target.endLine !== null
@@ -1500,7 +1501,7 @@ export function DocumentViewer({
       setSelectionPreview(null);
       setMarkdownComposerOpen(false);
       setFileComposerOpen(false);
-      putCommentInCache(queryClient, pullRequestId, comment);
+      await putCommentInCache(queryClient, pullRequestId, comment);
     },
   });
 

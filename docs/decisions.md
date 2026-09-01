@@ -2447,23 +2447,30 @@ placement together; a reply could re-run immutable Git reads and reconstruct unr
 
 Make placement a bounded application operation. One batch accepts ordered comment IDs and up to four
 document, commit, or Walkthrough destinations. It preserves first-seen comment order, reports missing
-IDs, uses a fixed comment concurrency of four, and shares request-scoped Promise caches for commit
+IDs, accepts the complete comment set held by the viewer without a 500-item product limit, uses a
+fixed comment concurrency of four, and shares request-scoped Promise caches for commit
 availability, changed-file pairs, and documents. Document panes send new and old destinations
 together, an expanded sidebar sends only its visible nontrivial targets, and the browser no longer
 uses the compatible single-comment endpoint. Placement query identity contains comment ID plus target,
 destination identity, and the relevant mutable-document revision; post timestamps are deliberately
 excluded, and current comment content is joined after placement lookup.
 
+Keep the Comments shell mounted while collapsed so PR-level composer text, filter, and selection
+state survive a temporary collapse. Gate the expensive thread list and placement query on expansion.
+
 Compute Structure backlinks as one source-OID reverse index keyed by the current Structure
 ID/`updatedAt` fingerprint. The index returns before Git work when there are no Structures, reads the
 target tree once, and runs one copy-aware comparison per distinct Structure source/target pair. The
 path endpoint remains a compatibility projection of the same index.
 
-Keep the global change sequence for compatibility and add independent Pull Request, comment,
-Walkthrough, and Structure revisions. Initialize them from the existing sequence during migration and
-advance only the domains changed by each logical transaction. Viewer polling invalidates only queries
-owned by changed domains. Comment mutations return the canonical thread and update the stable
-Pull-Request comment cache with functional updates, preserving unrelated object identities; mutation
+Keep the global change sequence for compatibility and add independent Pull Request metadata,
+Pull Request title/body content, comment, Walkthrough, and Structure revisions. Initialize them from
+the existing sequence during migration and advance only the domains changed by each logical
+transaction. No-op synchronization advances neither Pull Request revision, and status/location-only
+changes do not discard PR Markdown or search. Viewer polling invalidates only queries owned by changed
+domains. Comment mutations cancel the exact in-flight query, propagate its abort signal to HTTP, then
+update the stable Pull-Request comment cache from the canonical thread. The updater preserves unrelated
+object identities, restores `updatedAt DESC` order, and seeds a cache that was not yet loaded; mutation
 completion no longer waits for a change-sequence refetch. Immutable OID/path/range queries use infinite
 freshness only when their complete identity is in the key.
 
@@ -2475,6 +2482,8 @@ freshness only when their complete identity is in the key.
   still revalidate their own Git inputs and cannot leak state across repositories or PRs.
 - Domain revisions add write-path bookkeeping and migration state, but preserve the existing polling
   and global sequence contract without introducing WebSockets or another synchronization model.
+- Separating PR content from other metadata adds one revision, but prevents status/location churn and
+  no-op refreshes from rebuilding PR Markdown, search, or placement.
 - The Structure index may contain entries for files not currently open. It avoids repeated tree/diff
   processes and is shared across panes, while remaining derived and non-persistent.
 - Local canonical cache updates make UI mutations immediate. An external writer is still observed on

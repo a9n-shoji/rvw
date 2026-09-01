@@ -121,7 +121,7 @@ const placementDocumentRefSchema = z.discriminatedUnion("kind", [
 ]);
 
 export const resolveCommentPlacementsSchema = z.object({
-  commentIds: z.array(z.uuid()).max(500),
+  commentIds: z.array(z.uuid()),
   destinations: z
     .array(
       z.union([
