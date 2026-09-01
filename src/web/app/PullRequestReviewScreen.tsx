@@ -98,6 +98,7 @@ import {
   clearCommentDraftsForPullRequest,
   moveCommentDraftsForWorkspaceTransition,
 } from "../comment-draft-store.js";
+import { consumeLocalCommentRevisionDelta } from "../comment-query-cache.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { transferStructureSession, type StructureNavigationTarget } from "../structure-session.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
@@ -1512,7 +1513,14 @@ export function PullRequestReviewScreen({
       void queryClient.invalidateQueries({ queryKey: ["search", pullRequestId] });
     }
     if (previous.comments !== next.comments) {
-      void queryClient.invalidateQueries({ queryKey: ["comments", pullRequestId] });
+      const locallyApplied = consumeLocalCommentRevisionDelta(
+        queryClient,
+        pullRequestId,
+        next.comments - previous.comments,
+      );
+      if (!locallyApplied) {
+        void queryClient.invalidateQueries({ queryKey: ["comments", pullRequestId] });
+      }
     }
     if (previous.walkthroughs !== next.walkthroughs) {
       void queryClient.invalidateQueries({ queryKey: ["walkthroughs", pullRequestId] });

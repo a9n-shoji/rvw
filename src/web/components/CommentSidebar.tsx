@@ -7,7 +7,11 @@ import type {
   WalkthroughSummary,
 } from "../../domain/models.js";
 import { api, jsonRequest, resolveCommentPlacements } from "../api.js";
-import { cancelCommentQuery, putCommentInCache } from "../comment-query-cache.js";
+import {
+  beginLocalCommentMutation,
+  failLocalCommentMutation,
+  putCommentInCache,
+} from "../comment-query-cache.js";
 import type { ThemePreference } from "../theme.js";
 import { handleCommentSubmitShortcut } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
@@ -206,7 +210,8 @@ export function CommentSidebar({
           authorLabel: "You",
         }),
       ),
-    onMutate: async () => await cancelCommentQuery(queryClient, pullRequestId),
+    onMutate: async () => await beginLocalCommentMutation(queryClient, pullRequestId),
+    onError: async () => await failLocalCommentMutation(queryClient, pullRequestId),
     onSuccess: async ({ comment }) => {
       setPrComment("");
       setPrComposerOpen(false);

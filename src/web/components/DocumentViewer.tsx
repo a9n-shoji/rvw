@@ -49,7 +49,11 @@ import {
   readCommentDraft,
   writeCommentDraft,
 } from "../comment-draft-store.js";
-import { cancelCommentQuery, putCommentInCache } from "../comment-query-cache.js";
+import {
+  beginLocalCommentMutation,
+  failLocalCommentMutation,
+  putCommentInCache,
+} from "../comment-query-cache.js";
 import type {
   ActiveDocument,
   DocumentPaneId,
@@ -1484,7 +1488,8 @@ export function DocumentViewer({
           authorLabel: "You",
         }),
       ),
-    onMutate: async () => await cancelCommentQuery(queryClient, pullRequestId),
+    onMutate: async () => await beginLocalCommentMutation(queryClient, pullRequestId),
+    onError: async () => await failLocalCommentMutation(queryClient, pullRequestId),
     onSuccess: async ({ comment }, { target, location }) => {
       window.getSelection()?.removeAllRanges();
       const range =

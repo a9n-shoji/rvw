@@ -122,7 +122,7 @@ test("keeps 100-comment viewer placement requests within constant budgets", asyn
     mutationCommentId = ((await createdMutationResponse.json()) as { comment: { id: string } })
       .comment.id;
     await expect(page.getByText("Mutation budget fixture", { exact: true })).toBeVisible();
-    await page.waitForTimeout(250);
+    await page.waitForTimeout(1_250);
     expect(counts.document - mutationRequestsBefore.document).toBe(0);
     expect(counts.commit - mutationRequestsBefore.commit).toBe(0);
     expect(counts.commentsGet).toBe(mutationRequestsBefore.commentsGet);

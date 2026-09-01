@@ -2,7 +2,13 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import type { ReviewComment } from "../../src/domain/models.js";
 import type { CommentsResponse } from "../../src/web/api.js";
-import { putCommentInCache, removeCommentFromCache } from "../../src/web/comment-query-cache.js";
+import {
+  beginLocalCommentMutation,
+  consumeLocalCommentRevisionDelta,
+  failLocalCommentMutation,
+  putCommentInCache,
+  removeCommentFromCache,
+} from "../../src/web/comment-query-cache.js";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 
@@ -106,5 +112,20 @@ describe("comment query cache", () => {
     expect(queryClient.getQueryData(["comments", pullRequestId])).toEqual({
       comments: [canonical],
     });
+  });
+
+  it("suppresses only revision deltas accounted for by successful local mutations", async () => {
+    const queryClient = new QueryClient();
+
+    await beginLocalCommentMutation(queryClient, pullRequestId);
+    expect(consumeLocalCommentRevisionDelta(queryClient, pullRequestId, 1)).toBe(true);
+    expect(consumeLocalCommentRevisionDelta(queryClient, pullRequestId, 1)).toBe(false);
+
+    await beginLocalCommentMutation(queryClient, pullRequestId);
+    expect(consumeLocalCommentRevisionDelta(queryClient, pullRequestId, 2)).toBe(false);
+
+    await beginLocalCommentMutation(queryClient, pullRequestId);
+    await failLocalCommentMutation(queryClient, pullRequestId);
+    expect(consumeLocalCommentRevisionDelta(queryClient, pullRequestId, 1)).toBe(false);
   });
 });

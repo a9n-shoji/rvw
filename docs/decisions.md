@@ -2473,8 +2473,10 @@ changes do not discard PR Markdown or search. Viewer polling invalidates only qu
 domains. Comment mutations cancel the exact in-flight query, propagate its abort signal to HTTP, then
 update the stable Pull-Request comment cache from the canonical thread. The updater preserves unrelated
 object identities, restores `updatedAt DESC` order, and seeds a cache that was not yet loaded; mutation
-completion no longer waits for a change-sequence refetch. Immutable OID/path/range queries use infinite
-freshness only when their complete identity is in the key.
+completion no longer waits for a change-sequence refetch. Register one local revision credit before
+each mutation. Polling consumes it only when the complete comments revision delta is locally accounted
+for; an external excess delta or mutation failure performs the normal GET. Immutable OID/path/range
+queries use infinite freshness only when their complete identity is in the key.
 
 ### Trade-offs
 

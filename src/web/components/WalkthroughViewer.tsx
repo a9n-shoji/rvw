@@ -46,7 +46,11 @@ import type { ThemePreference } from "../theme.js";
 import type { DocumentPaneId } from "../document-workspace.js";
 import { mermaidBindingTargets } from "../mermaid-binding-resolver.js";
 import { commentReplyDraftScope } from "../comment-draft-store.js";
-import { cancelCommentQuery, putCommentInCache } from "../comment-query-cache.js";
+import {
+  beginLocalCommentMutation,
+  failLocalCommentMutation,
+  putCommentInCache,
+} from "../comment-query-cache.js";
 import type { ViewerNavigationTarget } from "./DocumentViewer.js";
 import { CommentIcon, InlineCommentComposer } from "./CommentComposer.js";
 import { CommentThread } from "./CommentThread.js";
@@ -922,7 +926,8 @@ export function WalkthroughViewer({
           authorLabel: "You",
         }),
       ),
-    onMutate: async () => await cancelCommentQuery(queryClient, walkthrough.pullRequestId),
+    onMutate: async () => await beginLocalCommentMutation(queryClient, walkthrough.pullRequestId),
+    onError: async () => await failLocalCommentMutation(queryClient, walkthrough.pullRequestId),
     onSuccess: async ({ comment }) => {
       window.getSelection()?.removeAllRanges();
       setCommentBody("");

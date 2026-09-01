@@ -16,7 +16,8 @@ import type {
 } from "../../domain/models.js";
 import { api, jsonRequest } from "../api.js";
 import {
-  cancelCommentQuery,
+  beginLocalCommentMutation,
+  failLocalCommentMutation,
   putCommentInCache,
   removeCommentFromCache,
 } from "../comment-query-cache.js";
@@ -442,7 +443,9 @@ export function CommentThread({
   }, [menuPosition, openMenuPostId, showThread]);
 
   const cancelCommentRefetch = async (): Promise<void> =>
-    await cancelCommentQuery(queryClient, comment.pullRequestId);
+    await beginLocalCommentMutation(queryClient, comment.pullRequestId);
+  const recoverCommentRefetch = async (): Promise<void> =>
+    await failLocalCommentMutation(queryClient, comment.pullRequestId);
   const cacheComment = async (next: ReviewComment): Promise<void> =>
     await putCommentInCache(queryClient, comment.pullRequestId, next);
   const replyMutation = useMutation({
@@ -452,6 +455,7 @@ export function CommentThread({
         jsonRequest({ body: reply, authorLabel: "You", relatedCommitOid: null }),
       ),
     onMutate: cancelCommentRefetch,
+    onError: recoverCommentRefetch,
     onSuccess: async ({ comment: next }) => {
       const currentReplyDraft = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
       writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, {
@@ -470,6 +474,7 @@ export function CommentThread({
         jsonRequest({}),
       ),
     onMutate: cancelCommentRefetch,
+    onError: recoverCommentRefetch,
     onSuccess: async ({ comment: next }) => await cacheComment(next),
   });
   const editMutation = useMutation({
@@ -482,6 +487,7 @@ export function CommentThread({
         },
       ),
     onMutate: cancelCommentRefetch,
+    onError: recoverCommentRefetch,
     onSuccess: async ({ comment: next }) => {
       setEditingPostId(null);
       setEditBody("");
@@ -498,6 +504,7 @@ export function CommentThread({
         },
       ),
     onMutate: cancelCommentRefetch,
+    onError: recoverCommentRefetch,
     onSuccess: async ({ comment: next }) => {
       setOpenMenuPostId(null);
       await cacheComment(next);
@@ -510,6 +517,7 @@ export function CommentThread({
         method: "DELETE",
       }),
     onMutate: cancelCommentRefetch,
+    onError: recoverCommentRefetch,
     onSuccess: async () => {
       deleteCommentReplyDraftsForComment(comment.pullRequestId, comment.id);
       await removeCommentFromCache(queryClient, comment.pullRequestId, comment.id);

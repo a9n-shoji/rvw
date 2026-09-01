@@ -910,6 +910,8 @@ viewerのcomment create/reply/edit/delete/resolve/reopenは、HTTP成功response
 response反映時は同queryをcancelし、query functionの`AbortSignal`をHTTP requestへ伝播する。初回GET前に
 mutationが成功した場合もcanonical threadをcacheへ作成し、遅れて完了した古いGETで上書きしない。mutation完了は
 このresponseとlocal cache反映までであり、change sequenceの手動invalidateや別endpointのrefetchを待たない。
+mutation開始時にlocal revision creditを一件登録し、次のcomments revision差分がcredit内だけならcanonical
+response反映済みとしてcomments GETを省略する。外部更新を含む大きい差分またはmutation失敗ではGETして再同期する。
 pollは外部CLI更新を取り込むため継続する。
 
 viewerのplacementは

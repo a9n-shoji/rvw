@@ -34,8 +34,8 @@ work on expansion.
 
 | Scenario                              |                                                                               Budget |              Observed locally |
 | ------------------------------------- | -----------------------------------------------------------------------------------: | ----------------------------: |
-| 100 comments, one document pane       |                                                            1 batch placement request |    1 request, 141 ms to ready |
-| 100 visible sidebar comments          |                                                            1 batch placement request |    1 request, 135 ms to ready |
+| 100 comments, one document pane       |                                                            1 batch placement request |    1 request, 135 ms to ready |
+| 100 visible sidebar comments          |                                                            1 batch placement request |    1 request, 124 ms to ready |
 | Collapsed sidebar                     |                                                          0 commit placement requests |                             0 |
 | Browser old single-placement endpoint |                                                                                    0 |                             0 |
 | 100 comments, new + old batch         |                                    `hasObject` 2, `changedFiles` 1, `readDocument` 2 |                     2 / 1 / 2 |
@@ -59,7 +59,9 @@ remaining inside the same request-count budgets.
 - Comment mutations update the stable Pull Request comment query from the canonical server response.
   They cancel the exact query before the write and again before the canonical update, propagate the
   query `AbortSignal` through `fetch`, seed an initially missing cache, and preserve server
-  `updatedAt DESC` ordering without replacing unrelated thread objects.
+  `updatedAt DESC` ordering without replacing unrelated thread objects. A local revision credit
+  suppresses only the next fully-accounted-for comments revision; a larger external delta or failed
+  mutation falls back to the normal comments GET.
   A PR-wide comment has no document placement identity, so its creation triggers no document or
   sidebar placement request and no immediate comments-list refetch.
 - The one-second poll remains the external synchronization mechanism. Domain revisions prevent a
