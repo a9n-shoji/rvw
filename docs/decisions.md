@@ -2450,8 +2450,10 @@ document, commit, or Walkthrough destinations. It preserves first-seen comment o
 IDs, accepts the complete comment set held by the viewer without a 500-item product limit, uses a
 fixed comment concurrency of four, and shares request-scoped Promise caches for commit
 availability, changed-file pairs, and documents. Document panes send new and old destinations
-together, an expanded sidebar sends only its visible nontrivial targets, and the browser no longer
-uses the compatible single-comment endpoint. Placement query identity contains comment ID plus target,
+together and include only repository-file or Pull Request Markdown targets matching the pane kind.
+An expanded sidebar sends the stable set of all non-PR targets independently of its unresolved /
+resolved presentation filter, and the browser no longer uses the compatible single-comment endpoint.
+Placement query identity contains comment ID plus target,
 destination identity, and the relevant mutable-document revision; post timestamps are deliberately
 excluded. Batch input is sorted by stable comment ID so `updatedAt` display reordering does not change
 placement identity, and current comment content is joined after placement lookup.
@@ -2463,20 +2465,25 @@ PR-wide comments are excluded from both placement batches because they have no d
 Compute Structure backlinks as one source-OID reverse index keyed by the current Structure
 ID/`updatedAt` fingerprint. The index returns before Git work when there are no Structures, reads the
 target tree once, and runs one copy-aware comparison per distinct Structure source/target pair. The
-path endpoint remains a compatibility projection of the same index.
+path endpoint remains a compatibility projection of the same index. Wait for the Structure summary
+list before enabling the browser query, and let fingerprint changes be its only refresh trigger; the
+domain poll does not also invalidate the old fingerprint query.
 
 Keep the global change sequence for compatibility and add independent Pull Request metadata,
 Pull Request title/body content, comment, Walkthrough, and Structure revisions. Initialize them from
 the existing sequence during migration and advance only the domains changed by each logical
 transaction. No-op synchronization advances neither Pull Request revision, and status/location-only
 changes do not discard PR Markdown or search. Viewer polling invalidates only queries owned by changed
-domains. Comment mutations cancel the exact in-flight query, propagate its abort signal to HTTP, then
-update the stable Pull-Request comment cache from the canonical thread. The updater preserves unrelated
-object identities, restores `updatedAt DESC` order, and seeds a cache that was not yet loaded; mutation
-completion no longer waits for a change-sequence refetch. Register one local revision credit before
-each mutation. Polling consumes it only when the complete comments revision delta is locally accounted
-for; an external excess delta or mutation failure performs the normal GET. Immutable OID/path/range
-queries use infinite freshness only when their complete identity is in the key.
+domains. Comment mutations cancel the exact in-flight query and propagate its abort signal to HTTP,
+then update the stable Pull-Request comment cache from the canonical thread. The updater preserves
+unrelated object identities, restores `updatedAt DESC` order, and seeds a cache that was not yet loaded.
+Immediately after that local update, start but do not await a comments-query invalidation as a cheap
+consistency barrier. Errors invalidate the same query. Do not infer causality from a client-side local
+revision credit: the barrier recovers the complete initial list, external writes, reversed concurrent
+mutation responses, and server ordering from the canonical server snapshot. Walkthrough comment labels
+derive their mutable title from the current summary by stable Walkthrough ID. Immutable OID/path/range
+queries use infinite freshness only when their complete identity is in the key. Placement batch queries
+also propagate cancellation through their HTTP request.
 
 ### Trade-offs
 
@@ -2490,5 +2497,7 @@ queries use infinite freshness only when their complete identity is in the key.
   no-op refreshes from rebuilding PR Markdown, search, or placement.
 - The Structure index may contain entries for files not currently open. It avoids repeated tree/diff
   processes and is shared across panes, while remaining derived and non-persistent.
-- Local canonical cache updates make UI mutations immediate. An external writer is still observed on
-  the existing one-second poll and reconciled through the same domain-specific query.
+- Local canonical cache updates make UI mutations immediate. Each mutation adds one lightweight
+  comments GET, but no document, search, or placement work; this replaces stateful causal bookkeeping
+  with an explicit consistency boundary. External writers are also observed on the existing one-second
+  poll and reconciled through the same domain-specific query.

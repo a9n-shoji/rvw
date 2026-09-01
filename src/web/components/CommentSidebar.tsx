@@ -8,8 +8,8 @@ import type {
 } from "../../domain/models.js";
 import { api, jsonRequest, resolveCommentPlacements } from "../api.js";
 import {
-  beginLocalCommentMutation,
-  failLocalCommentMutation,
+  cancelCommentQuery,
+  invalidateCommentQuery,
   putCommentInCache,
 } from "../comment-query-cache.js";
 import type { ThemePreference } from "../theme.js";
@@ -132,22 +132,39 @@ export function CommentSidebar({
   const [prComposerOpen, setPrComposerOpen] = useState(false);
   const [prComment, setPrComment] = useState("");
   const [copyFeedback, setCopyFeedback] = useState(false);
-  const unresolvedCount = comments.filter((comment) => comment.resolvedAt === null).length;
-  const resolvedCount = comments.length - unresolvedCount;
+  const walkthroughTitles = useMemo(
+    () => new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough.title])),
+    [walkthroughs],
+  );
+  const displayComments = useMemo(
+    () =>
+      comments.map((comment) => {
+        if (comment.target.kind !== "walkthrough") return comment;
+        const currentTitle = walkthroughTitles.get(comment.target.walkthroughId);
+        if (!currentTitle || currentTitle === comment.target.walkthroughTitle) return comment;
+        return {
+          ...comment,
+          target: { ...comment.target, walkthroughTitle: currentTitle },
+        };
+      }),
+    [comments, walkthroughTitles],
+  );
+  const unresolvedCount = displayComments.filter((comment) => comment.resolvedAt === null).length;
+  const resolvedCount = displayComments.length - unresolvedCount;
   const visible = useMemo(
     () =>
-      comments.filter((comment) =>
+      displayComments.filter((comment) =>
         showResolved ? comment.resolvedAt !== null : comment.resolvedAt === null,
       ),
-    [comments, showResolved],
+    [displayComments, showResolved],
   );
   const selectedComments = visible.filter((comment) => selected.has(comment.id));
   const placementComments = useMemo(
     () =>
-      visible
+      comments
         .filter((comment) => comment.target.kind !== "pull-request")
         .sort((left, right) => left.id.localeCompare(right.id)),
-    [visible],
+    [comments],
   );
   const visibleTargetFingerprint = useMemo(
     () => placementComments.map((comment) => [comment.id, comment.target]),
@@ -169,11 +186,12 @@ export function CommentSidebar({
       walkthroughRevision,
       visibleTargetFingerprint,
     ],
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       await resolveCommentPlacements(
         pullRequestId,
         placementComments.map(({ id }) => id),
         [{ kind: "commit", oid: selectedOid }],
+        signal,
       ),
     enabled: expanded && placementComments.length > 0,
     staleTime: Number.POSITIVE_INFINITY,
@@ -210,12 +228,12 @@ export function CommentSidebar({
           authorLabel: "You",
         }),
       ),
-    onMutate: async () => await beginLocalCommentMutation(queryClient, pullRequestId),
-    onError: async () => await failLocalCommentMutation(queryClient, pullRequestId),
-    onSuccess: async ({ comment }) => {
+    onMutate: async () => await cancelCommentQuery(queryClient, pullRequestId),
+    onError: () => invalidateCommentQuery(queryClient, pullRequestId),
+    onSuccess: ({ comment }) => {
       setPrComment("");
       setPrComposerOpen(false);
-      await putCommentInCache(queryClient, pullRequestId, comment);
+      putCommentInCache(queryClient, pullRequestId, comment);
     },
   });
 

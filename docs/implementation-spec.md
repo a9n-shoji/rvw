@@ -666,7 +666,9 @@ comment actionの直前へ常設する。`Pull Request.md`、Walkthrough、Struc
 popoverは通常のmenu keyboard操作、outside pointer、Escapeとtriggerへのfocus復帰を提供する。
 逆引き結果はStructure一覧のID + `updatedAt` fingerprintが変わるまでfreshとして扱い、commentなど無関係な
 change sequenceやtab復帰だけでは再取得しない。cached resultのbackground refresh中もpopoverとkeyboard focusを
-維持し、結果消滅により自動で閉じる場合はmenu内のfocusをtriggerへ戻す。
+維持し、結果消滅により自動で閉じる場合はmenu内のfocusをtriggerへ戻す。Structure一覧の初回load完了前は
+逆引きqueryを開始せず、pollは一覧だけをinvalidateする。一覧から導出したfingerprint変更を逆引き更新の唯一の
+triggerとし、同じStructure revisionで旧fingerprintと新fingerprintを二重取得しない。
 
 `GET /api/pull-requests/:id/structure-reference-index?sourceOid=<oid>`はtarget commit上の全effective fileを
 一度に解決し、`{ ok: true, index: { sourceOid, entries: Array<{ path, references }> } }`を返す。viewerは
@@ -906,20 +908,22 @@ unresolved/resolved状態を変えない。
 
 viewerのcomment create/reply/edit/delete/resolve/reopenは、HTTP成功responseにcanonicalなcurrent commentを
 含める。clientはstableな`["comments", pullRequestId]` cacheへfunctional updaterで対象threadだけを置換・追加・
-削除し、`updatedAt`降順へ再配置して無関係なthread objectのidentityを維持する。mutation開始時とcanonical
-response反映時は同queryをcancelし、query functionの`AbortSignal`をHTTP requestへ伝播する。初回GET前に
-mutationが成功した場合もcanonical threadをcacheへ作成し、遅れて完了した古いGETで上書きしない。mutation完了は
-このresponseとlocal cache反映までであり、change sequenceの手動invalidateや別endpointのrefetchを待たない。
-mutation開始時にlocal revision creditを一件登録し、次のcomments revision差分がcredit内だけならcanonical
-response反映済みとしてcomments GETを省略する。外部更新を含む大きい差分またはmutation失敗ではGETして再同期する。
-pollは外部CLI更新を取り込むため継続する。
+削除し、`updatedAt`降順へ再配置して無関係なthread objectのidentityを維持する。mutation開始時に同queryを
+cancelし、query functionの`AbortSignal`をHTTP requestへ伝播する。初回GET前にmutationが成功した場合も
+canonical threadをcacheへ作成する。canonical response反映後とmutation失敗時はcomments queryを非同期
+invalidateし、完全なserver一覧をconsistency barrierとして取得する。mutation完了はcanonical responseとlocal
+cache反映までであり、このGETを待たない。これによりinitial GET、外部更新、並行mutation、response逆転の
+いずれも最終server snapshotへ収束する。client側でmutationとserver revisionの因果を推測するrevision creditは
+持たない。pollも外部CLI更新を取り込むため継続する。
 
 viewerのplacementは
 `POST /api/pull-requests/:pullRequestId/comment-placements/resolve`へcomment ID列と最大4件のdestination
 （document、commit、Walkthrough）を渡して一括解決する。comment IDはfirst-seen順に重複排除し、responseも同順、
 missing IDは`missingCommentIds`へ明示する。viewerが保持するPR内comment全件を一requestへ渡せるものとし、
-comment ID件数にUIより小さい固定上限を設けない。別PRのcommentは混在させない。document viewerはnew/oldを同じ一requestへ
-含めてpaneごとに最大1回、展開中sidebarは表示集合に対して最大1回とし、sidebarを閉じている間は呼ばない。
+comment ID件数にUIより小さい固定上限を設けない。別PRのcommentは混在させない。document viewerはnew/oldを
+同じ一requestへ含め、repository paneにはrepository-file commentだけ、`Pull Request.md` paneには
+pull-request-markdown commentだけを渡してpaneごとに最大1回とする。展開中sidebarは未解決／解決済みfilterと
+独立した全non-PR comment集合に対して最大1回とし、sidebarを閉じている間は呼ばない。
 旧`GET /api/comments/:id/placement`は互換・parity oracleとして同じresolverを使うがbrowserからは呼ばない。
 resolverはrequest内でcommit availability、source/destination pairのchanged files、PR/OID/pathのdocumentを
 Promiseごと共有し、最大4commentの固定並列度で処理する。cacheへPromiseを登録してからawaitし、同じGit処理の
@@ -931,6 +935,8 @@ Promiseごと共有し、最大4commentの固定並列度で処理する。cache
 - Comments stackを閉じてもfilter、選択状態、PR全体comment composerとdraftのDOM/stateは保持し、重いthread一覧と
   placement queryだけを停止する。再展開時は入力途中のPR全体commentをそのまま復元する。
 - sidebarの各threadには常にcheckboxを置き、選択が一件以上ある場合だけ一括copy actionを表示する。
+- Walkthrough commentの表示titleはcomment cache内の値ではなく、stable Walkthrough IDからcurrent
+  Walkthrough summaryのtitleを導出する。titleだけの更新でもpoll後のsidebar表示をcurrent値へ揃える。
 - Diff内のresolved threadは既定で一行に折りたたみ、展開すればpost、reply欄、reopen actionを表示する。
 - 参照copy、post編集、削除は各postの`...` menuへ格納し、resolve/reopenはthread actionとする。
 - commentからexact source documentを開ける。force-push前のrepository sourceも保持refから開く。

@@ -39,10 +39,34 @@ async function deleteComments(request: APIRequestContext, ids: readonly string[]
   }
 }
 
+async function createWalkthroughComment(request: APIRequestContext): Promise<string> {
+  const response = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "walkthrough",
+        walkthroughId: "70000000-0000-4000-8000-000000000001",
+        startLine: null,
+        endLine: null,
+      },
+      body: "Non-repository placement fixture",
+      authorLabel: "Performance fixture",
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return ((await response.json()) as { comment: { id: string } }).comment.id;
+}
+
 function placementKind(request: Request): string | null {
   if (!request.url().includes("/comment-placements/resolve")) return null;
   const body = request.postDataJSON() as { destinations?: Array<{ kind?: string }> };
   return body.destinations?.[0]?.kind ?? null;
+}
+
+function placementCommentIds(request: Request): string[] {
+  if (!request.url().includes("/comment-placements/resolve")) return [];
+  const body = request.postDataJSON() as { commentIds?: string[] };
+  return body.commentIds ?? [];
 }
 
 test("keeps 100-comment viewer placement requests within constant budgets", async ({
@@ -54,13 +78,36 @@ test("keeps 100-comment viewer placement requests within constant budgets", asyn
   );
   expect(initialCommentsResponse.ok()).toBe(true);
   const initialComments = (await initialCommentsResponse.json()) as {
-    comments: Array<{ resolvedAt: string | null }>;
+    comments: Array<{
+      id: string;
+      resolvedAt: string | null;
+      target: { kind: string; documentKind?: string };
+    }>;
   };
   const expectedUnresolvedCount =
-    initialComments.comments.filter(({ resolvedAt }) => resolvedAt === null).length + 100;
-  const commentIds = await createRepositoryComments(request, 100);
+    initialComments.comments.filter(({ resolvedAt }) => resolvedAt === null).length + 101;
+  const repositoryCreatedCommentIds = await createRepositoryComments(request, 100);
+  const walkthroughCommentId = await createWalkthroughComment(request);
+  const commentIds = [...repositoryCreatedCommentIds, walkthroughCommentId];
+  const repositoryCommentIds = new Set([
+    ...repositoryCreatedCommentIds,
+    ...initialComments.comments
+      .filter(
+        ({ target }) => target.kind === "document" && target.documentKind === "repository-file",
+      )
+      .map(({ id }) => id),
+  ]);
+  const nonRepositoryCommentIds = new Set([
+    walkthroughCommentId,
+    ...initialComments.comments
+      .filter(
+        ({ target }) => target.kind !== "document" || target.documentKind !== "repository-file",
+      )
+      .map(({ id }) => id),
+  ]);
   let mutationCommentId: string | null = null;
   const counts = { document: 0, commit: 0, single: 0, commentsGet: 0 };
+  const documentPlacementCommentIds: string[][] = [];
   page.on("request", (browserRequest) => {
     const url = browserRequest.url();
     if (/\/api\/comments\/[^/]+\/placement\?/u.test(url)) counts.single += 1;
@@ -71,18 +118,29 @@ test("keeps 100-comment viewer placement requests within constant budgets", asyn
       counts.commentsGet += 1;
     }
     const kind = placementKind(browserRequest);
-    if (kind === "document") counts.document += 1;
+    if (kind === "document") {
+      counts.document += 1;
+      documentPlacementCommentIds.push(placementCommentIds(browserRequest));
+    }
     if (kind === "commit") counts.commit += 1;
   });
 
   try {
+    const initialRefresh = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "POST" &&
+        url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+      );
+    });
     await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await initialRefresh;
     const commentsToggle = page.getByRole("button", {
       name: `コメント ${expectedUnresolvedCount}`,
       exact: true,
     });
     await expect(commentsToggle).toBeVisible();
-    await expect.poll(() => counts.document).toBeGreaterThanOrEqual(1);
+    await page.waitForTimeout(250);
     counts.document = 0;
     counts.commit = 0;
     counts.commentsGet = 0;
@@ -95,6 +153,10 @@ test("keeps 100-comment viewer placement requests within constant budgets", asyn
     await page.waitForTimeout(250);
     expect(counts.document).toBe(1);
     expect(counts.commit).toBe(0);
+    const openedDocumentCommentIds = documentPlacementCommentIds.at(-1) ?? [];
+    expect(openedDocumentCommentIds.length).toBeGreaterThanOrEqual(100);
+    expect(openedDocumentCommentIds.every((id) => repositoryCommentIds.has(id))).toBe(true);
+    expect(openedDocumentCommentIds.some((id) => nonRepositoryCommentIds.has(id))).toBe(false);
 
     const sidebarOpenedAt = performance.now();
     await commentsToggle.click();
@@ -104,6 +166,42 @@ test("keeps 100-comment viewer placement requests within constant budgets", asyn
     await page.waitForTimeout(250);
     expect(counts.commit).toBe(1);
     expect(counts.single).toBe(0);
+
+    const performanceThread = page
+      .locator(".comment-list-item")
+      .filter({ has: page.getByText("Performance fixture 1", { exact: true }) });
+    const replyRequestsBefore = { ...counts };
+    await performanceThread.getByPlaceholder("返信を入力").fill("Performance reply fixture");
+    await performanceThread.getByPlaceholder("返信を入力").press("Control+Enter");
+    await expect(
+      performanceThread.getByText("Performance reply fixture", { exact: true }),
+    ).toBeVisible();
+    await page.waitForTimeout(1_250);
+    expect(counts.document).toBe(replyRequestsBefore.document);
+    expect(counts.commit).toBe(replyRequestsBefore.commit);
+    expect(counts.commentsGet).toBeGreaterThan(replyRequestsBefore.commentsGet);
+
+    const resolveRequestsBefore = { ...counts };
+    await performanceThread.getByRole("button", { name: "解決", exact: true }).click();
+    await expect(performanceThread).toHaveCount(0);
+    await page.waitForTimeout(1_250);
+    expect(counts.document).toBe(resolveRequestsBefore.document);
+    expect(counts.commit).toBe(resolveRequestsBefore.commit);
+    expect(counts.commentsGet).toBeGreaterThan(resolveRequestsBefore.commentsGet);
+
+    await page.getByRole("button", { name: /^解決済み/u }).click();
+    const resolvedPerformanceThread = page
+      .locator(".comment-list-item")
+      .filter({ has: page.getByText("Performance fixture 1", { exact: true }) });
+    await expect(resolvedPerformanceThread).toBeVisible();
+    const reopenRequestsBefore = { ...counts };
+    await resolvedPerformanceThread.getByRole("button", { name: "再度開く", exact: true }).click();
+    await expect(resolvedPerformanceThread).toHaveCount(0);
+    await page.waitForTimeout(1_250);
+    expect(counts.document).toBe(reopenRequestsBefore.document);
+    expect(counts.commit).toBe(reopenRequestsBefore.commit);
+    expect(counts.commentsGet).toBeGreaterThan(reopenRequestsBefore.commentsGet);
+    await page.getByRole("button", { name: /^未解決/u }).click();
 
     const mutationRequestsBefore = {
       document: counts.document,
@@ -125,7 +223,7 @@ test("keeps 100-comment viewer placement requests within constant budgets", asyn
     await page.waitForTimeout(1_250);
     expect(counts.document - mutationRequestsBefore.document).toBe(0);
     expect(counts.commit - mutationRequestsBefore.commit).toBe(0);
-    expect(counts.commentsGet).toBe(mutationRequestsBefore.commentsGet);
+    expect(counts.commentsGet).toBeGreaterThan(mutationRequestsBefore.commentsGet);
 
     console.info(
       JSON.stringify({
@@ -140,5 +238,77 @@ test("keeps 100-comment viewer placement requests within constant budgets", asyn
   } finally {
     if (mutationCommentId) commentIds.push(mutationCommentId);
     await deleteComments(request, commentIds);
+  }
+});
+
+test("restores existing comments after a mutation cancels the initial comments GET", async ({
+  page,
+  request,
+}) => {
+  const existingBody = "Existing comments race baseline";
+  const baselineResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: { kind: "pull-request" },
+      body: existingBody,
+      authorLabel: "Performance fixture",
+    },
+  });
+  expect(baselineResponse.ok()).toBe(true);
+  const baselineCommentId = ((await baselineResponse.json()) as { comment: { id: string } }).comment
+    .id;
+
+  let commentsRequests = 0;
+  let releaseInitialGet = (): void => {};
+  const initialGetGate = new Promise<void>((resolve) => {
+    releaseInitialGet = resolve;
+  });
+  let initialGetStarted = (): void => {};
+  const initialGetStartedPromise = new Promise<void>((resolve) => {
+    initialGetStarted = resolve;
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/comments?resolved=all`, async (route) => {
+    commentsRequests += 1;
+    if (commentsRequests === 1) {
+      const response = await route.fetch();
+      initialGetStarted();
+      await initialGetGate;
+      try {
+        await route.fulfill({ response });
+      } catch {
+        // The browser request is expected to be aborted by the mutation.
+      }
+      return;
+    }
+    await route.fallback();
+  });
+
+  let createdCommentId: string | null = null;
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await initialGetStartedPromise;
+    await page.getByRole("button", { name: /^コメント/u }).click();
+    await page.getByRole("button", { name: "＋ PR全体", exact: true }).click();
+    await page
+      .getByPlaceholder("Pull Request全体へのコメント")
+      .fill("Initial comments race fixture");
+    const mutationResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/api/comments",
+    );
+    await page.getByRole("button", { name: "コメント", exact: true }).click();
+    const response = await mutationResponse;
+    createdCommentId = ((await response.json()) as { comment: { id: string } }).comment.id;
+
+    await expect(page.getByText("Initial comments race fixture", { exact: true })).toBeVisible();
+    await expect.poll(() => commentsRequests).toBeGreaterThanOrEqual(2);
+    await expect(page.getByText(existingBody, { exact: true }).first()).toBeVisible();
+  } finally {
+    releaseInitialGet();
+    await deleteComments(
+      request,
+      createdCommentId ? [createdCommentId, baselineCommentId] : [baselineCommentId],
+    );
   }
 });

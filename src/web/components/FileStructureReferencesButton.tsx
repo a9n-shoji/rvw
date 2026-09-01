@@ -18,11 +18,13 @@ export function FileStructureReferencesButton({
   pullRequestId,
   fileRef,
   structureFingerprint,
+  structuresLoaded,
   onSelect,
 }: {
   pullRequestId: string;
   fileRef: RepositoryFileRef | null;
   structureFingerprint: string;
+  structuresLoaded: boolean;
   onSelect: (reference: FileStructureReference) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -48,7 +50,7 @@ export function FileStructureReferencesButton({
         `/api/pull-requests/${pullRequestId}/structure-reference-index?${search.toString()}`,
       );
     },
-    enabled: fileRef !== null,
+    enabled: fileRef !== null && structuresLoaded,
     retry: false,
     staleTime: Number.POSITIVE_INFINITY,
     placeholderData: (previousData) =>

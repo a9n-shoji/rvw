@@ -98,7 +98,6 @@ import {
   clearCommentDraftsForPullRequest,
   moveCommentDraftsForWorkspaceTransition,
 } from "../comment-draft-store.js";
-import { consumeLocalCommentRevisionDelta } from "../comment-query-cache.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { transferStructureSession, type StructureNavigationTarget } from "../structure-session.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
@@ -1513,14 +1512,7 @@ export function PullRequestReviewScreen({
       void queryClient.invalidateQueries({ queryKey: ["search", pullRequestId] });
     }
     if (previous.comments !== next.comments) {
-      const locallyApplied = consumeLocalCommentRevisionDelta(
-        queryClient,
-        pullRequestId,
-        next.comments - previous.comments,
-      );
-      if (!locallyApplied) {
-        void queryClient.invalidateQueries({ queryKey: ["comments", pullRequestId] });
-      }
+      void queryClient.invalidateQueries({ queryKey: ["comments", pullRequestId] });
     }
     if (previous.walkthroughs !== next.walkthroughs) {
       void queryClient.invalidateQueries({ queryKey: ["walkthroughs", pullRequestId] });
@@ -1529,9 +1521,6 @@ export function PullRequestReviewScreen({
     if (previous.structures !== next.structures) {
       void queryClient.invalidateQueries({ queryKey: ["structures", pullRequestId] });
       void queryClient.invalidateQueries({ queryKey: ["structure", pullRequestId] });
-      void queryClient.invalidateQueries({
-        queryKey: ["structure-reference-index", pullRequestId],
-      });
     }
   }, [changeSequence.data?.revisions, pullRequestId, queryClient]);
   const commentsQuery = useQuery({
@@ -2720,6 +2709,7 @@ export function PullRequestReviewScreen({
                 oldOid={paneOldOid}
                 pullRequestContentRevision={changeSequence.data?.revisions.pullRequestContent}
                 structureFingerprint={structureFingerprint}
+                structuresLoaded={structuresQuery.isSuccess}
                 activeDocument={paneViewerDocument}
                 displayMode={paneViewerState.effectiveDisplayMode}
                 diffStyle={diffStyle}

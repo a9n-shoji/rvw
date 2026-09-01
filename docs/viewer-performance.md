@@ -32,20 +32,22 @@ work on expansion.
 
 ## Result and CI budgets
 
-| Scenario                              |                                                                               Budget |              Observed locally |
-| ------------------------------------- | -----------------------------------------------------------------------------------: | ----------------------------: |
-| 100 comments, one document pane       |                                                            1 batch placement request |    1 request, 135 ms to ready |
-| 100 visible sidebar comments          |                                                            1 batch placement request |    1 request, 124 ms to ready |
-| Collapsed sidebar                     |                                                          0 commit placement requests |                             0 |
-| Browser old single-placement endpoint |                                                                                    0 |                             0 |
-| 100 comments, new + old batch         |                                    `hasObject` 2, `changedFiles` 1, `readDocument` 2 |                     2 / 1 / 2 |
-| No Structures                         |                                  `hasObject` 0, `tree` 0, `changedFilesWithCopies` 0 |                     0 / 0 / 0 |
-| Structure reverse index               | `tree` 1, `changedFilesWithCopies` 1 per unique source/target pair, `readDocument` 0 | enforced by integration tests |
+| Scenario                              |                                                                                                                         Budget |                  Observed locally |
+| ------------------------------------- | -----------------------------------------------------------------------------------------------------------------------------: | --------------------------------: |
+| 100 comments, one document pane       |                                                                                                      1 batch placement request |        1 request, 163 ms to ready |
+| 100 visible sidebar comments          |                                                                                                      1 batch placement request |        1 request, 135 ms to ready |
+| Reply / resolve / reopen in sidebar   |                                                                                                0 additional placement requests |                                 0 |
+| Local comment mutation                |                                                                    0 placement requests; asynchronous comments consistency GET |                   enforced by E2E |
+| Collapsed sidebar                     |                                                                                                    0 commit placement requests |                                 0 |
+| Browser old single-placement endpoint |                                                                                                                              0 |                                 0 |
+| 100 comments, new + old batch         |                                                                              `hasObject` 2, `changedFiles` 1, `readDocument` 2 |                         2 / 1 / 2 |
+| No Structures                         |                                                                            `hasObject` 0, `tree` 0, `changedFilesWithCopies` 0 |                         0 / 0 / 0 |
+| Structure reverse index               | `tree` 1, `changedFilesWithCopies` 1 per unique source/target pair, `readDocument` 0; 1 browser request per Structure revision | enforced by integration/E2E tests |
 
 The Playwright timing values are reported but not used as hard CI thresholds. CI enforces network and
 Git-call budgets so slower shared runners do not create false failures. The old single-placement
 operation remains a semantic parity oracle and an explicit baseline characterization path.
-The recorded timing observation is from the final 126-test Playwright run; focused runs varied while
+The recorded timing observation is from the final 127-test Playwright run; focused runs varied while
 remaining inside the same request-count budgets.
 
 ## Query and mutation boundary
@@ -57,13 +59,13 @@ remaining inside the same request-count budgets.
   infinite freshness only when the key contains their complete immutable or revision-qualified
   identity.
 - Comment mutations update the stable Pull Request comment query from the canonical server response.
-  They cancel the exact query before the write and again before the canonical update, propagate the
-  query `AbortSignal` through `fetch`, seed an initially missing cache, and preserve server
-  `updatedAt DESC` ordering without replacing unrelated thread objects. A local revision credit
-  suppresses only the next fully-accounted-for comments revision; a larger external delta or failed
-  mutation falls back to the normal comments GET.
+  They cancel the exact query before the write, propagate the query `AbortSignal` through `fetch`, seed
+  an initially missing cache, and preserve server `updatedAt DESC` ordering without replacing unrelated
+  thread objects. Success and failure both start a non-awaited comments invalidation as a lightweight
+  consistency barrier. There is no client-side revision credit; the GET restores a complete initial
+  list and converges external or reversed concurrent mutations to the server snapshot.
   A PR-wide comment has no document placement identity, so its creation triggers no document or
-  sidebar placement request and no immediate comments-list refetch.
+  sidebar placement request even though it performs the comments consistency GET.
 - The one-second poll remains the external synchronization mechanism. Domain revisions prevent a
   comment-only external update from refetching PR documents, Walkthroughs, Structures, or Structure
   backlinks.
@@ -71,6 +73,11 @@ remaining inside the same request-count budgets.
   not advance either revision; status/location-only changes do not invalidate PR Markdown or search.
 - A placement batch accepts the complete comment list held by the viewer rather than introducing a
   500-comment product limit. Fixed concurrency and request-scoped caches bound Git subprocess work.
+- Sidebar placement uses all non-PR targets independently of the unresolved/resolved filter. Repository
+  panes send only repository-file comment IDs, and Pull Request Markdown panes send only PR Markdown
+  comment IDs. Presentation changes therefore reuse the existing placement map.
+- Structure reverse-index queries wait for the Structure list and refresh only when its
+  `id:updatedAt` fingerprint changes, producing one additional request per Structure revision.
 
 ## Regression commands
 

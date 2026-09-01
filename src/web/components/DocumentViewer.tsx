@@ -50,8 +50,8 @@ import {
   writeCommentDraft,
 } from "../comment-draft-store.js";
 import {
-  beginLocalCommentMutation,
-  failLocalCommentMutation,
+  cancelCommentQuery,
+  invalidateCommentQuery,
   putCommentInCache,
 } from "../comment-query-cache.js";
 import type {
@@ -986,6 +986,7 @@ export function DocumentViewer({
   oldOid,
   pullRequestContentRevision,
   structureFingerprint,
+  structuresLoaded,
   activeDocument,
   displayMode,
   diffStyle,
@@ -1013,6 +1014,7 @@ export function DocumentViewer({
   oldOid: string | null;
   pullRequestContentRevision: number | undefined;
   structureFingerprint: string;
+  structuresLoaded: boolean;
   activeDocument: ActiveDocument;
   displayMode: DisplayMode;
   diffStyle: "unified" | "split";
@@ -1345,13 +1347,17 @@ export function DocumentViewer({
       ),
     [renderedRefs],
   );
-  const placementComments = useMemo(
-    () =>
-      comments
-        .filter((comment) => comment.target.kind !== "pull-request")
-        .sort((left, right) => left.id.localeCompare(right.id)),
-    [comments],
-  );
+  const placementComments = useMemo(() => {
+    const documentKinds = new Set(
+      [renderedRefs.new, renderedRefs.old].flatMap((ref) => (ref ? [ref.kind] : [])),
+    );
+    return comments
+      .filter(
+        (comment) =>
+          comment.target.kind === "document" && documentKinds.has(comment.target.documentKind),
+      )
+      .sort((left, right) => left.id.localeCompare(right.id));
+  }, [comments, renderedRefs]);
   const commentTargetFingerprint = useMemo(
     () => placementComments.map((comment) => [comment.id, comment.target]),
     [placementComments],
@@ -1368,11 +1374,12 @@ export function DocumentViewer({
         ? pullRequestContentRevision
         : null,
     ],
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       await resolveCommentPlacements(
         pullRequestId,
         placementComments.map(({ id }) => id),
         placementDestinations,
+        signal,
       ),
     enabled: placementComments.length > 0 && placementDestinations.length > 0,
     staleTime: Number.POSITIVE_INFINITY,
@@ -1488,9 +1495,9 @@ export function DocumentViewer({
           authorLabel: "You",
         }),
       ),
-    onMutate: async () => await beginLocalCommentMutation(queryClient, pullRequestId),
-    onError: async () => await failLocalCommentMutation(queryClient, pullRequestId),
-    onSuccess: async ({ comment }, { target, location }) => {
+    onMutate: async () => await cancelCommentQuery(queryClient, pullRequestId),
+    onError: () => invalidateCommentQuery(queryClient, pullRequestId),
+    onSuccess: ({ comment }, { target, location }) => {
       window.getSelection()?.removeAllRanges();
       const range =
         target.kind === "document" && target.startLine !== null && target.endLine !== null
@@ -1513,7 +1520,7 @@ export function DocumentViewer({
       setSelectionPreview(null);
       setMarkdownComposerOpen(false);
       setFileComposerOpen(false);
-      await putCommentInCache(queryClient, pullRequestId, comment);
+      putCommentInCache(queryClient, pullRequestId, comment);
     },
   });
 
@@ -1981,6 +1988,7 @@ export function DocumentViewer({
         pullRequestId={pullRequestId}
         fileRef={fileLevelRef}
         structureFingerprint={structureFingerprint}
+        structuresLoaded={structuresLoaded}
         onSelect={onOpenStructureReference}
       />
     ) : null;

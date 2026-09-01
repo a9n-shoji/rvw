@@ -47,8 +47,8 @@ import type { DocumentPaneId } from "../document-workspace.js";
 import { mermaidBindingTargets } from "../mermaid-binding-resolver.js";
 import { commentReplyDraftScope } from "../comment-draft-store.js";
 import {
-  beginLocalCommentMutation,
-  failLocalCommentMutation,
+  cancelCommentQuery,
+  invalidateCommentQuery,
   putCommentInCache,
 } from "../comment-query-cache.js";
 import type { ViewerNavigationTarget } from "./DocumentViewer.js";
@@ -876,11 +876,12 @@ export function WalkthroughViewer({
       walkthrough.body,
       placementComments.map((comment) => [comment.id, comment.target]),
     ],
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       await resolveCommentPlacements(
         walkthrough.pullRequestId,
         placementComments.map(({ id }) => id),
         [{ kind: "walkthrough", walkthroughId: walkthrough.id }],
+        signal,
       ),
     enabled: placementComments.length > 0,
     staleTime: Number.POSITIVE_INFINITY,
@@ -926,16 +927,16 @@ export function WalkthroughViewer({
           authorLabel: "You",
         }),
       ),
-    onMutate: async () => await beginLocalCommentMutation(queryClient, walkthrough.pullRequestId),
-    onError: async () => await failLocalCommentMutation(queryClient, walkthrough.pullRequestId),
-    onSuccess: async ({ comment }) => {
+    onMutate: async () => await cancelCommentQuery(queryClient, walkthrough.pullRequestId),
+    onError: () => invalidateCommentQuery(queryClient, walkthrough.pullRequestId),
+    onSuccess: ({ comment }) => {
       window.getSelection()?.removeAllRanges();
       setCommentBody("");
       setComposerOpen(false);
       setSelectedRange(null);
       setDiagramRange(null);
       setLineComposerPlacement(null);
-      await putCommentInCache(queryClient, walkthrough.pullRequestId, comment);
+      putCommentInCache(queryClient, walkthrough.pullRequestId, comment);
     },
   });
   const createCommentRef = useRef(createComment);

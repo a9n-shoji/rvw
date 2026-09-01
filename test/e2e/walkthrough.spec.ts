@@ -2286,6 +2286,8 @@ test("comments on selected walkthrough lines and marks them Outdated after repla
   const sidebarLineComment = page.locator(".comment-list-item").filter({
     hasText: "この責務の説明をもう少し具体化してください。",
   });
+  await expect(sidebarLineComment.getByText(updatedTitle, { exact: false })).toBeVisible();
+  await expect(sidebarLineComment.getByText(primaryWalkthrough, { exact: true })).toHaveCount(0);
   await expect(sidebarLineComment.locator(".badge--outdated")).toBeVisible();
   await expect(
     sidebarLineComment.getByText("コメント作成時の選択範囲", { exact: true }),

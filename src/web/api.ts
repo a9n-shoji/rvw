@@ -213,10 +213,11 @@ export async function resolveCommentPlacements(
   pullRequestId: string,
   commentIds: readonly string[],
   destinations: readonly CommentPlacementDestination[],
+  signal?: AbortSignal,
 ): Promise<CommentPlacementBatchResponse> {
   return await api<CommentPlacementBatchResponse>(
     `/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
-    jsonRequest({ commentIds, destinations }),
+    { ...jsonRequest({ commentIds, destinations }), ...(signal ? { signal } : {}) },
   );
 }
 

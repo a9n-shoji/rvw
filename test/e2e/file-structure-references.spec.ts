@@ -430,12 +430,22 @@ test("recovers menu focus when refreshed backlink rows disappear", async ({ page
     await route.fulfill({ json: structureIndex(sourceOid, sourcePath, references) });
   });
 
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
   await page.getByRole("button", { name: sourcePath, exact: true }).click();
   const trigger = page.getByRole("button", {
     name: "このファイルを参照するStructure 2件",
     exact: true,
   });
+  await expect(trigger).toBeVisible();
+  expect(lookupRequests).toBe(1);
   await trigger.click();
   const menu = page.getByRole("menu", { name: "このファイルを参照するStructure" });
   const secondaryItem = menu.getByRole("menuitem", {
@@ -448,17 +458,19 @@ test("recovers menu focus when refreshed backlink rows disappear", async ({ page
   referenceRevision = 1;
   const requestsBeforePartialRefresh = lookupRequests;
   await bumpStructureRevision(page);
-  await expect.poll(() => lookupRequests).toBeGreaterThan(requestsBeforePartialRefresh);
+  await expect.poll(() => lookupRequests).toBe(requestsBeforePartialRefresh + 1);
   await expect(menu.getByRole("menuitem")).toHaveCount(1);
   await expect(
     menu.getByRole("menuitem", { name: /Order placement behavior Node: Create order/u }),
   ).toBeFocused();
+  await page.waitForTimeout(250);
+  expect(lookupRequests).toBe(requestsBeforePartialRefresh + 1);
 
   fingerprint.revision = 2;
   referenceRevision = 2;
   const requestsBeforeEmptyRefresh = lookupRequests;
   await bumpStructureRevision(page);
-  await expect.poll(() => lookupRequests).toBeGreaterThan(requestsBeforeEmptyRefresh);
+  await expect.poll(() => lookupRequests).toBe(requestsBeforeEmptyRefresh + 1);
   const emptyTrigger = page.getByRole("button", {
     name: "このレビュー版では、このファイルをNodeから参照するStructureはありません",
     exact: true,
@@ -466,6 +478,8 @@ test("recovers menu focus when refreshed backlink rows disappear", async ({ page
   await expect(menu).toHaveCount(0);
   await expect(emptyTrigger).toBeFocused();
   await expect(emptyTrigger).toHaveAttribute("aria-disabled", "true");
+  await page.waitForTimeout(250);
+  expect(lookupRequests).toBe(requestsBeforeEmptyRefresh + 1);
 });
 
 test("exposes retry when a zero-result backlink refresh fails", async ({ page }) => {
