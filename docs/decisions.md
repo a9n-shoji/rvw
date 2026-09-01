@@ -2368,3 +2368,41 @@ introducing anchor-level identities.
   source-reference records; reordering an Edge's anchors is intentionally not identity-preserving.
 - The latest-file action deliberately opens only the known latest file without claiming a mapped line;
   the fallback view continues to preserve the verified anchor.
+
+## 2026-09-01: Export Structure from the browser presentation session
+
+### Problem
+
+Structure is useful as a spatial review document, but its interactive canvas cannot be shared outside
+rvw as one complete image. The production viewer mixes SVG Edge paths with HTML Nodes and relation
+labels, and focus intentionally limits which labels are disclosed. Serializing the existing Edge SVG
+or capturing the current viewport would therefore omit content and preserve navigation state that is
+not part of the Structure document.
+
+### Choice
+
+Extract Structure geometry, source presentation, label collision avoidance, and bounds into a shared
+render model. Build export models from the current pane's Node positions while ignoring focus, depth,
+selection, viewport, and Node scroll position. Require all Nodes, Edges, and Edge labels before an
+export can succeed.
+
+Serialize that model as a standalone SVG made only from SVG primitives, escaped text, resolved theme
+colors, and embedded metadata. Give each Edge change presentation an explicit same-color arrow marker
+instead of requiring context-dependent SVG paint, and keep the origin cue inside each notation shape.
+Keep fixed-size notation-specific Node cards; prioritize Node title content and ellipsize overflow, but
+expand every Edge label to retain its complete text. Derive PNG
+only by rasterizing the same SVG at a preferred 2x scale, with conservative dimension and pixel
+budgets. Place the Export menu between the existing reference and delete actions because it operates
+on the complete Structure document. Do not add a backend endpoint, database state, CLI capability, or
+dependency.
+
+### Trade-offs
+
+- SVG Nodes are a close primitive-based representation of the HTML cards rather than a DOM snapshot,
+  so small font-metric differences can remain across systems that open the SVG.
+- Fixed-size exported Nodes cannot expose arbitrary description length; a future explicit expanded
+  mode would need a separate layout contract.
+- Dense graphs keep every Edge label and mark unavoidable collisions instead of changing Node
+  positions or silently removing claims.
+- PNG may be downscaled or rejected for extremely sparse manual layouts; SVG remains the lossless
+  fallback.

@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
@@ -411,6 +412,114 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   expect(overlaps).toEqual([]);
 });
 
+test("exports the complete Structure as standalone SVG and 2x PNG without changing reading state", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, primaryTitle);
+  const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
+  await viewer.getByRole("button", { name: "表示中を収める" }).click();
+
+  const hub = viewer.locator('.structure-node[data-node-id="hub"]');
+  await dragVisibleStructureNode(page, viewer, hub);
+  const movedHub = await hub.evaluate((element) => ({
+    x: Number.parseFloat((element as HTMLElement).style.left),
+    y: Number.parseFloat((element as HTMLElement).style.top),
+  }));
+  await viewer.locator('.structure-node[data-node-id="order-aggregate"]').click();
+  await viewer.getByRole("button", { name: "1-hop", exact: true }).click();
+  await viewer.locator(".structure-edge-select").first().click();
+  await viewer.getByRole("button", { name: "拡大" }).click();
+  const readingState = await structureReadingState(viewer);
+  const worldTransform = await viewer.locator(".structure-world").getAttribute("style");
+  const selectedEdgeId = await viewer.getAttribute("data-selected-edge-id");
+  const nodeCount = Number(await viewer.getAttribute("data-total-node-count"));
+  const edgeCount = Number(await viewer.getAttribute("data-total-edge-count"));
+
+  const exportMenu = viewer.locator('summary[aria-label="Structureをエクスポート"]');
+  await exportMenu.click();
+  await expect(viewer.locator(".structure-export-popover")).toContainText(
+    "現在の配置で、全Node・全Relation・全Edge labelを書き出します。",
+  );
+  await expect(viewer.locator(".structure-export-popover")).not.toHaveAttribute("role");
+  await expect(viewer.locator(".structure-export-popover").getByRole("button")).toHaveCount(2);
+  const svgDownloadPromise = page.waitForEvent("download");
+  await viewer.getByRole("button", { name: /SVG.*全体・ベクター/u }).click();
+  const svgDownload = await svgDownloadPromise;
+  expect(svgDownload.suggestedFilename()).toMatch(
+    /^rvw-structure-Order-placement-behavior-[a-f0-9]{8}\.svg$/u,
+  );
+  const svgPath = await svgDownload.path();
+  expect(svgPath).not.toBeNull();
+  const svg = await readFile(svgPath, "utf8");
+  expect(svg.match(/data-node-id=/gu)).toHaveLength(nodeCount);
+  expect(svg.match(/<path data-edge-id=/gu)).toHaveLength(edgeCount);
+  expect(svg.match(/data-edge-label-id=/gu)).toHaveLength(edgeCount);
+  expect(svg).not.toContain("<foreignObject");
+  expect(svg).not.toContain("<script");
+  expect(svg).not.toContain("var(");
+  expect(svg).not.toContain("selected");
+  expect(svg).not.toContain("muted");
+  const hubMatch = svg.match(/<g data-node-id="hub"[^>]*><rect x="([^"]+)" y="([^"]+)"/u);
+  expect(hubMatch).not.toBeNull();
+  expect(Number(hubMatch![1])).toBeCloseTo(movedHub.x, 2);
+  expect(Number(hubMatch![2])).toBeCloseTo(movedHub.y, 2);
+  const svgDimensions = svg.match(/<svg[^>]* width="(\d+)" height="(\d+)"/u);
+  expect(svgDimensions).not.toBeNull();
+
+  await expect.poll(async () => await structureReadingState(viewer)).toEqual(readingState);
+  expect(await viewer.locator(".structure-world").getAttribute("style")).toBe(worldTransform);
+  expect(await viewer.getAttribute("data-selected-edge-id")).toBe(selectedEdgeId);
+
+  await exportMenu.click();
+  const pngDownloadPromise = page.waitForEvent("download");
+  await viewer.getByRole("button", { name: /PNG.*全体・2×/u }).click();
+  const pngDownload = await pngDownloadPromise;
+  expect(pngDownload.suggestedFilename()).toMatch(
+    /^rvw-structure-Order-placement-behavior-[a-f0-9]{8}\.png$/u,
+  );
+  const pngPath = await pngDownload.path();
+  expect(pngPath).not.toBeNull();
+  const png = await readFile(pngPath);
+  expect([...png.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+  expect(png.readUInt32BE(16)).toBe(Number(svgDimensions![1]) * 2);
+  expect(png.readUInt32BE(20)).toBe(Number(svgDimensions![2]) * 2);
+  await expect.poll(async () => await structureReadingState(viewer)).toEqual(readingState);
+  expect(await viewer.locator(".structure-world").getAttribute("style")).toBe(worldTransform);
+  expect(await viewer.getAttribute("data-selected-edge-id")).toBe(selectedEdgeId);
+});
+
+test("keeps the Export popover inside a narrow Structure pane", async ({ page }) => {
+  await page.setViewportSize({ width: 640, height: 720 });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, primaryTitle);
+  await page
+    .getByRole("navigation", { name: "レビュー文書" })
+    .getByRole("button", { name: secondaryTitle, exact: true })
+    .click({ modifiers: ["Meta"] });
+
+  const viewer = page
+    .locator('.document-pane[data-pane="left"]')
+    .locator(`[data-structure-id="${primaryStructureId}"]`);
+  await viewer.locator('summary[aria-label="Structureをエクスポート"]').click();
+  const containment = await viewer.evaluate((element) => {
+    const viewerRect = element.getBoundingClientRect();
+    const popoverRect = element
+      .querySelector<HTMLElement>(".structure-export-popover")!
+      .getBoundingClientRect();
+    return {
+      viewerLeft: viewerRect.left,
+      viewerRight: viewerRect.right,
+      viewerWidth: viewerRect.width,
+      popoverLeft: popoverRect.left,
+      popoverRight: popoverRect.right,
+    };
+  });
+  expect(containment.viewerWidth).toBeLessThan(320);
+  expect(containment.popoverLeft).toBeGreaterThanOrEqual(containment.viewerLeft + 7);
+  expect(containment.popoverRight).toBeLessThanOrEqual(containment.viewerRight - 7);
+});
+
 test("scrolls complete long content inside a fixed-size Node", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await openStructure(page, secondaryTitle);
@@ -547,6 +656,19 @@ test("scrolls complete long content inside a fixed-size Node", async ({ page }) 
   await expect.poll(async () => (await worldTranslation()).y).not.toBe(bottomBoundaryBefore.y);
   expect((await worldTranslation()).y - bottomBoundaryBefore.y).toBeCloseTo(-60, 0);
   expect(await scroller.evaluate((element) => element.scrollTop)).toBe(bottomScroll);
+
+  const scrollBeforeExport = await scroller.evaluate((element) => element.scrollTop);
+  const svgDownloadPromise = page.waitForEvent("download");
+  await viewer.locator('summary[aria-label="Structureをエクスポート"]').click();
+  await viewer.getByRole("button", { name: /SVG.*全体・ベクター/u }).click();
+  const svgDownload = await svgDownloadPromise;
+  const svgPath = await svgDownload.path();
+  expect(svgPath).not.toBeNull();
+  const svg = await readFile(svgPath, "utf8");
+  expect(svg).toMatch(
+    /<g data-node-id="payment-reconciliation"[\s\S]*?<text[^>]*font-size="11"[^>]*font-weight="700"[^>]*><tspan[^>]*>Payment/u,
+  );
+  expect(await scroller.evaluate((element) => element.scrollTop)).toBe(scrollBeforeExport);
 });
 
 test("preserves Structure fallback meaning through commit and head changes", async ({

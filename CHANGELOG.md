@@ -5,6 +5,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Structure全体を現在のNode配置のままSVGまたは2倍基準のPNGへエクスポートする機能。focus、近傍、
+  viewportにかかわらず全Node、全Relation、全Edge labelを含み、画面の閲覧状態を変更しない
+
 ## [0.4.0] - 2026-09-01
 
 ### Added
