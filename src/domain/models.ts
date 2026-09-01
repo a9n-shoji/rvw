@@ -1,3 +1,5 @@
+import type { SerializedRvwError } from "../shared/errors.js";
+
 export interface PullRequestIdentity {
   host: "github.com";
   owner: string;
@@ -403,9 +405,15 @@ export interface ResolvedCommentPlacement {
   placement: CommentPlacement;
 }
 
+export interface FailedCommentPlacement {
+  destination: CommentPlacementDestination;
+  error: SerializedRvwError;
+}
+
 export interface CommentPlacementResolution {
   commentId: string;
   placements: ResolvedCommentPlacement[];
+  failures: FailedCommentPlacement[];
 }
 
 export interface CommentPlacementBatchResult {

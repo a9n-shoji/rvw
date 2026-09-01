@@ -10,9 +10,14 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   test.setTimeout(60_000);
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+  const pullRequestHeading = page
+    .locator(".pr-heading")
+    .getByRole("heading", { name: /^Fixture review(?: updated)?$/ });
+  await expect(pullRequestHeading).toBeVisible();
   await expect(page).toHaveTitle(/^rvw: Fixture review(?: updated)?$/);
-  const pullRequestLink = page.getByRole("link", { name: "Fixture review" });
+  const pullRequestLink = pullRequestHeading.getByRole("link", {
+    name: /^Fixture review(?: updated)?$/,
+  });
   await expect(pullRequestLink).toHaveAttribute(
     "href",
     "https://github.com/acme/review-repo/pull/7",
@@ -1384,7 +1389,9 @@ test("searches while typing, groups occurrences, and reveals a result without ch
 test("keeps every sidebar section heading visible in a short viewport", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 320 });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+  await expect(
+    page.locator(".pr-heading").getByRole("heading", { name: /^Fixture review(?: updated)?$/ }),
+  ).toBeVisible();
 
   const stackToggles = page.locator(".sidebar-stack-toggle");
   await expect(stackToggles).toHaveCount(2);

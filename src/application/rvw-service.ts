@@ -2899,6 +2899,7 @@ export class RvwService {
     }
     if (destinationOid === null) return { outdated: true, range: null, path: null };
     const source = comment.target;
+    await this.assertPlacementCommitAvailable(pullRequest, source.sourceOid, context);
     const resolved = await this.resolveRepositoryCommentPath(
       pullRequest,
       source,
@@ -2958,21 +2959,41 @@ export class RvwService {
       comments.push(comment);
     }
     const context = this.createCommentPlacementRequestContext();
+    if (comments.length > 0) {
+      for (const destination of destinations) {
+        if (destination.kind === "commit") {
+          await this.assertPlacementCommitAvailable(pullRequest, destination.oid, context);
+        } else if (destination.kind === "document" && destination.ref.kind === "repository-file") {
+          await this.assertPlacementCommitAvailable(
+            pullRequest,
+            destination.ref.sourceOid,
+            context,
+          );
+        }
+      }
+    }
     return {
       comments: await mapWithConcurrency(comments, 4, async (comment) => {
         const placements = [];
+        const failures = [];
         for (const destination of destinations) {
-          placements.push({
-            destination,
-            placement: await this.placeCommentForDestination(
-              comment,
-              pullRequest,
+          try {
+            placements.push({
               destination,
-              context,
-            ),
-          });
+              placement: await this.placeCommentForDestination(
+                comment,
+                pullRequest,
+                destination,
+                context,
+              ),
+            });
+          } catch (error) {
+            const placementError = asRvwError(error);
+            if (placementError.code !== "COMMIT_NOT_FOUND") throw error;
+            failures.push({ destination, error: placementError.toJSON() });
+          }
         }
-        return { commentId: comment.id, placements };
+        return { commentId: comment.id, placements, failures };
       }),
       missingCommentIds,
     };

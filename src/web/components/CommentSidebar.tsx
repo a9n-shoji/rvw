@@ -6,6 +6,7 @@ import type {
   ReviewComment,
   WalkthroughSummary,
 } from "../../domain/models.js";
+import type { SerializedRvwError } from "../../shared/errors.js";
 import { api, jsonRequest, resolveCommentPlacements } from "../api.js";
 import {
   cancelCommentQuery,
@@ -28,6 +29,7 @@ function selectionLabel(comment: ReviewComment): string {
 function CommentCard({
   comment,
   placement,
+  placementError,
   selected,
   markdownSourceOid,
   themePreference,
@@ -40,6 +42,7 @@ function CommentCard({
 }: {
   comment: ReviewComment;
   placement: CommentPlacement | null;
+  placementError: SerializedRvwError | null;
   selected: boolean;
   markdownSourceOid?: string | undefined;
   themePreference: ThemePreference;
@@ -74,18 +77,21 @@ function CommentCard({
           onChange={(event) => onSelect(event.target.checked)}
         />
       </label>
-      <CommentThread
-        comment={comment}
-        variant="sidebar"
-        placement={placement}
-        markdownSourceOid={markdownSourceOid}
-        themePreference={themePreference}
-        onActiveChange={onCommentActiveChange}
-        onOpenCodeReference={onOpenCodeReference}
-        onOpenTarget={(openInRightPane) => onOpenTarget(placement, openInRightPane)}
-        onOpenRepositoryLink={onOpenRepositoryLink}
-        onDeleted={onDeleted}
-      />
+      <div className="comment-list-item-content">
+        <ErrorNotice error={placementError} />
+        <CommentThread
+          comment={comment}
+          variant="sidebar"
+          placement={placement}
+          markdownSourceOid={markdownSourceOid}
+          themePreference={themePreference}
+          onActiveChange={onCommentActiveChange}
+          onOpenCodeReference={onOpenCodeReference}
+          onOpenTarget={(openInRightPane) => onOpenTarget(placement, openInRightPane)}
+          onOpenRepositoryLink={onOpenRepositoryLink}
+          onDeleted={onDeleted}
+        />
+      </div>
     </div>
   );
 }
@@ -208,6 +214,15 @@ export function CommentSidebar({
           commentId,
           resolved[0]?.placement ?? null,
         ]) ?? [],
+      ),
+    [placementQuery.data],
+  );
+  const placementFailures = useMemo(
+    () =>
+      new Map(
+        placementQuery.data?.comments.flatMap(({ commentId, failures }) =>
+          failures[0] ? [[commentId, failures[0].error] as const] : [],
+        ) ?? [],
       ),
     [placementQuery.data],
   );
@@ -346,6 +361,7 @@ export function CommentSidebar({
                   ? { outdated: false, range: null, path: null }
                   : (placements.get(comment.id) ?? null)
               }
+              placementError={placementFailures.get(comment.id) ?? null}
               selected={selected.has(comment.id)}
               markdownSourceOid={
                 comment.target.kind === "walkthrough"

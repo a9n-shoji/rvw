@@ -101,6 +101,7 @@ import {
 } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
 import { gitBackedQueryBelongsToPullRequest } from "../git-backed-query.js";
+import { cancelAndInvalidateQueries } from "../query-invalidation.js";
 import { transferStructureSession, type StructureNavigationTarget } from "../structure-session.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
 import {
@@ -1182,10 +1183,20 @@ export function PullRequestReviewScreen({
     );
   };
 
+  const changeSequence = useQuery({
+    queryKey: ["change-sequence"],
+    queryFn: async () =>
+      await api<ChangeSequenceResponse>("/api/meta/change-sequence", viewerHeartbeatRequest()),
+    refetchInterval: 1000,
+    refetchIntervalInBackground: true,
+    networkMode: "always",
+  });
+
   const pullRequestQuery = useQuery({
     queryKey: ["pull-request", pullRequestId],
-    queryFn: async () => await api<PullRequestResponse>(`/api/pull-requests/${pullRequestId}`),
-    enabled: Boolean(pullRequestId),
+    queryFn: async ({ signal }) =>
+      await api<PullRequestResponse>(`/api/pull-requests/${pullRequestId}`, { signal }),
+    enabled: Boolean(pullRequestId && changeSequence.data?.revisions),
   });
   const commits = pullRequestQuery.data?.commits ?? [];
   const comparisonBaseOid = pullRequestQuery.data?.comparisonBaseOid ?? null;
@@ -1210,7 +1221,7 @@ export function PullRequestReviewScreen({
     ) {
       return;
     }
-    void queryClient.invalidateQueries({
+    void cancelAndInvalidateQueries(queryClient, {
       predicate: ({ queryKey }) => gitBackedQueryBelongsToPullRequest(queryKey, pullRequest.id),
     });
   }, [pullRequestQuery.data?.pullRequest, queryClient]);
@@ -1485,18 +1496,20 @@ export function PullRequestReviewScreen({
 
   const treeQuery = useQuery({
     queryKey: ["tree", pullRequestId, selectedOid],
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       await api<TreeResponse>(
         `/api/pull-requests/${pullRequestId}/tree?oid=${encodeURIComponent(selectedOid!)}`,
+        { signal },
       ),
     enabled: Boolean(pullRequestId && selectedOid),
     staleTime: Number.POSITIVE_INFINITY,
   });
   const changedQuery = useQuery({
     queryKey: ["changed-files", pullRequestId, effectiveOldOid, selectedOid],
-    queryFn: async () =>
+    queryFn: async ({ signal }) =>
       await api<ChangedFilesResponse>(
         `/api/pull-requests/${pullRequestId}/changed-files?oldOid=${encodeURIComponent(effectiveOldOid!)}&newOid=${encodeURIComponent(selectedOid!)}`,
+        { signal },
       ),
     enabled: Boolean(
       pullRequestId &&
@@ -1507,14 +1520,6 @@ export function PullRequestReviewScreen({
     ),
     staleTime: Number.POSITIVE_INFINITY,
   });
-  const changeSequence = useQuery({
-    queryKey: ["change-sequence"],
-    queryFn: async () =>
-      await api<ChangeSequenceResponse>("/api/meta/change-sequence", viewerHeartbeatRequest()),
-    refetchInterval: 1000,
-    refetchIntervalInBackground: true,
-    networkMode: "always",
-  });
   useEffect(() => {
     const next = changeSequence.data?.revisions;
     if (!next) return;
@@ -1522,35 +1527,28 @@ export function PullRequestReviewScreen({
     observedDomainRevisions.current = next;
     if (!previous) return;
     if (previous.pullRequests !== next.pullRequests) {
-      void queryClient.invalidateQueries({ queryKey: ["pull-request", pullRequestId] });
-    }
-    if (previous.pullRequestContent !== next.pullRequestContent) {
-      void queryClient.invalidateQueries({
-        predicate: ({ queryKey }) => {
-          const ref = queryKey[1];
-          return (
-            queryKey[0] === "document" &&
-            typeof ref === "object" &&
-            ref !== null &&
-            "kind" in ref &&
-            ref.kind === "pull-request-markdown" &&
-            "pullRequestId" in ref &&
-            ref.pullRequestId === pullRequestId
-          );
-        },
+      void cancelAndInvalidateQueries(queryClient, {
+        queryKey: ["pull-request", pullRequestId],
       });
-      void queryClient.invalidateQueries({ queryKey: ["search", pullRequestId] });
     }
     if (previous.comments !== next.comments) {
-      void queryClient.invalidateQueries({ queryKey: ["comments", pullRequestId] });
+      void cancelAndInvalidateQueries(queryClient, { queryKey: ["comments", pullRequestId] });
     }
     if (previous.walkthroughs !== next.walkthroughs) {
-      void queryClient.invalidateQueries({ queryKey: ["walkthroughs", pullRequestId] });
-      void queryClient.invalidateQueries({ queryKey: ["walkthrough", pullRequestId] });
+      void cancelAndInvalidateQueries(queryClient, {
+        queryKey: ["walkthroughs", pullRequestId],
+      });
+      void cancelAndInvalidateQueries(queryClient, {
+        queryKey: ["walkthrough", pullRequestId],
+      });
     }
     if (previous.structures !== next.structures) {
-      void queryClient.invalidateQueries({ queryKey: ["structures", pullRequestId] });
-      void queryClient.invalidateQueries({ queryKey: ["structure", pullRequestId] });
+      void cancelAndInvalidateQueries(queryClient, {
+        queryKey: ["structures", pullRequestId],
+      });
+      void cancelAndInvalidateQueries(queryClient, {
+        queryKey: ["structure", pullRequestId],
+      });
     }
   }, [changeSequence.data?.revisions, pullRequestId, queryClient]);
   const commentsQuery = useQuery({
@@ -1596,16 +1594,18 @@ export function PullRequestReviewScreen({
   const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
   const walkthroughsQuery = useQuery({
     queryKey: ["walkthroughs", pullRequestId],
-    queryFn: async () =>
-      await api<WalkthroughsResponse>(`/api/pull-requests/${pullRequestId}/walkthroughs`),
-    enabled: Boolean(pullRequestId),
+    queryFn: async ({ signal }) =>
+      await api<WalkthroughsResponse>(`/api/pull-requests/${pullRequestId}/walkthroughs`, {
+        signal,
+      }),
+    enabled: Boolean(pullRequestId && changeSequence.data?.revisions),
   });
   const walkthroughs = walkthroughsQuery.data?.walkthroughs ?? [];
   const structuresQuery = useQuery({
     queryKey: ["structures", pullRequestId],
-    queryFn: async () =>
-      await api<StructuresResponse>(`/api/pull-requests/${pullRequestId}/structures`),
-    enabled: Boolean(pullRequestId),
+    queryFn: async ({ signal }) =>
+      await api<StructuresResponse>(`/api/pull-requests/${pullRequestId}/structures`, { signal }),
+    enabled: Boolean(pullRequestId && changeSequence.data?.revisions),
   });
   const structures = structuresQuery.data?.structures ?? [];
   const structureFingerprint = structures
@@ -1736,11 +1736,12 @@ export function PullRequestReviewScreen({
   const walkthroughDetailQueries = useQueries({
     queries: openWalkthroughIds.map((walkthroughId) => ({
       queryKey: ["walkthrough", pullRequestId, walkthroughId],
-      queryFn: async () =>
+      queryFn: async ({ signal }: { signal: AbortSignal }) =>
         await api<WalkthroughResponse>(
           `/api/pull-requests/${pullRequestId}/walkthroughs/${walkthroughId}`,
+          { signal },
         ),
-      enabled: Boolean(pullRequestId),
+      enabled: Boolean(pullRequestId && changeSequence.data?.revisions),
     })),
   });
   const walkthroughDetails = new Map<string, Walkthrough>();
@@ -1769,11 +1770,12 @@ export function PullRequestReviewScreen({
   const structureDetailQueries = useQueries({
     queries: openStructureIds.map((structureId) => ({
       queryKey: ["structure", pullRequestId, structureId],
-      queryFn: async () =>
+      queryFn: async ({ signal }: { signal: AbortSignal }) =>
         await api<StructureResponse>(
           `/api/pull-requests/${pullRequestId}/structures/${structureId}`,
+          { signal },
         ),
-      enabled: Boolean(pullRequestId),
+      enabled: Boolean(pullRequestId && changeSequence.data?.revisions),
     })),
   });
   const structureDetails = new Map<string, Structure>();
@@ -1869,8 +1871,6 @@ export function PullRequestReviewScreen({
         selectedOid,
         latestHeadOid,
         rangeStartOid,
-        pullRequestTitle: pullRequestQuery.data?.pullRequest.latestTitle ?? null,
-        pullRequestBody: pullRequestQuery.data?.pullRequest.latestBody ?? null,
       };
     },
     onSuccess: (result, options, refreshStart) => {
@@ -1888,26 +1888,6 @@ export function PullRequestReviewScreen({
       }
       queryClient.setQueryData<ChangeSequenceResponse>(["change-sequence"], revisionSnapshot);
       queryClient.setQueryData(["pull-request", pullRequestId], result);
-      if (
-        refreshStart.pullRequestTitle !== result.pullRequest.latestTitle ||
-        refreshStart.pullRequestBody !== result.pullRequest.latestBody
-      ) {
-        void queryClient.invalidateQueries({
-          predicate: ({ queryKey }) => {
-            const ref = queryKey[1];
-            return (
-              queryKey[0] === "document" &&
-              typeof ref === "object" &&
-              ref !== null &&
-              "kind" in ref &&
-              ref.kind === "pull-request-markdown" &&
-              "pullRequestId" in ref &&
-              ref.pullRequestId === pullRequestId
-            );
-          },
-        });
-        void queryClient.invalidateQueries({ queryKey: ["search", pullRequestId] });
-      }
       const commitRangeUnchanged =
         refreshStart.commitRangeInteractionRevision === commitRangeInteractionRevision.current;
       const wasAtLatest = refreshStart.selectedOid === refreshStart.latestHeadOid;
@@ -2189,7 +2169,7 @@ export function PullRequestReviewScreen({
       };
       try {
         const referencedDocument = await queryClient.fetchQuery({
-          queryKey: ["document", ref],
+          queryKey: ["document", ref, null],
           queryFn: async () => (await api<DocumentResponse>(documentUrl(ref))).document,
           staleTime: Number.POSITIVE_INFINITY,
         });
@@ -2261,7 +2241,7 @@ export function PullRequestReviewScreen({
             ? `リンク切れ · ${referencePath}`
             : `参照先を表示できません · ${referencePath}`;
         }
-        queryClient.setQueryData(["document", resolution.document.ref], resolution.document);
+        queryClient.setQueryData(["document", resolution.document.ref, null], resolution.document);
         const target = resolution.target;
         const document: ActiveDocument = {
           kind: "repository-file",
@@ -2399,7 +2379,7 @@ export function PullRequestReviewScreen({
             ? `リンク切れ · ${resolution.resolvedAnchor.path}`
             : `参照先を表示できません · ${resolution.resolvedAnchor.path}`;
         }
-        queryClient.setQueryData(["document", resolution.document.ref], resolution.document);
+        queryClient.setQueryData(["document", resolution.document.ref, null], resolution.document);
         const target = resolution.target;
         const document: ActiveDocument = {
           kind: "repository-file",

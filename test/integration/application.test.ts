@@ -399,6 +399,77 @@ describe("RvwService commit workflow", () => {
     expect(readDocument).toHaveBeenCalledTimes(2);
   }, 20_000);
 
+  it("isolates an unavailable comment source within a placement batch", async () => {
+    const { repository, firstHead, database, service } = setup("rvw-placement-isolation-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const validComment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: firstHead,
+        path: "src.txt",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Valid placement",
+      authorLabel: "You",
+    });
+    const unavailableSourceOid = "f".repeat(40);
+    const brokenComment = database.createComment({
+      pullRequestId: opened.pullRequest.id,
+      createdHeadOid: firstHead,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: unavailableSourceOid,
+        path: "missing.txt",
+        startLine: 1,
+        endLine: 1,
+      },
+      body: "Unavailable placement source",
+      authorLabel: "You",
+    });
+
+    const resolved = await service.resolveCommentPlacements(
+      opened.pullRequest.id,
+      [validComment.id, brokenComment.id],
+      [{ kind: "commit", oid: firstHead }],
+    );
+
+    expect(resolved.comments[0]).toEqual({
+      commentId: validComment.id,
+      placements: [
+        {
+          destination: { kind: "commit", oid: firstHead },
+          placement: {
+            outdated: false,
+            range: { startLine: 1, endLine: 1 },
+            path: "src.txt",
+          },
+        },
+      ],
+      failures: [],
+    });
+    expect(resolved.comments[1]).toMatchObject({
+      commentId: brokenComment.id,
+      placements: [],
+      failures: [
+        {
+          destination: { kind: "commit", oid: firstHead },
+          error: { code: "COMMIT_NOT_FOUND" },
+        },
+      ],
+    });
+    await expect(
+      service.resolveCommentPlacements(
+        opened.pullRequest.id,
+        [validComment.id],
+        [{ kind: "commit", oid: unavailableSourceOid }],
+      ),
+    ).rejects.toMatchObject({ code: "COMMIT_NOT_FOUND" });
+  });
+
   it("reopens an explicitly registered PR outside a repository", async () => {
     const { repository, fake, service } = setup("rvw-open-outside-");
     const opened = await service.openPullRequest(undefined, repository);

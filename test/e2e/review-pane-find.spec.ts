@@ -4,9 +4,10 @@ const pullRequestId = "11111111-1111-4111-8111-111111111111";
 
 test("finds within the focused document pane with VS Code-style controls", async ({ page }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+  const fixtureFileButton = page.getByRole("button", { name: "src/fixture.ts", exact: true });
+  await expect(fixtureFileButton).toBeVisible();
 
-  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await fixtureFileButton.click();
   const leftPane = page.getByRole("region", { name: "左のコードペイン" });
   await expect(leftPane.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
     "aria-selected",
@@ -106,14 +107,24 @@ test("finds within the focused document pane with VS Code-style controls", async
 test("keeps inline text searchable across formatting boundaries and observes late ShadowRoots", async ({
   page,
 }) => {
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
   const leftPane = page.getByRole("region", { name: "左のコードペイン" });
+  const searchSurface = leftPane.locator("[data-pane-find-text]");
+  await expect(searchSurface).toContainText("Fixture review updated");
   await leftPane.focus();
   await page.keyboard.press("Control+F");
   const find = leftPane.getByRole("search", { name: "左ペイン内を検索" });
   const input = find.getByRole("textbox", { name: "ペイン内を検索" });
 
-  await leftPane.locator("[data-pane-find-text]").evaluate((surface) => {
+  await searchSurface.evaluate((surface) => {
     const lightDomFixture = document.createElement("div");
     lightDomFixture.innerHTML = "<p>format<strong>Boundary</strong></p><p>line<br>Boundary</p>";
     surface.append(lightDomFixture);

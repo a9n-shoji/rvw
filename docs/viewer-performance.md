@@ -40,6 +40,9 @@ work on expansion.
 | Local comment mutation                |                                                                    0 placement requests; asynchronous comments consistency GET |                   enforced by E2E |
 | Repository metadata-only revision     |                                                                                                0 Git-backed document refetches |                   enforced by E2E |
 | Repository location change            |                                                                                      cached Git-backed document refetched once |                   enforced by E2E |
+| Revision during initial GET           |                                                                 stale GET canceled; one new-generation request supplies the UI |              enforced by unit/E2E |
+| One unavailable comment source        |                                                                      healthy placements remain; error stays on affected thread |       enforced by integration/E2E |
+| PR content revision response ordering |                                                                 document and placement never render across different revisions |                   enforced by E2E |
 | Placement target-set refresh          |                                                               surviving annotations remain; deleted annotation is not retained |                   enforced by E2E |
 | Collapsed sidebar                     |                                                                                                    0 commit placement requests |                                 0 |
 | Browser old single-placement endpoint |                                                                                                                              0 |                                 0 |
@@ -50,7 +53,7 @@ work on expansion.
 The Playwright timing values are reported but not used as hard CI thresholds. CI enforces network and
 Git-call budgets so slower shared runners do not create false failures. The old single-placement
 operation remains a semantic parity oracle and an explicit baseline characterization path.
-The recorded timing observation is from the final 131-test Playwright run; focused runs varied while
+The recorded timing observation is from the final 136-test Playwright run; focused runs varied while
 remaining inside the same request-count budgets.
 
 ## Query and mutation boundary
@@ -77,25 +80,33 @@ remaining inside the same request-count budgets.
   sidebar placement request even though it performs the comments consistency GET.
 - The one-second poll remains the external synchronization mechanism. Domain revisions prevent a
   comment-only external update from refetching PR documents, Walkthroughs, Structures, or Structure
-  backlinks. The initial comments GET waits for the first revision snapshot so a write immediately
-  before baseline adoption is included rather than stranded in a stable cache.
+  backlinks. Mutable Pull Request, comments, Walkthrough, and Structure queries wait for the first
+  revision snapshot so a write immediately before baseline adoption is included rather than stranded
+  in a stable cache. Later revision and repository-location changes cancel the matching in-flight
+  query before invalidation. This forces a new fetch even when the first request has not produced data,
+  instead of allowing its stale Promise to satisfy and clear the newer invalidation.
 - Pull Request metadata and title/body content have separate revisions. A no-op synchronization does
   not advance either revision; status-only changes do not invalidate PR Markdown or search. A location
   change leaves PR Markdown intact but invalidates repository-backed search with the other Git queries.
-  Refresh responses atomically publish their revision snapshot to the viewer before PR Markdown is
-  invalidated, so content and placement never combine different content revisions.
+  PR Markdown document, search, and placement keys include the content revision published by the
+  heartbeat or refresh response. Old document and annotation data are not retained across that boundary,
+  so either response may arrive first without combining different revisions.
 - Batch comment sync advances the comments revision from the update result, not merely from a non-empty
   requested reply/resolve operation. Replaying the same idempotency key or resolving an already-resolved
   thread therefore does not cause another comments GET.
 - A placement batch accepts the complete comment list held by the viewer rather than introducing a
   500-comment product limit. Fixed concurrency and request-scoped caches bound Git subprocess work.
+  Destination and unexpected internal failures remain batch-wide, while an unavailable source commit
+  for one comment is returned as an item failure. Healthy placement results remain usable, and the
+  affected error is rendered only with that thread under the active sidebar filter.
 - Sidebar placement uses all non-PR targets independently of the unresolved/resolved filter. Repository
   panes send only repository-file comment IDs, and Pull Request Markdown panes send only PR Markdown
   comment IDs. The Walkthrough revision participates only when the batch contains a Walkthrough target.
   Presentation and unrelated domain changes therefore reuse the existing placement map.
 - When a document placement key changes because comments were added or deleted, the pane retains the
-  last placement response during the new batch and joins it only against current comment IDs. Existing
-  annotations remain visible during the request, while a deleted thread disappears immediately.
+  last placement response from the same mutable-document revision during the new batch and joins it
+  only against current comment IDs. Existing annotations remain visible during the request, while a
+  deleted thread disappears immediately. A content-revision change deliberately clears that retention.
 - Structure reverse-index queries wait for the Structure list and refresh only when its
   `id:updatedAt` fingerprint changes, including deletion, producing one additional request per Structure
   revision.

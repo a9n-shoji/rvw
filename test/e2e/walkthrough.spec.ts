@@ -2350,7 +2350,9 @@ test("removes both pane copies when a walkthrough is deleted externally", async 
   );
   expect(response.ok()).toBe(true);
   await expect(page.getByRole("tab", { name: title })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Fixture review" })).toBeVisible();
+  await expect(
+    page.locator(".pr-heading").getByRole("heading", { name: /^Fixture review(?: updated)?$/ }),
+  ).toBeVisible();
 });
 
 test("keeps same-Walkthrough reply input isolated by pane and moves it with the tab", async ({

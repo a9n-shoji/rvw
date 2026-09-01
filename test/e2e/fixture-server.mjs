@@ -2458,6 +2458,7 @@ app.post("/api/pull-requests/:id/comment-placements/resolve", async (context) =>
                 destination,
                 placement: fixtureCommentPlacement(comment, destination),
               })),
+              failures: [],
             },
           ]
         : [];

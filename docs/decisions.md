@@ -2492,13 +2492,30 @@ queries use infinite freshness only when their complete identity is in the key. 
 also propagate cancellation through their HTTP request. Delay the stable comments query until the
 initial domain-revision snapshot exists so an external write cannot be swallowed by baseline adoption.
 Pull Request refresh responses carry the post-sync revision snapshot; the viewer advances its heartbeat
-cache before invalidating PR Markdown so content and placement switch revisions together. Sidebar
+cache so content and placement switch revisions together. PR Markdown document, search, and placement
+queries include the content revision in their identity. They do not retain document or placement data
+across that revision boundary, while placement continuity remains available for comment-set changes
+inside one content revision. Sidebar
 placement includes the Walkthrough revision only when a Walkthrough target participates. Batch sync
 advances the comments revision only when a reply was newly inserted or resolution actually changed;
 an idempotent retry reuses its post without producing revision churn. When a document placement key
 changes with the current target set, retain the previous response while loading and join only comment IDs
 still present in the current comment list, keeping surviving annotations visible without resurrecting a
 deleted thread.
+
+Take the initial domain-revision snapshot before enabling Pull Request metadata, comments,
+Walkthrough, or Structure queries. When a later revision or repository-location change invalidates a
+stable query key, cancel its current fetch before invalidating it. This creates a new fetch generation
+even when the old query has no cached data, so completion of an older initial request cannot clear the
+newer invalidation. Propagate the query abort signal through mutable and Git-backed HTTP reads where
+available.
+
+Treat batch placement failures according to their scope. Validate repository-backed destinations once
+before comment workers begin, and keep destination or unexpected internal failures batch-wide. Convert
+an expected unavailable source commit discovered while resolving one comment into a destination-scoped
+failure on that comment's result. The sidebar renders that error with the affected thread, including
+only when its resolved/unresolved filter makes that thread visible, while healthy placements and
+annotations remain usable.
 
 ### Trade-offs
 
@@ -2520,3 +2537,8 @@ deleted thread.
   domain poll may revalidate comments again after observing the same server revision. This replaces
   stateful causal bookkeeping with an explicit consistency boundary. External writers are also
   observed on the existing one-second poll and reconciled through the same domain-specific query.
+- Cancel-before-invalidate adds a second explicit cache operation at mutable generation boundaries,
+  but prevents a no-data in-flight Promise from being reused as the refetch for a newer revision.
+- Per-comment placement failures make the batch response slightly richer and can leave one thread
+  without derived location, but they avoid expanding a recoverable source-ref problem into a complete
+  sidebar or document-placement outage.

@@ -63,6 +63,7 @@ import type { ReferenceStaleness } from "../document-viewer-state.js";
 import { diffForRenderer, fileContentsForRenderer } from "../file-rendering.js";
 import {
   api,
+  type CommentPlacementBatchResponse,
   documentUrl,
   type DiffResponse,
   type DocumentResponse,
@@ -1236,14 +1237,18 @@ export function DocumentViewer({
       : Boolean(
           (oldPath && isSupportedImagePath(oldPath)) || (newPath && isSupportedImagePath(newPath)),
         ));
+  const fullDocumentContentRevision =
+    fullRef.kind === "pull-request-markdown" ? pullRequestContentRevision : null;
   const fullQuery = useQuery({
-    queryKey: ["document", fullRef],
-    queryFn: async () => (await api<DocumentResponse>(documentUrl(fullRef))).document,
+    queryKey: ["document", fullRef, fullDocumentContentRevision],
+    queryFn: async ({ signal }) =>
+      (await api<DocumentResponse>(documentUrl(fullRef), { signal })).document,
     enabled:
       effectiveDisplayMode === "full" &&
       !repositoryImageViewerActive &&
-      !fullViewUnavailableMessage,
-    staleTime: fullRef.kind === "repository-file" ? Number.POSITIVE_INFINITY : 0,
+      !fullViewUnavailableMessage &&
+      fullDocumentContentRevision !== undefined,
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const diffSearch = new URLSearchParams({ kind: activeDocument.kind });
   if (activeDocument.kind === "repository-file") {
@@ -1254,9 +1259,13 @@ export function DocumentViewer({
   }
   const diffQuery = useQuery({
     queryKey: ["diff", pullRequestId, oldOid, selectedOid, activeDocument],
-    queryFn: async () =>
-      (await api<DiffResponse>(`/api/pull-requests/${pullRequestId}/diff?${diffSearch.toString()}`))
-        .diff,
+    queryFn: async ({ signal }) =>
+      (
+        await api<DiffResponse>(
+          `/api/pull-requests/${pullRequestId}/diff?${diffSearch.toString()}`,
+          { signal },
+        )
+      ).diff,
     enabled:
       effectiveDisplayMode !== "full" &&
       !repositoryImageViewerActive &&
@@ -1362,6 +1371,11 @@ export function DocumentViewer({
     () => placementComments.map((comment) => [comment.id, comment.target]),
     [placementComments],
   );
+  const annotationContentRevision =
+    renderedRefs.new?.kind === "pull-request-markdown" ||
+    renderedRefs.old?.kind === "pull-request-markdown"
+      ? pullRequestContentRevision
+      : null;
   const annotationQuery = useQuery({
     queryKey: [
       "comment-placements",
@@ -1369,26 +1383,44 @@ export function DocumentViewer({
       pullRequestId,
       commentTargetFingerprint,
       renderedRefs,
-      renderedRefs.new?.kind === "pull-request-markdown" ||
-      renderedRefs.old?.kind === "pull-request-markdown"
-        ? pullRequestContentRevision
-        : null,
+      annotationContentRevision,
     ],
     queryFn: async ({ signal }) =>
-      await resolveCommentPlacements(
-        pullRequestId,
-        placementComments.map(({ id }) => id),
-        placementDestinations,
-        signal,
-      ),
-    enabled: placementComments.length > 0 && placementDestinations.length > 0,
+      ({
+        contentRevision: annotationContentRevision,
+        response: await resolveCommentPlacements(
+          pullRequestId,
+          placementComments.map(({ id }) => id),
+          placementDestinations,
+          signal,
+        ),
+      }) satisfies {
+        contentRevision: number | null | undefined;
+        response: CommentPlacementBatchResponse;
+      },
+    enabled:
+      placementComments.length > 0 &&
+      placementDestinations.length > 0 &&
+      annotationContentRevision !== undefined,
     staleTime: Number.POSITIVE_INFINITY,
-    placeholderData: (previousData) => previousData,
+    placeholderData: (previousData) =>
+      previousData?.contentRevision === annotationContentRevision ? previousData : undefined,
   });
   const retainedAnnotationData = useRef(annotationQuery.data);
   useLayoutEffect(() => {
-    if (annotationQuery.data !== undefined) retainedAnnotationData.current = annotationQuery.data;
-  }, [annotationQuery.data]);
+    if (annotationQuery.data?.contentRevision === annotationContentRevision) {
+      retainedAnnotationData.current = annotationQuery.data;
+    }
+  }, [annotationContentRevision, annotationQuery.data]);
+  const annotationQueryData = annotationQuery.data;
+  const retainedAnnotationQueryData = retainedAnnotationData.current;
+  const currentAnnotationResponse =
+    annotationQueryData && annotationQueryData.contentRevision === annotationContentRevision
+      ? annotationQueryData.response
+      : retainedAnnotationQueryData &&
+          retainedAnnotationQueryData.contentRevision === annotationContentRevision
+        ? retainedAnnotationQueryData.response
+        : undefined;
   const annotationData = useMemo(() => {
     const fileAnnotations: LineAnnotation<ViewerAnnotation>[] = [];
     const diffAnnotations: DiffLineAnnotation<ViewerAnnotation>[] = [];
@@ -1401,9 +1433,10 @@ export function DocumentViewer({
       new: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
     } = { old: [], new: [] };
     const placementsByComment = new Map(
-      (annotationQuery.data ?? retainedAnnotationData.current)?.comments.map(
-        ({ commentId, placements }) => [commentId, placements],
-      ) ?? [],
+      currentAnnotationResponse?.comments.map(({ commentId, placements }) => [
+        commentId,
+        placements,
+      ]) ?? [],
     );
     const placementFor = (commentId: string, ref: DocumentRef): CommentPlacement | null =>
       placementsByComment
@@ -1481,7 +1514,13 @@ export function DocumentViewer({
       }
     }
     return { fileAnnotations, diffAnnotations, markdownComments, imageComments };
-  }, [annotationQuery.data, comments, effectiveDisplayMode, renderedRefs, repositoryImageRefs]);
+  }, [
+    comments,
+    currentAnnotationResponse,
+    effectiveDisplayMode,
+    renderedRefs,
+    repositoryImageRefs,
+  ]);
 
   const createMutation = useMutation({
     mutationFn: async ({

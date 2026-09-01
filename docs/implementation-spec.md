@@ -923,14 +923,18 @@ viewerのplacementは
 `POST /api/pull-requests/:pullRequestId/comment-placements/resolve`へcomment ID列と最大4件のdestination
 （document、commit、Walkthrough）を渡して一括解決する。comment IDはfirst-seen順に重複排除し、responseも同順、
 missing IDは`missingCommentIds`へ明示する。viewerが保持するPR内comment全件を一requestへ渡せるものとし、
-comment ID件数にUIより小さい固定上限を設けない。別PRのcommentは混在させない。document viewerはnew/oldを
+comment ID件数にUIより小さい固定上限を設けない。別PRのcommentは混在させない。destination自体が利用不能な場合と
+予期しない内部errorはbatch全体を失敗させる。一方、保持refの外部削除などcomment固有のsource取得失敗は
+そのcommentの`failures`へdestinationとserialized errorを返し、他commentのplacementを維持する。document viewerはnew/oldを
 同じ一requestへ含め、repository paneにはrepository-file commentだけ、`Pull Request.md` paneには
 pull-request-markdown commentだけを渡してpaneごとに最大1回とする。展開中sidebarは未解決／解決済みfilterと
 独立した全non-PR comment集合に対して最大1回とし、sidebarを閉じている間は呼ばない。sidebarのplacement identityは
 PR Markdown targetがある場合だけ`pullRequestContent` revision、Walkthrough targetがある場合だけWalkthrough revisionを
 含み、無関係なdomain更新ではbatchを再実行しない。document placementのquery identityがcomment追加／削除で変わる間は
-直前のplacement responseを保持し、current commentsに存在するIDだけをjoinする。これにより既存annotationを再計算中も
-表示し、削除済みcommentは旧responseに残っていても表示しない。
+同じmutable-document revisionの直前placement responseだけを保持し、current commentsに存在するIDだけをjoinする。
+これにより既存annotationを再計算中も表示し、削除済みcommentは旧responseに残っていても表示しない。
+`Pull Request.md`のdocument本文とplacementは同じ`pullRequestContent` revisionをquery identityへ含め、revision変更時は
+旧本文と旧placementをplaceholderへ使わない。本文とplacementのresponse順序にかかわらず異なるrevisionを同時表示しない。
 旧`GET /api/comments/:id/placement`は互換・parity oracleとして同じresolverを使うがbrowserからは呼ばない。
 resolverはrequest内でcommit availability、source/destination pairのchanged files、PR/OID/pathのdocumentを
 Promiseごと共有し、最大4commentの固定並列度で処理する。cacheへPromiseを登録してからawaitし、同じGit処理の
@@ -1361,12 +1365,17 @@ location変更もPR Markdownはinvalidateしないが、repository availability�
 各logical write transactionはglobalを一度、実際に変更したdomainだけを一度進める。Walkthrough削除で紐づくcommentが
 存在する場合とresetだけが複数domainを進める。冪等key付きcomment replyの再送や既にresolvedのcommentへの同じresolveは
 実変更に数えず、`comments` revisionを進めない。viewerはdomain revisionを比較し、PR metadata、PR virtual
-document/search、comments、Walkthrough、Structure/indexをそれぞれ独立にinvalidateする。global sequence変化だけを
-理由に全queryをinvalidateしない。stable keyを使うcomments queryは初回domain revision snapshot取得後にだけenableし、
+document/search、comments、Walkthrough、Structure/indexをそれぞれ独立に更新する。global sequence変化だけを
+理由に全queryをinvalidateしない。PR metadata、comments、Walkthrough、Structureのmutable queryは初回domain revision
+snapshot取得後にだけenableする。stable keyのmutable queryでrevision変更を検出した場合は、data未取得の初回fetchも含めて
+対象fetchをcancelしてからinvalidateし、旧requestの成功が新revisionの再取得を消さないようにする。
+`Pull Request.md`本文、本文search、placementはcontent revisionをquery identityへ含めて新generationへ切り替える。
+stable keyを使うcomments queryは
 `comments GET → 外部write → 初回revision baseline`の順序で更新を取りこぼさない。snapshot前のwriteは初回GETへ入り、
 snapshot後のwriteは次heartbeatが検出する。repository locationはGit object availabilityを変え得るため、
 `pullRequests` refetch後に`localRepositoryPath`または`gitCommonDir`の実変更を検出した場合だけ、そのPRのtree、changed files、
-repository document/diff/search、Structure reverse index、Mermaid peek、repository-file comment placementを明示invalidateする。
+repository document/diff/search、Structure reverse index、Mermaid peek、repository-file comment placementのin-flight fetchを
+cancelしてから明示invalidateする。
 statusなど他のPR metadata変更ではこのGit-backed invalidationを行わない。
 
 CREATE TABLE pull_requests (

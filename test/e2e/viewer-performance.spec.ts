@@ -400,6 +400,61 @@ test("loads an external comment written before the initial revision snapshot", a
   }
 });
 
+test("restarts the initial comments GET when a later revision arrives", async ({
+  page,
+  request,
+}) => {
+  let releaseInitialGet = (): void => {};
+  const initialGetGate = new Promise<void>((resolve) => {
+    releaseInitialGet = resolve;
+  });
+  let initialGetCaptured = (): void => {};
+  const initialGetCapturedPromise = new Promise<void>((resolve) => {
+    initialGetCaptured = resolve;
+  });
+  let commentListRequests = 0;
+  await page.route(`**/api/pull-requests/${pullRequestId}/comments?resolved=all`, async (route) => {
+    commentListRequests += 1;
+    if (commentListRequests !== 1) {
+      await route.fallback();
+      return;
+    }
+    const response = await route.fetch();
+    initialGetCaptured();
+    await initialGetGate;
+    try {
+      await route.fulfill({ response });
+    } catch {
+      // The revision boundary cancels this stale browser request.
+    }
+  });
+
+  let externalCommentId: string | null = null;
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await initialGetCapturedPromise;
+
+    const externalBody = "External comment during initial comments GET";
+    const externalResponse = await request.post("/api/comments", {
+      data: {
+        pullRequestId,
+        target: { kind: "pull-request" },
+        body: externalBody,
+        authorLabel: "External Agent",
+      },
+    });
+    expect(externalResponse.ok()).toBe(true);
+    externalCommentId = ((await externalResponse.json()) as { comment: { id: string } }).comment.id;
+
+    await expect.poll(() => commentListRequests).toBeGreaterThanOrEqual(2);
+    await page.getByRole("button", { name: /^コメント \d+$/u }).click();
+    await expect(page.getByText(externalBody, { exact: true })).toBeVisible();
+  } finally {
+    releaseInitialGet();
+    if (externalCommentId) await deleteComments(request, [externalCommentId]);
+  }
+});
+
 test("does not re-run repository sidebar placement for a Walkthrough-only revision", async ({
   page,
   request,
@@ -433,6 +488,96 @@ test("does not re-run repository sidebar placement for a Walkthrough-only revisi
     expect(sidebarPlacementRequests).toBe(requestsBeforeWalkthroughUpdate);
   } finally {
     await deleteComments(request, [commentId]);
+  }
+});
+
+test("keeps healthy sidebar placements when one hidden comment cannot be resolved", async ({
+  page,
+  request,
+}) => {
+  const validBody = "Placement isolation valid comment";
+  const brokenBody = "Placement isolation broken comment";
+  const validId = await createRepositoryComment(request, validBody);
+  const brokenId = await createRepositoryComment(request, brokenBody);
+  const resolved = await request.post(`/api/comments/${brokenId}/resolve`, { data: {} });
+  expect(resolved.ok()).toBe(true);
+
+  await page.route(
+    `**/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
+    async (route) => {
+      const input = route.request().postDataJSON() as {
+        commentIds?: string[];
+        destinations?: Array<{ kind: string }>;
+      };
+      if (input.destinations?.[0]?.kind !== "commit" || !input.commentIds?.includes(brokenId)) {
+        await route.fallback();
+        return;
+      }
+      const response = await route.fetch();
+      const payload = (await response.json()) as {
+        comments: Array<{
+          commentId: string;
+          placements: unknown[];
+          failures: unknown[];
+        }>;
+      };
+      await route.fulfill({
+        response,
+        json: {
+          ...payload,
+          comments: payload.comments.map((comment) =>
+            comment.commentId === brokenId
+              ? {
+                  ...comment,
+                  placements: [],
+                  failures: [
+                    {
+                      destination: input.destinations![0],
+                      error: {
+                        code: "COMMIT_NOT_FOUND",
+                        message: "コメント作成時のcommitを取得できません。",
+                        suggestions: ["保持済みGit refを確認してください。"],
+                      },
+                    },
+                  ],
+                }
+              : comment,
+          ),
+        },
+      });
+    },
+  );
+
+  try {
+    const initialRefresh = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "POST" &&
+        url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+      );
+    });
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await initialRefresh;
+    await page.getByRole("button", { name: /^コメント \d+$/u }).click();
+
+    const validCard = page.locator(".comment-list-item").filter({
+      has: page.getByText(validBody, { exact: true }),
+    });
+    await expect(validCard).toBeVisible();
+    await expect(validCard.getByRole("alert")).toHaveCount(0);
+    await expect(page.locator(".comment-list > .error-notice")).toHaveCount(0);
+
+    await page.getByRole("button", { name: /^解決済み/u }).click();
+    const brokenCard = page.locator(".comment-list-item").filter({
+      has: page.getByText(brokenBody, { exact: true }),
+    });
+    await expect(brokenCard).toBeVisible();
+    await expect(brokenCard.getByRole("alert")).toContainText(
+      "コメント作成時のcommitを取得できません。",
+    );
+    await expect(brokenCard.getByRole("alert")).toContainText("COMMIT_NOT_FOUND");
+  } finally {
+    await deleteComments(request, [validId, brokenId]);
   }
 });
 
@@ -512,6 +657,99 @@ test("invalidates Git-backed queries only when the repository location changes",
       "export function fixture",
     );
   } finally {
+    const resetLocation = await request.post("/api/test/repository-location", {
+      data: { version: 0 },
+    });
+    expect(resetLocation.ok()).toBe(true);
+  }
+});
+
+test("restarts an initial Git-backed document GET after the repository location changes", async ({
+  page,
+  request,
+}) => {
+  const resetBeforeOpen = await request.post("/api/test/repository-location", {
+    data: { version: 0 },
+  });
+  expect(resetBeforeOpen.ok()).toBe(true);
+  let releaseInitialDocument = (): void => {};
+  const initialDocumentGate = new Promise<void>((resolve) => {
+    releaseInitialDocument = resolve;
+  });
+  let initialDocumentCaptured = (): void => {};
+  const initialDocumentCapturedPromise = new Promise<void>((resolve) => {
+    initialDocumentCaptured = resolve;
+  });
+  let documentRequests = 0;
+  await page.route(`**/api/pull-requests/${pullRequestId}/document?*`, async (route) => {
+    const url = new URL(route.request().url());
+    if (
+      url.searchParams.get("kind") !== "repository-file" ||
+      url.searchParams.get("path") !== "src/fixture.ts"
+    ) {
+      await route.fallback();
+      return;
+    }
+    documentRequests += 1;
+    if (documentRequests !== 1) {
+      await route.fallback();
+      return;
+    }
+    const response = await route.fetch();
+    const payload = (await response.json()) as {
+      document: {
+        ref: unknown;
+        availability: string;
+        text: string | null;
+        byteLength: number;
+        oid: string | null;
+      };
+    };
+    initialDocumentCaptured();
+    await initialDocumentGate;
+    try {
+      await route.fulfill({
+        response,
+        json: {
+          ...payload,
+          document: {
+            ...payload.document,
+            availability: "missing",
+            text: null,
+            byteLength: 0,
+            oid: null,
+          },
+        },
+      });
+    } catch {
+      // The location boundary cancels this stale browser request.
+    }
+  });
+
+  try {
+    const initialRefresh = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "POST" &&
+        url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+      );
+    });
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await initialRefresh;
+    await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+    await page.getByRole("button", { name: "全文", exact: true }).click();
+    await initialDocumentCapturedPromise;
+
+    const locationUpdate = await request.post("/api/test/repository-location", {
+      data: { version: 2 },
+    });
+    expect(locationUpdate.ok()).toBe(true);
+    await expect.poll(() => documentRequests).toBeGreaterThanOrEqual(2);
+    await expect(page.locator('.document-pane[data-pane="left"]')).toContainText(
+      "export function fixture",
+    );
+  } finally {
+    releaseInitialDocument();
     const resetLocation = await request.post("/api/test/repository-location", {
       data: { version: 0 },
     });
@@ -602,3 +840,154 @@ test("keeps current annotations visible while a changed placement set is loading
     await deleteComments(request, createdId ? [survivingId, createdId] : [survivingId, deletedId]);
   }
 });
+
+for (const firstResponse of ["document", "placement"] as const) {
+  test(`keeps PR Markdown content and placements on one revision when ${firstResponse} resolves first`, async ({
+    page,
+    request,
+  }) => {
+    const resetSync = await request.post("/api/test/reset-sync-stage", { data: {} });
+    expect(resetSync.ok()).toBe(true);
+    let commentId: string | null = null;
+    let holdNextDocument = false;
+    let holdNextPlacement = false;
+    let releaseDocument = (): void => {};
+    const documentGate = new Promise<void>((resolve) => {
+      releaseDocument = resolve;
+    });
+    let documentStarted = (): void => {};
+    const documentStartedPromise = new Promise<void>((resolve) => {
+      documentStarted = resolve;
+    });
+    let documentFinished = (): void => {};
+    const documentFinishedPromise = new Promise<void>((resolve) => {
+      documentFinished = resolve;
+    });
+    let releasePlacement = (): void => {};
+    const placementGate = new Promise<void>((resolve) => {
+      releasePlacement = resolve;
+    });
+    let placementStarted = (): void => {};
+    const placementStartedPromise = new Promise<void>((resolve) => {
+      placementStarted = resolve;
+    });
+    let placementFinished = (): void => {};
+    const placementFinishedPromise = new Promise<void>((resolve) => {
+      placementFinished = resolve;
+    });
+
+    await page.route(`**/api/pull-requests/${pullRequestId}/document?*`, async (route) => {
+      const url = new URL(route.request().url());
+      if (!holdNextDocument || url.searchParams.get("kind") !== "pull-request-markdown") {
+        await route.fallback();
+        return;
+      }
+      holdNextDocument = false;
+      const response = await route.fetch();
+      documentStarted();
+      await documentGate;
+      await route.fulfill({ response });
+      documentFinished();
+    });
+    await page.route(
+      `**/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
+      async (route) => {
+        const input = route.request().postDataJSON() as {
+          commentIds?: string[];
+          destinations?: Array<{ kind?: string; ref?: { kind?: string } }>;
+        };
+        const targetsPullRequestMarkdown = input.destinations?.some(
+          (destination) =>
+            destination.kind === "document" && destination.ref?.kind === "pull-request-markdown",
+        );
+        if (
+          !holdNextPlacement ||
+          !targetsPullRequestMarkdown ||
+          !commentId ||
+          !input.commentIds?.includes(commentId)
+        ) {
+          await route.fallback();
+          return;
+        }
+        holdNextPlacement = false;
+        const response = await route.fetch();
+        placementStarted();
+        await placementGate;
+        await route.fulfill({ response });
+        placementFinished();
+      },
+    );
+
+    try {
+      const initialRefresh = page.waitForResponse((response) => {
+        const url = new URL(response.url());
+        return (
+          response.request().method() === "POST" &&
+          url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+        );
+      });
+      await page.goto(`/?pullRequestId=${pullRequestId}`);
+      await initialRefresh;
+      await expect(
+        page.getByText("This is always the latest PR body.", { exact: true }),
+      ).toBeVisible();
+
+      const commentResponse = await request.post("/api/comments", {
+        data: {
+          pullRequestId,
+          target: {
+            kind: "document",
+            documentKind: "pull-request-markdown",
+            sourceDocumentHash: "ignored-by-fixture",
+            quotedText: "ignored-by-fixture",
+            startLine: 3,
+            endLine: 3,
+          },
+          body: `PR content revision fixture ${firstResponse}`,
+          authorLabel: "Performance fixture",
+        },
+      });
+      expect(commentResponse.ok()).toBe(true);
+      commentId = ((await commentResponse.json()) as { comment: { id: string } }).comment.id;
+      const inlineThread = page.locator(`.comment-thread--inline[data-comment-id="${commentId}"]`);
+      await expect(inlineThread).toBeVisible();
+
+      holdNextDocument = true;
+      holdNextPlacement = true;
+      const externalRefresh = await request.post(`/api/pull-requests/${pullRequestId}/refresh`, {
+        data: {},
+      });
+      expect(externalRefresh.ok()).toBe(true);
+      await Promise.all([documentStartedPromise, placementStartedPromise]);
+
+      await expect(inlineThread).toHaveCount(0);
+      await expect(
+        page.getByText("This is always the latest PR body.", { exact: true }),
+      ).toHaveCount(0);
+
+      if (firstResponse === "document") {
+        releaseDocument();
+        await documentFinishedPromise;
+        await expect(page.getByText("The PR body was rewritten.", { exact: true })).toBeVisible();
+        await expect(inlineThread).toHaveCount(0);
+        releasePlacement();
+        await placementFinishedPromise;
+      } else {
+        releasePlacement();
+        await placementFinishedPromise;
+        await expect(inlineThread).toHaveCount(0);
+        await expect(
+          page.getByText("This is always the latest PR body.", { exact: true }),
+        ).toHaveCount(0);
+        releaseDocument();
+        await documentFinishedPromise;
+        await expect(page.getByText("The PR body was rewritten.", { exact: true })).toBeVisible();
+      }
+      await expect(inlineThread).toHaveCount(0);
+    } finally {
+      releaseDocument();
+      releasePlacement();
+      if (commentId) await deleteComments(request, [commentId]);
+    }
+  });
+}
