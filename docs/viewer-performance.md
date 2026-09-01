@@ -34,8 +34,8 @@ work on expansion.
 
 | Scenario                              |                                                                                                                         Budget |                  Observed locally |
 | ------------------------------------- | -----------------------------------------------------------------------------------------------------------------------------: | --------------------------------: |
-| 100 comments, one document pane       |                                                                                                      1 batch placement request |        1 request, 171 ms to ready |
-| 100 visible sidebar comments          |                                                                                                      1 batch placement request |        1 request, 145 ms to ready |
+| 100 comments, one document pane       |                                                                                                      1 batch placement request |        1 request, 177 ms to ready |
+| 100 visible sidebar comments          |                                                                                                      1 batch placement request |        1 request, 136 ms to ready |
 | Reply / resolve / reopen in sidebar   |                                                                                                0 additional placement requests |                                 0 |
 | Local comment mutation                |                                                                    0 placement requests; asynchronous comments consistency GET |                   enforced by E2E |
 | Repository metadata-only revision     |                                                                                                0 Git-backed document refetches |                   enforced by E2E |
