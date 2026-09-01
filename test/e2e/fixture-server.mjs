@@ -791,6 +791,7 @@ function bump(...domains) {
   for (const domain of new Set(domains)) revisions[domain] += 1;
 }
 let syncStage = 0;
+let repositoryLocationVersion = 0;
 let themePreference = "system";
 let blockedImageRequestCount = 0;
 let imageTextRequestCount = 0;
@@ -842,8 +843,14 @@ function currentPullRequest() {
     repository: "review-repo",
     number: 7,
     url: "https://github.com/acme/review-repo/pull/7",
-    localRepositoryPath: "/fixture/review-repo",
-    gitCommonDir: "/fixture/review-repo/.git",
+    localRepositoryPath:
+      repositoryLocationVersion === 0
+        ? "/fixture/review-repo"
+        : `/fixture/review-repo-${repositoryLocationVersion}`,
+    gitCommonDir:
+      repositoryLocationVersion === 0
+        ? "/fixture/review-repo/.git"
+        : `/fixture/review-repo-${repositoryLocationVersion}/.git`,
     latestTitle: syncStage > 0 ? "Fixture review updated" : "Fixture review",
     latestBody: [
       body,
@@ -1295,6 +1302,29 @@ app.post("/api/test/bump-revision", async (context) => {
   const { domains } = await context.req.json();
   bump(...domains);
   return context.json({ ok: true, changeSequence, revisions });
+});
+
+app.post("/api/test/repository-location", async (context) => {
+  const input = await context.req.json();
+  const version = Number(input.version);
+  if (!Number.isSafeInteger(version) || version < 0) {
+    return context.json(
+      { ok: false, error: { code: "INVALID_INPUT", message: "invalid location version" } },
+      400,
+    );
+  }
+  if (repositoryLocationVersion !== version) {
+    repositoryLocationVersion = version;
+    bump("pullRequests");
+  }
+  const pullRequest = currentPullRequest();
+  return context.json({
+    ok: true,
+    localRepositoryPath: pullRequest.localRepositoryPath,
+    gitCommonDir: pullRequest.gitCommonDir,
+    changeSequence,
+    revisions,
+  });
 });
 
 app.get("/api/pull-requests", (context) => {

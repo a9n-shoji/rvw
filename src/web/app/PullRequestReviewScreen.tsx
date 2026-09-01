@@ -100,6 +100,7 @@ import {
   moveCommentDraftsForWorkspaceTransition,
 } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
+import { gitBackedQueryBelongsToPullRequest } from "../git-backed-query.js";
 import { transferStructureSession, type StructureNavigationTarget } from "../structure-session.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
 import {
@@ -666,6 +667,11 @@ export function PullRequestReviewScreen({
   const commitRangeInteractionHeadOid = useRef<string | null>(null);
   const observedLatestHead = useRef<string | null>(null);
   const observedDomainRevisions = useRef<ChangeSequenceResponse["revisions"] | null>(null);
+  const observedRepositoryLocation = useRef<{
+    pullRequestId: string;
+    localRepositoryPath: string;
+    gitCommonDir: string;
+  } | null>(null);
   const observedAgentPostPullRequestId = useRef<string | null>(null);
   const observedAgentPostSnapshot = useRef<Map<string, string> | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
@@ -1185,6 +1191,29 @@ export function PullRequestReviewScreen({
   const comparisonBaseOid = pullRequestQuery.data?.comparisonBaseOid ?? null;
   const latestHeadOid = pullRequestQuery.data?.headOid ?? null;
   const latestPullRequestTitle = pullRequestQuery.data?.pullRequest.latestTitle;
+
+  useEffect(() => {
+    const pullRequest = pullRequestQuery.data?.pullRequest;
+    if (!pullRequest) return;
+    const next = {
+      pullRequestId: pullRequest.id,
+      localRepositoryPath: pullRequest.localRepositoryPath,
+      gitCommonDir: pullRequest.gitCommonDir,
+    };
+    const previous = observedRepositoryLocation.current;
+    observedRepositoryLocation.current = next;
+    if (
+      !previous ||
+      previous.pullRequestId !== next.pullRequestId ||
+      (previous.localRepositoryPath === next.localRepositoryPath &&
+        previous.gitCommonDir === next.gitCommonDir)
+    ) {
+      return;
+    }
+    void queryClient.invalidateQueries({
+      predicate: ({ queryKey }) => gitBackedQueryBelongsToPullRequest(queryKey, pullRequest.id),
+    });
+  }, [pullRequestQuery.data?.pullRequest, queryClient]);
 
   useEffect(() => {
     document.title = latestPullRequestTitle ? `rvw: ${latestPullRequestTitle}` : "rvw";

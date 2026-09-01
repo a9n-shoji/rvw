@@ -34,10 +34,13 @@ work on expansion.
 
 | Scenario                              |                                                                                                                         Budget |                  Observed locally |
 | ------------------------------------- | -----------------------------------------------------------------------------------------------------------------------------: | --------------------------------: |
-| 100 comments, one document pane       |                                                                                                      1 batch placement request |        1 request, 172 ms to ready |
-| 100 visible sidebar comments          |                                                                                                      1 batch placement request |        1 request, 142 ms to ready |
+| 100 comments, one document pane       |                                                                                                      1 batch placement request |        1 request, 171 ms to ready |
+| 100 visible sidebar comments          |                                                                                                      1 batch placement request |        1 request, 145 ms to ready |
 | Reply / resolve / reopen in sidebar   |                                                                                                0 additional placement requests |                                 0 |
 | Local comment mutation                |                                                                    0 placement requests; asynchronous comments consistency GET |                   enforced by E2E |
+| Repository metadata-only revision     |                                                                                                0 Git-backed document refetches |                   enforced by E2E |
+| Repository location change            |                                                                                      cached Git-backed document refetched once |                   enforced by E2E |
+| Placement target-set refresh          |                                                               surviving annotations remain; deleted annotation is not retained |                   enforced by E2E |
 | Collapsed sidebar                     |                                                                                                    0 commit placement requests |                                 0 |
 | Browser old single-placement endpoint |                                                                                                                              0 |                                 0 |
 | 100 comments, new + old batch         |                                                                              `hasObject` 2, `changedFiles` 1, `readDocument` 2 |                         2 / 1 / 2 |
@@ -47,7 +50,7 @@ work on expansion.
 The Playwright timing values are reported but not used as hard CI thresholds. CI enforces network and
 Git-call budgets so slower shared runners do not create false failures. The old single-placement
 operation remains a semantic parity oracle and an explicit baseline characterization path.
-The recorded timing observation is from the final 129-test Playwright run; focused runs varied while
+The recorded timing observation is from the final 131-test Playwright run; focused runs varied while
 remaining inside the same request-count budgets.
 
 ## Query and mutation boundary
@@ -55,9 +58,13 @@ remaining inside the same request-count budgets.
 - Placement cache identity is comment ID + immutable target + destination, plus PR or Walkthrough
   revision when mutable content participates. Post `updatedAt` and display ordering are excluded; each
   batch uses stable comment-ID order so a thread moving to the front does not invalidate placement.
-- Repository document, diff, tree, changed-file, search, placement, and Structure-index queries use
-  infinite freshness only when the key contains their complete immutable or revision-qualified
-  identity.
+- Repository document, diff, tree, changed-file, search, repository-file placement, and
+  Structure-index queries use infinite freshness only when the key contains their complete immutable
+  or revision-qualified identity. Because object availability also depends on repository location, the
+  viewer compares
+  `localRepositoryPath` and `gitCommonDir` after a scoped Pull Request refetch and invalidates all
+  Git-backed queries for that PR only when either value actually changes. A status-only Pull Request
+  revision does not trigger this invalidation.
 - Comment mutations update the stable Pull Request comment query from the canonical server response.
   They cancel the exact query before the write, propagate the query `AbortSignal` through `fetch`, seed
   an initially missing cache, and preserve server `updatedAt DESC` ordering without replacing unrelated
@@ -73,15 +80,22 @@ remaining inside the same request-count budgets.
   backlinks. The initial comments GET waits for the first revision snapshot so a write immediately
   before baseline adoption is included rather than stranded in a stable cache.
 - Pull Request metadata and title/body content have separate revisions. A no-op synchronization does
-  not advance either revision; status/location-only changes do not invalidate PR Markdown or search.
+  not advance either revision; status-only changes do not invalidate PR Markdown or search. A location
+  change leaves PR Markdown intact but invalidates repository-backed search with the other Git queries.
   Refresh responses atomically publish their revision snapshot to the viewer before PR Markdown is
   invalidated, so content and placement never combine different content revisions.
+- Batch comment sync advances the comments revision from the update result, not merely from a non-empty
+  requested reply/resolve operation. Replaying the same idempotency key or resolving an already-resolved
+  thread therefore does not cause another comments GET.
 - A placement batch accepts the complete comment list held by the viewer rather than introducing a
   500-comment product limit. Fixed concurrency and request-scoped caches bound Git subprocess work.
 - Sidebar placement uses all non-PR targets independently of the unresolved/resolved filter. Repository
   panes send only repository-file comment IDs, and Pull Request Markdown panes send only PR Markdown
   comment IDs. The Walkthrough revision participates only when the batch contains a Walkthrough target.
   Presentation and unrelated domain changes therefore reuse the existing placement map.
+- When a document placement key changes because comments were added or deleted, the pane retains the
+  last placement response during the new batch and joins it only against current comment IDs. Existing
+  annotations remain visible during the request, while a deleted thread disappears immediately.
 - Structure reverse-index queries wait for the Structure list and refresh only when its
   `id:updatedAt` fingerprint changes, including deletion, producing one additional request per Structure
   revision.

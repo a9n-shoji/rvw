@@ -503,8 +503,9 @@ describe("RvwDatabase", () => {
         {
           commentId: comment.id,
           reply: "Updated.",
-          resolve: false,
+          resolve: true,
           authorLabel: "Agent",
+          idempotencyKey: "semantic-sync-retry",
         },
       ],
     );
@@ -512,6 +513,25 @@ describe("RvwDatabase", () => {
       ...beforeSync,
       comments: beforeSync.comments + 1,
     });
+    const afterFirstSync = database.getDomainRevisions();
+    database.syncPullRequestAndComments(
+      { ...changedGithub, state: "CLOSED" },
+      repository,
+      comparisonBaseOid,
+      [
+        {
+          commentId: comment.id,
+          reply: "Updated.",
+          resolve: true,
+          authorLabel: "Agent",
+          idempotencyKey: "semantic-sync-retry",
+        },
+      ],
+    );
+    expect(database.getDomainRevisions()).toEqual(afterFirstSync);
+    const synchronizedComment = database.getComment(comment.id);
+    expect(synchronizedComment?.resolvedAt).not.toBeNull();
+    expect(synchronizedComment?.posts).toMatchObject([{ isRoot: true }, { body: "Updated." }]);
     database.close();
   });
 
@@ -759,6 +779,7 @@ describe("RvwDatabase", () => {
       "c".repeat(40),
       [update],
     );
+    const commentsRevisionAfterFirstSync = database.getDomainRevisions().comments;
     database.syncPullRequestAndComments(
       { ...github, headOid: "e".repeat(40), updatedAt: "2026-08-09T00:00:00.000Z" },
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
@@ -766,6 +787,7 @@ describe("RvwDatabase", () => {
       [update],
     );
 
+    expect(database.getDomainRevisions().comments).toBe(commentsRevisionAfterFirstSync);
     expect(database.listCommentPosts(comment.id)).toMatchObject([
       { isRoot: true },
       { body: "Updated.", relatedCommitOid: github.headOid },

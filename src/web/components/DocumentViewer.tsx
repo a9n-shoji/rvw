@@ -1383,7 +1383,12 @@ export function DocumentViewer({
       ),
     enabled: placementComments.length > 0 && placementDestinations.length > 0,
     staleTime: Number.POSITIVE_INFINITY,
+    placeholderData: (previousData) => previousData,
   });
+  const retainedAnnotationData = useRef(annotationQuery.data);
+  useLayoutEffect(() => {
+    if (annotationQuery.data !== undefined) retainedAnnotationData.current = annotationQuery.data;
+  }, [annotationQuery.data]);
   const annotationData = useMemo(() => {
     const fileAnnotations: LineAnnotation<ViewerAnnotation>[] = [];
     const diffAnnotations: DiffLineAnnotation<ViewerAnnotation>[] = [];
@@ -1396,8 +1401,9 @@ export function DocumentViewer({
       new: Array<{ comment: ReviewComment; placement: CommentPlacement }>;
     } = { old: [], new: [] };
     const placementsByComment = new Map(
-      annotationQuery.data?.comments.map(({ commentId, placements }) => [commentId, placements]) ??
-        [],
+      (annotationQuery.data ?? retainedAnnotationData.current)?.comments.map(
+        ({ commentId, placements }) => [commentId, placements],
+      ) ?? [],
     );
     const placementFor = (commentId: string, ref: DocumentRef): CommentPlacement | null =>
       placementsByComment

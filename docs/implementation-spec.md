@@ -928,7 +928,9 @@ comment ID件数にUIより小さい固定上限を設けない。別PRのcommen
 pull-request-markdown commentだけを渡してpaneごとに最大1回とする。展開中sidebarは未解決／解決済みfilterと
 独立した全non-PR comment集合に対して最大1回とし、sidebarを閉じている間は呼ばない。sidebarのplacement identityは
 PR Markdown targetがある場合だけ`pullRequestContent` revision、Walkthrough targetがある場合だけWalkthrough revisionを
-含み、無関係なdomain更新ではbatchを再実行しない。
+含み、無関係なdomain更新ではbatchを再実行しない。document placementのquery identityがcomment追加／削除で変わる間は
+直前のplacement responseを保持し、current commentsに存在するIDだけをjoinする。これにより既存annotationを再計算中も
+表示し、削除済みcommentは旧responseに残っていても表示しない。
 旧`GET /api/comments/:id/placement`は互換・parity oracleとして同じresolverを使うがbrowserからは呼ばない。
 resolverはrequest内でcommit availability、source/destination pairのchanged files、PR/OID/pathのdocumentを
 Promiseごと共有し、最大4commentの固定並列度で処理する。cacheへPromiseを登録してからawaitし、同じGit処理の
@@ -1354,13 +1356,18 @@ CREATE TABLE app_meta (
 `revisions: { pullRequests, pullRequestContent, comments, walkthroughs, structures }`を返す。migration時は各revisionを
 既存のglobal sequenceから初期化し、旧DBの初回pollを安全側に倒す。`pullRequests`は取得時刻を除く意味的なPR metadata、
 `pullRequestContent`はtitle/bodyだけを所有する。同一GitHub responseの再同期や同じstatus/locationのwriteではどちらも
-進めない。status/locationだけの変更は`pullRequests`だけを進め、PR Markdownと全文searchをinvalidateしない。
+進めない。statusだけの変更は`pullRequests`だけを進め、PR Markdownと全文searchをinvalidateしない。
+location変更もPR Markdownはinvalidateしないが、repository availabilityに依存する全文searchは下記の対象とする。
 各logical write transactionはglobalを一度、実際に変更したdomainだけを一度進める。Walkthrough削除で紐づくcommentが
-存在する場合とresetだけが複数domainを進める。viewerはdomain revisionを比較し、PR metadata、PR virtual
+存在する場合とresetだけが複数domainを進める。冪等key付きcomment replyの再送や既にresolvedのcommentへの同じresolveは
+実変更に数えず、`comments` revisionを進めない。viewerはdomain revisionを比較し、PR metadata、PR virtual
 document/search、comments、Walkthrough、Structure/indexをそれぞれ独立にinvalidateする。global sequence変化だけを
 理由に全queryをinvalidateしない。stable keyを使うcomments queryは初回domain revision snapshot取得後にだけenableし、
 `comments GET → 外部write → 初回revision baseline`の順序で更新を取りこぼさない。snapshot前のwriteは初回GETへ入り、
-snapshot後のwriteは次heartbeatが検出する。
+snapshot後のwriteは次heartbeatが検出する。repository locationはGit object availabilityを変え得るため、
+`pullRequests` refetch後に`localRepositoryPath`または`gitCommonDir`の実変更を検出した場合だけ、そのPRのtree、changed files、
+repository document/diff/search、Structure reverse index、Mermaid peek、repository-file comment placementを明示invalidateする。
+statusなど他のPR metadata変更ではこのGit-backed invalidationを行わない。
 
 CREATE TABLE pull_requests (
   id TEXT PRIMARY KEY,

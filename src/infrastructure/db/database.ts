@@ -1028,13 +1028,11 @@ export class RvwDatabase {
   ): PullRequest {
     const id = this.immediateTransaction(() => {
       const write = this.writePullRequest(github, repository, comparisonBaseOid);
-      this.applyCommentUpdates(updates, github.headOid);
+      const commentsChanged = this.applyCommentUpdates(updates, github.headOid);
       const domains: DomainRevision[] = [];
       if (write.semanticChanged) domains.push("pullRequests");
       if (write.contentChanged) domains.push("pullRequestContent");
-      if (updates.some((update) => update.resolve || update.reply.trim().length > 0)) {
-        domains.push("comments");
-      }
+      if (commentsChanged) domains.push("comments");
       if (domains.length > 0) this.incrementDomainRevisions(domains);
       return write.id;
     });
@@ -2060,10 +2058,14 @@ export class RvwDatabase {
     return { id: comment.id, ref: comment.ref };
   }
 
-  applyCommentUpdates(updates: CommentUpdateInput[], relatedCommitOid: string): void {
+  applyCommentUpdates(updates: CommentUpdateInput[], relatedCommitOid: string): boolean {
+    let changed = false;
     for (const update of updates) {
+      const current = this.getComment(update.commentId);
+      if (!current) throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
       if (update.reply.trim().length > 0) {
-        this.insertReply(
+        const existingPostIds = new Set(current.posts.map(({ id }) => id));
+        const reply = this.insertReply(
           update.commentId,
           {
             body: update.reply,
@@ -2080,10 +2082,13 @@ export class RvwDatabase {
           },
           false,
         );
-      } else if (!this.getComment(update.commentId)) {
-        throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
+        if (!existingPostIds.has(reply.id)) changed = true;
       }
-      if (update.resolve) this.setCommentResolved(update.commentId, true, false);
+      if (update.resolve && current.resolvedAt === null) {
+        this.setCommentResolved(update.commentId, true, false);
+        changed = true;
+      }
     }
+    return changed;
   }
 }

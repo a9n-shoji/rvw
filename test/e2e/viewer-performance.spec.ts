@@ -32,6 +32,26 @@ async function createRepositoryComments(
   return ids;
 }
 
+async function createRepositoryComment(request: APIRequestContext, body: string): Promise<string> {
+  const response = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid,
+        path: "src/fixture.ts",
+        startLine: 1,
+        endLine: 1,
+      },
+      body,
+      authorLabel: "Performance fixture",
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return ((await response.json()) as { comment: { id: string } }).comment.id;
+}
+
 async function deleteComments(request: APIRequestContext, ids: readonly string[]): Promise<void> {
   for (const id of ids) {
     const response = await request.delete(`/api/comments/${id}`, { data: {} });
@@ -413,5 +433,172 @@ test("does not re-run repository sidebar placement for a Walkthrough-only revisi
     expect(sidebarPlacementRequests).toBe(requestsBeforeWalkthroughUpdate);
   } finally {
     await deleteComments(request, [commentId]);
+  }
+});
+
+test("invalidates Git-backed queries only when the repository location changes", async ({
+  page,
+  request,
+}) => {
+  let documentRequests = 0;
+  await page.route(`**/api/pull-requests/${pullRequestId}/document?*`, async (route) => {
+    const url = new URL(route.request().url());
+    if (
+      url.searchParams.get("kind") !== "repository-file" ||
+      url.searchParams.get("path") !== "src/fixture.ts"
+    ) {
+      await route.fallback();
+      return;
+    }
+    documentRequests += 1;
+    if (documentRequests !== 1) {
+      await route.fallback();
+      return;
+    }
+    const response = await route.fetch();
+    const payload = (await response.json()) as {
+      document: {
+        ref: unknown;
+        availability: string;
+        text: string | null;
+        byteLength: number;
+        oid: string | null;
+      };
+    };
+    await route.fulfill({
+      response,
+      json: {
+        ...payload,
+        document: {
+          ...payload.document,
+          availability: "missing",
+          text: null,
+          byteLength: 0,
+          oid: null,
+        },
+      },
+    });
+  });
+
+  try {
+    const initialRefresh = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "POST" &&
+        url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+      );
+    });
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await initialRefresh;
+    await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+    await page.getByRole("button", { name: "全文", exact: true }).click();
+    await expect(page.getByText("文書が見つかりません。", { exact: true })).toBeVisible();
+    expect(documentRequests).toBe(1);
+
+    const statusOnlyRevision = await request.post("/api/test/bump-revision", {
+      data: { domains: ["pullRequests"] },
+    });
+    expect(statusOnlyRevision.ok()).toBe(true);
+    await page.waitForTimeout(1_250);
+    expect(documentRequests).toBe(1);
+    await expect(page.getByText("文書が見つかりません。", { exact: true })).toBeVisible();
+
+    const locationUpdate = await request.post("/api/test/repository-location", {
+      data: { version: 1 },
+    });
+    expect(locationUpdate.ok()).toBe(true);
+    await expect.poll(() => documentRequests).toBe(2);
+    await expect(page.locator('.document-pane[data-pane="left"]')).toContainText(
+      "export function fixture",
+    );
+  } finally {
+    const resetLocation = await request.post("/api/test/repository-location", {
+      data: { version: 0 },
+    });
+    expect(resetLocation.ok()).toBe(true);
+  }
+});
+
+test("keeps current annotations visible while a changed placement set is loading", async ({
+  page,
+  request,
+}) => {
+  const survivingBody = "Placement continuity survivor";
+  const deletedBody = "Placement continuity deleted";
+  const createdBody = "Placement continuity added";
+  const survivingId = await createRepositoryComment(request, survivingBody);
+  const deletedId = await createRepositoryComment(request, deletedBody);
+  let createdId: string | null = null;
+  let delayNextPlacement = false;
+  let releasePlacement = (): void => {};
+  const placementGate = new Promise<void>((resolve) => {
+    releasePlacement = resolve;
+  });
+  let delayedPlacementStarted = (): void => {};
+  const delayedPlacementStartedPromise = new Promise<void>((resolve) => {
+    delayedPlacementStarted = resolve;
+  });
+  await page.route(
+    `**/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
+    async (route) => {
+      const body = route.request().postDataJSON() as {
+        commentIds?: string[];
+        destinations?: Array<{ kind?: string; ref?: { path?: string } }>;
+      };
+      const targetsFixture = body.destinations?.some(
+        (destination) =>
+          destination.kind === "document" && destination.ref?.path === "src/fixture.ts",
+      );
+      if (
+        !delayNextPlacement ||
+        !targetsFixture ||
+        !createdId ||
+        !body.commentIds?.includes(createdId)
+      ) {
+        await route.fallback();
+        return;
+      }
+      delayNextPlacement = false;
+      const response = await route.fetch();
+      delayedPlacementStarted();
+      await placementGate;
+      await route.fulfill({ response });
+    },
+  );
+
+  try {
+    const initialRefresh = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "POST" &&
+        url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+      );
+    });
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await initialRefresh;
+    await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+    const survivingThread = page.locator(
+      `.comment-thread--inline[data-comment-id="${survivingId}"]`,
+    );
+    const deletedThread = page.locator(`.comment-thread--inline[data-comment-id="${deletedId}"]`);
+    await expect(survivingThread).toContainText(survivingBody);
+    await expect(deletedThread).toContainText(deletedBody);
+
+    delayNextPlacement = true;
+    const deletion = await request.delete(`/api/comments/${deletedId}`, { data: {} });
+    expect(deletion.ok()).toBe(true);
+    createdId = await createRepositoryComment(request, createdBody);
+    await delayedPlacementStartedPromise;
+
+    await expect(survivingThread).toContainText(survivingBody);
+    await expect(deletedThread).toHaveCount(0);
+    const createdThread = page.locator(`.comment-thread--inline[data-comment-id="${createdId}"]`);
+    await expect(createdThread).toHaveCount(0);
+
+    releasePlacement();
+    await expect(createdThread).toContainText(createdBody);
+  } finally {
+    releasePlacement();
+    await deleteComments(request, createdId ? [survivingId, createdId] : [survivingId, deletedId]);
   }
 });

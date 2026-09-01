@@ -2472,10 +2472,16 @@ domain poll and successful Structure deletion do not also invalidate the old fin
 Keep the global change sequence for compatibility and add independent Pull Request metadata,
 Pull Request title/body content, comment, Walkthrough, and Structure revisions. Initialize them from
 the existing sequence during migration and advance only the domains changed by each logical
-transaction. No-op synchronization advances neither Pull Request revision, and status/location-only
-changes do not discard PR Markdown or search. Viewer polling invalidates only queries owned by changed
-domains. Comment mutations cancel the exact in-flight query and propagate its abort signal to HTTP,
-then update the stable Pull-Request comment cache from the canonical thread. The updater preserves
+transaction. No-op synchronization advances neither Pull Request revision, and status-only changes do
+not discard PR Markdown or search. Location changes do not discard PR Markdown, while repository search
+is handled with the other Git-backed queries below. Viewer polling invalidates only queries owned by
+changed domains. After a Pull Request refetch, compare the saved local repository path and Git common directory;
+only an actual location change invalidates that PR's Git-backed tree, changed-file, repository-document,
+diff, search, Structure-index, Mermaid-peek, and repository-file placement queries. This repairs cached
+missing/object availability without putting the broad Pull Request revision into every immutable query
+key or making status changes repeat Git work. Comment mutations cancel the exact in-flight query and
+propagate its abort signal to HTTP, then update the stable Pull-Request comment cache from the canonical
+thread. The updater preserves
 unrelated object identities, restores `updatedAt DESC` order, and seeds a cache that was not yet loaded.
 Immediately after that local update, start but do not await a comments-query invalidation as a cheap
 consistency barrier. Errors invalidate the same query. Do not infer causality from a client-side local
@@ -2487,7 +2493,12 @@ also propagate cancellation through their HTTP request. Delay the stable comment
 initial domain-revision snapshot exists so an external write cannot be swallowed by baseline adoption.
 Pull Request refresh responses carry the post-sync revision snapshot; the viewer advances its heartbeat
 cache before invalidating PR Markdown so content and placement switch revisions together. Sidebar
-placement includes the Walkthrough revision only when a Walkthrough target participates.
+placement includes the Walkthrough revision only when a Walkthrough target participates. Batch sync
+advances the comments revision only when a reply was newly inserted or resolution actually changed;
+an idempotent retry reuses its post without producing revision churn. When a document placement key
+changes with the current target set, retain the previous response while loading and join only comment IDs
+still present in the current comment list, keeping surviving annotations visible without resurrecting a
+deleted thread.
 
 ### Trade-offs
 
@@ -2497,8 +2508,11 @@ placement includes the Walkthrough revision only when a Walkthrough target parti
   still revalidate their own Git inputs and cannot leak state across repositories or PRs.
 - Domain revisions add write-path bookkeeping and migration state, but preserve the existing polling
   and global sequence contract without introducing WebSockets or another synchronization model.
-- Separating PR content from other metadata adds one revision, but prevents status/location churn and
+- Separating PR content from other metadata adds one revision, but prevents status churn and
   no-op refreshes from rebuilding PR Markdown, search, or placement.
+- Repository location is deliberately handled by value comparison after the scoped PR metadata refetch
+  instead of another persisted revision. A location change invalidates all cached Git availability for
+  that PR once; ordinary metadata changes do not.
 - The Structure index may contain entries for files not currently open. It avoids repeated tree/diff
   processes and is shared across panes, while remaining derived and non-persistent.
 - Local canonical cache updates make UI mutations immediate. Each mutation starts one immediate,
