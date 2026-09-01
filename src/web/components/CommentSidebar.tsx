@@ -170,6 +170,11 @@ export function CommentSidebar({
     () => placementComments.map((comment) => [comment.id, comment.target]),
     [placementComments],
   );
+  const placementWalkthroughRevision = placementComments.some(
+    (comment) => comment.target.kind === "walkthrough",
+  )
+    ? walkthroughRevision
+    : null;
   const placementQuery = useQuery({
     queryKey: [
       "comment-placements",
@@ -183,7 +188,7 @@ export function CommentSidebar({
       )
         ? pullRequestContentRevision
         : null,
-      walkthroughRevision,
+      placementWalkthroughRevision,
       visibleTargetFingerprint,
     ],
     queryFn: async ({ signal }) =>

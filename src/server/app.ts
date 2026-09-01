@@ -241,9 +241,15 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     });
   });
 
-  app.post("/api/pull-requests/:id/refresh", async (context) =>
-    context.json({ ok: true, ...(await service.refreshPullRequest(context.req.param("id"))) }),
-  );
+  app.post("/api/pull-requests/:id/refresh", async (context) => {
+    const result = await service.refreshPullRequest(context.req.param("id"));
+    return context.json({
+      ok: true,
+      ...result,
+      changeSequence: service.database.getChangeSequence(),
+      revisions: service.database.getDomainRevisions(),
+    });
+  });
 
   app.post("/api/pull-requests/:id/reset", async (context) => {
     const input = resetSchema.parse(await context.req.json());

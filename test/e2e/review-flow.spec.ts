@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 
@@ -764,6 +764,22 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   ).toBeVisible();
   await expect(page.getByText("コメント作成時の選択範囲", { exact: true })).toHaveCount(0);
 
+  let releaseHeartbeat = (): void => {};
+  const heartbeatGate = new Promise<void>((resolve) => {
+    releaseHeartbeat = resolve;
+  });
+  let heartbeatBlocked = (): void => {};
+  const heartbeatBlockedPromise = new Promise<void>((resolve) => {
+    heartbeatBlocked = resolve;
+  });
+  const holdHeartbeat = async (route: Route) => {
+    heartbeatBlocked();
+    await heartbeatGate;
+    await route.fallback();
+  };
+  await page.route("**/api/meta/change-sequence", holdHeartbeat);
+  await heartbeatBlockedPromise;
+
   await actionsMenuButton.click();
   actionsMenu = page.getByRole("menu");
   await expect(actionsMenu.getByRole("menuitem", { name: "GitHubと同期" })).toBeVisible();
@@ -798,6 +814,8 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(prBodyCommentCard.locator(".comment-source-quote pre")).toHaveText(
     "This is always the latest PR body.",
   );
+  releaseHeartbeat();
+  await page.unroute("**/api/meta/change-sequence", holdHeartbeat);
 
   await selectCommitOnly(/Add fixture function/);
   await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);

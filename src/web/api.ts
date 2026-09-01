@@ -137,6 +137,8 @@ export interface ChangeSequenceResponse {
   };
 }
 
+export interface PullRequestRefreshResponse extends PullRequestResponse, ChangeSequenceResponse {}
+
 export interface TreeResponse {
   virtual: "Pull Request.md";
   entries: TreeEntry[];

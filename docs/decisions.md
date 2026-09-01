@@ -2467,7 +2467,7 @@ ID/`updatedAt` fingerprint. The index returns before Git work when there are no 
 target tree once, and runs one copy-aware comparison per distinct Structure source/target pair. The
 path endpoint remains a compatibility projection of the same index. Wait for the Structure summary
 list before enabling the browser query, and let fingerprint changes be its only refresh trigger; the
-domain poll does not also invalidate the old fingerprint query.
+domain poll and successful Structure deletion do not also invalidate the old fingerprint query.
 
 Keep the global change sequence for compatibility and add independent Pull Request metadata,
 Pull Request title/body content, comment, Walkthrough, and Structure revisions. Initialize them from
@@ -2483,7 +2483,11 @@ revision credit: the barrier recovers the complete initial list, external writes
 mutation responses, and server ordering from the canonical server snapshot. Walkthrough comment labels
 derive their mutable title from the current summary by stable Walkthrough ID. Immutable OID/path/range
 queries use infinite freshness only when their complete identity is in the key. Placement batch queries
-also propagate cancellation through their HTTP request.
+also propagate cancellation through their HTTP request. Delay the stable comments query until the
+initial domain-revision snapshot exists so an external write cannot be swallowed by baseline adoption.
+Pull Request refresh responses carry the post-sync revision snapshot; the viewer advances its heartbeat
+cache before invalidating PR Markdown so content and placement switch revisions together. Sidebar
+placement includes the Walkthrough revision only when a Walkthrough target participates.
 
 ### Trade-offs
 
@@ -2497,7 +2501,8 @@ also propagate cancellation through their HTTP request.
   no-op refreshes from rebuilding PR Markdown, search, or placement.
 - The Structure index may contain entries for files not currently open. It avoids repeated tree/diff
   processes and is shared across panes, while remaining derived and non-persistent.
-- Local canonical cache updates make UI mutations immediate. Each mutation adds one lightweight
-  comments GET, but no document, search, or placement work; this replaces stateful causal bookkeeping
-  with an explicit consistency boundary. External writers are also observed on the existing one-second
-  poll and reconciled through the same domain-specific query.
+- Local canonical cache updates make UI mutations immediate. Each mutation starts one immediate,
+  lightweight comments consistency GET, but no document, search, or placement work; the subsequent
+  domain poll may revalidate comments again after observing the same server revision. This replaces
+  stateful causal bookkeeping with an explicit consistency boundary. External writers are also
+  observed on the existing one-second poll and reconciled through the same domain-specific query.

@@ -1473,7 +1473,13 @@ app.post("/api/pull-requests/:id/refresh", async (context) => {
   const previousSyncStage = syncStage;
   if (!repositoryDemo) syncStage = Math.min(syncStage + 1, 2);
   if (syncStage !== previousSyncStage) bump("pullRequests", "pullRequestContent");
-  return context.json({ ok: true, ...currentView(), commentUpdatesApplied: 0 });
+  return context.json({
+    ok: true,
+    ...currentView(),
+    commentUpdatesApplied: 0,
+    changeSequence,
+    revisions,
+  });
 });
 
 app.get("/api/pull-requests/:id/tree", (context) => {

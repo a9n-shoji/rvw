@@ -312,3 +312,106 @@ test("restores existing comments after a mutation cancels the initial comments G
     );
   }
 });
+
+test("loads an external comment written before the initial revision snapshot", async ({
+  page,
+  request,
+}) => {
+  let releaseHeartbeat = (): void => {};
+  const heartbeatGate = new Promise<void>((resolve) => {
+    releaseHeartbeat = resolve;
+  });
+  let heartbeatStarted = (): void => {};
+  const heartbeatStartedPromise = new Promise<void>((resolve) => {
+    heartbeatStarted = resolve;
+  });
+  let heartbeatRequests = 0;
+  await page.route("**/api/meta/change-sequence", async (route) => {
+    heartbeatRequests += 1;
+    if (heartbeatRequests === 1) {
+      heartbeatStarted();
+      await heartbeatGate;
+    }
+    await route.fallback();
+  });
+
+  let releaseRefresh = (): void => {};
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    await refreshGate;
+    await route.fallback();
+  });
+
+  let commentListRequests = 0;
+  await page.route(`**/api/pull-requests/${pullRequestId}/comments?resolved=all`, async (route) => {
+    commentListRequests += 1;
+    await route.fallback();
+  });
+
+  let externalCommentId: string | null = null;
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await heartbeatStartedPromise;
+    expect(commentListRequests).toBe(0);
+
+    const externalBody = "External comment before revision bootstrap";
+    const externalResponse = await request.post("/api/comments", {
+      data: {
+        pullRequestId,
+        target: { kind: "pull-request" },
+        body: externalBody,
+        authorLabel: "External Agent",
+      },
+    });
+    expect(externalResponse.ok()).toBe(true);
+    externalCommentId = ((await externalResponse.json()) as { comment: { id: string } }).comment.id;
+
+    releaseHeartbeat();
+    await expect.poll(() => commentListRequests).toBe(1);
+    await page.getByRole("button", { name: /^コメント \d+$/u }).click();
+    await expect(page.getByText(externalBody, { exact: true })).toBeVisible();
+    expect(commentListRequests).toBe(1);
+  } finally {
+    releaseHeartbeat();
+    releaseRefresh();
+    if (externalCommentId) await deleteComments(request, [externalCommentId]);
+  }
+});
+
+test("does not re-run repository sidebar placement for a Walkthrough-only revision", async ({
+  page,
+  request,
+}) => {
+  const createdCommentIds = await createRepositoryComments(request, 1);
+  const commentId = createdCommentIds[0]!;
+  let sidebarPlacementRequests = 0;
+  page.on("request", (browserRequest) => {
+    if (placementKind(browserRequest) === "commit") sidebarPlacementRequests += 1;
+  });
+
+  try {
+    const initialRefresh = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return (
+        response.request().method() === "POST" &&
+        url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+      );
+    });
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await initialRefresh;
+    await page.getByRole("button", { name: /^コメント \d+$/u }).click();
+    await expect.poll(() => sidebarPlacementRequests).toBeGreaterThanOrEqual(1);
+    const requestsBeforeWalkthroughUpdate = sidebarPlacementRequests;
+
+    const revisionResponse = await request.post("/api/test/bump-revision", {
+      data: { domains: ["walkthroughs"] },
+    });
+    expect(revisionResponse.ok()).toBe(true);
+    await page.waitForTimeout(1_250);
+    expect(sidebarPlacementRequests).toBe(requestsBeforeWalkthroughUpdate);
+  } finally {
+    await deleteComments(request, [commentId]);
+  }
+});

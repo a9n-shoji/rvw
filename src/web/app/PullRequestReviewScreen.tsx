@@ -43,6 +43,7 @@ import {
   documentUrl,
   type DocumentResponse,
   jsonRequest,
+  type PullRequestRefreshResponse,
   type PullRequestResponse,
   type SearchResponse,
   type StructureSourceResolutionResponse,
@@ -1529,7 +1530,7 @@ export function PullRequestReviewScreen({
       await api<CommentsResponse>(`/api/pull-requests/${pullRequestId}/comments?resolved=all`, {
         signal,
       }),
-    enabled: Boolean(pullRequestId),
+    enabled: Boolean(pullRequestId && changeSequence.data?.revisions),
     placeholderData: (previousData) =>
       previousData?.comments.every((comment) => comment.pullRequestId === pullRequestId)
         ? previousData
@@ -1827,7 +1828,7 @@ export function PullRequestReviewScreen({
   const refreshMutation = useMutation({
     mutationFn: async (options: { announce: boolean }) => {
       void options;
-      return await api<PullRequestResponse>(
+      return await api<PullRequestRefreshResponse>(
         `/api/pull-requests/${pullRequestId}/refresh`,
         jsonRequest({}),
       );
@@ -1844,6 +1845,19 @@ export function PullRequestReviewScreen({
       };
     },
     onSuccess: (result, options, refreshStart) => {
+      const revisionSnapshot: ChangeSequenceResponse = {
+        changeSequence: result.changeSequence,
+        revisions: result.revisions,
+      };
+      const previousObservedRevisions = observedDomainRevisions.current;
+      if (previousObservedRevisions) {
+        observedDomainRevisions.current = {
+          ...previousObservedRevisions,
+          pullRequests: result.revisions.pullRequests,
+          pullRequestContent: result.revisions.pullRequestContent,
+        };
+      }
+      queryClient.setQueryData<ChangeSequenceResponse>(["change-sequence"], revisionSnapshot);
       queryClient.setQueryData(["pull-request", pullRequestId], result);
       if (
         refreshStart.pullRequestTitle !== result.pullRequest.latestTitle ||
@@ -2645,7 +2659,6 @@ export function PullRequestReviewScreen({
                 onDeleted={() => {
                   closeDocumentWithDrafts(paneViewerDocument, paneId);
                   void queryClient.invalidateQueries({ queryKey: ["structures", pullRequestId] });
-                  void queryClient.invalidateQueries({ queryKey: ["structure-reference-index"] });
                 }}
               />
             </Suspense>
