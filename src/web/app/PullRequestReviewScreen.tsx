@@ -21,6 +21,7 @@ import type {
   CodeReference,
   CommentPlacement,
   DocumentRef,
+  FileStructureReference,
   ReviewComment,
   SearchResult,
   SourceReferenceFileTarget,
@@ -97,7 +98,7 @@ import {
   moveCommentDraftsForWorkspaceTransition,
 } from "../comment-draft-store.js";
 import { deriveDocumentViewerState } from "../document-viewer-state.js";
-import { transferStructureSession } from "../structure-session.js";
+import { transferStructureSession, type StructureNavigationTarget } from "../structure-session.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
 import {
   agentNotificationBody,
@@ -580,6 +581,9 @@ export function PullRequestReviewScreen({
   const [viewerNavigationTargets, setViewerNavigationTargets] = useState<
     Record<DocumentPaneId, ViewerNavigationTarget | null>
   >({ left: null, right: null });
+  const [structureNavigationTargets, setStructureNavigationTargets] = useState<
+    Record<DocumentPaneId, StructureNavigationTarget | null>
+  >({ left: null, right: null });
   const viewerNavigationTargetsRef = useRef(viewerNavigationTargets);
   const appliedLineNavigation = useRef<Record<DocumentPaneId, AppliedLineNavigation | null>>({
     left: null,
@@ -595,6 +599,10 @@ export function PullRequestReviewScreen({
     }
     viewerNavigationTargetsRef.current = nextTargets;
     setViewerNavigationTargets((current) => {
+      if (uniquePaneIds.every((paneId) => current[paneId] === null)) return current;
+      return { ...current, ...Object.fromEntries(uniquePaneIds.map((paneId) => [paneId, null])) };
+    });
+    setStructureNavigationTargets((current) => {
       if (uniquePaneIds.every((paneId) => current[paneId] === null)) return current;
       return { ...current, ...Object.fromEntries(uniquePaneIds.map((paneId) => [paneId, null])) };
     });
@@ -656,6 +664,10 @@ export function PullRequestReviewScreen({
   const commitRangeInteractionHeadOid = useRef<string | null>(null);
   const observedLatestHead = useRef<string | null>(null);
   const observedChangeSequence = useRef<number | null>(null);
+  const observedStructureFingerprint = useRef<{
+    pullRequestId: string;
+    value: string;
+  } | null>(null);
   const observedAgentPostPullRequestId = useRef<string | null>(null);
   const observedAgentPostSnapshot = useRef<Map<string, string> | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
@@ -667,6 +679,7 @@ export function PullRequestReviewScreen({
     left: 0,
     right: 0,
   });
+  const structureNavigationSequence = useRef(0);
   useLayoutEffect(() => {
     if (!commentsExpanded || !commentsStackRef.current) return;
     const commentsStack = commentsStackRef.current;
@@ -1542,6 +1555,23 @@ export function PullRequestReviewScreen({
     enabled: Boolean(pullRequestId),
   });
   const structures = structuresQuery.data?.structures ?? [];
+  const structureFingerprint = structures
+    .map((structure) => `${structure.id}:${structure.updatedAt}`)
+    .sort()
+    .join("|");
+  useEffect(() => {
+    if (!structuresQuery.isSuccess) return;
+    const previous = observedStructureFingerprint.current;
+    observedStructureFingerprint.current = { pullRequestId, value: structureFingerprint };
+    if (
+      !previous ||
+      previous.pullRequestId !== pullRequestId ||
+      previous.value === structureFingerprint
+    ) {
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: ["structure-references", pullRequestId] });
+  }, [pullRequestId, queryClient, structureFingerprint, structuresQuery.isSuccess]);
   useEffect(() => {
     if (!walkthroughsQuery.isSuccess) return;
     const summaries = new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough]));
@@ -2030,6 +2060,41 @@ export function PullRequestReviewScreen({
       );
     },
     [openDocument],
+  );
+  const openFileStructureReference = useCallback(
+    (reference: FileStructureReference, sourcePane: DocumentPaneId): void => {
+      const document: ActiveDocument = {
+        kind: "structure",
+        id: reference.structure.id,
+        title: reference.structure.title,
+        sourceOid: reference.structure.sourceOid,
+      };
+      const workspace = documentWorkspaceRef.current;
+      const openPanes = documentPaneIds(workspace, document);
+      const targetPane = openPanes.includes(sourcePane) ? sourcePane : (openPanes[0] ?? sourcePane);
+      navigateToDocument(document, targetPane);
+      structureNavigationSequence.current += 1;
+      const target: StructureNavigationTarget = {
+        structureId: reference.structure.id,
+        structureUpdatedAt: reference.structure.updatedAt,
+        pane: targetPane,
+        nodeId: reference.targetNodeId,
+        requestId: structureNavigationSequence.current,
+      };
+      setStructureNavigationTargets((current) => ({ ...current, [targetPane]: target }));
+    },
+    [documentWorkspaceRef, navigateToDocument],
+  );
+  const finishStructureNavigation = useCallback(
+    (paneId: DocumentPaneId, requestId: number, failed: boolean): void => {
+      setStructureNavigationTargets((current) =>
+        current[paneId]?.requestId === requestId ? { ...current, [paneId]: null } : current,
+      );
+      if (failed) {
+        void queryClient.invalidateQueries({ queryKey: ["structure-references"] });
+      }
+    },
+    [queryClient],
   );
   const openCodeReference = useCallback(
     async (
@@ -2534,12 +2599,24 @@ export function PullRequestReviewScreen({
                 pullRequestId={pullRequest.id}
                 structure={paneViewerState.structure}
                 changedFiles={changedQuery.data?.files ?? []}
+                navigationTarget={
+                  structureNavigationTargets[paneId]?.structureId === paneViewerState.structure.id
+                    ? structureNavigationTargets[paneId]
+                    : null
+                }
+                onNavigationApplied={(requestId) =>
+                  finishStructureNavigation(paneId, requestId, false)
+                }
+                onNavigationFailed={(requestId) =>
+                  finishStructureNavigation(paneId, requestId, true)
+                }
                 onOpenSource={(locator, openInRightPane) =>
                   openStructureSource(paneViewerState.structure!, locator, openInRightPane)
                 }
                 onDeleted={() => {
                   closeDocumentWithDrafts(paneViewerDocument, paneId);
                   void queryClient.invalidateQueries({ queryKey: ["structures", pullRequestId] });
+                  void queryClient.invalidateQueries({ queryKey: ["structure-references"] });
                 }}
               />
             </Suspense>
@@ -2633,6 +2710,9 @@ export function PullRequestReviewScreen({
                       : "Pull Request.md",
                     paneId,
                   )
+                }
+                onOpenStructureReference={(reference) =>
+                  openFileStructureReference(reference, paneId)
                 }
               />
             </Suspense>

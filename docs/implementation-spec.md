@@ -638,7 +638,7 @@ type Structure = {
   新しいproducerは省略する。`notation`は`plain | class | database | interface | component | external | concept`の
   controlledな任意表示で、未指定は`plain`とする。producerが明示し、viewerは`kind`やpathから推論せず、
   layoutにも使わない。comment、group、
-  reverse lookup、durable layout、confidence、severityは持たない。
+  durable layout、confidence、severityは持たない。
 - SQLiteはstable identityと一つのcurrent graph値だけを保持する。updateは`expectedUpdatedAt`を条件にした
   atomicなwhole-value replacementで、node/edge単位patch、過去値、Structure revision、version selectorを
   持たない。deleteもpreviewで読んだ`updatedAt`がcurrent値と一致する場合だけ実行する。
@@ -658,6 +658,36 @@ short SHA、最新file actionを表示する。HEADまたは同じstable claim�
 表示しない。Edgeの複数anchorはEdge ID + current配列indexで識別し、same-claim updateではsurviving anchorの順序を
 維持する。anchor単位のstable IDは持たない。再解決後もglobal commit rangeを変更しない。
 `Cmd` / `Ctrl`+clickは右ペインへ開き、global commit range、表示mode、Structure focusを変更しない。
+
+repository file headerは、file-level commentと同じeffective `sourceOid + path`に対するStructure逆引きactionを
+comment actionの直前へ常設する。`Pull Request.md`、Walkthrough、Structureには表示しない。loading中と0件は
+位置を保ったdisabled state、失敗は0件と区別したretry可能なerror stateとする。1件でも直接遷移せずpopoverを
+開き、current PRのStructure一覧順でtitle、focus先Node label、同じStructure内の追加一致数を表示する。
+popoverは通常のmenu keyboard操作、outside pointer、Escapeとtriggerへのfocus復帰を提供する。
+逆引き結果はStructure一覧のID + `updatedAt` fingerprintが変わるまでfreshとして扱い、commentなど無関係な
+change sequenceやtab復帰だけでは再取得しない。cached resultのbackground refresh中もpopoverとkeyboard focusを
+維持し、結果消滅により自動で閉じる場合はmenu内のfocusをtriggerへ戻す。
+
+`GET /api/pull-requests/:id/structure-references?sourceOid=<oid>&path=<path>`は一つのeffective fileをbulkに解決し、
+`{ ok: true, references: FileStructureReference[] }`を返す。current StructureのNode anchorだけを対象とし、Edge
+anchor、label／description内のpathらしい文字列、heuristic relationは含めない。Node anchorの
+`structure.sourceOid + anchor.path`からtarget commitへ、同じpathが存在すればそれを優先し、消えた場合だけ
+既存のcopy-aware Git比較でrename／copy successorが一意な時に追従する。caseは保持し、候補が複数、target fileが
+missing、line rangeだけがstaleの各場合は、それぞれ推測しない、matchしない、file-level matchを維持する。
+永続reverse indexは持たない。一requestではtarget commitのtreeを一度だけ取得してpath存在確認を本文読込なしで
+行い、copy-aware Git比較も`structure.sourceOid + targetSourceOid`のcommit pairごとに一度だけ実行して
+`oldPath -> unique successor` indexを共有する。Node数に比例して同じ`--find-copies-harder`を起動しない。
+
+同じStructureの複数Nodeが一致した場合は1行へまとめ、originが一致すればorigin、そうでなければ全Edgeを
+undirectedとしてoriginからhop数が最小のNodeを選ぶ。unreachableはreachableの後、同距離はstable Node ID順と
+する。選択時は既に左右どちらかで開いている同じStructure tabを優先して再利用し、未openなら操作元paneへ開く。
+document workspaceとreading historyを通すためsource file tabとscrollを保ち、Backでfileへ戻す。pane別Structure
+sessionのNode位置、depth、zoom scaleを保ったone-shot requestとしてtarget Nodeをfocusし、Edge選択を解除して
+既存`centerNode`で中央へ寄せる。全体fitやcomponent remountは行わない。target Nodeがcurrent-value更新で消えた
+場合はoriginへfallbackせずnonfatal statusを表示し、逆引きqueryを再取得可能にする。one-shot requestは逆引きに
+使ったStructure summaryの`updatedAt`も保持する。表示detailがそれより古ければ同じrevisionへ更新されるまでNode
+不在を確定せず、同じrevisionで不在の場合だけ削除済みとする。detailの方が新しければ逆引きresultをstaleとして
+再取得する。Structure一覧のfingerprintが実際に変わった場合だけ逆引きqueryをinvalidateする。
 
 探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。trackpadの通常wheelは
 pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱い、pan / zoom感度は従来値の
@@ -1620,7 +1650,7 @@ Unit:
 - line mapping、rename、Outdated
 - comment resolve/reopen、URI、CLI/API schema
 - Walkthrough schema、URI、Markdown reference / HTML preview validation、行comment placement
-- Structure schema、URI、neighborhood completeness、Node非衝突、entrypoint／direction-biased canonical layoutとsession reconciliation
+- Structure schema、URI、neighborhood completeness、逆引きtarget Nodeのundirected最短hop選択、Node非衝突、entrypoint／direction-biased canonical layoutとsession reconciliation
 - DB migration 001→current
 - Pull Request一覧のGitHub更新日時順、stable tie-breaker、aggregate count、Closed / Merged filter適用後の
   pagination、既存行の不明な作成日時と状態、Open／状態未取得だけを対象とする明示的な一括status更新と部分失敗
@@ -1645,6 +1675,7 @@ Integration（実git + fake GitHub）:
 - doctorのDB write transactionとAgent疎通
 - source anchor付きWalkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
 - source anchor付きStructureの登録、一覧、取得、同一ID atomic完全置換、PR ownership、ref rollback、確認付き削除、reset削除
+- effective fileからNode anchorだけを対象にしたexact／rename-aware逆引き、複数Node集約、一覧順、Edge-only除外、line range staleness、ambiguous copyとcross-PR分離
 - worktree間共有
 
 E2Eで登録済みPR一覧、Closed / Merged filterと状態未取得行、empty state、URLに保持するpagination、
@@ -1699,6 +1730,9 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
     anchor indexの変更、参照元claim削除、HEADとStructureの同時更新をstable locatorで判定する。Structureへ戻った時と
     same-subject poll update後にstable-ID位置とviewportを維持する
 23. focusなしとAllで全Node / Edgeが表示され、同じStructureを左右paneへ開いてもsessionとDOM IDが競合しない
+24. repository file headerのStructure actionで0件、1件popover、複数Nodeの`+N`、Edge-only除外、rename先を確認し、
+    選択時は既存Structure tabとpane sessionを再利用してtarget Nodeだけを中央へfocusする。zoom、Node位置、depth、
+    source file tabを維持し、Backで元fileとscroll位置を復元する。Escapeはpopoverを閉じてtriggerへfocusを戻す
 
 CLI contract:
 

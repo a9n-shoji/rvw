@@ -7,6 +7,8 @@
 
 ### Added
 
+- repository fileから、そのfileをNode sourceとして参照するStructureをrename-awareに逆引きし、対応Nodeへ
+  閲覧状態を維持したまま移動できる機能
 - Structure全体を現在のNode配置のままSVGまたは2倍基準のPNGへエクスポートする機能。focus、近傍、
   viewportにかかわらず全Node、全Relation、全Edge labelを含み、画面の閲覧状態を変更しない
 

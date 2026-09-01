@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -37,6 +38,7 @@ import {
   scaledStructureZoom,
   setStructureSession,
   type StructureViewport,
+  type StructureNavigationTarget,
 } from "../structure-session.js";
 import {
   downloadStructureBlob,
@@ -247,6 +249,9 @@ export function StructureViewer({
   pullRequestId,
   structure,
   changedFiles,
+  navigationTarget = null,
+  onNavigationApplied,
+  onNavigationFailed,
   onOpenSource,
   onDeleted,
 }: {
@@ -254,6 +259,9 @@ export function StructureViewer({
   pullRequestId: string;
   structure: Structure;
   changedFiles: readonly ChangedFile[];
+  navigationTarget?: StructureNavigationTarget | null;
+  onNavigationApplied: (requestId: number) => void;
+  onNavigationFailed: (requestId: number) => void;
   onOpenSource: (
     locator: StructureSourceLocator,
     openInRightPane: boolean,
@@ -281,6 +289,7 @@ export function StructureViewer({
     updatedAt: structure.updatedAt,
   });
   const pendingViewportActionRef = useRef<"initial" | null>(cachedSession ? null : "initial");
+  const appliedNavigationRequestRef = useRef<number | null>(null);
   const panRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const dragRef = useRef<{
     pointerId: number;
@@ -557,15 +566,69 @@ export function StructureViewer({
     });
   }, [displayBounds, positions, structure.originNodeId, surfaceSize.height, surfaceSize.width]);
 
-  const centerNode = (nodeId: string, scale?: number): void => {
-    const point = positions[nodeId];
-    if (!point) return;
-    setViewport((current) => ({
-      scale: scale ?? current.scale,
-      x: surfaceSize.width / 2 - (point.x + STRUCTURE_NODE_WIDTH / 2) * (scale ?? current.scale),
-      y: surfaceSize.height / 2 - (point.y + STRUCTURE_NODE_HEIGHT / 2) * (scale ?? current.scale),
-    }));
-  };
+  const centerNode = useCallback(
+    (nodeId: string, scale?: number): void => {
+      const point = positions[nodeId];
+      if (!point) return;
+      setViewport((current) => ({
+        scale: scale ?? current.scale,
+        x: surfaceSize.width / 2 - (point.x + STRUCTURE_NODE_WIDTH / 2) * (scale ?? current.scale),
+        y:
+          surfaceSize.height / 2 - (point.y + STRUCTURE_NODE_HEIGHT / 2) * (scale ?? current.scale),
+      }));
+    },
+    [positions, surfaceSize.height, surfaceSize.width],
+  );
+
+  useLayoutEffect(() => {
+    if (
+      !navigationTarget ||
+      navigationTarget.structureId !== structure.id ||
+      navigationTarget.pane !== paneId ||
+      appliedNavigationRequestRef.current === navigationTarget.requestId
+    ) {
+      return;
+    }
+    if (structure.updatedAt < navigationTarget.structureUpdatedAt) return;
+    if (structure.updatedAt > navigationTarget.structureUpdatedAt) {
+      appliedNavigationRequestRef.current = navigationTarget.requestId;
+      setStatus(
+        "Structureが更新されたため、ファイル参照を更新しました。もう一度選択してください。",
+      );
+      onNavigationFailed(navigationTarget.requestId);
+      return;
+    }
+    const requestedNode = structure.nodes.find((node) => node.id === navigationTarget.nodeId);
+    if (!requestedNode) {
+      appliedNavigationRequestRef.current = navigationTarget.requestId;
+      setStatus(
+        "移動先のNodeはStructureの更新により削除されています。ファイル参照を更新しました。",
+      );
+      onNavigationFailed(navigationTarget.requestId);
+      return;
+    }
+    if (!positions[requestedNode.id] || surfaceSize.width === 0 || surfaceSize.height === 0) {
+      return;
+    }
+    pendingViewportActionRef.current = null;
+    setStatus(null);
+    setSelectedEdgeId(null);
+    setFocusId(requestedNode.id);
+    centerNode(requestedNode.id);
+    appliedNavigationRequestRef.current = navigationTarget.requestId;
+    onNavigationApplied(navigationTarget.requestId);
+  }, [
+    centerNode,
+    navigationTarget,
+    onNavigationApplied,
+    onNavigationFailed,
+    paneId,
+    positions,
+    structure.id,
+    structure.nodes,
+    surfaceSize.height,
+    surfaceSize.width,
+  ]);
 
   const centerFocus = (): void => {
     if (focusId) centerNode(focusId);

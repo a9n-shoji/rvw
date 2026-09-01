@@ -89,7 +89,7 @@ const primaryStructureNodes = [
     description: "application portを具象adapterへ結線し、handlerを構築する。",
     kind: "composition",
     notation: "component",
-    anchor: { path: "src/bootstrap/application.ts", startLine: 10, endLine: 22 },
+    anchor: { path: "src/application/orders/create-order.ts", startLine: 31, endLine: 34 },
   },
   {
     id: "authorization-policy",
@@ -239,7 +239,10 @@ const primaryStructureEdges = [
     to: "hub",
     label: "具象portを注入して構築する",
     directed: true,
-    anchors: [{ path: "src/bootstrap/application.ts", startLine: 10, endLine: 22 }],
+    anchors: [
+      { path: "src/bootstrap/application.ts", startLine: 10, endLine: 22 },
+      { path: "src/edge-only-evidence.ts", startLine: 1, endLine: 1 },
+    ],
   },
   {
     id: "handler-authorizes-actor",
@@ -406,9 +409,18 @@ const orderPlacementStructureEdges = primaryStructureEdges.filter(
     ].includes(edge.id),
 );
 
-const secondaryStructureNodes = primaryStructureNodes.filter((node) =>
-  ["payment-reconciliation", "payment-gateway", "order-repository"].includes(node.id),
-);
+const secondaryStructureNodes = primaryStructureNodes
+  .filter((node) =>
+    ["payment-reconciliation", "payment-gateway", "order-repository"].includes(node.id),
+  )
+  .map((node) =>
+    node.id === "payment-reconciliation"
+      ? {
+          ...node,
+          anchor: { path: "assets/hybrid.png", startLine: null, endLine: null },
+        }
+      : node,
+  );
 const secondaryStructureEdges = primaryStructureEdges.filter((edge) =>
   ["reconciliation-checks-payment", "reconciliation-checks-order"].includes(edge.id),
 );
@@ -739,7 +751,7 @@ const activeStructures = repositoryDemo
         id: secondaryStructureId,
         ref: `rvw://structure/${secondaryStructureId}`,
         pullRequestId,
-        sourceOid: firstHead,
+        sourceOid: baseOid,
         title: "Payment reconciliation recovery",
         scope:
           "The payment reconciliation worker that finds an authorized payment without a persisted order and voids it; order placement, retry envelopes, event delivery, and test evidence are excluded.",
@@ -985,6 +997,9 @@ function repositoryDocumentText(oid, filePath) {
   }
   if (filePath === "src/new.ts") return "export const added = true;\n";
   if (filePath === "src/removed.ts") return "export const removed = true;\n";
+  if (filePath === "src/edge-only-evidence.ts") {
+    return "export const edgeOnlyEvidence = true;\n";
+  }
   if (filePath === "src/viewport-anchor.ts") return viewportRepositoryText(oid);
   if (filePath in walkthroughRepositorySources || walkthroughRepositoryPaths.includes(filePath)) {
     const source = walkthroughRepositoryText(filePath);
@@ -1016,6 +1031,7 @@ function repositoryPathsAt(oid) {
       "large.txt",
       "src/fixture.ts",
       "src/viewport-anchor.ts",
+      "src/edge-only-evidence.ts",
       ...(oid === secondHead ? ["src/new.ts"] : ["src/removed.ts"]),
       "assets/modified.png",
       "assets/broken.png",
@@ -1835,6 +1851,91 @@ app.get("/api/pull-requests/:id/structures", (context) =>
     })),
   }),
 );
+
+function resolvedStructureNodePath(structure, anchorPath, targetSourceOid) {
+  if (repositoryPathsAt(targetSourceOid).includes(anchorPath)) return anchorPath;
+  if (
+    structure.sourceOid === baseOid &&
+    targetSourceOid !== baseOid &&
+    anchorPath === "assets/hybrid.png" &&
+    repositoryPathsAt(targetSourceOid).includes("docs/hybrid.md")
+  ) {
+    return "docs/hybrid.md";
+  }
+  return null;
+}
+
+function closestMatchingStructureNode(structure, matchingNodeIds) {
+  const neighbors = new Map(structure.nodes.map((node) => [node.id, new Set()]));
+  for (const edge of structure.edges) {
+    neighbors.get(edge.from)?.add(edge.to);
+    neighbors.get(edge.to)?.add(edge.from);
+  }
+  const distances = new Map([[structure.originNodeId, 0]]);
+  const queue = [structure.originNodeId];
+  for (let index = 0; index < queue.length; index += 1) {
+    const nodeId = queue[index];
+    for (const neighbor of neighbors.get(nodeId) ?? []) {
+      if (distances.has(neighbor)) continue;
+      distances.set(neighbor, distances.get(nodeId) + 1);
+      queue.push(neighbor);
+    }
+  }
+  return structure.nodes
+    .filter((node) => matchingNodeIds.has(node.id))
+    .sort((left, right) => {
+      const distance =
+        (distances.get(left.id) ?? Number.POSITIVE_INFINITY) -
+        (distances.get(right.id) ?? Number.POSITIVE_INFINITY);
+      return distance || left.id.localeCompare(right.id);
+    })[0];
+}
+
+app.get("/api/pull-requests/:id/structure-references", (context) => {
+  const sourceOid = context.req.query("sourceOid");
+  const targetPath = context.req.query("path");
+  if (!sourceOid || !targetPath) {
+    return context.json(
+      { ok: false, error: { code: "INVALID_INPUT", message: "sourceOidとpathが必要です" } },
+      400,
+    );
+  }
+  if (!repositoryPathsAt(sourceOid).includes(targetPath)) {
+    return context.json({ ok: true, references: [] });
+  }
+  const references = activeStructures.flatMap((structure) => {
+    const matchingNodeIds = new Set(
+      structure.nodes
+        .filter(
+          (node) =>
+            node.anchor &&
+            resolvedStructureNodePath(structure, node.anchor.path, sourceOid) === targetPath,
+        )
+        .map((node) => node.id),
+    );
+    const targetNode = closestMatchingStructureNode(structure, matchingNodeIds);
+    return targetNode
+      ? [
+          {
+            structure: {
+              id: structure.id,
+              ref: structure.ref,
+              pullRequestId: structure.pullRequestId,
+              sourceOid: structure.sourceOid,
+              title: structure.title,
+              scope: structure.scope,
+              createdAt: structure.createdAt,
+              updatedAt: structure.updatedAt,
+            },
+            targetNodeId: targetNode.id,
+            targetNodeLabel: targetNode.label,
+            matchingNodeCount: matchingNodeIds.size,
+          },
+        ]
+      : [];
+  });
+  return context.json({ ok: true, references });
+});
 
 app.get("/api/pull-requests/:id/structures/:structureId", (context) => {
   const structure = activeStructures.find(
