@@ -2399,11 +2399,20 @@ describe("RvwService commit workflow", () => {
     git(repository, "commit", "-m", "rename and copy backlink sources");
     const targetOid = git(repository, "rev-parse", "HEAD");
 
+    const copyAwareChanges = vi.spyOn(service.git, "changedFilesWithCopies");
+    const documentReads = vi.spyOn(service.git, "readDocument");
     const renamedReferences = await service.listFileStructureReferences(
       opened.pullRequest.id,
       targetOid,
       "renamed-src.txt",
     );
+    expect(copyAwareChanges).toHaveBeenCalledTimes(1);
+    expect(copyAwareChanges).toHaveBeenCalledWith(
+      opened.pullRequest.localRepositoryPath,
+      sourceOid,
+      targetOid,
+    );
+    expect(documentReads).not.toHaveBeenCalled();
     expect(renamedReferences.map((reference) => reference.structure.id)).toEqual(
       service
         .listStructures(opened.pullRequest.id)

@@ -1720,28 +1720,50 @@ export class RvwService {
     targetPath: string,
   ): Promise<FileStructureReference[]> {
     const pullRequest = this.getPullRequest(pullRequestId);
+    assertCodeReferencePath(targetPath);
     await this.assertCommitAvailable(pullRequest, targetSourceOid);
-    const targetDocument = await this.getDocument({
-      kind: "repository-file",
-      pullRequestId,
-      sourceOid: targetSourceOid,
-      path: targetPath,
-    });
-    if (targetDocument.availability === "missing") return [];
+    const targetPaths = new Set(
+      (await this.git.tree(pullRequest.localRepositoryPath, targetSourceOid)).map(
+        (entry) => entry.path,
+      ),
+    );
+    if (!targetPaths.has(targetPath)) return [];
 
-    const resolutions = new Map<string, Promise<string | null>>();
-    const resolvePath = (sourceOid: string, sourcePath: string): Promise<string | null> => {
-      const key = JSON.stringify([sourceOid, sourcePath]);
-      const cached = resolutions.get(key);
+    const successorIndexes = new Map<string, Promise<Map<string, ReadonlySet<string>>>>();
+    const successorIndex = (sourceOid: string): Promise<Map<string, ReadonlySet<string>>> => {
+      const key = JSON.stringify([sourceOid, targetSourceOid]);
+      const cached = successorIndexes.get(key);
       if (cached) return cached;
-      const resolution = this.resolveSourceFilePathAtCommit(
-        pullRequest,
-        sourceOid,
-        sourcePath,
-        targetSourceOid,
-      );
-      resolutions.set(key, resolution);
-      return resolution;
+      const index = this.git
+        .changedFilesWithCopies(pullRequest.localRepositoryPath, sourceOid, targetSourceOid)
+        .then((changes) => {
+          const successors = new Map<string, Set<string>>();
+          for (const candidate of changes) {
+            if (
+              (!candidate.status.startsWith("R") && !candidate.status.startsWith("C")) ||
+              candidate.oldPath === null ||
+              candidate.newPath === null
+            ) {
+              continue;
+            }
+            const paths = successors.get(candidate.oldPath) ?? new Set<string>();
+            paths.add(candidate.newPath);
+            successors.set(candidate.oldPath, paths);
+          }
+          return successors;
+        });
+      successorIndexes.set(key, index);
+      return index;
+    };
+    const resolvePath = (sourceOid: string, sourcePath: string): Promise<string | null> => {
+      if (targetPaths.has(sourcePath)) return Promise.resolve(sourcePath);
+      if (sourceOid === targetSourceOid) return Promise.resolve(null);
+      return successorIndex(sourceOid).then((index) => {
+        const successors = index.get(sourcePath);
+        if (successors?.size !== 1) return null;
+        const successor = [...successors][0]!;
+        return targetPaths.has(successor) ? successor : null;
+      });
     };
 
     const references: FileStructureReference[] = [];

@@ -589,6 +589,15 @@ export function StructureViewer({
     ) {
       return;
     }
+    if (structure.updatedAt < navigationTarget.structureUpdatedAt) return;
+    if (structure.updatedAt > navigationTarget.structureUpdatedAt) {
+      appliedNavigationRequestRef.current = navigationTarget.requestId;
+      setStatus(
+        "Structureが更新されたため、ファイル参照を更新しました。もう一度選択してください。",
+      );
+      onNavigationFailed(navigationTarget.requestId);
+      return;
+    }
     const requestedNode = structure.nodes.find((node) => node.id === navigationTarget.nodeId);
     if (!requestedNode) {
       appliedNavigationRequestRef.current = navigationTarget.requestId;

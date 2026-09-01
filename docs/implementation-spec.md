@@ -664,6 +664,9 @@ comment actionの直前へ常設する。`Pull Request.md`、Walkthrough、Struc
 位置を保ったdisabled state、失敗は0件と区別したretry可能なerror stateとする。1件でも直接遷移せずpopoverを
 開き、current PRのStructure一覧順でtitle、focus先Node label、同じStructure内の追加一致数を表示する。
 popoverは通常のmenu keyboard操作、outside pointer、Escapeとtriggerへのfocus復帰を提供する。
+逆引き結果はStructure一覧のID + `updatedAt` fingerprintが変わるまでfreshとして扱い、commentなど無関係な
+change sequenceやtab復帰だけでは再取得しない。cached resultのbackground refresh中もpopoverとkeyboard focusを
+維持し、結果消滅により自動で閉じる場合はmenu内のfocusをtriggerへ戻す。
 
 `GET /api/pull-requests/:id/structure-references?sourceOid=<oid>&path=<path>`は一つのeffective fileをbulkに解決し、
 `{ ok: true, references: FileStructureReference[] }`を返す。current StructureのNode anchorだけを対象とし、Edge
@@ -671,7 +674,9 @@ anchor、label／description内のpathらしい文字列、heuristic relationは
 `structure.sourceOid + anchor.path`からtarget commitへ、同じpathが存在すればそれを優先し、消えた場合だけ
 既存のcopy-aware Git比較でrename／copy successorが一意な時に追従する。caseは保持し、候補が複数、target fileが
 missing、line rangeだけがstaleの各場合は、それぞれ推測しない、matchしない、file-level matchを維持する。
-永続reverse indexは持たず、request内では同じsource OID + anchor pathの解決を共有する。
+永続reverse indexは持たない。一requestではtarget commitのtreeを一度だけ取得してpath存在確認を本文読込なしで
+行い、copy-aware Git比較も`structure.sourceOid + targetSourceOid`のcommit pairごとに一度だけ実行して
+`oldPath -> unique successor` indexを共有する。Node数に比例して同じ`--find-copies-harder`を起動しない。
 
 同じStructureの複数Nodeが一致した場合は1行へまとめ、originが一致すればorigin、そうでなければ全Edgeを
 undirectedとしてoriginからhop数が最小のNodeを選ぶ。unreachableはreachableの後、同距離はstable Node ID順と
@@ -679,8 +684,10 @@ undirectedとしてoriginからhop数が最小のNodeを選ぶ。unreachableはr
 document workspaceとreading historyを通すためsource file tabとscrollを保ち、Backでfileへ戻す。pane別Structure
 sessionのNode位置、depth、zoom scaleを保ったone-shot requestとしてtarget Nodeをfocusし、Edge選択を解除して
 既存`centerNode`で中央へ寄せる。全体fitやcomponent remountは行わない。target Nodeがcurrent-value更新で消えた
-場合はoriginへfallbackせずnonfatal statusを表示し、逆引きqueryを再取得可能にする。Structure変更sequenceでは
-一覧、detailと同時に逆引きqueryもinvalidateする。
+場合はoriginへfallbackせずnonfatal statusを表示し、逆引きqueryを再取得可能にする。one-shot requestは逆引きに
+使ったStructure summaryの`updatedAt`も保持する。表示detailがそれより古ければ同じrevisionへ更新されるまでNode
+不在を確定せず、同じrevisionで不在の場合だけ削除済みとする。detailの方が新しければ逆引きresultをstaleとして
+再取得する。Structure一覧のfingerprintが実際に変わった場合だけ逆引きqueryをinvalidateする。
 
 探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。trackpadの通常wheelは
 pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱い、pan / zoom感度は従来値の

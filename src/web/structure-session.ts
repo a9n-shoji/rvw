@@ -14,6 +14,7 @@ export interface StructureViewport {
 
 export interface StructureNavigationTarget {
   structureId: string;
+  structureUpdatedAt: string;
   pane: DocumentPaneId;
   nodeId: string;
   requestId: number;

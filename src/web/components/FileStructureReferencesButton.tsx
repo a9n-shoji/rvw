@@ -28,6 +28,7 @@ export function FileStructureReferencesButton({
   const hostRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuHadFocusRef = useRef(false);
   const query = useQuery({
     queryKey: ["structure-references", pullRequestId, fileRef?.sourceOid, fileRef?.path],
     queryFn: async () => {
@@ -41,16 +42,24 @@ export function FileStructureReferencesButton({
     },
     enabled: fileRef !== null,
     retry: false,
+    staleTime: Number.POSITIVE_INFINITY,
   });
   const references = query.data?.references ?? [];
-  const loading = fileRef !== null && (query.isPending || query.isFetching);
-  const failed = fileRef !== null && query.isError;
-  const available = !loading && !failed && references.length > 0;
+  const initialLoading = fileRef !== null && query.isPending;
+  const refreshing = fileRef !== null && query.isFetching && query.data !== undefined;
+  const failed = fileRef !== null && query.isError && query.data === undefined;
+  const available = !initialLoading && !failed && references.length > 0;
 
   useEffect(() => setOpen(false), [fileRef?.path, fileRef?.sourceOid]);
   useEffect(() => {
-    if (loading || failed || references.length === 0) setOpen(false);
-  }, [failed, loading, references.length]);
+    if (!open || (!initialLoading && !failed && references.length > 0)) return;
+    const restoreFocus = menuHadFocusRef.current;
+    menuHadFocusRef.current = false;
+    setOpen(false);
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => triggerRef.current?.focus());
+    }
+  }, [failed, initialLoading, open, references.length]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -78,11 +87,13 @@ export function FileStructureReferencesButton({
     const closeOnOutsidePointer = (event: PointerEvent): void => {
       const target = event.target as Node;
       if (hostRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      menuHadFocusRef.current = false;
       setOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
       event.preventDefault();
+      menuHadFocusRef.current = false;
       setOpen(false);
       triggerRef.current?.focus();
     };
@@ -108,7 +119,7 @@ export function FileStructureReferencesButton({
     items[nextIndex]?.focus();
   };
 
-  const title = loading
+  const title = initialLoading
     ? "このファイルのStructure参照を確認しています"
     : failed
       ? "Structure参照の取得に失敗しました。再試行"
@@ -126,7 +137,7 @@ export function FileStructureReferencesButton({
         title={title}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-busy={loading || undefined}
+        aria-busy={initialLoading || refreshing || undefined}
         disabled={!failed && !available}
         onClick={() => {
           if (failed) {
@@ -152,6 +163,17 @@ export function FileStructureReferencesButton({
             aria-label="このファイルを参照するStructure"
             style={popoverStyle}
             onKeyDown={handleMenuKeyDown}
+            onFocusCapture={() => {
+              menuHadFocusRef.current = true;
+            }}
+            onBlurCapture={(event) => {
+              if (
+                event.relatedTarget instanceof Node &&
+                !event.currentTarget.contains(event.relatedTarget)
+              ) {
+                menuHadFocusRef.current = false;
+              }
+            }}
           >
             {references.map((reference) => {
               const additionalMatches = reference.matchingNodeCount - 1;
@@ -161,6 +183,7 @@ export function FileStructureReferencesButton({
                   type="button"
                   role="menuitem"
                   onClick={() => {
+                    menuHadFocusRef.current = false;
                     setOpen(false);
                     onSelect(reference);
                   }}

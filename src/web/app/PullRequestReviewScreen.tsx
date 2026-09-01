@@ -664,6 +664,10 @@ export function PullRequestReviewScreen({
   const commitRangeInteractionHeadOid = useRef<string | null>(null);
   const observedLatestHead = useRef<string | null>(null);
   const observedChangeSequence = useRef<number | null>(null);
+  const observedStructureFingerprint = useRef<{
+    pullRequestId: string;
+    value: string;
+  } | null>(null);
   const observedAgentPostPullRequestId = useRef<string | null>(null);
   const observedAgentPostSnapshot = useRef<Map<string, string> | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
@@ -1497,7 +1501,6 @@ export function PullRequestReviewScreen({
     void queryClient.invalidateQueries({ queryKey: ["walkthrough"] });
     void queryClient.invalidateQueries({ queryKey: ["structures"] });
     void queryClient.invalidateQueries({ queryKey: ["structure"] });
-    void queryClient.invalidateQueries({ queryKey: ["structure-references"] });
   }, [changeSequence.data?.changeSequence, queryClient]);
   const commentsQuery = useQuery({
     queryKey: ["comments", pullRequestId, changeSequence.data?.changeSequence],
@@ -1552,6 +1555,23 @@ export function PullRequestReviewScreen({
     enabled: Boolean(pullRequestId),
   });
   const structures = structuresQuery.data?.structures ?? [];
+  const structureFingerprint = structures
+    .map((structure) => `${structure.id}:${structure.updatedAt}`)
+    .sort()
+    .join("|");
+  useEffect(() => {
+    if (!structuresQuery.isSuccess) return;
+    const previous = observedStructureFingerprint.current;
+    observedStructureFingerprint.current = { pullRequestId, value: structureFingerprint };
+    if (
+      !previous ||
+      previous.pullRequestId !== pullRequestId ||
+      previous.value === structureFingerprint
+    ) {
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: ["structure-references", pullRequestId] });
+  }, [pullRequestId, queryClient, structureFingerprint, structuresQuery.isSuccess]);
   useEffect(() => {
     if (!walkthroughsQuery.isSuccess) return;
     const summaries = new Map(walkthroughs.map((walkthrough) => [walkthrough.id, walkthrough]));
@@ -2056,6 +2076,7 @@ export function PullRequestReviewScreen({
       structureNavigationSequence.current += 1;
       const target: StructureNavigationTarget = {
         structureId: reference.structure.id,
+        structureUpdatedAt: reference.structure.updatedAt,
         pane: targetPane,
         nodeId: reference.targetNodeId,
         requestId: structureNavigationSequence.current,
