@@ -1114,6 +1114,7 @@ describe("RvwService commit workflow", () => {
     const changedFiles = vi.spyOn(service.git, "changedFiles");
     const changedFilesWithCopies = vi.spyOn(service.git, "changedFilesWithCopies");
     const firstParent = vi.spyOn(service.git, "firstParent");
+    const documentReads = vi.spyOn(service.git, "readDocument");
     await expect(
       service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
     ).resolves.toMatchObject({
@@ -1139,6 +1140,7 @@ describe("RvwService commit workflow", () => {
     expect(changedFiles).not.toHaveBeenCalled();
     expect(changedFilesWithCopies).not.toHaveBeenCalled();
     expect(firstParent).not.toHaveBeenCalled();
+    expect(documentReads).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to the anchor and offers the latest file when the range changed", async () => {
@@ -1265,6 +1267,7 @@ describe("RvwService commit workflow", () => {
     fake.pullRequest = { ...fake.pullRequest, headOid: latestHead };
     await service.refreshPullRequest(opened.pullRequest.id);
 
+    const documentReads = vi.spyOn(service.git, "readDocument");
     await expect(
       service.resolveWalkthroughReference(opened.pullRequest.id, walkthrough.id, "source"),
     ).resolves.toMatchObject({
@@ -1280,6 +1283,7 @@ describe("RvwService commit workflow", () => {
         endLine: 2,
       },
     });
+    expect(documentReads).toHaveBeenCalledTimes(3);
   });
 
   it("falls back when a removed source has multiple identical successor paths", async () => {
@@ -2174,6 +2178,18 @@ describe("RvwService commit workflow", () => {
       ],
       edges: [],
     });
+    const sameCommitDocumentReads = vi.spyOn(service.git, "readDocument");
+    await expect(
+      service.resolveStructureSource(opened.pullRequest.id, structure.id, {
+        kind: "node",
+        nodeId: "source",
+      }),
+    ).resolves.toMatchObject({
+      outcome: "latest",
+      document: { ref: { sourceOid: firstHead, path: "src.txt" } },
+    });
+    expect(sameCommitDocumentReads).toHaveBeenCalledOnce();
+    sameCommitDocumentReads.mockRestore();
     const latestHead = commitFile(
       repository,
       "src.txt",
@@ -2470,6 +2486,99 @@ describe("RvwService commit workflow", () => {
     await expect(
       service.listFileStructureReferences(opened.pullRequest.id, targetOid, "../src.txt"),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("uses one Structure revision for each file backlink while Git resolution is pending", async () => {
+    const { repository, fake, service } = setup("rvw-structure-backlink-snapshot-");
+    const opened = await service.openPullRequest(undefined, repository);
+    writeFileSync(path.join(repository, "blocking.txt"), "blocking source\n");
+    writeFileSync(path.join(repository, "stable.txt"), "stable source\n");
+    git(repository, "add", "blocking.txt", "stable.txt");
+    git(repository, "commit", "-m", "add backlink snapshot sources");
+    const sourceOid = git(repository, "rev-parse", "HEAD");
+    fake.pullRequest = { ...fake.pullRequest, headOid: sourceOid };
+    await service.refreshPullRequest(opened.pullRequest.id);
+
+    for (const suffix of ["one", "two"]) {
+      await service.publishStructure({
+        idempotencyKey: `structure-backlink-snapshot-${suffix}`,
+        pullRequest: opened.pullRequest.url,
+        sourceOid,
+        title: `Snapshot ${suffix}`,
+        scope: "A Structure whose backlink revision must remain internally consistent.",
+        originNodeId: "origin",
+        nodes: [{ id: "origin", label: `Snapshot ${suffix}`, anchor: { path: "stable.txt" } }],
+        edges: [],
+      });
+    }
+    const ordered = service
+      .listStructures(opened.pullRequest.id)
+      .map((summary) => service.getStructure(opened.pullRequest.id, summary.id));
+    const blockerBeforeLookup = await service.updateStructure(ordered[0]!.ref, {
+      expectedUpdatedAt: ordered[0]!.updatedAt,
+      sourceOid,
+      title: ordered[0]!.title,
+      scope: ordered[0]!.scope,
+      originNodeId: "origin",
+      nodes: [{ id: "origin", label: "Blocking source", anchor: { path: "blocking.txt" } }],
+      edges: [],
+    });
+    const followerBeforeLookup = ordered[1]!;
+
+    git(repository, "mv", "blocking.txt", "renamed-blocking.txt");
+    git(repository, "commit", "-m", "rename blocking backlink source");
+    const targetOid = git(repository, "rev-parse", "HEAD");
+
+    let releaseGitResolution = (): void => {};
+    let reportGitResolutionStarted = (): void => {};
+    const gitResolutionStarted = new Promise<void>((resolve) => {
+      reportGitResolutionStarted = resolve;
+    });
+    const gitResolutionGate = new Promise<void>((resolve) => {
+      releaseGitResolution = resolve;
+    });
+    const originalChangedFilesWithCopies = service.git.changedFilesWithCopies.bind(service.git);
+    vi.spyOn(service.git, "changedFilesWithCopies").mockImplementation(async (...arguments_) => {
+      reportGitResolutionStarted();
+      await gitResolutionGate;
+      return await originalChangedFilesWithCopies(...arguments_);
+    });
+
+    const lookup = service.listFileStructureReferences(
+      opened.pullRequest.id,
+      targetOid,
+      "renamed-blocking.txt",
+    );
+    await gitResolutionStarted;
+    const followerAfterLookupStarted = await service.updateStructure(followerBeforeLookup.ref, {
+      expectedUpdatedAt: followerBeforeLookup.updatedAt,
+      sourceOid: targetOid,
+      title: followerBeforeLookup.title,
+      scope: followerBeforeLookup.scope,
+      originNodeId: "origin",
+      nodes: [
+        {
+          id: "origin",
+          label: "Concurrently added backlink",
+          anchor: { path: "renamed-blocking.txt" },
+        },
+      ],
+      edges: [],
+    });
+    releaseGitResolution();
+
+    const references = await lookup;
+    expect(references).toHaveLength(1);
+    expect(references[0]).toMatchObject({
+      structure: {
+        id: blockerBeforeLookup.id,
+        updatedAt: blockerBeforeLookup.updatedAt,
+      },
+      targetNodeId: "origin",
+    });
+    expect(
+      references.some((reference) => reference.structure.id === followerAfterLookupStarted.id),
+    ).toBe(false);
   });
 
   it("allows a Structure publish operation to start fresh after PR reset", async () => {

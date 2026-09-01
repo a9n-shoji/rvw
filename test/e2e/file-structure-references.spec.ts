@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
-import type { Structure } from "../../src/domain/models.js";
+import type {
+  FileStructureReference,
+  Structure,
+  StructureSummary,
+} from "../../src/domain/models.js";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
@@ -33,6 +37,51 @@ async function createTransientPullRequestComment(page: Page): Promise<string> {
 async function deleteTransientComment(page: Page, commentId: string): Promise<void> {
   const response = await page.request.delete(`/api/comments/${commentId}`, { data: {} });
   expect(response.ok()).toBe(true);
+}
+
+function backlinkReference(input: {
+  structureId: string;
+  title: string;
+  targetNodeId: string;
+  targetNodeLabel: string;
+}): FileStructureReference {
+  return {
+    structure: {
+      id: input.structureId,
+      ref: `rvw://structure/${input.structureId}`,
+      pullRequestId,
+      sourceOid: "b".repeat(40),
+      title: input.title,
+      scope: "Structure backlink refresh fixture.",
+      createdAt: "2026-08-08T01:00:00.000Z",
+      updatedAt: "2026-08-08T01:00:00.000Z",
+    },
+    targetNodeId: input.targetNodeId,
+    targetNodeLabel: input.targetNodeLabel,
+    matchingNodeCount: 1,
+  };
+}
+
+async function routeStructureFingerprint(page: Page): Promise<{ revision: number }> {
+  const state = { revision: 0 };
+  await page.route(`**/api/pull-requests/${pullRequestId}/structures`, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    const response = await route.fetch();
+    const body = (await response.json()) as { ok: true; structures: StructureSummary[] };
+    const structures = body.structures.map((structure, index) =>
+      index === 0 && state.revision > 0
+        ? {
+            ...structure,
+            updatedAt: `2026-08-08T04:00:0${state.revision}.000Z`,
+          }
+        : structure,
+    );
+    await route.fulfill({ response, json: { ...body, structures } });
+  });
+  return state;
 }
 
 test("navigates from a file backlink to the focused Structure Node and restores reading state", async ({
@@ -144,7 +193,7 @@ test("keeps zero and Edge-only backlinks disabled and resolves a renamed file", 
     name: "このレビュー版では、このファイルをNodeから参照するStructureはありません",
     exact: true,
   });
-  await expect(noReferenceTrigger).toBeDisabled();
+  await expect(noReferenceTrigger).toHaveAttribute("aria-disabled", "true");
 
   await openFileFromPalette(page, "src/edge-only-evidence.ts");
   await expect(
@@ -152,7 +201,7 @@ test("keeps zero and Edge-only backlinks disabled and resolves a renamed file", 
       name: "このレビュー版では、このファイルをNodeから参照するStructureはありません",
       exact: true,
     }),
-  ).toBeDisabled();
+  ).toHaveAttribute("aria-disabled", "true");
 
   await openFileFromPalette(page, "docs/hybrid.md");
   const renamedTrigger = page.getByRole("button", {
@@ -347,6 +396,150 @@ test("keeps an open backlink menu focused across unrelated comment updates", asy
     await expect(trigger).toBeFocused();
   } finally {
     await deleteTransientComment(page, commentId);
+  }
+});
+
+test("recovers menu focus when refreshed backlink rows disappear", async ({ page }) => {
+  const sourcePath = "src/application/orders/create-order.ts";
+  const fingerprint = await routeStructureFingerprint(page);
+  const primaryReference = backlinkReference({
+    structureId: primaryStructureId,
+    title: "Order placement behavior",
+    targetNodeId: "hub",
+    targetNodeLabel: "Create order",
+  });
+  const secondaryReference = backlinkReference({
+    structureId: secondaryStructureId,
+    title: "Payment reconciliation recovery",
+    targetNodeId: "payment-reconciliation",
+    targetNodeLabel: "Payment reconciliation",
+  });
+  let lookupRequests = 0;
+  let referenceRevision = 0;
+  await page.route("**/structure-references?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("path") !== sourcePath) {
+      await route.fallback();
+      return;
+    }
+    lookupRequests += 1;
+    const references =
+      referenceRevision === 0
+        ? [primaryReference, secondaryReference]
+        : referenceRevision === 1
+          ? [primaryReference]
+          : [];
+    await route.fulfill({ json: { ok: true, references } });
+  });
+
+  const commentIds: string[] = [];
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await page.getByRole("button", { name: sourcePath, exact: true }).click();
+    const trigger = page.getByRole("button", {
+      name: "このファイルを参照するStructure 2件",
+      exact: true,
+    });
+    await trigger.click();
+    const menu = page.getByRole("menu", { name: "このファイルを参照するStructure" });
+    const secondaryItem = menu.getByRole("menuitem", {
+      name: /Payment reconciliation recovery Node: Payment reconciliation/u,
+    });
+    await page.keyboard.press("ArrowDown");
+    await expect(secondaryItem).toBeFocused();
+
+    fingerprint.revision = 1;
+    referenceRevision = 1;
+    const requestsBeforePartialRefresh = lookupRequests;
+    commentIds.push(await createTransientPullRequestComment(page));
+    await expect.poll(() => lookupRequests).toBeGreaterThan(requestsBeforePartialRefresh);
+    await expect(menu.getByRole("menuitem")).toHaveCount(1);
+    await expect(
+      menu.getByRole("menuitem", { name: /Order placement behavior Node: Create order/u }),
+    ).toBeFocused();
+
+    fingerprint.revision = 2;
+    referenceRevision = 2;
+    const requestsBeforeEmptyRefresh = lookupRequests;
+    commentIds.push(await createTransientPullRequestComment(page));
+    await expect.poll(() => lookupRequests).toBeGreaterThan(requestsBeforeEmptyRefresh);
+    const emptyTrigger = page.getByRole("button", {
+      name: "このレビュー版では、このファイルをNodeから参照するStructureはありません",
+      exact: true,
+    });
+    await expect(menu).toHaveCount(0);
+    await expect(emptyTrigger).toBeFocused();
+    await expect(emptyTrigger).toHaveAttribute("aria-disabled", "true");
+  } finally {
+    for (const commentId of commentIds) await deleteTransientComment(page, commentId);
+  }
+});
+
+test("exposes retry when a zero-result backlink refresh fails", async ({ page }) => {
+  const sourcePath = "src/fixture.ts";
+  const fingerprint = await routeStructureFingerprint(page);
+  const recoveredReference = backlinkReference({
+    structureId: primaryStructureId,
+    title: "Order placement behavior",
+    targetNodeId: "hub",
+    targetNodeLabel: "Recovered backlink",
+  });
+  let lookupRequests = 0;
+  let lookupOutcome: "empty" | "failed" | "recovered" = "empty";
+  await page.route("**/structure-references?*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("path") !== sourcePath) {
+      await route.fallback();
+      return;
+    }
+    lookupRequests += 1;
+    if (lookupOutcome === "failed") {
+      await route.fulfill({
+        status: 500,
+        json: { ok: false, error: { code: "INTERNAL_ERROR", message: "temporary failure" } },
+      });
+      return;
+    }
+    await route.fulfill({
+      json: { ok: true, references: lookupOutcome === "empty" ? [] : [recoveredReference] },
+    });
+  });
+
+  let commentId: string | null = null;
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await page.getByRole("button", { name: sourcePath, exact: true }).click();
+    await expect(
+      page.getByRole("button", {
+        name: "このレビュー版では、このファイルをNodeから参照するStructureはありません",
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-disabled", "true");
+
+    fingerprint.revision = 1;
+    lookupOutcome = "failed";
+    const requestsBeforeFailure = lookupRequests;
+    commentId = await createTransientPullRequestComment(page);
+    await expect.poll(() => lookupRequests).toBeGreaterThan(requestsBeforeFailure);
+    const retryTrigger = page.getByRole("button", {
+      name: "Structure参照を更新できませんでした。再試行",
+      exact: true,
+    });
+    await expect(retryTrigger).not.toHaveAttribute("aria-disabled", "true");
+    await expect(page.locator(".file-structure-references-error-badge")).toBeVisible();
+
+    lookupOutcome = "recovered";
+    const requestsBeforeRetry = lookupRequests;
+    await retryTrigger.click();
+    await expect.poll(() => lookupRequests).toBeGreaterThan(requestsBeforeRetry);
+    await expect(
+      page.getByRole("button", {
+        name: "このファイルを参照するStructure 1件",
+        exact: true,
+      }),
+    ).toBeVisible();
+  } finally {
+    if (commentId) await deleteTransientComment(page, commentId);
   }
 });
 

@@ -2273,6 +2273,15 @@ diffs-container > [slot="header-metadata"] {
   background: var(--accent-soft);
   color: var(--accent);
 }
+.file-structure-references-trigger[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+.file-structure-references-trigger[aria-disabled="true"]:hover {
+  border-color: var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+}
 .file-structure-references-trigger.is-error {
   border-color: color-mix(in srgb, var(--danger) 55%, var(--line));
   color: var(--danger);

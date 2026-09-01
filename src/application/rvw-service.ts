@@ -382,6 +382,24 @@ interface MarkdownNode {
   };
 }
 
+interface ResolvedSourceFile {
+  path: string;
+  document: DocumentContent;
+}
+
+function structureSummary(structure: Structure): StructureSummary {
+  return {
+    id: structure.id,
+    ref: structure.ref,
+    pullRequestId: structure.pullRequestId,
+    sourceOid: structure.sourceOid,
+    title: structure.title,
+    scope: structure.scope,
+    createdAt: structure.createdAt,
+    updatedAt: structure.updatedAt,
+  };
+}
+
 export interface WalkthroughMarkdownAnalysis {
   referenceIds: string[];
   mermaidNodeIds: Set<string>;
@@ -1721,6 +1739,10 @@ export class RvwService {
   ): Promise<FileStructureReference[]> {
     const pullRequest = this.getPullRequest(pullRequestId);
     assertCodeReferencePath(targetPath);
+    const structures = this.database.listStructures(pullRequestId).flatMap((summary) => {
+      const structure = this.database.getStructure(summary.id);
+      return structure?.pullRequestId === pullRequestId ? [structure] : [];
+    });
     await this.assertCommitAvailable(pullRequest, targetSourceOid);
     const targetPaths = new Set(
       (await this.git.tree(pullRequest.localRepositoryPath, targetSourceOid)).map(
@@ -1767,9 +1789,7 @@ export class RvwService {
     };
 
     const references: FileStructureReference[] = [];
-    for (const summary of this.database.listStructures(pullRequestId)) {
-      const structure = this.database.getStructure(summary.id);
-      if (!structure || structure.pullRequestId !== pullRequestId) continue;
+    for (const structure of structures) {
       const matchingNodeIds = new Set<string>();
       await Promise.all(
         structure.nodes.map(async (node) => {
@@ -1781,7 +1801,7 @@ export class RvwService {
       const targetNode = closestMatchingStructureNode(structure, matchingNodeIds);
       if (!targetNode) continue;
       references.push({
-        structure: summary,
+        structure: structureSummary(structure),
         targetNodeId: targetNode.id,
         targetNodeLabel: targetNode.label,
         matchingNodeCount: matchingNodeIds.size,
@@ -2202,23 +2222,15 @@ export class RvwService {
       path: reference.path,
     });
     const latestHeadOid = pullRequest.latestHeadOid;
-    const latestPath = await this.resolveSourceFilePathAtCommit(
+    const resolvedLatestFile = await this.resolveSourceFileAtCommit(
       pullRequest,
       sourceOid,
       reference.path,
       latestHeadOid,
+      sourceDocument,
     );
-    const latestDocument =
-      latestPath === null
-        ? null
-        : sourceOid === latestHeadOid && latestPath === reference.path
-          ? sourceDocument
-          : await this.getDocument({
-              kind: "repository-file",
-              pullRequestId: pullRequest.id,
-              sourceOid: latestHeadOid,
-              path: latestPath,
-            });
+    const latestPath = resolvedLatestFile?.path ?? null;
+    const latestDocument = resolvedLatestFile?.document ?? null;
     const latestFileExists = latestDocument !== null && latestDocument.availability !== "missing";
     const latestFileDisplayable = latestDocument?.availability === "available";
     const mappedRange =
@@ -2291,19 +2303,25 @@ export class RvwService {
     };
   }
 
-  private async resolveSourceFilePathAtCommit(
+  private async resolveSourceFileAtCommit(
     pullRequest: PullRequest,
     sourceOid: string,
     sourcePath: string,
     targetSourceOid: string,
-  ): Promise<string | null> {
-    const directDocument = await this.getDocument({
-      kind: "repository-file",
-      pullRequestId: pullRequest.id,
-      sourceOid: targetSourceOid,
-      path: sourcePath,
-    });
-    if (directDocument.availability !== "missing") return sourcePath;
+    sourceDocument: DocumentContent,
+  ): Promise<ResolvedSourceFile | null> {
+    const directDocument =
+      sourceOid === targetSourceOid
+        ? sourceDocument
+        : await this.getDocument({
+            kind: "repository-file",
+            pullRequestId: pullRequest.id,
+            sourceOid: targetSourceOid,
+            path: sourcePath,
+          });
+    if (directDocument.availability !== "missing") {
+      return { path: sourcePath, document: directDocument };
+    }
     if (sourceOid === targetSourceOid) return null;
     const successorPaths = [
       ...new Set(
@@ -2331,7 +2349,9 @@ export class RvwService {
       sourceOid: targetSourceOid,
       path: successorPath,
     });
-    return successorDocument.availability === "missing" ? null : successorPath;
+    return successorDocument.availability === "missing"
+      ? null
+      : { path: successorPath, document: successorDocument };
   }
 
   getWalkthroughByUri(uri: string): { pullRequest: PullRequest; walkthrough: Walkthrough } {
