@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-02
+
+### Fixed
+
+- 初回revision snapshotの取得中やPull Request取得中に、commitが存在するPRでも一時的に
+  `PR commitがありません。`と表示される回帰
+- 初回revision snapshotの取得失敗をcommitなしとして扱わず、APIの実エラーを表示するよう修正
+- Pull Requestのcommit取得完了後、latest headの選択が初期化されるまでempty stateへ遷移する問題
+
 ## [0.4.2] - 2026-09-02
 
 ### Changed
