@@ -27,8 +27,9 @@ select a node, or claim that publication changed rvw navigation.
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 4, `agent.transport`, `structure.read`, `structure.list`, and every one of
-   `structure.publish`, `structure.update`, or `structure.delete` needed for the task.
+2. Require `protocolVersion` 4, `agent.transport`, `structure.read`, `structure.list`,
+   `structure.preview`, and every one of `structure.publish`, `structure.update`, or
+   `structure.delete` needed for the task.
 3. Run `rvw agent status --json`. If `selectedTransport` is `unavailable`, stop and report its
    diagnostic. Otherwise use the reported transport without overriding it.
 4. Require local access to the saved repository and an exact committed source OID containing every
@@ -67,6 +68,27 @@ when relation direction is ignored. The complete Structure contains no more than
 
 Every `--stdin` command reads until EOF. Supply the entire object and close stdin in the same
 non-interactive invocation; do not start an interactive PTY and send only JSON plus a newline.
+
+## Preview before publishing or updating
+
+Immediately before `publish` or `update`, preview the exact Structure content that will be sent. Omit
+only command metadata: `pullRequest` and `idempotencyKey` for publication, or `expectedUpdatedAt` for
+an update. Keep `sourceOid`, `title`, `scope`, `originNodeId`, `nodes`, and `edges` identical:
+
+```bash
+rvw structure preview --stdin --json
+```
+
+Parse the canonical `layout` diagnostics and `warnings`. Treat `maxRows >= 8`,
+`nonForwardDirectionalLinkRatio >= 0.25`, or `originOutgoingDirectionalLinkCount === 0` as authoring
+smells. Reconsider whether the origin is the factual behavior entrypoint, nodes are too granular,
+claims or anchors overlap or nest, multiple behaviors are mixed, the subject boundary is too broad,
+or nodes merely reproduce adjacent source lines.
+
+These are not validation failures. If the factual graph does not improve after reconsideration,
+publish or update it and explain why the warning remains when useful. Never change factual edge
+direction, the factual origin, predicate wording, or a node responsibility claim merely to improve a
+layout score. Do not implement or invoke a separate Skill-side layout preview.
 
 ## Publish
 
@@ -115,6 +137,9 @@ never silently remove rejected graph elements. Parse the success response and re
 the result is known. After a timeout or connection loss, retry only the identical payload with that
 same key; the retry returns the original Structure. Never reuse the key for changed content.
 Publication is passive.
+
+Parse any returned `warnings` as response-derived authoring feedback. They do not mean publication
+failed and are not persisted graph content.
 
 ## Replace the current value
 

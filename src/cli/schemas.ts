@@ -13,6 +13,7 @@ export {
   commentReplyInputSchema,
   pullRequestSyncInputSchema,
   sourceAnchorInputSchema,
+  structureContentInputSchema,
   structurePublishInputSchema,
   structureUpdateInputSchema,
   walkthroughPublishInputSchema,

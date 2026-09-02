@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Runtime } from "../../src/application/runtime.js";
 import type { RvwService } from "../../src/application/rvw-service.js";
 import { createProgram, runCli } from "../../src/cli/main.js";
+import { structurePublishInputSchema } from "../../src/cli/schemas.js";
 import type { CommentPost, PullRequest, ReviewComment } from "../../src/domain/models.js";
 import { startRuntimeAgentSocket } from "../../src/server/agent-socket.js";
 
@@ -196,6 +197,7 @@ describe("CLI protocol discovery", () => {
         "pullRequest.sync",
         "structure.list",
         "structure.read",
+        "structure.preview",
         "structure.publish",
         "structure.update",
         "structure.delete",
@@ -220,7 +222,7 @@ describe("CLI protocol discovery", () => {
       program.commands
         .find((command) => command.name() === "structure")
         ?.commands.map((command) => command.name()),
-    ).toEqual(["publish", "get", "list", "update", "delete"]);
+    ).toEqual(["preview", "publish", "get", "list", "update", "delete"]);
     expect(
       program.commands
         .find((command) => command.name() === "agent")
@@ -858,7 +860,11 @@ describe("CLI protocol discovery", () => {
         nodes: [expect.objectContaining({ description: null, kind: null, notation: "plain" })],
       }),
     );
-    expect(readPublish()).toMatchObject({ ok: true, structure: { ref: uri } });
+    expect(readPublish()).toMatchObject({
+      ok: true,
+      structure: { ref: uri },
+      warnings: [{ code: "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION" }],
+    });
 
     vi.restoreAllMocks();
     const readGet = captureStdout();
@@ -885,6 +891,126 @@ describe("CLI protocol discovery", () => {
     ]);
     expect(listStructuresByReference).toHaveBeenCalledWith(pullRequest.url);
     expect(readList()).toMatchObject({ ok: true, structures: [{ ref: uri }] });
+  });
+
+  it("previews canonical Structure diagnostics without initializing runtime", async () => {
+    const input = {
+      sourceOid: "b".repeat(40),
+      title: "Terminal boundary",
+      scope: "A pure preview.",
+      originNodeId: "terminal",
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+        {
+          id: "terminal",
+          label: "Terminal",
+          anchor: { path: "src/terminal.ts", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [
+        {
+          id: "entry-terminal",
+          from: "entry",
+          to: "terminal",
+          label: "updates",
+          directed: true,
+          anchors: [],
+        },
+      ],
+    };
+    const readStdout = captureStdout();
+    provideStdin(input);
+    const program = createProgram(() => {
+      throw new Error("preview must not initialize runtime");
+    });
+
+    await program.parseAsync(["node", "rvw", "structure", "preview", "--stdin", "--json"]);
+
+    expect(readStdout()).toEqual({
+      ok: true,
+      layout: {
+        columnCount: 2,
+        rowsPerColumn: [1, 1],
+        maxRows: 1,
+        directionalLinkCount: 1,
+        nonForwardDirectionalLinkCount: 0,
+        nonForwardDirectionalLinkRatio: 0,
+        originOutgoingDirectionalLinkCount: 0,
+      },
+      warnings: [
+        expect.objectContaining({ code: "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION" }),
+      ],
+    });
+  });
+
+  it("returns a machine-readable error for invalid Structure preview stdin", async () => {
+    const readStdout = captureStdout();
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    provideStdin({ sourceOid: "not-an-oid" });
+
+    await runCli(["node", "rvw", "structure", "preview", "--stdin", "--json"]);
+
+    expect(process.exitCode).toBe(2);
+    expect(readStdout()).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT", message: "入力がCLI schemaに適合しません。" },
+    });
+  });
+
+  it("omits additive publish warnings when the persisted origin has an outgoing link", async () => {
+    const input = {
+      idempotencyKey: "structure-publish-forward-flow",
+      pullRequest: pullRequest.url,
+      sourceOid: "b".repeat(40),
+      title: "Forward flow",
+      scope: "A normal entrypoint flow.",
+      originNodeId: "entry",
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+        { id: "next", label: "Next" },
+      ],
+      edges: [
+        {
+          id: "entry-next",
+          from: "entry",
+          to: "next",
+          label: "calls",
+          directed: true,
+        },
+      ],
+    };
+    const published = structurePublishInputSchema.parse(input);
+    const publishStructure = vi.fn().mockResolvedValue({
+      id: "70000000-0000-4000-8000-000000000003",
+      ref: "rvw://structure/70000000-0000-4000-8000-000000000003",
+      pullRequestId: pullRequest.id,
+      ...published,
+      createdAt: "2026-09-02T00:00:00.000Z",
+      updatedAt: "2026-09-02T00:00:00.000Z",
+    });
+    const { runtime } = mockRuntime({ publishStructure });
+    const readStdout = captureStdout();
+    provideStdin(input);
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "structure",
+      "publish",
+      "--stdin",
+      "--json",
+    ]);
+
+    expect(readStdout()).toMatchObject({ ok: true, structure: { originNodeId: "entry" } });
+    expect(readStdout()).not.toHaveProperty("warnings");
   });
 
   it("passes a complete Structure replacement and requires delete confirmation", async () => {
@@ -931,7 +1057,11 @@ describe("CLI protocol discovery", () => {
       uri,
       expect.objectContaining({ nodes: [expect.objectContaining({ id: "entry" })] }),
     );
-    expect(readUpdate()).toMatchObject({ ok: true, structure: { ref: uri } });
+    expect(readUpdate()).toMatchObject({
+      ok: true,
+      structure: { ref: uri },
+      warnings: [{ code: "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION" }],
+    });
 
     vi.restoreAllMocks();
     const readDeletePreview = captureStdout();

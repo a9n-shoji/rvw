@@ -630,7 +630,8 @@ type Structure = {
   `directed`は必須booleanである。
 - `originNodeId`は対象behaviorを検証し始めるsource-establishedなentrypointを指す。
   HTTP routeに限らずpublic API、command handler、worker trigger、event subscriber、composition call、
-  migration execution pointを含む。同一subjectの実装上のentrypointが移動した場合だけupdateで変更できる。
+  migration execution pointを含む。subjectの中心物やrelationの多いhubを意味せず、terminal / intermediate
+  entrypointも許容する。同一subjectの実装上のentrypointが移動した場合だけupdateで変更できる。
 - Node descriptionとEdge labelはproducer claimであり、source anchorはそのclaimを検証する根拠である。
   Edge labelは`from`をactor/source、`to`をtargetとして自然に読めるverb / verb phraseを使い、
   directionを読解順には使わない。配置を操作するためにinverse relationやactive/passive表現を選ばない。
@@ -703,11 +704,15 @@ pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とす�
 2倍とする。overflowするNode上では、修飾キーなしの縦wheelをその方向へNode内scrollできる間だけNodeへ渡す。
 横wheel、Ctrl / Meta付きwheel、Node内scrollの上端／下端から外向きのwheelはcanvasへ渡す。layoutはtopology、
 factualなEdge direction、`originNodeId` entrypoint、stable IDを入力とするdeterministicなbehavior projectionと
-する。entrypointからdirected relationで到達できるunambiguousなEdge pairを左から右のrankへ置き、分岐は
-vertical whitespaceとtopology由来の順序で並べる。このrankは処理順や推奨読解順のproducer claimではなく、
-viewerがfactualなoriginとrelation directionから導出するprojectionである。undirected／reciprocal Edge、
-relation、parallel Edge数、self relationは方向軸へ影響させない。label、kind、description、path、変更種別も
-位置決定へ使わない。stable IDは対称な配置を決定するtie-breakerに限り、rootを選ばない。producer指定の
+する。originをrank 0に固定し、unambiguousなdirected pairをsuccessorへ`+1`、predecessorへ`-1`としてwave単位で
+伝播する。未rankのambiguous／cyclic／undirected remainderはtopology adjacencyで近傍へ置き、その後origin以外を
+`-1` / `+1`ずつ動かしてcanonical directional linkのnon-forward数がstrictに減るmoveだけを反復する。candidateは
+non-forward数、occupied column数、normalized column index上のtotal directional span、最後にstable Node IDで
+決定し、column内はbarycenter orderingを使う。このrankは処理順や推奨読解順のproducer claimではなく、viewerが
+factualなoriginとrelation directionから導出するprojectionである。同一unordered pairにundirected relationまたは
+両方向directed relationがあればdirectional signalから除外し、同方向parallelはpair-levelの1 link、self relationは
+0 linkとする。label、kind、description、path、変更種別は位置決定へ使わず、Edge label sizeはNode geometry決定後の
+placementだけに使う。stable IDは対称な配置を決定する最終tie-breakerに限る。producer指定の
 座標やpresentation hintは受け取らない。
 
 base mapはcurrent Structureだけから決定的に導出するcanonical layoutで、新しいsessionと明示的なlayout resetに
@@ -724,8 +729,9 @@ canonical layoutへ戻せる。
 使い、初期depthはAllとする。
 current-value更新でfocus Nodeが消えた場合は、
 producerの新しい`originNodeId`へ移動せずfocusなしのAllへ戻す。人間は明示buttonまたはEscapeでfocusを解除できる。
-新しいsessionは全Node / Edgeを描画しながら`originNodeId`を等倍でcanvas幅の25%付近、縦中央へ置き、
-右方向へ広がる読み取り空間を確保して全体を自動fitしない。
+新しいsessionは全Node / Edgeを描画しながら、originより左にNodeがなければ`originNodeId`を等倍でcanvas幅の
+25%付近、縦中央へ置く。左にpredecessor columnがある場合はNode-only boundsからorigin中心に対するleft/right spanを
+求め、自然な比率を35%〜50%へclampして横位置を決める。Edge label boundsは初期viewportへ使わず、全体を自動fitしない。
 focusがない場合もbase map中央を等倍で示す。1-hop / 2-hop / Allの切り替えはNode座標とcameraを変えず、
 表示するsubgraphだけを変更する。局所へ絞る時も読みやすい倍率とorientationを失わず、Allへ戻れば同じcameraで
 全体へ位置付け直せる。表示中のgraphを一枚へ圧縮するのは「表示中を収める」という明示操作だけとする。
@@ -1011,6 +1017,7 @@ comment.reopen
 pullRequest.sync
 structure.list
 structure.read
+structure.preview
 structure.publish
 structure.update
 structure.delete
@@ -1244,19 +1251,24 @@ postを一つのSQLite transactionで物理削除し、change sequenceを更新�
 ```bash
 rvw structure get <STRUCTURE_URI> --json
 rvw structure list <PR_REF> --json
+rvw structure preview --stdin --json
 rvw structure publish --stdin --json
 rvw structure update <STRUCTURE_URI> --stdin --json
 rvw structure delete <STRUCTURE_URI> --json
 rvw structure delete <STRUCTURE_URI> --yes --expected-updated-at <PREVIEW_UPDATED_AT> --json
 ```
 
-publish inputは`idempotencyKey`、`pullRequest`、`sourceOid`、`title`、`scope`、requiredな`originNodeId`、全
+preview inputはDB、repository runtime、Agent socketを初期化せず、publish/updateと同じ`sourceOid`、`title`、
+`scope`、`originNodeId`、全`nodes`、全`edges`をpure graph validationへ通し、canonical initial projectionの
+`columnCount`、`rowsPerColumn`、`maxRows`、pair-level directional link数、non-forward数とratio、origin outgoing数、
+canonical authoring warningsを返す。publish inputは`idempotencyKey`、`pullRequest`、`sourceOid`、`title`、`scope`、requiredな`originNodeId`、全
 `nodes`、全`edges`を持つ。同じkeyとcanonical payloadの再送は元のStructureを返し、別payloadとのkey conflictと
 削除済みresultを明示errorにする。`list`はPR selectorからstable `ref`を含むsummaryを返す。updateは
 `expectedUpdatedAt`と`pullRequest`を除く同じcurrent値の完全置換である。CLIとAgent socketは同じschemaと
 application validationを使用し、commit availability、PR ownership、UTF-8 document、line pair、ID、endpoint、
 focus、anchor総数、count、byte上限を検証する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
-`createdAt`と新しい`updatedAt`を返す。updateはcurrent `updatedAt`がexpected値と一致する時だけ保存し、不一致は
+`createdAt`と新しい`updatedAt`を返す。publish/update成功responseはexact persisted graphから導出したwarningsを
+additive optional fieldとして返し、warningは保存せず成功扱いを変えない。updateはcurrent `updatedAt`がexpected値と一致する時だけ保存し、不一致は
 409の`STRUCTURE_CONFLICT`を返す。どちらもretained commit refを確保してから一つのSQLite transactionで保存し、
 失敗時はref作成をrollbackする。過去graphは保存しないが、削除済みNode / Edge IDのtombstoneは保持して
 stable identityの再利用を拒否する。

@@ -55,6 +55,12 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureSkill).toContain("A Structure is a space; a Walkthrough is a path");
     expect(structureSkill).toContain("Require `protocolVersion` 4");
     expect(structureSkill).toContain("structure.publish");
+    expect(structureSkill).toContain("`structure.preview`");
+    expect(structureSkill).toContain("rvw structure preview --stdin --json");
+    expect(structureSkill).toContain("nonForwardDirectionalLinkRatio >= 0.25");
+    expect(structureSkill).toContain(
+      "Do not implement or invoke a separate Skill-side layout preview",
+    );
     expect(structureSkill).toContain("Never access SQLite directly");
     expect(structureSkill).toContain("Preserve IDs");
     expect(structureAuthoring).toContain("Explicit directions from the user");
@@ -63,6 +69,9 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureAuthoring).toMatch(/Stop and recommend a\s+Walkthrough/);
     expect(structureAuthoring).toContain("Do not create giant graphs");
     expect(structureAuthoring).toContain("factual code entrypoint");
+    expect(structureAuthoring).toContain("terminal or intermediate origin is still valid");
+    expect(structureAuthoring).toContain("around 20 full-width characters or fewer");
+    expect(structureAuthoring).toContain("overlapping or nested Node anchors");
     expect(structureAuthoring).toContain("static inventory");
     expect(structureAuthoring).toContain("deprecated compatibility field");
     expect(structureAuthoring).toContain("Do not set it in new");
