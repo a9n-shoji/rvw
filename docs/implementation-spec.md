@@ -704,13 +704,14 @@ pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とす�
 2倍とする。overflowするNode上では、修飾キーなしの縦wheelをその方向へNode内scrollできる間だけNodeへ渡す。
 横wheel、Ctrl / Meta付きwheel、Node内scrollの上端／下端から外向きのwheelはcanvasへ渡す。layoutはtopology、
 factualなEdge direction、`originNodeId` entrypoint、stable IDを入力とするdeterministicなbehavior projectionと
-する。originをrank 0に固定し、unambiguousなdirected pairをsuccessorへ`+1`、predecessorへ`-1`としてwave単位で
-伝播する。未rankのambiguous／cyclic／undirected remainderはtopology adjacencyで近傍へ置き、その後origin以外を
-`-1` / `+1`またはrank済みdirected neighborの直前／直後へ動かし、canonical directional linkのnon-forward数が
-strictに減るmoveだけを反復する。neighbor由来の候補は、shortcutで早くrankされたNodeがstrict-improvementのplateauを
-越えられない状態を避ける。candidateはnon-forward数、occupied column数、normalized column index上のtotal
-directional span、最後にordinalなstable Node IDで決定し、column内はbarycenter orderingを使う。このrankは処理順や
-推奨読解順のproducer claimではなく、viewerが
+する。originを含むtopology componentでは、canonical directional linksのstrongly connected componentsを求め、
+condensation DAGをlongest-path layeringする。各SCCを連続したrank blockとして配置してSCC間relationを必ずforwardにし、
+origin Nodeのrankが0になるよう全体をshiftする。これによりacyclic predecessorは負rank、successorは正rankになり、
+cycle内、つまり同一SCC内だけに不可避なnon-forward relationを残せる。SCC内はfactual directionをforward waveで展開し、
+originを含まなければtopology degreeでanchorを選ぶ。未rankのambiguous／undirected remainderは従来どおりtopology adjacencyで
+近傍へ置き、originを含まないdisconnected componentのfallbackも変更しない。column内はbarycenter orderingを使う。
+ordinalなstable Node IDはtopology上のqualityが同点の場合の最終tie-breakerだけに使う。このrankは処理順や推奨読解順の
+producer claimではなく、viewerが
 factualなoriginとrelation directionから導出するprojectionである。同一unordered pairにundirected relationまたは
 両方向directed relationがあればdirectional signalから除外し、同方向parallelはpair-levelの1 link、self relationは
 0 linkとする。label、kind、description、path、変更種別は位置決定へ使わず、Edge label sizeはNode geometry決定後の

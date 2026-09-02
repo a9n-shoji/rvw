@@ -507,6 +507,32 @@ Success returns `{ "ok": true, "layout": { ... }, "warnings": [...] }`. Layout c
 `nonForwardDirectionalLinkCount`, `nonForwardDirectionalLinkRatio`, and
 `originOutgoingDirectionalLinkCount`. The ratio is zero when there are no canonical directional links.
 
+Every warning has this shape:
+
+```ts
+type StructureAuthoringWarning = {
+  code:
+    | "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION"
+    | "STRUCTURE_LAYOUT_MAX_ROWS_HIGH"
+    | "STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH";
+  message: string;
+};
+```
+
+The current codes and conditions are:
+
+- `STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION`: the origin has zero outgoing canonical
+  directional links.
+- `STRUCTURE_LAYOUT_MAX_ROWS_HIGH`: the canonical projection has `maxRows >= 8`.
+- `STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH`: the canonical projection has a
+  non-forward directional-link ratio of at least `0.25`.
+
+Consumers branch on `code`, never on the display-oriented `message`, and ignore unknown warning
+codes. Future warning codes may be added to protocol v4 without changing the protocol version;
+consumers that require a particular feedback operation still require the `structure.preview`
+capability. Preview always returns a `warnings` array. Publish and update use the same warning object
+and code semantics but may omit the field when no warnings exist.
+
 ### Publish
 
 ```bash

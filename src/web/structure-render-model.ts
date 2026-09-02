@@ -74,13 +74,14 @@ export interface StructureRenderModel {
 export type StructureLabelAccessory = "source-actions" | "none";
 
 const EDGE_LABEL_MAX_TEXT_WIDTH = 210;
+const EDGE_LABEL_COMPACT_MAX_TEXT_WIDTH = 136;
 const EDGE_LABEL_MIN_TEXT_WIDTH = 64;
 const EDGE_LABEL_HORIZONTAL_PADDING = 11;
 const EDGE_LABEL_WIDTH_SAFETY = 2;
 export const EDGE_LABEL_LINE_HEIGHT = 14;
 
 function stableCompare(left: string, right: string): number {
-  return left.localeCompare(right, "en");
+  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 export function shortestUniqueSourceLabels(paths: readonly string[]): Map<string, string> {
@@ -367,6 +368,7 @@ function edgeLabelSize(
   edge: StructureEdge,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
   labelAccessory: StructureLabelAccessory,
+  maxTextWidth = EDGE_LABEL_MAX_TEXT_WIDTH,
 ): {
   selectWidth: number;
   boxWidth: number;
@@ -376,7 +378,7 @@ function edgeLabelSize(
 } {
   const naturalTextWidth = Math.ceil(structureTextUnits(edge.label) * 11.5);
   const textWidth = Math.min(
-    EDGE_LABEL_MAX_TEXT_WIDTH,
+    maxTextWidth,
     Math.max(
       EDGE_LABEL_MIN_TEXT_WIDTH,
       naturalTextWidth + EDGE_LABEL_HORIZONTAL_PADDING + EDGE_LABEL_WIDTH_SAFETY,
@@ -488,30 +490,52 @@ export function placeEdgeLabels(
       reciprocalEdgeIds.has(edge.id),
     );
     if (!geometry) continue;
-    const size = edgeLabelSize(edge, sourceChangeKinds, labelAccessory);
-    const possible = candidates.map(([fraction, offset]) =>
-      curveLabelCandidate(geometry, fraction, offset),
+    const naturalSize = edgeLabelSize(edge, sourceChangeKinds, labelAccessory);
+    const compactSize = edgeLabelSize(
+      edge,
+      sourceChangeKinds,
+      labelAccessory,
+      EDGE_LABEL_COMPACT_MAX_TEXT_WIDTH,
     );
-    const nodeSafe = possible.filter((candidate) => {
-      const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 4);
-      return !nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox));
-    });
-    const available = nodeSafe.find((candidate) => {
-      const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 5);
-      return !overlapsOccupiedLabel(box);
-    });
-    const fallback = nodeSafe.length > 0 ? nodeSafe[edgeIndex % nodeSafe.length] : undefined;
-    const chosen = available ?? fallback ?? possible[edgeIndex % possible.length]!;
-    occupyLabel(labelBox(chosen.x, chosen.y, size.boxWidth, size.height, 4));
+    const sizes =
+      compactSize.boxWidth < naturalSize.boxWidth ? [naturalSize, compactSize] : [naturalSize];
+    let available:
+      { point: { x: number; y: number }; size: ReturnType<typeof edgeLabelSize> } | undefined;
+    let fallback: typeof available;
+    let firstPossible: { x: number; y: number } | undefined;
+    for (const size of sizes) {
+      const possible = candidates.map(([fraction, offset]) =>
+        curveLabelCandidate(geometry, fraction, offset),
+      );
+      firstPossible ??= possible[edgeIndex % possible.length]!;
+      const nodeSafe = possible.filter((candidate) => {
+        const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 4);
+        return !nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox));
+      });
+      const point = nodeSafe.find((candidate) => {
+        const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 5);
+        return !overlapsOccupiedLabel(box);
+      });
+      if (point) {
+        available = { point, size };
+        break;
+      }
+      const fallbackPoint = nodeSafe[edgeIndex % nodeSafe.length];
+      if (fallbackPoint) fallback = { point: fallbackPoint, size };
+    }
+    const chosen = available ?? fallback ?? { point: firstPossible!, size: naturalSize };
+    occupyLabel(
+      labelBox(chosen.point.x, chosen.point.y, chosen.size.boxWidth, chosen.size.height, 4),
+    );
     placements.push({
       edge,
-      displayLines: size.displayLines,
-      source: size.source,
-      x: chosen.x,
-      y: chosen.y,
-      selectWidth: size.selectWidth,
-      boxWidth: size.boxWidth,
-      height: size.height,
+      displayLines: chosen.size.displayLines,
+      source: chosen.size.source,
+      x: chosen.point.x,
+      y: chosen.point.y,
+      selectWidth: chosen.size.selectWidth,
+      boxWidth: chosen.size.boxWidth,
+      height: chosen.size.height,
       crowded: !available,
     });
   }

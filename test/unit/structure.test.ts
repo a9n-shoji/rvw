@@ -122,6 +122,33 @@ function terminalHubStructure(): Structure {
   };
 }
 
+function directedStructure(
+  originNodeId: string,
+  nodeIds: readonly string[],
+  links: readonly (readonly [from: string, to: string])[],
+): Structure {
+  return {
+    ...structureWithHub(),
+    originNodeId,
+    nodes: nodeIds.map((id) => ({
+      id,
+      label: id,
+      description: null,
+      kind: null,
+      notation: "plain" as const,
+      anchor: null,
+    })),
+    edges: links.map(([from, to], index) => ({
+      id: `edge-${index}`,
+      from,
+      to,
+      label: "calls",
+      directed: true,
+      anchors: [],
+    })),
+  };
+}
+
 describe("Structure domain presentation rules", () => {
   it("round-trips stable Structure URIs", () => {
     const id = "70000000-0000-4000-8000-000000000001";
@@ -442,6 +469,107 @@ describe("Structure domain presentation rules", () => {
     ).toEqual(initialStructureLayout(structure));
   });
 
+  it("keeps an entrypoint and its direct successor on the factual side of a converging DAG", () => {
+    const structure = directedStructure(
+      "origin",
+      ["origin", "b", "c", "d"],
+      [
+        ["origin", "b"],
+        ["origin", "c"],
+        ["origin", "d"],
+        ["b", "c"],
+        ["b", "d"],
+      ],
+    );
+    const projection = projectStructure(structure);
+
+    expect(projection.rankByNodeId.get("origin")).toBe(0);
+    expect(projection.rankByNodeId.get("b")).toBe(1);
+    expect(projection.rankByNodeId.get("c")).toBe(2);
+    expect(projection.rankByNodeId.get("d")).toBe(2);
+    expect(projection.diagnostics.nonForwardDirectionalLinkCount).toBe(0);
+    expect(structureAuthoringWarnings(projection.diagnostics)).toEqual([]);
+  });
+
+  it("keeps every acyclic direct predecessor to the left of a terminal origin", () => {
+    const structure = directedStructure(
+      "origin",
+      ["a", "b", "c", "origin"],
+      [
+        ["a", "b"],
+        ["a", "c"],
+        ["a", "origin"],
+        ["b", "c"],
+        ["c", "origin"],
+      ],
+    );
+    const projection = projectStructure(structure);
+
+    expect(Object.fromEntries(projection.rankByNodeId)).toEqual({
+      a: -3,
+      b: -2,
+      c: -1,
+      origin: 0,
+    });
+    expect(projection.diagnostics.nonForwardDirectionalLinkCount).toBe(0);
+    expect(structureAuthoringWarnings(projection.diagnostics).map(({ code }) => code)).toEqual([
+      "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION",
+    ]);
+  });
+
+  it("does not warn for an acyclic entrypoint DAG with a forward layering", () => {
+    const structure = directedStructure(
+      "origin",
+      ["origin", "b", "c", "d"],
+      [
+        ["origin", "b"],
+        ["origin", "c"],
+        ["b", "c"],
+        ["c", "d"],
+      ],
+    );
+    const projection = projectStructure(structure);
+
+    expect(Object.fromEntries(projection.rankByNodeId)).toEqual({
+      b: 1,
+      c: 2,
+      d: 3,
+      origin: 0,
+    });
+    expect(projection.diagnostics.nonForwardDirectionalLinkCount).toBe(0);
+    expect(projection.diagnostics.nonForwardDirectionalLinkRatio).toBe(0);
+    expect(structureAuthoringWarnings(projection.diagnostics)).toEqual([]);
+  });
+
+  it("keeps logical DAG columns and warnings invariant when asymmetric Node IDs are renamed", () => {
+    const logicalLinks = [
+      [0, 1],
+      [0, 2],
+      [0, 3],
+      [1, 2],
+      [1, 3],
+      [1, 4],
+      [2, 3],
+      [3, 4],
+    ] as const;
+    const project = (idsByLogicalNode: readonly string[]) => {
+      const structure = directedStructure(
+        idsByLogicalNode[0]!,
+        idsByLogicalNode,
+        logicalLinks.map(([from, to]) => [idsByLogicalNode[from]!, idsByLogicalNode[to]!] as const),
+      );
+      const projection = projectStructure(structure);
+      return {
+        ranks: idsByLogicalNode.map((nodeId) => projection.rankByNodeId.get(nodeId)),
+        columns: idsByLogicalNode.map((nodeId) => projection.columnIndexByNodeId.get(nodeId)),
+        diagnostics: projection.diagnostics,
+        warningCodes: structureAuthoringWarnings(projection.diagnostics).map(({ code }) => code),
+      };
+    };
+
+    expect(project(["a", "b", "c", "d", "e"])).toEqual(project(["a", "d", "b", "c", "e"]));
+  });
+
   it("uses ordinal stable-ID ordering for topology-symmetric Nodes", () => {
     const structure = structureWithHub();
     structure.originNodeId = "origin";
@@ -598,6 +726,25 @@ describe("Structure domain presentation rules", () => {
     expect(structureAuthoringWarnings(cycleProjection.diagnostics).map(({ code }) => code)).toEqual(
       ["STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH"],
     );
+  });
+
+  it("keeps every inter-SCC directional link forward while isolating cycle non-forward links", () => {
+    const structure = directedStructure(
+      "entry",
+      ["entry", "a", "b", "c", "persist"],
+      [
+        ["entry", "a"],
+        ["a", "b"],
+        ["b", "c"],
+        ["c", "a"],
+        ["c", "persist"],
+      ],
+    );
+    const projection = projectStructure(structure);
+
+    expect(projection.rankByNodeId.get("entry")).toBeLessThan(projection.rankByNodeId.get("a")!);
+    expect(projection.rankByNodeId.get("c")).toBeLessThan(projection.rankByNodeId.get("persist")!);
+    expect(projection.diagnostics.nonForwardDirectionalLinkCount).toBe(1);
   });
 
   it("keeps a 50-Node topology finite and collision-free", () => {

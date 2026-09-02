@@ -193,41 +193,6 @@ function chooseRankProposal(
   return scored[0]!.rank;
 }
 
-function applyDirectionalWaves(
-  nodeSet: ReadonlySet<string>,
-  topology: SimpleStructureTopology,
-  ranks: Map<string, number>,
-): void {
-  for (let pass = 0; pass < nodeSet.size; pass += 1) {
-    const proposals = new Map<string, Set<number>>();
-    const propose = (nodeId: string, rank: number): void => {
-      const nodeProposals = proposals.get(nodeId) ?? new Set<number>();
-      nodeProposals.add(rank);
-      proposals.set(nodeId, nodeProposals);
-    };
-    for (const [from, to] of topology.directionalLinks) {
-      if (!nodeSet.has(from) || !nodeSet.has(to)) continue;
-      const fromRank = ranks.get(from);
-      const toRank = ranks.get(to);
-      if (fromRank !== undefined && toRank === undefined) propose(to, fromRank + 1);
-      if (fromRank === undefined && toRank !== undefined) propose(from, toRank - 1);
-    }
-    if (proposals.size === 0) break;
-    const accepted = [...proposals]
-      .map(
-        ([nodeId, nodeProposals]) =>
-          [
-            nodeId,
-            chooseRankProposal(nodeId, nodeProposals, ranks, topology.directionalLinks),
-          ] as const,
-      )
-      .sort(([left], [right]) => stableCompare(left, right));
-    for (const [nodeId, rank] of accepted) {
-      ranks.set(nodeId, rank);
-    }
-  }
-}
-
 function applyForwardWaves(
   nodeSet: ReadonlySet<string>,
   topology: SimpleStructureTopology,
@@ -257,6 +222,182 @@ function applyForwardWaves(
   }
 }
 
+function stronglyConnectedComponents(
+  nodeIds: readonly string[],
+  directionalLinks: readonly DirectionalLink[],
+): string[][] {
+  const nodeSet = new Set(nodeIds);
+  const outgoing = new Map(nodeIds.map((nodeId) => [nodeId, new Set<string>()]));
+  for (const [from, to] of directionalLinks) {
+    if (nodeSet.has(from) && nodeSet.has(to)) outgoing.get(from)?.add(to);
+  }
+  const indexes = new Map<string, number>();
+  const lowLinks = new Map<string, number>();
+  const stack: string[] = [];
+  const onStack = new Set<string>();
+  const components: string[][] = [];
+  let nextIndex = 0;
+
+  const visit = (nodeId: string): void => {
+    const nodeIndex = nextIndex;
+    nextIndex += 1;
+    indexes.set(nodeId, nodeIndex);
+    lowLinks.set(nodeId, nodeIndex);
+    stack.push(nodeId);
+    onStack.add(nodeId);
+
+    for (const neighbor of [...(outgoing.get(nodeId) ?? [])].sort(stableCompare)) {
+      if (!indexes.has(neighbor)) {
+        visit(neighbor);
+        lowLinks.set(nodeId, Math.min(lowLinks.get(nodeId)!, lowLinks.get(neighbor)!));
+      } else if (onStack.has(neighbor)) {
+        lowLinks.set(nodeId, Math.min(lowLinks.get(nodeId)!, indexes.get(neighbor)!));
+      }
+    }
+
+    if (lowLinks.get(nodeId) !== indexes.get(nodeId)) return;
+    const component: string[] = [];
+    for (;;) {
+      const member = stack.pop()!;
+      onStack.delete(member);
+      component.push(member);
+      if (member === nodeId) break;
+    }
+    component.sort(stableCompare);
+    components.push(component);
+  };
+
+  for (const nodeId of [...nodeIds].sort(stableCompare)) {
+    if (!indexes.has(nodeId)) visit(nodeId);
+  }
+  return components;
+}
+
+function internalComponentRanks(
+  nodeIds: readonly string[],
+  directionalLinks: readonly DirectionalLink[],
+  preferredAnchor: string | null,
+): Map<string, number> {
+  if (nodeIds.length === 1) return new Map([[nodeIds[0]!, 0]]);
+  const nodeSet = new Set(nodeIds);
+  const internalLinks = directionalLinks.filter(
+    ([from, to]) => nodeSet.has(from) && nodeSet.has(to),
+  );
+  const neighborSets = new Map(nodeIds.map((nodeId) => [nodeId, new Set<string>()]));
+  for (const [from, to] of internalLinks) {
+    neighborSets.get(from)?.add(to);
+    neighborSets.get(to)?.add(from);
+  }
+  const topology: SimpleStructureTopology = {
+    neighbors: new Map(
+      [...neighborSets].map(([nodeId, neighbors]) => [nodeId, [...neighbors].sort(stableCompare)]),
+    ),
+    links: internalLinks,
+    directionalLinks: internalLinks,
+  };
+  const anchor =
+    preferredAnchor && nodeSet.has(preferredAnchor)
+      ? preferredAnchor
+      : topologyRoot(nodeIds, topology);
+  const rawRanks = new Map([[anchor, 0]]);
+  applyForwardWaves(nodeSet, topology, rawRanks);
+  const rankIndexes = normalizedRankIndexes(rawRanks);
+  return new Map(nodeIds.map((nodeId) => [nodeId, rankIndexes.get(rawRanks.get(nodeId)!) ?? 0]));
+}
+
+function directionalCondensationRanks(
+  nodeIds: readonly string[],
+  topology: SimpleStructureTopology,
+  originNodeId: string,
+): Map<string, number> {
+  const nodeSet = new Set(nodeIds);
+  const directionalLinks = topology.directionalLinks.filter(
+    ([from, to]) => nodeSet.has(from) && nodeSet.has(to),
+  );
+  const components = stronglyConnectedComponents(nodeIds, directionalLinks);
+  const componentByNodeId = new Map<string, number>();
+  components.forEach((component, componentIndex) => {
+    for (const nodeId of component) componentByNodeId.set(nodeId, componentIndex);
+  });
+  const outgoing = new Map(components.map((_, index) => [index, new Set<number>()]));
+  const incoming = new Map(components.map((_, index) => [index, new Set<number>()]));
+  for (const [from, to] of directionalLinks) {
+    const fromComponent = componentByNodeId.get(from)!;
+    const toComponent = componentByNodeId.get(to)!;
+    if (fromComponent === toComponent) continue;
+    outgoing.get(fromComponent)!.add(toComponent);
+    incoming.get(toComponent)!.add(fromComponent);
+  }
+
+  const originComponent = componentByNodeId.get(originNodeId)!;
+  const activeComponents = new Set([originComponent]);
+  const activeQueue = [originComponent];
+  for (let index = 0; index < activeQueue.length; index += 1) {
+    const current = activeQueue[index]!;
+    for (const neighbor of [...outgoing.get(current)!, ...incoming.get(current)!]) {
+      if (activeComponents.has(neighbor)) continue;
+      activeComponents.add(neighbor);
+      activeQueue.push(neighbor);
+    }
+  }
+
+  const compareComponents = (left: number, right: number): number =>
+    stableCompare(components[left]![0]!, components[right]![0]!);
+  const localRanks = new Map<number, ReadonlyMap<string, number>>();
+  const componentWidths = new Map<number, number>();
+  for (const componentIndex of activeComponents) {
+    const component = components[componentIndex]!;
+    const ranks = internalComponentRanks(
+      component,
+      directionalLinks,
+      component.includes(originNodeId) ? originNodeId : null,
+    );
+    localRanks.set(componentIndex, ranks);
+    componentWidths.set(componentIndex, Math.max(...ranks.values()) + 1);
+  }
+
+  const remainingIncoming = new Map(
+    [...activeComponents].map((componentIndex) => [
+      componentIndex,
+      [...incoming.get(componentIndex)!].filter((source) => activeComponents.has(source)).length,
+    ]),
+  );
+  const componentStarts = new Map<number, number>();
+  const ready = [...activeComponents]
+    .filter((componentIndex) => remainingIncoming.get(componentIndex) === 0)
+    .sort(compareComponents);
+  for (const componentIndex of ready) componentStarts.set(componentIndex, 0);
+  while (ready.length > 0) {
+    const current = ready.shift()!;
+    for (const target of [...outgoing.get(current)!].sort(compareComponents)) {
+      if (!activeComponents.has(target)) continue;
+      componentStarts.set(
+        target,
+        Math.max(
+          componentStarts.get(target) ?? 0,
+          componentStarts.get(current)! + componentWidths.get(current)!,
+        ),
+      );
+      const unresolved = remainingIncoming.get(target)! - 1;
+      remainingIncoming.set(target, unresolved);
+      if (unresolved === 0) {
+        ready.push(target);
+        ready.sort(compareComponents);
+      }
+    }
+  }
+
+  const originRank =
+    componentStarts.get(originComponent)! + localRanks.get(originComponent)!.get(originNodeId)!;
+  const ranks = new Map<string, number>();
+  for (const componentIndex of activeComponents) {
+    for (const [nodeId, localRank] of localRanks.get(componentIndex)!) {
+      ranks.set(nodeId, componentStarts.get(componentIndex)! + localRank - originRank);
+    }
+  }
+  return ranks;
+}
+
 function componentRanks(
   nodeIds: readonly string[],
   topology: SimpleStructureTopology,
@@ -264,10 +405,10 @@ function componentRanks(
 ): Map<string, number> {
   const nodeSet = new Set(nodeIds);
   const entrypoint = entrypointId && nodeSet.has(entrypointId) ? entrypointId : null;
-  const ranks = new Map<string, number>();
 
   if (!entrypoint) {
     const root = topologyRoot(nodeIds, topology);
+    const ranks = new Map<string, number>();
     ranks.set(root, 0);
     const queue = [root];
     for (let index = 0; index < queue.length; index += 1) {
@@ -281,9 +422,7 @@ function componentRanks(
     return ranks;
   }
 
-  ranks.set(entrypoint, 0);
-  applyForwardWaves(nodeSet, topology, ranks);
-  applyDirectionalWaves(nodeSet, topology, ranks);
+  const ranks = directionalCondensationRanks(nodeIds, topology, entrypoint);
 
   // Ambiguous, cyclic, and undirected remainder stays discoverable beside its
   // nearest ranked topology neighbor without inventing a direction.
@@ -302,75 +441,6 @@ function componentRanks(
     }
   }
   return ranks;
-}
-
-interface RankMove {
-  nodeId: string;
-  rank: number;
-  nonForward: number;
-  occupiedColumns: number;
-  span: number;
-}
-
-function sameMoveObjective(left: RankMove, right: RankMove): boolean {
-  return (
-    left.nonForward === right.nonForward &&
-    left.occupiedColumns === right.occupiedColumns &&
-    left.span === right.span
-  );
-}
-
-function refineComponentRanks(
-  ranks: Map<string, number>,
-  topology: SimpleStructureTopology,
-  originNodeId: string,
-): Map<string, number> {
-  for (;;) {
-    const currentNonForward = countNonForwardLinks(ranks, topology.directionalLinks);
-    if (currentNonForward === 0) return ranks;
-    const moves: RankMove[] = [];
-    for (const nodeId of [...ranks.keys()].sort(stableCompare)) {
-      if (nodeId === originNodeId) continue;
-      const currentRank = ranks.get(nodeId)!;
-      const candidateRankValues = new Set([currentRank - 1, currentRank + 1]);
-      for (const [from, to] of topology.directionalLinks) {
-        if (to === nodeId) {
-          const predecessorRank = ranks.get(from);
-          if (predecessorRank !== undefined) candidateRankValues.add(predecessorRank + 1);
-        }
-        if (from === nodeId) {
-          const successorRank = ranks.get(to);
-          if (successorRank !== undefined) candidateRankValues.add(successorRank - 1);
-        }
-      }
-      candidateRankValues.delete(currentRank);
-      const candidates = [...candidateRankValues].map((candidateRank) => {
-        const candidateRanks = new Map(ranks).set(nodeId, candidateRank);
-        return {
-          nodeId,
-          rank: candidateRank,
-          nonForward: countNonForwardLinks(candidateRanks, topology.directionalLinks),
-          occupiedColumns: new Set(candidateRanks.values()).size,
-          span: totalDirectionalSpan(candidateRanks, topology.directionalLinks),
-        };
-      });
-      const valid = candidates.filter((candidate) => candidate.nonForward < currentNonForward);
-      const unitMoves = valid.filter(({ rank }) => Math.abs(rank - currentRank) === 1);
-      if (unitMoves.length === 2 && sameMoveObjective(unitMoves[0]!, unitMoves[1]!)) continue;
-      moves.push(...valid);
-    }
-    moves.sort(
-      (left, right) =>
-        left.nonForward - right.nonForward ||
-        left.occupiedColumns - right.occupiedColumns ||
-        left.span - right.span ||
-        stableCompare(left.nodeId, right.nodeId) ||
-        left.rank - right.rank,
-    );
-    const best = moves[0];
-    if (!best) return ranks;
-    ranks.set(best.nodeId, best.rank);
-  }
 }
 
 function orderRankGroups(
@@ -427,8 +497,7 @@ function layoutTopologyComponent(
   topology: SimpleStructureTopology,
   entrypointId: string | null,
 ): ComponentProjection {
-  const baseRanks = componentRanks(nodeIds, topology, entrypointId);
-  const ranks = entrypointId ? refineComponentRanks(baseRanks, topology, entrypointId) : baseRanks;
+  const ranks = componentRanks(nodeIds, topology, entrypointId);
   const rawGroups = new Map<number, string[]>();
   for (const nodeId of nodeIds) {
     const rank = ranks.get(nodeId) ?? 0;

@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { Structure } from "../../src/domain/models.js";
 import { initialStructureLayout } from "../../src/web/structure-graph.js";
 import {
+  boxesOverlap,
   buildFullStructureRenderModel,
   buildStructureRenderModel,
   EDGE_LABEL_LINE_HEIGHT,
+  labelBox,
 } from "../../src/web/structure-render-model.js";
 
 function renderStructure(): Structure {
@@ -184,6 +186,81 @@ describe("Structure shared render model", () => {
     expect(structures[2]!.displayLines).toHaveLength(2);
     expect(structures[2]!.displayLines[1]).toMatch(/…$/u);
     expect(structures[2]!.height).toBe(EDGE_LABEL_LINE_HEIGHT * 2 + 10);
+  });
+
+  it("re-wraps a crowded label within two lines before using a collision fallback", () => {
+    const structure: Structure = {
+      ...renderStructure(),
+      originNodeId: "controller",
+      nodes: ["routes", "composition", "controller", "auth", "handler", "request-schema"].map(
+        (id) => ({
+          id,
+          label: id,
+          description: null,
+          kind: null,
+          notation: "plain",
+          anchor: null,
+        }),
+      ),
+      edges: [
+        {
+          id: "controller-executes-handler",
+          from: "controller",
+          to: "handler",
+          label: "HTTP commandとして実行する",
+          directed: true,
+          anchors: [
+            { path: "src/controller.ts", startLine: 1, endLine: 1 },
+            { path: "src/handler.ts", startLine: 1, endLine: 1 },
+          ],
+        },
+        {
+          id: "composition-constructs-handler",
+          from: "composition",
+          to: "handler",
+          label: "具象portを注入して構築する",
+          directed: true,
+          anchors: [
+            { path: "src/composition.ts", startLine: 1, endLine: 1 },
+            { path: "src/handler.ts", startLine: 1, endLine: 1 },
+          ],
+        },
+      ],
+    };
+    const positions = {
+      routes: { x: 64, y: 432 },
+      composition: { x: 64, y: 616 },
+      controller: { x: 484, y: 432 },
+      auth: { x: 484, y: 616 },
+      handler: { x: 904, y: 432 },
+      "request-schema": { x: 904, y: 616 },
+    };
+    const model = buildStructureRenderModel({
+      structure,
+      positions,
+      sourceChangeKinds: new Map(),
+      selection: {
+        nodeIds: new Set(structure.nodes.map(({ id }) => id)),
+        edgeIds: new Set(structure.edges.map(({ id }) => id)),
+        labelEdgeIds: new Set(structure.edges.map(({ id }) => id)),
+      },
+      labelAccessory: "source-actions",
+    });
+    const [composition, controller] = model.labels;
+
+    expect(model.labels.map(({ edge }) => edge.id)).toEqual([
+      "composition-constructs-handler",
+      "controller-executes-handler",
+    ]);
+    expect(model.labels.every(({ crowded }) => !crowded)).toBe(true);
+    expect(controller!.displayLines.length).toBeLessThanOrEqual(2);
+    expect(controller!.boxWidth).toBeLessThanOrEqual(170);
+    expect(
+      boxesOverlap(
+        labelBox(composition!.x, composition!.y, composition!.boxWidth, composition!.height),
+        labelBox(controller!.x, controller!.y, controller!.boxWidth, controller!.height),
+      ),
+    ).toBe(false);
   });
 
   it("does not silently synthesize missing session coordinates", () => {
