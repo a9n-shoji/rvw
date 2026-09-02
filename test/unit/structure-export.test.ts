@@ -165,7 +165,7 @@ describe("Structure SVG export", () => {
     }
   });
 
-  it("keeps complete Edge label text available without ellipsis", () => {
+  it("clamps rendered Edge label text while keeping the complete text in the title", () => {
     const structure = exportStructure();
     const longLabel = structure.edges[0]!.label;
     const { document } = documentFor(structure);
@@ -176,7 +176,7 @@ describe("Structure SVG export", () => {
     expect(document.source).toContain(`<title>${escapedLabel}</title>`);
     const labelGroup = document.source.match(/<g data-edge-label-id="edge-0"[\s\S]*?<\/g>/u)?.[0];
     expect(labelGroup).toBeDefined();
-    expect(labelGroup).not.toContain("…");
+    expect(labelGroup).toContain("…");
   });
 
   it("fails rather than exporting an incomplete layout", () => {

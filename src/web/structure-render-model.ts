@@ -35,6 +35,7 @@ export interface EdgeSourcePresentation {
 
 export interface StructureEdgeLabelPlacement {
   edge: StructureEdge;
+  displayLines: readonly string[];
   source: EdgeSourcePresentation;
   x: number;
   y: number;
@@ -370,6 +371,7 @@ function edgeLabelSize(
   selectWidth: number;
   boxWidth: number;
   height: number;
+  displayLines: readonly string[];
   source: EdgeSourcePresentation;
 } {
   const naturalTextWidth = Math.ceil(structureTextUnits(edge.label) * 11.5);
@@ -381,12 +383,13 @@ function edgeLabelSize(
     ),
   );
   const contentWidth = Math.max(1, textWidth - EDGE_LABEL_HORIZONTAL_PADDING);
-  const lineCount = wrapStructureText({
+  const displayLines = wrapStructureText({
     text: edge.label,
     maxUnits: contentWidth / 11.5,
-    ellipsize: false,
-  }).length;
-  const textHeight = Math.max(24, lineCount * EDGE_LABEL_LINE_HEIGHT + 10);
+    maxLines: 2,
+    ellipsize: true,
+  });
+  const textHeight = Math.max(24, displayLines.length * EDGE_LABEL_LINE_HEIGHT + 10);
   const source = edgeSourcePresentation(edge, sourceChangeKinds);
   const sourceBadgeOverflow = source.anchorCount > 1 ? 4 : 0;
   const sourceActionWidth =
@@ -399,6 +402,7 @@ function edgeLabelSize(
     selectWidth: textWidth,
     boxWidth: textWidth + sourceActionWidth,
     height,
+    displayLines,
     source,
   };
 }
@@ -501,6 +505,7 @@ export function placeEdgeLabels(
     occupyLabel(labelBox(chosen.x, chosen.y, size.boxWidth, size.height, 4));
     placements.push({
       edge,
+      displayLines: size.displayLines,
       source: size.source,
       x: chosen.x,
       y: chosen.y,

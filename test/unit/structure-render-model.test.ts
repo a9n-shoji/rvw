@@ -4,6 +4,7 @@ import { initialStructureLayout } from "../../src/web/structure-graph.js";
 import {
   buildFullStructureRenderModel,
   buildStructureRenderModel,
+  EDGE_LABEL_LINE_HEIGHT,
 } from "../../src/web/structure-render-model.js";
 
 function renderStructure(): Structure {
@@ -157,6 +158,32 @@ describe("Structure shared render model", () => {
     const placements = (model: typeof first) =>
       Object.fromEntries(model.labels.map(({ edge, x, y }) => [edge.id, { x, y }]));
     expect(placements(reordered)).toEqual(placements(first));
+  });
+
+  it("uses the same maximum two-line representation for label geometry and rendering", () => {
+    const labels = [
+      "calls",
+      "validates through a second line",
+      `explains ${"a very long conditional relation ".repeat(12)}`,
+    ];
+    const structures = labels.map((label) => {
+      const structure = renderStructure();
+      structure.edges = [{ ...structure.edges[0]!, label }];
+      const model = buildFullStructureRenderModel({
+        structure,
+        positions: initialStructureLayout(structure),
+        sourceChangeKinds: new Map(),
+      });
+      return model.labels[0]!;
+    });
+
+    expect(structures[0]!.displayLines).toEqual(["calls"]);
+    expect(structures[0]!.height).toBe(24);
+    expect(structures[1]!.displayLines).toHaveLength(2);
+    expect(structures[1]!.height).toBe(EDGE_LABEL_LINE_HEIGHT * 2 + 10);
+    expect(structures[2]!.displayLines).toHaveLength(2);
+    expect(structures[2]!.displayLines[1]).toMatch(/…$/u);
+    expect(structures[2]!.height).toBe(EDGE_LABEL_LINE_HEIGHT * 2 + 10);
   });
 
   it("does not silently synthesize missing session coordinates", () => {

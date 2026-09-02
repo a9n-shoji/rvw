@@ -359,9 +359,21 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   const contractEdgeLabel = viewer.locator(
     '.structure-edge-label[data-edge-id="detail-response-enters-client"]',
   );
-  await expect(contractEdgeLabel).toContainText("typed payloadを渡す");
+  const fullEdgeLabel = "応答契約の整合が確認できた場合に限りtyped payloadをクライアントへ渡す";
+  const contractEdgeButton = contractEdgeLabel.locator(".structure-edge-select");
+  const contractEdgeText = contractEdgeLabel.locator(".structure-edge-label-text");
+  await expect(contractEdgeButton).toHaveAttribute("title", fullEdgeLabel);
+  await expect(contractEdgeButton).toHaveAttribute("aria-label", new RegExp(fullEdgeLabel));
+  await expect(contractEdgeText).not.toHaveText(fullEdgeLabel);
+  await expect(contractEdgeText).toContainText("…");
+  expect(
+    await contractEdgeText.evaluate((element) => ({
+      breakCount: element.querySelectorAll("br").length,
+      lineClamp: getComputedStyle(element).webkitLineClamp,
+    })),
+  ).toEqual({ breakCount: 1, lineClamp: "2" });
   const [labelButtonBox, sourceActionBox] = await Promise.all([
-    contractEdgeLabel.locator(".structure-edge-select").boundingBox(),
+    contractEdgeButton.boundingBox(),
     contractEdgeLabel.locator(".structure-edge-sources > summary").boundingBox(),
   ]);
   expect(labelButtonBox).not.toBeNull();

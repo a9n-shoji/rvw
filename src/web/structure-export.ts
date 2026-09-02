@@ -370,12 +370,7 @@ function serializeEdgeLabel(
   palette: StructureExportPalette,
 ): string {
   const outline = colorForChangeKind(placement.source.changeKind, palette, palette.accent);
-  const maxUnits = Math.max(1, (placement.selectWidth - 11) / 11.5);
-  const lines = wrapStructureText({
-    text: placement.edge.label,
-    maxUnits,
-    ellipsize: false,
-  });
+  const lines = placement.displayLines;
   const firstY = -((lines.length - 1) * EDGE_LABEL_LINE_HEIGHT) / 2 + 3.5;
   return `<g data-edge-label-id="${escapeXml(placement.edge.id)}" transform="translate(${finiteNumber(placement.x)} ${finiteNumber(placement.y)})"${placement.crowded ? ' data-crowded="true"' : ""}><rect x="${finiteNumber(-placement.selectWidth / 2)}" y="${finiteNumber(-placement.height / 2)}" width="${finiteNumber(placement.selectWidth)}" height="${finiteNumber(placement.height)}" rx="${finiteNumber(placement.height / 2)}" fill="${escapeXml(palette.panel)}" stroke="${escapeXml(outline)}" stroke-width="1"${placement.crowded ? ' stroke-dasharray="4 3"' : ""}/>${svgTextLines({ lines, x: 0, firstY, lineHeight: EDGE_LABEL_LINE_HEIGHT, fontSize: 10, fontFamily: SANS_FONT, fill: outline, anchor: "middle" })}<title>${escapeXml(placement.edge.label)}</title></g>`;
 }

@@ -660,7 +660,7 @@ const fullStackStructureEdges = [
     id: "detail-response-enters-client",
     from: "order-detail-contract",
     to: "order-api-client",
-    label: "typed payloadを渡す",
+    label: "応答契約の整合が確認できた場合に限りtyped payloadをクライアントへ渡す",
     directed: true,
     anchors: [
       { path: "src/shared/contracts/order-detail.ts", startLine: 1, endLine: 24 },
