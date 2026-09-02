@@ -1225,7 +1225,7 @@ app.use("/api/pull-requests/*", async (context, next) => {
   }
   if (requestedId !== pullRequestId) {
     return context.json(
-      { ok: false, error: { code: "PULL_REQUEST_NOT_FOUND", message: "missing pull request" } },
+      { ok: false, error: { code: "PR_NOT_FOUND", message: "missing pull request" } },
       404,
     );
   }

@@ -1,7 +1,8 @@
-import { expect, test, type APIRequestContext, type Request } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page, type Request } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const sourceOid = "b".repeat(40);
+const emptyCommitMessage = "PR commitがありません。";
 
 test.setTimeout(120_000);
 
@@ -87,6 +88,34 @@ function placementCommentIds(request: Request): string[] {
   if (!request.url().includes("/comment-placements/resolve")) return [];
   const body = request.postDataJSON() as { commentIds?: string[] };
   return body.commentIds ?? [];
+}
+
+type CommitEmptyStateProbeWindow = Window & {
+  __rvwSawCommitEmptyState?: boolean;
+};
+
+async function installCommitEmptyStateProbe(page: Page): Promise<void> {
+  await page.addInitScript((message) => {
+    const probeWindow = window as CommitEmptyStateProbeWindow;
+    probeWindow.__rvwSawCommitEmptyState = false;
+    const recordEmptyState = (): void => {
+      if (document.body?.textContent?.includes(message)) {
+        probeWindow.__rvwSawCommitEmptyState = true;
+      }
+    };
+    new MutationObserver(recordEmptyState).observe(document, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    recordEmptyState();
+  }, emptyCommitMessage);
+}
+
+async function sawCommitEmptyState(page: Page): Promise<boolean> {
+  return await page.evaluate(() =>
+    Boolean((window as CommitEmptyStateProbeWindow).__rvwSawCommitEmptyState),
+  );
 }
 
 test("keeps 100-comment viewer placement requests within constant budgets", async ({
@@ -617,6 +646,8 @@ test("loads an external comment written before the initial revision snapshot", a
   try {
     await page.goto(`/?pullRequestId=${pullRequestId}`);
     await heartbeatStartedPromise;
+    await expect(page.getByText("レビュー状態を読み込んでいます…", { exact: true })).toBeVisible();
+    await expect(page.getByText(emptyCommitMessage, { exact: true })).toHaveCount(0);
     expect(commentListRequests).toBe(0);
 
     const externalBody = "External comment before revision bootstrap";
@@ -633,6 +664,9 @@ test("loads an external comment written before the initial revision snapshot", a
 
     releaseHeartbeat();
     await expect.poll(() => commentListRequests).toBe(1);
+    await expect(page.getByRole("button", { name: /^対象commit:/u })).toHaveAccessibleName(
+      /PR全体/u,
+    );
     await page.getByRole("button", { name: /^コメント \d+$/u }).click();
     await expect(page.getByText(externalBody, { exact: true })).toBeVisible();
     expect(commentListRequests).toBe(1);
@@ -640,6 +674,83 @@ test("loads an external comment written before the initial revision snapshot", a
     releaseHeartbeat();
     releaseRefresh();
     if (externalCommentId) await deleteComments(request, [externalCommentId]);
+  }
+});
+
+test("shows the revision bootstrap error without starting the Pull Request query", async ({
+  page,
+}) => {
+  const bootstrapErrorMessage = "Revision snapshot fixture failed.";
+  let pullRequestGets = 0;
+  await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
+    if (route.request().method() === "GET") pullRequestGets += 1;
+    await route.fallback();
+  });
+  await page.route("**/api/meta/change-sequence", async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error: { code: "REVISION_SNAPSHOT_FAILED", message: bootstrapErrorMessage },
+      }),
+    });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+
+  await expect(page.getByText(bootstrapErrorMessage, { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByText(emptyCommitMessage, { exact: true })).toHaveCount(0);
+  expect(pullRequestGets).toBe(0);
+});
+
+test("selects the latest commit without rendering a transient empty-commit state", async ({
+  page,
+}) => {
+  await installCommitEmptyStateProbe(page);
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+
+  const commitPicker = page.getByRole("button", { name: /^対象commit:/u });
+  await expect(commitPicker).toHaveAccessibleName(/Trim fixture input.*2 commits.*PR全体/u);
+  await commitPicker.click();
+  await expect(
+    page.getByRole("dialog").getByRole("option", { name: /Trim fixture input.*最新/u }),
+  ).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Escape");
+  await expect(page.getByText(emptyCommitMessage, { exact: true })).toHaveCount(0);
+  expect(await sawCommitEmptyState(page)).toBe(false);
+});
+
+test("shows the empty-commit state only after a successful empty commit enumeration", async ({
+  page,
+}) => {
+  let releaseRefresh = (): void => {};
+  const refreshGate = new Promise<void>((resolve) => {
+    releaseRefresh = resolve;
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    await refreshGate;
+    await route.fallback();
+  });
+  await page.route(`**/api/pull-requests/${pullRequestId}`, async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    const response = await route.fetch();
+    const body = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({ response, json: { ...body, commits: [] } });
+  });
+
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await expect(page.getByText(emptyCommitMessage, { exact: true })).toBeVisible();
+    await expect(page.getByText("レビュー状態を読み込んでいます…", { exact: true })).toHaveCount(0);
+  } finally {
+    releaseRefresh();
   }
 });
 
