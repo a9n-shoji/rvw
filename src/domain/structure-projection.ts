@@ -167,6 +167,14 @@ function totalDirectionalSpan(
   }, 0);
 }
 
+function compareNumberArrays(left: readonly number[], right: readonly number[]): number {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
 function chooseRankProposal(
   nodeId: string,
   proposals: ReadonlySet<number>,
@@ -277,6 +285,10 @@ function internalComponentRanks(
   nodeIds: readonly string[],
   directionalLinks: readonly DirectionalLink[],
   preferredAnchor: string | null,
+  originIncomingBoundaryNodeIds: readonly string[],
+  incomingBoundaryNodeIds: readonly string[],
+  outgoingBoundaryNodeIds: readonly string[],
+  attachmentBoundaryNodeIds: readonly string[],
 ): Map<string, number> {
   if (nodeIds.length === 1) return new Map([[nodeIds[0]!, 0]]);
   const nodeSet = new Set(nodeIds);
@@ -295,14 +307,49 @@ function internalComponentRanks(
     links: internalLinks,
     directionalLinks: internalLinks,
   };
-  const anchor =
-    preferredAnchor && nodeSet.has(preferredAnchor)
-      ? preferredAnchor
-      : topologyRoot(nodeIds, topology);
-  const rawRanks = new Map([[anchor, 0]]);
-  applyForwardWaves(nodeSet, topology, rawRanks);
-  const rankIndexes = normalizedRankIndexes(rawRanks);
-  return new Map(nodeIds.map((nodeId) => [nodeId, rankIndexes.get(rawRanks.get(nodeId)!) ?? 0]));
+  const ranksFromAnchor = (anchor: string): Map<string, number> => {
+    const rawRanks = new Map([[anchor, 0]]);
+    applyForwardWaves(nodeSet, topology, rawRanks);
+    const rankIndexes = normalizedRankIndexes(rawRanks);
+    return new Map(nodeIds.map((nodeId) => [nodeId, rankIndexes.get(rawRanks.get(nodeId)!) ?? 0]));
+  };
+  if (preferredAnchor && nodeSet.has(preferredAnchor)) return ranksFromAnchor(preferredAnchor);
+
+  const candidates = nodeIds.map((anchor) => {
+    const ranks = ranksFromAnchor(anchor);
+    const maxRank = Math.max(...ranks.values());
+    return {
+      anchor,
+      ranks,
+      nonForward: countNonForwardLinks(ranks, internalLinks),
+      originIncomingBoundaryRanks: originIncomingBoundaryNodeIds
+        .map((nodeId) => ranks.get(nodeId)!)
+        .sort((left, right) => right - left),
+      incomingBoundaryRanks: incomingBoundaryNodeIds
+        .map((nodeId) => ranks.get(nodeId)!)
+        .sort((left, right) => right - left),
+      outgoingBoundaryDistances: outgoingBoundaryNodeIds
+        .map((nodeId) => maxRank - ranks.get(nodeId)!)
+        .sort((left, right) => right - left),
+      attachmentBoundaryRanks: attachmentBoundaryNodeIds
+        .map((nodeId) => ranks.get(nodeId)!)
+        .sort((left, right) => right - left),
+      width: new Set(ranks.values()).size,
+      span: totalDirectionalSpan(ranks, internalLinks),
+    };
+  });
+  candidates.sort(
+    (left, right) =>
+      left.nonForward - right.nonForward ||
+      compareNumberArrays(left.originIncomingBoundaryRanks, right.originIncomingBoundaryRanks) ||
+      compareNumberArrays(left.incomingBoundaryRanks, right.incomingBoundaryRanks) ||
+      compareNumberArrays(left.outgoingBoundaryDistances, right.outgoingBoundaryDistances) ||
+      compareNumberArrays(left.attachmentBoundaryRanks, right.attachmentBoundaryRanks) ||
+      left.width - right.width ||
+      left.span - right.span ||
+      stableCompare(left.anchor, right.anchor),
+  );
+  return candidates[0]!.ranks;
 }
 
 function directionalCondensationRanks(
@@ -330,47 +377,86 @@ function directionalCondensationRanks(
   }
 
   const originComponent = componentByNodeId.get(originNodeId)!;
-  const activeComponents = new Set([originComponent]);
-  const activeQueue = [originComponent];
-  for (let index = 0; index < activeQueue.length; index += 1) {
-    const current = activeQueue[index]!;
-    for (const neighbor of [...outgoing.get(current)!, ...incoming.get(current)!]) {
-      if (activeComponents.has(neighbor)) continue;
-      activeComponents.add(neighbor);
-      activeQueue.push(neighbor);
+  const directionalGroups: number[][] = [];
+  const directionalGroupByComponent = new Map<number, number>();
+  for (let first = 0; first < components.length; first += 1) {
+    if (directionalGroupByComponent.has(first)) continue;
+    const groupIndex = directionalGroups.length;
+    const group: number[] = [];
+    const queue = [first];
+    directionalGroupByComponent.set(first, groupIndex);
+    for (let index = 0; index < queue.length; index += 1) {
+      const current = queue[index]!;
+      group.push(current);
+      for (const neighbor of [...outgoing.get(current)!, ...incoming.get(current)!]) {
+        if (directionalGroupByComponent.has(neighbor)) continue;
+        directionalGroupByComponent.set(neighbor, groupIndex);
+        queue.push(neighbor);
+      }
     }
+    directionalGroups.push(group);
+  }
+
+  const directionalGroupByNodeId = new Map<string, number>();
+  for (const [nodeId, componentIndex] of componentByNodeId) {
+    directionalGroupByNodeId.set(nodeId, directionalGroupByComponent.get(componentIndex)!);
+  }
+  const attachmentBoundaryNodeIds = new Map(
+    components.map((_, componentIndex) => [componentIndex, [] as string[]]),
+  );
+  for (const [left, right] of topology.links) {
+    if (directionalGroupByNodeId.get(left) === directionalGroupByNodeId.get(right)) continue;
+    attachmentBoundaryNodeIds.get(componentByNodeId.get(left)!)!.push(left);
+    attachmentBoundaryNodeIds.get(componentByNodeId.get(right)!)!.push(right);
   }
 
   const compareComponents = (left: number, right: number): number =>
     stableCompare(components[left]![0]!, components[right]![0]!);
   const localRanks = new Map<number, ReadonlyMap<string, number>>();
   const componentWidths = new Map<number, number>();
-  for (const componentIndex of activeComponents) {
+  for (let componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
     const component = components[componentIndex]!;
     const ranks = internalComponentRanks(
       component,
       directionalLinks,
       component.includes(originNodeId) ? originNodeId : null,
+      directionalLinks.flatMap(([from, to]) =>
+        componentByNodeId.get(from) === originComponent &&
+        componentByNodeId.get(to) === componentIndex &&
+        componentIndex !== originComponent
+          ? [to]
+          : [],
+      ),
+      directionalLinks.flatMap(([from, to]) =>
+        componentByNodeId.get(to) === componentIndex &&
+        componentByNodeId.get(from) !== componentIndex
+          ? [to]
+          : [],
+      ),
+      directionalLinks.flatMap(([from, to]) =>
+        componentByNodeId.get(from) === componentIndex &&
+        componentByNodeId.get(to) !== componentIndex
+          ? [from]
+          : [],
+      ),
+      attachmentBoundaryNodeIds.get(componentIndex)!,
     );
     localRanks.set(componentIndex, ranks);
     componentWidths.set(componentIndex, Math.max(...ranks.values()) + 1);
   }
 
   const remainingIncoming = new Map(
-    [...activeComponents].map((componentIndex) => [
-      componentIndex,
-      [...incoming.get(componentIndex)!].filter((source) => activeComponents.has(source)).length,
-    ]),
+    components.map((_, componentIndex) => [componentIndex, incoming.get(componentIndex)!.size]),
   );
   const componentStarts = new Map<number, number>();
-  const ready = [...activeComponents]
+  const ready = components
+    .map((_, componentIndex) => componentIndex)
     .filter((componentIndex) => remainingIncoming.get(componentIndex) === 0)
     .sort(compareComponents);
   for (const componentIndex of ready) componentStarts.set(componentIndex, 0);
   while (ready.length > 0) {
     const current = ready.shift()!;
     for (const target of [...outgoing.get(current)!].sort(compareComponents)) {
-      if (!activeComponents.has(target)) continue;
       componentStarts.set(
         target,
         Math.max(
@@ -387,13 +473,82 @@ function directionalCondensationRanks(
     }
   }
 
-  const originRank =
-    componentStarts.get(originComponent)! + localRanks.get(originComponent)!.get(originNodeId)!;
-  const ranks = new Map<string, number>();
-  for (const componentIndex of activeComponents) {
+  const unshiftedRanks = new Map<string, number>();
+  for (let componentIndex = 0; componentIndex < components.length; componentIndex += 1) {
     for (const [nodeId, localRank] of localRanks.get(componentIndex)!) {
-      ranks.set(nodeId, componentStarts.get(componentIndex)! + localRank - originRank);
+      unshiftedRanks.set(nodeId, componentStarts.get(componentIndex)! + localRank);
     }
+  }
+
+  const originGroup = directionalGroupByComponent.get(originComponent)!;
+  const groupOffsets = new Map<number, number>([[originGroup, -unshiftedRanks.get(originNodeId)!]]);
+  while (groupOffsets.size < directionalGroups.length) {
+    const proposals = new Map<number, Set<number>>();
+    for (const [left, right] of topology.links) {
+      const leftGroup = directionalGroupByNodeId.get(left)!;
+      const rightGroup = directionalGroupByNodeId.get(right)!;
+      if (leftGroup === rightGroup) continue;
+      const leftOffset = groupOffsets.get(leftGroup);
+      const rightOffset = groupOffsets.get(rightGroup);
+      if (leftOffset !== undefined && rightOffset === undefined) {
+        const offsets = proposals.get(rightGroup) ?? new Set<number>();
+        offsets.add(unshiftedRanks.get(left)! + leftOffset + 1 - unshiftedRanks.get(right)!);
+        proposals.set(rightGroup, offsets);
+      }
+      if (leftOffset === undefined && rightOffset !== undefined) {
+        const offsets = proposals.get(leftGroup) ?? new Set<number>();
+        offsets.add(unshiftedRanks.get(right)! + rightOffset + 1 - unshiftedRanks.get(left)!);
+        proposals.set(leftGroup, offsets);
+      }
+    }
+    if (proposals.size === 0) break;
+    const knownGroupOffsets = new Map(groupOffsets);
+    const rankedValues = [...unshiftedRanks].flatMap(([nodeId, rank]) => {
+      const offset = knownGroupOffsets.get(directionalGroupByNodeId.get(nodeId)!);
+      return offset === undefined ? [] : [rank + offset];
+    });
+    const acceptedOffsets = new Map<number, number>();
+    for (const [groupIndex, proposedOffsets] of proposals) {
+      const candidates = [...proposedOffsets].map((offset) => {
+        const crossGroupSpan = topology.links.reduce((total, [left, right]) => {
+          const leftGroup = directionalGroupByNodeId.get(left)!;
+          const rightGroup = directionalGroupByNodeId.get(right)!;
+          const leftOffset = leftGroup === groupIndex ? offset : knownGroupOffsets.get(leftGroup);
+          const rightOffset =
+            rightGroup === groupIndex ? offset : knownGroupOffsets.get(rightGroup);
+          if (leftOffset === undefined || rightOffset === undefined) return total;
+          return (
+            total +
+            Math.abs(
+              unshiftedRanks.get(left)! + leftOffset - unshiftedRanks.get(right)! - rightOffset,
+            )
+          );
+        }, 0);
+        const addedRanks = directionalGroups[groupIndex]!.flatMap((componentIndex) =>
+          components[componentIndex]!.map((nodeId) => unshiftedRanks.get(nodeId)! + offset),
+        );
+        return {
+          offset,
+          crossGroupSpan,
+          occupiedColumns: new Set([...rankedValues, ...addedRanks]).size,
+        };
+      });
+      candidates.sort(
+        (left, right) =>
+          left.crossGroupSpan - right.crossGroupSpan ||
+          left.occupiedColumns - right.occupiedColumns ||
+          Math.abs(left.offset) - Math.abs(right.offset) ||
+          left.offset - right.offset,
+      );
+      acceptedOffsets.set(groupIndex, candidates[0]!.offset);
+    }
+    for (const [groupIndex, offset] of acceptedOffsets) groupOffsets.set(groupIndex, offset);
+  }
+
+  const ranks = new Map<string, number>();
+  for (const [nodeId, rank] of unshiftedRanks) {
+    const groupOffset = groupOffsets.get(directionalGroupByNodeId.get(nodeId)!);
+    ranks.set(nodeId, rank + (groupOffset ?? 0));
   }
   return ranks;
 }
@@ -424,8 +579,8 @@ function componentRanks(
 
   const ranks = directionalCondensationRanks(nodeIds, topology, entrypoint);
 
-  // Ambiguous, cyclic, and undirected remainder stays discoverable beside its
-  // nearest ranked topology neighbor without inventing a direction.
+  // Any topology-only remainder stays discoverable beside its nearest ranked
+  // neighbor without turning its ambiguous relation into a directional signal.
   const rankedQueue = [...ranks]
     .sort(
       ([leftId, leftRank], [rightId, rightRank]) =>

@@ -693,6 +693,93 @@ describe("Structure domain presentation rules", () => {
     expect(initialStructureLayout(relabeled)).toEqual(initialStructureLayout(structure));
   });
 
+  it.each(["undirected", "reciprocal"] as const)(
+    "preserves a directional chain beyond a %s bridge",
+    (bridgeKind) => {
+      const structure = directedStructure(
+        "origin",
+        ["origin", "next", "sink", "middle", "source"],
+        [
+          ["origin", "next"],
+          ["source", "middle"],
+          ["middle", "sink"],
+        ],
+      );
+      structure.edges.push(
+        {
+          id: "bridge-forward",
+          from: "origin",
+          to: "sink",
+          label: "relates",
+          directed: bridgeKind === "reciprocal",
+          anchors: [],
+        },
+        ...(bridgeKind === "reciprocal"
+          ? [
+              {
+                id: "bridge-reverse",
+                from: "sink",
+                to: "origin",
+                label: "relates",
+                directed: true,
+                anchors: [],
+              },
+            ]
+          : []),
+      );
+
+      const projection = projectStructure(structure);
+      expect(projection.rankByNodeId.get("source")).toBeLessThan(
+        projection.rankByNodeId.get("middle")!,
+      );
+      expect(projection.rankByNodeId.get("middle")).toBeLessThan(
+        projection.rankByNodeId.get("sink")!,
+      );
+      expect(projection.diagnostics.nonForwardDirectionalLinkCount).toBe(0);
+      expect(structureAuthoringWarnings(projection.diagnostics)).toEqual([]);
+      expect(
+        projectStructure({
+          ...structure,
+          nodes: [...structure.nodes].reverse(),
+          edges: [...structure.edges].reverse(),
+        }),
+      ).toEqual(projection);
+    },
+  );
+
+  it("uses whole-graph SCC boundaries before stable IDs when choosing a cycle anchor", () => {
+    const logicalLinks = [
+      [0, 1],
+      [1, 2],
+      [1, 3],
+      [2, 4],
+      [3, 4],
+      [4, 1],
+    ] as const;
+    const project = (idsByLogicalNode: readonly string[]) => {
+      const structure = directedStructure(
+        idsByLogicalNode[0]!,
+        idsByLogicalNode,
+        logicalLinks.map(([from, to]) => [idsByLogicalNode[from]!, idsByLogicalNode[to]!] as const),
+      );
+      const projection = projectStructure(structure);
+      return {
+        ranks: idsByLogicalNode.map((nodeId) => projection.rankByNodeId.get(nodeId)),
+        columns: idsByLogicalNode.map((nodeId) => projection.columnIndexByNodeId.get(nodeId)),
+        diagnostics: projection.diagnostics,
+        warningCodes: structureAuthoringWarnings(projection.diagnostics).map(({ code }) => code),
+      };
+    };
+
+    const first = project(["origin", "a", "b", "c", "d"]);
+    const renamed = project(["origin", "b", "c", "d", "a"]);
+    expect(first).toEqual(renamed);
+    expect(first).toMatchObject({
+      ranks: [0, 1, 2, 2, 3],
+      warningCodes: [],
+    });
+  });
+
   it("emits canonical tall-column and non-forward-ratio warnings at their thresholds", () => {
     const isolated = structureWithHub();
     isolated.nodes = isolated.nodes.slice(0, 1);
