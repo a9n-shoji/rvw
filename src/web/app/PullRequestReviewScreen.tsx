@@ -556,10 +556,10 @@ const themeOptions: { preference: ThemePreference; label: string }[] = [
 const SYNC_FEEDBACK_DURATION_MS = 3_000;
 
 function pullRequestLoadErrorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.code === "PULL_REQUEST_NOT_FOUND") {
+  if (error instanceof ApiError && error.code === "PR_NOT_FOUND") {
     return "Pull Requestが見つかりません。`rvw open`から起動し直してください。";
   }
-  return error instanceof Error ? error.message : "PR commitがありません。";
+  return error instanceof Error ? error.message : "レビュー状態を読み込めませんでした。";
 }
 
 export function PullRequestReviewScreen({
@@ -574,7 +574,7 @@ export function PullRequestReviewScreen({
   onNavigateToList: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [selectedOid, setSelectedOid] = useState<string | null>(null);
+  const [selectedOidState, setSelectedOid] = useState<string | null>(null);
   const [rangeStartOid, setRangeStartOid] = useState<string | null>(null);
   const [documentDisplayMode, setDocumentDisplayMode] = useState<DocumentDisplayMode>("full");
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("unified");
@@ -1206,6 +1206,12 @@ export function PullRequestReviewScreen({
   const comparisonBaseOid = pullRequestQuery.data?.comparisonBaseOid ?? null;
   const latestHeadOid = pullRequestQuery.data?.headOid ?? null;
   const latestPullRequestTitle = pullRequestQuery.data?.pullRequest.latestTitle;
+  const selectedOid =
+    selectedOidState && commits.some((commit) => commit.oid === selectedOidState)
+      ? selectedOidState
+      : latestHeadOid && commits.some((commit) => commit.oid === latestHeadOid)
+        ? latestHeadOid
+        : null;
 
   useEffect(() => {
     const pullRequest = pullRequestQuery.data?.pullRequest;
@@ -1256,10 +1262,12 @@ export function PullRequestReviewScreen({
     if (
       latestHeadOid &&
       !suppressRefreshHeadFollow &&
-      (!selectedOid || selectedOid === previousLatest)
+      (!selectedOidState ||
+        selectedOidState === previousLatest ||
+        !commits.some((commit) => commit.oid === selectedOidState))
     ) {
       const shouldKeepSingleCommit = Boolean(
-        commitRangeTouched.current && selectedOid && rangeStartOid === selectedOid,
+        commitRangeTouched.current && selectedOidState && rangeStartOid === selectedOidState,
       );
       const preservedStartIsValid = commits.some((commit) => commit.oid === rangeStartOid);
       setSelectedOid(latestHeadOid);
@@ -1274,7 +1282,7 @@ export function PullRequestReviewScreen({
       );
     }
     observedLatestHead.current = latestHeadOid;
-  }, [commits, latestHeadOid, rangeStartOid, selectedOid]);
+  }, [commits, latestHeadOid, rangeStartOid, selectedOidState]);
   useEffect(() => {
     if (!rangeStartValid) {
       setRangeStartOid(defaultRangeStartOid);
@@ -1336,7 +1344,7 @@ export function PullRequestReviewScreen({
     if (
       !pullRequestId ||
       !pullRequestQuery.isSuccess ||
-      !selectedOid ||
+      !selectedOidState ||
       readingHistoryReady.current
     ) {
       return;
@@ -1360,7 +1368,7 @@ export function PullRequestReviewScreen({
     pullRequestQuery.isSuccess,
     restoreReadingHistory,
     restoreReadingHistoryOnMount,
-    selectedOid,
+    selectedOidState,
   ]);
 
   useEffect(() => {
@@ -2523,7 +2531,14 @@ export function PullRequestReviewScreen({
     [resolveStructureSource, resolveWalkthroughReference],
   );
 
-  if (pullRequestQuery.isLoading) {
+  const revisionSnapshotReady = changeSequence.data?.revisions !== undefined;
+  const pullRequestDataReady = pullRequestQuery.data !== undefined;
+  const initialRevisionError = !revisionSnapshotReady ? changeSequence.error : null;
+  const initialPullRequestError = !pullRequestDataReady ? pullRequestQuery.error : null;
+  if (
+    (!revisionSnapshotReady && !pullRequestDataReady && !initialRevisionError) ||
+    (revisionSnapshotReady && !pullRequestDataReady && !initialPullRequestError)
+  ) {
     return (
       <main className="fatal-state">
         <h1>rvw</h1>
@@ -2531,11 +2546,27 @@ export function PullRequestReviewScreen({
       </main>
     );
   }
-  if (pullRequestQuery.error || !pullRequestQuery.data || !selectedOid) {
+  if (initialRevisionError || initialPullRequestError || !pullRequestQuery.data) {
     return (
       <main className="fatal-state">
         <h1>rvw</h1>
-        <p>{pullRequestLoadErrorMessage(pullRequestQuery.error)}</p>
+        <p>{pullRequestLoadErrorMessage(initialRevisionError ?? initialPullRequestError)}</p>
+      </main>
+    );
+  }
+  if (commits.length === 0) {
+    return (
+      <main className="fatal-state">
+        <h1>rvw</h1>
+        <p>PR commitがありません。</p>
+      </main>
+    );
+  }
+  if (!selectedOid) {
+    return (
+      <main className="fatal-state">
+        <h1>rvw</h1>
+        <p>レビュー状態を読み込んでいます…</p>
       </main>
     );
   }
@@ -2582,7 +2613,8 @@ export function PullRequestReviewScreen({
     resetMutation.error ??
     themePreferenceQuery.error ??
     themePreferenceMutation.error ??
-    changeSequence.error;
+    changeSequence.error ??
+    pullRequestQuery.error;
   const rightPaneVisible =
     documentWorkspace.documents.right.length > 0 || draggedDocumentKey !== null;
   const commentsHeightRange = commentsStackRef.current?.parentElement
