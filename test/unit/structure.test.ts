@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Structure } from "../../src/domain/models.js";
+import {
+  projectStructure,
+  simpleStructureTopology,
+  structureAuthoringWarnings,
+} from "../../src/domain/structure-projection.js";
 import { formatStructureUri, parseStructureUri } from "../../src/domain/structure-uri.js";
 import {
   initialStructureLayout,
@@ -55,6 +60,65 @@ function structureWithHub(): Structure {
     })),
     createdAt: "2026-08-30T00:00:00.000Z",
     updatedAt: "2026-08-30T00:00:00.000Z",
+  };
+}
+
+function terminalHubStructure(): Structure {
+  const ids = [
+    "source",
+    "root",
+    "handler",
+    "loop",
+    "command",
+    "coordinator",
+    "initialize",
+    "mutate",
+    "read",
+    "validate",
+    "publish",
+    "inspect",
+    "hub",
+  ];
+  const link = (from: string, to: string) => ({
+    id: `${from}-${to}`,
+    from,
+    to,
+    label: `${from} to ${to}`,
+    directed: true,
+    anchors: [],
+  });
+  return {
+    ...structureWithHub(),
+    originNodeId: "hub",
+    nodes: ids.map((id) => ({
+      id,
+      label: id,
+      description: `${id} responsibility`,
+      kind: null,
+      notation: "plain" as const,
+      anchor: null,
+    })),
+    edges: [
+      link("source", "root"),
+      link("root", "handler"),
+      link("root", "loop"),
+      link("root", "command"),
+      link("root", "coordinator"),
+      link("handler", "initialize"),
+      link("handler", "read"),
+      link("loop", "mutate"),
+      link("loop", "read"),
+      link("loop", "validate"),
+      link("command", "publish"),
+      link("command", "inspect"),
+      link("coordinator", "validate"),
+      link("initialize", "hub"),
+      link("mutate", "hub"),
+      link("read", "hub"),
+      link("validate", "hub"),
+      link("publish", "hub"),
+      link("inspect", "hub"),
+    ],
   };
 }
 
@@ -292,11 +356,161 @@ describe("Structure domain presentation rules", () => {
       ],
     };
     const layout = initialStructureLayout(structure);
+    const projection = projectStructure(structure);
     expect(layout.entry!.x).toBeLessThan(layout.parse!.x);
     expect(layout.parse!.x).toBeLessThan(layout.execute!.x);
     expect(layout.execute!.x).toBeLessThan(layout.persist!.x);
+    expect(Math.min(...projection.rankByNodeId.values())).toBe(0);
+    expect(projection.diagnostics).toMatchObject({
+      columnCount: 4,
+      rowsPerColumn: [1, 1, 1, 2],
+      maxRows: 2,
+      nonForwardDirectionalLinkCount: 0,
+    });
     expectNoNodeOverlap(layout);
     expect(initialStructureLayout(structure)).toEqual(layout);
+    expect(
+      projectStructure({
+        ...structure,
+        nodes: [...structure.nodes].reverse(),
+        edges: [...structure.edges].reverse(),
+      }),
+    ).toEqual(projection);
+  });
+
+  it("expands a terminal hub origin through multiple negative predecessor ranks", () => {
+    const structure = terminalHubStructure();
+    const projection = projectStructure(structure);
+    const layout = initialStructureLayout(structure);
+    const originColumn = projection.columnIndexByNodeId.get("hub")!;
+
+    expect(projection.rankByNodeId.get("hub")).toBe(0);
+    expect(projection.rankByNodeId.get("initialize")).toBe(-1);
+    expect(projection.rankByNodeId.get("handler")).toBe(-2);
+    expect(projection.rankByNodeId.get("source")).toBe(-4);
+    expect(projection.columnIndexByNodeId.get("initialize")).toBeLessThan(originColumn);
+    expect(projection.columnIndexByNodeId.get("source")).toBeLessThan(
+      projection.columnIndexByNodeId.get("handler")!,
+    );
+    expect(projection.diagnostics).toMatchObject({
+      columnCount: 5,
+      rowsPerColumn: [1, 1, 4, 6, 1],
+      maxRows: 6,
+      directionalLinkCount: 19,
+      nonForwardDirectionalLinkCount: 0,
+      nonForwardDirectionalLinkRatio: 0,
+      originOutgoingDirectionalLinkCount: 0,
+    });
+    expect(structureAuthoringWarnings(projection.diagnostics).map(({ code }) => code)).toEqual([
+      "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION",
+    ]);
+    expectNoNodeOverlap(layout);
+    expect(Object.values(layout).every(({ x, y }) => Number.isFinite(x + y))).toBe(true);
+
+    const shuffled: Structure = {
+      ...structure,
+      nodes: [...structure.nodes].reverse(),
+      edges: [...structure.edges].reverse(),
+    };
+    expect(projectStructure(shuffled)).toEqual(projection);
+    expect(initialStructureLayout(shuffled)).toEqual(layout);
+
+    const alternatePresentation: Structure = {
+      ...structure,
+      nodes: structure.nodes.map((node) => ({
+        ...node,
+        label: `Changed ${node.label}`,
+        description: `Changed ${node.description}`,
+        notation: node.id === "hub" ? "database" : "component",
+      })),
+      edges: structure.edges.map((edge) => ({ ...edge, label: `Changed ${edge.label}` })),
+    };
+    expect(initialStructureLayout(alternatePresentation)).toEqual(layout);
+  });
+
+  it("derives directional ranks and diagnostics only from canonical pair-level topology", () => {
+    const base = structureWithHub();
+    const nodes = ["origin", "parallel", "reciprocal", "undirected", "self"].map((id) => ({
+      id,
+      label: id,
+      description: null,
+      kind: null,
+      notation: "plain" as const,
+      anchor: null,
+    }));
+    const structure: Structure = {
+      ...base,
+      originNodeId: "origin",
+      nodes,
+      edges: [
+        { ...base.edges[0]!, id: "parallel-a", from: "origin", to: "parallel" },
+        { ...base.edges[0]!, id: "parallel-b", from: "origin", to: "parallel" },
+        { ...base.edges[0]!, id: "reciprocal-a", from: "origin", to: "reciprocal" },
+        { ...base.edges[0]!, id: "reciprocal-b", from: "reciprocal", to: "origin" },
+        {
+          ...base.edges[0]!,
+          id: "undirected-a",
+          from: "origin",
+          to: "undirected",
+        },
+        {
+          ...base.edges[0]!,
+          id: "undirected-b",
+          from: "origin",
+          to: "undirected",
+          directed: false,
+        },
+        { ...base.edges[0]!, id: "self", from: "self", to: "self" },
+      ],
+    };
+    const topology = simpleStructureTopology(structure);
+    const projection = projectStructure(structure);
+    expect(topology.directionalLinks).toEqual([["origin", "parallel"]]);
+    expect(projection.diagnostics.directionalLinkCount).toBe(1);
+    expect(projection.diagnostics.originOutgoingDirectionalLinkCount).toBe(1);
+    expect(projection.diagnostics.nonForwardDirectionalLinkCount).toBe(0);
+    expect(projection.diagnostics.nonForwardDirectionalLinkRatio).toBe(0);
+
+    const relabeled = {
+      ...structure,
+      edges: structure.edges.map((edge) => ({ ...edge, label: `long changed ${edge.label}` })),
+    };
+    expect(initialStructureLayout(relabeled)).toEqual(initialStructureLayout(structure));
+  });
+
+  it("emits canonical tall-column and non-forward-ratio warnings at their thresholds", () => {
+    const isolated = structureWithHub();
+    isolated.nodes = isolated.nodes.slice(0, 1);
+    isolated.edges = [];
+    expect(projectStructure(isolated).diagnostics.nonForwardDirectionalLinkRatio).toBe(0);
+
+    const tall = structureWithHub();
+    tall.nodes = tall.nodes.slice(0, 9);
+    tall.edges = tall.edges.slice(0, 8);
+    const tallWarnings = structureAuthoringWarnings(projectStructure(tall).diagnostics);
+    expect(tallWarnings.map(({ code }) => code)).toEqual(["STRUCTURE_LAYOUT_MAX_ROWS_HIGH"]);
+
+    const cycle = structureWithHub();
+    cycle.originNodeId = "a";
+    cycle.nodes = ["a", "b", "c"].map((id) => ({
+      id,
+      label: id,
+      description: null,
+      kind: null,
+      notation: "plain",
+      anchor: null,
+    }));
+    cycle.edges = [
+      { id: "a-b", from: "a", to: "b", label: "calls", directed: true, anchors: [] },
+      { id: "b-c", from: "b", to: "c", label: "calls", directed: true, anchors: [] },
+      { id: "c-a", from: "c", to: "a", label: "calls", directed: true, anchors: [] },
+    ];
+    const cycleProjection = projectStructure(cycle);
+    expect(cycleProjection.diagnostics.nonForwardDirectionalLinkCount).toBe(1);
+    expect(cycleProjection.diagnostics.nonForwardDirectionalLinkRatio).toBeCloseTo(1 / 3);
+    expect(structureAuthoringWarnings(cycleProjection.diagnostics).map(({ code }) => code)).toEqual(
+      ["STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH"],
+    );
   });
 
   it("keeps a 50-Node topology finite and collision-free", () => {

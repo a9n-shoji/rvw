@@ -4,6 +4,7 @@ import {
   createStructureSession,
   deleteStructureSessions,
   getStructureSession,
+  initialStructureViewport,
   MAX_STRUCTURE_ZOOM,
   MIN_STRUCTURE_ZOOM,
   scaledStructureZoom,
@@ -41,6 +42,81 @@ describe("Structure pane sessions", () => {
     const session = createStructureSession(structure("70000000-0000-4000-8000-000000000098"));
     expect(session.focusId).toBe("entry");
     expect(session.depth).toBe("all");
+  });
+
+  it("keeps an entrypoint origin at one quarter of the initial viewport", () => {
+    const value = structure("70000000-0000-4000-8000-000000000097");
+    value.nodes.push({
+      ...value.nodes[0]!,
+      id: "next",
+      label: "Next",
+      anchor: null,
+    });
+    value.edges.push({
+      id: "entry-next",
+      from: "entry",
+      to: "next",
+      label: "calls",
+      directed: true,
+      anchors: [],
+    });
+    const session = createStructureSession(value);
+    const viewport = initialStructureViewport({
+      structure: value,
+      positions: session.positions,
+      surfaceSize: { width: 1_200, height: 800 },
+    });
+    const originCenter = session.positions.entry!.x + 228 / 2 + viewport.x;
+    expect(originCenter).toBe(300);
+    expect(viewport.scale).toBe(1);
+    expect(session.focusId).toBe("entry");
+  });
+
+  it("moves a terminal origin rightward using node-only predecessor spans", () => {
+    const value = structure("70000000-0000-4000-8000-000000000096");
+    value.nodes.unshift(
+      { ...value.nodes[0]!, id: "root", label: "Root", anchor: null },
+      { ...value.nodes[0]!, id: "predecessor", label: "Predecessor", anchor: null },
+    );
+    value.originNodeId = "entry";
+    value.edges.push(
+      {
+        id: "root-predecessor",
+        from: "root",
+        to: "predecessor",
+        label: "calls",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "predecessor-entry",
+        from: "predecessor",
+        to: "entry",
+        label: "updates with an intentionally very long authored predicate that is not geometry",
+        directed: true,
+        anchors: [],
+      },
+    );
+    const session = createStructureSession(value);
+    const surfaceSize = { width: 1_200, height: 800 };
+    const viewport = initialStructureViewport({
+      structure: value,
+      positions: session.positions,
+      surfaceSize,
+    });
+    const originViewportX = session.positions.entry!.x + 228 / 2 + viewport.x;
+    const predecessorViewportX = session.positions.predecessor!.x + 228 / 2 + viewport.x;
+    expect(originViewportX / surfaceSize.width).toBeGreaterThanOrEqual(0.35);
+    expect(originViewportX / surfaceSize.width).toBeLessThanOrEqual(0.5);
+    expect(predecessorViewportX).toBeGreaterThan(0);
+    expect(predecessorViewportX).toBeLessThan(surfaceSize.width);
+    expect(viewport.scale).toBe(1);
+
+    value.edges[1]!.label = "short";
+    expect(
+      initialStructureViewport({ structure: value, positions: session.positions, surfaceSize }),
+    ).toEqual(viewport);
+    expect(session.focusId).toBe("entry");
   });
 
   it("moves the current reading state between panes without sharing both entries", () => {

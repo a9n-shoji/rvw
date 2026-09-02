@@ -34,6 +34,7 @@ import {
   createStructureSession,
   deleteStructureSessions,
   getStructureSession,
+  initialStructureViewport,
   MIN_STRUCTURE_ZOOM,
   scaledStructureZoom,
   setStructureSession,
@@ -551,20 +552,9 @@ export function StructureViewer({
   useLayoutEffect(() => {
     const action = pendingViewportActionRef.current;
     if (!action || !displayBounds || surfaceSize.width === 0 || surfaceSize.height === 0) return;
-    const point = positions[structure.originNodeId];
-    const centerX = point
-      ? point.x + STRUCTURE_NODE_WIDTH / 2
-      : (displayBounds.left + displayBounds.right) / 2;
-    const centerY = point
-      ? point.y + STRUCTURE_NODE_HEIGHT / 2
-      : (displayBounds.top + displayBounds.bottom) / 2;
     pendingViewportActionRef.current = null;
-    setViewport({
-      scale: 1,
-      x: surfaceSize.width * 0.25 - centerX,
-      y: surfaceSize.height / 2 - centerY,
-    });
-  }, [displayBounds, positions, structure.originNodeId, surfaceSize.height, surfaceSize.width]);
+    setViewport(initialStructureViewport({ structure, positions, surfaceSize }));
+  }, [displayBounds, positions, structure, surfaceSize]);
 
   const centerNode = useCallback(
     (nodeId: string, scale?: number): void => {

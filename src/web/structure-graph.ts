@@ -1,14 +1,19 @@
 import type { Structure, StructureEdge } from "../domain/models.js";
+import {
+  projectStructure,
+  STRUCTURE_NODE_HEIGHT,
+  STRUCTURE_NODE_WIDTH,
+  type StructurePoint,
+} from "../domain/structure-projection.js";
 
-export interface StructurePoint {
-  x: number;
-  y: number;
-}
+export {
+  STRUCTURE_NODE_HEIGHT,
+  STRUCTURE_NODE_WIDTH,
+  type StructurePoint,
+} from "../domain/structure-projection.js";
 
 export type StructureNeighborhoodDepth = 1 | 2 | "all";
 
-export const STRUCTURE_NODE_WIDTH = 228;
-export const STRUCTURE_NODE_HEIGHT = 112;
 export const STRUCTURE_MAX_EDGE_LANE_OFFSET = 96;
 
 function stableCompare(left: string, right: string): number {
@@ -28,62 +33,6 @@ function adjacency(structure: Structure): Map<string, string[]> {
   }
   for (const neighbors of result.values()) neighbors.sort(stableCompare);
   return result;
-}
-
-interface SimpleTopology {
-  neighbors: Map<string, string[]>;
-  links: Array<readonly [string, string]>;
-  directionalLinks: Array<readonly [string, string]>;
-}
-
-function simpleTopology(structure: Structure): SimpleTopology {
-  const neighborSets = new Map(structure.nodes.map((node) => [node.id, new Set<string>()]));
-  const pairNodes = new Map<string, readonly [string, string]>();
-  const pairDirections = new Map<
-    string,
-    {
-      hasUndirected: boolean;
-      directions: Map<string, readonly [string, string]>;
-    }
-  >();
-  for (const edge of structure.edges) {
-    if (edge.from === edge.to || !neighborSets.has(edge.from) || !neighborSets.has(edge.to)) {
-      continue;
-    }
-    neighborSets.get(edge.from)?.add(edge.to);
-    neighborSets.get(edge.to)?.add(edge.from);
-    const ordered = [edge.from, edge.to].sort(stableCompare) as [string, string];
-    const pairKey = JSON.stringify(ordered);
-    pairNodes.set(pairKey, ordered);
-    const directions = pairDirections.get(pairKey) ?? {
-      hasUndirected: false,
-      directions: new Map<string, readonly [string, string]>(),
-    };
-    if (edge.directed) {
-      directions.directions.set(JSON.stringify([edge.from, edge.to]), [edge.from, edge.to]);
-    } else {
-      directions.hasUndirected = true;
-    }
-    pairDirections.set(pairKey, directions);
-  }
-  const compareLinks = (
-    [leftA, leftB]: readonly [string, string],
-    [rightA, rightB]: readonly [string, string],
-  ): number => {
-    const first = stableCompare(leftA, rightA);
-    return first === 0 ? stableCompare(leftB, rightB) : first;
-  };
-  return {
-    neighbors: new Map(
-      [...neighborSets].map(([nodeId, neighbors]) => [nodeId, [...neighbors].sort(stableCompare)]),
-    ),
-    links: [...pairNodes.values()].sort(compareLinks),
-    directionalLinks: [...pairDirections.values()]
-      .flatMap(({ hasUndirected, directions }) =>
-        !hasUndirected && directions.size === 1 ? [...directions.values()] : [],
-      )
-      .sort(compareLinks),
-  };
 }
 
 export function incidentStructureEdges(structure: Structure, nodeId: string): StructureEdge[] {
@@ -136,248 +85,17 @@ export function visibleStructureGraph(
   return { nodeIds: neighborhood, edgeIds };
 }
 
-function topologyComponents(topology: SimpleTopology): string[][] {
-  const components: string[][] = [];
-  const assigned = new Set<string>();
-  for (const first of [...topology.neighbors.keys()].sort(stableCompare)) {
-    if (assigned.has(first)) continue;
-    const component: string[] = [];
-    const queue = [first];
-    assigned.add(first);
-    for (let index = 0; index < queue.length; index += 1) {
-      const current = queue[index]!;
-      component.push(current);
-      for (const neighbor of topology.neighbors.get(current) ?? []) {
-        if (assigned.has(neighbor)) continue;
-        assigned.add(neighbor);
-        queue.push(neighbor);
-      }
-    }
-    component.sort(stableCompare);
-    components.push(component);
-  }
-  return components.sort(
-    (left, right) => right.length - left.length || stableCompare(left[0]!, right[0]!),
-  );
-}
-
-function topologyRoot(nodeIds: readonly string[], topology: SimpleTopology): string {
-  const neighborDegree = (nodeId: string): number =>
-    (topology.neighbors.get(nodeId) ?? []).reduce(
-      (total, neighbor) => total + (topology.neighbors.get(neighbor)?.length ?? 0),
-      0,
-    );
-  return [...nodeIds].sort(
-    (left, right) =>
-      (topology.neighbors.get(right)?.length ?? 0) - (topology.neighbors.get(left)?.length ?? 0) ||
-      neighborDegree(right) - neighborDegree(left) ||
-      stableCompare(left, right),
-  )[0]!;
-}
-
-function componentRanks(
-  nodeIds: readonly string[],
-  topology: SimpleTopology,
-  entrypointId: string | null,
-): Map<string, number> {
-  const nodeSet = new Set(nodeIds);
-  const entrypoint = entrypointId && nodeSet.has(entrypointId) ? entrypointId : null;
-  const ranks = new Map<string, number>();
-
-  if (!entrypoint) {
-    const root = topologyRoot(nodeIds, topology);
-    ranks.set(root, 0);
-    const queue = [root];
-    for (let index = 0; index < queue.length; index += 1) {
-      const current = queue[index]!;
-      for (const neighbor of topology.neighbors.get(current) ?? []) {
-        if (!nodeSet.has(neighbor) || ranks.has(neighbor)) continue;
-        ranks.set(neighbor, ranks.get(current)! + 1);
-        queue.push(neighbor);
-      }
-    }
-    return ranks;
-  }
-
-  // Only a single, unambiguous directed relation contributes to the behavior
-  // axis. Reciprocal and undirected pairs remain topology without a forced side.
-  const outgoing = new Map(nodeIds.map((nodeId) => [nodeId, [] as string[]]));
-  for (const [from, to] of topology.directionalLinks) {
-    if (!nodeSet.has(from) || !nodeSet.has(to)) continue;
-    outgoing.get(from)?.push(to);
-  }
-  for (const targets of outgoing.values()) targets.sort(stableCompare);
-
-  ranks.set(entrypoint, 0);
-  const queue = [entrypoint];
-  for (let index = 0; index < queue.length; index += 1) {
-    const current = queue[index]!;
-    for (const target of outgoing.get(current) ?? []) {
-      if (ranks.has(target)) continue;
-      ranks.set(target, ranks.get(current)! + 1);
-      queue.push(target);
-    }
-  }
-
-  // A setup dependency that points into an already ranked responsibility is
-  // placed immediately before it, but never to the left of the factual origin.
-  for (let pass = 0; pass < nodeIds.length; pass += 1) {
-    let changed = false;
-    for (const [from, to] of topology.directionalLinks) {
-      if (!nodeSet.has(from) || !nodeSet.has(to)) continue;
-      const fromRank = ranks.get(from);
-      const toRank = ranks.get(to);
-      if (fromRank === undefined && toRank !== undefined) {
-        ranks.set(from, Math.max(0, toRank - 1));
-        changed = true;
-      } else if (fromRank !== undefined && toRank === undefined) {
-        ranks.set(to, fromRank + 1);
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-
-  // Ambiguous/cyclic/undirected remainder stays discoverable next to the first
-  // ranked neighbor without inventing a direction for that relation.
-  const rankedQueue = [...ranks]
-    .sort(
-      ([leftId, leftRank], [rightId, rightRank]) =>
-        leftRank - rightRank || stableCompare(leftId, rightId),
-    )
-    .map(([nodeId]) => nodeId);
-  for (let index = 0; index < rankedQueue.length; index += 1) {
-    const current = rankedQueue[index]!;
-    for (const neighbor of topology.neighbors.get(current) ?? []) {
-      if (!nodeSet.has(neighbor) || ranks.has(neighbor)) continue;
-      ranks.set(neighbor, ranks.get(current)! + 1);
-      rankedQueue.push(neighbor);
-    }
-  }
-  return ranks;
-}
-
-function orderRankGroups(
-  groups: Map<number, string[]>,
-  topology: SimpleTopology,
-): Map<number, string[]> {
-  const rankValues = [...groups.keys()].sort((left, right) => left - right);
-  const result = new Map(
-    rankValues.map((rank) => [rank, [...groups.get(rank)!].sort(stableCompare)]),
-  );
-  const sortAgainst = (rank: number, adjacentRank: number): void => {
-    const nodes = result.get(rank)!;
-    const adjacent = result.get(adjacentRank)!;
-    const adjacentOrder = new Map(adjacent.map((nodeId, index) => [nodeId, index]));
-    const barycenter = (nodeId: string): number | null => {
-      const indexes = (topology.neighbors.get(nodeId) ?? []).flatMap((neighbor) => {
-        const index = adjacentOrder.get(neighbor);
-        return index === undefined ? [] : [index];
-      });
-      return indexes.length === 0
-        ? null
-        : indexes.reduce((total, index) => total + index, 0) / indexes.length;
-    };
-    nodes.sort((left, right) => {
-      const leftCenter = barycenter(left);
-      const rightCenter = barycenter(right);
-      if (leftCenter === null && rightCenter === null) return stableCompare(left, right);
-      if (leftCenter === null) return 1;
-      if (rightCenter === null) return -1;
-      return leftCenter - rightCenter || stableCompare(left, right);
-    });
-  };
-  for (let pass = 0; pass < 6; pass += 1) {
-    for (let index = 1; index < rankValues.length; index += 1) {
-      sortAgainst(rankValues[index]!, rankValues[index - 1]!);
-    }
-    for (let index = rankValues.length - 2; index >= 0; index -= 1) {
-      sortAgainst(rankValues[index]!, rankValues[index + 1]!);
-    }
-  }
-  return result;
-}
-
-function layoutTopologyComponent(
-  nodeIds: readonly string[],
-  topology: SimpleTopology,
-  entrypointId: string | null,
-): Record<string, StructurePoint> {
-  if (nodeIds.length === 1) return { [nodeIds[0]!]: { x: 0, y: 0 } };
-  const ranks = componentRanks(nodeIds, topology, entrypointId);
-  const rawGroups = new Map<number, string[]>();
-  for (const nodeId of nodeIds) {
-    const rank = ranks.get(nodeId) ?? 0;
-    const group = rawGroups.get(rank) ?? [];
-    group.push(nodeId);
-    rawGroups.set(rank, group);
-  }
-  const groups = orderRankGroups(rawGroups, topology);
-  const rankValues = [...groups.keys()].sort((left, right) => left - right);
-  const rankStride = STRUCTURE_NODE_WIDTH + 192;
-  const rowStride = STRUCTURE_NODE_HEIGHT + 72;
-  const maxRows = Math.max(...[...groups.values()].map((nodes) => nodes.length));
-  const centerY = ((maxRows - 1) * rowStride) / 2;
-  const positions: Record<string, StructurePoint> = {};
-  rankValues.forEach((rank, rankIndex) => {
-    const group = groups.get(rank)!;
-    const top = centerY - ((group.length - 1) * rowStride) / 2;
-    group.forEach((nodeId, rowIndex) => {
-      positions[nodeId] = {
-        x: rankIndex * rankStride,
-        y: top + rowIndex * rowStride,
-      };
-    });
-  });
-  return positions;
-}
-
 /**
  * Canonical behavior map derived from topology plus the authored entrypoint.
  * Unambiguous directed relations form readable left-to-right ranks; branches use
- * vertical whitespace and topology-derived ordering. Undirected, reciprocal,
- * parallel, and self-relations do not force an axis. Authored display content
- * never affects geometry. Stable IDs only resolve otherwise symmetric ordering,
- * so Reset returns the same graph to the same projection.
+ * vertical whitespace and topology-derived ordering. Undirected or reciprocal
+ * pairs and self-relations do not force an axis; same-direction parallel edges
+ * contribute one pair-level signal. Authored display content never affects
+ * geometry. Stable IDs only resolve otherwise symmetric ordering, so Reset
+ * returns the same graph to the same projection.
  */
 export function initialStructureLayout(structure: Structure): Record<string, StructurePoint> {
-  if (structure.nodes.length === 0) return {};
-  const topology = simpleTopology(structure);
-  const componentGap = 180;
-  const outerPadding = 64;
-  const components = topologyComponents(topology).map((nodeIds) => {
-    const positions = layoutTopologyComponent(nodeIds, topology, structure.originNodeId);
-    const bounds = structureLayoutBounds(nodeIds, positions)!;
-    return {
-      nodeIds,
-      positions,
-      width: bounds.maxX - bounds.minX,
-      height: bounds.maxY - bounds.minY,
-    };
-  });
-  const totalArea = components.reduce(
-    (sum, component) => sum + (component.width + componentGap) * (component.height + componentGap),
-    0,
-  );
-  const targetRowWidth = Math.max(960, Math.sqrt(totalArea) * 1.45);
-  const result: Record<string, StructurePoint> = {};
-  let cursorX = outerPadding;
-  let cursorY = outerPadding;
-  let rowHeight = 0;
-  for (const component of components) {
-    if (cursorX > outerPadding && cursorX + component.width > targetRowWidth) {
-      cursorX = outerPadding;
-      cursorY += rowHeight + componentGap;
-      rowHeight = 0;
-    }
-    for (const nodeId of component.nodeIds) {
-      const point = component.positions[nodeId]!;
-      result[nodeId] = { x: cursorX + point.x, y: cursorY + point.y };
-    }
-    cursorX += component.width + componentGap;
-    rowHeight = Math.max(rowHeight, component.height);
-  }
-  return result;
+  return Object.fromEntries(projectStructure(structure).positionsByNodeId);
 }
 
 export function reconcileStructureLayout(
