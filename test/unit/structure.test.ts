@@ -378,6 +378,93 @@ describe("Structure domain presentation rules", () => {
     ).toEqual(projection);
   });
 
+  it("moves across a strict-improvement plateau using directional neighbor ranks", () => {
+    const structure = structureWithHub();
+    structure.originNodeId = "entry";
+    structure.nodes = ["entry", "parse", "execute", "persist"].map((id) => ({
+      id,
+      label: id,
+      description: null,
+      kind: null,
+      notation: "plain",
+      anchor: null,
+    }));
+    structure.edges = [
+      {
+        id: "entry-parse",
+        from: "entry",
+        to: "parse",
+        label: "parses",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "parse-execute",
+        from: "parse",
+        to: "execute",
+        label: "executes",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "execute-persist",
+        from: "execute",
+        to: "persist",
+        label: "persists",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "entry-persist",
+        from: "entry",
+        to: "persist",
+        label: "also persists",
+        directed: true,
+        anchors: [],
+      },
+    ];
+
+    const projection = projectStructure(structure);
+    expect(Object.fromEntries(projection.rankByNodeId)).toEqual({
+      entry: 0,
+      execute: 2,
+      parse: 1,
+      persist: 3,
+    });
+    expect(projection.diagnostics.nonForwardDirectionalLinkCount).toBe(0);
+    expect(structureAuthoringWarnings(projection.diagnostics)).toEqual([]);
+    expect(
+      initialStructureLayout({
+        ...structure,
+        nodes: [...structure.nodes].reverse(),
+        edges: [...structure.edges].reverse(),
+      }),
+    ).toEqual(initialStructureLayout(structure));
+  });
+
+  it("uses ordinal stable-ID ordering for topology-symmetric Nodes", () => {
+    const structure = structureWithHub();
+    structure.originNodeId = "origin";
+    structure.nodes = ["origin", "a_", "a-", "a", "A"].map((id) => ({
+      id,
+      label: id,
+      description: null,
+      kind: null,
+      notation: "plain",
+      anchor: null,
+    }));
+    structure.edges = structure.nodes.slice(1).map((node) => ({
+      id: `origin-${node.id}`,
+      from: "origin",
+      to: node.id,
+      label: "calls",
+      directed: true,
+      anchors: [],
+    }));
+
+    expect(projectStructure(structure).columns).toEqual([["origin"], ["A", "a", "a-", "a_"]]);
+  });
+
   it("expands a terminal hub origin through multiple negative predecessor ranks", () => {
     const structure = terminalHubStructure();
     const projection = projectStructure(structure);

@@ -706,9 +706,11 @@ pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とす�
 factualなEdge direction、`originNodeId` entrypoint、stable IDを入力とするdeterministicなbehavior projectionと
 する。originをrank 0に固定し、unambiguousなdirected pairをsuccessorへ`+1`、predecessorへ`-1`としてwave単位で
 伝播する。未rankのambiguous／cyclic／undirected remainderはtopology adjacencyで近傍へ置き、その後origin以外を
-`-1` / `+1`ずつ動かしてcanonical directional linkのnon-forward数がstrictに減るmoveだけを反復する。candidateは
-non-forward数、occupied column数、normalized column index上のtotal directional span、最後にstable Node IDで
-決定し、column内はbarycenter orderingを使う。このrankは処理順や推奨読解順のproducer claimではなく、viewerが
+`-1` / `+1`またはrank済みdirected neighborの直前／直後へ動かし、canonical directional linkのnon-forward数が
+strictに減るmoveだけを反復する。neighbor由来の候補は、shortcutで早くrankされたNodeがstrict-improvementのplateauを
+越えられない状態を避ける。candidateはnon-forward数、occupied column数、normalized column index上のtotal
+directional span、最後にordinalなstable Node IDで決定し、column内はbarycenter orderingを使う。このrankは処理順や
+推奨読解順のproducer claimではなく、viewerが
 factualなoriginとrelation directionから導出するprojectionである。同一unordered pairにundirected relationまたは
 両方向directed relationがあればdirectional signalから除外し、同方向parallelはpair-levelの1 link、self relationは
 0 linkとする。label、kind、description、path、変更種別は位置決定へ使わず、Edge label sizeはNode geometry決定後の
@@ -731,7 +733,8 @@ current-value更新でfocus Nodeが消えた場合は、
 producerの新しい`originNodeId`へ移動せずfocusなしのAllへ戻す。人間は明示buttonまたはEscapeでfocusを解除できる。
 新しいsessionは全Node / Edgeを描画しながら、originより左にNodeがなければ`originNodeId`を等倍でcanvas幅の
 25%付近、縦中央へ置く。左にpredecessor columnがある場合はNode-only boundsからorigin中心に対するleft/right spanを
-求め、自然な比率を35%〜50%へclampして横位置を決める。Edge label boundsは初期viewportへ使わず、全体を自動fitしない。
+求め、自然な比率と最寄りの左側Nodeを最低64 px表示するための比率の大きい方を35%〜50%へclampして横位置を決める。
+狭すぎるviewportでは50%上限を優先する。Edge label boundsは初期viewportへ使わず、全体を自動fitしない。
 focusがない場合もbase map中央を等倍で示す。1-hop / 2-hop / Allの切り替えはNode座標とcameraを変えず、
 表示するsubgraphだけを変更する。局所へ絞る時も読みやすい倍率とorientationを失わず、Allへ戻れば同じcameraで
 全体へ位置付け直せる。表示中のgraphを一枚へ圧縮するのは「表示中を収める」という明示操作だけとする。

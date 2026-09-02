@@ -15,6 +15,8 @@ export interface StructureViewport {
   scale: number;
 }
 
+const MIN_VISIBLE_NEAREST_LEFT_NODE_WIDTH = 64;
+
 export function initialStructureViewport(input: {
   structure: Pick<Structure, "originNodeId" | "nodes">;
   positions: Readonly<Record<string, StructurePoint>>;
@@ -41,7 +43,17 @@ export function initialStructureViewport(input: {
     const leftSpan = centerX - bounds.minX;
     const rightSpan = bounds.maxX - centerX;
     const naturalFraction = leftSpan / Math.max(leftSpan + rightSpan, 1);
-    horizontalFraction = Math.min(0.5, Math.max(0.35, naturalFraction));
+    const nearestLeftNodeRight = Math.max(
+      ...structure.nodes.flatMap((node) => {
+        const nodePoint = positions[node.id];
+        return nodePoint && nodePoint.x < point.x ? [nodePoint.x + STRUCTURE_NODE_WIDTH] : [];
+      }),
+    );
+    const visibilityFraction = Number.isFinite(nearestLeftNodeRight)
+      ? (centerX - nearestLeftNodeRight + MIN_VISIBLE_NEAREST_LEFT_NODE_WIDTH) /
+        Math.max(surfaceSize.width, 1)
+      : 0;
+    horizontalFraction = Math.min(0.5, Math.max(0.35, naturalFraction, visibilityFraction));
   }
   return {
     scale: 1,

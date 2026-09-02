@@ -45,7 +45,7 @@ export interface StructureProjection {
 }
 
 function stableCompare(left: string, right: string): number {
-  return left.localeCompare(right, "en");
+  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 function compareLinks([leftA, leftB]: DirectionalLink, [rightA, rightB]: DirectionalLink): number {
@@ -332,18 +332,31 @@ function refineComponentRanks(
     for (const nodeId of [...ranks.keys()].sort(stableCompare)) {
       if (nodeId === originNodeId) continue;
       const currentRank = ranks.get(nodeId)!;
-      const candidates = [-1, 1].map((offset) => {
-        const candidateRanks = new Map(ranks).set(nodeId, currentRank + offset);
+      const candidateRankValues = new Set([currentRank - 1, currentRank + 1]);
+      for (const [from, to] of topology.directionalLinks) {
+        if (to === nodeId) {
+          const predecessorRank = ranks.get(from);
+          if (predecessorRank !== undefined) candidateRankValues.add(predecessorRank + 1);
+        }
+        if (from === nodeId) {
+          const successorRank = ranks.get(to);
+          if (successorRank !== undefined) candidateRankValues.add(successorRank - 1);
+        }
+      }
+      candidateRankValues.delete(currentRank);
+      const candidates = [...candidateRankValues].map((candidateRank) => {
+        const candidateRanks = new Map(ranks).set(nodeId, candidateRank);
         return {
           nodeId,
-          rank: currentRank + offset,
+          rank: candidateRank,
           nonForward: countNonForwardLinks(candidateRanks, topology.directionalLinks),
           occupiedColumns: new Set(candidateRanks.values()).size,
           span: totalDirectionalSpan(candidateRanks, topology.directionalLinks),
         };
       });
       const valid = candidates.filter((candidate) => candidate.nonForward < currentNonForward);
-      if (valid.length === 2 && sameMoveObjective(valid[0]!, valid[1]!)) continue;
+      const unitMoves = valid.filter(({ rank }) => Math.abs(rank - currentRank) === 1);
+      if (unitMoves.length === 2 && sameMoveObjective(unitMoves[0]!, unitMoves[1]!)) continue;
       moves.push(...valid);
     }
     moves.sort(
@@ -351,7 +364,8 @@ function refineComponentRanks(
         left.nonForward - right.nonForward ||
         left.occupiedColumns - right.occupiedColumns ||
         left.span - right.span ||
-        stableCompare(left.nodeId, right.nodeId),
+        stableCompare(left.nodeId, right.nodeId) ||
+        left.rank - right.rank,
     );
     const best = moves[0];
     if (!best) return ranks;
