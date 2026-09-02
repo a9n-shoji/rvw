@@ -780,6 +780,70 @@ describe("Structure domain presentation rules", () => {
     });
   });
 
+  it("uses structural rank profiles before stable IDs for a non-symmetric SCC", () => {
+    const logicalNodes = [
+      "p1",
+      "p2",
+      "origin",
+      "A",
+      "B",
+      "C",
+      "D",
+      "s1",
+      "s2",
+      "s3",
+      "s4",
+      "s5",
+      "s6",
+    ] as const;
+    const logicalLinks = [
+      [0, 2],
+      [0, 3],
+      [0, 5],
+      [1, 6],
+      [2, 7],
+      [2, 8],
+      [2, 9],
+      [2, 10],
+      [2, 11],
+      [2, 12],
+      [3, 5],
+      [5, 4],
+      [4, 6],
+      [5, 6],
+      [6, 3],
+    ] as const;
+    const project = (cycleIds: readonly string[]) => {
+      const ids = logicalNodes.map((logicalNode) => {
+        const cycleIndex = ["A", "B", "C", "D"].indexOf(logicalNode);
+        return cycleIndex === -1 ? logicalNode : cycleIds[cycleIndex]!;
+      });
+      const structure = directedStructure(
+        "origin",
+        ids,
+        logicalLinks.map(([from, to]) => [ids[from]!, ids[to]!] as const),
+      );
+      const projection = projectStructure(structure);
+      return {
+        logicalRanks: ids.map((nodeId) => projection.rankByNodeId.get(nodeId)),
+        diagnostics: projection.diagnostics,
+        warningCodes: structureAuthoringWarnings(projection.diagnostics).map(({ code }) => code),
+      };
+    };
+
+    const first = project(["a", "b", "c", "d"]);
+    const renamed = project(["b", "c", "a", "d"]);
+    expect(first).toEqual(renamed);
+    expect(first).toMatchObject({
+      logicalRanks: [-1, -1, 0, 0, 2, 1, 2, 1, 1, 1, 1, 1, 1],
+      diagnostics: {
+        rowsPerColumn: [2, 2, 7, 2],
+        maxRows: 7,
+      },
+      warningCodes: [],
+    });
+  });
+
   it("emits canonical tall-column and non-forward-ratio warnings at their thresholds", () => {
     const isolated = structureWithHub();
     isolated.nodes = isolated.nodes.slice(0, 1);

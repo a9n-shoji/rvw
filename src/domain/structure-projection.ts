@@ -175,6 +175,78 @@ function compareNumberArrays(left: readonly number[], right: readonly number[]):
   return 0;
 }
 
+function boundaryCounts(nodeIds: readonly string[]): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const nodeId of nodeIds) counts.set(nodeId, (counts.get(nodeId) ?? 0) + 1);
+  return counts;
+}
+
+function canonicalStructuralColors(
+  nodeIds: readonly string[],
+  directionalLinks: readonly DirectionalLink[],
+  originIncomingBoundaryNodeIds: readonly string[],
+  incomingBoundaryNodeIds: readonly string[],
+  outgoingBoundaryNodeIds: readonly string[],
+  attachmentBoundaryNodeIds: readonly string[],
+): ReadonlyMap<string, number> {
+  const incomingNeighbors = new Map(nodeIds.map((nodeId) => [nodeId, new Set<string>()]));
+  const outgoingNeighbors = new Map(nodeIds.map((nodeId) => [nodeId, new Set<string>()]));
+  for (const [from, to] of directionalLinks) {
+    outgoingNeighbors.get(from)?.add(to);
+    incomingNeighbors.get(to)?.add(from);
+  }
+  const originIncomingCounts = boundaryCounts(originIncomingBoundaryNodeIds);
+  const incomingCounts = boundaryCounts(incomingBoundaryNodeIds);
+  const outgoingCounts = boundaryCounts(outgoingBoundaryNodeIds);
+  const attachmentCounts = boundaryCounts(attachmentBoundaryNodeIds);
+  const assignColors = (descriptors: ReadonlyMap<string, string>): Map<string, number> => {
+    const colorByDescriptor = new Map(
+      [...new Set(descriptors.values())]
+        .sort(stableCompare)
+        .map((descriptor, index) => [descriptor, index]),
+    );
+    return new Map(
+      nodeIds.map((nodeId) => [nodeId, colorByDescriptor.get(descriptors.get(nodeId)!)!]),
+    );
+  };
+  let colors = assignColors(
+    new Map(
+      nodeIds.map((nodeId) => [
+        nodeId,
+        JSON.stringify([
+          incomingNeighbors.get(nodeId)!.size,
+          outgoingNeighbors.get(nodeId)!.size,
+          originIncomingCounts.get(nodeId) ?? 0,
+          incomingCounts.get(nodeId) ?? 0,
+          outgoingCounts.get(nodeId) ?? 0,
+          attachmentCounts.get(nodeId) ?? 0,
+        ]),
+      ]),
+    ),
+  );
+  for (let pass = 0; pass < nodeIds.length; pass += 1) {
+    const next = assignColors(
+      new Map(
+        nodeIds.map((nodeId) => [
+          nodeId,
+          JSON.stringify([
+            colors.get(nodeId),
+            [...incomingNeighbors.get(nodeId)!]
+              .map((neighbor) => colors.get(neighbor)!)
+              .sort((left, right) => left - right),
+            [...outgoingNeighbors.get(nodeId)!]
+              .map((neighbor) => colors.get(neighbor)!)
+              .sort((left, right) => left - right),
+          ]),
+        ]),
+      ),
+    );
+    if (nodeIds.every((nodeId) => next.get(nodeId) === colors.get(nodeId))) break;
+    colors = next;
+  }
+  return colors;
+}
+
 function chooseRankProposal(
   nodeId: string,
   proposals: ReadonlySet<number>,
@@ -307,6 +379,14 @@ function internalComponentRanks(
     links: internalLinks,
     directionalLinks: internalLinks,
   };
+  const structuralColors = canonicalStructuralColors(
+    nodeIds,
+    internalLinks,
+    originIncomingBoundaryNodeIds,
+    incomingBoundaryNodeIds,
+    outgoingBoundaryNodeIds,
+    attachmentBoundaryNodeIds,
+  );
   const ranksFromAnchor = (anchor: string): Map<string, number> => {
     const rawRanks = new Map([[anchor, 0]]);
     applyForwardWaves(nodeSet, topology, rawRanks);
@@ -318,6 +398,17 @@ function internalComponentRanks(
   const candidates = nodeIds.map((anchor) => {
     const ranks = ranksFromAnchor(anchor);
     const maxRank = Math.max(...ranks.values());
+    const rankLoadProfile = Array.from(
+      { length: maxRank + 1 },
+      (_, rank) => nodeIds.filter((nodeId) => ranks.get(nodeId) === rank).length,
+    );
+    const rankStructuralProfile = rankLoadProfile.flatMap((_, rank) => [
+      -1,
+      ...nodeIds
+        .filter((nodeId) => ranks.get(nodeId) === rank)
+        .map((nodeId) => structuralColors.get(nodeId)!)
+        .sort((left, right) => left - right),
+    ]);
     return {
       anchor,
       ranks,
@@ -336,6 +427,9 @@ function internalComponentRanks(
         .sort((left, right) => right - left),
       width: new Set(ranks.values()).size,
       span: totalDirectionalSpan(ranks, internalLinks),
+      rankLoadProfile,
+      rankStructuralProfile,
+      anchorStructuralColor: structuralColors.get(anchor)!,
     };
   });
   candidates.sort(
@@ -347,6 +441,9 @@ function internalComponentRanks(
       compareNumberArrays(left.attachmentBoundaryRanks, right.attachmentBoundaryRanks) ||
       left.width - right.width ||
       left.span - right.span ||
+      compareNumberArrays(left.rankLoadProfile, right.rankLoadProfile) ||
+      compareNumberArrays(left.rankStructuralProfile, right.rankStructuralProfile) ||
+      left.anchorStructuralColor - right.anchorStructuralColor ||
       stableCompare(left.anchor, right.anchor),
   );
   return candidates[0]!.ranks;
