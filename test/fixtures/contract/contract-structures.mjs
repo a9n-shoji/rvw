@@ -302,7 +302,7 @@ const primaryStructureEdges = [
         "return this.ports.idempotency.run",
         31,
       ),
-      semanticAnchor("src/infrastructure/db/idempotency-store.ts", "async run", 28),
+      semanticAnchor("src/infrastructure/db/idempotency-store.ts", "pg_advisory_lock", 31),
     ],
   },
   {

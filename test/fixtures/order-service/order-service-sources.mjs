@@ -107,13 +107,13 @@ export class CreateOrderHandler {
       ? idempotencyEnvelope(command.idempotencyKey, command.actor.subject)
       : undefined;
 
-    return this.ports.idempotency.run(envelope, async ({ operationId, complete }) => {
+    return this.ports.idempotency.run(envelope, async ({ operationId, runTransaction }) => {
       const existingOrder = await this.ports.orders.findById(operationId);
       if (existingOrder) {
         const existingResult = { order: existingOrder };
-        await this.ports.transaction.run((transaction) =>
-          complete(existingResult, transaction),
-        );
+        await runTransaction(async (_transaction, complete) => {
+          await complete(existingResult);
+        });
         return existingResult;
       }
       const catalogItems = await this.ports.catalog.getBySkus(
@@ -133,7 +133,9 @@ export class CreateOrderHandler {
         paymentMethodId: command.paymentMethodId,
         amount: order.total,
       });
-      await this.ports.paymentRecoveryCandidates.register(authorization.id);
+      await runTransaction(async (transaction) => {
+        await this.ports.paymentRecoveryCandidates.register(authorization.id, transaction);
+      });
       order.recordPaymentAuthorization(authorization.id);
       this.ports.telemetry.record(orderLogContext({
         requestId: command.requestId,
@@ -143,11 +145,11 @@ export class CreateOrderHandler {
       }));
 
       const result = { order: order.toSnapshot() };
-      await this.ports.transaction.run(async (transaction) => {
+      await runTransaction(async (transaction, complete) => {
         await this.ports.orders.insert(order, transaction);
         await this.ports.outbox.append(order.releaseEvents(), transaction);
         await this.ports.paymentRecoveryCandidates.complete(authorization.id, transaction);
-        await complete(result, transaction);
+        await complete(result);
       });
 
       return result;
@@ -407,7 +409,7 @@ export class PostgresOrderRepository {
   `),
   "src/infrastructure/db/idempotency-store.ts": source(`
 import { randomUUID } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { DbTransaction, IdempotencyOperationContext } from "../../application/ports.js";
 import type { IdempotencyEnvelope } from "../../application/orders/idempotency-policy.js";
 
@@ -419,12 +421,24 @@ export class PostgresIdempotencyStore {
     operation: (context: IdempotencyOperationContext) => Promise<T>,
   ): Promise<T> {
     if (!envelope) {
-      return await operation({ operationId: randomUUID(), async complete() {} });
+      return await operation({
+        operationId: randomUUID(),
+        runTransaction: async (work) => {
+          const client = await this.pool.connect();
+          try {
+            return await this.runTransaction(client, work, async () => {});
+          } finally {
+            client.release();
+          }
+        },
+      });
     }
     const key = [envelope.operation, envelope.actorSubject, envelope.key].join(":");
     const client = await this.pool.connect();
+    let lockHeld = false;
     try {
       await client.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
+      lockHeld = true;
       await client.query(
         "INSERT INTO idempotency_keys (key, operation_id, status) VALUES ($1, $2, 'pending') ON CONFLICT DO NOTHING",
         [key, randomUUID()],
@@ -441,16 +455,39 @@ export class PostgresIdempotencyStore {
       }
       return await operation({
         operationId: row.operation_id,
-        complete: async (result: unknown, transaction: DbTransaction) => {
-          await transaction.query(
-            "UPDATE idempotency_keys SET status = 'completed', response = $2 WHERE key = $1",
-            [key, JSON.stringify(result)],
-          );
-        },
+        runTransaction: async (work) =>
+          await this.runTransaction(client, work, async (result) => {
+            await client.query(
+              "UPDATE idempotency_keys SET status = 'completed', response = $2 WHERE key = $1",
+              [key, JSON.stringify(result)],
+            );
+          }),
       });
     } finally {
-      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
-      client.release();
+      try {
+        if (lockHeld) await client.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+      } finally {
+        client.release();
+      }
+    }
+  }
+
+  private async runTransaction<T>(
+    client: PoolClient,
+    work: (
+      transaction: DbTransaction,
+      complete: (result: unknown) => Promise<void>,
+    ) => Promise<T>,
+    complete: (result: unknown) => Promise<void>,
+  ): Promise<T> {
+    await client.query("BEGIN");
+    try {
+      const result = await work(client, complete);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
     }
   }
 }
@@ -545,8 +582,8 @@ import type { DbTransaction, PaymentRecoveryCandidatePort } from "../../applicat
 export class PostgresPaymentRecoveryCandidates implements PaymentRecoveryCandidatePort {
   constructor(private readonly pool: Pool, private readonly graceSeconds: number) {}
 
-  async register(authorizationId: string): Promise<void> {
-    await this.pool.query(
+  async register(authorizationId: string, transaction?: DbTransaction): Promise<void> {
+    await (transaction ?? this.pool).query(
       "INSERT INTO payment_recovery_candidates (authorization_id, eligible_at) VALUES ($1, now() + make_interval(secs => $2)) ON CONFLICT DO NOTHING",
       [authorizationId, this.graceSeconds],
     );

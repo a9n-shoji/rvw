@@ -96,7 +96,7 @@ const mainReferences = [
     "CreateOrderHandler.execute",
     "src/application/orders/create-order.ts",
     "async execute",
-    32,
+    53,
     "The orchestration boundary",
   ),
   fileReference(
@@ -125,8 +125,8 @@ const mainReferences = [
     "idempotency",
     "PostgresIdempotencyStore.run",
     "src/infrastructure/db/idempotency-store.ts",
-    "async run",
-    13,
+    "  async run<T>(",
+    73,
     "Retry-safe command execution",
   ),
   reference(

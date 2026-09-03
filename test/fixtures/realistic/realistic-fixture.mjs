@@ -17,6 +17,7 @@ const fixtureToolchain = {
   hono: rootPackage.devDependencies.hono,
   typescript: rootPackage.devDependencies.typescript,
   vitest: rootPackage.devDependencies.vitest,
+  zod: rootPackage.devDependencies.zod,
 };
 
 const backgroundContexts = [
@@ -56,7 +57,7 @@ const baseFiles = () => {
         private: true,
         type: "module",
         scripts: { check: "tsc --noEmit", test: "vitest run", start: "node dist/server.js" },
-        dependencies: { hono: fixtureToolchain.hono, pg: "8.16.3", zod: "4.1.11" },
+        dependencies: { hono: fixtureToolchain.hono, pg: "8.16.3", zod: fixtureToolchain.zod },
         devDependencies: {
           typescript: fixtureToolchain.typescript,
           vitest: fixtureToolchain.vitest,
@@ -331,57 +332,6 @@ const source = (value) => `${value.trim()}\n`;
 
 const finalSources = {
   ...walkthroughRepositorySources,
-  "src/infrastructure/db/idempotency-store.ts": source(`
-import { randomUUID } from "node:crypto";
-import type { Pool } from "pg";
-import type { DbTransaction, IdempotencyOperationContext } from "../../application/ports.js";
-import type { IdempotencyEnvelope } from "../../application/orders/idempotency-policy.js";
-
-export class PostgresIdempotencyStore {
-  constructor(private readonly pool: Pool) {}
-
-  async run<T>(
-    envelope: IdempotencyEnvelope | undefined,
-    operation: (context: IdempotencyOperationContext) => Promise<T>,
-  ): Promise<T> {
-    if (!envelope) {
-      return await operation({ operationId: randomUUID(), async complete() {} });
-    }
-    const key = [envelope.operation, envelope.actorSubject, envelope.key].join(":");
-    const client = await this.pool.connect();
-    try {
-      await client.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
-      await client.query(
-        "INSERT INTO idempotency_keys (key, operation_id, status) VALUES ($1, $2, 'pending') ON CONFLICT DO NOTHING",
-        [key, randomUUID()],
-      );
-      const claimed = await client.query(
-        "SELECT operation_id, status, response FROM idempotency_keys WHERE key = $1",
-        [key],
-      );
-      const row = claimed.rows[0];
-      if (!row) throw new Error("idempotency operation claim disappeared");
-      if (row.status === "completed") {
-        const response = row.response;
-        return (typeof response === "string" ? JSON.parse(response) : response) as T;
-      }
-      // The advisory lock serializes remote work without holding a database transaction open.
-      return await operation({
-        operationId: row.operation_id,
-        complete: async (result: unknown, transaction: DbTransaction) => {
-          await transaction.query(
-            "UPDATE idempotency_keys SET status = 'completed', response = $2 WHERE key = $1",
-            [key, JSON.stringify(result)],
-          );
-        },
-      });
-    } finally {
-      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
-      client.release();
-    }
-  }
-}
-  `),
   "src/application/orders/idempotency-policy.ts": source(`
 /** Identifies one durable create-order operation across repeated HTTP delivery. */
 export interface IdempotencyEnvelope {
@@ -437,13 +387,18 @@ export interface OrderRepositoryPort {
   findByPaymentAuthorization(authorizationId: string): Promise<unknown | null>;
 }
 export interface PaymentRecoveryCandidatePort {
-  register(authorizationId: string): Promise<void>;
+  register(authorizationId: string, transaction?: DbTransaction): Promise<void>;
   leaseNextCandidate(leaseSeconds: number): Promise<{ authorizationId: string } | null>;
   complete(authorizationId: string, transaction?: DbTransaction): Promise<void>;
 }
 export interface IdempotencyOperationContext {
   operationId: string;
-  complete(result: unknown, transaction: DbTransaction): Promise<void>;
+  runTransaction<T>(
+    work: (
+      transaction: DbTransaction,
+      complete: (result: unknown) => Promise<void>,
+    ) => Promise<T>,
+  ): Promise<T>;
 }
 export interface ApplicationPorts {
   idempotency: {
@@ -554,8 +509,8 @@ Record the authorization identifier and customer ID in the incident timeline.
 Do not capture an authorization when no order record exists.
 
 The reconciliation worker leases candidates before checking the order repository. Treat an already
-voided authorization as success, retry provider timeouts, and page the payments owner when the same
-authorization remains eligible for more than three runs.
+voided authorization as success and retry provider timeouts. Until attempt metadata is persisted,
+monitor candidate age and lease churn externally and inspect captured or unknown provider states.
   `),
   "docs/runbooks/outbox-lag.md": source(`
 # Outbox lag runbook
@@ -574,6 +529,115 @@ describe("calculateOrderTotal", () => {
       [{ sku: "sku-1", quantity: 1 }, { sku: "sku-2", quantity: 1 }],
       [{ sku: "sku-1", unitPrice: 100, currency: "USD" }, { sku: "sku-2", unitPrice: 100, currency: "EUR" }],
     )).toThrow("mixed currencies");
+  });
+});
+  `),
+  "test/integration/idempotency-store.test.ts": source(`
+import { describe, expect, it } from "vitest";
+import type { Pool, PoolClient } from "pg";
+import { idempotencyEnvelope } from "../../src/application/orders/idempotency-policy.js";
+import { PostgresIdempotencyStore } from "../../src/infrastructure/db/idempotency-store.js";
+
+function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
+  let connected = false;
+  let peakConnections = 0;
+  let releases = 0;
+  let committedWrites = 0;
+  let pendingWrites = 0;
+  let pendingResponse: unknown;
+  let row: { operation_id: string; status: "pending" | "completed"; response: unknown } | null = null;
+  const waiters: Array<() => void> = [];
+
+  const pool = {
+    async query() { throw new Error("pool.query is not used by the idempotency adapter"); },
+    async connect() {
+      if (connected) await new Promise<void>((resolve) => waiters.push(resolve));
+      connected = true;
+      peakConnections = Math.max(peakConnections, 1);
+      let released = false;
+      const client = {
+        async query(sql: string, values: unknown[] = []) {
+          if (sql === "BEGIN") {
+            pendingWrites = 0;
+            pendingResponse = undefined;
+          } else if (sql.startsWith("INSERT INTO idempotency_keys") && !row) {
+            row = { operation_id: String(values[1]), status: "pending", response: null };
+          } else if (sql.startsWith("SELECT operation_id")) {
+            return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+          } else if (
+            sql.startsWith("INSERT INTO payment_recovery_candidates") ||
+            sql.startsWith("INSERT INTO orders") ||
+            sql.startsWith("INSERT INTO outbox_events")
+          ) {
+            pendingWrites += 1;
+          } else if (sql.startsWith("UPDATE idempotency_keys")) {
+            pendingResponse = JSON.parse(String(values[1]));
+          } else if (sql === "COMMIT") {
+            if (row && pendingResponse !== undefined) {
+              row = { ...row, status: "completed", response: pendingResponse };
+            }
+            committedWrites += pendingWrites;
+          } else if (sql === "ROLLBACK") {
+            pendingWrites = 0;
+            pendingResponse = undefined;
+          } else if (sql.startsWith("SELECT pg_advisory_unlock") && options.failUnlock) {
+            throw new Error("unlock unavailable");
+          }
+          return { rows: [], rowCount: 0 };
+        },
+        release() {
+          if (released) return;
+          released = true;
+          connected = false;
+          releases += 1;
+          waiters.shift()?.();
+        },
+      } satisfies PoolClient;
+      return client;
+    },
+  } satisfies Pool;
+
+  return {
+    pool,
+    stats: () => ({ peakConnections, releases, committedWrites }),
+  };
+}
+
+describe("PostgresIdempotencyStore", () => {
+  it("completes concurrent same-key operations with a single pool connection", async () => {
+    const harness = singleConnectionPool();
+    const store = new PostgresIdempotencyStore(harness.pool);
+    const envelope = idempotencyEnvelope("checkout-1", "actor-1");
+    let operationCalls = 0;
+    const execute = () =>
+      store.run(envelope, async ({ operationId, runTransaction }) => {
+        operationCalls += 1;
+        await runTransaction(async (transaction) => {
+          await transaction.query("INSERT INTO payment_recovery_candidates VALUES ($1)", [operationId]);
+        });
+        return await runTransaction(async (transaction, complete) => {
+          await transaction.query("INSERT INTO orders VALUES ($1)", [operationId]);
+          await transaction.query("INSERT INTO outbox_events VALUES ($1)", [operationId]);
+          const result = { order: { id: operationId } };
+          await complete(result);
+          return result;
+        });
+      });
+
+    const [first, second] = await Promise.all([execute(), execute()]);
+
+    expect(second).toEqual(first);
+    expect(operationCalls).toBe(1);
+    expect(harness.stats()).toEqual({ peakConnections: 1, releases: 2, committedWrites: 3 });
+  });
+
+  it("releases the connection when advisory unlock fails", async () => {
+    const harness = singleConnectionPool({ failUnlock: true });
+    const store = new PostgresIdempotencyStore(harness.pool);
+    await expect(
+      store.run(idempotencyEnvelope("checkout-2", "actor-1"), async () => ({ ok: true })),
+    ).rejects.toThrow("unlock unavailable");
+    expect(harness.stats().releases).toBe(1);
   });
 });
   `),
@@ -838,7 +902,8 @@ export async function createIntegrationHarness() {
       if (!envelope) {
         return await work({
           operationId: "00000000-0000-4000-8000-000000000099",
-          async complete() {},
+          runTransaction: async (transactionWork) =>
+            await transaction.run((client) => transactionWork(client, async () => {})),
         });
       }
       const key = [envelope.operation, envelope.actorSubject, envelope.key].join(":");
@@ -852,14 +917,19 @@ export async function createIntegrationHarness() {
       if (operation.response) return operation.response as T;
       return await work({
         operationId: operation.operationId,
-        async complete(result: CreateOrderResult, transaction: DbTransaction) {
-          if (!transaction) throw new Error("idempotency completion requires the order transaction");
-          if (failIdempotencyCompletion) {
-            failIdempotencyCompletion = false;
-            throw new Error("idempotency completion unavailable");
-          }
-          stagedIdempotencyCompletions.push({ key, result });
-        },
+        runTransaction: async (transactionWork) =>
+          await transaction.run((client) =>
+            transactionWork(client, async (result) => {
+              if (failIdempotencyCompletion) {
+                failIdempotencyCompletion = false;
+                throw new Error("idempotency completion unavailable");
+              }
+              stagedIdempotencyCompletions.push({
+                key,
+                result: result as CreateOrderResult,
+              });
+            }),
+          ),
       });
     },
     failNextComplete() { failIdempotencyCompletion = true; },
@@ -914,7 +984,10 @@ export async function createIntegrationHarness() {
 };
 
 const preRecoveryCreateOrderSource = finalSources["src/application/orders/create-order.ts"]
-  .replace("      await this.ports.paymentRecoveryCandidates.register(authorization.id);\n", "")
+  .replace(
+    / {6}await runTransaction\(async \(transaction\) => \{\n {8}await this\.ports\.paymentRecoveryCandidates\.register\(authorization\.id, transaction\);\n {6}\}\);\n/u,
+    "",
+  )
   .replace(
     "        await this.ports.paymentRecoveryCandidates.complete(authorization.id, transaction);\n",
     "",
@@ -938,7 +1011,7 @@ const preIdempotencyCreateOrderSource = preObservabilityCreateOrderSource
   .replace("const envelope = command.idempotencyKey", "const retry = command.idempotencyKey")
   .replace("idempotencyEnvelope(command.idempotencyKey", "retryPolicy(command.idempotencyKey")
   .replace(
-    "this.ports.idempotency.run(envelope, async ({ operationId, complete }) => {",
+    "this.ports.idempotency.run(envelope, async ({ operationId, runTransaction }) => {",
     "this.ports.retries.run(retry, async () => {",
   )
   .replace(
@@ -946,7 +1019,11 @@ const preIdempotencyCreateOrderSource = preObservabilityCreateOrderSource
     "",
   )
   .replace("        id: operationId,\n", "")
-  .replace("        await complete(result, transaction);\n", "");
+  .replace(
+    "      await runTransaction(async (transaction, complete) => {",
+    "      await this.ports.transaction.run(async (transaction) => {",
+  )
+  .replace("        await complete(result);\n", "");
 if (
   preIdempotencyCreateOrderSource === preObservabilityCreateOrderSource ||
   preIdempotencyCreateOrderSource.includes("idempotency-policy") ||
@@ -1260,6 +1337,7 @@ function createRepository() {
           "src/application/orders/idempotency-policy.ts",
           "src/application/orders/create-order.ts",
           "src/application/ports.ts",
+          "test/integration/idempotency-store.test.ts",
         ],
         extra: {
           "src/application/orders/create-order.ts": preObservabilityCreateOrderSource,
@@ -1471,7 +1549,7 @@ export function createRealisticFixture() {
         "CreateOrderHandler",
         "src/application/orders/create-order.ts",
         "async execute",
-        31,
+        52,
         "Order placement orchestration",
       ),
       headReference(
@@ -1496,8 +1574,8 @@ export function createRealisticFixture() {
         "recovery-idempotency",
         "Idempotency transaction",
         "src/infrastructure/db/idempotency-store.ts",
-        "async run",
-        12,
+        "pg_advisory_lock",
+        31,
         "Concurrent retries converge on one result",
       ),
       headReference(
@@ -2091,7 +2169,7 @@ export function createRealisticFixture() {
     const latestBody = [
       "## Summary",
       "",
-      "Adds a production-ready order placement flow spanning the authenticated HTTP boundary, domain pricing, inventory and payment integrations, atomic persistence, asynchronous event delivery, and payment recovery.",
+      "Adds a production-style order placement flow spanning the authenticated HTTP boundary, domain pricing, inventory and payment integrations, atomic persistence, asynchronous event delivery, and payment recovery.",
       "",
       "## Motivation / failure mode",
       "",
@@ -2103,11 +2181,11 @@ export function createRealisticFixture() {
       "",
       "## Transaction boundary",
       "",
-      "The order snapshot, released domain events, recovery completion, and idempotency response are written with the same Postgres transaction client. External inventory and payment calls intentionally happen before this boundary and are covered by stable provider identity plus explicit recovery.",
+      "The order snapshot, released domain events, recovery completion, and idempotency response are written with the same Postgres transaction client held by the idempotency operation. External inventory and payment calls intentionally happen before this boundary; payment uses stable provider identity and explicit recovery, while inventory expiry is a documented residual boundary.",
       "",
       "## Retry / idempotency semantics",
       "",
-      "The Idempotency-Key and actor first claim one stable operation ID, which is also the order ID and payment provider key. Concurrent attempts serialize on that operation, and its completed response commits atomically with the order and outbox.",
+      "The Idempotency-Key and actor first claim one stable operation ID, which is also the order ID and payment provider key. Concurrent attempts serialize on that operation using one pool connection, and its completed response commits atomically with the order and outbox. Reusing the same key with a different payload deliberately replays the first response; callers must allocate a new key for a new order.",
       "",
       "## Payment failure recovery",
       "",
@@ -2131,7 +2209,7 @@ export function createRealisticFixture() {
       "",
       "## Known trade-offs",
       "",
-      "Inventory reservations are not transactionally coupled to Postgres and expire independently. Outbox consumers must tolerate duplicates. Reconciliation intentionally prefers a delayed retry over voiding on ambiguous provider state.",
+      "Inventory reservations are not transactionally coupled to Postgres: a local rollback may reserve again on retry, and both reservations expire independently. Outbox consumers must tolerate duplicates. Reconciliation currently groups captured, pending, and unknown orphan states into retry-later; candidate attempt count and last outcome remain follow-up work, so operations monitors age and lease churn externally.",
       "",
       "## Suggested review route",
       "",
@@ -2213,7 +2291,7 @@ export function createRealisticFixture() {
       thread(
         1,
         { kind: "pull-request" },
-        "Please confirm inventory reservations expire if authorization never completes; this is the remaining rollout decision.",
+        "Please confirm inventory reservations expire if authorization never completes or a local rollback reserves again on retry; duplicate reservations remain a rollout decision.",
       ),
       thread(
         2,
@@ -2581,6 +2659,7 @@ export function validateRealisticFixture(fixture) {
   );
   if (
     generatedPackage.dependencies.hono !== fixtureToolchain.hono ||
+    generatedPackage.dependencies.zod !== fixtureToolchain.zod ||
     generatedPackage.devDependencies.typescript !== fixtureToolchain.typescript ||
     generatedPackage.devDependencies.vitest !== fixtureToolchain.vitest
   ) {
@@ -2778,17 +2857,20 @@ export function validateRealisticFixture(fixture) {
     "id: operationId",
     "ports.telemetry.record(orderLogContext",
     "authorizationId: authorization.id",
-    "paymentRecoveryCandidates.register(authorization.id)",
+    "paymentRecoveryCandidates.register(authorization.id, transaction)",
     "paymentRecoveryCandidates.complete(authorization.id, transaction)",
-    "complete(result, transaction)",
+    "runTransaction(async (transaction, complete)",
+    "complete(result)",
   ]);
   requireSourceClaim("src/infrastructure/db/idempotency-store.ts", [
     "pg_advisory_lock",
     "operation_id",
     'status === "completed"',
     "operationId: row.operation_id",
+    "this.runTransaction(client, work",
     "UPDATE idempotency_keys SET status = 'completed'",
     "pg_advisory_unlock",
+    "client.release()",
   ]);
   requireSourceClaim("migrations/018_orders_and_outbox.sql", [
     "CREATE TABLE idempotency_keys",
@@ -2838,6 +2920,11 @@ export function validateRealisticFixture(fixture) {
     "createdAuthorizations",
     "rolls back both the order and outbox records",
     "expect(await harness.orders.all()).toEqual([])",
+  ]);
+  requireSourceClaim("test/integration/idempotency-store.test.ts", [
+    "single pool connection",
+    "Promise.all([execute(), execute()])",
+    "unlock unavailable",
   ]);
   requireSourceClaim("test/integration/payment-reconciliation.test.ts", [
     "normalizes Stripe requires_capture",

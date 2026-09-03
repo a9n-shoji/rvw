@@ -169,13 +169,18 @@ export interface OrderRepositoryPort {
   findByPaymentAuthorization(authorizationId: string): Promise<unknown | null>;
 }
 export interface PaymentRecoveryCandidatePort {
-  register(authorizationId: string): Promise<void>;
+  register(authorizationId: string, transaction?: DbTransaction): Promise<void>;
   leaseNextCandidate(leaseSeconds: number): Promise<{ authorizationId: string } | null>;
   complete(authorizationId: string, transaction?: DbTransaction): Promise<void>;
 }
 export interface IdempotencyOperationContext {
   operationId: string;
-  complete(result: unknown, transaction: DbTransaction): Promise<void>;
+  runTransaction<T>(
+    work: (
+      transaction: DbTransaction,
+      complete: (result: unknown) => Promise<void>,
+    ) => Promise<T>,
+  ): Promise<T>;
 }
 export interface ApplicationPorts {
   idempotency: {

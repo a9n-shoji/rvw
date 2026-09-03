@@ -170,7 +170,7 @@ test("keeps agent explanation passive until a human opens a current code referen
   await expect(
     page
       .locator(
-        '.document-pane[data-pane="right"] diffs-container [data-line="43"][data-selected-line="last"]',
+        '.document-pane[data-pane="right"] diffs-container [data-line="64"][data-selected-line="last"]',
       )
       .first(),
   ).toBeVisible();
@@ -193,7 +193,7 @@ test("keeps agent explanation passive until a human opens a current code referen
   ).toBeVisible();
   await expect(
     page.locator(
-      '.document-pane[data-pane="right"] diffs-container [data-line="43"][data-selected-line]',
+      '.document-pane[data-pane="right"] diffs-container [data-line="64"][data-selected-line]',
     ),
   ).toHaveCount(0);
   await expect(

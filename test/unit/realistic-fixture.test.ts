@@ -60,9 +60,9 @@ describe("realistic fixture", () => {
       ]);
       expect(fixture.manifest).toMatchObject({
         commitCount: 7,
-        repositoryFileCount: 130,
-        changedFileCount: 43,
-        changeKinds: { added: 36, modified: 4, renamed: 1, deleted: 2 },
+        repositoryFileCount: 131,
+        changedFileCount: 44,
+        changeKinds: { added: 37, modified: 4, renamed: 1, deleted: 2 },
         commentCount: 13,
         unresolvedCommentCount: 6,
         resolvedCommentCount: 7,
@@ -231,6 +231,7 @@ describe("realistic fixture", () => {
           "test/unit/pricing.test.ts",
           "test/unit/order-telemetry.test.ts",
           "test/integration/create-order.test.ts",
+          "test/integration/idempotency-store.test.ts",
           "test/integration/payment-reconciliation.test.ts",
           "test/contract/order-api.test.ts",
           "test/contract/outbox-event.test.ts",

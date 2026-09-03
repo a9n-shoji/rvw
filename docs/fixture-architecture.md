@@ -34,7 +34,9 @@ orphan、既にterminal、再試行すべき曖昧状態を明示的に区別す
 
 actor-scoped idempotency keyはremote side effectより先にstable operation IDをclaimし、そのIDをorder IDと
 payment provider keyに使う。completed responseはorder / outbox / recovery completionと同じtransactionへ書き、
-完了記録だけが欠ける障害窓を作らない。
+完了記録だけが欠ける障害窓を作らない。advisory lockを保持する同じconnectionでこのtransactionを実行し、
+pool capacityが1でも追加connection待ちを起こさない。payload fingerprint、inventory reservationのretry重複、
+reconciliationのattempt / last-outcome永続化はsynthetic PRのKnown trade-offsとして明示する。
 
 fixtureを更新するときは、まずscenarioの意味を保ったままsourceとcommit progressionを変更し、その後に
 semantic needleから作られるreferenceを更新する。手書き行番号は追加しない。builderのstartup validationと
