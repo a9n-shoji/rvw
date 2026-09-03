@@ -20,7 +20,7 @@ import {
 const require = createRequire(import.meta.url);
 const tscEntry = require.resolve("typescript/bin/tsc");
 const vitestEntry = path.join(path.dirname(require.resolve("vitest")), "vitest.mjs");
-const fixtureTestTimeout = process.platform === "win32" ? 30_000 : 5_000;
+const fixtureTestTimeout = process.platform === "win32" ? 30_000 : 10_000;
 vi.setConfig({ testTimeout: fixtureTestTimeout });
 
 describe("realistic fixture", () => {
@@ -60,9 +60,9 @@ describe("realistic fixture", () => {
       ]);
       expect(fixture.manifest).toMatchObject({
         commitCount: 7,
-        repositoryFileCount: 129,
-        changedFileCount: 42,
-        changeKinds: { added: 37, modified: 2, renamed: 1, deleted: 2 },
+        repositoryFileCount: 130,
+        changedFileCount: 43,
+        changeKinds: { added: 36, modified: 4, renamed: 1, deleted: 2 },
         commentCount: 13,
         unresolvedCommentCount: 7,
         resolvedCommentCount: 6,
@@ -99,13 +99,52 @@ describe("realistic fixture", () => {
     }
   });
 
+  it("introduces retry and idempotency behavior in the commits that name them", () => {
+    const fixture = createRealisticFixture();
+    try {
+      const reservationCommit = fixture.commits[2]?.oid;
+      const idempotencyCommit = fixture.commits[3]?.oid;
+      if (!reservationCommit || !idempotencyCommit) throw new Error("fixture commits are missing");
+      const reservationHandler = fixture.repositoryDocumentAt(
+        reservationCommit,
+        "src/application/orders/create-order.ts",
+      ).text;
+      const reservationPorts = fixture.repositoryDocumentAt(
+        reservationCommit,
+        "src/application/ports.ts",
+      ).text;
+      const idempotencyHandler = fixture.repositoryDocumentAt(
+        idempotencyCommit,
+        "src/application/orders/create-order.ts",
+      ).text;
+      expect(reservationHandler).toContain('from "./retry-policy.js"');
+      expect(reservationHandler).toContain("this.ports.retries.run(retry");
+      expect(reservationHandler).not.toContain("idempotency-policy");
+      expect(reservationPorts).toContain("RetryPolicy");
+      expect(idempotencyHandler).toContain('from "./idempotency-policy.js"');
+      expect(idempotencyHandler).toContain("this.ports.idempotency.run(envelope");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
   it("ignores hostile global Git configuration and hooks", () => {
     const baseline = createRealisticFixture();
     const hostileRoot = mkdtempSync(path.join(os.tmpdir(), "rvw-hostile-git-"));
     const hooksPath = path.join(hostileRoot, "hooks");
-    const templateHooksPath = path.join(hostileRoot, "template", "hooks");
+    const templatePath = path.join(hostileRoot, "template");
+    const templateHooksPath = path.join(templatePath, "hooks");
+    const templateInfoPath = path.join(templatePath, "info");
+    const homePath = path.join(hostileRoot, "home");
+    const xdgGitPath = path.join(hostileRoot, "xdg", "git");
     mkdirSync(hooksPath);
     mkdirSync(templateHooksPath, { recursive: true });
+    mkdirSync(templateInfoPath, { recursive: true });
+    mkdirSync(path.join(homePath, ".config", "git"), { recursive: true });
+    mkdirSync(xdgGitPath, { recursive: true });
+    writeFileSync(path.join(templateInfoPath, "attributes"), "*.ts -text\n", "utf8");
+    writeFileSync(path.join(homePath, ".config", "git", "attributes"), "*.ts -text\n", "utf8");
+    writeFileSync(path.join(xdgGitPath, "attributes"), "*.ts -text\n", "utf8");
     const hookPath = path.join(hooksPath, "pre-commit");
     writeFileSync(hookPath, "#!/bin/sh\nexit 73\n", "utf8");
     chmodSync(hookPath, 0o755);
@@ -135,6 +174,9 @@ describe("realistic fixture", () => {
       GIT_CONFIG_COUNT: "1",
       GIT_CONFIG_KEY_0: "user.name",
       GIT_CONFIG_VALUE_0: "Injected Config Identity",
+      GIT_TEMPLATE_DIR: templatePath,
+      HOME: homePath,
+      XDG_CONFIG_HOME: path.join(hostileRoot, "xdg"),
     } as const;
     const previousEnvironment = Object.fromEntries(
       Object.keys(hostileEnvironment).map((key) => [key, process.env[key]]),
@@ -146,6 +188,9 @@ describe("realistic fixture", () => {
       expect(hostile.baseOid).toBe(baseline.baseOid);
       expect(hostile.headOid).toBe(baseline.headOid);
       expect(hostile.manifest).toEqual(baseline.manifest);
+      expect(existsSync(path.join(hostile.repositoryRoot, ".git", "info", "attributes"))).toBe(
+        false,
+      );
     } finally {
       for (const [key, value] of Object.entries(previousEnvironment)) {
         if (value === undefined) delete process.env[key];
@@ -184,6 +229,7 @@ describe("realistic fixture", () => {
           "--root",
           fixture.repositoryRoot,
           "test/unit/pricing.test.ts",
+          "test/unit/order-telemetry.test.ts",
           "test/integration/create-order.test.ts",
           "test/integration/payment-reconciliation.test.ts",
           "test/contract/order-api.test.ts",

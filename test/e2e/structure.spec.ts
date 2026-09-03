@@ -1413,7 +1413,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
     .getAttribute("aria-label");
   await expect(hubSourceAction).toHaveAttribute(
     "aria-label",
-    "src/application/orders/create-order.ts:9-37を開く",
+    "src/application/orders/create-order.ts:8-50を開く",
   );
   const resolutionResponsePromise = page.waitForResponse((response) =>
     response
@@ -1431,8 +1431,8 @@ test("resolves Structure anchors to latest and preserves spatial context across 
       target: {
         sourceOid: "c".repeat(40),
         path: "src/application/orders/create-order.ts",
-        startLine: 9,
-        endLine: 37,
+        startLine: 8,
+        endLine: 50,
       },
     },
   });
@@ -1441,7 +1441,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   ).toHaveAttribute("aria-selected", "true");
   await expect(page.locator('.document-pane[data-pane="left"] diffs-container')).toHaveAttribute(
     "data-search-target-line",
-    "9",
+    "8",
   );
   await expect(page.getByRole("button", { name: /^対象commit:/ })).toHaveAttribute(
     "aria-label",

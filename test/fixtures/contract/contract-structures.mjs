@@ -1,6 +1,30 @@
+import path from "node:path";
+import {
+  walkthroughRepositoryPaths,
+  walkthroughRepositoryText,
+} from "../../e2e/walkthrough-fixture.mjs";
+
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
 const fullStackStructureId = "80000000-0000-4000-8000-000000000003";
+const semanticAnchorNeedles = new Map();
+
+function semanticAnchor(filePath, needle, span = 0) {
+  const text = walkthroughRepositoryText(filePath);
+  const firstOffset = text.indexOf(needle);
+  const secondOffset = firstOffset < 0 ? -1 : text.indexOf(needle, firstOffset + 1);
+  if (firstOffset < 0) throw new Error(`contract anchor could not find ${needle} in ${filePath}`);
+  if (secondOffset >= 0) throw new Error(`contract anchor is not unique: ${needle} in ${filePath}`);
+  const startLine = text.slice(0, firstOffset).split("\n").length;
+  const anchor = {
+    path: filePath,
+    startLine,
+    endLine: Math.min(startLine + span, text.trimEnd().split("\n").length),
+  };
+  semanticAnchorNeedles.set(`${anchor.path}\0${anchor.startLine}\0${anchor.endLine}`, needle);
+  return anchor;
+}
+
 const primaryStructureNodes = [
   {
     id: "hub",
@@ -8,7 +32,11 @@ const primaryStructureNodes = [
     description: "注文の認可から外部side effect、永続化までを調停するapplication boundary。",
     kind: "use-case",
     notation: "class",
-    anchor: { path: "src/application/orders/create-order.ts", startLine: 9, endLine: 37 },
+    anchor: semanticAnchor(
+      "src/application/orders/create-order.ts",
+      "export class CreateOrderHandler",
+      42,
+    ),
   },
   {
     id: "http-routes",
@@ -16,7 +44,7 @@ const primaryStructureNodes = [
     description: "認証middlewareと注文commandのHTTP entry pointを構成する。",
     kind: "route",
     notation: "external",
-    anchor: { path: "src/http/routes/orders.ts", startLine: 6, endLine: 14 },
+    anchor: semanticAnchor("src/http/routes/orders.ts", "export function orderRoutes", 8),
   },
   {
     id: "auth-middleware",
@@ -24,7 +52,11 @@ const primaryStructureNodes = [
     description: "access tokenを検証し、認可に必要なactor contextを組み立てる。",
     kind: "middleware",
     notation: "component",
-    anchor: { path: "src/http/middleware/require-actor.ts", startLine: 4, endLine: 18 },
+    anchor: semanticAnchor(
+      "src/http/middleware/require-actor.ts",
+      "export function requireActor",
+      14,
+    ),
   },
   {
     id: "http-controller",
@@ -32,7 +64,11 @@ const primaryStructureNodes = [
     description: "HTTP payloadとheaderをapplication commandへ変換する。",
     kind: "controller",
     notation: "class",
-    anchor: { path: "src/http/controllers/create-order.ts", startLine: 5, endLine: 19 },
+    anchor: semanticAnchor(
+      "src/http/controllers/create-order.ts",
+      "export function createOrderControllerFor",
+      18,
+    ),
   },
   {
     id: "request-schema",
@@ -40,7 +76,7 @@ const primaryStructureNodes = [
     description: "注文requestの識別子、明細数、数量をtransport boundaryで検証する。",
     kind: "schema",
     notation: "interface",
-    anchor: { path: "src/http/schemas/create-order.ts", startLine: 3, endLine: 12 },
+    anchor: semanticAnchor("src/http/schemas/create-order.ts", "export const createOrderSchema", 9),
   },
   {
     id: "composition-root",
@@ -48,7 +84,7 @@ const primaryStructureNodes = [
     description: "application portを具象adapterへ結線し、handlerを構築する。",
     kind: "composition",
     notation: "component",
-    anchor: { path: "src/application/orders/create-order.ts", startLine: 31, endLine: 34 },
+    anchor: semanticAnchor("src/bootstrap/application.ts", "const ports =", 12),
   },
   {
     id: "authorization-policy",
@@ -56,7 +92,11 @@ const primaryStructureNodes = [
     description: "orders:create権限とcustomer scopeをapplication boundaryで保証する。",
     kind: "policy",
     notation: "class",
-    anchor: { path: "src/application/authorization/order-policy.ts", startLine: 4, endLine: 11 },
+    anchor: semanticAnchor(
+      "src/application/authorization/order-policy.ts",
+      "export function assertCanCreateOrder",
+      7,
+    ),
   },
   {
     id: "idempotency-store",
@@ -64,7 +104,11 @@ const primaryStructureNodes = [
     description: "同じidempotency keyの再試行を元の結果へ収束させる。",
     kind: "adapter",
     notation: "database",
-    anchor: { path: "src/infrastructure/db/idempotency-store.ts", startLine: 3, endLine: 18 },
+    anchor: semanticAnchor(
+      "src/infrastructure/db/idempotency-store.ts",
+      "export class PostgresIdempotencyStore",
+      15,
+    ),
   },
   {
     id: "inventory-client",
@@ -72,11 +116,11 @@ const primaryStructureNodes = [
     description: "注文明細の在庫をtimeout付きHTTP requestで予約する。",
     kind: "gateway",
     notation: "external",
-    anchor: {
-      path: "src/infrastructure/inventory/http-inventory-client.ts",
-      startLine: 4,
-      endLine: 18,
-    },
+    anchor: semanticAnchor(
+      "src/infrastructure/inventory/http-inventory-client.ts",
+      "export class HttpInventoryClient",
+      14,
+    ),
   },
   {
     id: "order-aggregate",
@@ -84,7 +128,7 @@ const primaryStructureNodes = [
     description: "注文totalとplaced/payment eventを保持するdomain aggregate。",
     kind: "aggregate",
     notation: "class",
-    anchor: { path: "src/domain/orders/order.ts", startLine: 5, endLine: 41 },
+    anchor: semanticAnchor("src/domain/orders/order.ts", "export class Order", 41),
   },
   {
     id: "pricing-policy",
@@ -92,7 +136,11 @@ const primaryStructureNodes = [
     description: "catalog priceを使って単一通貨の注文totalを計算する。",
     kind: "policy",
     notation: "class",
-    anchor: { path: "src/domain/orders/pricing.ts", startLine: 1, endLine: 14 },
+    anchor: semanticAnchor(
+      "src/domain/orders/pricing.ts",
+      "export function calculateOrderTotal",
+      13,
+    ),
   },
   {
     id: "payment-gateway",
@@ -100,7 +148,11 @@ const primaryStructureNodes = [
     description: "order IDをidempotency keyとして決済を手動capture前まで認証する。",
     kind: "gateway",
     notation: "external",
-    anchor: { path: "src/infrastructure/payments/stripe-gateway.ts", startLine: 4, endLine: 21 },
+    anchor: semanticAnchor(
+      "src/infrastructure/payments/stripe-gateway.ts",
+      "export class StripeGateway",
+      26,
+    ),
   },
   {
     id: "transaction-runner",
@@ -108,7 +160,11 @@ const primaryStructureNodes = [
     description: "orderとoutboxのwriteを同じPostgres transactionへ閉じ込める。",
     kind: "adapter",
     notation: "component",
-    anchor: { path: "src/infrastructure/db/transaction.ts", startLine: 3, endLine: 20 },
+    anchor: semanticAnchor(
+      "src/infrastructure/db/transaction.ts",
+      "export class TransactionRunner",
+      17,
+    ),
   },
   {
     id: "order-repository",
@@ -116,7 +172,11 @@ const primaryStructureNodes = [
     description: "domain snapshotをorders tableへ永続化する。",
     kind: "repository",
     notation: "class",
-    anchor: { path: "src/infrastructure/db/order-repository.ts", startLine: 4, endLine: 16 },
+    anchor: semanticAnchor(
+      "src/infrastructure/db/order-repository.ts",
+      "export class PostgresOrderRepository",
+      12,
+    ),
   },
   {
     id: "outbox",
@@ -124,7 +184,11 @@ const primaryStructureNodes = [
     description: "domain eventをtransactional outboxへ追記する。",
     kind: "repository",
     notation: "database",
-    anchor: { path: "src/infrastructure/events/postgres-outbox.ts", startLine: 4, endLine: 13 },
+    anchor: semanticAnchor(
+      "src/infrastructure/events/postgres-outbox.ts",
+      "export class PostgresOutbox",
+      9,
+    ),
   },
   {
     id: "outbox-dispatcher",
@@ -132,7 +196,7 @@ const primaryStructureNodes = [
     description: "未送信eventを排他的にclaimし、event busへ配送する。",
     kind: "worker",
     notation: "component",
-    anchor: { path: "src/workers/outbox-dispatcher.ts", startLine: 4, endLine: 16 },
+    anchor: semanticAnchor("src/workers/outbox-dispatcher.ts", "export class OutboxDispatcher", 23),
   },
   {
     id: "payment-reconciliation",
@@ -142,7 +206,11 @@ const primaryStructureNodes = [
       "注文が残らなかった認証済みpaymentを定期的に検出し、providerの現在状態と注文repositoryを照合して、安全にvoidできる対象だけを回収する。再試行時はすでにvoid済みのpaymentを成功として扱い、一時的なprovider障害は次回実行へ残す。処理対象と判断根拠は監査logへ記録し、通常の注文作成transactionから独立したrecovery boundaryとして動作する。候補ごとに取得したprovider responseと照合時刻を保持し、同じpaymentを並列workerが重複処理しないようleaseを確認する。注文が遅れて永続化された場合はvoidせず正常系へ戻し、timeoutやrate limitは失敗として確定せず再試行可能な状態を維持する。batch全体では一件の失敗が残りの候補を止めないよう分離し、終了時に成功、延期、調査対象の件数を集約する。",
     kind: "worker",
     notation: "component",
-    anchor: { path: "src/workers/payment-reconciliation.ts", startLine: 3, endLine: 13 },
+    anchor: semanticAnchor(
+      "src/workers/payment-reconciliation.ts",
+      "export class PaymentReconciliationWorker",
+      22,
+    ),
   },
   {
     id: "database-schema",
@@ -150,7 +218,7 @@ const primaryStructureNodes = [
     description: "order recordと配送待ちeventの永続化境界を定義する。",
     kind: "migration",
     notation: "database",
-    anchor: { path: "migrations/018_orders_and_outbox.sql", startLine: 1, endLine: 18 },
+    anchor: semanticAnchor("migrations/018_orders_and_outbox.sql", "CREATE TABLE orders", 31),
   },
 ];
 const primaryStructureEdges = [
@@ -160,7 +228,7 @@ const primaryStructureEdges = [
     to: "auth-middleware",
     label: "すべてのrouteでactorを認証する",
     directed: true,
-    anchors: [{ path: "src/http/routes/orders.ts", startLine: 9, endLine: 9 }],
+    anchors: [semanticAnchor("src/http/routes/orders.ts", 'routes.use("*"')],
   },
   {
     id: "routes-post-controller",
@@ -168,7 +236,7 @@ const primaryStructureEdges = [
     to: "http-controller",
     label: "POST /ordersを委譲する",
     directed: true,
-    anchors: [{ path: "src/http/routes/orders.ts", startLine: 10, endLine: 10 }],
+    anchors: [semanticAnchor("src/http/routes/orders.ts", 'routes.post("/"')],
   },
   {
     id: "controller-validates-request",
@@ -177,8 +245,8 @@ const primaryStructureEdges = [
     label: "request bodyを検証する",
     directed: true,
     anchors: [
-      { path: "src/http/controllers/create-order.ts", startLine: 7, endLine: 7 },
-      { path: "src/http/schemas/create-order.ts", startLine: 3, endLine: 12 },
+      semanticAnchor("src/http/controllers/create-order.ts", "createOrderSchema.parse"),
+      semanticAnchor("src/http/schemas/create-order.ts", "export const createOrderSchema", 9),
     ],
   },
   {
@@ -188,8 +256,12 @@ const primaryStructureEdges = [
     label: "HTTP commandとして実行する",
     directed: true,
     anchors: [
-      { path: "src/http/controllers/create-order.ts", startLine: 10, endLine: 16 },
-      { path: "src/application/orders/create-order.ts", startLine: 9, endLine: 37 },
+      semanticAnchor(
+        "src/http/controllers/create-order.ts",
+        "const result = await createOrder.execute",
+        7,
+      ),
+      semanticAnchor("src/application/orders/create-order.ts", "async execute", 36),
     ],
   },
   {
@@ -199,8 +271,8 @@ const primaryStructureEdges = [
     label: "具象portを注入して構築する",
     directed: true,
     anchors: [
-      { path: "src/bootstrap/application.ts", startLine: 10, endLine: 22 },
-      { path: "src/edge-only-evidence.ts", startLine: 1, endLine: 1 },
+      semanticAnchor("src/bootstrap/application.ts", "const ports =", 12),
+      semanticAnchor("src/edge-only-evidence.ts", "export const moduleName"),
     ],
   },
   {
@@ -209,7 +281,12 @@ const primaryStructureEdges = [
     to: "authorization-policy",
     label: "作成権限を検証する",
     directed: true,
-    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 10, endLine: 10 }],
+    anchors: [
+      semanticAnchor(
+        "src/application/orders/create-order.ts",
+        "assertCanCreateOrder(command.actor",
+      ),
+    ],
   },
   {
     id: "handler-idempotency-envelope",
@@ -218,8 +295,12 @@ const primaryStructureEdges = [
     label: "再試行を束ねる",
     directed: true,
     anchors: [
-      { path: "src/application/orders/create-order.ts", startLine: 12, endLine: 37 },
-      { path: "src/infrastructure/db/idempotency-store.ts", startLine: 6, endLine: 16 },
+      semanticAnchor(
+        "src/application/orders/create-order.ts",
+        "return this.ports.idempotency.run",
+        31,
+      ),
+      semanticAnchor("src/infrastructure/db/idempotency-store.ts", "async run", 28),
     ],
   },
   {
@@ -228,7 +309,13 @@ const primaryStructureEdges = [
     to: "idempotency-store",
     label: "同じkeyの保存済みresultを再利用する",
     directed: true,
-    anchors: [{ path: "src/infrastructure/db/idempotency-store.ts", startLine: 6, endLine: 16 }],
+    anchors: [
+      semanticAnchor(
+        "src/infrastructure/db/idempotency-store.ts",
+        "const cached = await this.pool.query",
+        5,
+      ),
+    ],
   },
   {
     id: "handler-reserves-inventory",
@@ -236,7 +323,9 @@ const primaryStructureEdges = [
     to: "inventory-client",
     label: "在庫を予約する",
     directed: true,
-    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 16, endLine: 16 }],
+    anchors: [
+      semanticAnchor("src/application/orders/create-order.ts", "this.ports.inventory.reserve"),
+    ],
   },
   {
     id: "handler-places-order",
@@ -244,7 +333,9 @@ const primaryStructureEdges = [
     to: "order-aggregate",
     label: "Orderを生成する",
     directed: true,
-    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 17, endLine: 22 }],
+    anchors: [
+      semanticAnchor("src/application/orders/create-order.ts", "const order = Order.place", 5),
+    ],
   },
   {
     id: "order-calculates-total",
@@ -253,8 +344,8 @@ const primaryStructureEdges = [
     label: "注文totalを計算する",
     directed: true,
     anchors: [
-      { path: "src/domain/orders/order.ts", startLine: 12, endLine: 18 },
-      { path: "src/domain/orders/pricing.ts", startLine: 1, endLine: 14 },
+      semanticAnchor("src/domain/orders/order.ts", "this.total = calculateOrderTotal"),
+      semanticAnchor("src/domain/orders/pricing.ts", "export function calculateOrderTotal", 13),
     ],
   },
   {
@@ -263,7 +354,13 @@ const primaryStructureEdges = [
     to: "payment-gateway",
     label: "決済を認証する",
     directed: true,
-    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 24, endLine: 29 }],
+    anchors: [
+      semanticAnchor(
+        "src/application/orders/create-order.ts",
+        "const authorization = await this.ports.payments.authorize",
+        4,
+      ),
+    ],
   },
   {
     id: "handler-opens-transaction",
@@ -271,7 +368,13 @@ const primaryStructureEdges = [
     to: "transaction-runner",
     label: "transactionを開始する",
     directed: true,
-    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 31, endLine: 34 }],
+    anchors: [
+      semanticAnchor(
+        "src/application/orders/create-order.ts",
+        "await this.ports.transaction.run",
+        3,
+      ),
+    ],
   },
   {
     id: "handler-persists-order",
@@ -280,8 +383,8 @@ const primaryStructureEdges = [
     label: "transaction内でOrderを保存する",
     directed: true,
     anchors: [
-      { path: "src/application/orders/create-order.ts", startLine: 32, endLine: 32 },
-      { path: "src/infrastructure/db/order-repository.ts", startLine: 4, endLine: 11 },
+      semanticAnchor("src/application/orders/create-order.ts", "await this.ports.orders.insert"),
+      semanticAnchor("src/infrastructure/db/order-repository.ts", "async insert", 6),
     ],
   },
   {
@@ -291,8 +394,8 @@ const primaryStructureEdges = [
     label: "transaction内でeventを追記する",
     directed: true,
     anchors: [
-      { path: "src/application/orders/create-order.ts", startLine: 33, endLine: 33 },
-      { path: "src/infrastructure/events/postgres-outbox.ts", startLine: 4, endLine: 12 },
+      semanticAnchor("src/application/orders/create-order.ts", "await this.ports.outbox.append"),
+      semanticAnchor("src/infrastructure/events/postgres-outbox.ts", "async append", 6),
     ],
   },
   {
@@ -302,8 +405,11 @@ const primaryStructureEdges = [
     label: "response snapshotを返す",
     directed: true,
     anchors: [
-      { path: "src/domain/orders/order.ts", startLine: 39, endLine: 41 },
-      { path: "src/application/orders/create-order.ts", startLine: 36, endLine: 36 },
+      semanticAnchor("src/domain/orders/order.ts", "toSnapshot()", 6),
+      semanticAnchor(
+        "src/application/orders/create-order.ts",
+        "return { order: order.toSnapshot() }",
+      ),
     ],
   },
   {
@@ -312,7 +418,13 @@ const primaryStructureEdges = [
     to: "outbox",
     label: "同じDB transactionを共有する",
     directed: false,
-    anchors: [{ path: "src/application/orders/create-order.ts", startLine: 31, endLine: 34 }],
+    anchors: [
+      semanticAnchor(
+        "src/application/orders/create-order.ts",
+        "await this.ports.transaction.run",
+        3,
+      ),
+    ],
   },
   {
     id: "orders-use-schema",
@@ -320,7 +432,7 @@ const primaryStructureEdges = [
     to: "database-schema",
     label: "orders tableへwriteする",
     directed: true,
-    anchors: [{ path: "migrations/018_orders_and_outbox.sql", startLine: 1, endLine: 7 }],
+    anchors: [semanticAnchor("migrations/018_orders_and_outbox.sql", "CREATE TABLE orders", 7)],
   },
   {
     id: "outbox-uses-schema",
@@ -328,7 +440,9 @@ const primaryStructureEdges = [
     to: "database-schema",
     label: "outbox tableへwriteする",
     directed: true,
-    anchors: [{ path: "migrations/018_orders_and_outbox.sql", startLine: 9, endLine: 18 }],
+    anchors: [
+      semanticAnchor("migrations/018_orders_and_outbox.sql", "CREATE TABLE outbox_events", 7),
+    ],
   },
   {
     id: "dispatcher-claims-outbox",
@@ -336,7 +450,7 @@ const primaryStructureEdges = [
     to: "outbox",
     label: "未送信eventを排他的にclaimする",
     directed: true,
-    anchors: [{ path: "src/workers/outbox-dispatcher.ts", startLine: 7, endLine: 14 }],
+    anchors: [semanticAnchor("src/workers/outbox-dispatcher.ts", "FOR UPDATE SKIP LOCKED", 6)],
   },
   {
     id: "reconciliation-checks-payment",
@@ -344,7 +458,13 @@ const primaryStructureEdges = [
     to: "payment-gateway",
     label: "認証済みpaymentを照合してvoidする",
     directed: true,
-    anchors: [{ path: "src/workers/payment-reconciliation.ts", startLine: 6, endLine: 11 }],
+    anchors: [
+      semanticAnchor(
+        "src/workers/payment-reconciliation.ts",
+        "const payment = await this.payments.getAuthorization",
+        4,
+      ),
+    ],
   },
   {
     id: "reconciliation-checks-order",
@@ -352,7 +472,13 @@ const primaryStructureEdges = [
     to: "order-repository",
     label: "対応するorderの有無を照合する",
     directed: true,
-    anchors: [{ path: "src/workers/payment-reconciliation.ts", startLine: 6, endLine: 11 }],
+    anchors: [
+      semanticAnchor(
+        "src/workers/payment-reconciliation.ts",
+        "const order = await this.orders.findByPaymentAuthorization",
+        3,
+      ),
+    ],
   },
 ];
 
@@ -689,6 +815,53 @@ export const fullStackRepositoryPaths = [
     ...fullStackStructureEdges.flatMap((edge) => edge.anchors.map((anchor) => anchor.path)),
   ]),
 ];
+
+export function validateContractStructureFixture() {
+  const structures = [
+    {
+      title: "Order placement behavior",
+      nodes: orderPlacementStructureNodes,
+      edges: orderPlacementStructureEdges,
+    },
+  ];
+  for (const structure of structures) {
+    for (const [kind, id, sourceAnchor] of [
+      ...structure.nodes.flatMap((node) => (node.anchor ? [["node", node.id, node.anchor]] : [])),
+      ...structure.edges.flatMap((edge) =>
+        edge.anchors.map((sourceAnchor) => ["edge", edge.id, sourceAnchor]),
+      ),
+    ]) {
+      const needle = semanticAnchorNeedles.get(
+        `${sourceAnchor.path}\0${sourceAnchor.startLine}\0${sourceAnchor.endLine}`,
+      );
+      if (!needle) throw new Error(`${structure.title} ${kind} ${id} lacks a semantic anchor`);
+      const selected = walkthroughRepositoryText(sourceAnchor.path)
+        .split("\n")
+        .slice(sourceAnchor.startLine - 1, sourceAnchor.endLine)
+        .join("\n");
+      if (!selected.includes(needle)) {
+        throw new Error(`${structure.title} ${kind} ${id} no longer selects ${needle}`);
+      }
+    }
+  }
+
+  const repositoryPaths = new Set([...walkthroughRepositoryPaths, ...fullStackRepositoryPaths]);
+  for (const filePath of repositoryPaths) {
+    if (!/\.[cm]?[jt]sx?$/u.test(filePath)) continue;
+    const text = walkthroughRepositoryText(filePath);
+    for (const match of text.matchAll(/\bfrom\s+["'](\.[^"']+)["']/gu)) {
+      const specifier = match[1];
+      const resolved = path.posix.normalize(
+        path.posix.join(path.posix.dirname(filePath), specifier.replace(/\.js$/u, ".ts")),
+      );
+      if (!repositoryPaths.has(resolved)) {
+        throw new Error(`contract repository ${filePath} imports missing ${resolved}`);
+      }
+    }
+  }
+}
+
+validateContractStructureFixture();
 
 export function createContractStructures({ pullRequestId, baseOid, firstHead }) {
   return [

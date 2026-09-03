@@ -47,7 +47,7 @@ test("reviews the deterministic resilient-order PR across artifacts", async ({ p
   const tree = (await treeResponse.json()) as {
     entries: Array<{ path: string; size: number | null }>;
   };
-  expect(tree.entries.length).toBe(129);
+  expect(tree.entries.length).toBe(130);
   expect(tree.entries.map(({ path }) => path)).toContain("src/application/orders/create-order.ts");
   expect(tree.entries.map(({ path }) => path)).toContain("src/modules/catalog/queries.ts");
 
@@ -58,7 +58,7 @@ test("reviews the deterministic resilient-order PR across artifacts", async ({ p
   const changes = (await changesResponse.json()) as {
     files: Array<{ kind: string; oldPath: string | null; newPath: string | null }>;
   };
-  expect(changes.files).toHaveLength(42);
+  expect(changes.files).toHaveLength(43);
   expect(changes.files).toContainEqual(
     expect.objectContaining({
       kind: "renamed",

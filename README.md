@@ -387,6 +387,7 @@ stress coverageの場所は[Fixture architecture](docs/fixture-architecture.md)�
 pnpm install --frozen-lockfile
 pnpm check
 pnpm test
+pnpm test:dogfood
 pnpm test:e2e
 pnpm build
 pnpm test:package

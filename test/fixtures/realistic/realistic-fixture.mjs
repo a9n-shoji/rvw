@@ -114,6 +114,15 @@ export class ForbiddenError extends Error {}
 export class InventoryUnavailableError extends Error {}
 export class PaymentDeclinedError extends Error {}
   `),
+    "src/application/ports.ts": source(`
+export interface CatalogItem { sku: string; unitPrice: number; currency: string; }
+export interface CatalogPort { getBySkus(skus: string[]): Promise<CatalogItem[]>; }
+  `),
+    "src/bootstrap/application.ts": source(`
+export const application = {
+  createOrder: { async execute() { throw new Error("order placement is not configured"); } },
+};
+  `),
     "src/infrastructure/auth/jwt-verifier.ts": source(`
 export interface AccessTokenClaims {
   sub: string;
@@ -406,6 +415,7 @@ export interface OrderRepositoryPort {
   findByPaymentAuthorization(authorizationId: string): Promise<unknown | null>;
 }
 export interface PaymentRecoveryCandidatePort {
+  register(authorizationId: string): Promise<void>;
   leaseNextCandidate(leaseSeconds: number): Promise<{ authorizationId: string } | null>;
   complete(authorizationId: string): Promise<void>;
 }
@@ -416,6 +426,7 @@ export interface ApplicationPorts {
   catalog: CatalogPort;
   inventory: InventoryPort;
   payments: PaymentPort;
+  paymentRecoveryCandidates: PaymentRecoveryCandidatePort;
   transaction: { run<T>(work: (transaction: DbTransaction) => Promise<T>): Promise<T> };
   orders: OrderRepositoryPort;
   outbox: { append(events: DomainEvent[], transaction: DbTransaction): Promise<void> };
@@ -441,7 +452,9 @@ export const orderMetrics = {
   idempotencyReplay: "orders.idempotency.replay_total",
   orphanAuthorization: "payments.orphan_authorization_total",
   outboxLag: "outbox.oldest_unpublished_age_seconds",
-  recordOutboxLag(seconds: number) { void seconds; },
+  measurements: [] as number[],
+  recordOutboxLag(seconds: number) { this.measurements.push(seconds); },
+  reset() { this.measurements.length = 0; },
 } as const;
   `),
   "src/telemetry/order-logger.ts": source(`
@@ -453,6 +466,29 @@ export function orderLogContext(input: {
 }) {
   return { ...input, component: "order-placement" };
 }
+
+const records: Array<Record<string, string | undefined>> = [];
+export const orderTelemetry = {
+  record(context: Record<string, string | undefined>) { records.push({ ...context }); },
+  snapshot() { return records.map((context) => ({ ...context })); },
+  reset() { records.length = 0; },
+};
+  `),
+  "test/unit/order-telemetry.test.ts": source(`
+import { describe, expect, it } from "vitest";
+import { orderMetrics } from "../../src/telemetry/order-metrics.js";
+import { orderTelemetry } from "../../src/telemetry/order-logger.js";
+
+describe("order telemetry sinks", () => {
+  it("records structured context and outbox lag in memory", () => {
+    orderTelemetry.reset();
+    orderMetrics.reset();
+    orderTelemetry.record({ requestId: "request-1", orderId: "order-1" });
+    orderMetrics.recordOutboxLag(12);
+    expect(orderTelemetry.snapshot()).toEqual([{ requestId: "request-1", orderId: "order-1" }]);
+    expect(orderMetrics.measurements).toEqual([12]);
+  });
+});
   `),
   "config/order-placement.json": `${JSON.stringify(
     {
@@ -532,6 +568,7 @@ describe("payment reconciliation", () => {
         async findByPaymentAuthorization() { return null; },
       },
       {
+        async register() {},
         async leaseNextCandidate(seconds) {
           leaseSeconds.push(seconds);
           return { authorizationId: "auth-orphaned" };
@@ -582,6 +619,7 @@ export async function createIntegrationHarness() {
   const cache = new Map<string, CreateOrderResult>();
   const authorizeCalls: unknown[] = [];
   const telemetryRecords: Array<Record<string, string | undefined>> = [];
+  const recoveryCandidates: string[] = [];
 
   const transaction = {
     async run<T>(work: (client: DbTransaction) => Promise<T>): Promise<T> {
@@ -626,6 +664,11 @@ export async function createIntegrationHarness() {
     },
     inventory: { async reserve() { return { id: "reservation-1" }; } },
     payments,
+    paymentRecoveryCandidates: {
+      async register(authorizationId) { recoveryCandidates.push(authorizationId); },
+      async leaseNextCandidate() { return null; },
+      async complete() {},
+    },
     transaction,
     orders,
     outbox,
@@ -647,6 +690,7 @@ export async function createIntegrationHarness() {
     orders,
     outbox,
     payments,
+    recoveryCandidates,
     telemetryRecords,
     validCommand(overrides: Partial<CreateOrderCommand> = {}): CreateOrderCommand {
       return {
@@ -669,11 +713,80 @@ export async function createIntegrationHarness() {
   `),
 };
 
-const preObservabilityCreateOrderSource = finalSources["src/application/orders/create-order.ts"]
+const preRecoveryCreateOrderSource = finalSources["src/application/orders/create-order.ts"].replace(
+  "      await this.ports.paymentRecoveryCandidates.register(authorization.id);\n",
+  "",
+);
+if (preRecoveryCreateOrderSource === finalSources["src/application/orders/create-order.ts"]) {
+  throw new Error("realistic fixture could not derive the pre-recovery order handler");
+}
+
+const preObservabilityCreateOrderSource = preRecoveryCreateOrderSource
   .replace('import { orderLogContext } from "../../telemetry/order-logger.js";\n', "")
   .replace(/ {6}this\.ports\.telemetry\.record\(orderLogContext\(\{[\s\S]*? {6}\}\)\);\n/, "");
-if (preObservabilityCreateOrderSource === finalSources["src/application/orders/create-order.ts"]) {
+if (preObservabilityCreateOrderSource === preRecoveryCreateOrderSource) {
   throw new Error("realistic fixture could not derive the pre-observability order handler");
+}
+
+const preIdempotencyCreateOrderSource = preObservabilityCreateOrderSource
+  .replace(
+    'import { idempotencyEnvelope } from "./idempotency-policy.js";',
+    'import { retryPolicy } from "./retry-policy.js";',
+  )
+  .replace("const envelope = command.idempotencyKey", "const retry = command.idempotencyKey")
+  .replace("idempotencyEnvelope(command.idempotencyKey", "retryPolicy(command.idempotencyKey")
+  .replace("this.ports.idempotency.run(envelope", "this.ports.retries.run(retry");
+if (
+  preIdempotencyCreateOrderSource === preObservabilityCreateOrderSource ||
+  preIdempotencyCreateOrderSource.includes("idempotency-policy") ||
+  preIdempotencyCreateOrderSource.includes("ports.idempotency")
+) {
+  throw new Error("realistic fixture could not derive the pre-idempotency order handler");
+}
+
+const preIdempotencyPortsSource = source(`
+import type { DomainEvent } from "../domain/events.js";
+import type { Order } from "../domain/orders/order.js";
+import type { RetryPolicy } from "./orders/retry-policy.js";
+
+export interface DbTransaction {
+  query(sql: string, values?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
+}
+export interface CatalogItem { sku: string; unitPrice: number; currency: string; }
+export interface CatalogPort { getBySkus(skus: string[]): Promise<CatalogItem[]>; }
+export interface InventoryPort {
+  reserve(lines: Array<{ sku: string; quantity: number }>): Promise<{ id: string }>;
+}
+export interface AuthorizationInput {
+  orderId: string;
+  paymentMethodId: string;
+  amount: { amount: number; currency: string };
+}
+export interface PaymentPort {
+  authorize(input: AuthorizationInput): Promise<{ id: string }>;
+  getAuthorization(authorizationId: string): Promise<{ status: string }>;
+  voidAuthorization(authorizationId: string): Promise<void>;
+}
+export interface OrderRepositoryPort {
+  insert(order: Order, transaction: DbTransaction): Promise<void>;
+  findByPaymentAuthorization(authorizationId: string): Promise<unknown | null>;
+}
+export interface ApplicationPorts {
+  retries: { run<T>(policy: RetryPolicy | undefined, work: () => Promise<T>): Promise<T> };
+  catalog: CatalogPort;
+  inventory: InventoryPort;
+  payments: PaymentPort;
+  transaction: { run<T>(work: (transaction: DbTransaction) => Promise<T>): Promise<T> };
+  orders: OrderRepositoryPort;
+  outbox: { append(events: DomainEvent[], transaction: DbTransaction): Promise<void> };
+}
+  `);
+
+const preRecoveryPortsSource = finalSources["src/application/ports.ts"]
+  .replace(/export interface PaymentRecoveryCandidatePort \{[\s\S]*?\}\n/u, "")
+  .replace("  paymentRecoveryCandidates: PaymentRecoveryCandidatePort;\n", "");
+if (preRecoveryPortsSource === finalSources["src/application/ports.ts"]) {
+  throw new Error("realistic fixture could not derive pre-recovery application ports");
 }
 
 function git(repositoryRoot, args, options = {}) {
@@ -841,12 +954,20 @@ function createRepository() {
   const environmentRoot = mkdtempSync(path.join(os.tmpdir(), "rvw-realistic-git-env-"));
   const globalConfig = path.join(environmentRoot, "global.gitconfig");
   const hooksPath = path.join(environmentRoot, "hooks");
+  const homePath = path.join(environmentRoot, "home");
+  const xdgConfigPath = path.join(environmentRoot, "xdg");
+  const templatePath = path.join(environmentRoot, "template");
   writeFileSync(globalConfig, "", "utf8");
-  mkdirSync(hooksPath);
+  for (const directory of [hooksPath, homePath, xdgConfigPath, templatePath]) {
+    mkdirSync(directory);
+  }
   gitEnvironments.set(repositoryRoot, {
     GIT_CONFIG_GLOBAL: globalConfig,
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_ATTR_NOSYSTEM: "1",
+    GIT_TEMPLATE_DIR: templatePath,
+    HOME: homePath,
+    XDG_CONFIG_HOME: xdgConfigPath,
     hooksPath,
   });
   let cleaned = false;
@@ -858,7 +979,12 @@ function createRepository() {
     rmSync(environmentRoot, { recursive: true, force: true });
   };
   try {
-    git(repositoryRoot, ["init", "--object-format=sha1", "--initial-branch=main"]);
+    git(repositoryRoot, [
+      "init",
+      "--object-format=sha1",
+      "--initial-branch=main",
+      `--template=${templatePath}`,
+    ]);
     const config = [
       ["user.name", "Acme Orders Team"],
       ["user.email", "orders@example.test"],
@@ -906,7 +1032,8 @@ function createRepository() {
           "src/application/ports.ts",
         ],
         extra: {
-          "src/application/orders/create-order.ts": preObservabilityCreateOrderSource,
+          "src/application/orders/create-order.ts": preIdempotencyCreateOrderSource,
+          "src/application/ports.ts": preIdempotencyPortsSource,
         },
       },
       {
@@ -914,7 +1041,13 @@ function createRepository() {
         files: [
           "src/infrastructure/db/idempotency-store.ts",
           "src/application/orders/idempotency-policy.ts",
+          "src/application/orders/create-order.ts",
+          "src/application/ports.ts",
         ],
+        extra: {
+          "src/application/orders/create-order.ts": preObservabilityCreateOrderSource,
+          "src/application/ports.ts": preRecoveryPortsSource,
+        },
         remove: ["src/application/orders/retry-policy.ts"],
       },
       {
@@ -933,16 +1066,22 @@ function createRepository() {
           "migrations/018_orders_and_outbox.sql",
           "src/telemetry/order-metrics.ts",
           "src/telemetry/order-logger.ts",
+          "test/unit/order-telemetry.test.ts",
           "src/application/orders/create-order.ts",
           "config/order-placement.json",
           "config/order-alerts.json",
           "docs/architecture/resilient-order-placement.md",
           "docs/runbooks/outbox-lag.md",
         ],
+        extra: {
+          "src/application/orders/create-order.ts": preRecoveryCreateOrderSource,
+        },
       },
       {
         subject: "Recover orphan payments and close review feedback",
         files: [
+          "src/application/orders/create-order.ts",
+          "src/application/ports.ts",
           "src/workers/payment-reconciliation.ts",
           "src/infrastructure/payments/postgres-recovery-candidates.ts",
           "src/bootstrap/application.ts",
@@ -2360,19 +2499,20 @@ export function validateRealisticFixture(fixture) {
         fail(`${comment.ref} walkthrough quote does not match`);
     }
   }
-  const headEntries = new Set(
-    fixture.repositoryEntriesAt(fixture.headOid).map((entry) => entry.path),
-  );
-  for (const filePath of headEntries) {
-    if (!filePath.endsWith(".ts")) continue;
-    const document = fixture.repositoryDocumentAt(fixture.headOid, filePath);
-    if (document.availability !== "available" || document.text === null) continue;
-    for (const match of document.text.matchAll(/\bfrom\s+["'](\.[^"']+)["']/gu)) {
-      const specifier = match[1];
-      const resolved = path.posix.normalize(
-        path.posix.join(path.posix.dirname(filePath), specifier.replace(/\.js$/u, ".ts")),
-      );
-      if (!headEntries.has(resolved)) fail(`${filePath} imports missing ${resolved}`);
+  for (const oid of [fixture.baseOid, ...fixture.commits.map((commit) => commit.oid)]) {
+    const entries = new Set(fixture.repositoryEntriesAt(oid).map((entry) => entry.path));
+    for (const filePath of entries) {
+      if (!filePath.endsWith(".ts")) continue;
+      const document = fixture.repositoryDocumentAt(oid, filePath);
+      if (document.availability !== "available" || document.text === null) continue;
+      for (const match of document.text.matchAll(/\bfrom\s+["'](\.[^"']+)["']/gu)) {
+        const specifier = match[1];
+        const resolved = path.posix.normalize(
+          path.posix.join(path.posix.dirname(filePath), specifier.replace(/\.js$/u, ".ts")),
+        );
+        if (!entries.has(resolved))
+          fail(`${oid.slice(0, 8)}:${filePath} imports missing ${resolved}`);
+      }
     }
   }
   const requireSourceClaim = (filePath, needles) => {
@@ -2388,6 +2528,7 @@ export function validateRealisticFixture(fixture) {
     "ports.idempotency.run(envelope",
     "ports.telemetry.record(orderLogContext",
     "authorizationId: authorization.id",
+    "paymentRecoveryCandidates.register(authorization.id)",
   ]);
   requireSourceClaim("src/infrastructure/db/idempotency-store.ts", [
     "pg_advisory_lock",
@@ -2423,8 +2564,11 @@ export function validateRealisticFixture(fixture) {
   ]);
   requireSourceClaim("src/bootstrap/application.ts", [
     "new PostgresPaymentRecoveryCandidates(pool)",
+    "paymentRecoveryCandidates,",
     "config.reconciliationLeaseSeconds",
   ]);
+  requireSourceClaim("src/telemetry/order-logger.ts", ["records.push", "snapshot()"]);
+  requireSourceClaim("src/telemetry/order-metrics.ts", ["this.measurements.push(seconds)"]);
   requireSourceClaim("test/contract/order-api.test.ts", [
     'app.route("/orders", orderRoutes(',
     'app.request("/orders"',

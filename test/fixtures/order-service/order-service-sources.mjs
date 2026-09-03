@@ -124,6 +124,7 @@ export class CreateOrderHandler {
         paymentMethodId: command.paymentMethodId,
         amount: order.total,
       });
+      await this.ports.paymentRecoveryCandidates.register(authorization.id);
       order.recordPaymentAuthorization(authorization.id);
       this.ports.telemetry.record(orderLogContext({
         requestId: command.requestId,
@@ -478,6 +479,13 @@ import type { PaymentRecoveryCandidatePort } from "../../application/ports.js";
 export class PostgresPaymentRecoveryCandidates implements PaymentRecoveryCandidatePort {
   constructor(private readonly pool: Pool) {}
 
+  async register(authorizationId: string): Promise<void> {
+    await this.pool.query(
+      "INSERT INTO payment_recovery_candidates (authorization_id) VALUES ($1) ON CONFLICT DO NOTHING",
+      [authorizationId],
+    );
+  }
+
   async leaseNextCandidate(leaseSeconds: number) {
     const result = await this.pool.query(
       \`UPDATE payment_recovery_candidates
@@ -522,18 +530,21 @@ import { StripeGateway } from "../infrastructure/payments/stripe-gateway.js";
 import { HttpInventoryClient } from "../infrastructure/inventory/http-inventory-client.js";
 import { PaymentReconciliationWorker } from "../workers/payment-reconciliation.js";
 import { PostgresPaymentRecoveryCandidates } from "../infrastructure/payments/postgres-recovery-candidates.js";
+import { orderTelemetry } from "../telemetry/order-logger.js";
 
 const orderRepository = new PostgresOrderRepository(pool);
 const paymentGateway = new StripeGateway(stripeClient);
+const paymentRecoveryCandidates = new PostgresPaymentRecoveryCandidates(pool);
 const ports = {
   orders: orderRepository,
   idempotency: new PostgresIdempotencyStore(pool),
   outbox: new PostgresOutbox(),
   transaction: new TransactionRunner(pool),
   payments: paymentGateway,
+  paymentRecoveryCandidates,
   inventory: new HttpInventoryClient(config.inventoryUrl),
   catalog: catalogClient,
-  telemetry: { record(context: Record<string, string | undefined>) { void context; } },
+  telemetry: orderTelemetry,
 };
 
 export const application = {
@@ -544,7 +555,7 @@ export const workers = {
   paymentReconciliation: new PaymentReconciliationWorker(
     paymentGateway,
     orderRepository,
-    new PostgresPaymentRecoveryCandidates(pool),
+    paymentRecoveryCandidates,
     config.reconciliationLeaseSeconds,
   ),
 };
@@ -560,6 +571,7 @@ describe("CreateOrderHandler", () => {
     expect(result.order.status).toBe("placed");
     expect(await harness.orders.findById(result.order.id)).not.toBeNull();
     expect(await harness.outbox.pendingTypes()).toEqual(["order.placed", "payment.authorized"]);
+    expect(harness.recoveryCandidates).toEqual(["auth-1"]);
     expect(harness.telemetryRecords).toContainEqual({
       component: "order-placement",
       requestId: "request-test-1",

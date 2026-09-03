@@ -8,7 +8,7 @@ rvwのfixtureは、失敗原因を局所化できる小さな契約と、ひと�
 | contract  | 単一UI/API状態、binary / too-large / missing、comment placement、test-only mutation                   | 通常のPlaywright server。`RVW_FIXTURE_SCENARIO`省略時 |
 | realistic | deterministicな注文service PRをPR本文、Git history、source、comment、Walkthrough、Structureとして縦断 | `pnpm demo`と`realistic-fixture.spec.ts`              |
 | stress    | 100 comments、long document、20 / 100 / 500-node graphと各graph shape                                 | unit test、Viewer E2E、`viewer-performance.spec.ts`   |
-| dogfood   | 現在のrvw checkoutにあるcommitted Git objectsを読む任意の確認                                         | `pnpm demo:dogfood`とtemporary-repo reader unit test  |
+| dogfood   | 現在のrvw checkoutにあるcommitted Git objectsを読む任意の確認                                         | `pnpm demo:dogfood`、`pnpm test:dogfood`              |
 
 fixture serverは`RVW_FIXTURE_SCENARIO=contract|realistic|dogfood`だけを受け付ける。未知の値はcontractへ
 fallbackせず起動時に失敗する。通常のPlaywrightはcontract serverとrealistic serverを起動し、dogfoodは
@@ -35,7 +35,7 @@ semantic needleから作られるreferenceを更新する。手書き行番号�
 - first-parent chain、base / head、file / diff shape、added / modified / renamed / deletedの存在
 - Walkthrough reference ID、Mermaid binding、Structure origin / endpoint / source anchorの整合性
 - comment targetと作成commit、PR / Walkthrough quote、rename追従、delete後Outdatedの整合性
-- 全relative importのclosureと、生成repository全体が`tsc --noEmit`を通ること
+- baseと各commitにおける全relative importのclosureと、生成repository全体が`tsc --noEmit`を通ること
 - Structure origin topology、sourceOid、post reference / related commit、説明を支える主要sourceの存在
 - 同じsource fileが複数Structure nodeから逆引きできること
 - missing pathが明示的にmissingになること
@@ -56,8 +56,8 @@ deep-line navigation / searchは通常の`pnpm test:e2e`内で実行する。500
 
 ## Dogfood mode
 
-`pnpm demo:dogfood`は`createDogfoodFixture`を通して現在のcheckoutのcommitted objectsを読む。これはparserと
+`pnpm demo:dogfood`と`pnpm test:dogfood`は`createDogfoodFixture`を通して現在のcheckoutのcommitted objectsを読む。これはparserと
 Git object readerを手元の実repositoryで確認するmodeであり、realistic acceptance contractではない。file数、
-byte数、changed file数、PRの意味をnormal CIで固定assertしない。必要なhistoryがなければ、取得すべきhistoryを
+byte数、changed file数、PRの意味を通常の`pnpm test`で固定assertせず、専用CI jobでsmoke testする。必要なhistoryがなければ、取得すべきhistoryを
 示すerrorを返し、network fetchを暗黙に行わない。tree / document / binary / rename reader自体は現在のcheckoutに
 依存しないtemporary Git repositoryのunit testで固定する。

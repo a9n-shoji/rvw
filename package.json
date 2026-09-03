@@ -46,6 +46,7 @@
     "demo:dogfood": "node scripts/build.mjs && tsx scripts/dogfood.mjs",
     "check": "tsc --noEmit && eslint . && prettier --check .",
     "test": "vitest run",
+    "test:dogfood": "node --import tsx scripts/dogfood-smoke.ts",
     "test:watch": "vitest",
     "test:e2e": "node scripts/build.mjs && playwright test",
     "test:package": "node scripts/package-smoke.mjs",
