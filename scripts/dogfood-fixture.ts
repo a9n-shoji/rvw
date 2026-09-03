@@ -18,7 +18,7 @@ import type {
 const pullRequestId = "22222222-2222-4222-8222-222222222222";
 const maximumDocumentBytes = 1024 * 1024;
 
-interface RepositoryDocumentSnapshot {
+export interface RepositoryDocumentSnapshot {
   availability: DocumentAvailability;
   text: string | null;
   byteLength: number | null;
@@ -149,7 +149,7 @@ function parseCommit(repositoryRoot: string, oid: string): CommitSummary {
   };
 }
 
-function parseTree(repositoryRoot: string, oid: string): TreeEntry[] {
+export function readDogfoodTree(repositoryRoot: string, oid: string): TreeEntry[] {
   return gitText(repositoryRoot, ["ls-tree", "-r", "-l", "-z", oid])
     .split("\0")
     .filter(Boolean)
@@ -173,7 +173,11 @@ function parseTree(repositoryRoot: string, oid: string): TreeEntry[] {
     });
 }
 
-function parseChangedFiles(repositoryRoot: string, oldOid: string, newOid: string): ChangedFile[] {
+export function readDogfoodChangedFiles(
+  repositoryRoot: string,
+  oldOid: string,
+  newOid: string,
+): ChangedFile[] {
   const fields = gitText(repositoryRoot, [
     "diff",
     "--name-status",
@@ -220,6 +224,60 @@ function parseChangedFiles(repositoryRoot: string, oldOid: string, newOid: strin
     });
   }
   return files;
+}
+
+export function readDogfoodDocument(
+  repositoryRoot: string,
+  oid: string,
+  filePath: string,
+): RepositoryDocumentSnapshot {
+  const entry = readDogfoodTree(repositoryRoot, oid).find(
+    (candidate) => candidate.path === filePath,
+  );
+  if (!entry) {
+    return {
+      availability: "missing",
+      text: null,
+      byteLength: 0,
+      entryKind: "file",
+      normalizedLineEndings: false,
+      oid: null,
+    };
+  }
+  if (entry.size !== null && entry.size > maximumDocumentBytes) {
+    return {
+      availability: "too-large",
+      text: null,
+      byteLength: entry.size,
+      entryKind: entry.kind,
+      normalizedLineEndings: false,
+      oid: entry.oid,
+    };
+  }
+  const contents =
+    entry.kind === "submodule"
+      ? Buffer.from(`${entry.oid}\n`)
+      : gitBuffer(repositoryRoot, ["show", `${oid}:${filePath}`]);
+  if (contents.includes(0) || !isUtf8(contents)) {
+    return {
+      availability: "binary",
+      text: null,
+      byteLength: contents.byteLength,
+      entryKind: entry.kind,
+      normalizedLineEndings: false,
+      oid: entry.oid,
+    };
+  }
+  const originalText = contents.toString("utf8");
+  const text = originalText.replace(/\r\n?/g, "\n");
+  return {
+    availability: "available",
+    text,
+    byteLength: contents.byteLength,
+    entryKind: entry.kind,
+    normalizedLineEndings: text !== originalText,
+    oid: entry.oid,
+  };
 }
 
 function hashDocument(text: string): string {
@@ -583,7 +641,7 @@ export function createDogfoodFixture(
   const repositoryEntriesAt = (oid: string): TreeEntry[] => {
     const cached = treeCache.get(oid);
     if (cached) return cached;
-    const entries = parseTree(resolvedRoot, oid);
+    const entries = readDogfoodTree(resolvedRoot, oid);
     treeCache.set(oid, entries);
     return entries;
   };
@@ -591,59 +649,9 @@ export function createDogfoodFixture(
     const key = `${oid}\0${filePath}`;
     const cached = documentCache.get(key);
     if (cached) return cached;
-    const entry = repositoryEntriesAt(oid).find((candidate) => candidate.path === filePath);
-    if (!entry) {
-      const missing: RepositoryDocumentSnapshot = {
-        availability: "missing",
-        text: null,
-        byteLength: 0,
-        entryKind: "file",
-        normalizedLineEndings: false,
-        oid: null,
-      };
-      documentCache.set(key, missing);
-      return missing;
-    }
-    if (entry.size !== null && entry.size > maximumDocumentBytes) {
-      const tooLarge: RepositoryDocumentSnapshot = {
-        availability: "too-large",
-        text: null,
-        byteLength: entry.size,
-        entryKind: entry.kind,
-        normalizedLineEndings: false,
-        oid: entry.oid,
-      };
-      documentCache.set(key, tooLarge);
-      return tooLarge;
-    }
-    const contents =
-      entry.kind === "submodule"
-        ? Buffer.from(`${entry.oid}\n`)
-        : gitBuffer(resolvedRoot, ["show", `${oid}:${filePath}`]);
-    if (contents.includes(0) || !isUtf8(contents)) {
-      const binary: RepositoryDocumentSnapshot = {
-        availability: "binary",
-        text: null,
-        byteLength: contents.byteLength,
-        entryKind: entry.kind,
-        normalizedLineEndings: false,
-        oid: entry.oid,
-      };
-      documentCache.set(key, binary);
-      return binary;
-    }
-    const originalText = contents.toString("utf8");
-    const text = originalText.replace(/\r\n?/g, "\n");
-    const available: RepositoryDocumentSnapshot = {
-      availability: "available",
-      text,
-      byteLength: contents.byteLength,
-      entryKind: entry.kind,
-      normalizedLineEndings: text !== originalText,
-      oid: entry.oid,
-    };
-    documentCache.set(key, available);
-    return available;
+    const document = readDogfoodDocument(resolvedRoot, oid, filePath);
+    documentCache.set(key, document);
+    return document;
   };
   const readHeadText = (filePath: string): string => {
     const document = repositoryDocumentAt(latestCommit.oid, filePath);
@@ -653,7 +661,7 @@ export function createDogfoodFixture(
     return document.text;
   };
   const changedFiles = (oldOid: string, newOid: string): ChangedFile[] =>
-    parseChangedFiles(resolvedRoot, oldOid, newOid);
+    readDogfoodChangedFiles(resolvedRoot, oldOid, newOid);
   const headEntries = repositoryEntriesAt(latestCommit.oid);
   const pullRequestChanges = changedFiles(baseOid, latestCommit.oid);
   const walkthroughs = createWalkthroughs(latestCommit.oid, readHeadText);

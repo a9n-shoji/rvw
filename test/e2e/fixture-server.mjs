@@ -8,6 +8,11 @@ import {
   createContractStructures,
   fullStackRepositoryPaths,
 } from "../fixtures/contract/contract-structures.mjs";
+import { installFixtureLifecycle } from "../fixtures/fixture-lifecycle.mjs";
+import {
+  createLongStressDocument,
+  createStructureStressFixture,
+} from "../fixtures/stress/stress-fixture.ts";
 import {
   sourceAnchorFingerprint,
   structureSourceAnchor,
@@ -54,6 +59,7 @@ const activeWalkthroughs = repositoryFixture
 const activeStructures = repositoryFixture
   ? structuredClone(repositoryFixture.structures ?? [])
   : createContractStructures({ pullRequestId, baseOid, firstHead });
+const longStressDocument = createLongStressDocument();
 const activeViewers = new Set();
 const releasedViewers = new Set();
 let changeSequence = 0;
@@ -326,6 +332,7 @@ function repositoryDocumentText(oid, filePath) {
   if (filePath === "src/edge-only-evidence.ts") {
     return "export const edgeOnlyEvidence = true;\n";
   }
+  if (filePath === "stress/long-document.txt") return longStressDocument;
   if (filePath === "src/viewport-anchor.ts") return viewportRepositoryText(oid);
   if (filePath in walkthroughRepositorySources || walkthroughRepositoryPaths.includes(filePath)) {
     const source = walkthroughRepositoryText(filePath);
@@ -358,6 +365,7 @@ function repositoryPathsAt(oid) {
       "src/fixture.ts",
       "src/viewport-anchor.ts",
       "src/edge-only-evidence.ts",
+      "stress/long-document.txt",
       ...(oid === secondHead ? ["src/new.ts"] : ["src/removed.ts"]),
       "assets/modified.png",
       "assets/broken.png",
@@ -1351,6 +1359,44 @@ app.get("/api/pull-requests/:id/structures/:structureId", (context) => {
     : context.json({ ok: false, error: { code: "NOT_FOUND", message: "missing structure" } }, 404);
 });
 
+app.post("/api/fixture/stress/structure", async (context) => {
+  if (scenarioName !== "contract") {
+    return context.json(
+      { ok: false, error: { code: "NOT_FOUND", message: "contract fixture only" } },
+      404,
+    );
+  }
+  const input = await context.req.json();
+  if (input.reset === true) {
+    activeStructures.splice(
+      0,
+      activeStructures.length,
+      ...createContractStructures({ pullRequestId, baseOid, firstHead }),
+    );
+  } else {
+    if (![20, 100, 500].includes(input.nodeCount)) {
+      return context.json(
+        { ok: false, error: { code: "INVALID_INPUT", message: "unsupported stress node count" } },
+        400,
+      );
+    }
+    if (!["linear", "fan-out", "fan-in", "dense", "disconnected", "cycle"].includes(input.shape)) {
+      return context.json(
+        { ok: false, error: { code: "INVALID_INPUT", message: "unsupported stress graph shape" } },
+        400,
+      );
+    }
+    const structure = createStructureStressFixture({
+      nodeCount: input.nodeCount,
+      shape: input.shape,
+      longLabels: input.longLabels === true,
+    });
+    activeStructures.splice(0, activeStructures.length, structure);
+  }
+  bump("structures");
+  return context.json({ ok: true, structures: activeStructures });
+});
+
 app.get("/api/pull-requests/:id/structures/:structureId/anchors/resolve", (context) => {
   const structure = activeStructures.find(
     (candidate) => candidate.id === context.req.param("structureId"),
@@ -2010,5 +2056,14 @@ app.use("*", serveStatic({ root: staticRoot }));
 const index = readFileSync(path.join(staticRoot, "index.html"), "utf8");
 app.get("*", (context) => context.html(index));
 
-process.once("exit", () => repositoryFixture?.cleanup?.());
-serve({ fetch: app.fetch, hostname: host, port });
+let server;
+try {
+  server = serve({ fetch: app.fetch, hostname: host, port });
+} catch (error) {
+  repositoryFixture?.cleanup?.();
+  throw error;
+}
+installFixtureLifecycle({
+  cleanup: () => repositoryFixture?.cleanup?.(),
+  close: (done) => server.close(done),
+});

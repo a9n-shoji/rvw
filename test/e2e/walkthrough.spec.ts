@@ -158,11 +158,11 @@ test("keeps agent explanation passive until a human opens a current code referen
   await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(3);
   await expect(page.locator('.document-pane[data-pane="right"] diffs-container')).toHaveAttribute(
     "data-search-target-line",
-    "9",
+    "10",
   );
   const firstSelectedHandlerLine = page
     .locator(
-      '.document-pane[data-pane="right"] diffs-container [data-line="9"][data-selected-line="first"]',
+      '.document-pane[data-pane="right"] diffs-container [data-line="10"][data-selected-line="first"]',
     )
     .first();
   await expect(firstSelectedHandlerLine).toBeVisible();
@@ -170,7 +170,7 @@ test("keeps agent explanation passive until a human opens a current code referen
   await expect(
     page
       .locator(
-        '.document-pane[data-pane="right"] diffs-container [data-line="39"][data-selected-line="last"]',
+        '.document-pane[data-pane="right"] diffs-container [data-line="42"][data-selected-line="last"]',
       )
       .first(),
   ).toBeVisible();
@@ -178,13 +178,13 @@ test("keeps agent explanation passive until a human opens a current code referen
     page.locator('.walkthrough-diagram svg[data-render-instance="initial"]'),
   ).toHaveCount(1);
   await page
-    .locator('.document-pane[data-pane="right"] diffs-container [data-column-number="9"]')
+    .locator('.document-pane[data-pane="right"] diffs-container [data-column-number="10"]')
     .first()
     .click();
   await expect(
     page
       .locator(
-        '.document-pane[data-pane="right"] diffs-container [data-line="9"][data-selected-line="first"]',
+        '.document-pane[data-pane="right"] diffs-container [data-line="10"][data-selected-line="first"]',
       )
       .first(),
   ).toBeVisible();
@@ -193,7 +193,7 @@ test("keeps agent explanation passive until a human opens a current code referen
   ).toBeVisible();
   await expect(
     page.locator(
-      '.document-pane[data-pane="right"] diffs-container [data-line="39"][data-selected-line]',
+      '.document-pane[data-pane="right"] diffs-container [data-line="42"][data-selected-line]',
     ),
   ).toHaveCount(0);
   await expect(
@@ -1668,7 +1668,7 @@ test("binds node-like elements across supported Mermaid diagram types", async ({
   await expect(expandedService).toBeVisible();
   await expandedService.click();
   await expect(dialog.getByText("src/workers/outbox-dispatcher.ts", { exact: true })).toBeVisible();
-  await expect(dialog.locator(".mermaid-reference-location small")).toHaveText("L7–L16");
+  await expect(dialog.locator(".mermaid-reference-location small")).toHaveText("L7–L17");
   await expect(dialog.getByRole("button", { name: "Open in review" })).toBeVisible();
 });
 

@@ -39,6 +39,15 @@ export function createStructureStressFixture(options: {
   longLabels?: boolean;
 }): Structure {
   const { nodeCount, shape, longLabels = false } = options;
+  const shapeCode: Record<StressGraphShape, string> = {
+    linear: "1",
+    "fan-out": "2",
+    "fan-in": "3",
+    dense: "4",
+    disconnected: "5",
+    cycle: "6",
+  };
+  const stableSuffix = `${shapeCode[shape]}${String(nodeCount).padStart(11, "0")}`;
   const sourceOid = "e".repeat(40);
   const nodes = Array.from({ length: nodeCount }, (_, index) => ({
     id: `node-${index}`,
@@ -91,8 +100,8 @@ export function createStructureStressFixture(options: {
     }
   }
   return {
-    id: `76000000-0000-4000-8000-${String(nodeCount).padStart(12, "0")}`,
-    ref: `rvw://structure/76000000-0000-4000-8000-${String(nodeCount).padStart(12, "0")}`,
+    id: `76000000-0000-4000-8000-${stableSuffix}`,
+    ref: `rvw://structure/76000000-0000-4000-8000-${stableSuffix}`,
     pullRequestId: "11111111-1111-4111-8111-111111111111",
     sourceOid,
     title: `${shape} ${nodeCount}-node stress graph`,

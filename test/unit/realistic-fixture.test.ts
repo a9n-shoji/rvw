@@ -1,3 +1,15 @@
+import { execFileSync, spawn } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   createRealisticFixture,
@@ -41,9 +53,9 @@ describe("realistic fixture", () => {
       ]);
       expect(fixture.manifest).toMatchObject({
         commitCount: 7,
-        repositoryFileCount: 147,
-        changedFileCount: 39,
-        changeKinds: { added: 35, modified: 1, renamed: 1, deleted: 2 },
+        repositoryFileCount: 129,
+        changedFileCount: 41,
+        changeKinds: { added: 37, modified: 1, renamed: 1, deleted: 2 },
         commentCount: 13,
         unresolvedCommentCount: 7,
         resolvedCommentCount: 6,
@@ -79,6 +91,118 @@ describe("realistic fixture", () => {
       fixture.cleanup();
     }
   });
+
+  it("ignores hostile global Git configuration and hooks", () => {
+    const baseline = createRealisticFixture();
+    const hostileRoot = mkdtempSync(path.join(os.tmpdir(), "rvw-hostile-git-"));
+    const hooksPath = path.join(hostileRoot, "hooks");
+    const templateHooksPath = path.join(hostileRoot, "template", "hooks");
+    mkdirSync(hooksPath);
+    mkdirSync(templateHooksPath, { recursive: true });
+    const hookPath = path.join(hooksPath, "pre-commit");
+    writeFileSync(hookPath, "#!/bin/sh\nexit 73\n", "utf8");
+    chmodSync(hookPath, 0o755);
+    const hostileConfig = path.join(hostileRoot, "global.gitconfig");
+    writeFileSync(
+      hostileConfig,
+      [
+        "[user]",
+        "  name = Hostile User",
+        "  email = hostile@example.test",
+        "[commit]",
+        "  gpgSign = true",
+        "[core]",
+        `  hooksPath = ${hooksPath}`,
+        "[init]",
+        `  templateDir = ${path.join(hostileRoot, "template")}`,
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const previousGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = hostileConfig;
+    let hostile: ReturnType<typeof createRealisticFixture> | undefined;
+    try {
+      hostile = createRealisticFixture();
+      expect(hostile.baseOid).toBe(baseline.baseOid);
+      expect(hostile.headOid).toBe(baseline.headOid);
+      expect(hostile.manifest).toEqual(baseline.manifest);
+    } finally {
+      if (previousGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previousGlobalConfig;
+      hostile?.cleanup();
+      baseline.cleanup();
+      rmSync(hostileRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("type-checks the self-contained synthetic repository", () => {
+    const fixture = createRealisticFixture();
+    try {
+      execFileSync(path.resolve("node_modules/.bin/tsc"), ["--project", fixture.repositoryRoot], {
+        stdio: "pipe",
+      });
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("executes the synthetic core scenario tests without network access", () => {
+    const fixture = createRealisticFixture();
+    try {
+      symlinkSync(
+        path.resolve("node_modules"),
+        path.join(fixture.repositoryRoot, "node_modules"),
+        "dir",
+      );
+      execFileSync(
+        path.resolve("node_modules/.bin/vitest"),
+        [
+          "run",
+          "--root",
+          fixture.repositoryRoot,
+          "test/unit/pricing.test.ts",
+          "test/integration/create-order.test.ts",
+          "test/integration/payment-reconciliation.test.ts",
+          "test/contract/outbox-event.test.ts",
+        ],
+        { stdio: "pipe" },
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("removes the temporary repository when a child receives SIGTERM", async () => {
+    const child = spawn(
+      process.execPath,
+      [path.resolve("test/fixtures/realistic/signal-cleanup-child.mjs")],
+      { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] },
+    );
+    let output = "";
+    const repositoryRoot = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("cleanup child did not become ready")),
+        8_000,
+      );
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        output += chunk;
+        const newline = output.indexOf("\n");
+        if (newline < 0) return;
+        clearTimeout(timer);
+        resolve(output.slice(0, newline));
+      });
+      child.once("error", reject);
+    });
+    expect(existsSync(repositoryRoot)).toBe(true);
+    child.kill("SIGTERM");
+    const exitResult = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolve) => child.once("exit", (code, signal) => resolve({ code, signal })),
+    );
+    expect(exitResult).toEqual({ code: 0, signal: null });
+    expect(existsSync(repositoryRoot)).toBe(false);
+  }, 15_000);
 
   it("tracks the renamed review target and marks the deleted target as outdated", () => {
     const fixture = createRealisticFixture();

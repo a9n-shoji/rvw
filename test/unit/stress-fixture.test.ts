@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { initialStructureLayout } from "../../src/web/structure-graph.js";
+import { buildFullStructureRenderModel } from "../../src/web/structure-render-model.js";
 import {
   createLongStressDocument,
   createStressCommentInputs,
@@ -52,5 +54,34 @@ describe("stress fixture generators", () => {
     const document = createLongStressDocument();
     expect(document.split("\n")).toHaveLength(10_001);
     expect(document.split("\n")[7_499]).toContain("stress line 7500");
+  });
+
+  it("uses distinct stable IDs for different graph shapes", () => {
+    const linear = createStructureStressFixture({ nodeCount: 100, shape: "linear" });
+    const fanIn = createStructureStressFixture({ nodeCount: 100, shape: "fan-in" });
+    expect(linear.id).not.toBe(fanIn.id);
+    expect(linear.ref).not.toBe(fanIn.ref);
+  });
+
+  it("lays out and builds the complete render model for 500 nodes", () => {
+    const graph = createStructureStressFixture({ nodeCount: 500, shape: "linear" });
+    const startedAt = performance.now();
+    const positions = initialStructureLayout(graph);
+    const model = buildFullStructureRenderModel({
+      structure: graph,
+      positions,
+      sourceChangeKinds: new Map(),
+    });
+    const elapsedMs = performance.now() - startedAt;
+    expect(Object.keys(positions)).toHaveLength(500);
+    expect(
+      Object.values(positions).every(({ x, y }) => Number.isFinite(x) && Number.isFinite(y)),
+    ).toBe(true);
+    expect(model.nodes).toHaveLength(500);
+    expect(model.edges).toHaveLength(499);
+    expect(model.bounds).not.toBeNull();
+    if (!model.bounds) throw new Error("stress render model did not produce bounds");
+    expect(Object.values(model.bounds).every(Number.isFinite)).toBe(true);
+    expect(elapsedMs).toBeLessThan(10_000);
   });
 });
