@@ -175,30 +175,35 @@ function compareNumberArrays(left: readonly number[], right: readonly number[]):
   return 0;
 }
 
-function boundaryCounts(nodeIds: readonly string[]): ReadonlyMap<string, number> {
-  const counts = new Map<string, number>();
-  for (const nodeId of nodeIds) counts.set(nodeId, (counts.get(nodeId) ?? 0) + 1);
-  return counts;
-}
-
-function canonicalStructuralColors(
+function canonicalTopologyStructuralColors(
   nodeIds: readonly string[],
-  directionalLinks: readonly DirectionalLink[],
-  originIncomingBoundaryNodeIds: readonly string[],
-  incomingBoundaryNodeIds: readonly string[],
-  outgoingBoundaryNodeIds: readonly string[],
-  attachmentBoundaryNodeIds: readonly string[],
+  topology: SimpleStructureTopology,
+  originNodeId: string,
 ): ReadonlyMap<string, number> {
+  const nodeSet = new Set(nodeIds);
   const incomingNeighbors = new Map(nodeIds.map((nodeId) => [nodeId, new Set<string>()]));
   const outgoingNeighbors = new Map(nodeIds.map((nodeId) => [nodeId, new Set<string>()]));
-  for (const [from, to] of directionalLinks) {
+  for (const [from, to] of topology.directionalLinks) {
+    if (!nodeSet.has(from) || !nodeSet.has(to)) continue;
     outgoingNeighbors.get(from)?.add(to);
     incomingNeighbors.get(to)?.add(from);
   }
-  const originIncomingCounts = boundaryCounts(originIncomingBoundaryNodeIds);
-  const incomingCounts = boundaryCounts(incomingBoundaryNodeIds);
-  const outgoingCounts = boundaryCounts(outgoingBoundaryNodeIds);
-  const attachmentCounts = boundaryCounts(attachmentBoundaryNodeIds);
+  const ambiguousNeighbors = new Map(
+    nodeIds.map((nodeId) => {
+      const directionalNeighbors = new Set([
+        ...incomingNeighbors.get(nodeId)!,
+        ...outgoingNeighbors.get(nodeId)!,
+      ]);
+      return [
+        nodeId,
+        new Set(
+          (topology.neighbors.get(nodeId) ?? []).filter(
+            (neighbor) => nodeSet.has(neighbor) && !directionalNeighbors.has(neighbor),
+          ),
+        ),
+      ];
+    }),
+  );
   const assignColors = (descriptors: ReadonlyMap<string, string>): Map<string, number> => {
     const colorByDescriptor = new Map(
       [...new Set(descriptors.values())]
@@ -214,12 +219,10 @@ function canonicalStructuralColors(
       nodeIds.map((nodeId) => [
         nodeId,
         JSON.stringify([
+          nodeId === originNodeId ? 1 : 0,
           incomingNeighbors.get(nodeId)!.size,
           outgoingNeighbors.get(nodeId)!.size,
-          originIncomingCounts.get(nodeId) ?? 0,
-          incomingCounts.get(nodeId) ?? 0,
-          outgoingCounts.get(nodeId) ?? 0,
-          attachmentCounts.get(nodeId) ?? 0,
+          ambiguousNeighbors.get(nodeId)!.size,
         ]),
       ]),
     ),
@@ -235,6 +238,9 @@ function canonicalStructuralColors(
               .map((neighbor) => colors.get(neighbor)!)
               .sort((left, right) => left - right),
             [...outgoingNeighbors.get(nodeId)!]
+              .map((neighbor) => colors.get(neighbor)!)
+              .sort((left, right) => left - right),
+            [...ambiguousNeighbors.get(nodeId)!]
               .map((neighbor) => colors.get(neighbor)!)
               .sort((left, right) => left - right),
           ]),
@@ -356,6 +362,7 @@ function stronglyConnectedComponents(
 function internalComponentRanks(
   nodeIds: readonly string[],
   directionalLinks: readonly DirectionalLink[],
+  structuralColors: ReadonlyMap<string, number>,
   preferredAnchor: string | null,
   originIncomingBoundaryNodeIds: readonly string[],
   incomingBoundaryNodeIds: readonly string[],
@@ -379,14 +386,6 @@ function internalComponentRanks(
     links: internalLinks,
     directionalLinks: internalLinks,
   };
-  const structuralColors = canonicalStructuralColors(
-    nodeIds,
-    internalLinks,
-    originIncomingBoundaryNodeIds,
-    incomingBoundaryNodeIds,
-    outgoingBoundaryNodeIds,
-    attachmentBoundaryNodeIds,
-  );
   const ranksFromAnchor = (anchor: string): Map<string, number> => {
     const rawRanks = new Map([[anchor, 0]]);
     applyForwardWaves(nodeSet, topology, rawRanks);
@@ -458,6 +457,7 @@ function directionalCondensationRanks(
   const directionalLinks = topology.directionalLinks.filter(
     ([from, to]) => nodeSet.has(from) && nodeSet.has(to),
   );
+  const structuralColors = canonicalTopologyStructuralColors(nodeIds, topology, originNodeId);
   const components = stronglyConnectedComponents(nodeIds, directionalLinks);
   const componentByNodeId = new Map<string, number>();
   components.forEach((component, componentIndex) => {
@@ -516,6 +516,7 @@ function directionalCondensationRanks(
     const ranks = internalComponentRanks(
       component,
       directionalLinks,
+      structuralColors,
       component.includes(originNodeId) ? originNodeId : null,
       directionalLinks.flatMap(([from, to]) =>
         componentByNodeId.get(from) === originComponent &&

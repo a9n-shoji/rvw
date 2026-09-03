@@ -844,6 +844,96 @@ describe("Structure domain presentation rules", () => {
     });
   });
 
+  it("colors ambiguous attachment endpoints from their whole-component context", () => {
+    const logicalNodes = [
+      "origin",
+      "p1",
+      "p2",
+      "p3",
+      "p4",
+      "p5",
+      "p6",
+      "s1",
+      "s2",
+      "s3",
+      "s4",
+      "s5",
+      "A",
+      "B",
+      "C",
+    ] as const;
+    const directionalLinks = [
+      [0, 7],
+      [1, 7],
+      [2, 7],
+      [3, 7],
+      [4, 7],
+      [5, 7],
+      [6, 7],
+      [7, 8],
+      [8, 9],
+      [9, 10],
+      [10, 11],
+      [12, 13],
+      [13, 14],
+      [14, 12],
+    ] as const;
+    const attachmentLinks = [
+      [0, 12],
+      [8, 13],
+      [11, 14],
+    ] as const;
+    const project = (cycleIds: readonly string[]) => {
+      const ids = logicalNodes.map((logicalNode) => {
+        const cycleIndex = ["A", "B", "C"].indexOf(logicalNode);
+        return cycleIndex === -1 ? logicalNode : cycleIds[cycleIndex]!;
+      });
+      const structure = directedStructure(
+        "origin",
+        ids,
+        directionalLinks.map(([from, to]) => [ids[from]!, ids[to]!] as const),
+      );
+      structure.edges.push(
+        ...attachmentLinks.map(([from, to], index) => ({
+          id: `attachment-${index}`,
+          from: ids[from]!,
+          to: ids[to]!,
+          label: "relates",
+          directed: false,
+          anchors: [],
+        })),
+      );
+      const projection = projectStructure(structure);
+      return {
+        logicalRanks: ids.map((nodeId) => projection.rankByNodeId.get(nodeId)),
+        diagnostics: projection.diagnostics,
+        warningCodes: structureAuthoringWarnings(projection.diagnostics).map(({ code }) => code),
+      };
+    };
+
+    const permutations = [
+      ["a", "b", "c"],
+      ["a", "c", "b"],
+      ["b", "a", "c"],
+      ["b", "c", "a"],
+      ["c", "a", "b"],
+      ["c", "b", "a"],
+    ];
+    const expected = project(permutations[0]!);
+    for (const permutation of permutations.slice(1)) expect(project(permutation)).toEqual(expected);
+    expect(expected).toMatchObject({
+      diagnostics: {
+        rowsPerColumn: [8, 2, 2, 1, 1, 1],
+        maxRows: 8,
+        directionalLinkCount: 14,
+        nonForwardDirectionalLinkCount: 1,
+        originOutgoingDirectionalLinkCount: 1,
+      },
+      warningCodes: ["STRUCTURE_LAYOUT_MAX_ROWS_HIGH"],
+    });
+    expect(expected.diagnostics.nonForwardDirectionalLinkRatio).toBeCloseTo(1 / 14);
+  });
+
   it("emits canonical tall-column and non-forward-ratio warnings at their thresholds", () => {
     const isolated = structureWithHub();
     isolated.nodes = isolated.nodes.slice(0, 1);
