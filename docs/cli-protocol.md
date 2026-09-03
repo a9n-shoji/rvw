@@ -9,8 +9,9 @@ references to comment create, reply, edit, get, and synchronized replies, and ad
 `agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
 idempotency keys are additive fields and do not change existing callers. Version 4 adds required
 nullable `lastModifiedBy` provenance to comment-post output so consumers can distinguish trusted
-Agent and human write channels. Structure read, list, idempotent publish, compare-and-swap update, and
-compare-and-swap delete are additive version-4 capabilities and do not change existing command schemas.
+Agent and human write channels. Structure read, list, canonical preview, idempotent publish,
+compare-and-swap update, and compare-and-swap delete are additive version-4 capabilities and do not
+change existing command schemas.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
@@ -491,6 +492,47 @@ rvw structure get <STRUCTURE_URI> --json
 The response contains the complete Structure and its Pull Request identity, including the local
 repository path. It does not contain browser focus, positions, viewport, or expansion state.
 
+### Preview
+
+```bash
+rvw structure preview --stdin --json
+```
+
+Preview accepts the same normalized graph content as publish/update: `sourceOid`, `title`, `scope`,
+`originNodeId`, `nodes`, and `edges`, without persisted identity, Pull Request identity, idempotency,
+or compare-and-swap fields. It performs pure graph validation and canonical initial projection only;
+it does not initialize a database, repository runtime, or Agent socket and does not resolve files.
+Success returns `{ "ok": true, "layout": { ... }, "warnings": [...] }`. Layout contains
+`columnCount`, `rowsPerColumn`, `maxRows`, `directionalLinkCount`,
+`nonForwardDirectionalLinkCount`, `nonForwardDirectionalLinkRatio`, and
+`originOutgoingDirectionalLinkCount`. The ratio is zero when there are no canonical directional links.
+
+Every warning has this shape:
+
+```ts
+type StructureAuthoringWarning = {
+  code:
+    | "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION"
+    | "STRUCTURE_LAYOUT_MAX_ROWS_HIGH"
+    | "STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH";
+  message: string;
+};
+```
+
+The current codes and conditions are:
+
+- `STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION`: the origin has zero outgoing canonical
+  directional links.
+- `STRUCTURE_LAYOUT_MAX_ROWS_HIGH`: the canonical projection has `maxRows >= 8`.
+- `STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH`: the canonical projection has a
+  non-forward directional-link ratio of at least `0.25`.
+
+Consumers branch on `code`, never on the display-oriented `message`, and ignore unknown warning
+codes. Future warning codes may be added to protocol v4 without changing the protocol version;
+consumers that require a particular feedback operation still require the `structure.preview`
+capability. Preview always returns a `warnings` array. Publish and update use the same warning object
+and code semantics but may omit the field when no warnings exist.
+
 ### Publish
 
 ```bash
@@ -565,7 +607,9 @@ and retaining `sourceOid`. An exact retry with the same idempotency key returns 
 reusing the key for another canonical payload fails, and retrying after that Structure was deleted
 reports a deleted result. `rvw pr reset` removes publication records with the rest of the PR review
 state, so the same logical key can begin a fresh publication after reset. Success returns the saved
-Structure and `rvw://structure/<uuid>`. Publication
+Structure and `rvw://structure/<uuid>`. Successful publish and update responses may add `warnings`.
+Warnings are deterministic metadata derived from the exact persisted graph, are not saved, and do not
+change command success or graph content. Publication
 is passive: it never opens a browser or changes a tab, commit range, focus, viewport, or scroll position.
 
 ### List and recover references
@@ -703,6 +747,7 @@ comment.reopen
 pullRequest.sync
 structure.list
 structure.read
+structure.preview
 structure.publish
 structure.update
 structure.delete

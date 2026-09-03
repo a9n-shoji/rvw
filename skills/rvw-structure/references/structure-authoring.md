@@ -54,6 +54,12 @@ can verify in committed code.
   `plain` card.
 - Prefer the smallest meaningful multi-line anchor that verifies the node claim. Use a file anchor only
   for genuinely file-wide responsibility and a single-line range only for a line-local declaration.
+- Within one file, merge overlapping or nested Node anchors unless each Node expresses a distinct,
+  independently explainable code-centered responsibility. Do not represent both an entire method and
+  each of its branches as overlapping Nodes; when branches are the claims, normally omit the parent
+  method Node. Anchor each Node to the smallest meaningful, preferably non-overlapping range. A
+  file-wide anchor will overlap most other Nodes in that file, so use it deliberately. Overlap is not
+  an error, but retained overlap must support distinct responsibility claims.
 
 Do not create giant graphs, file inventories, one node per function, inferred runtime call graphs,
 dependency graphs obtained only from import syntax, or concept-only diagrams detached from code.
@@ -66,8 +72,13 @@ expanding merely because more static responsibilities are connected.
 Each edge is a producer claim about how two nodes relate in this subject.
 
 - Use a short verb or verb phrase: `calls`, `constructs`, `validates`, `persists`, `loads`, `implements`,
-  `emits`, `renders`, or another fact supported by the source. Avoid vague labels such as `related to`,
-  `part of`, `connects`, or unlabeled arrows.
+  `emits`, `renders`, or another fact supported by the source. As a practical authoring target, keep a
+  Japanese predicate around 20 full-width characters or fewer and an English predicate readable in
+  one or two lines at normal zoom. State only the primary predicate; do not pack conditions, reasons,
+  or result explanations into the Edge label. For example, prefer `キャッシュから読む` over
+  `設定値が存在するときのみキャッシュから読み込む`. Put necessary detail in a Node description,
+  Edge anchor, and the source evidence the reviewer can open. This is guidance, not a length limit.
+  Avoid vague labels such as `related to`, `part of`, `connects`, or unlabeled arrows.
 - Write the predicate so the claim reads naturally from the `from` Node as its actor or source to the
   `to` Node as its target. Choose the factual relationship that best explains the declared behavior,
   not an inverse or passive restatement chosen to move either endpoint on the canvas.
@@ -103,7 +114,16 @@ IDs identify claims across whole-value replacements; labels are presentation.
   starts verifying the declared behavior: for example an HTTP route, public API, command handler,
   worker trigger, event subscriber, composition call, or migration execution point. It is not required
   to be an HTTP/runtime boundary, but it must be an existing Node with its own exact source anchor. It
-  is not persisted viewer state or a claim of architectural importance.
+  is not persisted viewer state or a claim of architectural importance. Do not choose a central data
+  structure, important-looking class, or highly connected hub merely because it seems central. When a
+  request starts from a file, symbol, class, or data structure, identify the concrete behavior first
+  and find where a reviewer factually starts verifying that behavior in source; do not mechanically
+  reuse the requested source as origin. A data structure or contract may still be the map's central hub,
+  but connectivity alone does not make it the origin.
+- An origin with no outgoing unambiguous directed relation is an authoring smell: reconsider whether it
+  is really the factual entrypoint. A terminal or intermediate origin is still valid when the source
+  establishes it. Never increase origin out-degree by reversing an Edge, changing predicate wording,
+  or otherwise distorting relation semantics for layout quality.
 - Ensure every Node is reachable from the origin when direction, parallel multiplicity, and self-loops
   are ignored. A disconnected component is a different subject or an unsupported inventory, not a
   second island in the same Structure.
@@ -131,11 +151,20 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] Each node's main claim is quickly understandable at normal zoom without relying on scrolling.
 - [ ] Concept-only nodes are necessary and do not invent semantics.
 - [ ] Every edge label states a precise relationship and direction is factual.
+- [ ] Every edge label is a short verb or verb phrase readable at normal zoom and does not contain a
+      packed condition or explanation.
 - [ ] IDs are unique, semantic, and stable across updates; removed IDs are not recycled.
-- [ ] `originNodeId` names the existing source-established Node where review of this behavior starts.
+- [ ] `originNodeId` names the existing source-established factual code entrypoint where review of this
+      behavior starts, not merely the subject's central object.
+- [ ] If the origin has no outgoing unambiguous directed relation, its selection was rechecked against
+      the factual behavior entrypoint.
+- [ ] If layout preview reports `maxRows >= 8` or a non-forward directional link ratio of at least 25%,
+      origin, granularity, behavior mix, and subject boundary were reconsidered.
 - [ ] The origin Node has an exact source anchor and every Node is connected to it by declared relations.
 - [ ] Every edge endpoint exists and parallel relationships have distinct IDs.
 - [ ] Every path and range is exact at the single committed `sourceOid`.
+- [ ] There are no unintended overlapping or nested Node anchors in one file; any retained overlap is
+      justified by distinct responsibility claims.
 - [ ] The graph contains at least one source anchor and no more than 400 across all nodes and edges.
 - [ ] The map contains no hidden review conclusion, presentation layout, inferred confidence, or
       exhaustive-completeness claim.

@@ -5153,6 +5153,11 @@ diffs-container > [slot="header-metadata"] {
 .structure-edge-label-text {
   min-width: 0;
   flex: 1 1 auto;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .structure-edge-label.crowded .structure-edge-select {

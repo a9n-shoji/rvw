@@ -2389,8 +2389,10 @@ export can succeed.
 Serialize that model as a standalone SVG made only from SVG primitives, escaped text, resolved theme
 colors, and embedded metadata. Give each Edge change presentation an explicit same-color arrow marker
 instead of requiring context-dependent SVG paint, and keep the origin cue inside each notation shape.
-Keep fixed-size notation-specific Node cards; prioritize Node title content and ellipsize overflow, but
-expand every Edge label to retain its complete text. Derive PNG
+Keep fixed-size notation-specific Node cards; prioritize Node title content and ellipsize overflow.
+Share Edge-label placement and collision handling between the interactive Viewer and export, but give
+them explicit text policies: clamp Viewer labels and their geometry to two lines, while wrapping every
+exported Edge label without ellipsis and expanding its collision box to retain the complete text. Derive PNG
 only by rasterizing the same SVG at a preferred 2x scale, with conservative dimension and pixel
 budgets. Place the Export menu between the existing reference and delete actions because it operates
 on the complete Structure document. Do not add a backend endpoint, database state, CLI capability, or

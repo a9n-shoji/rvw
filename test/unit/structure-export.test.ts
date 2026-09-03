@@ -11,6 +11,7 @@ import {
 import { initialStructureLayout, STRUCTURE_NODE_HEIGHT } from "../../src/web/structure-graph.js";
 import {
   buildFullStructureRenderModel,
+  EDGE_LABEL_LINE_HEIGHT,
   structureTextUnits,
   wrapStructureText,
 } from "../../src/web/structure-render-model.js";
@@ -165,10 +166,10 @@ describe("Structure SVG export", () => {
     }
   });
 
-  it("keeps complete Edge label text available without ellipsis", () => {
+  it("renders the complete Edge label visibly with geometry for every wrapped line", () => {
     const structure = exportStructure();
     const longLabel = structure.edges[0]!.label;
-    const { document } = documentFor(structure);
+    const { model, document } = documentFor(structure);
     const escapedLabel = longLabel
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
@@ -176,7 +177,20 @@ describe("Structure SVG export", () => {
     expect(document.source).toContain(`<title>${escapedLabel}</title>`);
     const labelGroup = document.source.match(/<g data-edge-label-id="edge-0"[\s\S]*?<\/g>/u)?.[0];
     expect(labelGroup).toBeDefined();
+    const placement = model.labels.find(({ edge }) => edge.id === "edge-0")!;
+    expect(placement.displayLines.length).toBeGreaterThan(2);
+    expect(placement.displayLines.join(" ").replaceAll(/\s+/gu, " ").trim()).toBe(
+      longLabel.replaceAll(/\s+/gu, " ").trim(),
+    );
+    expect(placement.height).toBe(placement.displayLines.length * EDGE_LABEL_LINE_HEIGHT + 10);
     expect(labelGroup).not.toContain("…");
+    for (const line of placement.displayLines) {
+      const escapedLine = line
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+      expect(labelGroup).toContain(`>${escapedLine}</tspan>`);
+    }
   });
 
   it("fails rather than exporting an incomplete layout", () => {

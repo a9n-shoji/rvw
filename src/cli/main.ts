@@ -8,6 +8,11 @@ import openBrowser from "open";
 import { z } from "zod";
 import { createRuntime, type Runtime } from "../application/runtime.js";
 import { databasePathConfiguration } from "../infrastructure/db/database.js";
+import {
+  projectStructure,
+  structureAuthoringWarnings,
+  type StructureGraphContent,
+} from "../domain/structure-projection.js";
 import { SkillInstaller, type SkillPlatform } from "../infrastructure/skills/skill-installer.js";
 import {
   APP_VERSION,
@@ -56,6 +61,7 @@ import {
   commentReplyInputSchema,
   commentWatchOptionsSchema,
   pullRequestSyncInputSchema,
+  structureContentInputSchema,
   structurePublishInputSchema,
   structureUpdateInputSchema,
   walkthroughPublishInputSchema,
@@ -76,6 +82,11 @@ interface OutputOptions {
 
 function writeJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+function structureAuthoringFeedback(structure: StructureGraphContent) {
+  const layout = projectStructure(structure).diagnostics;
+  return { layout, warnings: structureAuthoringWarnings(layout) };
 }
 
 function writeJsonSequence(value: unknown): void {
@@ -853,6 +864,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "pullRequest.sync",
           "structure.list",
           "structure.read",
+          "structure.preview",
           "structure.publish",
           "structure.update",
           "structure.delete",
@@ -1038,6 +1050,16 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
 
   const structure = program.command("structure").description("source anchor付きStructureを管理");
   structure
+    .command("preview")
+    .requiredOption("--stdin", "stdinからJSONを読む")
+    .requiredOption("--json", "JSONで出力")
+    .description("Structure contentを保存せずcanonical initial layoutで検査")
+    .action(async () => {
+      const content = structureContentInputSchema.parse(await readStdinJson());
+      writeJson({ ok: true, ...structureAuthoringFeedback(content) });
+    });
+
+  structure
     .command("publish")
     .requiredOption("--stdin", "stdinからJSONを読む")
     .requiredOption("--json", "JSONで出力")
@@ -1049,7 +1071,8 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         input,
         async () => await getRuntime().service.publishStructure(input),
       );
-      writeJson({ ok: true, structure: published });
+      const warnings = structureAuthoringFeedback(published).warnings;
+      writeJson({ ok: true, structure: published, ...(warnings.length > 0 ? { warnings } : {}) });
     });
 
   structure
@@ -1089,7 +1112,8 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         { uri, content },
         async () => await getRuntime().service.updateStructure(uri, content),
       );
-      writeJson({ ok: true, structure: updated });
+      const warnings = structureAuthoringFeedback(updated).warnings;
+      writeJson({ ok: true, structure: updated, ...(warnings.length > 0 ? { warnings } : {}) });
     });
 
   structure

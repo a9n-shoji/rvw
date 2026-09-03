@@ -37,6 +37,20 @@ const packOutputSchema = z.object({
 const protocolSchema = z.object({
   appVersion: z.string(),
   protocolVersion: z.number().int(),
+  capabilities: z.array(z.string()),
+});
+const structurePreviewSchema = z.object({
+  ok: z.literal(true),
+  layout: z.object({
+    columnCount: z.number().int(),
+    rowsPerColumn: z.array(z.number().int()),
+    maxRows: z.number().int(),
+    directionalLinkCount: z.number().int(),
+    nonForwardDirectionalLinkCount: z.number().int(),
+    nonForwardDirectionalLinkRatio: z.number(),
+    originOutgoingDirectionalLinkCount: z.number().int(),
+  }),
+  warnings: z.array(z.object({ code: z.string(), message: z.string() })),
 });
 const doctorSchema = z.object({
   ok: z.boolean(),
@@ -339,6 +353,48 @@ try {
   );
   assert.equal(protocol.appVersion, packageJson.version);
   assert.ok(Number.isInteger(protocol.protocolVersion));
+  assert.ok(protocol.capabilities.includes("structure.preview"));
+  const preview = parseJson(
+    run(bin, ["structure", "preview", "--stdin", "--json"], {
+      cwd: workingDirectory,
+      input: JSON.stringify({
+        sourceOid: "a".repeat(40),
+        title: "Installed preview",
+        scope: "The packaged canonical preview command.",
+        originNodeId: "terminal",
+        nodes: [
+          {
+            id: "entry",
+            label: "Entry",
+            anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+          },
+          {
+            id: "terminal",
+            label: "Terminal",
+            anchor: { path: "src/terminal.ts", startLine: 1, endLine: 1 },
+          },
+        ],
+        edges: [
+          {
+            id: "entry-terminal",
+            from: "entry",
+            to: "terminal",
+            label: "updates",
+            directed: true,
+          },
+        ],
+      }),
+      ...(process.platform === "win32" ? { shell: true } : {}),
+    }),
+    structurePreviewSchema,
+    "rvw structure preview",
+  );
+  assert.equal(preview.layout.columnCount, 2);
+  assert.equal(preview.layout.nonForwardDirectionalLinkCount, 0);
+  assert.deepEqual(
+    preview.warnings.map((warning) => warning.code),
+    ["STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION"],
+  );
 
   const fakeBin = path.join(temporaryRoot, "fake-bin");
   if (process.platform !== "win32") createFakeGitHubCli(fakeBin);

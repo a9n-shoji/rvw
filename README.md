@@ -164,6 +164,7 @@ dependency、contract、side effectへ辿る空間として提示できます。
 entrypointを置けない静的なarchitecture／責務inventoryはStructureへ広げません。
 
 ```bash
+rvw structure preview --stdin --json
 rvw structure publish --stdin --json
 rvw structure get rvw://structure/<uuid> --json
 rvw structure update rvw://structure/<uuid> --stdin --json
@@ -173,6 +174,8 @@ rvw structure delete rvw://structure/<uuid> --json
 Structureは一つのexact `sourceOid`、宣言されたtitle / scope、entrypoint、stableなNode / Edge IDからなります。
 Nodeは0または1件、Edgeは0件以上のsource anchorを持ち、rvwはcommit、UTF-8 path、line pair、endpoint、
 focus、重複ID、sizeを保存前に検証します。publish / updateはbrowserやnavigationを操作しません。
+publish / update前には同じgraph contentをpreviewし、canonical layout diagnosticsとauthoring warningから
+origin、granularity、behavior / subject boundaryを再確認できます。warningは保存を拒否せず、graphを自動変更しません。
 
 viewerではfocusがある時に1-hop / 2-hopへ絞り、Allでは全Node / Edgeを表示します。relationを次数やIDで
 暗黙に隠さず、pan、zoom、fit、node drag、layout resetで探索できます。通常clickでexact sourceを左、
@@ -261,7 +264,7 @@ queue、retry、batch内のthread単位status post、自己返信抑制をtransa
 line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動できるようにします。
 
 四つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
-`rvw walkthrough get/update/publish/delete ... --json`、`rvw structure get/update/publish/delete ... --json`、
+`rvw walkthrough get/update/publish/delete ... --json`、`rvw structure preview/get/update/publish/delete ... --json`、
 `rvw pr sync --stdin --json`だけを利用します。
 ローカルDBやrepositoryへアクセスできないCloud Agentは対象外です。
 

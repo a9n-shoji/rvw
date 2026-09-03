@@ -34,6 +34,7 @@ import {
   createStructureSession,
   deleteStructureSessions,
   getStructureSession,
+  initialStructureViewport,
   MIN_STRUCTURE_ZOOM,
   scaledStructureZoom,
   setStructureSession,
@@ -509,6 +510,7 @@ export function StructureViewer({
           labelEdgeIds,
         },
         labelAccessory: "source-actions",
+        edgeLabelMode: "viewer-clamped",
       }),
     [labelEdgeIds, positions, sourceChangeKinds, structure, visible.edgeIds, visible.nodeIds],
   );
@@ -551,20 +553,9 @@ export function StructureViewer({
   useLayoutEffect(() => {
     const action = pendingViewportActionRef.current;
     if (!action || !displayBounds || surfaceSize.width === 0 || surfaceSize.height === 0) return;
-    const point = positions[structure.originNodeId];
-    const centerX = point
-      ? point.x + STRUCTURE_NODE_WIDTH / 2
-      : (displayBounds.left + displayBounds.right) / 2;
-    const centerY = point
-      ? point.y + STRUCTURE_NODE_HEIGHT / 2
-      : (displayBounds.top + displayBounds.bottom) / 2;
     pendingViewportActionRef.current = null;
-    setViewport({
-      scale: 1,
-      x: surfaceSize.width * 0.25 - centerX,
-      y: surfaceSize.height / 2 - centerY,
-    });
-  }, [displayBounds, positions, structure.originNodeId, surfaceSize.height, surfaceSize.width]);
+    setViewport(initialStructureViewport({ structure, positions, surfaceSize }));
+  }, [displayBounds, positions, structure, surfaceSize]);
 
   const centerNode = useCallback(
     (nodeId: string, scale?: number): void => {
@@ -988,44 +979,53 @@ export function StructureViewer({
                   );
                 })}
               </svg>
-              {edgeLabelPlacements.map(({ edge, source, x, y, selectWidth, height, crowded }) => {
-                const changeKind = source.changeKind;
-                const fromNode = nodesById.get(edge.from);
-                const toNode = nodesById.get(edge.to);
-                const relationLabel = edge.directed
-                  ? `${fromNode?.label ?? edge.from} から ${toNode?.label ?? edge.to} へ: ${edge.label}`
-                  : `${fromNode?.label ?? edge.from} と ${toNode?.label ?? edge.to} の関係: ${edge.label}`;
-                const selected = edge.id === selectedEdgeId;
-                const muted = selectedEdgeId !== null && !selected;
-                return (
-                  <div
-                    key={`label:${edge.id}`}
-                    className={`structure-edge-label${crowded ? " crowded" : ""}${muted ? " muted" : ""}`}
-                    data-edge-id={edge.id}
-                    data-source-anchor-count={source.anchorCount}
-                    data-source-change-kind={changeKind ?? undefined}
-                    style={{ left: x, top: y, minHeight: height }}
-                  >
-                    <button
-                      type="button"
-                      className={`structure-edge-select${selected ? " selected" : ""}`}
-                      title={edge.label}
-                      aria-label={relationLabel}
-                      aria-pressed={selected}
-                      style={{ maxWidth: selectWidth }}
-                      onClick={() =>
-                        setSelectedEdgeId((current) => (current === edge.id ? null : edge.id))
-                      }
+              {edgeLabelPlacements.map(
+                ({ edge, displayLines, source, x, y, selectWidth, height, crowded }) => {
+                  const changeKind = source.changeKind;
+                  const fromNode = nodesById.get(edge.from);
+                  const toNode = nodesById.get(edge.to);
+                  const relationLabel = edge.directed
+                    ? `${fromNode?.label ?? edge.from} から ${toNode?.label ?? edge.to} へ: ${edge.label}`
+                    : `${fromNode?.label ?? edge.from} と ${toNode?.label ?? edge.to} の関係: ${edge.label}`;
+                  const selected = edge.id === selectedEdgeId;
+                  const muted = selectedEdgeId !== null && !selected;
+                  return (
+                    <div
+                      key={`label:${edge.id}`}
+                      className={`structure-edge-label${crowded ? " crowded" : ""}${muted ? " muted" : ""}`}
+                      data-edge-id={edge.id}
+                      data-source-anchor-count={source.anchorCount}
+                      data-source-change-kind={changeKind ?? undefined}
+                      style={{ left: x, top: y, minHeight: height }}
                     >
-                      <span className="structure-edge-label-text">{edge.label}</span>
-                    </button>
-                    <EdgeSourceAction
-                      edge={edge}
-                      onOpen={(locator, anchor, right) => void openSource(locator, anchor, right)}
-                    />
-                  </div>
-                );
-              })}
+                      <button
+                        type="button"
+                        className={`structure-edge-select${selected ? " selected" : ""}`}
+                        title={edge.label}
+                        aria-label={relationLabel}
+                        aria-pressed={selected}
+                        style={{ maxWidth: selectWidth }}
+                        onClick={() =>
+                          setSelectedEdgeId((current) => (current === edge.id ? null : edge.id))
+                        }
+                      >
+                        <span className="structure-edge-label-text" aria-hidden="true">
+                          {displayLines.map((line, index) => (
+                            <Fragment key={`${edge.id}:line:${index}`}>
+                              {index > 0 && <br />}
+                              {line}
+                            </Fragment>
+                          ))}
+                        </span>
+                      </button>
+                      <EdgeSourceAction
+                        edge={edge}
+                        onOpen={(locator, anchor, right) => void openSource(locator, anchor, right)}
+                      />
+                    </div>
+                  );
+                },
+              )}
               {renderModel.nodes.map(({ node, point, changeKind, sourceLabel }) => {
                 const selected = node.id === focusId;
                 const incidentToFocus = incident.some(

@@ -35,6 +35,7 @@ export interface EdgeSourcePresentation {
 
 export interface StructureEdgeLabelPlacement {
   edge: StructureEdge;
+  displayLines: readonly string[];
   source: EdgeSourcePresentation;
   x: number;
   y: number;
@@ -71,15 +72,17 @@ export interface StructureRenderModel {
 }
 
 export type StructureLabelAccessory = "source-actions" | "none";
+export type StructureEdgeLabelMode = "viewer-clamped" | "export-complete";
 
 const EDGE_LABEL_MAX_TEXT_WIDTH = 210;
+const EDGE_LABEL_COMPACT_MAX_TEXT_WIDTH = 136;
 const EDGE_LABEL_MIN_TEXT_WIDTH = 64;
 const EDGE_LABEL_HORIZONTAL_PADDING = 11;
 const EDGE_LABEL_WIDTH_SAFETY = 2;
 export const EDGE_LABEL_LINE_HEIGHT = 14;
 
 function stableCompare(left: string, right: string): number {
-  return left.localeCompare(right, "en");
+  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 export function shortestUniqueSourceLabels(paths: readonly string[]): Map<string, string> {
@@ -366,27 +369,35 @@ function edgeLabelSize(
   edge: StructureEdge,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
   labelAccessory: StructureLabelAccessory,
+  labelMode: StructureEdgeLabelMode,
+  maxTextWidth = EDGE_LABEL_MAX_TEXT_WIDTH,
 ): {
   selectWidth: number;
   boxWidth: number;
   height: number;
+  displayLines: readonly string[];
   source: EdgeSourcePresentation;
 } {
   const naturalTextWidth = Math.ceil(structureTextUnits(edge.label) * 11.5);
   const textWidth = Math.min(
-    EDGE_LABEL_MAX_TEXT_WIDTH,
+    maxTextWidth,
     Math.max(
       EDGE_LABEL_MIN_TEXT_WIDTH,
       naturalTextWidth + EDGE_LABEL_HORIZONTAL_PADDING + EDGE_LABEL_WIDTH_SAFETY,
     ),
   );
   const contentWidth = Math.max(1, textWidth - EDGE_LABEL_HORIZONTAL_PADDING);
-  const lineCount = wrapStructureText({
-    text: edge.label,
-    maxUnits: contentWidth / 11.5,
-    ellipsize: false,
-  }).length;
-  const textHeight = Math.max(24, lineCount * EDGE_LABEL_LINE_HEIGHT + 10);
+  const displayLines = wrapStructureText(
+    labelMode === "viewer-clamped"
+      ? {
+          text: edge.label,
+          maxUnits: contentWidth / 11.5,
+          maxLines: 2,
+          ellipsize: true,
+        }
+      : { text: edge.label, maxUnits: contentWidth / 11.5, ellipsize: false },
+  );
+  const textHeight = Math.max(24, displayLines.length * EDGE_LABEL_LINE_HEIGHT + 10);
   const source = edgeSourcePresentation(edge, sourceChangeKinds);
   const sourceBadgeOverflow = source.anchorCount > 1 ? 4 : 0;
   const sourceActionWidth =
@@ -399,6 +410,7 @@ function edgeLabelSize(
     selectWidth: textWidth,
     boxWidth: textWidth + sourceActionWidth,
     height,
+    displayLines,
     source,
   };
 }
@@ -411,6 +423,7 @@ export function placeEdgeLabels(
   routeOffsets: ReadonlyMap<string, number>,
   reciprocalEdgeIds: ReadonlySet<string>,
   labelAccessory: StructureLabelAccessory,
+  labelMode: StructureEdgeLabelMode,
 ): StructureEdgeLabelPlacement[] {
   const nodeBoxes = nodes.flatMap((node) => {
     const point = positions[node.id];
@@ -484,29 +497,55 @@ export function placeEdgeLabels(
       reciprocalEdgeIds.has(edge.id),
     );
     if (!geometry) continue;
-    const size = edgeLabelSize(edge, sourceChangeKinds, labelAccessory);
-    const possible = candidates.map(([fraction, offset]) =>
-      curveLabelCandidate(geometry, fraction, offset),
+    const naturalSize = edgeLabelSize(edge, sourceChangeKinds, labelAccessory, labelMode);
+    const sizes: Array<ReturnType<typeof edgeLabelSize>> = [naturalSize];
+    if (labelMode === "viewer-clamped") {
+      const compactSize = edgeLabelSize(
+        edge,
+        sourceChangeKinds,
+        labelAccessory,
+        labelMode,
+        EDGE_LABEL_COMPACT_MAX_TEXT_WIDTH,
+      );
+      if (compactSize.boxWidth < naturalSize.boxWidth) sizes.push(compactSize);
+    }
+    let available:
+      { point: { x: number; y: number }; size: ReturnType<typeof edgeLabelSize> } | undefined;
+    let fallback: typeof available;
+    let firstPossible: { x: number; y: number } | undefined;
+    for (const size of sizes) {
+      const possible = candidates.map(([fraction, offset]) =>
+        curveLabelCandidate(geometry, fraction, offset),
+      );
+      firstPossible ??= possible[edgeIndex % possible.length]!;
+      const nodeSafe = possible.filter((candidate) => {
+        const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 4);
+        return !nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox));
+      });
+      const point = nodeSafe.find((candidate) => {
+        const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 5);
+        return !overlapsOccupiedLabel(box);
+      });
+      if (point) {
+        available = { point, size };
+        break;
+      }
+      const fallbackPoint = nodeSafe[edgeIndex % nodeSafe.length];
+      if (fallbackPoint) fallback = { point: fallbackPoint, size };
+    }
+    const chosen = available ?? fallback ?? { point: firstPossible!, size: naturalSize };
+    occupyLabel(
+      labelBox(chosen.point.x, chosen.point.y, chosen.size.boxWidth, chosen.size.height, 4),
     );
-    const nodeSafe = possible.filter((candidate) => {
-      const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 4);
-      return !nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox));
-    });
-    const available = nodeSafe.find((candidate) => {
-      const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 5);
-      return !overlapsOccupiedLabel(box);
-    });
-    const fallback = nodeSafe.length > 0 ? nodeSafe[edgeIndex % nodeSafe.length] : undefined;
-    const chosen = available ?? fallback ?? possible[edgeIndex % possible.length]!;
-    occupyLabel(labelBox(chosen.x, chosen.y, size.boxWidth, size.height, 4));
     placements.push({
       edge,
-      source: size.source,
-      x: chosen.x,
-      y: chosen.y,
-      selectWidth: size.selectWidth,
-      boxWidth: size.boxWidth,
-      height: size.height,
+      displayLines: chosen.size.displayLines,
+      source: chosen.size.source,
+      x: chosen.point.x,
+      y: chosen.point.y,
+      selectWidth: chosen.size.selectWidth,
+      boxWidth: chosen.size.boxWidth,
+      height: chosen.size.height,
       crowded: !available,
     });
   }
@@ -519,8 +558,10 @@ export function buildStructureRenderModel(input: {
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>;
   selection: StructureRenderSelection;
   labelAccessory: StructureLabelAccessory;
+  edgeLabelMode: StructureEdgeLabelMode;
 }): StructureRenderModel {
-  const { structure, positions, sourceChangeKinds, selection, labelAccessory } = input;
+  const { structure, positions, sourceChangeKinds, selection, labelAccessory, edgeLabelMode } =
+    input;
   const sourceLabels = shortestUniqueSourceLabels([
     ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor.path] : [])),
     ...structure.edges.flatMap((edge) => edge.anchors.map((anchor) => anchor.path)),
@@ -568,6 +609,7 @@ export function buildStructureRenderModel(input: {
     routeOffsets,
     reciprocalEdgeIds,
     labelAccessory,
+    edgeLabelMode,
   );
   const boxes: StructureBox[] = nodes.map(({ point }) => ({
     left: point.x,
@@ -598,5 +640,6 @@ export function buildFullStructureRenderModel(input: {
       labelEdgeIds: new Set(structure.edges.map((edge) => edge.id)),
     },
     labelAccessory: "none",
+    edgeLabelMode: "export-complete",
   });
 }
