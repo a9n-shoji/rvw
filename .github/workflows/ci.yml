@@ -32,7 +32,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm check
+      - if: runner.os == 'Linux'
+        run: pnpm check
       - run: pnpm test
       - if: runner.os == 'Linux'
         run: pnpm exec playwright install chromium
