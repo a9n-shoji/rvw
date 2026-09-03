@@ -18,7 +18,7 @@ import type {
 const pullRequestId = "22222222-2222-4222-8222-222222222222";
 const maximumDocumentBytes = 1024 * 1024;
 
-interface RepositoryDocumentSnapshot {
+export interface RepositoryDocumentSnapshot {
   availability: DocumentAvailability;
   text: string | null;
   byteLength: number | null;
@@ -27,7 +27,8 @@ interface RepositoryDocumentSnapshot {
   oid: string | null;
 }
 
-export interface RepositoryDemoFixture {
+export interface DogfoodFixture {
+  scenario: "dogfood";
   pullRequestId: string;
   baseOid: string;
   headOid: string;
@@ -35,9 +36,12 @@ export interface RepositoryDemoFixture {
   pullRequest: PullRequest;
   comments: ReviewComment[];
   walkthroughs: Walkthrough[];
+  structures: [];
   repositoryEntriesAt(oid: string): TreeEntry[];
   repositoryDocumentAt(oid: string, filePath: string): RepositoryDocumentSnapshot;
   changedFiles(oldOid: string, newOid: string): ChangedFile[];
+  resolvePathAt(sourceOid: string, sourcePath: string, targetOid: string): string | null;
+  cleanup(): void;
 }
 
 function gitText(repositoryRoot: string, args: string[]): string {
@@ -88,7 +92,8 @@ function selectCommitOids(repositoryRoot: string, commitCount: number): string[]
     if (commitOids.length === commitCount + 1) {
       const baseOid = commitOids[commitCount];
       const headOid = commitOids[0];
-      if (!baseOid || !headOid) throw new Error(`demo fixture range is incomplete at ${candidate}`);
+      if (!baseOid || !headOid)
+        throw new Error(`dogfood fixture range is incomplete at ${candidate}`);
       const changedFileCount = gitText(repositoryRoot, [
         "diff",
         "--name-only",
@@ -117,7 +122,7 @@ function selectCommitOids(repositoryRoot: string, commitCount: number): string[]
   const topLevel = gitText(repositoryRoot, ["rev-parse", "--show-toplevel"]).trim();
   const shallow = gitText(repositoryRoot, ["rev-parse", "--is-shallow-repository"]).trim();
   throw new Error(
-    `demo fixture requires ${commitCount} first-parent commits plus a comparison base from HEAD or a local ref; ` +
+    `dogfood fixture requires ${commitCount} first-parent commits plus a comparison base from HEAD or a local ref; ` +
       `repository=${topLevel}, shallow=${shallow}, attempts=${attempts.join(", ") || "none"}; ` +
       "fetch more Git history and retry",
   );
@@ -133,7 +138,7 @@ function parseCommit(repositoryRoot: string, oid: string): CommitSummary {
     .trimEnd()
     .split("\0");
   if (!commitOid || parents === undefined || !subject || !authorName || !authoredAt) {
-    throw new Error(`demo fixture could not parse commit ${oid}`);
+    throw new Error(`dogfood fixture could not parse commit ${oid}`);
   }
   return {
     oid: commitOid,
@@ -144,16 +149,16 @@ function parseCommit(repositoryRoot: string, oid: string): CommitSummary {
   };
 }
 
-function parseTree(repositoryRoot: string, oid: string): TreeEntry[] {
+export function readDogfoodTree(repositoryRoot: string, oid: string): TreeEntry[] {
   return gitText(repositoryRoot, ["ls-tree", "-r", "-l", "-z", oid])
     .split("\0")
     .filter(Boolean)
     .map((record) => {
       const match = /^(\d{6}) (blob|commit) ([0-9a-f]+) +(-|\d+)\t([\s\S]+)$/.exec(record);
-      if (!match) throw new Error(`demo fixture could not parse tree entry at ${oid}`);
+      if (!match) throw new Error(`dogfood fixture could not parse tree entry at ${oid}`);
       const [, mode, type, objectOid, sizeText, filePath] = match;
       if (!mode || !type || !objectOid || !sizeText || !filePath) {
-        throw new Error(`demo fixture tree entry is incomplete at ${oid}`);
+        throw new Error(`dogfood fixture tree entry is incomplete at ${oid}`);
       }
       const kind: TreeEntryKind =
         type === "commit" ? "submodule" : mode === "120000" ? "symlink" : "file";
@@ -168,7 +173,11 @@ function parseTree(repositoryRoot: string, oid: string): TreeEntry[] {
     });
 }
 
-function parseChangedFiles(repositoryRoot: string, oldOid: string, newOid: string): ChangedFile[] {
+export function readDogfoodChangedFiles(
+  repositoryRoot: string,
+  oldOid: string,
+  newOid: string,
+): ChangedFile[] {
   const fields = gitText(repositoryRoot, [
     "diff",
     "--name-status",
@@ -186,7 +195,7 @@ function parseChangedFiles(repositoryRoot: string, oldOid: string, newOid: strin
     if (code === "R" || code === "C") {
       const oldPath = fields[index++];
       const newPath = fields[index++];
-      if (!oldPath || !newPath) throw new Error(`demo fixture rename is incomplete: ${status}`);
+      if (!oldPath || !newPath) throw new Error(`dogfood fixture rename is incomplete: ${status}`);
       files.push({
         kind: code === "R" ? "renamed" : "added",
         status,
@@ -197,7 +206,7 @@ function parseChangedFiles(repositoryRoot: string, oldOid: string, newOid: strin
       continue;
     }
     const filePath = fields[index++];
-    if (!filePath) throw new Error(`demo fixture change is incomplete: ${status}`);
+    if (!filePath) throw new Error(`dogfood fixture change is incomplete: ${status}`);
     const kind =
       code === "A"
         ? "added"
@@ -217,6 +226,69 @@ function parseChangedFiles(repositoryRoot: string, oldOid: string, newOid: strin
   return files;
 }
 
+export function readDogfoodDocument(
+  repositoryRoot: string,
+  oid: string,
+  filePath: string,
+): RepositoryDocumentSnapshot {
+  const entry = readDogfoodTree(repositoryRoot, oid).find(
+    (candidate) => candidate.path === filePath,
+  );
+  return readDogfoodDocumentFromEntry(repositoryRoot, oid, filePath, entry);
+}
+
+export function readDogfoodDocumentFromEntry(
+  repositoryRoot: string,
+  oid: string,
+  filePath: string,
+  entry: TreeEntry | undefined,
+): RepositoryDocumentSnapshot {
+  if (!entry) {
+    return {
+      availability: "missing",
+      text: null,
+      byteLength: 0,
+      entryKind: "file",
+      normalizedLineEndings: false,
+      oid: null,
+    };
+  }
+  if (entry.size !== null && entry.size > maximumDocumentBytes) {
+    return {
+      availability: "too-large",
+      text: null,
+      byteLength: entry.size,
+      entryKind: entry.kind,
+      normalizedLineEndings: false,
+      oid: entry.oid,
+    };
+  }
+  const contents =
+    entry.kind === "submodule"
+      ? Buffer.from(`${entry.oid}\n`)
+      : gitBuffer(repositoryRoot, ["show", `${oid}:${filePath}`]);
+  if (contents.includes(0) || !isUtf8(contents)) {
+    return {
+      availability: "binary",
+      text: null,
+      byteLength: contents.byteLength,
+      entryKind: entry.kind,
+      normalizedLineEndings: false,
+      oid: entry.oid,
+    };
+  }
+  const originalText = contents.toString("utf8");
+  const text = originalText.replace(/\r\n?/g, "\n");
+  return {
+    availability: "available",
+    text,
+    byteLength: contents.byteLength,
+    entryKind: entry.kind,
+    normalizedLineEndings: text !== originalText,
+    oid: entry.oid,
+  };
+}
+
 function hashDocument(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
@@ -232,7 +304,8 @@ function lineReference(
 ): CodeReference {
   const text = readText(filePath);
   const offset = text.indexOf(needle);
-  if (offset < 0) throw new Error(`demo reference ${id} could not find ${needle} in ${filePath}`);
+  if (offset < 0)
+    throw new Error(`dogfood reference ${id} could not find ${needle} in ${filePath}`);
   const startLine = text.slice(0, offset).split("\n").length;
   return {
     id,
@@ -489,10 +562,10 @@ function createComments(
   };
 
   const walkthrough = walkthroughs[0];
-  if (!walkthrough) throw new Error("demo walkthrough is missing");
+  if (!walkthrough) throw new Error("dogfood walkthrough is missing");
   const walkthroughLines = walkthrough.body.split("\n");
   const quotedLine = walkthroughLines[2];
-  if (!quotedLine) throw new Error("demo walkthrough comment target is missing");
+  if (!quotedLine) throw new Error("dogfood walkthrough comment target is missing");
 
   return [
     thread(
@@ -555,14 +628,14 @@ function createComments(
   ];
 }
 
-export function createRepositoryDemoFixture(
+export function createDogfoodFixture(
   repositoryRoot: string,
   options: { commitCount?: number } = {},
-): RepositoryDemoFixture {
+): DogfoodFixture {
   const resolvedRoot = path.resolve(repositoryRoot);
   const commitCount = options.commitCount ?? 6;
   if (!Number.isInteger(commitCount) || commitCount < 2 || commitCount > 12) {
-    throw new Error("demo fixture commit count must be an integer from 2 to 12");
+    throw new Error("dogfood fixture commit count must be an integer from 2 to 12");
   }
   const commitOids = selectCommitOids(resolvedRoot, commitCount);
   const commits = commitOids.map((oid) => parseCommit(resolvedRoot, oid));
@@ -570,14 +643,14 @@ export function createRepositoryDemoFixture(
   const latestCommit = commits.at(-1);
   const baseOid = firstCommit?.parentOids[0];
   if (!firstCommit || !latestCommit || !baseOid) {
-    throw new Error("demo fixture requires a first-parent comparison base");
+    throw new Error("dogfood fixture requires a first-parent comparison base");
   }
   const treeCache = new Map<string, TreeEntry[]>();
   const documentCache = new Map<string, RepositoryDocumentSnapshot>();
   const repositoryEntriesAt = (oid: string): TreeEntry[] => {
     const cached = treeCache.get(oid);
     if (cached) return cached;
-    const entries = parseTree(resolvedRoot, oid);
+    const entries = readDogfoodTree(resolvedRoot, oid);
     treeCache.set(oid, entries);
     return entries;
   };
@@ -586,68 +659,19 @@ export function createRepositoryDemoFixture(
     const cached = documentCache.get(key);
     if (cached) return cached;
     const entry = repositoryEntriesAt(oid).find((candidate) => candidate.path === filePath);
-    if (!entry) {
-      const missing: RepositoryDocumentSnapshot = {
-        availability: "missing",
-        text: null,
-        byteLength: 0,
-        entryKind: "file",
-        normalizedLineEndings: false,
-        oid: null,
-      };
-      documentCache.set(key, missing);
-      return missing;
-    }
-    if (entry.size !== null && entry.size > maximumDocumentBytes) {
-      const tooLarge: RepositoryDocumentSnapshot = {
-        availability: "too-large",
-        text: null,
-        byteLength: entry.size,
-        entryKind: entry.kind,
-        normalizedLineEndings: false,
-        oid: entry.oid,
-      };
-      documentCache.set(key, tooLarge);
-      return tooLarge;
-    }
-    const contents =
-      entry.kind === "submodule"
-        ? Buffer.from(`${entry.oid}\n`)
-        : gitBuffer(resolvedRoot, ["show", `${oid}:${filePath}`]);
-    if (contents.includes(0) || !isUtf8(contents)) {
-      const binary: RepositoryDocumentSnapshot = {
-        availability: "binary",
-        text: null,
-        byteLength: contents.byteLength,
-        entryKind: entry.kind,
-        normalizedLineEndings: false,
-        oid: entry.oid,
-      };
-      documentCache.set(key, binary);
-      return binary;
-    }
-    const originalText = contents.toString("utf8");
-    const text = originalText.replace(/\r\n?/g, "\n");
-    const available: RepositoryDocumentSnapshot = {
-      availability: "available",
-      text,
-      byteLength: contents.byteLength,
-      entryKind: entry.kind,
-      normalizedLineEndings: text !== originalText,
-      oid: entry.oid,
-    };
-    documentCache.set(key, available);
-    return available;
+    const document = readDogfoodDocumentFromEntry(resolvedRoot, oid, filePath, entry);
+    documentCache.set(key, document);
+    return document;
   };
   const readHeadText = (filePath: string): string => {
     const document = repositoryDocumentAt(latestCommit.oid, filePath);
     if (document.availability !== "available" || document.text === null) {
-      throw new Error(`demo fixture requires a readable ${filePath}`);
+      throw new Error(`dogfood fixture requires a readable ${filePath}`);
     }
     return document.text;
   };
   const changedFiles = (oldOid: string, newOid: string): ChangedFile[] =>
-    parseChangedFiles(resolvedRoot, oldOid, newOid);
+    readDogfoodChangedFiles(resolvedRoot, oldOid, newOid);
   const headEntries = repositoryEntriesAt(latestCommit.oid);
   const pullRequestChanges = changedFiles(baseOid, latestCommit.oid);
   const walkthroughs = createWalkthroughs(latestCommit.oid, readHeadText);
@@ -674,6 +698,7 @@ export function createRepositoryDemoFixture(
     "> Demo metadata is synthetic; every repository document and commit shown comes from committed Git objects in this checkout.",
   ].join("\n");
   return {
+    scenario: "dogfood",
     pullRequestId,
     baseOid,
     headOid: latestCommit.oid,
@@ -707,8 +732,19 @@ export function createRepositoryDemoFixture(
     },
     comments,
     walkthroughs,
+    structures: [],
     repositoryEntriesAt,
     repositoryDocumentAt,
     changedFiles,
+    resolvePathAt(sourceOid, sourcePath, targetOid) {
+      if (repositoryEntriesAt(targetOid).some((entry) => entry.path === sourcePath)) {
+        return sourcePath;
+      }
+      const change = changedFiles(sourceOid, targetOid).find(
+        (candidate) => candidate.oldPath === sourcePath,
+      );
+      return change?.kind === "renamed" ? change.newPath : null;
+    },
+    cleanup() {},
   };
 }

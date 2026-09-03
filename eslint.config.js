@@ -33,4 +33,8 @@ export default tseslint.config(
     files: ["skills/rvw-watch-comments/scripts/*.mjs"],
     ...tseslint.configs.disableTypeChecked,
   },
+  {
+    files: ["test/fixtures/**/*.mjs"],
+    ...tseslint.configs.disableTypeChecked,
+  },
 );

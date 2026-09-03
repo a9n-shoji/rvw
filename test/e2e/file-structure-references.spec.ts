@@ -143,7 +143,7 @@ test("navigates from a file backlink to the focused Structure Node and restores 
   await structureTrigger.click();
   const menu = page.getByRole("menu", { name: "このファイルを参照するStructure" });
   const result = menu.getByRole("menuitem", {
-    name: /Order placement behavior Node: Create order \+1/u,
+    name: /Order placement behavior Node: Create order$/u,
   });
   await expect(menu).toBeVisible();
   await expect(result).toBeVisible();
@@ -161,7 +161,7 @@ test("navigates from a file backlink to the focused Structure Node and restores 
   await structureTrigger.click();
   await page
     .getByRole("menu", { name: "このファイルを参照するStructure" })
-    .getByRole("menuitem", { name: /Order placement behavior Node: Create order \+1/u })
+    .getByRole("menuitem", { name: /Order placement behavior Node: Create order$/u })
     .click();
 
   await expect(page.getByRole("tab", { name: "Order placement behavior" })).toHaveCount(1);
@@ -382,7 +382,7 @@ test("keeps an open backlink menu focused across unrelated comment updates", asy
   await trigger.click();
   const menu = page.getByRole("menu", { name: "このファイルを参照するStructure" });
   const menuItem = menu.getByRole("menuitem", {
-    name: /Order placement behavior Node: Create order \+1/u,
+    name: /Order placement behavior Node: Create order$/u,
   });
   await expect(menuItem).toBeFocused();
 

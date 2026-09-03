@@ -367,16 +367,27 @@ source checkoutでは、GitHub接続や保存済みPRを用意せずにrepositor
 pnpm demo
 ```
 
-このデモは小さなE2E fixtureとは分離され、現在のcheckoutにある直近6件のfirst-parent commitを
-一つのsynthetic PRとして表示します。tree、文書、diff、検索はworktreeではなく実際のGit objectから読み、
-100件以上の実在file、複数commit、変更外のtest・document・Skill、初期commentとWalkthroughを含みます。
+既定のデモは、固定metadataからtemporary directoryへ毎回同じSHA-1 Git historyを構築します。架空の注文
+serviceに対するresilient order placement PRを、7 commits、changed / unchanged file、review comments、
+Walkthrough、Structureを含む一貫したreview workloadとして表示します。networkや現在のrvw historyには依存しません。
 browserを自動で開かない場合は`pnpm demo -- --no-open`、portを変える場合は`RVW_DEMO_PORT`を指定します。
-デモを停止するには起動したterminalでCtrl+Cを押してください。
+
+現在のrvw checkoutをそのままreviewする任意のdogfood modeは別commandです。表示内容はlocal refsと
+committed historyに応じて変わり、必要なfirst-parent historyが不足していれば明示的に失敗します。
+
+```bash
+pnpm demo:dogfood
+```
+
+fixtureのcontract / realistic / stress / dogfoodの境界、realistic historyの更新規則、anchor integrity、
+stress coverageの場所は[Fixture architecture](docs/fixture-architecture.md)を参照してください。デモを停止するには
+起動したterminalでCtrl+Cを押してください。
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm check
 pnpm test
+pnpm test:dogfood
 pnpm test:e2e
 pnpm build
 pnpm test:package
