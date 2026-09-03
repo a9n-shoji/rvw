@@ -109,7 +109,7 @@ const mainReferences = [
     "controller",
     "createOrderController",
     "src/http/controllers/create-order.ts",
-    "export async function createOrderController",
+    "export function createOrderControllerFor",
     14,
     "Request parsing and application handoff",
   ),

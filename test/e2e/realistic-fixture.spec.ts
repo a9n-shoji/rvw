@@ -58,7 +58,7 @@ test("reviews the deterministic resilient-order PR across artifacts", async ({ p
   const changes = (await changesResponse.json()) as {
     files: Array<{ kind: string; oldPath: string | null; newPath: string | null }>;
   };
-  expect(changes.files).toHaveLength(41);
+  expect(changes.files).toHaveLength(42);
   expect(changes.files).toContainEqual(
     expect.objectContaining({
       kind: "renamed",
@@ -213,6 +213,7 @@ test("keeps realistic comments and Structure backlinks coherent at the latest he
     comments: Array<{
       id: string;
       resolvedAt: string | null;
+      target: { startLine: number | null; endLine: number | null };
       posts: Array<{ body: string; relatedCommitOid: string | null }>;
     }>;
   };
@@ -272,6 +273,38 @@ test("keeps realistic comments and Structure backlinks coherent at the latest he
       ],
     }),
   ]);
+
+  const shiftedCommentId = "75000000-0000-4000-8000-000000000008";
+  const shiftedSource = comments.comments.find(({ id }) => id === shiftedCommentId)?.target;
+  const shiftedPlacement = (await (
+    await request.post(
+      `${realisticBaseURL}/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
+      {
+        data: {
+          commentIds: [shiftedCommentId],
+          destinations: [{ kind: "commit", oid: view.headOid }],
+        },
+      },
+    )
+  ).json()) as {
+    comments: Array<{
+      placements: Array<{
+        placement: {
+          outdated: boolean;
+          path: string | null;
+          range: { startLine: number; endLine: number } | null;
+        };
+      }>;
+    }>;
+  };
+  expect(shiftedSource?.startLine).not.toBeNull();
+  expect(shiftedPlacement.comments[0]?.placements[0]?.placement).toMatchObject({
+    outdated: false,
+    path: "src/application/orders/create-order.ts",
+  });
+  expect(shiftedPlacement.comments[0]?.placements[0]?.placement.range?.startLine).toBeGreaterThan(
+    shiftedSource?.startLine ?? Number.MAX_SAFE_INTEGER,
+  );
 
   const structures = (await (
     await request.get(`${realisticBaseURL}/api/pull-requests/${pullRequestId}/structures`)

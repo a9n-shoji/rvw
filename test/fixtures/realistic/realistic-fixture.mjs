@@ -78,6 +78,8 @@ declare module "hono" {
     use(...args: any[]): void;
     post(...args: any[]): void;
     get(...args: any[]): void;
+    route(...args: any[]): void;
+    request(...args: any[]): Promise<Response>;
   }
 }
 declare module "zod" { export const z: any; }
@@ -403,6 +405,10 @@ export interface OrderRepositoryPort {
   insert(order: Order, transaction: DbTransaction): Promise<void>;
   findByPaymentAuthorization(authorizationId: string): Promise<unknown | null>;
 }
+export interface PaymentRecoveryCandidatePort {
+  leaseNextCandidate(leaseSeconds: number): Promise<{ authorizationId: string } | null>;
+  complete(authorizationId: string): Promise<void>;
+}
 export interface ApplicationPorts {
   idempotency: {
     run<T>(envelope: IdempotencyEnvelope | undefined, work: () => Promise<T>): Promise<T>;
@@ -413,6 +419,7 @@ export interface ApplicationPorts {
   transaction: { run<T>(work: (transaction: DbTransaction) => Promise<T>): Promise<T> };
   orders: OrderRepositoryPort;
   outbox: { append(events: DomainEvent[], transaction: DbTransaction): Promise<void> };
+  telemetry: { record(context: Record<string, string | undefined>): void };
 }
   `),
   "src/infrastructure/events/outbox-event.ts": source(`
@@ -434,10 +441,16 @@ export const orderMetrics = {
   idempotencyReplay: "orders.idempotency.replay_total",
   orphanAuthorization: "payments.orphan_authorization_total",
   outboxLag: "outbox.oldest_unpublished_age_seconds",
+  recordOutboxLag(seconds: number) { void seconds; },
 } as const;
   `),
   "src/telemetry/order-logger.ts": source(`
-export function orderLogContext(input: { requestId: string; orderId?: string; idempotencyKey?: string }) {
+export function orderLogContext(input: {
+  requestId: string;
+  orderId?: string;
+  authorizationId?: string;
+  idempotencyKey?: string;
+}) {
   return { ...input, component: "order-placement" };
 }
   `),
@@ -504,8 +517,10 @@ import { describe, expect, it } from "vitest";
 import { PaymentReconciliationWorker } from "../../src/workers/payment-reconciliation.js";
 
 describe("payment reconciliation", () => {
-  it("voids an authorization only when no persisted order exists", async () => {
+  it("leases and completes an orphan authorization after safely voiding it", async () => {
     const voided: string[] = [];
+    const completed: string[] = [];
+    const leaseSeconds: number[] = [];
     const worker = new PaymentReconciliationWorker(
       {
         async authorize() { return { id: "unused" }; },
@@ -516,9 +531,19 @@ describe("payment reconciliation", () => {
         async insert() {},
         async findByPaymentAuthorization() { return null; },
       },
+      {
+        async leaseNextCandidate(seconds) {
+          leaseSeconds.push(seconds);
+          return { authorizationId: "auth-orphaned" };
+        },
+        async complete(id) { completed.push(id); },
+      },
+      60,
     );
-    await worker.reconcile("auth-orphaned");
+    await worker.tick();
+    expect(leaseSeconds).toEqual([60]);
     expect(voided).toEqual(["auth-orphaned"]);
+    expect(completed).toEqual(["auth-orphaned"]);
   });
 });
   `),
@@ -556,6 +581,7 @@ export async function createIntegrationHarness() {
   let failOutbox = false;
   const cache = new Map<string, CreateOrderResult>();
   const authorizeCalls: unknown[] = [];
+  const telemetryRecords: Array<Record<string, string | undefined>> = [];
 
   const transaction = {
     async run<T>(work: (client: DbTransaction) => Promise<T>): Promise<T> {
@@ -614,12 +640,14 @@ export async function createIntegrationHarness() {
         return result;
       },
     },
+    telemetry: { record(context) { telemetryRecords.push(context); } },
   };
   return {
     createOrder: new CreateOrderHandler(ports),
     orders,
     outbox,
     payments,
+    telemetryRecords,
     validCommand(overrides: Partial<CreateOrderCommand> = {}): CreateOrderCommand {
       return {
         actor: {
@@ -628,6 +656,7 @@ export async function createIntegrationHarness() {
           customerScope: "all",
           permissions: new Set(["orders:create"]),
         },
+        requestId: "request-test-1",
         customerId: "00000000-0000-4000-8000-000000000001",
         paymentMethodId: "pm-test",
         idempotencyKey: "checkout-42",
@@ -638,30 +667,40 @@ export async function createIntegrationHarness() {
   };
 }
   `),
-  "test/support/api-client.ts": source(`
-export const apiClient = {
-  async post(_path: string, _payload: unknown) {
-    return { status: 401, body: { error: "unauthorized" } };
-  },
-  asOrderWriter() {
-    return {
-      async post(_path: string, payload: unknown) {
-        return { status: 201, body: { order: { status: "placed", payload } } };
-      },
-    };
-  },
 };
-  `),
-};
+
+const preObservabilityCreateOrderSource = finalSources["src/application/orders/create-order.ts"]
+  .replace('import { orderLogContext } from "../../telemetry/order-logger.js";\n', "")
+  .replace(/ {6}this\.ports\.telemetry\.record\(orderLogContext\(\{[\s\S]*? {6}\}\)\);\n/, "");
+if (preObservabilityCreateOrderSource === finalSources["src/application/orders/create-order.ts"]) {
+  throw new Error("realistic fixture could not derive the pre-observability order handler");
+}
 
 function git(repositoryRoot, args, options = {}) {
   const isolatedEnvironment = gitEnvironments.get(repositoryRoot) ?? {};
+  const environment = { ...process.env };
+  for (const key of Object.keys(environment)) {
+    if (
+      [
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_CONFIG_COUNT",
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_WORK_TREE",
+      ].includes(key) ||
+      /^GIT_CONFIG_(?:KEY|VALUE)_\d+$/u.test(key)
+    ) {
+      delete environment[key];
+    }
+  }
   return execFileSync("git", args, {
     cwd: repositoryRoot,
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
     ...options,
-    env: { ...process.env, ...isolatedEnvironment, ...(options.env ?? {}) },
+    env: { ...environment, ...isolatedEnvironment, ...(options.env ?? {}) },
   });
 }
 
@@ -693,6 +732,10 @@ function commitAll(repositoryRoot, subject, index) {
     ],
     {
       env: {
+        GIT_AUTHOR_NAME: "Acme Orders Team",
+        GIT_AUTHOR_EMAIL: "orders@example.test",
+        GIT_COMMITTER_NAME: "Acme Orders Team",
+        GIT_COMMITTER_EMAIL: "orders@example.test",
         GIT_AUTHOR_DATE: date,
         GIT_COMMITTER_DATE: date,
         TZ: "UTC",
@@ -862,6 +905,9 @@ function createRepository() {
           "src/application/orders/create-order.ts",
           "src/application/ports.ts",
         ],
+        extra: {
+          "src/application/orders/create-order.ts": preObservabilityCreateOrderSource,
+        },
       },
       {
         subject: "Converge retried requests with an idempotency envelope",
@@ -887,6 +933,7 @@ function createRepository() {
           "migrations/018_orders_and_outbox.sql",
           "src/telemetry/order-metrics.ts",
           "src/telemetry/order-logger.ts",
+          "src/application/orders/create-order.ts",
           "config/order-placement.json",
           "config/order-alerts.json",
           "docs/architecture/resilient-order-placement.md",
@@ -897,14 +944,15 @@ function createRepository() {
         subject: "Recover orphan payments and close review feedback",
         files: [
           "src/workers/payment-reconciliation.ts",
+          "src/infrastructure/payments/postgres-recovery-candidates.ts",
           "src/bootstrap/application.ts",
+          "src/bootstrap/config.ts",
           "test/integration/create-order.test.ts",
           "test/integration/payment-reconciliation.test.ts",
           "test/contract/order-api.test.ts",
           "test/contract/outbox-event.test.ts",
           "test/unit/pricing.test.ts",
           "test/support/integration-harness.ts",
-          "test/support/api-client.ts",
           "docs/runbooks/payment-recovery.md",
           "docs/order-workflow.md",
         ],
@@ -1060,7 +1108,7 @@ export function createRealisticFixture() {
         "placement-controller",
         "Request controller",
         "src/http/controllers/create-order.ts",
-        "export async function createOrderController",
+        "export function createOrderControllerFor",
         14,
         "Transport-to-application mapping",
       ),
@@ -1211,7 +1259,7 @@ export function createRealisticFixture() {
         body: [
           "# Retry and payment recovery",
           "",
-          "Repeated requests enter the [idempotency transaction](rvw-ref:recovery-idempotency) before [payment authorization](rvw-ref:recovery-payment).",
+          "Repeated requests enter the [serialized idempotency operation](rvw-ref:recovery-idempotency) before [payment authorization](rvw-ref:recovery-payment).",
           "",
           "```mermaid",
           "flowchart LR",
@@ -1309,7 +1357,7 @@ export function createRealisticFixture() {
             "class",
             anchor(
               "src/http/controllers/create-order.ts",
-              "export async function createOrderController",
+              "export function createOrderControllerFor",
               12,
             ),
           ),
@@ -1369,7 +1417,7 @@ export function createRealisticFixture() {
             "controller",
             "handler",
             "executes a validated command",
-            anchor("src/http/controllers/create-order.ts", "application.createOrder.execute", 7),
+            anchor("src/http/controllers/create-order.ts", "createOrder.execute", 7),
           ),
           edge(
             "handler-reserves",
@@ -1559,14 +1607,18 @@ export function createRealisticFixture() {
             "scheduler",
             "authorization-candidate",
             "leases a recovery candidate",
-            anchor("src/workers/payment-reconciliation.ts", "async reconcile", 2),
+            anchor("src/workers/payment-reconciliation.ts", "leaseNextCandidate", 3),
           ),
           edge(
             "candidate-feeds-decision",
             "authorization-candidate",
             "reconciliation-decision",
             "identifies the authorization under review",
-            anchor("src/workers/payment-reconciliation.ts", "async reconcile(authorizationId", 2),
+            anchor(
+              "src/workers/payment-reconciliation.ts",
+              "this.reconcile(candidate.authorizationId)",
+              2,
+            ),
           ),
           edge(
             "order-evidence-feeds-decision",
@@ -1669,7 +1721,7 @@ export function createRealisticFixture() {
             "dispatcher",
             "metrics",
             "reports oldest unpublished age",
-            anchor("src/telemetry/order-metrics.ts", "outboxLag", 1),
+            anchor("src/workers/outbox-dispatcher.ts", "orderMetrics.recordOutboxLag", 1),
           ),
         ],
         "2026-07-14T17:43:00.000Z",
@@ -2072,6 +2124,46 @@ export function createRealisticFixture() {
       );
       return change?.kind === "renamed" ? change.newPath : null;
     };
+    const resolveLineRangeAt = (sourceOid, sourcePath, startLine, endLine, targetOid) => {
+      const targetPath = resolvePathAt(sourceOid, sourcePath, targetOid);
+      if (!targetPath) return null;
+      const patch = git(repositoryRoot, [
+        "diff",
+        "--unified=0",
+        "--find-renames=50%",
+        sourceOid,
+        targetOid,
+        "--",
+        sourcePath,
+        targetPath,
+      ]);
+      const hunks = [...patch.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gmu)].map(
+        (match) => ({
+          oldStart: Number(match[1]),
+          oldCount: match[2] === undefined ? 1 : Number(match[2]),
+          newCount: match[4] === undefined ? 1 : Number(match[4]),
+        }),
+      );
+      const mapLine = (line) => {
+        let delta = 0;
+        for (const hunk of hunks) {
+          if (hunk.oldCount === 0) {
+            if (line <= hunk.oldStart) return line + delta;
+            delta += hunk.newCount;
+            continue;
+          }
+          if (line < hunk.oldStart) return line + delta;
+          if (line < hunk.oldStart + hunk.oldCount) return null;
+          delta += hunk.newCount - hunk.oldCount;
+        }
+        return line + delta;
+      };
+      const mappedStart = mapLine(startLine);
+      const mappedEnd = mapLine(endLine);
+      return mappedStart === null || mappedEnd === null
+        ? null
+        : { startLine: mappedStart, endLine: mappedEnd };
+    };
 
     const cleanup = cleanupOnce;
     const fixture = {
@@ -2090,6 +2182,7 @@ export function createRealisticFixture() {
       repositoryDocumentAt,
       changedFiles,
       resolvePathAt,
+      resolveLineRangeAt,
       cleanup,
     };
     validateRealisticFixture(fixture);
@@ -2295,6 +2388,8 @@ export function validateRealisticFixture(fixture) {
   requireSourceClaim("src/application/orders/create-order.ts", [
     "idempotencyEnvelope(command.idempotencyKey, command.actor.subject)",
     "ports.idempotency.run(envelope",
+    "ports.telemetry.record(orderLogContext",
+    "authorizationId: authorization.id",
   ]);
   requireSourceClaim("src/infrastructure/db/idempotency-store.ts", [
     "pg_advisory_lock",
@@ -2315,11 +2410,26 @@ export function validateRealisticFixture(fixture) {
   requireSourceClaim("migrations/018_orders_and_outbox.sql", [
     "CREATE TABLE idempotency_keys",
     "CREATE TABLE outbox_events",
+    "CREATE TABLE payment_recovery_candidates",
   ]);
   requireSourceClaim("src/workers/outbox-dispatcher.ts", [
     'await client.query("BEGIN")',
     "FOR UPDATE SKIP LOCKED",
     "id: event.id",
+    "orderMetrics.recordOutboxLag",
+  ]);
+  requireSourceClaim("src/workers/payment-reconciliation.ts", [
+    "leaseNextCandidate(this.leaseSeconds)",
+    "this.reconcile(candidate.authorizationId)",
+    "this.candidates.complete(candidate.authorizationId)",
+  ]);
+  requireSourceClaim("src/bootstrap/application.ts", [
+    "new PostgresPaymentRecoveryCandidates(pool)",
+    "config.reconciliationLeaseSeconds",
+  ]);
+  requireSourceClaim("test/contract/order-api.test.ts", [
+    'app.route("/orders", orderRoutes(',
+    'app.request("/orders"',
   ]);
   requireSourceClaim("test/integration/create-order.test.ts", [
     "rolls back both the order and outbox records",
@@ -2359,6 +2469,28 @@ export function validateRealisticFixture(fixture) {
     ) !== null
   )
     fail("deleted comment is not outdated at head");
+  const shiftedComment = fixture.comments.find(
+    (comment) => comment.id === "75000000-0000-4000-8000-000000000008",
+  );
+  if (
+    !shiftedComment ||
+    shiftedComment.target.kind !== "document" ||
+    shiftedComment.target.documentKind !== "repository-file" ||
+    shiftedComment.target.startLine === null ||
+    shiftedComment.target.endLine === null
+  ) {
+    fail("same-path shifted-line comment is missing");
+  }
+  const shiftedRange = fixture.resolveLineRangeAt(
+    shiftedComment.target.sourceOid,
+    shiftedComment.target.path,
+    shiftedComment.target.startLine,
+    shiftedComment.target.endLine,
+    fixture.headOid,
+  );
+  if (!shiftedRange || shiftedRange.startLine === shiftedComment.target.startLine) {
+    fail("same-path comment range does not follow inserted lines");
+  }
   const structureMatches = fixture.structures.filter((structure) =>
     structure.nodes.some(
       (structureNode) => structureNode.anchor?.path === fixture.manifest.multiStructurePath,

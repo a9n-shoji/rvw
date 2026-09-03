@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createDogfoodFixture,
   readDogfoodChangedFiles,
   readDogfoodDocument,
   readDogfoodTree,
@@ -60,5 +61,15 @@ describe("dogfood Git object reader", () => {
     } finally {
       rmSync(repositoryRoot, { recursive: true, force: true });
     }
+  });
+
+  it("builds a dogfood fixture from the current rvw checkout", () => {
+    const fixture = createDogfoodFixture(process.cwd());
+    expect(fixture.scenario).toBe("dogfood");
+    expect(fixture.commits.length).toBeGreaterThan(1);
+    expect(fixture.repositoryEntriesAt(fixture.headOid).length).toBeGreaterThan(0);
+    expect(fixture.walkthroughs.length).toBeGreaterThan(0);
+    expect(fixture.comments.length).toBeGreaterThan(0);
+    fixture.cleanup();
   });
 });

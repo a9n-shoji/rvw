@@ -10,11 +10,16 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import {
   createRealisticFixture,
   validateRealisticFixture,
 } from "../fixtures/realistic/realistic-fixture.mjs";
+
+const require = createRequire(import.meta.url);
+const tscEntry = require.resolve("typescript/bin/tsc");
+const vitestEntry = path.join(path.dirname(require.resolve("vitest")), "vitest.mjs");
 
 describe("realistic fixture", () => {
   it("builds identical Git history and manifests in separate temporary directories", () => {
@@ -54,8 +59,8 @@ describe("realistic fixture", () => {
       expect(fixture.manifest).toMatchObject({
         commitCount: 7,
         repositoryFileCount: 129,
-        changedFileCount: 41,
-        changeKinds: { added: 37, modified: 1, renamed: 1, deleted: 2 },
+        changedFileCount: 42,
+        changeKinds: { added: 37, modified: 2, renamed: 1, deleted: 2 },
         commentCount: 13,
         unresolvedCommentCount: 7,
         resolvedCommentCount: 6,
@@ -119,8 +124,20 @@ describe("realistic fixture", () => {
       ].join("\n"),
       "utf8",
     );
-    const previousGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
-    process.env.GIT_CONFIG_GLOBAL = hostileConfig;
+    const hostileEnvironment = {
+      GIT_CONFIG_GLOBAL: hostileConfig,
+      GIT_AUTHOR_NAME: "Hostile Author",
+      GIT_AUTHOR_EMAIL: "hostile-author@example.test",
+      GIT_COMMITTER_NAME: "Hostile Committer",
+      GIT_COMMITTER_EMAIL: "hostile-committer@example.test",
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "user.name",
+      GIT_CONFIG_VALUE_0: "Injected Config Identity",
+    } as const;
+    const previousEnvironment = Object.fromEntries(
+      Object.keys(hostileEnvironment).map((key) => [key, process.env[key]]),
+    );
+    Object.assign(process.env, hostileEnvironment);
     let hostile: ReturnType<typeof createRealisticFixture> | undefined;
     try {
       hostile = createRealisticFixture();
@@ -128,8 +145,10 @@ describe("realistic fixture", () => {
       expect(hostile.headOid).toBe(baseline.headOid);
       expect(hostile.manifest).toEqual(baseline.manifest);
     } finally {
-      if (previousGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
-      else process.env.GIT_CONFIG_GLOBAL = previousGlobalConfig;
+      for (const [key, value] of Object.entries(previousEnvironment)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
       hostile?.cleanup();
       baseline.cleanup();
       rmSync(hostileRoot, { recursive: true, force: true });
@@ -139,7 +158,7 @@ describe("realistic fixture", () => {
   it("type-checks the self-contained synthetic repository", () => {
     const fixture = createRealisticFixture();
     try {
-      execFileSync(path.resolve("node_modules/.bin/tsc"), ["--project", fixture.repositoryRoot], {
+      execFileSync(process.execPath, [tscEntry, "--project", fixture.repositoryRoot], {
         stdio: "pipe",
       });
     } finally {
@@ -153,17 +172,19 @@ describe("realistic fixture", () => {
       symlinkSync(
         path.resolve("node_modules"),
         path.join(fixture.repositoryRoot, "node_modules"),
-        "dir",
+        process.platform === "win32" ? "junction" : "dir",
       );
       execFileSync(
-        path.resolve("node_modules/.bin/vitest"),
+        process.execPath,
         [
+          vitestEntry,
           "run",
           "--root",
           fixture.repositoryRoot,
           "test/unit/pricing.test.ts",
           "test/integration/create-order.test.ts",
           "test/integration/payment-reconciliation.test.ts",
+          "test/contract/order-api.test.ts",
           "test/contract/outbox-event.test.ts",
         ],
         { stdio: "pipe" },
@@ -173,36 +194,40 @@ describe("realistic fixture", () => {
     }
   });
 
-  it("removes the temporary repository when a child receives SIGTERM", async () => {
-    const child = spawn(
-      process.execPath,
-      [path.resolve("test/fixtures/realistic/signal-cleanup-child.mjs")],
-      { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] },
-    );
-    let output = "";
-    const repositoryRoot = await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("cleanup child did not become ready")),
-        8_000,
+  it.skipIf(process.platform === "win32")(
+    "removes the temporary repository when a child receives SIGTERM",
+    async () => {
+      const child = spawn(
+        process.execPath,
+        [path.resolve("test/fixtures/realistic/signal-cleanup-child.mjs")],
+        { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] },
       );
-      child.stdout.setEncoding("utf8");
-      child.stdout.on("data", (chunk: string) => {
-        output += chunk;
-        const newline = output.indexOf("\n");
-        if (newline < 0) return;
-        clearTimeout(timer);
-        resolve(output.slice(0, newline));
+      let output = "";
+      const repositoryRoot = await new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("cleanup child did not become ready")),
+          8_000,
+        );
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk: string) => {
+          output += chunk;
+          const newline = output.indexOf("\n");
+          if (newline < 0) return;
+          clearTimeout(timer);
+          resolve(output.slice(0, newline));
+        });
+        child.once("error", reject);
       });
-      child.once("error", reject);
-    });
-    expect(existsSync(repositoryRoot)).toBe(true);
-    child.kill("SIGTERM");
-    const exitResult = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolve) => child.once("exit", (code, signal) => resolve({ code, signal })),
-    );
-    expect(exitResult).toEqual({ code: 0, signal: null });
-    expect(existsSync(repositoryRoot)).toBe(false);
-  }, 15_000);
+      expect(existsSync(repositoryRoot)).toBe(true);
+      child.kill("SIGTERM");
+      const exitResult = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        (resolve) => child.once("exit", (code, signal) => resolve({ code, signal })),
+      );
+      expect(exitResult).toEqual({ code: 0, signal: null });
+      expect(existsSync(repositoryRoot)).toBe(false);
+    },
+    15_000,
+  );
 
   it("tracks the renamed review target and marks the deleted target as outdated", () => {
     const fixture = createRealisticFixture();

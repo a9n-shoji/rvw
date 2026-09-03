@@ -56,6 +56,13 @@ export interface RealisticFixture {
   repositoryDocumentAt(oid: string, filePath: string): RealisticRepositoryDocument;
   changedFiles(oldOid: string, newOid: string): ChangedFile[];
   resolvePathAt(sourceOid: string, sourcePath: string, targetOid: string): string | null;
+  resolveLineRangeAt(
+    sourceOid: string,
+    sourcePath: string,
+    startLine: number,
+    endLine: number,
+    targetOid: string,
+  ): { startLine: number; endLine: number } | null;
   cleanup(): void;
 }
 

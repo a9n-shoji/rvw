@@ -18,11 +18,11 @@ import { requireActor } from "../middleware/require-actor.js";
 import { createOrderController } from "../controllers/create-order.js";
 import { getOrderController } from "../controllers/get-order.js";
 
-export function orderRoutes() {
+export function orderRoutes(overrides: { verifyToken?: Parameters<typeof requireActor>[0]; createOrder?: typeof createOrderController } = {}) {
   const routes = new Hono();
 
-  routes.use("*", requireActor());
-  routes.post("/", createOrderController);
+  routes.use("*", requireActor(overrides.verifyToken));
+  routes.post("/", overrides.createOrder ?? createOrderController);
   routes.get("/:orderId", getOrderController);
 
   return routes;
@@ -33,13 +33,16 @@ import type { Context } from "hono";
 import { createOrderSchema } from "../schemas/create-order.js";
 import { application } from "../../bootstrap/application.js";
 
-export async function createOrderController(context: Context) {
+export function createOrderControllerFor(createOrder = application.createOrder) {
+  return async function createOrderController(context: Context) {
   const actor = context.get("actor");
   const request = createOrderSchema.parse(await context.req.json());
   const idempotencyKey = context.req.header("idempotency-key");
+  const requestId = context.req.header("x-request-id") ?? "request-unknown";
 
-  const result = await application.createOrder.execute({
+  const result = await createOrder.execute({
     actor,
+    requestId,
     idempotencyKey,
     customerId: request.customerId,
     lines: request.lines,
@@ -47,19 +50,22 @@ export async function createOrderController(context: Context) {
   });
 
   return context.json({ order: result.order }, 201);
+  };
 }
+
+export const createOrderController = createOrderControllerFor();
   `),
   "src/http/middleware/require-actor.ts": source(`
 import type { MiddlewareHandler } from "hono";
 import { verifyAccessToken } from "../../infrastructure/auth/jwt-verifier.js";
 
-export function requireActor(): MiddlewareHandler {
+export function requireActor(verifyToken = verifyAccessToken): MiddlewareHandler {
   return async (context, next) => {
     const header = context.req.header("authorization");
     const token = header?.startsWith("Bearer ") ? header.slice(7) : null;
     if (!token) return context.json({ error: "unauthorized" }, 401);
 
-    const claims = await verifyAccessToken(token);
+    const claims = await verifyToken(token);
     context.set("actor", {
       subject: claims.sub,
       organizationId: claims.org,
@@ -88,6 +94,7 @@ export const createOrderSchema = z.object({
 import { Order } from "../../domain/orders/order.js";
 import { assertCanCreateOrder } from "../authorization/order-policy.js";
 import { idempotencyEnvelope } from "./idempotency-policy.js";
+import { orderLogContext } from "../../telemetry/order-logger.js";
 import type { CreateOrderCommand, CreateOrderResult } from "./types.js";
 import type { ApplicationPorts } from "../ports.js";
 
@@ -118,6 +125,12 @@ export class CreateOrderHandler {
         amount: order.total,
       });
       order.recordPaymentAuthorization(authorization.id);
+      this.ports.telemetry.record(orderLogContext({
+        requestId: command.requestId,
+        orderId: order.id,
+        authorizationId: authorization.id,
+        idempotencyKey: command.idempotencyKey,
+      }));
 
       await this.ports.transaction.run(async (transaction) => {
         await this.ports.orders.insert(order, transaction);
@@ -134,6 +147,7 @@ import type { Actor } from "../authorization/actor.js";
 
 export interface CreateOrderCommand {
   actor: Actor;
+  requestId: string;
   idempotencyKey?: string;
   customerId: string;
   paymentMethodId: string;
@@ -398,6 +412,7 @@ export class PostgresOutbox {
   "src/workers/outbox-dispatcher.ts": source(`
 import type { Pool } from "pg";
 import type { EventBus } from "../infrastructure/events/event-bus.js";
+import { orderMetrics } from "../telemetry/order-metrics.js";
 
 export class OutboxDispatcher {
   constructor(private readonly pool: Pool, private readonly bus: EventBus) {}
@@ -409,6 +424,8 @@ export class OutboxDispatcher {
       const events = await client.query(
         "SELECT * FROM outbox_events WHERE published_at IS NULL ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED",
       );
+      const oldest = events.rows[0]?.created_at;
+      if (oldest) orderMetrics.recordOutboxLag((Date.now() - new Date(oldest).getTime()) / 1000);
       for (const event of events.rows) {
         await this.bus.publish({ id: event.id, type: event.type, payload: event.payload });
         await client.query("UPDATE outbox_events SET published_at = now() WHERE id = $1", [event.id]);
@@ -424,10 +441,26 @@ export class OutboxDispatcher {
 }
   `),
   "src/workers/payment-reconciliation.ts": source(`
-import type { PaymentPort, OrderRepositoryPort } from "../application/ports.js";
+import type {
+  OrderRepositoryPort,
+  PaymentPort,
+  PaymentRecoveryCandidatePort,
+} from "../application/ports.js";
 
 export class PaymentReconciliationWorker {
-  constructor(private readonly payments: PaymentPort, private readonly orders: OrderRepositoryPort) {}
+  constructor(
+    private readonly payments: PaymentPort,
+    private readonly orders: OrderRepositoryPort,
+    private readonly candidates: PaymentRecoveryCandidatePort,
+    private readonly leaseSeconds: number,
+  ) {}
+
+  async tick(): Promise<void> {
+    const candidate = await this.candidates.leaseNextCandidate(this.leaseSeconds);
+    if (!candidate) return;
+    await this.reconcile(candidate.authorizationId);
+    await this.candidates.complete(candidate.authorizationId);
+  }
 
   async reconcile(authorizationId: string): Promise<void> {
     const payment = await this.payments.getAuthorization(authorizationId);
@@ -437,6 +470,43 @@ export class PaymentReconciliationWorker {
     }
   }
 }
+  `),
+  "src/infrastructure/payments/postgres-recovery-candidates.ts": source(`
+import type { Pool } from "pg";
+import type { PaymentRecoveryCandidatePort } from "../../application/ports.js";
+
+export class PostgresPaymentRecoveryCandidates implements PaymentRecoveryCandidatePort {
+  constructor(private readonly pool: Pool) {}
+
+  async leaseNextCandidate(leaseSeconds: number) {
+    const result = await this.pool.query(
+      \`UPDATE payment_recovery_candidates
+       SET leased_until = now() + make_interval(secs => $1)
+       WHERE authorization_id = (
+         SELECT authorization_id FROM payment_recovery_candidates
+         WHERE completed_at IS NULL AND (leased_until IS NULL OR leased_until < now())
+         ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
+       )
+       RETURNING authorization_id\`,
+      [leaseSeconds],
+    );
+    const authorizationId = result.rows[0]?.authorization_id;
+    return authorizationId ? { authorizationId } : null;
+  }
+
+  async complete(authorizationId: string): Promise<void> {
+    await this.pool.query(
+      "UPDATE payment_recovery_candidates SET completed_at = now() WHERE authorization_id = $1",
+      [authorizationId],
+    );
+  }
+}
+  `),
+  "src/bootstrap/config.ts": source(`
+export const config = {
+  inventoryUrl: "http://inventory.internal",
+  reconciliationLeaseSeconds: 60,
+} as const;
   `),
   "src/bootstrap/application.ts": source(`
 import { pool } from "./database.js";
@@ -450,19 +520,33 @@ import { PostgresOutbox } from "../infrastructure/events/postgres-outbox.js";
 import { TransactionRunner } from "../infrastructure/db/transaction.js";
 import { StripeGateway } from "../infrastructure/payments/stripe-gateway.js";
 import { HttpInventoryClient } from "../infrastructure/inventory/http-inventory-client.js";
+import { PaymentReconciliationWorker } from "../workers/payment-reconciliation.js";
+import { PostgresPaymentRecoveryCandidates } from "../infrastructure/payments/postgres-recovery-candidates.js";
 
+const orderRepository = new PostgresOrderRepository(pool);
+const paymentGateway = new StripeGateway(stripeClient);
 const ports = {
-  orders: new PostgresOrderRepository(pool),
+  orders: orderRepository,
   idempotency: new PostgresIdempotencyStore(pool),
   outbox: new PostgresOutbox(),
   transaction: new TransactionRunner(pool),
-  payments: new StripeGateway(stripeClient),
+  payments: paymentGateway,
   inventory: new HttpInventoryClient(config.inventoryUrl),
   catalog: catalogClient,
+  telemetry: { record(context: Record<string, string | undefined>) { void context; } },
 };
 
 export const application = {
   createOrder: new CreateOrderHandler(ports),
+};
+
+export const workers = {
+  paymentReconciliation: new PaymentReconciliationWorker(
+    paymentGateway,
+    orderRepository,
+    new PostgresPaymentRecoveryCandidates(pool),
+    config.reconciliationLeaseSeconds,
+  ),
 };
   `),
   "test/integration/create-order.test.ts": source(`
@@ -476,6 +560,13 @@ describe("CreateOrderHandler", () => {
     expect(result.order.status).toBe("placed");
     expect(await harness.orders.findById(result.order.id)).not.toBeNull();
     expect(await harness.outbox.pendingTypes()).toEqual(["order.placed", "payment.authorized"]);
+    expect(harness.telemetryRecords).toContainEqual({
+      component: "order-placement",
+      requestId: "request-test-1",
+      orderId: result.order.id,
+      authorizationId: "auth-1",
+      idempotencyKey: "checkout-42",
+    });
   });
 
   it("returns the original result for a repeated idempotency key", async () => {
@@ -500,7 +591,10 @@ describe("CreateOrderHandler", () => {
   `),
   "test/contract/order-api.test.ts": source(`
 import { describe, expect, it } from "vitest";
-import { apiClient } from "../support/api-client.js";
+import { Hono } from "hono";
+import { orderRoutes } from "../../src/http/routes/orders.js";
+import { createOrderControllerFor } from "../../src/http/controllers/create-order.js";
+import { createIntegrationHarness } from "../support/integration-harness.js";
 
 const validPayload = () => ({
   customerId: "00000000-0000-4000-8000-000000000001",
@@ -510,14 +604,34 @@ const validPayload = () => ({
 
 describe("POST /orders", () => {
   it("requires an authenticated actor", async () => {
-    const response = await apiClient.post("/orders", { lines: [] });
+    const harness = await createIntegrationHarness();
+    const app = new Hono();
+    app.route("/orders", orderRoutes({ createOrder: createOrderControllerFor(harness.createOrder) }));
+    const response = await app.request("/orders", { method: "POST", body: JSON.stringify({ lines: [] }) });
     expect(response.status).toBe(401);
   });
 
   it("returns the stable placed order representation", async () => {
-    const response = await apiClient.asOrderWriter().post("/orders", validPayload());
+    const harness = await createIntegrationHarness();
+    const app = new Hono();
+    app.route("/orders", orderRoutes({
+      createOrder: createOrderControllerFor(harness.createOrder),
+      verifyToken: async () => ({
+        sub: "reviewer-1", org: "acme", customerScope: "all", permissions: ["orders:create"],
+      }),
+    }));
+    const response = await app.request("/orders", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer contract-token",
+        "content-type": "application/json",
+        "idempotency-key": "contract-order-1",
+        "x-request-id": "request-contract-1",
+      },
+      body: JSON.stringify(validPayload()),
+    });
     expect(response.status).toBe(201);
-    expect(response.body.order).toMatchObject({ status: "placed" });
+    expect((await response.json()).order).toMatchObject({ status: "placed" });
   });
 });
   `),
@@ -547,5 +661,12 @@ CREATE TABLE outbox_events (
 );
 
 CREATE INDEX outbox_pending_idx ON outbox_events (created_at) WHERE published_at IS NULL;
+
+CREATE TABLE payment_recovery_candidates (
+  authorization_id text PRIMARY KEY,
+  leased_until timestamptz,
+  completed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
   `),
 };

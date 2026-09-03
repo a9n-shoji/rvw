@@ -1807,6 +1807,22 @@ function fixtureCommentPlacement(comment, destination) {
       ? null
       : { startLine: comment.target.startLine, endLine: comment.target.endLine };
   let targetOutdated = targetPath === null;
+  if (
+    range &&
+    comment.target.documentKind === "repository-file" &&
+    destinationOid &&
+    targetPath === comment.target.path &&
+    repositoryFixture?.resolveLineRangeAt
+  ) {
+    range = repositoryFixture.resolveLineRangeAt(
+      comment.target.sourceOid,
+      comment.target.path,
+      range.startLine,
+      range.endLine,
+      destinationOid,
+    );
+    targetOutdated = range === null;
+  }
   if (comment.target.documentKind === "pull-request-markdown" && range) {
     const pullRequest = currentPullRequest();
     const markdown = `# ${pullRequest.latestTitle}\n\n${pullRequest.latestBody}`;

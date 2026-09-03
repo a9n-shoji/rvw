@@ -234,6 +234,15 @@ export function readDogfoodDocument(
   const entry = readDogfoodTree(repositoryRoot, oid).find(
     (candidate) => candidate.path === filePath,
   );
+  return readDogfoodDocumentFromEntry(repositoryRoot, oid, filePath, entry);
+}
+
+export function readDogfoodDocumentFromEntry(
+  repositoryRoot: string,
+  oid: string,
+  filePath: string,
+  entry: TreeEntry | undefined,
+): RepositoryDocumentSnapshot {
   if (!entry) {
     return {
       availability: "missing",
@@ -649,7 +658,8 @@ export function createDogfoodFixture(
     const key = `${oid}\0${filePath}`;
     const cached = documentCache.get(key);
     if (cached) return cached;
-    const document = readDogfoodDocument(resolvedRoot, oid, filePath);
+    const entry = repositoryEntriesAt(oid).find((candidate) => candidate.path === filePath);
+    const document = readDogfoodDocumentFromEntry(resolvedRoot, oid, filePath, entry);
     documentCache.set(key, document);
     return document;
   };
