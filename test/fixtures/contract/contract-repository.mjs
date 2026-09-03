@@ -165,7 +165,10 @@ export interface PaymentPort {
 }
 export interface OrderRepositoryPort {
   insert(order: Order, transaction: DbTransaction): Promise<void>;
-  findById(orderId: string): Promise<ReturnType<Order["toSnapshot"]> | null>;
+  findById(
+    orderId: string,
+    transaction: DbTransaction,
+  ): Promise<ReturnType<Order["toSnapshot"]> | null>;
   findByPaymentAuthorization(authorizationId: string): Promise<unknown | null>;
 }
 export interface PaymentRecoveryCandidatePort {
@@ -193,7 +196,6 @@ export interface ApplicationPorts {
   inventory: InventoryPort;
   payments: PaymentPort;
   paymentRecoveryCandidates: PaymentRecoveryCandidatePort;
-  transaction: { run<T>(work: (transaction: DbTransaction) => Promise<T>): Promise<T> };
   orders: OrderRepositoryPort;
   outbox: { append(events: DomainEvent[], transaction: DbTransaction): Promise<void> };
   telemetry: { record(context: Record<string, string | undefined>): void };

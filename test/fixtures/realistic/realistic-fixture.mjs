@@ -383,7 +383,10 @@ export interface PaymentPort {
 }
 export interface OrderRepositoryPort {
   insert(order: Order, transaction: DbTransaction): Promise<void>;
-  findById(orderId: string): Promise<ReturnType<Order["toSnapshot"]> | null>;
+  findById(
+    orderId: string,
+    transaction: DbTransaction,
+  ): Promise<ReturnType<Order["toSnapshot"]> | null>;
   findByPaymentAuthorization(authorizationId: string): Promise<unknown | null>;
 }
 export interface PaymentRecoveryCandidatePort {
@@ -411,7 +414,6 @@ export interface ApplicationPorts {
   inventory: InventoryPort;
   payments: PaymentPort;
   paymentRecoveryCandidates: PaymentRecoveryCandidatePort;
-  transaction: { run<T>(work: (transaction: DbTransaction) => Promise<T>): Promise<T> };
   orders: OrderRepositoryPort;
   outbox: { append(events: DomainEvent[], transaction: DbTransaction): Promise<void> };
   telemetry: { record(context: Record<string, string | undefined>): void };
@@ -536,7 +538,12 @@ describe("calculateOrderTotal", () => {
 import { describe, expect, it } from "vitest";
 import type { Pool, PoolClient } from "pg";
 import { idempotencyEnvelope } from "../../src/application/orders/idempotency-policy.js";
+import { CreateOrderHandler } from "../../src/application/orders/create-order.js";
 import { PostgresIdempotencyStore } from "../../src/infrastructure/db/idempotency-store.js";
+import { PostgresOrderRepository } from "../../src/infrastructure/db/order-repository.js";
+import { TransactionRunner } from "../../src/infrastructure/db/transaction.js";
+import { PostgresOutbox } from "../../src/infrastructure/events/postgres-outbox.js";
+import { PostgresPaymentRecoveryCandidates } from "../../src/infrastructure/payments/postgres-recovery-candidates.js";
 
 function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
   let connected = false;
@@ -545,6 +552,8 @@ function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
   let committedWrites = 0;
   let pendingWrites = 0;
   let pendingResponse: unknown;
+  let pendingOrders: Array<Record<string, unknown>> = [];
+  const committedOrders = new Map<string, Record<string, unknown>>();
   let row: { operation_id: string; status: "pending" | "completed"; response: unknown } | null = null;
   const waiters: Array<() => void> = [];
 
@@ -560,14 +569,27 @@ function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
           if (sql === "BEGIN") {
             pendingWrites = 0;
             pendingResponse = undefined;
+            pendingOrders = [];
           } else if (sql.startsWith("INSERT INTO idempotency_keys") && !row) {
             row = { operation_id: String(values[1]), status: "pending", response: null };
           } else if (sql.startsWith("SELECT operation_id")) {
             return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+          } else if (sql.startsWith("SELECT * FROM orders WHERE id")) {
+            const order = committedOrders.get(String(values[0]));
+            return { rows: order ? [order] : [], rowCount: order ? 1 : 0 };
+          } else if (sql.startsWith("INSERT INTO orders")) {
+            pendingWrites += 1;
+            pendingOrders.push({
+              id: values[0],
+              status: values[1],
+              total_amount: values[2],
+              currency: values[3],
+              payment_authorization_id: values[4],
+            });
           } else if (
             sql.startsWith("INSERT INTO payment_recovery_candidates") ||
-            sql.startsWith("INSERT INTO orders") ||
-            sql.startsWith("INSERT INTO outbox_events")
+            sql.startsWith("INSERT INTO outbox_events") ||
+            sql.startsWith("UPDATE payment_recovery_candidates")
           ) {
             pendingWrites += 1;
           } else if (sql.startsWith("UPDATE idempotency_keys")) {
@@ -576,10 +598,12 @@ function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
             if (row && pendingResponse !== undefined) {
               row = { ...row, status: "completed", response: pendingResponse };
             }
+            for (const order of pendingOrders) committedOrders.set(String(order.id), order);
             committedWrites += pendingWrites;
           } else if (sql === "ROLLBACK") {
             pendingWrites = 0;
             pendingResponse = undefined;
+            pendingOrders = [];
           } else if (sql.startsWith("SELECT pg_advisory_unlock") && options.failUnlock) {
             throw new Error("unlock unavailable");
           }
@@ -599,41 +623,74 @@ function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
 
   return {
     pool,
-    stats: () => ({ peakConnections, releases, committedWrites }),
+    stats: () => ({
+      peakConnections,
+      releases,
+      committedWrites,
+      committedOrderCount: committedOrders.size,
+    }),
   };
 }
 
 describe("PostgresIdempotencyStore", () => {
-  it("completes concurrent same-key operations with a single pool connection", async () => {
+  it("runs the handler and pool-backed repositories with one connection", async () => {
     const harness = singleConnectionPool();
-    const store = new PostgresIdempotencyStore(harness.pool);
-    const envelope = idempotencyEnvelope("checkout-1", "actor-1");
-    let operationCalls = 0;
-    const execute = () =>
-      store.run(envelope, async ({ operationId, runTransaction }) => {
-        operationCalls += 1;
-        await runTransaction(async (transaction) => {
-          await transaction.query("INSERT INTO payment_recovery_candidates VALUES ($1)", [operationId]);
-        });
-        return await runTransaction(async (transaction, complete) => {
-          await transaction.query("INSERT INTO orders VALUES ($1)", [operationId]);
-          await transaction.query("INSERT INTO outbox_events VALUES ($1)", [operationId]);
-          const result = { order: { id: operationId } };
-          await complete(result);
-          return result;
-        });
-      });
+    const transactionRunner = new TransactionRunner(harness.pool);
+    const orders = new PostgresOrderRepository(harness.pool);
+    let inventoryCalls = 0;
+    let paymentCalls = 0;
+    const handler = new CreateOrderHandler({
+      idempotency: new PostgresIdempotencyStore(harness.pool, transactionRunner),
+      catalog: {
+        async getBySkus(skus) {
+          return skus.map((sku) => ({ sku, unitPrice: 1200, currency: "USD" }));
+        },
+      },
+      inventory: { async reserve() { inventoryCalls += 1; return { id: "reservation-1" }; } },
+      payments: {
+        async authorize() { paymentCalls += 1; return { id: "auth-1" }; },
+        async getAuthorization() { return { state: "voidable" as const }; },
+        async voidAuthorization() {},
+      },
+      paymentRecoveryCandidates: new PostgresPaymentRecoveryCandidates(harness.pool, 300),
+      orders,
+      outbox: new PostgresOutbox(),
+      telemetry: { record() {} },
+    });
+    const command = {
+      actor: {
+        subject: "actor-1",
+        organizationId: "acme",
+        customerScope: "all" as const,
+        permissions: new Set(["orders:create"]),
+      },
+      requestId: "request-1",
+      idempotencyKey: "checkout-1",
+      customerId: "00000000-0000-4000-8000-000000000001",
+      paymentMethodId: "pm-test",
+      lines: [{ sku: "sku-1", quantity: 1 }],
+    };
+    const execute = () => handler.execute(command);
 
     const [first, second] = await Promise.all([execute(), execute()]);
 
     expect(second).toEqual(first);
-    expect(operationCalls).toBe(1);
-    expect(harness.stats()).toEqual({ peakConnections: 1, releases: 2, committedWrites: 3 });
+    expect(inventoryCalls).toBe(1);
+    expect(paymentCalls).toBe(1);
+    expect(harness.stats()).toEqual({
+      peakConnections: 1,
+      releases: 2,
+      committedWrites: 5,
+      committedOrderCount: 1,
+    });
   });
 
   it("releases the connection when advisory unlock fails", async () => {
     const harness = singleConnectionPool({ failUnlock: true });
-    const store = new PostgresIdempotencyStore(harness.pool);
+    const store = new PostgresIdempotencyStore(
+      harness.pool,
+      new TransactionRunner(harness.pool),
+    );
     await expect(
       store.run(idempotencyEnvelope("checkout-2", "actor-1"), async () => ({ ok: true })),
     ).rejects.toThrow("unlock unavailable");
@@ -947,7 +1004,6 @@ export async function createIntegrationHarness() {
       async leaseNextCandidate() { return null; },
       async complete(authorizationId) { stagedRecoveryCompletions.push(authorizationId); },
     },
-    transaction,
     orders,
     outbox,
     idempotency,
@@ -1015,7 +1071,7 @@ const preIdempotencyCreateOrderSource = preObservabilityCreateOrderSource
     "this.ports.retries.run(retry, async () => {",
   )
   .replace(
-    / {6}const existingOrder = await this\.ports\.orders\.findById\(operationId\);[\s\S]*? {6}\}\n/u,
+    / {6}const existingResult = await runTransaction\([\s\S]*? {6}if \(existingResult\) \{\n {8}return existingResult;\n {6}\}\n/u,
     "",
   )
   .replace("        id: operationId,\n", "")
@@ -1082,6 +1138,92 @@ const preRecoveryPortsSource = finalSources["src/application/ports.ts"]
 if (preRecoveryPortsSource === finalSources["src/application/ports.ts"]) {
   throw new Error("realistic fixture could not derive pre-recovery application ports");
 }
+
+const preTransactionIdempotencyStoreSource = source(`
+import { randomUUID } from "node:crypto";
+import type { Pool, PoolClient } from "pg";
+import type { DbTransaction, IdempotencyOperationContext } from "../../application/ports.js";
+import type { IdempotencyEnvelope } from "../../application/orders/idempotency-policy.js";
+
+export class PostgresIdempotencyStore {
+  constructor(private readonly pool: Pool) {}
+
+  async run<T>(
+    envelope: IdempotencyEnvelope | undefined,
+    operation: (context: IdempotencyOperationContext) => Promise<T>,
+  ): Promise<T> {
+    if (!envelope) {
+      return await operation({
+        operationId: randomUUID(),
+        runTransaction: async (work) => {
+          const client = await this.pool.connect();
+          try {
+            return await this.runTransaction(client, work, async () => {});
+          } finally {
+            client.release();
+          }
+        },
+      });
+    }
+    const key = [envelope.operation, envelope.actorSubject, envelope.key].join(":");
+    const client = await this.pool.connect();
+    let lockHeld = false;
+    try {
+      await client.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
+      lockHeld = true;
+      await client.query(
+        "INSERT INTO idempotency_keys (key, operation_id, status) VALUES ($1, $2, 'pending') ON CONFLICT DO NOTHING",
+        [key, randomUUID()],
+      );
+      const claimed = await client.query(
+        "SELECT operation_id, status, response FROM idempotency_keys WHERE key = $1",
+        [key],
+      );
+      const row = claimed.rows[0];
+      if (!row) throw new Error("idempotency operation claim disappeared");
+      if (row.status === "completed") {
+        const response = row.response;
+        return (typeof response === "string" ? JSON.parse(response) : response) as T;
+      }
+      return await operation({
+        operationId: row.operation_id,
+        runTransaction: async (work) =>
+          await this.runTransaction(client, work, async (result) => {
+            await client.query(
+              "UPDATE idempotency_keys SET status = 'completed', response = $2 WHERE key = $1",
+              [key, JSON.stringify(result)],
+            );
+          }),
+      });
+    } finally {
+      try {
+        if (lockHeld) await client.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+      } finally {
+        client.release();
+      }
+    }
+  }
+
+  private async runTransaction<T>(
+    client: PoolClient,
+    work: (
+      transaction: DbTransaction,
+      complete: (result: unknown) => Promise<void>,
+    ) => Promise<T>,
+    complete: (result: unknown) => Promise<void>,
+  ): Promise<T> {
+    await client.query("BEGIN");
+    try {
+      const result = await work(client, complete);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+  }
+}
+`);
 
 function git(repositoryRoot, args, options = {}) {
   const isolatedEnvironment = gitEnvironments.get(repositoryRoot) ?? {};
@@ -1337,9 +1479,9 @@ function createRepository() {
           "src/application/orders/idempotency-policy.ts",
           "src/application/orders/create-order.ts",
           "src/application/ports.ts",
-          "test/integration/idempotency-store.test.ts",
         ],
         extra: {
+          "src/infrastructure/db/idempotency-store.ts": preTransactionIdempotencyStoreSource,
           "src/application/orders/create-order.ts": preObservabilityCreateOrderSource,
           "src/application/ports.ts": preRecoveryPortsSource,
         },
@@ -1349,6 +1491,7 @@ function createRepository() {
         subject: "Persist orders and events in one transaction",
         files: [
           "src/infrastructure/db/transaction.ts",
+          "src/infrastructure/db/idempotency-store.ts",
           "src/infrastructure/db/order-repository.ts",
           "src/infrastructure/events/postgres-outbox.ts",
           "src/infrastructure/events/outbox-event.ts",
@@ -1382,6 +1525,7 @@ function createRepository() {
           "src/bootstrap/application.ts",
           "src/bootstrap/config.ts",
           "test/integration/create-order.test.ts",
+          "test/integration/idempotency-store.test.ts",
           "test/integration/payment-reconciliation.test.ts",
           "test/contract/order-api.test.ts",
           "test/contract/outbox-event.test.ts",
@@ -1608,9 +1752,9 @@ export function createRealisticFixture() {
         "delivery-transaction",
         "Database transaction",
         "src/infrastructure/db/transaction.ts",
-        "async run",
-        12,
-        "Atomic order and event write",
+        "async runWithClient",
+        14,
+        "Atomic order and event write on the idempotency lock connection",
       ),
       headReference(
         "delivery-outbox",
@@ -1826,7 +1970,7 @@ export function createRealisticFixture() {
             "Order transaction",
             "transaction",
             "database",
-            anchor("src/infrastructure/db/transaction.ts", "async run", 10),
+            anchor("src/infrastructure/db/transaction.ts", "async runWithClient", 14),
           ),
         ],
         [
@@ -1876,11 +2020,16 @@ export function createRealisticFixture() {
             "handler-persists",
             "handler",
             "transaction",
-            "commits order and events atomically",
+            "requests an atomic write on the locked connection",
             anchor(
               "src/application/orders/create-order.ts",
               "const result = { order: order.toSnapshot() };",
               5,
+            ),
+            anchor(
+              "src/infrastructure/db/idempotency-store.ts",
+              "this.transactions.runWithClient",
+              9,
             ),
           ),
         ],
@@ -2853,7 +3002,7 @@ export function validateRealisticFixture(fixture) {
   requireSourceClaim("src/application/orders/create-order.ts", [
     "idempotencyEnvelope(command.idempotencyKey, command.actor.subject)",
     "ports.idempotency.run(envelope",
-    "orders.findById(operationId)",
+    "orders.findById(operationId, transaction)",
     "id: operationId",
     "ports.telemetry.record(orderLogContext",
     "authorizationId: authorization.id",
@@ -2867,7 +3016,7 @@ export function validateRealisticFixture(fixture) {
     "operation_id",
     'status === "completed"',
     "operationId: row.operation_id",
-    "this.runTransaction(client, work",
+    "this.transactions.runWithClient(client",
     "UPDATE idempotency_keys SET status = 'completed'",
     "pg_advisory_unlock",
     "client.release()",
@@ -2922,7 +3071,8 @@ export function validateRealisticFixture(fixture) {
     "expect(await harness.orders.all()).toEqual([])",
   ]);
   requireSourceClaim("test/integration/idempotency-store.test.ts", [
-    "single pool connection",
+    "pool-backed repositories with one connection",
+    "new PostgresOrderRepository(harness.pool)",
     "Promise.all([execute(), execute()])",
     "unlock unavailable",
   ]);

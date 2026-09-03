@@ -35,6 +35,7 @@ orphan、既にterminal、再試行すべき曖昧状態を明示的に区別す
 actor-scoped idempotency keyはremote side effectより先にstable operation IDをclaimし、そのIDをorder IDと
 payment provider keyに使う。completed responseはorder / outbox / recovery completionと同じtransactionへ書き、
 完了記録だけが欠ける障害窓を作らない。advisory lockを保持する同じconnectionでこのtransactionを実行し、
+`PostgresIdempotencyStore`が`TransactionRunner.runWithClient`へそのconnectionを渡すため、order存在確認を含めて
 pool capacityが1でも追加connection待ちを起こさない。payload fingerprint、inventory reservationのretry重複、
 reconciliationのattempt / last-outcome永続化はsynthetic PRのKnown trade-offsとして明示する。
 

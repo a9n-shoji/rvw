@@ -159,13 +159,14 @@ const primaryStructureNodes = [
   {
     id: "transaction-runner",
     label: "Database transaction",
-    description: "orderとoutboxのwriteを同じPostgres transactionへ閉じ込める。",
+    description:
+      "idempotency lockのconnectionを再利用してorderとoutboxを同じtransactionへ閉じ込める。",
     kind: "adapter",
     notation: "component",
     anchor: semanticAnchor(
       "src/infrastructure/db/transaction.ts",
       "export class TransactionRunner",
-      17,
+      25,
     ),
   },
   {
@@ -368,14 +369,20 @@ const primaryStructureEdges = [
     id: "handler-opens-transaction",
     from: "hub",
     to: "transaction-runner",
-    label: "transactionを開始する",
+    label: "idempotency context経由でlock済みtransactionを要求する",
     directed: true,
     anchors: [
       semanticAnchor(
         "src/application/orders/create-order.ts",
         "const result = { order: order.toSnapshot() };",
-        3,
+        5,
       ),
+      semanticAnchor(
+        "src/infrastructure/db/idempotency-store.ts",
+        "this.transactions.runWithClient",
+        9,
+      ),
+      semanticAnchor("src/infrastructure/db/transaction.ts", "async runWithClient", 14),
     ],
   },
   {
@@ -408,7 +415,10 @@ const primaryStructureEdges = [
     directed: true,
     anchors: [
       semanticAnchor("src/domain/orders/order.ts", "toSnapshot()", 6),
-      semanticAnchor("src/application/orders/create-order.ts", "return result;"),
+      semanticAnchor(
+        "src/application/orders/create-order.ts",
+        "const result = { order: order.toSnapshot() };",
+      ),
     ],
   },
   {

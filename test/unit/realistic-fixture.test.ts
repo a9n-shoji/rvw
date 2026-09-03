@@ -104,7 +104,10 @@ describe("realistic fixture", () => {
     try {
       const reservationCommit = fixture.commits[2]?.oid;
       const idempotencyCommit = fixture.commits[3]?.oid;
-      if (!reservationCommit || !idempotencyCommit) throw new Error("fixture commits are missing");
+      const persistenceCommit = fixture.commits[4]?.oid;
+      if (!reservationCommit || !idempotencyCommit || !persistenceCommit) {
+        throw new Error("fixture commits are missing");
+      }
       const reservationHandler = fixture.repositoryDocumentAt(
         reservationCommit,
         "src/application/orders/create-order.ts",
@@ -117,12 +120,24 @@ describe("realistic fixture", () => {
         idempotencyCommit,
         "src/application/orders/create-order.ts",
       ).text;
+      const idempotencyStore = fixture.repositoryDocumentAt(
+        idempotencyCommit,
+        "src/infrastructure/db/idempotency-store.ts",
+      ).text;
+      const persistenceStore = fixture.repositoryDocumentAt(
+        persistenceCommit,
+        "src/infrastructure/db/idempotency-store.ts",
+      ).text;
       expect(reservationHandler).toContain('from "./retry-policy.js"');
       expect(reservationHandler).toContain("this.ports.retries.run(retry");
       expect(reservationHandler).not.toContain("idempotency-policy");
       expect(reservationPorts).toContain("RetryPolicy");
       expect(idempotencyHandler).toContain('from "./idempotency-policy.js"');
       expect(idempotencyHandler).toContain("this.ports.idempotency.run(envelope");
+      expect(idempotencyStore).toContain("private async runTransaction");
+      expect(idempotencyStore).not.toContain("TransactionRunner");
+      expect(persistenceStore).toContain('import { TransactionRunner } from "./transaction.js"');
+      expect(persistenceStore).toContain("this.transactions.runWithClient(client");
     } finally {
       fixture.cleanup();
     }

@@ -108,12 +108,16 @@ export class CreateOrderHandler {
       : undefined;
 
     return this.ports.idempotency.run(envelope, async ({ operationId, runTransaction }) => {
-      const existingOrder = await this.ports.orders.findById(operationId);
-      if (existingOrder) {
-        const existingResult = { order: existingOrder };
-        await runTransaction(async (_transaction, complete) => {
-          await complete(existingResult);
-        });
+      const existingResult = await runTransaction(async (transaction, complete) => {
+        const existingOrder = await this.ports.orders.findById(operationId, transaction);
+        if (existingOrder) {
+          const result = { order: existingOrder };
+          await complete(result);
+          return result;
+        }
+        return null;
+      });
+      if (existingResult) {
         return existingResult;
       }
       const catalogItems = await this.ports.catalog.getBySkus(
@@ -353,15 +357,24 @@ export class TransactionRunner {
   async run<T>(operation: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
-      await client.query("BEGIN");
+      return await this.runWithClient(client, operation);
+    } finally {
+      client.release();
+    }
+  }
+
+  async runWithClient<T>(
+    client: PoolClient,
+    operation: (client: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    await client.query("BEGIN");
+    try {
       const result = await operation(client);
       await client.query("COMMIT");
       return result;
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
-    } finally {
-      client.release();
     }
   }
 }
@@ -387,8 +400,8 @@ export class PostgresOrderRepository {
     );
   }
 
-  async findById(orderId: string) {
-    const result = await this.pool.query("SELECT * FROM orders WHERE id = $1", [orderId]);
+  async findById(orderId: string, transaction: PoolClient) {
+    const result = await transaction.query("SELECT * FROM orders WHERE id = $1", [orderId]);
     const row = result.rows[0];
     return row ? {
       id: row.id,
@@ -409,12 +422,16 @@ export class PostgresOrderRepository {
   `),
   "src/infrastructure/db/idempotency-store.ts": source(`
 import { randomUUID } from "node:crypto";
-import type { Pool, PoolClient } from "pg";
-import type { DbTransaction, IdempotencyOperationContext } from "../../application/ports.js";
+import type { Pool } from "pg";
+import type { IdempotencyOperationContext } from "../../application/ports.js";
 import type { IdempotencyEnvelope } from "../../application/orders/idempotency-policy.js";
+import { TransactionRunner } from "./transaction.js";
 
 export class PostgresIdempotencyStore {
-  constructor(private readonly pool: Pool) {}
+  constructor(
+    private readonly pool: Pool,
+    private readonly transactions: TransactionRunner,
+  ) {}
 
   async run<T>(
     envelope: IdempotencyEnvelope | undefined,
@@ -423,14 +440,8 @@ export class PostgresIdempotencyStore {
     if (!envelope) {
       return await operation({
         operationId: randomUUID(),
-        runTransaction: async (work) => {
-          const client = await this.pool.connect();
-          try {
-            return await this.runTransaction(client, work, async () => {});
-          } finally {
-            client.release();
-          }
-        },
+        runTransaction: async (work) =>
+          await this.transactions.run((client) => work(client, async () => {})),
       });
     }
     const key = [envelope.operation, envelope.actorSubject, envelope.key].join(":");
@@ -456,12 +467,14 @@ export class PostgresIdempotencyStore {
       return await operation({
         operationId: row.operation_id,
         runTransaction: async (work) =>
-          await this.runTransaction(client, work, async (result) => {
-            await client.query(
-              "UPDATE idempotency_keys SET status = 'completed', response = $2 WHERE key = $1",
-              [key, JSON.stringify(result)],
-            );
-          }),
+          await this.transactions.runWithClient(client, (transaction) =>
+            work(transaction, async (result) => {
+              await transaction.query(
+                "UPDATE idempotency_keys SET status = 'completed', response = $2 WHERE key = $1",
+                [key, JSON.stringify(result)],
+              );
+            }),
+          ),
       });
     } finally {
       try {
@@ -472,24 +485,6 @@ export class PostgresIdempotencyStore {
     }
   }
 
-  private async runTransaction<T>(
-    client: PoolClient,
-    work: (
-      transaction: DbTransaction,
-      complete: (result: unknown) => Promise<void>,
-    ) => Promise<T>,
-    complete: (result: unknown) => Promise<void>,
-  ): Promise<T> {
-    await client.query("BEGIN");
-    try {
-      const result = await work(client, complete);
-      await client.query("COMMIT");
-      return result;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    }
-  }
 }
   `),
   "src/infrastructure/events/postgres-outbox.ts": source(`
@@ -643,11 +638,11 @@ const paymentRecoveryCandidates = new PostgresPaymentRecoveryCandidates(
   pool,
   config.recoveryGraceSeconds,
 );
+const transactionRunner = new TransactionRunner(pool);
 const ports = {
   orders: orderRepository,
-  idempotency: new PostgresIdempotencyStore(pool),
+  idempotency: new PostgresIdempotencyStore(pool, transactionRunner),
   outbox: new PostgresOutbox(),
-  transaction: new TransactionRunner(pool),
   payments: paymentGateway,
   paymentRecoveryCandidates,
   inventory: new HttpInventoryClient(config.inventoryUrl),

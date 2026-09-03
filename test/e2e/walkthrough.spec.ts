@@ -1624,7 +1624,7 @@ test("binds node-like elements across supported Mermaid diagram types", async ({
     "createOrderController",
     "CreateOrderHandler.execute",
     "requireActor",
-    "TransactionRunner.run",
+    "TransactionRunner.runWithClient",
     "Order.place",
     "OutboxDispatcher.tick",
   ]) {
@@ -1650,7 +1650,9 @@ test("binds node-like elements across supported Mermaid diagram types", async ({
   ).toHaveAttribute("aria-selected", "true");
   await page.getByRole("tab", { name: mermaidBindingWalkthrough }).click();
 
-  const state = page.getByRole("button", { name: "TransactionRunner.runをコードで開く" });
+  const state = page.getByRole("button", {
+    name: "TransactionRunner.runWithClientをコードで開く",
+  });
   await state.focus();
   await page.keyboard.press("Space");
   await expect(
