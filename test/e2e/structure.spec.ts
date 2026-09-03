@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { contractSemanticAnchors } from "../fixtures/contract/contract-structures.mjs";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
@@ -8,6 +9,26 @@ const fullStackStructureId = "80000000-0000-4000-8000-000000000003";
 const primaryTitle = "Order placement behavior";
 const secondaryTitle = "Payment reconciliation recovery";
 const fullStackTitle = "Order detail response rendering";
+
+test("serves every semantic Structure anchor from the validated contract source provider", async ({
+  request,
+}) => {
+  for (const sourceAnchor of contractSemanticAnchors) {
+    const response = await request.get(
+      `/api/pull-requests/${pullRequestId}/document?kind=repository-file&sourceOid=${"c".repeat(40)}&path=${encodeURIComponent(sourceAnchor.path)}`,
+    );
+    expect(response.ok()).toBe(true);
+    const body = (await response.json()) as {
+      document: { availability: string; text: string | null };
+    };
+    expect(body.document.availability).toBe("available");
+    const selected = body.document.text
+      ?.split("\n")
+      .slice(sourceAnchor.startLine - 1, sourceAnchor.endLine)
+      .join("\n");
+    expect(selected).toContain(sourceAnchor.needle);
+  }
+});
 
 async function openStructure(page: Page, title: string): Promise<void> {
   const folder = page.getByRole("button", { name: /^Structure \d+$/ });

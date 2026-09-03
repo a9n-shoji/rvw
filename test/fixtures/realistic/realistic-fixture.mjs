@@ -1,7 +1,7 @@
 import { isUtf8 } from "node:buffer";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { walkthroughRepositorySources } from "../order-service/order-service-sources.mjs";
@@ -10,6 +10,14 @@ export const realisticPullRequestId = "22222222-2222-4222-8222-222222222222";
 const maximumDocumentBytes = 1024 * 1024;
 const fixtureEpoch = Date.parse("2026-07-14T09:00:00.000Z");
 const gitEnvironments = new Map();
+const rootPackage = JSON.parse(
+  readFileSync(new URL("../../../package.json", import.meta.url), "utf8"),
+);
+const fixtureToolchain = {
+  hono: rootPackage.devDependencies.hono,
+  typescript: rootPackage.devDependencies.typescript,
+  vitest: rootPackage.devDependencies.vitest,
+};
 
 const backgroundContexts = [
   "catalog",
@@ -48,8 +56,11 @@ const baseFiles = () => {
         private: true,
         type: "module",
         scripts: { check: "tsc --noEmit", test: "vitest run", start: "node dist/server.js" },
-        dependencies: { hono: "4.9.8", pg: "8.16.3", zod: "4.1.11" },
-        devDependencies: { typescript: "5.9.2", vitest: "3.2.4" },
+        dependencies: { hono: fixtureToolchain.hono, pg: "8.16.3", zod: "4.1.11" },
+        devDependencies: {
+          typescript: fixtureToolchain.typescript,
+          vitest: fixtureToolchain.vitest,
+        },
       },
       null,
       2,
@@ -417,7 +428,7 @@ export interface OrderRepositoryPort {
 export interface PaymentRecoveryCandidatePort {
   register(authorizationId: string): Promise<void>;
   leaseNextCandidate(leaseSeconds: number): Promise<{ authorizationId: string } | null>;
-  complete(authorizationId: string): Promise<void>;
+  complete(authorizationId: string, transaction?: DbTransaction): Promise<void>;
 }
 export interface ApplicationPorts {
   idempotency: {
@@ -550,9 +561,70 @@ describe("calculateOrderTotal", () => {
   `),
   "test/integration/payment-reconciliation.test.ts": source(`
 import { describe, expect, it } from "vitest";
+import { PostgresPaymentRecoveryCandidates } from "../../src/infrastructure/payments/postgres-recovery-candidates.js";
 import { PaymentReconciliationWorker } from "../../src/workers/payment-reconciliation.js";
 
 describe("payment reconciliation", () => {
+  const candidateStore = (candidate: { authorizationId: string } | null, completed: string[]) => ({
+    async register() {},
+    async leaseNextCandidate() { return candidate; },
+    async complete(id: string) { completed.push(id); },
+  });
+
+  it("keeps newly registered authorizations ineligible during the commit grace period", async () => {
+    const queries: Array<{ sql: string; values: unknown[] | undefined }> = [];
+    const voided: string[] = [];
+    const store = new PostgresPaymentRecoveryCandidates(
+      {
+        async query(sql: string, values?: unknown[]) {
+          queries.push({ sql, values });
+          return { rows: [], rowCount: 0 };
+        },
+      } as any,
+      300,
+    );
+    await store.register("auth-pending-commit");
+    expect(queries[0].sql).toContain("eligible_at");
+    expect(queries[0].values).toEqual(["auth-pending-commit", 300]);
+    const worker = new PaymentReconciliationWorker(
+      {
+        async authorize() { return { id: "unused" }; },
+        async getAuthorization() { return { status: "authorized" }; },
+        async voidAuthorization(id) { voided.push(id); },
+      },
+      {
+        async insert() {},
+        async findByPaymentAuthorization() { return null; },
+      },
+      store,
+      60,
+    );
+    await worker.tick();
+    expect(queries[1].sql).toContain("eligible_at <= now()");
+    expect(voided).toEqual([]);
+  });
+
+  it("completes a candidate without touching payment when its order exists", async () => {
+    const completed: string[] = [];
+    const paymentLookups: string[] = [];
+    const worker = new PaymentReconciliationWorker(
+      {
+        async authorize() { return { id: "unused" }; },
+        async getAuthorization(id) { paymentLookups.push(id); return { status: "authorized" }; },
+        async voidAuthorization() {},
+      },
+      {
+        async insert() {},
+        async findByPaymentAuthorization() { return { id: "order-committed" }; },
+      },
+      candidateStore({ authorizationId: "auth-committed" }, completed),
+      60,
+    );
+    await worker.tick();
+    expect(paymentLookups).toEqual([]);
+    expect(completed).toEqual(["auth-committed"]);
+  });
+
   it("leases and completes an orphan authorization after safely voiding it", async () => {
     const voided: string[] = [];
     const completed: string[] = [];
@@ -568,12 +640,11 @@ describe("payment reconciliation", () => {
         async findByPaymentAuthorization() { return null; },
       },
       {
-        async register() {},
-        async leaseNextCandidate(seconds) {
+        ...candidateStore({ authorizationId: "auth-orphaned" }, completed),
+        async leaseNextCandidate(seconds: number) {
           leaseSeconds.push(seconds);
           return { authorizationId: "auth-orphaned" };
         },
-        async complete(id) { completed.push(id); },
       },
       60,
     );
@@ -581,6 +652,27 @@ describe("payment reconciliation", () => {
     expect(leaseSeconds).toEqual([60]);
     expect(voided).toEqual(["auth-orphaned"]);
     expect(completed).toEqual(["auth-orphaned"]);
+  });
+
+  it("leaves an ambiguous provider state eligible for a later retry", async () => {
+    const completed: string[] = [];
+    const voided: string[] = [];
+    const worker = new PaymentReconciliationWorker(
+      {
+        async authorize() { return { id: "unused" }; },
+        async getAuthorization() { return { status: "processing" }; },
+        async voidAuthorization(id) { voided.push(id); },
+      },
+      {
+        async insert() {},
+        async findByPaymentAuthorization() { return null; },
+      },
+      candidateStore({ authorizationId: "auth-ambiguous" }, completed),
+      60,
+    );
+    await worker.tick();
+    expect(voided).toEqual([]);
+    expect(completed).toEqual([]);
   });
 });
   `),
@@ -620,6 +712,7 @@ export async function createIntegrationHarness() {
   const authorizeCalls: unknown[] = [];
   const telemetryRecords: Array<Record<string, string | undefined>> = [];
   const recoveryCandidates: string[] = [];
+  const completedRecoveryCandidates: string[] = [];
 
   const transaction = {
     async run<T>(work: (client: DbTransaction) => Promise<T>): Promise<T> {
@@ -667,7 +760,7 @@ export async function createIntegrationHarness() {
     paymentRecoveryCandidates: {
       async register(authorizationId) { recoveryCandidates.push(authorizationId); },
       async leaseNextCandidate() { return null; },
-      async complete() {},
+      async complete(authorizationId) { completedRecoveryCandidates.push(authorizationId); },
     },
     transaction,
     orders,
@@ -691,6 +784,7 @@ export async function createIntegrationHarness() {
     outbox,
     payments,
     recoveryCandidates,
+    completedRecoveryCandidates,
     telemetryRecords,
     validCommand(overrides: Partial<CreateOrderCommand> = {}): CreateOrderCommand {
       return {
@@ -713,10 +807,12 @@ export async function createIntegrationHarness() {
   `),
 };
 
-const preRecoveryCreateOrderSource = finalSources["src/application/orders/create-order.ts"].replace(
-  "      await this.ports.paymentRecoveryCandidates.register(authorization.id);\n",
-  "",
-);
+const preRecoveryCreateOrderSource = finalSources["src/application/orders/create-order.ts"]
+  .replace("      await this.ports.paymentRecoveryCandidates.register(authorization.id);\n", "")
+  .replace(
+    "        await this.ports.paymentRecoveryCandidates.complete(authorization.id, transaction);\n",
+    "",
+  );
 if (preRecoveryCreateOrderSource === finalSources["src/application/orders/create-order.ts"]) {
   throw new Error("realistic fixture could not derive the pre-recovery order handler");
 }
@@ -1776,7 +1872,11 @@ export function createRealisticFixture() {
             "reconciliation-decision",
             "void-command",
             "voids only an orphan authorization",
-            anchor("src/workers/payment-reconciliation.ts", "if (!order", 3),
+            anchor(
+              "src/workers/payment-reconciliation.ts",
+              'if (payment.status === "authorized")',
+              3,
+            ),
           ),
         ],
         "2026-07-14T17:42:00.000Z",
@@ -1902,7 +2002,7 @@ export function createRealisticFixture() {
       "",
       "## Observability",
       "",
-      "Structured logs include request, order, authorization, and idempotency identifiers. Metrics cover placement latency, replay rate, orphan authorization count, and oldest unpublished event age.",
+      "Structured logs include request, order, authorization, and idempotency identifiers. Metric names reserve placement, replay, and recovery instrumentation; the dispatcher currently records and tests oldest unpublished event age.",
       "",
       "## Tests",
       "",
@@ -2136,7 +2236,12 @@ export function createRealisticFixture() {
       ),
       thread(
         12,
-        targetAt(commitOids[6], "src/workers/payment-reconciliation.ts", "if (!order", 3),
+        targetAt(
+          commitOids[6],
+          "src/workers/payment-reconciliation.ts",
+          'if (payment.status === "authorized")',
+          3,
+        ),
         "The remaining risk is provider ambiguity: should a timeout increment the investigation counter or remain retryable indefinitely?",
         { createdHeadOid: commitOids[6], relatedCommitOid: commitOids[6] },
       ),
@@ -2349,6 +2454,16 @@ export function validateRealisticFixture(fixture) {
   if (fixture.manifest.changedFileCount < 25 || fixture.manifest.changedFileCount > 45) {
     fail("changed file count must remain between 25 and 45");
   }
+  const generatedPackage = JSON.parse(
+    fixture.repositoryDocumentAt(fixture.baseOid, "package.json").text,
+  );
+  if (
+    generatedPackage.dependencies.hono !== fixtureToolchain.hono ||
+    generatedPackage.devDependencies.typescript !== fixtureToolchain.typescript ||
+    generatedPackage.devDependencies.vitest !== fixtureToolchain.vitest
+  ) {
+    fail("synthetic package toolchain must match the root package used by dogfood validation");
+  }
   for (const kind of ["added", "modified", "renamed", "deleted"]) {
     if (!fixture.manifest.changeKinds[kind]) fail(`missing ${kind} change`);
   }
@@ -2540,6 +2655,7 @@ export function validateRealisticFixture(fixture) {
     "ports.telemetry.record(orderLogContext",
     "authorizationId: authorization.id",
     "paymentRecoveryCandidates.register(authorization.id)",
+    "paymentRecoveryCandidates.complete(authorization.id, transaction)",
   ]);
   requireSourceClaim("src/infrastructure/db/idempotency-store.ts", [
     "pg_advisory_lock",
@@ -2570,11 +2686,20 @@ export function validateRealisticFixture(fixture) {
   ]);
   requireSourceClaim("src/workers/payment-reconciliation.ts", [
     "leaseNextCandidate(this.leaseSeconds)",
-    "this.reconcile(candidate.authorizationId)",
-    "this.candidates.complete(candidate.authorizationId)",
+    'outcome !== "retry-later"',
+    'return "order-exists"',
+    'return "voided"',
+    'return "already-terminal"',
+    'return "retry-later"',
+  ]);
+  requireSourceClaim("src/infrastructure/payments/postgres-recovery-candidates.ts", [
+    "eligible_at",
+    "eligible_at <= now()",
+    "transaction ?? this.pool",
   ]);
   requireSourceClaim("src/bootstrap/application.ts", [
-    "new PostgresPaymentRecoveryCandidates(pool)",
+    "new PostgresPaymentRecoveryCandidates(",
+    "config.recoveryGraceSeconds",
     "paymentRecoveryCandidates,",
     "config.reconciliationLeaseSeconds",
   ]);

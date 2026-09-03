@@ -1,64 +1,22 @@
 import {
-  source,
-  walkthroughRepositorySources,
-} from "../fixtures/order-service/order-service-sources.mjs";
+  contractRepositoryPaths,
+  contractRepositorySources,
+  contractRepositoryText,
+} from "../fixtures/contract/contract-repository.mjs";
 
-export { walkthroughRepositorySources };
+export const walkthroughRepositorySources = contractRepositorySources;
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const sourceOid = "c".repeat(40);
 
-const supportingPaths = [
-  ".github/workflows/ci.yml",
-  ".github/workflows/deploy.yml",
-  "README.md",
-  "docs/architecture.md",
-  "docs/runbooks/payment-reconciliation.md",
-  "docs/runbooks/stuck-outbox.md",
-  "src/application/errors.ts",
-  "src/application/ports.ts",
-  "src/application/orders/idempotency-policy.ts",
-  "src/application/authorization/actor.ts",
-  "src/bootstrap/config.ts",
-  "src/bootstrap/database.ts",
-  "src/domain/events.ts",
-  "src/http/controllers/get-order.ts",
-  "src/infrastructure/auth/jwt-verifier.ts",
-  "src/infrastructure/catalog/http-catalog-client.ts",
-  "src/infrastructure/events/event-bus.ts",
-  "src/infrastructure/payments/stripe-client.ts",
-  "src/infrastructure/telemetry/tracing.ts",
-  "src/telemetry/order-logger.ts",
-  "src/telemetry/order-metrics.ts",
-  "src/server.ts",
-  "test/support/api-client.ts",
-  "test/support/integration-harness.ts",
-  "test/unit/order.test.ts",
-  "test/unit/pricing.test.ts",
-  "tsconfig.json",
-  "vite.config.ts",
-];
-
-export const walkthroughRepositoryPaths = [
-  ...Object.keys(walkthroughRepositorySources),
-  ...supportingPaths,
-].sort();
+export const walkthroughRepositoryPaths = contractRepositoryPaths;
 
 /**
  * @param {string} filePath
  * @returns {string}
  */
 export function walkthroughRepositoryText(filePath) {
-  return (
-    walkthroughRepositorySources[filePath] ??
-    source(`
-// ${filePath}
-// Supporting repository document included to make navigation density realistic.
-
-export const moduleName = "${filePath.replaceAll('"', "")}";
-export const enabled = true;
-    `)
-  );
+  return contractRepositoryText(filePath);
 }
 
 /**

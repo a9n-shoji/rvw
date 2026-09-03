@@ -136,6 +136,7 @@ export class CreateOrderHandler {
       await this.ports.transaction.run(async (transaction) => {
         await this.ports.orders.insert(order, transaction);
         await this.ports.outbox.append(order.releaseEvents(), transaction);
+        await this.ports.paymentRecoveryCandidates.complete(authorization.id, transaction);
       });
 
       return { order: order.toSnapshot() };
@@ -376,22 +377,34 @@ export class PostgresOrderRepository {
 }
   `),
   "src/infrastructure/db/idempotency-store.ts": source(`
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
+import type { IdempotencyEnvelope } from "../../application/orders/idempotency-policy.js";
 
 export class PostgresIdempotencyStore {
   constructor(private readonly pool: Pool) {}
 
-  async run<T>(key: string | undefined, operation: () => Promise<T>): Promise<T> {
-    if (!key) return await operation();
-    const cached = await this.pool.query("SELECT response FROM idempotency_keys WHERE key = $1", [key]);
-    if (cached.rowCount) return cached.rows[0].response as T;
+  async run<T>(envelope: IdempotencyEnvelope | undefined, operation: () => Promise<T>): Promise<T> {
+    if (!envelope) return await operation();
+    const key = [envelope.operation, envelope.actorSubject, envelope.key].join(":");
+    const client = await this.pool.connect();
+    try {
+      await client.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
+      const cached = await client.query("SELECT response FROM idempotency_keys WHERE key = $1", [key]);
+      if (cached.rowCount) return cached.rows[0].response as T;
+      const result = await operation();
+      await this.record(client, key, result);
+      return result;
+    } finally {
+      await client.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+      client.release();
+    }
+  }
 
-    const result = await operation();
-    await this.pool.query(
-      "INSERT INTO idempotency_keys (key, response) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+  private async record(client: PoolClient, key: string, result: unknown): Promise<void> {
+    await client.query(
+      "INSERT INTO idempotency_keys (key, response) VALUES ($1, $2)",
       [key, result],
     );
-    return result;
   }
 }
   `),
@@ -459,30 +472,36 @@ export class PaymentReconciliationWorker {
   async tick(): Promise<void> {
     const candidate = await this.candidates.leaseNextCandidate(this.leaseSeconds);
     if (!candidate) return;
-    await this.reconcile(candidate.authorizationId);
-    await this.candidates.complete(candidate.authorizationId);
+    const outcome = await this.reconcile(candidate.authorizationId);
+    if (outcome !== "retry-later") {
+      await this.candidates.complete(candidate.authorizationId);
+    }
   }
 
-  async reconcile(authorizationId: string): Promise<void> {
-    const payment = await this.payments.getAuthorization(authorizationId);
+  async reconcile(authorizationId: string): Promise<"order-exists" | "voided" | "already-terminal" | "retry-later"> {
     const order = await this.orders.findByPaymentAuthorization(authorizationId);
-    if (!order && payment.status === "authorized") {
+    if (order) return "order-exists";
+    const payment = await this.payments.getAuthorization(authorizationId);
+    if (payment.status === "authorized") {
       await this.payments.voidAuthorization(authorizationId);
+      return "voided";
     }
+    if (["voided", "canceled", "cancelled"].includes(payment.status)) return "already-terminal";
+    return "retry-later";
   }
 }
   `),
   "src/infrastructure/payments/postgres-recovery-candidates.ts": source(`
 import type { Pool } from "pg";
-import type { PaymentRecoveryCandidatePort } from "../../application/ports.js";
+import type { DbTransaction, PaymentRecoveryCandidatePort } from "../../application/ports.js";
 
 export class PostgresPaymentRecoveryCandidates implements PaymentRecoveryCandidatePort {
-  constructor(private readonly pool: Pool) {}
+  constructor(private readonly pool: Pool, private readonly graceSeconds: number) {}
 
   async register(authorizationId: string): Promise<void> {
     await this.pool.query(
-      "INSERT INTO payment_recovery_candidates (authorization_id) VALUES ($1) ON CONFLICT DO NOTHING",
-      [authorizationId],
+      "INSERT INTO payment_recovery_candidates (authorization_id, eligible_at) VALUES ($1, now() + make_interval(secs => $2)) ON CONFLICT DO NOTHING",
+      [authorizationId, this.graceSeconds],
     );
   }
 
@@ -492,7 +511,8 @@ export class PostgresPaymentRecoveryCandidates implements PaymentRecoveryCandida
        SET leased_until = now() + make_interval(secs => $1)
        WHERE authorization_id = (
          SELECT authorization_id FROM payment_recovery_candidates
-         WHERE completed_at IS NULL AND (leased_until IS NULL OR leased_until < now())
+         WHERE completed_at IS NULL AND eligible_at <= now()
+           AND (leased_until IS NULL OR leased_until < now())
          ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
        )
        RETURNING authorization_id\`,
@@ -502,8 +522,8 @@ export class PostgresPaymentRecoveryCandidates implements PaymentRecoveryCandida
     return authorizationId ? { authorizationId } : null;
   }
 
-  async complete(authorizationId: string): Promise<void> {
-    await this.pool.query(
+  async complete(authorizationId: string, transaction?: DbTransaction): Promise<void> {
+    await (transaction ?? this.pool).query(
       "UPDATE payment_recovery_candidates SET completed_at = now() WHERE authorization_id = $1",
       [authorizationId],
     );
@@ -514,6 +534,7 @@ export class PostgresPaymentRecoveryCandidates implements PaymentRecoveryCandida
 export const config = {
   inventoryUrl: "http://inventory.internal",
   reconciliationLeaseSeconds: 60,
+  recoveryGraceSeconds: 300,
 } as const;
   `),
   "src/bootstrap/application.ts": source(`
@@ -534,7 +555,10 @@ import { orderTelemetry } from "../telemetry/order-logger.js";
 
 const orderRepository = new PostgresOrderRepository(pool);
 const paymentGateway = new StripeGateway(stripeClient);
-const paymentRecoveryCandidates = new PostgresPaymentRecoveryCandidates(pool);
+const paymentRecoveryCandidates = new PostgresPaymentRecoveryCandidates(
+  pool,
+  config.recoveryGraceSeconds,
+);
 const ports = {
   orders: orderRepository,
   idempotency: new PostgresIdempotencyStore(pool),
@@ -572,6 +596,7 @@ describe("CreateOrderHandler", () => {
     expect(await harness.orders.findById(result.order.id)).not.toBeNull();
     expect(await harness.outbox.pendingTypes()).toEqual(["order.placed", "payment.authorized"]);
     expect(harness.recoveryCandidates).toEqual(["auth-1"]);
+    expect(harness.completedRecoveryCandidates).toEqual(["auth-1"]);
     expect(harness.telemetryRecords).toContainEqual({
       component: "order-placement",
       requestId: "request-test-1",
@@ -598,6 +623,8 @@ describe("CreateOrderHandler", () => {
     );
     expect(await harness.orders.all()).toEqual([]);
     expect(await harness.outbox.pendingTypes()).toEqual([]);
+    expect(harness.recoveryCandidates).toEqual(["auth-1"]);
+    expect(harness.completedRecoveryCandidates).toEqual([]);
   });
 });
   `),
@@ -676,6 +703,7 @@ CREATE INDEX outbox_pending_idx ON outbox_events (created_at) WHERE published_at
 
 CREATE TABLE payment_recovery_candidates (
   authorization_id text PRIMARY KEY,
+  eligible_at timestamptz NOT NULL,
   leased_until timestamptz,
   completed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()

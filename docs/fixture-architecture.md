@@ -27,6 +27,10 @@ transaction内のorder / outbox永続化、dispatcherとobservability、payment 
 単位で進む。manifestはrepository / diff shape、change kinds、layer、comment state、Walkthrough、Structure、
 rename / delete targetsを一箇所に集約する。
 
+payment recovery candidateはremote authorization直後に登録するが、grace period中はlease対象にしない。
+正常なorder commitではcandidateの完了をorder / outboxと同じtransactionに含め、workerはorder存在、確認済み
+orphan、既にterminal、再試行すべき曖昧状態を明示的に区別する。
+
 fixtureを更新するときは、まずscenarioの意味を保ったままsourceとcommit progressionを変更し、その後に
 semantic needleから作られるreferenceを更新する。手書き行番号は追加しない。builderのstartup validationと
 `realistic-fixture.test.ts`は次をnamed invariantとして検証する。
@@ -43,11 +47,16 @@ semantic needleから作られるreferenceを更新する。手書き行番号�
 ## Contract and stress ownership
 
 contractとrealisticが共有するorder-service source corpusはscenario-neutralな
-`test/fixtures/order-service/order-service-sources.mjs`、contractのWalkthrough dataは
+`test/fixtures/order-service/order-service-sources.mjs`に置く。contractで配信する全repository sourceは
+`test/fixtures/contract/contract-repository.mjs`がそのcorpusと明示的な補助sourceを統合し、未知pathを
+拒否する単一providerになる。contractのWalkthrough dataは
 `test/e2e/walkthrough-fixture.mjs`、Structure dataは`test/fixtures/contract/contract-structures.mjs`に置く。
 `fixture-server.mjs`はHTTP behavior、selected
 repository provider、fresh mutable comments / Walkthroughs / Structuresの橋渡しを担う。contract固有の
 mutation endpointやbinary / too-large等のedge caseはrealisticへ複製しない。
+
+Structureのsemantic anchorはprovider上で検証したneedleを公開し、E2EでもHTTP APIが返した同じ行範囲に
+needleが含まれることを確認する。validator専用のfallback sourceは持たない。
 
 stress generatorは`test/fixtures/stress/stress-fixture.ts`に置く。実務narrativeやrealistic manifestの件数を
 増やすためには使わない。100-comment placement budget、100-node Structureの実Viewer操作、10,000-line文書の

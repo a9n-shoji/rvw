@@ -329,9 +329,6 @@ function repositoryDocumentText(oid, filePath) {
   }
   if (filePath === "src/new.ts") return "export const added = true;\n";
   if (filePath === "src/removed.ts") return "export const removed = true;\n";
-  if (filePath === "src/edge-only-evidence.ts") {
-    return "export const edgeOnlyEvidence = true;\n";
-  }
   if (filePath === "stress/long-document.txt") return longStressDocument;
   if (filePath === "src/viewport-anchor.ts") return viewportRepositoryText(oid);
   if (filePath in walkthroughRepositorySources || walkthroughRepositoryPaths.includes(filePath)) {
@@ -339,16 +336,6 @@ function repositoryDocumentText(oid, filePath) {
     return filePath === "src/application/orders/create-order.ts" && oid === secondHead
       ? `${source.trimEnd()}\n\n// Updated orchestration path.\n`
       : source;
-  }
-  if (fullStackRepositoryPaths.includes(filePath)) {
-    return [
-      `// Full-stack Structure demonstration source: ${filePath}`,
-      ...Array.from(
-        { length: 47 },
-        (_, index) => `export const demonstrationLine${index + 2} = ${index + 2};`,
-      ),
-      "",
-    ].join("\n");
   }
   return repositoryText(oid);
 }

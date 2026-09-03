@@ -8,6 +8,7 @@ const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
 const fullStackStructureId = "80000000-0000-4000-8000-000000000003";
 const semanticAnchorNeedles = new Map();
+const semanticAnchorAssertions = [];
 
 function semanticAnchor(filePath, needle, span = 0) {
   const text = walkthroughRepositoryText(filePath);
@@ -22,6 +23,7 @@ function semanticAnchor(filePath, needle, span = 0) {
     endLine: Math.min(startLine + span, text.trimEnd().split("\n").length),
   };
   semanticAnchorNeedles.set(`${anchor.path}\0${anchor.startLine}\0${anchor.endLine}`, needle);
+  semanticAnchorAssertions.push({ anchor, needle });
   return anchor;
 }
 
@@ -272,7 +274,7 @@ const primaryStructureEdges = [
     directed: true,
     anchors: [
       semanticAnchor("src/bootstrap/application.ts", "const ports =", 12),
-      semanticAnchor("src/edge-only-evidence.ts", "export const moduleName"),
+      semanticAnchor("src/edge-only-evidence.ts", "export const edgeOnlyEvidence"),
     ],
   },
   {
@@ -312,7 +314,7 @@ const primaryStructureEdges = [
     anchors: [
       semanticAnchor(
         "src/infrastructure/db/idempotency-store.ts",
-        "const cached = await this.pool.query",
+        "const cached = await client.query",
         5,
       ),
     ],
@@ -817,6 +819,7 @@ export const fullStackRepositoryPaths = [
 ];
 
 export function validateContractStructureFixture() {
+  const repositoryPaths = new Set([...walkthroughRepositoryPaths, ...fullStackRepositoryPaths]);
   const structures = [
     {
       title: "Order placement behavior",
@@ -831,6 +834,9 @@ export function validateContractStructureFixture() {
         edge.anchors.map((sourceAnchor) => ["edge", edge.id, sourceAnchor]),
       ),
     ]) {
+      if (!repositoryPaths.has(sourceAnchor.path)) {
+        throw new Error(`${structure.title} ${kind} ${id} targets missing ${sourceAnchor.path}`);
+      }
       const needle = semanticAnchorNeedles.get(
         `${sourceAnchor.path}\0${sourceAnchor.startLine}\0${sourceAnchor.endLine}`,
       );
@@ -845,7 +851,6 @@ export function validateContractStructureFixture() {
     }
   }
 
-  const repositoryPaths = new Set([...walkthroughRepositoryPaths, ...fullStackRepositoryPaths]);
   for (const filePath of repositoryPaths) {
     if (!/\.[cm]?[jt]sx?$/u.test(filePath)) continue;
     const text = walkthroughRepositoryText(filePath);
@@ -860,6 +865,11 @@ export function validateContractStructureFixture() {
     }
   }
 }
+
+export const contractSemanticAnchors = semanticAnchorAssertions.map(({ anchor, needle }) => ({
+  ...anchor,
+  needle,
+}));
 
 validateContractStructureFixture();
 
