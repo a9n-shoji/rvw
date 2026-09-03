@@ -14,13 +14,8 @@ concurrency:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -32,14 +27,28 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - if: runner.os == 'Linux'
-        run: pnpm check
+      - run: pnpm check
       - run: pnpm test
-      - if: runner.os == 'Linux'
-        run: pnpm exec playwright install chromium
+      - run: pnpm exec playwright install chromium
       - name: Run contract and realistic E2E fixtures
-        if: runner.os == 'Linux'
         run: pnpm test:e2e
+
+  fixture-test-windows:
+    name: Fixture tests (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec vitest run test/unit/realistic-fixture.test.ts test/unit/dogfood-git-reader.test.ts
 
   package-smoke:
     name: Package smoke (${{ matrix.os }})

@@ -16,7 +16,6 @@ function git(repositoryRoot: string, args: string[]): string {
     encoding: "utf8",
     env: {
       ...process.env,
-      GIT_CONFIG_GLOBAL: os.devNull,
       GIT_CONFIG_NOSYSTEM: "1",
     },
   }).trim();

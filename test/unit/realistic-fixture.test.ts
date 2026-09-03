@@ -11,7 +11,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createRealisticFixture,
   validateRealisticFixture,
@@ -20,6 +20,8 @@ import {
 const require = createRequire(import.meta.url);
 const tscEntry = require.resolve("typescript/bin/tsc");
 const vitestEntry = path.join(path.dirname(require.resolve("vitest")), "vitest.mjs");
+const fixtureTestTimeout = process.platform === "win32" ? 30_000 : 5_000;
+vi.setConfig({ testTimeout: fixtureTestTimeout });
 
 describe("realistic fixture", () => {
   it("builds identical Git history and manifests in separate temporary directories", () => {

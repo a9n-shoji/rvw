@@ -1031,10 +1031,8 @@ export function createRealisticFixture() {
         documentCache.set(key, tooLarge);
         return tooLarge;
       }
-      const contents = execFileSync("git", ["show", `${oid}:${filePath}`], {
-        cwd: repositoryRoot,
+      const contents = git(repositoryRoot, ["show", `${oid}:${filePath}`], {
         encoding: "buffer",
-        maxBuffer: 32 * 1024 * 1024,
       });
       if (contents.includes(0) || !isUtf8(contents)) {
         const binary = {
