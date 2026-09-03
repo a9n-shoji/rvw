@@ -287,7 +287,7 @@ test("keeps agent explanation passive until a human opens a current code referen
   );
   await expect(page.locator('.document-pane[data-pane="right"] diffs-container')).toHaveAttribute(
     "data-search-target-line",
-    "21",
+    "22",
   );
   await expect(page.getByRole("tab", { name: primaryWalkthrough })).toBeVisible();
   await expect(handlerTab).toBeVisible();
@@ -1598,7 +1598,7 @@ test("renders a class diagram with code-bound classes", async ({ page }) => {
   await orderClass.click();
   await expect(page.locator('.document-pane[data-pane="left"] diffs-container')).toHaveAttribute(
     "data-search-target-line",
-    "21",
+    "22",
   );
   await page
     .locator('.document-pane[data-pane="left"]')
@@ -1609,7 +1609,7 @@ test("renders a class diagram with code-bound classes", async ({ page }) => {
   await reopenedOrderClass.dispatchEvent("pointerdown", { metaKey: true });
   await expect(page.locator('.document-pane[data-pane="right"] diffs-container')).toHaveAttribute(
     "data-search-target-line",
-    "21",
+    "22",
   );
 });
 

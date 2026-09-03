@@ -314,7 +314,7 @@ const primaryStructureEdges = [
     anchors: [
       semanticAnchor(
         "src/infrastructure/db/idempotency-store.ts",
-        "const cached = await client.query",
+        "const claimed = await client.query",
         5,
       ),
     ],
@@ -373,7 +373,7 @@ const primaryStructureEdges = [
     anchors: [
       semanticAnchor(
         "src/application/orders/create-order.ts",
-        "await this.ports.transaction.run",
+        "const result = { order: order.toSnapshot() };",
         3,
       ),
     ],
@@ -408,10 +408,7 @@ const primaryStructureEdges = [
     directed: true,
     anchors: [
       semanticAnchor("src/domain/orders/order.ts", "toSnapshot()", 6),
-      semanticAnchor(
-        "src/application/orders/create-order.ts",
-        "return { order: order.toSnapshot() }",
-      ),
+      semanticAnchor("src/application/orders/create-order.ts", "return result;"),
     ],
   },
   {
@@ -423,7 +420,7 @@ const primaryStructureEdges = [
     anchors: [
       semanticAnchor(
         "src/application/orders/create-order.ts",
-        "await this.ports.transaction.run",
+        "const result = { order: order.toSnapshot() };",
         3,
       ),
     ],

@@ -29,7 +29,12 @@ rename / delete targetsを一箇所に集約する。
 
 payment recovery candidateはremote authorization直後に登録するが、grace period中はlease対象にしない。
 正常なorder commitではcandidateの完了をorder / outboxと同じtransactionに含め、workerはorder存在、確認済み
-orphan、既にterminal、再試行すべき曖昧状態を明示的に区別する。
+orphan、既にterminal、再試行すべき曖昧状態を明示的に区別する。provider固有のpayment statusはadapterで
+`voidable` / `already-voided` / `captured` / `pending` / `unknown`へ正規化する。
+
+actor-scoped idempotency keyはremote side effectより先にstable operation IDをclaimし、そのIDをorder IDと
+payment provider keyに使う。completed responseはorder / outbox / recovery completionと同じtransactionへ書き、
+完了記録だけが欠ける障害窓を作らない。
 
 fixtureを更新するときは、まずscenarioの意味を保ったままsourceとcommit progressionを変更し、その後に
 semantic needleから作られるreferenceを更新する。手書き行番号は追加しない。builderのstartup validationと

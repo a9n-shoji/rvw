@@ -1492,17 +1492,17 @@ test("focuses a deep Walkthrough range when command-click creates the right pane
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await openWalkthroughFromSidebar(page, "注文作成フロー：HTTPからtransactional outboxまで");
   await page
-    .getByRole("button", { name: "recordPaymentAuthorization L26–34", exact: true })
+    .getByRole("button", { name: "recordPaymentAuthorization L27–35", exact: true })
     .click({ modifiers: ["Meta"] });
 
   const rightPane = page.locator('.document-pane[data-pane="right"]');
   const diff = rightPane.locator("diffs-container");
-  await expect(diff).toHaveAttribute("data-search-target-line", "26");
-  await expect(diff.locator('[data-line="26"][data-editor-active-line]')).toBeVisible();
+  await expect(diff).toHaveAttribute("data-search-target-line", "27");
+  await expect(diff.locator('[data-line="27"][data-editor-active-line]')).toBeVisible();
   await expect
     .poll(async () => {
       const paneBox = await rightPane.boundingBox();
-      const lineBox = await diff.locator('[data-line="26"][data-editor-active-line]').boundingBox();
+      const lineBox = await diff.locator('[data-line="27"][data-editor-active-line]').boundingBox();
       if (!paneBox || !lineBox) return Number.POSITIVE_INFINITY;
       const paneCenter = paneBox.y + paneBox.height / 2;
       const lineCenter = lineBox.y + lineBox.height / 2;

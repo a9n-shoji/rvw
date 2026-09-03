@@ -107,12 +107,21 @@ export class CreateOrderHandler {
       ? idempotencyEnvelope(command.idempotencyKey, command.actor.subject)
       : undefined;
 
-    return this.ports.idempotency.run(envelope, async () => {
+    return this.ports.idempotency.run(envelope, async ({ operationId, complete }) => {
+      const existingOrder = await this.ports.orders.findById(operationId);
+      if (existingOrder) {
+        const existingResult = { order: existingOrder };
+        await this.ports.transaction.run((transaction) =>
+          complete(existingResult, transaction),
+        );
+        return existingResult;
+      }
       const catalogItems = await this.ports.catalog.getBySkus(
         command.lines.map((line) => line.sku),
       );
       const reservation = await this.ports.inventory.reserve(command.lines);
       const order = Order.place({
+        id: operationId,
         customerId: command.customerId,
         lines: command.lines,
         catalogItems,
@@ -133,13 +142,15 @@ export class CreateOrderHandler {
         idempotencyKey: command.idempotencyKey,
       }));
 
+      const result = { order: order.toSnapshot() };
       await this.ports.transaction.run(async (transaction) => {
         await this.ports.orders.insert(order, transaction);
         await this.ports.outbox.append(order.releaseEvents(), transaction);
         await this.ports.paymentRecoveryCandidates.complete(authorization.id, transaction);
+        await complete(result, transaction);
       });
 
-      return { order: order.toSnapshot() };
+      return result;
     });
   }
 }
@@ -189,13 +200,14 @@ import { calculateOrderTotal } from "./pricing.js";
 import type { DomainEvent } from "../events.js";
 
 export class Order {
-  readonly id = randomUUID();
+  readonly id;
   readonly status = "placed" as const;
   readonly total;
   private paymentAuthorizationId: string | null = null;
   private readonly events: DomainEvent[] = [];
 
   private constructor(private readonly state: OrderState) {
+    this.id = state.id ?? randomUUID();
     this.total = calculateOrderTotal(state.lines, state.catalogItems);
     this.events.push({
       type: "order.placed",
@@ -233,6 +245,7 @@ export class Order {
 }
 
 interface OrderState {
+  id?: string;
   customerId: string;
   reservationId: string;
   lines: Array<{ sku: string; quantity: number }>;
@@ -276,8 +289,11 @@ export class HttpInventoryClient implements InventoryPort {
 }
   `),
   "src/infrastructure/payments/stripe-gateway.ts": source(`
-import type { PaymentPort } from "../../application/ports.js";
-import type { AuthorizationInput } from "../../application/ports.js";
+import type {
+  AuthorizationInput,
+  AuthorizationState,
+  PaymentPort,
+} from "../../application/ports.js";
 import { PaymentDeclinedError } from "../../application/errors.js";
 
 interface StripeClient {
@@ -311,7 +327,14 @@ export class StripeGateway implements PaymentPort {
   }
 
   async getAuthorization(authorizationId: string) {
-    return await this.stripe.paymentIntents.retrieve(authorizationId);
+    const intent = await this.stripe.paymentIntents.retrieve(authorizationId);
+    const states: Record<string, AuthorizationState> = {
+      requires_capture: "voidable",
+      canceled: "already-voided",
+      succeeded: "captured",
+      processing: "pending",
+    };
+    return { state: states[intent.status] ?? "unknown" };
   }
 
   async voidAuthorization(authorizationId: string): Promise<void> {
@@ -362,9 +385,15 @@ export class PostgresOrderRepository {
     );
   }
 
-  async findById(orderId: string, transaction: PoolClient) {
-    const result = await transaction.query("SELECT * FROM orders WHERE id = $1", [orderId]);
-    return result.rows[0] ?? null;
+  async findById(orderId: string) {
+    const result = await this.pool.query("SELECT * FROM orders WHERE id = $1", [orderId]);
+    const row = result.rows[0];
+    return row ? {
+      id: row.id,
+      status: row.status,
+      total: { amount: row.total_amount, currency: row.currency },
+      paymentAuthorizationId: row.payment_authorization_id,
+    } : null;
   }
 
   async findByPaymentAuthorization(authorizationId: string) {
@@ -377,34 +406,52 @@ export class PostgresOrderRepository {
 }
   `),
   "src/infrastructure/db/idempotency-store.ts": source(`
-import type { Pool, PoolClient } from "pg";
+import { randomUUID } from "node:crypto";
+import type { Pool } from "pg";
+import type { DbTransaction, IdempotencyOperationContext } from "../../application/ports.js";
 import type { IdempotencyEnvelope } from "../../application/orders/idempotency-policy.js";
 
 export class PostgresIdempotencyStore {
   constructor(private readonly pool: Pool) {}
 
-  async run<T>(envelope: IdempotencyEnvelope | undefined, operation: () => Promise<T>): Promise<T> {
-    if (!envelope) return await operation();
+  async run<T>(
+    envelope: IdempotencyEnvelope | undefined,
+    operation: (context: IdempotencyOperationContext) => Promise<T>,
+  ): Promise<T> {
+    if (!envelope) {
+      return await operation({ operationId: randomUUID(), async complete() {} });
+    }
     const key = [envelope.operation, envelope.actorSubject, envelope.key].join(":");
     const client = await this.pool.connect();
     try {
       await client.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
-      const cached = await client.query("SELECT response FROM idempotency_keys WHERE key = $1", [key]);
-      if (cached.rowCount) return cached.rows[0].response as T;
-      const result = await operation();
-      await this.record(client, key, result);
-      return result;
+      await client.query(
+        "INSERT INTO idempotency_keys (key, operation_id, status) VALUES ($1, $2, 'pending') ON CONFLICT DO NOTHING",
+        [key, randomUUID()],
+      );
+      const claimed = await client.query(
+        "SELECT operation_id, status, response FROM idempotency_keys WHERE key = $1",
+        [key],
+      );
+      const row = claimed.rows[0];
+      if (!row) throw new Error("idempotency operation claim disappeared");
+      if (row.status === "completed") {
+        const response = row.response;
+        return (typeof response === "string" ? JSON.parse(response) : response) as T;
+      }
+      return await operation({
+        operationId: row.operation_id,
+        complete: async (result: unknown, transaction: DbTransaction) => {
+          await transaction.query(
+            "UPDATE idempotency_keys SET status = 'completed', response = $2 WHERE key = $1",
+            [key, JSON.stringify(result)],
+          );
+        },
+      });
     } finally {
       await client.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
       client.release();
     }
-  }
-
-  private async record(client: PoolClient, key: string, result: unknown): Promise<void> {
-    await client.query(
-      "INSERT INTO idempotency_keys (key, response) VALUES ($1, $2)",
-      [key, result],
-    );
   }
 }
   `),
@@ -482,11 +529,11 @@ export class PaymentReconciliationWorker {
     const order = await this.orders.findByPaymentAuthorization(authorizationId);
     if (order) return "order-exists";
     const payment = await this.payments.getAuthorization(authorizationId);
-    if (payment.status === "authorized") {
+    if (payment.state === "voidable") {
       await this.payments.voidAuthorization(authorizationId);
       return "voided";
     }
-    if (["voided", "canceled", "cancelled"].includes(payment.status)) return "already-terminal";
+    if (payment.state === "already-voided") return "already-terminal";
     return "retry-later";
   }
 }
@@ -615,6 +662,24 @@ describe("CreateOrderHandler", () => {
     expect(harness.payments.authorizeCalls).toHaveLength(1);
   });
 
+  it("rolls back the order when idempotency completion fails and retries with stable identity", async () => {
+    const harness = await createIntegrationHarness();
+    const command = harness.validCommand({ idempotencyKey: "checkout-after-failure" });
+    harness.idempotency.failNextComplete();
+    await expect(harness.createOrder.execute(command)).rejects.toThrow(
+      "idempotency completion unavailable",
+    );
+    expect(await harness.orders.all()).toEqual([]);
+    expect(await harness.outbox.pendingTypes()).toEqual([]);
+
+    const retried = await harness.createOrder.execute(command);
+    const attemptedOrderIds = harness.payments.authorizeCalls.map((input: any) => input.orderId);
+    expect(new Set(attemptedOrderIds).size).toBe(1);
+    expect(retried.order.id).toBe(attemptedOrderIds[0]);
+    expect(harness.payments.createdAuthorizations).toEqual(["auth-1"]);
+    expect(await harness.orders.findById(retried.order.id)).toEqual(retried.order);
+  });
+
   it("rolls back both the order and outbox records when the outbox write fails", async () => {
     const harness = await createIntegrationHarness();
     harness.outbox.failNextAppend();
@@ -686,7 +751,9 @@ CREATE TABLE orders (
 
 CREATE TABLE idempotency_keys (
   key text PRIMARY KEY,
-  response jsonb NOT NULL,
+  operation_id uuid NOT NULL UNIQUE,
+  status text NOT NULL CHECK (status IN ('pending', 'completed')),
+  response jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 

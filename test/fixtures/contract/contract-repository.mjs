@@ -152,13 +152,20 @@ export interface AuthorizationInput {
   paymentMethodId: string;
   amount: { amount: number; currency: string };
 }
+export type AuthorizationState =
+  | "voidable"
+  | "already-voided"
+  | "captured"
+  | "pending"
+  | "unknown";
 export interface PaymentPort {
   authorize(input: AuthorizationInput): Promise<{ id: string }>;
-  getAuthorization(authorizationId: string): Promise<{ status: string }>;
+  getAuthorization(authorizationId: string): Promise<{ state: AuthorizationState }>;
   voidAuthorization(authorizationId: string): Promise<void>;
 }
 export interface OrderRepositoryPort {
   insert(order: Order, transaction: DbTransaction): Promise<void>;
+  findById(orderId: string): Promise<ReturnType<Order["toSnapshot"]> | null>;
   findByPaymentAuthorization(authorizationId: string): Promise<unknown | null>;
 }
 export interface PaymentRecoveryCandidatePort {
@@ -166,9 +173,16 @@ export interface PaymentRecoveryCandidatePort {
   leaseNextCandidate(leaseSeconds: number): Promise<{ authorizationId: string } | null>;
   complete(authorizationId: string, transaction?: DbTransaction): Promise<void>;
 }
+export interface IdempotencyOperationContext {
+  operationId: string;
+  complete(result: unknown, transaction: DbTransaction): Promise<void>;
+}
 export interface ApplicationPorts {
   idempotency: {
-    run<T>(envelope: IdempotencyEnvelope | undefined, work: () => Promise<T>): Promise<T>;
+    run<T>(
+      envelope: IdempotencyEnvelope | undefined,
+      work: (context: IdempotencyOperationContext) => Promise<T>,
+    ): Promise<T>;
   };
   catalog: CatalogPort;
   inventory: InventoryPort;
@@ -227,7 +241,7 @@ export interface EventBus {
 export const stripeClient = {
   paymentIntents: {
     async create() { return { id: "pi_configured", status: "requires_capture" }; },
-    async retrieve(id: string) { return { id, status: "authorized" }; },
+    async retrieve(id: string) { return { id, status: "requires_capture" }; },
     async cancel() {},
   },
 };

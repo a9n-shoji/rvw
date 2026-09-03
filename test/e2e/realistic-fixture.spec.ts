@@ -79,7 +79,7 @@ test("reviews the deterministic resilient-order PR across artifacts", async ({ p
   await expect(page.getByText("Transaction boundary", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "ウォークスルー 3", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Structure 4", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "コメント 7", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "コメント 6", exact: true })).toBeVisible();
 
   const commitPicker = page
     .getByRole("region", { name: "レビュー範囲", exact: true })
@@ -164,19 +164,19 @@ test("reviews the deterministic resilient-order PR across artifacts", async ({ p
   ]);
   await page.keyboard.press("Escape");
 
-  await page.getByRole("button", { name: "コメント 7", exact: true }).click();
+  await page.getByRole("button", { name: "コメント 6", exact: true }).click();
   const reviewSidebar = page.getByLabel("レビューサイドバー");
   const deletedSourceThread = reviewSidebar
     .locator(".comment-thread")
     .filter({ hasText: "This best-effort loop can void a payment" });
   await expect(deletedSourceThread.getByText("Outdated", { exact: true })).toBeVisible();
+  await reviewSidebar.getByRole("button", { name: "解決済み 7", exact: true }).click();
   await expect(
     reviewSidebar.getByText(
-      "The provider uses order ID idempotency, and the final commit adds orphan reconciliation.",
+      "The actor-scoped request first claims a stable operation/order ID, so retries reuse the same provider key; idempotency completion then commits with the order, outbox, and recovery completion.",
       { exact: true },
     ),
   ).toBeVisible();
-  await reviewSidebar.getByRole("button", { name: "解決済み 6", exact: true }).click();
   await expect(
     reviewSidebar.getByText(
       "Manual capture is the right failure boundary. Please add recovery ownership before resolving this.",
@@ -218,8 +218,8 @@ test("keeps realistic comments and Structure backlinks coherent at the latest he
     }>;
   };
   expect(comments.comments).toHaveLength(13);
-  expect(comments.comments.filter(({ resolvedAt }) => resolvedAt === null)).toHaveLength(7);
-  expect(comments.comments.filter(({ resolvedAt }) => resolvedAt !== null)).toHaveLength(6);
+  expect(comments.comments.filter(({ resolvedAt }) => resolvedAt === null)).toHaveLength(6);
+  expect(comments.comments.filter(({ resolvedAt }) => resolvedAt !== null)).toHaveLength(7);
   expect(comments.comments.filter(({ posts }) => posts.length > 1)).toHaveLength(8);
   expect(comments.comments.flatMap(({ posts }) => posts.map(({ body }) => body))).toContain(
     "Renamed to idempotency-policy.ts and made the actor-scoped envelope explicit.",
