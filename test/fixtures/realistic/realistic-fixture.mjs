@@ -2501,11 +2501,22 @@ export function validateRealisticFixture(fixture) {
   }
   for (const oid of [fixture.baseOid, ...fixture.commits.map((commit) => commit.oid)]) {
     const entries = new Set(fixture.repositoryEntriesAt(oid).map((entry) => entry.path));
-    for (const filePath of entries) {
-      if (!filePath.endsWith(".ts")) continue;
-      const document = fixture.repositoryDocumentAt(oid, filePath);
-      if (document.availability !== "available" || document.text === null) continue;
-      for (const match of document.text.matchAll(/\bfrom\s+["'](\.[^"']+)["']/gu)) {
+    const importLines = git(fixture.repositoryRoot, [
+      "grep",
+      "-z",
+      "-n",
+      "-I",
+      "-E",
+      "from[[:space:]]+[\"']\\.",
+      oid,
+      "--",
+      "*.ts",
+    ]);
+    for (const record of importLines.split("\n").filter(Boolean)) {
+      const [qualifiedPath, , line] = record.split("\0");
+      const filePath = qualifiedPath?.slice(oid.length + 1);
+      if (!filePath || line === undefined) fail(`${oid.slice(0, 8)} has malformed import data`);
+      for (const match of line.matchAll(/\bfrom\s+["'](\.[^"']+)["']/gu)) {
         const specifier = match[1];
         const resolved = path.posix.normalize(
           path.posix.join(path.posix.dirname(filePath), specifier.replace(/\.js$/u, ".ts")),
