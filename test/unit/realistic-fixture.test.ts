@@ -83,6 +83,12 @@ describe("realistic fixture", () => {
       expect(fixture.pullRequest.latestBody).toContain("## Transaction boundary");
       expect(fixture.pullRequest.latestBody).toContain("## Payment failure recovery");
       expect(fixture.pullRequest.latestBody).toContain("## Suggested review route");
+      expect(fixture.pullRequest.latestBody).toContain(
+        "The operation, actor, and Idempotency-Key tuple is JSON-encoded",
+      );
+      expect(fixture.pullRequest.latestBody).toContain(
+        "The session advisory lock and its pool connection remain held",
+      );
       expect(fixture.walkthroughs.map(({ title }) => title)).toEqual([
         "Review route: authenticated order placement",
         "Failure route: retries and payment recovery",

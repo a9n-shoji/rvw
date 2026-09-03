@@ -444,9 +444,10 @@ export class PostgresIdempotencyStore {
           await this.transactions.run((client) => work(client, async () => {})),
       });
     }
-    const key = [envelope.operation, envelope.actorSubject, envelope.key].join(":");
+    const key = JSON.stringify([envelope.operation, envelope.actorSubject, envelope.key]);
     const client = await this.pool.connect();
     let lockHeld = false;
+    let destroyClient = false;
     try {
       await client.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
       lockHeld = true;
@@ -478,9 +479,20 @@ export class PostgresIdempotencyStore {
       });
     } finally {
       try {
-        if (lockHeld) await client.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+        if (lockHeld) {
+          const unlocked = await client.query(
+            "SELECT pg_advisory_unlock(hashtext($1)) AS unlocked",
+            [key],
+          );
+          if (unlocked.rows[0]?.unlocked !== true) {
+            throw new Error("advisory lock release was not confirmed");
+          }
+        }
+      } catch (error) {
+        destroyClient = true;
+        throw error;
       } finally {
-        client.release();
+        client.release(destroyClient);
       }
     }
   }
@@ -692,6 +704,15 @@ describe("CreateOrderHandler", () => {
     const second = await harness.createOrder.execute(command);
     expect(second).toEqual(first);
     expect(harness.payments.authorizeCalls).toHaveLength(1);
+  });
+
+  it("does not promise retry convergence without an idempotency key", async () => {
+    const harness = await createIntegrationHarness();
+    const command = harness.validCommand({ idempotencyKey: undefined });
+    const first = await harness.createOrder.execute(command);
+    const second = await harness.createOrder.execute(command);
+    expect(second.order.id).not.toBe(first.order.id);
+    expect(harness.payments.authorizeCalls).toHaveLength(2);
   });
 
   it("rolls back the order when idempotency completion fails and retries with stable identity", async () => {

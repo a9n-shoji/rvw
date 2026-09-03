@@ -179,6 +179,12 @@ test("reviews the deterministic resilient-order PR across artifacts", async ({ p
   ).toBeVisible();
   await expect(
     reviewSidebar.getByText(
+      "Please keep external calls outside the database transaction to avoid holding transaction and row locks during provider latency. The session advisory lock and its pool connection remain held to serialize the operation.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    reviewSidebar.getByText(
       "Manual capture is the right failure boundary. Please add recovery ownership before resolving this.",
       { exact: true },
     ),

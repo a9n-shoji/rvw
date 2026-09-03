@@ -36,7 +36,8 @@ actor-scoped idempotency keyはremote side effectより先にstable operation ID
 payment provider keyに使う。completed responseはorder / outbox / recovery completionと同じtransactionへ書き、
 完了記録だけが欠ける障害窓を作らない。advisory lockを保持する同じconnectionでこのtransactionを実行し、
 `PostgresIdempotencyStore`が`TransactionRunner.runWithClient`へそのconnectionを渡すため、order存在確認を含めて
-pool capacityが1でも追加connection待ちを起こさない。payload fingerprint、inventory reservationのretry重複、
+pool capacityが1でも追加connection待ちを起こさない。ただしprovider呼出し中もsession advisory lockとconnectionは
+保持されるため、slow providerやretry burstによるpool占有はreview対象のtrade-offとして明示する。payload fingerprint、inventory reservationのretry重複、
 reconciliationのattempt / last-outcome永続化はsynthetic PRのKnown trade-offsとして明示する。
 
 fixtureを更新するときは、まずscenarioの意味を保ったままsourceとcommit progressionを変更し、その後に

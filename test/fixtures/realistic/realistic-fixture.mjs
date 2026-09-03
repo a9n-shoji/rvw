@@ -99,7 +99,7 @@ declare module "pg" {
   export interface QueryResult { rowCount: number | null; rows: any[]; }
   export interface PoolClient {
     query(sql: string, values?: unknown[]): Promise<QueryResult>;
-    release(): void;
+    release(destroy?: boolean): void;
   }
   export interface Pool {
     query(sql: string, values?: unknown[]): Promise<QueryResult>;
@@ -549,12 +549,20 @@ function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
   let connected = false;
   let peakConnections = 0;
   let releases = 0;
+  let destroyedReleases = 0;
+  const releaseModes: boolean[] = [];
+  let createdSessions = 0;
+  let idleSessionId: number | undefined;
+  let unlockFailuresRemaining = options.failUnlock ? 1 : 0;
   let committedWrites = 0;
   let pendingWrites = 0;
-  let pendingResponse: unknown;
+  let pendingResponse: { key: string; response: unknown } | undefined;
   let pendingOrders: Array<Record<string, unknown>> = [];
   const committedOrders = new Map<string, Record<string, unknown>>();
-  let row: { operation_id: string; status: "pending" | "completed"; response: unknown } | null = null;
+  const rows = new Map<
+    string,
+    { operation_id: string; status: "pending" | "completed"; response: unknown }
+  >();
   const waiters: Array<() => void> = [];
 
   const pool = {
@@ -563,6 +571,8 @@ function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
       if (connected) await new Promise<void>((resolve) => waiters.push(resolve));
       connected = true;
       peakConnections = Math.max(peakConnections, 1);
+      const sessionId = idleSessionId ?? ++createdSessions;
+      idleSessionId = undefined;
       let released = false;
       const client = {
         async query(sql: string, values: unknown[] = []) {
@@ -570,9 +580,17 @@ function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
             pendingWrites = 0;
             pendingResponse = undefined;
             pendingOrders = [];
-          } else if (sql.startsWith("INSERT INTO idempotency_keys") && !row) {
-            row = { operation_id: String(values[1]), status: "pending", response: null };
+          } else if (sql.startsWith("INSERT INTO idempotency_keys")) {
+            const key = String(values[0]);
+            if (!rows.has(key)) {
+              rows.set(key, {
+                operation_id: String(values[1]),
+                status: "pending",
+                response: null,
+              });
+            }
           } else if (sql.startsWith("SELECT operation_id")) {
+            const row = rows.get(String(values[0]));
             return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
           } else if (sql.startsWith("SELECT * FROM orders WHERE id")) {
             const order = committedOrders.get(String(values[0]));
@@ -593,10 +611,20 @@ function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
           ) {
             pendingWrites += 1;
           } else if (sql.startsWith("UPDATE idempotency_keys")) {
-            pendingResponse = JSON.parse(String(values[1]));
+            pendingResponse = {
+              key: String(values[0]),
+              response: JSON.parse(String(values[1])),
+            };
           } else if (sql === "COMMIT") {
-            if (row && pendingResponse !== undefined) {
-              row = { ...row, status: "completed", response: pendingResponse };
+            if (pendingResponse) {
+              const row = rows.get(pendingResponse.key);
+              if (row) {
+                rows.set(pendingResponse.key, {
+                  ...row,
+                  status: "completed",
+                  response: pendingResponse.response,
+                });
+              }
             }
             for (const order of pendingOrders) committedOrders.set(String(order.id), order);
             committedWrites += pendingWrites;
@@ -604,16 +632,23 @@ function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
             pendingWrites = 0;
             pendingResponse = undefined;
             pendingOrders = [];
-          } else if (sql.startsWith("SELECT pg_advisory_unlock") && options.failUnlock) {
-            throw new Error("unlock unavailable");
+          } else if (sql.startsWith("SELECT pg_advisory_unlock")) {
+            if (unlockFailuresRemaining > 0) {
+              unlockFailuresRemaining -= 1;
+              throw new Error("unlock unavailable");
+            }
+            return { rows: [{ unlocked: true }], rowCount: 1 };
           }
           return { rows: [], rowCount: 0 };
         },
-        release() {
+        release(destroy = false) {
           if (released) return;
           released = true;
           connected = false;
           releases += 1;
+          releaseModes.push(destroy);
+          if (destroy) destroyedReleases += 1;
+          else idleSessionId = sessionId;
           waiters.shift()?.();
         },
       } satisfies PoolClient;
@@ -626,8 +661,12 @@ function singleConnectionPool(options: { failUnlock?: boolean } = {}) {
     stats: () => ({
       peakConnections,
       releases,
+      destroyedReleases,
+      releaseModes: [...releaseModes],
+      createdSessions,
       committedWrites,
       committedOrderCount: committedOrders.size,
+      idempotencyRowCount: rows.size,
     }),
   };
 }
@@ -680,12 +719,39 @@ describe("PostgresIdempotencyStore", () => {
     expect(harness.stats()).toEqual({
       peakConnections: 1,
       releases: 2,
+      destroyedReleases: 0,
+      releaseModes: [false, false],
+      createdSessions: 1,
       committedWrites: 5,
       committedOrderCount: 1,
+      idempotencyRowCount: 1,
     });
   });
 
-  it("releases the connection when advisory unlock fails", async () => {
+  it("keeps colon-bearing actor and client keys in separate rows", async () => {
+    const harness = singleConnectionPool();
+    const store = new PostgresIdempotencyStore(
+      harness.pool,
+      new TransactionRunner(harness.pool),
+    );
+    const execute = (actorSubject: string, key: string, marker: string) =>
+      store.run(idempotencyEnvelope(key, actorSubject), async ({ operationId, runTransaction }) =>
+        runTransaction(async (_transaction, complete) => {
+          const result = { marker, operationId };
+          await complete(result);
+          return result;
+        }),
+      );
+
+    const first = await execute("actor:a", "b", "first");
+    const second = await execute("actor", "a:b", "second");
+
+    expect(second.operationId).not.toBe(first.operationId);
+    expect(second.marker).toBe("second");
+    expect(harness.stats().idempotencyRowCount).toBe(2);
+  });
+
+  it("destroys the session when advisory unlock fails", async () => {
     const harness = singleConnectionPool({ failUnlock: true });
     const store = new PostgresIdempotencyStore(
       harness.pool,
@@ -694,7 +760,22 @@ describe("PostgresIdempotencyStore", () => {
     await expect(
       store.run(idempotencyEnvelope("checkout-2", "actor-1"), async () => ({ ok: true })),
     ).rejects.toThrow("unlock unavailable");
-    expect(harness.stats().releases).toBe(1);
+    expect(harness.stats()).toMatchObject({
+      releases: 1,
+      destroyedReleases: 1,
+      releaseModes: [true],
+      createdSessions: 1,
+    });
+
+    await expect(
+      store.run(idempotencyEnvelope("checkout-3", "actor-1"), async () => ({ ok: true })),
+    ).resolves.toEqual({ ok: true });
+    expect(harness.stats()).toMatchObject({
+      releases: 2,
+      destroyedReleases: 1,
+      releaseModes: [true, false],
+      createdSessions: 2,
+    });
   });
 });
   `),
@@ -886,6 +967,7 @@ export async function createIntegrationHarness() {
   let stagedIdempotencyCompletions: Array<{ key: string; result: CreateOrderResult }> = [];
   let failOutbox = false;
   let failIdempotencyCompletion = false;
+  let unkeyedOperationCount = 0;
   const operations = new Map<string, { operationId: string; response?: CreateOrderResult }>();
   const authorizeCalls: unknown[] = [];
   const createdAuthorizations: string[] = [];
@@ -957,13 +1039,14 @@ export async function createIntegrationHarness() {
       work: (context: IdempotencyOperationContext) => Promise<T>,
     ): Promise<T> {
       if (!envelope) {
+        unkeyedOperationCount += 1;
         return await work({
-          operationId: "00000000-0000-4000-8000-000000000099",
+          operationId: \`00000000-0000-4000-8000-\${String(100 + unkeyedOperationCount).padStart(12, "0")}\`,
           runTransaction: async (transactionWork) =>
             await transaction.run((client) => transactionWork(client, async () => {})),
         });
       }
-      const key = [envelope.operation, envelope.actorSubject, envelope.key].join(":");
+      const key = JSON.stringify([envelope.operation, envelope.actorSubject, envelope.key]);
       let operation = operations.get(key);
       if (!operation) {
         operation = {
@@ -1165,9 +1248,10 @@ export class PostgresIdempotencyStore {
         },
       });
     }
-    const key = [envelope.operation, envelope.actorSubject, envelope.key].join(":");
+    const key = JSON.stringify([envelope.operation, envelope.actorSubject, envelope.key]);
     const client = await this.pool.connect();
     let lockHeld = false;
+    let destroyClient = false;
     try {
       await client.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
       lockHeld = true;
@@ -1197,9 +1281,20 @@ export class PostgresIdempotencyStore {
       });
     } finally {
       try {
-        if (lockHeld) await client.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+        if (lockHeld) {
+          const unlocked = await client.query(
+            "SELECT pg_advisory_unlock(hashtext($1)) AS unlocked",
+            [key],
+          );
+          if (unlocked.rows[0]?.unlocked !== true) {
+            throw new Error("advisory lock release was not confirmed");
+          }
+        }
+      } catch (error) {
+        destroyClient = true;
+        throw error;
       } finally {
-        client.release();
+        client.release(destroyClient);
       }
     }
   }
@@ -1447,7 +1542,7 @@ function createRepository() {
           "src/application/orders/types.ts",
         ],
         extra: {
-          "README.md": `${baseFiles()["README.md"]}\n## Order API\n\nPOST /orders requires an actor and an idempotency key.\n`,
+          "README.md": `${baseFiles()["README.md"]}\n## Order API\n\nPOST /orders requires an actor. An idempotency key is recommended; without one, retries are not guaranteed to converge.\n`,
         },
       },
       {
@@ -2334,7 +2429,7 @@ export function createRealisticFixture() {
       "",
       "## Retry / idempotency semantics",
       "",
-      "The Idempotency-Key and actor first claim one stable operation ID, which is also the order ID and payment provider key. Concurrent attempts serialize on that operation using one pool connection, and its completed response commits atomically with the order and outbox. Reusing the same key with a different payload deliberately replays the first response; callers must allocate a new key for a new order.",
+      "The operation, actor, and Idempotency-Key tuple is JSON-encoded before it claims one stable operation ID, which is also the order ID and payment provider key. Each attempt holds one pool connection while serializing on the session advisory lock; the winning attempt reuses that locked connection for database work instead of requesting a second. Its completed response commits atomically with the order and outbox. Reusing the same key with a different payload deliberately replays the first response; callers must allocate a new key for a new order.",
       "",
       "## Payment failure recovery",
       "",
@@ -2358,7 +2453,7 @@ export function createRealisticFixture() {
       "",
       "## Known trade-offs",
       "",
-      "Inventory reservations are not transactionally coupled to Postgres: a local rollback may reserve again on retry, and both reservations expire independently. Outbox consumers must tolerate duplicates. Reconciliation currently groups captured, pending, and unknown orphan states into retry-later; candidate attempt count and last outcome remain follow-up work, so operations monitors age and lease churn externally.",
+      "Inventory reservations are not transactionally coupled to Postgres: a local rollback may reserve again on retry, and both reservations expire independently. The session advisory lock and its pool connection remain held while catalog, inventory, and payment providers respond, so slow providers or retry bursts can occupy pool capacity even though no database transaction or row lock is open. Requests without an Idempotency-Key do not receive retry-convergence guarantees. Outbox consumers must tolerate duplicates. Reconciliation currently groups captured, pending, and unknown orphan states into retry-later; candidate attempt count and last outcome remain follow-up work, so operations monitors age and lease churn externally.",
       "",
       "## Suggested review route",
       "",
@@ -2452,10 +2547,11 @@ export function createRealisticFixture() {
           startLine: prTransactionLine,
           endLine: prTransactionLine,
         },
-        "The boundary is clear. Please keep the external calls outside the database transaction to avoid holding locks during provider latency.",
+        "Please keep external calls outside the database transaction to avoid holding transaction and row locks during provider latency. The session advisory lock and its pool connection remain held to serialize the operation.",
         {
           resolved: true,
-          reply: "Confirmed in the final handler and called out explicitly in this section.",
+          reply:
+            "Confirmed: provider calls remain outside database transactions, while the session advisory lock and pool-capacity trade-off are documented separately.",
           relatedCommitOid: commitOids[4],
         },
       ),
@@ -3012,6 +3108,7 @@ export function validateRealisticFixture(fixture) {
     "complete(result)",
   ]);
   requireSourceClaim("src/infrastructure/db/idempotency-store.ts", [
+    "JSON.stringify([envelope.operation, envelope.actorSubject, envelope.key])",
     "pg_advisory_lock",
     "operation_id",
     'status === "completed"',
@@ -3019,7 +3116,8 @@ export function validateRealisticFixture(fixture) {
     "this.transactions.runWithClient(client",
     "UPDATE idempotency_keys SET status = 'completed'",
     "pg_advisory_unlock",
-    "client.release()",
+    "advisory lock release was not confirmed",
+    "client.release(destroyClient)",
   ]);
   requireSourceClaim("migrations/018_orders_and_outbox.sql", [
     "CREATE TABLE idempotency_keys",
@@ -3066,6 +3164,7 @@ export function validateRealisticFixture(fixture) {
   ]);
   requireSourceClaim("test/integration/create-order.test.ts", [
     "retries with stable identity",
+    "does not promise retry convergence without an idempotency key",
     "createdAuthorizations",
     "rolls back both the order and outbox records",
     "expect(await harness.orders.all()).toEqual([])",
@@ -3074,7 +3173,15 @@ export function validateRealisticFixture(fixture) {
     "pool-backed repositories with one connection",
     "new PostgresOrderRepository(harness.pool)",
     "Promise.all([execute(), execute()])",
+    "keeps colon-bearing actor and client keys in separate rows",
+    'execute("actor:a", "b", "first")',
+    "destroys the session when advisory unlock fails",
+    "releaseModes: [true, false]",
     "unlock unavailable",
+  ]);
+  requireSourceClaim("README.md", [
+    "An idempotency key is recommended",
+    "retries are not guaranteed to converge",
   ]);
   requireSourceClaim("test/integration/payment-reconciliation.test.ts", [
     "normalizes Stripe requires_capture",

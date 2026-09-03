@@ -206,7 +206,7 @@ const primaryStructureNodes = [
     label:
       "Payment reconciliation worker for authorized payments without a matching persisted order",
     description:
-      "注文が残らなかった認証済みpaymentを定期的に検出し、providerの現在状態と注文repositoryを照合して、安全にvoidできる対象だけを回収する。再試行時はすでにvoid済みのpaymentを成功として扱い、一時的なprovider障害は次回実行へ残す。処理対象と判断根拠は監査logへ記録し、通常の注文作成transactionから独立したrecovery boundaryとして動作する。候補ごとに取得したprovider responseと照合時刻を保持し、同じpaymentを並列workerが重複処理しないようleaseを確認する。注文が遅れて永続化された場合はvoidせず正常系へ戻し、timeoutやrate limitは失敗として確定せず再試行可能な状態を維持する。batch全体では一件の失敗が残りの候補を止めないよう分離し、終了時に成功、延期、調査対象の件数を集約する。",
+      "recovery candidateを1件leaseし、対応するorderがあれば完了する。orderがなければprovider状態を照合し、void可能なauthorizationだけを取消し、既に取消済みなら完了、captured・pending・unknownは次回retryへ残す。",
     kind: "worker",
     notation: "component",
     anchor: semanticAnchor(
