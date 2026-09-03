@@ -72,6 +72,7 @@ export interface StructureRenderModel {
 }
 
 export type StructureLabelAccessory = "source-actions" | "none";
+export type StructureEdgeLabelMode = "viewer-clamped" | "export-complete";
 
 const EDGE_LABEL_MAX_TEXT_WIDTH = 210;
 const EDGE_LABEL_COMPACT_MAX_TEXT_WIDTH = 136;
@@ -368,6 +369,7 @@ function edgeLabelSize(
   edge: StructureEdge,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
   labelAccessory: StructureLabelAccessory,
+  labelMode: StructureEdgeLabelMode,
   maxTextWidth = EDGE_LABEL_MAX_TEXT_WIDTH,
 ): {
   selectWidth: number;
@@ -385,12 +387,16 @@ function edgeLabelSize(
     ),
   );
   const contentWidth = Math.max(1, textWidth - EDGE_LABEL_HORIZONTAL_PADDING);
-  const displayLines = wrapStructureText({
-    text: edge.label,
-    maxUnits: contentWidth / 11.5,
-    maxLines: 2,
-    ellipsize: true,
-  });
+  const displayLines = wrapStructureText(
+    labelMode === "viewer-clamped"
+      ? {
+          text: edge.label,
+          maxUnits: contentWidth / 11.5,
+          maxLines: 2,
+          ellipsize: true,
+        }
+      : { text: edge.label, maxUnits: contentWidth / 11.5, ellipsize: false },
+  );
   const textHeight = Math.max(24, displayLines.length * EDGE_LABEL_LINE_HEIGHT + 10);
   const source = edgeSourcePresentation(edge, sourceChangeKinds);
   const sourceBadgeOverflow = source.anchorCount > 1 ? 4 : 0;
@@ -417,6 +423,7 @@ export function placeEdgeLabels(
   routeOffsets: ReadonlyMap<string, number>,
   reciprocalEdgeIds: ReadonlySet<string>,
   labelAccessory: StructureLabelAccessory,
+  labelMode: StructureEdgeLabelMode,
 ): StructureEdgeLabelPlacement[] {
   const nodeBoxes = nodes.flatMap((node) => {
     const point = positions[node.id];
@@ -490,15 +497,18 @@ export function placeEdgeLabels(
       reciprocalEdgeIds.has(edge.id),
     );
     if (!geometry) continue;
-    const naturalSize = edgeLabelSize(edge, sourceChangeKinds, labelAccessory);
-    const compactSize = edgeLabelSize(
-      edge,
-      sourceChangeKinds,
-      labelAccessory,
-      EDGE_LABEL_COMPACT_MAX_TEXT_WIDTH,
-    );
-    const sizes =
-      compactSize.boxWidth < naturalSize.boxWidth ? [naturalSize, compactSize] : [naturalSize];
+    const naturalSize = edgeLabelSize(edge, sourceChangeKinds, labelAccessory, labelMode);
+    const sizes: Array<ReturnType<typeof edgeLabelSize>> = [naturalSize];
+    if (labelMode === "viewer-clamped") {
+      const compactSize = edgeLabelSize(
+        edge,
+        sourceChangeKinds,
+        labelAccessory,
+        labelMode,
+        EDGE_LABEL_COMPACT_MAX_TEXT_WIDTH,
+      );
+      if (compactSize.boxWidth < naturalSize.boxWidth) sizes.push(compactSize);
+    }
     let available:
       { point: { x: number; y: number }; size: ReturnType<typeof edgeLabelSize> } | undefined;
     let fallback: typeof available;
@@ -548,8 +558,10 @@ export function buildStructureRenderModel(input: {
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>;
   selection: StructureRenderSelection;
   labelAccessory: StructureLabelAccessory;
+  edgeLabelMode: StructureEdgeLabelMode;
 }): StructureRenderModel {
-  const { structure, positions, sourceChangeKinds, selection, labelAccessory } = input;
+  const { structure, positions, sourceChangeKinds, selection, labelAccessory, edgeLabelMode } =
+    input;
   const sourceLabels = shortestUniqueSourceLabels([
     ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor.path] : [])),
     ...structure.edges.flatMap((edge) => edge.anchors.map((anchor) => anchor.path)),
@@ -597,6 +609,7 @@ export function buildStructureRenderModel(input: {
     routeOffsets,
     reciprocalEdgeIds,
     labelAccessory,
+    edgeLabelMode,
   );
   const boxes: StructureBox[] = nodes.map(({ point }) => ({
     left: point.x,
@@ -627,5 +640,6 @@ export function buildFullStructureRenderModel(input: {
       labelEdgeIds: new Set(structure.edges.map((edge) => edge.id)),
     },
     labelAccessory: "none",
+    edgeLabelMode: "export-complete",
   });
 }

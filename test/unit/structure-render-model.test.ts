@@ -127,6 +127,7 @@ describe("Structure shared render model", () => {
       sourceChangeKinds: new Map(),
       selection,
       labelAccessory: "source-actions",
+      edgeLabelMode: "viewer-clamped",
     });
     const withoutSourceAction = buildStructureRenderModel({
       structure,
@@ -134,6 +135,7 @@ describe("Structure shared render model", () => {
       sourceChangeKinds: new Map(),
       selection,
       labelAccessory: "none",
+      edgeLabelMode: "viewer-clamped",
     });
 
     expect(withSourceAction.nodes).toHaveLength(2);
@@ -162,7 +164,7 @@ describe("Structure shared render model", () => {
     expect(placements(reordered)).toEqual(placements(first));
   });
 
-  it("uses the same maximum two-line representation for label geometry and rendering", () => {
+  it("uses the same maximum two-line representation for Viewer label geometry and rendering", () => {
     const labels = [
       "calls",
       "validates through a second line",
@@ -171,10 +173,17 @@ describe("Structure shared render model", () => {
     const structures = labels.map((label) => {
       const structure = renderStructure();
       structure.edges = [{ ...structure.edges[0]!, label }];
-      const model = buildFullStructureRenderModel({
+      const model = buildStructureRenderModel({
         structure,
         positions: initialStructureLayout(structure),
         sourceChangeKinds: new Map(),
+        selection: {
+          nodeIds: new Set(structure.nodes.map(({ id }) => id)),
+          edgeIds: new Set(structure.edges.map(({ id }) => id)),
+          labelEdgeIds: new Set(structure.edges.map(({ id }) => id)),
+        },
+        labelAccessory: "none",
+        edgeLabelMode: "viewer-clamped",
       });
       return model.labels[0]!;
     });
@@ -186,6 +195,31 @@ describe("Structure shared render model", () => {
     expect(structures[2]!.displayLines).toHaveLength(2);
     expect(structures[2]!.displayLines[1]).toMatch(/…$/u);
     expect(structures[2]!.height).toBe(EDGE_LABEL_LINE_HEIGHT * 2 + 10);
+  });
+
+  it("uses complete wrapped Edge labels and matching bounds for export", () => {
+    const structure = renderStructure();
+    structure.edges = [
+      {
+        ...structure.edges[0]!,
+        label: `explains ${"a very long conditional relation ".repeat(12)}finished`,
+      },
+    ];
+    const model = buildFullStructureRenderModel({
+      structure,
+      positions: initialStructureLayout(structure),
+      sourceChangeKinds: new Map(),
+    });
+    const placement = model.labels[0]!;
+    const box = labelBox(placement.x, placement.y, placement.boxWidth, placement.height, 4);
+
+    expect(placement.displayLines.length).toBeGreaterThan(2);
+    expect(placement.displayLines.join(" ")).not.toContain("…");
+    expect(placement.height).toBe(placement.displayLines.length * EDGE_LABEL_LINE_HEIGHT + 10);
+    expect(model.bounds!.left).toBeLessThanOrEqual(box.left);
+    expect(model.bounds!.top).toBeLessThanOrEqual(box.top);
+    expect(model.bounds!.right).toBeGreaterThanOrEqual(box.right);
+    expect(model.bounds!.bottom).toBeGreaterThanOrEqual(box.bottom);
   });
 
   it("re-wraps a crowded label within two lines before using a collision fallback", () => {
@@ -245,6 +279,7 @@ describe("Structure shared render model", () => {
         labelEdgeIds: new Set(structure.edges.map(({ id }) => id)),
       },
       labelAccessory: "source-actions",
+      edgeLabelMode: "viewer-clamped",
     });
     const [composition, controller] = model.labels;
 
@@ -306,6 +341,7 @@ describe("Structure shared render model", () => {
     expect(model.nodes).toHaveLength(50);
     expect(model.edges).toHaveLength(200);
     expect(model.labels).toHaveLength(200);
+    expect(model.labels.some(({ crowded }) => crowded)).toBe(true);
     expect([
       ...model.nodes.flatMap(({ point }) => [point.x, point.y]),
       ...model.labels.flatMap(({ x, y }) => [x, y]),

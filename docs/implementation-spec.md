@@ -772,7 +772,8 @@ change presentationを使ってstandalone SVGまたは2倍基準のPNGを生成�
 viewport、Node内scroll位置を無視し、全Node、全Edge、全Edge labelを含む。boundsはNode、Bézier Edge、self-loop、
 arrow marker、全Edge labelを含めて自動trimし、toolbar、minimap、canvas status、source action、grid背景は含めない。
 Nodeは画面と同じ固定寸法とnotationを維持し、source identity、title、descriptionを先頭から描画して収まらない
-Node textだけをellipsisにする。Edge labelは省略せず必要な高さへ広げ、高密度で衝突を避け切れない場合も削除せず
+Node textだけをellipsisにする。対話ViewerのEdge labelは実表示と衝突boxを同じ最大2行へ揃える一方、exportでは
+同じ配置処理を全文wrap modeで使い、Edge labelを省略せず必要な高さへ広げる。高密度で衝突を避け切れない場合も削除せず
 crowded表示を保つ。SVGは`foreignObject`、外部asset、外部stylesheet、raw markupを使わず、producer由来文字列を
 XML text / attributeとしてescapeする。directed Edgeのarrowheadはchange presentationごとのresolved colorを持つ
 明示markerを参照し、context依存paintを要求しない。origin cueはnotation固有のshape境界内へ収める。

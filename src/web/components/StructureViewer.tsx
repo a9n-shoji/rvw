@@ -510,6 +510,7 @@ export function StructureViewer({
           labelEdgeIds,
         },
         labelAccessory: "source-actions",
+        edgeLabelMode: "viewer-clamped",
       }),
     [labelEdgeIds, positions, sourceChangeKinds, structure, visible.edgeIds, visible.nodeIds],
   );
