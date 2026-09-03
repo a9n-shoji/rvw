@@ -5,6 +5,28 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-03
+
+### Added
+
+- Structure contentを保存せずcanonical projection、layout diagnostics、authoring warningsを確認できる
+  `rvw structure preview --stdin --json`と`structure.preview` protocol capability
+- Structure publish / update成功時に、保存済みgraphから導出したlayout authoring warningを返すfeedback loop
+
+### Changed
+
+- Structureのinitial projectionをpair-level topologyとSCC layeringを共有する実装へ整理し、terminal / hub originの
+  predecessorをnegative rankへ展開。入力順やpresentation contentに依存しないdeterministicなrefinement、diagnostics、
+  initial viewportを導入
+- Structure Skillにpublish / update前のcanonical preview、factual entrypointとしてのorigin選択、短いEdge predicate、
+  overlapping / nested Node anchorの再検討手順を追加
+- ViewerのEdge labelをgeometryと一致する最大2行へ制限し、SVG / PNG exportでは全文を省略せずwrapして保持
+
+### Fixed
+
+- terminal originへ入る多数のpredecessorがoriginと同じ左端columnへ潰れ、non-forward relationと縦積みが増える問題
+- Viewer向けEdge labelのellipsisがSVG / PNG exportにも流用され、standalone artifactからrelation全文が失われる回帰
+
 ## [0.4.3] - 2026-09-02
 
 ### Fixed
