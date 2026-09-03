@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page, type Request } from "@playwright/test";
+import { createStressCommentInputs } from "../fixtures/stress/stress-fixture.js";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const sourceOid = "b".repeat(40);
@@ -11,20 +12,16 @@ async function createRepositoryComments(
   count: number,
 ): Promise<string[]> {
   const ids: string[] = [];
-  for (let index = 0; index < count; index += 1) {
+  const inputs = createStressCommentInputs(count, {
+    pullRequestId,
+    sourceOid,
+    path: "src/removed.ts",
+  });
+  for (const input of inputs) {
     const response = await request.post("/api/comments", {
       data: {
         pullRequestId,
-        target: {
-          kind: "document",
-          documentKind: "repository-file",
-          sourceOid,
-          path: "src/removed.ts",
-          startLine: 1,
-          endLine: 1,
-        },
-        body: `Performance fixture ${index + 1}`,
-        authorLabel: "Performance fixture",
+        ...input,
       },
     });
     expect(response.ok()).toBe(true);

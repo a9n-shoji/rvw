@@ -7,10 +7,10 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 process.env.RVW_E2E_PORT = String(port);
-process.env.RVW_FIXTURE_SCENARIO = "realistic";
+process.env.RVW_FIXTURE_SCENARIO = "dogfood";
 
 await import("../test/e2e/fixture-server.mjs");
 
 const url = `http://${host}:${port}/?pullRequestId=22222222-2222-4222-8222-222222222222`;
-process.stderr.write(`rvw deterministic realistic demo: ${url}\n`);
+process.stderr.write(`rvw dogfood demo (current checkout history): ${url}\n`);
 if (!process.argv.includes("--no-open")) await open(url);

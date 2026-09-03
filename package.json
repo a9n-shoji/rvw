@@ -43,6 +43,7 @@
   "scripts": {
     "dev": "tsx src/cli/main.ts open --no-open",
     "demo": "node scripts/build.mjs && tsx scripts/demo.mjs",
+    "demo:dogfood": "node scripts/build.mjs && tsx scripts/dogfood.mjs",
     "check": "tsc --noEmit && eslint . && prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",

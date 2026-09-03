@@ -27,7 +27,8 @@ interface RepositoryDocumentSnapshot {
   oid: string | null;
 }
 
-export interface RepositoryDemoFixture {
+export interface DogfoodFixture {
+  scenario: "dogfood";
   pullRequestId: string;
   baseOid: string;
   headOid: string;
@@ -35,9 +36,12 @@ export interface RepositoryDemoFixture {
   pullRequest: PullRequest;
   comments: ReviewComment[];
   walkthroughs: Walkthrough[];
+  structures: [];
   repositoryEntriesAt(oid: string): TreeEntry[];
   repositoryDocumentAt(oid: string, filePath: string): RepositoryDocumentSnapshot;
   changedFiles(oldOid: string, newOid: string): ChangedFile[];
+  resolvePathAt(sourceOid: string, sourcePath: string, targetOid: string): string | null;
+  cleanup(): void;
 }
 
 function gitText(repositoryRoot: string, args: string[]): string {
@@ -88,7 +92,8 @@ function selectCommitOids(repositoryRoot: string, commitCount: number): string[]
     if (commitOids.length === commitCount + 1) {
       const baseOid = commitOids[commitCount];
       const headOid = commitOids[0];
-      if (!baseOid || !headOid) throw new Error(`demo fixture range is incomplete at ${candidate}`);
+      if (!baseOid || !headOid)
+        throw new Error(`dogfood fixture range is incomplete at ${candidate}`);
       const changedFileCount = gitText(repositoryRoot, [
         "diff",
         "--name-only",
@@ -117,7 +122,7 @@ function selectCommitOids(repositoryRoot: string, commitCount: number): string[]
   const topLevel = gitText(repositoryRoot, ["rev-parse", "--show-toplevel"]).trim();
   const shallow = gitText(repositoryRoot, ["rev-parse", "--is-shallow-repository"]).trim();
   throw new Error(
-    `demo fixture requires ${commitCount} first-parent commits plus a comparison base from HEAD or a local ref; ` +
+    `dogfood fixture requires ${commitCount} first-parent commits plus a comparison base from HEAD or a local ref; ` +
       `repository=${topLevel}, shallow=${shallow}, attempts=${attempts.join(", ") || "none"}; ` +
       "fetch more Git history and retry",
   );
@@ -133,7 +138,7 @@ function parseCommit(repositoryRoot: string, oid: string): CommitSummary {
     .trimEnd()
     .split("\0");
   if (!commitOid || parents === undefined || !subject || !authorName || !authoredAt) {
-    throw new Error(`demo fixture could not parse commit ${oid}`);
+    throw new Error(`dogfood fixture could not parse commit ${oid}`);
   }
   return {
     oid: commitOid,
@@ -150,10 +155,10 @@ function parseTree(repositoryRoot: string, oid: string): TreeEntry[] {
     .filter(Boolean)
     .map((record) => {
       const match = /^(\d{6}) (blob|commit) ([0-9a-f]+) +(-|\d+)\t([\s\S]+)$/.exec(record);
-      if (!match) throw new Error(`demo fixture could not parse tree entry at ${oid}`);
+      if (!match) throw new Error(`dogfood fixture could not parse tree entry at ${oid}`);
       const [, mode, type, objectOid, sizeText, filePath] = match;
       if (!mode || !type || !objectOid || !sizeText || !filePath) {
-        throw new Error(`demo fixture tree entry is incomplete at ${oid}`);
+        throw new Error(`dogfood fixture tree entry is incomplete at ${oid}`);
       }
       const kind: TreeEntryKind =
         type === "commit" ? "submodule" : mode === "120000" ? "symlink" : "file";
@@ -186,7 +191,7 @@ function parseChangedFiles(repositoryRoot: string, oldOid: string, newOid: strin
     if (code === "R" || code === "C") {
       const oldPath = fields[index++];
       const newPath = fields[index++];
-      if (!oldPath || !newPath) throw new Error(`demo fixture rename is incomplete: ${status}`);
+      if (!oldPath || !newPath) throw new Error(`dogfood fixture rename is incomplete: ${status}`);
       files.push({
         kind: code === "R" ? "renamed" : "added",
         status,
@@ -197,7 +202,7 @@ function parseChangedFiles(repositoryRoot: string, oldOid: string, newOid: strin
       continue;
     }
     const filePath = fields[index++];
-    if (!filePath) throw new Error(`demo fixture change is incomplete: ${status}`);
+    if (!filePath) throw new Error(`dogfood fixture change is incomplete: ${status}`);
     const kind =
       code === "A"
         ? "added"
@@ -232,7 +237,8 @@ function lineReference(
 ): CodeReference {
   const text = readText(filePath);
   const offset = text.indexOf(needle);
-  if (offset < 0) throw new Error(`demo reference ${id} could not find ${needle} in ${filePath}`);
+  if (offset < 0)
+    throw new Error(`dogfood reference ${id} could not find ${needle} in ${filePath}`);
   const startLine = text.slice(0, offset).split("\n").length;
   return {
     id,
@@ -489,10 +495,10 @@ function createComments(
   };
 
   const walkthrough = walkthroughs[0];
-  if (!walkthrough) throw new Error("demo walkthrough is missing");
+  if (!walkthrough) throw new Error("dogfood walkthrough is missing");
   const walkthroughLines = walkthrough.body.split("\n");
   const quotedLine = walkthroughLines[2];
-  if (!quotedLine) throw new Error("demo walkthrough comment target is missing");
+  if (!quotedLine) throw new Error("dogfood walkthrough comment target is missing");
 
   return [
     thread(
@@ -555,14 +561,14 @@ function createComments(
   ];
 }
 
-export function createRepositoryDemoFixture(
+export function createDogfoodFixture(
   repositoryRoot: string,
   options: { commitCount?: number } = {},
-): RepositoryDemoFixture {
+): DogfoodFixture {
   const resolvedRoot = path.resolve(repositoryRoot);
   const commitCount = options.commitCount ?? 6;
   if (!Number.isInteger(commitCount) || commitCount < 2 || commitCount > 12) {
-    throw new Error("demo fixture commit count must be an integer from 2 to 12");
+    throw new Error("dogfood fixture commit count must be an integer from 2 to 12");
   }
   const commitOids = selectCommitOids(resolvedRoot, commitCount);
   const commits = commitOids.map((oid) => parseCommit(resolvedRoot, oid));
@@ -570,7 +576,7 @@ export function createRepositoryDemoFixture(
   const latestCommit = commits.at(-1);
   const baseOid = firstCommit?.parentOids[0];
   if (!firstCommit || !latestCommit || !baseOid) {
-    throw new Error("demo fixture requires a first-parent comparison base");
+    throw new Error("dogfood fixture requires a first-parent comparison base");
   }
   const treeCache = new Map<string, TreeEntry[]>();
   const documentCache = new Map<string, RepositoryDocumentSnapshot>();
@@ -642,7 +648,7 @@ export function createRepositoryDemoFixture(
   const readHeadText = (filePath: string): string => {
     const document = repositoryDocumentAt(latestCommit.oid, filePath);
     if (document.availability !== "available" || document.text === null) {
-      throw new Error(`demo fixture requires a readable ${filePath}`);
+      throw new Error(`dogfood fixture requires a readable ${filePath}`);
     }
     return document.text;
   };
@@ -674,6 +680,7 @@ export function createRepositoryDemoFixture(
     "> Demo metadata is synthetic; every repository document and commit shown comes from committed Git objects in this checkout.",
   ].join("\n");
   return {
+    scenario: "dogfood",
     pullRequestId,
     baseOid,
     headOid: latestCommit.oid,
@@ -707,8 +714,19 @@ export function createRepositoryDemoFixture(
     },
     comments,
     walkthroughs,
+    structures: [],
     repositoryEntriesAt,
     repositoryDocumentAt,
     changedFiles,
+    resolvePathAt(sourceOid, sourcePath, targetOid) {
+      if (repositoryEntriesAt(targetOid).some((entry) => entry.path === sourcePath)) {
+        return sourcePath;
+      }
+      const change = changedFiles(sourceOid, targetOid).find(
+        (candidate) => candidate.oldPath === sourcePath,
+      );
+      return change?.kind === "renamed" ? change.newPath : null;
+    },
+    cleanup() {},
   };
 }
