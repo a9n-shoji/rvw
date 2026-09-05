@@ -58,11 +58,28 @@ const doctorSchema = z.object({
   git: z.object({ repository: z.unknown().nullable() }),
   github: z.object({ version: z.string(), authenticated: z.boolean() }),
 });
-const skillInstallSchema = z.object({
+const skillStatusResponseSchema = z.object({
+  ok: z.literal(true),
   skills: z.array(
     z.object({
+      platform: z.enum(["codex", "claude"]),
       name: z.string(),
+      path: z.string(),
+      installed: z.boolean(),
       matchesBundled: z.boolean(),
+      managed: z.boolean(),
+      locallyModified: z.boolean(),
+      updateAvailable: z.boolean().nullable(),
+      updateRequired: z.boolean(),
+      state: z.enum([
+        "not-installed",
+        "current",
+        "update-available",
+        "locally-modified",
+        "unmanaged-difference",
+        "inspection-error",
+      ]),
+      inspectionError: z.string().nullable(),
     }),
   ),
 });
@@ -449,7 +466,7 @@ try {
       cwd: workingDirectory,
       ...(process.platform === "win32" ? { shell: true } : {}),
     }),
-    skillInstallSchema,
+    skillStatusResponseSchema,
     "rvw skill install",
   );
   assert.deepEqual(
@@ -462,7 +479,7 @@ try {
       cwd: workingDirectory,
       ...(process.platform === "win32" ? { shell: true } : {}),
     }),
-    skillInstallSchema,
+    skillStatusResponseSchema,
     "rvw skill install claude",
   );
   assert.deepEqual(
@@ -470,6 +487,37 @@ try {
     installedSkills.skills.map((skill) => skill.name),
   );
   assert.ok(installedClaudeSkills.skills.every((skill) => skill.matchesBundled));
+  const codexSkillStatus = parseJson(
+    run(bin, ["skill", "status", "codex", "--target", skillRoot, "--json"], {
+      cwd: workingDirectory,
+      ...(process.platform === "win32" ? { shell: true } : {}),
+    }),
+    skillStatusResponseSchema,
+    "rvw skill status codex",
+  );
+  const claudeSkillStatus = parseJson(
+    run(bin, ["skill", "status", "claude", "--target", claudeSkillRoot, "--json"], {
+      cwd: workingDirectory,
+      ...(process.platform === "win32" ? { shell: true } : {}),
+    }),
+    skillStatusResponseSchema,
+    "rvw skill status claude",
+  );
+  assert.deepEqual(codexSkillStatus, installedSkills);
+  assert.deepEqual(claudeSkillStatus, installedClaudeSkills);
+  assert.ok(
+    [...codexSkillStatus.skills, ...claudeSkillStatus.skills].every(
+      (skill) =>
+        skill.installed &&
+        skill.matchesBundled &&
+        skill.managed &&
+        !skill.locallyModified &&
+        skill.updateAvailable === false &&
+        !skill.updateRequired &&
+        skill.state === "current" &&
+        skill.inspectionError === null,
+    ),
+  );
   for (const skill of installedSkills.skills) {
     assert.equal(
       readFileSync(path.join(skillRoot, skill.name, "SKILL.md"), "utf8"),

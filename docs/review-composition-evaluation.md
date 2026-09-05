@@ -11,10 +11,11 @@ URI can be issued. No fake URI or persistent review object was created.
 
 ## Evaluated instruction revision
 
-Every case used the same unmodified instruction content in a fresh Agent context:
+Every composition case used the same current, unmodified instruction content in a fresh Agent
+context:
 
 - `skills/rvw-review-compose/SKILL.md` Git blob
-  `72774e2b1edcae5f7488a93069fd9202ccb374e9`
+  `bbeb447491ab6b171de95ed926a110d50f7a4b5c`
 - `skills/rvw-review-compose/references/review-composition.md` Git blob
   `cf022b7a03c1ff4917083eb11d466d88e73f1ed2`
 
@@ -78,34 +79,81 @@ Input:
 - Explicit subject: bundled Skill distribution from the CLI entrypoint through package-root discovery,
   managed install and digest status, and package contents
 
-Observed composition: one Structure, “Bundled Skill distribution authority”; no Walkthrough. Its
-central question was how the shipped CLI keeps the package as the authoritative bundled source while
-installing into host-specific roots and classifying installed copies.
+Observed composition: one Walkthrough, “How the installed rvw CLI finds and manages its bundled
+Skills”; no Structure. Its central question was how an installed `skill install` or `skill status`
+invocation reaches package-relative assets, distinguishes bundle updates from local modifications,
+and installs the packaged content.
+
+The target commit's own diff concerns Mermaid review UI rather than Skill distribution. Because the
+user supplied a standalone explicit subject at that coordinate, the evaluator described the behavior
+present in that committed tree and did not invent a claim that the commit introduced it.
 
 Ephemeral brief summary:
 
-- Authoring scope includes the `package.json` bin/files boundary, build-produced CLI, module-relative
-  source discovery, shared Skill inventory, host-specific destination roots, the bundled/installed/
-  recorded digest distinction, force protection, staged replacement, and package-smoke evidence.
+- Authoring scope follows the `package.json` bin/files boundary, build-produced CLI, command dispatch,
+  module-relative source discovery, destination-root selection, the bundled/installed/recorded digest
+  distinction, force protection, staged replacement, and package-smoke evidence in causal order.
 - It excludes individual Skill workflows, Viewer/database behavior, release publication, literal
-  tarball inventory, and local status branches that remain clearer in code.
-- `src/cli/main.ts:1396-1398` is only an `originCandidate`; the producer must verify it.
+  tarball inventory, the unrelated Mermaid change, and local status branches that remain clearer in
+  code.
+- `package.json:27-38` and `src/cli/main.ts:1396-1399` are candidate starting anchors, not assumed
+  facts; the producer must verify them.
 - Candidate claims to verify include that discovery is relative to the executing package rather than
-  cwd, platform adapters change destination rather than content, managed status compares three digest
-  authorities, and packed global install works from an unrelated cwd.
+  cwd, platform adapters change destination rather than source content, status compares three digest
+  authorities, an unforced install rejects conflicts before writes, replacement has staged rollback,
+  and packed global install works from an unrelated cwd.
 
 Direct-code reading retained the status truth table and digest encoding in
 `src/infrastructure/skills/skill-installer.ts`, the exact packaging mechanics in `package.json` and
 `scripts/build.mjs`, and the literal package/install assertions in `scripts/package-smoke.mjs` and
 `test/unit/skill-installer.test.ts`.
 
-Whole-composition assessment: the main difficulty is cross-file ownership and dependency, so a
-Structure reduces joins. A Walkthrough would repeat the package-to-installer chain, while branch-heavy
-status and rollback details are faster to inspect directly. The evaluator explicitly distinguished
-package root, destination Skill root, bundled digest, installed digest, and recorded digest.
+Whole-composition assessment: the explicit subject starts at an installed CLI invocation and depends
+on the order from package boundary through discovery, classification, replacement, and packed
+verification. A Structure would repeat those same relations without lowering comprehension cost,
+while static inventory, branch-heavy status logic, and rollback detail remain faster to inspect
+directly. The evaluator explicitly distinguished package root, destination Skill root, bundled digest,
+installed digest, and recorded digest.
 
-Verdict: **Pass.** One relationship surface is sufficient; it is not paired mechanically with an
-ordered document.
+Verdict: **Pass.** One ordered surface is sufficient and is not paired mechanically with a Structure.
+This result differs from the earlier-revision evaluation and is retained rather than relabeled to
+preserve the previous expected surface.
+
+## Supplemental case: bundled Skill authority graph
+
+A separate fresh run inspected committed HEAD
+`01841f836706b19805a4fbd5e338522ea62ee4e5` for the relationship-only question: which declarations
+own the five-Skill distribution contract and which packaging, installation, status, Codex, Claude,
+custom-root, and test boundaries consume or independently restate that authority.
+
+Observed composition: one Structure, “Bundled Skill authority and distribution boundary”; no
+Walkthrough. The Structure distinguishes the normative specification, executable runtime inventory,
+canonical package-relative content tree, platform-specific destination roots, three-digest status
+model, packaging gate, and independent test oracles. Installation has ordered implementation details,
+but ordering is not necessary to answer this authority question and would duplicate the relationship
+surface.
+
+Its ephemeral brief includes the current specification, `SkillName` / `skillNames`, package-relative
+source resolution, default and custom target selection, recursive content digest and install marker,
+status and doctor exposure, installer and Skill-contract tests, protocol-version paths, npm package
+inclusion, and package smoke. It excludes individual Skill workflows, Viewer or database behavior,
+host runtime invocation mechanics, release publication, and staging details that do not change the
+authority graph. `src/infrastructure/skills/skill-installer.ts:24-30` is only an origin candidate.
+
+Direct-code reading retains the exact digest and status truth tables, target parsing, force and swap
+branches, narrow test assertions, and package-smoke commands. This inspection also found that the
+specification required packaged `skill status --json` checks for both custom roots while package smoke
+only examined statuses returned by `skill install`. The follow-up change now invokes both packaged
+status commands and validates their full status fields against the install results.
+
+Whole-composition assessment: splitting inventory, roots, digest ownership, and verification into
+separate Artifacts would hide their common authority boundary. One Structure exposes the important
+joins without turning branch details into nodes. It also keeps `current` distinct from `managed` and
+does not treat repeated test lists as canonical runtime authority.
+
+Verdict: **Pass.** The current composer independently selected a Structure-only composition for a
+relationship-shaped question, complementing the ordered single-surface result in Case 2 without
+turning either outcome into a template.
 
 ## Case 3: stale watcher work and fenced side effects
 
@@ -160,6 +208,13 @@ election from delegation or forcing a Structure would hide the timing invariant 
 hold two surfaces together. The result demonstrates that the scenario labels used to choose evaluation
 subjects do not override the composer's representation judgment.
 
+The current evaluator also refused to force two broad lifecycle claims. In the target tree, Agent
+socket ownership is released before HTTP and SQLite finish closing, and `viewer.open` returns a URL
+without reserving a Viewer lifecycle lease before the new tab's first heartbeat. Those source-supported
+limits remain direct-code review points rather than being rewritten into the candidate Walkthrough as
+stronger authority guarantees. The composition passes even though those candidate implementation
+claims do not.
+
 ## Adversarial brief: contradicted upstream claim
 
 A fresh Structure-producer run received an authoritative subject and scope for cross-platform bundled
@@ -167,12 +222,20 @@ Skill distribution at `b31dfe399f71464b2ff338acaca58fc92118bedb`, plus this cand
 `mustEstablish` claim: “The installer intentionally renders different `SKILL.md` content for Codex and
 Claude.” It also received `SkillInstaller.install` as a suggested origin.
 
+The run used the current producer content:
+
+- `skills/rvw-structure/SKILL.md` Git blob
+  `51a107a8e451c3a3f23762e1f24bef62bf87a61d`
+- `skills/rvw-structure/references/structure-authoring.md` Git blob
+  `97c6608da874994b8cf5d15bc4a177918dec4d01`
+
 The producer preserved the review question and scope, independently verified the origin, and rejected
 the factual candidate. The shared Skill inventory and package-root source feed both platforms;
 platform selection changes only the destination root, and installer/package tests compare identical
 names and content. Because the source-supported answer still fits the same central question and scope,
 the producer could continue with the opposite claim rather than broadening or aborting the subject. It
-did not preview or publish the contradicted assertion.
+treated `SkillInstaller.install` as an entrypoint rather than semantic proof and did not preview or
+publish the contradicted assertion.
 
 Verdict: **Pass.** Brief authority bounded the investigation but did not become evidence for the
 answer, and an exact plausible origin did not create a confirmation loop.
@@ -181,6 +244,8 @@ answer, and an exact plausible origin did not create a confirmation loop.
 
 - The three primary cases produced zero, one, and two Artifacts without any fixed slot or mandatory
   pair.
+- The supplemental authority case produced Structure only, while Case 2 selected Walkthrough only for
+  a differently shaped question over related implementation.
 - Direct code reading remained a first-class decision in every case, not a residual catch-all.
 - Each proposed Artifact had one central question and named exclusions; the complex case kept its
   critical cross-surface join explicit.
@@ -195,6 +260,51 @@ These outcomes support the current composition contract but are not a permanent 
 different composition may pass when it gives stronger source-grounded reasons and satisfies the same
 rubric.
 
+## Installed-host acceptance
+
+An isolated acceptance run on 2026-09-05 packed commit
+`01841f836706b19805a4fbd5e338522ea62ee4e5` and installed that tarball into a temporary global prefix.
+The tarball contained 494 files and had npm shasum
+`1feb0a932fb29b471ed1567ccbd224593069f75b`. The packaged CLI then installed the same five managed
+Skills into project-local Codex and Claude Code targets. Both installer results classified every copy
+as `current`, `matchesBundled`, and managed, with no local modification or available update. A
+separate temporary rvw database held PR #76 and all Artifact writes; tracked repository source was not
+modified.
+
+### Codex
+
+A fresh ephemeral Codex CLI 0.147.0 session explicitly activated `rvw-review-compose`. It loaded the
+installed composer and composition reference, inspected the committed PR, and chose one Walkthrough
+for the bounded claim-verification handoff because the subject depends on the order from brief through
+independent producer verification to correction or recomposition. It rejected a companion Structure
+as duplicate representation.
+
+Before publication, the session loaded the complete installed `rvw-walkthrough` Skill and authoring
+reference. Producer verification refined the candidate claim: an unsupported or contradicted answer
+can be corrected inside the same question and scope; only an essential conflict that would change the
+question or cross an exclusion returns to composition. The producer published
+`rvw://walkthrough/81042ad0-7734-46a1-9203-10793649fd8e` against the exact acceptance commit. A
+packaged-CLI `walkthrough get` read it back with the expected source OID, five references, five Mermaid
+bindings, and the refined boundary. `structure list` remained empty. The URI belongs to the temporary
+acceptance database and is evidence from this run, not a durable fixture or golden output.
+
+Verdict: **Pass** for installed composer discovery, native producer activation, minimum-surface
+selection, producer-side claim verification, publication, and post-publication readback on Codex.
+
+### Claude Code
+
+A fresh Claude Code 2.1.92 initialization discovered the project-local installed
+`rvw-review-compose`, `rvw-walkthrough`, and `rvw-structure` entries in both its Skill inventory and
+slash-command inventory. The subsequent model request returned `401 authentication_failed`, including
+for a minimal control prompt, even though the CLI reported an existing `claude.ai` login. The run was
+stopped without producer invocation or Artifact publication; the isolated database still contained no
+Structure.
+
+Verdict: **Blocked by host authentication** after packaged installation and native discovery. This run
+does not establish Claude Code Skill-tool activation, producer handoff, publication, or readback, and
+must not be reported as a cross-host execution pass. Repeat the bounded Structure case in a freshly
+authenticated Claude Code environment before claiming that coverage.
+
 ## Remaining limitations
 
 This is a small, non-statistical sample from one repository and one evaluation date. Agent decisions
@@ -203,7 +313,8 @@ are not encoded as regex tests. Contract tests cover durable responsibility and 
 future material authoring changes should rerun these fresh-context cases and record any failure,
 contract adjustment, and complete rerun.
 
-Most importantly, these planning runs do not establish cross-host producer activation or publication.
-That requires separate black-box acceptance in fresh Codex and Claude Code sessions with the installed
-bundle, a real CLI transport, producer activation before mutation, and post-publication `get`
-verification.
+The installed-host run establishes the full chain on Codex and packaged Skill discovery on Claude
+Code, but not the full Claude Code execution chain because of the recorded authentication failure.
+Cross-host producer activation and publication therefore remain partially verified rather than
+complete. A complete claim requires the blocked Claude Code case to reach Skill-tool producer
+activation before mutation and post-publication `get` verification.
