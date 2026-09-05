@@ -123,6 +123,13 @@ keeps an external Agent task subscribed to newly created posts and fails closed 
 producer Skills honor a session-local upstream brief while retaining their own representation rejection
 and exact-source contracts; they do not independently expand back into PR-wide composition.
 
+The upstream brief is split by meaning rather than persisted shape. Subject, review question, purpose or
+behavior boundary, scope, inclusions, exclusions, and emphasis bound the producer's investigation;
+`mustEstablish`, suggested origins, relationships, invariants, and other implementation assertions remain
+claims the producer verifies independently against committed source. The composer activates producers by
+canonical name through each host's native Skill mechanism; host-specific user invocation sigils are not
+part of the rvw protocol.
+
 Review composition is an authoring strategy outside the domain model. Its candidate understanding units,
 Artifact briefs, recommended entry, and URI summary are not persisted as a Review Set, Artifact kind,
 group, or review plan. The composer uses the existing protocol-v4 Walkthrough and Structure operations;

@@ -57,18 +57,35 @@ subject may need one Walkthrough, one Structure, or no Artifact. Artifact count 
 measure.
 
 Before invoking a producer, prepare an internal Artifact brief with a single subject and review
-question, explicit scope and exclusions, and the facts that the Artifact must establish. The brief is
-authoring context, not public JSON or rvw schema. Follow the detailed brief contract in the reference.
+question, explicit scope and exclusions, and the candidate claims that the Artifact must verify. Keep
+the brief's authoring bounds separate from its claims-to-verify; the composer's analysis does not turn
+an implementation claim into a fact. The brief is authoring context, not public JSON or rvw schema.
+Follow the detailed brief contract in the reference.
 
-For each selected Artifact, load and use the bundled sibling producer Skill:
+For each selected Artifact, activate the installed sibling by its canonical name through the current
+host's native Skill mechanism, then follow that producer's complete Skill and authoring reference:
 
-- `$rvw-walkthrough` for one Walkthrough brief.
-- `$rvw-structure` for one Structure brief.
+- `rvw-walkthrough` for one Walkthrough brief.
+- `rvw-structure` for one Structure brief.
 
-Pass the brief as authority. Do not reimplement their source, format, preview, identity, concurrency,
-publish, update, or delete contracts here, and do not invent a generic sub-Skill invocation framework.
-If a producer rejects the requested representation, return that decision to composition and choose a
-better surface or direct code reading; never make the producer broaden the subject to compensate.
+In Codex, activate the named entry from the available Skill inventory. In Claude Code, invoke the named
+Skill with the Skill tool. In both hosts, load the full producer instructions before any Artifact
+operation.
+
+Do not treat `$name`, `/name`, or another host's user-facing syntax as a cross-host invocation
+protocol. If the selected producer is unavailable or disabled in the current session, stop before any
+Artifact operation and report that installation or host-configuration problem; do not imitate the
+producer contract from this Skill.
+
+Pass the subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and
+emphasis as authoring authority: they control what the producer investigates, not what the code must
+say. Pass `mustEstablish`, a suggested origin, relationship, invariant, and every other implementation
+assertion as claims to verify independently in committed source and tests. Do not reimplement the
+producer's source, format, preview, identity, concurrency, publish, update, or delete contracts here,
+and do not invent a generic sub-Skill invocation framework. If a producer rejects the requested
+representation or reports that an essential claim is unsupported or contradicted, return that result
+to composition and revise the brief, choose a better surface, or direct the reviewer to code; never
+make the producer broaden the subject or force the claim to compensate.
 
 ## Existing Artifacts
 

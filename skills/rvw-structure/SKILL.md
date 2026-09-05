@@ -22,12 +22,17 @@ candidate boundaries to the requester or upstream composer so that they can choo
 
 This Skill produces, updates, or deletes at most one Structure for the requested behavior. When an
 Artifact brief from the user, caller, Pull Request body, or an upstream Skill supplies a subject, review
-question, behavior, scope, inclusions, exclusions, must-establish facts, emphasis, or factual-origin
-guidance, treat those bounds as authority and fill only their gaps with verified committed code and
-tests. The brief does not override source exactness or the representation rejection rules above.
-Inspect broader Pull Request context only as evidence. Do not decide the Pull Request's Artifact count
-or Walkthrough / Structure mix, guarantee coverage of other review subjects, or publish companion
-Artifacts.
+question, behavior boundary, scope, inclusions, exclusions, or emphasis, treat those choices as
+authoring authority over what this Structure investigates. Treat `mustEstablish`, suggested origins,
+relationships, invariants, and every other implementation assertion as claims to verify independently
+in committed source and tests, not as facts or conclusions to force. The brief does not override source
+exactness or the representation rejection rules above. Inspect broader Pull Request context only as
+evidence, and do not mistake a valid anchor for semantic proof. When source establishes a different
+answer inside the same question and scope, use that answer. When an essential claim or origin is
+unsupported or contradicted and resolving it would materially change the question or boundary, do not
+publish it; report the conflict to the requester or upstream composer. Do not decide the Pull Request's
+Artifact count or Walkthrough / Structure mix, guarantee coverage of other review subjects, or publish
+companion Artifacts.
 
 When invoked directly without an upstream brief, derive one bounded Structure from the user's explicit
 request and verified facts. Standalone Structure creation remains supported. Do not infer product

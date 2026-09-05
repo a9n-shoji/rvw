@@ -16,7 +16,10 @@
 - `rvw open`の新規runtimeを既定で`127.0.0.1:43117`へ固定し、起動をまたいでorigin-scopedな通知permissionと
   設定を維持。空きportの自動選択は明示的な`--port 0`へ変更
 - `rvw-walkthrough`と`rvw-structure`を一つのbounded Artifactを作るproducerとして明確化し、上位composerの
-  subject、review question、scope、inclusion / exclusionを優先しながら各representationの拒否境界を維持
+  subject、review question、scope、inclusion / exclusionを優先しながら、`mustEstablish`、suggested origin / relation /
+  invariantはcommit済みsourceで独立に検証し、各representationの拒否境界を維持
+- review composerからproducerをcanonical名と各hostのnative Skill mechanismでloadし、Codex / Claude Code固有の
+  user-facing invocation記法を共有runtime contractにしないfail-closedな委譲へ変更
 
 ### Fixed
 

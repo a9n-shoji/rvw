@@ -6,11 +6,22 @@ Use this guide when creating a Walkthrough or materially revising its explanatio
 
 Apply inputs in this order:
 
-1. Follow explicit directions from the user, caller, Pull Request body, or upstream Skill. When an
-   upstream Artifact brief supplies a subject, review question, purpose, scope, inclusions, exclusions,
-   must-establish facts, or emphasis, those bounds are authority for this Walkthrough.
-2. Fill gaps with facts verified in the diff, committed code, tests, documentation, and available Pull Request context.
-3. Use only necessary inference when facts do not establish intent. Mark the inference or uncertainty instead of presenting it as fact.
+1. Follow explicit directions from the user, caller, Pull Request body, or upstream Skill. A supplied
+   subject, review question, purpose, scope, inclusions, exclusions, and emphasis are authority over
+   what this Walkthrough investigates and how it is bounded.
+2. Treat `mustEstablish` and any suggested implementation fact, relationship, or invariant as a claim
+   to verify independently in the diff, committed code, tests, documentation, and source-controlled
+   contracts. Never treat the caller's conclusion as its own evidence.
+3. Use only necessary inference when facts do not establish intent. Mark the inference or uncertainty
+   instead of presenting it as fact.
+
+Authority over the authoring question is not proof of its answer. A factual assumption embedded in an
+authoritative field still needs source verification, and an exact source range does not establish the
+semantic claim by itself. Explicit off-repository intent may control the requested purpose when it is
+attributed as external context, but it does not establish current code behavior. When committed source
+supports a different answer without changing the central question or scope, use the supported answer.
+When an essential claim is unsupported or contradicted and resolution would change the question or
+cross an exclusion, do not publish it; return the conflict to the requester or upstream composer.
 
 Honor partial directions for the parts they cover and use this guide for the rest. Add minimal context when an instruction would otherwise leave the Walkthrough unintelligible, but do not substitute a different goal.
 
@@ -164,7 +175,8 @@ Use this checklist internally; do not reproduce it mechanically in the Walkthrou
 
 - [ ] Explicit instructions take priority, and defaults fill only their gaps.
 - [ ] The Walkthrough answers one bounded review question and does not assume PR-wide coverage.
-- [ ] Supplied inclusions, exclusions, must-establish facts, and emphasis were preserved.
+- [ ] Supplied inclusions, exclusions, and emphasis were preserved; `mustEstablish` claims were verified
+      rather than assumed or forced.
 - [ ] Adjacent subjects were reported to the caller rather than turned into companion Artifacts.
 - [ ] The subject is genuinely clearer as an ordered path; otherwise no Walkthrough was published.
 - [ ] The requested subject or change center can be stated briefly without unsupported intent.

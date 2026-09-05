@@ -739,6 +739,15 @@ Agent output. It adds no Review Set, persistent group, Artifact kind, URI, datab
 UI, protocol capability, or generic runtime sub-Skill invocation framework. Protocol version 4 and the
 capability list below remain unchanged.
 
+The brief's subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and
+emphasis control what a producer investigates. `mustEstablish`, suggested origins, relationships,
+invariants, and other implementation assertions are candidates that the producer independently verifies
+against committed source and tests; authoring authority and valid source coordinates do not prove a
+semantic claim. An essential unsupported or contradicted claim returns to composition rather than being
+forced into an Artifact. The composer activates each installed producer by canonical name through the
+current host's native Skill mechanism and fails before Artifact operations when that producer is
+unavailable or disabled. User-facing `$name` and `/name` spellings are not a shared invocation protocol.
+
 When an existing Artifact URI is supplied, the composer uses the matching producer's current-value read
 and same-subject update contract instead of publishing an unconditional revised copy. Existing
 `structure.list` may inspect Structure summaries or recover an uncertain publication, but there is no
@@ -764,14 +773,16 @@ an explicit forced install.
 `rvw-walkthrough` constrains commit identity, code references, diagram bindings, CLI validation,
 passive publication and update, and explicit destructive authorization for one bounded Walkthrough. It
 treats the explanation as one ordered orientation path, follows an upstream brief's subject, review
-question, scope, inclusions, exclusions, and emphasis as authority, and uses a flexible default guide
-only for unspecified choices. It does not own PR-wide coverage, Artifact count, or the type mix, but it
+question, purpose, scope, inclusions, exclusions, and emphasis as authoring authority, while independently
+verifying `mustEstablish` and all implementation assertions. It uses a flexible default guide only for
+unspecified choices. It does not own PR-wide coverage, Artifact count, or the type mix, but it
 retains the local rejection boundary when the requested subject has no useful ordered path. It
 deliberately avoids a fixed template, an exhaustive review boundary, and AI-review conclusions.
 
 `rvw-structure` produces one PR-relevant behavior space with a factual code entrypoint, gives an
-upstream brief's subject, review question, behavior, scope, inclusions, exclusions, and emphasis
-priority, inspects committed code, and publishes stable-ID Node and Edge claims at one exact commit. It
+upstream brief's subject, review question, behavior boundary, scope, inclusions, exclusions, and emphasis
+authoring priority, independently verifies every suggested origin, relation, invariant, and other
+implementation assertion in committed code, and publishes stable-ID Node and Edge claims at one exact commit. It
 does not choose PR-wide coverage, the type mix, or companion Artifacts, but it retains the local rejection
 boundaries for ordered paths, missing factual origins, and static inventories. It also rejects giant or
 inferred graphs, vague relationships, layout instructions, implicit same-URI subject changes, browser

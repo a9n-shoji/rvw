@@ -65,12 +65,17 @@ cost. It never requires a Walkthrough and Structure pair or a fixed overview/tem
 
 Candidate understanding units and Artifact briefs remain session-local authoring context. Before each
 selected Artifact, the composer supplies one subject, review question, scope with inclusions and
-exclusions, must-establish facts, and optional emphasis. `rvw-walkthrough` and `rvw-structure` each
-produce at most one bounded Artifact from that authority and do not expand back into PR-wide coverage or
-publish companion Artifacts. Each producer retains its representation rejection, source exactness,
-identity, passive-publication, update, and deletion contracts; Structure also retains canonical preview
-and optimistic concurrency. A rejection returns to composition for another surface or direct code
-reading.
+exclusions, candidate `mustEstablish` claims, and optional emphasis. Subject, review question, purpose or
+behavior boundary, scope, and emphasis are authority over what the producer investigates; they are not
+proof of an implementation answer. `mustEstablish`, suggested origin, relationship, invariant, and any
+other factual assertion are verification targets. Each producer independently verifies them from
+committed source and tests, because a valid anchor establishes location rather than the semantic truth of
+its attached prose, Node, or Edge. `rvw-walkthrough` and `rvw-structure` each produce at most one bounded
+Artifact and do not expand back into PR-wide coverage or publish companion Artifacts. Each producer
+retains its representation rejection, source exactness, identity, passive-publication, update, and
+deletion contracts; Structure also retains canonical preview and optimistic concurrency. A
+representation rejection or essential unsupported / contradicted claim returns to composition for a
+revised brief, another surface, or direct code reading.
 
 Re-evaluate the complete composition for detailed overlap, terminology drift, missing and cross-boundary
 risk, and over-fragmentation before finishing. Return the rationale, a non-mandatory recommended entry,
@@ -83,6 +88,12 @@ sub-Skill invocation framework. The composer uses the existing protocol-version-
 Artifact URI is explicitly supplied it reads the current value and prefers a same-subject update;
 existing `structure list` remains available, while the absence of a general Walkthrough list is reported
 honestly rather than bypassed through SQLite or a new discovery protocol.
+
+Activate each installed producer by canonical name through the current host's native Skill mechanism
+and load its full contract before any Artifact operation. Codex and Claude Code may expose different
+user-facing invocation syntax, so no `$name`, `/name`, or other sigil becomes a cross-host protocol. If
+the producer is unavailable or disabled in that session, fail closed instead of copying a partial
+producer workflow into the composer.
 
 ### Trade-offs
 

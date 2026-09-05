@@ -8,11 +8,23 @@ defaults only where explicit instructions are silent.
 Apply inputs in this order:
 
 1. Explicit directions from the user, caller, Pull Request body, or upstream Skill define the subject,
-   review question, behavior, scope, inclusions, exclusions, must-establish facts, emphasis, and any
-   factual-origin guidance.
-2. Verified committed code, tests, documentation, and Pull Request context fill gaps.
-3. Put hypotheses, uncertain connections, and relations that are not directly established by source or
-   explicit authority in the Agent's normal response, not in the Structure.
+   review question, behavior boundary, scope, inclusions, exclusions, and emphasis. These choices are
+   authority over what to investigate, not proof of what the code does.
+2. Treat `mustEstablish`, suggested origins, relationships, invariants, and every other factual
+   implementation assertion as claims to verify independently in committed code, tests,
+   and source-controlled contracts. Use Pull Request context for authoring direction or attributed
+   intent, not as proof of current code behavior. Never treat the caller's conclusion as its own
+   evidence.
+3. Put hypotheses, uncertain connections, and relations that are not directly established by source
+   in the Agent's normal response, not in the Structure.
+
+A factual assumption remains a claim to verify even when it appears inside an authoritative field.
+Exact anchor validity proves only that the source location exists, not that a Node or Edge description
+is semantically true. Explicit off-repository intent may control the requested subject when it is
+attributed as external context, but it does not establish current code behavior. When source supports a
+different answer without changing the central question or scope, use the supported answer. When an
+essential claim or origin is unsupported or contradicted and resolution would change the question or
+boundary, do not publish it; return the conflict to the requester or upstream composer.
 
 Do not substitute a broader architecture tour for a bounded subject. A useful subject states one
 PR-relevant behavior and the code entrypoint from which a reviewer can begin verifying it. A useful
@@ -41,9 +53,11 @@ can verify in committed code.
 
 - Keep one level of abstraction around the stated subject. Split a node when its label joins multiple
   independent responsibilities; merge nodes that only reproduce neighboring source lines.
-- Use concept nodes without anchors only when the concept is explicitly established by the authority
-  inputs or is needed to connect anchored code claims. Do not use unanchored concepts to invent
-  product semantics.
+- Use concept nodes without anchors only when their description is source-supported across several
+  sites but has no single exact range, or when a minimal label connects anchored code claims without
+  adding semantics beyond those source-supported claims. A request may make a concept relevant to
+  investigate, but does not make its implementation semantics true. Do not use unanchored concepts to
+  invent product semantics.
 - `description` states the claim and its role in this subject. It is not a review finding, approval,
   recommendation, or generated summary of the whole file.
 - Keep the `label` and `description` short enough that a reviewer can grasp the node's main claim at
@@ -92,8 +106,8 @@ Each edge is a producer claim about how two nodes relate in this subject.
   placement.
 - Add zero or more anchors that directly establish the relationship. Use multiple anchors when the
   relationship is intentionally established at several distinct code sites. An edge without anchors is
-  acceptable only when the relationship follows directly from its anchored endpoints or explicit
-  subject authority.
+  acceptable only when the code inside its source-supported anchored endpoints directly establishes
+  the relationship; subject authority alone cannot establish it.
 - Preserve the relative order of surviving anchors on the same Edge across an update. The viewer uses
   the stable Edge ID plus anchor index to keep an open source action attached to its claim; replace an
   anchor in place instead of reordering unchanged entries.
@@ -150,7 +164,8 @@ latest-head, or working-tree locations.
 Use this checklist internally; do not reproduce it as the Structure description.
 
 - [ ] The declared subject is bounded and is better represented as a space than an ordered path.
-- [ ] Explicit authority controls the requested scope; verified facts fill only its gaps.
+- [ ] Explicit authority controls the requested scope; every implementation claim, suggested origin,
+      relation, and invariant was independently verified rather than assumed or forced.
 - [ ] Each node is one useful, code-centered claim at a consistent granularity.
 - [ ] Each node's main claim is quickly understandable at normal zoom without relying on scrolling.
 - [ ] Concept-only nodes are necessary and do not invent semantics.

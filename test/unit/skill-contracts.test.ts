@@ -135,27 +135,79 @@ describe("rvw review composition contract", () => {
     expect(reviewComposeSkill).toMatch(/There is no general Walkthrough\s+discovery contract/);
     expect(reviewComposition).toContain('"Slice" may be used as private shorthand');
   });
+
+  it("delegates to canonical producer Skills through the current host", () => {
+    expect(reviewComposeSkill).toMatch(/current\s+host's native Skill mechanism/);
+    expect(reviewComposeSkill).toContain("`rvw-walkthrough` for one Walkthrough brief");
+    expect(reviewComposeSkill).toContain("`rvw-structure` for one Structure brief");
+    expect(reviewComposeSkill).toContain("unavailable or disabled in the current session");
+    expect(reviewComposeSkill).toContain("available Skill inventory");
+    expect(reviewComposeSkill).toContain("Skill with the Skill tool");
+    expect(reviewComposeSkill).toContain("load the full producer instructions");
+    expect(reviewComposeSkill).toMatch(/stop before any\s+Artifact operation/);
+    expect(reviewComposeSkill).not.toContain("$rvw-walkthrough");
+    expect(reviewComposeSkill).not.toContain("$rvw-structure");
+  });
+
+  it("separates authoring bounds from implementation claims to verify", () => {
+    expect(reviewComposeSkill).toContain("authoring bounds separate from its claims-to-verify");
+    expect(reviewComposeSkill).toMatch(
+      /Pass the subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and\s+emphasis as authoring authority/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /Pass `mustEstablish`, a suggested origin, relationship, invariant,[\s\S]*claims to verify independently in committed source and tests/,
+    );
+    expect(reviewComposition).toContain("Authority over the question is not proof of its answer");
+    expect(reviewComposition).toMatch(
+      /`mustEstablish` means claims the producer must attempt to verify[\s\S]*not a list of facts the producer may assume or conclusions it must force/,
+    );
+    expect(reviewComposition).toMatch(
+      /Verifying that an\s+anchor exists and its range is valid does not by itself verify the semantic claim/,
+    );
+  });
 });
 
 describe("single-Artifact producer composition boundary", () => {
-  it("treats an upstream bounded brief as authority without expanding to the Pull Request", () => {
+  it("treats upstream authoring bounds as authority without expanding to the Pull Request", () => {
     for (const producer of [walkthroughSkill, structureSkill]) {
       expect(producer).toContain("at most one");
       expect(producer).toMatch(/subject,\s+review\s+question/);
       expect(producer).toContain("inclusions, exclusions");
-      expect(producer).toContain("must-establish facts");
       expect(producer).toContain("emphasis");
       expect(producer).toMatch(/Inspect broader Pull\s+Request context only/);
-      expect(producer).toMatch(/Pull Request's Artifact count\s+or Walkthrough \/ Structure\s+mix/);
-      expect(producer).toMatch(/publish companion\s+Artifacts/);
+      expect(producer).toMatch(/Pull Request's\s+Artifact count/);
+      expect(producer).toMatch(/Walkthrough\s+\/ Structure mix/);
+      expect(producer).toMatch(/publish\s+companion Artifacts/);
       expect(producer).toContain("Standalone");
     }
     expect(walkthroughSkill).toMatch(
-      /Do not broaden the Walkthrough\s+to cover the whole Pull Request/,
+      /Do not broaden\s+the Walkthrough to cover the whole Pull Request/,
     );
     expect(structureSkill).toMatch(/do not publish separate Structures\s+autonomously/);
     expect(structureAuthoring).not.toContain("yields separate Structures");
     expect(structureAuthoring).not.toContain("author that behavior as a separate Structure");
+  });
+
+  it("independently verifies upstream claims instead of treating them as facts", () => {
+    for (const producer of [walkthroughSkill, structureSkill]) {
+      expect(producer).toContain("`mustEstablish`");
+      expect(producer).toMatch(/claims? to verify independently\s+in committed source and tests/);
+      expect(producer).toMatch(
+        /essential claim[\s\S]*unsupported or contradicted[\s\S]*do not\s+publish/,
+      );
+      expect(producer).toMatch(/report the conflict to the requester or upstream composer/);
+    }
+    expect(walkthroughSkill).toContain("a valid path or line range alone does not prove");
+    expect(structureSkill).toContain("do not mistake a valid anchor for semantic proof");
+    expect(walkthroughAuthoring).toContain(
+      "Never treat the caller's conclusion as its own evidence",
+    );
+    expect(structureAuthoring).toContain("Never treat the caller's conclusion as");
+    expect(structureAuthoring).toContain("subject authority alone cannot establish it");
+    expect(structureAuthoring).not.toContain("or explicit subject authority");
+    expect(structureAuthoring).not.toMatch(
+      /concept is explicitly established by the authority\s+inputs/,
+    );
   });
 
   it("retains each producer's local representation rejection boundary", () => {

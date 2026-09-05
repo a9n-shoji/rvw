@@ -19,13 +19,17 @@ sequence.
 
 This Skill produces, updates, or deletes at most one Walkthrough for the requested subject. When the
 user, caller, Pull Request body, or an upstream Skill supplies an Artifact brief, treat its subject,
-review question, purpose, scope, inclusions, exclusions, must-establish facts, and emphasis as authoring
-authority. These are internal authoring inputs, not new Walkthrough schema fields. Inspect broader Pull
-Request context only to verify the brief and find exact source evidence. Do not broaden the Walkthrough
-to cover the whole Pull Request, decide the Pull Request's Artifact count or Walkthrough / Structure
-mix, guarantee other review-subject coverage, or publish companion Artifacts. If the brief cannot stay
-understandable without crossing an exclusion or materially changing its review question, report the
-conflict to the requester or upstream composer instead of silently widening it.
+review question, purpose, scope, inclusions, exclusions, and emphasis as authoring authority over what
+this Walkthrough investigates. Treat `mustEstablish` and every suggested implementation fact,
+relationship, or invariant as a claim to verify independently in committed source and tests, not as an
+assumed fact or a conclusion to force. These are internal authoring inputs, not new Walkthrough schema
+fields. Inspect broader Pull Request context only to verify those claims and find exact source evidence;
+a valid path or line range alone does not prove the prose attached to it. When source establishes a
+different answer inside the same question and scope, use that answer. When an essential claim is
+unsupported or contradicted and resolving it would materially change the review question or cross an
+exclusion, do not publish it; report the conflict to the requester or upstream composer. Do not broaden
+the Walkthrough to cover the whole Pull Request, decide the Pull Request's Artifact count or Walkthrough
+/ Structure mix, guarantee other review-subject coverage, or publish companion Artifacts.
 
 When invoked directly without an upstream brief, derive one bounded Walkthrough subject from the
 user's explicit request and verified facts. Standalone Walkthrough creation remains supported. Follow

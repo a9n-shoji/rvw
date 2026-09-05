@@ -262,20 +262,30 @@ section templateも要求しません。作成後は通常のAgent responseで�
 永続Artifactではなく、厳密なreview完了planでもありません。ReviewerはWalkthrough、Structure、codeのどこからでも
 入り直せます。
 
+composerは各producerをcanonical Skill名で、Codex / Claude Codeそれぞれのnative Skill mechanismからloadします。
+共有Skill本文は`$name`や`/name`をruntime protocolとして扱わず、producerがsessionで利用不能ならArtifact操作前に
+停止します。briefのsubject、review question、purpose / behavior boundary、scope、inclusion / exclusion、emphasisは
+調査範囲のauthorityですが、`mustEstablish`、suggested origin / relationship / invariantなどの実装assertionはproducerが
+commit済みsourceとtestから独立に検証するcandidate claimです。briefやvalidなsource rangeだけで事実とはみなしません。
+
 Walkthroughを一件作る場合は、説明したいbounded subjectと必要な作成指示をセッションへ伝えて
 `rvw-walkthrough` Skillを直接使います。Skillは上位composerを含む明示されたbriefのsubject、review question、
 scope、inclusion / exclusion、emphasisを優先し、未指定の作成判断だけを既定guideで補います。PR全体のArtifact数や
 Structureとの役割分担を決めず、そのsubjectに適した一つのordered pathをsource anchor付きreferenceで検証して
-publishします。ordered pathが適切でなければStructureを提案するrepresentation rejectionは残ります。
+publishします。`mustEstablish`その他の実装assertionはauthorityとして受け入れずsourceから再検証し、essential claimが
+unsupported / contradictedなら無理なanchorを付けずcallerへ返します。ordered pathが適切でなければStructureを提案する
+representation rejectionは残ります。
 Walkthrough全体へのコメントから説明を改善する場合は、現在内容を取得して同じURIを更新し、重複した
 「改訂版」を追加しません。
 
 Structureを作る場合は、behavior、entrypoint、scope、含める／除外する関係を伝えて`rvw-structure` Skillを使います。
-Skillは上位composerを含む明示briefをauthorityとして一つのbounded behaviorだけを扱い、実際のcommit済みcodeを
-調査して、labelではなくclaimのidentityとしてstable IDを割り当てます。PR全体の構成や別behaviorのArtifactは
+Skillは上位composerを含む明示briefを調査boundaryのauthorityとして一つのbounded behaviorだけを扱い、suggested
+entrypointやrelationを実際のcommit済みcodeから再検証して、labelではなくclaimのidentityとしてstable IDを割り当てます。
+PR全体の構成や別behaviorのArtifactは
 自律的に増やしません。読み順が本質ならWalkthroughを提案し、静的なarchitecture inventoryならStructureを
 作らないrepresentation rejectionは残ります。producer authoringの実地評価は
-[Structure producer evaluation](docs/structure-producer-evaluation.md)に記録しています。
+[Structure producer evaluation](docs/structure-producer-evaluation.md)、composition判断のfresh-context評価は
+[Review composition decision evaluation](docs/review-composition-evaluation.md)に記録しています。
 
 新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRを
 同梱driverから約1秒間隔で監視し、起動前の既存未解決commentは処理しません。自分のPRのfix-and-pushを起動taskへ
