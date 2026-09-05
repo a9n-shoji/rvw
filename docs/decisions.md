@@ -1,5 +1,83 @@
 # Architecture decisions
 
+## 2026-09-05: Add authorial spatial presentation to Structure
+
+### Problem
+
+The original Structure contract made canonical placement a function only of graph topology, factual
+Edge direction, the entrypoint, and stable IDs. That preserved reviewer control, but it also made an
+author encode the intended explanation indirectly through labels, Edge direction, or graph shape. A
+correct relationship graph can have several equally plausible projections, and topology alone cannot
+say which connected backbone or conceptual regions make this particular PR change understandable.
+
+Using raw coordinates would solve a renderer problem by making pixel layout durable artifact data.
+Turning the map into a sequence of cards would instead duplicate Walkthrough and surrender the
+simultaneous, freely explorable view that makes Structure useful.
+
+### Choice
+
+Add this required nullable field to the complete Structure content:
+
+```ts
+presentation: {
+  thesis: string;
+  primarySpine: string[];
+  regions: Array<{ label: string; nodeIds: string[] }>;
+} | null;
+```
+
+Treat `originNodeId`, Nodes, Edges, and source anchors as the factual graph; `presentation` as authorial
+spatial semantics; and focus, depth, camera, drag positions, and viewport as ephemeral reviewer session
+state. Coordinates, focus, viewport, and manual positions never enter the artifact. A missing field in
+legacy `graph_json` normalizes to `null` on read, so this change needs no SQL migration.
+
+For a non-null value, require a 1–1000-character thesis and one `primarySpine` of 2–50 unique current
+Node IDs whose consecutive pairs are connected by a factual Edge in either direction. Allow 0–12
+ordered regions with 1–100-character labels and one or more current Node IDs. A Node may appear in the
+spine and one region, but it cannot appear in multiple regions. Ignoring unassigned spine Nodes, the
+region indexes encountered along the spine must be nondecreasing, so the two declared left-to-right
+orders cannot conflict.
+
+Use the spine and regions in canonical placement, initial orientation, and visual emphasis. A new
+session with presentation starts at `primarySpine[0]`; that default is derived from the current artifact,
+not persisted or remotely controlled reviewer state. Keep `originNodeId` visible as the distinct factual
+entrypoint. Retain every Node and Edge, preserve factual Edge direction, and keep focus, source
+verification, pan, zoom, drag, and unrestricted exploration available. `presentation: null` keeps the
+original topology-derived projection and origin-based initial focus/orientation.
+
+Advance the public and internal machine contract to protocol version 5 and advertise
+`structure.presentation`. Version-5 preview, publish, and update payloads must include the field even
+when it is `null`; unsupported consumers fail through the existing version/capability preflight.
+
+This decision supersedes the topology-only input, origin-only initial-focus/orientation, and blanket
+no-group parts of “Add Structure as a separate exact-source relationship space.” It permits only
+authorial presentation regions, not factual graph groups. The stable factual graph, no raw coordinates,
+human session control, bounded subject, exact-source, and whole-value update choices remain.
+
+### Alternatives considered
+
+- Keep topology-only projection: rejected because it cannot distinguish the explanation the author
+  intends from other valid layouts of the same facts.
+- Add only a thesis: rejected because prose alone gives the renderer no structural basis for canonical
+  placement or orientation.
+- Add multiple authored routes: rejected because competing orders are hard to validate and move
+  Structure toward a stepper. One connected primary spine plus ordered regions can expose branches
+  without prescribing a complete traversal.
+- Persist coordinates or generic layout hints: rejected because they couple artifacts to one renderer
+  and make producer layout override durable reviewer state.
+
+### Trade-offs
+
+- Producers now make one more substantive judgment, and protocol v5 is intentionally breaking even
+  though the persisted JSON remains backward readable.
+- A single spine cannot express every possible tour. It is the visual backbone, not a claim that every
+  Node belongs to one linear execution path.
+- Region labels and thesis can become vague decoration or review conclusions. Producer guidance and
+  dogfood evaluation therefore require source-consistent explanatory language, connected spine pairs,
+  non-inventory regions, and verification that no content or exploration path disappears.
+- Presentation-aware layout adds renderer complexity, but `null` remains a deterministic baseline and
+  an explicit comparison case for evaluation.
+
 ## 2026-09-05: Keep the default viewer origin stable
 
 ### Problem
@@ -149,6 +227,10 @@ detail into an unstable identity.
   rendering remains passive rather than receiving a guessed identity.
 
 ## 2026-08-30: Add Structure as a separate exact-source relationship space
+
+Status: The topology-only canonical-input, origin-only initial-session, and blanket no-group choices are
+superseded by “Add authorial spatial presentation to Structure.” Only authorial presentation regions are
+added; the factual-graph, no-coordinate, and reviewer-session choices remain in force.
 
 ### Problem
 

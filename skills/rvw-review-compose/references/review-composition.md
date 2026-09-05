@@ -67,16 +67,18 @@ Choose by the shape of the review question, not by a desired Artifact mix.
 
 ### Walkthrough
 
-Choose a Walkthrough when the reviewer benefits from a deliberate comprehension order: an execution
-path, lifecycle, causal chain, state transition, or ordered comparison. It may include relationships
-needed to understand that path, but it should not absorb independently useful ownership maps or every
-concept in the Pull Request.
+Choose a Walkthrough when an execution path, lifecycle, causal chain, state transition, or ordered
+comparison needs prose between sequential stops, a required ending, or transitions that carry the
+meaning. It may include relationships needed to understand that path, but it should not absorb
+independently useful ownership maps or every concept in the Pull Request.
 
 ### Structure
 
 Choose a Structure when the reviewer needs to explore a bounded behavior through responsibilities,
 ownership, dependencies, contracts, or side effects from a factual code origin. It may contain factual
-direction, but do not use it for a sequence whose meaning depends on a beginning and end.
+direction and may use an authorial thesis, connected primary spine, and ordered regions to prioritize
+how the simultaneously visible space is first understood. Do not use it for a sequence whose meaning
+depends on prose between stops, route transitions, or a required ending.
 
 ### Direct code reading
 
@@ -108,8 +110,8 @@ coverage checklist for the Pull Request.
 Separate two kinds of input in every brief:
 
 - **Authoring authority:** the subject, review question, purpose or behavior boundary, scope,
-  inclusions, exclusions, and emphasis decide what the producer investigates and how the requested
-  Artifact is bounded.
+  inclusions, exclusions, emphasis, and requested spatial presentation decide what the producer
+  investigates, how the Artifact is bounded, and how verified claims should first be presented.
 - **Claims to verify:** `mustEstablish`, a suggested origin, relationship, invariant, and any other
   assertion about the implementation are candidates the producer must independently verify in
   committed source, tests, or source-controlled contracts before presenting them as facts.
@@ -155,12 +157,13 @@ scope.include: responsibilities and relations needed for the question
 scope.exclude: adjacent behaviors or inventories to omit
 mustEstablish: candidate node, relation, and boundary claims to verify from source evidence
 emphasis: optional user-requested detail or risk emphasis
+presentation: optional requested thesis, connected visual backbone, and ordered regions; never raw coordinates or reviewer state
 existingArtifact: optional explicitly supplied URI for the same subject
 ```
 
 Do not use the brief to override a producer's representation rejection boundary or source-exactness
 contract. The producer may reject a Walkthrough that has no useful order, or a Structure that is really
-an ordered path, has no factual origin, or is only a static inventory. Recompose instead of silently
+an ordered prose or transition path, has no factual origin, or is only a static inventory. Recompose instead of silently
 broadening the scope.
 
 ## Re-evaluate the whole composition

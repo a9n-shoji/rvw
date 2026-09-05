@@ -181,7 +181,7 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 4,
+      protocolVersion: 5,
       appVersion: "0.5.0",
       capabilities: [
         "agent.transport",
@@ -199,6 +199,7 @@ describe("CLI protocol discovery", () => {
         "structure.list",
         "structure.read",
         "structure.preview",
+        "structure.presentation",
         "structure.publish",
         "structure.update",
         "structure.delete",
@@ -976,6 +977,7 @@ describe("CLI protocol discovery", () => {
       title: "Authorization boundary",
       scope: "Relationships around authorization.",
       originNodeId: "entry",
+      presentation: null,
       nodes: [
         {
           id: "entry",
@@ -1017,7 +1019,7 @@ describe("CLI protocol discovery", () => {
     );
     expect(readPublish()).toMatchObject({
       ok: true,
-      structure: { ref: uri },
+      structure: { ref: uri, presentation: null },
       warnings: [{ code: "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION" }],
     });
 
@@ -1032,7 +1034,7 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
     expect(getStructureByUri).toHaveBeenCalledWith(uri);
-    expect(readGet()).toMatchObject({ ok: true, structure: { ref: uri } });
+    expect(readGet()).toMatchObject({ ok: true, structure: { ref: uri, presentation: null } });
 
     vi.restoreAllMocks();
     const readList = captureStdout();
@@ -1054,6 +1056,11 @@ describe("CLI protocol discovery", () => {
       title: "Terminal boundary",
       scope: "A pure preview.",
       originNodeId: "terminal",
+      presentation: {
+        thesis: "Understand the transition into the terminal boundary.",
+        primarySpine: ["entry", "terminal"],
+        regions: [],
+      },
       nodes: [
         {
           id: "entry",
@@ -1124,6 +1131,11 @@ describe("CLI protocol discovery", () => {
       title: "Forward flow",
       scope: "A normal entrypoint flow.",
       originNodeId: "entry",
+      presentation: {
+        thesis: "Follow the forward flow.",
+        primarySpine: ["entry", "next"],
+        regions: [],
+      },
       nodes: [
         {
           id: "entry",
@@ -1164,7 +1176,17 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
 
-    expect(readStdout()).toMatchObject({ ok: true, structure: { originNodeId: "entry" } });
+    expect(readStdout()).toMatchObject({
+      ok: true,
+      structure: {
+        originNodeId: "entry",
+        presentation: {
+          thesis: "Follow the forward flow.",
+          primarySpine: ["entry", "next"],
+          regions: [],
+        },
+      },
+    });
     expect(readStdout()).not.toHaveProperty("warnings");
   });
 
@@ -1176,6 +1198,7 @@ describe("CLI protocol discovery", () => {
       title: "Updated boundary",
       scope: "The same declared subject.",
       originNodeId: "entry",
+      presentation: null,
       nodes: [
         {
           id: "entry",
@@ -1214,7 +1237,7 @@ describe("CLI protocol discovery", () => {
     );
     expect(readUpdate()).toMatchObject({
       ok: true,
-      structure: { ref: uri },
+      structure: { ref: uri, presentation: null },
       warnings: [{ code: "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION" }],
     });
 

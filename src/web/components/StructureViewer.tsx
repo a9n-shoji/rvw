@@ -517,6 +517,16 @@ export function StructureViewer({
   const renderedEdges = renderModel.edges.map(({ edge }) => edge);
   const renderedNodes = renderModel.nodes.map(({ node }) => node);
   const edgeLabelPlacements = renderModel.labels;
+  const renderedPresentation = renderModel.presentation;
+  const presentationRegionByNodeId = useMemo(
+    () =>
+      new Map(
+        (structure.presentation?.regions ?? []).flatMap((region, index) =>
+          region.nodeIds.map((nodeId) => [nodeId, { index, label: region.label }] as const),
+        ),
+      ),
+    [structure.presentation],
+  );
   const displayBounds = renderModel.bounds;
   const worldWidth = Math.max(1_200, (displayBounds?.right ?? 1_000) + 180);
   const worldHeight = Math.max(800, (displayBounds?.bottom ?? 600) + 180);
@@ -797,6 +807,7 @@ export function StructureViewer({
       data-total-edge-count={structure.edges.length}
       data-rendered-node-count={renderedNodes.length}
       data-rendered-edge-count={renderedEdges.length}
+      data-has-presentation={structure.presentation ? "true" : undefined}
       data-viewport-scale={viewport.scale.toFixed(3)}
       data-selected-edge-id={selectedEdgeId ?? undefined}
     >
@@ -837,6 +848,12 @@ export function StructureViewer({
           </button>
         </div>
       </header>
+      {structure.presentation && (
+        <div className="structure-thesis-strip" role="note" aria-label="Structure thesis">
+          <strong>Thesis</strong>
+          <span title={structure.presentation.thesis}>{structure.presentation.thesis}</span>
+        </div>
+      )}
       <div className="structure-body">
         <div className="structure-toolbar" aria-label="Structure表示操作">
           <div className="structure-toolbar-group" role="group" aria-label="近傍の深さ">
@@ -939,6 +956,22 @@ export function StructureViewer({
                 transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
               }}
             >
+              {renderedPresentation?.regions.map((region) => (
+                <div
+                  key={`region:${region.index}`}
+                  className="structure-region"
+                  data-region-index={region.index}
+                  aria-hidden="true"
+                  style={{
+                    left: region.bounds.left,
+                    top: region.bounds.top,
+                    width: region.bounds.right - region.bounds.left,
+                    height: region.bounds.bottom - region.bounds.top,
+                  }}
+                >
+                  <span title={region.label}>{region.label}</span>
+                </div>
+              ))}
               <svg
                 className="structure-edges"
                 width={worldWidth}
@@ -962,12 +995,15 @@ export function StructureViewer({
                   const focused = edge.from === focusId || edge.to === focusId;
                   const selected = edge.id === selectedEdgeId;
                   const muted = selectedEdgeId !== null && !selected;
+                  const primarySpine =
+                    renderedPresentation?.primarySpineEdgeIds.has(edge.id) ?? false;
                   const changeKind = source.changeKind;
                   return (
                     <path
                       key={edge.id}
-                      className={`structure-edge${focused ? " focused" : ""}${selected ? " selected" : ""}${muted ? " muted" : ""}`}
+                      className={`structure-edge${primarySpine ? " primary-spine" : ""}${focused ? " focused" : ""}${selected ? " selected" : ""}${muted ? " muted" : ""}`}
                       data-edge-id={edge.id}
+                      data-primary-spine={primarySpine ? "true" : undefined}
                       data-source-change-kind={changeKind ?? undefined}
                       data-start-x={route.startX}
                       data-start-y={route.startY}
@@ -989,11 +1025,14 @@ export function StructureViewer({
                     : `${fromNode?.label ?? edge.from} と ${toNode?.label ?? edge.to} の関係: ${edge.label}`;
                   const selected = edge.id === selectedEdgeId;
                   const muted = selectedEdgeId !== null && !selected;
+                  const primarySpine =
+                    renderedPresentation?.primarySpineEdgeIds.has(edge.id) ?? false;
                   return (
                     <div
                       key={`label:${edge.id}`}
-                      className={`structure-edge-label${crowded ? " crowded" : ""}${muted ? " muted" : ""}`}
+                      className={`structure-edge-label${primarySpine ? " primary-spine" : ""}${crowded ? " crowded" : ""}${muted ? " muted" : ""}`}
                       data-edge-id={edge.id}
+                      data-primary-spine={primarySpine ? "true" : undefined}
                       data-source-anchor-count={source.anchorCount}
                       data-source-change-kind={changeKind ?? undefined}
                       style={{ left: x, top: y, minHeight: height }}
@@ -1028,16 +1067,22 @@ export function StructureViewer({
               )}
               {renderModel.nodes.map(({ node, point, changeKind, sourceLabel }) => {
                 const selected = node.id === focusId;
+                const primarySpine =
+                  renderedPresentation?.primarySpineNodeIds.has(node.id) ?? false;
+                const presentationRegion = presentationRegionByNodeId.get(node.id);
                 const incidentToFocus = incident.some(
                   (edge) => edge.from === node.id || edge.to === node.id,
                 );
                 return (
                   <div
                     key={node.id}
-                    className={`structure-node notation-${node.notation}${node.id === structure.originNodeId ? " origin" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
+                    className={`structure-node notation-${node.notation}${node.id === structure.originNodeId ? " origin" : ""}${primarySpine ? " primary-spine" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
                     data-node-id={node.id}
                     data-node-notation={node.notation}
                     data-origin-node={node.id === structure.originNodeId ? "true" : undefined}
+                    data-primary-spine={primarySpine ? "true" : undefined}
+                    data-region-index={presentationRegion?.index}
+                    data-region-label={presentationRegion?.label}
                     data-source-change-kind={changeKind ?? undefined}
                     style={{ left: point.x, top: point.y }}
                     onPointerDown={(event) => {
@@ -1056,6 +1101,7 @@ export function StructureViewer({
                     <button
                       type="button"
                       className="structure-node-focus"
+                      aria-label={`${node.label}${primarySpine ? " · primary spine" : ""}${presentationRegion ? ` · region ${presentationRegion.label}` : ""}`}
                       aria-pressed={selected}
                       onClick={(event) => {
                         if (event.detail === 0) focusNode(node.id);

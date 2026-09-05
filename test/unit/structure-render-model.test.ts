@@ -27,6 +27,7 @@ function renderStructure(): Structure {
     title: "Export render model",
     scope: "All exported relationships.",
     originNodeId: "node-0",
+    presentation: null,
     nodes: notations.map((notation, index) => ({
       id: `node-${index}`,
       label: `Node ${index}`,
@@ -88,6 +89,38 @@ function renderStructure(): Structure {
 }
 
 describe("Structure shared render model", () => {
+  it("derives shared region bounds and factual primary-spine Edges from presentation", () => {
+    const structure: Structure = {
+      ...renderStructure(),
+      presentation: {
+        thesis: "The request crosses a stable boundary.",
+        primarySpine: ["node-0", "node-1"],
+        regions: [
+          { label: "Ingress", nodeIds: ["node-0", "node-2"] },
+          { label: "Execution", nodeIds: ["node-1", "node-3"] },
+        ],
+      },
+    };
+    const model = buildFullStructureRenderModel({
+      structure,
+      positions: initialStructureLayout(structure),
+      sourceChangeKinds: new Map(),
+    });
+
+    expect(model.presentation?.thesis).toBe(structure.presentation!.thesis);
+    expect([...model.presentation!.primarySpineNodeIds].sort()).toEqual(["node-0", "node-1"]);
+    expect([...model.presentation!.primarySpineEdgeIds].sort()).toEqual([
+      "forward",
+      "parallel",
+      "reverse",
+    ]);
+    expect(model.presentation?.regions.map(({ label }) => label)).toEqual(["Ingress", "Execution"]);
+    expect(model.presentation!.regions[0]!.bounds.right).toBeLessThan(
+      model.presentation!.regions[1]!.bounds.left,
+    );
+    expect(model.bounds!.left).toBeLessThanOrEqual(model.presentation!.regions[0]!.bounds.left);
+  });
+
   it("builds every Node, Edge, and Edge label with complete bounds", () => {
     const structure = renderStructure();
     const model = buildFullStructureRenderModel({

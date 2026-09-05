@@ -3,6 +3,25 @@
   "title": "Agent transport boundary",
   "scope": "The committed CLI-to-service transport selection, request validation, and dispatch boundary. Socket ownership and viewer lifecycle are excluded.",
   "originNodeId": "cli-service-call",
+  "presentation": {
+    "thesis": "CLI operations cross a transport-selection boundary before a validated socket envelope reaches shared service dispatch, while diagnostics observe the same client path.",
+    "primarySpine": [
+      "cli-service-call",
+      "socket-client",
+      "socket-request-validation",
+      "socket-dispatch"
+    ],
+    "regions": [
+      {
+        "label": "Client boundary",
+        "nodeIds": ["cli-service-call", "socket-client", "transport-status"]
+      },
+      {
+        "label": "Validation and dispatch",
+        "nodeIds": ["socket-request-validation", "operation-schemas", "socket-dispatch"]
+      }
+    ]
+  },
   "nodes": [
     {
       "id": "cli-service-call",

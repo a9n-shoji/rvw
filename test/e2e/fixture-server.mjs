@@ -1570,10 +1570,30 @@ app.post("/api/fixture/structures/:structureId/source-lifecycle", async (context
     edge.anchors[anchorIndex] = input.anchor;
   }
   if (input.removeNodeId) {
+    if (structure.presentation?.primarySpine.includes(input.removeNodeId)) {
+      return context.json(
+        {
+          ok: false,
+          error: {
+            code: "INVALID_STRUCTURE_PRESENTATION",
+            message: "cannot remove a primary-spine Node from this lifecycle fixture",
+          },
+        },
+        400,
+      );
+    }
     structure.nodes = structure.nodes.filter((node) => node.id !== input.removeNodeId);
     structure.edges = structure.edges.filter(
       (edge) => edge.from !== input.removeNodeId && edge.to !== input.removeNodeId,
     );
+    if (structure.presentation) {
+      structure.presentation.regions = structure.presentation.regions
+        .map((region) => ({
+          ...region,
+          nodeIds: region.nodeIds.filter((nodeId) => nodeId !== input.removeNodeId),
+        }))
+        .filter((region) => region.nodeIds.length > 0);
+    }
   }
   structure.updatedAt = new Date(Date.parse(structure.updatedAt) + 1_000).toISOString();
   bump("structures");

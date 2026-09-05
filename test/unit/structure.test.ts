@@ -49,6 +49,7 @@ function structureWithHub(): Structure {
     title: "Hub relationships",
     scope: "A bounded test graph.",
     originNodeId: "hub",
+    presentation: null,
     nodes,
     edges: nodes.slice(1).map((node, index) => ({
       id: `edge-${String(14 - index).padStart(2, "0")}`,
@@ -60,6 +61,106 @@ function structureWithHub(): Structure {
     })),
     createdAt: "2026-08-30T00:00:00.000Z",
     updatedAt: "2026-08-30T00:00:00.000Z",
+  };
+}
+
+function structureWithPresentation(): Structure {
+  const node = (id: string, label: string) => ({
+    id,
+    label,
+    description: null,
+    kind: null,
+    notation: "plain" as const,
+    anchor: null,
+  });
+  return {
+    id: "70000000-0000-4000-8000-000000000091",
+    ref: "rvw://structure/70000000-0000-4000-8000-000000000091",
+    pullRequestId: "pr-1",
+    sourceOid: "9".repeat(40),
+    title: "Presented behavior",
+    scope: "A graph with an authored spatial presentation.",
+    originNodeId: "origin",
+    presentation: {
+      thesis: "Requests move through one observable backbone while details remain explorable.",
+      primarySpine: ["receive", "decide", "respond"],
+      regions: [
+        { label: "Input", nodeIds: ["receive", "input-detail"] },
+        { label: "Policy", nodeIds: ["policy-detail"] },
+        { label: "Output", nodeIds: ["respond", "output-detail"] },
+      ],
+    },
+    nodes: [
+      node("origin", "Factual origin"),
+      node("receive", "Receive"),
+      node("decide", "Decide"),
+      node("respond", "Respond"),
+      node("input-detail", "Input detail"),
+      node("policy-detail", "Policy detail"),
+      node("output-detail", "Output detail"),
+      node("related-detail", "Related detail"),
+      node("disconnected", "Disconnected detail"),
+    ],
+    edges: [
+      {
+        id: "origin-receive",
+        from: "origin",
+        to: "receive",
+        label: "enters",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "receive-decide",
+        from: "receive",
+        to: "decide",
+        label: "validates",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "decide-respond",
+        from: "decide",
+        to: "respond",
+        label: "produces",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "receive-input-detail",
+        from: "receive",
+        to: "input-detail",
+        label: "parses",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "decide-policy-detail",
+        from: "decide",
+        to: "policy-detail",
+        label: "consults",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "respond-output-detail",
+        from: "respond",
+        to: "output-detail",
+        label: "formats",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "output-related-detail",
+        from: "output-detail",
+        to: "related-detail",
+        label: "records",
+        directed: true,
+        anchors: [],
+      },
+    ],
+    createdAt: "2026-09-05T00:00:00.000Z",
+    updatedAt: "2026-09-05T00:00:00.000Z",
   };
 }
 
@@ -155,6 +256,46 @@ describe("Structure domain presentation rules", () => {
     expect(formatStructureUri(id)).toBe(`rvw://structure/${id}`);
     expect(parseStructureUri(formatStructureUri(id))).toBe(id);
     expect(() => parseStructureUri("rvw://structure/not-a-uuid")).toThrow(/URI/);
+  });
+
+  it("uses a non-null presentation as a deterministic, collision-free spatial composition", () => {
+    const structure = structureWithPresentation();
+    const layout = initialStructureLayout(structure);
+    const spine = structure.presentation!.primarySpine.map((nodeId) => layout[nodeId]!);
+    expect(spine.map(({ y }) => y)).toEqual([spine[0]!.y, spine[0]!.y, spine[0]!.y]);
+    expect(spine[0]!.x).toBeLessThan(spine[1]!.x);
+    expect(spine[1]!.x).toBeLessThan(spine[2]!.x);
+    expect(spine[2]!.x - spine[0]!.x).toBe(1_040);
+    expect(Object.keys(layout).sort()).toEqual(structure.nodes.map(({ id }) => id).sort());
+    expectNoNodeOverlap(layout);
+
+    const regionBounds = structure.presentation!.regions.map((region) => ({
+      left: Math.min(...region.nodeIds.map((nodeId) => layout[nodeId]!.x)),
+      right: Math.max(...region.nodeIds.map((nodeId) => layout[nodeId]!.x + STRUCTURE_NODE_WIDTH)),
+    }));
+    expect(regionBounds[0]!.right).toBeLessThan(regionBounds[1]!.left);
+    expect(regionBounds[1]!.right).toBeLessThan(regionBounds[2]!.left);
+    expect(Math.abs(layout["related-detail"]!.x - layout["output-detail"]!.x)).toBeLessThanOrEqual(
+      STRUCTURE_NODE_WIDTH + 72,
+    );
+
+    const shuffled = initialStructureLayout({
+      ...structure,
+      nodes: [...structure.nodes].reverse(),
+      edges: [...structure.edges].reverse(),
+    });
+    expect(shuffled).toEqual(layout);
+  });
+
+  it("keeps the legacy topology projection unchanged for a null presentation", () => {
+    const structure = structureWithHub();
+    expect(projectStructure(structure)).toEqual(
+      projectStructure({
+        originNodeId: structure.originNodeId,
+        nodes: structure.nodes,
+        edges: structure.edges,
+      }),
+    );
   });
 
   it("keeps every relation in the selected neighborhood", () => {

@@ -880,6 +880,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "structure.list",
           "structure.read",
           "structure.preview",
+          "structure.presentation",
           "structure.publish",
           "structure.update",
           "structure.delete",

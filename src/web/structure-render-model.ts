@@ -64,10 +64,25 @@ export interface StructureRenderNode {
   changeKind: ChangeKind | null;
 }
 
+export interface StructureRenderRegion {
+  index: number;
+  label: string;
+  nodeIds: readonly string[];
+  bounds: StructureBox;
+}
+
+export interface StructureRenderPresentation {
+  thesis: string;
+  primarySpineNodeIds: ReadonlySet<string>;
+  primarySpineEdgeIds: ReadonlySet<string>;
+  regions: readonly StructureRenderRegion[];
+}
+
 export interface StructureRenderModel {
   nodes: readonly StructureRenderNode[];
   edges: readonly StructureRenderEdge[];
   labels: readonly StructureEdgeLabelPlacement[];
+  presentation: StructureRenderPresentation | null;
   bounds: StructureBox | null;
 }
 
@@ -611,6 +626,69 @@ export function buildStructureRenderModel(input: {
     labelAccessory,
     edgeLabelMode,
   );
+  const presentation = structure.presentation
+    ? (() => {
+        const primarySpineNodeIds = new Set(
+          structure.presentation.primarySpine.filter((nodeId) => renderNodeIds.has(nodeId)),
+        );
+        const adjacentSpinePairs = new Set(
+          structure.presentation.primarySpine
+            .slice(1)
+            .map((nodeId, index) =>
+              JSON.stringify(
+                [structure.presentation!.primarySpine[index]!, nodeId].sort(stableCompare),
+              ),
+            ),
+        );
+        const primarySpineEdgeIds = new Set(
+          edges
+            .filter(({ edge }) =>
+              adjacentSpinePairs.has(JSON.stringify([edge.from, edge.to].sort(stableCompare))),
+            )
+            .map(({ edge }) => edge.id),
+        );
+        const regions = structure.presentation.regions.flatMap((region, index) => {
+          const regionNodes = region.nodeIds.flatMap((nodeId) => {
+            const point = positions[nodeId];
+            return renderNodeIds.has(nodeId) && point
+              ? [
+                  {
+                    nodeId,
+                    box: {
+                      left: point.x,
+                      top: point.y,
+                      right: point.x + STRUCTURE_NODE_WIDTH,
+                      bottom: point.y + STRUCTURE_NODE_HEIGHT,
+                    },
+                  },
+                ]
+              : [];
+          });
+          const memberBounds = mergedBounds(regionNodes.map(({ box }) => box));
+          return memberBounds
+            ? [
+                {
+                  index,
+                  label: region.label,
+                  nodeIds: regionNodes.map(({ nodeId }) => nodeId),
+                  bounds: {
+                    left: memberBounds.left - 32,
+                    top: memberBounds.top - 38,
+                    right: memberBounds.right + 32,
+                    bottom: memberBounds.bottom + 28,
+                  },
+                },
+              ]
+            : [];
+        });
+        return {
+          thesis: structure.presentation.thesis,
+          primarySpineNodeIds,
+          primarySpineEdgeIds,
+          regions,
+        };
+      })()
+    : null;
   const boxes: StructureBox[] = nodes.map(({ point }) => ({
     left: point.x,
     top: point.y,
@@ -623,7 +701,8 @@ export function buildStructureRenderModel(input: {
       labelBox(placement.x, placement.y, placement.boxWidth, placement.height, 4),
     ),
   );
-  return { nodes, edges, labels, bounds: mergedBounds(boxes) };
+  boxes.push(...(presentation?.regions.map((region) => region.bounds) ?? []));
+  return { nodes, edges, labels, presentation, bounds: mergedBounds(boxes) };
 }
 
 export function buildFullStructureRenderModel(input: {

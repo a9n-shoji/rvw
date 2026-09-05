@@ -21,6 +21,7 @@ function structure(id: string): Structure {
     title: "Session boundary",
     scope: "A bounded test Structure.",
     originNodeId: "entry",
+    presentation: null,
     nodes: [
       {
         id: "entry",
@@ -38,6 +39,40 @@ function structure(id: string): Structure {
 }
 
 describe("Structure pane sessions", () => {
+  it("starts a presented Structure from the first primary-spine Node, not the factual origin", () => {
+    const value = structure("70000000-0000-4000-8000-000000000096");
+    value.nodes.push(
+      { ...value.nodes[0]!, id: "read-first", label: "Read first", anchor: null },
+      { ...value.nodes[0]!, id: "read-next", label: "Read next", anchor: null },
+    );
+    value.edges.push({
+      id: "read-first-next",
+      from: "read-first",
+      to: "read-next",
+      label: "leads to",
+      directed: true,
+      anchors: [],
+    });
+    value.presentation = {
+      thesis: "Read the authored backbone before exploring supporting details.",
+      primarySpine: ["read-first", "read-next"],
+      regions: [],
+    };
+
+    const session = createStructureSession(value);
+    expect(session.focusId).toBe("read-first");
+    expect(session.depth).toBe("all");
+    expect(session.positions["read-first"]!.x).toBeLessThan(session.positions["read-next"]!.x);
+    expect(session.positions["read-first"]!.y).toBe(session.positions["read-next"]!.y);
+
+    const viewport = initialStructureViewport({
+      structure: value,
+      positions: session.positions,
+      surfaceSize: { width: 900, height: 600 },
+    });
+    expect(viewport.y + (session.positions["read-first"]!.y + 112 / 2) * viewport.scale).toBe(300);
+  });
+
   it("starts from the complete map while highlighting the authored behavior entrypoint", () => {
     const session = createStructureSession(structure("70000000-0000-4000-8000-000000000098"));
     expect(session.focusId).toBe("entry");

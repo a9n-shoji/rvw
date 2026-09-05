@@ -2176,6 +2176,14 @@ describe("RvwService commit workflow", () => {
           directed: true,
         },
       ],
+      presentation: {
+        thesis: "  Start from the exact source and understand the consumer relationship.  ",
+        primarySpine: ["source", "consumer"],
+        regions: [
+          { label: "  Evidence  ", nodeIds: ["source", "obsolete"] },
+          { label: "Consumer", nodeIds: ["consumer"] },
+        ],
+      },
     };
     await expect(
       service.publishStructure({
@@ -2191,10 +2199,43 @@ describe("RvwService commit workflow", () => {
         edges: publishInput.edges.filter((edge) => edge.id === "documents-obsolete"),
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-presentation-required",
+        presentation: undefined as never,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-presentation-strict",
+        presentation: {
+          ...publishInput.presentation,
+          unexpected: true,
+        } as unknown as typeof publishInput.presentation,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-presentation-region-order",
+        presentation: {
+          ...publishInput.presentation,
+          regions: [
+            { label: "Consumer", nodeIds: ["consumer"] },
+            { label: "Evidence", nodeIds: ["source", "obsolete"] },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     const structure = await service.publishStructure(publishInput);
     await expect(service.publishStructure(publishInput)).resolves.toEqual(structure);
     await expect(
-      service.publishStructure({ ...publishInput, title: "Conflicting retry" }),
+      service.publishStructure({
+        ...publishInput,
+        presentation: { ...publishInput.presentation, thesis: "A conflicting presentation." },
+      }),
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
 
     expect(structure).toMatchObject({
@@ -2202,6 +2243,14 @@ describe("RvwService commit workflow", () => {
       pullRequestId: opened.pullRequest.id,
       sourceOid: firstHead,
       originNodeId: "source",
+      presentation: {
+        thesis: "Start from the exact source and understand the consumer relationship.",
+        primarySpine: ["source", "consumer"],
+        regions: [
+          { label: "Evidence", nodeIds: ["source", "obsolete"] },
+          { label: "Consumer", nodeIds: ["consumer"] },
+        ],
+      },
       nodes: [
         {
           id: "source",
@@ -2262,6 +2311,15 @@ describe("RvwService commit workflow", () => {
           directed: true,
         },
       ],
+      presentation: {
+        thesis: "Follow validation through the source boundary to its consumer.",
+        primarySpine: ["validator", "source", "consumer"],
+        regions: [
+          { label: "Validation", nodeIds: ["validator"] },
+          { label: "Source", nodeIds: ["source"] },
+          { label: "Consumer", nodeIds: ["consumer"] },
+        ],
+      },
     });
     expect(updated).toMatchObject({
       id: structure.id,
@@ -2270,6 +2328,9 @@ describe("RvwService commit workflow", () => {
       title: "Source boundary",
       nodes: [{ id: "source" }, { id: "consumer" }, { id: "validator" }],
       edges: [{ id: "validates-source" }, { id: "serves-consumer" }],
+      presentation: {
+        thesis: "Follow validation through the source boundary to its consumer.",
+      },
     });
     expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse(structure.updatedAt));
     expect(updated.edges.some((edge) => edge.id === "reads-source")).toBe(false);
@@ -2283,6 +2344,7 @@ describe("RvwService commit workflow", () => {
         originNodeId: "source",
         nodes: [...updated.nodes, { id: "obsolete", label: "Different claim" }],
         edges: updated.edges,
+        presentation: updated.presentation,
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(
@@ -2304,6 +2366,7 @@ describe("RvwService commit workflow", () => {
             anchors: [{ path: "src.txt" }],
           },
         ],
+        presentation: updated.presentation,
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
 
@@ -2316,6 +2379,7 @@ describe("RvwService commit workflow", () => {
         originNodeId: "source",
         nodes: [{ id: "source", label: "Stale", anchor: { path: "src.txt" } }],
         edges: [],
+        presentation: null,
       }),
     ).rejects.toMatchObject({
       code: "STRUCTURE_CONFLICT",
@@ -2338,6 +2402,7 @@ describe("RvwService commit workflow", () => {
           },
         ],
         edges: [],
+        presentation: null,
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     expect(service.getStructureByUri(structure.ref).structure).toEqual(updated);
@@ -2366,6 +2431,7 @@ describe("RvwService commit workflow", () => {
           nodes: updated.nodes,
           edges: updated.edges,
           originNodeId: updated.originNodeId,
+          presentation: updated.presentation,
         }),
       ),
     );
@@ -2406,6 +2472,7 @@ describe("RvwService commit workflow", () => {
       title: "Latest source structure",
       scope: "The source file and its current location.",
       originNodeId: "source",
+      presentation: null,
       nodes: [
         {
           id: "source",
@@ -2470,6 +2537,7 @@ describe("RvwService commit workflow", () => {
       title: structure.title,
       scope: structure.scope,
       originNodeId: "source",
+      presentation: null,
       nodes: [
         {
           id: "source",
@@ -2537,6 +2605,7 @@ describe("RvwService commit workflow", () => {
       title: "Nearest matching claim",
       scope: "Select the source claim nearest to the behavior origin.",
       originNodeId: "origin",
+      presentation: null,
       nodes: [
         { id: "origin", label: "Origin", anchor: { path: "origin.txt" } },
         {
@@ -2564,6 +2633,7 @@ describe("RvwService commit workflow", () => {
       title: "Edge-only evidence",
       scope: "The target file appears only on an Edge.",
       originNodeId: "origin",
+      presentation: null,
       nodes: [{ id: "origin", label: "Edge origin", anchor: { path: "edge-only.txt" } }],
       edges: [
         {
@@ -2583,6 +2653,7 @@ describe("RvwService commit workflow", () => {
       title: "Matching origin",
       scope: "The behavior origin itself is in the target file.",
       originNodeId: "source-origin",
+      presentation: null,
       nodes: [
         { id: "source-origin", label: "Source origin", anchor: { path: "src.txt" } },
         { id: "other", label: "Other" },
@@ -2604,6 +2675,7 @@ describe("RvwService commit workflow", () => {
       title: "Ambiguous copy source",
       scope: "A copied file must not be guessed.",
       originNodeId: "copy-origin",
+      presentation: null,
       nodes: [{ id: "copy-origin", label: "Copy origin", anchor: { path: "copy-source.txt" } }],
       edges: [],
     });
@@ -2759,6 +2831,7 @@ describe("RvwService commit workflow", () => {
         title: `Snapshot ${suffix}`,
         scope: "A Structure whose backlink revision must remain internally consistent.",
         originNodeId: "origin",
+        presentation: null,
         nodes: [{ id: "origin", label: `Snapshot ${suffix}`, anchor: { path: "stable.txt" } }],
         edges: [],
       });
@@ -2772,6 +2845,7 @@ describe("RvwService commit workflow", () => {
       title: ordered[0]!.title,
       scope: ordered[0]!.scope,
       originNodeId: "origin",
+      presentation: null,
       nodes: [{ id: "origin", label: "Blocking source", anchor: { path: "blocking.txt" } }],
       edges: [],
     });
@@ -2808,6 +2882,7 @@ describe("RvwService commit workflow", () => {
       title: followerBeforeLookup.title,
       scope: followerBeforeLookup.scope,
       originNodeId: "origin",
+      presentation: null,
       nodes: [
         {
           id: "origin",
@@ -2843,6 +2918,7 @@ describe("RvwService commit workflow", () => {
       title: "Resettable behavior",
       scope: "A single source-established behavior origin.",
       originNodeId: "entry",
+      presentation: null,
       nodes: [
         {
           id: "entry",

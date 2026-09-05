@@ -8,7 +8,8 @@ export interface StructurePoint {
 export const STRUCTURE_NODE_WIDTH = 228;
 export const STRUCTURE_NODE_HEIGHT = 112;
 
-export type StructureGraphContent = Pick<Structure, "originNodeId" | "nodes" | "edges">;
+export type StructureGraphContent = Pick<Structure, "originNodeId" | "nodes" | "edges"> &
+  Partial<Pick<Structure, "presentation">>;
 export type DirectionalLink = readonly [from: string, to: string];
 
 export interface SimpleStructureTopology {
@@ -745,6 +746,267 @@ interface ComponentProjection {
   height: number;
 }
 
+const PRESENTATION_AXIS_STRIDE = STRUCTURE_NODE_WIDTH + 292;
+const PRESENTATION_ROW_STRIDE = STRUCTURE_NODE_HEIGHT + 96;
+const PRESENTATION_COLUMN_STRIDE = STRUCTURE_NODE_WIDTH + 72;
+const PRESENTATION_NODE_GAP_X = 44;
+const PRESENTATION_NODE_GAP_Y = 52;
+
+function presentationPositionOverlaps(
+  occupied: readonly StructurePoint[],
+  candidate: StructurePoint,
+): boolean {
+  return occupied.some(
+    (point) =>
+      candidate.x < point.x + STRUCTURE_NODE_WIDTH + PRESENTATION_NODE_GAP_X &&
+      candidate.x + STRUCTURE_NODE_WIDTH + PRESENTATION_NODE_GAP_X > point.x &&
+      candidate.y < point.y + STRUCTURE_NODE_HEIGHT + PRESENTATION_NODE_GAP_Y &&
+      candidate.y + STRUCTURE_NODE_HEIGHT + PRESENTATION_NODE_GAP_Y > point.y,
+  );
+}
+
+function firstOpenPresentationPoint(
+  occupied: readonly StructurePoint[],
+  anchorX: number,
+): StructurePoint {
+  for (let radius = 1; radius <= 80; radius += 1) {
+    for (const row of [-radius, radius]) {
+      for (let column = -radius; column <= radius; column += 1) {
+        const candidate = {
+          x: anchorX + column * PRESENTATION_COLUMN_STRIDE,
+          y: row * PRESENTATION_ROW_STRIDE,
+        };
+        if (!presentationPositionOverlaps(occupied, candidate)) return candidate;
+      }
+    }
+    for (const column of [-radius, radius]) {
+      for (let row = -radius + 1; row < radius; row += 1) {
+        if (row === 0) continue;
+        const candidate = {
+          x: anchorX + column * PRESENTATION_COLUMN_STRIDE,
+          y: row * PRESENTATION_ROW_STRIDE,
+        };
+        if (!presentationPositionOverlaps(occupied, candidate)) return candidate;
+      }
+    }
+  }
+  return { x: anchorX, y: (occupied.length + 1) * PRESENTATION_ROW_STRIDE };
+}
+
+function firstOpenPresentationRegionPoint(
+  occupied: readonly StructurePoint[],
+  anchorX: number,
+): StructurePoint {
+  for (let row = 1; row <= 160; row += 1) {
+    for (const direction of [-1, 1]) {
+      const candidate = { x: anchorX, y: direction * row * PRESENTATION_ROW_STRIDE };
+      if (!presentationPositionOverlaps(occupied, candidate)) return candidate;
+    }
+  }
+  return firstOpenPresentationPoint(occupied, anchorX);
+}
+
+function nearestPresentationAnchor(input: {
+  nodeId: string;
+  anchors: ReadonlySet<string>;
+  topology: SimpleStructureTopology;
+  positions: ReadonlyMap<string, StructurePoint>;
+}): string | null {
+  const { nodeId, anchors, topology, positions } = input;
+  const seen = new Set([nodeId]);
+  let frontier = [nodeId];
+  while (frontier.length > 0) {
+    const matches = frontier
+      .filter((candidate) => anchors.has(candidate) && positions.has(candidate))
+      .sort((left, right) => {
+        const leftX = positions.get(left)?.x ?? 0;
+        const rightX = positions.get(right)?.x ?? 0;
+        return leftX - rightX || stableCompare(left, right);
+      });
+    if (matches[0]) return matches[0];
+    const next: string[] = [];
+    for (const current of frontier.sort(stableCompare)) {
+      for (const neighbor of topology.neighbors.get(current) ?? []) {
+        if (seen.has(neighbor)) continue;
+        seen.add(neighbor);
+        next.push(neighbor);
+      }
+    }
+    frontier = next.sort(stableCompare);
+  }
+  return null;
+}
+
+function projectionFromPresentedPositions(
+  structure: StructureGraphContent,
+  topology: SimpleStructureTopology,
+  rawPositions: ReadonlyMap<string, StructurePoint>,
+): StructureProjection {
+  const outerPadding = 64;
+  const minX = Math.min(...[...rawPositions.values()].map((point) => point.x));
+  const minY = Math.min(...[...rawPositions.values()].map((point) => point.y));
+  const positions = new Map(
+    [...rawPositions].map(([nodeId, point]) => [
+      nodeId,
+      { x: point.x - minX + outerPadding, y: point.y - minY + outerPadding },
+    ]),
+  );
+  const xValues = [...new Set([...positions.values()].map(({ x }) => x))].sort(
+    (left, right) => left - right,
+  );
+  const columnIndexByX = new Map(xValues.map((x, index) => [x, index]));
+  const columns = xValues.map((x) =>
+    [...positions]
+      .filter(([, point]) => point.x === x)
+      .sort(
+        ([leftId, left], [rightId, right]) => left.y - right.y || stableCompare(leftId, rightId),
+      )
+      .map(([nodeId]) => nodeId),
+  );
+  const columnIndexByNodeId = new Map(
+    [...positions].map(([nodeId, point]) => [nodeId, columnIndexByX.get(point.x)!]),
+  );
+  const ranks = new Map(columnIndexByNodeId);
+  const nonForwardDirectionalLinkCount = topology.directionalLinks.reduce(
+    (count, [from, to]) =>
+      count +
+      (columnIndexByNodeId.has(from) &&
+      columnIndexByNodeId.has(to) &&
+      columnIndexByNodeId.get(from)! >= columnIndexByNodeId.get(to)!
+        ? 1
+        : 0),
+    0,
+  );
+  const rowsPerColumn = columns.map((column) => column.length);
+  const directionalLinkCount = topology.directionalLinks.length;
+  return {
+    positionsByNodeId: positions,
+    rankByNodeId: ranks,
+    columnIndexByNodeId,
+    columns,
+    directionalLinks: topology.directionalLinks,
+    diagnostics: {
+      columnCount: columns.length,
+      rowsPerColumn,
+      maxRows: Math.max(0, ...rowsPerColumn),
+      directionalLinkCount,
+      nonForwardDirectionalLinkCount,
+      nonForwardDirectionalLinkRatio:
+        directionalLinkCount === 0 ? 0 : nonForwardDirectionalLinkCount / directionalLinkCount,
+      originOutgoingDirectionalLinkCount: topology.directionalLinks.filter(
+        ([from]) => from === structure.originNodeId,
+      ).length,
+    },
+  };
+}
+
+function projectPresentedStructure(
+  structure: StructureGraphContent,
+  topology: SimpleStructureTopology,
+): StructureProjection | null {
+  const presentation = structure.presentation;
+  if (!presentation) return null;
+  const nodeIds = new Set(structure.nodes.map((node) => node.id));
+  const primarySpine = presentation.primarySpine.filter((nodeId) => nodeIds.has(nodeId));
+  if (primarySpine.length === 0) return null;
+
+  const regionByNodeId = new Map<string, number>();
+  presentation.regions.forEach((region, regionIndex) => {
+    for (const nodeId of region.nodeIds) {
+      if (nodeIds.has(nodeId)) regionByNodeId.set(nodeId, regionIndex);
+    }
+  });
+  const positions = new Map<string, StructurePoint>();
+  const occupied: StructurePoint[] = [];
+  const spineRegionIndexes = primarySpine.map((nodeId) => regionByNodeId.get(nodeId));
+  let extraRegionSlots = 0;
+  let previousRegionSpineIndex: number | null = null;
+  let previousRegionIndex: number | null = null;
+  primarySpine.forEach((nodeId, index) => {
+    const regionIndex = spineRegionIndexes[index];
+    if (
+      regionIndex !== undefined &&
+      previousRegionSpineIndex !== null &&
+      previousRegionIndex !== null
+    ) {
+      const spineGapCount = index - previousRegionSpineIndex;
+      const regionGapCount = regionIndex - previousRegionIndex;
+      extraRegionSlots += Math.max(0, regionGapCount - spineGapCount);
+    }
+    const point = {
+      x: (index + extraRegionSlots) * PRESENTATION_AXIS_STRIDE,
+      y: 0,
+    };
+    positions.set(nodeId, point);
+    occupied.push(point);
+    if (regionIndex !== undefined) {
+      previousRegionSpineIndex = index;
+      previousRegionIndex = regionIndex;
+    }
+  });
+
+  const spineXByRegion = presentation.regions.map((_, regionIndex) =>
+    primarySpine.flatMap((nodeId) =>
+      regionByNodeId.get(nodeId) === regionIndex ? [positions.get(nodeId)!.x] : [],
+    ),
+  );
+  const spineRight = Math.max(...primarySpine.map((nodeId) => positions.get(nodeId)!.x));
+  const regionCenters = presentation.regions.map((_, regionIndex) => {
+    const memberXs = spineXByRegion[regionIndex]!;
+    if (memberXs.length > 0) {
+      return memberXs.reduce((sum, value) => sum + value, 0) / memberXs.length;
+    }
+    const previousIndex = spineXByRegion.findLastIndex(
+      (candidate, index) => index < regionIndex && candidate.length > 0,
+    );
+    const nextIndex = spineXByRegion.findIndex(
+      (candidate, index) => index > regionIndex && candidate.length > 0,
+    );
+    const previous = previousIndex >= 0 ? spineXByRegion[previousIndex]! : null;
+    const next = nextIndex >= 0 ? spineXByRegion[nextIndex]! : null;
+    if (previous && next) {
+      const fromPrevious =
+        Math.max(...previous) + (regionIndex - previousIndex) * PRESENTATION_AXIS_STRIDE;
+      const fromNext = Math.min(...next) - (nextIndex - regionIndex) * PRESENTATION_AXIS_STRIDE;
+      return (fromPrevious + fromNext) / 2;
+    }
+    if (previous) {
+      return Math.max(...previous) + (regionIndex - previousIndex) * PRESENTATION_AXIS_STRIDE;
+    }
+    if (next) return Math.min(...next) - (nextIndex - regionIndex) * PRESENTATION_AXIS_STRIDE;
+    return (
+      spineRight / 2 +
+      (regionIndex - (presentation.regions.length - 1) / 2) * PRESENTATION_AXIS_STRIDE
+    );
+  });
+
+  presentation.regions.forEach((region, regionIndex) => {
+    const anchorX = regionCenters[regionIndex] ?? spineRight / 2;
+    for (const nodeId of [...region.nodeIds].sort(stableCompare)) {
+      if (!nodeIds.has(nodeId) || positions.has(nodeId)) continue;
+      const point = firstOpenPresentationRegionPoint(occupied, anchorX);
+      positions.set(nodeId, point);
+      occupied.push(point);
+    }
+  });
+
+  const presentedAnchors = new Set(positions.keys());
+  for (const nodeId of [...nodeIds].sort(stableCompare)) {
+    if (positions.has(nodeId)) continue;
+    const anchorId = nearestPresentationAnchor({
+      nodeId,
+      anchors: presentedAnchors,
+      topology,
+      positions,
+    });
+    const anchorX = anchorId ? positions.get(anchorId)!.x : spineRight + PRESENTATION_AXIS_STRIDE;
+    const point = firstOpenPresentationPoint(occupied, anchorX);
+    positions.set(nodeId, point);
+    occupied.push(point);
+  }
+  return projectionFromPresentedPositions(structure, topology, positions);
+}
+
 function layoutTopologyComponent(
   nodeIds: readonly string[],
   topology: SimpleStructureTopology,
@@ -783,6 +1045,8 @@ function layoutTopologyComponent(
 
 export function projectStructure(structure: StructureGraphContent): StructureProjection {
   const topology = simpleStructureTopology(structure);
+  const presented = projectPresentedStructure(structure, topology);
+  if (presented) return presented;
   if (structure.nodes.length === 0) {
     const diagnostics: StructureLayoutDiagnostics = {
       columnCount: 0,

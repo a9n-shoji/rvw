@@ -818,6 +818,51 @@ const fullStackStructureEdges = [
     anchors: [{ path: "src/frontend/orders/OrderDetailPage.tsx", startLine: 15, endLine: 18 }],
   },
 ];
+const fullStackStructurePresentation = {
+  thesis:
+    "注文詳細はbackendのread modelから共有response契約を越え、frontendのquery stateとして画面へ届く。",
+  primarySpine: [
+    "order-detail-route",
+    "get-order-query",
+    "order-response-presenter",
+    "order-detail-contract",
+    "order-api-client",
+    "order-detail-query-hook",
+    "order-detail-page",
+  ],
+  regions: [
+    {
+      label: "HTTP boundary",
+      nodeIds: ["order-detail-route", "detail-actor-auth", "detail-params"],
+    },
+    {
+      label: "Read and present",
+      nodeIds: [
+        "get-order-query",
+        "order-read-repository",
+        "orders-read-model",
+        "order-response-presenter",
+        "order-not-found",
+      ],
+    },
+    {
+      label: "Shared response",
+      nodeIds: ["order-detail-contract", "order-api-client"],
+    },
+    {
+      label: "React rendering",
+      nodeIds: [
+        "order-detail-query-hook",
+        "order-query-cache",
+        "order-detail-page",
+        "order-summary-card",
+        "order-line-items",
+        "order-status-badge",
+        "order-detail-error",
+      ],
+    },
+  ],
+};
 export const fullStackRepositoryPaths = [
   ...new Set([
     ...fullStackStructureNodes.flatMap((node) => (node.anchor ? [node.anchor.path] : [])),
@@ -858,6 +903,82 @@ export function validateContractStructureFixture() {
     }
   }
 
+  const structureContracts = [
+    {
+      title: "Order placement behavior",
+      originNodeId: "http-routes",
+      presentation: null,
+      nodes: orderPlacementStructureNodes,
+      edges: orderPlacementStructureEdges,
+    },
+    {
+      title: "Payment reconciliation recovery",
+      originNodeId: "payment-reconciliation",
+      presentation: null,
+      nodes: secondaryStructureNodes,
+      edges: secondaryStructureEdges,
+    },
+    {
+      title: "Order detail response rendering",
+      originNodeId: "order-detail-route",
+      presentation: fullStackStructurePresentation,
+      nodes: fullStackStructureNodes,
+      edges: fullStackStructureEdges,
+    },
+  ];
+  for (const structure of structureContracts) {
+    if (!Object.hasOwn(structure, "presentation")) {
+      throw new Error(`${structure.title} lacks required nullable presentation`);
+    }
+    const nodeIds = new Set(structure.nodes.map((node) => node.id));
+    if (!nodeIds.has(structure.originNodeId)) {
+      throw new Error(`${structure.title} origin is not a current Node`);
+    }
+    if (!structure.presentation) continue;
+    const primarySpine = structure.presentation.primarySpine;
+    if (new Set(primarySpine).size !== primarySpine.length) {
+      throw new Error(`${structure.title} primary spine repeats a Node`);
+    }
+    for (const nodeId of primarySpine) {
+      if (!nodeIds.has(nodeId)) {
+        throw new Error(`${structure.title} primary spine targets missing Node ${nodeId}`);
+      }
+    }
+    for (let index = 1; index < primarySpine.length; index += 1) {
+      const left = primarySpine[index - 1];
+      const right = primarySpine[index];
+      if (
+        !structure.edges.some(
+          (edge) =>
+            (edge.from === left && edge.to === right) || (edge.from === right && edge.to === left),
+        )
+      ) {
+        throw new Error(`${structure.title} primary spine has no Edge for ${left} -> ${right}`);
+      }
+    }
+    const regionByNodeId = new Map();
+    structure.presentation.regions.forEach((region, regionIndex) => {
+      for (const nodeId of region.nodeIds) {
+        if (!nodeIds.has(nodeId)) {
+          throw new Error(`${structure.title} region targets missing Node ${nodeId}`);
+        }
+        if (regionByNodeId.has(nodeId)) {
+          throw new Error(`${structure.title} repeats ${nodeId} across regions`);
+        }
+        regionByNodeId.set(nodeId, regionIndex);
+      }
+    });
+    let previousRegionIndex = -1;
+    for (const nodeId of primarySpine) {
+      const regionIndex = regionByNodeId.get(nodeId);
+      if (regionIndex === undefined) continue;
+      if (regionIndex < previousRegionIndex) {
+        throw new Error(`${structure.title} primary spine contradicts ordered regions`);
+      }
+      previousRegionIndex = regionIndex;
+    }
+  }
+
   for (const filePath of repositoryPaths) {
     if (!/\.[cm]?[jt]sx?$/u.test(filePath)) continue;
     const text = walkthroughRepositoryText(filePath);
@@ -891,6 +1012,7 @@ export function createContractStructures({ pullRequestId, baseOid, firstHead }) 
       scope:
         "Order creation from the authenticated HTTP boundary through domain decisions, remote side effects, transactional persistence, and event handoff; background delivery, recovery, and read paths are excluded.",
       originNodeId: "http-routes",
+      presentation: null,
       nodes: orderPlacementStructureNodes,
       edges: orderPlacementStructureEdges,
       createdAt: "2026-08-08T01:00:00.000Z",
@@ -905,6 +1027,7 @@ export function createContractStructures({ pullRequestId, baseOid, firstHead }) 
       scope:
         "The payment reconciliation worker that finds an authorized payment without a persisted order and voids it; order placement, retry envelopes, event delivery, and test evidence are excluded.",
       originNodeId: "payment-reconciliation",
+      presentation: null,
       nodes: secondaryStructureNodes,
       edges: secondaryStructureEdges,
       createdAt: "2026-08-08T01:05:00.000Z",
@@ -919,6 +1042,7 @@ export function createContractStructures({ pullRequestId, baseOid, firstHead }) 
       scope:
         "GET /orders/:orderId from the backend HTTP entrypoint through read-model lookup and the shared response contract into the React query and component rendering boundary.",
       originNodeId: "order-detail-route",
+      presentation: structuredClone(fullStackStructurePresentation),
       nodes: fullStackStructureNodes,
       edges: fullStackStructureEdges,
       createdAt: "2026-08-08T01:10:00.000Z",

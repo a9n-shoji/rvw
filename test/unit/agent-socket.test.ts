@@ -241,6 +241,7 @@ describe("Agent socket", () => {
       title: "Authorization boundary",
       scope: "Relationships around authorization.",
       originNodeId: "entry",
+      presentation: null,
       nodes: [
         {
           id: "entry",

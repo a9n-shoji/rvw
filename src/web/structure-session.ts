@@ -18,7 +18,7 @@ export interface StructureViewport {
 const MIN_VISIBLE_NEAREST_LEFT_NODE_WIDTH = 64;
 
 export function initialStructureViewport(input: {
-  structure: Pick<Structure, "originNodeId" | "nodes">;
+  structure: Pick<Structure, "originNodeId" | "nodes"> & Partial<Pick<Structure, "presentation">>;
   positions: Readonly<Record<string, StructurePoint>>;
   surfaceSize: { width: number; height: number };
 }): StructureViewport {
@@ -27,7 +27,10 @@ export function initialStructureViewport(input: {
     structure.nodes.map((node) => node.id),
     positions,
   );
-  const point = positions[structure.originNodeId];
+  const initialFocusId = structure.presentation?.primarySpine.find((nodeId) =>
+    structure.nodes.some((node) => node.id === nodeId),
+  );
+  const point = positions[initialFocusId ?? structure.originNodeId];
   const centerX = point
     ? point.x + STRUCTURE_NODE_WIDTH / 2
     : bounds
@@ -94,8 +97,9 @@ function sessionKey(paneId: DocumentPaneId, structureId: string): string {
 }
 
 export function createStructureSession(structure: Structure): StructureSession {
-  const focusId = structure.nodes.some((node) => node.id === structure.originNodeId)
-    ? structure.originNodeId
+  const requestedFocusId = structure.presentation?.primarySpine[0] ?? structure.originNodeId;
+  const focusId = structure.nodes.some((node) => node.id === requestedFocusId)
+    ? requestedFocusId
     : null;
   return {
     focusId,

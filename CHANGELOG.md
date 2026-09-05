@@ -10,6 +10,9 @@
 - 通知permissionの状態表示と、Agentのcomment更新経路を介さずbrowser / OS通知を確認できるテスト通知
 - PR全体または明示されたreview subjectを調査し、Walkthrough、Structure、直接code readingから必要最小限の
   構成を選ぶCodex / Claude Code共通のbundled `rvw-review-compose` Skill
+- Structureへthesis、connectedなprimary spine、ordered regionからなるoptionalなauthorial `presentation`を追加。
+  raw座標を保存せず、spatial explanationのcanonical配置、初期orientation、visual emphasisを伝えられる
+- protocol version 5と`structure.presentation` capability
 
 ### Changed
 
@@ -20,6 +23,9 @@
   invariantはcommit済みsourceで独立に検証し、各representationの拒否境界を維持
 - review composerからproducerをcanonical名と各hostのnative Skill mechanismでloadし、Codex / Claude Code固有の
   user-facing invocation記法を共有runtime contractにしないfail-closedな委譲へ変更
+- Structure preview / publish / updateはrequired nullableな`presentation`を受け取る。旧保存値は`null`へ
+  normalizeし、`null`では従来のtopology projectionを維持するためSQL migrationは不要
+- bundled Skillsのprotocol preflightをversion 5へ更新
 
 ### Fixed
 

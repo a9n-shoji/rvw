@@ -268,14 +268,98 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   await openStructure(page, fullStackTitle);
   const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
   await expect(viewer.getByRole("heading", { name: fullStackTitle })).toBeVisible();
+  await expect(viewer).toHaveAttribute("data-has-presentation", "true");
+  await expect(
+    viewer.getByText(
+      "注文詳細はbackendのread modelから共有response契約を越え、frontendのquery stateとして画面へ届く。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  const thesisStrip = viewer.getByRole("note", { name: "Structure thesis" });
+  await expect(thesisStrip).toBeVisible();
+  await expect(viewer.locator(".structure-canvas-status .structure-canvas-thesis")).toHaveCount(0);
+  const defaultThesisLayout = await viewer.evaluate((element) => {
+    const strip = element.querySelector<HTMLElement>(".structure-thesis-strip")!;
+    const thesis = strip.querySelector<HTMLElement>("span")!;
+    const canvas = element.querySelector<HTMLElement>(".structure-canvas")!;
+    const status = element.querySelector<HTMLElement>(".structure-canvas-status")!;
+    const stripBox = strip.getBoundingClientRect();
+    const canvasBox = canvas.getBoundingClientRect();
+    return {
+      outsideCanvas: stripBox.bottom <= canvasBox.top + 1,
+      statusHeight: status.getBoundingClientRect().height,
+      whiteSpace: getComputedStyle(thesis).whiteSpace,
+      textOverflow: getComputedStyle(thesis).textOverflow,
+    };
+  });
+  expect(defaultThesisLayout).toMatchObject({
+    outsideCanvas: true,
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+  });
+  expect(defaultThesisLayout.statusHeight).toBeLessThan(60);
   await expect(viewer.getByText("17/17 Node · 19/19 Relation", { exact: true })).toBeVisible();
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
     /focused/,
   );
+  await expect(viewer.locator(".structure-region")).toHaveCount(4);
+  await expect(viewer.locator('.structure-region[data-region-index="0"]')).toContainText(
+    "HTTP boundary",
+  );
+  await expect(viewer.locator('.structure-node[data-primary-spine="true"]')).toHaveCount(7);
+  await expect(viewer.locator('.structure-edge[data-primary-spine="true"]')).toHaveCount(6);
+  await expect(
+    viewer.locator('.structure-node[data-node-id="order-detail-route"] .structure-node-focus'),
+  ).toHaveAccessibleName("GET /orders/:orderId · primary spine · region HTTP boundary");
+  const presentationGeometry = await viewer.evaluate((element) => {
+    const spine = [
+      "order-detail-route",
+      "get-order-query",
+      "order-response-presenter",
+      "order-detail-contract",
+      "order-api-client",
+      "order-detail-query-hook",
+      "order-detail-page",
+    ].map((nodeId) => {
+      const node = element.querySelector<HTMLElement>(`.structure-node[data-node-id="${nodeId}"]`)!;
+      return { left: Number.parseFloat(node.style.left), top: Number.parseFloat(node.style.top) };
+    });
+    const regions = [...element.querySelectorAll<HTMLElement>(".structure-region")].map(
+      (region) => ({
+        left: Number.parseFloat(region.style.left),
+        right: Number.parseFloat(region.style.left) + Number.parseFloat(region.style.width),
+      }),
+    );
+    return { spine, regions };
+  });
+  expect(new Set(presentationGeometry.spine.map(({ top }) => top)).size).toBe(1);
+  expect(
+    presentationGeometry.spine.every(
+      (point, index, points) => index === 0 || points[index - 1]!.left < point.left,
+    ),
+  ).toBe(true);
+  expect(
+    presentationGeometry.regions.every(
+      (region, index, regions) => index === 0 || regions[index - 1]!.right < region.left,
+    ),
+  ).toBe(true);
   await expect(viewer.locator(".structure-claim-note")).toHaveCount(0);
   await expect(viewer.locator(".structure-details")).toHaveCount(0);
 
   await page.setViewportSize({ width: 760, height: 700 });
+  expect(
+    await thesisStrip.locator("span").evaluate((element) => ({
+      whiteSpace: getComputedStyle(element).whiteSpace,
+      lineClamp: getComputedStyle(element).webkitLineClamp,
+    })),
+  ).toEqual({ whiteSpace: "normal", lineClamp: "2" });
+  expect(
+    await viewer.evaluate((element) => {
+      const strip = element.querySelector<HTMLElement>(".structure-thesis-strip")!;
+      const canvas = element.querySelector<HTMLElement>(".structure-canvas")!;
+      return strip.getBoundingClientRect().bottom <= canvas.getBoundingClientRect().top + 1;
+    }),
+  ).toBe(true);
   const canvasHeightBeforeScope = (await viewer.locator(".structure-canvas").boundingBox())!.height;
   const scopeToggle = viewer.locator(".structure-scope-details > summary");
   await scopeToggle.click();

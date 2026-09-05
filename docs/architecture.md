@@ -86,14 +86,19 @@ complete reference set in a side or bottom index.
 Structures cross the same one-way CLI boundary as a separate domain. An Agent declares a bounded
 PR-relevant behavior and factual code entrypoint as stable-ID nodes and edges fixed to one exact source commit. SQLite keeps one
 current graph JSON value per stable Structure ID; publication and whole-value replacement validate all
-paths, ranges, endpoints, focus, identities, and Pull Request ownership before retaining the commit.
-The graph is a set of producer claims, not a semantic code index. It has no revision history, comments,
-groups, persisted semantic reverse index, inferred edges, or persisted coordinates. The viewer may
+paths, ranges, endpoints, identities, presentation references/order, and Pull Request ownership before retaining the commit.
+The current value separates factual graph claims from an optional authorial spatial presentation made
+of a thesis, one connected primary spine, and ordered regions. Legacy graph JSON without the field reads
+as `presentation: null`; no SQL migration is needed. It is not a semantic code index and has no revision
+history, comments, persisted semantic reverse index, inferred edges, or persisted coordinates. The viewer may
 derive an ephemeral backlink index from explicit Node anchors in the current values. HTTP lists and reads current values;
 human-confirmed delete is the only write exposed to the browser.
 
-The Structure viewer uses topology, factual direction reachable from the entrypoint, and stable IDs—not
-display content—to produce an initial layout. Pane-local
+The Structure viewer uses a non-null presentation to shape canonical placement, initial orientation,
+and visual emphasis while preserving every factual Node, Edge, and direction. With `presentation: null`,
+it uses topology, factual direction reachable from the entrypoint, and stable IDs—not display content—to
+produce the original projection. A presented session initially focuses `primarySpine[0]`; the null case
+initially focuses the origin. Both are defaults derived from the artifact, while pane-local
 browser session state preserves focus, neighborhood depth, node positions, and viewport across tab
 navigation and current-value updates, and moves with a Structure tab between panes. Surviving IDs keep
 positions and new nodes take a non-overlapping slot near retained neighbors. 1-hop and 2-hop require a
@@ -118,7 +123,8 @@ The bundled Skills are named by capability rather than Agent host. `rvw` handles
 synchronization; `rvw-review-compose` chooses the minimum adaptive mix of Walkthrough, Structure, and
 direct code reading for one Pull Request or explicit review subject; `rvw-walkthrough` turns one bounded
 subject into one validated source-anchored ordered path; `rvw-structure` maps one declared PR-relevant
-behavior from its code entrypoint into stable source-anchored relationships; and `rvw-watch-comments`
+behavior from its code entrypoint into stable source-anchored relationships and optional authorial spatial
+presentation; and `rvw-watch-comments`
 keeps an external Agent task subscribed to newly created posts and fails closed on PR ownership. The
 producer Skills honor a session-local upstream brief while retaining their own representation rejection
 and exact-source contracts; they do not independently expand back into PR-wide composition.
@@ -132,7 +138,7 @@ part of the rvw protocol.
 
 Review composition is an authoring strategy outside the domain model. Its candidate understanding units,
 Artifact briefs, recommended entry, and URI summary are not persisted as a Review Set, Artifact kind,
-group, or review plan. The composer uses the existing protocol-v4 Walkthrough and Structure operations;
+group, or review plan. The composer uses the existing protocol-v5 Walkthrough and Structure operations;
 it adds no database, URI, API, Viewer UI, protocol capability, or generic runtime sub-Skill invocation
 framework. Codex and Claude Code receive the same five Skill directories under their respective local
 Skill roots. Platform selection is a packaging concern only and does not fork the Agent protocol or

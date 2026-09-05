@@ -374,6 +374,7 @@ try {
   assert.equal(protocol.appVersion, packageJson.version);
   assert.ok(Number.isInteger(protocol.protocolVersion));
   assert.ok(protocol.capabilities.includes("structure.preview"));
+  assert.ok(protocol.capabilities.includes("structure.presentation"));
   const preview = parseJson(
     run(bin, ["structure", "preview", "--stdin", "--json"], {
       cwd: workingDirectory,
@@ -382,6 +383,7 @@ try {
         title: "Installed preview",
         scope: "The packaged canonical preview command.",
         originNodeId: "terminal",
+        presentation: null,
         nodes: [
           {
             id: "entry",

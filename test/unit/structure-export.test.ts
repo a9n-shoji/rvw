@@ -49,6 +49,7 @@ function exportStructure(): Structure {
     title: 'Unsafe <Structure> & "export"',
     scope: "Scope with </desc><script>alert(1)</script> and \u0001 control.",
     originNodeId: "node-0",
+    presentation: null,
     nodes: notations.map((notation, index) => ({
       id: `node-${index}`,
       label:
@@ -87,6 +88,33 @@ function documentFor(structure = exportStructure()) {
 }
 
 describe("Structure SVG export", () => {
+  it("exports authored thesis, ordered regions, and primary spine without session state", () => {
+    const structure = exportStructure();
+    structure.presentation = {
+      thesis: 'Flow <starts> here & stays factual "throughout".',
+      primarySpine: ["node-0", "node-1"],
+      regions: [
+        { label: "Input & validation", nodeIds: ["node-0", "node-2"] },
+        { label: "Execution <core>", nodeIds: ["node-1", "node-3"] },
+      ],
+    };
+    const { model, document } = documentFor(structure);
+
+    expect(document.source).toContain('data-layer="presentation-thesis"');
+    expect(document.source).toContain(
+      "Flow &lt;starts&gt; here &amp; stays factual &quot;throughout&quot;.",
+    );
+    expect(document.source).toContain('data-presentation-region-index="0"');
+    expect(document.source).toContain('data-presentation-region-label="Input &amp; validation"');
+    expect(document.source).toContain('data-edge-id="edge-0" data-primary-spine="true"');
+    expect(document.source).toContain('data-node-id="node-0" data-node-notation="plain"');
+    expect(document.source).toContain('data-node-primary-spine-mark="true"');
+    expect(document.source).toContain('data-node-origin-mark="true"');
+    expect(document.source).not.toContain("selected-edge");
+    expect(document.source).not.toContain("focus-id");
+    expect(model.presentation?.regions).toHaveLength(2);
+  });
+
   it("serializes a standalone, complete, deterministic SVG", () => {
     const structure = exportStructure();
     const first = documentFor(structure);

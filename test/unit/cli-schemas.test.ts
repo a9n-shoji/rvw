@@ -340,6 +340,14 @@ describe("CLI input schemas", () => {
             directed: true,
           },
         ],
+        presentation: {
+          thesis: "  Follow the authorization decision.  ",
+          primarySpine: ["controller", "policy"],
+          regions: [
+            { label: "  Request boundary  ", nodeIds: ["controller"] },
+            { label: "Policy", nodeIds: ["policy"] },
+          ],
+        },
       }),
     ).toMatchObject({
       originNodeId: "controller",
@@ -353,6 +361,11 @@ describe("CLI input schemas", () => {
         { notation: "plain", anchor: null },
       ],
       edges: [{ directed: true, anchors: [] }],
+      presentation: {
+        thesis: "Follow the authorization decision.",
+        primarySpine: ["controller", "policy"],
+        regions: [{ label: "Request boundary" }, { label: "Policy" }],
+      },
     });
   });
 
@@ -377,6 +390,7 @@ describe("CLI input schemas", () => {
         label: string;
         directed?: boolean;
       }>,
+      presentation: null,
     };
     expect(
       structureUpdateInputSchema.safeParse({
@@ -434,6 +448,7 @@ describe("CLI input schemas", () => {
         scope: valid.scope,
         nodes: valid.nodes,
         edges: valid.edges,
+        presentation: null,
       }).success,
     ).toBe(false);
     expect(
@@ -465,6 +480,116 @@ describe("CLI input schemas", () => {
           directed: false,
           anchors: Array.from({ length: 20 }, () => ({ path: "src/entry.ts" })),
         })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates Structure presentation references, spine adjacency, regions, and region order", () => {
+    const valid = {
+      expectedUpdatedAt: "2026-09-05T00:00:00.000Z",
+      sourceOid: "c".repeat(40),
+      title: "Presented boundary",
+      scope: "One bounded relationship with authorial presentation.",
+      originNodeId: "entry",
+      nodes: [
+        { id: "entry", label: "Entry", anchor: { path: "src/entry.ts" } },
+        { id: "policy", label: "Policy" },
+        { id: "store", label: "Store" },
+      ],
+      edges: [
+        { id: "entry-policy", from: "entry", to: "policy", label: "checks", directed: true },
+        { id: "store-policy", from: "store", to: "policy", label: "persists", directed: true },
+      ],
+      presentation: {
+        thesis: "Read from the request boundary into the persisted result.",
+        primarySpine: ["entry", "policy", "store"],
+        regions: [
+          { label: "Input", nodeIds: ["entry"] },
+          { label: "Decision", nodeIds: ["policy"] },
+          { label: "Effect", nodeIds: ["store"] },
+        ],
+      },
+    };
+    expect(structureUpdateInputSchema.safeParse(valid).success).toBe(true);
+    expect(
+      structureUpdateInputSchema.safeParse({ ...valid, presentation: undefined }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, thesis: "   " },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, unexpected: true },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [{ label: "Input", nodeIds: ["entry"], unexpected: true }],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, thesis: ` ${"t".repeat(1_000)} ` },
+      }).success,
+    ).toBe(true);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, thesis: "t".repeat(1_001) },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, primarySpine: ["entry", "entry"] },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, primarySpine: ["entry", "store"] },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [
+            { label: "First", nodeIds: ["entry", "policy"] },
+            { label: "Second", nodeIds: ["policy"] },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [
+            { label: "First", nodeIds: ["policy"] },
+            { label: "Second", nodeIds: ["entry", "store"] },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [{ label: "Missing", nodeIds: ["missing"] }],
+        },
       }).success,
     ).toBe(false);
   });

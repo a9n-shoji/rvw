@@ -3,6 +3,7 @@
   "title": "Markdown source mapping",
   "scope": "The committed mapping between Markdown AST positions, rendered selection, highlights, and comment anchors. Markdown parsing and comment persistence are excluded.",
   "originNodeId": "source-map-plugin",
+  "presentation": null,
   "nodes": [
     {
       "id": "source-position-model",

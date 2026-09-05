@@ -24,7 +24,7 @@ For every composition task, read
 
 ## Preflight
 
-1. Run `rvw protocol --json` and parse stdout as JSON. Require `protocolVersion` 4 and
+1. Run `rvw protocol --json` and parse stdout as JSON. Require `protocolVersion` 5 and
    `agent.transport`, and record the available Walkthrough and Structure capabilities. After selecting
    the composition and before invoking a producer, require only the capabilities that its chosen
    operation actually uses; the producer Skills perform their complete operation-specific checks.
@@ -42,10 +42,11 @@ persist or present them as a new rvw object.
 
 For each candidate unit, choose exactly the surface that lowers its comprehension cost:
 
-- Use a Walkthrough when ordered execution, causality, lifecycle, or a comprehension sequence is the
-  essential shape.
+- Use a Walkthrough when ordered execution, causality, lifecycle, or a comprehension sequence needs
+  prose between stops, a required ending, or transitions that carry the meaning.
 - Use a Structure when responsibility, ownership, dependency, contract, or side-effect relationships
-  around one factual code entrypoint are the essential shape.
+  around one factual code entrypoint are the essential shape. A connected visual backbone and ordered
+  regions may prioritize how the simultaneously visible space is first understood.
 - Direct the reviewer to code without creating an Artifact when the question is local, conditional,
   implementation-specific, or already clearer in source.
 - Create no new surface when an Artifact would merely restate another Artifact or add a join the
@@ -57,8 +58,9 @@ subject may need one Walkthrough, one Structure, or no Artifact. Artifact count 
 measure.
 
 Before invoking a producer, prepare an internal Artifact brief with a single subject and review
-question, explicit scope and exclusions, and the candidate claims that the Artifact must verify. Keep
-the brief's authoring bounds separate from its claims-to-verify; the composer's analysis does not turn
+question, explicit scope and exclusions, any requested spatial presentation, and the candidate claims
+that the Artifact must verify. Keep the brief's authoring bounds separate from its claims-to-verify;
+the composer's analysis does not turn
 an implementation claim into a fact. The brief is authoring context, not public JSON or rvw schema.
 Follow the detailed brief contract in the reference.
 
@@ -79,7 +81,9 @@ producer contract from this Skill.
 
 Pass the subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and
 emphasis as authoring authority: they control what the producer investigates, not what the code must
-say. Pass `mustEstablish`, a suggested origin, relationship, invariant, and every other implementation
+say. For a Structure, also pass any requested thesis, connected visual backbone, and ordered regions as
+presentation authority over verified claims. Pass `mustEstablish`, a suggested origin, relationship, invariant,
+and every other implementation
 assertion as claims to verify independently in committed source and tests. Do not reimplement the
 producer's source, format, preview, identity, concurrency, publish, update, or delete contracts here,
 and do not invent a generic sub-Skill invocation framework. If a producer rejects the requested

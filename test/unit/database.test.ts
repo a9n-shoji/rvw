@@ -328,6 +328,7 @@ describe("RvwDatabase", () => {
       title: "Architecture space",
       scope: "The bounded relationship under review.",
       originNodeId: "entry",
+      presentation: null,
       nodes: [
         {
           id: "entry",
@@ -382,6 +383,175 @@ describe("RvwDatabase", () => {
       total: 3,
     });
     database.close();
+  });
+
+  it("persists Structure presentation and normalizes only a legacy missing value to null", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-structure-presentation-db-"));
+    const filePath = path.join(directory, "rvw.db");
+    const database = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const structure = database.createStructure({
+      pullRequestId: pullRequest.id,
+      sourceOid: github.headOid,
+      title: "Presented behavior",
+      scope: "A persisted authorial presentation.",
+      originNodeId: "entry",
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          description: null,
+          kind: null,
+          notation: "plain",
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+        {
+          id: "effect",
+          label: "Effect",
+          description: null,
+          kind: null,
+          notation: "database",
+          anchor: null,
+        },
+        {
+          id: "audit",
+          label: "Audit",
+          description: null,
+          kind: null,
+          notation: "component",
+          anchor: null,
+        },
+      ],
+      edges: [
+        {
+          id: "entry-effect",
+          from: "entry",
+          to: "effect",
+          label: "persists",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "effect-audit",
+          from: "effect",
+          to: "audit",
+          label: "records",
+          directed: true,
+          anchors: [],
+        },
+      ],
+      presentation: {
+        thesis: "Follow the entrypoint into its persisted effect.",
+        primarySpine: ["entry", "effect", "audit"],
+        regions: [
+          { label: "Entry", nodeIds: ["entry"] },
+          { label: "Effect", nodeIds: ["effect"] },
+          { label: "Audit", nodeIds: ["audit"] },
+        ],
+      },
+      idempotencyKey: "structure-presentation",
+      idempotencyRequestHash: "structure-presentation-request",
+    });
+    expect(database.getStructure(structure.id)?.presentation).toEqual(structure.presentation);
+    database.close();
+
+    const raw = new DatabaseSync(filePath);
+    const row = raw.prepare("SELECT graph_json FROM structures WHERE id = ?").get(structure.id) as {
+      graph_json: string;
+    };
+    const canonicalGraph = JSON.parse(row.graph_json) as Record<string, unknown>;
+    const legacyGraph = { ...canonicalGraph };
+    delete legacyGraph.presentation;
+    raw
+      .prepare("UPDATE structures SET graph_json = ? WHERE id = ?")
+      .run(JSON.stringify(legacyGraph), structure.id);
+    raw.close();
+
+    const reopened = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    expect(reopened.getStructure(structure.id)?.presentation).toBeNull();
+    reopened.close();
+
+    const presentation = structure.presentation!;
+    const corruptionCases: Array<[string, unknown]> = [
+      ["missing required keys", {}],
+      ["unknown presentation key", { ...presentation, coordinates: [] }],
+      ["empty thesis", { ...presentation, thesis: "" }],
+      ["non-canonical thesis", { ...presentation, thesis: ` ${presentation.thesis}` }],
+      ["overlong thesis", { ...presentation, thesis: "t".repeat(1_001) }],
+      ["short spine", { ...presentation, primarySpine: ["entry"] }],
+      ["duplicate spine node", { ...presentation, primarySpine: ["entry", "entry"] }],
+      ["dangling spine node", { ...presentation, primarySpine: ["entry", "missing"] }],
+      ["non-adjacent spine pair", { ...presentation, primarySpine: ["entry", "audit"] }],
+      [
+        "too many regions",
+        {
+          ...presentation,
+          regions: Array.from({ length: 13 }, (_, index) => ({
+            label: `Region ${index + 1}`,
+            nodeIds: ["entry"],
+          })),
+        },
+      ],
+      [
+        "unknown region key",
+        {
+          ...presentation,
+          regions: [{ label: "Entry", nodeIds: ["entry"], color: "blue" }],
+        },
+      ],
+      [
+        "non-canonical region label",
+        { ...presentation, regions: [{ label: " Entry ", nodeIds: ["entry"] }] },
+      ],
+      ["empty region", { ...presentation, regions: [{ label: "Empty", nodeIds: [] }] }],
+      [
+        "duplicate node within a region",
+        { ...presentation, regions: [{ label: "Entry", nodeIds: ["entry", "entry"] }] },
+      ],
+      [
+        "duplicate node across regions",
+        {
+          ...presentation,
+          regions: [
+            { label: "First", nodeIds: ["entry"] },
+            { label: "Second", nodeIds: ["entry"] },
+          ],
+        },
+      ],
+      [
+        "dangling region node",
+        { ...presentation, regions: [{ label: "Missing", nodeIds: ["missing"] }] },
+      ],
+      [
+        "decreasing region order on the spine",
+        {
+          ...presentation,
+          regions: [
+            { label: "Effect", nodeIds: ["effect"] },
+            { label: "Entry", nodeIds: ["entry"] },
+          ],
+        },
+      ],
+    ];
+    const invalid = new DatabaseSync(filePath);
+    const invalidReopened = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    for (const [label, corruptPresentation] of corruptionCases) {
+      invalid
+        .prepare("UPDATE structures SET graph_json = ? WHERE id = ?")
+        .run(
+          JSON.stringify({ ...canonicalGraph, presentation: corruptPresentation }),
+          structure.id,
+        );
+      expect(() => invalidReopened.getStructure(structure.id), label).toThrowError(
+        expect.objectContaining({ code: "DATABASE_ERROR" }),
+      );
+    }
+    invalidReopened.close();
+    invalid.close();
   });
 
   it("lists only Open, Draft, and unknown Pull Requests needing a status refresh", () => {

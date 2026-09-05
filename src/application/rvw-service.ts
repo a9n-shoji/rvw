@@ -33,6 +33,7 @@ import type {
   StructureEdge,
   StructureNode,
   StructureNodeNotation,
+  StructurePresentation,
   StructureSourceLocator,
   StructureSourceResolution,
   StructureSummary,
@@ -87,6 +88,9 @@ import {
   MAX_STRUCTURE_LABEL_CHARACTERS,
   MAX_STRUCTURE_NODES,
   MAX_STRUCTURE_PAYLOAD_BYTES,
+  MAX_STRUCTURE_PRESENTATION_REGIONS,
+  MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
+  MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
   MAX_STRUCTURE_SCOPE_CHARACTERS,
   MAX_STRUCTURE_SOURCE_ANCHORS,
   MAX_STRUCTURE_TITLE_CHARACTERS,
@@ -292,6 +296,7 @@ export interface StructureContentRequest {
   originNodeId: string;
   nodes: StructureNodeRequest[];
   edges: StructureEdgeRequest[];
+  presentation: StructurePresentation | null;
 }
 
 export interface StructurePublishRequest extends StructureContentRequest {
@@ -2009,6 +2014,21 @@ export class RvwService {
     return normalized;
   }
 
+  private assertStructurePresentationText(
+    value: unknown,
+    maximum: number,
+    subject: string,
+  ): string {
+    if (typeof value !== "string") {
+      throw new RvwError("INVALID_INPUT", `${subject}は文字列で指定してください。`);
+    }
+    const normalized = value.trim();
+    if (normalized.length < 1 || normalized.length > maximum) {
+      throw new RvwError("INVALID_INPUT", `${subject}はtrim後1〜${maximum}文字にしてください。`);
+    }
+    return normalized;
+  }
+
   private assertStructureId(value: string, subject: string): string {
     if (!STRUCTURE_ID_PATTERN.test(value)) {
       throw new RvwError(
@@ -2196,7 +2216,159 @@ export class RvwService {
         `Structureのsource anchorは合計${MAX_STRUCTURE_SOURCE_ANCHORS}件以下にしてください。`,
       );
     }
-    const graph = { originNodeId, nodes, edges };
+    if (input.presentation === undefined) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        "Structure presentationはnullまたはobjectで指定してください。",
+      );
+    }
+    let presentation: StructurePresentation | null = null;
+    if (input.presentation !== null) {
+      if (
+        typeof input.presentation !== "object" ||
+        Array.isArray(input.presentation) ||
+        Object.keys(input.presentation).some(
+          (key) => key !== "thesis" && key !== "primarySpine" && key !== "regions",
+        )
+      ) {
+        throw new RvwError("INVALID_INPUT", "Structure presentationが不正です。");
+      }
+      const thesis = this.assertStructurePresentationText(
+        input.presentation.thesis,
+        MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
+        "Structure presentation thesis",
+      );
+      if (
+        !Array.isArray(input.presentation.primarySpine) ||
+        input.presentation.primarySpine.length < 2 ||
+        input.presentation.primarySpine.length > MAX_STRUCTURE_NODES
+      ) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `Structure presentation primarySpineは2〜${MAX_STRUCTURE_NODES}件にしてください。`,
+        );
+      }
+      const primarySpine: string[] = [];
+      const primarySpineNodeIds = new Set<string>();
+      for (const rawNodeId of input.presentation.primarySpine) {
+        const nodeId = this.assertStructureId(
+          rawNodeId,
+          "Structure presentation primarySpine Node ID",
+        );
+        if (primarySpineNodeIds.has(nodeId)) {
+          throw new RvwError(
+            "INVALID_INPUT",
+            `Structure presentation primarySpineのNode IDが重複しています: ${nodeId}`,
+          );
+        }
+        if (!nodeIds.has(nodeId)) {
+          throw new RvwError(
+            "INVALID_INPUT",
+            `Structure presentation primarySpineのNodeが存在しません: ${nodeId}`,
+          );
+        }
+        primarySpineNodeIds.add(nodeId);
+        primarySpine.push(nodeId);
+      }
+      for (let index = 1; index < primarySpine.length; index += 1) {
+        const previous = primarySpine[index - 1]!;
+        const current = primarySpine[index]!;
+        if (
+          !edges.some(
+            (edge) =>
+              (edge.from === previous && edge.to === current) ||
+              (edge.from === current && edge.to === previous),
+          )
+        ) {
+          throw new RvwError(
+            "INVALID_INPUT",
+            `Structure presentation primarySpineの隣接Node間にEdgeがありません: ${previous} ↔ ${current}`,
+          );
+        }
+      }
+      if (
+        !Array.isArray(input.presentation.regions) ||
+        input.presentation.regions.length > MAX_STRUCTURE_PRESENTATION_REGIONS
+      ) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `Structure presentation regionsは${MAX_STRUCTURE_PRESENTATION_REGIONS}件以下にしてください。`,
+        );
+      }
+      const assignedRegionByNodeId = new Map<string, { index: number; label: string }>();
+      const regions = input.presentation.regions.map((region, regionIndex) => {
+        if (
+          typeof region !== "object" ||
+          region === null ||
+          Array.isArray(region) ||
+          Object.keys(region).some((key) => key !== "label" && key !== "nodeIds")
+        ) {
+          throw new RvwError(
+            "INVALID_INPUT",
+            `Structure presentation region ${regionIndex + 1}が不正です。`,
+          );
+        }
+        const label = this.assertStructurePresentationText(
+          region.label,
+          MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
+          `Structure presentation region ${regionIndex + 1} label`,
+        );
+        if (
+          !Array.isArray(region.nodeIds) ||
+          region.nodeIds.length < 1 ||
+          region.nodeIds.length > MAX_STRUCTURE_NODES
+        ) {
+          throw new RvwError(
+            "INVALID_INPUT",
+            `Structure presentation region ${label}のnodeIdsは1〜${MAX_STRUCTURE_NODES}件にしてください。`,
+          );
+        }
+        const currentRegionNodeIds = new Set<string>();
+        const normalizedNodeIds = region.nodeIds.map((rawNodeId) => {
+          const nodeId = this.assertStructureId(
+            rawNodeId,
+            `Structure presentation region ${label} Node ID`,
+          );
+          if (currentRegionNodeIds.has(nodeId)) {
+            throw new RvwError(
+              "INVALID_INPUT",
+              `Structure presentation region ${label}のNode IDが重複しています: ${nodeId}`,
+            );
+          }
+          if (!nodeIds.has(nodeId)) {
+            throw new RvwError(
+              "INVALID_INPUT",
+              `Structure presentation region ${label}のNodeが存在しません: ${nodeId}`,
+            );
+          }
+          const assignedRegion = assignedRegionByNodeId.get(nodeId);
+          if (assignedRegion !== undefined) {
+            throw new RvwError(
+              "INVALID_INPUT",
+              `Structure presentation Node ${nodeId}は複数regionに所属できません: ${assignedRegion.label}, ${label}`,
+            );
+          }
+          currentRegionNodeIds.add(nodeId);
+          assignedRegionByNodeId.set(nodeId, { index: regionIndex, label });
+          return nodeId;
+        });
+        return { label, nodeIds: normalizedNodeIds };
+      });
+      let previousSpineRegionIndex = -1;
+      for (const nodeId of primarySpine) {
+        const region = assignedRegionByNodeId.get(nodeId);
+        if (region === undefined) continue;
+        if (region.index < previousSpineRegionIndex) {
+          throw new RvwError(
+            "INVALID_INPUT",
+            "Structure presentation primarySpine上のregion所属はregionsの順序に沿って非減少にしてください。",
+          );
+        }
+        previousSpineRegionIndex = region.index;
+      }
+      presentation = { thesis, primarySpine, regions };
+    }
+    const graph = { originNodeId, nodes, edges, presentation };
     if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
       throw new RvwError(
         "INVALID_INPUT",

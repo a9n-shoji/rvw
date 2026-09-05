@@ -33,6 +33,7 @@ import type {
   StructureDeleteCounts,
   StructureEdge,
   StructureNode,
+  StructurePresentation,
   StructureSummary,
   Walkthrough,
   WalkthroughDeleteCounts,
@@ -42,6 +43,14 @@ import type {
 import { formatCommentUri } from "../../domain/comment-uri.js";
 import { formatStructureUri } from "../../domain/structure-uri.js";
 import { formatWalkthroughUri } from "../../domain/walkthrough-uri.js";
+import {
+  MAX_STRUCTURE_NODES,
+  MAX_STRUCTURE_PAYLOAD_BYTES,
+  MAX_STRUCTURE_PRESENTATION_REGIONS,
+  MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
+  MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
+  STRUCTURE_ID_PATTERN,
+} from "../../shared/constants.js";
 import { RvwError } from "../../shared/errors.js";
 import { isThemePreference, type ThemePreference } from "../../shared/preferences.js";
 
@@ -193,13 +202,117 @@ function isStructureEdge(value: unknown): value is StructureEdge {
   );
 }
 
-function structureGraphValue(row: DbRow): Pick<Structure, "originNodeId" | "nodes" | "edges"> {
+function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
+  const actualKeys = Object.keys(value);
+  return actualKeys.length === keys.length && actualKeys.every((key) => keys.includes(key));
+}
+
+function isCanonicalPresentationText(value: unknown, maximum: number): value is string {
+  return (
+    typeof value === "string" &&
+    value === value.trim() &&
+    value.length >= 1 &&
+    value.length <= maximum
+  );
+}
+
+function isStructurePresentation(
+  value: unknown,
+  nodes: StructureNode[],
+  edges: StructureEdge[],
+): value is StructurePresentation {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["thesis", "primarySpine", "regions"]) ||
+    !isCanonicalPresentationText(value.thesis, MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS) ||
+    !Array.isArray(value.primarySpine) ||
+    value.primarySpine.length < 2 ||
+    value.primarySpine.length > MAX_STRUCTURE_NODES ||
+    !Array.isArray(value.regions) ||
+    value.regions.length > MAX_STRUCTURE_PRESENTATION_REGIONS
+  ) {
+    return false;
+  }
+
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const primarySpineNodeIds = new Set<string>();
+  const primarySpine: string[] = [];
+  for (const nodeId of value.primarySpine) {
+    if (
+      typeof nodeId !== "string" ||
+      !STRUCTURE_ID_PATTERN.test(nodeId) ||
+      !nodeIds.has(nodeId) ||
+      primarySpineNodeIds.has(nodeId)
+    ) {
+      return false;
+    }
+    primarySpineNodeIds.add(nodeId);
+    primarySpine.push(nodeId);
+  }
+  for (let index = 1; index < primarySpine.length; index += 1) {
+    const previous = primarySpine[index - 1]!;
+    const current = primarySpine[index]!;
+    if (
+      !edges.some(
+        (edge) =>
+          (edge.from === previous && edge.to === current) ||
+          (edge.from === current && edge.to === previous),
+      )
+    ) {
+      return false;
+    }
+  }
+
+  const regionByNodeId = new Map<string, number>();
+  for (const [regionIndex, region] of value.regions.entries()) {
+    if (
+      !isRecord(region) ||
+      !hasExactKeys(region, ["label", "nodeIds"]) ||
+      !isCanonicalPresentationText(
+        region.label,
+        MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
+      ) ||
+      !Array.isArray(region.nodeIds) ||
+      region.nodeIds.length < 1 ||
+      region.nodeIds.length > MAX_STRUCTURE_NODES
+    ) {
+      return false;
+    }
+    const currentRegionNodeIds = new Set<string>();
+    for (const nodeId of region.nodeIds) {
+      if (
+        typeof nodeId !== "string" ||
+        !STRUCTURE_ID_PATTERN.test(nodeId) ||
+        !nodeIds.has(nodeId) ||
+        currentRegionNodeIds.has(nodeId) ||
+        regionByNodeId.has(nodeId)
+      ) {
+        return false;
+      }
+      currentRegionNodeIds.add(nodeId);
+      regionByNodeId.set(nodeId, regionIndex);
+    }
+  }
+
+  let previousSpineRegionIndex = -1;
+  for (const nodeId of primarySpine) {
+    const regionIndex = regionByNodeId.get(nodeId);
+    if (regionIndex === undefined) continue;
+    if (regionIndex < previousSpineRegionIndex) return false;
+    previousSpineRegionIndex = regionIndex;
+  }
+  return true;
+}
+
+function structureGraphValue(
+  row: DbRow,
+): Pick<Structure, "originNodeId" | "nodes" | "edges" | "presentation"> {
   try {
     const value: unknown = JSON.parse(stringValue(row, "graph_json"));
-    const originNodeId =
-      isRecord(value) && typeof value.originNodeId === "string" ? value.originNodeId : null;
+    if (!isRecord(value)) throw new Error("invalid Structure graph");
+    const originNodeId = typeof value.originNodeId === "string" ? value.originNodeId : null;
+    const presentation = value.presentation === undefined ? null : value.presentation;
     if (
-      !isRecord(value) ||
       originNodeId === null ||
       !Array.isArray(value.nodes) ||
       !value.nodes.every(isStructureNode) ||
@@ -208,10 +321,21 @@ function structureGraphValue(row: DbRow): Pick<Structure, "originNodeId" | "node
     ) {
       throw new Error("invalid Structure graph");
     }
+    const nodes = value.nodes;
+    const edges = value.edges;
+    if (
+      presentation !== null &&
+      (!isStructurePresentation(presentation, nodes, edges) ||
+        Buffer.byteLength(JSON.stringify({ originNodeId, nodes, edges, presentation }), "utf8") >
+          MAX_STRUCTURE_PAYLOAD_BYTES)
+    ) {
+      throw new Error("invalid Structure presentation");
+    }
     return {
       originNodeId,
-      nodes: value.nodes.map((node) => ({ ...node, notation: node.notation ?? "plain" })),
-      edges: value.edges,
+      nodes: nodes.map((node) => ({ ...node, notation: node.notation ?? "plain" })),
+      edges,
+      presentation,
     };
   } catch (error) {
     throw new RvwError("DATABASE_ERROR", "Structure graph_jsonが不正です。", { cause: error });
@@ -450,6 +574,7 @@ export interface NewStructureInput {
   originNodeId: string;
   nodes: StructureNode[];
   edges: StructureEdge[];
+  presentation: StructurePresentation | null;
   idempotencyKey: string;
   idempotencyRequestHash: string;
 }
@@ -1452,6 +1577,7 @@ export class RvwDatabase {
       originNodeId: input.originNodeId,
       nodes: input.nodes,
       edges: input.edges,
+      presentation: input.presentation,
     });
     this.immediateTransaction(() => {
       const keyHash = hashIdempotencyKey(input.idempotencyKey);
@@ -1526,6 +1652,7 @@ export class RvwDatabase {
       originNodeId: input.originNodeId,
       nodes: input.nodes,
       edges: input.edges,
+      presentation: input.presentation,
     });
     this.immediateTransaction(() => {
       const current = this.getStructure(id);

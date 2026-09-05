@@ -8,8 +8,9 @@ defaults only where explicit instructions are silent.
 Apply inputs in this order:
 
 1. Explicit directions from the user, caller, Pull Request body, or upstream Skill define the subject,
-   review question, behavior boundary, scope, inclusions, exclusions, and emphasis. These choices are
-   authority over what to investigate, not proof of what the code does.
+   review question, behavior boundary, scope, inclusions, exclusions, emphasis, and requested spatial
+   presentation. These choices are authority over what to investigate and how to present it, not proof
+   of what the code does.
 2. Treat `mustEstablish`, suggested origins, relationships, invariants, and every other factual
    implementation assertion as claims to verify independently in committed code, tests,
    and source-controlled contracts. Use Pull Request context for authoring direction or attributed
@@ -39,9 +40,11 @@ behaviors, do not join them and do not create multiple Structures from this prod
 explicitly supplied boundary; otherwise return candidate boundaries to the requester or upstream
 composer.
 
-Before authoring, test the requested shape: if the explanation becomes clearer only when its elements
-are arranged as step 1, then step 2, then step 3, the subject is a path. Stop and recommend a
-Walkthrough. A Structure may contain directed relationships, but direction is not a reading order. If
+Before authoring, test the requested shape. Structure may tell a reviewer which connected backbone to
+grasp first, but all relationships remain simultaneously visible and independently explorable. If the
+meaning depends on prose between sequential stops, a required ending, or route transitions rather than
+the visible relationship space, it is not a Structure. Stop and recommend a Walkthrough. Edge direction is factual and is not
+the authored spatial order. If
 the subject has no factual code entrypoint and is useful only as a timeless architecture diagram, stop
 without publishing a Structure.
 
@@ -113,8 +116,40 @@ Each edge is a producer claim about how two nodes relate in this subject.
   anchor in place instead of reordering unchanged entries.
 - Do not publish a hypothesized or uncertain relation. Explain it separately in the Agent response so
   the map never presents an inference as a source-established fact.
-- Do not encode confidence, severity, inferred risk, reviewer approval, hidden groups, or presentation
-  instructions in IDs, labels, kinds, or descriptions.
+- Do not encode confidence, severity, inferred risk, reviewer approval, hidden groups, or layout
+  instructions in IDs, labels, kinds, or descriptions. Use `presentation` only for its defined
+  authorial semantics.
+
+## Author spatial presentation deliberately
+
+`presentation` is required nullable version-5 content. Use `null` when the factual graph is clearest
+with the topology-derived projection or when no defensible spatial explanation has been requested or
+discovered. Never omit the field.
+
+For a non-null presentation:
+
+- Write a nonblank `thesis` of 1–1000 characters that states what the whole map should help the reviewer
+  understand. It may synthesize the graph's source-supported claims, but must not announce a review
+  finding, approval, risk verdict, or completeness guarantee.
+- Choose one `primarySpine` of 2–50 unique current Node IDs. It is the backbone to grasp first in this
+  explanation and determines authorial reading priority and emphasis. Every consecutive pair must have
+  a factual Edge in either direction. Do not invent an Edge, reverse its endpoints, or change its
+  predicate to make the spine valid. The spine does not claim runtime order or project-wide
+  architectural importance, and it need not start at or contain `originNodeId`.
+- Add 0–12 `regions` only when named spatial groupings clarify this subject. Each has a nonblank
+  1–100-character `label` and one or more unique current Node IDs. A Node may be both on the spine and in
+  one region, but it may not occur in more than one region. Regions are authorial groupings, not new
+  factual relations, subsystem ownership, or permission to expand the Structure into a static inventory.
+- Region array order is left to right. After ignoring spine Nodes that belong to no region, their region
+  indexes must be nondecreasing along the spine. Reorder the regions, revise the spine, or leave a spine
+  Node ungrouped rather than declaring contradictory spatial orders.
+
+A non-null presentation influences canonical placement, initial orientation, and visual emphasis. A
+new session initially focuses `primarySpine[0]`; `originNodeId` remains separately marked as the factual
+entrypoint. The initial focus is derived from the current artifact and does not persist reviewer focus or
+give the producer browser control. All Nodes, Edges, directions, and source actions remain available for
+free exploration. Do not author coordinates, viewport, focus, manual positions, multiple routes,
+stepper behavior, or autoplay.
 
 ## Maintain stable identity
 
@@ -172,6 +207,14 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] Every edge label states a precise relationship and direction is factual.
 - [ ] Every edge label is a short verb or verb phrase readable at normal zoom and does not contain a
       packed condition or explanation.
+- [ ] `presentation` is present; `null` is intentional, or its thesis states a source-consistent spatial
+      explanation without a review conclusion or completeness claim.
+- [ ] A non-null primary spine contains 2–50 unique current Node IDs, each consecutive pair has a factual
+      Edge in either direction, and its order was not encoded by changing factual Edge direction.
+- [ ] Every non-null region has a concise label and current unique Node IDs, no Node belongs to multiple
+      regions, and assigned spine Nodes encounter region indexes in nondecreasing order.
+- [ ] Presentation describes one visual backbone and useful spatial groupings without coordinates,
+      multiple routes, hidden content, static inventory, stepper behavior, or autoplay.
 - [ ] IDs are unique, semantic, and stable across updates; removed IDs are not recycled.
 - [ ] `originNodeId` names the existing source-established factual code entrypoint where review of this
       behavior starts, not merely the subject's central object.
@@ -185,7 +228,7 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] There are no unintended overlapping or nested Node anchors in one file; any retained overlap is
       justified by distinct responsibility claims.
 - [ ] The graph contains at least one source anchor and no more than 400 across all nodes and edges.
-- [ ] The map contains no hidden review conclusion, presentation layout, inferred confidence, or
+- [ ] The map contains no hidden review conclusion, raw layout coordinates, inferred confidence, or
       exhaustive-completeness claim.
 - [ ] The graph is small enough that a reviewer can explore it as a coherent subject.
 - [ ] The graph has no more than 50 nodes and 200 edges; a denser subject was narrowed or returned to

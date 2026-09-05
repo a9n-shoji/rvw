@@ -20,6 +20,9 @@ import {
   MAX_STRUCTURE_LABEL_CHARACTERS,
   MAX_STRUCTURE_NODES,
   MAX_STRUCTURE_PAYLOAD_BYTES,
+  MAX_STRUCTURE_PRESENTATION_REGIONS,
+  MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
+  MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
   MAX_STRUCTURE_SCOPE_CHARACTERS,
   MAX_STRUCTURE_SOURCE_ANCHORS,
   MAX_STRUCTURE_TITLE_CHARACTERS,
@@ -283,6 +286,35 @@ const structureEdgeInputSchema = z
   })
   .strict();
 
+const structurePresentationInputSchema = z
+  .object({
+    thesis: z
+      .string()
+      .transform((value) => value.trim())
+      .pipe(z.string().min(1).max(MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS)),
+    primarySpine: z
+      .array(z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN))
+      .min(2)
+      .max(MAX_STRUCTURE_NODES),
+    regions: z
+      .array(
+        z
+          .object({
+            label: z
+              .string()
+              .transform((value) => value.trim())
+              .pipe(z.string().min(1).max(MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS)),
+            nodeIds: z
+              .array(z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN))
+              .min(1)
+              .max(MAX_STRUCTURE_NODES),
+          })
+          .strict(),
+      )
+      .max(MAX_STRUCTURE_PRESENTATION_REGIONS),
+  })
+  .strict();
+
 const structureContentShape = {
   sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
   title: z.string().min(1).max(MAX_STRUCTURE_TITLE_CHARACTERS),
@@ -290,6 +322,7 @@ const structureContentShape = {
   originNodeId: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
   nodes: z.array(structureNodeInputSchema).min(1).max(MAX_STRUCTURE_NODES),
   edges: z.array(structureEdgeInputSchema).max(MAX_STRUCTURE_EDGES),
+  presentation: structurePresentationInputSchema.nullable(),
 };
 
 function refineStructureContent(
@@ -302,6 +335,11 @@ function refineStructureContent(
       to: string;
       anchors: Array<Record<string, unknown>>;
     }>;
+    presentation: {
+      thesis: string;
+      primarySpine: string[];
+      regions: Array<{ label: string; nodeIds: string[] }>;
+    } | null;
   },
   context: z.RefinementCtx,
 ): void {
@@ -381,6 +419,89 @@ function refineStructureContent(
       });
     }
   }
+  if (value.presentation !== null) {
+    const spineNodeIds = new Set<string>();
+    for (const [index, nodeId] of value.presentation.primarySpine.entries()) {
+      if (spineNodeIds.has(nodeId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["presentation", "primarySpine", index],
+          message: "primarySpineのNode IDが重複しています。",
+        });
+      }
+      spineNodeIds.add(nodeId);
+      if (!nodeIds.has(nodeId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["presentation", "primarySpine", index],
+          message: "primarySpineのNodeが存在しません。",
+        });
+      }
+    }
+    for (let index = 1; index < value.presentation.primarySpine.length; index += 1) {
+      const previous = value.presentation.primarySpine[index - 1]!;
+      const current = value.presentation.primarySpine[index]!;
+      if (
+        nodeIds.has(previous) &&
+        nodeIds.has(current) &&
+        !value.edges.some(
+          (edge) =>
+            (edge.from === previous && edge.to === current) ||
+            (edge.from === current && edge.to === previous),
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["presentation", "primarySpine", index],
+          message: `primarySpineの隣接Node間にEdgeがありません: ${previous} ↔ ${current}`,
+        });
+      }
+    }
+    const regionByNodeId = new Map<string, number>();
+    for (const [regionIndex, region] of value.presentation.regions.entries()) {
+      const currentRegionNodeIds = new Set<string>();
+      for (const [nodeIndex, nodeId] of region.nodeIds.entries()) {
+        if (currentRegionNodeIds.has(nodeId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "regions", regionIndex, "nodeIds", nodeIndex],
+            message: "同じregion内でNode IDが重複しています。",
+          });
+        }
+        currentRegionNodeIds.add(nodeId);
+        if (!nodeIds.has(nodeId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "regions", regionIndex, "nodeIds", nodeIndex],
+            message: "regionのNodeが存在しません。",
+          });
+        }
+        const assignedRegionIndex = regionByNodeId.get(nodeId);
+        if (assignedRegionIndex !== undefined && assignedRegionIndex !== regionIndex) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "regions", regionIndex, "nodeIds", nodeIndex],
+            message: "一つのNodeを複数regionへ所属させることはできません。",
+          });
+        }
+        if (assignedRegionIndex === undefined) regionByNodeId.set(nodeId, regionIndex);
+      }
+    }
+    let previousSpineRegionIndex = -1;
+    for (const [spineIndex, nodeId] of value.presentation.primarySpine.entries()) {
+      const regionIndex = regionByNodeId.get(nodeId);
+      if (regionIndex === undefined) continue;
+      if (regionIndex < previousSpineRegionIndex) {
+        context.addIssue({
+          code: "custom",
+          path: ["presentation", "primarySpine", spineIndex],
+          message: "primarySpine上のregion所属はregionsの順序に沿って非減少にしてください。",
+        });
+      } else {
+        previousSpineRegionIndex = regionIndex;
+      }
+    }
+  }
   const anchorCount =
     value.nodes.filter((node) => node.anchor !== null).length +
     value.edges.reduce((count, edge) => count + edge.anchors.length, 0);
@@ -396,7 +517,12 @@ function refineStructureContent(
       message: `Structureのsource anchorは合計${MAX_STRUCTURE_SOURCE_ANCHORS}件以下にしてください。`,
     });
   }
-  const graph = { originNodeId: value.originNodeId, nodes: value.nodes, edges: value.edges };
+  const graph = {
+    originNodeId: value.originNodeId,
+    nodes: value.nodes,
+    edges: value.edges,
+    presentation: value.presentation,
+  };
   if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
     context.addIssue({
       code: "custom",

@@ -1,6 +1,6 @@
 # rvw implementation specification
 
-**基準日:** 2026-08-30
+**基準日:** 2026-09-05
 **対象:** Phase 1のローカル実用品とPhase 2の配布
 **一次仕様:** この文書を実装・テスト・README・Skill契約のsource of truthとする。commitモデルへの
 移行は、それと無関係な既存のViewer、comment、CLI、security、配布要件を破棄しない。
@@ -15,7 +15,8 @@
 検索結果を含む任意の文書へコメントでき、その判断をCodex / Claude Codeへ共通Skill経由で受け渡す。
 Agentが実装やarchitectureを説明する場合は、source commitをanchorに持つWalkthroughとしてcode reference、
 Mermaid図、staticなHTML visualを提示できる。PRに関係するbehaviorをentrypointから周辺relationへ説明する場合は、
-同じくexact sourceを持つStructureとしてstableなnodeとedgeを提示できる。どの参照をいつ開くかは人間が選び、
+同じくexact sourceを持つStructureとしてstableなnodeとedge、およびoptionalなauthorial spatial presentationを
+提示できる。どの参照をいつ開くかは人間が選び、
 rvwの最大二ペインのdocument workspaceで確認する。
 
 diffは変更を見つけるlensであり、レビュー対象の境界ではない。レビュー対象は選択したcommitが作る
@@ -56,7 +57,8 @@ rvwが担うもの:
 - comment postごとのexact commit固定typed code reference
 - 新規comment postのDB-wide event順序、opaque cursor、10秒pollのwatch CLI
 - source commitをanchorに持つAgent Walkthrough、typed code reference、Mermaid図、static HTML visual
-- boundedなPR-relevant behaviorをentrypointから表すAgent Structure、stable Node / Edge ID、source anchor
+- boundedなPR-relevant behaviorをentrypointから表すAgent Structure、stable Node / Edge ID、source anchor、
+  optionalなthesis / primary spine / ordered region
 - platform非依存の`rvw` / `rvw-review-compose` / `rvw-walkthrough` / `rvw-structure` /
   `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
 
@@ -99,8 +101,8 @@ Git ref、full source OID、comment target、SQLite IDは必要なprotocol以外
 生じた質問、修正要求、確認結果をsoftwareの具体的な位置へ結び、Agentとの次の協業単位になる。
 WalkthroughはAgentが説明として提示する読み物であり、事実の正本ではない。人間はinline referenceや
 diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分で照合する。同じ参照を横や下へ
-列挙するindexは表示しない。Structureはboundedなsubjectの関係を任意方向へ探索するspaceであり、
-claimを選択してsource evidenceと照合する。
+列挙するindexは表示しない。Structureはboundedなsubjectの関係を任意方向へ探索しながら同時に見渡せる
+spatial explanationであり、optionalなauthorial presentationを手がかりにclaimを選択してsource evidenceと照合する。
 
 ### 3.1 Commit選択
 
@@ -583,8 +585,9 @@ interface Walkthrough {
 ## 5.5 Structure
 
 StructureはPRに関係するboundedなbehaviorを、source-establishedなentrypointから依存、contract、side effectへ
-任意の方向に探索できるrelationship spaceとして表す。Walkthroughは意図的な読解pathであり、Structureは
-読解順を規定しない。flowをgraphへ押し込まず、順番が理解の本体ならWalkthroughを使う。entrypointを持たない
+任意の方向に探索できるrelationship spaceとして表す。authorは任意の`presentation`で、同時に見渡せる
+spatial explanationの主張、primary spine、ordered regionを宣言できる。これは一本道のstepperやautoplayではない。
+順序とprose自体が理解の本体ならWalkthroughを使う。entrypointを持たない
 静的なarchitecture／責務inventoryはPR reviewの停止条件を失うためStructureの対象にしない。Structureは
 generic Artifact system、semantic code graph、AI推論結果、review finding、completeness保証ではない。
 
@@ -624,6 +627,15 @@ type StructureEdge = {
   anchors: SourceAnchor[];
 };
 
+type StructurePresentation = {
+  thesis: string;
+  primarySpine: string[];
+  regions: Array<{
+    label: string;
+    nodeIds: string[];
+  }>;
+};
+
 type Structure = {
   id: string;
   ref: `rvw://structure/${string}`;
@@ -632,6 +644,7 @@ type Structure = {
   title: string;
   scope: string;
   originNodeId: string;
+  presentation: StructurePresentation | null;
   nodes: StructureNode[];
   edges: StructureEdge[];
   createdAt: string;
@@ -656,14 +669,26 @@ type Structure = {
   HTTP routeに限らずpublic API、command handler、worker trigger、event subscriber、composition call、
   migration execution pointを含む。subjectの中心物やrelationの多いhubを意味せず、terminal / intermediate
   entrypointも許容する。同一subjectの実装上のentrypointが移動した場合だけupdateで変更できる。
+- `presentation`はfactual graphと分離したauthorial semanticsで、v5 producerは`null`を含め必ず送る。
+  non-nullの場合、`thesis`は1〜1000文字、`primarySpine`は2〜50件のuniqueなcurrent Node IDとし、隣接する
+  すべてのpairは向きにかかわらずfactual Edgeで接続されていなければならない。`regions`は左から右へ並ぶ
+  0〜12件で、各`label`は1〜100文字、`nodeIds`は1件以上のuniqueなcurrent Node IDとする。同じNodeを
+  複数regionへ所属させない。spine上でregionに所属するNodeだけを順に見たregion indexは非減少とし、
+  spineの左から右とordered regionの左から右を矛盾させない。spine Nodeはregion未所属でも、一つのregionへ
+  所属してもよい。
+- factual graph（`originNodeId`、Node、Edge、source）、authorial `presentation`、reviewer sessionを別layerとして
+  扱う。`primarySpine`はこの説明で先に掴むbackboneという優先と強調を表すが、その順はruntime data flow、
+  control flow、因果、Edge方向、project全体でのarchitectural importanceを主張せず、Edgeの`from` / `to`を
+  書き換えない。regionも新しいfactual relationや静的inventoryを意味しない。`presentation: null`は従来の
+  topology projectionを選ぶ。旧`graph_json`にfieldがない保存値はread時に`null`へnormalizeし、SQL migrationは
+  追加しない。
 - Node descriptionとEdge labelはproducer claimであり、source anchorはそのclaimを検証する根拠である。
   Edge labelは`from`をactor/source、`to`をtargetとして自然に読めるverb / verb phraseを使い、
   directionを読解順には使わない。配置を操作するためにinverse relationやactive/passive表現を選ばない。
 - `kind`は既存producerとの互換性のため入力とcurrent valueに残すdeprecated fieldであり、viewerは表示せず、
   新しいproducerは省略する。`notation`は`plain | class | database | interface | component | external | concept`の
   controlledな任意表示で、未指定は`plain`とする。producerが明示し、viewerは`kind`やpathから推論せず、
-  layoutにも使わない。comment、group、
-  durable layout、confidence、severityは持たない。
+  layoutにも使わない。comment、raw座標、focus、viewport、manual position、confidence、severityは持たない。
 - SQLiteはstable identityと一つのcurrent graph値だけを保持する。updateは`expectedUpdatedAt`を条件にした
   atomicなwhole-value replacementで、node/edge単位patch、過去値、Structure revision、version selectorを
   持たない。deleteもpreviewで読んだ`updatedAt`がcurrent値と一致する場合だけ実行する。
@@ -726,9 +751,13 @@ sessionのNode位置、depth、zoom scaleを保ったone-shot requestとしてta
 探索はfocus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。trackpadの通常wheelは
 pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱い、pan / zoom感度は従来値の
 2倍とする。overflowするNode上では、修飾キーなしの縦wheelをその方向へNode内scrollできる間だけNodeへ渡す。
-横wheel、Ctrl / Meta付きwheel、Node内scrollの上端／下端から外向きのwheelはcanvasへ渡す。layoutはtopology、
-factualなEdge direction、`originNodeId` entrypoint、stable IDを入力とするdeterministicなbehavior projectionと
-する。originを含むtopology componentでは、canonical directional linksのstrongly connected componentsを求め、
+横wheel、Ctrl / Meta付きwheel、Node内scrollの上端／下端から外向きのwheelはcanvasへ渡す。layoutはfactual graph、
+optionalな`presentation`、stable IDを入力とするdeterministicなbehavior projectionとする。non-nullの
+`presentation`では`primarySpine`を左から右のcanonical backbone、`regions`を宣言順のまとまりとして配置し、
+thesis、spine、regionを初期orientationとvisual emphasisへ反映する。spine外／region外を含む全Nodeと全Edgeを
+残し、Edge方向やfactual claimを書き換えず、focus、source検証、自由探索を制限しない。
+`presentation: null`では従来どおりtopology、factualなEdge direction、`originNodeId` entrypointからprojectionを
+導出する。originを含むtopology componentでは、canonical directional linksのstrongly connected componentsを求め、
 directional weak componentごとにcondensation DAGをlongest-path layeringする。各SCCを連続したrank blockとして配置して
 SCC間relationを必ずforwardにし、originを含むgroupはorigin Nodeのrankが0になるようshiftする。これによりacyclic
 predecessorは負rank、successorは正rankになり、cycle内、つまり同一SCC内だけに不可避なnon-forward relationを残せる。
@@ -747,8 +776,9 @@ producer claimではなく、viewerが
 factualなoriginとrelation directionから導出するprojectionである。同一unordered pairにundirected relationまたは
 両方向directed relationがあればdirectional signalから除外し、同方向parallelはpair-levelの1 link、self relationは
 0 linkとする。label、kind、description、path、変更種別は位置決定へ使わず、Edge label sizeはNode geometry決定後の
-placementだけに使う。stable IDは対称な配置を決定する最終tie-breakerに限る。producer指定の
-座標やpresentation hintは受け取らない。
+placementだけに使う。stable IDは対称な配置を決定する最終tie-breakerに限る。non-nullの`presentation`は
+このtopology projectionへauthorial semanticsを加える入力であり、producer指定の座標、focus、viewport、
+manual positionは引き続き受け取らない。
 
 base mapはcurrent Structureだけから決定的に導出するcanonical layoutで、新しいsessionと明示的なlayout resetに
 使う。session layoutはそれを起点にした人間のreading stateであり、Node dragとwhole-value update後もretained
@@ -760,11 +790,15 @@ surviving IDの位置を保つ。layout resetはNode座標だけをcanonical値�
 左右paneで同じStructureを
 開いてもreading stateとDOM参照を共有しない。reload、別browser、CLI、SQLiteへ座標を持ち越さない。drag後は
 canonical layoutへ戻せる。
-`originNodeId`は新しいreading sessionの初期highlight、orientation、canonical behavior projectionのentrypointに
-使い、初期depthはAllとする。
+初期depthはAllとする。`presentation`がnon-nullなら新しいsessionの初期focus / highlightを
+`primarySpine[0]`に置き、primary spineとordered regionを左から右へ読めるorientationを使う。この初期値は
+current artifactから導出するだけで、durableまたはremote-controlledなreviewer stateではない。
+`originNodeId`は別のfactual entrypoint markerとして残す。`presentation: null`なら従来どおり
+`originNodeId`を初期focus / highlightとcanonical orientationのentrypointに使う。どちらも一本道のstepperや
+autoplayにはしない。
 current-value更新でfocus Nodeが消えた場合は、
 producerの新しい`originNodeId`へ移動せずfocusなしのAllへ戻す。人間は明示buttonまたはEscapeでfocusを解除できる。
-新しいsessionは全Node / Edgeを描画しながら、originより左にNodeがなければ`originNodeId`を等倍でcanvas幅の
+`presentation: null`の新しいsessionは全Node / Edgeを描画しながら、originより左にNodeがなければ`originNodeId`を等倍でcanvas幅の
 25%付近、縦中央へ置く。左にpredecessor columnがある場合はNode-only boundsからorigin中心に対するleft/right spanを
 求め、自然な比率と最寄りの左側Nodeを最低64 px表示するための比率の大きい方を35%〜50%へclampして横位置を決める。
 狭すぎるviewportでは50%上限を優先する。Edge label boundsは初期viewportへ使わず、全体を自動fitしない。
@@ -784,8 +818,10 @@ Nodeはsource file identityをclaim titleと別の行に置き、source action�
 大きさを変えず、titleとdescriptionを省略しない。内容がcardを超える場合はNode内を縦scrollして全文を確認でき、
 descriptionの本文領域はsource actionの下も含めて右端まで使う。Node内scrollはlayout座標、Edge route、session座標、
 canvas zoomを変更しない。
-canvasはfocus名、可視／全体件数、
-zoom率とminimapを常時提示する。zoomは同じcardとRelation labelを一体として拡大縮小し、表示情報を暗黙に
+canvasはfocus名、可視／全体件数、zoom率とminimapを常時提示する。non-nullの`presentation`ではthesisを
+headerとcanvasの間に置く専用stripへ短く表示し、通常幅では1行、狭いpaneでは最大2行にclampする。canvas上へ
+thesisを重ねない。region labelを各まとまりに表示し、primary spineのNode / Edgeを他のfactsを弱めず強調する。
+zoomは同じcardとRelation labelを一体として拡大縮小し、表示情報を暗黙に
 増減させない。広域の位置関係はminimap、局所の読解はpan / zoom、全体把握は明示的なfitで使い分ける。
 Structure固有のheaderはtitleとexact sourceを一つのcompact rowへ置き、scopeは同じrowから開くnon-modalな
 popoverで確認できるようにする。表示操作はcanvas上のsingle-row overlayとし、狭いpaneでも複数行へwrapして
@@ -1038,7 +1074,7 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-current protocol versionは4とし、最初のpublic compatibility contractはversion 1である。公開前に
+current protocol versionは5とし、最初のpublic compatibility contractはversion 1である。公開前に
 使用した内部version番号は互換性保証の対象外とする。public release後は番号を再利用せず、breaking
 changeのたびに単調増加させる。capabilityは次を含む。
 
@@ -1056,6 +1092,7 @@ comment.reopen
 pullRequest.sync
 structure.list
 structure.read
+structure.presentation
 structure.preview
 structure.publish
 structure.update
@@ -1310,21 +1347,23 @@ rvw structure delete <STRUCTURE_URI> --yes --expected-updated-at <PREVIEW_UPDATE
 ```
 
 preview inputはDB、repository runtime、Agent socketを初期化せず、publish/updateと同じ`sourceOid`、`title`、
-`scope`、`originNodeId`、全`nodes`、全`edges`をpure graph validationへ通し、canonical initial projectionの
+`scope`、`originNodeId`、required nullableな`presentation`、全`nodes`、全`edges`をpure validationへ通し、canonical initial projectionの
 `columnCount`、`rowsPerColumn`、`maxRows`、pair-level directional link数、non-forward数とratio、origin outgoing数、
-canonical authoring warningsを返す。publish inputは`idempotencyKey`、`pullRequest`、`sourceOid`、`title`、`scope`、requiredな`originNodeId`、全
-`nodes`、全`edges`を持つ。同じkeyとcanonical payloadの再送は元のStructureを返し、別payloadとのkey conflictと
+canonical authoring warningsを返す。publish inputは`idempotencyKey`、`pullRequest`、`sourceOid`、`title`、`scope`、requiredな`originNodeId`、
+required nullableな`presentation`、全`nodes`、全`edges`を持つ。同じkeyとcanonical payloadの再送は元のStructureを返し、別payloadとのkey conflictと
 削除済みresultを明示errorにする。`list`はPR selectorからstable `ref`を含むsummaryを返す。updateは
 `expectedUpdatedAt`と`pullRequest`を除く同じcurrent値の完全置換である。CLIとAgent socketは同じschemaと
 application validationを使用し、commit availability、PR ownership、UTF-8 document、line pair、ID、endpoint、
-focus、anchor総数、count、byte上限を検証する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
+focus、anchor総数、count、byte上限に加え、presentationの文字数、current Node参照、spineのunique性と隣接Edge、
+region間のNode非重複、spine上のregion index非減少を検証する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
 `createdAt`と新しい`updatedAt`を返す。publish/update成功responseはexact persisted graphから導出したwarningsを
 additive optional fieldとして返し、warningは保存せず成功扱いを変えない。updateはcurrent `updatedAt`がexpected値と一致する時だけ保存し、不一致は
 409の`STRUCTURE_CONFLICT`を返す。どちらもretained commit refを確保してから一つのSQLite transactionで保存し、
 失敗時はref作成をrollbackする。過去graphは保存しないが、削除済みNode / Edge IDのtombstoneは保持して
 stable identityの再利用を拒否する。
 
-`get`はcurrent Structureと対象PR identity、local repository pathを返す。`--yes`なしのdeleteは
+`get`はcurrent Structureと対象PR identity、local repository pathを返し、旧保存値を含め`presentation`を必ず
+`null`またはobjectで返す。`--yes`なしのdeleteは
 `STRUCTURE_DELETE_CONFIRMATION_REQUIRED`、current Structure、Node / Edge / anchor件数を返してexit 2とする。
 confirmed deleteはpreviewの`updatedAt`を必須とし、current値が変わっていない場合だけ物理削除する。全commandは
 passiveでviewerを操作しない。
@@ -1780,7 +1819,7 @@ invariant検証を行う。refとSQLiteの不整合を検出した場合は部�
 - dirty判定errorには対象repository pathとstatus entry一覧を含める
 - invalid commit range / object / path
 - invalid Walkthrough reference / Mermaid binding / HTML preview / line range
-- invalid Structure identity / endpoint / focus / source anchor / line range / payload
+- invalid Structure identity / endpoint / presentation / focus / source anchor / line range / payload
 - refとOID不整合
 - binary / too large
 - stale protocol
@@ -1797,7 +1836,9 @@ Unit:
 - line mapping、rename、Outdated
 - comment resolve/reopen、URI、CLI/API schema
 - Walkthrough schema、URI、Markdown reference / HTML preview validation、行comment placement
-- Structure schema、URI、neighborhood completeness、逆引きtarget Nodeのundirected最短hop選択、Node非衝突、entrypoint／direction-biased canonical layoutとsession reconciliation
+- Structure schema、URI、neighborhood completeness、presentationの参照／隣接Edge／region非重複／順序整合、
+  旧graphのnull normalization、逆引きtarget Nodeのundirected最短hop選択、Node非衝突、presentation-aware／
+  topology fallback canonical layoutとsession reconciliation
 - DB migration 001→current
 - Pull Request一覧のGitHub更新日時順、stable tie-breaker、aggregate count、Closed / Merged filter適用後の
   pagination、既存行の不明な作成日時と状態、Open／状態未取得だけを対象とする明示的な一括status更新と部分失敗
@@ -1821,7 +1862,8 @@ Integration（実git + fake GitHub）:
   同一databaseのopen再利用、異なるdatabaseの独立runtime、stale owner/socket recovery、明示port conflict
 - doctorのDB write transactionとAgent疎通
 - source anchor付きWalkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
-- source anchor付きStructureの登録、一覧、取得、同一ID atomic完全置換、PR ownership、ref rollback、確認付き削除、reset削除
+- source anchorとrequired nullable presentation付きStructureの登録、一覧、取得、同一ID atomic完全置換、
+  PR ownership、ref rollback、確認付き削除、reset削除
 - effective fileからNode anchorだけを対象にしたexact／rename-aware逆引き、複数Node集約、一覧順、Edge-only除外、line range staleness、ambiguous copyとcross-PR分離
 - worktree間共有
 
@@ -1870,7 +1912,9 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
     確認する。composerはtarget付近へ表示し、HTML内部threadは外側Markdown inlineへ重複せず、markerから
     Comments sidebarのthreadをactivateできる。Pane Findはiframe本文を検索・highlight・前後移動できる
 21. 同じPRのStructureを2件以上一覧し、片方を開いてもcodeを自動表示せず、1/2-hop / All、focus、
-    全relation表示、Relation選択、pan / zoom / fit / drag / layout resetを操作できる
+    全relation表示、Relation選択、pan / zoom / fit / drag / layout resetを操作できる。non-null presentationでは
+    thesis、primary spine、ordered regionがcanonical配置、初期orientation、visual emphasisへ反映され、nullでは
+    従来のtopology projectionになる。どちらも全Node / Edgeを探索できる
 22. StructureのNode / Edge anchorを通常clickで左、modifier-clickで右へsource-anchor共通context付きで開く。
     latest成功、source fallback、latest file action、historical rangeのlatest exact全文、HEAD更新後のstale表示と
     再解決を確認し、global commit選択を変えない。同じNode IDのanchor変更、旧anchorの別claimでの再利用、Edge ID +
@@ -1904,7 +1948,8 @@ CLI contract:
 - `comment edit`のbody完全置換、related commit維持／解除／更新、Agent socket経由write
 - comment create/reply/edit/syncのpost単位reference検証、保存、完全置換、commit保持、idempotency
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
-- `structure get/publish/update/delete`のschema、shared transport、同一ID whole-value update、削除preview、passive contract
+- `structure get/publish/update/delete`のschema、v5 required nullable presentation、shared transport、同一ID whole-value update、
+  旧graphのnull normalization、削除preview、passive contract
 - `rvw-review-compose`がPR-wide compositionを担い、fixed templateやWalkthrough / Structureの常時pairを要求せず、
   最小構成とdirect code readingを選び、overlap、terminology、missing / cross-boundary risk、over-fragmentationを
   構成全体で再確認し、永続Setや新Artifact kindを要求しないcontract
@@ -1984,8 +2029,9 @@ compositionはSkill-level strategyであり、Review Set / Review Plan / Slice�
 Artifact kind、URI、database row、migration、CLI capability、HTTP API、Viewer UIを追加しない。sibling producerの
 契約を利用するためのgenericなruntime sub-Skill invocation frameworkも作らない。composerはcanonical Skill名を各hostの
 native Skill mechanismへ渡してproducerの完全なcontractをloadし、`$name`や`/name`を共通runtime protocolとして
-hardcodeしない。producerがcurrent sessionでunavailable / disabledならArtifact操作前にfail closedする。protocol versionは
-4のまま、既存のWalkthrough / Structure capabilityだけを使う。既存URIがuserまたはcallerから明示された場合はmatching producerで
+hardcodeしない。producerがcurrent sessionでunavailable / disabledならArtifact操作前にfail closedする。composer自体は
+protocol capabilityを追加せず、protocol version 5の既存Walkthrough / Structure capabilityだけを使う。既存URIがuserまたは
+callerから明示された場合はmatching producerで
 current値を読んでsame-subject updateを優先し、無条件の改訂版をpublishしない。既存`structure list`はそのcontract内で
 利用できるが、一般的なWalkthrough listはないため、URI未指定時にSQLiteを直接読んだり網羅的なduplicate検出を
 主張したりしない。
@@ -1999,17 +2045,20 @@ Structureを提案するlocal routing判断を残す。diffやfileの一覧、�
 更新時は既存artifactを読んで完全置換し、改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への
 明示authorizationなしに実行しない。
 
-`rvw-structure`は「Structureはbehavior space、Walkthroughはpath」をrouting boundaryとする。user / caller / PR本文の
+`rvw-structure`は「Structureは同時に見渡せるspatial explanation、Walkthroughは順序とprose自体がartifact」を
+routing boundaryとする。user / caller / PR本文の
 明示briefに加え、上位composerからのsubject、review question、behavior boundary、scope、inclusion / exclusion、
-emphasisをauthoring boundaryとして最優先し、entrypointやrelationなどのcandidate claimは実際のcommit済みrepositoryで
-独立に検証する。一つのbounded behaviorだけを扱い、
+emphasis、requested spatial presentationをauthoring boundaryとして最優先し、entrypointやrelationなどのcandidate
+claimは実際のcommit済みrepositoryで独立に検証する。一つのbounded behaviorだけを扱い、
 PR全体のArtifact数、Walkthroughとの役割分担、隣接behaviorのcompanion Artifactを決めない。code-centeredな同じ
 abstraction levelのNode、verb-based Edge label、stable claim ID、一つのexact `sourceOid`を要求する。
 concept-only Nodeはsource-establishedだが単一anchorを持たない概念またはsource-supported claimの必要な接続に限定し、
-subject authorityだけでNode / Edgeを事実化しない。巨大graph、file inventory、AI推論edge、layout hint、
-review conclusion、静的なarchitecture／責務inventoryを作らない。ordered pathやentrypointのないinventoryを
+必要ならthesis、connectedなprimary spine、ordered regionからなるauthorial `presentation`を使うが、
+subject authorityだけでNode / Edgeを事実化しない。巨大graph、file inventory、AI推論edge、raw座標、
+review conclusion、静的なarchitecture／責務inventoryを作らない。ordered prose pathやentrypointのないinventoryを
 拒否するlocal routing判断を残す。同じsubjectだけをsame URIへ完全置換し、明示的に別subjectを作る場合だけ
-新規publishする。viewerを開かず、削除preview後の明示authorizationなしにdeleteしない。producer品質はfixture転記ではなくAgentが
+新規publishする。viewerを
+開かず、削除preview後の明示authorizationなしにdeleteしない。producer品質はfixture転記ではなくAgentが
 repositoryを調査して作った2〜3件のStructureでscope、granularity、concept-node使用、Edge label、anchorを
 評価し、結果をdocsへ記録する。
 
@@ -2069,7 +2118,8 @@ Functional:
 - Agentがsource anchor付きWalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の
   referenceだけを最新HEAD上の対応箇所、または明示されたanchor fallbackとして最大二ペインのtabで検証できる。
   不要なWalkthroughは件数確認後に削除できる。
-- AgentがboundedなPR-relevant behaviorをentrypoint付きStructureとしてCLIで提示し、人間が1/2-hop / AllとRelation選択を
+- AgentがboundedなPR-relevant behaviorをentrypointとoptionalなauthorial presentation付きStructureとしてCLIで提示し、
+  人間が1/2-hop / AllとRelation選択を
   自由に探索し、Node / Edge anchorをexact sourceで開ける。同じsubjectの更新ではstable IDに基づく空間を
   session内で維持し、別subjectは別artifactにする。不要なStructureは件数確認後に削除できる。
 - Agentが`rvw-review-compose`でPR全体または明示review subjectを調査し、Walkthrough、Structure、直接code
@@ -2095,8 +2145,9 @@ Manual acceptance:
 2. 変更fileを入口に全文、all files、検索を使い、関連するdiff外fileまで辿って結果の実装を理解する。
 3. Agentが実装説明をWalkthroughとしてpublishし、viewerの表示位置が勝手に変わらないことを確認する。
 4. 人間が説明内の一部referenceとdiagram nodeだけを選び、説明tabを残したままexact codeを読む。
-5. AgentがPR-relevant behaviorをentrypoint付きStructureとしてpublishし、人間がfocusと近傍を変えながらNode / Edgeの
-   exact sourceを左右ペインへ開く。tab往復とcurrent値更新でorientationが保たれることを確認する。
+5. AgentがPR-relevant behaviorをentrypointとpresentation付きStructureとしてpublishし、thesis、primary spine、
+   ordered regionが空間へ反映されても全Node / Edgeを自由に探索できることを確認する。人間がfocusと近傍を変えながら
+   exact sourceを左右ペインへ開き、tab往復とcurrent値更新でorientationが保たれることを確認する。
 6. diff外fileを含む具体的なsourceへline commentを作り、そのURIをAgentへ渡す。
 7. Agentが対象sourceと周辺contextを調査し、authorizedな修正、test、commit、push、必要なPR本文更新を行う。
 8. Agentが`rvw pr sync --stdin --json`でreplyを追加する。
@@ -2108,7 +2159,8 @@ Manual acceptance:
 
 - review version、manual capture、version summaryを再導入しない
 - Walkthrough revision履歴、version selector、改訂版の自動複製を追加しない
-- Structure revision履歴、generic Artifact layer、comment/group、durable座標、AI推論graphを追加しない
+- Structure revision履歴、generic Artifact layer、comment、raw／durable座標、AI推論graphを追加しない。
+  `presentation.regions`をfactual graph groupingやreview findingへ拡張しない
 - PR本文履歴やPR revision selectorを追加しない
 - PR本文をcommitへ擬似的にbindingしない
 - Ask/AI chat/Agent spawnを追加しない
