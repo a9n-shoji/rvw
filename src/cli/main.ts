@@ -855,6 +855,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "comment.create",
           "comment.list",
           "comment.watch",
+          "comment.watchOwnership",
           "comment.read",
           "comment.reply",
           "comment.edit",
@@ -1313,6 +1314,38 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       }
     });
 
+  const watchTask = comment
+    .command("watch-task")
+    .description("comment watch taskのshared ownershipを管理");
+
+  watchTask
+    .command("activate")
+    .requiredOption("--task-id <task-id>", "新しいlogical watch task ID")
+    .requiredOption("--json", "JSONで出力")
+    .action(async (options: { taskId: string }) => {
+      const input = { taskId: z.uuid().parse(options.taskId) };
+      const result = await callService("comment.watch.activate", input, () =>
+        getRuntime().service.activateCommentWatchTask(input.taskId),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
+  watchTask
+    .command("verify")
+    .requiredOption("--task-id <task-id>", "logical watch task ID")
+    .requiredOption("--generation <generation>", "watch generation")
+    .requiredOption("--json", "JSONで出力")
+    .action(async (options: { taskId: string; generation: string }) => {
+      const input = {
+        taskId: z.uuid().parse(options.taskId),
+        generation: z.coerce.number().int().positive().parse(options.generation),
+      };
+      const result = await callService("comment.watch.verify", input, () =>
+        getRuntime().service.verifyCommentWatchTask(input.taskId, input.generation),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
   comment
     .command("create")
     .requiredOption("--stdin", "stdinからJSONを読む")
@@ -1397,6 +1430,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           : { relatedCommitOid: input.relatedCommitOid }),
         ...(input.references === undefined ? {} : { references: input.references }),
         ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+        ...(input.watchTask === undefined ? {} : { watchTask: input.watchTask }),
       };
       const post = await callService(
         "comment.reply",
@@ -1424,6 +1458,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           ? {}
           : { relatedCommitOid: input.relatedCommitOid }),
         ...(input.references === undefined ? {} : { references: input.references }),
+        ...(input.watchTask === undefined ? {} : { watchTask: input.watchTask }),
       };
       const post = await callService(
         "comment.edit",

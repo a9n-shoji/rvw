@@ -113,6 +113,7 @@ import {
 import {
   RvwDatabase,
   type CommentUpdateInput,
+  type CommentWatchTaskFence,
   type RevisionSnapshot,
 } from "../infrastructure/db/database.js";
 import { GitClient, type RepositoryContext } from "../infrastructure/git/git-client.js";
@@ -1813,6 +1814,17 @@ export class RvwService {
     };
   }
 
+  activateCommentWatchTask(taskId: string) {
+    return this.database.activateCommentWatchTask(taskId);
+  }
+
+  verifyCommentWatchTask(taskId: string, generation: number) {
+    return {
+      ...this.database.assertCommentWatchTaskAuthority(taskId, generation),
+      status: "active" as const,
+    };
+  }
+
   listComments(pullRequestId: string, resolved?: boolean): ReviewComment[] {
     this.getPullRequest(pullRequestId);
     return this.database.listComments(pullRequestId, resolved);
@@ -2628,6 +2640,7 @@ export class RvwService {
       references?: CodeReference[];
       idempotencyKey?: string;
       lastModifiedBy?: CommentPostModifier;
+      watchTask?: CommentWatchTaskFence;
     },
   ) {
     const id = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
@@ -2708,6 +2721,7 @@ export class RvwService {
       relatedCommitOid?: string | null;
       references?: CodeReference[];
       lastModifiedBy?: CommentPostModifier;
+      watchTask?: CommentWatchTaskFence;
     },
   ): Promise<CommentPost> {
     const commentId = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
@@ -2740,6 +2754,7 @@ export class RvwService {
         relatedCommitOid,
         references,
         input.lastModifiedBy ?? post.lastModifiedBy,
+        input.watchTask,
       );
     return relatedCommitOid
       ? await this.writeWithRetainedCommit(pullRequest, relatedCommitOid, "comment", write)

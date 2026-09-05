@@ -52,13 +52,16 @@ task may consume that sequence with an opaque database-scoped cursor through `rv
 rvw retains minimal event identifiers independently of deletable posts and owns only ordering and
 replay. The bundled Skill's task-local state script atomically owns its cursor, queue, leases, retries,
 per-batch status posts, self-event suppression, and repository-writer serialization. After claim, the
-task creates one immediate acknowledgement per affected thread and later edits that same normal post
+task creates one immediate acknowledgement per currently unresolved affected thread and later edits that same normal post
 to the final outcome. A retry of that batch restores its acknowledgement, while a later batch for the
 same thread creates a new post and preserves the earlier outcome. The parent reserves subagent capacity
 before intake; the driver caps in-flight claims to that capacity and polls task state to drain same-PR
 follow-ups after lease release and retries after their due time. Every acknowledged lease is handed to
 one fresh subagent immediately, while the parent retains only intake, state, and final-post ownership.
-Separate tasks may consume the same log with separate state. This terminal-bound consumer is not a daemon
+Separate tasks retain separate private state, while the rvw database holds one active logical watcher
+generation that fences superseded states. The event cursor remains an independent stream position.
+Historical events for resolved or missing threads are durably skipped before acknowledgement. This
+terminal-bound consumer is not a daemon
 and rvw never starts it. A durable
 reply-idempotency ledger makes an exact caller-payload retry safe without introducing Agent session
 identity into comments.

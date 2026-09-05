@@ -188,6 +188,7 @@ describe("CLI protocol discovery", () => {
         "comment.create",
         "comment.list",
         "comment.watch",
+        "comment.watchOwnership",
         "comment.read",
         "comment.reply",
         "comment.edit",
@@ -212,7 +213,17 @@ describe("CLI protocol discovery", () => {
       program.commands
         .find((command) => command.name() === "comment")
         ?.commands.map((command) => command.name()),
-    ).toEqual(["watch", "create", "list", "get", "reply", "edit", "resolve", "reopen"]);
+    ).toEqual([
+      "watch",
+      "watch-task",
+      "create",
+      "list",
+      "get",
+      "reply",
+      "edit",
+      "resolve",
+      "reopen",
+    ]);
     expect(
       program.commands
         .find((command) => command.name() === "walkthrough")
@@ -301,6 +312,38 @@ describe("CLI protocol discovery", () => {
     ]);
   });
 
+  it("activates a logical comment watch task and returns its shared generation", async () => {
+    const taskId = "11111111-1111-4111-8111-111111111111";
+    const activateCommentWatchTask = vi.fn().mockReturnValue({
+      databaseId: "0123456789abcdef0123456789abcdef",
+      taskId,
+      generation: 7,
+      status: "activated",
+    });
+    const { runtime } = mockRuntime({ activateCommentWatchTask });
+    const readStdout = captureStdout();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "comment",
+      "watch-task",
+      "activate",
+      "--task-id",
+      taskId,
+      "--json",
+    ]);
+
+    expect(activateCommentWatchTask).toHaveBeenCalledWith(taskId);
+    expect(readStdout()).toEqual({
+      ok: true,
+      databaseId: "0123456789abcdef0123456789abcdef",
+      taskId,
+      generation: 7,
+      status: "activated",
+    });
+  });
+
   it("creates one unresolved comment from a strict stdin payload", async () => {
     const input = {
       pullRequest: pullRequest.url,
@@ -350,7 +393,44 @@ describe("CLI protocol discovery", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("passes a watch generation fence through an acknowledgement reply", async () => {
+    const input = {
+      body: "🔎 確認中です…",
+      idempotencyKey: "watch-acknowledgement",
+      watchTask: {
+        taskId: "11111111-1111-4111-8111-111111111111",
+        generation: 7,
+      },
+    };
+    const reply = { ...rootPost, ...input, id: "reply-1", isRoot: false };
+    const replyToComment = vi.fn().mockResolvedValue(reply);
+    const { runtime, close } = mockRuntime({ replyToComment });
+    const readStdout = captureStdout();
+    provideStdin(input);
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "comment",
+      "reply",
+      commentRef,
+      "--stdin",
+      "--json",
+    ]);
+
+    expect(replyToComment).toHaveBeenCalledWith(commentRef, {
+      ...input,
+      lastModifiedBy: "agent",
+    });
+    expect(readStdout()).toEqual({ ok: true, post: reply });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it("replaces one recorded comment post through the Agent CLI", async () => {
+    const watchTask = {
+      taskId: "11111111-1111-4111-8111-111111111111",
+      generation: 7,
+    };
     const input = {
       body: "✅ [対応しました](rvw-ref:result)",
       relatedCommitOid: "d".repeat(40),
@@ -364,6 +444,7 @@ describe("CLI protocol discovery", () => {
           description: null,
         },
       ],
+      watchTask,
     };
     const edited = { ...rootPost, ...input, updatedAt: "2026-08-20T00:00:00.000Z" };
     const editCommentPost = vi.fn().mockResolvedValue(edited);

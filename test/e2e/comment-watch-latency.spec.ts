@@ -16,9 +16,16 @@ const preflightScript = path.resolve("skills/rvw-watch-comments/scripts/prefligh
 const cli = path.resolve("dist/cli.mjs");
 const pullRequestUrl = "https://github.com/acme/review-repo/pull/77";
 
-function runState(state: string, command: string, args: string[] = [], input?: unknown) {
+function runState(
+  state: string,
+  command: string,
+  args: string[] = [],
+  input?: unknown,
+  env?: NodeJS.ProcessEnv,
+) {
   const result = spawnSync(process.execPath, [stateScript, command, "--state", state, ...args], {
     encoding: "utf8",
+    ...(env === undefined ? {} : { env }),
     ...(input === undefined ? {} : { input: JSON.stringify(input) }),
   });
   expect(result.status, result.stderr).toBe(0);
@@ -123,6 +130,7 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
     rvw: { protocolVersion: 4, missingCapabilities: [] },
     checks: { agentStatus: true, agentPingInspected: true },
   });
+  runState(state, "activate", [], undefined, childEnvironment(databasePath));
   const driver = spawn(
     process.execPath,
     [driverScript, state, "--auto-ack", "--max-in-flight", "1"],

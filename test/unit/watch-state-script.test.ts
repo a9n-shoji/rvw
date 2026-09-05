@@ -6,21 +6,110 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 const script = path.resolve("skills/rvw-watch-comments/scripts/watch-state.mjs");
+const authorityScript = path.resolve("test/fixtures/fake-watch-authority-rvw.mjs");
+
+function authorityEnvironment(state: string) {
+  return {
+    ...process.env,
+    RVW_BIN: process.execPath,
+    RVW_BIN_ARGS_JSON: JSON.stringify([authorityScript]),
+    FAKE_WATCH_STATE: state,
+  };
+}
 
 function run(state: string, command: string, args: string[] = [], input?: unknown) {
   const result = spawnSync(process.execPath, [script, command, "--state", state, ...args], {
     encoding: "utf8",
+    env: authorityEnvironment(state),
     ...(input === undefined ? {} : { input: JSON.stringify(input) }),
   });
   if (result.status !== 0) throw new Error(result.stderr);
   return JSON.parse(result.stdout) as Record<string, unknown>;
 }
 
+function bindAuthority(state: string) {
+  const database = new DatabaseSync(state);
+  database.prepare("UPDATE meta SET value = '1' WHERE key = 'watch_ownership_schema'").run();
+  database
+    .prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('watch_generation', '1')")
+    .run();
+  database
+    .prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('watch_ownership_status', 'active')")
+    .run();
+  database.close();
+}
+
 function ingest(state: string, frame: unknown) {
-  return run(state, "ingest", [], frame);
+  const result = run(state, "ingest", [], frame);
+  if ((frame as { type?: unknown })?.type === "ready") bindAuthority(state);
+  return result;
 }
 
 describe("rvw-watch-comments task state", () => {
+  it("fails closed instead of silently activating a legacy task state", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-legacy-")), "task.db");
+    run(state, "init");
+    const database = new DatabaseSync(state);
+    database.prepare("DELETE FROM meta WHERE key LIKE 'watch_ownership_%'").run();
+    database.close();
+
+    for (const command of ["activate", "verify"]) {
+      const result = spawnSync(process.execPath, [script, command, "--state", state], {
+        encoding: "utf8",
+        env: authorityEnvironment(state),
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Legacy watch state cannot be");
+    }
+  });
+
+  it("durably skips operations independently and completes an all-skipped batch", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-skip-")), "task.db");
+    const pullRequest = "https://github.com/acme/repo/pull/10";
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "00112233445566778899aabbccddeeff",
+      cursor: "cursor-0",
+      anchoredAtCurrent: false,
+    });
+    for (const [sequence, commentRef] of [
+      "rvw://comment/resolved",
+      "rvw://comment/gone",
+    ].entries()) {
+      ingest(state, {
+        type: "comment-posted",
+        cursor: `cursor-${sequence + 1}`,
+        event: {
+          sequence: sequence + 1,
+          postId: `post-${sequence + 1}`,
+          commentRef,
+          pullRequestUrl: pullRequest,
+          createdAt: "2026-08-20T00:00:00.000Z",
+          deleted: false,
+        },
+      });
+    }
+    const claimed = run(state, "claim", ["--pull-request", pullRequest]);
+
+    expect(
+      run(state, "skip", ["--lease", String(claimed.leaseId)], {
+        commentRef: "rvw://comment/resolved",
+        reason: "resolved",
+      }),
+    ).toMatchObject({ status: "skipped", batchCompleted: false });
+    expect(
+      run(state, "skip", ["--lease", String(claimed.leaseId)], {
+        commentRef: "rvw://comment/gone",
+        reason: "gone",
+      }),
+    ).toMatchObject({ status: "skipped", batchCompleted: true });
+    expect(run(state, "list")).toMatchObject({ inFlight: 0, pending: [] });
+    expect(run(state, "status")).toMatchObject({
+      batches: { completed: 1, inFlight: 0, unbatchedEvents: 0 },
+    });
+  });
+
   it("waits for the pending set to become non-empty and emits monitor-ready JSON", async () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-wait-")), "task.db");
     run(state, "init");
@@ -92,6 +181,7 @@ describe("rvw-watch-comments task state", () => {
         deleted: false,
       },
     });
+    bindAuthority(state);
     const claimed = run(state, "claim", ["--pull-request", "https://github.com/acme/repo/pull/9"]);
 
     expect(
@@ -166,7 +256,7 @@ describe("rvw-watch-comments task state", () => {
         "--write-key",
         "acme/repo",
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", env: authorityEnvironment(state) },
     );
     expect(writeCapableClaim.status).toBe(1);
     expect(writeCapableClaim.stderr).toContain(

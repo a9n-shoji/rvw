@@ -41,4 +41,14 @@ describe("rvw-watch-comments delegation contract", () => {
     );
     expect(skill).toMatch(/repository write\s+reservations serialize writers across different PRs/);
   });
+
+  it("separates historical actionability from shared watcher authority", () => {
+    expect(skill).toContain("watch-state.mjs' activate");
+    expect(skill).toMatch(/Never run `activate` when resuming an existing task/);
+    expect(skill).toMatch(/older Skill[\s\S]*fails\s+closed/i);
+    expect(skill).toContain("`batch-skipped` is diagnostic completion");
+    expect(skill).toMatch(/resolved and disappeared operations[\s\S]*durably marked skipped/);
+    expect(skill).toMatch(/mixed batch[\s\S]*unresolved operations/);
+    expect(skill).toMatch(/superseded driver terminates/);
+  });
 });

@@ -31,6 +31,9 @@ rvw replies remain allowed. Never resolve unless the user separately changes tha
 Use Node 24 and one task-private absolute SQLite path outside every reviewed repository. The state
 tool stores identifiers, cursors, leases, retries, and generated post IDs, but never comment bodies or
 source. Separate watch tasks use separate state databases.
+The task database is private durable execution state; it is not consumer authority. rvw stores one
+shared logical watch generation for the selected rvw database so a newer task supersedes every older
+task even when their state paths differ.
 
 Initialize once after running `gh api user --jq .login`:
 
@@ -43,6 +46,18 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' init \
 
 Omit `--expected-login` and force `investigate-and-reply` when identity is unavailable.
 Initialization rejects a policy change for an existing task.
+
+Immediately after initializing a genuinely new task, activate it once:
+
+```bash
+node '<SKILL_DIR>/scripts/watch-state.mjs' activate --state '<TASK_STATE_DB>'
+```
+
+Activation registers the task ID in the rvw database and durably binds the returned database ID and
+generation to the task state. Retrying activation for that same task ID after an initialization crash
+returns the same generation. Never run `activate` when resuming an existing task: resume only verifies
+its stored generation. A task state created by an older Skill has no provable generation and fails
+closed; initialize and activate a new task instead of silently adopting the legacy state.
 
 On restart, run `recover`, then `status`. Both expose `quarantinedBatches`; `status` also exposes
 recoverable `inFlightBatches` with lease IDs and status posts, plus the task's bound acknowledgement
@@ -60,7 +75,7 @@ prevents an interrupted third attempt from leaving `確認中` indefinitely.
 ## Start or resume intake
 
 Run the single preflight command. It concurrently detects `rvw` and verifies Node `>=24.15.0`.
-Require `protocolVersion` 4 and `agent.transport`, `comment.watch`, `comment.read`, `comment.reply`,
+Require `protocolVersion` 4 and `agent.transport`, `comment.watch`, `comment.watchOwnership`, `comment.read`, `comment.reply`,
 `comment.edit`, `comment.codeReferences`, and `pullRequest.sync`, and report agent status and ping in
 one JSON value. Stop when `ok` is false. A disconnected ping is diagnostic when status safely selects
 direct-database transport; an unavailable selected transport is fatal.
@@ -83,6 +98,15 @@ the exact durable cursor. Before each initial connection or reconnect, it auto-a
 durable work up to the same capacity. The driver atomically owns one lock beside the canonical state
 path before spawning rvw. A second driver for the same state exits immediately; a later restart
 removes a stale lock only when its recorded owner process no longer exists.
+Before startup, reconnect, each pending-work pump, and every write reservation, the task verifies that
+its task ID and generation are still active in the rvw database. The auto-acknowledgement mutation also
+carries that fencing identity, so supersession between verification and the database write is rejected
+atomically. A running superseded driver terminates instead of claiming or acknowledging more work.
+Supersession revokes new claims, acknowledgements, delegation, and write reservations; it is
+not a distributed cancellation signal for a lease delegated before activation. Such in-flight work
+may reach a safe boundary, but a worker that has not already reserved its repository cannot begin a
+code write after supersession. A reservation committed before the newer activation is treated as
+already in flight.
 
 For an `investigate-and-reply`-only task, prefer the target of eight above whenever capacity permits.
 Do not reduce capacity merely because multiple leases may inspect the same Pull Request or repository:
@@ -100,12 +124,14 @@ that post is replaced with the final outcome. Omit `--author-label` only when th
 identity genuinely cannot be determined; those posts intentionally remain unlabeled. The first
 auto-ack claim durably binds either the supplied label or that deliberate absence to the task before
 calling rvw. Every restart must use the same value. A changed, added, or removed label is rejected
-before rvw reads or writes, so an acknowledgement retry keeps the original idempotency payload.
+before rvw reads or writes any comment, so an acknowledgement retry keeps the original idempotency payload.
 
 Launch the driver through the runtime's long-lived streaming-process facility. Yield stdout to the
 parent as soon as lines arrive; never wait for the driver to exit or buffer a group of lines before
 dispatch. Process every `batch-acknowledged` line already received before waiting for more driver
 output.
+`batch-skipped` is diagnostic completion with no actionable operations and must never start a
+subagent.
 
 The driver polls rvw once per second and task state about every 250 milliseconds. Its state pump
 automatically acknowledges work that becomes eligible after a lease release or `nextAttemptAt`; do
@@ -142,8 +168,12 @@ a crash before that commit causes rvw to replay it. Never construct or edit curs
 
 With the normal auto-ack driver, consume its `batch-acknowledged` object directly. Each operation has
 `commentRef`, the batch-operation-stable `idempotencyKey`, `statusPostId`, `acknowledgement`, `status`, and the
-fresh `comment get` result as `thread`. A disappeared thread has `status: "gone"` and is not
-acknowledged. If intake runs without auto-ack, invoke the same complete fast path once for the PR:
+fresh `comment get` result as `thread`. A disappeared thread has `status: "skipped"` and
+`skipReason: "gone"`. The fresh thread is authoritative for actionability: resolved and disappeared operations
+are durably marked skipped, create or restore no acknowledgement, and are excluded from the actionable
+`operations` and `events`. A mixed batch still acknowledges and delegates its unresolved operations.
+If every operation is skipped, the state completes the batch and auto-ack emits `batch-skipped`, never
+`batch-acknowledged`. If intake runs without auto-ack, invoke the same complete fast path once for the PR:
 
 ```bash
 node '<SKILL_DIR>/scripts/auto-ack.mjs' \
@@ -154,12 +184,14 @@ node '<SKILL_DIR>/scripts/auto-ack.mjs' \
 
 For a null `statusPostId`, auto-ack first binds the task's immutable acknowledgement label, then sends
 exactly `{ "body": "🔎 確認中です…",
-"idempotencyKey": "<BATCH_OPERATION_KEY>", "authorLabel": "<CURRENT_AGENT_NAME>" }` to
+"idempotencyKey": "<BATCH_OPERATION_KEY>", "authorLabel": "<CURRENT_AGENT_NAME>",
+"watchTask": { "taskId": "<TASK_ID>", "generation": 1 } }` to
 `rvw comment reply`, then records the returned post. It omits `relatedCommitOid`, so an uncertain
 retry has the identical payload. When `--author-label` is omitted, the task records that explicit
 unlabeled choice and `authorLabel` is omitted too. For an existing
 status post in the same retried batch it sends
-`{ "body": "🔎 確認中です…", "relatedCommitOid": null }` to `comment edit`; editing preserves the
+`{ "body": "🔎 確認中です…", "relatedCommitOid": null,
+"watchTask": { "taskId": "<TASK_ID>", "generation": 1 } }` to `comment edit`; editing preserves the
 label already stored when the post was created. A later batch for the
 same thread has a new key and null `statusPostId`, so it creates another acknowledgement and never
 rewrites the previous final answer.
@@ -181,6 +213,8 @@ The unique reservation prevents two leases from writing the same repository. A m
 `auto-ack` may instead receive `--write-key` when that identity was already verified and the immutable
 task policy allows `fix-and-push`. An `investigate-and-reply`-only task cannot claim or reserve a write
 key; its leases stay unreserved and may inspect the same repository concurrently.
+`reserve-write` first verifies the shared generation; a superseded policy cannot acquire a new write
+reservation.
 
 ## Delegate every acknowledged batch immediately
 
@@ -335,6 +369,7 @@ retry, auto-ack restores the acknowledgement before work. Continue unrelated PRs
 On graceful stop, stop dispatching, let active writes reach a safe boundary, terminate the driver,
 and report `status`. The driver releases its owner lock after the rvw child exits. Resume with the
 stored cursor and `recover`; never start the same task twice with one state database.
+Resume verifies the stored generation and never calls `activate` or obtains a newer generation.
 
 ## Bundled CLI contract reference
 
@@ -346,12 +381,15 @@ stdout with a nonzero exit. Commands marked with stdin read one complete JSON ob
 | Command         | Arguments                                                                                | stdin JSON                                             | Success JSON                                                                                                         |
 | --------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
 | `init`          | `--state PATH [--expected-login LOGIN] [--own-mode investigate-and-reply\|fix-and-push]` | none                                                   | `{ok,state,taskId,databaseId,cursor,expectedGitHubLogin,ownPullRequests,batches,inFlightBatches,quarantinedBatches}` |
+| `activate`      | `--state PATH`                                                                           | none                                                   | `{ok,taskId,databaseId,generation}`; new-task-only shared registration                                               |
+| `verify`        | `--state PATH`                                                                           | none                                                   | `{ok,status:"active",taskId,databaseId,generation}`                                                                  |
 | `ingest`        | `--state PATH`                                                                           | `ready`, `comment-posted`, or `stopped` frame from rvw | `{ok,status,cursor[,sequence]}`; event and cursor commit atomically                                                  |
 | `list`          | `--state PATH`                                                                           | none                                                   | `{ok,inFlight,pending:[{pullRequest,batchId,eventCount,firstSequence,commentRefs}]}`                                 |
 | `wait`          | `--state PATH [--interval-ms N] [--follow]`                                              | none                                                   | `{ok,type:"pending",pullRequests,pending}` on empty-to-non-empty                                                     |
 | `claim`         | `--state PATH --pull-request URL [--write-key owner/repo]`                               | none                                                   | `{ok,leaseId,batchId,pullRequest,attempts,writeKey,events,operations}`                                               |
 | `reserve-write` | `--state PATH --lease ID --write-key owner/repo`                                         | none                                                   | `{ok,leaseId,batchId,pullRequest,writeKey,status}`                                                                   |
 | `ack`           | `--state PATH --lease ID`                                                                | `{commentRef,postId}`                                  | `{ok,batchId,commentRef,statusPostId,status}`                                                                        |
+| `skip`          | `--state PATH --lease ID`                                                                | `{commentRef,reason:"resolved"\|"gone"}`               | `{ok,batchId,commentRef,status:"skipped",reason,batchCompleted}`                                                     |
 | `complete`      | `--state PATH --lease ID`                                                                | `{postIds:string[]}`                                   | `{ok,batchId,status:"completed",suppressedPostIds}`                                                                  |
 | `fail`          | `--state PATH --lease ID`                                                                | `{error:string,retryable:boolean}`                     | `{ok,batchId,status,attempts,nextAttemptAt[,operations]}`                                                            |
 | `recover`       | `--state PATH`                                                                           | none                                                   | `{ok,recovered,pending,quarantined,quarantinedBatches}`                                                              |
@@ -382,9 +420,11 @@ Claim `operations` are `{commentRef,idempotencyKey,statusPostId}`. Claim `events
 `{sequence,postId,commentRef,pullRequestUrl}`. State schema additions are created with
 idempotent local migrations; existing state databases remain readable and retain their cursors,
 leases, and unfinished batch keys and status posts.
+Legacy states remain inspectable but cannot activate, resume intake, acknowledge, or reserve writes
+without ownership metadata.
 
-| Script    | Invocation                                                                                                  | Output                                                                                        |
-| --------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Preflight | `node scripts/preflight.mjs`                                                                                | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                     |
-| Driver    | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N --author-label NAME]`                    | `watch-ready`, `pending`, `batch-acknowledged`, and reconnect JSON lines.                     |
-| Auto-ack  | `node scripts/auto-ack.mjs --state STATE --pull-request URL [--write-key owner/repo] [--author-label NAME]` | Claimed lease plus `{events,operations}`; each operation includes the fresh thread or `gone`. |
+| Script    | Invocation                                                                                                  | Output                                                                                     |
+| --------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Preflight | `node scripts/preflight.mjs`                                                                                | One aggregate `{ok,node,rvw,agent,checks,errors}` object.                                  |
+| Driver    | `node scripts/watch-driver.mjs STATE [--auto-ack --max-in-flight N --author-label NAME]`                    | `watch-ready`, `pending`, `batch-acknowledged`, `batch-skipped`, and reconnect JSON lines. |
+| Auto-ack  | `node scripts/auto-ack.mjs --state STATE --pull-request URL [--write-key owner/repo] [--author-label NAME]` | Actionable `{events,operations}` plus diagnostic `skippedOperations`.                      |

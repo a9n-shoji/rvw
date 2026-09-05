@@ -80,28 +80,52 @@ function isGone(result) {
   );
 }
 
-async function acknowledgeOperation(state, leaseId, operation, threadResult) {
+function isResolved(result) {
+  return successfulJson(result) && result.json?.comment?.resolved === true;
+}
+
+function isNoLongerActionable(result) {
+  return result.json?.ok === false && result.json?.error?.code === "COMMENT_NOT_ACTIONABLE";
+}
+
+async function skipOperation(state, leaseId, operation, reason, thread) {
+  await runState(state, "skip", ["--lease", leaseId], {
+    commentRef: operation.commentRef,
+    reason,
+  });
+  return {
+    ...operation,
+    status: "skipped",
+    skipReason: reason,
+    acknowledgement: "skipped",
+    thread,
+  };
+}
+
+async function acknowledgeOperation(state, leaseId, operation, threadResult, watchTask) {
   if (isGone(threadResult)) {
-    return {
-      ...operation,
-      status: "gone",
-      acknowledgement: "skipped",
-      thread: null,
-    };
+    return await skipOperation(state, leaseId, operation, "gone", null);
   }
   if (!successfulJson(threadResult)) {
     fail(`rvw comment get failed for ${operation.commentRef}`, {
       failure: rvwFailure("comment get", threadResult),
     });
   }
+  if (isResolved(threadResult)) {
+    return await skipOperation(state, leaseId, operation, "resolved", threadResult.json);
+  }
   if (operation.statusPostId === null) {
     const reply = await runRvw(["comment", "reply", operation.commentRef, "--stdin", "--json"], {
       input: {
         body: ACKNOWLEDGEMENT_BODY,
         idempotencyKey: operation.idempotencyKey,
+        watchTask,
         ...(operation.authorLabel === null ? {} : { authorLabel: operation.authorLabel }),
       },
     });
+    if (isNoLongerActionable(reply)) {
+      return await skipOperation(state, leaseId, operation, "resolved", threadResult.json);
+    }
     if (!successfulJson(reply) || typeof reply.json?.post?.id !== "string") {
       fail(`rvw comment reply failed for ${operation.commentRef}`, {
         failure: rvwFailure("comment reply", reply),
@@ -133,9 +157,13 @@ async function acknowledgeOperation(state, leaseId, operation, threadResult) {
       input: {
         body: ACKNOWLEDGEMENT_BODY,
         relatedCommitOid: null,
+        watchTask,
       },
     },
   );
+  if (isNoLongerActionable(edit)) {
+    return await skipOperation(state, leaseId, operation, "resolved", threadResult.json);
+  }
   if (!successfulJson(edit)) {
     fail(`rvw comment edit failed for ${operation.commentRef}`, {
       failure: rvwFailure("comment edit", edit),
@@ -166,6 +194,8 @@ async function main() {
   }
   let claimed = null;
   try {
+    const authority = await runState(state, "verify");
+    const watchTask = { taskId: authority.taskId, generation: authority.generation };
     const claimArgs = ["--pull-request", pullRequest];
     if (options["write-key"]) claimArgs.push("--write-key", options["write-key"]);
     if (authorLabel === null) claimArgs.push("--no-author-label");
@@ -184,9 +214,38 @@ async function main() {
           claimed.leaseId,
           { ...claimed.operations[index], authorLabel: claimed.authorLabel },
           threadResults[index],
+          watchTask,
         ),
       );
     }
+    const actionableOperations = operations.filter(
+      (operation) => operation.status === "acknowledged",
+    );
+    const skippedOperations = operations.filter((operation) => operation.status === "skipped");
+    const actionableCommentRefs = new Set(
+      actionableOperations.map((operation) => operation.commentRef),
+    );
+    if (actionableOperations.length === 0) {
+      if (operations.length === 0) {
+        await runState(state, "complete", ["--lease", claimed.leaseId], { postIds: [] });
+      }
+      process.stdout.write(
+        `${JSON.stringify({
+          ok: true,
+          type: "skipped",
+          batchId: claimed.batchId,
+          pullRequest: claimed.pullRequest,
+          attempts: claimed.attempts,
+          events: [],
+          operations: [],
+          skippedOperations,
+        })}\n`,
+      );
+      return;
+    }
+    // Fence dispatch as well as the acknowledgement writes. A task superseded while
+    // reading or acknowledging the batch must not emit new actionable work.
+    await runState(state, "verify");
     process.stdout.write(
       `${JSON.stringify({
         ok: true,
@@ -196,8 +255,9 @@ async function main() {
         pullRequest: claimed.pullRequest,
         attempts: claimed.attempts,
         writeKey: claimed.writeKey,
-        events: claimed.events,
-        operations,
+        events: claimed.events.filter((event) => actionableCommentRefs.has(event.commentRef)),
+        operations: actionableOperations,
+        skippedOperations,
       })}\n`,
     );
   } catch (error) {

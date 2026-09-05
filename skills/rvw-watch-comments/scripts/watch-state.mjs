@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { runRvw, successfulJson } from "./rvw-command.mjs";
 
 function fail(message) {
   throw new Error(message);
@@ -104,6 +105,9 @@ function openState(statePath, create) {
       comment_ref TEXT NOT NULL,
       idempotency_key TEXT NOT NULL UNIQUE,
       post_id TEXT,
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'acknowledged', 'skipped')),
+      skip_reason TEXT,
       PRIMARY KEY(batch_id, comment_ref)
     );
     CREATE TABLE IF NOT EXISTS suppressed_posts (
@@ -190,6 +194,8 @@ function migrateStateSchema(database) {
   const operationColumns = database.prepare("PRAGMA table_info(operations)").all();
   if (
     operationColumns.some((column) => column.name === "post_id") &&
+    operationColumns.some((column) => column.name === "status") &&
+    operationColumns.some((column) => column.name === "skip_reason") &&
     getMeta(database, "batch_scoped_status_posts") === "1"
   ) {
     return;
@@ -198,6 +204,15 @@ function migrateStateSchema(database) {
     const currentOperationColumns = database.prepare("PRAGMA table_info(operations)").all();
     if (!currentOperationColumns.some((column) => column.name === "post_id")) {
       database.exec("ALTER TABLE operations ADD COLUMN post_id TEXT;");
+    }
+    if (!currentOperationColumns.some((column) => column.name === "status")) {
+      database.exec(
+        "ALTER TABLE operations ADD COLUMN status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'acknowledged', 'skipped'));",
+      );
+      database.exec("UPDATE operations SET status = 'acknowledged' WHERE post_id IS NOT NULL;");
+    }
+    if (!currentOperationColumns.some((column) => column.name === "skip_reason")) {
+      database.exec("ALTER TABLE operations ADD COLUMN skip_reason TEXT;");
     }
     if (getMeta(database, "batch_scoped_status_posts") === "1") return;
     if (tableExists(database, "comment_statuses")) {
@@ -237,8 +252,9 @@ function migrateStateSchema(database) {
         }
         database
           .prepare(
-            `INSERT INTO operations(batch_id, comment_ref, idempotency_key, post_id)
-            VALUES (?, ?, ?, ?)`,
+            `INSERT INTO operations(
+              batch_id, comment_ref, idempotency_key, post_id, status, skip_reason
+            ) VALUES (?, ?, ?, ?, ?, NULL)`,
           )
           .run(
             row.batch_id,
@@ -247,6 +263,7 @@ function migrateStateSchema(database) {
               ? row.legacy_key
               : `${getMeta(database, "task_id") ?? "task"}:${row.batch_id}:${randomUUID()}`,
             useLegacyStatus ? row.legacy_post_id : null,
+            useLegacyStatus && row.legacy_post_id !== null ? "acknowledged" : "pending",
           );
       }
     }
@@ -262,8 +279,9 @@ function ensureBatchOperations(database, batchId) {
   for (let index = 0; index < commentRefs.length; index += 1) {
     database
       .prepare(
-        `INSERT OR IGNORE INTO operations(batch_id, comment_ref, idempotency_key, post_id)
-        VALUES (?, ?, ?, NULL)`,
+        `INSERT OR IGNORE INTO operations(
+          batch_id, comment_ref, idempotency_key, post_id, status, skip_reason
+        ) VALUES (?, ?, ?, NULL, 'pending', NULL)`,
       )
       .run(batchId, commentRefs[index], `${getMeta(database, "task_id")}:${batchId}:${index + 1}`);
   }
@@ -272,13 +290,15 @@ function ensureBatchOperations(database, batchId) {
 function batchStatusOperations(database, batchId) {
   return database
     .prepare(
-      `SELECT comment_ref, post_id FROM operations
+      `SELECT comment_ref, post_id, status, skip_reason FROM operations
       WHERE batch_id = ? ORDER BY comment_ref`,
     )
     .all(batchId)
     .map((operation) => ({
       commentRef: operation.comment_ref,
       statusPostId: operation.post_id ?? null,
+      status: operation.status,
+      skipReason: operation.skip_reason ?? null,
     }));
 }
 
@@ -320,8 +340,104 @@ function initialize(database, options) {
     setMeta(database, "own_mode", ownMode);
     setMeta(database, "expected_login", expectedLogin);
     setMeta(database, "last_sequence", "0");
+    setMeta(database, "watch_ownership_schema", "1");
+    setMeta(database, "watch_ownership_status", "pending");
     return taskId;
   });
+}
+
+function localAuthority(database) {
+  const taskId = getMeta(database, "task_id");
+  if (!taskId) fail("State database is not initialized");
+  if (getMeta(database, "watch_ownership_schema") !== "1") {
+    fail("Legacy watch state cannot be resumed safely; initialize a new watch task");
+  }
+  const generationRaw = getMeta(database, "watch_generation");
+  const databaseId = getMeta(database, "database_id");
+  if (!generationRaw || !databaseId || getMeta(database, "watch_ownership_status") !== "active") {
+    fail("Watch task is not activated; run watch-state activate for this new task");
+  }
+  const generation = Number(generationRaw);
+  if (!Number.isSafeInteger(generation) || generation < 1)
+    fail("Stored watch generation is invalid");
+  return { taskId, generation, databaseId };
+}
+
+function rvwCommandFailure(command, result) {
+  return JSON.stringify({
+    command,
+    exitCode: result.code,
+    signal: result.signal,
+    output: result.json,
+    stderr: result.stderr.trim() || null,
+    stdout: result.json ? null : result.stdout.trim() || null,
+  });
+}
+
+async function activateOwnership(database) {
+  const taskId = getMeta(database, "task_id");
+  if (!taskId) fail("State database is not initialized");
+  if (getMeta(database, "watch_ownership_schema") !== "1") {
+    fail("Legacy watch state cannot be activated safely; initialize a new watch task");
+  }
+  const result = await runRvw(["comment", "watch-task", "activate", "--task-id", taskId, "--json"]);
+  if (!successfulJson(result)) {
+    fail(
+      `rvw watch task activation failed: ${rvwCommandFailure("comment watch-task activate", result)}`,
+    );
+  }
+  const authority = result.json;
+  if (
+    authority.taskId !== taskId ||
+    typeof authority.databaseId !== "string" ||
+    !/^[0-9a-f]{32}$/.test(authority.databaseId) ||
+    !Number.isSafeInteger(authority.generation) ||
+    authority.generation < 1
+  ) {
+    fail("rvw watch task activation returned an invalid authority");
+  }
+  transaction(database, () => {
+    const existingDatabaseId = getMeta(database, "database_id");
+    const existingGeneration = getMeta(database, "watch_generation");
+    if (existingDatabaseId && existingDatabaseId !== authority.databaseId) {
+      fail("State belongs to another rvw database");
+    }
+    if (existingGeneration && Number(existingGeneration) !== authority.generation) {
+      fail("State is bound to another watch generation");
+    }
+    setMeta(database, "database_id", authority.databaseId);
+    setMeta(database, "watch_generation", String(authority.generation));
+    setMeta(database, "watch_ownership_status", "active");
+  });
+  return localAuthority(database);
+}
+
+async function verifyOwnership(database) {
+  const authority = localAuthority(database);
+  const result = await runRvw([
+    "comment",
+    "watch-task",
+    "verify",
+    "--task-id",
+    authority.taskId,
+    "--generation",
+    String(authority.generation),
+    "--json",
+  ]);
+  if (!successfulJson(result)) {
+    fail(
+      `rvw watch task verification failed: ${rvwCommandFailure("comment watch-task verify", result)}`,
+    );
+  }
+  if (
+    result.json.taskId !== authority.taskId ||
+    result.json.generation !== authority.generation ||
+    result.json.databaseId !== authority.databaseId ||
+    result.json.status !== "active"
+  ) {
+    fail("rvw watch task verification returned a different authority");
+  }
+  return authority;
 }
 
 function ingestReady(database, frame) {
@@ -606,14 +722,15 @@ function claim(database, pullRequestUrl, writeKey, requestedAuthorLabel) {
     ensureBatchOperations(database, batchId);
     const operations = database
       .prepare(
-        `SELECT comment_ref, idempotency_key, post_id FROM operations
-        WHERE batch_id = ? ORDER BY comment_ref`,
+        `SELECT comment_ref, idempotency_key, post_id, status FROM operations
+        WHERE batch_id = ? AND status != 'skipped' ORDER BY comment_ref`,
       )
       .all(batchId)
       .map((operation) => ({
         commentRef: operation.comment_ref,
         idempotencyKey: operation.idempotency_key,
         statusPostId: operation.post_id,
+        status: operation.status,
       }));
     return {
       leaseId,
@@ -661,6 +778,12 @@ function reserveWrite(database, leaseId, writeKey) {
   });
 }
 
+function assertWriteMode(database) {
+  if (getMeta(database, "own_mode") !== "fix-and-push") {
+    fail("Task policy does not allow repository write reservations");
+  }
+}
+
 function acknowledge(database, leaseId, input) {
   if (typeof input.commentRef !== "string" || input.commentRef.length === 0) {
     fail("commentRef is required");
@@ -680,7 +803,10 @@ function acknowledge(database, leaseId, input) {
       fail("Batch operation already has another status post");
     }
     database
-      .prepare("UPDATE operations SET post_id = ? WHERE batch_id = ? AND comment_ref = ?")
+      .prepare(
+        `UPDATE operations SET post_id = ?, status = 'acknowledged', skip_reason = NULL
+        WHERE batch_id = ? AND comment_ref = ?`,
+      )
       .run(input.postId, batch.id, input.commentRef);
     database
       .prepare("INSERT OR IGNORE INTO suppressed_posts(post_id, created_at) VALUES (?, ?)")
@@ -695,6 +821,72 @@ function acknowledge(database, leaseId, input) {
       commentRef: input.commentRef,
       statusPostId: input.postId,
       status: operation.post_id === null ? "recorded" : "existing",
+    };
+  });
+}
+
+function skipOperation(database, leaseId, input) {
+  if (typeof input.commentRef !== "string" || input.commentRef.length === 0) {
+    fail("commentRef is required");
+  }
+  if (input.reason !== "resolved" && input.reason !== "gone") {
+    fail("reason must be resolved or gone");
+  }
+  return transaction(database, () => {
+    const batch = database
+      .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
+      .get(leaseId);
+    if (!batch) fail("Active lease was not found");
+    const operation = database
+      .prepare(
+        `SELECT status, skip_reason FROM operations
+        WHERE batch_id = ? AND comment_ref = ?`,
+      )
+      .get(batch.id, input.commentRef);
+    if (!operation) fail("Comment is not part of the active lease");
+    if (operation.status === "skipped" && operation.skip_reason !== input.reason) {
+      fail("Batch operation was already skipped for another reason");
+    }
+    const now = new Date().toISOString();
+    database
+      .prepare(
+        `UPDATE operations SET status = 'skipped', skip_reason = ?
+        WHERE batch_id = ? AND comment_ref = ?`,
+      )
+      .run(input.reason, batch.id, input.commentRef);
+    database
+      .prepare(
+        `UPDATE events SET status = 'completed', updated_at = ?
+        WHERE batch_id = ? AND comment_ref = ? AND status = 'pending'`,
+      )
+      .run(now, batch.id, input.commentRef);
+    const remaining = database
+      .prepare(
+        `SELECT count(*) AS count FROM operations
+        WHERE batch_id = ? AND status != 'skipped'`,
+      )
+      .get(batch.id);
+    const batchCompleted = Number(remaining.count) === 0;
+    if (batchCompleted) {
+      database
+        .prepare(
+          `UPDATE events SET status = 'completed', updated_at = ?
+          WHERE batch_id = ? AND status = 'pending'`,
+        )
+        .run(now, batch.id);
+      database
+        .prepare(
+          `UPDATE batches SET status = 'completed', lease_id = NULL, write_key = NULL,
+            next_attempt_at = NULL, updated_at = ? WHERE id = ?`,
+        )
+        .run(now, batch.id);
+    }
+    return {
+      batchId: batch.id,
+      commentRef: input.commentRef,
+      status: "skipped",
+      reason: input.reason,
+      batchCompleted,
     };
   });
 }
@@ -829,9 +1021,19 @@ function status(database) {
       updatedAt: batch.updated_at,
       operations: batchStatusOperations(database, batch.id),
     }));
+  const ownershipSchema = getMeta(database, "watch_ownership_schema");
+  const watchGeneration = getMeta(database, "watch_generation");
+  const ownership =
+    ownershipSchema !== "1"
+      ? "legacy"
+      : getMeta(database, "watch_ownership_status") === "active" && watchGeneration !== null
+        ? "active"
+        : "pending";
   return {
     taskId: getMeta(database, "task_id"),
     databaseId: getMeta(database, "database_id"),
+    watchGeneration: watchGeneration === null ? null : Number(watchGeneration),
+    watchOwnership: ownership,
     cursor: getMeta(database, "cursor"),
     authorLabel: taskAuthorLabel(database),
     authorLabelBound: getMeta(database, "author_label") !== null,
@@ -863,6 +1065,14 @@ async function main() {
       return;
     }
     if (!getMeta(database, "task_id")) fail("State database is not initialized");
+    if (command === "activate") {
+      write({ ok: true, ...(await activateOwnership(database)) });
+      return;
+    }
+    if (command === "verify") {
+      write({ ok: true, status: "active", ...(await verifyOwnership(database)) });
+      return;
+    }
     if (command === "ingest") {
       const frame = await readInput();
       const result =
@@ -885,6 +1095,7 @@ async function main() {
       return;
     }
     if (command === "claim") {
+      await verifyOwnership(database);
       if (options["author-label"] !== undefined && options["no-author-label"] === true) {
         fail("Pass either --author-label or --no-author-label, not both");
       }
@@ -906,6 +1117,8 @@ async function main() {
       return;
     }
     if (command === "reserve-write") {
+      assertWriteMode(database);
+      await verifyOwnership(database);
       write({
         ok: true,
         ...reserveWrite(database, required(options, "lease"), required(options, "write-key")),
@@ -918,6 +1131,13 @@ async function main() {
     }
     if (command === "ack") {
       write({ ok: true, ...acknowledge(database, required(options, "lease"), await readInput()) });
+      return;
+    }
+    if (command === "skip") {
+      write({
+        ok: true,
+        ...skipOperation(database, required(options, "lease"), await readInput()),
+      });
       return;
     }
     if (command === "fail") {

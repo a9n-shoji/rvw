@@ -2552,3 +2552,44 @@ canonical batch settles even if its result is outdated or failed.
 - Per-comment placement failures make the batch response slightly richer and can leave one thread
   without derived location, but they avoid expanding a recoverable source-ref problem into a complete
   sidebar or document-placement outage.
+
+## 2026-09-05: Fence logical comment watchers and revalidate historical events
+
+### Problem
+
+The durable watch cursor lived only in a task-private SQLite database, and the driver lock was scoped
+to that state path. Starting a newer task with another state database therefore did not revoke an older
+task. Accidentally resuming the old cursor replayed historical post events as pending work. Auto-ack
+already re-read each thread, but ignored its current resolved state, so replay could create or restore
+acknowledgements and dispatch many fresh workers for work that was no longer actionable.
+
+### Choice
+
+Keep cursor and retry state task-private, but add a small rvw-database table that assigns each logical
+watch task ID a monotonic generation and records when it is superseded. A new task explicitly activates
+once; repeated activation of that same active task is idempotent, while resume only verifies the stored
+task ID and generation. Retaining superseded registrations is necessary to distinguish a crashed
+activation retry from an old task attempting to reclaim ownership. Legacy task states without a bound
+generation fail closed.
+
+Verify authority before driver startup, reconnect, pending-work pumps, and repository write reservation.
+Carry the same fence into acknowledgement reply/edit transactions so a concurrent activation cannot
+race a successful verification. Keep the opaque watch cursor unchanged as only the event-stream
+position.
+
+Treat each post event as a historical fact. Auto-ack uses the fresh thread as authoritative current
+state, durably marks resolved or missing operations skipped, and filters them from the actionable event
+and operation payload. A mixed batch continues with its unresolved operations; the final skip in an
+all-non-actionable batch atomically completes the batch and produces only a non-dispatchable diagnostic.
+
+### Trade-offs
+
+- The rvw database retains one short registration row per activated logical watcher, which is the
+  minimum history needed for idempotent activation without allowing a superseded task to reactivate.
+- Drivers perform periodic authority reads and acknowledgement writes include a fence check, adding
+  small local SQLite/CLI overhead in exchange for revocation across independent task-state paths.
+- Existing task state remains inspectable for recovery diagnostics, but cannot resume automatically;
+  the safe migration path is to initialize and explicitly activate a new logical task.
+- Supersession prevents new claims, acknowledgements, delegation, and write reservations, but is not
+  distributed cancellation for a lease already delegated and write-reserved before activation; that
+  in-flight work may reach a safe boundary.

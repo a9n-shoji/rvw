@@ -297,6 +297,8 @@ rvw pr refresh <PR_REF> --json
 rvw comment create --stdin --json
 rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
+rvw comment watch-task activate --task-id <UUID> --json
+rvw comment watch-task verify --task-id <UUID> --generation <N> --json
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
 rvw comment get <COMMENT_URI> --live --json
@@ -316,6 +318,10 @@ rvw pr attach <PR_REF> --repository <PATH> --json
 `--stdin` commandはEOFまでJSONを読みます。改行だけでは終了しないため、processから呼ぶ場合は送信後に
 stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいずれかを使います。起動済みの
 対話commandへJSONと改行だけを送るとEOF待ちになります。
+
+`comment watch-task`は同じrvw databaseを監視する外部taskのgenerationを管理します。新taskだけが
+`activate`し、再開taskは保存済みgenerationを`verify`します。comment watch cursorは引き続きevent位置
+だけを表し、consumer ownershipとは独立です。
 
 `comment create`は登録済みPR、通常のcomment target、本文、任意のAgent名、投稿単位code referenceをstdin JSONで受け取り、
 未解決のroot threadを一件作成します。repository targetはexact commit、path、任意のinclusive line rangeを

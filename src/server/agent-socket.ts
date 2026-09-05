@@ -341,6 +341,14 @@ export async function dispatchAgentSocketRequest(
       const input = parseOperationInput("comment.watch", request.input);
       return service.listCommentPostEvents(input.cursor, input.limit);
     }
+    case "comment.watch.activate": {
+      const input = parseOperationInput("comment.watch.activate", request.input);
+      return service.activateCommentWatchTask(input.taskId);
+    }
+    case "comment.watch.verify": {
+      const input = parseOperationInput("comment.watch.verify", request.input);
+      return service.verifyCommentWatchTask(input.taskId, input.generation);
+    }
     case "comment.create": {
       const input = parseOperationInput("comment.create", request.input);
       return await service.createCommentForReference(
@@ -366,6 +374,7 @@ export async function dispatchAgentSocketRequest(
           ? {}
           : { relatedCommitOid: input.edit.relatedCommitOid }),
         ...(input.edit.references === undefined ? {} : { references: input.edit.references }),
+        ...(input.edit.watchTask === undefined ? {} : { watchTask: input.edit.watchTask }),
         lastModifiedBy: "agent",
       });
     }

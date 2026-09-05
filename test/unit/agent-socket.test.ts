@@ -100,6 +100,30 @@ describe("Agent socket", () => {
     );
   });
 
+  it("routes comment watch activation and verification through the shared service", async () => {
+    const taskId = "11111111-1111-4111-8111-111111111111";
+    const activateCommentWatchTask = vi.fn().mockReturnValue({ taskId, generation: 1 });
+    const verifyCommentWatchTask = vi.fn().mockReturnValue({ taskId, generation: 1 });
+    const service = { activateCommentWatchTask, verifyCommentWatchTask } as unknown as RvwService;
+
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "comment.watch.activate",
+        input: { taskId },
+      }),
+    ).resolves.toEqual({ taskId, generation: 1 });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "comment.watch.verify",
+        input: { taskId, generation: 1 },
+      }),
+    ).resolves.toEqual({ taskId, generation: 1 });
+    expect(activateCommentWatchTask).toHaveBeenCalledWith(taskId);
+    expect(verifyCommentWatchTask).toHaveBeenCalledWith(taskId, 1);
+  });
+
   it("routes strict comment creation through the running rvw service", async () => {
     const createCommentForReference = vi
       .fn()
@@ -147,7 +171,14 @@ describe("Agent socket", () => {
     const input = {
       uri: "rvw://comment/10000000-0000-4000-8000-000000000008",
       postId: "post-1",
-      edit: { body: "✅ Done", relatedCommitOid: "a".repeat(40) },
+      edit: {
+        body: "✅ Done",
+        relatedCommitOid: "a".repeat(40),
+        watchTask: {
+          taskId: "11111111-1111-4111-8111-111111111111",
+          generation: 3,
+        },
+      },
     };
 
     await expect(
