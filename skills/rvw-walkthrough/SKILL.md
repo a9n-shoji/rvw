@@ -1,18 +1,43 @@
 ---
 name: rvw-walkthrough
-description: Read, publish, improve in place, or explicitly delete a source-anchored Markdown explanation with code references and optional Mermaid bindings through the local rvw CLI. Use when the user asks to create, present, publish, revise, update, or remove an implementation, surrounding-code, flow, or architecture walkthrough in rvw. Do not use this Skill for rvw comment handling or PR synchronization.
+description: Read, publish, improve in place, or explicitly delete one source-anchored Markdown explanation with code references and optional Mermaid bindings through the local rvw CLI. Use when the user asks for one implementation, surrounding-code, flow, or architecture walkthrough. Use rvw-review-compose when the user asks which Walkthroughs or Structures a whole review subject needs. Do not use this Skill for rvw comment handling or PR synchronization.
 ---
 
 # rvw Walkthrough management
 
-Create a first reading path that helps a reviewer build a mental model of a committed change or requested implementation subject and continue into the code. Treat the Walkthrough as orientation, not as the code's source of truth, an exhaustive change log, a completed AI review, a review-scope guarantee, or an approval plan.
+Create one reading path that helps a reviewer build a mental model of one bounded committed change or
+requested implementation subject and continue into the code. Treat the Walkthrough as orientation,
+not as the code's source of truth, an exhaustive change log, a completed AI review, a review-scope
+guarantee, or an approval plan.
 
-When the requested output is a navigable map of responsibilities and relations participating in one
-concrete behavior or processing flow, route the task to `rvw-structure` instead. A request that starts
-from a file or symbol still belongs there when it asks which concrete behavior that source participates
-in rather than for an authored reading sequence.
+This producer retains responsibility for representation suitability. When the requested subject has
+no useful ordered reading path and is clearer as a navigable map of responsibilities and relations,
+stop without publishing and recommend `rvw-structure` to the requester or upstream composer. Do not
+create that Structure from this Skill. A request that starts from a file or symbol still belongs there
+when it asks which concrete behavior that source participates in rather than for an authored reading
+sequence.
 
-Follow explicit instructions from the user, caller, Pull Request body, or an upstream Skill before any default in this Skill. Instructions may set the reading order, focus, format, detail, scope, exclusions, assumed knowledge, design decisions to explain, or non-code evidence to include. Apply the default authoring guide only where those instructions are silent. Add only the minimum context needed to keep the requested Walkthrough understandable; never replace the requested purpose with a different one.
+This Skill produces, updates, or deletes at most one Walkthrough for the requested subject. When the
+user, caller, Pull Request body, or an upstream Skill supplies an Artifact brief, treat its subject,
+review question, purpose, scope, inclusions, exclusions, and emphasis as authoring authority over what
+this Walkthrough investigates. Treat `mustEstablish` and every suggested implementation fact,
+relationship, or invariant as a claim to verify independently in committed source and tests, not as an
+assumed fact or a conclusion to force. These are internal authoring inputs, not new Walkthrough schema
+fields. Inspect broader Pull Request context only to verify those claims and find exact source evidence;
+a valid path or line range alone does not prove the prose attached to it. When source establishes a
+different answer inside the same question and scope, use that answer. When an essential claim is
+unsupported or contradicted and resolving it would materially change the review question or cross an
+exclusion, do not publish it; report the conflict to the requester or upstream composer. Do not broaden
+the Walkthrough to cover the whole Pull Request, decide the Pull Request's Artifact count or Walkthrough
+/ Structure mix, guarantee other review-subject coverage, or publish companion Artifacts.
+
+When invoked directly without an upstream brief, derive one bounded Walkthrough subject from the
+user's explicit request and verified facts. Standalone Walkthrough creation remains supported. Follow
+explicit instructions before any default in this Skill. Instructions may set the reading order, focus,
+format, detail, scope, exclusions, assumed knowledge, design decisions to explain, or non-code evidence
+to include. Apply the default authoring guide only where those instructions are silent. Add only the
+minimum context needed to keep the requested Walkthrough understandable; never replace the requested
+purpose with a different one.
 
 Prefer verified repository and subject facts. Use the smallest necessary inference when facts do not establish intent, label the uncertainty, and never invent business requirements or off-repository constraints.
 
@@ -46,8 +71,8 @@ Read the complete current body, source OID, diagram bindings, references, and Pu
 1. Inspect the explicit instructions and relevant committed repository state. Determine whether the request explains a change or a standalone implementation, flow, or architecture subject. Use available Pull Request context when it contains authoring directions or establishes purpose.
 2. When explicit instructions leave authoring choices unresolved, read [the authoring guide](references/walkthrough-authoring.md). Apply its workflow, adaptation rules, anti-patterns, example, and completion check only as defaults for those choices.
 3. Choose one exact commit containing every referenced path and range. Treat it as the coordinate where the references are guaranteed to exist and the viewer's fallback if latest-head mapping is uncertain, not as a request to keep normal viewing historical. Do not publish an explanation of uncommitted code.
-4. For a change-focused Walkthrough, inspect the diff and enough surrounding code to identify the change's center and connections. For a standalone subject, inspect its central responsibility, contract, entry points, and connections without inventing a before/after story. Include unchanged callers, callees, contracts, models, or tests when they materially reduce the reader's exploration cost; do not include them merely because they are related.
-5. Compose the smallest useful reading path in the order that best builds the mental model, rather than file order or diff order. Connect each step to concrete code, explain why it comes next, expose meaningful uncertainty, and leave useful starting points for exploration beyond the Walkthrough.
+4. For a change-focused Walkthrough, inspect the diff and enough surrounding code to identify the requested subject's center and connections. Only when no bounded subject was supplied may the change itself establish that center. For a standalone subject, inspect its central responsibility, contract, entry points, and connections without inventing a before/after story. Include unchanged callers, callees, contracts, models, or tests when they materially reduce the reader's exploration cost; do not include them merely because they are related.
+5. Compose the smallest useful reading path for the requested subject in the order that best builds the mental model, rather than file order or diff order. Connect each step to concrete code, explain why it comes next, expose meaningful uncertainty, and leave useful starting points for exploration beyond the Walkthrough.
 6. Generate the completed Walkthrough in one pass unless the user explicitly requests an interactive process. Do not ask for approval of an intermediate review plan.
 7. Link important code claims with `rvw-ref:<referenceId>`; use Markdown links in prose and `<a href="rvw-ref:<referenceId>">` links inside HTML previews.
 8. Define every reference with a repository-relative path and, when useful, an inclusive line range at the chosen `sourceOid`. Prefer the smallest meaningful multi-line range that lets the reader verify a code block or flow; include the signature and relevant body instead of pointing only at its first line. Use a single-line range only for a genuinely line-local claim such as one constant or declaration. Omit both `startLine` and `endLine` when the claim concerns the file as a whole. Keep IDs unique and stable within the publication.

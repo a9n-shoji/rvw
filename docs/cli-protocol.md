@@ -722,11 +722,37 @@ Skill status.
 
 ## Bundled Skills
 
-`rvw skill install codex` and `rvw skill install claude` each install the same four capability-named
-Skills: `rvw` for comment creation, handling, and synchronization, `rvw-walkthrough` for publication,
-`rvw-structure` for bounded behavior maps from factual code entrypoints, and `rvw-watch-comments` for continuous new-post intake. The
-platform argument selects only the destination Skill root. No Skill hardcodes an Agent identity;
-the current Agent may supply an accurate optional `authorLabel`.
+`rvw skill install codex` and `rvw skill install claude` each install the same five capability-named
+Skills: `rvw` for comment creation, handling, and synchronization; `rvw-review-compose` for minimum
+adaptive composition across a Pull Request or explicit review subject; `rvw-walkthrough` for one
+source-anchored ordered path; `rvw-structure` for one bounded behavior map from a factual code
+entrypoint; and `rvw-watch-comments` for continuous new-post intake. The platform argument selects only
+the destination Skill root. No Skill hardcodes an Agent identity; the current Agent may supply an
+accurate optional `authorLabel`.
+
+`rvw-review-compose` investigates committed code, chooses only the useful Walkthrough, Structure, or
+direct-code surfaces, and rechecks the whole composition for overlap, terminology drift, missing or
+cross-boundary risk, and over-fragmentation. It does not require a fixed template or a Walkthrough /
+Structure pair. Its candidate understanding units and Artifact briefs are session-local instructions to
+the single-Artifact producers, and its recommended entry and resulting URIs are returned as ordinary
+Agent output. It adds no Review Set, persistent group, Artifact kind, URI, database or API state, Viewer
+UI, protocol capability, or generic runtime sub-Skill invocation framework. Protocol version 4 and the
+capability list below remain unchanged.
+
+The brief's subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and
+emphasis control what a producer investigates. `mustEstablish`, suggested origins, relationships,
+invariants, and other implementation assertions are candidates that the producer independently verifies
+against committed source and tests; authoring authority and valid source coordinates do not prove a
+semantic claim. An essential unsupported or contradicted claim returns to composition rather than being
+forced into an Artifact. The composer activates each installed producer by canonical name through the
+current host's native Skill mechanism and fails before Artifact operations when that producer is
+unavailable or disabled. User-facing `$name` and `/name` spellings are not a shared invocation protocol.
+
+When an existing Artifact URI is supplied, the composer uses the matching producer's current-value read
+and same-subject update contract instead of publishing an unconditional revised copy. Existing
+`structure.list` may inspect Structure summaries or recover an uncertain publication, but there is no
+general Walkthrough discovery command. The composer does not access SQLite or claim exhaustive duplicate
+detection when no Walkthrough URI was supplied.
 
 `rvw-watch-comments` documents the complete state-script stdin/stdout contract. Its driver derives
 `--after` from task state, its auto-ack reuses each batch operation's idempotency key and status post
@@ -745,16 +771,22 @@ installation with no trustworthy rvw marker (`unmanaged-difference`). None is ov
 an explicit forced install.
 
 `rvw-walkthrough` constrains commit identity, code references, diagram bindings, CLI validation,
-passive publication and update, and explicit destructive authorization. It treats the explanation as
-a first reading path for building a mental model of a change or requested implementation subject,
-follows explicit authoring instructions first, and uses a flexible default guide only for unspecified
-choices. It deliberately avoids a fixed template, an exhaustive review boundary, and AI-review conclusions.
+passive publication and update, and explicit destructive authorization for one bounded Walkthrough. It
+treats the explanation as one ordered orientation path, follows an upstream brief's subject, review
+question, purpose, scope, inclusions, exclusions, and emphasis as authoring authority, while independently
+verifying `mustEstablish` and all implementation assertions. It uses a flexible default guide only for
+unspecified choices. It does not own PR-wide coverage, Artifact count, or the type mix, but it
+retains the local rejection boundary when the requested subject has no useful ordered path. It
+deliberately avoids a fixed template, an exhaustive review boundary, and AI-review conclusions.
 
-`rvw-structure` selects Structure only for PR-relevant behavior spaces with a factual code entrypoint,
-gives explicit subject and scope authority priority, inspects committed code, and publishes stable-ID
-Node and Edge claims at one exact commit. It rejects static responsibility inventories, giant or
-inferred graphs, vague relationships, layout instructions, implicit
-same-URI subject changes, browser control, and deletion without exact preview authorization.
+`rvw-structure` produces one PR-relevant behavior space with a factual code entrypoint, gives an
+upstream brief's subject, review question, behavior boundary, scope, inclusions, exclusions, and emphasis
+authoring priority, independently verifies every suggested origin, relation, invariant, and other
+implementation assertion in committed code, and publishes stable-ID Node and Edge claims at one exact commit. It
+does not choose PR-wide coverage, the type mix, or companion Artifacts, but it retains the local rejection
+boundaries for ordered paths, missing factual origins, and static inventories. It also rejects giant or
+inferred graphs, vague relationships, layout instructions, implicit same-URI subject changes, browser
+control, and deletion without exact preview authorization.
 
 ## Protocol discovery
 

@@ -18,10 +18,12 @@ import { APP_VERSION } from "../../shared/constants.js";
 import { RvwError } from "../../shared/errors.js";
 
 export type SkillPlatform = "codex" | "claude";
-export type SkillName = "rvw" | "rvw-walkthrough" | "rvw-structure" | "rvw-watch-comments";
+export type SkillName =
+  "rvw" | "rvw-review-compose" | "rvw-walkthrough" | "rvw-structure" | "rvw-watch-comments";
 
 const skillNames = [
   "rvw",
+  "rvw-review-compose",
   "rvw-walkthrough",
   "rvw-structure",
   "rvw-watch-comments",

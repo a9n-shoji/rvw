@@ -57,7 +57,8 @@ rvwが担うもの:
 - 新規comment postのDB-wide event順序、opaque cursor、10秒pollのwatch CLI
 - source commitをanchorに持つAgent Walkthrough、typed code reference、Mermaid図、static HTML visual
 - boundedなPR-relevant behaviorをentrypointから表すAgent Structure、stable Node / Edge ID、source anchor
-- platform非依存の`rvw` / `rvw-walkthrough` / `rvw-structure` / `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
+- platform非依存の`rvw` / `rvw-review-compose` / `rvw-walkthrough` / `rvw-structure` /
+  `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
 
 rvwが担わないもの:
 
@@ -464,6 +465,18 @@ private attachmentをCI fixtureへ保存しないため、release前に次を人
 Walkthroughは、外部AgentがCLIで登録するsource anchor付きMarkdown documentである。rvwは説明を生成せず、
 Agentを起動せず、登録時にもbrowserを開いたりactive tabやscroll位置を変更したりしない。
 
+`rvw-walkthrough`は一つのbounded subjectについて一つのWalkthroughを作成、更新、削除するproducerであり、
+PR全体のArtifact数、Walkthrough / Structureの組み合わせ、他subjectのcoverageを決めない。user、caller、PR本文、
+または上位composerからsubject、review question、purpose、scope、inclusion / exclusion、emphasisを含むbriefが
+渡された場合は「何を調査するか」のauthoring authorityとして優先する。`mustEstablish`、suggested relationship、
+invariantなどの実装上のassertionはproducerがcommit済みcodeとtestから独立に検証するclaim candidateであり、
+authorityや結論として扱わない。exact source rangeの存在だけでもsemantic claimの証明にはならない。sourceが同じ
+question / scope内で異なる答えを示すならその答えを使い、essential claimがunsupported / contradictedでboundary変更を
+要するならpublishせずcallerへconflictを返す。broader PR contextはclaim検証とexact source evidenceのために調査できるが、
+除外範囲を越えて一つの説明をPR全体へ広げたり、別subjectのcompanion Artifactを自律的に作成したりしない。一方、
+requested subjectに有用なordered pathがなくStructureの方が適切ならpublishせずcallerへ返すrepresentation rejectionは
+producerに残す。
+
 ```typescript
 interface CodeReference {
   id: string;
@@ -575,6 +588,15 @@ StructureはPRに関係するboundedなbehaviorを、source-establishedなentryp
 静的なarchitecture／責務inventoryはPR reviewの停止条件を失うためStructureの対象にしない。Structureは
 generic Artifact system、semantic code graph、AI推論結果、review finding、completeness保証ではない。
 
+`rvw-structure`は一つのbounded behaviorについて一つのStructureを作成、更新、削除するproducerであり、
+PR全体のArtifact構成や隣接behaviorの追加Artifactを決めない。user、caller、PR本文、または上位composerのbriefが
+subject、review question、behavior boundary、scope、inclusion / exclusion、emphasisを明示した場合、それを「何を
+調査するか」のauthorityとして優先する。`mustEstablish`、suggested origin / relationship / invariantその他の実装assertionは
+producerがcommit済みcodeとtestから独立に検証するclaim candidateであり、sourceが裏付けないNode / Edge / originを
+briefどおりに強制しない。briefはsource exactness、factual origin、stable identityを上書きせず、essential claimが
+unsupported / contradictedなら必要に応じてcallerへconflictを返す。ordered path、entrypointのない静的inventory、または
+一つのcoherentなbehavior spaceにならないsubjectを拒否するrepresentation boundaryもproducerに残す。
+
 一つのStructureは次を持つ。
 
 ```ts
@@ -617,8 +639,8 @@ type Structure = {
 };
 ```
 
-- `title`と`scope`はsubjectとboundaryを宣言する。producerはuser / caller / PR本文の明示指示を優先し、
-  commit済みcodeとtestで未指定部分だけを補う。
+- `title`と`scope`はsubjectとboundaryを宣言する。producerはuser / caller / PR本文 / 上位composerの
+  明示briefを優先し、commit済みcodeとtestで未指定部分だけを補う。
 - Node / Edge IDは`^[A-Za-z][A-Za-z0-9_-]{0,63}$`を満たすlabelとは別のclaim identityであり、
   Structure内でuniqueとする。same-subject updateで
   surviving claimのIDを維持し、削除したIDを別claimへ再利用しない。削除済みNode / Edge IDは小さな
@@ -784,9 +806,11 @@ budgetに収まるscaleへ縮小する。安全な最低scaleを下回る場合�
 exportはbackend、DB、CLI protocol、Structure data modelを変更せず、実行後もreading stateを一切変更しない。
 
 1-hop / 2-hopはfocusがある時だけ選べる。focusなしはAllへ戻し、Allは全Nodeと全Edgeを表示する。relationを
-stable IDや件数で自動的に隠さない。bounded graphを超えるsubjectはproducerがscopeを分ける。別のoriginから
-独立してtriggerされるbehaviorへ到達した時点も分割境界とし、静的なsubsystem inventoryへ拡張しない。選択commit範囲に対する変更file
-presentationはbadge / borderだけへ反映し、source identityとlayoutへ影響させない。
+stable IDや件数で自動的に隠さない。bounded graphを超えるsubjectはproducerが明示brief内でscopeを狭めるか、
+requesterまたは上位composerへboundaryの再検討を返し、このproducer requestから別Artifactを自律的に増やさない。
+別のoriginから独立してtriggerされるbehaviorへ到達した時点も現在Structureの停止境界とし、必要なら隣接behaviorを
+callerへ報告するが、静的なsubsystem inventoryへ拡張しない。選択commit範囲に対する変更file presentationは
+badge / borderだけへ反映し、source identityとlayoutへ影響させない。
 
 publish / update / deleteはpassiveでbrowserを開かずnavigationを変更しない。publishは一つのlogical operationに
 保持する`idempotencyKey`を必須とし、同じcanonical payloadの再送は元のstable URIを返す。別payloadへのkey再利用と
@@ -1353,7 +1377,7 @@ passiveでviewerを操作しない。
 - `pr sync`の`commentUpdates`は最大500件で、各要素は`commentRef`、`reply`、`resolve`と任意の
   `references`、`idempotencyKey`を持つ。referenceは同期したcurrent GitHub headへ固定する。
 - breakingなprotocol schema変更ではprotocol versionを進める。additiveなcommandは同じversionへ新しい
-  capabilityを追加する。いずれもCLI contract test、4つの共通Skill、README、`docs/cli-protocol.md`を
+  capabilityを追加する。いずれもCLI contract test、bundled Skill群、README、`docs/cli-protocol.md`を
   同じ変更で更新する。
 
 ## 8. SQLite
@@ -1881,8 +1905,14 @@ CLI contract:
 - comment create/reply/edit/syncのpost単位reference検証、保存、完全置換、commit保持、idempotency
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
 - `structure get/publish/update/delete`のschema、shared transport、同一ID whole-value update、削除preview、passive contract
+- `rvw-review-compose`がPR-wide compositionを担い、fixed templateやWalkthrough / Structureの常時pairを要求せず、
+  最小構成とdirect code readingを選び、overlap、terminology、missing / cross-boundary risk、over-fragmentationを
+  構成全体で再確認し、永続Setや新Artifact kindを要求しないcontract
+- `rvw-walkthrough` / `rvw-structure`が上位briefのsubject、scope、inclusion / exclusionをauthoring authorityとして
+  一つのbounded Artifactだけを作り、`mustEstablish`、suggested origin / relation / invariantはcommit済みsourceから
+  独立に検証し、PR-wide compositionを引き受けず、それぞれのrepresentation rejectionを維持するcontract
 - `pr sync`のreply/head関連付けと非冪等時の再取得
-- 4つのSkillの初回install、同一内容の再install、いずれかに差異がある場合の更新検知と`--force`
+- 5つのSkillの初回install、同一内容の再install、いずれかに差異がある場合の更新検知と`--force`
 - Skill installerが対象Skill directory外を変更しないこと
 - `skill status --json`のschema
 
@@ -1892,8 +1922,9 @@ Package smoke:
 - CLIはNode built-in以外のruntime依存を`dist/cli.mjs`へbundleし、package manifestにruntime
   `dependencies`を残さない
 - 空のnpm cacheを使ってtemp prefixへoffline global installし、`rvw --version`と`rvw doctor`を実行
-- temp Skill rootへCodex / Claude Code向けの同じ4つのSkillをinstallし、`skill status --json`で一致を確認
-- static assets、migrations、`rvw` / `rvw-walkthrough` / `rvw-structure` / `rvw-watch-comments` Skill assetがtarballに存在することを確認
+- temp Skill rootへCodex / Claude Code向けの同じ5つのSkillをinstallし、`skill status --json`で一致を確認
+- static assets、migrations、`rvw` / `rvw-review-compose` / `rvw-walkthrough` / `rvw-structure` /
+  `rvw-watch-comments` Skill assetがtarballに存在することを確認
 
 必須commands:
 
@@ -1924,28 +1955,69 @@ rvw skill status
 アクセスできるlocal Agentだけを対象とする。
 
 Skill sourceはcwdではなく実行中CLIのpackage rootを基準に解決する。`--force`でも対象Skill
-directory以外を削除しない。一度のinstallでコメント取得・返信・sync用の`rvw`と、Walkthroughの
-検証・publish・current値更新・確認付き削除用の`rvw-walkthrough`、Structureのbehavior／entrypoint選択・検証・publish・
-current値更新・確認付き削除用の`rvw-structure`、新規post監視用の`rvw-watch-comments`を配置する。四つの
-Skillの名前と内容はCodex / Claude Codeで共通とし、
+directory以外を削除しない。一度のinstallでコメント取得・返信・sync用の`rvw`と、PR全体のreview
+composition用の`rvw-review-compose`、一つのWalkthroughの検証・publish・current値更新・確認付き削除用の
+`rvw-walkthrough`、一つのStructureのbehavior／entrypoint選択・検証・publish・current値更新・確認付き削除用の
+`rvw-structure`、新規post監視用の`rvw-watch-comments`を配置する。5つのSkillの名前と内容はCodex / Claude Codeで共通とし、
 platform adapterが変えるのは既定のSkill rootだけとする。Agent名はSkillへhardcodeせず、CLIの任意
 `authorLabel`として実行中Agentが正確に判断できる場合だけ渡す。
 
+`rvw-review-compose`は一つのPull Requestまたは明示review subjectを調査し、主要な理解上の難所とcouplingを
+見つけ、必要な時だけsession内のboundedな理解単位へ分ける。各単位についてordered lifecycle / causalityなら
+Walkthrough、responsibility / ownership / dependency / contractならStructure、局所的な条件や実装詳細なら
+直接code readingを選び、WalkthroughとStructureを常にpairにしない。Overview / State / Flow / Error / Test /
+Structureの固定template、単位ごとのArtifact作成、完全な説明setを要求せず、最小の外部表現でmental-model loadを
+下げ、重要なcouplingを隠さないことをqualityとする。
+
+composerは各producerへ渡す前に、subject、review question、scopeのinclusion / exclusion、`mustEstablish`、emphasisを
+持つ内部Artifact briefを用意する。このうちsubject、question、purpose / behavior boundary、scope、inclusion /
+exclusion、emphasisはauthoring boundaryのauthorityであり、`mustEstablish`、suggested origin / relationship /
+invariantその他の実装assertionはproducerがcommit済みsourceから独立に検証するcandidate claimである。composerの事前
+分析やvalidなanchor自体をsemantic proofとして再利用しない。producerがessential claimのunsupported / contradictedを
+返したらbriefやsurfaceを再検討し、結論を強制しない。このbriefと理解単位はsession-localなauthoring contextであり、
+public schemaではない。production後は詳細なoverlap、terminology drift、重要なboundaryの欠落、over-fragmentation、
+cross-boundary riskを構成全体で再評価し、不要なArtifactを作らないかscopeを切り直す。推奨する最初の入口は示せるが
+mandatoryなreview planや完了保証にはせず、通常のAgent responseで構成理由、作成／更新URI、直接codeで確認する論点を
+返す。そのresponseも永続Artifactにしない。
+
+compositionはSkill-level strategyであり、Review Set / Review Plan / Sliceの永続entity、group ID、typed Artifact link、
+Artifact kind、URI、database row、migration、CLI capability、HTTP API、Viewer UIを追加しない。sibling producerの
+契約を利用するためのgenericなruntime sub-Skill invocation frameworkも作らない。composerはcanonical Skill名を各hostの
+native Skill mechanismへ渡してproducerの完全なcontractをloadし、`$name`や`/name`を共通runtime protocolとして
+hardcodeしない。producerがcurrent sessionでunavailable / disabledならArtifact操作前にfail closedする。protocol versionは
+4のまま、既存のWalkthrough / Structure capabilityだけを使う。既存URIがuserまたはcallerから明示された場合はmatching producerで
+current値を読んでsame-subject updateを優先し、無条件の改訂版をpublishしない。既存`structure list`はそのcontract内で
+利用できるが、一般的なWalkthrough listはないため、URI未指定時にSQLiteを直接読んだり網羅的なduplicate検出を
+主張したりしない。
+
 `rvw-walkthrough`は一つのcurrent `sourceOid`、exact code reference、Mermaid binding、passiveなpublishと
-同一ID更新、削除の明示authorizationを規定する。説明の見出し、順序、分割、粒度、diagram選択はsessionの
-requestとrepository contextへ委ね、固定の文書templateを要求しない。Walkthroughはreviewerが変更または
-明示された実装対象のmental modelを作るための最初の読解経路とし、作成指示を優先して、未指定部分だけを
-既定guideで補う。diffやfileの一覧、網羅的なAI review、完全性の保証にはしない。更新時は既存artifactを読んで完全置換し、
-改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への明示authorizationなしに実行しない。
+同一ID更新、削除の明示authorizationを規定し、一つのbounded subjectについて一つのordered orientation pathだけを
+作る。上位briefを含む明示されたsubject、review question、scope、inclusion / exclusion、emphasisを優先して
+未指定部分だけを既定guideで補い、PR全体のArtifact数やStructureとの役割分担を決めない。説明の見出し、順序、
+粒度、diagram選択はrequestとsubjectへ委ね、固定の文書templateを要求しない。ordered pathが有用でなければ
+Structureを提案するlocal routing判断を残す。diffやfileの一覧、網羅的なAI review、完全性の保証にはしない。
+更新時は既存artifactを読んで完全置換し、改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への
+明示authorizationなしに実行しない。
 
 `rvw-structure`は「Structureはbehavior space、Walkthroughはpath」をrouting boundaryとする。user / caller / PR本文の
-明示behavior、entrypoint、scopeを最優先し、実際のcommit済みrepositoryを調査して不足だけを補う。code-centeredな同じ
+明示briefに加え、上位composerからのsubject、review question、behavior boundary、scope、inclusion / exclusion、
+emphasisをauthoring boundaryとして最優先し、entrypointやrelationなどのcandidate claimは実際のcommit済みrepositoryで
+独立に検証する。一つのbounded behaviorだけを扱い、
+PR全体のArtifact数、Walkthroughとの役割分担、隣接behaviorのcompanion Artifactを決めない。code-centeredな同じ
 abstraction levelのNode、verb-based Edge label、stable claim ID、一つのexact `sourceOid`を要求する。
-concept-only Nodeは明示authorityまたは必要な接続に限定し、巨大graph、file inventory、AI推論edge、layout hint、
-review conclusion、静的なarchitecture／責務inventoryを作らない。同じsubjectだけをsame URIへ完全置換し、別subjectは新規publishする。viewerを
-開かず、削除preview後の明示authorizationなしにdeleteしない。producer品質はfixture転記ではなくAgentが
+concept-only Nodeはsource-establishedだが単一anchorを持たない概念またはsource-supported claimの必要な接続に限定し、
+subject authorityだけでNode / Edgeを事実化しない。巨大graph、file inventory、AI推論edge、layout hint、
+review conclusion、静的なarchitecture／責務inventoryを作らない。ordered pathやentrypointのないinventoryを
+拒否するlocal routing判断を残す。同じsubjectだけをsame URIへ完全置換し、明示的に別subjectを作る場合だけ
+新規publishする。viewerを開かず、削除preview後の明示authorizationなしにdeleteしない。producer品質はfixture転記ではなくAgentが
 repositoryを調査して作った2〜3件のStructureでscope、granularity、concept-node使用、Edge label、anchorを
 評価し、結果をdocsへ記録する。
+
+review compositionの判断品質は、期待surfaceを伏せたfresh Agent contextでsmall local change、relationship-centered
+subject、state / lifecycle / asyncを含むcomplex changeを同じSkill revisionに対してforward評価する。Artifact economy、
+surface shape、central question、scope / exclusion、direct-code choice、overlap、terminology、cross-boundary coupling、
+briefのauthoring authorityとcandidate claimの分離を確認し、planning-only評価をhost invocation / publish成功とは扱わない。
+結果は`docs/review-composition-evaluation.md`へ記録する。
 
 `rvw-watch-comments`は一つの外部Agent taskをreceiverとして使い、cursorless起動で既存未解決を処理せず、
 新規root/replyをPRごとのbatchへまとめる。同梱preflight、watch driver、state script、auto-ackが
@@ -2000,6 +2072,8 @@ Functional:
 - AgentがboundedなPR-relevant behaviorをentrypoint付きStructureとしてCLIで提示し、人間が1/2-hop / AllとRelation選択を
   自由に探索し、Node / Edge anchorをexact sourceで開ける。同じsubjectの更新ではstable IDに基づく空間を
   session内で維持し、別subjectは別artifactにする。不要なStructureは件数確認後に削除できる。
+- Agentが`rvw-review-compose`でPR全体または明示review subjectを調査し、Walkthrough、Structure、直接code
+  readingから最小のadaptive compositionを選び、通常responseで推奨入口と作成／更新URIを返せる。
 - PR全体、PR本文、file、line/range comment、reply、post edit/delete、resolve/reopen、sidebar、Outdatedが機能し、
   postはsafe GFM、repository link／相対画像、表示専用Mermaidとしてrenderされる。
 - 一件／一覧／選択comment参照をcopyし、Codex / Claude Codeへ同じ`rvw` Skillを配置してCLIで解決・返信できる。
@@ -2013,7 +2087,7 @@ Quality:
 - API/CLI validationとmigrationがあり、Git commandへshell interpolationを使わない。
 - `pnpm install --frozen-lockfile`、check、unit/integration、E2E、build、package smokeが成功する。
 - Phase 1完了時点のpackageは`name: rvw`かつ`private: true`で、CIからnpm publishしない。
-- README、一次仕様、decisions、CLI protocol、4つのbundled Skillが同じ利用者モデルを説明する。
+- README、一次仕様、decisions、CLI protocol、5つのbundled Skillが同じ利用者モデルを説明する。
 
 Manual acceptance:
 

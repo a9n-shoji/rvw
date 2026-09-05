@@ -115,14 +115,29 @@ render as non-fetching placeholders. Same-origin SVG asset responses carry a res
 Policy and sandbox so direct navigation cannot execute repository-controlled script under the viewer origin.
 
 The bundled Skills are named by capability rather than Agent host. `rvw` handles review comments and
-synchronization; `rvw-walkthrough` converts the current session's explanation into a validated,
-source-anchored path without prescribing its document structure; `rvw-structure` maps a declared
-PR-relevant behavior from its code entrypoint into stable source-anchored relationships;
-`rvw-watch-comments` keeps an
-external Agent task subscribed to newly created posts and fails closed on PR ownership. Codex and Claude Code receive
-the same Skill directories under their respective local Skill roots. Platform selection is a packaging
-concern only and does not fork the Agent protocol or workflow instructions. Installer metadata records
-the bundled digest so update availability and local customization are reported separately.
+synchronization; `rvw-review-compose` chooses the minimum adaptive mix of Walkthrough, Structure, and
+direct code reading for one Pull Request or explicit review subject; `rvw-walkthrough` turns one bounded
+subject into one validated source-anchored ordered path; `rvw-structure` maps one declared PR-relevant
+behavior from its code entrypoint into stable source-anchored relationships; and `rvw-watch-comments`
+keeps an external Agent task subscribed to newly created posts and fails closed on PR ownership. The
+producer Skills honor a session-local upstream brief while retaining their own representation rejection
+and exact-source contracts; they do not independently expand back into PR-wide composition.
+
+The upstream brief is split by meaning rather than persisted shape. Subject, review question, purpose or
+behavior boundary, scope, inclusions, exclusions, and emphasis bound the producer's investigation;
+`mustEstablish`, suggested origins, relationships, invariants, and other implementation assertions remain
+claims the producer verifies independently against committed source. The composer activates producers by
+canonical name through each host's native Skill mechanism; host-specific user invocation sigils are not
+part of the rvw protocol.
+
+Review composition is an authoring strategy outside the domain model. Its candidate understanding units,
+Artifact briefs, recommended entry, and URI summary are not persisted as a Review Set, Artifact kind,
+group, or review plan. The composer uses the existing protocol-v4 Walkthrough and Structure operations;
+it adds no database, URI, API, Viewer UI, protocol capability, or generic runtime sub-Skill invocation
+framework. Codex and Claude Code receive the same five Skill directories under their respective local
+Skill roots. Platform selection is a packaging concern only and does not fork the Agent protocol or
+workflow instructions. Installer metadata records the bundled digest so update availability and local
+customization are reported separately.
 
 Each browser document attaches an ephemeral viewer ID to that poll. The database runtime uses those IDs
 only to stop its HTTP listener after the final tab closes; they are never persisted and are not part of

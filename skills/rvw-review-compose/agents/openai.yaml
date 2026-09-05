@@ -1,0 +1,4 @@
+interface:
+  display_name: "rvw Review Compose"
+  short_description: "Compose the minimum useful rvw review surfaces"
+  default_prompt: "Use $rvw-review-compose to create the minimum useful rvw review-surface composition for this Pull Request."

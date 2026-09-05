@@ -128,7 +128,8 @@ viewerはこの流れのために次を提供します。
 
 ## Agentの説明を人間の順序で検証する
 
-外部Agentは`rvw-walkthrough` SkillとCLIを使い、実装説明を一つのsource commitをanchorとしてrvwへ提示できます。
+外部Agentは単一Artifact producerである`rvw-walkthrough` SkillとCLIを使い、一つのbounded subjectの
+実装説明を一つのsource commitをanchorとしてrvwへ提示できます。
 
 ```bash
 rvw walkthrough publish --stdin --json
@@ -166,9 +167,10 @@ Agentは現在内容を読み、同じ`rvw://walkthrough/<uuid>`を更新して�
 
 ## codeの関係を空間として検証する
 
-外部Agentは`rvw-structure` SkillとCLIを使い、PRに関係するboundedなbehaviorをfactualなcode entrypointから
-dependency、contract、side effectへ辿る空間として提示できます。必須の読み順を持つ説明はWalkthroughです。
-entrypointを置けない静的なarchitecture／責務inventoryはStructureへ広げません。
+外部Agentは単一Artifact producerである`rvw-structure` SkillとCLIを使い、PRに関係する一つのboundedな
+behaviorをfactualなcode entrypointからdependency、contract、side effectへ辿る空間として提示できます。
+必須の読み順を持つ説明はWalkthroughです。entrypointを置けない静的なarchitecture／責務inventoryは
+Structureへ広げません。
 
 ```bash
 rvw structure preview --stdin --json
@@ -197,11 +199,11 @@ Structure headerの`Export`から、現在のNode配置を保った図全体をs
 
 ## Codex / Claude Code Skills
 
-アプリ本体からローカルSkillをインストールします。一度のinstallで、コメント処理用の`rvw`、
-Walkthroughのpublish・改善・削除用の`rvw-walkthrough`、Structureのpublish・置換・削除用の
-`rvw-structure`、新規コメント監視用の
-`rvw-watch-comments`が入ります。Skill名と内容はCodex / Claude Codeで共通で、
-platform指定は配置先だけを選びます。
+アプリ本体からローカルSkillをインストールします。一度のinstallで、コメント処理用の`rvw`、PR全体の
+必要最小限のreview compositionを選ぶ`rvw-review-compose`、単一Walkthroughのpublish・改善・削除用の
+`rvw-walkthrough`、単一Structureのpublish・置換・削除用の`rvw-structure`、新規コメント監視用の
+`rvw-watch-comments`という5つが入ります。Skill名と内容はCodex / Claude Codeで共通で、platform指定は
+配置先だけを選びます。
 
 ```bash
 rvw skill install codex
@@ -211,8 +213,8 @@ rvw skill status
 
 既定の配置先は次です。
 
-- Codex: `~/.agents/skills/rvw`、`~/.agents/skills/rvw-walkthrough`、`~/.agents/skills/rvw-structure`、`~/.agents/skills/rvw-watch-comments`
-- Claude Code: `~/.claude/skills/rvw`、`~/.claude/skills/rvw-walkthrough`、`~/.claude/skills/rvw-structure`、`~/.claude/skills/rvw-watch-comments`
+- Codex: `~/.agents/skills/rvw`、`~/.agents/skills/rvw-review-compose`、`~/.agents/skills/rvw-walkthrough`、`~/.agents/skills/rvw-structure`、`~/.agents/skills/rvw-watch-comments`
+- Claude Code: `~/.claude/skills/rvw`、`~/.claude/skills/rvw-review-compose`、`~/.claude/skills/rvw-walkthrough`、`~/.claude/skills/rvw-structure`、`~/.claude/skills/rvw-watch-comments`
 
 rvwがインストールしたSkillには同梱版digestを記録します。`skill status --json`と`doctor --json`は、
 管理済みの旧版なら`updateAvailable: true`、ローカル編集なら`locallyModified: true`、記録のない差異なら
@@ -244,16 +246,46 @@ globalなcommit選択を変えずに開けます。
 rvw Skillを使って、https://github.com/owner/repository/pull/123 をreviewし、見つけた指摘をRVWのコメントとして作成してください。
 ```
 
-Walkthroughを作る場合は、説明したい対象と必要な作成指示をセッションへ伝えて`rvw-walkthrough` Skillを使います。
-Skillは明示された指示を優先し、未指定の作成判断だけを既定guideで補って、reviewerが変更または実装対象の
-mental modelを作るための最初の読解経路を構成します。文書の見出しや説明順序は固定せず、source anchorを持つ
-reference付きartifactとして検証してpublishします。Walkthrough全体へのコメントから説明を改善する場合は、
-現在内容を取得して同じURIを更新し、重複した「改訂版」を追加しません。
+PR全体または明示したreview subjectについて、どの説明surfaceが必要かも含めて任せる場合は
+`rvw-review-compose` Skillを使います。
+
+```text
+rvw-review-compose Skillを使って、https://github.com/owner/repository/pull/123 を理解するための
+Walkthrough / Structureをおすすめの構成で作ってください。
+```
+
+composerはcommit済みcodeと周辺contextを調査し、一度に内部化する概念を減らす最小構成を選びます。順序や
+lifecycleが本体ならWalkthrough、ownershipやdependencyが本体ならStructure、局所的な分岐や実装詳細なら
+Artifactを作らずcodeを直接読む入口を示します。WalkthroughとStructureを常に一組にせず、固定のoverviewや
+section templateも要求しません。作成後は通常のAgent responseで、構成理由、推奨される最初の入口、作成または
+更新したURI、意図的に直接code readingへ残した論点を返します。このresponseとcomposer内部の理解単位やbriefは
+永続Artifactではなく、厳密なreview完了planでもありません。ReviewerはWalkthrough、Structure、codeのどこからでも
+入り直せます。
+
+composerは各producerをcanonical Skill名で、Codex / Claude Codeそれぞれのnative Skill mechanismからloadします。
+共有Skill本文は`$name`や`/name`をruntime protocolとして扱わず、producerがsessionで利用不能ならArtifact操作前に
+停止します。briefのsubject、review question、purpose / behavior boundary、scope、inclusion / exclusion、emphasisは
+調査範囲のauthorityですが、`mustEstablish`、suggested origin / relationship / invariantなどの実装assertionはproducerが
+commit済みsourceとtestから独立に検証するcandidate claimです。briefやvalidなsource rangeだけで事実とはみなしません。
+
+Walkthroughを一件作る場合は、説明したいbounded subjectと必要な作成指示をセッションへ伝えて
+`rvw-walkthrough` Skillを直接使います。Skillは上位composerを含む明示されたbriefのsubject、review question、
+scope、inclusion / exclusion、emphasisを優先し、未指定の作成判断だけを既定guideで補います。PR全体のArtifact数や
+Structureとの役割分担を決めず、そのsubjectに適した一つのordered pathをsource anchor付きreferenceで検証して
+publishします。`mustEstablish`その他の実装assertionはauthorityとして受け入れずsourceから再検証し、essential claimが
+unsupported / contradictedなら無理なanchorを付けずcallerへ返します。ordered pathが適切でなければStructureを提案する
+representation rejectionは残ります。
+Walkthrough全体へのコメントから説明を改善する場合は、現在内容を取得して同じURIを更新し、重複した
+「改訂版」を追加しません。
 
 Structureを作る場合は、behavior、entrypoint、scope、含める／除外する関係を伝えて`rvw-structure` Skillを使います。
-Skillは実際のcommit済みcodeを調査し、labelではなくclaimのidentityとしてstable IDを割り当てます。
-読み順が本質ならWalkthroughを提案し、静的なarchitecture inventoryならStructureを作りません。producer authoringの実地評価は
-[Structure producer evaluation](docs/structure-producer-evaluation.md)に記録しています。
+Skillは上位composerを含む明示briefを調査boundaryのauthorityとして一つのbounded behaviorだけを扱い、suggested
+entrypointやrelationを実際のcommit済みcodeから再検証して、labelではなくclaimのidentityとしてstable IDを割り当てます。
+PR全体の構成や別behaviorのArtifactは
+自律的に増やしません。読み順が本質ならWalkthroughを提案し、静的なarchitecture inventoryならStructureを
+作らないrepresentation rejectionは残ります。producer authoringの実地評価は
+[Structure producer evaluation](docs/structure-producer-evaluation.md)、composition判断のfresh-context評価は
+[Review composition decision evaluation](docs/review-composition-evaluation.md)に記録しています。
 
 新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRを
 同梱driverから約1秒間隔で監視し、起動前の既存未解決commentは処理しません。自分のPRのfix-and-pushを起動taskへ
@@ -270,9 +302,12 @@ queue、retry、batch内のthread単位status post、自己返信抑制をtransa
 調査結果、実装内容、test結果が具体的なcodeに基づく場合、Skillは最終replyからexact commitの有用な
 line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動できるようにします。
 
-四つのSkillはSQLiteを直接読まず、`rvw protocol --json`、`rvw comment ... --json`、
-`rvw walkthrough get/update/publish/delete ... --json`、`rvw structure preview/get/update/publish/delete ... --json`、
-`rvw pr sync --stdin --json`だけを利用します。
+5つのSkillはrvwのapplication SQLiteを直接読まず、rvwへの操作には`rvw protocol --json`、`rvw agent status --json`、
+`rvw comment ... --json`、
+`rvw walkthrough get/update/publish/delete ... --json`、
+`rvw structure list/preview/get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`という既存contractだけを
+利用します。composerの追加による新しいCLI commandやprotocol capabilityはありません。既存Walkthrough URIが
+明示されない場合に全Walkthroughを列挙するcontractもないため、composerはSQLiteを読んで重複を推測しません。
 ローカルDBやrepositoryへアクセスできないCloud Agentは対象外です。
 
 ## 復旧
