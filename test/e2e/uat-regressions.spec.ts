@@ -345,7 +345,9 @@ test("notifies only after an Agent acknowledgement becomes a final reply", async
   await actionsButton.click();
   await expect(page.getByText("権限: 許可", { exact: true })).toBeVisible();
   await page.getByRole("menuitem", { name: "テスト通知を送る" }).click();
-  await expect(page.getByRole("status")).toHaveText("テスト通知を送信しました。");
+  await expect(page.getByRole("status")).toHaveText(
+    "テスト通知を送信しました。表示されない場合はChromeまたはOSの通知設定を確認してください。",
+  );
   await expect
     .poll(
       async () =>
@@ -361,7 +363,7 @@ test("notifies only after an Agent acknowledgement becomes a final reply", async
     .toEqual([
       {
         title: "rvw",
-        options: expect.objectContaining({ body: "通知テスト", tag: "rvw-notification-test" }),
+        options: { body: "通知テスト" },
       },
     ]);
   await page.evaluate(() => {

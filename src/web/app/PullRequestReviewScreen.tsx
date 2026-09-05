@@ -1199,15 +1199,14 @@ export function PullRequestReviewScreen({
         setSyncFeedback("ブラウザのサイト設定で通知を許可してください。");
         return;
       }
-      const notification = new Notification("rvw", {
-        body: "通知テスト",
-        tag: "rvw-notification-test",
-      });
+      const notification = new Notification("rvw", { body: "通知テスト" });
       notification.onclick = () => {
         window.focus();
         notification.close();
       };
-      setSyncFeedback("テスト通知を送信しました。");
+      setSyncFeedback(
+        "テスト通知を送信しました。表示されない場合はChromeまたはOSの通知設定を確認してください。",
+      );
     } catch (error) {
       console.warn("テスト通知を作成できませんでした。", error);
       setSyncFeedback("テスト通知を作成できませんでした。ブラウザとOSの設定を確認してください。");
