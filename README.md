@@ -67,19 +67,26 @@ rvw open https://github.com/owner/repository/pull/123
 rvw open
 ```
 
-serverは`127.0.0.1`の空きportだけへbindします。同じdatabaseで既にrvwが動いていれば、通常の
+serverは`127.0.0.1:43117`へbindします。同じdatabaseで既にrvwが動いていれば、通常の
 `rvw open`はそのruntimeへPRを追加し、同じoriginで新しいtabを開きます。二つ目のserverやdatabase接続は
 起動しません。最初の`rvw open`だけがbackground runtimeを開始し、最初のtab接続を確認してから端末へ
 制御を返します。最後のtabを閉じると短い猶予後に停止し、リロード中や別tabが残っている間は停止しません。
-異なる`RVW_DATABASE_PATH`を指定したruntimeは独立して起動できます。
+固定originにより、Browser NotificationのpermissionとAgentコメント通知設定は通常起動をまたいで維持されます。
+空きportを自動選択する場合は`--port 0`を明示します。この場合は起動ごとにoriginが変わり得るため、通知permissionと
+browser storageは引き継がれません。異なる`RVW_DATABASE_PATH`のruntimeを同時に起動する場合は、二つ目へ別の
+固定`--port`または`--port 0`を指定します。
 
 serverを端末に接続したままにする場合は`rvw open --foreground`を使います。同じdatabaseのruntimeが
 既にあればforeground commandは競合を明示します。ブラウザだけを自動で開かない場合は
 `rvw open --no-open`を使います。active runtimeがあればURLを表示して再利用し、なければCtrl+Cまで
 signal管理のserverを起動します。再利用時もCLIがCtrl+Cまでviewer leaseを保持するため、表示したURLが
-終了猶予中に無効になることはありません。初回の`--port`は尊重し、active runtimeと異なるportを指定した場合は
+終了猶予中に無効になることはありません。初回の`--port`は尊重し、省略時はactive runtimeのoriginを再利用します。
+active runtimeと異なるportを明示した場合は
 二つ目を起動せず競合を返します。一度登録したPRは、完全URLまたは全登録PRで一意な番号を指定すれば
 repository外のdirectoryからも開けます。
+
+最上部の`...` menuでは、Browser Notificationのpermission状態を確認し、Agent更新と独立したテスト通知を送れます。
+`Agentのコメントを通知`を有効にすると、初回読込後にAgentが追加・更新した最終回答を通知します。
 
 ## 変更を理解する
 

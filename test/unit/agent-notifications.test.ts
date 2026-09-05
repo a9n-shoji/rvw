@@ -4,6 +4,7 @@ import {
   agentAcknowledgementBody,
   agentNotificationBody,
   isNotifiableAgentPost,
+  notificationPermissionLabel,
   scanAgentPostNotifications,
 } from "../../src/web/agent-notifications.js";
 
@@ -114,5 +115,12 @@ describe("Agent browser notifications", () => {
   it("keeps notification previews compact", () => {
     expect(agentNotificationBody("first\n\nsecond", 20)).toBe("first second");
     expect(agentNotificationBody("1234567890", 6)).toBe("12345…");
+  });
+
+  it("labels every browser notification permission state", () => {
+    expect(notificationPermissionLabel("default")).toBe("未確認");
+    expect(notificationPermissionLabel("granted")).toBe("許可");
+    expect(notificationPermissionLabel("denied")).toBe("拒否");
+    expect(notificationPermissionLabel("unsupported")).toBe("未対応");
   });
 });

@@ -33,6 +33,21 @@ export function browserNotificationPermission(): NotificationPermission | "unsup
   return typeof Notification === "undefined" ? "unsupported" : Notification.permission;
 }
 
+export function notificationPermissionLabel(
+  permission: NotificationPermission | "unsupported",
+): string {
+  switch (permission) {
+    case "default":
+      return "未確認";
+    case "granted":
+      return "許可";
+    case "denied":
+      return "拒否";
+    case "unsupported":
+      return "未対応";
+  }
+}
+
 export function isNotifiableAgentPost(post: CommentPost): boolean {
   const authorLabel = post.authorLabel?.trim();
   return Boolean(

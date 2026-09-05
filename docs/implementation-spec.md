@@ -344,9 +344,11 @@ empty fileは従来どおり明示的に扱う。
   in-app tab closeはいずれも確認を出さず、browser標準の操作に委ねる。
 - top barのPR titleはGitHubのPR pageを別tabで開くlinkとする。その他menuではUI themeを
   light / dark / systemから選べる。選択はOS user data directoryの共通DBへ保存し、異なるPRや
-  自動割り当てportで新しく起動したviewerにも引き継ぐ。browser storageは初期表示用cacheに限る。
+  `--port 0`で自動割り当てしたviewerにも引き継ぐ。browser storageは初期表示用cacheに限る。
   systemはOS設定へ追従する。
-- その他menuからbrowser origin（portを含む）単位でAgentコメント通知を明示的に有効化できる。初回のcomment読込は通知せず、
+- その他menuからbrowser origin（portを含む）単位でAgentコメント通知を明示的に有効化できる。menuには
+  browserの通知permissionを`未確認` / `許可` / `拒否` / `未対応`として常時表示し、Agent更新経路と独立した
+  `rvw` / `通知テスト`のBrowser Notificationをその場で送れるactionを置く。初回のcomment読込は通知せず、
   以後に追加または編集されたpostのうち、最終変更経路が`agent`で、空でない`authorLabel`があり`You`ではないものだけを対象とする。
   `Unknown`と`🔎 確認中です…`は通知せず、watcherが同じpostを最終回答へ編集した時に通知する。
   通知permissionと設定が有効な場合だけBrowser Notificationを作り、クリック時はviewerをfocusする。
@@ -1709,7 +1711,9 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 ## 12. Server / security
 
 - Node 24 LTS、Hono、React/Vite、TypeScript strict、pnpm 11
-- `127.0.0.1`の空きportだけへbind
+- `127.0.0.1`だけへbindし、`rvw open`でactive runtimeがない場合の既定portは`43117`とする。
+  `--port 0`を明示した場合だけ空きportを自動選択する。既定portが使用中ならsilentに別portへ移らず、
+  別の`--port`または`--port 0`を案内する明示errorを返す
 - expected Hostを検証
 - write APIは`application/json`だけ
 - same-origin以外のwriteを拒否、CORSを有効にしない
@@ -1730,8 +1734,10 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - `--no-open`はbrowser自動起動だけを無効にする。active runtimeは再利用し、active runtimeがなければ従来どおり
   signal管理のserverを起動する。browser管理のactive runtimeを再利用した場合はCLI自身がviewer leaseを
   Ctrl+Cまでheartbeatし、終了時にreleaseする
-- 初回の明示`--port`は尊重する。active runtimeと異なる非0 portを指定した再利用はconflict errorとし、
-  二つ目のserverを起動しない
+- 初回の明示`--port`は尊重する。省略時は新規runtimeに既定`43117`を使うが、active runtimeがある場合は
+  そのportを問わず同じoriginを再利用する。active runtimeと異なる非0 portを明示した再利用はconflict errorとし、
+  二つ目のserverを起動しない。異なるdatabaseのruntimeを同時に使う場合は、二つ目へ別の固定portまたは
+  `--port 0`を明示する
 - SQLiteはWALでserver processを扱い、Agent CLIの書き込みは可能ならuser専用Unix socketを経由する
 
 同一PRを同じruntimeの複数viewer tabで開くことは許容する。SQLite writeは`BEGIN IMMEDIATE`を使う。
@@ -1850,6 +1856,9 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
 24. repository file headerのStructure actionで0件、1件popover、複数Nodeの`+N`、Edge-only除外、rename先を確認し、
     選択時は既存Structure tabとpane sessionを再利用してtarget Nodeだけを中央へfocusする。zoom、Node位置、depth、
     source file tabを維持し、Backで元fileとscroll位置を復元する。Escapeはpopoverを閉じてtriggerへfocusを戻す
+25. 通知menuでpermissionの全状態を表示し、テスト通知をAgent/comment更新なしで送れる。初回comment loadと
+    Agentの確認中postは通知せず、確認中postのfinal editをcomments domain revisionで再取得した時だけ
+    stubbed Notification constructorを一度呼ぶ
 
 CLI contract:
 

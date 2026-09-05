@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- 通知permissionの状態表示と、Agentのcomment更新経路を介さずbrowser / OS通知を確認できるテスト通知
+
+### Changed
+
+- `rvw open`の新規runtimeを既定で`127.0.0.1:43117`へ固定し、起動をまたいでorigin-scopedな通知permissionと
+  設定を維持。空きportの自動選択は明示的な`--port 0`へ変更
+
+### Fixed
+
+- 最後のviewerを閉じて再起動した際、random portによるorigin変更でAgentコメント通知が事実上リセットされる問題
+
 ## [0.5.0] - 2026-09-03
 
 ### Added

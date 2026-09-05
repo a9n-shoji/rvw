@@ -110,6 +110,7 @@ import { useDocumentWorkspace } from "../use-document-workspace.js";
 import {
   agentNotificationBody,
   browserNotificationPermission,
+  notificationPermissionLabel,
   readAgentNotificationsEnabled,
   scanAgentPostNotifications,
   storeAgentNotificationsEnabled,
@@ -1184,6 +1185,33 @@ export function PullRequestReviewScreen({
         ? "Agentのコメントをブラウザ通知します。"
         : "通知は許可されませんでした。ブラウザのサイト設定から変更できます。",
     );
+  };
+  const sendTestNotification = async (): Promise<void> => {
+    setActionsMenuOpen(false);
+    let permission = browserNotificationPermission();
+    if (permission === "unsupported") {
+      setSyncFeedback("このブラウザはBrowser Notificationに対応していません。");
+      return;
+    }
+    try {
+      if (permission === "default") permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setSyncFeedback("ブラウザのサイト設定で通知を許可してください。");
+        return;
+      }
+      const notification = new Notification("rvw", {
+        body: "通知テスト",
+        tag: "rvw-notification-test",
+      });
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+      setSyncFeedback("テスト通知を送信しました。");
+    } catch (error) {
+      console.warn("テスト通知を作成できませんでした。", error);
+      setSyncFeedback("テスト通知を作成できませんでした。ブラウザとOSの設定を確認してください。");
+    }
   };
 
   const changeSequence = useQuery({
@@ -2968,7 +2996,10 @@ export function PullRequestReviewScreen({
                 </button>
               </div>
               <div className="topbar-menu-section" role="group" aria-label="通知">
-                <span className="topbar-menu-section-label">通知</span>
+                <span className="topbar-menu-section-label topbar-menu-section-heading">
+                  <span>通知</span>
+                  <span>権限: {notificationPermissionLabel(notificationPermission)}</span>
+                </span>
                 <button
                   role="menuitemcheckbox"
                   aria-checked={agentNotificationsActive}
@@ -2976,14 +3007,11 @@ export function PullRequestReviewScreen({
                 >
                   <span>Agentのコメントを通知</span>
                   <span className="topbar-menu-check" aria-hidden="true">
-                    {agentNotificationsActive
-                      ? "✓"
-                      : notificationPermission === "denied"
-                        ? "拒否"
-                        : notificationPermission === "unsupported"
-                          ? "未対応"
-                          : ""}
+                    {agentNotificationsActive ? "✓" : ""}
                   </span>
+                </button>
+                <button role="menuitem" onClick={() => void sendTestNotification()}>
+                  <span>テスト通知を送る</span>
                 </button>
               </div>
               <div className="topbar-menu-section" role="group" aria-label="UIテーマ">

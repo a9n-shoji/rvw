@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { createServer as createNetServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acquireRuntimeOrReuseExisting,
@@ -11,9 +12,10 @@ import {
   type BackgroundOpenChild,
 } from "../../src/cli/main.js";
 import type { Runtime } from "../../src/application/runtime.js";
+import { DEFAULT_VIEWER_PORT } from "../../src/shared/constants.js";
 import { RvwError } from "../../src/shared/errors.js";
 import type { RunningRuntimeAgentSocket } from "../../src/server/agent-socket.js";
-import type { RunningServer } from "../../src/server/start-server.js";
+import { startServer, type RunningServer } from "../../src/server/start-server.js";
 import { ViewerLifecycle } from "../../src/server/viewer-lifecycle.js";
 
 function backgroundChild(): BackgroundOpenChild & {
@@ -354,7 +356,7 @@ describe("database-scoped viewer runtime reuse", () => {
     });
 
     await expect(
-      startBackgroundOpen("45", 0, { forkWorker, launchBrowser, tryRuntimeOpen }),
+      startBackgroundOpen("45", undefined, { forkWorker, launchBrowser, tryRuntimeOpen }),
     ).resolves.toBe("http://127.0.0.1:4321/?pullRequestId=pr-45");
 
     expect(tryRuntimeOpen).toHaveBeenCalledWith({
@@ -386,7 +388,36 @@ describe("database-scoped viewer runtime reuse", () => {
         }),
       }),
     ).resolves.toBe("http://127.0.0.1:4321/");
-    expect(forkWorker).toHaveBeenCalledWith(undefined, 4321);
+    expect(forkWorker).toHaveBeenCalledWith(undefined, 4321, 4321);
+  });
+
+  it("starts the first runtime on the stable default port while treating an omitted port as reusable", async () => {
+    const child = backgroundChild();
+    const forkWorker = vi.fn(() => {
+      setTimeout(() => {
+        child.emit("message", {
+          type: "ready",
+          url: `http://127.0.0.1:${DEFAULT_VIEWER_PORT}/`,
+        });
+        child.emit("message", { type: "viewer-connected" });
+      }, 0);
+      return child;
+    });
+    const tryRuntimeOpen = vi.fn().mockResolvedValue({
+      available: false,
+      reason: "socket-not-found",
+    });
+
+    await expect(
+      startBackgroundOpen(undefined, undefined, {
+        forkWorker,
+        launchBrowser: vi.fn().mockResolvedValue(undefined),
+        tryRuntimeOpen,
+      }),
+    ).resolves.toBe(`http://127.0.0.1:${DEFAULT_VIEWER_PORT}/`);
+
+    expect(tryRuntimeOpen).toHaveBeenCalledWith({ cwd: process.cwd(), requestedPort: 0 });
+    expect(forkWorker).toHaveBeenCalledWith(undefined, DEFAULT_VIEWER_PORT, 0);
   });
 
   it("hands a stopping runtime off to a background worker", async () => {
@@ -410,7 +441,7 @@ describe("database-scoped viewer runtime reuse", () => {
         ),
       }),
     ).resolves.toBe("http://127.0.0.1:4321/");
-    expect(forkWorker).toHaveBeenCalledWith(undefined, 0);
+    expect(forkWorker).toHaveBeenCalledWith(undefined, 0, 0);
   });
 
   it("reuses the active origin and rejects a conflicting explicit port before opening a PR", async () => {
@@ -477,6 +508,44 @@ describe("database-scoped viewer runtime reuse", () => {
       handler.openViewer({ reference: "999", cwd: "/repo", requestedPort: 0 }),
     ).rejects.toBe(failure);
     expect(cancelViewerReservation).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
+  });
+});
+
+describe("viewer port startup", () => {
+  it("reports an actionable error when a fixed port is already occupied", async () => {
+    const blocker = createNetServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        blocker.once("error", reject);
+        blocker.listen(0, "127.0.0.1", resolve);
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    const address = blocker.address();
+    if (!address || typeof address === "string") throw new Error("test port was not assigned");
+
+    try {
+      try {
+        await startServer({} as Parameters<typeof startServer>[0], { port: address.port });
+        expect.unreachable("occupied viewer port should fail");
+      } catch (error) {
+        expect(error).toBeInstanceOf(RvwError);
+        if (!(error instanceof RvwError)) throw error;
+        expect(error).toMatchObject({
+          code: "PROCESS_FAILED",
+          details: { port: address.port, reason: "address-in-use" },
+        });
+        expect(error.suggestions).toContain(
+          "一時的に空きportを自動選択する場合は--port 0を指定してください。",
+        );
+      }
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        blocker.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 });
 
