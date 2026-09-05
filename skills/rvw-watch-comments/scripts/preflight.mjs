@@ -7,6 +7,7 @@ const REQUIRED_PROTOCOL = 4;
 const REQUIRED_CAPABILITIES = [
   "agent.transport",
   "comment.watch",
+  "comment.watchOwnership",
   "comment.read",
   "comment.reply",
   "comment.edit",

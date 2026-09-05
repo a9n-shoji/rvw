@@ -40,5 +40,20 @@ describe("rvw-watch-comments delegation contract", () => {
       /immutable task policy allows `fix-and-push`[\s\S]*same-PR\s+follow-ups remain durable but ineligible/,
     );
     expect(skill).toMatch(/repository write\s+reservations serialize writers across different PRs/);
+    expect(skill).toMatch(/different task-state databases and generations[\s\S]*same repository/);
+    expect(skill).toMatch(
+      /atomically verifies the shared generation and acquires the shared repository key/,
+    );
+    expect(skill).toMatch(/Activation does not discard[\s\S]*existing reservation/);
+  });
+
+  it("separates historical actionability from shared watcher authority", () => {
+    expect(skill).toContain("watch-state.mjs' activate");
+    expect(skill).toMatch(/Never run `activate` when resuming an existing task/);
+    expect(skill).toMatch(/older Skill[\s\S]*fails\s+closed/i);
+    expect(skill).toContain("`batch-skipped` is diagnostic completion");
+    expect(skill).toMatch(/resolved and disappeared operations[\s\S]*durably marked skipped/);
+    expect(skill).toMatch(/mixed batch[\s\S]*unresolved operations/);
+    expect(skill).toMatch(/superseded driver terminates/);
   });
 });

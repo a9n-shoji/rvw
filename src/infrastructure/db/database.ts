@@ -69,6 +69,20 @@ export interface PullRequestGitHubStatusUpdate {
   isDraft: boolean;
 }
 
+export interface CommentWatchTaskAuthority {
+  databaseId: string;
+  taskId: string;
+  generation: number;
+}
+
+export type CommentWatchTaskFence = Pick<CommentWatchTaskAuthority, "taskId" | "generation">;
+
+export interface CommentWatchWriteReservation extends CommentWatchTaskFence {
+  databaseId: string;
+  leaseId: string;
+  writeKey: string;
+}
+
 function stringValue(row: DbRow, key: string): string {
   const value = row[key];
   if (typeof value !== "string") throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
@@ -720,6 +734,219 @@ export class RvwDatabase {
       .get() as DbRow | undefined;
     if (!row) throw new RvwError("DATABASE_ERROR", "comment watchのdatabase IDがありません。");
     return stringValue(row, "value");
+  }
+
+  activateCommentWatchTask(taskId: string): CommentWatchTaskAuthority & {
+    status: "activated" | "existing";
+  } {
+    return this.immediateTransaction(() => {
+      const existing = this.database
+        .prepare(
+          `SELECT task_id, generation, superseded_at
+          FROM comment_watch_tasks WHERE task_id = ?`,
+        )
+        .get(taskId) as DbRow | undefined;
+      if (existing) {
+        const generation = numberValue(existing, "generation");
+        if (nullableString(existing, "superseded_at") !== null) {
+          const active = this.database
+            .prepare(
+              `SELECT task_id, generation FROM comment_watch_tasks
+              WHERE superseded_at IS NULL`,
+            )
+            .get() as DbRow | undefined;
+          throw new RvwError(
+            "WATCH_TASK_SUPERSEDED",
+            "このcomment watch taskは既に別のtaskへ引き継がれています。",
+            {
+              details: {
+                taskId,
+                generation,
+                activeTaskId: active ? stringValue(active, "task_id") : null,
+                activeGeneration: active ? numberValue(active, "generation") : null,
+              },
+              suggestions: ["現在activeなwatch taskをresumeしてください。"],
+            },
+          );
+        }
+        return {
+          databaseId: this.getCommentWatchDatabaseId(),
+          taskId,
+          generation,
+          status: "existing",
+        };
+      }
+
+      const latest = this.database
+        .prepare("SELECT COALESCE(MAX(generation), 0) AS generation FROM comment_watch_tasks")
+        .get() as DbRow;
+      const generation = numberValue(latest, "generation") + 1;
+      const now = new Date().toISOString();
+      this.database
+        .prepare(
+          `UPDATE comment_watch_tasks SET superseded_at = ?
+          WHERE superseded_at IS NULL`,
+        )
+        .run(now);
+      this.database
+        .prepare(
+          `INSERT INTO comment_watch_tasks(task_id, generation, activated_at, superseded_at)
+          VALUES (?, ?, ?, NULL)`,
+        )
+        .run(taskId, generation, now);
+      return {
+        databaseId: this.getCommentWatchDatabaseId(),
+        taskId,
+        generation,
+        status: "activated",
+      };
+    });
+  }
+
+  assertCommentWatchTaskAuthority(taskId: string, generation: number): CommentWatchTaskAuthority {
+    const active = this.database
+      .prepare(
+        `SELECT task_id, generation FROM comment_watch_tasks
+        WHERE superseded_at IS NULL`,
+      )
+      .get() as DbRow | undefined;
+    if (
+      !active ||
+      stringValue(active, "task_id") !== taskId ||
+      numberValue(active, "generation") !== generation
+    ) {
+      throw new RvwError(
+        "WATCH_TASK_SUPERSEDED",
+        "このcomment watch taskはactive generationではありません。",
+        {
+          details: {
+            taskId,
+            generation,
+            activeTaskId: active ? stringValue(active, "task_id") : null,
+            activeGeneration: active ? numberValue(active, "generation") : null,
+          },
+          suggestions: ["現在activeなwatch taskをresumeしてください。"],
+        },
+      );
+    }
+    return { databaseId: this.getCommentWatchDatabaseId(), taskId, generation };
+  }
+
+  reserveCommentWatchWriter(
+    taskId: string,
+    generation: number,
+    leaseId: string,
+    writeKey: string,
+  ): CommentWatchWriteReservation & { status: "reserved" | "existing" } {
+    if (!/^[^/\s]+\/[^/\s]+$/.test(writeKey)) {
+      throw new RvwError("INVALID_INPUT", "writer reservation keyはowner/repository形式です。");
+    }
+    const canonicalWriteKey = writeKey.toLowerCase();
+    return this.immediateTransaction(() => {
+      const authority = this.assertCommentWatchTaskAuthority(taskId, generation);
+      const existingLease = this.database
+        .prepare(
+          `SELECT lease_id, write_key, task_id, generation
+          FROM comment_watch_write_reservations WHERE lease_id = ?`,
+        )
+        .get(leaseId) as DbRow | undefined;
+      if (existingLease) {
+        if (
+          stringValue(existingLease, "write_key") !== canonicalWriteKey ||
+          stringValue(existingLease, "task_id") !== taskId ||
+          numberValue(existingLease, "generation") !== generation
+        ) {
+          throw new RvwError(
+            "WATCH_WRITE_RESERVED",
+            "このleaseは別のcomment watch writer reservationに使用されています。",
+            { details: { taskId, generation, leaseId, writeKey: canonicalWriteKey } },
+          );
+        }
+        return { ...authority, leaseId, writeKey: canonicalWriteKey, status: "existing" };
+      }
+
+      const existingWriter = this.database
+        .prepare(
+          `SELECT lease_id, task_id, generation
+          FROM comment_watch_write_reservations WHERE write_key = ?`,
+        )
+        .get(canonicalWriteKey) as DbRow | undefined;
+      if (existingWriter) {
+        throw new RvwError(
+          "WATCH_WRITE_RESERVED",
+          `repository ${canonicalWriteKey} は別のwatch workerが使用中です。`,
+          {
+            details: {
+              writeKey: canonicalWriteKey,
+              ownerLeaseId: stringValue(existingWriter, "lease_id"),
+              ownerTaskId: stringValue(existingWriter, "task_id"),
+              ownerGeneration: numberValue(existingWriter, "generation"),
+            },
+          },
+        );
+      }
+
+      this.database
+        .prepare(
+          `INSERT INTO comment_watch_write_reservations(
+            lease_id, write_key, task_id, generation, acquired_at
+          ) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(leaseId, canonicalWriteKey, taskId, generation, new Date().toISOString());
+      return { ...authority, leaseId, writeKey: canonicalWriteKey, status: "reserved" };
+    });
+  }
+
+  releaseCommentWatchWriter(
+    taskId: string,
+    generation: number,
+    leaseId: string,
+  ): CommentWatchTaskFence & {
+    databaseId: string;
+    leaseId: string;
+    writeKey: string | null;
+    status: "released" | "absent";
+  } {
+    return this.immediateTransaction(() => {
+      const existing = this.database
+        .prepare(
+          `SELECT lease_id, write_key, task_id, generation
+          FROM comment_watch_write_reservations WHERE lease_id = ?`,
+        )
+        .get(leaseId) as DbRow | undefined;
+      if (!existing) {
+        return {
+          databaseId: this.getCommentWatchDatabaseId(),
+          taskId,
+          generation,
+          leaseId,
+          writeKey: null,
+          status: "absent",
+        };
+      }
+      if (
+        stringValue(existing, "task_id") !== taskId ||
+        numberValue(existing, "generation") !== generation
+      ) {
+        throw new RvwError(
+          "WATCH_WRITE_RESERVED",
+          "別のcomment watch taskが所有するwriter reservationは解放できません。",
+          { details: { taskId, generation, leaseId } },
+        );
+      }
+      const writeKey = stringValue(existing, "write_key");
+      this.database
+        .prepare("DELETE FROM comment_watch_write_reservations WHERE lease_id = ?")
+        .run(leaseId);
+      return {
+        databaseId: this.getCommentWatchDatabaseId(),
+        taskId,
+        generation,
+        leaseId,
+        writeKey,
+        status: "released",
+      };
+    });
   }
 
   getLatestCommentPostEventSequence(): number {
@@ -1905,14 +2132,25 @@ export class RvwDatabase {
       references?: CodeReference[];
       idempotencyKey?: string;
       idempotencyRequestHash?: string;
+      watchTask?: CommentWatchTaskFence;
     },
     incrementSequence = true,
   ): CommentPost {
     let result: CommentPost | undefined;
     const write = (): void => {
+      if (input.watchTask) {
+        this.assertCommentWatchTaskAuthority(input.watchTask.taskId, input.watchTask.generation);
+      }
       const comment = this.getComment(commentId);
       if (!comment) {
         throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。");
+      }
+      if (input.watchTask && comment.resolvedAt !== null) {
+        throw new RvwError(
+          "COMMENT_NOT_ACTIONABLE",
+          "解決済みcommentにはwatch acknowledgementを作成できません。",
+          { details: { commentRef: comment.ref } },
+        );
       }
       const pullRequest = this.getPullRequest(comment.pullRequestId);
       if (!pullRequest) throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。");
@@ -2017,9 +2255,24 @@ export class RvwDatabase {
     relatedCommitOid: string | null,
     references: CodeReference[],
     lastModifiedBy: CommentPostModifier | null,
+    watchTask?: CommentWatchTaskFence,
   ): CommentPost {
     const now = new Date().toISOString();
     this.immediateTransaction(() => {
+      if (watchTask) {
+        this.assertCommentWatchTaskAuthority(watchTask.taskId, watchTask.generation);
+        const comment = this.getComment(commentId);
+        if (!comment) {
+          throw new RvwError("COMMENT_NOT_FOUND", "コメントが見つかりません。", { status: 404 });
+        }
+        if (comment.resolvedAt !== null) {
+          throw new RvwError(
+            "COMMENT_NOT_ACTIONABLE",
+            "解決済みcommentのwatch acknowledgementは復元できません。",
+            { details: { commentRef: comment.ref } },
+          );
+        }
+      }
       const result = this.database
         .prepare(
           `UPDATE comment_posts

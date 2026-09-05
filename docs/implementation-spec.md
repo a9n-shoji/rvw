@@ -1147,18 +1147,20 @@ fingerprintへ含めない。keyのreuseは拒否し、元postが削除済みな
 `rvw comment watch --json-seq`は保存済み全PRの新規root commentとreplyをRFC 7464 JSON text
 sequenceとして出力する。cursor省略時は現在の最新event位置へanchorし、起動前の既存未解決commentを
 処理しない。最初の`ready` frameがdatabase-scoped opaque cursorを返し、その後の`comment-posted` frameは
-各event直後のcursor、sequence、post ID、comment URI、PR URL、削除済みかを返す。eventは調査contextを
-含まない最小triggerとし、Agentは必ず`comment get`でthreadを読み直す。
+各event直後のcursor、sequence、post ID、comment URI、PR URL、削除済みかを返す。eventはhistorical factを
+表す最小triggerでありactionable workそのものではない。Agentはacknowledgement直前に必ず`comment get`で
+current threadを読み直し、resolvedまたは削除済みならoperation単位でdurableにskipする。
 
 `--after`は同じdatabaseのcursorから再生し、別database、最新sequenceより先、破損、未知versionのcursorを拒否する。poll間隔は
 既定10秒、1〜300秒とする。event rowはcomment/post削除と独立して保持し、削除後の再生は`deleted: true`
-として返す。複数の独立taskは別cursorで同じlogを読める。
+として返す。汎用event APIでは複数consumerが別cursorで同じlogを読める。cursorはevent-stream position
+だけを表し、logical watcher authorityを含めない。
 
 cursor、pending queue、retry、authorization、Agentが作成したpost IDは外部Agent taskがrepository外へ
 保持する。同梱Skillのstate scriptはtask専用SQLiteを使い、event enqueueとcursor更新、batch lease、retry、
 batch内のcomment URIごとのstatus post mapping、自己post抑制をtransaction化する。batch claim直後にthreadを
 確認して冪等なack replyを即時作成する。最初のauto-ack claimはack投稿より前に、表示用Agent名または
-意図的な無名をtaskのimmutable metaへ固定する。再開時は同じ値だけを使い、異なる指定はrvwへのread/write前に
+意図的な無名をtaskのimmutable metaへ固定する。再開時は同じ値だけを使い、異なる指定はrvw commentのread/write前に
 拒否する。同じbatchのretryでstatus postがあればそのpostをack本文へ戻すが、
 後続replyの新しいbatchは新しいpostを作る。完了時は現在のbatchのpostを最終結果へ編集する。同梱preflightは
 protocol、capability、transport、Nodeを一括検査し、watch driverは
@@ -1171,8 +1173,18 @@ active lease中に到着したeventも別batchとしてcapacity内でauto-ackし
 並列調査できる。batchごとのstatus postを使うため最終reply editは衝突しない。fix-and-pushを許可したtaskでは
 同一PRの後続eventを先行lease解放後まで待たせ、repository write reservationにより異なるPR間のwriterも直列化
 する。retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
-state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。rvwはAgentやsubagentを
-起動せず、これらのtask stateも保持しない。
+state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。task-private stateとは別に、
+rvw databaseはlogical watch task IDと単調増加generationをshared authorityとして保持する。new taskの明示的
+activationだけがprevious generationをsupersedeし、resumeは保存済みgenerationをverifyするだけで再取得しない。
+activationは同じtask IDに冪等で、generation導入前のlegacy stateはfail closedとする。driverは起動、reconnect、
+pending claim前にauthorityを検証する。repository write reservationはrvw database側でactive task/generationの
+検証とshared write key取得を同じSQLite transactionにまとめ、task-private DBの`write_key`はrecovery用mirrorとする。
+旧generationが取得済みのreservationはactivationで削除せず、exact task/generation/leaseによるcomplete、fail、recover
+まで新generationも同じrepositoryを取得できない。ack reply/editも同じSQLite transaction内でfenceと
+unresolved状態を確認する。all-skipped batchはdispatch対象のacknowledged batchを出さない。rvwはAgentや
+subagentを起動せず、task-private queue、lease、retry stateも保持しない。supersessionは新規claim、
+acknowledgement、delegation、write reservationを停止するが、activation前にdelegate済みでwrite reservationも
+取得済みのleaseに対するdistributed cancellationではない。そのworkはsafe boundaryまで進められる。
 task起動時に明示された場合だけ、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
 OIDとpush先が一致するPRをfix-and-push候補にできる。他人、不明、不一致はinvestigate-and-replyとする。
 親taskはacknowledge済みleaseをbatchの大きさ、mode、変更有無にかかわらず同じscheduling turn内で一つの

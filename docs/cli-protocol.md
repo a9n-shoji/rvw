@@ -6,7 +6,8 @@ changes and are never reused. Version 2 added the invariant that every declared 
 must be reachable from its Markdown body or Mermaid bindings. Version 3 adds post-level typed code
 references to comment create, reply, edit, get, and synchronized replies, and advertises
 `comment.codeReferences`. It also keeps the additive
-`agent.transport`, `comment.create`, `comment.watch`, and `comment.edit` capabilities. Optional
+`agent.transport`, `comment.create`, `comment.watch`, `comment.watchOwnership`, and `comment.edit`
+capabilities. Optional
 idempotency keys are additive fields and do not change existing callers. Version 4 adds required
 nullable `lastModifiedBy` provenance to comment-post output so consumers can distinguish trusted
 Agent and human write channels. Structure read, list, canonical preview, idempotent publish,
@@ -113,6 +114,10 @@ rvw pr attach <PULL_REQUEST> --repository <PATH> --json
 rvw comment create --stdin --json
 rvw comment list <PULL_REQUEST> --state unresolved --limit 50 --offset 0 --json
 rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
+rvw comment watch-task activate --task-id <UUID> --json
+rvw comment watch-task verify --task-id <UUID> --generation <N> --json
+rvw comment watch-task reserve-write --task-id <UUID> --generation <N> --lease-id <UUID> --write-key <OWNER/REPOSITORY> --json
+rvw comment watch-task release-write --task-id <UUID> --generation <N> --lease-id <UUID> --json
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
 rvw comment get <COMMENT_URI> --live --json
@@ -306,6 +311,9 @@ not create another post. Success returns `{ "ok": true, "post": ... }`.
 Resolved threads accept replies. A standalone or synchronized reply does not reopen a resolved
 thread; state changes remain explicit. `comment reopen` reopens it, while `comment resolve` or a sync
 update with `resolve: true` resolves it.
+The bundled watcher supplies an optional `{taskId,generation}` `watchTask` fence on acknowledgement
+reply/edit requests. Only those fenced mutations require the task to remain the active logical watcher,
+and they atomically reject resolved threads with `COMMENT_NOT_ACTIONABLE`.
 
 ### Continuous watch
 
@@ -322,11 +330,29 @@ a cursor from another database, beyond the current event sequence, or otherwise 
 and accepts 1 through 300 seconds. `--once` drains the currently available page and exits, primarily
 for protocol tests and recovery tools. Independent tasks may consume the log with separate cursors.
 
+`comment watch-task activate` is separate from event streaming. It registers a new UUID as the sole
+active logical watcher in the selected rvw database and returns its monotonically increasing
+generation plus `databaseId`. Repeating activation for that same still-active task is idempotent and
+returns the same generation. Activating a different task supersedes the previous generation; a later
+activation or verification by the superseded task fails with `WATCH_TASK_SUPERSEDED`.
+`comment watch-task verify` never changes ownership. The cursor remains only an event-stream position
+and never contains or grants consumer authority.
+`comment watch-task reserve-write` verifies the supplied task generation and acquires the normalized
+repository writer key in the same rvw SQLite transaction. The lease ID makes an exact retry
+idempotent. Reservations survive activation of a newer generation, so the new task cannot overlap an
+older in-flight writer. `comment watch-task release-write` is scoped to the exact task, generation,
+and lease but deliberately does not require that generation to remain active; this lets superseded
+in-flight work release its reservation. An absent exact reservation is an idempotent success.
+
 rvw does not start an Agent, store its queue, or authorize code changes. The external task owns
 batching, retries, and self-event suppression. The bundled `rvw-watch-comments` Skill supplies a
 task-local SQLite state tool for atomic cursor ingestion, batch leases, and one status post per affected
-comment URI in each batch. After a claim and successful thread read, it immediately creates
+comment URI in each batch. The state is task-private, while rvw's watch-task generation is shared
+authority across every state path using that rvw database. After a claim and successful unresolved
+thread read, it immediately creates
 `🔎 確認中です…`, suppresses that reply's watch event, and edits the same post to the final outcome.
+A fresh resolved or missing thread is durably skipped before acknowledgement. Mixed batches delegate
+only their actionable operations, and an all-skipped batch emits no dispatchable acknowledgement.
 A retry of the same batch restores that post; a later batch for the same thread creates a new one and
 leaves the earlier outcome unchanged. It requires explicit
 startup authorization before an authenticated user's own PR can be fixed and pushed, and verifies the
@@ -346,6 +372,12 @@ without waiting for another watch event or reconnect. Before spawning rvw, the d
 one process-owner lock beside the canonical task-state path. A concurrent driver for that state exits
 without starting another watcher. The lock is released on graceful shutdown, and a later driver reclaims
 it only when the recorded owner process no longer exists.
+The driver verifies shared authority before startup, reconnect, and pending claims. Writer reservation
+combines that authority check with shared-key acquisition in one rvw transaction; task-local
+`write_key` is only a recovery mirror. Completion, failure, and recovery release the shared lease
+before clearing that mirror. A prior generation's reservation continues blocking the same repository
+until release. Acknowledgement writes carry their fence into the same rvw transaction. Legacy task
+state without a generation fails closed instead of claiming current ownership.
 
 ## Walkthrough lifecycle
 

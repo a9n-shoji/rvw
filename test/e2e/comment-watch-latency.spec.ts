@@ -16,9 +16,16 @@ const preflightScript = path.resolve("skills/rvw-watch-comments/scripts/prefligh
 const cli = path.resolve("dist/cli.mjs");
 const pullRequestUrl = "https://github.com/acme/review-repo/pull/77";
 
-function runState(state: string, command: string, args: string[] = [], input?: unknown) {
+function runState(
+  state: string,
+  command: string,
+  args: string[] = [],
+  input?: unknown,
+  env?: NodeJS.ProcessEnv,
+) {
   const result = spawnSync(process.execPath, [stateScript, command, "--state", state, ...args], {
     encoding: "utf8",
+    ...(env === undefined ? {} : { env }),
     ...(input === undefined ? {} : { input: JSON.stringify(input) }),
   });
   expect(result.status, result.stderr).toBe(0);
@@ -123,6 +130,7 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
     rvw: { protocolVersion: 4, missingCapabilities: [] },
     checks: { agentStatus: true, agentPingInspected: true },
   });
+  runState(state, "activate", [], undefined, childEnvironment(databasePath));
   const driver = spawn(
     process.execPath,
     [driverScript, state, "--auto-ack", "--max-in-flight", "1"],
@@ -181,7 +189,13 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
       },
     );
     expect(edited.status, edited.stderr).toBe(0);
-    runState(state, "complete", ["--lease", leaseId], { postIds: [] });
+    runState(
+      state,
+      "complete",
+      ["--lease", leaseId],
+      { postIds: [] },
+      childEnvironment(databasePath),
+    );
 
     const verified = new RvwDatabase({
       filePath: databasePath,
@@ -241,7 +255,13 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
       },
     );
     expect(followUpEdited.status, followUpEdited.stderr).toBe(0);
-    runState(state, "complete", ["--lease", followUpLeaseId], { postIds: [] });
+    runState(
+      state,
+      "complete",
+      ["--lease", followUpLeaseId],
+      { postIds: [] },
+      childEnvironment(databasePath),
+    );
 
     const finalThread = new RvwDatabase({
       filePath: databasePath,

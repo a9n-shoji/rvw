@@ -23,9 +23,16 @@ function readFakeCalls(log: string): FakeRvwCall[] {
     .map((line) => JSON.parse(line) as unknown as FakeRvwCall);
 }
 
-function runState(state: string, command: string, args: string[] = [], input?: unknown) {
+function runState(
+  state: string,
+  command: string,
+  args: string[] = [],
+  input?: unknown,
+  env?: NodeJS.ProcessEnv,
+) {
   const result = spawnSync(process.execPath, [stateScript, command, "--state", state, ...args], {
     encoding: "utf8",
+    ...(env === undefined ? {} : { env }),
     ...(input === undefined ? {} : { input: JSON.stringify(input) }),
   });
   if (result.status !== 0) throw new Error(result.stderr);
@@ -52,22 +59,73 @@ const json = (value, code = 0) => {
 };
 if (args[0] === "protocol") {
   json({ protocolVersion: 4, appVersion: "9.9.9", capabilities: [
-    "agent.transport", "comment.watch", "comment.read", "comment.reply",
+    "agent.transport", "comment.watch", "comment.watchOwnership", "comment.read", "comment.reply",
     "comment.edit", "comment.codeReferences", "pullRequest.sync"
   ] });
 } else if (args[0] === "agent" && args[1] === "status") {
   json({ ok: true, connected: true, selectedTransport: "agent-socket" });
 } else if (args[0] === "agent" && args[1] === "ping") {
   json({ ok: true, connected: true, selectedTransport: "agent-socket" });
+} else if (args[0] === "comment" && args[1] === "watch-task") {
+  const taskIndex = args.indexOf("--task-id");
+  const generationIndex = args.indexOf("--generation");
+  const leaseIndex = args.indexOf("--lease-id");
+  const writeKeyIndex = args.indexOf("--write-key");
+  const priorVerifications = priorCalls.filter(
+    (call) => call.args[0] === "comment" && call.args[1] === "watch-task" && call.args[2] === "verify"
+  ).length;
+  if (args[2] === "verify" && Number(process.env.FAKE_RVW_VERIFY_LIMIT ?? "999999") <= priorVerifications) {
+    json({ ok: false, error: { code: "WATCH_TASK_SUPERSEDED", message: "superseded" } }, 2);
+  } else if (args[2] === "reserve-write") {
+    if (process.env.FAKE_RVW_RESERVE_SUPERSEDED === "1") {
+      json({ ok: false, error: { code: "WATCH_TASK_SUPERSEDED", message: "superseded" } }, 2);
+    } else {
+      json({
+        ok: true,
+        databaseId: "0123456789abcdef0123456789abcdef",
+        taskId: args[taskIndex + 1],
+        generation: Number(args[generationIndex + 1]),
+        leaseId: args[leaseIndex + 1],
+        writeKey: args[writeKeyIndex + 1],
+        status: "reserved"
+      });
+    }
+  } else if (args[2] === "release-write") {
+    json({
+      ok: true,
+      databaseId: "0123456789abcdef0123456789abcdef",
+      taskId: args[taskIndex + 1],
+      generation: Number(args[generationIndex + 1]),
+      leaseId: args[leaseIndex + 1],
+      writeKey: null,
+      status: "absent"
+    });
+  } else json({
+    ok: true,
+    databaseId: "0123456789abcdef0123456789abcdef",
+    taskId: args[taskIndex + 1],
+    generation: generationIndex < 0 ? 1 : Number(args[generationIndex + 1]),
+    status: args[2] === "activate" ? "activated" : "active"
+  });
 } else if (args[0] === "comment" && args[1] === "get") {
-  json({ ok: true, pullRequest: { url: "https://github.com/acme/repo/pull/1" }, comment: { ref: args[2], posts: [] } });
+  const gone = JSON.parse(process.env.FAKE_RVW_GONE_REFS ?? "[]");
+  const resolved = JSON.parse(process.env.FAKE_RVW_RESOLVED_REFS ?? "[]");
+  if (gone.includes(args[2])) {
+    json({ ok: false, error: { code: "COMMENT_NOT_FOUND", message: "gone" } }, 2);
+  } else {
+    json({ ok: true, pullRequest: { url: "https://github.com/acme/repo/pull/1" }, comment: { ref: args[2], resolved: resolved.includes(args[2]), posts: [] } });
+  }
 } else if (args[0] === "comment" && args[1] === "reply") {
+  if (process.env.FAKE_RVW_REPLY_NON_ACTIONABLE === "1") {
+    json({ ok: false, error: { code: "COMMENT_NOT_ACTIONABLE", message: "resolved" } }, 2);
+  } else {
   const priorReplies = priorCalls.filter((call) => call.args[0] === "comment" && call.args[1] === "reply");
   const replayIndex = priorReplies.findIndex(
     (call) => call.input?.idempotencyKey === parsedInput?.idempotencyKey
   );
   const replyNumber = replayIndex >= 0 ? replayIndex + 1 : priorReplies.length + 1;
   json({ ok: true, post: { id: "status-post-" + replyNumber, body: parsedInput.body } });
+  }
 } else if (args[0] === "comment" && args[1] === "edit") {
   json({ ok: true, post: { id: args[4], body: parsedInput.body } });
 } else if (args[0] === "comment" && args[1] === "watch") {
@@ -108,8 +166,17 @@ function fakeEnvironment(fake: { script: string; log: string }) {
   };
 }
 
-function initializeQueuedState(state: string) {
+function activateState(state: string, fake: { script: string; log: string }) {
+  const result = spawnSync(process.execPath, [stateScript, "activate", "--state", state], {
+    encoding: "utf8",
+    env: fakeEnvironment(fake),
+  });
+  if (result.status !== 0) throw new Error(result.stderr);
+}
+
+function initializeQueuedState(state: string, fake: { script: string; log: string }) {
   runState(state, "init");
+  activateState(state, fake);
   runState(state, "ingest", [], {
     type: "ready",
     databaseId: "0123456789abcdef0123456789abcdef",
@@ -201,7 +268,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-auto-ack-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeQueuedState(state);
+    initializeQueuedState(state, fake);
 
     const result = spawnSync(
       process.execPath,
@@ -244,7 +311,13 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(replyCall?.input).toMatchObject({ body: "🔎 確認中です…", authorLabel: "Codex" });
     expect(typeof (replyCall?.input as { idempotencyKey?: unknown }).idempotencyKey).toBe("string");
 
-    runState(state, "complete", ["--lease", firstAcknowledgement.leaseId], { postIds: [] });
+    runState(
+      state,
+      "complete",
+      ["--lease", firstAcknowledgement.leaseId],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
     runState(state, "ingest", [], {
       type: "comment-posted",
       cursor: "cursor-2",
@@ -290,18 +363,173 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(calls.some((call) => call.args[1] === "edit")).toBe(false);
   });
 
+  it("completes resolved and gone historical operations without acknowledgement or dispatch", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-auto-ack-skipped-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    const pullRequest = "https://github.com/acme/repo/pull/1";
+    const resolvedRef = "rvw://comment/resolved-comment";
+    const goneRef = "rvw://comment/gone-comment";
+    runState(state, "init");
+    activateState(state, fake);
+    runState(state, "ingest", [], {
+      type: "ready",
+      databaseId: "0123456789abcdef0123456789abcdef",
+      cursor: "cursor-0",
+      anchoredAtCurrent: false,
+    });
+    for (const [sequence, commentRef] of [resolvedRef, goneRef].entries()) {
+      runState(state, "ingest", [], {
+        type: "comment-posted",
+        cursor: `cursor-${sequence + 1}`,
+        event: {
+          sequence: sequence + 1,
+          postId: `historical-post-${sequence + 1}`,
+          commentRef,
+          pullRequestUrl: pullRequest,
+          createdAt: "2026-08-20T00:00:00.000Z",
+          deleted: false,
+        },
+      });
+    }
+
+    const result = spawnSync(
+      process.execPath,
+      [autoAckScript, "--state", state, "--pull-request", pullRequest],
+      {
+        encoding: "utf8",
+        env: {
+          ...fakeEnvironment(fake),
+          FAKE_RVW_RESOLVED_REFS: JSON.stringify([resolvedRef]),
+          FAKE_RVW_GONE_REFS: JSON.stringify([goneRef]),
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      type: "skipped",
+      events: [],
+      operations: [],
+      skippedOperations: [
+        { commentRef: goneRef, status: "skipped", skipReason: "gone" },
+        { commentRef: resolvedRef, status: "skipped", skipReason: "resolved" },
+      ],
+    });
+    expect(runState(state, "list")).toMatchObject({ inFlight: 0, pending: [] });
+    expect(runState(state, "status")).toMatchObject({
+      batches: { completed: 1, inFlight: 0, unbatchedEvents: 0 },
+    });
+    expect(
+      readFakeCalls(fake.log).filter((call) => ["reply", "edit"].includes(call.args[1]!)),
+    ).toEqual([]);
+  });
+
+  it("acknowledges only the unresolved operation in a mixed historical batch", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-auto-ack-mixed-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    const pullRequest = "https://github.com/acme/repo/pull/1";
+    const resolvedRef = "rvw://comment/comment-a-resolved";
+    const unresolvedRef = "rvw://comment/comment-b-unresolved";
+    runState(state, "init");
+    activateState(state, fake);
+    runState(state, "ingest", [], {
+      type: "ready",
+      databaseId: "0123456789abcdef0123456789abcdef",
+      cursor: "cursor-0",
+      anchoredAtCurrent: false,
+    });
+    for (const [sequence, commentRef] of [resolvedRef, unresolvedRef].entries()) {
+      runState(state, "ingest", [], {
+        type: "comment-posted",
+        cursor: `cursor-${sequence + 1}`,
+        event: {
+          sequence: sequence + 1,
+          postId: `historical-post-${sequence + 1}`,
+          commentRef,
+          pullRequestUrl: pullRequest,
+          createdAt: "2026-08-20T00:00:00.000Z",
+          deleted: false,
+        },
+      });
+    }
+
+    const result = spawnSync(
+      process.execPath,
+      [autoAckScript, "--state", state, "--pull-request", pullRequest],
+      {
+        encoding: "utf8",
+        env: {
+          ...fakeEnvironment(fake),
+          FAKE_RVW_RESOLVED_REFS: JSON.stringify([resolvedRef]),
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const acknowledged = JSON.parse(result.stdout) as {
+      leaseId: string;
+      events: Array<{ commentRef: string }>;
+    };
+    expect(acknowledged).toMatchObject({
+      ok: true,
+      type: "acknowledged",
+      operations: [{ commentRef: unresolvedRef, acknowledgement: "created" }],
+      skippedOperations: [{ commentRef: resolvedRef, status: "skipped", skipReason: "resolved" }],
+    });
+    expect(acknowledged.events.map((event) => event.commentRef)).toEqual([unresolvedRef]);
+    const replyCalls = readFakeCalls(fake.log).filter((call) => call.args[1] === "reply");
+    expect(replyCalls).toHaveLength(1);
+    expect(replyCalls[0]?.args[2]).toBe(unresolvedRef);
+    runState(
+      state,
+      "complete",
+      ["--lease", acknowledged.leaseId],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
+    expect(runState(state, "list")).toMatchObject({ pending: [] });
+  });
+
+  it("turns a resolve race at the fenced acknowledgement write into a durable skip", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-auto-ack-resolve-race-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    initializeQueuedState(state, fake);
+
+    const result = spawnSync(
+      process.execPath,
+      [autoAckScript, "--state", state, "--pull-request", "https://github.com/acme/repo/pull/1"],
+      {
+        encoding: "utf8",
+        env: { ...fakeEnvironment(fake), FAKE_RVW_REPLY_NON_ACTIONABLE: "1" },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      type: "skipped",
+      operations: [],
+      skippedOperations: [{ skipReason: "resolved", acknowledgement: "skipped" }],
+    });
+    expect(runState(state, "list")).toMatchObject({ inFlight: 0, pending: [] });
+  });
+
   it("pins the acknowledgement author before reply and rejects a changed or omitted restart label", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-auto-ack-author-recovery-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeQueuedState(state);
+    initializeQueuedState(state, fake);
     const pullRequest = "https://github.com/acme/repo/pull/1";
-    const claimed = runState(state, "claim", [
-      "--pull-request",
-      pullRequest,
-      "--author-label",
-      "Codex",
-    ]) as {
+    const claimed = runState(
+      state,
+      "claim",
+      ["--pull-request", pullRequest, "--author-label", "Codex"],
+      undefined,
+      fakeEnvironment(fake),
+    ) as {
       operations: Array<{ commentRef: string; idempotencyKey: string }>;
     };
     const operation = claimed.operations[0];
@@ -326,7 +554,10 @@ describe("rvw-watch-comments bundled scripts", () => {
     );
     expect(firstReply.status).toBe(0);
     expect(JSON.parse(firstReply.stdout)).toMatchObject({ post: { id: "status-post-1" } });
-    expect(runState(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
+    expect(runState(state, "recover", [], undefined, fakeEnvironment(fake))).toMatchObject({
+      recovered: 1,
+      pending: 1,
+    });
 
     const mismatchedRestart = spawnSync(
       process.execPath,
@@ -346,7 +577,9 @@ describe("rvw-watch-comments bundled scripts", () => {
       ok: false,
       error: "watch-state claim failed",
     });
-    expect(readFakeCalls(fake.log)).toHaveLength(1);
+    expect(
+      readFakeCalls(fake.log).filter((call) => ["get", "reply", "edit"].includes(call.args[1]!)),
+    ).toHaveLength(1);
 
     const unlabeledRestart = spawnSync(
       process.execPath,
@@ -358,7 +591,9 @@ describe("rvw-watch-comments bundled scripts", () => {
       ok: false,
       error: "watch-state claim failed",
     });
-    expect(readFakeCalls(fake.log)).toHaveLength(1);
+    expect(
+      readFakeCalls(fake.log).filter((call) => ["get", "reply", "edit"].includes(call.args[1]!)),
+    ).toHaveLength(1);
 
     const resumed = spawnSync(
       process.execPath,
@@ -380,21 +615,31 @@ describe("rvw-watch-comments bundled scripts", () => {
       (call) => call.args[0] === "comment" && call.args[1] === "reply",
     );
     expect(replyCalls).toHaveLength(2);
-    expect(replyCalls[0]?.input).toEqual(replyCalls[1]?.input);
+    expect(replyCalls[1]?.input).toMatchObject(replyCalls[0]?.input as Record<string, unknown>);
+    expect(replyCalls[1]?.input).toMatchObject({
+      watchTask: { generation: 1 },
+    });
   });
 
   it("rejects a changed author label before an empty watcher starts", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-driver-author-startup-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeQueuedState(state);
-    const claimed = runState(state, "claim", [
-      "--pull-request",
-      "https://github.com/acme/repo/pull/1",
-      "--author-label",
-      "Codex",
-    ]) as { leaseId: string };
-    runState(state, "complete", ["--lease", claimed.leaseId], { postIds: [] });
+    initializeQueuedState(state, fake);
+    const claimed = runState(
+      state,
+      "claim",
+      ["--pull-request", "https://github.com/acme/repo/pull/1", "--author-label", "Codex"],
+      undefined,
+      fakeEnvironment(fake),
+    ) as { leaseId: string };
+    runState(
+      state,
+      "complete",
+      ["--lease", claimed.leaseId],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
     expect(runState(state, "status")).toMatchObject({
       authorLabel: "Codex",
       authorLabelBound: true,
@@ -417,7 +662,110 @@ describe("rvw-watch-comments bundled scripts", () => {
         expect.stringContaining("Existing task author label Codex does not match"),
       );
     }
-    expect(existsSync(fake.log)).toBe(false);
+    expect(
+      readFakeCalls(fake.log).some((call) =>
+        ["watch", "get", "reply", "edit"].includes(call.args[1]!),
+      ),
+    ).toBe(false);
+  });
+
+  it("stops a live driver before claiming pending work after its generation is superseded", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-superseded-live-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    runState(state, "init");
+    activateState(state, fake);
+
+    const result = spawnSync(process.execPath, [driverScript, state, "--auto-ack"], {
+      encoding: "utf8",
+      env: { ...fakeEnvironment(fake), FAKE_RVW_VERIFY_LIMIT: "4" },
+    });
+
+    expect(result.status).toBe(22);
+    expect(result.stderr).toContain("watch-state verify failed");
+    expect(
+      readFakeCalls(fake.log).some(
+        (call) => call.args[0] === "comment" && call.args[1] === "watch",
+      ),
+    ).toBe(true);
+    expect(
+      readFakeCalls(fake.log).some((call) => ["get", "reply", "edit"].includes(call.args[1]!)),
+    ).toBe(false);
+    expect(runState(state, "status")).toMatchObject({
+      cursor: "cursor-1",
+      batches: { inFlight: 0, unbatchedEvents: 1 },
+    });
+  });
+
+  it("does not expose a write-capable claim when shared reservation loses the generation race", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-writer-fence-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    runState(state, "init", ["--own-mode", "fix-and-push"]);
+    activateState(state, fake);
+    runState(state, "ingest", [], {
+      type: "ready",
+      databaseId: "0123456789abcdef0123456789abcdef",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    runState(state, "ingest", [], {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "human-post-writer-fence",
+        commentRef: "rvw://comment/comment-writer-fence",
+        pullRequestUrl: "https://github.com/acme/repo/pull/1",
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+
+    const rejected = spawnSync(
+      process.execPath,
+      [
+        stateScript,
+        "claim",
+        "--state",
+        state,
+        "--pull-request",
+        "https://github.com/acme/repo/pull/1",
+        "--write-key",
+        "acme/repo",
+      ],
+      {
+        encoding: "utf8",
+        env: { ...fakeEnvironment(fake), FAKE_RVW_RESERVE_SUPERSEDED: "1" },
+      },
+    );
+
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain("WATCH_TASK_SUPERSEDED");
+    expect(runState(state, "status")).toMatchObject({
+      batches: { pending: 1, inFlight: 0 },
+    });
+    const claimed = runState(
+      state,
+      "claim",
+      ["--pull-request", "https://github.com/acme/repo/pull/1", "--write-key", "acme/repo"],
+      undefined,
+      fakeEnvironment(fake),
+    );
+    expect(claimed).toMatchObject({ attempts: 1, writeKey: "acme/repo" });
+    runState(
+      state,
+      "complete",
+      ["--lease", String(claimed.leaseId)],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
+    const writerCalls = readFakeCalls(fake.log).filter(
+      (call) => call.args[0] === "comment" && call.args[1] === "watch-task",
+    );
+    expect(writerCalls.map((call) => call.args[2])).toEqual(
+      expect.arrayContaining(["reserve-write", "release-write"]),
+    );
   });
 
   it("drives RFC 7464 intake and auto-ack without an Agent shell round trip", async () => {
@@ -425,6 +773,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
     runState(state, "init");
+    activateState(state, fake);
     const child = spawn(
       process.execPath,
       [driverScript, state, "--auto-ack", "--author-label", "Codex"],
@@ -498,7 +847,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-driver-recover-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeQueuedState(state);
+    initializeQueuedState(state, fake);
     const child = spawn(process.execPath, [driverScript, state, "--auto-ack"], {
       env: fakeEnvironment(fake),
       stdio: ["ignore", "pipe", "pipe"],
@@ -556,6 +905,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
     runState(state, "init");
+    activateState(state, fake);
     const canonicalState = realpathSync(state);
     const lockPath = `${canonicalState}.watch-driver.lock`;
     const first = spawn(process.execPath, [driverScript, state], {
@@ -658,6 +1008,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
     runState(state, "init");
+    activateState(state, fake);
     runState(state, "ingest", [], {
       type: "ready",
       databaseId: "0123456789abcdef0123456789abcdef",
@@ -703,9 +1054,15 @@ describe("rvw-watch-comments bundled scripts", () => {
       batches: { inFlight: 1, unbatchedEvents: 1 },
     });
 
-    runState(state, "complete", ["--lease", String(firstAcknowledgements[0]?.leaseId)], {
-      postIds: [],
-    });
+    runState(
+      state,
+      "complete",
+      ["--lease", String(firstAcknowledgements[0]?.leaseId)],
+      {
+        postIds: [],
+      },
+      fakeEnvironment(fake),
+    );
     const second = await output.waitFor(
       (message) =>
         message.type === "batch-acknowledged" &&
@@ -728,7 +1085,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-follow-up-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeQueuedState(state);
+    initializeQueuedState(state, fake);
     const child = spawn(
       process.execPath,
       [driverScript, state, "--auto-ack", "--max-in-flight", "2"],
@@ -778,8 +1135,20 @@ describe("rvw-watch-comments bundled scripts", () => {
       batches: { inFlight: 2, unbatchedEvents: 0 },
     });
 
-    runState(state, "complete", ["--lease", String(first.leaseId)], { postIds: [] });
-    runState(state, "complete", ["--lease", String(followUp.leaseId)], { postIds: [] });
+    runState(
+      state,
+      "complete",
+      ["--lease", String(first.leaseId)],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
+    runState(
+      state,
+      "complete",
+      ["--lease", String(followUp.leaseId)],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
 
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve, reject) => {
@@ -793,7 +1162,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-retry-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    initializeQueuedState(state);
+    initializeQueuedState(state, fake);
     const child = spawn(
       process.execPath,
       [driverScript, state, "--auto-ack", "--max-in-flight", "1"],
@@ -812,10 +1181,16 @@ describe("rvw-watch-comments bundled scripts", () => {
     const first = await output.waitFor(
       (message) => message.type === "batch-acknowledged" && message.attempts === 1,
     );
-    const failed = runState(state, "fail", ["--lease", String(first.leaseId)], {
-      error: "No subagent slot accepted the lease",
-      retryable: true,
-    });
+    const failed = runState(
+      state,
+      "fail",
+      ["--lease", String(first.leaseId)],
+      {
+        error: "No subagent slot accepted the lease",
+        retryable: true,
+      },
+      fakeEnvironment(fake),
+    );
     expect(failed).toMatchObject({ status: "pending", attempts: 1 });
     expect(runState(state, "list")).toMatchObject({ inFlight: 0, pending: [] });
 
@@ -836,7 +1211,11 @@ describe("rvw-watch-comments bundled scripts", () => {
     const editCall = readFakeCalls(fake.log).find(
       (call) => call.args[0] === "comment" && call.args[1] === "edit",
     );
-    expect(editCall?.input).toEqual({ body: "🔎 確認中です…", relatedCommitOid: null });
+    expect(editCall?.input).toMatchObject({
+      body: "🔎 確認中です…",
+      relatedCommitOid: null,
+      watchTask: { generation: 1 },
+    });
 
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve, reject) => {

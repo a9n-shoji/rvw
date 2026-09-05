@@ -127,6 +127,144 @@ describe("RvwDatabase", () => {
     second.close();
   });
 
+  it("fences superseded watch tasks and serializes writers across generations", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-generation-"));
+    const filePath = path.join(directory, "rvw.db");
+    const taskA = "11111111-1111-4111-8111-111111111111";
+    const taskB = "22222222-2222-4222-8222-222222222222";
+    const first = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+
+    const activatedA = first.activateCommentWatchTask(taskA);
+    expect(activatedA).toMatchObject({ taskId: taskA, generation: 1, status: "activated" });
+    expect(first.activateCommentWatchTask(taskA)).toEqual({
+      ...activatedA,
+      status: "existing",
+    });
+    expect(first.assertCommentWatchTaskAuthority(taskA, 1)).toMatchObject({
+      taskId: taskA,
+      generation: 1,
+    });
+    const leaseA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const leaseB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    expect(first.reserveCommentWatchWriter(taskA, 1, leaseA, "Acme/Repo")).toMatchObject({
+      taskId: taskA,
+      generation: 1,
+      leaseId: leaseA,
+      writeKey: "acme/repo",
+      status: "reserved",
+    });
+    expect(first.reserveCommentWatchWriter(taskA, 1, leaseA, "acme/repo")).toMatchObject({
+      status: "existing",
+    });
+
+    expect(first.activateCommentWatchTask(taskB)).toMatchObject({
+      taskId: taskB,
+      generation: 2,
+      status: "activated",
+    });
+    expect(() => first.assertCommentWatchTaskAuthority(taskA, 1)).toThrow(
+      "active generationではありません",
+    );
+    expect(() => first.activateCommentWatchTask(taskA)).toThrow("既に別のtaskへ引き継がれています");
+    expect(() => first.reserveCommentWatchWriter(taskA, 1, leaseB, "acme/other")).toThrow(
+      "active generationではありません",
+    );
+    expect(() => first.reserveCommentWatchWriter(taskB, 2, leaseB, "acme/repo")).toThrow(
+      "別のwatch workerが使用中",
+    );
+    expect(first.releaseCommentWatchWriter(taskA, 1, leaseA)).toMatchObject({
+      taskId: taskA,
+      generation: 1,
+      leaseId: leaseA,
+      writeKey: "acme/repo",
+      status: "released",
+    });
+    expect(first.reserveCommentWatchWriter(taskB, 2, leaseB, "acme/repo")).toMatchObject({
+      taskId: taskB,
+      generation: 2,
+      leaseId: leaseB,
+      writeKey: "acme/repo",
+      status: "reserved",
+    });
+
+    const pullRequest = first.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const comment = first.createComment({
+      pullRequestId: pullRequest.id,
+      createdHeadOid: github.headOid,
+      target: { kind: "pull-request" },
+      body: "Please investigate.",
+    });
+    expect(() =>
+      first.insertReply(comment.id, {
+        body: "🔎 確認中です…",
+        idempotencyKey: "superseded-watch-ack",
+        watchTask: activatedA,
+      }),
+    ).toThrow("active generationではありません");
+    expect(first.getComment(comment.id)?.posts).toHaveLength(1);
+    first.close();
+
+    const resumed = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    expect(resumed.assertCommentWatchTaskAuthority(taskB, 2)).toMatchObject({
+      taskId: taskB,
+      generation: 2,
+    });
+    expect(resumed.activateCommentWatchTask(taskB)).toMatchObject({
+      taskId: taskB,
+      generation: 2,
+      status: "existing",
+    });
+    resumed.close();
+  });
+
+  it("atomically rejects watch acknowledgements for resolved comments", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const taskId = "33333333-3333-4333-8333-333333333333";
+    const authority = database.activateCommentWatchTask(taskId);
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const comment = database.createComment({
+      pullRequestId: pullRequest.id,
+      createdHeadOid: github.headOid,
+      target: { kind: "pull-request" },
+      body: "Please investigate.",
+    });
+    const acknowledgement = database.insertReply(comment.id, {
+      body: "🔎 確認中です…",
+      idempotencyKey: "initial-watch-ack",
+      watchTask: authority,
+    });
+    database.setCommentResolved(comment.id, true);
+
+    expect(() =>
+      database.insertReply(comment.id, {
+        body: "🔎 確認中です…",
+        idempotencyKey: "resolved-watch-ack",
+        watchTask: authority,
+      }),
+    ).toThrow("解決済みcomment");
+    expect(() =>
+      database.updateCommentPost(
+        comment.id,
+        acknowledgement.id,
+        "🔎 確認中です…",
+        null,
+        [],
+        "agent",
+        authority,
+      ),
+    ).toThrow("解決済みcomment");
+    expect(database.getComment(comment.id)?.posts).toHaveLength(2);
+    database.close();
+  });
+
   it("lists Pull Request summaries by GitHub update time with aggregate counts and pagination", () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const older = database.upsertPullRequest(

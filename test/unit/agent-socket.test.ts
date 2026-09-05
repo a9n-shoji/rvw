@@ -100,6 +100,66 @@ describe("Agent socket", () => {
     );
   });
 
+  it("routes comment watch activation and verification through the shared service", async () => {
+    const taskId = "11111111-1111-4111-8111-111111111111";
+    const leaseId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const activateCommentWatchTask = vi.fn().mockReturnValue({ taskId, generation: 1 });
+    const verifyCommentWatchTask = vi.fn().mockReturnValue({ taskId, generation: 1 });
+    const reserveCommentWatchWriter = vi.fn().mockReturnValue({
+      taskId,
+      generation: 1,
+      leaseId,
+      writeKey: "acme/repo",
+      status: "reserved",
+    });
+    const releaseCommentWatchWriter = vi.fn().mockReturnValue({
+      taskId,
+      generation: 1,
+      leaseId,
+      writeKey: "acme/repo",
+      status: "released",
+    });
+    const service = {
+      activateCommentWatchTask,
+      verifyCommentWatchTask,
+      reserveCommentWatchWriter,
+      releaseCommentWatchWriter,
+    } as unknown as RvwService;
+
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "comment.watch.activate",
+        input: { taskId },
+      }),
+    ).resolves.toEqual({ taskId, generation: 1 });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "comment.watch.verify",
+        input: { taskId, generation: 1 },
+      }),
+    ).resolves.toEqual({ taskId, generation: 1 });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "comment.watch.reserveWrite",
+        input: { taskId, generation: 1, leaseId, writeKey: "acme/repo" },
+      }),
+    ).resolves.toMatchObject({ leaseId, writeKey: "acme/repo", status: "reserved" });
+    await expect(
+      dispatchAgentSocketRequest(service, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "comment.watch.releaseWrite",
+        input: { taskId, generation: 1, leaseId },
+      }),
+    ).resolves.toMatchObject({ leaseId, status: "released" });
+    expect(activateCommentWatchTask).toHaveBeenCalledWith(taskId);
+    expect(verifyCommentWatchTask).toHaveBeenCalledWith(taskId, 1);
+    expect(reserveCommentWatchWriter).toHaveBeenCalledWith(taskId, 1, leaseId, "acme/repo");
+    expect(releaseCommentWatchWriter).toHaveBeenCalledWith(taskId, 1, leaseId);
+  });
+
   it("routes strict comment creation through the running rvw service", async () => {
     const createCommentForReference = vi
       .fn()
@@ -147,7 +207,14 @@ describe("Agent socket", () => {
     const input = {
       uri: "rvw://comment/10000000-0000-4000-8000-000000000008",
       postId: "post-1",
-      edit: { body: "✅ Done", relatedCommitOid: "a".repeat(40) },
+      edit: {
+        body: "✅ Done",
+        relatedCommitOid: "a".repeat(40),
+        watchTask: {
+          taskId: "11111111-1111-4111-8111-111111111111",
+          generation: 3,
+        },
+      },
     };
 
     await expect(

@@ -23,6 +23,7 @@ const EXIT_AUTO_ACK = 23;
 const EXIT_ALREADY_RUNNING = 24;
 const DEFAULT_MAX_IN_FLIGHT = 1;
 const DEFAULT_AUTO_ACK_POLL_MS = 250;
+const DEFAULT_AUTHORITY_POLL_MS = 1_000;
 const MAX_AUTHOR_LABEL_CHARACTERS = 100;
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const stateScript = path.join(scriptDirectory, "watch-state.mjs");
@@ -243,10 +244,23 @@ async function dispatchAutoAck(state, pullRequest, authorLabel) {
   if (result.code !== 0 || !result.json?.ok) {
     throw new DriverError(`auto-ack failed for ${pullRequest}`, EXIT_AUTO_ACK, result);
   }
-  write({ ...result.json, type: "batch-acknowledged" });
+  if (result.json.type === "acknowledged") {
+    write({ ...result.json, type: "batch-acknowledged" });
+    return;
+  }
+  if (result.json.type === "skipped") {
+    write({ ...result.json, type: "batch-skipped" });
+    return;
+  }
+  throw new DriverError(
+    `auto-ack returned an invalid result for ${pullRequest}`,
+    EXIT_AUTO_ACK,
+    result,
+  );
 }
 
 async function dispatchPendingAutoAcks(state, maxInFlight, authorLabel) {
+  await stateCommand(state, "verify");
   const work = await stateCommand(state, "list");
   const inFlight = Number(work.inFlight);
   if (!Number.isSafeInteger(inFlight) || inFlight < 0 || !Array.isArray(work.pending)) {
@@ -315,7 +329,17 @@ function autoAckPollMilliseconds() {
     : DEFAULT_AUTO_ACK_POLL_MS;
 }
 
+function authorityPollMilliseconds() {
+  const configured = Number(
+    process.env.RVW_WATCH_AUTHORITY_POLL_MS ?? String(DEFAULT_AUTHORITY_POLL_MS),
+  );
+  return Number.isSafeInteger(configured) && configured >= 10 && configured <= 60_000
+    ? configured
+    : DEFAULT_AUTHORITY_POLL_MS;
+}
+
 async function runWatchOnce(state, autoAck, maxInFlight, authorLabel, stopping) {
+  await stateCommand(state, "verify");
   const current = await stateCommand(state, "status");
   const args = ["comment", "watch"];
   if (current.cursor) args.push("--after", current.cursor);
@@ -335,6 +359,8 @@ async function runWatchOnce(state, autoAck, maxInFlight, authorLabel, stopping) 
   child.stdin.end();
   let autoAckPump = null;
   let autoAckError = null;
+  let authorityCheck = null;
+  let authorityError = null;
   const pumpAutoAcks = async () => {
     if (!autoAck || stopping.requested) return;
     if (autoAckPump) return autoAckPump;
@@ -351,6 +377,22 @@ async function runWatchOnce(state, autoAck, maxInFlight, authorLabel, stopping) 
   };
   const autoAckTimer = autoAck
     ? setInterval(() => void pumpAutoAcks().catch(() => undefined), autoAckPollMilliseconds())
+    : null;
+  const checkAuthority = async () => {
+    if (autoAck || stopping.requested || authorityCheck) return authorityCheck;
+    authorityCheck = stateCommand(state, "verify");
+    try {
+      await authorityCheck;
+    } catch (error) {
+      authorityError ??= error;
+      child.kill("SIGTERM");
+      throw error;
+    } finally {
+      authorityCheck = null;
+    }
+  };
+  const authorityTimer = !autoAck
+    ? setInterval(() => void checkAuthority().catch(() => undefined), authorityPollMilliseconds())
     : null;
   const decoder = new StringDecoder("utf8");
   let buffered = "";
@@ -388,7 +430,9 @@ async function runWatchOnce(state, autoAck, maxInFlight, authorLabel, stopping) 
     }
     const status = await statusPromise;
     if (autoAckPump) await autoAckPump.catch(() => undefined);
+    if (authorityCheck) await authorityCheck.catch(() => undefined);
     if (autoAckError) throw autoAckError;
+    if (authorityError) throw authorityError;
     stopping.child = null;
     return { ...status, stderr, readySeen, stoppedSeen };
   } catch (error) {
@@ -398,6 +442,7 @@ async function runWatchOnce(state, autoAck, maxInFlight, authorLabel, stopping) 
     throw error;
   } finally {
     if (autoAckTimer) clearInterval(autoAckTimer);
+    if (authorityTimer) clearInterval(authorityTimer);
   }
 }
 
@@ -415,6 +460,7 @@ async function main() {
   const { state, autoAck, maxInFlight, authorLabel } = parseArguments(process.argv.slice(2));
   const driverLock = acquireDriverLock(state);
   try {
+    await stateCommand(state, "verify");
     if (autoAck) await assertTaskAuthorLabel(state, authorLabel);
     const stopping = { requested: false, child: null };
     const stop = () => {

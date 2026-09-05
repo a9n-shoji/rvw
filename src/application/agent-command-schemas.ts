@@ -36,6 +36,10 @@ const nullableCommentLine = z.number().int().positive().nullable().optional().de
 const idempotencyKey = z.string().min(1).max(MAX_IDEMPOTENCY_KEY_CHARACTERS).optional();
 const requiredIdempotencyKey = z.string().min(1).max(MAX_IDEMPOTENCY_KEY_CHARACTERS);
 const expectedUpdatedAt = z.string().min(1).max(100);
+const commentWatchTaskFenceSchema = z
+  .object({ taskId: z.uuid(), generation: z.number().int().positive() })
+  .strict();
+const commentWatchLeaseSchema = commentWatchTaskFenceSchema.extend({ leaseId: z.uuid() }).strict();
 
 export const commentTargetInputSchema = z
   .union([
@@ -165,6 +169,7 @@ export const commentReplyInputSchema = z
     relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
     references: optionalCodeReferences,
     idempotencyKey,
+    watchTask: commentWatchTaskFenceSchema.optional(),
   })
   .strict()
   .superRefine(requireRelatedCommitForReferences);
@@ -179,6 +184,7 @@ export const commentPostEditInputSchema = z
       }),
     relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
     references: optionalCodeReferences,
+    watchTask: commentWatchTaskFenceSchema.optional(),
   })
   .strict();
 
@@ -447,6 +453,12 @@ export const agentCommandInputSchemas = {
       limit: z.number().int().min(1).max(MAX_COMMENT_WATCH_LIMIT),
     })
     .strict(),
+  "comment.watch.activate": z.object({ taskId: z.uuid() }).strict(),
+  "comment.watch.verify": commentWatchTaskFenceSchema,
+  "comment.watch.reserveWrite": commentWatchLeaseSchema
+    .extend({ writeKey: z.string().regex(/^[^/\s]+\/[^/\s]+$/) })
+    .strict(),
+  "comment.watch.releaseWrite": commentWatchLeaseSchema,
   "comment.create": commentCreateInputSchema,
   "comment.get": z.object({ uri: commentUri, live: z.boolean().default(false) }).strict(),
   "comment.reply": z.object({ uri: commentUri, reply: commentReplyInputSchema }).strict(),
