@@ -3,8 +3,14 @@ import { describe, expect, it } from "vitest";
 
 const rvwSkill = readFileSync("skills/rvw/SKILL.md", "utf8");
 const watchSkill = readFileSync("skills/rvw-watch-comments/SKILL.md", "utf8");
+const reviewComposeSkill = readFileSync("skills/rvw-review-compose/SKILL.md", "utf8");
+const reviewComposeDescription = reviewComposeSkill.match(/^description: (.+)$/mu)?.[1] ?? "";
 const walkthroughSkill = readFileSync("skills/rvw-walkthrough/SKILL.md", "utf8");
 const structureSkill = readFileSync("skills/rvw-structure/SKILL.md", "utf8");
+const reviewComposition = readFileSync(
+  "skills/rvw-review-compose/references/review-composition.md",
+  "utf8",
+);
 const structureAuthoring = readFileSync(
   "skills/rvw-structure/references/structure-authoring.md",
   "utf8",
@@ -76,5 +82,94 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureAuthoring).toContain("deprecated compatibility field");
     expect(structureAuthoring).toContain("Do not set it in new");
     expect(structureAuthoring).toContain("Do not publish");
+  });
+});
+
+describe("rvw review composition contract", () => {
+  it("owns adaptive PR-wide composition and prefers the minimum useful surface", () => {
+    expect(reviewComposeDescription).toContain("Pull Request or explicit review subject");
+    expect(reviewComposeDescription).toContain("direct code reading");
+    expect(reviewComposeDescription).toContain("overall review composition");
+    expect(reviewComposeSkill).toContain("This Skill owns PR-wide composition");
+    expect(reviewComposeSkill).toContain("smallest useful set of rvw reading surfaces");
+    expect(reviewComposeSkill).toContain(
+      "Direct the reviewer to code without creating an Artifact",
+    );
+    expect(reviewComposeSkill).toContain("Never require a Walkthrough and Structure as a pair");
+    expect(reviewComposeSkill).toContain("Never require an overview Artifact");
+    expect(reviewComposition).toContain("Never default to Walkthrough then Structure then code");
+    expect(reviewComposition).toMatch(
+      /Never instantiate Overview, State, Flow, Error, Test, and\s+Structure as fixed slots/,
+    );
+  });
+
+  it("rechecks the complete composition instead of maximizing Artifact count", () => {
+    expect(reviewComposeSkill).toMatch(/Artifact count is not a quality\s+measure/);
+    expect(reviewComposeSkill).toContain("detailed overlap, terminology drift");
+    expect(reviewComposeSkill).toMatch(/missing\s+important boundaries/);
+    expect(reviewComposeSkill).toContain("over-fragmentation");
+    expect(reviewComposeSkill).toContain("cross-boundary risk");
+    expect(reviewComposeSkill).toMatch(
+      /Never delete any published Artifact,[\s\S]*normal deletion preview[\s\S]*explicit authorization/,
+    );
+    expect(reviewComposition).toContain("Count the joins between surfaces");
+    expect(reviewComposition).toContain("state authority, lifecycle, async behavior");
+    expect(reviewComposition).toContain("output or state produced on one side");
+  });
+
+  it("keeps understanding units and briefs internal without a persistent Set model", () => {
+    expect(reviewComposeSkill).toContain(
+      "Candidate bounded understanding units are internal reasoning",
+    );
+    expect(reviewComposeSkill).toMatch(
+      /The brief is\s+authoring context, not public JSON or rvw schema/,
+    );
+    expect(reviewComposition).toContain("Use a flexible note, not a fixed form");
+    expect(reviewComposition).toContain("prompts rather than required slots");
+    expect(reviewComposition).toMatch(
+      /mustEstablish[\s\S]*rather than using it as a\s+coverage checklist/,
+    );
+    expect(reviewComposeSkill).toContain("Do not create a Review Set");
+    expect(reviewComposeSkill).toContain("database row, migration, CLI");
+    expect(reviewComposeSkill).toContain("Do not publish a duplicate");
+    expect(reviewComposeSkill).toMatch(/There is no general Walkthrough\s+discovery contract/);
+    expect(reviewComposition).toContain('"Slice" may be used as private shorthand');
+  });
+});
+
+describe("single-Artifact producer composition boundary", () => {
+  it("treats an upstream bounded brief as authority without expanding to the Pull Request", () => {
+    for (const producer of [walkthroughSkill, structureSkill]) {
+      expect(producer).toContain("at most one");
+      expect(producer).toMatch(/subject,\s+review\s+question/);
+      expect(producer).toContain("inclusions, exclusions");
+      expect(producer).toContain("must-establish facts");
+      expect(producer).toContain("emphasis");
+      expect(producer).toMatch(/Inspect broader Pull\s+Request context only/);
+      expect(producer).toMatch(/Pull Request's Artifact count\s+or Walkthrough \/ Structure\s+mix/);
+      expect(producer).toMatch(/publish companion\s+Artifacts/);
+      expect(producer).toContain("Standalone");
+    }
+    expect(walkthroughSkill).toMatch(
+      /Do not broaden the Walkthrough\s+to cover the whole Pull Request/,
+    );
+    expect(structureSkill).toMatch(/do not publish separate Structures\s+autonomously/);
+    expect(structureAuthoring).not.toContain("yields separate Structures");
+    expect(structureAuthoring).not.toContain("author that behavior as a separate Structure");
+  });
+
+  it("retains each producer's local representation rejection boundary", () => {
+    expect(walkthroughSkill).toMatch(
+      /no useful ordered reading path[\s\S]*stop without publishing[\s\S]*recommend `rvw-structure`/,
+    );
+    expect(structureSkill).toMatch(
+      /required reading[\s\S]*stop without publishing[\s\S]*recommend `rvw-walkthrough`/,
+    );
+    expect(structureSkill).toMatch(
+      /no defensible[\s\S]*generic static architecture[\s\S]*do not publish a Structure/,
+    );
+    expect(walkthroughAuthoring).toContain(
+      "The subject is genuinely clearer as an ordered path; otherwise no Walkthrough was published",
+    );
   });
 });

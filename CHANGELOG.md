@@ -8,11 +8,15 @@
 ### Added
 
 - 通知permissionの状態表示と、Agentのcomment更新経路を介さずbrowser / OS通知を確認できるテスト通知
+- PR全体または明示されたreview subjectを調査し、Walkthrough、Structure、直接code readingから必要最小限の
+  構成を選ぶCodex / Claude Code共通のbundled `rvw-review-compose` Skill
 
 ### Changed
 
 - `rvw open`の新規runtimeを既定で`127.0.0.1:43117`へ固定し、起動をまたいでorigin-scopedな通知permissionと
   設定を維持。空きportの自動選択は明示的な`--port 0`へ変更
+- `rvw-walkthrough`と`rvw-structure`を一つのbounded Artifactを作るproducerとして明確化し、上位composerの
+  subject、review question、scope、inclusion / exclusionを優先しながら各representationの拒否境界を維持
 
 ### Fixed
 

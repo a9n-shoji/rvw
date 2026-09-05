@@ -6,11 +6,18 @@ Use this guide when creating a Walkthrough or materially revising its explanatio
 
 Apply inputs in this order:
 
-1. Follow explicit directions from the user, caller, Pull Request body, or upstream Skill.
+1. Follow explicit directions from the user, caller, Pull Request body, or upstream Skill. When an
+   upstream Artifact brief supplies a subject, review question, purpose, scope, inclusions, exclusions,
+   must-establish facts, or emphasis, those bounds are authority for this Walkthrough.
 2. Fill gaps with facts verified in the diff, committed code, tests, documentation, and available Pull Request context.
 3. Use only necessary inference when facts do not establish intent. Mark the inference or uncertainty instead of presenting it as fact.
 
 Honor partial directions for the parts they cover and use this guide for the rest. Add minimal context when an instruction would otherwise leave the Walkthrough unintelligible, but do not substitute a different goal.
+
+This guide governs one Walkthrough, not the Pull Request's Artifact composition. Use broader PR context
+as evidence without taking responsibility for PR-wide coverage, choosing an Artifact count or type mix,
+or publishing a companion Artifact. If a bounded brief conflicts with the representation or cannot be
+made understandable inside its exclusions, return the conflict to the requester or upstream composer.
 
 Provide an initial route through the implementation that lowers the cost of building a mental model. Let the reviewer choose which references to open and where to explore next. Do not present the route as the full review boundary or as a substitute for the committed source.
 
@@ -18,7 +25,7 @@ When the requested subject is a standalone architecture, flow, or surrounding-co
 
 ## Build the default reading path
 
-1. **Identify the center.** For a change, compress the problem addressed, externally visible behavior change, main before/after difference, new concept or responsibility, and connection to an existing mechanism into one central explanation. For a standalone subject, identify its central responsibility, contract, or path. When purpose is not established, describe only the verified implementation and state what remains unknown.
+1. **Identify the center.** Use the supplied subject and review question when present; do not recenter on the whole change. Otherwise derive the smallest coherent implementation question from the explicit request and verified facts. A Walkthrough should have one central path, not absorb every independently useful concept in the Pull Request. For a change, connect only the problem, visible behavior, before/after difference, concept, responsibility, or existing mechanism needed for that path. For a standalone subject, identify its central responsibility, contract, or path. When purpose is not established, describe only the verified implementation and state what remains unknown.
 2. **Trace the structure.** Inspect the diff when the task concerns a change, and inspect beyond changed files whenever useful. Consider entry points, callers, callees, data producers and consumers, state transitions, persistence, external I/O, events or jobs, types and contracts, existing implementation, and tests. Stop exploring branches that do not clarify the center.
 3. **Choose a comprehension order.** Prefer a causal or conceptual sequence over file or diff order. Useful sequences include external entry to internal handling, caller to callee, data creation to transformation to storage to use, old mechanism to new difference, abstraction to implementation, contract to implementation, or representative case to repeated applications.
 4. **Select the minimum useful route.** Use as few steps as needed to understand the central structure. A local change may need one to three steps; a multi-layer flow may need more. Do not add steps merely to appear complete.
@@ -143,6 +150,8 @@ This route may cross changed and unchanged code, gives each stop a reason, and r
 - Do not paraphrase the diff or list files in repository order.
 - Do not stop at an abstract summary that cannot lead the reader into specific code.
 - Do not bury the main path in every potentially related file.
+- Do not expand one bounded subject into PR-wide coverage or publish companion Artifacts for adjacent
+  subjects.
 - Do not center the output on AI review findings or suggested improvements.
 - Do not claim the Walkthrough is sufficient, exhaustive, or evidence that the change can be approved.
 - Do not invent business intent or external constraints.
@@ -154,6 +163,10 @@ This route may cross changed and unchanged code, gives each stop a reason, and r
 Use this checklist internally; do not reproduce it mechanically in the Walkthrough.
 
 - [ ] Explicit instructions take priority, and defaults fill only their gaps.
+- [ ] The Walkthrough answers one bounded review question and does not assume PR-wide coverage.
+- [ ] Supplied inclusions, exclusions, must-establish facts, and emphasis were preserved.
+- [ ] Adjacent subjects were reported to the caller rather than turned into companion Artifacts.
+- [ ] The subject is genuinely clearer as an ordered path; otherwise no Walkthrough was published.
 - [ ] The requested subject or change center can be stated briefly without unsupported intent.
 - [ ] The order builds a mental model rather than mirroring file or diff order.
 - [ ] Each step connects to exact code or another concrete subject and explains why it matters.

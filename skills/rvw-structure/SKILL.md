@@ -1,25 +1,37 @@
 ---
 name: rvw-structure
-description: Read, publish, replace in place, or explicitly delete a source-anchored relationship map through the local rvw CLI. Use when a reviewer needs to inspect the dependencies and side effects around a bounded PR-relevant behavior from a factual code entrypoint. Use rvw-walkthrough when the explanation is primarily an ordered path, and do not create a Structure for a generic static architecture or responsibility inventory.
+description: Read, publish, replace in place, or explicitly delete one source-anchored relationship map through the local rvw CLI. Use when a reviewer needs to inspect the dependencies and side effects around one bounded PR-relevant behavior from a factual code entrypoint. Use rvw-review-compose when the user asks which Walkthroughs or Structures a whole review subject needs. Use rvw-walkthrough when the explanation is primarily an ordered path, and do not create a Structure for a generic static architecture or responsibility inventory.
 ---
 
 # rvw Structure management
 
-Create a review space that lets a human inspect one bounded PR-relevant behavior from a factual code
+Create one review space that lets a human inspect one bounded PR-relevant behavior from a factual code
 entrypoint through the responsibilities, dependencies, contracts, and side effects needed to verify
 it. A Structure is a space; a Walkthrough is a path. If the clearest explanation has a required reading
-order, beginning, and end, stop and recommend `rvw-walkthrough` instead. If there is no defensible
-entrypoint and the result would be a generic static architecture, subsystem catalog, or responsibility
-inventory, do not publish a Structure.
+order, beginning, and end, stop without publishing and recommend `rvw-walkthrough` to the requester or
+upstream composer. Do not create that Walkthrough from this Skill. If there is no defensible entrypoint
+and the result would be a generic static architecture, subsystem catalog, or responsibility inventory,
+do not publish a Structure. These representation rejection boundaries still apply to an upstream brief.
 
 The request may begin with a behavior or with a selected file, symbol, or changed source. For a
 source-led request, first identify the concrete PR-relevant behavior in which that source participates,
-then find its factual origin and map only that behavior. If the source participates in independently
-triggered behaviors, publish separate Structures rather than joining them into a static source map.
+then find its factual origin and map only that behavior. If the source participates in multiple
+independently triggered behaviors, do not join them and do not publish separate Structures
+autonomously. Follow an explicitly supplied behavior boundary; when none is established, report the
+candidate boundaries to the requester or upstream composer so that they can choose the subject.
 
-Follow explicit subject, scope, inclusion, exclusion, and emphasis instructions from the user, caller,
-Pull Request body, or upstream Skill. Fill only their gaps with verified committed code and tests. Do
-not infer product intent, invent architectural semantics, or turn related files into an exhaustive map.
+This Skill produces, updates, or deletes at most one Structure for the requested behavior. When an
+Artifact brief from the user, caller, Pull Request body, or an upstream Skill supplies a subject, review
+question, behavior, scope, inclusions, exclusions, must-establish facts, emphasis, or factual-origin
+guidance, treat those bounds as authority and fill only their gaps with verified committed code and
+tests. The brief does not override source exactness or the representation rejection rules above.
+Inspect broader Pull Request context only as evidence. Do not decide the Pull Request's Artifact count
+or Walkthrough / Structure mix, guarantee coverage of other review subjects, or publish companion
+Artifacts.
+
+When invoked directly without an upstream brief, derive one bounded Structure from the user's explicit
+request and verified facts. Standalone Structure creation remains supported. Do not infer product
+intent, invent architectural semantics, or turn related files into an exhaustive map.
 
 Use only the `rvw` CLI protocol. Never access SQLite directly, control the viewer, open a Structure,
 select a node, or claim that publication changed rvw navigation.

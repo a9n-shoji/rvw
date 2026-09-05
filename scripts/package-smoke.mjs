@@ -261,6 +261,9 @@ try {
     "dist/web/THIRD_PARTY_NOTICES.txt",
     "skills/rvw/SKILL.md",
     "skills/rvw/agents/openai.yaml",
+    "skills/rvw-review-compose/SKILL.md",
+    "skills/rvw-review-compose/agents/openai.yaml",
+    "skills/rvw-review-compose/references/review-composition.md",
     "skills/rvw-walkthrough/SKILL.md",
     "skills/rvw-walkthrough/agents/openai.yaml",
     "skills/rvw-walkthrough/references/walkthrough-authoring.md",
@@ -439,7 +442,8 @@ try {
   assert.equal(Number(migrationState.count), expectedMigrationCount);
   assert.equal(Number(migrationState.latest), expectedMigrationCount);
 
-  const skillRoot = path.join(temporaryRoot, "skills");
+  const skillRoot = path.join(temporaryRoot, "codex-skills");
+  const claudeSkillRoot = path.join(temporaryRoot, "claude-skills");
   const installedSkills = parseJson(
     run(bin, ["skill", "install", "codex", "--target", skillRoot, "--json"], {
       cwd: workingDirectory,
@@ -450,9 +454,49 @@ try {
   );
   assert.deepEqual(
     installedSkills.skills.map((skill) => skill.name),
-    ["rvw", "rvw-walkthrough", "rvw-structure", "rvw-watch-comments"],
+    ["rvw", "rvw-review-compose", "rvw-walkthrough", "rvw-structure", "rvw-watch-comments"],
   );
   assert.ok(installedSkills.skills.every((skill) => skill.matchesBundled));
+  const installedClaudeSkills = parseJson(
+    run(bin, ["skill", "install", "claude", "--target", claudeSkillRoot, "--json"], {
+      cwd: workingDirectory,
+      ...(process.platform === "win32" ? { shell: true } : {}),
+    }),
+    skillInstallSchema,
+    "rvw skill install claude",
+  );
+  assert.deepEqual(
+    installedClaudeSkills.skills.map((skill) => skill.name),
+    installedSkills.skills.map((skill) => skill.name),
+  );
+  assert.ok(installedClaudeSkills.skills.every((skill) => skill.matchesBundled));
+  for (const skill of installedSkills.skills) {
+    assert.equal(
+      readFileSync(path.join(skillRoot, skill.name, "SKILL.md"), "utf8"),
+      readFileSync(path.join(claudeSkillRoot, skill.name, "SKILL.md"), "utf8"),
+      `Codex and Claude installed different ${skill.name} contents`,
+    );
+  }
+  for (const asset of [
+    "SKILL.md",
+    path.join("agents", "openai.yaml"),
+    path.join("references", "review-composition.md"),
+  ]) {
+    const packagedAsset = readFileSync(
+      path.join(installedPackageRoot, "skills", "rvw-review-compose", asset),
+      "utf8",
+    );
+    assert.equal(
+      readFileSync(path.join(skillRoot, "rvw-review-compose", asset), "utf8"),
+      packagedAsset,
+      `Codex install is missing the packaged rvw-review-compose ${asset}`,
+    );
+    assert.equal(
+      readFileSync(path.join(claudeSkillRoot, "rvw-review-compose", asset), "utf8"),
+      packagedAsset,
+      `Claude install is missing the packaged rvw-review-compose ${asset}`,
+    );
+  }
   const installedWatchState = path.join(
     skillRoot,
     "rvw-watch-comments",

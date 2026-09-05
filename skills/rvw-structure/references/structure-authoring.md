@@ -8,7 +8,8 @@ defaults only where explicit instructions are silent.
 Apply inputs in this order:
 
 1. Explicit directions from the user, caller, Pull Request body, or upstream Skill define the subject,
-   scope, inclusions, exclusions, and emphasis.
+   review question, behavior, scope, inclusions, exclusions, must-establish facts, emphasis, and any
+   factual-origin guidance.
 2. Verified committed code, tests, documentation, and Pull Request context fill gaps.
 3. Put hypotheses, uncertain connections, and relations that are not directly established by source or
    explicit authority in the Agent's normal response, not in the Structure.
@@ -20,9 +21,11 @@ understand that behavior and what it deliberately excludes. A data model, subsys
 belongs only when it clarifies that behavior; a static inventory of them is not a Structure subject.
 
 If the request starts from a file, symbol, module, or changed source rather than a named behavior, use
-that source only as the discovery entry. Identify the concrete PR-relevant behavior it participates in,
-then locate that behavior's factual origin. A source that participates in multiple independently
-triggered behaviors yields separate Structures; it does not justify a combined module inventory.
+that source only as the discovery entry. Identify the one concrete PR-relevant behavior requested, then
+locate that behavior's factual origin. If the source participates in multiple independently triggered
+behaviors, do not join them and do not create multiple Structures from this producer request. Follow an
+explicitly supplied boundary; otherwise return candidate boundaries to the requester or upstream
+composer.
 
 Before authoring, test the requested shape: if the explanation becomes clearer only when its elements
 are arranged as step 1, then step 2, then step 3, the subject is a path. Stop and recommend a
@@ -64,8 +67,9 @@ can verify in committed code.
 Do not create giant graphs, file inventories, one node per function, inferred runtime call graphs,
 dependency graphs obtained only from import syntax, or concept-only diagrams detached from code.
 When following the current behavior reaches another independently triggered behavior with its own
-origin, stop and author that behavior as a separate Structure if it is review-relevant. Do not keep
-expanding merely because more static responsibilities are connected.
+origin, stop at the current scope. Report that adjacent behavior when it is materially relevant, but do
+not author another Structure from this producer request. Do not keep expanding merely because more
+static responsibilities are connected.
 
 ## State relationships precisely
 
@@ -169,5 +173,5 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] The map contains no hidden review conclusion, presentation layout, inferred confidence, or
       exhaustive-completeness claim.
 - [ ] The graph is small enough that a reviewer can explore it as a coherent subject.
-- [ ] The graph has no more than 50 nodes and 200 edges; a denser subject has been split rather than
-      relying on the viewer to hide relations.
+- [ ] The graph has no more than 50 nodes and 200 edges; a denser subject was narrowed or returned to
+      the requester for composition rather than overloaded into this Structure.

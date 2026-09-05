@@ -39,6 +39,62 @@ with the browser Notification stub, including the comments domain revision refet
 - Existing permissions on past random-port origins cannot be migrated by the browser and must be granted
   once on the new stable origin.
 
+## 2026-09-05: Separate PR-wide review composition from single-Artifact production
+
+### Problem
+
+`rvw-walkthrough` and `rvw-structure` each need local judgment about whether their own representation
+fits a subject, but they had also accumulated parts of the decision about how an entire Pull Request
+should be divided and whether both representations were needed. For changes with several state,
+lifecycle, asynchronous, and responsibility boundaries, that can produce one overloaded Artifact or a
+large Walkthrough-plus-Structure pair whose duplicated mental model costs more to join than it saves.
+
+A fixed set of overview, state, flow, error, test, and structure documents would make simple changes
+worse and hide coupling behind tidy categories. Persisting those categories as a Review Set would also
+turn an authoring strategy into a new product entity before its value or Viewer discoverability needs
+have been demonstrated.
+
+### Choice
+
+Add `rvw-review-compose` as the fifth capability-named bundled Skill shared unchanged by Codex and Claude
+Code. It investigates one Pull Request or explicit review subject, identifies its main comprehension
+difficulties and coupling, and chooses the minimum useful surface for each bounded question: a
+Walkthrough for ordered causality or lifecycle, a Structure for relationships around a factual code
+entrypoint, or direct code reading when another external representation would not lower comprehension
+cost. It never requires a Walkthrough and Structure pair or a fixed overview/template.
+
+Candidate understanding units and Artifact briefs remain session-local authoring context. Before each
+selected Artifact, the composer supplies one subject, review question, scope with inclusions and
+exclusions, must-establish facts, and optional emphasis. `rvw-walkthrough` and `rvw-structure` each
+produce at most one bounded Artifact from that authority and do not expand back into PR-wide coverage or
+publish companion Artifacts. Each producer retains its representation rejection, source exactness,
+identity, passive-publication, update, and deletion contracts; Structure also retains canonical preview
+and optimistic concurrency. A rejection returns to composition for another surface or direct code
+reading.
+
+Re-evaluate the complete composition for detailed overlap, terminology drift, missing and cross-boundary
+risk, and over-fragmentation before finishing. Return the rationale, a non-mandatory recommended entry,
+created or updated Walkthrough / Structure URIs, and deliberately code-only topics in the normal Agent
+response. That response is orientation, not a persistent review plan or a claim that review is complete.
+
+Do not add a Review Set or Review Plan entity, persistent Slice, group ID, typed Artifact link, Artifact
+kind, URI, database row, migration, CLI capability, HTTP API, Viewer grouping, or generic runtime
+sub-Skill invocation framework. The composer uses the existing protocol-version-4 operations. When an
+Artifact URI is explicitly supplied it reads the current value and prefers a same-subject update;
+existing `structure list` remains available, while the absence of a general Walkthrough list is reported
+honestly rather than bypassed through SQLite or a new discovery protocol.
+
+### Trade-offs
+
+- Existing direct requests for one Walkthrough or Structure keep working, while PR-wide decomposition
+  has one explicit owner.
+- There is no durable grouping or Viewer-level composition discovery; reviewers receive recommended
+  entry and URIs in ordinary Agent output and remain free to start from code or another Artifact.
+- Duplicate avoidance is exact for an explicitly supplied URI and bounded by existing CLI discovery
+  otherwise, especially for Walkthroughs.
+- The composer and producers share contracts through bundled instructions rather than a new invocation
+  runtime, so contract tests and documentation must prevent those responsibilities from drifting.
+
 ## 2026-08-30: Resolve supported Mermaid node-like bindings through diagram adapters
 
 ### Problem

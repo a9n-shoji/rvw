@@ -4,7 +4,13 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SkillInstaller } from "../../src/infrastructure/skills/skill-installer.js";
 
-const expectedSkillNames = ["rvw", "rvw-walkthrough", "rvw-structure", "rvw-watch-comments"];
+const expectedSkillNames = [
+  "rvw",
+  "rvw-review-compose",
+  "rvw-walkthrough",
+  "rvw-structure",
+  "rvw-watch-comments",
+];
 
 describe("SkillInstaller", () => {
   it("installs every bundled skill idempotently and requires force for divergent content", () => {
@@ -18,11 +24,20 @@ describe("SkillInstaller", () => {
     expect(first.every((status) => status.matchesBundled)).toBe(true);
     expect(installer.install("codex", { targetRoot: target })).toEqual(first);
 
-    const reviewSkill = first.find((status) => status.name === "rvw")!;
-    writeFileSync(path.join(reviewSkill.path, "SKILL.md"), "locally changed");
+    const composeSkill = first.find((status) => status.name === "rvw-review-compose")!;
+    writeFileSync(path.join(composeSkill.path, "SKILL.md"), "locally changed");
     expect(installer.statuses("codex", target)).toMatchObject([
       {
         name: "rvw",
+        installed: true,
+        matchesBundled: true,
+        locallyModified: false,
+        updateAvailable: false,
+        updateRequired: false,
+        state: "current",
+      },
+      {
+        name: "rvw-review-compose",
         installed: true,
         matchesBundled: false,
         locallyModified: true,
@@ -71,11 +86,11 @@ describe("SkillInstaller", () => {
     const target = mkdtempSync(path.join(os.tmpdir(), "rvw-skills-update-"));
     const installer = new SkillInstaller(packageRoot);
     const installed = installer.install("codex", { targetRoot: target });
-    const reviewSkill = installed.find((status) => status.name === "rvw")!;
+    const composeSkill = installed.find((status) => status.name === "rvw-review-compose")!;
 
-    const bundledSkillPath = path.join(packageRoot, "skills", "rvw", "SKILL.md");
+    const bundledSkillPath = path.join(packageRoot, "skills", "rvw-review-compose", "SKILL.md");
     writeFileSync(bundledSkillPath, `${readFileSync(bundledSkillPath, "utf8")}\nBundled update.\n`);
-    expect(installer.status("codex", "rvw", target)).toMatchObject({
+    expect(installer.status("codex", "rvw-review-compose", target)).toMatchObject({
       managed: true,
       locallyModified: false,
       updateAvailable: true,
@@ -83,8 +98,8 @@ describe("SkillInstaller", () => {
       state: "update-available",
     });
 
-    writeFileSync(path.join(reviewSkill.path, "SKILL.md"), "local customization");
-    expect(installer.status("codex", "rvw", target)).toMatchObject({
+    writeFileSync(path.join(composeSkill.path, "SKILL.md"), "local customization");
+    expect(installer.status("codex", "rvw-review-compose", target)).toMatchObject({
       managed: true,
       locallyModified: true,
       updateAvailable: true,
@@ -115,6 +130,14 @@ describe("SkillInstaller", () => {
     const structureAuthoring = path.join("rvw-structure", "references", "structure-authoring.md");
     expect(readFileSync(path.join(codexTarget, structureAuthoring), "utf8")).toBe(
       readFileSync(path.join(claudeTarget, structureAuthoring), "utf8"),
+    );
+    const reviewComposition = path.join(
+      "rvw-review-compose",
+      "references",
+      "review-composition.md",
+    );
+    expect(readFileSync(path.join(codexTarget, reviewComposition), "utf8")).toBe(
+      readFileSync(path.join(claudeTarget, reviewComposition), "utf8"),
     );
   });
 
