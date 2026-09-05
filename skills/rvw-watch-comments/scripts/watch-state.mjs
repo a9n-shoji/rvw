@@ -440,6 +440,72 @@ async function verifyOwnership(database) {
   return authority;
 }
 
+async function acquireSharedWriteReservation(database, leaseId, writeKey) {
+  const authority = localAuthority(database);
+  const canonicalWriteKey = normalizeWriteKey(writeKey);
+  const result = await runRvw([
+    "comment",
+    "watch-task",
+    "reserve-write",
+    "--task-id",
+    authority.taskId,
+    "--generation",
+    String(authority.generation),
+    "--lease-id",
+    leaseId,
+    "--write-key",
+    canonicalWriteKey,
+    "--json",
+  ]);
+  if (!successfulJson(result)) {
+    fail(
+      `rvw writer reservation failed: ${rvwCommandFailure("comment watch-task reserve-write", result)}`,
+    );
+  }
+  if (
+    result.json.taskId !== authority.taskId ||
+    result.json.generation !== authority.generation ||
+    result.json.databaseId !== authority.databaseId ||
+    result.json.leaseId !== leaseId ||
+    result.json.writeKey !== canonicalWriteKey ||
+    (result.json.status !== "reserved" && result.json.status !== "existing")
+  ) {
+    fail("rvw writer reservation returned a different reservation");
+  }
+  return result.json;
+}
+
+async function releaseSharedWriteReservation(database, leaseId) {
+  const authority = localAuthority(database);
+  const result = await runRvw([
+    "comment",
+    "watch-task",
+    "release-write",
+    "--task-id",
+    authority.taskId,
+    "--generation",
+    String(authority.generation),
+    "--lease-id",
+    leaseId,
+    "--json",
+  ]);
+  if (!successfulJson(result)) {
+    fail(
+      `rvw writer release failed: ${rvwCommandFailure("comment watch-task release-write", result)}`,
+    );
+  }
+  if (
+    result.json.taskId !== authority.taskId ||
+    result.json.generation !== authority.generation ||
+    result.json.databaseId !== authority.databaseId ||
+    result.json.leaseId !== leaseId ||
+    (result.json.status !== "released" && result.json.status !== "absent")
+  ) {
+    fail("rvw writer release returned a different reservation");
+  }
+  return result.json;
+}
+
 function ingestReady(database, frame) {
   if (
     typeof frame.databaseId !== "string" ||
@@ -665,8 +731,7 @@ function createBatch(database, pullRequestUrl, now) {
   return batchId;
 }
 
-function claim(database, pullRequestUrl, writeKey, requestedAuthorLabel) {
-  const canonicalWriteKey = writeKey === undefined ? undefined : normalizeWriteKey(writeKey);
+function claim(database, pullRequestUrl, requestedAuthorLabel) {
   return transaction(database, () => {
     const authorLabel =
       requestedAuthorLabel === undefined
@@ -674,9 +739,6 @@ function claim(database, pullRequestUrl, writeKey, requestedAuthorLabel) {
         : bindTaskAuthorLabel(database, requestedAuthorLabel);
     const now = new Date().toISOString();
     const ownMode = getMeta(database, "own_mode");
-    if (canonicalWriteKey !== undefined && ownMode !== "fix-and-push") {
-      fail("Task policy does not allow repository write reservations");
-    }
     if (ownMode !== "investigate-and-reply") {
       const active = database
         .prepare("SELECT id FROM batches WHERE pull_request_url = ? AND status = 'in_flight'")
@@ -694,19 +756,12 @@ function claim(database, pullRequestUrl, writeKey, requestedAuthorLabel) {
     const batchId = batch?.id ?? createBatch(database, pullRequestUrl, now);
     batch = database.prepare("SELECT * FROM batches WHERE id = ?").get(batchId);
     const leaseId = randomUUID();
-    try {
-      database
-        .prepare(
-          `UPDATE batches SET status = 'in_flight', attempts = attempts + 1,
-            lease_id = ?, write_key = ?, updated_at = ? WHERE id = ?`,
-        )
-        .run(leaseId, canonicalWriteKey ?? null, now, batchId);
-    } catch (error) {
-      if (String(error).includes("UNIQUE constraint failed")) {
-        fail(`Another write-capable batch owns repository ${canonicalWriteKey}`);
-      }
-      throw error;
-    }
+    database
+      .prepare(
+        `UPDATE batches SET status = 'in_flight', attempts = attempts + 1,
+          lease_id = ?, write_key = NULL, updated_at = ? WHERE id = ?`,
+      )
+      .run(leaseId, now, batchId);
     const events = database
       .prepare(
         `SELECT sequence, post_id, comment_ref, pull_request_url
@@ -737,7 +792,7 @@ function claim(database, pullRequestUrl, writeKey, requestedAuthorLabel) {
       batchId,
       pullRequest: pullRequestUrl,
       attempts: Number(batch.attempts) + 1,
-      writeKey: canonicalWriteKey ?? null,
+      writeKey: null,
       authorLabel,
       events,
       operations,
@@ -745,7 +800,7 @@ function claim(database, pullRequestUrl, writeKey, requestedAuthorLabel) {
   });
 }
 
-function reserveWrite(database, leaseId, writeKey) {
+function recordWriteReservation(database, leaseId, writeKey) {
   const canonicalWriteKey = normalizeWriteKey(writeKey);
   return transaction(database, () => {
     if (getMeta(database, "own_mode") !== "fix-and-push") {
@@ -778,10 +833,48 @@ function reserveWrite(database, leaseId, writeKey) {
   });
 }
 
+function abandonClaim(database, leaseId) {
+  return transaction(database, () => {
+    const batch = database
+      .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
+      .get(leaseId);
+    if (!batch) return;
+    database
+      .prepare(
+        `UPDATE batches SET status = 'pending', attempts = MAX(attempts - 1, 0),
+          lease_id = NULL, write_key = NULL, next_attempt_at = NULL, updated_at = ?
+        WHERE id = ?`,
+      )
+      .run(new Date().toISOString(), batch.id);
+  });
+}
+
+async function reserveWrite(database, leaseId, writeKey) {
+  assertWriteMode(database);
+  const reservation = await acquireSharedWriteReservation(database, leaseId, writeKey);
+  try {
+    return {
+      ...recordWriteReservation(database, leaseId, reservation.writeKey),
+      status: reservation.status,
+    };
+  } catch (error) {
+    await releaseSharedWriteReservation(database, leaseId);
+    throw error;
+  }
+}
+
 function assertWriteMode(database) {
   if (getMeta(database, "own_mode") !== "fix-and-push") {
     fail("Task policy does not allow repository write reservations");
   }
+}
+
+function assertActiveLease(database, leaseId) {
+  const batch = database
+    .prepare("SELECT id, write_key FROM batches WHERE lease_id = ? AND status = 'in_flight'")
+    .get(leaseId);
+  if (!batch) fail("Active lease was not found");
+  return batch;
 }
 
 function acknowledge(database, leaseId, input) {
@@ -867,20 +960,6 @@ function skipOperation(database, leaseId, input) {
       )
       .get(batch.id);
     const batchCompleted = Number(remaining.count) === 0;
-    if (batchCompleted) {
-      database
-        .prepare(
-          `UPDATE events SET status = 'completed', updated_at = ?
-          WHERE batch_id = ? AND status = 'pending'`,
-        )
-        .run(now, batch.id);
-      database
-        .prepare(
-          `UPDATE batches SET status = 'completed', lease_id = NULL, write_key = NULL,
-            next_attempt_at = NULL, updated_at = ? WHERE id = ?`,
-        )
-        .run(now, batch.id);
-    }
     return {
       batchId: batch.id,
       commentRef: input.commentRef,
@@ -891,11 +970,16 @@ function skipOperation(database, leaseId, input) {
   });
 }
 
-function complete(database, leaseId, input) {
+function completePostIds(input) {
   const postIds = Array.isArray(input.postIds) ? [...new Set(input.postIds)] : [];
   if (postIds.some((postId) => typeof postId !== "string" || postId.length === 0)) {
     fail("postIds must contain strings");
   }
+  return postIds;
+}
+
+function complete(database, leaseId, input) {
+  const postIds = completePostIds(input);
   return transaction(database, () => {
     const batch = database
       .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
@@ -927,8 +1011,12 @@ function complete(database, leaseId, input) {
   });
 }
 
-function failLease(database, leaseId, input) {
+function validateFailureInput(input) {
   if (typeof input.error !== "string" || input.error.length === 0) fail("error is required");
+}
+
+function failLease(database, leaseId, input) {
+  validateFailureInput(input);
   return transaction(database, () => {
     const batch = database
       .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
@@ -994,6 +1082,13 @@ function recover(database) {
       quarantinedBatches: quarantinedBatches(database),
     };
   });
+}
+
+function inFlightLeaseIds(database) {
+  return database
+    .prepare("SELECT lease_id FROM batches WHERE status = 'in_flight' AND lease_id IS NOT NULL")
+    .all()
+    .map((batch) => batch.lease_id);
 }
 
 function status(database) {
@@ -1105,28 +1200,39 @@ async function main() {
           : options["no-author-label"] === true
             ? null
             : undefined;
-      write({
-        ok: true,
-        ...claim(
-          database,
-          required(options, "pull-request"),
-          options["write-key"],
-          requestedAuthorLabel,
-        ),
-      });
+      if (options["write-key"] !== undefined) assertWriteMode(database);
+      const claimed = claim(database, required(options, "pull-request"), requestedAuthorLabel);
+      if (options["write-key"] === undefined) {
+        write({ ok: true, ...claimed });
+        return;
+      }
+      try {
+        const reservation = await reserveWrite(database, claimed.leaseId, options["write-key"]);
+        write({ ok: true, ...claimed, writeKey: reservation.writeKey });
+      } catch (error) {
+        abandonClaim(database, claimed.leaseId);
+        throw error;
+      }
       return;
     }
     if (command === "reserve-write") {
-      assertWriteMode(database);
-      await verifyOwnership(database);
       write({
         ok: true,
-        ...reserveWrite(database, required(options, "lease"), required(options, "write-key")),
+        ...(await reserveWrite(
+          database,
+          required(options, "lease"),
+          required(options, "write-key"),
+        )),
       });
       return;
     }
     if (command === "complete") {
-      write({ ok: true, ...complete(database, required(options, "lease"), await readInput()) });
+      const leaseId = required(options, "lease");
+      const input = await readInput();
+      completePostIds(input);
+      const batch = assertActiveLease(database, leaseId);
+      if (batch.write_key !== null) await releaseSharedWriteReservation(database, leaseId);
+      write({ ok: true, ...complete(database, leaseId, input) });
       return;
     }
     if (command === "ack") {
@@ -1141,10 +1247,18 @@ async function main() {
       return;
     }
     if (command === "fail") {
-      write({ ok: true, ...failLease(database, required(options, "lease"), await readInput()) });
+      const leaseId = required(options, "lease");
+      const input = await readInput();
+      validateFailureInput(input);
+      const batch = assertActiveLease(database, leaseId);
+      if (batch.write_key !== null) await releaseSharedWriteReservation(database, leaseId);
+      write({ ok: true, ...failLease(database, leaseId, input) });
       return;
     }
     if (command === "recover") {
+      for (const leaseId of inFlightLeaseIds(database)) {
+        await releaseSharedWriteReservation(database, leaseId);
+      }
       write({ ok: true, ...recover(database) });
       return;
     }

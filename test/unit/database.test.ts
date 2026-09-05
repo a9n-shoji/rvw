@@ -127,7 +127,7 @@ describe("RvwDatabase", () => {
     second.close();
   });
 
-  it("fences superseded comment watch tasks while preserving idempotent activation and resume", () => {
+  it("fences superseded watch tasks and serializes writers across generations", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-generation-"));
     const filePath = path.join(directory, "rvw.db");
     const taskA = "11111111-1111-4111-8111-111111111111";
@@ -144,6 +144,18 @@ describe("RvwDatabase", () => {
       taskId: taskA,
       generation: 1,
     });
+    const leaseA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const leaseB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    expect(first.reserveCommentWatchWriter(taskA, 1, leaseA, "Acme/Repo")).toMatchObject({
+      taskId: taskA,
+      generation: 1,
+      leaseId: leaseA,
+      writeKey: "acme/repo",
+      status: "reserved",
+    });
+    expect(first.reserveCommentWatchWriter(taskA, 1, leaseA, "acme/repo")).toMatchObject({
+      status: "existing",
+    });
 
     expect(first.activateCommentWatchTask(taskB)).toMatchObject({
       taskId: taskB,
@@ -154,6 +166,26 @@ describe("RvwDatabase", () => {
       "active generationではありません",
     );
     expect(() => first.activateCommentWatchTask(taskA)).toThrow("既に別のtaskへ引き継がれています");
+    expect(() => first.reserveCommentWatchWriter(taskA, 1, leaseB, "acme/other")).toThrow(
+      "active generationではありません",
+    );
+    expect(() => first.reserveCommentWatchWriter(taskB, 2, leaseB, "acme/repo")).toThrow(
+      "別のwatch workerが使用中",
+    );
+    expect(first.releaseCommentWatchWriter(taskA, 1, leaseA)).toMatchObject({
+      taskId: taskA,
+      generation: 1,
+      leaseId: leaseA,
+      writeKey: "acme/repo",
+      status: "released",
+    });
+    expect(first.reserveCommentWatchWriter(taskB, 2, leaseB, "acme/repo")).toMatchObject({
+      taskId: taskB,
+      generation: 2,
+      leaseId: leaseB,
+      writeKey: "acme/repo",
+      status: "reserved",
+    });
 
     const pullRequest = first.upsertPullRequest(
       github,

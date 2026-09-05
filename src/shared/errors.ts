@@ -40,6 +40,7 @@ export type RvwErrorCode =
   | "STRUCTURE_CONFLICT"
   | "UNSUPPORTED_IMAGE"
   | "WALKTHROUGH_DELETE_CONFIRMATION_REQUIRED"
+  | "WATCH_WRITE_RESERVED"
   | "WATCH_TASK_SUPERSEDED";
 
 export interface SerializedRvwError {

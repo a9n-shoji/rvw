@@ -116,6 +116,8 @@ rvw comment list <PULL_REQUEST> --state unresolved --limit 50 --offset 0 --json
 rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
 rvw comment watch-task activate --task-id <UUID> --json
 rvw comment watch-task verify --task-id <UUID> --generation <N> --json
+rvw comment watch-task reserve-write --task-id <UUID> --generation <N> --lease-id <UUID> --write-key <OWNER/REPOSITORY> --json
+rvw comment watch-task release-write --task-id <UUID> --generation <N> --lease-id <UUID> --json
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
 rvw comment get <COMMENT_URI> --live --json
@@ -335,6 +337,12 @@ returns the same generation. Activating a different task supersedes the previous
 activation or verification by the superseded task fails with `WATCH_TASK_SUPERSEDED`.
 `comment watch-task verify` never changes ownership. The cursor remains only an event-stream position
 and never contains or grants consumer authority.
+`comment watch-task reserve-write` verifies the supplied task generation and acquires the normalized
+repository writer key in the same rvw SQLite transaction. The lease ID makes an exact retry
+idempotent. Reservations survive activation of a newer generation, so the new task cannot overlap an
+older in-flight writer. `comment watch-task release-write` is scoped to the exact task, generation,
+and lease but deliberately does not require that generation to remain active; this lets superseded
+in-flight work release its reservation. An absent exact reservation is an idempotent success.
 
 rvw does not start an Agent, store its queue, or authorize code changes. The external task owns
 batching, retries, and self-event suppression. The bundled `rvw-watch-comments` Skill supplies a
@@ -364,9 +372,12 @@ without waiting for another watch event or reconnect. Before spawning rvw, the d
 one process-owner lock beside the canonical task-state path. A concurrent driver for that state exits
 without starting another watcher. The lock is released on graceful shutdown, and a later driver reclaims
 it only when the recorded owner process no longer exists.
-The driver verifies shared authority before startup, reconnect, pending claims, and write reservation;
-acknowledgement writes carry the fence into the same rvw transaction. Legacy task state without a
-generation fails closed instead of claiming current ownership.
+The driver verifies shared authority before startup, reconnect, and pending claims. Writer reservation
+combines that authority check with shared-key acquisition in one rvw transaction; task-local
+`write_key` is only a recovery mirror. Completion, failure, and recovery release the shared lease
+before clearing that mirror. A prior generation's reservation continues blocking the same repository
+until release. Acknowledgement writes carry their fence into the same rvw transaction. Legacy task
+state without a generation fails closed instead of claiming current ownership.
 
 ## Walkthrough lifecycle
 

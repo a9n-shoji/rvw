@@ -1825,6 +1825,14 @@ export class RvwService {
     };
   }
 
+  reserveCommentWatchWriter(taskId: string, generation: number, leaseId: string, writeKey: string) {
+    return this.database.reserveCommentWatchWriter(taskId, generation, leaseId, writeKey);
+  }
+
+  releaseCommentWatchWriter(taskId: string, generation: number, leaseId: string) {
+    return this.database.releaseCommentWatchWriter(taskId, generation, leaseId);
+  }
+
   listComments(pullRequestId: string, resolved?: boolean): ReviewComment[] {
     this.getPullRequest(pullRequestId);
     return this.database.listComments(pullRequestId, resolved);

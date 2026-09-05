@@ -104,6 +104,9 @@ describe("rvw-watch-comments task state", () => {
         reason: "gone",
       }),
     ).toMatchObject({ status: "skipped", batchCompleted: true });
+    expect(
+      run(state, "complete", ["--lease", String(claimed.leaseId)], { postIds: [] }),
+    ).toMatchObject({ status: "completed" });
     expect(run(state, "list")).toMatchObject({ inFlight: 0, pending: [] });
     expect(run(state, "status")).toMatchObject({
       batches: { completed: 1, inFlight: 0, unbatchedEvents: 0 },
@@ -196,6 +199,9 @@ describe("rvw-watch-comments task state", () => {
         },
       ],
     });
+    expect(
+      run(state, "complete", ["--lease", String(claimed.leaseId)], { postIds: [] }),
+    ).toMatchObject({ status: "completed" });
   });
 
   it("allows concurrent leases for the same PR under an investigate-only policy", () => {
@@ -275,7 +281,7 @@ describe("rvw-watch-comments task state", () => {
         "--write-key",
         "acme/repo",
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", env: authorityEnvironment(state) },
     );
     expect(writeReservation.status).toBe(1);
     expect(writeReservation.stderr).toContain(
@@ -496,7 +502,7 @@ describe("rvw-watch-comments task state", () => {
         "--write-key",
         "acme/repo",
       ],
-      { encoding: "utf8" },
+      { encoding: "utf8", env: authorityEnvironment(state) },
     );
     expect(blocked.status).toBe(1);
 

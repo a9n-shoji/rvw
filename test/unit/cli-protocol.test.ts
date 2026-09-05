@@ -226,6 +226,12 @@ describe("CLI protocol discovery", () => {
     ]);
     expect(
       program.commands
+        .find((command) => command.name() === "comment")
+        ?.commands.find((command) => command.name() === "watch-task")
+        ?.commands.map((command) => command.name()),
+    ).toEqual(["activate", "verify", "reserve-write", "release-write"]);
+    expect(
+      program.commands
         .find((command) => command.name() === "walkthrough")
         ?.commands.map((command) => command.name()),
     ).toEqual(["publish", "get", "update", "delete"]);
@@ -342,6 +348,74 @@ describe("CLI protocol discovery", () => {
       generation: 7,
       status: "activated",
     });
+  });
+
+  it("reserves a shared writer with the watch generation fence", async () => {
+    const taskId = "11111111-1111-4111-8111-111111111111";
+    const leaseId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const reserveCommentWatchWriter = vi.fn().mockReturnValue({
+      databaseId: "0123456789abcdef0123456789abcdef",
+      taskId,
+      generation: 7,
+      leaseId,
+      writeKey: "acme/repo",
+      status: "reserved",
+    });
+    const { runtime } = mockRuntime({ reserveCommentWatchWriter });
+    const readStdout = captureStdout();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "comment",
+      "watch-task",
+      "reserve-write",
+      "--task-id",
+      taskId,
+      "--generation",
+      "7",
+      "--lease-id",
+      leaseId,
+      "--write-key",
+      "Acme/Repo",
+      "--json",
+    ]);
+
+    expect(reserveCommentWatchWriter).toHaveBeenCalledWith(taskId, 7, leaseId, "acme/repo");
+    expect(readStdout()).toMatchObject({ ok: true, leaseId, writeKey: "acme/repo" });
+  });
+
+  it("releases an exact shared writer lease after supersession", async () => {
+    const taskId = "11111111-1111-4111-8111-111111111111";
+    const leaseId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const releaseCommentWatchWriter = vi.fn().mockReturnValue({
+      databaseId: "0123456789abcdef0123456789abcdef",
+      taskId,
+      generation: 7,
+      leaseId,
+      writeKey: "acme/repo",
+      status: "released",
+    });
+    const { runtime } = mockRuntime({ releaseCommentWatchWriter });
+    const readStdout = captureStdout();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "comment",
+      "watch-task",
+      "release-write",
+      "--task-id",
+      taskId,
+      "--generation",
+      "7",
+      "--lease-id",
+      leaseId,
+      "--json",
+    ]);
+
+    expect(releaseCommentWatchWriter).toHaveBeenCalledWith(taskId, 7, leaseId);
+    expect(readStdout()).toMatchObject({ ok: true, leaseId, status: "released" });
   });
 
   it("creates one unresolved comment from a strict stdin payload", async () => {

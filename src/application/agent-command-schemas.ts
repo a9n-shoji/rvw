@@ -39,6 +39,7 @@ const expectedUpdatedAt = z.string().min(1).max(100);
 const commentWatchTaskFenceSchema = z
   .object({ taskId: z.uuid(), generation: z.number().int().positive() })
   .strict();
+const commentWatchLeaseSchema = commentWatchTaskFenceSchema.extend({ leaseId: z.uuid() }).strict();
 
 export const commentTargetInputSchema = z
   .union([
@@ -454,6 +455,10 @@ export const agentCommandInputSchemas = {
     .strict(),
   "comment.watch.activate": z.object({ taskId: z.uuid() }).strict(),
   "comment.watch.verify": commentWatchTaskFenceSchema,
+  "comment.watch.reserveWrite": commentWatchLeaseSchema
+    .extend({ writeKey: z.string().regex(/^[^/\s]+\/[^/\s]+$/) })
+    .strict(),
+  "comment.watch.releaseWrite": commentWatchLeaseSchema,
   "comment.create": commentCreateInputSchema,
   "comment.get": z.object({ uri: commentUri, live: z.boolean().default(false) }).strict(),
   "comment.reply": z.object({ uri: commentUri, reply: commentReplyInputSchema }).strict(),

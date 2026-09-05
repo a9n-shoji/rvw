@@ -189,7 +189,13 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
       },
     );
     expect(edited.status, edited.stderr).toBe(0);
-    runState(state, "complete", ["--lease", leaseId], { postIds: [] });
+    runState(
+      state,
+      "complete",
+      ["--lease", leaseId],
+      { postIds: [] },
+      childEnvironment(databasePath),
+    );
 
     const verified = new RvwDatabase({
       filePath: databasePath,
@@ -249,7 +255,13 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
       },
     );
     expect(followUpEdited.status, followUpEdited.stderr).toBe(0);
-    runState(state, "complete", ["--lease", followUpLeaseId], { postIds: [] });
+    runState(
+      state,
+      "complete",
+      ["--lease", followUpLeaseId],
+      { postIds: [] },
+      childEnvironment(databasePath),
+    );
 
     const finalThread = new RvwDatabase({
       filePath: databasePath,

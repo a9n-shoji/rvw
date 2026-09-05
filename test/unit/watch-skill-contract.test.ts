@@ -40,6 +40,11 @@ describe("rvw-watch-comments delegation contract", () => {
       /immutable task policy allows `fix-and-push`[\s\S]*same-PR\s+follow-ups remain durable but ineligible/,
     );
     expect(skill).toMatch(/repository write\s+reservations serialize writers across different PRs/);
+    expect(skill).toMatch(/different task-state databases and generations[\s\S]*same repository/);
+    expect(skill).toMatch(
+      /atomically verifies the shared generation and acquires the shared repository key/,
+    );
+    expect(skill).toMatch(/Activation does not discard[\s\S]*existing reservation/);
   });
 
   it("separates historical actionability from shared watcher authority", () => {

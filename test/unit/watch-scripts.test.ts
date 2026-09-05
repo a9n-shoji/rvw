@@ -69,11 +69,37 @@ if (args[0] === "protocol") {
 } else if (args[0] === "comment" && args[1] === "watch-task") {
   const taskIndex = args.indexOf("--task-id");
   const generationIndex = args.indexOf("--generation");
+  const leaseIndex = args.indexOf("--lease-id");
+  const writeKeyIndex = args.indexOf("--write-key");
   const priorVerifications = priorCalls.filter(
     (call) => call.args[0] === "comment" && call.args[1] === "watch-task" && call.args[2] === "verify"
   ).length;
   if (args[2] === "verify" && Number(process.env.FAKE_RVW_VERIFY_LIMIT ?? "999999") <= priorVerifications) {
     json({ ok: false, error: { code: "WATCH_TASK_SUPERSEDED", message: "superseded" } }, 2);
+  } else if (args[2] === "reserve-write") {
+    if (process.env.FAKE_RVW_RESERVE_SUPERSEDED === "1") {
+      json({ ok: false, error: { code: "WATCH_TASK_SUPERSEDED", message: "superseded" } }, 2);
+    } else {
+      json({
+        ok: true,
+        databaseId: "0123456789abcdef0123456789abcdef",
+        taskId: args[taskIndex + 1],
+        generation: Number(args[generationIndex + 1]),
+        leaseId: args[leaseIndex + 1],
+        writeKey: args[writeKeyIndex + 1],
+        status: "reserved"
+      });
+    }
+  } else if (args[2] === "release-write") {
+    json({
+      ok: true,
+      databaseId: "0123456789abcdef0123456789abcdef",
+      taskId: args[taskIndex + 1],
+      generation: Number(args[generationIndex + 1]),
+      leaseId: args[leaseIndex + 1],
+      writeKey: null,
+      status: "absent"
+    });
   } else json({
     ok: true,
     databaseId: "0123456789abcdef0123456789abcdef",
@@ -285,7 +311,13 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(replyCall?.input).toMatchObject({ body: "🔎 確認中です…", authorLabel: "Codex" });
     expect(typeof (replyCall?.input as { idempotencyKey?: unknown }).idempotencyKey).toBe("string");
 
-    runState(state, "complete", ["--lease", firstAcknowledgement.leaseId], { postIds: [] });
+    runState(
+      state,
+      "complete",
+      ["--lease", firstAcknowledgement.leaseId],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
     runState(state, "ingest", [], {
       type: "comment-posted",
       cursor: "cursor-2",
@@ -451,7 +483,13 @@ describe("rvw-watch-comments bundled scripts", () => {
     const replyCalls = readFakeCalls(fake.log).filter((call) => call.args[1] === "reply");
     expect(replyCalls).toHaveLength(1);
     expect(replyCalls[0]?.args[2]).toBe(unresolvedRef);
-    runState(state, "complete", ["--lease", acknowledged.leaseId], { postIds: [] });
+    runState(
+      state,
+      "complete",
+      ["--lease", acknowledged.leaseId],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
     expect(runState(state, "list")).toMatchObject({ pending: [] });
   });
 
@@ -516,7 +554,10 @@ describe("rvw-watch-comments bundled scripts", () => {
     );
     expect(firstReply.status).toBe(0);
     expect(JSON.parse(firstReply.stdout)).toMatchObject({ post: { id: "status-post-1" } });
-    expect(runState(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
+    expect(runState(state, "recover", [], undefined, fakeEnvironment(fake))).toMatchObject({
+      recovered: 1,
+      pending: 1,
+    });
 
     const mismatchedRestart = spawnSync(
       process.execPath,
@@ -592,7 +633,13 @@ describe("rvw-watch-comments bundled scripts", () => {
       undefined,
       fakeEnvironment(fake),
     ) as { leaseId: string };
-    runState(state, "complete", ["--lease", claimed.leaseId], { postIds: [] });
+    runState(
+      state,
+      "complete",
+      ["--lease", claimed.leaseId],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
     expect(runState(state, "status")).toMatchObject({
       authorLabel: "Codex",
       authorLabelBound: true,
@@ -648,6 +695,77 @@ describe("rvw-watch-comments bundled scripts", () => {
       cursor: "cursor-1",
       batches: { inFlight: 0, unbatchedEvents: 1 },
     });
+  });
+
+  it("does not expose a write-capable claim when shared reservation loses the generation race", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-writer-fence-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    runState(state, "init", ["--own-mode", "fix-and-push"]);
+    activateState(state, fake);
+    runState(state, "ingest", [], {
+      type: "ready",
+      databaseId: "0123456789abcdef0123456789abcdef",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    runState(state, "ingest", [], {
+      type: "comment-posted",
+      cursor: "cursor-1",
+      event: {
+        sequence: 1,
+        postId: "human-post-writer-fence",
+        commentRef: "rvw://comment/comment-writer-fence",
+        pullRequestUrl: "https://github.com/acme/repo/pull/1",
+        createdAt: "2026-08-20T00:00:00.000Z",
+        deleted: false,
+      },
+    });
+
+    const rejected = spawnSync(
+      process.execPath,
+      [
+        stateScript,
+        "claim",
+        "--state",
+        state,
+        "--pull-request",
+        "https://github.com/acme/repo/pull/1",
+        "--write-key",
+        "acme/repo",
+      ],
+      {
+        encoding: "utf8",
+        env: { ...fakeEnvironment(fake), FAKE_RVW_RESERVE_SUPERSEDED: "1" },
+      },
+    );
+
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain("WATCH_TASK_SUPERSEDED");
+    expect(runState(state, "status")).toMatchObject({
+      batches: { pending: 1, inFlight: 0 },
+    });
+    const claimed = runState(
+      state,
+      "claim",
+      ["--pull-request", "https://github.com/acme/repo/pull/1", "--write-key", "acme/repo"],
+      undefined,
+      fakeEnvironment(fake),
+    );
+    expect(claimed).toMatchObject({ attempts: 1, writeKey: "acme/repo" });
+    runState(
+      state,
+      "complete",
+      ["--lease", String(claimed.leaseId)],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
+    const writerCalls = readFakeCalls(fake.log).filter(
+      (call) => call.args[0] === "comment" && call.args[1] === "watch-task",
+    );
+    expect(writerCalls.map((call) => call.args[2])).toEqual(
+      expect.arrayContaining(["reserve-write", "release-write"]),
+    );
   });
 
   it("drives RFC 7464 intake and auto-ack without an Agent shell round trip", async () => {
@@ -936,9 +1054,15 @@ describe("rvw-watch-comments bundled scripts", () => {
       batches: { inFlight: 1, unbatchedEvents: 1 },
     });
 
-    runState(state, "complete", ["--lease", String(firstAcknowledgements[0]?.leaseId)], {
-      postIds: [],
-    });
+    runState(
+      state,
+      "complete",
+      ["--lease", String(firstAcknowledgements[0]?.leaseId)],
+      {
+        postIds: [],
+      },
+      fakeEnvironment(fake),
+    );
     const second = await output.waitFor(
       (message) =>
         message.type === "batch-acknowledged" &&
@@ -1011,8 +1135,20 @@ describe("rvw-watch-comments bundled scripts", () => {
       batches: { inFlight: 2, unbatchedEvents: 0 },
     });
 
-    runState(state, "complete", ["--lease", String(first.leaseId)], { postIds: [] });
-    runState(state, "complete", ["--lease", String(followUp.leaseId)], { postIds: [] });
+    runState(
+      state,
+      "complete",
+      ["--lease", String(first.leaseId)],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
+    runState(
+      state,
+      "complete",
+      ["--lease", String(followUp.leaseId)],
+      { postIds: [] },
+      fakeEnvironment(fake),
+    );
 
     child.kill("SIGTERM");
     const code = await new Promise<number | null>((resolve, reject) => {
@@ -1045,10 +1181,16 @@ describe("rvw-watch-comments bundled scripts", () => {
     const first = await output.waitFor(
       (message) => message.type === "batch-acknowledged" && message.attempts === 1,
     );
-    const failed = runState(state, "fail", ["--lease", String(first.leaseId)], {
-      error: "No subagent slot accepted the lease",
-      retryable: true,
-    });
+    const failed = runState(
+      state,
+      "fail",
+      ["--lease", String(first.leaseId)],
+      {
+        error: "No subagent slot accepted the lease",
+        retryable: true,
+      },
+      fakeEnvironment(fake),
+    );
     expect(failed).toMatchObject({ status: "pending", attempts: 1 });
     expect(runState(state, "list")).toMatchObject({ inFlight: 0, pending: [] });
 

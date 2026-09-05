@@ -299,6 +299,8 @@ rvw comment list <PR_REF> --state unresolved --limit 50 --offset 0 --json
 rvw comment watch [--after <CURSOR>] [--interval 10] --json-seq
 rvw comment watch-task activate --task-id <UUID> --json
 rvw comment watch-task verify --task-id <UUID> --generation <N> --json
+rvw comment watch-task reserve-write --task-id <UUID> --generation <N> --lease-id <UUID> --write-key <OWNER/REPOSITORY> --json
+rvw comment watch-task release-write --task-id <UUID> --generation <N> --lease-id <UUID> --json
 rvw comment get <COMMENT_URI> --json
 rvw comment get <COMMENT_URI> --include-pr-body --json
 rvw comment get <COMMENT_URI> --live --json
@@ -321,7 +323,9 @@ stdinをcloseし、shellではpipe、quoted heredoc、input redirectionのいず
 
 `comment watch-task`は同じrvw databaseを監視する外部taskのgenerationを管理します。新taskだけが
 `activate`し、再開taskは保存済みgenerationを`verify`します。comment watch cursorは引き続きevent位置
-だけを表し、consumer ownershipとは独立です。
+だけを表し、consumer ownershipとは独立です。repository writer reservationもrvw databaseで共有され、
+active generationの検証と取得が同じtransactionで行われます。旧generationの取得済みreservationは
+releaseされるまで新generationをブロックします。
 
 `comment create`は登録済みPR、通常のcomment target、本文、任意のAgent名、投稿単位code referenceをstdin JSONで受け取り、
 未解決のroot threadを一件作成します。repository targetはexact commit、path、任意のinclusive line rangeを

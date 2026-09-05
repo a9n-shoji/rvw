@@ -2572,15 +2572,20 @@ task ID and generation. Retaining superseded registrations is necessary to disti
 activation retry from an old task attempting to reclaim ownership. Legacy task states without a bound
 generation fail closed.
 
-Verify authority before driver startup, reconnect, pending-work pumps, and repository write reservation.
-Carry the same fence into acknowledgement reply/edit transactions so a concurrent activation cannot
-race a successful verification. Keep the opaque watch cursor unchanged as only the event-stream
-position.
+Verify authority before driver startup, reconnect, and pending-work pumps. Move repository writer
+reservations into the rvw database and combine active-generation verification with shared-key
+acquisition in one immediate transaction, while retaining only a recovery mirror in task-private
+state. Activation leaves prior-generation reservations intact. Completion, failure, and recovery may
+release an exact task/generation/lease reservation even after supersession. Carry the same fence into
+acknowledgement reply/edit transactions so a concurrent activation cannot race a successful
+verification. Keep the opaque watch cursor unchanged as only the event-stream position.
 
 Treat each post event as a historical fact. Auto-ack uses the fresh thread as authoritative current
 state, durably marks resolved or missing operations skipped, and filters them from the actionable event
-and operation payload. A mixed batch continues with its unresolved operations; the final skip in an
-all-non-actionable batch atomically completes the batch and produces only a non-dispatchable diagnostic.
+and operation payload. A mixed batch continues with its unresolved operations. After the final skip in
+an all-non-actionable batch, auto-ack completes the lease through the same shared-release boundary and
+produces only a non-dispatchable diagnostic. A crash between skip and completion leaves no actionable
+operation and recovery can safely finish the empty lease.
 
 ### Trade-offs
 
@@ -2588,6 +2593,8 @@ all-non-actionable batch atomically completes the batch and produces only a non-
   minimum history needed for idempotent activation without allowing a superseded task to reactivate.
 - Drivers perform periodic authority reads and acknowledgement writes include a fence check, adding
   small local SQLite/CLI overhead in exchange for revocation across independent task-state paths.
+- Shared writer rows add one rvw CLI round trip at reservation and release boundaries. This is the
+  authoritative cross-state exclusion point; the task-local unique index remains defensive only.
 - Existing task state remains inspectable for recovery diagnostics, but cannot resume automatically;
   the safe migration path is to initialize and explicitly activate a new logical task.
 - Supersession prevents new claims, acknowledgements, delegation, and write reservations, but is not

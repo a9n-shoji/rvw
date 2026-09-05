@@ -349,6 +349,19 @@ export async function dispatchAgentSocketRequest(
       const input = parseOperationInput("comment.watch.verify", request.input);
       return service.verifyCommentWatchTask(input.taskId, input.generation);
     }
+    case "comment.watch.reserveWrite": {
+      const input = parseOperationInput("comment.watch.reserveWrite", request.input);
+      return service.reserveCommentWatchWriter(
+        input.taskId,
+        input.generation,
+        input.leaseId,
+        input.writeKey,
+      );
+    }
+    case "comment.watch.releaseWrite": {
+      const input = parseOperationInput("comment.watch.releaseWrite", request.input);
+      return service.releaseCommentWatchWriter(input.taskId, input.generation, input.leaseId);
+    }
     case "comment.create": {
       const input = parseOperationInput("comment.create", request.input);
       return await service.createCommentForReference(

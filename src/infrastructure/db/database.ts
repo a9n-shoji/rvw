@@ -77,6 +77,12 @@ export interface CommentWatchTaskAuthority {
 
 export type CommentWatchTaskFence = Pick<CommentWatchTaskAuthority, "taskId" | "generation">;
 
+export interface CommentWatchWriteReservation extends CommentWatchTaskFence {
+  databaseId: string;
+  leaseId: string;
+  writeKey: string;
+}
+
 function stringValue(row: DbRow, key: string): string {
   const value = row[key];
   if (typeof value !== "string") throw new RvwError("DATABASE_ERROR", `DB列 ${key} が不正です。`);
@@ -824,6 +830,123 @@ export class RvwDatabase {
       );
     }
     return { databaseId: this.getCommentWatchDatabaseId(), taskId, generation };
+  }
+
+  reserveCommentWatchWriter(
+    taskId: string,
+    generation: number,
+    leaseId: string,
+    writeKey: string,
+  ): CommentWatchWriteReservation & { status: "reserved" | "existing" } {
+    if (!/^[^/\s]+\/[^/\s]+$/.test(writeKey)) {
+      throw new RvwError("INVALID_INPUT", "writer reservation keyはowner/repository形式です。");
+    }
+    const canonicalWriteKey = writeKey.toLowerCase();
+    return this.immediateTransaction(() => {
+      const authority = this.assertCommentWatchTaskAuthority(taskId, generation);
+      const existingLease = this.database
+        .prepare(
+          `SELECT lease_id, write_key, task_id, generation
+          FROM comment_watch_write_reservations WHERE lease_id = ?`,
+        )
+        .get(leaseId) as DbRow | undefined;
+      if (existingLease) {
+        if (
+          stringValue(existingLease, "write_key") !== canonicalWriteKey ||
+          stringValue(existingLease, "task_id") !== taskId ||
+          numberValue(existingLease, "generation") !== generation
+        ) {
+          throw new RvwError(
+            "WATCH_WRITE_RESERVED",
+            "このleaseは別のcomment watch writer reservationに使用されています。",
+            { details: { taskId, generation, leaseId, writeKey: canonicalWriteKey } },
+          );
+        }
+        return { ...authority, leaseId, writeKey: canonicalWriteKey, status: "existing" };
+      }
+
+      const existingWriter = this.database
+        .prepare(
+          `SELECT lease_id, task_id, generation
+          FROM comment_watch_write_reservations WHERE write_key = ?`,
+        )
+        .get(canonicalWriteKey) as DbRow | undefined;
+      if (existingWriter) {
+        throw new RvwError(
+          "WATCH_WRITE_RESERVED",
+          `repository ${canonicalWriteKey} は別のwatch workerが使用中です。`,
+          {
+            details: {
+              writeKey: canonicalWriteKey,
+              ownerLeaseId: stringValue(existingWriter, "lease_id"),
+              ownerTaskId: stringValue(existingWriter, "task_id"),
+              ownerGeneration: numberValue(existingWriter, "generation"),
+            },
+          },
+        );
+      }
+
+      this.database
+        .prepare(
+          `INSERT INTO comment_watch_write_reservations(
+            lease_id, write_key, task_id, generation, acquired_at
+          ) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(leaseId, canonicalWriteKey, taskId, generation, new Date().toISOString());
+      return { ...authority, leaseId, writeKey: canonicalWriteKey, status: "reserved" };
+    });
+  }
+
+  releaseCommentWatchWriter(
+    taskId: string,
+    generation: number,
+    leaseId: string,
+  ): CommentWatchTaskFence & {
+    databaseId: string;
+    leaseId: string;
+    writeKey: string | null;
+    status: "released" | "absent";
+  } {
+    return this.immediateTransaction(() => {
+      const existing = this.database
+        .prepare(
+          `SELECT lease_id, write_key, task_id, generation
+          FROM comment_watch_write_reservations WHERE lease_id = ?`,
+        )
+        .get(leaseId) as DbRow | undefined;
+      if (!existing) {
+        return {
+          databaseId: this.getCommentWatchDatabaseId(),
+          taskId,
+          generation,
+          leaseId,
+          writeKey: null,
+          status: "absent",
+        };
+      }
+      if (
+        stringValue(existing, "task_id") !== taskId ||
+        numberValue(existing, "generation") !== generation
+      ) {
+        throw new RvwError(
+          "WATCH_WRITE_RESERVED",
+          "別のcomment watch taskが所有するwriter reservationは解放できません。",
+          { details: { taskId, generation, leaseId } },
+        );
+      }
+      const writeKey = stringValue(existing, "write_key");
+      this.database
+        .prepare("DELETE FROM comment_watch_write_reservations WHERE lease_id = ?")
+        .run(leaseId);
+      return {
+        databaseId: this.getCommentWatchDatabaseId(),
+        taskId,
+        generation,
+        leaseId,
+        writeKey,
+        status: "released",
+      };
+    });
   }
 
   getLatestCommentPostEventSequence(): number {

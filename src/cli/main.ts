@@ -1346,6 +1346,63 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       writeJson({ ok: true, ...result });
     });
 
+  watchTask
+    .command("reserve-write")
+    .requiredOption("--task-id <task-id>", "logical watch task ID")
+    .requiredOption("--generation <generation>", "watch generation")
+    .requiredOption("--lease-id <lease-id>", "task-local batch lease ID")
+    .requiredOption("--write-key <owner-repository>", "共有するowner/repository writer key")
+    .requiredOption("--json", "JSONで出力")
+    .action(
+      async (options: {
+        taskId: string;
+        generation: string;
+        leaseId: string;
+        writeKey: string;
+      }) => {
+        const input = {
+          taskId: z.uuid().parse(options.taskId),
+          generation: z.coerce.number().int().positive().parse(options.generation),
+          leaseId: z.uuid().parse(options.leaseId),
+          writeKey: z
+            .string()
+            .regex(/^[^/\s]+\/[^/\s]+$/)
+            .parse(options.writeKey.toLowerCase()),
+        };
+        const result = await callService("comment.watch.reserveWrite", input, () =>
+          getRuntime().service.reserveCommentWatchWriter(
+            input.taskId,
+            input.generation,
+            input.leaseId,
+            input.writeKey,
+          ),
+        );
+        writeJson({ ok: true, ...result });
+      },
+    );
+
+  watchTask
+    .command("release-write")
+    .requiredOption("--task-id <task-id>", "logical watch task ID")
+    .requiredOption("--generation <generation>", "watch generation")
+    .requiredOption("--lease-id <lease-id>", "task-local batch lease ID")
+    .requiredOption("--json", "JSONで出力")
+    .action(async (options: { taskId: string; generation: string; leaseId: string }) => {
+      const input = {
+        taskId: z.uuid().parse(options.taskId),
+        generation: z.coerce.number().int().positive().parse(options.generation),
+        leaseId: z.uuid().parse(options.leaseId),
+      };
+      const result = await callService("comment.watch.releaseWrite", input, () =>
+        getRuntime().service.releaseCommentWatchWriter(
+          input.taskId,
+          input.generation,
+          input.leaseId,
+        ),
+      );
+      writeJson({ ok: true, ...result });
+    });
+
   comment
     .command("create")
     .requiredOption("--stdin", "stdinからJSONを読む")

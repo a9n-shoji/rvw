@@ -33,7 +33,8 @@ tool stores identifiers, cursors, leases, retries, and generated post IDs, but n
 source. Separate watch tasks use separate state databases.
 The task database is private durable execution state; it is not consumer authority. rvw stores one
 shared logical watch generation for the selected rvw database so a newer task supersedes every older
-task even when their state paths differ.
+task even when their state paths differ. Repository writer reservations are shared in that same rvw
+database; the task database stores only a local mirror for lease recovery and status.
 
 Initialize once after running `gh api user --jq .login`:
 
@@ -98,8 +99,9 @@ the exact durable cursor. Before each initial connection or reconnect, it auto-a
 durable work up to the same capacity. The driver atomically owns one lock beside the canonical state
 path before spawning rvw. A second driver for the same state exits immediately; a later restart
 removes a stale lock only when its recorded owner process no longer exists.
-Before startup, reconnect, each pending-work pump, and every write reservation, the task verifies that
-its task ID and generation are still active in the rvw database. The auto-acknowledgement mutation also
+Before startup, reconnect, and each pending-work pump, the task verifies that its task ID and
+generation are still active in the rvw database. Writer reservation instead verifies that generation
+and acquires the shared repository key in one authoritative rvw transaction. The auto-acknowledgement mutation also
 carries that fencing identity, so supersession between verification and the database write is rejected
 atomically. A running superseded driver terminates instead of claiming or acknowledging more work.
 Supersession revokes new claims, acknowledgements, delegation, and write reservations; it is
@@ -209,12 +211,15 @@ node '<SKILL_DIR>/scripts/watch-state.mjs' reserve-write \
   --write-key '<HEAD_OWNER>/<HEAD_REPOSITORY>'
 ```
 
-The unique reservation prevents two leases from writing the same repository. A manually invoked
+The unique shared reservation prevents leases from different task-state databases and generations
+from writing the same repository. A manually invoked
 `auto-ack` may instead receive `--write-key` when that identity was already verified and the immutable
 task policy allows `fix-and-push`. An `investigate-and-reply`-only task cannot claim or reserve a write
 key; its leases stay unreserved and may inspect the same repository concurrently.
-`reserve-write` first verifies the shared generation; a superseded policy cannot acquire a new write
-reservation.
+`reserve-write` atomically verifies the shared generation and acquires the shared repository key; a
+superseded policy cannot acquire a new reservation between those steps. Activation does not discard
+an older generation's existing reservation. `complete`, `fail`, and `recover` release the exact
+lease-owned shared reservation before clearing its task-local mirror, including after supersession.
 
 ## Delegate every acknowledged batch immediately
 

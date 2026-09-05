@@ -226,9 +226,7 @@ async function main() {
       actionableOperations.map((operation) => operation.commentRef),
     );
     if (actionableOperations.length === 0) {
-      if (operations.length === 0) {
-        await runState(state, "complete", ["--lease", claimed.leaseId], { postIds: [] });
-      }
+      await runState(state, "complete", ["--lease", claimed.leaseId], { postIds: [] });
       process.stdout.write(
         `${JSON.stringify({
           ok: true,
