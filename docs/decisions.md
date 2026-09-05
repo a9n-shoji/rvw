@@ -1,5 +1,44 @@
 # Architecture decisions
 
+## 2026-09-05: Keep the default viewer origin stable
+
+### Problem
+
+`rvw open` previously passed port `0` by default, so each new browser-managed runtime could receive a
+different loopback port. Browser Notification permission and the explicit
+`rvw.agentNotifications` preference are both origin-scoped, and the port is part of that origin. Closing
+the final viewer and opening rvw again could therefore make a previously enabled notification setup look
+reset even though both sessions used `127.0.0.1`.
+
+The Agent notification path also combined browser/OS permission failures with comment revision polling,
+filtering, and Notification construction. Without a direct test action, a user could not distinguish
+those layers from the viewer UI.
+
+### Choice
+
+Start a new runtime on `127.0.0.1:43117` when `--port` is omitted. Keep an omitted port as a wildcard only
+when discovering an already active database runtime, so a custom or ephemeral active origin is reused
+instead of rejected. Make automatic port assignment an explicit `--port 0` choice, preserve explicit
+nonzero port conflict behavior, and fail clearly with custom-port and `--port 0` guidance when the stable
+default is occupied. Separate database runtimes that must coexist use distinct explicit ports or opt into
+an ephemeral port.
+
+Show the browser Notification permission state in the existing notification menu and add a direct test
+notification that does not depend on comments, Agent labels, or revision polling. Keep the production
+notification filter unchanged. Cover the direct test and the existing acknowledgement-to-final-edit path
+with the browser Notification stub, including the comments domain revision refetch.
+
+### Trade-offs
+
+- Normal rvw restarts retain one origin, so Chrome permission and the local notification preference need
+  to be granted only once after this change.
+- A process already using port 43117 now produces an actionable startup error instead of silently changing
+  origin. `--port 0` restores the former convenience when origin persistence is not required.
+- Multiple database runtimes need explicit port coordination. A deterministic hash-derived port was not
+  chosen because collisions still require fallback and would make the user-visible origin less obvious.
+- Existing permissions on past random-port origins cannot be migrated by the browser and must be granted
+  once on the new stable origin.
+
 ## 2026-08-30: Resolve supported Mermaid node-like bindings through diagram adapters
 
 ### Problem

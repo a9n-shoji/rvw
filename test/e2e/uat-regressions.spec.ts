@@ -335,12 +335,40 @@ test("notifies only after an Agent acknowledgement becomes a final reply", async
   const notificationToggle = page
     .getByRole("menu")
     .getByRole("menuitemcheckbox", { name: "Agentのコメントを通知" });
+  await expect(page.getByText("権限: 未確認", { exact: true })).toBeVisible();
   await expect(notificationToggle).toHaveAttribute("aria-checked", "false");
   await notificationToggle.click();
   await expect
     .poll(async () => await page.evaluate(() => localStorage.getItem("rvw.agentNotifications")))
     .toBe("enabled");
   await expect(page.getByRole("status")).toHaveText("Agentのコメントをブラウザ通知します。");
+  await actionsButton.click();
+  await expect(page.getByText("権限: 許可", { exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "テスト通知を送る" }).click();
+  await expect(page.getByRole("status")).toHaveText(
+    "テスト通知を送信しました。表示されない場合はChromeまたはOSの通知設定を確認してください。",
+  );
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate(
+          () =>
+            (
+              window as typeof window & {
+                rvwNotifications?: Array<{ title: string; options?: NotificationOptions }>;
+              }
+            ).rvwNotifications ?? [],
+        ),
+    )
+    .toEqual([
+      {
+        title: "rvw",
+        options: { body: "通知テスト" },
+      },
+    ]);
+  await page.evaluate(() => {
+    (window as typeof window & { rvwNotifications?: unknown[] }).rvwNotifications = [];
+  });
   await openCommentsSidebar(page);
 
   let commentId: string | null = null;

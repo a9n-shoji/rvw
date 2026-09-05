@@ -3,6 +3,7 @@ export const PROTOCOL_VERSION = 4;
 export const VIEWER_ID_HEADER = "x-rvw-viewer-id";
 export const VIEWER_OPEN_LEASE_HEADER = "x-rvw-viewer-open-lease";
 export const VIEWER_OPEN_LEASE_QUERY = "viewerLease";
+export const DEFAULT_VIEWER_PORT = 43_117;
 
 export const GIT_OBJECT_ID_PATTERN = /^[0-9a-f]{40,64}$/i;
 export const CONTENT_FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;

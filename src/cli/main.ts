@@ -19,6 +19,7 @@ import {
   DEFAULT_COMMENT_LIST_LIMIT,
   DEFAULT_COMMENT_WATCH_INTERVAL_SECONDS,
   DEFAULT_COMMENT_WATCH_LIMIT,
+  DEFAULT_VIEWER_PORT,
   PROTOCOL_VERSION,
   VIEWER_ID_HEADER,
   VIEWER_OPEN_LEASE_HEADER,
@@ -176,7 +177,11 @@ interface BackgroundOpenOptions {
 }
 
 interface BackgroundOpenDependencies {
-  forkWorker?: (reference: string | undefined, port: number) => BackgroundOpenChild;
+  forkWorker?: (
+    reference: string | undefined,
+    port: number,
+    requestedPort: number,
+  ) => BackgroundOpenChild;
   launchBrowser?: (url: string) => Promise<unknown>;
   tryRuntimeOpen?: (
     input: RuntimeViewerOpenInput,
@@ -376,12 +381,16 @@ function staticDirectory(): string {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]!;
 }
 
-function forkOpenWorker(reference: string | undefined, port: number): BackgroundOpenChild {
+function forkOpenWorker(
+  reference: string | undefined,
+  port: number,
+  requestedPort: number,
+): BackgroundOpenChild {
   const modulePath = process.argv[1];
   if (!modulePath) {
     throw new RvwError("PROCESS_FAILED", "rvw CLIの実行pathを解決できませんでした。");
   }
-  const args = ["__open-worker", "--port", String(port)];
+  const args = ["__open-worker", "--port", String(port), "--requested-port", String(requestedPort)];
   if (reference !== undefined) args.push("--reference", reference);
   return fork(path.resolve(modulePath), args, {
     cwd: process.cwd(),
@@ -393,13 +402,15 @@ function forkOpenWorker(reference: string | undefined, port: number): Background
 
 export async function startBackgroundOpen(
   reference: string | undefined,
-  port: number,
+  port: number | undefined,
   dependencies: BackgroundOpenDependencies = {},
 ): Promise<string> {
+  const startupPort = port ?? DEFAULT_VIEWER_PORT;
+  const requestedPort = port ?? 0;
   const input: RuntimeViewerOpenInput = {
     ...(reference === undefined ? {} : { reference }),
     cwd: process.cwd(),
-    requestedPort: port,
+    requestedPort,
   };
   const launchBrowser = dependencies.launchBrowser ?? (async (url) => await openBrowser(url));
   let existing: AgentSocketResult<RuntimeViewerOpenResult> | null = null;
@@ -419,7 +430,7 @@ export async function startBackgroundOpen(
       { details: existing.details },
     );
   }
-  const child = (dependencies.forkWorker ?? forkOpenWorker)(reference, port);
+  const child = (dependencies.forkWorker ?? forkOpenWorker)(reference, startupPort, requestedPort);
   return await completeBackgroundOpen(child, launchBrowser);
 }
 
@@ -653,11 +664,13 @@ async function waitForWorkerParentDisconnect(): Promise<void> {
 async function runOpenServer(
   runtimeFactory: () => Runtime,
   reference: string | undefined,
-  port: number,
+  port: number | undefined,
   openAutomatically: boolean,
   useAgentSocket: boolean,
   reuseExisting: boolean,
 ): Promise<void> {
+  const startupPort = port ?? DEFAULT_VIEWER_PORT;
+  const requestedPort = port ?? 0;
   let activeRuntime: Runtime | undefined;
   let running: RunningServer | undefined;
   let agentSocket: RunningRuntimeAgentSocket | undefined;
@@ -666,7 +679,7 @@ async function runOpenServer(
       const databaseFilePath = databasePathConfiguration().filePath;
       if (reuseExisting) {
         const startup = await acquireRuntimeOrReuseExisting(
-          runtimeViewerOpenInput(reference, process.cwd(), port),
+          runtimeViewerOpenInput(reference, process.cwd(), requestedPort),
           databaseFilePath,
         );
         if (startup.kind === "reused") {
@@ -694,7 +707,7 @@ async function runOpenServer(
     activeRuntime = runtimeFactory();
     const opened = await activeRuntime.service.openPullRequest(reference, process.cwd());
     running = await startServer(activeRuntime.service, {
-      port,
+      port: startupPort,
       staticDirectory: staticDirectory(),
       autoCloseWhenNoViewers: openAutomatically,
     });
@@ -716,6 +729,7 @@ async function runOpenWorker(
   runtimeFactory: () => Runtime,
   reference: string | undefined,
   port: number,
+  requestedPort: number,
 ): Promise<void> {
   let activeRuntime: Runtime | undefined;
   let running: RunningServer | undefined;
@@ -726,7 +740,7 @@ async function runOpenWorker(
     }
     const databaseFilePath = databasePathConfiguration().filePath;
     const startup = await acquireRuntimeOrReuseExisting(
-      runtimeViewerOpenInput(reference, process.cwd(), port),
+      runtimeViewerOpenInput(reference, process.cwd(), requestedPort),
       databaseFilePath,
     );
     if (startup.kind === "reused") {
@@ -910,12 +924,12 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .argument("[pull-request]", "PR URLまたは番号")
     .option("--no-open", "ブラウザを開かない")
     .option("--foreground", "terminalに接続したままviewerを実行")
-    .option("--port <port>", "listen port（0は自動）", parsePort, 0)
+    .option("--port <port>", `listen port（既定${DEFAULT_VIEWER_PORT}、0は自動）`, parsePort)
     .description("Pull Requestを開いてローカルviewerを起動")
     .action(
       async (
         reference: string | undefined,
-        options: { open: boolean; foreground?: boolean; port: number },
+        options: { open: boolean; foreground?: boolean; port?: number },
       ) => {
         if (options.open && !options.foreground && useAgentSocket) {
           const url = await startBackgroundOpen(reference, options.port);
@@ -937,9 +951,10 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .command("__open-worker", { hidden: true })
     .option("--reference <pull-request>")
     .requiredOption("--port <port>", "listen port", parsePort)
-    .action(async (options: { reference?: string; port: number }) => {
+    .requiredOption("--requested-port <port>", "requested listen port", parsePort)
+    .action(async (options: { reference?: string; port: number; requestedPort: number }) => {
       try {
-        await runOpenWorker(getRuntime, options.reference, options.port);
+        await runOpenWorker(getRuntime, options.reference, options.port, options.requestedPort);
       } catch (error) {
         const rvwError = asRvwError(error);
         const sent = await sendOpenWorkerMessage({

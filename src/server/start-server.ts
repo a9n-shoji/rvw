@@ -112,6 +112,21 @@ export async function startServer(
         });
       },
     );
-    server.on("error", reject);
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EADDRINUSE" || (options.port ?? 0) === 0) {
+        reject(error);
+        return;
+      }
+      reject(
+        new RvwError("PROCESS_FAILED", `port ${options.port}を使用できません。`, {
+          cause: error,
+          details: { port: options.port, reason: "address-in-use" },
+          suggestions: [
+            "起動中のprocessを停止するか、別の--portを指定してください。",
+            "一時的に空きportを自動選択する場合は--port 0を指定してください。",
+          ],
+        }),
+      );
+    });
   });
 }
