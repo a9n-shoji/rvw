@@ -2108,24 +2108,34 @@ test("restores a Structure reading snapshot across source navigation and browser
 test("ignores a pending Structure source response after browser Back restores an older destination", async ({
   page,
 }) => {
+  const preparedResponse = await page.request.get(
+    `/api/pull-requests/${pullRequestId}/structures/${fullStackStructureId}/anchors/resolve?locatorKind=node&nodeId=order-detail-page`,
+  );
+  expect(preparedResponse.ok()).toBe(true);
+  const preparedPayload: unknown = await preparedResponse.json();
   let releaseResponse!: () => void;
   let markRequestSeen!: () => void;
   let markResponseCompleted!: () => void;
+  let markResponseFailed!: (reason?: unknown) => void;
   const responseGate = new Promise<void>((resolve) => {
     releaseResponse = resolve;
   });
   const requestSeen = new Promise<void>((resolve) => {
     markRequestSeen = resolve;
   });
-  const responseCompleted = new Promise<void>((resolve) => {
+  const responseCompleted = new Promise<void>((resolve, reject) => {
     markResponseCompleted = resolve;
+    markResponseFailed = reject;
   });
   await page.route("**/structures/*/anchors/resolve*", async (route) => {
     markRequestSeen();
     await responseGate;
-    const response = await route.fetch();
-    await route.fulfill({ response });
-    markResponseCompleted();
+    try {
+      await route.fulfill({ status: preparedResponse.status(), json: preparedPayload });
+      markResponseCompleted();
+    } catch (error) {
+      markResponseFailed(error);
+    }
   });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
