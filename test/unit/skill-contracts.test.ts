@@ -7,6 +7,7 @@ const reviewComposeSkill = readFileSync("skills/rvw-review-compose/SKILL.md", "u
 const reviewComposeDescription = reviewComposeSkill.match(/^description: (.+)$/mu)?.[1] ?? "";
 const walkthroughSkill = readFileSync("skills/rvw-walkthrough/SKILL.md", "utf8");
 const structureSkill = readFileSync("skills/rvw-structure/SKILL.md", "utf8");
+const structureOpenAi = readFileSync("skills/rvw-structure/agents/openai.yaml", "utf8");
 const reviewComposition = readFileSync(
   "skills/rvw-review-compose/references/review-composition.md",
   "utf8",
@@ -75,6 +76,9 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureSkill).not.toContain("primarySpine");
     expect(structureSkill).toContain("Require `protocolVersion` 5");
     expect(structureSkill).toContain("`structure.presentation`");
+    expect(structureSkill).toMatch(
+      /Require only the operation capabilities the task uses:[\s\S]*`structure.read` for\s+`get`[\s\S]*`structure.list` for listing or uncertain-publication recovery[\s\S]*`structure.preview` before\s+publish or update/,
+    );
     expect(structureSkill).toContain("structure.publish");
     expect(structureSkill).toContain("`structure.preview`");
     expect(structureSkill).toContain("rvw structure preview --stdin --json");
@@ -116,6 +120,9 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureAuthoring).toContain("deprecated compatibility field");
     expect(structureAuthoring).toContain("Do not set it in new");
     expect(structureAuthoring).toContain("Do not publish");
+    expect(structureOpenAi).toContain("Manage one bounded source-anchored behavior map");
+    expect(structureOpenAi).toContain("read or manage");
+    expect(structureOpenAi).not.toContain("to publish one bounded");
   });
 
   it("keeps Structure truth, presentation, rendering, and reviewer session separate", () => {
@@ -245,7 +252,13 @@ describe("rvw review composition contract", () => {
   it("preflights protocol v5 before delegating an Artifact operation", () => {
     expect(reviewComposeSkill).toContain("Require `protocolVersion` 5");
     expect(reviewComposeSkill).toMatch(
-      /before invoking a producer, require only the capabilities that its chosen\s+operation actually uses/,
+      /Immediately\s+before every producer invocation, including a contextual read of an explicitly supplied Artifact,\s+require only the capabilities that invocation actually uses/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /A contextual read may happen before the composition is selected;\s+creation and update capabilities are required only after selecting that operation/,
+    );
+    expect(reviewComposition).toMatch(
+      /Before each producer invocation, including this contextual read, require only the capability that\s+invocation uses/,
     );
   });
 

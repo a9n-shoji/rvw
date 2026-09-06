@@ -57,9 +57,11 @@ select a node, or claim that publication changed rvw navigation.
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 5, `agent.transport`, `structure.read`, `structure.list`,
-   `structure.presentation`, `structure.preview`, and every one of `structure.publish`, `structure.update`, or
-   `structure.delete` needed for the task.
+2. Require `protocolVersion` 5, `agent.transport`, and `structure.presentation` so version-5 current
+   values can be parsed. Require only the operation capabilities the task uses: `structure.read` for
+   `get`, `structure.list` for listing or uncertain-publication recovery, `structure.preview` before
+   publish or update, and the corresponding `structure.publish`, `structure.update`, or
+   `structure.delete` capability for each requested mutation.
 3. Run `rvw agent status --json`. If `selectedTransport` is `unavailable`, stop and report its
    diagnostic. Otherwise use the reported transport without overriding it.
 4. Require local access to the saved repository and an exact committed source OID containing every

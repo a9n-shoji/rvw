@@ -28,9 +28,11 @@ For every composition task, read
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON. Require `protocolVersion` 5 and
-   `agent.transport`, and record the available Walkthrough and Structure capabilities. After selecting
-   the composition and before invoking a producer, require only the capabilities that its chosen
-   operation actually uses; the producer Skills perform their complete operation-specific checks.
+   `agent.transport`, and record the available Walkthrough and Structure capabilities. Immediately
+   before every producer invocation, including a contextual read of an explicitly supplied Artifact,
+   require only the capabilities that invocation actually uses. The producer Skills perform their
+   complete operation-specific checks. A contextual read may happen before the composition is selected;
+   creation and update capabilities are required only after selecting that operation.
 2. Run `rvw agent status --json`. If `selectedTransport` is `unavailable`, do not read or mutate an
    Artifact and report the diagnostic. This preflight result overrides the existing-URI read permission
    below: even an explicitly supplied URI cannot be read without transport. A recommendation-only

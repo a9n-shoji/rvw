@@ -44,6 +44,9 @@ describes the absence of side effects; it does not prohibit an authorized contex
 The contextual-read permission applies only after the main Skill's transport preflight succeeds. If
 transport is unavailable, its diagnostic takes precedence: do not read the URI or infer its current
 contents, although a clearly labeled source-only recommendation may still be possible.
+Before each producer invocation, including this contextual read, require only the capability that
+invocation uses. A contextual read may precede composition selection; do not require publish or update
+capabilities until the composition selects and authorizes that operation.
 
 When intent is ambiguous, recommend without mutation. A read-only result must say that its proposals
 are unproduced and must not fabricate Artifact URIs.

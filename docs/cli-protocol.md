@@ -663,7 +663,7 @@ Node `notation` is optional and normalizes to `plain`; accepted values are `plai
 `database`, `interface`, `component`, `external`, and `concept`. Notation affects Node rendering only;
 it is not part of the authorial `presentation` contract.
 
-A non-null `presentation` has a 1–1000-character `thesis`, a current `startNodeId`, an optional
+A non-null `presentation` has a 1–1000-character `thesis`, a current `startNodeId`, a required nullable
 `primaryBackbone`, and 0–12 `regions`. The exact start-only shape (`primaryBackbone: null`, `regions: []`) is
 valid: it declares a thesis and attention start without declaring a spatial organizer. The start is
 independent of the factual `originNodeId`. A non-null backbone contains 1–16 unique current Edge IDs whose
@@ -893,6 +893,7 @@ agent.transport
 comment.create
 comment.list
 comment.watch
+comment.watchOwnership
 comment.read
 comment.reply
 comment.edit

@@ -55,4 +55,32 @@ describe("protocol version contract", () => {
     );
     expect(protocol).toContain("ignore unknown warning");
   });
+
+  it("documents the complete additive watch-ownership capability", () => {
+    const protocol = readFileSync("docs/cli-protocol.md", "utf8");
+    expect(protocol).toContain("comment.watchOwnership");
+  });
+
+  it("keeps Structure protocol terminology on origin rather than removed focus input", () => {
+    const specification = readFileSync("docs/implementation-spec.md", "utf8");
+    const lifecycle = specification.slice(
+      specification.indexOf("### 7.5 Structure lifecycle"),
+      specification.indexOf("### 7.6 JSON transport contract"),
+    );
+    const errorPolicy = specification.slice(
+      specification.indexOf("## 13. Error方針"),
+      specification.indexOf("## 14. テスト"),
+    );
+
+    expect(lifecycle).toContain("`originNodeId`、anchor総数");
+    expect(lifecycle).not.toContain("focus、anchor総数");
+    expect(errorPolicy).toContain("endpoint / origin / presentation");
+    expect(errorPolicy).not.toContain("presentation / focus / source anchor");
+  });
+
+  it("documents primaryBackbone as required nullable version-5 content", () => {
+    const protocol = readFileSync("docs/cli-protocol.md", "utf8");
+    expect(protocol).toMatch(/required nullable\s+`primaryBackbone`/);
+    expect(protocol).not.toMatch(/an optional\s+`primaryBackbone`/);
+  });
 });

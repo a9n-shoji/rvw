@@ -1501,7 +1501,7 @@ required nullableな`presentation`、全`nodes`、全`edges`を持つ。同じke
 削除済みresultを明示errorにする。`list`はPR selectorからstable `ref`を含むsummaryを返す。updateは
 `expectedUpdatedAt`と`pullRequest`を除く同じcurrent値の完全置換である。CLIとAgent socketは同じschemaと
 application validationを使用し、commit availability、PR ownership、UTF-8 document、line pair、ID、endpoint、
-focus、anchor総数、count、byte上限に加え、presentationの文字数、current Node参照、backbone Edgeのunique性と
+`originNodeId`、anchor総数、count、byte上限に加え、presentationの文字数、current Node参照、backbone Edgeのunique性と
 stable normalization、derived Node数、start membership、weak connectivity、Region IDのunique性、summary、Region間の
 Node非重複を検証する。Regionとmemberのarray順はstable ID順へnormalizeし、入力順だけが違うretryを同じcontentとして扱う。
 start-only presentationはbackbone / regionがなくても受理する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
@@ -1989,7 +1989,7 @@ invariant検証を行う。refとSQLiteの不整合を検出した場合は部�
 - dirty判定errorには対象repository pathとstatus entry一覧を含める
 - invalid commit range / object / path
 - invalid Walkthrough reference / Mermaid binding / HTML preview / line range
-- invalid Structure identity / endpoint / presentation / focus / source anchor / line range / payload
+- invalid Structure identity / endpoint / origin / presentation / source anchor / line range / payload
 - refとOID不整合
 - binary / too large
 - stale protocol
