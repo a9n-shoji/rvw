@@ -4,11 +4,13 @@ import {
   createStructureSession,
   deleteStructureSessions,
   getStructureSession,
+  initialStructureRegionsView,
   initialStructureViewport,
   MAX_STRUCTURE_ZOOM,
   MIN_STRUCTURE_ZOOM,
   preserveStructureLayoutScreenPosition,
   reconcileStructureSession,
+  restoreStructureRegionsViewFromHistory,
   scaledStructureZoom,
   setStructureSession,
   appendStructureNavigationHistory,
@@ -17,7 +19,11 @@ import {
   structureHomeNodeIds,
   structureLayoutBasisKey,
   structureOneHopNodeIds,
+  structureRegionsLayoutBasisKey,
+  structureRegionsViewportForHome,
+  structureRegionsViewportForFit,
   structureViewportForBounds,
+  structureViewportForCameraFrame,
   structureViewportForNodeIds,
   transferStructureSession,
 } from "../../src/web/structure-session.js";
@@ -76,14 +82,226 @@ function presentedStructure(id: string): Structure {
     startNodeId: "A",
     primaryBackbone: { edgeIds: ["ab", "bc"] },
     regions: [
-      { label: "First", nodeIds: ["A", "B"] },
-      { label: "Second", nodeIds: ["C"] },
+      {
+        id: "first",
+        label: "First",
+        summary: "A and B establish the first responsibility.",
+        nodeIds: ["A", "B"],
+      },
+      {
+        id: "second",
+        label: "Second",
+        summary: "C carries the second responsibility.",
+        nodeIds: ["C"],
+      },
     ],
   };
   return value;
 }
 
 describe("Structure pane sessions", () => {
+  it("fits the independent Regions projection camera without changing card geometry", () => {
+    expect(
+      structureRegionsViewportForFit({
+        contentSize: { width: 1_000, height: 500 },
+        surfaceSize: { width: 500, height: 400 },
+      }),
+    ).toEqual({ x: 28, y: 89, scale: 0.444 });
+    expect(
+      structureRegionsViewportForFit({
+        contentSize: { width: 120, height: 100 },
+        surfaceSize: { width: 800, height: 600 },
+      }),
+    ).toEqual({ x: 340, y: 250, scale: 1 });
+    expect(
+      structureRegionsViewportForFit({
+        contentSize: { width: 0, height: 100 },
+        surfaceSize: { width: 800, height: 600 },
+      }),
+    ).toBeNull();
+
+    const home = structureRegionsViewportForHome({
+      contentSize: { width: 1_000, height: 700 },
+      surfaceSize: { width: 500, height: 400 },
+      attentionBounds: { left: 48, top: 48, right: 280, bottom: 224 },
+    })!;
+    expect(home.scale).toBe(0.72);
+    expect(home.x + 48 * home.scale).toBeGreaterThanOrEqual(28);
+    expect(home.y + 48 * home.scale).toBeGreaterThanOrEqual(28);
+    expect(home.x + 280 * home.scale).toBeLessThanOrEqual(472);
+    expect(home.y + 224 * home.scale).toBeLessThanOrEqual(372);
+  });
+
+  it("canonicalizes serialization order in the Regions layout basis", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000082");
+    const reordered: Structure = {
+      ...value,
+      nodes: [...value.nodes].reverse(),
+      edges: [...value.edges].reverse(),
+      presentation: {
+        ...value.presentation!,
+        thesis: "Updated prose does not change the Regions projection.",
+        primaryBackbone: {
+          edgeIds: [...value.presentation!.primaryBackbone!.edgeIds].reverse(),
+        },
+        regions: [...value.presentation!.regions]
+          .reverse()
+          .map((region) => ({ ...region, nodeIds: [...region.nodeIds].reverse() })),
+      },
+    };
+    expect(structureRegionsLayoutBasisKey(reordered)).toBe(structureRegionsLayoutBasisKey(value));
+
+    const relabeled: Structure = {
+      ...reordered,
+      edges: reordered.edges.map((edge) =>
+        edge.id === "ab" ? { ...edge, label: "A delegates to B" } : edge,
+      ),
+    };
+    expect(structureRegionsLayoutBasisKey(relabeled)).not.toBe(
+      structureRegionsLayoutBasisKey(value),
+    );
+  });
+
+  it("preserves a manual Regions camera until its derived map basis changes", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000081");
+    const regionsView = {
+      ...initialStructureRegionsView(value),
+      viewport: { x: -120, y: 84, scale: 1.4 },
+      surfaceSize: { width: 760, height: 520 },
+      cameraMode: "manual" as const,
+    };
+    const manual = { ...createStructureSession(value), regionsView };
+    const proseOnly: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: {
+        ...value.presentation!,
+        thesis: "New thesis prose.",
+        regions: value.presentation!.regions.map((region) => ({
+          ...region,
+          summary: `${region.summary} More prose.`,
+        })),
+      },
+    };
+    expect(reconcileStructureSession(proseOnly, manual).regionsView).toEqual(regionsView);
+
+    const rerouted: Structure = {
+      ...proseOnly,
+      updatedAt: "2026-08-30T00:02:00.000Z",
+      edges: proseOnly.edges.map((edge) =>
+        edge.id === "ab" ? { ...edge, label: "A delegates to B" } : edge,
+      ),
+    };
+    expect(reconcileStructureSession(rerouted, manual).regionsView).toEqual({
+      ...initialStructureRegionsView(rerouted),
+      surfaceSize: regionsView.surfaceSize,
+    });
+  });
+
+  it("restores a Regions history camera with its capture surface and explicit fit intent", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000080");
+    const current = {
+      ...initialStructureRegionsView(value),
+      viewport: { x: -40, y: 20, scale: 0.8 },
+      surfaceSize: { width: 1_100, height: 680 },
+      cameraMode: "manual" as const,
+    };
+    const restored = restoreStructureRegionsViewFromHistory(current, {
+      viewMode: "regions",
+      focusId: "A",
+      depth: "all",
+      framedRegionId: null,
+      viewport: { x: 10, y: 20, scale: 1 },
+      regionsViewport: { x: -180, y: 72, scale: 1.3 },
+      regionsSurfaceSize: { width: 760, height: 520 },
+      regionsCameraMode: "manual",
+    });
+    expect(restored).toEqual({
+      ...current,
+      viewport: { x: -180, y: 72, scale: 1.3 },
+      surfaceSize: { width: 760, height: 520 },
+    });
+    expect(
+      restoreStructureRegionsViewFromHistory(
+        current,
+        {
+          viewMode: "regions",
+          focusId: "A",
+          depth: "all",
+          framedRegionId: null,
+          viewport: { x: 10, y: 20, scale: 1 },
+          regionsViewport: { x: -180, y: 72, scale: 1.3 },
+          regionsSurfaceSize: { width: 760, height: 520 },
+          regionsCameraMode: "manual",
+        },
+        { width: 1_100, height: 680 },
+      ),
+    ).toMatchObject({
+      viewport: { x: -10, y: 152, scale: 1.3 },
+      surfaceSize: { width: 1_100, height: 680 },
+      cameraMode: "manual",
+    });
+
+    expect(
+      restoreStructureRegionsViewFromHistory(current, {
+        viewMode: "regions",
+        focusId: null,
+        depth: "all",
+        framedRegionId: null,
+        viewport: { x: 0, y: 0, scale: 1 },
+        regionsCameraMode: "fit",
+      }),
+    ).toMatchObject({ cameraMode: "fit", viewport: current.viewport });
+  });
+
+  it("invalidates historical Regions geometry but preserves a Home reframe intent", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000079");
+    const session = {
+      ...createStructureSession(value),
+      navigationHistory: [
+        {
+          viewMode: "regions" as const,
+          focusId: "A",
+          depth: "all" as const,
+          framedRegionId: null,
+          viewport: { x: 10, y: 20, scale: 1 },
+          regionsViewport: { x: -180, y: 72, scale: 1.3 },
+          regionsSurfaceSize: { width: 760, height: 520 },
+          regionsCameraMode: "manual" as const,
+        },
+      ],
+    };
+    const relabeled: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: {
+        ...value.presentation!,
+        regions: value.presentation!.regions.map((region) =>
+          region.id === "first" ? { ...region, label: "First relabeled" } : region,
+        ),
+      },
+    };
+    const reconciled = reconcileStructureSession(relabeled, session);
+    expect(reconciled.navigationHistory[0]).toMatchObject({
+      viewMode: "regions",
+      regionsCameraMode: "home",
+    });
+    expect(reconciled.navigationHistory[0]).not.toHaveProperty("regionsViewport");
+    expect(reconciled.navigationHistory[0]).not.toHaveProperty("regionsSurfaceSize");
+
+    const manuallyMovedAfterUpdate = {
+      ...reconciled.regionsView,
+      viewport: { x: -500, y: -300, scale: 1.6 },
+      cameraMode: "manual" as const,
+    };
+    expect(
+      restoreStructureRegionsViewFromHistory(
+        manuallyMovedAfterUpdate,
+        reconciled.navigationHistory[0]!,
+      ).cameraMode,
+    ).toBe("home");
+  });
+
   it("starts a presented Structure from the authorial start, not the factual origin", () => {
     const value = structure("70000000-0000-4000-8000-000000000096");
     value.nodes.push(
@@ -106,6 +324,7 @@ describe("Structure pane sessions", () => {
     };
 
     const session = createStructureSession(value);
+    expect(session.viewMode).toBe("graph");
     expect(session.focusId).toBe("read-first");
     expect(session.depth).toBe("all");
     expect(session.positions["read-first"]!.x).toBeLessThan(session.positions["read-next"]!.x);
@@ -281,12 +500,39 @@ describe("Structure pane sessions", () => {
   });
 
   it("fits derived region bounds without changing member geometry", () => {
+    const bounds = { left: 100, top: 200, right: 700, bottom: 500 };
+    const surfaceSize = { width: 900, height: 600 };
     const viewport = structureViewportForBounds({
-      bounds: { left: 100, top: 200, right: 700, bottom: 500 },
-      surfaceSize: { width: 900, height: 600 },
+      bounds,
+      surfaceSize,
+    });
+
+    expect(
+      structureViewportForCameraFrame({
+        frame: { kind: "region", regionId: "policy" },
+        positions: {},
+        regionBounds: new Map([["policy", bounds]]),
+        surfaceSize,
+      }),
+    ).toEqual(viewport);
+    expect(
+      structureViewportForCameraFrame({
+        frame: { kind: "region", regionId: "removed" },
+        positions: {},
+        regionBounds: new Map([["policy", bounds]]),
+        surfaceSize,
+      }),
+    ).toBeNull();
+
+    const resizedViewport = structureViewportForCameraFrame({
+      frame: { kind: "region", regionId: "policy" },
+      positions: {},
+      regionBounds: new Map([["policy", bounds]]),
+      surfaceSize: { width: 1_100, height: 700 },
     });
 
     expect(viewport).not.toBeNull();
+    expect(resizedViewport).not.toEqual(viewport);
     expect(viewport!.scale).toBeLessThanOrEqual(1.25);
     expect(viewport!.x + 100 * viewport!.scale).toBeGreaterThanOrEqual(36);
     expect(viewport!.x + 700 * viewport!.scale).toBeLessThanOrEqual(900 - 36);
@@ -294,7 +540,7 @@ describe("Structure pane sessions", () => {
     expect(viewport!.y + 500 * viewport!.scale).toBeLessThanOrEqual(600 - 36);
   });
 
-  it("derives Home from exact backbone endpoints plus one-hop context", () => {
+  it("keeps Home local to the authorial start independently of backbone extent", () => {
     const value = presentedStructure("70000000-0000-4000-8000-000000000087");
     value.nodes.push(
       { ...value.nodes[0]!, id: "D", label: "D", anchor: null },
@@ -307,7 +553,7 @@ describe("Structure pane sessions", () => {
 
     expect([...structureBackboneNodeIds(value)].sort()).toEqual(["A", "B", "C"]);
     expect([...structureOneHopNodeIds(value, ["C"])].sort()).toEqual(["A", "B", "C", "D"]);
-    expect([...structureHomeNodeIds(value)].sort()).toEqual(["A", "B", "C", "D"]);
+    expect([...structureHomeNodeIds(value)].sort()).toEqual(["A", "B", "C"]);
   });
 
   it("frames only the requested exact member geometry", () => {
@@ -337,14 +583,13 @@ describe("Structure pane sessions", () => {
   it("starts with a compact Guide disclosure and bounded pane-local navigation history", () => {
     expect(initialStructureGuideDisclosure()).toEqual({
       thesis: true,
-      coreRelations: false,
-      regions: false,
     });
 
     const first = {
+      viewMode: "graph" as const,
       focusId: "A",
       depth: "all" as const,
-      framedRegionIndex: null,
+      framedRegionId: null,
       viewport: { x: 1, y: 2, scale: 1 },
     };
     expect(appendStructureNavigationHistory([first], first)).toEqual([first]);
@@ -357,13 +602,18 @@ describe("Structure pane sessions", () => {
     expect(
       appendStructureNavigationHistory([first], {
         ...first,
-        framedRegionIndex: 0,
+        framedRegionId: "first",
       }),
-    ).toEqual([first, { ...first, framedRegionIndex: 0 }]);
+    ).toEqual([first, { ...first, framedRegionId: "first" }]);
+    expect(appendStructureNavigationHistory([first], { ...first, viewMode: "regions" })).toEqual([
+      first,
+      { ...first, viewMode: "regions" },
+    ]);
     const history = Array.from({ length: 55 }, (_, index) => ({
+      viewMode: "graph" as const,
       focusId: `node-${index}`,
       depth: "all" as const,
-      framedRegionIndex: null,
+      framedRegionId: null,
       viewport: { x: index, y: index * 2, scale: 1 },
     })).reduce(appendStructureNavigationHistory, []);
     expect(history).toHaveLength(50);
@@ -381,7 +631,9 @@ describe("Structure pane sessions", () => {
           ...value.presentation!,
           thesis: "Different prose must not move the graph.",
           regions: value.presentation!.regions.map((region) => ({
+            ...region,
             label: `Renamed ${region.label}`,
+            summary: `Reworded ${region.summary}`,
             nodeIds: [...region.nodeIds].reverse(),
           })),
         },
@@ -395,7 +647,7 @@ describe("Structure pane sessions", () => {
           regions: [...value.presentation!.regions].reverse(),
         },
       }),
-    ).not.toBe(baseline);
+    ).toBe(baseline);
     expect(
       structureLayoutBasisKey({
         edges: value.edges,
@@ -467,7 +719,14 @@ describe("Structure pane sessions", () => {
       updatedAt: "2026-08-30T00:02:00.000Z",
       presentation: {
         ...changedStart.presentation!,
-        regions: [{ label: "Policy", nodeIds: ["B", "C"] }],
+        regions: [
+          {
+            id: "policy",
+            label: "Policy",
+            summary: "B and C make the policy decision.",
+            nodeIds: ["B", "C"],
+          },
+        ],
       },
     };
     const organizedSession = reconcileStructureSession(organized, reconciled);
@@ -482,7 +741,7 @@ describe("Structure pane sessions", () => {
       focusId: "B",
       selectedEdgeId: "ab",
       depth: 2 as const,
-      framedRegionIndex: 1,
+      framedRegionId: "second",
       positions: {
         A: { x: 100, y: 80 },
         B: { x: 760, y: 330 },
@@ -504,7 +763,8 @@ describe("Structure pane sessions", () => {
     expect(reconciled.focusId).toBe("B");
     expect(reconciled.selectedEdgeId).toBe("ab");
     expect(reconciled.depth).toBe(2);
-    expect(reconciled.framedRegionIndex).toBeNull();
+    expect(reconciled.framedRegionId).toBe("second");
+    expect(reconciled.cameraFrame).toEqual({ kind: "region", regionId: "second" });
     expect(reconciled.viewport.scale).toBe(session.viewport.scale);
     expect(reconciled.viewport.x + reconciled.positions.B!.x * reconciled.viewport.scale).toBe(
       session.viewport.x + session.positions.B.x * session.viewport.scale,
@@ -514,11 +774,11 @@ describe("Structure pane sessions", () => {
     );
   });
 
-  it("rebases for ordered regions and null transitions", () => {
+  it("preserves Region identity across array reordering and rebases membership changes", () => {
     const value = presentedStructure("70000000-0000-4000-8000-000000000092");
     const session = {
       ...createStructureSession(value),
-      framedRegionIndex: 1,
+      framedRegionId: "second",
       positions: {
         A: { x: 901, y: 902 },
         B: { x: 903, y: 904 },
@@ -530,21 +790,37 @@ describe("Structure pane sessions", () => {
       updatedAt: "2026-08-30T00:01:00.000Z",
       presentation: {
         ...value.presentation!,
-        primaryBackbone: null,
         regions: [...value.presentation!.regions].reverse(),
       },
     };
     const regionReconciled = reconcileStructureSession(reordered, session);
-    expect(regionReconciled.positions).toEqual(initialStructureLayout(reordered));
-    expect(regionReconciled.framedRegionIndex).toBeNull();
+    expect(regionReconciled.positions).toEqual(session.positions);
+    expect(regionReconciled.framedRegionId).toBe("second");
+
+    const regrouped: Structure = {
+      ...reordered,
+      updatedAt: "2026-08-30T00:01:30.000Z",
+      presentation: {
+        ...reordered.presentation!,
+        regions: reordered.presentation!.regions.map((region) =>
+          region.id === "first"
+            ? { ...region, nodeIds: ["A"] }
+            : { ...region, nodeIds: ["B", "C"] },
+        ),
+      },
+    };
+    const regroupedSession = reconcileStructureSession(regrouped, regionReconciled);
+    expect(regroupedSession.positions).toEqual(initialStructureLayout(regrouped));
+    expect(regroupedSession.framedRegionId).toBe("second");
+    expect(regroupedSession.cameraFrame).toEqual({ kind: "region", regionId: "second" });
 
     const withoutPresentation: Structure = {
-      ...reordered,
+      ...regrouped,
       updatedAt: "2026-08-30T00:02:00.000Z",
       presentation: null,
     };
     const nullReconciled = reconcileStructureSession(withoutPresentation, {
-      ...regionReconciled,
+      ...regroupedSession,
       positions: {
         A: { x: 801, y: 802 },
         B: { x: 803, y: 804 },
@@ -552,6 +828,29 @@ describe("Structure pane sessions", () => {
       },
     });
     expect(nullReconciled.positions).toEqual(initialStructureLayout(withoutPresentation));
+  });
+
+  it("keeps Regions as pane-local view state and falls back to Graph when Regions disappear", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000099");
+    const session = { ...createStructureSession(value), viewMode: "regions" as const };
+    const proseUpdate: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: { ...value.presentation!, thesis: "Reworded without changing Regions." },
+    };
+
+    const preserved = reconcileStructureSession(proseUpdate, session);
+    expect(preserved.viewMode).toBe("regions");
+
+    const removed: Structure = {
+      ...proseUpdate,
+      updatedAt: "2026-08-30T00:02:00.000Z",
+      presentation: { ...proseUpdate.presentation!, regions: [] },
+    };
+    expect(reconcileStructureSession(removed, preserved).viewMode).toBe("graph");
+
+    const graphSession = createStructureSession(removed);
+    expect(reconcileStructureSession(proseUpdate, graphSession).viewMode).toBe("graph");
   });
 
   it("preserves the layout center on screen when a rebase has no surviving focus", () => {
@@ -605,7 +904,7 @@ describe("Structure pane sessions", () => {
     };
     const session = {
       ...createStructureSession(value),
-      framedRegionIndex: 1,
+      framedRegionId: "second",
       positions: manual,
     };
     const proseOnly: Structure = {
@@ -623,7 +922,7 @@ describe("Structure pane sessions", () => {
     const proseReconciled = reconcileStructureSession(proseOnly, session);
     expect(proseReconciled.positions).toEqual(manual);
     expect(proseReconciled.viewport).toEqual(session.viewport);
-    expect(proseReconciled.framedRegionIndex).toBe(1);
+    expect(proseReconciled.framedRegionId).toBe("second");
 
     const graphOnly: Structure = {
       ...proseOnly,
@@ -651,28 +950,68 @@ describe("Structure pane sessions", () => {
     expect(graphReconciled.positions.D).toBeDefined();
   });
 
+  it("drops renderer-derived Fit bounds across an artifact revision without moving the viewport", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000081");
+    const staleBounds = { left: -40, top: -20, right: 1_400, bottom: 900 };
+    const session = {
+      ...createStructureSession(value),
+      cameraFrame: { kind: "bounds" as const, bounds: staleBounds },
+      viewport: { x: 42, y: -18, scale: 0.73 },
+      navigationHistory: [
+        {
+          viewMode: "graph" as const,
+          focusId: "B",
+          depth: "all" as const,
+          framedRegionId: null,
+          cameraFrame: { kind: "bounds" as const, bounds: staleBounds },
+          viewport: { x: 12, y: 24, scale: 0.61 },
+        },
+      ],
+    };
+    const updated: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: {
+        ...value.presentation!,
+        thesis: "Prose changed, and a later graph-only edit could change complete render bounds.",
+      },
+    };
+
+    const reconciled = reconcileStructureSession(updated, session);
+
+    expect(reconciled.viewport).toEqual(session.viewport);
+    expect(reconciled.cameraFrame).toBeNull();
+    expect(reconciled.navigationHistory[0]!.viewport).toEqual(
+      session.navigationHistory[0]!.viewport,
+    );
+    expect(reconciled.navigationHistory[0]!.cameraFrame).toBeNull();
+  });
+
   it("preserves Guide disclosure and prunes navigation history only for removed targets", () => {
     const value = presentedStructure("70000000-0000-4000-8000-000000000085");
     const session = {
       ...createStructureSession(value),
-      guideDisclosure: { thesis: false, coreRelations: true, regions: true },
+      guideDisclosure: { thesis: false },
       navigationHistory: [
         {
+          viewMode: "regions" as const,
           focusId: "B",
           depth: 1 as const,
-          framedRegionIndex: 0,
+          framedRegionId: "first",
           viewport: { x: 10, y: 20, scale: 1 },
         },
         {
+          viewMode: "graph" as const,
           focusId: "C",
           depth: 2 as const,
-          framedRegionIndex: 1,
+          framedRegionId: "second",
           viewport: { x: 30, y: 40, scale: 1.2 },
         },
         {
+          viewMode: "graph" as const,
           focusId: null,
           depth: "all" as const,
-          framedRegionIndex: null,
+          framedRegionId: null,
           viewport: { x: 50, y: 60, scale: 0.8 },
         },
       ],
@@ -685,7 +1024,14 @@ describe("Structure pane sessions", () => {
       presentation: {
         ...value.presentation!,
         primaryBackbone: { edgeIds: ["ab"] },
-        regions: [{ label: "First", nodeIds: ["A", "B"] }],
+        regions: [
+          {
+            id: "first",
+            label: "First",
+            summary: "A and B establish the surviving responsibility.",
+            nodeIds: ["A", "B"],
+          },
+        ],
       },
     };
 
@@ -694,12 +1040,72 @@ describe("Structure pane sessions", () => {
     expect(reconciled.guideDisclosure).toEqual(session.guideDisclosure);
     expect(reconciled.navigationHistory.map(({ focusId }) => focusId)).toEqual(["B", null]);
     expect(reconciled.navigationHistory.map(({ depth }) => depth)).toEqual([1, "all"]);
-    expect(reconciled.navigationHistory.map(({ framedRegionIndex }) => framedRegionIndex)).toEqual([
+    expect(reconciled.navigationHistory.map(({ viewMode }) => viewMode)).toEqual([
+      "regions",
+      "graph",
+    ]);
+    expect(reconciled.navigationHistory.map(({ framedRegionId }) => framedRegionId)).toEqual([
+      "first",
       null,
+    ]);
+    expect(reconciled.navigationHistory.map(({ cameraFrame }) => cameraFrame ?? null)).toEqual([
+      { kind: "region", regionId: "first" },
       null,
     ]);
     expect(reconciled.navigationHistory[0]!.viewport.scale).toBe(1);
     expect(reconciled.navigationHistory[1]!.viewport.scale).toBe(0.8);
+  });
+
+  it("keeps a Regions return destination when only its latent Graph focus is removed", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000084");
+    const session = {
+      ...createStructureSession(value),
+      surfaceSize: { width: 900, height: 600 },
+      navigationHistory: [
+        {
+          viewMode: "regions" as const,
+          focusId: "B",
+          depth: 2 as const,
+          framedRegionId: null,
+          cameraFrame: { kind: "center-node" as const, nodeId: "B", scale: 1.1 },
+          viewport: { x: 10, y: 20, scale: 1.1 },
+        },
+        {
+          viewMode: "graph" as const,
+          focusId: "B",
+          depth: 2 as const,
+          framedRegionId: null,
+          cameraFrame: { kind: "center-node" as const, nodeId: "B", scale: 1.1 },
+          viewport: { x: 30, y: 40, scale: 1.1 },
+        },
+      ],
+    };
+    const updated: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      nodes: value.nodes.filter((node) => node.id !== "B"),
+      edges: value.edges.filter((edge) => edge.from !== "B" && edge.to !== "B"),
+      presentation: {
+        ...value.presentation!,
+        primaryBackbone: { edgeIds: ["ac"] },
+        regions: value.presentation!.regions.map((region) => ({
+          ...region,
+          nodeIds: region.nodeIds.filter((nodeId) => nodeId !== "B"),
+        })),
+      },
+    };
+
+    const reconciled = reconcileStructureSession(updated, session);
+
+    expect(reconciled.navigationHistory).toHaveLength(1);
+    expect(reconciled.navigationHistory[0]).toMatchObject({
+      viewMode: "regions",
+      focusId: null,
+      depth: "all",
+      framedRegionId: null,
+      cameraFrame: null,
+    });
+    expect(reconciled.navigationHistory[0]!.viewport.scale).toBe(1.1);
   });
 
   it("centers replacement geometry when no Node survives a rebase", () => {

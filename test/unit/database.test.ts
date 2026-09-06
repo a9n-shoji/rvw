@@ -479,8 +479,18 @@ describe("RvwDatabase", () => {
           edgeIds: ["effect-entry-reverse", "effect-audit"],
         },
         regions: [
-          { label: "Effect and entry", nodeIds: ["entry", "effect"] },
-          { label: "Audit", nodeIds: ["audit"] },
+          {
+            id: "effect-entry",
+            label: "Effect and entry",
+            summary: "Carries the entrypoint into its persisted effect.",
+            nodeIds: ["entry", "effect"],
+          },
+          {
+            id: "audit",
+            label: "Audit",
+            summary: "Records the persisted effect for later inspection.",
+            nodeIds: ["audit"],
+          },
         ],
       },
       idempotencyKey: "structure-presentation",
@@ -489,8 +499,18 @@ describe("RvwDatabase", () => {
     expect(structure.presentation).toMatchObject({
       primaryBackbone: { edgeIds: ["effect-audit", "effect-entry-reverse"] },
       regions: [
-        { label: "Effect and entry", nodeIds: ["effect", "entry"] },
-        { label: "Audit", nodeIds: ["audit"] },
+        {
+          id: "audit",
+          label: "Audit",
+          summary: "Records the persisted effect for later inspection.",
+          nodeIds: ["audit"],
+        },
+        {
+          id: "effect-entry",
+          label: "Effect and entry",
+          summary: "Carries the entrypoint into its persisted effect.",
+          nodeIds: ["effect", "entry"],
+        },
       ],
     });
     expect(database.getStructure(structure.id)?.presentation).toEqual(structure.presentation);
@@ -532,6 +552,7 @@ describe("RvwDatabase", () => {
     reopened.close();
 
     const presentation = structure.presentation!;
+    const validRegion = presentation.regions[0]!;
     const corruptionCases: Array<[string, unknown]> = [
       ["missing required keys", {}],
       ["unknown presentation key", { ...presentation, coordinates: [] }],
@@ -604,7 +625,9 @@ describe("RvwDatabase", () => {
         {
           ...presentation,
           regions: Array.from({ length: 13 }, (_, index) => ({
+            id: `region-${index + 1}`,
             label: `Region ${index + 1}`,
+            summary: `Explains responsibility ${index + 1}.`,
             nodeIds: ["entry"],
           })),
         },
@@ -613,31 +636,62 @@ describe("RvwDatabase", () => {
         "unknown region key",
         {
           ...presentation,
-          regions: [{ label: "Entry", nodeIds: ["entry"], color: "blue" }],
+          regions: [{ ...validRegion, color: "blue" }],
         },
       ],
       [
-        "non-canonical region label",
-        { ...presentation, regions: [{ label: " Entry ", nodeIds: ["entry"] }] },
+        "obsolete branch-v5 region shape",
+        {
+          ...presentation,
+          regions: [{ label: validRegion.label, nodeIds: validRegion.nodeIds }],
+        },
       ],
-      ["empty region", { ...presentation, regions: [{ label: "Empty", nodeIds: [] }] }],
+      [
+        "missing region summary",
+        {
+          ...presentation,
+          regions: [{ id: validRegion.id, label: validRegion.label, nodeIds: validRegion.nodeIds }],
+        },
+      ],
+      [
+        "duplicate region ID",
+        {
+          ...presentation,
+          regions: [validRegion, { ...presentation.regions[1]!, id: validRegion.id }],
+        },
+      ],
+      ["invalid region ID", { ...presentation, regions: [{ ...validRegion, id: "1 invalid" }] }],
+      [
+        "non-canonical region label",
+        { ...presentation, regions: [{ ...validRegion, label: " Entry " }] },
+      ],
+      ["empty region summary", { ...presentation, regions: [{ ...validRegion, summary: "" }] }],
+      [
+        "non-canonical region summary",
+        { ...presentation, regions: [{ ...validRegion, summary: ` ${validRegion.summary}` }] },
+      ],
+      [
+        "overlong region summary",
+        { ...presentation, regions: [{ ...validRegion, summary: "s".repeat(501) }] },
+      ],
+      ["empty region", { ...presentation, regions: [{ ...validRegion, nodeIds: [] }] }],
       [
         "duplicate node within a region",
-        { ...presentation, regions: [{ label: "Entry", nodeIds: ["entry", "entry"] }] },
+        { ...presentation, regions: [{ ...validRegion, nodeIds: ["entry", "entry"] }] },
       ],
       [
         "duplicate node across regions",
         {
           ...presentation,
           regions: [
-            { label: "First", nodeIds: ["entry"] },
-            { label: "Second", nodeIds: ["entry"] },
+            { ...validRegion, id: "first", nodeIds: ["entry"] },
+            { ...validRegion, id: "second", nodeIds: ["entry"] },
           ],
         },
       ],
       [
         "dangling region node",
-        { ...presentation, regions: [{ label: "Missing", nodeIds: ["missing"] }] },
+        { ...presentation, regions: [{ ...validRegion, nodeIds: ["missing"] }] },
       ],
     ];
     const invalid = new DatabaseSync(filePath);

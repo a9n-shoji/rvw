@@ -108,7 +108,7 @@ test("navigates from a file backlink to the focused Structure Node and restores 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
 
   const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
-  await page.getByRole("button", { name: "Structure 3", exact: true }).click();
+  await page.getByRole("button", { name: "Structure 5", exact: true }).click();
   await reviewTree.getByRole("button", { name: "Order placement behavior", exact: true }).click();
   const primaryViewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
   const orderAggregate = primaryViewer.locator(
@@ -131,7 +131,7 @@ test("navigates from a file backlink to the focused Structure Node and restores 
   await page.getByRole("button", { name: sourcePath, exact: true }).click();
   const leftPane = page.locator('.document-pane[data-pane="left"]');
   const structureTrigger = leftPane.getByRole("button", {
-    name: "このファイルを参照するStructure 1件",
+    name: "このファイルを参照するStructure 2件",
     exact: true,
   });
   const commentTrigger = leftPane.getByRole("button", {
@@ -150,9 +150,13 @@ test("navigates from a file backlink to the focused Structure Node and restores 
   const result = menu.getByRole("menuitem", {
     name: /Order placement behavior Node: Create order$/u,
   });
+  const reciprocalResult = menu.getByRole("menuitem", {
+    name: /Order construction reciprocal relations Node: Create order$/u,
+  });
   await expect(menu).toBeVisible();
   await expect(result).toBeVisible();
-  await expect(menu.getByRole("menuitem")).toHaveCount(1);
+  await expect(reciprocalResult).toBeVisible();
+  await expect(menu.getByRole("menuitem")).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(structureTrigger).toBeFocused();
@@ -328,7 +332,7 @@ test("waits for a fresh Structure detail before validating a fresh backlink", as
 
   try {
     await page.goto(`/?pullRequestId=${pullRequestId}`);
-    await page.getByRole("button", { name: "Structure 3", exact: true }).click();
+    await page.getByRole("button", { name: "Structure 5", exact: true }).click();
     await page
       .getByRole("navigation", { name: "レビュー文書" })
       .getByRole("button", { name: "Order placement behavior", exact: true })
@@ -385,7 +389,7 @@ test("keeps an open backlink menu focused across unrelated comment updates", asy
   await initialRefresh;
   await page.getByRole("button", { name: sourcePath, exact: true }).click();
   const trigger = page.getByRole("button", {
-    name: "このファイルを参照するStructure 1件",
+    name: "このファイルを参照するStructure 2件",
     exact: true,
   });
   await trigger.click();

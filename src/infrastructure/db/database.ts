@@ -44,7 +44,7 @@ import { formatCommentUri } from "../../domain/comment-uri.js";
 import { formatStructureUri } from "../../domain/structure-uri.js";
 import {
   canonicalStructureBackboneEdgeIds,
-  canonicalStructureRegionNodeIds,
+  canonicalStructurePresentationRegions,
   isStructureBackboneWeaklyConnected,
   structureBackboneNodeIds,
 } from "../../domain/structure-presentation.js";
@@ -56,6 +56,7 @@ import {
   MAX_STRUCTURE_PRIMARY_BACKBONE_NODES,
   MAX_STRUCTURE_PRESENTATION_REGIONS,
   MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
+  MAX_STRUCTURE_PRESENTATION_REGION_SUMMARY_CHARACTERS,
   MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
   STRUCTURE_ID_PATTERN,
 } from "../../shared/constants.js";
@@ -281,14 +282,22 @@ function isStructurePresentation(
     }
   }
 
-  const regionByNodeId = new Map<string, number>();
-  for (const [regionIndex, region] of value.regions.entries()) {
+  const regionIds = new Set<string>();
+  const regionByNodeId = new Map<string, string>();
+  for (const region of value.regions) {
     if (
       !isRecord(region) ||
-      !hasExactKeys(region, ["label", "nodeIds"]) ||
+      !hasExactKeys(region, ["id", "label", "summary", "nodeIds"]) ||
+      typeof region.id !== "string" ||
+      !STRUCTURE_ID_PATTERN.test(region.id) ||
+      regionIds.has(region.id) ||
       !isCanonicalPresentationText(
         region.label,
         MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
+      ) ||
+      !isCanonicalPresentationText(
+        region.summary,
+        MAX_STRUCTURE_PRESENTATION_REGION_SUMMARY_CHARACTERS,
       ) ||
       !Array.isArray(region.nodeIds) ||
       region.nodeIds.length < 1 ||
@@ -296,6 +305,7 @@ function isStructurePresentation(
     ) {
       return false;
     }
+    regionIds.add(region.id);
     const currentRegionNodeIds = new Set<string>();
     for (const nodeId of region.nodeIds) {
       if (
@@ -308,7 +318,7 @@ function isStructurePresentation(
         return false;
       }
       currentRegionNodeIds.add(nodeId);
-      regionByNodeId.set(nodeId, regionIndex);
+      regionByNodeId.set(nodeId, region.id);
     }
   }
 
@@ -378,10 +388,7 @@ function structureGraphValue(
                       presentation.primaryBackbone.edgeIds,
                     ),
                   },
-            regions: presentation.regions.map((region) => ({
-              ...region,
-              nodeIds: canonicalStructureRegionNodeIds(region.nodeIds),
-            })),
+            regions: canonicalStructurePresentationRegions(presentation.regions),
           };
     return {
       originNodeId,
@@ -1750,6 +1757,13 @@ export class RvwDatabase {
             .all(id) as DbRow[]
         ).map((row) => stringValue(row, "edge_id")),
       );
+      const retiredRegionIds = new Set(
+        (
+          this.database
+            .prepare("SELECT region_id FROM structure_retired_region_ids WHERE structure_id = ?")
+            .all(id) as DbRow[]
+        ).map((row) => stringValue(row, "region_id")),
+      );
       const reusedNode = input.nodes.find((node) => retiredNodeIds.has(node.id));
       if (reusedNode) {
         throw new RvwError(
@@ -1764,14 +1778,27 @@ export class RvwDatabase {
           `削除済みのStructure Edge IDは再利用できません: ${reusedEdge.id}`,
         );
       }
+      const reusedRegion = input.presentation?.regions.find((region) =>
+        retiredRegionIds.has(region.id),
+      );
+      if (reusedRegion) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          `削除済みのStructure Region IDは再利用できません: ${reusedRegion.id}`,
+        );
+      }
       const nextNodeIds = new Set(input.nodes.map((node) => node.id));
       const nextEdgeIds = new Set(input.edges.map((edge) => edge.id));
+      const nextRegionIds = new Set(input.presentation?.regions.map((region) => region.id) ?? []);
       const retiredAtThisUpdate = current.nodes
         .map((node) => node.id)
         .filter((nodeId) => !nextNodeIds.has(nodeId));
       const retiredEdgesAtThisUpdate = current.edges
         .map((edge) => edge.id)
         .filter((edgeId) => !nextEdgeIds.has(edgeId));
+      const retiredRegionsAtThisUpdate = (current.presentation?.regions ?? [])
+        .map((region) => region.id)
+        .filter((regionId) => !nextRegionIds.has(regionId));
       const result = this.database
         .prepare(
           `UPDATE structures
@@ -1800,6 +1827,10 @@ export class RvwDatabase {
         "INSERT OR IGNORE INTO structure_retired_edge_ids(structure_id, edge_id, retired_at) VALUES (?, ?, ?)",
       );
       for (const edgeId of retiredEdgesAtThisUpdate) retireEdge.run(id, edgeId, now);
+      const retireRegion = this.database.prepare(
+        "INSERT OR IGNORE INTO structure_retired_region_ids(structure_id, region_id, retired_at) VALUES (?, ?, ?)",
+      );
+      for (const regionId of retiredRegionsAtThisUpdate) retireRegion.run(id, regionId, now);
       this.incrementDomainRevisions(["structures"]);
     });
     const structure = this.getStructure(id);

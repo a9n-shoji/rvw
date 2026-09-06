@@ -1,4 +1,4 @@
-import type { StructureEdge } from "./models.js";
+import type { StructureEdge, StructurePresentationRegion } from "./models.js";
 
 type BackboneEdge = Pick<StructureEdge, "from" | "to">;
 
@@ -12,6 +12,17 @@ export function canonicalStructureBackboneEdgeIds(edgeIds: readonly string[]): s
 
 export function canonicalStructureRegionNodeIds(nodeIds: readonly string[]): string[] {
   return [...nodeIds].sort(compareStructureIds);
+}
+
+export function canonicalStructurePresentationRegions(
+  regions: readonly StructurePresentationRegion[],
+): StructurePresentationRegion[] {
+  return [...regions]
+    .map((region) => ({
+      ...region,
+      nodeIds: canonicalStructureRegionNodeIds(region.nodeIds),
+    }))
+    .sort((left, right) => compareStructureIds(left.id, right.id));
 }
 
 export function structureBackboneNodeIds(edges: readonly BackboneEdge[]): Set<string> {

@@ -1,14 +1,17 @@
 ---
 name: rvw-review-compose
-description: Analyze one Pull Request or explicit review subject and choose the minimum useful mix of source-anchored rvw Walkthroughs, Structures, and direct code reading, creating Artifacts only when they lower comprehension cost. Use when the user asks rvw to recommend or produce an overall review composition. Use the producer Skills directly for one explicitly bounded Walkthrough or Structure.
+description: Analyze one Pull Request or explicit review subject and choose the useful mix of source-anchored rvw Walkthroughs, Structures, and direct code reading that minimizes total comprehension cost. Use when the user asks to recommend or explicitly produce an overall review composition; recommendation is non-mutating. Use the producer Skills directly for one explicitly bounded Walkthrough or Structure.
 ---
 
 # rvw review composition
 
-Compose the smallest useful set of rvw reading surfaces for one Pull Request or explicitly requested
-review subject. Reduce how many concepts a reviewer must internalize at once without hiding important
-coupling. The goal is not to create a complete explanation set or to make the reviewer feel finished;
-it is to let the reviewer build small mental models and enter the committed code at the right points.
+Compose the useful mix of rvw reading surfaces for one Pull Request or explicitly requested review
+subject that minimizes the reviewer's total comprehension cost. That cost includes the complexity
+inside each surface, the joins between surfaces, and the important coupling a surface choice would
+hide. It is not the number of Artifacts: two independently useful surfaces can be better than one
+overloaded surface, while zero can be best for a local question. The goal is not to create a complete
+explanation set or to make the reviewer feel finished; it is to let the reviewer build small mental
+models and enter the committed code at the right points.
 
 This Skill owns PR-wide composition. `rvw-walkthrough` owns one ordered explanation path, and
 `rvw-structure` owns one bounded relationship space. Use either producer directly when the user has
@@ -28,12 +31,21 @@ For every composition task, read
    `agent.transport`, and record the available Walkthrough and Structure capabilities. After selecting
    the composition and before invoking a producer, require only the capabilities that its chosen
    operation actually uses; the producer Skills perform their complete operation-specific checks.
-2. Run `rvw agent status --json`. If `selectedTransport` is `unavailable`, stop before Artifact reads
-   or writes and report the diagnostic. Otherwise use the reported transport without overriding it.
+2. Run `rvw agent status --json`. If `selectedTransport` is `unavailable`, do not read or mutate an
+   Artifact and report the diagnostic. A recommendation-only composition may still inspect committed
+   repository source and return unproduced briefs; a production request must stop before invoking a
+   producer. Otherwise use the reported transport without overriding it.
 3. Require local access to the saved repository and investigate committed code. Do not compose or
    publish Artifacts from uncommitted source.
 
 ## Compose before producing
+
+First classify the requested operation. A request to assess, recommend, plan, audit, or explain a
+composition is read-only: return proposed surfaces and internal briefs without creating, publishing,
+or updating. The matching producer may read an explicitly supplied existing URI. Invoke a producer for
+Artifact creation or update only when the user explicitly asks to create, publish, produce, or update
+Artifacts. Supplying an existing URI authorizes reading it for composition context, not updating it.
+When production intent is ambiguous, finish with a recommendation rather than mutate review state.
 
 Investigate the Pull Request or requested subject, its diff, relevant surrounding code, contracts, and
 tests before choosing Artifact boundaries. Identify the main comprehension difficulties and the
@@ -46,9 +58,9 @@ For each candidate unit, choose exactly the surface that lowers its comprehensio
   prose between stops, a required ending, or transitions that carry the meaning.
 - Use a Structure when responsibility, ownership, dependency, contract, or side-effect relationships
   around one factual code entrypoint are the essential shape. Its optional presentation may set initial
-  attention, emphasize one connected exact-relation backbone, and spatially compose named comprehension
-  regions while keeping the complete graph directly reachable. Region order is canonical canvas and legend composition,
-  not reviewer priority or a reading sequence.
+  attention, emphasize one connected exact-relation backbone, and identify stable named comprehension
+  Regions with responsibility summaries while keeping the complete graph directly reachable. Region array
+  order is not authorial semantics.
 - Direct the reviewer to code without creating an Artifact when the question is local, conditional,
   implementation-specific, or already clearer in source.
 - Create no new surface when an Artifact would merely restate another Artifact or add a join the
@@ -57,7 +69,9 @@ For each candidate unit, choose exactly the surface that lowers its comprehensio
 Never require a Walkthrough and Structure as a pair. Never require an overview Artifact, one Artifact
 per candidate unit, or fixed Overview / State / Flow / Error / Test / Structure sections. A simple
 subject may need one Walkthrough, one Structure, or no Artifact. Artifact count is not a quality
-measure.
+measure, and "minimum useful" never means "fewest Artifacts." Compare total comprehension cost. Split
+when one surface would overload two independently useful questions; merge or drop when the reviewer
+would need multiple surfaces open just to understand one inseparable invariant.
 
 Before invoking a producer, prepare an internal Artifact brief with a single subject and review
 question, explicit scope and exclusions, any requested spatial presentation, and the candidate claims
@@ -66,8 +80,9 @@ the composer's analysis does not turn
 an implementation claim into a fact. The brief is authoring context, not public JSON or rvw schema.
 Follow the detailed brief contract in the reference.
 
-For each selected Artifact, activate the installed sibling by its canonical name through the current
-host's native Skill mechanism, then follow that producer's complete Skill and authoring reference:
+For each selected Artifact in an authorized production run, activate the installed sibling by its
+canonical name through the current host's native Skill mechanism, then follow that producer's complete
+Skill and authoring reference. In a read-only composition, keep the brief unproduced:
 
 - `rvw-walkthrough` for one Walkthrough brief.
 - `rvw-structure` for one Structure brief.
@@ -83,11 +98,17 @@ producer contract from this Skill.
 
 Pass the subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and
 emphasis as authoring authority: they control what the producer investigates, not what the code must
-say. For a Structure, also pass any requested thesis, attention start, connected exact-relation visual
-backbone, and named comprehension regions as presentation authority over verified claims. When a backbone
-is requested, its exact Edge set must be compact and connected, with the start among its derived endpoint
-Nodes. Treat each region's stable-sorted Node IDs as unordered membership; never require the start to belong to a region, and do not
-interpret region order as reviewer priority.
+say. For a Structure, also pass any requested thesis, suggested attention-start concept, connected
+exact-relation visual backbone, and named comprehension Regions as presentation authority over verified
+claims. Describe a new backbone by the relationship claims it should emphasize and a new Region by its
+stable comprehension-chunk meaning; the Structure producer resolves those requests onto verified stable
+Node / Edge / Region IDs and the final normalized payload. Refer to raw IDs only when they came from an
+existing Structure read. A requested backbone must resolve to a compact connected exact Edge set with
+the start among its derived endpoint Nodes. A requested Region needs a concise statement of how its
+chunk contributes to the thesis and unordered disjoint Node membership; the producer assigns its stable
+ID. Never require the start or every Node to belong to a Region,
+interpret Region array order as guidance, or request authored Region-to-Region relations; the Viewer derives
+cross-Region connections only from verified factual Edges.
 When a meaningful thesis and start exist but no honest backbone or useful named chunk does, request the
 exact start-only form rather than a fake backbone, dummy region, or decorative grouping.
 Do not request authored layers or stages; spatial ranks remain renderer-derived.
@@ -99,10 +120,20 @@ representation or reports that an essential claim is unsupported or contradicted
 to composition and revise the brief, choose a better surface, or direct the reviewer to code; never
 make the producer broaden the subject or force the claim to compensate.
 
+Do not dispatch producer handoffs as a batch. Start with the independently useful Artifact whose
+verified answer most constrains the remaining composition. After each producer result, use the actual
+source-supported answer and terminology to re-evaluate every unpublished brief for overlap, changed
+scope, and hidden coupling; then drop, revise, or invoke the next producer. A successful producer may
+refine a candidate claim without rejecting the representation, so recomposition is not limited to
+errors. Never publish an Artifact whose usefulness depends entirely on a later producer establishing
+another brief.
+
 ## Existing Artifacts
 
 When the user or caller supplies an existing Artifact URI, have the matching producer read its current
-value before deciding whether the same subject should be updated. Do not publish a duplicate
+value before deciding whether the same subject should be updated. Read-only composition still stops at
+that decision. During an authorized update, preserve surviving identities and never direct the producer
+to recycle a retired Node, Edge, or Region ID for a new claim or chunk. Do not publish a duplicate
 "revision" by default. `structure list` may be used within its existing contract to recover an
 uncertain publication or inspect candidate Structure summaries. There is no general Walkthrough
 discovery contract: when an existing Walkthrough URI was not supplied, do not claim exhaustive
@@ -118,9 +149,10 @@ and the user's explicit authorization.
 
 Report in the normal Agent response:
 
-- why this composition is the minimum useful one;
+- why this composition minimizes total comprehension cost rather than merely Artifact count;
 - a recommended first entry, without claiming a mandatory or complete review plan;
-- every created or updated `rvw://walkthrough/<uuid>` and `rvw://structure/<uuid>` URI; and
+- every created or updated `rvw://walkthrough/<uuid>` and `rvw://structure/<uuid>` URI, or an explicit
+  statement that the recommendation was read-only and remains unproduced; and
 - important topics intentionally left for direct code reading, with a brief reason.
 
 The response is not a persistent Artifact. State that the committed code remains the source of truth

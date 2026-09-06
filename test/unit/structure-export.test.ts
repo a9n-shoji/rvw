@@ -12,6 +12,8 @@ import { initialStructureLayout, STRUCTURE_NODE_HEIGHT } from "../../src/web/str
 import {
   buildFullStructureRenderModel,
   EDGE_LABEL_LINE_HEIGHT,
+  STRUCTURE_EDGE_ARROW_LENGTH,
+  STRUCTURE_EDGE_ARROW_WIDTH,
   structureTextUnits,
   wrapStructureText,
 } from "../../src/web/structure-render-model.js";
@@ -88,7 +90,7 @@ function documentFor(structure = exportStructure()) {
 }
 
 describe("Structure SVG export", () => {
-  it("exports authored thesis, ordered regions, and exact explanation backbone without session state", () => {
+  it("exports authored thesis, canonical Regions, and exact explanation backbone without session state", () => {
     const structure = exportStructure();
     structure.edges.push({
       id: "edge-parallel",
@@ -103,8 +105,18 @@ describe("Structure SVG export", () => {
       startNodeId: "node-0",
       primaryBackbone: { edgeIds: ["edge-0"] },
       regions: [
-        { label: "Input & validation", nodeIds: ["node-0", "node-2"] },
-        { label: "Execution <core>", nodeIds: ["node-1", "node-3"] },
+        {
+          id: "a-input-validation",
+          label: "Input & validation",
+          summary: "Input decoding and validation responsibilities.",
+          nodeIds: ["node-0", "node-2"],
+        },
+        {
+          id: "b-execution-core",
+          label: "Execution <core>",
+          summary: "Core execution responsibilities.",
+          nodeIds: ["node-1", "node-3"],
+        },
       ],
     };
     const { model, document } = documentFor(structure);
@@ -113,15 +125,21 @@ describe("Structure SVG export", () => {
     expect(document.source).toContain(
       "Flow &lt;starts&gt; here &amp; stays factual &quot;throughout&quot;.",
     );
-    expect(document.source).toContain('data-presentation-region-index="0"');
+    expect(document.source).not.toContain("data-presentation-region-index");
+    expect(document.source).toContain('data-presentation-region-id="a-input-validation"');
     expect(document.source).toContain('data-presentation-region-label="Input &amp; validation"');
     expect(document.source).toContain('data-layer="presentation-region-members"');
     expect(document.source.match(/data-presentation-region-member-node-id=/gu)).toHaveLength(4);
     expect(document.source).toContain('data-presentation-region-member-node-id="node-0"');
-    expect(document.source).toContain("Region R1: Input &amp; validation");
-    expect(document.source).toContain("REGIONS · R1 Input &amp; validation (2 Nodes)");
+    expect(document.source).toContain("Region AIV: Input &amp; validation");
+    expect(document.source).toContain("REGIONS · AIV Input &amp; validation (2 Nodes)");
+    expect(document.source).toContain("Input decoding and validation responsibilities.");
+    expect(document.source).toContain(
+      "DIRECT REGION CONNECTIONS · AIV → BEC (2 Edges) · AIV — BEC (1 Edge)",
+    );
     expect(document.source).toContain("START · Very long &lt;entry&gt; &amp; label");
-    expect(document.source).toContain("CORE RELATIONS · calls &lt;unsafe&gt; &amp;");
+    expect(document.source).toContain("BACKBONE · 1 exact relation highlighted");
+    expect(document.source).not.toContain("CORE RELATIONS ·");
     expect(document.source).not.toContain('data-layer="presentation-regions"');
     expect(document.source).toContain('data-edge-id="edge-0" data-primary-backbone="true"');
     expect(document.source).toMatch(/data-edge-id="edge-parallel"(?![^>]*data-primary-backbone)/u);
@@ -135,6 +153,15 @@ describe("Structure SVG export", () => {
     expect(document.source).toContain("Explanation backbone member");
     expect(document.source).toContain("Factual graph origin");
     expect(model.presentation?.regions).toHaveLength(2);
+
+    const reordered = documentFor({
+      ...structure,
+      presentation: {
+        ...structure.presentation,
+        regions: [...structure.presentation.regions].reverse(),
+      },
+    });
+    expect(reordered.document.source).toBe(document.source);
   });
 
   it("exports thesis and attention start without fabricated spine or region metadata", () => {
@@ -159,7 +186,7 @@ describe("Structure SVG export", () => {
     expect(document.source).toContain("START · Node 1");
     expect(document.source).toContain('data-node-id="node-1"');
     expect(document.source).toContain('data-node-presentation-start-mark="true"');
-    expect(document.source).not.toContain("CORE RELATIONS ·");
+    expect(document.source).not.toContain("BACKBONE ·");
     expect(document.source).not.toContain("REGIONS ·");
     expect(document.source).not.toContain("data-node-primary-backbone-mark");
     expect(document.source).not.toContain('data-layer="presentation-region-members"');
@@ -183,7 +210,14 @@ describe("Structure SVG export", () => {
       structure.edges.filter((edge) => edge.directed).length,
     );
     expect(source.match(/data-edge-marker-kind=/gu)).toHaveLength(7);
-    expect(source.match(/refX="10"/gu)).toHaveLength(7);
+    expect(source.match(new RegExp(`refX="${STRUCTURE_EDGE_ARROW_LENGTH}"`, "gu"))).toHaveLength(7);
+    expect(
+      source.match(new RegExp(`markerWidth="${STRUCTURE_EDGE_ARROW_LENGTH}"`, "gu")),
+    ).toHaveLength(7);
+    expect(
+      source.match(new RegExp(`markerHeight="${STRUCTURE_EDGE_ARROW_WIDTH}"`, "gu")),
+    ).toHaveLength(7);
+    expect(source.match(/markerUnits="userSpaceOnUse"/gu)).toHaveLength(7);
     for (const [kind, color] of [
       ["default", palette.muted],
       ["added", palette.success],
@@ -197,9 +231,11 @@ describe("Structure SVG export", () => {
         new RegExp(`<marker id="rvw-structure-arrow-${kind}"[^>]*><path[^>]*fill="${color}"`, "u"),
       );
     }
+    expect(source).toMatch(/<path data-edge-id="edge-0"[^>]*stroke="#d29922"/u);
     expect(source).toMatch(
-      /<path data-edge-id="edge-0"[^>]*stroke="#d29922"[^>]*marker-end="url\(#rvw-structure-arrow-modified\)"/u,
+      /<path data-edge-arrow-id="edge-0"[^>]*stroke="#d29922"[^>]*stroke-width="0"[^>]*marker-end="url\(#rvw-structure-arrow-modified\)"/u,
     );
+    expect(source).not.toMatch(/<path data-edge-id="edge-0"[^>]*marker-end=/u);
     expect(source).not.toContain("context-stroke");
     for (const notation of structure.nodes.map((node) => node.notation)) {
       expect(source).toContain(`data-node-notation="${notation}"`);
@@ -214,6 +250,52 @@ describe("Structure SVG export", () => {
     expect(source).not.toContain("<image");
     expect(source).not.toContain("var(");
     expect(source).toBe(second.source);
+  });
+
+  it("renders displaced-label leaders as neutral anchored callouts below every label", () => {
+    const structure = exportStructure();
+    structure.edges.push(
+      ...Array.from({ length: 8 }, (_, index) => ({
+        id: `parallel-callout-${index}`,
+        from: "node-0",
+        to: "node-1",
+        label: `parallel callout relation ${index}`,
+        directed: true,
+        anchors: [],
+      })),
+    );
+    const { model, document } = documentFor(structure);
+    const placement = model.labels.find(({ leaderPath }) => leaderPath !== null);
+
+    expect(placement).toBeDefined();
+    expect(placement!.leaderEdgeAnchor).not.toBeNull();
+    expect(placement!.leaderLabelAnchor).not.toBeNull();
+    const leaderGroup = document.source.match(
+      new RegExp(`<g data-edge-label-leader-id="${placement!.edge.id}"[\\s\\S]*?<\\/g>`, "u"),
+    )?.[0];
+    expect(leaderGroup).toBeDefined();
+    expect(leaderGroup).toContain('data-edge-label-leader-halo="true"');
+    expect(leaderGroup).toContain(`stroke="${palette.panel}"`);
+    expect(leaderGroup).toContain('stroke-width="4"');
+    expect(leaderGroup).toContain('data-edge-label-leader-line="true"');
+    expect(leaderGroup).toContain(`stroke="${palette.muted}"`);
+    expect(leaderGroup).toContain('stroke-dasharray="1 4"');
+    expect(leaderGroup).toContain('stroke-linecap="round"');
+    expect(leaderGroup).toContain('data-edge-label-leader-anchor="true"');
+    const anchor = leaderGroup!.match(
+      /data-edge-label-leader-anchor="true" cx="([^"]+)" cy="([^"]+)"/u,
+    );
+    expect(anchor).not.toBeNull();
+    expect(Number(anchor![1])).toBeCloseTo(placement!.leaderEdgeAnchor!.x, 3);
+    expect(Number(anchor![2])).toBeCloseTo(placement!.leaderEdgeAnchor!.y, 3);
+
+    const leaderLayer = document.source.indexOf('<g data-layer="edge-label-leaders">');
+    const labelLayer = document.source.indexOf('<g data-layer="edge-labels">');
+    expect(leaderLayer).toBeGreaterThan(document.source.indexOf('<g data-layer="edges">'));
+    expect(labelLayer).toBeGreaterThan(leaderLayer);
+    expect(document.source.indexOf(`data-edge-label-id="${placement!.edge.id}"`)).toBeGreaterThan(
+      leaderLayer,
+    );
   });
 
   it("keeps notation-aware origin marks clear of shaped Node borders", () => {

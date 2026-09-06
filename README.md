@@ -170,7 +170,7 @@ Agentは現在内容を読み、同じ`rvw://walkthrough/<uuid>`を更新して�
 外部Agentは単一Artifact producerである`rvw-structure` SkillとCLIを使い、PRに関係する一つのboundedな
 behaviorをfactualなcode entrypointからdependency、contract、side effectへ辿る空間として提示できます。
 thesis、最初に見るNode、必要な場合だけ2〜12 Node / 1〜16 Edgeのconnected exact-relation backbone、
-spatially orderedなcomprehension regionで説明の意図を表せます。artifactは一つのbounded behaviorに必要な
+stable IDと責務summaryを持つcomprehension regionで説明の意図を表せます。artifactは一つのbounded behaviorに必要な
 relationを保持し、Viewerはstableな全体像とfocus-relativeな局所lensを往復します。正直なspatial organizerがない場合も、意味のある
 thesisとattention startだけを提示できます。順序とprose自体がartifactならWalkthroughです。
 entrypointを置けない静的なarchitecture／責務inventoryはStructureへ広げません。
@@ -185,35 +185,51 @@ rvw structure delete rvw://structure/<uuid> --json
 
 Structureは一つのexact `sourceOid`、宣言されたtitle / scope、entrypoint、stableなNode / Edge ID、required nullableな
 `presentation`からなります。presentationはraw座標ではなく、thesis、authorialなattention start、exact factual
-Edgeのunordered setからなる一つのoptionalなconnected primary backbone、重複しないspatially orderedな
-comprehension regionからなるauthorial semanticsです。backboneもregionも持たないstart-only presentationは、
+Edgeのunordered setからなる一つのoptionalなconnected primary backbone、stable ID / label / 責務summary /
+重複しないNode membershipを持つcomprehension regionからなるauthorial semanticsです。backboneもregionも持たないstart-only presentationは、
 意味のあるthesisとattention startを伝えられる一方、graph配置へ存在しないspatial orderを作りません。
 Nodeは0または1件、Edgeは0件以上のsource anchorを持ち、rvwはcommit、UTF-8 path、line pair、endpoint、
-重複ID、presentation参照と順序、sizeを保存前に検証します。publish / updateはbrowserやnavigationを操作しません。
+重複ID、presentation参照とmembership、sizeを保存前に検証します。publish / updateはbrowserやnavigationを操作しません。
 publish / update前には同じgraph contentをpreviewし、presentationに依存しないtopology diagnosticsとauthoring warningから
 origin、granularity、behavior / subject boundaryを再確認できます。warningは保存を拒否せず、graphを自動変更しません。
 
 primary backboneまたはregionがあればcanonical配置へ反映し、backboneもregionもないstart-only presentationと
 `presentation: null`は同じtopology projectionを使います。start-onlyでもthesisとattention startはoverview、
 visual cue、exportへ残り、新規sessionは`startNodeId`から始まります。factual entrypointのoriginは別に示します。
-header直下のcompact Guideでは折り畳み可能なthesis、exact Core relations、spatial-order region legendを確認でき、
-backboneの強調、region memberのR badge、complete minimapでcanvas上の位置へ対応付けられます。Regionを選ぶと
-代表Nodeを捏造せずexact memberへviewportを移動します。region membershipは囲い枠ではなく明示Node IDに
-基づくため、manual drag後も変わりません。regionはnamed comprehension chunkで、array順はcanonicalな
-spatial orderとlegend順です。読解sequence、runtime順、重要度ではなく、各`nodeIds`の内側にも順序はありません。
-region-only mapは宣言順を保つbounded gridへ折り返します。
-viewerではHomeからauthorial coreを掴み、Node focusの1-hop / 2-hop、Region frame、AllをBackで往復します。
+header直下のcompact Guideはattention startと折り畳み可能なthesisだけを示し、backbone Edgeの完全なリストや
+Region関係図を複製しません。Structure本体はGraph / Regionsを切り替えられ、Regions modeではRegionごとの責務を
+矩形として示し、factual Edgeから導出したdirectなRegion間connectionを矢印で表示します。Regionを選ぶとGraphへ
+drill-downして、代表Nodeを捏造せずexact memberへviewportを移動します。Graph上にはRegionのfull label、責務summary、
+member / internal relation数を持つcompact lensを表示し、対象Nodeと内部relationを専用styleで強調します。stable ID由来の
+略称を復号したり、Node配置からmembershipを推測したりする必要はありません。BackでRegions overviewへ戻れます。
+Regions modeはcard geometryを狭いpaneへ押し込まず、初期表示 / ResetではStartを含む責務を読めるscaleで示し、
+Fitだけがmap全体を収めます。独立したzoom / wheel・drag panで局所を読みます。このRegions cameraはGraph viewportと混ぜずpane-local sessionへ保持し、
+mode切替、Region drillからのBack、tab往復でもそれぞれの位置を復元します。
+region membershipは囲い枠ではなく明示Node IDに
+基づくため、manual drag後も変わりません。regionはnamed comprehension chunkで、summaryはそのchunkがthesisへ
+何を寄与するかを伝えます。Region arrayと各`nodeIds`の順序に意味はなく、stable IDでcanonical化されます。
+Region間の関係は別のauthorial graphではなく、member間のdirect factual EdgeからViewerが導出します。
+viewerではHomeでauthorial start（null presentationではorigin）とexact 1-hopを読み、canvas / minimapに残る
+backbone emphasisでcoreの位置を保ちながら、Node focusの1-hop / 2-hop、Region frame、AllをBackで往復します。
 HomeとRegion frameは対象を確実に見せるためAllへ切り替えます。Region frame中はfocusを維持したままmemberと内部relationを
-full relevanceで読め、Home、Node focus、depth変更で解除します。Backは直前のfocus / hop depth / framed region / viewportを復元します。
+full relevanceで読め、Home、Node focus、depth変更で解除します。Backは直前のview mode / focus / hop depth / framed region / viewportを復元します。
 backbone membershipは固定されたauthorial salience、focus hopは一時的なreviewer attentionとして別に表示します。
 低zoomで省略するdetailもvisible / total件数、minimap、selection、Allから回収でき、pan、zoom、fit、node drag、
 layout resetで探索できます。通常clickでexact sourceを左、
 `Cmd` / `Ctrl`+clickで右ペインへ開きます。globalなcommit選択は
-変えません。node位置とviewportは同じbrowser sessionで保持しますが、SQLiteやAgent protocolへ座標を
+変えません。GraphのNode位置 / viewportとRegions viewportは互いに独立して同じbrowser sessionで保持しますが、SQLiteやAgent protocolへ座標を
 保存しません。同じsubjectの更新は同じURIを完全置換します。通常は存続するIDの位置を保ちますが、backbone endpoint
-adjacency、region membership/orderなどspatial organizerが変われば、新しいspatial semanticsへcanonical geometryをrebaseします。
+adjacency、Region identity / membershipなどspatial organizerが変われば、新しいspatial semanticsへcanonical geometryをrebaseします。
+frame中のRegion IDが存続する場合はchunk lensも維持し、current memberと内部relationのderived boundsへrefitします。
+Regionのlabel / summaryや配列順だけの変更ではGraphのNode geometryをrebaseしません。
+Regions cameraは別のderived-map basisでreconcileし、unorderedな配列順やsummary / thesisだけの変更では保持する一方、
+Region label / membership、cross-Region Edge endpoint・direction・labelなどprojection / routingが変われば、
+Startを読める新しいHome projectionへ戻します。map全体への縮小は明示的なFitだけが行います。
 `null`とstart-onlyの往復やthesis / startだけの変更ではmanual geometryを保ちます。別subjectは新しい
 Structureとしてpublishします。
+Node / Edge / Regionのstable IDは同じclaim / comprehension chunkが存続する間だけ維持し、一度削除したIDを
+別の意味で再利用しません。rvwは三種類すべてのretired IDをtombstoneとして保持し、後のupdateでの再導入を
+拒否します。存続中のIDが意味ごと差し替えられたかは機械判定せず、producerが新しいIDを割り当てます。
 
 Structure headerの`Export`から、現在のNode配置を保った図全体をstandalone SVGまたは2倍基準のPNGとして
 保存できます。focusや1-hop / 2-hopで画面上に絞り込んでいても、出力には全Node、全Relation、全Edge labelが
@@ -301,7 +317,7 @@ Walkthrough全体へのコメントから説明を改善する場合は、現在
 「改訂版」を追加しません。
 
 Structureを作る場合は、behavior、entrypoint、scope、含める／除外する関係と、必要なら伝えたいthesis、
-最初に見るNode、connectedなexact Core relationのprimary backbone、regionを伝えて`rvw-structure` Skillを使います。
+最初に見るNode、connectedなexact factual relation setのprimary backbone、regionを伝えて`rvw-structure` Skillを使います。
 Skillは上位composerを含む明示briefを調査boundaryのauthorityとして一つのbounded behaviorだけを扱い、suggested
 entrypointやrelationを実際のcommit済みcodeから再検証して、labelではなくclaimのidentityとしてstable IDを割り当てます。
 PR全体の構成や別behaviorのArtifactは自律的に増やしません。順序とprose自体が本質ならWalkthroughを提案し、

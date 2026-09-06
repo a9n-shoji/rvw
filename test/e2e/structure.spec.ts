@@ -6,9 +6,12 @@ const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
 const fullStackStructureId = "80000000-0000-4000-8000-000000000003";
+const reciprocalStructureId = "80000000-0000-4000-8000-000000000004";
+const topologyOnlyStructureId = "80000000-0000-4000-8000-000000000005";
 const primaryTitle = "Order placement behavior";
 const secondaryTitle = "Payment reconciliation recovery";
 const fullStackTitle = "Order detail response rendering";
+const topologyOnlyTitle = "Outbox persistence topology (unguided)";
 
 test("serves every semantic Structure anchor from the validated contract source provider", async ({
   request,
@@ -63,6 +66,44 @@ async function structureReadingState(viewer: Locator): Promise<StructureReadingS
   };
 }
 
+async function structureGraphLensState(viewer: Locator) {
+  return {
+    focusedNodeId: await viewer.locator(".structure-node.focused").getAttribute("data-node-id"),
+    depth: await viewer
+      .getByRole("group", { name: "近傍の深さ" })
+      .locator('button[aria-pressed="true"]')
+      .textContent(),
+    worldTransform: await viewer.locator(".structure-world").getAttribute("style"),
+    viewportScale: await viewer.getAttribute("data-viewport-scale"),
+  };
+}
+
+async function structureRegionsCameraState(viewer: Locator) {
+  return {
+    transform: await viewer.locator(".structure-region-map").getAttribute("style"),
+    scale: await viewer.getAttribute("data-regions-viewport-scale"),
+    mode: await viewer.getAttribute("data-regions-camera-mode"),
+  };
+}
+
+async function expectRegionsMapFullyVisible(viewer: Locator): Promise<void> {
+  await expect
+    .poll(async () => {
+      const [surfaceBox, mapBox] = await Promise.all([
+        viewer.locator(".structure-regions-canvas-scroll").boundingBox(),
+        viewer.locator(".structure-region-map").boundingBox(),
+      ]);
+      if (!surfaceBox || !mapBox) return false;
+      return (
+        mapBox.x >= surfaceBox.x - 1 &&
+        mapBox.x + mapBox.width <= surfaceBox.x + surfaceBox.width + 1 &&
+        mapBox.y >= surfaceBox.y - 1 &&
+        mapBox.y + mapBox.height <= surfaceBox.y + surfaceBox.height + 1
+      );
+    })
+    .toBe(true);
+}
+
 async function expectFocusedNodeVisible(viewer: Locator): Promise<void> {
   await expect
     .poll(async () => {
@@ -89,27 +130,35 @@ async function expectStructureNodesFullyVisible(
     .poll(async () =>
       viewer.evaluate((element, expectedNodeIds) => {
         const canvas = element.querySelector<HTMLElement>(".structure-canvas");
-        if (!canvas) return false;
+        if (!canvas) return ["missing canvas"];
         const canvasBox = canvas.getBoundingClientRect();
-        return expectedNodeIds.every((nodeId) => {
+        return expectedNodeIds.flatMap((nodeId) => {
           const node = element.querySelector<HTMLElement>(
             `.structure-node[data-node-id="${nodeId}"]`,
           );
-          if (!node) return false;
+          if (!node) return [`${nodeId}: missing`];
           const box = node.getBoundingClientRect();
-          return (
+          return [
             box.left >= canvasBox.left - 1 &&
             box.right <= canvasBox.right + 1 &&
             box.top >= canvasBox.top - 1 &&
             box.bottom <= canvasBox.bottom + 1
-          );
+              ? []
+              : [
+                  `${nodeId}: node=${box.left.toFixed(1)},${box.top.toFixed(1)},${box.right.toFixed(1)},${box.bottom.toFixed(1)} canvas=${canvasBox.left.toFixed(1)},${canvasBox.top.toFixed(1)},${canvasBox.right.toFixed(1)},${canvasBox.bottom.toFixed(1)}`,
+                ],
+          ].flat();
         });
       }, nodeIds),
     )
-    .toBe(true);
+    .toEqual([]);
 }
 
 async function dragVisibleStructureNode(page: Page, viewer: Locator, node: Locator): Promise<void> {
+  // Framing actions animate the world transform. Starting a pointer gesture while that
+  // transition is still moving the target can make the initial coordinates land on the
+  // canvas instead of the Node, turning the intended drag into a pan.
+  await expect(viewer.locator(".structure-world")).not.toHaveClass(/camera-transition/u);
   const [canvasBox, nodeBox] = await Promise.all([
     viewer.locator(".structure-canvas").boundingBox(),
     node.boundingBox(),
@@ -213,7 +262,7 @@ test("preserves Structure reading state when closing the last left tab normalize
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  const structureFolder = page.getByRole("button", { name: "Structure 3", exact: true });
+  const structureFolder = page.getByRole("button", { name: "Structure 5", exact: true });
   await structureFolder.click();
   await page
     .getByRole("navigation", { name: "レビュー文書" })
@@ -255,7 +304,7 @@ test("keeps the surviving pane session when closing a duplicate Structure tab", 
   const initialRightScale = Number(await rightViewer.getAttribute("data-viewport-scale"));
   await rightViewer.getByRole("button", { name: "縮小", exact: true }).click();
   const expectedRightState = await structureReadingState(rightViewer);
-  expect(expectedRightState.focusedNodeId).toBe("http-routes");
+  expect(expectedRightState.focusedNodeId).toBe("hub");
   expect(expectedRightState.depth).toBe("全体");
   expect(Number(expectedRightState.viewportScale)).toBeLessThan(initialRightScale);
   expect(Number(expectedRightState.viewportScale)).toBeGreaterThanOrEqual(0.03);
@@ -290,6 +339,8 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       { ref: `rvw://structure/${primaryStructureId}` },
       { ref: `rvw://structure/${secondaryStructureId}` },
       { ref: `rvw://structure/${fullStackStructureId}` },
+      { ref: `rvw://structure/${reciprocalStructureId}` },
+      { ref: `rvw://structure/${topologyOnlyStructureId}` },
     ],
   });
   await page.goto(`/?pullRequestId=${pullRequestId}`);
@@ -333,34 +384,53 @@ test("maps a backend response contract into frontend React rendering", async ({ 
     /focused/,
   );
   const thesisToggle = viewer.getByRole("button", { name: /Thesis/u });
-  const coreToggle = viewer.getByRole("button", { name: /Core relations/u });
-  const regionsToggle = viewer.getByRole("button", { name: /Regions/u });
+  const graphMode = viewer.getByRole("button", { name: "Graph", exact: true });
+  const regionsMode = viewer.getByRole("button", { name: "Regions", exact: true });
   await expect(thesisToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(coreToggle).toHaveAttribute("aria-expanded", "false");
-  await expect(regionsToggle).toHaveAttribute("aria-expanded", "false");
-  await expect(viewer.locator(".structure-presentation-overview-connection")).toHaveCount(0);
+  await expect(viewer.getByRole("button", { name: /Core relations/u })).toHaveCount(0);
+  await expect(viewer.getByText("Explanation backbone", { exact: true })).toHaveCount(0);
+  await expect(
+    viewer.locator(".structure-presentation-overview .structure-region-map"),
+  ).toHaveCount(0);
   await expect(viewer.locator(".structure-presentation-overview-regions")).toHaveCount(0);
-  await coreToggle.click();
-  await regionsToggle.click();
-  await expect(viewer.locator(".structure-presentation-overview-connection")).toHaveCount(14);
+  await expect(graphMode).toHaveAttribute("aria-pressed", "true");
+  await expect(regionsMode).toHaveAttribute("aria-pressed", "false");
+  await regionsMode.click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await expect(viewer.locator(".structure-regions-canvas")).toBeVisible();
+  await expect(viewer.locator(".structure-canvas")).toBeHidden();
+  await expect(viewer.locator(".structure-minimap")).toBeHidden();
+  await expect(viewer.getByRole("group", { name: "近傍の深さ" })).toHaveCount(0);
+  await expect(viewer.getByRole("button", { name: "表示中を収める" })).toHaveCount(0);
+  await expect(viewer.locator(".structure-region-map-card")).toHaveCount(4);
   await expect(
-    viewer.locator(
-      '.structure-presentation-overview-connection[data-edge-id="detail-route-executes-query"]',
-    ),
-  ).toHaveAttribute("data-direction", "directed");
-  await expect(viewer.locator(".structure-presentation-overview-regions > ol > li")).toHaveText([
-    "R1HTTP boundary3 Nodes",
-    "R2Read and present5 Nodes",
-    "R3Shared response2 Nodes",
-    "R4React rendering7 Nodes",
+    viewer.locator('.structure-region-map-card[data-region-id="frontend-rendering"]'),
+  ).toContainText("typed query stateをcacheし");
+  await expect(viewer.locator(".structure-region-map-relation:not(.context-boundary)")).toHaveCount(
+    3,
+  );
+  await expect(
+    viewer.locator('.structure-region-map-relation[data-edge-ids~="detail-route-executes-query"]'),
+  ).toHaveAttribute("data-direction", "second-to-first");
+  await expect(viewer.getByText("4 Regions · 17/17 Nodes assigned", { exact: true })).toBeVisible();
+  const [regionsCanvasBox, canvasShellBox] = await Promise.all([
+    viewer.locator(".structure-regions-canvas").boundingBox(),
+    viewer.locator(".structure-canvas-shell").boundingBox(),
   ]);
+  expect(regionsCanvasBox).not.toBeNull();
+  expect(canvasShellBox).not.toBeNull();
+  expect(regionsCanvasBox!.height).toBeCloseTo(canvasShellBox!.height, 0);
+  expect(Math.abs(regionsCanvasBox!.width - canvasShellBox!.width)).toBeLessThanOrEqual(1);
+
+  await graphMode.click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "graph");
   await expect(viewer.locator(".structure-region")).toHaveCount(0);
-  await expect(viewer.locator(".structure-region-member")).toHaveCount(17);
   await expect(
     viewer.locator(
-      '.structure-region-member[data-region-index="0"][data-region-node-id="order-detail-route"]',
+      '.structure-node[data-region-id="http-boundary"][data-node-id="order-detail-route"]',
     ),
-  ).toHaveAttribute("title", "Region 1: HTTP boundary");
+  ).toHaveAttribute("data-region-label", "HTTP boundary");
+  await expect(viewer.locator(".structure-region-member")).toHaveCount(0);
   await expect(viewer.locator(".structure-minimap-primary-backbone")).toHaveCount(14);
   await expect(viewer.locator(".structure-minimap-presentation-start")).toHaveCount(1);
   await expect(viewer.locator(".structure-minimap circle.primary-backbone")).toHaveCount(12);
@@ -370,10 +440,7 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   await expect(
     viewer.locator('.structure-presentation-overview-node[data-node-id="order-detail-route"]'),
   ).toHaveAttribute("aria-pressed", "true");
-  await viewer
-    .locator('.structure-presentation-overview-relation-node[data-node-id="order-detail-page"]')
-    .first()
-    .click();
+  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').click();
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
     /focused/,
   );
@@ -388,7 +455,7 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   await expect(
     viewer.locator('.structure-node[data-node-id="order-detail-route"] .structure-node-focus'),
   ).toHaveAccessibleName(
-    "GET /orders/:orderId · factual origin · authorial start · explanation backbone member · region R1: HTTP boundary",
+    "GET /orders/:orderId · factual origin · authorial start · explanation backbone member · region: HTTP boundary",
   );
   await expect(
     viewer.locator(
@@ -396,8 +463,6 @@ test("maps a backend response contract into frontend React rendering", async ({ 
     ),
   ).toHaveAccessibleName(/explanation backbone relation$/u);
   await thesisToggle.click();
-  await coreToggle.click();
-  await regionsToggle.click();
   await expect(viewer.locator(".structure-presentation-guide-section")).toHaveCount(0);
   expect(
     (await viewer.locator(".structure-presentation-overview").boundingBox())!.height,
@@ -453,7 +518,7 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       top: (sourceBox.top - nodeBox.top) / scale,
     };
   });
-  expect(conceptSourceInsets.right).toBeGreaterThanOrEqual(23);
+  expect(conceptSourceInsets.right).toBeGreaterThanOrEqual(21.5);
   expect(conceptSourceInsets.top).toBeGreaterThanOrEqual(11);
 
   const notationLayoutMetrics = await viewer.evaluate((element) => {
@@ -479,11 +544,13 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       const descriptionBox = description.getBoundingClientRect();
       const sourceBox = source.getBoundingClientRect();
       const nodeBox = node.getBoundingClientRect();
+      const world = node.closest<HTMLElement>(".structure-world")!;
+      const scale = new DOMMatrixReadOnly(getComputedStyle(world).transform).a;
       return {
         notation,
-        fileTitleGap: titleBox.top - sourceNameBox.bottom,
-        titleSourceClearance: titleBox.top - sourceBox.bottom,
-        identitySourceClearance: sourceBox.left - identityBox.right,
+        fileTitleGap: (titleBox.top - sourceNameBox.bottom) / scale,
+        titleSourceClearance: (titleBox.top - sourceBox.bottom) / scale,
+        identitySourceClearance: (sourceBox.left - identityBox.right) / scale,
         descriptionWidthRatio: descriptionBox.width / nodeBox.width,
         focusHorizontalOverflow: focus.scrollWidth - focus.clientWidth,
         titleHorizontalOverflow: title.scrollWidth - title.clientWidth,
@@ -492,7 +559,7 @@ test("maps a backend response contract into frontend React rendering", async ({ 
     });
   });
   for (const metrics of notationLayoutMetrics) {
-    expect(metrics.fileTitleGap, metrics.notation).toBeGreaterThanOrEqual(1.5);
+    expect(metrics.fileTitleGap, metrics.notation).toBeGreaterThanOrEqual(1.9);
     expect(metrics.fileTitleGap, metrics.notation).toBeLessThanOrEqual(2.5);
     expect(metrics.titleSourceClearance, metrics.notation).toBeGreaterThanOrEqual(0);
     expect(metrics.identitySourceClearance, metrics.notation).toBeGreaterThanOrEqual(0);
@@ -541,14 +608,16 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   const contractEdgeText = contractEdgeLabel.locator(".structure-edge-label-text");
   await expect(contractEdgeButton).toHaveAttribute("title", fullEdgeLabel);
   await expect(contractEdgeButton).toHaveAttribute("aria-label", new RegExp(fullEdgeLabel));
-  await expect(contractEdgeText).not.toHaveText(fullEdgeLabel);
-  await expect(contractEdgeText).toContainText("…");
-  expect(
-    await contractEdgeText.evaluate((element) => ({
-      breakCount: element.querySelectorAll("br").length,
-      lineClamp: getComputedStyle(element).webkitLineClamp,
-    })),
-  ).toEqual({ breakCount: 1, lineClamp: "2" });
+  await expect(contractEdgeText).toHaveText(fullEdgeLabel);
+  await expect(contractEdgeText).not.toContainText("…");
+  const wrappedLabel = await contractEdgeText.evaluate((element) => ({
+    breakCount: element.querySelectorAll("br").length,
+    lineClamp: getComputedStyle(element).webkitLineClamp,
+    fullyVisible: element.scrollHeight <= element.clientHeight + 1,
+  }));
+  expect(wrappedLabel.breakCount).toBeGreaterThanOrEqual(2);
+  expect(wrappedLabel.lineClamp).toBe("none");
+  expect(wrappedLabel.fullyVisible).toBe(true);
   const [labelButtonBox, sourceActionBox] = await Promise.all([
     contractEdgeButton.boundingBox(),
     contractEdgeLabel.locator(".structure-edge-sources > summary").boundingBox(),
@@ -556,20 +625,34 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   expect(labelButtonBox).not.toBeNull();
   expect(sourceActionBox).not.toBeNull();
   expect(sourceActionBox!.x).toBeGreaterThanOrEqual(labelButtonBox!.x + labelButtonBox!.width - 1);
-  const labelRightGap = await contractEdgeLabel
+  const labelTextContained = await contractEdgeLabel
     .locator(".structure-edge-select")
     .evaluate((button) => {
       const text = button.querySelector<HTMLElement>(".structure-edge-label-text")!;
       const textRange = document.createRange();
       textRange.selectNodeContents(text);
-      return button.getBoundingClientRect().right - textRange.getBoundingClientRect().right;
+      const buttonBox = button.getBoundingClientRect();
+      const textBox = textRange.getBoundingClientRect();
+      return (
+        textBox.left >= buttonBox.left - 1 &&
+        textBox.right <= buttonBox.right + 1 &&
+        textBox.top >= buttonBox.top - 1 &&
+        textBox.bottom <= buttonBox.bottom + 1
+      );
     });
-  expect(labelRightGap).toBeLessThanOrEqual(4.1);
-  await contractEdgeLabel.locator(".structure-edge-sources > summary").click();
+  expect(labelTextContained).toBe(true);
+  const contractEdgeSourceSummary = contractEdgeLabel.locator(".structure-edge-sources > summary");
+  await contractEdgeSourceSummary.focus();
+  await contractEdgeSourceSummary.press("Enter");
+  await expect(contractEdgeLabel.locator(".structure-edge-sources")).toHaveAttribute("open", "");
   await expect(
     contractEdgeLabel.locator(".structure-edge-source-menu .structure-source"),
   ).toHaveCount(2);
-  await contractEdgeLabel.locator(".structure-edge-source-menu .structure-source").first().click();
+  const firstContractEdgeSource = contractEdgeLabel
+    .locator(".structure-edge-source-menu .structure-source")
+    .first();
+  await firstContractEdgeSource.focus();
+  await firstContractEdgeSource.press("Enter");
   await expect(
     page.getByRole("tab", { name: "src/shared/contracts/order-detail.ts" }),
   ).toHaveAttribute("aria-selected", "true");
@@ -611,7 +694,135 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   expect(overlaps.labelPairs).toEqual([]);
 });
 
-test("uses a stable authored map with Guide disclosure, region framing, Home, and pane-local Back", async ({
+test("keeps unassigned Context explicit without manufacturing a transitive Region relation", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, primaryTitle);
+  const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
+  await viewer.getByRole("button", { name: "Regions", exact: true }).click();
+
+  const map = viewer.locator(".structure-region-map");
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await expect(map).toHaveAttribute("data-context-count", "1");
+  await expect(viewer.locator(".structure-region-context-card")).toHaveCount(1);
+  await expect(viewer.locator(".structure-region-context-card")).toHaveAccessibleName(
+    "Unassigned Context: Application wiring. 1 node.",
+  );
+  const boundary = viewer.locator(
+    '.structure-region-map-relation.context-boundary[data-edge-ids~="composition-constructs-handler"]',
+  );
+  await expect(boundary).toHaveCount(1);
+  await expect(boundary).toHaveAttribute("data-direction", "context-to-region");
+  await expect(
+    viewer.locator(
+      '.structure-region-map-relation:not(.context-boundary)[data-edge-ids~="composition-constructs-handler"]',
+    ),
+  ).toHaveCount(0);
+  await expect(viewer.getByRole("list", { name: "Exact factual relationships" })).toContainText(
+    "Context Application wiring to Application coordination",
+  );
+  const applicationRegionLabel = viewer
+    .locator('.structure-region-map-card[data-region-id="application-coordination"]')
+    .locator(".structure-region-map-card-heading > strong");
+  await expect(applicationRegionLabel).toHaveText("Application coordination");
+  expect(
+    await applicationRegionLabel.evaluate((element) => ({
+      overflow: getComputedStyle(element).overflow,
+      textOverflow: getComputedStyle(element).textOverflow,
+      whiteSpace: getComputedStyle(element).whiteSpace,
+    })),
+  ).toEqual({ overflow: "visible", textOverflow: "clip", whiteSpace: "normal" });
+});
+
+test("keeps Regions relation arrowheads legible against their lines in dark mode", async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, primaryTitle);
+  const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
+  await viewer.getByRole("button", { name: "Regions", exact: true }).click();
+
+  const paints = await viewer.locator(".structure-region-map").evaluate((map) =>
+    [...map.querySelectorAll<SVGGElement>(".structure-region-map-relation")].flatMap((group) => {
+      const line = group.querySelector<SVGPathElement>(".structure-region-map-relation-line");
+      if (!line) return [];
+      const markerPaints = [line.getAttribute("marker-start"), line.getAttribute("marker-end")]
+        .flatMap((reference) => reference?.match(/#([^)]*)/u)?.[1] ?? [])
+        .map((markerId) => {
+          const arrowhead = map.querySelector<SVGPathElement>(`#${markerId} path`);
+          return arrowhead
+            ? {
+                line: getComputedStyle(line).stroke,
+                arrowhead: getComputedStyle(arrowhead).fill,
+              }
+            : null;
+        })
+        .filter((paint): paint is { line: string; arrowhead: string } => paint !== null);
+      return markerPaints;
+    }),
+  );
+  expect(paints.length).toBeGreaterThan(0);
+  expect(paints.every(({ line, arrowhead }) => line === arrowhead)).toBe(true);
+});
+
+test("keeps native scrolling out of the transformed Graph camera", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const canvas = viewer.locator(".structure-canvas");
+
+  await viewer.getByRole("button", { name: "Home", exact: true }).click();
+  await expectStructureNodesFullyVisible(viewer, ["get-order-query"]);
+  const clickVisibleNode = async (nodeId: string): Promise<void> => {
+    await expect(viewer.locator(".structure-world")).not.toHaveClass(/camera-transition/u);
+    const bounds = await viewer.locator(`.structure-node[data-node-id="${nodeId}"]`).boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.click(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+  };
+  await clickVisibleNode("get-order-query");
+  await expect(viewer.locator('.structure-node[data-node-id="get-order-query"]')).toHaveClass(
+    /focused/u,
+  );
+  await expectStructureNodesFullyVisible(viewer, ["orders-read-model"]);
+
+  // A transformed element's untransformed layout box can prompt native focus scrolling.
+  // The Structure camera must remain the sole viewport instead of composing that hidden
+  // scroll offset with its persisted transform.
+  await expect
+    .poll(async () =>
+      canvas.evaluate((element) => ({
+        left: element.scrollLeft,
+        top: element.scrollTop,
+      })),
+    )
+    .toEqual({ left: 0, top: 0 });
+
+  const readModel = viewer.locator('.structure-node[data-node-id="orders-read-model"]');
+  await readModel.locator(".structure-node-focus").focus();
+  await expect
+    .poll(async () =>
+      canvas.evaluate((element) => ({
+        left: element.scrollLeft,
+        top: element.scrollTop,
+      })),
+    )
+    .toEqual({ left: 0, top: 0 });
+  await readModel.locator(".structure-node-focus").press("Enter");
+  await expect(readModel).toHaveClass(/focused/u);
+  await expectStructureNodesFullyVisible(viewer, ["orders-read-model"]);
+  await expect
+    .poll(async () =>
+      canvas.evaluate((element) => ({
+        left: element.scrollLeft,
+        top: element.scrollTop,
+      })),
+    )
+    .toEqual({ left: 0, top: 0 });
+});
+
+test("switches between the stable Graph lens and the Regions overview with drill-down and pane-local Back", async ({
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
@@ -634,34 +845,76 @@ test("uses a stable authored map with Guide disclosure, region framing, Home, an
   );
 
   const thesisToggle = viewer.getByRole("button", { name: /Thesis/u });
-  const regionsToggle = viewer.getByRole("button", { name: /Regions/u });
+  const graphMode = viewer.getByRole("button", { name: "Graph", exact: true });
+  const regionsMode = viewer.getByRole("button", { name: "Regions", exact: true });
   await thesisToggle.click();
-  await regionsToggle.click();
   await expect(thesisToggle).toHaveAttribute("aria-expanded", "false");
-  await expect(regionsToggle).toHaveAttribute("aria-expanded", "true");
+
+  await viewer.getByRole("button", { name: "1-hop", exact: true }).click();
+  await expect(viewer.getByText("4/17 Node · 5/19 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.locator(".structure-region-member")).toHaveCount(0);
+  const graphStateBeforeRegions = await structureGraphLensState(viewer);
   const regionOriginTransform = await world.evaluate(
     (element) => (element as HTMLElement).style.transform,
   );
 
-  await viewer.getByRole("button", { name: "1-hop", exact: true }).click();
-  await expect(viewer.getByText("4/17 Node · 5/19 Relation", { exact: true })).toBeVisible();
-  await expect(viewer.locator(".structure-region-member")).toHaveCount(4);
+  await regionsMode.click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await expect(regionsMode).toHaveAttribute("aria-pressed", "true");
+  await expect(viewer.locator(".structure-canvas")).toBeHidden();
+  await expect(viewer.locator(".structure-minimap")).toBeHidden();
+  await expect(viewer.locator(".structure-region-map-card")).toHaveCount(4);
+  const fittedRegionsCamera = await structureRegionsCameraState(viewer);
+  await viewer.getByRole("button", { name: "Regionsを拡大" }).click();
+  const regionsSurface = viewer.locator(".structure-regions-canvas-scroll");
+  await regionsSurface.dispatchEvent("wheel", { deltaX: -17, deltaY: 13 });
+  await expect(viewer).toHaveAttribute("data-regions-camera-mode", "manual");
+  expect(await structureRegionsCameraState(viewer)).not.toEqual(fittedRegionsCamera);
 
   const reactRegionButton = viewer.getByRole("button", {
-    name: "Frame region R4: React rendering, 7 nodes",
-    exact: true,
+    name: /^Open region React rendering in Graph, 7 nodes\./u,
   });
   await reactRegionButton.focus();
+  const regionsReturnCamera = await structureRegionsCameraState(viewer);
   await reactRegionButton.press("Enter");
+  await expect(viewer).toHaveAttribute("data-view-mode", "graph");
+  await expect(graphMode).toBeFocused();
   await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
   await expect(viewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
-  await expect(viewer).toHaveAttribute("data-framed-region-index", "3");
-  await expect(reactRegionButton).toHaveAttribute("aria-pressed", "true");
+  await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
   await expect(viewer.locator(".structure-node")).toHaveCount(17);
-  await expect(viewer.locator(".structure-region-member")).toHaveCount(17);
+  await expect(viewer.locator(".structure-region-member")).toHaveCount(0);
+  const regionLens = viewer.locator('.structure-region-lens[data-region-id="frontend-rendering"]');
+  await expect(regionLens).toBeVisible();
+  await expect(regionLens).toContainText("React rendering");
+  await expect(regionLens).toContainText(
+    "typed query stateをcacheし、pageからsummary・items・status・error表示へ分配する。",
+  );
+  await expect(regionLens).toContainText("7 exact member Nodes · 6 internal Relations");
+  expect(
+    await viewer.evaluate((element) => {
+      const lens = element.querySelector<HTMLElement>(".structure-region-lens")!;
+      const lensRect = lens.getBoundingClientRect();
+      return [
+        ...element.querySelectorAll<HTMLElement>(
+          '.structure-node[data-framed-region-member="true"]',
+        ),
+      ]
+        .filter((node) => {
+          const nodeRect = node.getBoundingClientRect();
+          return (
+            lensRect.left < nodeRect.right &&
+            lensRect.right > nodeRect.left &&
+            lensRect.top < nodeRect.bottom &&
+            lensRect.bottom > nodeRect.top
+          );
+        })
+        .map((node) => node.dataset.nodeId);
+    }),
+  ).toEqual([]);
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
     /focused/,
   );
@@ -699,23 +952,21 @@ test("uses a stable authored map with Guide disclosure, region framing, Home, an
   ).toEqual(initialPositions);
 
   await viewer.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(viewer).not.toHaveAttribute("data-framed-region-index");
-  await expect(reactRegionButton).toHaveAttribute("aria-pressed", "false");
+  await expect(viewer).not.toHaveAttribute("data-framed-region-id");
   await expect(viewer).toHaveAttribute("data-navigation-history-count", "2");
   await viewer.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(viewer).toHaveAttribute("data-framed-region-index", "3");
-  await expect(reactRegionButton).toHaveAttribute("aria-pressed", "true");
+  await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
   await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
 
   await viewer.getByRole("button", { name: "2-hop", exact: true }).click();
-  await expect(viewer).not.toHaveAttribute("data-framed-region-index");
+  await expect(viewer).not.toHaveAttribute("data-framed-region-id");
   await expect(viewer.getByRole("button", { name: "2-hop", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   await expect(viewer).toHaveAttribute("data-navigation-history-count", "2");
   await viewer.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(viewer).toHaveAttribute("data-framed-region-index", "3");
+  await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
   await expect(viewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -724,16 +975,28 @@ test("uses a stable authored map with Guide disclosure, region framing, Home, an
 
   await viewer.getByRole("button", { name: "Back", exact: true }).click();
   await expect(viewer).toHaveAttribute("data-navigation-history-count", "0");
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await expect(viewer.locator(".structure-regions-canvas")).toBeVisible();
+  await expect
+    .poll(async () => await structureRegionsCameraState(viewer))
+    .toEqual(regionsReturnCamera);
+  await graphMode.click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "graph");
   await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   await expect(viewer.locator(".structure-node")).toHaveCount(4);
-  await expect(viewer.locator(".structure-region-member")).toHaveCount(4);
+  await expect(viewer.locator(".structure-region-member")).toHaveCount(0);
   await expect
     .poll(async () => await world.evaluate((element) => (element as HTMLElement).style.transform))
     .toBe(regionOriginTransform);
+  await expect
+    .poll(async () => await structureGraphLensState(viewer))
+    .toEqual(graphStateBeforeRegions);
 
+  await regionsMode.click();
+  const regionsCameraBeforeClose = await structureRegionsCameraState(viewer);
   await page.getByRole("button", { name: `${fullStackTitle}を閉じる`, exact: true }).click();
   await openStructure(page, fullStackTitle);
   viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
@@ -741,20 +1004,22 @@ test("uses a stable authored map with Guide disclosure, region framing, Home, an
     "aria-expanded",
     "false",
   );
-  await expect(viewer.getByRole("button", { name: /Regions/u })).toHaveAttribute(
-    "aria-expanded",
-    "true",
-  );
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await expect
+    .poll(async () => await structureRegionsCameraState(viewer))
+    .toEqual(regionsCameraBeforeClose);
+  await viewer.getByRole("button", { name: "Graph", exact: true }).click();
   await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
 
+  await viewer.getByRole("button", { name: "Regions", exact: true }).click();
   await viewer
-    .getByRole("button", { name: "Frame region R4: React rendering, 7 nodes", exact: true })
+    .getByRole("button", { name: /^Open region React rendering in Graph, 7 nodes\./u })
     .click();
   await viewer.locator('.structure-node[data-node-id="order-detail-page"]').click();
-  await expect(viewer).not.toHaveAttribute("data-framed-region-index");
+  await expect(viewer).not.toHaveAttribute("data-framed-region-id");
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
     /focused/,
   );
@@ -775,11 +1040,13 @@ test("uses a stable authored map with Guide disclosure, region framing, Home, an
     "aria-pressed",
     "true",
   );
-  await expect(viewer).toHaveAttribute("data-framed-region-index", "3");
+  await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
   await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
   await viewer.getByRole("button", { name: "Back", exact: true }).click();
   await expect(viewer).toHaveAttribute("data-navigation-history-count", "0");
-  await expect(viewer).not.toHaveAttribute("data-framed-region-index");
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await expect(viewer).not.toHaveAttribute("data-framed-region-id");
+  await viewer.getByRole("button", { name: "Graph", exact: true }).click();
   await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -845,13 +1112,114 @@ test("uses a stable authored map with Guide disclosure, region framing, Home, an
       .locator(".structure-edge-label-text")
       .evaluate((element) => getComputedStyle(element).visibility),
   ).toBe("visible");
+  await viewer.getByRole("button", { name: "Regions", exact: true }).click();
   await viewer
-    .getByRole("button", { name: "Frame region R4: React rendering, 7 nodes", exact: true })
+    .getByRole("button", { name: /^Open region React rendering in Graph, 7 nodes\./u })
     .click();
   await expect(secondaryLabel).toHaveClass(/selected/);
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
     /focused/,
   );
+});
+
+test("restores a captured Regions camera through same-mode Back after a pane resize", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const regionsMode = viewer.getByRole("button", { name: "Regions", exact: true });
+  await regionsMode.click();
+  await viewer.getByRole("button", { name: "Regionsを拡大" }).click();
+  await viewer
+    .locator(".structure-regions-canvas-scroll")
+    .dispatchEvent("wheel", { deltaX: -23, deltaY: 17 });
+  const regionButton = viewer.getByRole("button", {
+    name: /^Open region React rendering in Graph, 7 nodes\./u,
+  });
+  await regionButton.focus();
+  await regionButton.press("Enter");
+  await expect(viewer).toHaveAttribute("data-view-mode", "graph");
+
+  await page.setViewportSize({ width: 1_040, height: 720 });
+  await regionsMode.click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  const resizedReturnCamera = await structureRegionsCameraState(viewer);
+  await viewer.getByRole("button", { name: "Regionsを拡大" }).click();
+  await expect
+    .poll(async () => await structureRegionsCameraState(viewer))
+    .not.toEqual(resizedReturnCamera);
+
+  await viewer.getByRole("button", { name: "Back", exact: true }).click();
+  await expect
+    .poll(async () => await structureRegionsCameraState(viewer))
+    .toEqual(resizedReturnCamera);
+});
+
+test("reframes an open manual Regions camera when its derived map basis changes", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const detailResponse = await page.request.get(
+    `/api/pull-requests/${pullRequestId}/structures/${fullStackStructureId}`,
+  );
+  expect(detailResponse.ok()).toBe(true);
+  const detail = (await detailResponse.json()) as {
+    structure: {
+      title: string;
+      presentation: {
+        thesis: string;
+        startNodeId: string;
+        primaryBackbone: { edgeIds: string[] } | null;
+        regions: Array<{ id: string; label: string; summary: string; nodeIds: string[] }>;
+      };
+    };
+  };
+  const originalTitle = detail.structure.title;
+  const originalPresentation = detail.structure.presentation;
+  const relabeledRegion = originalPresentation.regions[0]!;
+
+  await viewer.getByRole("button", { name: "Regions", exact: true }).click();
+  await viewer.getByRole("button", { name: "Regionsを拡大" }).click();
+  await viewer
+    .locator(".structure-regions-canvas-scroll")
+    .dispatchEvent("wheel", { deltaX: 37, deltaY: -19 });
+  await expect(viewer).toHaveAttribute("data-regions-camera-mode", "manual");
+
+  const relabeledPresentation = {
+    ...originalPresentation,
+    regions: originalPresentation.regions.map((region, index) =>
+      index === 0 ? { ...region, label: `${relabeledRegion.label} updated` } : region,
+    ),
+  };
+  const updatedTitle = `${originalTitle} Regions updated`;
+  try {
+    const updateResponse = await page.request.post(
+      `/api/fixture/structures/${fullStackStructureId}/update`,
+      { data: { title: updatedTitle, presentation: relabeledPresentation } },
+    );
+    expect(updateResponse.ok()).toBe(true);
+    await expect(viewer.locator(".structure-header h2")).toHaveText(updatedTitle);
+    await expect(viewer).toHaveAttribute("data-regions-camera-mode", "home");
+    await expect
+      .poll(async () => Number(await viewer.getAttribute("data-regions-viewport-scale")))
+      .toBeLessThan(1);
+    expect(Number(await viewer.getAttribute("data-regions-viewport-scale"))).toBeGreaterThanOrEqual(
+      0.7,
+    );
+    await expect(
+      viewer.locator(`.structure-region-map-card[data-region-id="${relabeledRegion.id}"]`),
+    ).toContainText("updated");
+  } finally {
+    const restoreResponse = await page.request.post(
+      `/api/fixture/structures/${fullStackStructureId}/update`,
+      { data: { title: originalTitle, presentation: originalPresentation } },
+    );
+    expect(restoreResponse.ok()).toBe(true);
+    await expect(viewer.locator(".structure-header h2")).toHaveText(originalTitle);
+  }
 });
 
 test("exports the complete Structure as standalone SVG and 2x PNG without changing reading state", async ({
@@ -877,6 +1245,8 @@ test("exports the complete Structure as standalone SVG and 2x PNG without changi
   const selectedEdgeId = await viewer.getAttribute("data-selected-edge-id");
   const nodeCount = Number(await viewer.getAttribute("data-total-node-count"));
   const edgeCount = Number(await viewer.getAttribute("data-total-edge-count"));
+  await viewer.getByRole("button", { name: "Regions", exact: true }).click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
 
   const exportMenu = viewer.locator('summary[aria-label="Structureをエクスポート"]');
   await exportMenu.click();
@@ -909,9 +1279,12 @@ test("exports the complete Structure as standalone SVG and 2x PNG without changi
   const svgDimensions = svg.match(/<svg[^>]* width="(\d+)" height="(\d+)"/u);
   expect(svgDimensions).not.toBeNull();
 
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await viewer.getByRole("button", { name: "Graph", exact: true }).click();
   await expect.poll(async () => await structureReadingState(viewer)).toEqual(readingState);
   expect(await viewer.locator(".structure-world").getAttribute("style")).toBe(worldTransform);
   expect(await viewer.getAttribute("data-selected-edge-id")).toBe(selectedEdgeId);
+  await viewer.getByRole("button", { name: "Regions", exact: true }).click();
 
   await exportMenu.click();
   const pngDownloadPromise = page.waitForEvent("download");
@@ -926,6 +1299,8 @@ test("exports the complete Structure as standalone SVG and 2x PNG without changi
   expect([...png.subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
   expect(png.readUInt32BE(16)).toBe(Number(svgDimensions![1]) * 2);
   expect(png.readUInt32BE(20)).toBe(Number(svgDimensions![2]) * 2);
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await viewer.getByRole("button", { name: "Graph", exact: true }).click();
   await expect.poll(async () => await structureReadingState(viewer)).toEqual(readingState);
   expect(await viewer.locator(".structure-world").getAttribute("style")).toBe(worldTransform);
   expect(await viewer.getAttribute("data-selected-edge-id")).toBe(selectedEdgeId);
@@ -943,6 +1318,185 @@ test("keeps the Export popover inside a narrow Structure pane", async ({ page })
   const viewer = page
     .locator('.document-pane[data-pane="left"]')
     .locator(`[data-structure-id="${primaryStructureId}"]`);
+  const regionsMode = viewer.getByRole("button", { name: "Regions", exact: true });
+  await regionsMode.scrollIntoViewIfNeeded();
+  await expect(regionsMode).toBeVisible();
+  await regionsMode.click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  const regionsScroll = viewer.locator(".structure-regions-canvas-scroll");
+  await expect(regionsScroll).toBeVisible();
+  const scrollMetrics = await regionsScroll.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    clientHeight: element.clientHeight,
+    scrollWidth: element.scrollWidth,
+    scrollHeight: element.scrollHeight,
+    overflow: getComputedStyle(element).overflow,
+  }));
+  expect(scrollMetrics.clientWidth).toBeLessThan(320);
+  expect(scrollMetrics.overflow).toBe("hidden");
+  expect(scrollMetrics.scrollWidth).toBeGreaterThan(0);
+  expect(scrollMetrics.scrollHeight).toBeGreaterThan(0);
+  await expect(viewer).toHaveAttribute("data-regions-camera-mode", "home");
+  const homeCamera = await structureRegionsCameraState(viewer);
+  const homeScale = Number(homeCamera.scale);
+  expect(homeScale).toBeGreaterThanOrEqual(0.7);
+  const startRegion = viewer.locator('.structure-region-map-card[data-start-region="true"]');
+  await expect
+    .poll(async () => {
+      const [surfaceBox, cardBox] = await Promise.all([
+        regionsScroll.boundingBox(),
+        startRegion.boundingBox(),
+      ]);
+      if (!surfaceBox || !cardBox) return false;
+      return (
+        cardBox.x >= surfaceBox.x &&
+        cardBox.x + cardBox.width <= surfaceBox.x + surfaceBox.width &&
+        cardBox.y >= surfaceBox.y &&
+        cardBox.y + cardBox.height <= surfaceBox.y + surfaceBox.height
+      );
+    })
+    .toBe(true);
+
+  await viewer.getByRole("button", { name: "Regions全体を収める" }).click();
+  await expect(viewer).toHaveAttribute("data-regions-camera-mode", "fit");
+  await expectRegionsMapFullyVisible(viewer);
+  const fitCamera = await structureRegionsCameraState(viewer);
+  const fitScale = Number(fitCamera.scale);
+  expect(fitScale).toBeGreaterThan(0);
+  expect(fitScale).toBeLessThan(homeScale);
+
+  const dragStart = await regionsScroll.evaluate((surface) => {
+    const bounds = surface.getBoundingClientRect();
+    const left = Math.max(bounds.left, 0);
+    const top = Math.max(bounds.top, 0);
+    const right = Math.min(bounds.right, window.innerWidth);
+    const bottom = Math.min(bounds.bottom, window.innerHeight);
+    for (let y = bottom - 12; y >= top + 12; y -= 18) {
+      for (let x = left + 12; x <= right - 12; x += 18) {
+        const target = document.elementFromPoint(x, y);
+        if (
+          target &&
+          target.closest(".structure-regions-canvas-scroll") === surface &&
+          !target.closest(
+            ".structure-region-map-card, .structure-region-map-relation-label, button",
+          )
+        ) {
+          return { x, y };
+        }
+      }
+    }
+    throw new Error("No visible blank Regions canvas point was available for pointer panning.");
+  });
+  await page.mouse.move(dragStart.x, dragStart.y);
+  await page.mouse.down();
+  await page.mouse.move(dragStart.x + 42, dragStart.y - 34, { steps: 4 });
+  await page.mouse.up();
+  const draggedCamera = await structureRegionsCameraState(viewer);
+  expect(draggedCamera.transform).not.toBe(fitCamera.transform);
+  expect(Number(draggedCamera.scale)).toBeCloseTo(fitScale, 3);
+  await expect(viewer).toHaveAttribute("data-regions-camera-mode", "manual");
+
+  const surfaceBox = await regionsScroll.boundingBox();
+  expect(surfaceBox).not.toBeNull();
+  await page.mouse.move(
+    surfaceBox!.x + surfaceBox!.width / 2,
+    Math.min(surfaceBox!.y + surfaceBox!.height / 2, 700),
+  );
+  await page.keyboard.down("Control");
+  await page.mouse.wheel(0, -80);
+  await page.keyboard.up("Control");
+  await expect
+    .poll(async () => Number(await viewer.getAttribute("data-regions-viewport-scale")))
+    .toBeGreaterThan(fitScale);
+
+  await viewer.getByRole("button", { name: "Regionsを拡大" }).click();
+  await expect
+    .poll(async () => Number(await viewer.getAttribute("data-regions-viewport-scale")))
+    .toBeGreaterThan(fitScale);
+  await expect(viewer).toHaveAttribute("data-regions-camera-mode", "manual");
+  const zoomedCamera = await structureRegionsCameraState(viewer);
+  await regionsScroll.dispatchEvent("wheel", { deltaX: 24, deltaY: 18 });
+  await expect
+    .poll(async () => await structureRegionsCameraState(viewer))
+    .not.toEqual(zoomedCamera);
+  expect(Number((await structureRegionsCameraState(viewer)).scale)).toBeCloseTo(
+    Number(zoomedCamera.scale),
+    3,
+  );
+
+  const lastRegion = viewer.locator(".structure-region-map-card").last();
+  await lastRegion.focus();
+  await expect(lastRegion).toBeFocused();
+  await expect
+    .poll(async () => {
+      const [surfaceBox, cardBox] = await Promise.all([
+        regionsScroll.boundingBox(),
+        lastRegion.boundingBox(),
+      ]);
+      if (!surfaceBox || !cardBox) return false;
+      return (
+        cardBox.x >= surfaceBox.x + 14 &&
+        cardBox.x + cardBox.width <= surfaceBox.x + surfaceBox.width - 14 &&
+        cardBox.y >= surfaceBox.y + 14 &&
+        cardBox.y + cardBox.height <= surfaceBox.y + surfaceBox.height - 14
+      );
+    })
+    .toBe(true);
+
+  await viewer.getByRole("button", { name: "Regions表示を戻す" }).click();
+  await expect(viewer).toHaveAttribute("data-regions-camera-mode", "home");
+  expect(Number(await viewer.getAttribute("data-regions-viewport-scale"))).toBeGreaterThanOrEqual(
+    0.7,
+  );
+
+  await viewer.getByRole("button", { name: "Regions全体を収める" }).click();
+  await expect(viewer).toHaveAttribute("data-regions-camera-mode", "fit");
+  await expectRegionsMapFullyVisible(viewer);
+
+  const applicationRegion = viewer.getByRole("button", {
+    name: /^Open region Application coordination in Graph, 3 nodes\./u,
+  });
+  await applicationRegion.scrollIntoViewIfNeeded();
+  await applicationRegion.click();
+  const regionLens = viewer.locator(
+    '.structure-region-lens[data-region-id="application-coordination"]',
+  );
+  await expect(regionLens).toBeVisible();
+  await expect(viewer.locator(".structure-canvas-status")).toHaveCount(0);
+  const lensContainment = await viewer.evaluate((element) => {
+    const canvas = element.querySelector<HTMLElement>(".structure-canvas")!.getBoundingClientRect();
+    const toolbar = element
+      .querySelector<HTMLElement>(".structure-toolbar")!
+      .getBoundingClientRect();
+    const lens = element.querySelector<HTMLElement>(".structure-region-lens")!;
+    const lensRect = lens.getBoundingClientRect();
+    const style = getComputedStyle(lens);
+    return {
+      canvasLeft: canvas.left,
+      canvasRight: canvas.right,
+      toolbarBottom: toolbar.bottom,
+      lensLeft: lensRect.left,
+      lensRight: lensRect.right,
+      lensTop: lensRect.top,
+      overflowY: style.overflowY,
+      pointerEvents: style.pointerEvents,
+      whiteSpace: getComputedStyle(lens.querySelector<HTMLElement>(".structure-region-lens > p")!)
+        .whiteSpace,
+    };
+  });
+  expect(lensContainment.lensLeft).toBeGreaterThanOrEqual(lensContainment.canvasLeft + 7);
+  expect(lensContainment.lensRight).toBeLessThanOrEqual(lensContainment.canvasRight - 7);
+  expect(lensContainment.lensTop).toBeGreaterThan(lensContainment.toolbarBottom);
+  expect(lensContainment).toMatchObject({
+    overflowY: "auto",
+    pointerEvents: "auto",
+    whiteSpace: "normal",
+  });
+  await regionLens.focus();
+  await expect(regionLens).toBeFocused();
+  await viewer.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+
   await viewer.locator('summary[aria-label="Structureをエクスポート"]').click();
   const containment = await viewer.evaluate((element) => {
     const viewerRect = element.getBoundingClientRect();
@@ -1404,7 +1958,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto(`/?pullRequestId=${pullRequestId}`);
 
-  const structureFolder = page.getByRole("button", { name: "Structure 3", exact: true });
+  const structureFolder = page.getByRole("button", { name: "Structure 5", exact: true });
   await expect(structureFolder).toHaveAttribute("aria-expanded", "false");
   await structureFolder.click();
   await expect(structureFolder).toHaveAttribute("aria-expanded", "true");
@@ -1412,7 +1966,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await expect(structureFolder).toHaveAttribute("aria-expanded", "false");
   await structureFolder.click();
   const reviewTree = page.getByRole("navigation", { name: "レビュー文書" });
-  await expect(reviewTree.locator(".review-tree-structure")).toHaveCount(3);
+  await expect(reviewTree.locator(".review-tree-structure")).toHaveCount(5);
   await expect(reviewTree.getByRole("button", { name: primaryTitle })).toHaveAttribute(
     "title",
     `${primaryTitle}\nOrder creation from the authenticated HTTP boundary through domain decisions, remote side effects, transactional persistence, and event handoff; background delivery, recovery, and read paths are excluded.\nbbbbbbbb`,
@@ -1426,9 +1980,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
   await expect(viewer.getByRole("heading", { name: primaryTitle })).toBeVisible();
   await expect(viewer.getByText("16/16 Node · 19/19 Relation", { exact: true })).toBeVisible();
-  await expect(viewer.locator('.structure-node[data-node-id="http-routes"]')).toHaveClass(
-    /focused/,
-  );
+  await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/);
   await expect(viewer.locator('.structure-node[data-node-id="http-routes"]')).toHaveAttribute(
     "data-origin-node",
     "true",
@@ -1449,9 +2001,9 @@ test("resolves Structure anchors to latest and preserves spatial context across 
 
   const canvas = viewer.locator(".structure-canvas");
   await expectStructureNodesFullyVisible(viewer, [
-    "http-routes",
-    "auth-middleware",
     "http-controller",
+    "hub",
+    "authorization-policy",
   ]);
   await expect
     .poll(async () => {
@@ -1480,9 +2032,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await expect(secondaryViewer.locator(".structure-node")).toHaveCount(3);
   await expect(secondaryViewer.locator(".structure-edge")).toHaveCount(2);
   await openStructure(page, primaryTitle);
-  await expect(viewer.locator('.structure-node[data-node-id="http-routes"]')).toHaveClass(
-    /focused/,
-  );
+  await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/);
   await expect(viewer.locator(".structure-node")).toHaveCount(16);
   await expect(viewer.locator(".structure-edge")).toHaveCount(19);
 
@@ -1535,7 +2085,8 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   expect(titleTextBox).not.toBeNull();
   expect(sourceActionBox).not.toBeNull();
   expect(identityBox!.y + identityBox!.height).toBeLessThanOrEqual(titleTextBox!.y + 1);
-  expect(titleTextBox!.width).toBeGreaterThan(130);
+  const currentViewportScale = Number(await viewer.getAttribute("data-viewport-scale"));
+  expect(titleTextBox!.width / currentViewportScale).toBeGreaterThan(130);
   expect(sourceActionBox!.x).toBeGreaterThan(titleTextBox!.x);
 
   await hubNode.click();
@@ -1589,21 +2140,25 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await hubNode.click();
 
   const firstEdge = viewer.locator('.structure-edge[data-edge-id="controller-executes-handler"]');
+  const firstEdgeArrow = viewer.locator(
+    '.structure-edge-arrow-carrier[data-edge-arrow-id="controller-executes-handler"]',
+  );
   await expect(firstEdge).toHaveAttribute("d", / C /);
-  await expect(firstEdge).toHaveAttribute("marker-end", /structure-left-.+-arrow/);
+  await expect(firstEdge).not.toHaveAttribute("marker-end", /.+/u);
+  await expect(firstEdgeArrow).toHaveAttribute("marker-end", /structure-left-.+-arrow/);
   await expect(firstEdge).toHaveAttribute("data-source-change-kind", "modified");
   const endpointsMeetNodeBoundaries = await firstEdge.evaluate((element) => {
     const path = element as SVGPathElement;
     const viewerElement = path.closest(".structure-viewer")!;
     const controller = viewerElement.querySelector<HTMLElement>(
-      '[data-node-id="http-controller"]',
+      '.structure-node[data-node-id="http-controller"]',
     )!;
-    const hub = viewerElement.querySelector<HTMLElement>('[data-node-id="hub"]')!;
+    const hub = viewerElement.querySelector<HTMLElement>('.structure-node[data-node-id="hub"]')!;
     const pointOnBoundary = (x: number, y: number, node: HTMLElement): boolean => {
       const left = Number.parseFloat(node.style.left);
       const top = Number.parseFloat(node.style.top);
-      const right = left + 228;
-      const bottom = top + 112;
+      const right = left + node.offsetWidth;
+      const bottom = top + node.offsetHeight;
       const epsilon = 0.01;
       const withinX = x >= left - epsilon && x <= right + epsilon;
       const withinY = y >= top - epsilon && y <= bottom + epsilon;
@@ -1617,7 +2172,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
     );
   });
   expect(endpointsMeetNodeBoundaries).toBe(true);
-  await expect(viewer.locator(".structure-edges marker").first()).toHaveAttribute("refX", "10");
+  await expect(viewer.locator(".structure-edges marker").first()).toHaveAttribute("refX", "12");
 
   const firstEdgeLabel = viewer.locator(
     '.structure-edge-label[data-edge-id="controller-executes-handler"]',
@@ -1626,7 +2181,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await expect(firstEdgeLabel.locator(".structure-source-identity")).toHaveCount(0);
   await expect(firstEdgeLabel.locator(".structure-edge-sources")).toBeVisible();
   await expect(firstEdgeLabel.locator(".structure-edge-select")).toHaveAccessibleName(
-    "Create order controller から Create order へ: HTTP commandとして実行する",
+    "Create order controller から Create order へ: HTTP commandとして実行する · explanation backbone relation",
   );
 
   const graphCollisions = await viewer.evaluate((element) => {
@@ -1644,7 +2199,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
     ]
       .map((label) => label.dataset.edgeId!)
       .sort();
-    const leaders = [...element.querySelectorAll<SVGPathElement>(".structure-edge-label-leader")];
+    const leaders = [...element.querySelectorAll<SVGGElement>(".structure-edge-label-leader")];
     const leaderIds = leaders.map((leader) => leader.dataset.edgeId!).sort();
     const overlaps = (left: { rect: DOMRect }, right: { rect: DOMRect }): boolean =>
       !(
@@ -1669,8 +2224,22 @@ test("resolves Structure anchors to latest and preserves spatial context across 
       displacedLabelIds,
       leaderIds,
       leadersAreVisible: leaders.every((leader) => {
-        const style = getComputedStyle(leader);
-        return leader.getTotalLength() > 0 && style.stroke !== "none" && Number(style.opacity) > 0;
+        const line = leader.querySelector<SVGPathElement>(".structure-edge-label-leader-line");
+        const halo = leader.querySelector<SVGPathElement>(".structure-edge-label-leader-halo");
+        const anchor = leader.querySelector<SVGCircleElement>(
+          ".structure-edge-label-leader-anchor",
+        );
+        if (!line || !halo || !anchor) return false;
+        const lineStyle = getComputedStyle(line);
+        const haloStyle = getComputedStyle(halo);
+        return (
+          line.getTotalLength() > 0 &&
+          lineStyle.stroke !== "none" &&
+          lineStyle.strokeDasharray !== "none" &&
+          Number.parseFloat(haloStyle.strokeWidth) >= 4 &&
+          Number.parseFloat(anchor.getAttribute("r") ?? "0") > 0 &&
+          Number(lineStyle.opacity) > 0
+        );
       }),
     };
   });
@@ -2041,13 +2610,15 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await expect(secondaryViewer.locator(".structure-edge-label")).toHaveCount(2);
   await secondaryViewer.getByRole("button", { name: "表示中を収める" }).click();
   await page.setViewportSize({ width: 900, height: 700 });
-  const [headerBox, toolbarBox, canvasBox, viewerBox] = await Promise.all([
+  const [headerBox, guideBox, toolbarBox, canvasBox, viewerBox] = await Promise.all([
     secondaryViewer.locator(".structure-header").boundingBox(),
+    secondaryViewer.locator(".structure-presentation-overview").boundingBox(),
     secondaryViewer.locator(".structure-toolbar").boundingBox(),
     secondaryViewer.locator(".structure-canvas-shell").boundingBox(),
     secondaryViewer.boundingBox(),
   ]);
   expect(headerBox).not.toBeNull();
+  expect(guideBox).not.toBeNull();
   expect(toolbarBox).not.toBeNull();
   expect(canvasBox).not.toBeNull();
   expect(viewerBox).not.toBeNull();
@@ -2060,7 +2631,9 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   expect(toolbarBox!.y + toolbarBox!.height).toBeLessThanOrEqual(
     canvasBox!.y + canvasBox!.height + 1,
   );
-  expect(canvasBox!.height).toBeGreaterThanOrEqual(viewerBox!.height - headerBox!.height - 2);
+  expect(canvasBox!.height).toBeGreaterThanOrEqual(
+    viewerBox!.height - headerBox!.height - guideBox!.height - 2,
+  );
   expect(canvasBox!.y + canvasBox!.height).toBeLessThanOrEqual(
     viewerBox!.y + viewerBox!.height + 1,
   );
@@ -2095,7 +2668,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
     })
     .click();
   await expect(page.getByRole("tab", { name: secondaryTitle })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Structure 2", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Structure 4", exact: true })).toBeVisible();
   await expect.poll(() => structureReferenceIndexRequests).toBe(requestsBeforeDelete + 1);
   await page.waitForTimeout(250);
   expect(structureReferenceIndexRequests).toBe(requestsBeforeDelete + 1);
@@ -2127,24 +2700,9 @@ test("rebases a cached Structure session when authored presentation changes whil
       },
     };
   });
-  const regionMarkerBefore = viewer.locator(
-    '.structure-region-member[data-region-node-id="order-response-presenter"]',
-  );
-  await expect(regionMarkerBefore).toHaveAttribute("title", "Region 2: Read and present");
-  expect(
-    await viewer.evaluate((element) => {
-      const node = element.querySelector<HTMLElement>(
-        '.structure-node[data-node-id="order-response-presenter"]',
-      )!;
-      const marker = element.querySelector<HTMLElement>(
-        '.structure-region-member[data-region-node-id="order-response-presenter"]',
-      )!;
-      return {
-        deltaX: Number.parseFloat(marker.style.left) - Number.parseFloat(node.style.left),
-        deltaY: Number.parseFloat(marker.style.top) - Number.parseFloat(node.style.top),
-      };
-    }),
-  ).toEqual({ deltaX: 203, deltaY: -14 });
+  await expect(focusedNode).toHaveAttribute("data-region-id", "backend-read-and-present");
+  await expect(focusedNode).toHaveAttribute("data-region-label", "Read and present");
+  await expect(viewer.locator(".structure-region-member")).toHaveCount(0);
   const scaleBefore = await viewer.getAttribute("data-viewport-scale");
   const detailResponse = await page.request.get(
     `/api/pull-requests/${pullRequestId}/structures/${fullStackStructureId}`,
@@ -2156,7 +2714,7 @@ test("rebases a cached Structure session when authored presentation changes whil
         thesis: string;
         startNodeId: string;
         primaryBackbone: { edgeIds: string[] };
-        regions: Array<{ label: string; nodeIds: string[] }>;
+        regions: Array<{ id: string; label: string; summary: string; nodeIds: string[] }>;
       };
     };
   };
@@ -2197,11 +2755,8 @@ test("rebases a cached Structure session when authored presentation changes whil
     "true",
   );
   await expect(restoredViewer).toHaveAttribute("data-viewport-scale", scaleBefore!);
-  await expect(
-    restoredViewer.locator(
-      '.structure-region-member[data-region-node-id="order-response-presenter"]',
-    ),
-  ).toHaveAttribute("title", "Region 3: Read and present");
+  await expect(restoredFocus).toHaveAttribute("data-region-id", "backend-read-and-present");
+  await expect(restoredFocus).toHaveAttribute("data-region-label", "Read and present");
   await expect
     .poll(async () => {
       const rectangle = await restoredFocus.boundingBox();
@@ -2258,10 +2813,13 @@ test("shows thesis and an attention start without manufacturing a backbone or re
     const startNode = viewer.locator('.structure-node[data-node-id="order-detail-contract"]');
 
     await expect(viewer).toHaveAttribute("data-has-presentation", "true");
+    await expect(viewer).toHaveAttribute("data-view-mode", "graph");
     await expect(overview.locator(".structure-presentation-overview-thesis")).toContainText(thesis);
     await expect(overview.getByRole("button", { name: /Authorial start node/u })).toBeVisible();
     await expect(overview.getByRole("button", { name: /Core relations/u })).toHaveCount(0);
-    await expect(overview.locator(".structure-presentation-overview-regions")).toHaveCount(0);
+    await expect(overview.locator(".structure-region-map")).toHaveCount(0);
+    await expect(viewer.getByRole("button", { name: "Regions", exact: true })).toBeDisabled();
+    await expect(viewer.locator(".structure-regions-canvas")).toHaveCount(0);
     await expect(startNode).toHaveClass(/focused/);
     await expect(startNode).toHaveAttribute("data-presentation-start-node", "true");
     await expect(viewer.locator('.structure-node[data-primary-backbone="true"]')).toHaveCount(0);
@@ -2287,4 +2845,20 @@ test("shows thesis and an attention start without manufacturing a backbone or re
     );
     expect(restoreResponse.ok()).toBe(true);
   }
+});
+
+test("keeps the topology-only fallback in Graph with Regions unavailable", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, topologyOnlyTitle);
+  const viewer = page.locator(`[data-structure-id="${topologyOnlyStructureId}"]`);
+
+  await expect(viewer).toHaveAttribute("data-view-mode", "graph");
+  await expect(viewer.locator(".structure-presentation-overview")).toHaveCount(0);
+  await expect(viewer.getByRole("button", { name: "Graph", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(viewer.getByRole("button", { name: "Regions", exact: true })).toBeDisabled();
+  await expect(viewer.locator(".structure-regions-canvas")).toHaveCount(0);
+  await expect(viewer.locator(".structure-canvas")).toBeVisible();
 });

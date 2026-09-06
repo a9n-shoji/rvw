@@ -2393,8 +2393,18 @@ describe("RvwService commit workflow", () => {
           edgeIds: ["serves-consumer", "documents-obsolete", "reads-source"],
         },
         regions: [
-          { label: "  Evidence  ", nodeIds: ["source", "obsolete"] },
-          { label: "Consumer", nodeIds: ["consumer"] },
+          {
+            id: "a-evidence",
+            label: "  Evidence  ",
+            summary: "  Establishes the exact source and its obsolete claim.  ",
+            nodeIds: ["source", "obsolete"],
+          },
+          {
+            id: "b-consumer",
+            label: "Consumer",
+            summary: "Consumes the source through the published boundary.",
+            nodeIds: ["consumer"],
+          },
         ],
       },
     };
@@ -2457,6 +2467,32 @@ describe("RvwService commit workflow", () => {
         },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-presentation-duplicate-region-id",
+        presentation: {
+          ...publishInput.presentation,
+          regions: [
+            publishInput.presentation.regions[0]!,
+            {
+              ...publishInput.presentation.regions[1]!,
+              id: publishInput.presentation.regions[0]!.id,
+            },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-presentation-empty-region-summary",
+        presentation: {
+          ...publishInput.presentation,
+          regions: [{ ...publishInput.presentation.regions[0]!, summary: "   " }],
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     const structure = await service.publishStructure(publishInput);
     await expect(
       service.publishStructure({
@@ -2466,10 +2502,9 @@ describe("RvwService commit workflow", () => {
           primaryBackbone: {
             edgeIds: ["reads-source", "serves-consumer", "documents-obsolete"],
           },
-          regions: [
-            { label: "  Evidence  ", nodeIds: ["obsolete", "source"] },
-            { label: "Consumer", nodeIds: ["consumer"] },
-          ],
+          regions: [...publishInput.presentation.regions]
+            .reverse()
+            .map((region) => ({ ...region, nodeIds: [...region.nodeIds].reverse() })),
         },
       }),
     ).resolves.toEqual(structure);
@@ -2492,8 +2527,18 @@ describe("RvwService commit workflow", () => {
           edgeIds: ["documents-obsolete", "reads-source", "serves-consumer"],
         },
         regions: [
-          { label: "Evidence", nodeIds: ["obsolete", "source"] },
-          { label: "Consumer", nodeIds: ["consumer"] },
+          {
+            id: "a-evidence",
+            label: "Evidence",
+            summary: "Establishes the exact source and its obsolete claim.",
+            nodeIds: ["obsolete", "source"],
+          },
+          {
+            id: "b-consumer",
+            label: "Consumer",
+            summary: "Consumes the source through the published boundary.",
+            nodeIds: ["consumer"],
+          },
         ],
       },
       nodes: [
@@ -2564,8 +2609,18 @@ describe("RvwService commit workflow", () => {
         startNodeId: "validator",
         primaryBackbone: null,
         regions: [
-          { label: "Validation", nodeIds: ["validator"] },
-          { label: "Source and consumer", nodeIds: ["consumer", "source"] },
+          {
+            id: "a-validation",
+            label: "Validation",
+            summary: "Verifies the source before consumers use it.",
+            nodeIds: ["validator"],
+          },
+          {
+            id: "b-source-consumer",
+            label: "Source and consumer",
+            summary: "Connects the exact source to its consumer.",
+            nodeIds: ["consumer", "source"],
+          },
         ],
       },
     });
@@ -2582,8 +2637,18 @@ describe("RvwService commit workflow", () => {
         startNodeId: "validator",
         primaryBackbone: null,
         regions: [
-          { label: "Validation", nodeIds: ["validator"] },
-          { label: "Source and consumer", nodeIds: ["consumer", "source"] },
+          {
+            id: "a-validation",
+            label: "Validation",
+            summary: "Verifies the source before consumers use it.",
+            nodeIds: ["validator"],
+          },
+          {
+            id: "b-source-consumer",
+            label: "Source and consumer",
+            summary: "Connects the exact source to its consumer.",
+            nodeIds: ["consumer", "source"],
+          },
         ],
       },
     });
@@ -2622,6 +2687,28 @@ describe("RvwService commit workflow", () => {
           },
         ],
         presentation: updated.presentation,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.updateStructure(structure.ref, {
+        expectedUpdatedAt: updated.updatedAt,
+        sourceOid: firstHead,
+        title: "Reused retired comprehension chunk",
+        scope: "A retired Region identity must not frame a different chunk.",
+        originNodeId: "source",
+        nodes: updated.nodes,
+        edges: updated.edges,
+        presentation: {
+          ...updated.presentation!,
+          regions: [
+            {
+              ...updated.presentation!.regions[0]!,
+              id: "a-evidence",
+              label: "Rebound retired Region",
+            },
+            updated.presentation!.regions[1]!,
+          ],
+        },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
 

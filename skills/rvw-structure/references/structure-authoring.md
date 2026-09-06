@@ -126,6 +126,14 @@ Each edge is a producer claim about how two nodes relate in this subject.
 with the topology-derived projection or when no defensible spatial explanation has been requested or
 discovered. Never omit the field.
 
+Keep four layers distinct. The factual graph is the origin, Nodes, exact Edges, directions, predicates,
+and source anchors. Authorial presentation is only the thesis, attention start, optional exact-Edge
+backbone, and named Region membership. Derived rendering includes ranks, coordinates, routes, label
+placement, Region bounds, Context components, semantic zoom, and the Regions relationship view. The
+reviewer session includes Graph / Regions mode, focus, framed Region, history, pan, zoom, viewport, and
+manual positions. Only the first two are Structure content, and presentation never rewrites factual
+truth.
+
 For a non-null presentation:
 
 - Write a nonblank `thesis` of 1–1000 characters that states what the whole map should help the reviewer
@@ -153,26 +161,37 @@ For a non-null presentation:
   graph. Use regions, narrow the behavior boundary, or choose a Walkthrough when ordered transitions and
   prose carry the explanation.
   Do not author layers or stages: visual ranks and bands are derived layout, not explanation truth.
-- Add 0–12 `regions` only when named spatial groupings clarify this subject. Each has a nonblank
-  1–100-character `label` and one or more unique current Node IDs. A Node may be both on the backbone and in
-  one region, but it may not occur in more than one region. Regions are authorial groupings, not new
-  factual relations, subsystem ownership, or permission to expand the Structure into a static inventory.
-  Each `nodeIds` array is a membership set: stable-sort it by Node ID because its item order carries no
-  sequence, geometry, or priority.
-- The `regions` array orders named comprehension chunks for canonical spatial composition and the matching
-  legend, not for reviewer reading priority, reading sequence, runtime order, or importance. A renderer
-  keeps that order unambiguous and may wrap a region-only map into further rows to keep the overview
-  bounded. Exact Node IDs, not an enclosing shape, define membership after a reviewer manually moves Nodes.
+- Add 0–12 `regions` only when named comprehension chunks clarify this subject. Give each Region a unique,
+  stable ID using the same ID syntax as Nodes and Edges, a nonblank 1–100-character `label`, a concise
+  1–500-character `summary`, and one or more unique current Node IDs. The summary explains what the chunk
+  contributes to this Structure's thesis; it is not a generic subsystem description, architectural
+  ownership claim, review conclusion, or completeness claim. Preserve a Region ID across updates while
+  that comprehension chunk survives, even when its label, summary, or members change.
+- A Node may be both on the backbone and in one Region, but it may not occur in more than one Region.
+  Region membership may be partial: do not force the start or every graph Node into a Region, and do not
+  manufacture a miscellaneous chunk. A Region need not form a connected induced subgraph when its members
+  honestly constitute one comprehension chunk. Exact Node IDs, not an enclosing shape, define membership
+  after a reviewer manually moves Nodes.
+- Treat each `nodeIds` array and the outer `regions` array as unordered sets. Stable-sort members by Node ID
+  and Regions by Region ID for canonical input; neither order expresses sequence, geometry, priority, or
+  importance. Regions are authorial chunking, not new factual relations or permission to expand the
+  Structure into a static inventory. Do not author Region-to-Region relations: a renderer may summarize
+  only direct factual Edges crossing Region memberships.
 
 A non-null presentation influences the overview, initial attention, and visual emphasis; a backbone and/or
 regions additionally organize canonical placement. A start-only presentation retains topology-derived
 geometry; it is still presentation because its thesis and attention start shape the overview and a new
-session initially focuses `startNodeId`.
+Viewer session initially focuses `startNodeId`.
 `originNodeId` remains separately marked as the factual entrypoint. The initial focus is derived from the
 current artifact and does not persist reviewer focus or give the producer browser control. All Nodes,
 Edges, factual directions, and source actions remain available for free exploration. Presentation never
 changes the graph's factual claims or hides secondary content. Do not author coordinates, viewport,
 focus, manual positions, multiple routes, stepper behavior, or autoplay.
+
+Do not omit needed factual claims, manufacture a backbone or Region, shorten a responsibility into
+ambiguity, or otherwise change Artifact semantics merely to fit Graph or Regions into one screen. The
+Viewer keeps canonical Region cards readable and provides pane-local Reset, Fit, zoom, and pan; its
+camera and packing choices are derived rendering and reviewer-session state, not authoring inputs.
 
 ## Maintain stable identity
 
@@ -182,9 +201,11 @@ IDs identify claims across whole-value replacements; labels are presentation.
   not match a symbol exactly.
 - Preserve an ID when the same claim survives an update, even if its label, description, kind, notation, anchor,
   or endpoint details change.
-- Assign a new ID for a genuinely new claim. Never recycle an ID removed from this Structure for a
-  different node or edge. rvw retains retired Node and Edge IDs as tombstones and rejects their
-  reintroduction without retaining prior graph values.
+- Assign a new ID for a genuinely new claim or comprehension chunk. Never recycle an ID removed from this
+  Structure—whether it identified a Node, Edge, or Region—for a different meaning. rvw retains all three retired ID kinds as
+  tombstones and rejects their reintroduction without retaining prior graph values. This mechanically
+  detects disappearance followed by reuse; it cannot determine whether a continuously present ID was
+  semantically repurposed, so compare the current claim/chunk before preserving it.
 - Give every edge its own stable ID, including parallel edges between the same endpoints.
 - Use `originNodeId` for the subject's factual code entrypoint. The entrypoint is the place a reviewer
   starts verifying the declared behavior: for example an HTTP route, public API, command handler,
@@ -240,8 +261,11 @@ Use this checklist internally; do not reproduce it as the Structure description.
       decorative grouping was added.
 - [ ] A non-null primary backbone contains 1–16 stable-sorted unique current Edge IDs, derives 2–12 endpoint
       Nodes including `startNodeId`, and is weakly connected without changing factual Edge direction.
-- [ ] Every region has a concise label and stable-sorted current unique Node IDs, each `nodeIds` array is
-      treated as a membership set, and no Node belongs to multiple regions.
+- [ ] Every Region has a unique stable ID, a concise label and thesis-relevant responsibility summary,
+      stable-sorted current unique Node IDs, and no Node belongs to multiple Regions. The Region array is
+      stable-sorted by ID; neither array carries authorial order.
+- [ ] Unassigned Nodes are intentional, no miscellaneous Region was manufactured for total coverage, and
+      no authored Region relation duplicates or contradicts the factual graph.
 - [ ] Presentation describes at most one visual backbone and useful spatial groupings without coordinates,
       multiple routes, hidden content, static inventory, stepper behavior, or autoplay.
 - [ ] IDs are unique, semantic, and stable across updates; removed IDs are not recycled.

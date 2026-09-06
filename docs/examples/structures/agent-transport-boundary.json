@@ -15,11 +15,15 @@
     },
     "regions": [
       {
+        "id": "client-boundary",
         "label": "Client boundary",
+        "summary": "Selects and observes the transport used by a CLI operation before the request crosses the socket boundary.",
         "nodeIds": ["cli-service-call", "socket-client", "transport-status"]
       },
       {
+        "id": "validation-dispatch",
         "label": "Validation and dispatch",
+        "summary": "Validates the socket envelope against operation contracts before shared service dispatch.",
         "nodeIds": ["operation-schemas", "socket-dispatch", "socket-request-validation"]
       }
     ]

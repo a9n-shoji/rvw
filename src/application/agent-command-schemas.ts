@@ -2,6 +2,7 @@ import { z } from "zod";
 import { STRUCTURE_NODE_NOTATIONS } from "../domain/models.js";
 import {
   canonicalStructureBackboneEdgeIds,
+  canonicalStructurePresentationRegions,
   canonicalStructureRegionNodeIds,
   isStructureBackboneWeaklyConnected,
   structureBackboneNodeIds,
@@ -30,6 +31,7 @@ import {
   MAX_STRUCTURE_PRIMARY_BACKBONE_NODES,
   MAX_STRUCTURE_PRESENTATION_REGIONS,
   MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
+  MAX_STRUCTURE_PRESENTATION_REGION_SUMMARY_CHARACTERS,
   MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
   MAX_STRUCTURE_SCOPE_CHARACTERS,
   MAX_STRUCTURE_SOURCE_ANCHORS,
@@ -315,10 +317,15 @@ const structurePresentationInputSchema = z
       .array(
         z
           .object({
+            id: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
             label: z
               .string()
               .transform((value) => value.trim())
               .pipe(z.string().min(1).max(MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS)),
+            summary: z
+              .string()
+              .transform((value) => value.trim())
+              .pipe(z.string().min(1).max(MAX_STRUCTURE_PRESENTATION_REGION_SUMMARY_CHARACTERS)),
             nodeIds: z
               .array(z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN))
               .min(1)
@@ -327,7 +334,8 @@ const structurePresentationInputSchema = z
           })
           .strict(),
       )
-      .max(MAX_STRUCTURE_PRESENTATION_REGIONS),
+      .max(MAX_STRUCTURE_PRESENTATION_REGIONS)
+      .transform(canonicalStructurePresentationRegions),
   })
   .strict();
 
@@ -355,7 +363,7 @@ function refineStructureContent(
       thesis: string;
       startNodeId: string;
       primaryBackbone: { edgeIds: string[] } | null;
-      regions: Array<{ label: string; nodeIds: string[] }>;
+      regions: Array<{ id: string; label: string; summary: string; nodeIds: string[] }>;
     } | null;
   },
   context: z.RefinementCtx,
@@ -502,8 +510,17 @@ function refineStructureContent(
         }
       }
     }
-    const regionByNodeId = new Map<string, number>();
+    const regionIds = new Set<string>();
+    const regionByNodeId = new Map<string, string>();
     for (const [regionIndex, region] of value.presentation.regions.entries()) {
+      if (regionIds.has(region.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["presentation", "regions", regionIndex, "id"],
+          message: "region IDが重複しています。",
+        });
+      }
+      regionIds.add(region.id);
       const currentRegionNodeIds = new Set<string>();
       for (const [nodeIndex, nodeId] of region.nodeIds.entries()) {
         if (currentRegionNodeIds.has(nodeId)) {
@@ -521,15 +538,15 @@ function refineStructureContent(
             message: "regionのNodeが存在しません。",
           });
         }
-        const assignedRegionIndex = regionByNodeId.get(nodeId);
-        if (assignedRegionIndex !== undefined && assignedRegionIndex !== regionIndex) {
+        const assignedRegionId = regionByNodeId.get(nodeId);
+        if (assignedRegionId !== undefined && assignedRegionId !== region.id) {
           context.addIssue({
             code: "custom",
             path: ["presentation", "regions", regionIndex, "nodeIds", nodeIndex],
             message: "一つのNodeを複数regionへ所属させることはできません。",
           });
         }
-        if (assignedRegionIndex === undefined) regionByNodeId.set(nodeId, regionIndex);
+        if (assignedRegionId === undefined) regionByNodeId.set(nodeId, region.id);
       }
     }
   }

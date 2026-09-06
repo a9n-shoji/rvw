@@ -224,7 +224,9 @@ export interface StructureEdge {
 }
 
 export interface StructurePresentationRegion {
+  id: string;
   label: string;
+  summary: string;
   nodeIds: string[];
 }
 

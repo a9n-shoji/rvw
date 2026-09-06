@@ -10,13 +10,13 @@ entrypoint through the responsibilities, dependencies, contracts, and side effec
 it. A Structure is a freely explorable spatial explanation whose complete factual graph remains
 available; a Walkthrough makes
 ordered prose and transitions the artifact. A Structure may name an attention start, emphasize at most
-one connected exact-relation visual backbone of at most 12 derived Nodes and 16 Edges, and spatially compose ordered, named comprehension
-regions, but it remains freely explorable and is never a stepper or autoplay. Region order controls the
-canonical spatial composition and legend, not reviewer priority or a reading sequence. A path, hub,
+one connected exact-relation visual backbone of at most 12 derived Nodes and 16 Edges, and identify stable,
+named comprehension Regions with concise responsibility summaries, but it remains freely explorable and
+is never a stepper or autoplay. Region array order is not authorial semantics. A path, hub,
 fan-out, convergence, reciprocal pair, or small cyclic skeleton can be the backbone. When a meaningful thesis
 and attention start exist but neither an honest backbone nor a useful comprehension region does, an exact
 start-only presentation is valid: topology still supplies the geometry while presentation supplies the
-overview, initial attention, and new-session focus. If the clearest
+overview, initial attention, and initial focus for a new Viewer session. If the clearest
 explanation needs a required reading order because prose between sequential stops, a required ending, or
 route transitions carry the meaning, stop without publishing and recommend `rvw-walkthrough` to the
 requester or upstream composer. Do not create that Walkthrough from this Skill. If there is no defensible
@@ -96,7 +96,8 @@ provide both positive inclusive `startLine` and `endLine`, or omit both. Use rep
 `originNodeId` and `presentation` are required; use `presentation: null` when no authorial spatial
 semantics are justified. A non-null presentation includes `thesis`, `startNodeId`, `primaryBackbone`, and
 `regions` explicitly; `primaryBackbone` may be `null` and `regions` may be empty under the authoring contract.
-Stable-sort the backbone's exact Edge IDs and each region's unordered Node membership by ID.
+Stable-sort the backbone's exact Edge IDs, each Region's unordered Node membership, and the Region array
+by stable ID.
 Do not add authored layer, stage, coordinate, rank, or route fields.
 The origin Node must have a source anchor, and every Node must be reachable from it when relation direction
 is ignored. The complete Structure contains no more than 400 source anchors.
@@ -150,7 +151,9 @@ rvw structure publish --stdin --json <<'RVW_JSON'
     },
     "regions": [
       {
+        "id": "decision-contract",
         "label": "Decision contract",
+        "summary": "Connects the committed policy input to the allow/deny decision.",
         "nodeIds": ["policy-input", "request-policy"]
       }
     ]
@@ -198,9 +201,10 @@ failed and are not persisted graph content.
 ## Replace the current value
 
 Use an in-place update only when the requested subject identity remains the same. Preserve IDs for
-surviving nodes and edges even when their labels or anchors change, never recycle removed IDs for new
-claims, and send the complete replacement value. rvw records retired IDs and rejects their
-reintroduction even when the current value no longer contains them:
+surviving Nodes and Edges even when their labels or anchors change, and preserve a Region ID while the
+same comprehension chunk survives. Never recycle removed Node, Edge, or Region IDs for new claims or
+chunks, and send the complete replacement value. rvw records all three retired ID kinds and rejects their reintroduction even
+when the current value no longer contains them:
 
 ```bash
 rvw structure update '<STRUCTURE_URI>' --stdin --json

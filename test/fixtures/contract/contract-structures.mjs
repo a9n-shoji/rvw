@@ -12,6 +12,8 @@ const MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES = 16;
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
 const fullStackStructureId = "80000000-0000-4000-8000-000000000003";
+const reciprocalStructureId = "80000000-0000-4000-8000-000000000004";
+const topologyOnlyStructureId = "80000000-0000-4000-8000-000000000005";
 const semanticAnchorNeedles = new Map();
 const semanticAnchorAssertions = [];
 
@@ -507,6 +509,51 @@ const orderPlacementStructureEdges = primaryStructureEdges.filter(
       "reconciliation-checks-order",
     ].includes(edge.id),
 );
+const orderPlacementStructurePresentation = {
+  thesis:
+    "Create orderは一つのapplication boundaryから認可、domain decision、remote side effect、atomic persistenceへ分岐する。",
+  startNodeId: "hub",
+  primaryBackbone: {
+    edgeIds: [
+      "controller-executes-handler",
+      "handler-appends-events",
+      "handler-authorizes-actor",
+      "handler-authorizes-payment",
+      "handler-idempotency-envelope",
+      "handler-opens-transaction",
+      "handler-persists-order",
+      "handler-places-order",
+      "handler-reserves-inventory",
+      "order-calculates-total",
+    ],
+  },
+  regions: [
+    {
+      id: "application-coordination",
+      label: "Application coordination",
+      summary: "認可と再試行境界を確定し、注文作成のdecisionとeffectを調停する。",
+      nodeIds: ["authorization-policy", "hub", "idempotency-store"],
+    },
+    {
+      id: "atomic-persistence",
+      label: "Atomic persistence",
+      summary: "order recordとoutbox eventを同じtransactionとschemaへ閉じ込める。",
+      nodeIds: ["database-schema", "order-repository", "outbox", "transaction-runner"],
+    },
+    {
+      id: "domain-and-remote-effects",
+      label: "Domain and remote effects",
+      summary: "aggregateの価格決定と在庫・決済のremote side effectを担う。",
+      nodeIds: ["inventory-client", "order-aggregate", "payment-gateway", "pricing-policy"],
+    },
+    {
+      id: "request-boundary",
+      label: "Request boundary",
+      summary: "HTTP requestを認証・検証し、application commandへ変換する。",
+      nodeIds: ["auth-middleware", "http-controller", "http-routes", "request-schema"],
+    },
+  ],
+};
 
 const secondaryStructureNodes = primaryStructureNodes
   .filter((node) =>
@@ -522,6 +569,60 @@ const secondaryStructureNodes = primaryStructureNodes
   );
 const secondaryStructureEdges = primaryStructureEdges.filter((edge) =>
   ["reconciliation-checks-payment", "reconciliation-checks-order"].includes(edge.id),
+);
+const secondaryStructurePresentation = {
+  thesis:
+    "Payment reconciliationはpersist済みorderとprovider上のauthorizationを照合してrecovery判断を行う。",
+  startNodeId: "payment-reconciliation",
+  primaryBackbone: null,
+  regions: [],
+};
+const reciprocalStructureNodes = primaryStructureNodes.filter((node) =>
+  ["hub", "order-aggregate", "pricing-policy"].includes(node.id),
+);
+const reciprocalStructureEdges = primaryStructureEdges.filter((edge) =>
+  ["handler-places-order", "order-calculates-total", "order-returns-snapshot"].includes(edge.id),
+);
+const reciprocalStructurePresentation = {
+  thesis:
+    "Create orderとOrder aggregateは生成とresponse返却の逆向きrelationを持つが、生成側だけがこの説明のcoreである。",
+  startNodeId: "hub",
+  primaryBackbone: {
+    edgeIds: ["handler-places-order", "order-calculates-total"],
+  },
+  regions: [
+    {
+      id: "application-coordination",
+      label: "Application coordination",
+      summary: "注文生成を開始し、完成したresponse snapshotを受け取る。",
+      nodeIds: ["hub"],
+    },
+    {
+      id: "domain-construction",
+      label: "Domain construction",
+      summary: "Order aggregateを生成し、価格を計算してresponse snapshotを形成する。",
+      nodeIds: ["order-aggregate", "pricing-policy"],
+    },
+  ],
+};
+const topologyOnlyStructureNodes = primaryStructureNodes.filter((node) =>
+  [
+    "database-schema",
+    "order-repository",
+    "outbox",
+    "outbox-dispatcher",
+    "transaction-runner",
+  ].includes(node.id),
+);
+const topologyOnlyStructureEdges = primaryStructureEdges.filter((edge) =>
+  [
+    "dispatcher-claims-outbox",
+    "handler-appends-events",
+    "handler-persists-order",
+    "orders-use-schema",
+    "outbox-uses-schema",
+    "repositories-share-transaction",
+  ].includes(edge.id),
 );
 const fullStackStructureNodes = [
   {
@@ -847,11 +948,9 @@ const fullStackStructurePresentation = {
   },
   regions: [
     {
-      label: "HTTP boundary",
-      nodeIds: ["detail-actor-auth", "detail-params", "order-detail-route"],
-    },
-    {
+      id: "backend-read-and-present",
       label: "Read and present",
+      summary: "customer-scoped projectionを読み出し、成功またはnot-found responseへ写像する。",
       nodeIds: [
         "get-order-query",
         "order-not-found",
@@ -861,11 +960,9 @@ const fullStackStructurePresentation = {
       ],
     },
     {
-      label: "Shared response",
-      nodeIds: ["order-api-client", "order-detail-contract"],
-    },
-    {
+      id: "frontend-rendering",
       label: "React rendering",
+      summary: "typed query stateをcacheし、pageからsummary・items・status・error表示へ分配する。",
       nodeIds: [
         "order-detail-error",
         "order-detail-page",
@@ -875,6 +972,18 @@ const fullStackStructurePresentation = {
         "order-status-badge",
         "order-summary-card",
       ],
+    },
+    {
+      id: "http-boundary",
+      label: "HTTP boundary",
+      summary: "閲覧者とorder IDを検証し、customer-scoped detail queryを開始する。",
+      nodeIds: ["detail-actor-auth", "detail-params", "order-detail-route"],
+    },
+    {
+      id: "shared-response-contract",
+      label: "Shared response",
+      summary: "backend responseとfrontend clientの間で成功・error payloadの型境界を保つ。",
+      nodeIds: ["order-api-client", "order-detail-contract"],
     },
   ],
 };
@@ -886,15 +995,83 @@ export const fullStackRepositoryPaths = [
 ];
 
 export function validateContractStructureFixture() {
-  const repositoryPaths = new Set([...walkthroughRepositoryPaths, ...fullStackRepositoryPaths]);
-  const structures = [
+  const repositoryPaths = new Set([
+    ...walkthroughRepositoryPaths,
+    ...fullStackRepositoryPaths,
+    // The fixture server exposes this binary through its rename/history lifecycle endpoint.
+    "assets/hybrid.png",
+  ]);
+  const structureContracts = [
     {
+      id: primaryStructureId,
       title: "Order placement behavior",
+      originNodeId: "http-routes",
+      presentation: orderPlacementStructurePresentation,
       nodes: orderPlacementStructureNodes,
       edges: orderPlacementStructureEdges,
     },
+    {
+      id: secondaryStructureId,
+      title: "Payment reconciliation recovery",
+      originNodeId: "payment-reconciliation",
+      presentation: secondaryStructurePresentation,
+      nodes: secondaryStructureNodes,
+      edges: secondaryStructureEdges,
+    },
+    {
+      id: fullStackStructureId,
+      title: "Order detail response rendering",
+      originNodeId: "order-detail-route",
+      presentation: fullStackStructurePresentation,
+      nodes: fullStackStructureNodes,
+      edges: fullStackStructureEdges,
+    },
+    {
+      id: reciprocalStructureId,
+      title: "Order construction reciprocal relations",
+      originNodeId: "hub",
+      presentation: reciprocalStructurePresentation,
+      nodes: reciprocalStructureNodes,
+      edges: reciprocalStructureEdges,
+    },
+    {
+      id: topologyOnlyStructureId,
+      title: "Outbox persistence topology (unguided)",
+      originNodeId: "outbox-dispatcher",
+      presentation: null,
+      nodes: topologyOnlyStructureNodes,
+      edges: topologyOnlyStructureEdges,
+    },
   ];
-  for (const structure of structures) {
+  if (structureContracts.length !== 5) {
+    throw new Error("contract fixture must expose exactly five Structure scenarios");
+  }
+  if (new Set(structureContracts.map(({ id }) => id)).size !== structureContracts.length) {
+    throw new Error("contract fixture repeats a Structure identity");
+  }
+
+  for (const structure of structureContracts) {
+    if (!Object.hasOwn(structure, "presentation")) {
+      throw new Error(`${structure.title} lacks required nullable presentation`);
+    }
+    const actualNodeIds = structure.nodes.map((node) => node.id);
+    if (new Set(actualNodeIds).size !== actualNodeIds.length) {
+      throw new Error(`${structure.title} repeats a Node identity`);
+    }
+    const nodeIds = new Set(structure.nodes.map((node) => node.id));
+    if (!nodeIds.has(structure.originNodeId)) {
+      throw new Error(`${structure.title} origin is not a current Node`);
+    }
+    const actualEdgeIds = structure.edges.map((edge) => edge.id);
+    if (new Set(actualEdgeIds).size !== actualEdgeIds.length) {
+      throw new Error(`${structure.title} repeats an Edge identity`);
+    }
+    for (const edge of structure.edges) {
+      if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+        throw new Error(`${structure.title} Edge ${edge.id} targets a missing Node`);
+      }
+    }
+
     for (const [kind, id, sourceAnchor] of [
       ...structure.nodes.flatMap((node) => (node.anchor ? [["node", node.id, node.anchor]] : [])),
       ...structure.edges.flatMap((edge) =>
@@ -904,63 +1081,32 @@ export function validateContractStructureFixture() {
       if (!repositoryPaths.has(sourceAnchor.path)) {
         throw new Error(`${structure.title} ${kind} ${id} targets missing ${sourceAnchor.path}`);
       }
+      if (sourceAnchor.startLine === null || sourceAnchor.endLine === null) {
+        if (sourceAnchor.startLine !== null || sourceAnchor.endLine !== null) {
+          throw new Error(`${structure.title} ${kind} ${id} has a partial whole-file anchor`);
+        }
+        continue;
+      }
+      const lines = walkthroughRepositoryText(sourceAnchor.path).split("\n");
+      if (
+        sourceAnchor.startLine < 1 ||
+        sourceAnchor.endLine < sourceAnchor.startLine ||
+        sourceAnchor.endLine > lines.length
+      ) {
+        throw new Error(`${structure.title} ${kind} ${id} has an invalid source range`);
+      }
+      const selected = lines.slice(sourceAnchor.startLine - 1, sourceAnchor.endLine).join("\n");
+      if (selected.trim().length === 0) {
+        throw new Error(`${structure.title} ${kind} ${id} selects no source evidence`);
+      }
       const needle = semanticAnchorNeedles.get(
         `${sourceAnchor.path}\0${sourceAnchor.startLine}\0${sourceAnchor.endLine}`,
       );
-      if (!needle) throw new Error(`${structure.title} ${kind} ${id} lacks a semantic anchor`);
-      const selected = walkthroughRepositoryText(sourceAnchor.path)
-        .split("\n")
-        .slice(sourceAnchor.startLine - 1, sourceAnchor.endLine)
-        .join("\n");
-      if (!selected.includes(needle)) {
+      if (needle !== undefined && !selected.includes(needle)) {
         throw new Error(`${structure.title} ${kind} ${id} no longer selects ${needle}`);
       }
     }
-  }
 
-  const structureContracts = [
-    {
-      title: "Order placement behavior",
-      originNodeId: "http-routes",
-      presentation: null,
-      nodes: orderPlacementStructureNodes,
-      edges: orderPlacementStructureEdges,
-    },
-    {
-      title: "Payment reconciliation recovery",
-      originNodeId: "payment-reconciliation",
-      presentation: null,
-      nodes: secondaryStructureNodes,
-      edges: secondaryStructureEdges,
-    },
-    {
-      title: "Order detail response rendering",
-      originNodeId: "order-detail-route",
-      presentation: fullStackStructurePresentation,
-      nodes: fullStackStructureNodes,
-      edges: fullStackStructureEdges,
-    },
-    {
-      title: "Payment reconciliation start-only presentation contract",
-      originNodeId: "payment-reconciliation",
-      presentation: {
-        thesis: "Begin at reconciliation without manufacturing a path or comprehension chunk.",
-        startNodeId: "payment-reconciliation",
-        primaryBackbone: null,
-        regions: [],
-      },
-      nodes: secondaryStructureNodes,
-      edges: secondaryStructureEdges,
-    },
-  ];
-  for (const structure of structureContracts) {
-    if (!Object.hasOwn(structure, "presentation")) {
-      throw new Error(`${structure.title} lacks required nullable presentation`);
-    }
-    const nodeIds = new Set(structure.nodes.map((node) => node.id));
-    if (!nodeIds.has(structure.originNodeId)) {
-      throw new Error(`${structure.title} origin is not a current Node`);
-    }
     if (structure.presentation === null) continue;
     if (
       typeof structure.presentation !== "object" ||
@@ -968,6 +1114,8 @@ export function validateContractStructureFixture() {
       Object.keys(structure.presentation).sort().join(",") !==
         "primaryBackbone,regions,startNodeId,thesis" ||
       typeof structure.presentation.thesis !== "string" ||
+      structure.presentation.thesis.trim() !== structure.presentation.thesis ||
+      structure.presentation.thesis.length === 0 ||
       typeof structure.presentation.startNodeId !== "string" ||
       !Object.hasOwn(structure.presentation, "primaryBackbone") ||
       !Array.isArray(structure.presentation.regions)
@@ -1032,8 +1180,37 @@ export function validateContractStructureFixture() {
         throw new Error(`${structure.title} primary backbone is disconnected`);
       }
     }
+    const regionIds = structure.presentation.regions.map((region) => region.id);
+    if (new Set(regionIds).size !== regionIds.length) {
+      throw new Error(`${structure.title} repeats a Region identity`);
+    }
+    // Region array position carries no reading priority; keep fixture bytes canonical by stable ID.
+    if (regionIds.join("\0") !== [...regionIds].sort().join("\0")) {
+      throw new Error(`${structure.title} Region IDs are not canonical`);
+    }
     const regionByNodeId = new Map();
-    structure.presentation.regions.forEach((region, regionIndex) => {
+    structure.presentation.regions.forEach((region) => {
+      if (
+        typeof region !== "object" ||
+        region === null ||
+        Array.isArray(region) ||
+        Object.keys(region).sort().join(",") !== "id,label,nodeIds,summary" ||
+        typeof region.id !== "string" ||
+        !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(region.id) ||
+        typeof region.label !== "string" ||
+        region.label.length === 0 ||
+        region.label.trim() !== region.label ||
+        typeof region.summary !== "string" ||
+        region.summary.length === 0 ||
+        region.summary.trim() !== region.summary ||
+        !Array.isArray(region.nodeIds) ||
+        region.nodeIds.length === 0
+      ) {
+        throw new Error(`${structure.title} has malformed Region content`);
+      }
+      if (new Set(region.nodeIds).size !== region.nodeIds.length) {
+        throw new Error(`${structure.title} region ${region.label} repeats a Node`);
+      }
       if (region.nodeIds.join("\0") !== [...region.nodeIds].sort().join("\0")) {
         throw new Error(`${structure.title} region ${region.label} Node IDs are not canonical`);
       }
@@ -1044,7 +1221,7 @@ export function validateContractStructureFixture() {
         if (regionByNodeId.has(nodeId)) {
           throw new Error(`${structure.title} repeats ${nodeId} across regions`);
         }
-        regionByNodeId.set(nodeId, regionIndex);
+        regionByNodeId.set(nodeId, region.id);
       }
     });
   }
@@ -1082,7 +1259,7 @@ export function createContractStructures({ pullRequestId, baseOid, firstHead }) 
       scope:
         "Order creation from the authenticated HTTP boundary through domain decisions, remote side effects, transactional persistence, and event handoff; background delivery, recovery, and read paths are excluded.",
       originNodeId: "http-routes",
-      presentation: null,
+      presentation: structuredClone(orderPlacementStructurePresentation),
       nodes: orderPlacementStructureNodes,
       edges: orderPlacementStructureEdges,
       createdAt: "2026-08-08T01:00:00.000Z",
@@ -1097,7 +1274,7 @@ export function createContractStructures({ pullRequestId, baseOid, firstHead }) 
       scope:
         "The payment reconciliation worker that finds an authorized payment without a persisted order and voids it; order placement, retry envelopes, event delivery, and test evidence are excluded.",
       originNodeId: "payment-reconciliation",
-      presentation: null,
+      presentation: structuredClone(secondaryStructurePresentation),
       nodes: secondaryStructureNodes,
       edges: secondaryStructureEdges,
       createdAt: "2026-08-08T01:05:00.000Z",
@@ -1117,6 +1294,36 @@ export function createContractStructures({ pullRequestId, baseOid, firstHead }) 
       edges: fullStackStructureEdges,
       createdAt: "2026-08-08T01:10:00.000Z",
       updatedAt: "2026-08-08T01:10:00.000Z",
+    },
+    {
+      id: reciprocalStructureId,
+      ref: `rvw://structure/${reciprocalStructureId}`,
+      pullRequestId,
+      sourceOid: firstHead,
+      title: "Order construction reciprocal relations",
+      scope:
+        "The exact reciprocal relations between CreateOrderHandler and the Order aggregate during construction, total calculation, and response snapshot return; transport, authorization, remote side effects, and persistence are excluded.",
+      originNodeId: "hub",
+      presentation: structuredClone(reciprocalStructurePresentation),
+      nodes: reciprocalStructureNodes,
+      edges: reciprocalStructureEdges,
+      createdAt: "2026-08-08T01:15:00.000Z",
+      updatedAt: "2026-08-08T01:15:00.000Z",
+    },
+    {
+      id: topologyOnlyStructureId,
+      ref: `rvw://structure/${topologyOnlyStructureId}`,
+      pullRequestId,
+      sourceOid: firstHead,
+      title: "Outbox persistence topology (unguided)",
+      scope:
+        "The persistence topology connecting the order record, transactional outbox, shared transaction and schema, and background delivery; application decisions, remote effects, and recovery are excluded.",
+      originNodeId: "outbox-dispatcher",
+      presentation: null,
+      nodes: topologyOnlyStructureNodes,
+      edges: topologyOnlyStructureEdges,
+      createdAt: "2026-08-08T01:20:00.000Z",
+      updatedAt: "2026-08-08T01:20:00.000Z",
     },
   ];
 }

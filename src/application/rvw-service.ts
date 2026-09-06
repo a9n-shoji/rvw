@@ -55,7 +55,7 @@ import { parseWalkthroughUri } from "../domain/walkthrough-uri.js";
 import { parseStructureUri } from "../domain/structure-uri.js";
 import {
   canonicalStructureBackboneEdgeIds,
-  canonicalStructureRegionNodeIds,
+  canonicalStructurePresentationRegions,
   isStructureBackboneWeaklyConnected,
   structureBackboneNodeIds,
 } from "../domain/structure-presentation.js";
@@ -98,6 +98,7 @@ import {
   MAX_STRUCTURE_PRIMARY_BACKBONE_NODES,
   MAX_STRUCTURE_PRESENTATION_REGIONS,
   MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
+  MAX_STRUCTURE_PRESENTATION_REGION_SUMMARY_CHARACTERS,
   MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
   MAX_STRUCTURE_SCOPE_CHARACTERS,
   MAX_STRUCTURE_SOURCE_ANCHORS,
@@ -2334,23 +2335,42 @@ export class RvwService {
           `Structure presentation regionsは${MAX_STRUCTURE_PRESENTATION_REGIONS}件以下にしてください。`,
         );
       }
-      const assignedRegionByNodeId = new Map<string, { index: number; label: string }>();
+      const regionIds = new Set<string>();
+      const assignedRegionByNodeId = new Map<string, { id: string; label: string }>();
       const regions = input.presentation.regions.map((region, regionIndex) => {
         if (
           typeof region !== "object" ||
           region === null ||
           Array.isArray(region) ||
-          Object.keys(region).some((key) => key !== "label" && key !== "nodeIds")
+          Object.keys(region).some(
+            (key) => key !== "id" && key !== "label" && key !== "summary" && key !== "nodeIds",
+          )
         ) {
           throw new RvwError(
             "INVALID_INPUT",
             `Structure presentation region ${regionIndex + 1}が不正です。`,
           );
         }
+        const id = this.assertStructureId(
+          region.id,
+          `Structure presentation region ${regionIndex + 1} ID`,
+        );
+        if (regionIds.has(id)) {
+          throw new RvwError(
+            "INVALID_INPUT",
+            `Structure presentation region IDが重複しています: ${id}`,
+          );
+        }
+        regionIds.add(id);
         const label = this.assertStructurePresentationText(
           region.label,
           MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
           `Structure presentation region ${regionIndex + 1} label`,
+        );
+        const summary = this.assertStructurePresentationText(
+          region.summary,
+          MAX_STRUCTURE_PRESENTATION_REGION_SUMMARY_CHARACTERS,
+          `Structure presentation region ${label} summary`,
         );
         if (
           !Array.isArray(region.nodeIds) ||
@@ -2384,16 +2404,21 @@ export class RvwService {
           if (assignedRegion !== undefined) {
             throw new RvwError(
               "INVALID_INPUT",
-              `Structure presentation Node ${nodeId}は複数regionに所属できません: ${assignedRegion.label}, ${label}`,
+              `Structure presentation Node ${nodeId}は複数regionに所属できません: ${assignedRegion.label} (${assignedRegion.id}), ${label} (${id})`,
             );
           }
           currentRegionNodeIds.add(nodeId);
-          assignedRegionByNodeId.set(nodeId, { index: regionIndex, label });
+          assignedRegionByNodeId.set(nodeId, { id, label });
           return nodeId;
         });
-        return { label, nodeIds: canonicalStructureRegionNodeIds(normalizedNodeIds) };
+        return { id, label, summary, nodeIds: normalizedNodeIds };
       });
-      presentation = { thesis, startNodeId, primaryBackbone, regions };
+      presentation = {
+        thesis,
+        startNodeId,
+        primaryBackbone,
+        regions: canonicalStructurePresentationRegions(regions),
+      };
     }
     const graph = { originNodeId, nodes, edges, presentation };
     if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {

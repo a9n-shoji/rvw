@@ -812,7 +812,7 @@ function firstOpenPresentationPoint(
   occupied: readonly StructurePoint[],
   anchor: StructurePoint,
   forbiddenEnvelopes: readonly PresentationEnvelope[] = [],
-  preferredDirection: "above" | "below" | "either" = "either",
+  preferredDirection: "above" | "below" | "left" | "right" | "either" = "either",
 ): StructurePoint {
   if (presentationPositionIsOpen(occupied, anchor, forbiddenEnvelopes)) return anchor;
   for (let radius = 1; radius <= 80; radius += 1) {
@@ -831,7 +831,13 @@ function firstOpenPresentationPoint(
         if (presentationPositionIsOpen(occupied, candidate, forbiddenEnvelopes)) return candidate;
       }
     }
-    for (const column of [-radius, radius]) {
+    const columnOrder =
+      preferredDirection === "left"
+        ? [-radius, radius]
+        : preferredDirection === "right"
+          ? [radius, -radius]
+          : [-radius, radius];
+    for (const column of columnOrder) {
       for (let row = -radius + 1; row < radius; row += 1) {
         if (row === 0) continue;
         const candidate = {
@@ -1037,30 +1043,355 @@ function presentationBackbonePositions(input: {
   return packings[0]!.positions;
 }
 
+interface PresentationRegionRelation {
+  regionIds: readonly [string, string];
+  hasBackboneEdge: boolean;
+  directedFrom: string | null;
+  directedTo: string | null;
+}
+
+interface PresentationRegionPlan {
+  id: string;
+  members: readonly string[];
+  columns: number;
+  rows: number;
+  width: number;
+  height: number;
+  envelopeWidth: number;
+  envelopeHeight: number;
+}
+
+interface PresentationRegionGridCell {
+  column: number;
+  row: number;
+}
+
+interface PresentationRegionPacking {
+  plans: readonly PresentationRegionPlan[];
+  cellByRegionId: ReadonlyMap<string, PresentationRegionGridCell>;
+  topLeftByRegionId: ReadonlyMap<string, StructurePoint>;
+}
+
+function presentationRegionRelations(input: {
+  structure: StructureGraphContent;
+  regionByNodeId: ReadonlyMap<string, string>;
+  backboneEdgeIds: ReadonlySet<string>;
+}): PresentationRegionRelation[] {
+  const { structure, regionByNodeId, backboneEdgeIds } = input;
+  const pairs = new Map<
+    string,
+    {
+      regionIds: [string, string];
+      hasBackboneEdge: boolean;
+      hasUndirected: boolean;
+      directions: Set<string>;
+    }
+  >();
+  for (const edge of [...structure.edges].sort((left, right) => stableCompare(left.id, right.id))) {
+    const fromRegionId = regionByNodeId.get(edge.from);
+    const toRegionId = regionByNodeId.get(edge.to);
+    if (!fromRegionId || !toRegionId || fromRegionId === toRegionId) continue;
+    const regionIds = [fromRegionId, toRegionId].sort(stableCompare) as [string, string];
+    const key = JSON.stringify(regionIds);
+    const pair = pairs.get(key) ?? {
+      regionIds,
+      hasBackboneEdge: false,
+      hasUndirected: false,
+      directions: new Set<string>(),
+    };
+    pair.hasBackboneEdge ||= backboneEdgeIds.has(edge.id);
+    if (edge.directed) pair.directions.add(JSON.stringify([fromRegionId, toRegionId]));
+    else pair.hasUndirected = true;
+    pairs.set(key, pair);
+  }
+  return [...pairs.values()]
+    .sort((left, right) => {
+      const first = stableCompare(left.regionIds[0], right.regionIds[0]);
+      return first === 0 ? stableCompare(left.regionIds[1], right.regionIds[1]) : first;
+    })
+    .map((pair) => {
+      const direction =
+        !pair.hasUndirected && pair.directions.size === 1
+          ? (JSON.parse([...pair.directions][0]!) as [string, string])
+          : null;
+      return {
+        regionIds: pair.regionIds,
+        hasBackboneEdge: pair.hasBackboneEdge,
+        directedFrom: direction?.[0] ?? null,
+        directedTo: direction?.[1] ?? null,
+      };
+    });
+}
+
+function comparePresentationRegionCells(
+  left: PresentationRegionGridCell,
+  right: PresentationRegionGridCell,
+): number {
+  return left.row - right.row || left.column - right.column;
+}
+
+function presentationRegionPacking(input: {
+  structure: StructureGraphContent;
+  regionByNodeId: ReadonlyMap<string, string>;
+  backboneEdgeIds: ReadonlySet<string>;
+  startNodeId: string;
+}): PresentationRegionPacking {
+  const { structure, regionByNodeId, backboneEdgeIds, startNodeId } = input;
+  const validNodeIds = new Set(structure.nodes.map(({ id }) => id));
+  const plans = [...structure.presentation!.regions]
+    .sort((left, right) => stableCompare(left.id, right.id))
+    .map((region): PresentationRegionPlan => {
+      const members = [
+        ...new Set(region.nodeIds.filter((nodeId) => validNodeIds.has(nodeId))),
+      ].sort(stableCompare);
+      const { columns, rows } = presentationGridDimensions(members.length);
+      const width = (columns - 1) * PRESENTATION_COLUMN_STRIDE + STRUCTURE_NODE_WIDTH;
+      const height = (rows - 1) * PRESENTATION_ROW_STRIDE + STRUCTURE_NODE_HEIGHT;
+      return {
+        id: region.id,
+        members,
+        columns,
+        rows,
+        width,
+        height,
+        envelopeWidth: width + 2 * STRUCTURE_REGION_PADDING_X,
+        envelopeHeight: height + STRUCTURE_REGION_PADDING_TOP + STRUCTURE_REGION_PADDING_BOTTOM,
+      };
+    });
+  if (plans.length === 0) {
+    return { plans, cellByRegionId: new Map(), topLeftByRegionId: new Map() };
+  }
+
+  const relations = presentationRegionRelations({ structure, regionByNodeId, backboneEdgeIds });
+  const relationByPair = new Map(
+    relations.map((relation) => [JSON.stringify(relation.regionIds), relation]),
+  );
+  const neighbors = new Map(plans.map(({ id }) => [id, new Map<string, number>()]));
+  for (const relation of relations) {
+    const [first, second] = relation.regionIds;
+    const weight = relation.hasBackboneEdge ? 3 : 1;
+    neighbors.get(first)?.set(second, weight);
+    neighbors.get(second)?.set(first, weight);
+  }
+  const startRegionId = regionByNodeId.get(startNodeId);
+  const degree = (regionId: string): number =>
+    [...(neighbors.get(regionId)?.values() ?? [])].reduce((sum, weight) => sum + weight, 0);
+  const canonicalPlacementOrder = (): string[] => {
+    const unplaced = new Set(plans.map(({ id }) => id));
+    const placed = new Set<string>();
+    const result: string[] = [];
+    while (unplaced.size > 0) {
+      const next = [...unplaced].sort((left, right) => {
+        if (result.length === 0 && startRegionId) {
+          if (left === startRegionId) return -1;
+          if (right === startRegionId) return 1;
+        }
+        const leftPlacedAffinity = [...(neighbors.get(left) ?? [])].reduce(
+          (sum, [neighbor, weight]) => sum + (placed.has(neighbor) ? weight : 0),
+          0,
+        );
+        const rightPlacedAffinity = [...(neighbors.get(right) ?? [])].reduce(
+          (sum, [neighbor, weight]) => sum + (placed.has(neighbor) ? weight : 0),
+          0,
+        );
+        return (
+          rightPlacedAffinity - leftPlacedAffinity ||
+          degree(right) - degree(left) ||
+          stableCompare(left, right)
+        );
+      })[0]!;
+      result.push(next);
+      unplaced.delete(next);
+      placed.add(next);
+    }
+    return result;
+  };
+  const placementOrder = canonicalPlacementOrder();
+  const planById = new Map(plans.map((plan) => [plan.id, plan]));
+  const candidatePackings: Array<{
+    cellByRegionId: ReadonlyMap<string, PresentationRegionGridCell>;
+    topLeftByRegionId: ReadonlyMap<string, StructurePoint>;
+    score: number;
+    width: number;
+    height: number;
+    signature: string;
+  }> = [];
+  const maximumColumnCount = Math.min(plans.length, Math.ceil(Math.sqrt(plans.length * 3)));
+  for (let columnCount = 1; columnCount <= maximumColumnCount; columnCount += 1) {
+    const rowCount = Math.ceil(plans.length / columnCount);
+    const availableCells: PresentationRegionGridCell[] = Array.from(
+      { length: plans.length },
+      (_, index) => ({ column: index % columnCount, row: Math.floor(index / columnCount) }),
+    );
+    const cellByRegionId = new Map<string, PresentationRegionGridCell>();
+    for (const [placementIndex, regionId] of placementOrder.entries()) {
+      const cell = [...availableCells].sort((left, right) => {
+        if (placementIndex === 0) {
+          return (
+            left.column - right.column ||
+            Math.abs(left.row - (rowCount - 1) / 2) - Math.abs(right.row - (rowCount - 1) / 2) ||
+            left.row - right.row
+          );
+        }
+        const score = (candidate: PresentationRegionGridCell) => {
+          let relationDistance = 0;
+          let directionalPenalty = 0;
+          let connectedWeight = 0;
+          for (const [neighborId, weight] of neighbors.get(regionId) ?? []) {
+            const neighborCell = cellByRegionId.get(neighborId);
+            if (!neighborCell) continue;
+            connectedWeight += weight;
+            relationDistance +=
+              weight *
+              (Math.abs(candidate.column - neighborCell.column) +
+                Math.abs(candidate.row - neighborCell.row));
+            const relation = relationByPair.get(
+              JSON.stringify([regionId, neighborId].sort(stableCompare)),
+            );
+            if (relation?.directedFrom === neighborId && candidate.column < neighborCell.column) {
+              directionalPenalty += 1;
+            }
+            if (relation?.directedTo === neighborId && candidate.column > neighborCell.column) {
+              directionalPenalty += 1;
+            }
+          }
+          const distanceToPlaced = Math.min(
+            ...[...cellByRegionId.values()].map(
+              (placedCell) =>
+                Math.abs(candidate.column - placedCell.column) +
+                Math.abs(candidate.row - placedCell.row),
+            ),
+          );
+          return {
+            disconnected: connectedWeight === 0 ? 1 : 0,
+            directionalPenalty,
+            relationDistance,
+            distanceToPlaced,
+          };
+        };
+        const leftScore = score(left);
+        const rightScore = score(right);
+        return (
+          leftScore.disconnected - rightScore.disconnected ||
+          leftScore.directionalPenalty - rightScore.directionalPenalty ||
+          leftScore.relationDistance - rightScore.relationDistance ||
+          leftScore.distanceToPlaced - rightScore.distanceToPlaced ||
+          comparePresentationRegionCells(left, right)
+        );
+      })[0]!;
+      cellByRegionId.set(regionId, cell);
+      availableCells.splice(availableCells.indexOf(cell), 1);
+    }
+
+    const columnWidths = Array.from({ length: columnCount }, (_, column) =>
+      Math.max(
+        0,
+        ...[...cellByRegionId].flatMap(([regionId, cell]) =>
+          cell.column === column ? [planById.get(regionId)!.envelopeWidth] : [],
+        ),
+      ),
+    );
+    const rowHeights = Array.from({ length: rowCount }, (_, row) =>
+      Math.max(
+        0,
+        ...[...cellByRegionId].flatMap(([regionId, cell]) =>
+          cell.row === row ? [planById.get(regionId)!.envelopeHeight] : [],
+        ),
+      ),
+    );
+    const columnLefts = columnWidths.map((_, column) =>
+      columnWidths
+        .slice(0, column)
+        .reduce((sum, width) => sum + width + PRESENTATION_REGION_GAP_X, 0),
+    );
+    const rowTops = rowHeights.map((_, row) =>
+      rowHeights.slice(0, row).reduce((sum, height) => sum + height + PRESENTATION_REGION_GAP_Y, 0),
+    );
+    const topLeftByRegionId = new Map(
+      [...cellByRegionId].map(([regionId, cell]) => {
+        const plan = planById.get(regionId)!;
+        return [
+          regionId,
+          {
+            x: columnLefts[cell.column]! + (columnWidths[cell.column]! - plan.envelopeWidth) / 2,
+            y: rowTops[cell.row]! + (rowHeights[cell.row]! - plan.envelopeHeight) / 2,
+          },
+        ];
+      }),
+    );
+    const width =
+      columnWidths.reduce((sum, value) => sum + value, 0) +
+      Math.max(0, columnCount - 1) * PRESENTATION_REGION_GAP_X;
+    const height =
+      rowHeights.reduce((sum, value) => sum + value, 0) +
+      Math.max(0, rowCount - 1) * PRESENTATION_REGION_GAP_Y;
+    const center = (regionId: string): StructurePoint => {
+      const plan = planById.get(regionId)!;
+      const topLeft = topLeftByRegionId.get(regionId)!;
+      return {
+        x: topLeft.x + plan.envelopeWidth / 2,
+        y: topLeft.y + plan.envelopeHeight / 2,
+      };
+    };
+    const totalRelationSpan = relations.reduce((sum, relation) => {
+      const first = center(relation.regionIds[0]);
+      const second = center(relation.regionIds[1]);
+      return sum + Math.abs(first.x - second.x) + Math.abs(first.y - second.y);
+    }, 0);
+    const directionViolations = relations.filter((relation) => {
+      if (!relation.directedFrom || !relation.directedTo) return false;
+      return center(relation.directedFrom).x > center(relation.directedTo).x;
+    }).length;
+    const averageRelationSpan = relations.length === 0 ? 0 : totalRelationSpan / relations.length;
+    candidatePackings.push({
+      cellByRegionId,
+      topLeftByRegionId,
+      score:
+        Math.max(width / PRESENTATION_TARGET_ASPECT_RATIO, height) +
+        averageRelationSpan * 0.35 +
+        directionViolations * 240,
+      width,
+      height,
+      signature: plans
+        .map(({ id }) => {
+          const cell = cellByRegionId.get(id)!;
+          return `${id}:${cell.column},${cell.row}`;
+        })
+        .join("|"),
+    });
+  }
+  candidatePackings.sort(
+    (left, right) =>
+      left.score - right.score ||
+      left.width * left.height - right.width * right.height ||
+      stableCompare(left.signature, right.signature),
+  );
+  return { plans, ...candidatePackings[0]! };
+}
+
 function presentationRegionMemberOrder(input: {
   members: readonly string[];
   columns: number;
-  regionIndex: number;
-  regionByNodeId: ReadonlyMap<string, number>;
+  rows: number;
+  regionId: string;
+  regionByNodeId: ReadonlyMap<string, string>;
+  regionCellById: ReadonlyMap<string, PresentationRegionGridCell>;
   topology: SimpleStructureTopology;
 }): string[] {
-  const { members, columns, regionIndex, regionByNodeId, topology } = input;
+  const { members, columns, rows, regionId, regionByNodeId, regionCellById, topology } = input;
+  const ownCell = regionCellById.get(regionId) ?? { column: 0, row: 0 };
   const affinity = new Map(
     members.map((nodeId) => {
-      let previous = 0;
-      let next = 0;
-      for (const neighbor of topology.neighbors.get(nodeId) ?? []) {
-        const neighborRegion = regionByNodeId.get(neighbor);
-        if (neighborRegion === undefined || neighborRegion === regionIndex) continue;
-        if (neighborRegion < regionIndex) previous += 1;
-        else next += 1;
-      }
-      return [nodeId, { previous, next }] as const;
+      const adjacentCells = (topology.neighbors.get(nodeId) ?? []).flatMap((neighbor) => {
+        const neighborRegionId = regionByNodeId.get(neighbor);
+        const cell = neighborRegionId ? regionCellById.get(neighborRegionId) : undefined;
+        return neighborRegionId && neighborRegionId !== regionId && cell ? [cell] : [];
+      });
+      const horizontal = adjacentCells.reduce((sum, cell) => sum + cell.column - ownCell.column, 0);
+      const vertical = adjacentCells.reduce((sum, cell) => sum + cell.row - ownCell.row, 0);
+      return [nodeId, { count: adjacentCells.length, horizontal, vertical }] as const;
     }),
   );
-  if ([...affinity.values()].every(({ previous, next }) => previous + next === 0)) {
-    return [...members];
-  }
   const cells = members.map((_, index) => ({
     index,
     column: index % columns,
@@ -1070,17 +1401,18 @@ function presentationRegionMemberOrder(input: {
   for (const nodeId of [...members].sort((left, right) => {
     const leftAffinity = affinity.get(left)!;
     const rightAffinity = affinity.get(right)!;
-    return (
-      rightAffinity.previous + rightAffinity.next - (leftAffinity.previous + leftAffinity.next) ||
-      stableCompare(left, right)
-    );
+    return rightAffinity.count - leftAffinity.count || stableCompare(left, right);
   })) {
-    const { previous, next } = affinity.get(nodeId)!;
-    const total = previous + next;
-    const desiredColumn = total === 0 ? (columns - 1) / 2 : (next * (columns - 1)) / total;
+    const { count, horizontal, vertical } = affinity.get(nodeId)!;
+    const desiredColumn =
+      count === 0 || horizontal === 0 ? (columns - 1) / 2 : horizontal > 0 ? columns - 1 : 0;
+    const desiredRow = count === 0 || vertical === 0 ? (rows - 1) / 2 : vertical > 0 ? rows - 1 : 0;
     const cell = [...cells].sort(
       (left, right) =>
-        Math.abs(left.column - desiredColumn) - Math.abs(right.column - desiredColumn) ||
+        Math.abs(left.column - desiredColumn) +
+          Math.abs(left.row - desiredRow) -
+          Math.abs(right.column - desiredColumn) -
+          Math.abs(right.row - desiredRow) ||
         left.row - right.row ||
         left.column - right.column,
     )[0]!;
@@ -1090,69 +1422,37 @@ function presentationRegionMemberOrder(input: {
   return [...assignment].sort(([left], [right]) => left - right).map(([, nodeId]) => nodeId);
 }
 
-function presentationRegionOnlyPositions(
-  structure: StructureGraphContent,
-  topology: SimpleStructureTopology,
-  regionByNodeId: ReadonlyMap<string, number>,
-): ReadonlyMap<string, StructurePoint> {
-  const presentation = structure.presentation!;
-  const validNodeIds = new Set(structure.nodes.map(({ id }) => id));
+function presentationRegionOnlyPositions(input: {
+  structure: StructureGraphContent;
+  topology: SimpleStructureTopology;
+  regionByNodeId: ReadonlyMap<string, string>;
+  packing: PresentationRegionPacking;
+}): ReadonlyMap<string, StructurePoint> {
+  const { topology, regionByNodeId, packing } = input;
   const positions = new Map<string, StructurePoint>();
-  const regionPlans = presentation.regions.map((region, regionIndex) => {
-    const members = [...new Set(region.nodeIds.filter((nodeId) => validNodeIds.has(nodeId)))].sort(
-      stableCompare,
-    );
-    const { columns, rows } = presentationGridDimensions(members.length);
-    return {
-      members: presentationRegionMemberOrder({
-        members,
-        columns,
-        regionIndex,
-        regionByNodeId,
-        topology,
-      }),
-      columns,
-      width: (columns - 1) * PRESENTATION_COLUMN_STRIDE + STRUCTURE_NODE_WIDTH,
-      height: (rows - 1) * PRESENTATION_ROW_STRIDE + STRUCTURE_NODE_HEIGHT,
-    };
-  });
-  const totalArea = regionPlans.reduce(
-    (sum, plan) =>
-      sum +
-      (plan.width + 2 * STRUCTURE_REGION_PADDING_X + PRESENTATION_REGION_GAP_X) *
-        (plan.height +
-          STRUCTURE_REGION_PADDING_TOP +
-          STRUCTURE_REGION_PADDING_BOTTOM +
-          PRESENTATION_REGION_GAP_Y),
-    0,
-  );
-  const targetWidth = Math.max(920, Math.sqrt(totalArea) * 1.25);
-  let cursorX = 0;
-  let cursorY = 0;
-  let rowHeight = 0;
-  for (const plan of regionPlans) {
-    const envelopeWidth = plan.width + 2 * STRUCTURE_REGION_PADDING_X;
-    const envelopeHeight =
-      plan.height + STRUCTURE_REGION_PADDING_TOP + STRUCTURE_REGION_PADDING_BOTTOM;
-    if (cursorX > 0 && cursorX + envelopeWidth > targetWidth) {
-      cursorX = 0;
-      cursorY += rowHeight + PRESENTATION_REGION_GAP_Y;
-      rowHeight = 0;
-    }
-    plan.members.forEach((nodeId, index) => {
+  for (const plan of packing.plans) {
+    const topLeft = packing.topLeftByRegionId.get(plan.id)!;
+    const members = presentationRegionMemberOrder({
+      members: plan.members,
+      columns: plan.columns,
+      rows: plan.rows,
+      regionId: plan.id,
+      regionByNodeId,
+      regionCellById: packing.cellByRegionId,
+      topology,
+    });
+    members.forEach((nodeId, index) => {
       positions.set(nodeId, {
         x:
-          cursorX +
+          topLeft.x +
           STRUCTURE_REGION_PADDING_X +
           (index % plan.columns) * PRESENTATION_COLUMN_STRIDE,
         y:
-          cursorY +
+          topLeft.y +
           STRUCTURE_REGION_PADDING_TOP +
           Math.floor(index / plan.columns) * PRESENTATION_ROW_STRIDE,
       });
     });
-    cursorX += envelopeWidth + PRESENTATION_REGION_GAP_X;
-    rowHeight = Math.max(rowHeight, envelopeHeight);
   }
   return positions;
 }
@@ -1317,6 +1617,60 @@ function projectionFromPresentedPositions(
   };
 }
 
+type PresentationPlacementDirection = "above" | "below" | "left" | "right";
+
+function presentationRegionPlacementDirection(input: {
+  regionId: string;
+  anchorId: string | null;
+  regionByNodeId: ReadonlyMap<string, string>;
+  packing: PresentationRegionPacking;
+  positions: ReadonlyMap<string, StructurePoint>;
+}): PresentationPlacementDirection {
+  const { regionId, anchorId, regionByNodeId, packing, positions } = input;
+  const ownCell = packing.cellByRegionId.get(regionId);
+  const anchorRegionId = anchorId ? regionByNodeId.get(anchorId) : undefined;
+  const anchorCell = anchorRegionId ? packing.cellByRegionId.get(anchorRegionId) : undefined;
+  if (anchorRegionId === regionId && ownCell) {
+    const cells = [...packing.cellByRegionId.values()];
+    const averageRow = cells.reduce((sum, cell) => sum + cell.row, 0) / cells.length;
+    return ownCell.row < averageRow ? "above" : "below";
+  }
+  let horizontal = ownCell && anchorCell ? ownCell.column - anchorCell.column : 0;
+  let vertical = ownCell && anchorCell ? ownCell.row - anchorCell.row : 0;
+
+  if (horizontal === 0 && vertical === 0) {
+    const regionPoints = [...positions].flatMap(([nodeId, point]) =>
+      regionByNodeId.get(nodeId) === regionId ? [point] : [],
+    );
+    const allPoints = [...positions.values()];
+    if (regionPoints.length > 0 && allPoints.length > 0) {
+      const average = (points: readonly StructurePoint[], axis: keyof StructurePoint): number =>
+        points.reduce((sum, point) => sum + point[axis], 0) / points.length;
+      horizontal = average(regionPoints, "x") - average(allPoints, "x");
+      vertical = average(regionPoints, "y") - average(allPoints, "y");
+    }
+  }
+  if (horizontal === 0 && vertical === 0 && ownCell) {
+    const cells = [...packing.cellByRegionId.values()];
+    const averageColumn = cells.reduce((sum, cell) => sum + cell.column, 0) / cells.length;
+    const averageRow = cells.reduce((sum, cell) => sum + cell.row, 0) / cells.length;
+    horizontal = ownCell.column - averageColumn;
+    vertical = ownCell.row - averageRow;
+  }
+  if (Math.abs(horizontal) > Math.abs(vertical)) return horizontal < 0 ? "left" : "right";
+  return vertical < 0 ? "above" : "below";
+}
+
+function presentationDirectionOffset(
+  point: StructurePoint,
+  direction: PresentationPlacementDirection,
+): StructurePoint {
+  if (direction === "left") return { x: point.x - PRESENTATION_COLUMN_STRIDE, y: point.y };
+  if (direction === "right") return { x: point.x + PRESENTATION_COLUMN_STRIDE, y: point.y };
+  if (direction === "above") return { x: point.x, y: point.y - PRESENTATION_ROW_STRIDE };
+  return { x: point.x, y: point.y + PRESENTATION_ROW_STRIDE };
+}
+
 function projectPresentedStructure(
   structure: StructureGraphContent,
   topology: SimpleStructureTopology,
@@ -1341,19 +1695,30 @@ function projectPresentedStructure(
       : ([...nodeIds].sort(stableCompare)[0] ?? null);
   if (!startNodeId) return null;
 
-  const regionByNodeId = new Map<string, number>();
-  presentation.regions.forEach((region, regionIndex) => {
+  const regionByNodeId = new Map<string, string>();
+  for (const region of [...presentation.regions].sort((left, right) =>
+    stableCompare(left.id, right.id),
+  )) {
     for (const nodeId of [...new Set(region.nodeIds)].sort(stableCompare)) {
-      if (nodeIds.has(nodeId)) regionByNodeId.set(nodeId, regionIndex);
+      if (nodeIds.has(nodeId) && !regionByNodeId.has(nodeId)) {
+        regionByNodeId.set(nodeId, region.id);
+      }
     }
+  }
+  const regionPacking = presentationRegionPacking({
+    structure,
+    regionByNodeId,
+    backboneEdgeIds,
+    startNodeId,
   });
   const positions = new Map<string, StructurePoint>();
   if (backboneEdges.length === 0) {
-    for (const [nodeId, point] of presentationRegionOnlyPositions(
+    for (const [nodeId, point] of presentationRegionOnlyPositions({
       structure,
       topology,
       regionByNodeId,
-    )) {
+      packing: regionPacking,
+    })) {
       positions.set(nodeId, point);
     }
   } else {
@@ -1406,8 +1771,10 @@ function projectPresentedStructure(
         };
         return (
           previousBarycenter(left) - previousBarycenter(right) ||
-          (regionByNodeId.get(left) ?? Number.POSITIVE_INFINITY) -
-            (regionByNodeId.get(right) ?? Number.POSITIVE_INFINITY) ||
+          stableCompare(
+            regionByNodeId.get(left) ?? "\uffff",
+            regionByNodeId.get(right) ?? "\uffff",
+          ) ||
           stableCompare(left, right)
         );
       });
@@ -1427,7 +1794,17 @@ function projectPresentedStructure(
   const occupied = [...positions.values()];
   const backboneCorridors = presentationBackboneCorridors(backboneEdges, positions);
   const regionEnvelopes: PresentationEnvelope[] = [];
-  presentation.regions.forEach((region, regionIndex) => {
+  const regionsInPackingOrder = [...presentation.regions].sort((left, right) => {
+    const leftCell = regionPacking.cellByRegionId.get(left.id);
+    const rightCell = regionPacking.cellByRegionId.get(right.id);
+    if (leftCell && rightCell) {
+      const position = comparePresentationRegionCells(leftCell, rightCell);
+      if (position !== 0) return position;
+    } else if (leftCell) return -1;
+    else if (rightCell) return 1;
+    return stableCompare(left.id, right.id);
+  });
+  regionsInPackingOrder.forEach((region) => {
     const regionNodeIds = new Set(
       region.nodeIds.filter((nodeId) => nodeIds.has(nodeId)).sort(stableCompare),
     );
@@ -1448,11 +1825,14 @@ function projectPresentedStructure(
       const anchor = anchorId
         ? positions.get(anchorId)!
         : { x: fallbackRight + PRESENTATION_RANK_GAP, y: 0 };
-      const direction = regionIndex % 2 === 0 ? "above" : "below";
-      const desired = {
-        x: anchor.x,
-        y: anchor.y + (direction === "above" ? -PRESENTATION_ROW_STRIDE : PRESENTATION_ROW_STRIDE),
-      };
+      const direction = presentationRegionPlacementDirection({
+        regionId: region.id,
+        anchorId,
+        regionByNodeId,
+        packing: regionPacking,
+        positions,
+      });
+      const desired = presentationDirectionOffset(anchor, direction);
       const point = firstOpenPresentationPoint(
         occupied,
         desired,
@@ -1482,6 +1862,9 @@ function projectPresentedStructure(
     ) + PRESENTATION_RANK_GAP;
   while (remaining.size > 0) {
     const nodeId = nextPresentationNode(remaining, presentedAnchors, topology);
+    const directAnchors = (topology.neighbors.get(nodeId) ?? [])
+      .filter((neighbor) => presentedAnchors.has(neighbor) && positions.has(neighbor))
+      .sort(stableCompare);
     const anchorId = nearestPresentationAnchor({
       nodeId,
       anchors: presentedAnchors,
@@ -1489,12 +1872,22 @@ function projectPresentedStructure(
       positions,
     });
     const anchor = anchorId ? positions.get(anchorId)! : { x: fallbackX, y: 0 };
-    const desired = { x: anchor.x, y: anchor.y + PRESENTATION_ROW_STRIDE };
+    const desired =
+      directAnchors.length >= 2
+        ? {
+            x:
+              directAnchors.reduce((sum, current) => sum + positions.get(current)!.x, 0) /
+              directAnchors.length,
+            y:
+              directAnchors.reduce((sum, current) => sum + positions.get(current)!.y, 0) /
+              directAnchors.length,
+          }
+        : { x: anchor.x, y: anchor.y + PRESENTATION_ROW_STRIDE };
     const point = firstOpenPresentationPoint(
       occupied,
       desired,
       [...backboneCorridors, ...regionEnvelopes],
-      "below",
+      directAnchors.length >= 2 ? "either" : "below",
     );
     positions.set(nodeId, point);
     occupied.push(point);

@@ -86,38 +86,55 @@ complete reference set in a side or bottom index.
 Structures cross the same one-way CLI boundary as a separate domain. An Agent declares a bounded
 PR-relevant behavior and factual code entrypoint as stable-ID nodes and edges fixed to one exact source commit. SQLite keeps one
 current graph JSON value per stable Structure ID; publication and whole-value replacement validate all
-paths, ranges, endpoints, identities, presentation references/order, and Pull Request ownership before retaining the commit.
+paths, ranges, endpoints, identities, presentation references/membership, and Pull Request ownership before retaining the commit.
 The current value separates factual graph claims from an optional authorial spatial presentation made
 of a thesis, an attention start, at most one connected exact-Edge primary backbone of 2–12 derived Nodes
-and 1–16 Edges, and spatially ordered named comprehension regions. Backbone Edge membership is exact
+and 1–16 Edges, and named comprehension Regions with stable IDs, responsibility summaries, and disjoint
+Node membership. Backbone Edge membership is exact
 and unordered; path, fan-out, convergence, reciprocal, and small cyclic cores share the same model.
 A start-only presentation with no backbone or regions is valid when its thesis and
-attention start are meaningful but no honest spatial organizer exists. Region array order defines
-canonical spatial and legend order, not reading sequence, runtime order, or importance; each region's
-`nodeIds` is an unordered membership set. Legacy graph JSON without the field reads
-as `presentation: null`; no SQL migration is needed. It is not a semantic code index and has no revision
+attention start are meaningful but no honest spatial organizer exists. Region arrays and each region's
+`nodeIds` are unordered sets canonicalized by stable ID. Membership may be partial and a Region need not
+form a connected induced subgraph. Legacy graph JSON without the field reads
+as `presentation: null`; no `graph_json` data migration is needed. Retired Node, Edge, and Region IDs are
+kept in small tombstone tables so a client that missed intermediate whole-value updates cannot mistake a
+removed-then-reused identity for a surviving claim or framed chunk. Continuously present identity semantics
+remain an authoring responsibility because ordinary claim and membership edits are valid. Structure is not a semantic code index and has no revision
 history, comments, persisted semantic reverse index, inferred edges, or persisted coordinates. The viewer may
 derive an ephemeral backlink index from explicit Node anchors in the current values. HTTP lists and reads current values;
 human-confirmed delete is the only write exposed to the browser.
 
 The Structure viewer uses a primary backbone or regions to shape canonical placement and uses any non-null
 presentation for its compact authorial Guide and cues while preserving every factual Node, Edge, and direction. The Guide
-shows the thesis, attention start, exact Core relations, and ordered R-number legend; each region member
-carries the matching R badge, so manual geometry never becomes membership truth. Each Guide section is
-independently disclosable and regions are keyboard-accessible camera landmarks. Region-only
-maps may wrap chunks into a bounded row-major grid while preserving canonical spatial order. With
-`presentation: null` or a start-only presentation, it uses topology, factual direction reachable from
+shows the thesis and attention start; it does not duplicate the complete primary-backbone Edge list or a
+space-starved Region graph. Graph mode shows the exact factual Node / Edge surface. Regions mode uses the
+full Structure body for responsibility rectangles and direct cross-Region connections derived from factual
+Edges. Region cards use the complete authorial label rather than exposing stable IDs as abbreviations.
+Drilling into Graph opens a named Region lens with its full responsibility summary and exact coverage;
+member Nodes and internal relations receive a dedicated visual treatment, so manual geometry never becomes
+membership truth. Regions are keyboard-accessible drill-down landmarks. With
+an independent pane-local Regions camera, first view / Reset keeps the Start landmark at a readable
+scale while Fit frames the complete derived map without changing card geometry. Zoom and wheel/drag pan support local reading. Graph and Regions
+cameras survive mode switches and tab movement independently; Region drill history snapshots both.
+With `presentation: null` or a start-only presentation, it uses topology, factual direction reachable from
 the entrypoint, and stable IDs—not display content—to produce the same projection. A long derived
 backbone may fold deterministically across multiple serpentine rows so the canonical map uses both
 dimensions and keeps region envelopes distinct. Row boundaries and the target aspect are projection
 heuristics, not authored layers, reading order, or protocol state. A non-null presentation's new
 session initially focuses `startNodeId`; the null case
 initially focuses the origin. Both are defaults derived from the artifact, while pane-local
-browser session state preserves focus, neighborhood depth, Home/Back navigation, Guide disclosure, node positions, and viewport across tab
+browser session state preserves Graph / Regions mode, focus, neighborhood depth, Home/Back navigation, Guide disclosure, node positions, and projection-specific viewports across tab
 navigation and current-value updates, and moves with a Structure tab between panes. Surviving IDs keep
 positions and new nodes take a non-overlapping slot near retained neighbors while the spatial organizer
-is unchanged. A changed backbone endpoint adjacency or region membership/order rebases Node geometry to
-the new canonical explanation while preserving surviving focus and its screen-space camera anchor.
+is unchanged. A changed backbone endpoint adjacency or Region identity/membership rebases Node geometry to
+the new canonical explanation while preserving surviving focus and its screen-space camera anchor. A
+framed Region whose stable ID survives remains the active chunk lens and is refit from its current
+members and derived internal-relation bounds; only a removed Region ID is pruned. Region
+label/summary edits and Region array reordering do not rebase Graph Node geometry.
+The Regions camera has its own canonical derived-map basis: unordered serialization and thesis/summary
+edits retain it, while changes that can alter Region cards, Context components, relation routes, or
+relation-label geometry reset it to the readable Start-oriented Home projection. Only explicit Fit
+frames the complete map. The key and camera are viewer state, not protocol semantics.
 Null and start-only presentations share one layout basis, so transitions between them and thesis- or
 start-only edits preserve manual geometry; changing only the exact parallel backbone relation preserves
 geometry while updating emphasis. The shared deterministic route model avoids non-endpoint Nodes and
@@ -127,10 +144,13 @@ or nearly share a corridor; parallel and reciprocal relations are required examp
 focus filtering for Viewer and export; at normal detail, labels are Node-disjoint and pairwise
 non-overlapping, with leader-associated displaced slots when inline placement is unavailable. Backbone membership is stable
 authorial salience; focus-hop proximity is session-derived attention and uses a separate visual channel.
+Home activates All and frames the authorial start—or the null-presentation origin—plus its exact factual
+1-hop Node bounds; the full backbone remains emphasized but does not enlarge that camera target.
 1-hop and 2-hop require a focus; All exposes every Node and Edge. Semantic zoom may suppress unreadable
 secondary detail only while counts, minimap, selection, Home, and All keep it explicitly recoverable.
-Home and Region framing activate All so their declared targets are actually visible; Back restores the
-previous focus, neighborhood depth, framed Region, and camera. Region framing preserves focus and
+Home and Region framing activate All so their declared targets are actually visible; a Regions-mode
+card drill-down switches to Graph and Back can restore the overview together with the previous focus,
+neighborhood depth, framed Region, and camera. Direct mode toggles do not create history entries. Region framing preserves focus and
 membership while temporarily restoring full visual relevance to the framed members and their internal
 relations. Home, local Node focus, and an explicit depth change clear that pane-session chunk lens.
 Source actions always open the declared exact `sourceOid` in the chosen pane without changing
