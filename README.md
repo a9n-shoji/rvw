@@ -169,8 +169,9 @@ Agentは現在内容を読み、同じ`rvw://walkthrough/<uuid>`を更新して�
 
 外部Agentは単一Artifact producerである`rvw-structure` SkillとCLIを使い、PRに関係する一つのboundedな
 behaviorをfactualなcode entrypointからdependency、contract、side effectへ辿る空間として提示できます。
-thesis、最初に見るNode、必要な場合だけ2〜12 Nodeの一本のexact-Edge primary spine、
-spatially orderedなcomprehension regionで同時に見渡せる説明の意図を表せます。正直なspatial organizerがない場合も、意味のある
+thesis、最初に見るNode、必要な場合だけ2〜12 Node / 1〜16 Edgeのconnected exact-relation backbone、
+spatially orderedなcomprehension regionで説明の意図を表せます。artifactは一つのbounded behaviorに必要な
+relationを保持し、Viewerはstableな全体像とfocus-relativeな局所lensを往復します。正直なspatial organizerがない場合も、意味のある
 thesisとattention startだけを提示できます。順序とprose自体がartifactならWalkthroughです。
 entrypointを置けない静的なarchitecture／責務inventoryはStructureへ広げません。
 
@@ -183,29 +184,34 @@ rvw structure delete rvw://structure/<uuid> --json
 ```
 
 Structureは一つのexact `sourceOid`、宣言されたtitle / scope、entrypoint、stableなNode / Edge ID、required nullableな
-`presentation`からなります。presentationはraw座標ではなく、thesis、authorialなattention start、隣接pairを
-exactなfactual Edge IDで結ぶ2〜12 Nodeのoptionalなprimary spine、
-重複しないspatially orderedなcomprehension regionからなるauthorial semanticsです。spineもregionも持たないstart-only presentationは、
+`presentation`からなります。presentationはraw座標ではなく、thesis、authorialなattention start、exact factual
+Edgeのunordered setからなる一つのoptionalなconnected primary backbone、重複しないspatially orderedな
+comprehension regionからなるauthorial semanticsです。backboneもregionも持たないstart-only presentationは、
 意味のあるthesisとattention startを伝えられる一方、graph配置へ存在しないspatial orderを作りません。
 Nodeは0または1件、Edgeは0件以上のsource anchorを持ち、rvwはcommit、UTF-8 path、line pair、endpoint、
 重複ID、presentation参照と順序、sizeを保存前に検証します。publish / updateはbrowserやnavigationを操作しません。
 publish / update前には同じgraph contentをpreviewし、presentationに依存しないtopology diagnosticsとauthoring warningから
 origin、granularity、behavior / subject boundaryを再確認できます。warningは保存を拒否せず、graphを自動変更しません。
 
-primary spineまたはregionがあればcanonical配置へ反映し、spineもregionもないstart-only presentationと
+primary backboneまたはregionがあればcanonical配置へ反映し、backboneもregionもないstart-only presentationと
 `presentation: null`は同じtopology projectionを使います。start-onlyでもthesisとattention startはoverview、
 visual cue、exportへ残り、新規sessionは`startNodeId`から始まります。factual entrypointのoriginは別に示します。
-header直下のoverviewではthesis、exact relationを含むreading spine、spatial-order region legendを先に読め、
-primary spineの強調、region memberのR badge、minimapでcanvas上の位置へ対応付けられます。region membershipは囲い枠ではなく明示Node IDに
+header直下のcompact Guideでは折り畳み可能なthesis、exact Core relations、spatial-order region legendを確認でき、
+backboneの強調、region memberのR badge、complete minimapでcanvas上の位置へ対応付けられます。Regionを選ぶと
+代表Nodeを捏造せずexact memberへviewportを移動します。region membershipは囲い枠ではなく明示Node IDに
 基づくため、manual drag後も変わりません。regionはnamed comprehension chunkで、array順はcanonicalな
 spatial orderとlegend順です。読解sequence、runtime順、重要度ではなく、各`nodeIds`の内側にも順序はありません。
 region-only mapは宣言順を保つbounded gridへ折り返します。
-viewerではfocusがある時に1-hop / 2-hopへ絞り、Allでは全Node / Edgeを表示します。relationを次数やIDで
-暗黙に隠さず、pan、zoom、fit、node drag、layout resetで探索できます。通常clickでexact sourceを左、
+viewerではHomeからauthorial coreを掴み、Node focusの1-hop / 2-hop、Region frame、AllをBackで往復します。
+HomeとRegion frameは対象を確実に見せるためAllへ切り替えます。Region frame中はfocusを維持したままmemberと内部relationを
+full relevanceで読め、Home、Node focus、depth変更で解除します。Backは直前のfocus / hop depth / framed region / viewportを復元します。
+backbone membershipは固定されたauthorial salience、focus hopは一時的なreviewer attentionとして別に表示します。
+低zoomで省略するdetailもvisible / total件数、minimap、selection、Allから回収でき、pan、zoom、fit、node drag、
+layout resetで探索できます。通常clickでexact sourceを左、
 `Cmd` / `Ctrl`+clickで右ペインへ開きます。globalなcommit選択は
 変えません。node位置とviewportは同じbrowser sessionで保持しますが、SQLiteやAgent protocolへ座標を
-保存しません。同じsubjectの更新は同じURIを完全置換します。通常は存続するIDの位置を保ちますが、spine Node order、
-region membership/orderなどspatial organizerが変われば、新しいspatial semanticsへcanonical geometryをrebaseします。
+保存しません。同じsubjectの更新は同じURIを完全置換します。通常は存続するIDの位置を保ちますが、backbone endpoint
+adjacency、region membership/orderなどspatial organizerが変われば、新しいspatial semanticsへcanonical geometryをrebaseします。
 `null`とstart-onlyの往復やthesis / startだけの変更ではmanual geometryを保ちます。別subjectは新しい
 Structureとしてpublishします。
 
@@ -295,7 +301,7 @@ Walkthrough全体へのコメントから説明を改善する場合は、現在
 「改訂版」を追加しません。
 
 Structureを作る場合は、behavior、entrypoint、scope、含める／除外する関係と、必要なら伝えたいthesis、
-最初に見るNode、exact relationのprimary spine、regionを伝えて`rvw-structure` Skillを使います。
+最初に見るNode、connectedなexact Core relationのprimary backbone、regionを伝えて`rvw-structure` Skillを使います。
 Skillは上位composerを含む明示briefを調査boundaryのauthorityとして一つのbounded behaviorだけを扱い、suggested
 entrypointやrelationを実際のcommit済みcodeから再検証して、labelではなくclaimのidentityとしてstable IDを割り当てます。
 PR全体の構成や別behaviorのArtifactは自律的に増やしません。順序とprose自体が本質ならWalkthroughを提案し、

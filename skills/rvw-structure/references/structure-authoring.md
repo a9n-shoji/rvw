@@ -41,8 +41,8 @@ explicitly supplied boundary; otherwise return candidate boundaries to the reque
 composer.
 
 Before authoring, test the requested shape. Structure may direct initial attention and organize the
-overview around one connected backbone, but all relationships remain simultaneously visible and
-independently explorable. If the meaning depends on prose between sequential stops, a required ending, or
+overview around one connected backbone, but all relationships remain available and independently
+explorable even when the Viewer uses a local lens. If the meaning depends on prose between sequential stops, a required ending, or
 route transitions rather than the visible relationship space, it is not a Structure. Stop and recommend a
 Walkthrough. Edge direction is factual and is not the authored spatial order. If
 the subject has no factual code entrypoint and is useful only as a timeless architecture diagram, stop
@@ -133,39 +133,38 @@ For a non-null presentation:
   finding, approval, risk verdict, or completeness guarantee.
 - Choose one current `startNodeId` as the first authorial attention anchor. It may differ from
   `originNodeId`: start says where this explanation first asks the reviewer to look, while origin says
-  where source verification of the behavior factually begins. When a spine is present, the start must be
-  its first Node; it need not belong to a region.
-- Use `primarySpine: null` when this explanation has no single defensible backbone, including honest
-  hub, fan-out, convergence, or reciprocal shapes. Regions may still provide useful comprehension chunks.
+  where source verification of the behavior factually begins. When a backbone is present, the start must
+  be one of its derived endpoint Nodes; it need not belong to a region.
+- Use `primaryBackbone: null` when this explanation has no compact connected relation skeleton worth
+  emphasizing. Regions may still provide useful comprehension chunks.
   When a meaningful thesis and start exist but there is neither an honest backbone nor a useful named
-  chunk, use the exact start-only form with `primarySpine: null` and `regions: []`. Do not manufacture a
+  chunk, use the exact start-only form with `primaryBackbone: null` and `regions: []`. Do not manufacture a
   path, dummy region, or decorative grouping to satisfy a presentation template. If the thesis or start
   is not meaningful either, use `presentation: null`.
-- Otherwise choose one `primarySpine` object with 2–12 unique current `nodeIds` and exactly one current
-  Edge ID per adjacent pair in `edgeIds`. Its first Node must equal `startNodeId`. The selected Edge is
-  the exact relation to emphasize, including when parallel or reciprocal Edges join the same pair. It may
-  connect the pair in either factual direction. Do not invent an Edge, reverse its endpoints, change its
-  predicate, or select every relation between the pair. The spine is the visual backbone for the
-  overview; it does not claim runtime order, reviewer reading order, or project-wide architectural
-  importance. The 12-Node cap is
-  intentional: select the explanatory backbone instead of turning the spine into an exhaustive tour.
-  Use regions, narrow the behavior boundary, or choose a Walkthrough when a longer ordered route is
-  what carries the explanation.
+- Otherwise choose one `primaryBackbone` object with 1–16 unique current Edge IDs in `edgeIds`. Treat the
+  array as an unordered exact-membership set and sort it by stable Edge ID. The selected Edges must derive
+  2–12 unique endpoint Nodes including `startNodeId`, and form one weakly connected graph when factual direction,
+  parallel multiplicity, and self-loops are ignored. A self-loop may supplement, but cannot connect, the
+  multi-Node skeleton. Select only the exact relations needed to grasp the thesis first. A path, star,
+  fan-out, convergence diamond, reciprocal pair, or small cycle is valid. Do not invent an Edge, reverse
+  its endpoints, change its predicate, or select every relation merely because it is available. Parallel
+  or reciprocal Edge IDs may both appear only when both exact relations belong to the core. The 12-Node
+  and 16-Edge caps are intentional: select the explanatory backbone instead of copying the whole factual
+  graph. Use regions, narrow the behavior boundary, or choose a Walkthrough when ordered transitions and
+  prose carry the explanation.
+  Do not author layers or stages: visual ranks and bands are derived layout, not explanation truth.
 - Add 0–12 `regions` only when named spatial groupings clarify this subject. Each has a nonblank
-  1–100-character `label` and one or more unique current Node IDs. A Node may be both on the spine and in
+  1–100-character `label` and one or more unique current Node IDs. A Node may be both on the backbone and in
   one region, but it may not occur in more than one region. Regions are authorial groupings, not new
   factual relations, subsystem ownership, or permission to expand the Structure into a static inventory.
-  Each `nodeIds` array is a membership set: its item order carries no sequence, geometry, or priority.
+  Each `nodeIds` array is a membership set: stable-sort it by Node ID because its item order carries no
+  sequence, geometry, or priority.
 - The `regions` array orders named comprehension chunks for canonical spatial composition and the matching
   legend, not for reviewer reading priority, reading sequence, runtime order, or importance. A renderer
   keeps that order unambiguous and may wrap a region-only map into further rows to keep the overview
-  bounded. When a spine exists, the spine Nodes belonging to each region must form one contiguous
-  interval, and those intervals must follow region array order. Do not put an unassigned or differently
-  grouped spine Node between two members of one region: one comprehension chunk must not be interleaved
-  across the backbone. Reorder or redefine the regions instead. Exact Node IDs, not an enclosing shape,
-  define membership after a reviewer manually moves Nodes.
+  bounded. Exact Node IDs, not an enclosing shape, define membership after a reviewer manually moves Nodes.
 
-A non-null presentation influences the overview, initial attention, and visual emphasis; a spine and/or
+A non-null presentation influences the overview, initial attention, and visual emphasis; a backbone and/or
 regions additionally organize canonical placement. A start-only presentation retains topology-derived
 geometry; it is still presentation because its thesis and attention start shape the overview and a new
 session initially focuses `startNodeId`.
@@ -233,17 +232,16 @@ Use this checklist internally; do not reproduce it as the Structure description.
       packed condition or explanation.
 - [ ] `presentation` is present; `null` is intentional, or its thesis states a source-consistent spatial
       explanation without a review conclusion or completeness claim.
-- [ ] A non-null presentation explicitly includes a current attention start, `primarySpine` (object or
-      `null`), and `regions` (possibly empty). The start leads a non-null spine and need not belong to a
-      region.
-- [ ] It uses an exact-Edge spine or useful named regions when either is honest; the start-only form is used
-      only for a meaningful thesis and start when neither is honest. No fake spine, dummy region, or
+- [ ] A non-null presentation explicitly includes a current attention start, `primaryBackbone` (object or
+      `null`), and `regions` (possibly empty). When `primaryBackbone` is non-null, the start belongs to it;
+      the start need not belong to a region.
+- [ ] It uses a connected exact-Edge backbone or useful named regions when either is honest; the start-only form is used
+      only for a meaningful thesis and start when neither is honest. No fake backbone, dummy region, or
       decorative grouping was added.
-- [ ] A non-null primary spine contains 2–12 unique current Node IDs, starts at `startNodeId`, and names
-      exactly one current Edge joining each consecutive pair without changing factual Edge direction.
-- [ ] Every region has a concise label and current unique Node IDs, each `nodeIds` array is treated as a
-      membership set, no Node belongs to multiple regions, and each region's spine members form one
-      contiguous interval in declared spatial/legend order.
+- [ ] A non-null primary backbone contains 1–16 stable-sorted unique current Edge IDs, derives 2–12 endpoint
+      Nodes including `startNodeId`, and is weakly connected without changing factual Edge direction.
+- [ ] Every region has a concise label and stable-sorted current unique Node IDs, each `nodeIds` array is
+      treated as a membership set, and no Node belongs to multiple regions.
 - [ ] Presentation describes at most one visual backbone and useful spatial groupings without coordinates,
       multiple routes, hidden content, static inventory, stepper behavior, or autoplay.
 - [ ] IDs are unique, semantic, and stable across updates; removed IDs are not recycled.

@@ -1,13 +1,123 @@
 import { describe, expect, it } from "vitest";
 import type { Structure } from "../../src/domain/models.js";
-import { initialStructureLayout } from "../../src/web/structure-graph.js";
+import {
+  initialStructureLayout,
+  STRUCTURE_NODE_HEIGHT,
+  STRUCTURE_NODE_WIDTH,
+} from "../../src/web/structure-graph.js";
 import {
   boxesOverlap,
   buildFullStructureRenderModel,
   buildStructureRenderModel,
   EDGE_LABEL_LINE_HEIGHT,
   labelBox,
+  routeStructureEdges,
 } from "../../src/web/structure-render-model.js";
+import { createContractStructures } from "../fixtures/contract/contract-structures.mjs";
+
+function segmentIntersectsBox(
+  start: { x: number; y: number },
+  end: { x: number; y: number },
+  box: { left: number; top: number; right: number; bottom: number },
+): boolean {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  let minimum = 0;
+  let maximum = 1;
+  for (const [origin, delta, low, high] of [
+    [start.x, dx, box.left, box.right],
+    [start.y, dy, box.top, box.bottom],
+  ] as const) {
+    if (Math.abs(delta) < 0.000_001) {
+      if (origin < low || origin > high) return false;
+      continue;
+    }
+    const first = (low - origin) / delta;
+    const second = (high - origin) / delta;
+    minimum = Math.max(minimum, Math.min(first, second));
+    maximum = Math.min(maximum, Math.max(first, second));
+    if (minimum > maximum) return false;
+  }
+  return maximum >= 0 && minimum <= 1;
+}
+
+function linePathPoints(path: string): Array<{ x: number; y: number }> {
+  return [
+    ...path.matchAll(
+      /[ML]\s+(-?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?)\s+(-?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?)/giu,
+    ),
+  ].map((match) => ({ x: Number(match[1]), y: Number(match[2]) }));
+}
+
+function pointIsOnBoxBoundary(
+  point: { x: number; y: number },
+  box: { left: number; top: number; right: number; bottom: number },
+): boolean {
+  const tolerance = 0.000_001;
+  const onVertical =
+    (Math.abs(point.x - box.left) <= tolerance || Math.abs(point.x - box.right) <= tolerance) &&
+    point.y >= box.top - tolerance &&
+    point.y <= box.bottom + tolerance;
+  const onHorizontal =
+    (Math.abs(point.y - box.top) <= tolerance || Math.abs(point.y - box.bottom) <= tolerance) &&
+    point.x >= box.left - tolerance &&
+    point.x <= box.right + tolerance;
+  return onVertical || onHorizontal;
+}
+
+function maximumSharedOrthogonalLength(
+  left: readonly { x: number; y: number }[],
+  right: readonly { x: number; y: number }[],
+): number {
+  type Segment = {
+    orientation: "horizontal" | "vertical";
+    fixed: number;
+    minimum: number;
+    maximum: number;
+  };
+  const segments = (points: readonly { x: number; y: number }[]) =>
+    points.slice(1).flatMap<Segment>((point, index) => {
+      const previous = points[index]!;
+      if (previous.y === point.y) {
+        return [
+          {
+            orientation: "horizontal" as const,
+            fixed: point.y,
+            minimum: Math.min(previous.x, point.x),
+            maximum: Math.max(previous.x, point.x),
+          },
+        ];
+      }
+      if (previous.x === point.x) {
+        return [
+          {
+            orientation: "vertical" as const,
+            fixed: point.x,
+            minimum: Math.min(previous.y, point.y),
+            maximum: Math.max(previous.y, point.y),
+          },
+        ];
+      }
+      return [];
+    });
+  let maximum = 0;
+  for (const leftSegment of segments(left)) {
+    for (const rightSegment of segments(right)) {
+      if (
+        leftSegment.orientation !== rightSegment.orientation ||
+        leftSegment.fixed !== rightSegment.fixed
+      ) {
+        continue;
+      }
+      maximum = Math.max(
+        maximum,
+        Math.min(leftSegment.maximum, rightSegment.maximum) -
+          Math.max(leftSegment.minimum, rightSegment.minimum),
+      );
+    }
+  }
+  return maximum;
+}
 
 function renderStructure(): Structure {
   const notations = [
@@ -89,14 +199,13 @@ function renderStructure(): Structure {
 }
 
 describe("Structure shared render model", () => {
-  it("derives exact region membership and factual primary-spine Edges from presentation", () => {
+  it("derives exact region membership and factual primary-backbone Edges from presentation", () => {
     const structure: Structure = {
       ...renderStructure(),
       presentation: {
         thesis: "The request crosses a stable boundary.",
         startNodeId: "node-0",
-        primarySpine: {
-          nodeIds: ["node-0", "node-1"],
+        primaryBackbone: {
           edgeIds: ["parallel"],
         },
         regions: [
@@ -112,15 +221,34 @@ describe("Structure shared render model", () => {
     });
 
     expect(model.presentation?.thesis).toBe(structure.presentation!.thesis);
-    expect(model.presentation?.primarySpineNodeOrder).toEqual(["node-0", "node-1"]);
-    expect(model.presentation?.primarySpineEdgeOrder).toEqual(["parallel"]);
-    expect([...model.presentation!.primarySpineNodeIds].sort()).toEqual(["node-0", "node-1"]);
-    expect([...model.presentation!.primarySpineEdgeIds]).toEqual(["parallel"]);
+    expect(model.presentation?.startNodeId).toBe("node-0");
+    expect([...model.presentation!.primaryBackboneNodeIds].sort()).toEqual(["node-0", "node-1"]);
+    expect([...model.presentation!.primaryBackboneEdgeIds]).toEqual(["parallel"]);
     expect(model.presentation?.regions.map(({ label }) => label)).toEqual(["Ingress", "Execution"]);
     expect(model.presentation?.regions.map(({ nodeIds }) => nodeIds)).toEqual([
       ["node-0", "node-2"],
       ["node-1", "node-3"],
     ]);
+    const executionBounds = model.presentation!.regions[1]!.bounds;
+    const internalEdge = model.edges.find(({ edge }) => edge.id === "branch-1")!;
+    const internalLabel = model.labels.find(({ edge }) => edge.id === "branch-1")!;
+    const internalLabelBounds = labelBox(
+      internalLabel.x,
+      internalLabel.y,
+      internalLabel.boxWidth,
+      internalLabel.height,
+      4,
+    );
+    for (const bounds of [
+      internalEdge.geometry.bounds,
+      internalLabelBounds,
+      ...(internalLabel.leaderBounds ? [internalLabel.leaderBounds] : []),
+    ]) {
+      expect(executionBounds.left).toBeLessThanOrEqual(bounds.left);
+      expect(executionBounds.top).toBeLessThanOrEqual(bounds.top);
+      expect(executionBounds.right).toBeGreaterThanOrEqual(bounds.right);
+      expect(executionBounds.bottom).toBeGreaterThanOrEqual(bounds.bottom);
+    }
   });
 
   it("keeps generated presentation metadata deterministic across input order", () => {
@@ -207,7 +335,7 @@ describe("Structure shared render model", () => {
         presentation: {
           thesis: "Generated presentation.",
           startNodeId: spineIds[0]!,
-          primarySpine: caseIndex % 3 === 0 ? null : { nodeIds: spineIds, edgeIds: spineEdgeIds },
+          primaryBackbone: caseIndex % 3 === 0 ? null : { edgeIds: spineEdgeIds },
           regions: Array.from({ length: regionCount }, (_, regionIndex) => ({
             label: `Region ${regionIndex}`,
             nodeIds: [
@@ -243,7 +371,7 @@ describe("Structure shared render model", () => {
         structure.presentation!.regions.map((region, index) => ({
           index,
           label: region.label,
-          nodeIds: region.nodeIds,
+          nodeIds: [...region.nodeIds].sort(),
         })),
       );
     }
@@ -272,6 +400,65 @@ describe("Structure shared render model", () => {
     const self = model.edges.find(({ edge }) => edge.id === "self")!;
     expect(model.bounds!.right).toBeGreaterThanOrEqual(self.geometry.bounds.right);
     expect(model.bounds!.top).toBeLessThanOrEqual(self.geometry.bounds.top);
+  });
+
+  it("keeps every label after manual positions block direct association leaders", () => {
+    const structure = createContractStructures({
+      pullRequestId: "pr-1",
+      baseOid: "a".repeat(40),
+      firstHead: "b".repeat(40),
+    })[0] as Structure;
+    const canonical = initialStructureLayout(structure);
+    const hub = canonical["hub"]!;
+
+    for (const [deltaX, deltaY] of [
+      [-500, -100],
+      [-300, 52],
+      [250, -300],
+      [250, 52],
+      [75, 52],
+    ] as const) {
+      const positions = {
+        ...canonical,
+        hub: { x: hub.x + deltaX, y: hub.y + deltaY },
+      };
+      const model = buildFullStructureRenderModel({
+        structure,
+        positions,
+        sourceChangeKinds: new Map(),
+      });
+      const nodeBoxes = model.nodes.map(({ point }) => ({
+        left: point.x,
+        top: point.y,
+        right: point.x + STRUCTURE_NODE_WIDTH,
+        bottom: point.y + STRUCTURE_NODE_HEIGHT,
+      }));
+
+      expect(model.edges, `${deltaX},${deltaY}: Edge routes`).toHaveLength(structure.edges.length);
+      expect(model.labels, `${deltaX},${deltaY}: Edge labels`).toHaveLength(structure.edges.length);
+      expect(
+        model.labels.every((label) =>
+          nodeBoxes.every(
+            (nodeBox) =>
+              !boxesOverlap(labelBox(label.x, label.y, label.boxWidth, label.height, 4), nodeBox),
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        model.labels.filter(({ displaced }) => displaced).every(({ leaderPath }) => leaderPath),
+      ).toBe(true);
+      for (const label of model.labels.filter(({ displaced }) => displaced)) {
+        const points = linePathPoints(label.leaderPath!);
+        expect(points.length).toBeGreaterThanOrEqual(2);
+        expect(
+          points
+            .slice(1)
+            .every((point, index) =>
+              nodeBoxes.every((nodeBox) => !segmentIntersectsBox(points[index]!, point, nodeBox)),
+            ),
+        ).toBe(true);
+      }
+    }
   });
 
   it("respects screen selections while source actions reserve label width", () => {
@@ -323,6 +510,238 @@ describe("Structure shared render model", () => {
     const placements = (model: typeof first) =>
       Object.fromEntries(model.labels.map(({ edge, x, y }) => [edge.id, { x, y }]));
     expect(placements(reordered)).toEqual(placements(first));
+  });
+
+  it("routes parallel, reciprocal, and self-loop Edges around every non-endpoint Node", () => {
+    const structure: Structure = {
+      ...renderStructure(),
+      originNodeId: "left",
+      nodes: ["left", "blocker", "right", "lower-right"].map((id) => ({
+        id,
+        label: id,
+        description: null,
+        kind: null,
+        notation: "plain",
+        anchor: null,
+      })),
+      edges: [
+        {
+          id: "forward-a",
+          from: "left",
+          to: "right",
+          label: "first parallel relation",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "forward-b",
+          from: "left",
+          to: "right",
+          label: "second parallel relation",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "reciprocal",
+          from: "right",
+          to: "left",
+          label: "reverse relation",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "different-pair",
+          from: "left",
+          to: "lower-right",
+          label: "another relation sharing the obstacle gutter",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "self",
+          from: "blocker",
+          to: "blocker",
+          label: "self relation",
+          directed: true,
+          anchors: [],
+        },
+      ],
+    };
+    const positions = {
+      left: { x: 0, y: 0 },
+      blocker: { x: 300, y: 0 },
+      right: { x: 600, y: 0 },
+      "lower-right": { x: 600, y: 184 },
+    };
+    const routes = routeStructureEdges(structure.edges, structure.nodes, positions);
+    expect(routes.size).toBe(structure.edges.length);
+    expect(
+      new Set(["forward-a", "forward-b", "reciprocal"].map((edgeId) => routes.get(edgeId)!.path))
+        .size,
+    ).toBe(3);
+
+    const nodeBoxes = new Map(
+      structure.nodes.map((node) => {
+        const point = positions[node.id as keyof typeof positions];
+        return [
+          node.id,
+          {
+            left: point.x,
+            top: point.y,
+            right: point.x + STRUCTURE_NODE_WIDTH,
+            bottom: point.y + STRUCTURE_NODE_HEIGHT,
+          },
+        ] as const;
+      }),
+    );
+    for (const edge of structure.edges) {
+      const route = routes.get(edge.id)!;
+      expect(pointIsOnBoxBoundary(route.points[0]!, nodeBoxes.get(edge.from)!)).toBe(true);
+      expect(pointIsOnBoxBoundary(route.points.at(-1)!, nodeBoxes.get(edge.to)!)).toBe(true);
+      expect(route.points[1]).not.toEqual(route.points[0]);
+      expect(route.points.at(-2)).not.toEqual(route.points.at(-1));
+      for (const [nodeId, box] of nodeBoxes) {
+        if (nodeId === edge.from || nodeId === edge.to) continue;
+        expect(
+          route.points
+            .slice(1)
+            .some((point, index) => segmentIntersectsBox(route.points[index]!, point, box)),
+          `${edge.id} crosses ${nodeId}`,
+        ).toBe(false);
+      }
+    }
+    for (const [index, edgeId] of ["forward-a", "forward-b", "reciprocal"].entries()) {
+      for (const otherId of ["forward-a", "forward-b", "reciprocal"].slice(index + 1)) {
+        expect(
+          maximumSharedOrthogonalLength(
+            routes.get(edgeId)!.points.slice(1, -1),
+            routes.get(otherId)!.points.slice(1, -1),
+          ),
+          `${edgeId} and ${otherId} collapse into one obstacle lane`,
+        ).toBe(0);
+      }
+    }
+    for (const edgeId of ["forward-a", "forward-b", "reciprocal"]) {
+      expect(
+        maximumSharedOrthogonalLength(
+          routes.get(edgeId)!.points.slice(1, -1),
+          routes.get("different-pair")!.points.slice(1, -1),
+        ),
+        `${edgeId} and a different endpoint pair share a long obstacle lane`,
+      ).toBeLessThan(48);
+    }
+
+    const reordered = routeStructureEdges(
+      [...structure.edges].reverse(),
+      [...structure.nodes].reverse(),
+      positions,
+    );
+    expect(
+      Object.fromEntries([...reordered].map(([edgeId, geometry]) => [edgeId, geometry.path])),
+    ).toEqual(Object.fromEntries([...routes].map(([edgeId, geometry]) => [edgeId, geometry.path])));
+  });
+
+  it("keeps direct lane endpoints and directed marker metadata on Node boundaries", () => {
+    const structure: Structure = {
+      ...renderStructure(),
+      originNodeId: "left",
+      nodes: ["left", "right"].map((id) => ({
+        id,
+        label: id,
+        description: null,
+        kind: null,
+        notation: "plain",
+        anchor: null,
+      })),
+      edges: [
+        {
+          id: "forward-a",
+          from: "left",
+          to: "right",
+          label: "first lane",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "forward-b",
+          from: "left",
+          to: "right",
+          label: "second lane",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "reverse",
+          from: "right",
+          to: "left",
+          label: "return lane",
+          directed: true,
+          anchors: [],
+        },
+      ],
+    };
+    const positions = { left: { x: 0, y: 0 }, right: { x: 600, y: 220 } };
+    const boxes = new Map(
+      structure.nodes.map((node) => {
+        const point = positions[node.id as keyof typeof positions];
+        return [
+          node.id,
+          {
+            left: point.x,
+            top: point.y,
+            right: point.x + STRUCTURE_NODE_WIDTH,
+            bottom: point.y + STRUCTURE_NODE_HEIGHT,
+          },
+        ] as const;
+      }),
+    );
+    const routes = routeStructureEdges(structure.edges, structure.nodes, positions);
+
+    expect(routes.size).toBe(structure.edges.length);
+    for (const edge of structure.edges) {
+      const route = routes.get(edge.id)!;
+      expect(pointIsOnBoxBoundary(route.points[0]!, boxes.get(edge.from)!)).toBe(true);
+      expect(pointIsOnBoxBoundary(route.points.at(-1)!, boxes.get(edge.to)!)).toBe(true);
+      expect({ x: route.endX, y: route.endY }).toEqual(route.points.at(-1));
+      expect(route.points[1]).not.toEqual(route.points[0]);
+      expect(route.points.at(-2)).not.toEqual(route.points.at(-1));
+    }
+  });
+
+  it("places labels against the complete artifact before filtering the active lens", () => {
+    const structure = renderStructure();
+    const positions = initialStructureLayout(structure);
+    const complete = buildStructureRenderModel({
+      structure,
+      positions,
+      sourceChangeKinds: new Map(),
+      selection: {
+        nodeIds: new Set(structure.nodes.map(({ id }) => id)),
+        edgeIds: new Set(structure.edges.map(({ id }) => id)),
+        labelEdgeIds: new Set(structure.edges.map(({ id }) => id)),
+      },
+      labelAccessory: "source-actions",
+      edgeLabelMode: "viewer-clamped",
+    });
+    const focusedEdgeIds = new Set(["forward", "parallel"]);
+    const focused = buildStructureRenderModel({
+      structure,
+      positions,
+      sourceChangeKinds: new Map(),
+      selection: {
+        nodeIds: new Set(["node-0", "node-1"]),
+        edgeIds: focusedEdgeIds,
+        labelEdgeIds: focusedEdgeIds,
+      },
+      labelAccessory: "source-actions",
+      edgeLabelMode: "viewer-clamped",
+    });
+    const completePositions = Object.fromEntries(
+      complete.labels.map(({ edge, x, y }) => [edge.id, { x, y }]),
+    );
+    expect(Object.fromEntries(focused.labels.map(({ edge, x, y }) => [edge.id, { x, y }]))).toEqual(
+      Object.fromEntries([...focusedEdgeIds].map((edgeId) => [edgeId, completePositions[edgeId]])),
+    );
   });
 
   it("uses the same maximum two-line representation for Viewer label geometry and rendering", () => {
@@ -383,7 +802,7 @@ describe("Structure shared render model", () => {
     expect(model.bounds!.bottom).toBeGreaterThanOrEqual(box.bottom);
   });
 
-  it("re-wraps a crowded label within two lines before using a collision fallback", () => {
+  it("re-wraps a crowded label within two lines before using displaced placement", () => {
     const structure: Structure = {
       ...renderStructure(),
       originNodeId: "controller",
@@ -450,7 +869,6 @@ describe("Structure shared render model", () => {
     ]);
     expect(model.labels.every(({ crowded }) => !crowded)).toBe(true);
     expect(controller!.displayLines.length).toBeLessThanOrEqual(2);
-    expect(controller!.boxWidth).toBeLessThanOrEqual(170);
     expect(
       boxesOverlap(
         labelBox(composition!.x, composition!.y, composition!.boxWidth, composition!.height),
@@ -470,6 +888,48 @@ describe("Structure shared render model", () => {
     });
     expect(model.nodes).toHaveLength(structure.nodes.length - 1);
     expect(model.edges.length).toBeLessThan(structure.edges.length);
+  });
+
+  it("places all 200 labels of one parallel bundle without label collisions", () => {
+    const structure: Structure = {
+      ...renderStructure(),
+      originNodeId: "left",
+      nodes: ["left", "right"].map((id) => ({
+        id,
+        label: id,
+        description: null,
+        kind: null,
+        notation: "plain",
+        anchor: null,
+      })),
+      edges: Array.from({ length: 200 }, (_, index) => ({
+        id: `parallel-${String(index).padStart(3, "0")}`,
+        from: "left",
+        to: "right",
+        label: `parallel relationship ${index} remains individually inspectable`,
+        directed: true,
+        anchors: [],
+      })),
+    };
+    const model = buildFullStructureRenderModel({
+      structure,
+      positions: { left: { x: 0, y: 0 }, right: { x: 600, y: 0 } },
+      sourceChangeKinds: new Map(),
+    });
+
+    expect(model.edges).toHaveLength(200);
+    expect(model.labels).toHaveLength(200);
+    for (const [index, label] of model.labels.entries()) {
+      const box = labelBox(label.x, label.y, label.boxWidth, label.height, 4);
+      for (const other of model.labels.slice(index + 1)) {
+        expect(
+          boxesOverlap(box, labelBox(other.x, other.y, other.boxWidth, other.height, 4)),
+          `${label.edge.id} overlaps ${other.edge.id}`,
+        ).toBe(false);
+      }
+    }
+    expect(model.bounds!.right - model.bounds!.left).toBeLessThan(50_000);
+    expect(model.bounds!.bottom - model.bounds!.top).toBeLessThan(50_000);
   });
 
   it("keeps the 50 Node and 200 Edge boundary finite and complete", () => {
@@ -494,18 +954,57 @@ describe("Structure shared render model", () => {
         anchors: [],
       })),
     };
-    const model = buildFullStructureRenderModel({
+    const positions = initialStructureLayout(structure);
+    const exportModel = buildFullStructureRenderModel({
       structure,
-      positions: initialStructureLayout(structure),
+      positions,
       sourceChangeKinds: new Map(),
     });
-    expect(model.nodes).toHaveLength(50);
-    expect(model.edges).toHaveLength(200);
-    expect(model.labels).toHaveLength(200);
-    expect(model.labels.some(({ crowded }) => crowded)).toBe(true);
-    expect([
-      ...model.nodes.flatMap(({ point }) => [point.x, point.y]),
-      ...model.labels.flatMap(({ x, y }) => [x, y]),
-    ]).toSatisfy((values: number[]) => values.every(Number.isFinite));
+    const viewerModel = buildStructureRenderModel({
+      structure,
+      positions,
+      sourceChangeKinds: new Map(),
+      selection: {
+        nodeIds: new Set(nodes.map(({ id }) => id)),
+        edgeIds: new Set(structure.edges.map(({ id }) => id)),
+        labelEdgeIds: new Set(structure.edges.map(({ id }) => id)),
+      },
+      labelAccessory: "source-actions",
+      edgeLabelMode: "viewer-clamped",
+    });
+    for (const model of [exportModel, viewerModel]) {
+      expect(model.nodes).toHaveLength(50);
+      expect(model.edges).toHaveLength(200);
+      expect(model.labels).toHaveLength(200);
+      const nodeBoxes = model.nodes.map(({ point }) => ({
+        left: point.x,
+        top: point.y,
+        right: point.x + STRUCTURE_NODE_WIDTH,
+        bottom: point.y + STRUCTURE_NODE_HEIGHT,
+      }));
+      expect(
+        model.labels.every((label) =>
+          nodeBoxes.every(
+            (nodeBox) =>
+              !boxesOverlap(labelBox(label.x, label.y, label.boxWidth, label.height, 4), nodeBox),
+          ),
+        ),
+      ).toBe(true);
+      for (const [index, label] of model.labels.entries()) {
+        const box = labelBox(label.x, label.y, label.boxWidth, label.height, 4);
+        for (const other of model.labels.slice(index + 1)) {
+          expect(
+            boxesOverlap(box, labelBox(other.x, other.y, other.boxWidth, other.height, 4)),
+            `${label.edge.id} overlaps ${other.edge.id}`,
+          ).toBe(false);
+        }
+      }
+      expect([
+        ...model.nodes.flatMap(({ point }) => [point.x, point.y]),
+        ...model.labels.flatMap(({ x, y }) => [x, y]),
+      ]).toSatisfy((values: number[]) => values.every(Number.isFinite));
+      expect(model.bounds!.right - model.bounds!.left).toBeLessThan(50_000);
+      expect(model.bounds!.bottom - model.bounds!.top).toBeLessThan(50_000);
+    }
   });
 });

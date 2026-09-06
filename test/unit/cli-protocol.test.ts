@@ -1059,7 +1059,7 @@ describe("CLI protocol discovery", () => {
       presentation: {
         thesis: "Understand the transition into the terminal boundary.",
         startNodeId: "entry",
-        primarySpine: { nodeIds: ["entry", "terminal"], edgeIds: ["entry-terminal"] },
+        primaryBackbone: { edgeIds: ["entry-terminal"] },
         regions: [],
       },
       nodes: [
@@ -1119,7 +1119,7 @@ describe("CLI protocol discovery", () => {
       presentation: {
         thesis: "The hub integrates otherwise independent policies.",
         startNodeId: "hub",
-        primarySpine: null,
+        primaryBackbone: null,
         regions: [],
       },
       nodes: [
@@ -1202,7 +1202,7 @@ describe("CLI protocol discovery", () => {
       presentation: {
         thesis: "Follow the forward flow.",
         startNodeId: "entry",
-        primarySpine: { nodeIds: ["entry", "next"], edgeIds: ["entry-next"] },
+        primaryBackbone: { edgeIds: ["entry-next"] },
         regions: [],
       },
       nodes: [
@@ -1252,7 +1252,7 @@ describe("CLI protocol discovery", () => {
         presentation: {
           thesis: "Follow the forward flow.",
           startNodeId: "entry",
-          primarySpine: { nodeIds: ["entry", "next"], edgeIds: ["entry-next"] },
+          primaryBackbone: { edgeIds: ["entry-next"] },
           regions: [],
         },
       },

@@ -6,7 +6,16 @@
   "presentation": {
     "thesis": "The source-map plugin turns one rendered Markdown coordinate contract into several independently explorable review interactions.",
     "startNodeId": "source-map-plugin",
-    "primarySpine": null,
+    "primaryBackbone": {
+      "edgeIds": [
+        "comment-anchors-use-source-model",
+        "decoration-materializes-source-model",
+        "highlights-consume-decoration",
+        "plugin-runs-comment-anchors",
+        "plugin-runs-decoration",
+        "plugin-runs-highlights"
+      ]
+    },
     "regions": [
       {
         "label": "Composition",
@@ -18,7 +27,7 @@
       },
       {
         "label": "Review interactions",
-        "nodeIds": ["range-highlights", "comment-anchor-placement", "selection-source-range"]
+        "nodeIds": ["comment-anchor-placement", "range-highlights", "selection-source-range"]
       }
     ]
   },

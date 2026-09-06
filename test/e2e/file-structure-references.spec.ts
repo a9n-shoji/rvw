@@ -111,7 +111,12 @@ test("navigates from a file backlink to the focused Structure Node and restores 
   await page.getByRole("button", { name: "Structure 3", exact: true }).click();
   await reviewTree.getByRole("button", { name: "Order placement behavior", exact: true }).click();
   const primaryViewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
-  await primaryViewer.locator('.structure-node[data-node-id="order-aggregate"]').click();
+  const orderAggregate = primaryViewer.locator(
+    '.structure-node[data-node-id="order-aggregate"] .structure-node-focus',
+  );
+  await orderAggregate.focus();
+  await page.keyboard.press("Enter");
+  await primaryViewer.getByRole("button", { name: "2-hop", exact: true }).click();
   await primaryViewer.getByRole("button", { name: "縮小", exact: true }).click();
   const scaleBeforeNavigation = await primaryViewer.getAttribute("data-viewport-scale");
   const hubPositionBeforeNavigation = await primaryViewer
@@ -168,6 +173,10 @@ test("navigates from a file backlink to the focused Structure Node and restores 
   await expect(primaryViewer).toBeVisible();
   await expect(primaryViewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(
     /focused/u,
+  );
+  await expect(primaryViewer.getByRole("button", { name: "2-hop", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
   );
   await expect(primaryViewer).toHaveAttribute("data-viewport-scale", scaleBeforeNavigation!);
   expect(

@@ -230,6 +230,7 @@ function serializeNode(
   renderNode: StructureRenderNode,
   structure: Structure,
   palette: StructureExportPalette,
+  presentation: StructureRenderModel["presentation"],
 ): string {
   const { node, point } = renderNode;
   const outline = colorForChangeKind(renderNode.changeKind, palette, palette.lineStrong);
@@ -309,13 +310,9 @@ function serializeNode(
     node.id === structure.originNodeId
       ? `<line data-node-origin-mark="true" x1="${finiteNumber(originMark.x)}" y1="${finiteNumber(originMark.top)}" x2="${finiteNumber(originMark.x)}" y2="${finiteNumber(originMark.bottom)}" stroke="${escapeXml(palette.accent)}" stroke-width="4" stroke-linecap="round"/>`
       : "";
-  const primarySpineIndex = structure.presentation?.primarySpine?.nodeIds.indexOf(node.id) ?? -1;
-  const primarySpine = primarySpineIndex >= 0;
-  const primarySpineMark = primarySpine
-    ? `<line data-node-primary-spine-mark="true" x1="${finiteNumber(point.x + 18)}" y1="${finiteNumber(point.y + 3)}" x2="${finiteNumber(point.x + STRUCTURE_NODE_WIDTH - 18)}" y2="${finiteNumber(point.y + 3)}" stroke="${escapeXml(palette.accent)}" stroke-width="3" stroke-linecap="round" opacity="0.58"/>`
-    : "";
-  const primarySpineOrderMark = primarySpine
-    ? `<g data-node-primary-spine-order-mark="${primarySpineIndex + 1}"><rect x="${finiteNumber(point.x + 1)}" y="${finiteNumber(point.y - 14)}" width="25" height="15" rx="7.5" fill="${escapeXml(palette.panel)}" stroke="${escapeXml(palette.accent)}" stroke-opacity="0.55"/><text x="${finiteNumber(point.x + 13.5)}" y="${finiteNumber(point.y - 3.5)}" text-anchor="middle" fill="${escapeXml(palette.accent)}" font-family="${MONO_FONT}" font-size="8" font-weight="700">P${primarySpineIndex + 1}</text></g>`
+  const primaryBackbone = presentation?.primaryBackboneNodeIds.has(node.id) ?? false;
+  const primaryBackboneMark = primaryBackbone
+    ? `<line data-node-primary-backbone-mark="true" x1="${finiteNumber(point.x + 18)}" y1="${finiteNumber(point.y + 3)}" x2="${finiteNumber(point.x + STRUCTURE_NODE_WIDTH - 18)}" y2="${finiteNumber(point.y + 3)}" stroke="${escapeXml(palette.accent)}" stroke-width="3" stroke-linecap="round" opacity="0.58"/>`
     : "";
   const presentationStart = structure.presentation?.startNodeId === node.id;
   const presentationStartMark = presentationStart
@@ -366,14 +363,14 @@ function serializeNode(
   const presentationDescription = [
     node.id === structure.originNodeId ? "Factual graph origin" : null,
     presentationStart ? "Authorial presentation start" : null,
-    primarySpine ? `Reading spine position ${primarySpineIndex + 1}` : null,
+    primaryBackbone ? "Explanation backbone member" : null,
     presentationRegion
       ? `Region R${presentationRegionIndex + 1}: ${presentationRegion.label}`
       : null,
   ]
     .filter((value): value is string => value !== null)
     .join("\n");
-  return `<g data-node-id="${escapeXml(node.id)}" data-node-notation="${escapeXml(node.notation)}"${node.id === structure.originNodeId ? ' data-origin-node="true"' : ""}${presentationStart ? ' data-presentation-start-node="true"' : ""}${primarySpine ? ' data-primary-spine="true"' : ""}${presentationRegion ? ` data-presentation-region-index="${presentationRegionIndex}"` : ""}${renderNode.changeKind ? ` data-source-change-kind="${escapeXml(renderNode.changeKind)}"` : ""}>${serializeNodeShape(renderNode, outline, palette)}${origin}${primarySpineMark}${primarySpineOrderMark}${presentationStartMark}<g data-node-content="true">${source}${title}${divider}${description}</g><title>${escapeXml(node.label)}</title><desc>${escapeXml(`${node.description ?? ""}${presentationDescription ? `\n${presentationDescription}` : ""}`)}</desc></g>`;
+  return `<g data-node-id="${escapeXml(node.id)}" data-node-notation="${escapeXml(node.notation)}"${node.id === structure.originNodeId ? ' data-origin-node="true"' : ""}${presentationStart ? ' data-presentation-start-node="true"' : ""}${primaryBackbone ? ' data-primary-backbone="true"' : ""}${presentationRegion ? ` data-presentation-region-index="${presentationRegionIndex}"` : ""}${renderNode.changeKind ? ` data-source-change-kind="${escapeXml(renderNode.changeKind)}"` : ""}>${serializeNodeShape(renderNode, outline, palette)}${origin}${primaryBackboneMark}${presentationStartMark}<g data-node-content="true">${source}${title}${divider}${description}</g><title>${escapeXml(node.label)}</title><desc>${escapeXml(`${node.description ?? ""}${presentationDescription ? `\n${presentationDescription}` : ""}`)}</desc></g>`;
 }
 
 export function assertCompleteStructureExport(
@@ -396,12 +393,15 @@ export function assertCompleteStructureExport(
 function serializeEdgeLabel(
   placement: StructureRenderModel["labels"][number],
   palette: StructureExportPalette,
-  primarySpine: boolean,
+  primaryBackbone: boolean,
 ): string {
   const outline = colorForChangeKind(placement.source.changeKind, palette, palette.accent);
   const lines = placement.displayLines;
   const firstY = -((lines.length - 1) * EDGE_LABEL_LINE_HEIGHT) / 2 + 3.5;
-  return `<g data-edge-label-id="${escapeXml(placement.edge.id)}" transform="translate(${finiteNumber(placement.x)} ${finiteNumber(placement.y)})"${primarySpine ? ' data-primary-spine="true"' : ""}${placement.crowded ? ' data-crowded="true"' : ""}><rect x="${finiteNumber(-placement.selectWidth / 2)}" y="${finiteNumber(-placement.height / 2)}" width="${finiteNumber(placement.selectWidth)}" height="${finiteNumber(placement.height)}" rx="${finiteNumber(placement.height / 2)}" fill="${escapeXml(palette.panel)}" stroke="${escapeXml(outline)}" stroke-width="${primarySpine ? "1.4" : "1"}"${placement.crowded ? ' stroke-dasharray="4 3"' : ""}/>${svgTextLines({ lines, x: 0, firstY, lineHeight: EDGE_LABEL_LINE_HEIGHT, fontSize: 10, fontFamily: SANS_FONT, fill: outline, anchor: "middle" })}<title>${escapeXml(placement.edge.label)}</title></g>`;
+  const leader = placement.leaderPath
+    ? `<path data-edge-label-leader-id="${escapeXml(placement.edge.id)}" d="${escapeXml(placement.leaderPath)}" fill="none" stroke="${escapeXml(outline)}" stroke-width="1" stroke-dasharray="3 3" opacity="0.72"/>`
+    : "";
+  return `${leader}<g data-edge-label-id="${escapeXml(placement.edge.id)}" transform="translate(${finiteNumber(placement.x)} ${finiteNumber(placement.y)})"${primaryBackbone ? ' data-primary-backbone="true"' : ""}${placement.crowded ? ' data-crowded="true"' : ""}${placement.displaced ? ' data-displaced="true"' : ""}><rect x="${finiteNumber(-placement.selectWidth / 2)}" y="${finiteNumber(-placement.height / 2)}" width="${finiteNumber(placement.selectWidth)}" height="${finiteNumber(placement.height)}" rx="${finiteNumber(placement.height / 2)}" fill="${escapeXml(palette.panel)}" stroke="${escapeXml(outline)}" stroke-width="${primaryBackbone ? "1.4" : "1"}"${placement.crowded ? ' stroke-dasharray="4 3"' : ""}/>${svgTextLines({ lines, x: 0, firstY, lineHeight: EDGE_LABEL_LINE_HEIGHT, fontSize: 10, fontFamily: SANS_FONT, fill: outline, anchor: "middle" })}<title>${escapeXml(placement.edge.label)}</title></g>`;
 }
 
 function serializePresentationRegions(
@@ -439,7 +439,7 @@ function edgeMarkerColor(kind: StructureEdgeMarkerKind, palette: StructureExport
 function serializeEdgeMarkerDefs(palette: StructureExportPalette): string {
   return EDGE_MARKER_KINDS.map((kind) => {
     const color = edgeMarkerColor(kind, palette);
-    return `<marker id="${edgeMarkerId(kind)}" data-edge-marker-kind="${kind}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 10 5 L 0 10 z" fill="${escapeXml(color)}"/></marker>`;
+    return `<marker id="${edgeMarkerId(kind)}" data-edge-marker-kind="${kind}" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto" markerUnits="strokeWidth"><path d="M 0 0 L 10 5 L 0 10 z" fill="${escapeXml(color)}"/></marker>`;
   }).join("");
 }
 
@@ -460,12 +460,22 @@ export function serializeStructureSvg(input: {
         ellipsize: false,
       })
     : [];
+  const primaryBackboneEdges = model.presentation
+    ? structure.edges
+        .filter((edge) => model.presentation!.primaryBackboneEdgeIds.has(edge.id))
+        .sort((left, right) => left.id.localeCompare(right.id, "en"))
+    : [];
   const presentationLegend = structure.presentation
     ? [
         `START · ${structure.nodes.find(({ id }) => id === structure.presentation!.startNodeId)?.label ?? structure.presentation.startNodeId}`,
-        ...(structure.presentation.primarySpine
+        ...(primaryBackboneEdges.length > 0
           ? [
-              `SPINE · P1–P${structure.presentation.primarySpine.nodeIds.length} is authored backbone order, not execution sequence`,
+              `CORE RELATIONS · ${primaryBackboneEdges
+                .map(
+                  (edge) =>
+                    `${edge.label} [${edge.from}${edge.directed ? " → " : " — "}${edge.to}]`,
+                )
+                .join(" · ")}`,
             ]
           : []),
         ...(structure.presentation.regions.length > 0
@@ -507,8 +517,8 @@ export function serializeStructureSvg(input: {
     .map(({ edge, geometry, source }) => {
       const markerKind = edgeMarkerKind(source.changeKind);
       const stroke = edgeMarkerColor(markerKind, palette);
-      const primarySpine = model.presentation?.primarySpineEdgeIds.has(edge.id) ?? false;
-      return `<path data-edge-id="${escapeXml(edge.id)}"${primarySpine ? ' data-primary-spine="true"' : ""} d="${escapeXml(geometry.path)}" fill="none" stroke="${escapeXml(stroke)}" stroke-width="${primarySpine ? "2" : "1.4"}" opacity="${primarySpine ? "0.82" : source.changeKind ? "0.76" : "0.58"}"${edge.directed ? ` marker-end="url(#${edgeMarkerId(markerKind)})"` : ""}/>`;
+      const primaryBackbone = model.presentation?.primaryBackboneEdgeIds.has(edge.id) ?? false;
+      return `<path data-edge-id="${escapeXml(edge.id)}"${primaryBackbone ? ' data-primary-backbone="true"' : ""} d="${escapeXml(geometry.path)}" fill="none" stroke="${escapeXml(stroke)}" stroke-width="${primaryBackbone ? "2" : "1.4"}" opacity="${primaryBackbone ? "0.82" : source.changeKind ? "0.76" : "0.58"}"${edge.directed ? ` marker-end="url(#${edgeMarkerId(markerKind)})"` : ""}/>`;
     })
     .join("");
   const labels = model.labels
@@ -516,12 +526,12 @@ export function serializeStructureSvg(input: {
       serializeEdgeLabel(
         placement,
         palette,
-        model.presentation?.primarySpineEdgeIds.has(placement.edge.id) ?? false,
+        model.presentation?.primaryBackboneEdgeIds.has(placement.edge.id) ?? false,
       ),
     )
     .join("");
   const nodes = model.nodes
-    .map((renderNode) => serializeNode(renderNode, structure, palette))
+    .map((renderNode) => serializeNode(renderNode, structure, palette, model.presentation))
     .join("");
   const regions = serializePresentationRegions(model, palette);
   const thesis = model.presentation

@@ -9,7 +9,7 @@ function overviewStructure(): Structure {
     pullRequestId: "pr-1",
     sourceOid: "a".repeat(40),
     title: "Presentation overview",
-    scope: "A compact spatial reading lens.",
+    scope: "A compact spatial explanation lens.",
     originNodeId: "a",
     nodes: ["a", "b", "c", "d"].map((id) => ({
       id,
@@ -44,13 +44,20 @@ function overviewStructure(): Structure {
         directed: false,
         anchors: [],
       },
+      {
+        id: "parallel",
+        from: "a",
+        to: "b",
+        label: "observes",
+        directed: true,
+        anchors: [],
+      },
     ],
     presentation: {
       thesis: "These relations form one review-relevant boundary.",
       startNodeId: "a",
-      primarySpine: {
-        nodeIds: ["a", "b", "c", "d"],
-        edgeIds: ["forward", "reverse", "neutral"],
+      primaryBackbone: {
+        edgeIds: ["reverse", "parallel", "forward", "neutral"],
       },
       regions: [
         { label: "Ingress", nodeIds: ["a", "b"] },
@@ -63,25 +70,27 @@ function overviewStructure(): Structure {
 }
 
 describe("Structure presentation overview", () => {
-  it("keeps exact spine Edge labels and distinguishes factual direction from spine order", () => {
+  it("derives backbone Nodes from an unordered exact Edge set", () => {
     const model = buildStructurePresentationOverviewModel(overviewStructure())!;
 
     expect(model.startNode).toMatchObject({ id: "a", label: "Node A", isStart: true });
-    expect(model.spineNodes.map(({ id }) => id)).toEqual(["a", "b", "c", "d"]);
     expect(
-      model.spineConnections.map(({ edgeId, label, direction }) => ({
+      model.coreRelations.map(({ edgeId, label, directed, fromNode, toNode }) => ({
         edgeId,
         label,
-        direction,
+        directed,
+        from: fromNode.id,
+        to: toNode.id,
       })),
     ).toEqual([
-      { edgeId: "forward", label: "calls", direction: "forward" },
-      { edgeId: "reverse", label: "is consumed by", direction: "reverse" },
-      { edgeId: "neutral", label: "shares policy with", direction: "undirected" },
+      { edgeId: "forward", label: "calls", directed: true, from: "a", to: "b" },
+      { edgeId: "neutral", label: "shares policy with", directed: false, from: "c", to: "d" },
+      { edgeId: "parallel", label: "observes", directed: true, from: "a", to: "b" },
+      { edgeId: "reverse", label: "is consumed by", directed: true, from: "c", to: "b" },
     ]);
     expect(model.regions).toEqual([
-      { label: "Ingress", nodeCount: 2 },
-      { label: "Policy", nodeCount: 2 },
+      { index: 0, label: "Ingress", nodeIds: ["a", "b"], nodeCount: 2 },
+      { index: 1, label: "Policy", nodeIds: ["c", "d"], nodeCount: 2 },
     ]);
   });
 
@@ -90,7 +99,7 @@ describe("Structure presentation overview", () => {
     structure.presentation = {
       thesis: "The policy areas are the useful chunks.",
       startNodeId: "c",
-      primarySpine: null,
+      primaryBackbone: null,
       regions: [
         { label: "Ingress", nodeIds: ["a", "b"] },
         { label: "Policy", nodeIds: ["c", "d"] },
@@ -100,17 +109,16 @@ describe("Structure presentation overview", () => {
     const model = buildStructurePresentationOverviewModel(structure)!;
 
     expect(model.startNode).toMatchObject({ id: "c", isStart: true });
-    expect(model.spineNodes).toEqual([]);
-    expect(model.spineConnections).toEqual([]);
+    expect(model.coreRelations).toEqual([]);
     expect(model.regions.map(({ label }) => label)).toEqual(["Ingress", "Policy"]);
   });
 
-  it("represents thesis and attention start without manufacturing a spine or regions", () => {
+  it("represents thesis and attention start without manufacturing a backbone or regions", () => {
     const structure = overviewStructure();
     structure.presentation = {
       thesis: "Begin at the shared policy without inventing additional spatial structure.",
       startNodeId: "c",
-      primarySpine: null,
+      primaryBackbone: null,
       regions: [],
     };
 
@@ -118,8 +126,7 @@ describe("Structure presentation overview", () => {
 
     expect(model.thesis).toBe(structure.presentation.thesis);
     expect(model.startNode).toMatchObject({ id: "c", isStart: true });
-    expect(model.spineNodes).toEqual([]);
-    expect(model.spineConnections).toEqual([]);
+    expect(model.coreRelations).toEqual([]);
     expect(model.regions).toEqual([]);
   });
 
@@ -130,14 +137,13 @@ describe("Structure presentation overview", () => {
     expect(buildStructurePresentationOverviewModel(structure)).toBeNull();
   });
 
-  it("does not shift later exact Edges onto the wrong node pair when persisted spine data is stale", () => {
+  it("does not misassign a surviving exact relation when one referenced Edge is unavailable", () => {
     const structure = overviewStructure();
-    structure.presentation!.primarySpine!.edgeIds[0] = "missing-edge";
+    structure.presentation!.primaryBackbone!.edgeIds = ["missing-edge", "reverse"];
 
     const model = buildStructurePresentationOverviewModel(structure)!;
 
     expect(model.startNode.id).toBe("a");
-    expect(model.spineNodes).toEqual([]);
-    expect(model.spineConnections).toEqual([]);
+    expect(model.coreRelations.map(({ edgeId }) => edgeId)).toEqual(["reverse"]);
   });
 });

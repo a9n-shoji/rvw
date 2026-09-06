@@ -12,7 +12,8 @@ import {
 } from "../../src/cli/schemas.js";
 import {
   MAX_COMMENT_BODY_BYTES,
-  MAX_STRUCTURE_PRIMARY_SPINE_NODES,
+  MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES,
+  MAX_STRUCTURE_PRIMARY_BACKBONE_NODES,
 } from "../../src/shared/constants.js";
 
 describe("CLI input schemas", () => {
@@ -346,8 +347,7 @@ describe("CLI input schemas", () => {
         presentation: {
           thesis: "  Follow the authorization decision.  ",
           startNodeId: "controller",
-          primarySpine: {
-            nodeIds: ["controller", "policy"],
+          primaryBackbone: {
             edgeIds: ["checks-policy"],
           },
           regions: [
@@ -371,8 +371,7 @@ describe("CLI input schemas", () => {
       presentation: {
         thesis: "Follow the authorization decision.",
         startNodeId: "controller",
-        primarySpine: {
-          nodeIds: ["controller", "policy"],
+        primaryBackbone: {
           edgeIds: ["checks-policy"],
         },
         regions: [{ label: "Request boundary" }, { label: "Policy" }],
@@ -495,7 +494,7 @@ describe("CLI input schemas", () => {
     ).toBe(false);
   });
 
-  it("validates Structure presentation references, spine adjacency, regions, and region order", () => {
+  it("validates and normalizes a connected exact-Edge Structure backbone", () => {
     const valid = {
       expectedUpdatedAt: "2026-09-05T00:00:00.000Z",
       sourceOid: "c".repeat(40),
@@ -524,41 +523,45 @@ describe("CLI input schemas", () => {
           directed: true,
         },
         { id: "store-policy", from: "store", to: "policy", label: "persists", directed: true },
+        { id: "store-loop", from: "store", to: "store", label: "retries", directed: true },
       ],
       presentation: {
-        thesis: "Read from the request boundary into the persisted result.",
+        thesis: "The policy hub connects the request to persistence.",
         startNodeId: "entry",
-        primarySpine: {
-          nodeIds: ["entry", "policy", "store"],
-          edgeIds: ["entry-policy", "store-policy"],
+        primaryBackbone: {
+          edgeIds: ["store-policy", "entry-policy-parallel", "entry-policy"],
         },
         regions: [
-          { label: "Input", nodeIds: ["entry"] },
+          { label: "Input and effect", nodeIds: ["store", "entry"] },
           { label: "Decision", nodeIds: ["policy"] },
-          { label: "Effect", nodeIds: ["store"] },
         ],
       },
     };
     expect(structureUpdateInputSchema.parse(valid).presentation).toMatchObject({
       startNodeId: "entry",
-      primarySpine: {
-        nodeIds: ["entry", "policy", "store"],
-        edgeIds: ["entry-policy", "store-policy"],
+      primaryBackbone: {
+        edgeIds: ["entry-policy", "entry-policy-parallel", "store-policy"],
       },
+      regions: [
+        { label: "Input and effect", nodeIds: ["entry", "store"] },
+        { label: "Decision", nodeIds: ["policy"] },
+      ],
     });
+    // Direction, parallel multiplicity, and region-member order do not define traversal order.
     expect(
       structureUpdateInputSchema.parse({
         ...valid,
         presentation: {
           ...valid.presentation,
-          primarySpine: {
-            ...valid.presentation.primarySpine,
-            edgeIds: ["policy-entry-reverse", "store-policy"],
+          primaryBackbone: {
+            edgeIds: ["store-policy", "policy-entry-reverse", "entry-policy-parallel"],
           },
         },
       }).presentation,
     ).toMatchObject({
-      primarySpine: { edgeIds: ["policy-entry-reverse", "store-policy"] },
+      primaryBackbone: {
+        edgeIds: ["entry-policy-parallel", "policy-entry-reverse", "store-policy"],
+      },
     });
     expect(
       structureUpdateInputSchema.safeParse({ ...valid, presentation: undefined }).success,
@@ -572,21 +575,31 @@ describe("CLI input schemas", () => {
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
+        presentation: {
+          ...valid.presentation,
+          primaryBackbone: { edgeIds: ["entry-policy", "store-loop"] },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
         presentation: { ...valid.presentation, startNodeId: "missing" },
       }).success,
     ).toBe(false);
+    // Any selected endpoint may be the authorial start, independent of Edge direction.
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
         presentation: { ...valid.presentation, startNodeId: "policy" },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
         presentation: {
           ...valid.presentation,
-          primarySpine: { ...valid.presentation.primarySpine, edgeIds: ["entry-policy"] },
+          primaryBackbone: { edgeIds: ["entry-policy", "entry-policy"] },
         },
       }).success,
     ).toBe(false);
@@ -595,10 +608,7 @@ describe("CLI input schemas", () => {
         ...valid,
         presentation: {
           ...valid.presentation,
-          primarySpine: {
-            ...valid.presentation.primarySpine,
-            edgeIds: ["missing-edge", "store-policy"],
-          },
+          primaryBackbone: { edgeIds: ["entry-policy", "missing-edge"] },
         },
       }).success,
     ).toBe(false);
@@ -607,10 +617,8 @@ describe("CLI input schemas", () => {
         ...valid,
         presentation: {
           ...valid.presentation,
-          primarySpine: {
-            ...valid.presentation.primarySpine,
-            edgeIds: ["store-policy", "entry-policy"],
-          },
+          startNodeId: "store",
+          primaryBackbone: { edgeIds: ["entry-policy"] },
         },
       }).success,
     ).toBe(false);
@@ -620,15 +628,16 @@ describe("CLI input schemas", () => {
         presentation: { ...valid.presentation, unexpected: true },
       }).success,
     ).toBe(false);
+    // Regions are unordered membership sets and need not be intervals of the backbone.
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
         presentation: {
           ...valid.presentation,
-          regions: [{ label: "Discontiguous", nodeIds: ["entry", "store"] }],
+          regions: [{ label: "Related boundaries", nodeIds: ["store", "entry"] }],
         },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
@@ -650,27 +659,15 @@ describe("CLI input schemas", () => {
         presentation: { ...valid.presentation, thesis: "t".repeat(1_001) },
       }).success,
     ).toBe(false);
+    // The obsolete v5 branch field is rejected instead of silently receiving new semantics.
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
         presentation: {
-          ...valid.presentation,
-          primarySpine: {
-            ...valid.presentation.primarySpine,
-            nodeIds: ["entry", "entry"],
-          },
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      structureUpdateInputSchema.safeParse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          primarySpine: {
-            nodeIds: ["entry", "store"],
-            edgeIds: ["entry-policy"],
-          },
+          thesis: valid.presentation.thesis,
+          startNodeId: valid.presentation.startNodeId,
+          primarySpine: { nodeIds: ["entry", "policy"], edgeIds: ["entry-policy"] },
+          regions: valid.presentation.regions,
         },
       }).success,
     ).toBe(false);
@@ -697,7 +694,7 @@ describe("CLI input schemas", () => {
           ],
         },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
@@ -713,7 +710,7 @@ describe("CLI input schemas", () => {
         presentation: {
           thesis: "Start from the hub and compare its peers.",
           startNodeId: "policy",
-          primarySpine: null,
+          primaryBackbone: null,
           regions: [{ label: "Policies", nodeIds: ["entry", "policy", "store"] }],
         },
       }).success,
@@ -724,16 +721,17 @@ describe("CLI input schemas", () => {
         presentation: {
           thesis: "Begin at the policy hub without inventing a path or grouping.",
           startNodeId: "policy",
-          primarySpine: null,
+          primaryBackbone: null,
           regions: [],
         },
       }).success,
     ).toBe(true);
   });
 
-  it("caps a Structure primary spine at twelve Nodes", () => {
-    expect(MAX_STRUCTURE_PRIMARY_SPINE_NODES).toBe(12);
-    const inputWithSpine = (nodeCount: number) => {
+  it("bounds a Structure primary backbone by derived Nodes and exact Edges", () => {
+    expect(MAX_STRUCTURE_PRIMARY_BACKBONE_NODES).toBe(12);
+    expect(MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES).toBe(16);
+    const inputWithBackbone = (nodeCount: number) => {
       const nodes = Array.from({ length: nodeCount }, (_, index) => ({
         id: `node-${index + 1}`,
         label: `Node ${index + 1}`,
@@ -749,7 +747,7 @@ describe("CLI input schemas", () => {
       return {
         expectedUpdatedAt: "2026-09-05T00:00:00.000Z",
         sourceOid: "d".repeat(40),
-        title: "Bounded reading spine",
+        title: "Bounded explanation backbone",
         scope: "The first-grasp backbone through one bounded relationship space.",
         originNodeId: "node-1",
         nodes,
@@ -757,8 +755,7 @@ describe("CLI input schemas", () => {
         presentation: {
           thesis: "Grasp this compact backbone before exploring the remaining graph.",
           startNodeId: "node-1",
-          primarySpine: {
-            nodeIds: nodes.map(({ id }) => id),
+          primaryBackbone: {
             edgeIds: edges.map(({ id }) => id),
           },
           regions: [],
@@ -766,7 +763,36 @@ describe("CLI input schemas", () => {
       };
     };
 
-    expect(structureUpdateInputSchema.safeParse(inputWithSpine(12)).success).toBe(true);
-    expect(structureUpdateInputSchema.safeParse(inputWithSpine(13)).success).toBe(false);
+    expect(structureUpdateInputSchema.safeParse(inputWithBackbone(12)).success).toBe(true);
+    expect(structureUpdateInputSchema.safeParse(inputWithBackbone(13)).success).toBe(false);
+
+    const twoNodes = inputWithBackbone(2);
+    const parallelEdges = Array.from({ length: 17 }, (_, index) => ({
+      id: `parallel-${String(index + 1).padStart(2, "0")}`,
+      from: "node-1",
+      to: "node-2",
+      label: `relation ${index + 1}`,
+      directed: true,
+    }));
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...twoNodes,
+        edges: parallelEdges.slice(0, 16),
+        presentation: {
+          ...twoNodes.presentation,
+          primaryBackbone: { edgeIds: parallelEdges.slice(0, 16).map(({ id }) => id) },
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...twoNodes,
+        edges: parallelEdges,
+        presentation: {
+          ...twoNodes.presentation,
+          primaryBackbone: { edgeIds: parallelEdges.map(({ id }) => id) },
+        },
+      }).success,
+    ).toBe(false);
   });
 });

@@ -75,33 +75,42 @@ Agentが実装やarchitectureを説明する場合、成立を保証するsource
 削除できる。
 
 Walkthroughは、順序とprose自体がartifactである意図的な読解pathである。Structureは、PRに関係する
-boundedなbehaviorをfactualなcode entrypointから依存、contract、side effectへ任意の方向に辿りながら、
-同時に見渡せるspatial explanationである。Agentはsubject、scope、entrypoint、stableなNode / Edge ID、
-exact source anchorに加え、必要ならthesis、authorial start、optionalなexact-Edge primary spine、spatially orderedなcomprehension regionをauthorial semanticsとして
-提示できる。これは座標や一本道のstepperではない。座標、pan、zoom、manual positionは人間の一時的な
-reading stateに留める。表示範囲を1-hop / 2-hopへ明示的に絞ることはできるが、
-Allでrelationを暗黙に隠さない。高次数になるsubjectはscopeを分ける。PRで検証するbehaviorに接地しない
+boundedなbehaviorをfactualなcode entrypointから依存、contract、side effectへ任意の方向に辿り、stableな
+全体像とfocus-relativeな局所lensを往復できるspatial explanationである。Agentはsubject、scope、entrypoint、
+stableなNode / Edge ID、exact source anchorに加え、必要ならthesis、authorial start、optionalなconnected
+exact-Edge primary backbone、spatially orderedなcomprehension regionをauthorial semanticsとして提示できる。
+これは座標、importance layer、一本道のstepperではない。座標、focus hop、navigation history、pan、zoom、manual
+positionは人間の一時的なreading stateに留める。表示範囲を1-hop / 2-hopへ明示的に絞ることはできるが、
+Home / minimap / Allでcomplete extentへ戻れる。高次数になるsubjectはscopeを分ける。PRで検証するbehaviorに接地しない
 静的なarchitecture／責務inventoryは扱わない。Structureも独自の履歴やsemantic truthを持たず、claimを
 検証する正本はGitである。
 
 Structureはneutralなgraph viewerではなく、Walkthroughやcode readingで形成したmental modelを、変更された
-behaviorを成立させる責務とrelationへ位置付け直すreading surfaceである。factual graph、authorial
-presentation、ephemeral reviewer sessionを混ぜない。presentationがあればviewerはauthorial start、optionalな
-2〜12 Nodeのexact-Edge primary spine、spatially orderedなcomprehension regionをoverviewとvisual cueへ反映する。primary spineまたは
-regionがspatial organizerとして存在する場合だけbase mapへ反映し、start-only presentationと`null`はfactsと
-entrypointから同じtopology projectionを作る。start-onlyでも意味のあるthesis、attention start、新規sessionの
-focus、exportは失わない。
+behaviorを成立させる責務とrelationへ位置付け直すreading surfaceである。factual graph、authorial presentation、
+derived rendering、ephemeral reviewer sessionを混ぜない。presentationがあればviewerはauthorial start、optionalな
+2〜12 Node / 1〜16 Edgeのconnected exact-relation backbone、spatially orderedなcomprehension regionをGuide、
+canonical map、visual cueへ反映する。backboneまたはregionがspatial organizerとして存在する場合だけbase mapへ
+反映し、start-only presentationと`null`はfactsとentrypointから同じtopology projectionを作る。start-onlyでも
+意味のあるthesis、attention start、新規sessionのfocus、exportは失わない。
 regionはnamed comprehension chunkで、array順はcanonicalなspatial orderとlegend順である。reading sequence、
 runtime順、architectural importanceではなく、各region内の`nodeIds`にも順序はない。region-only mapはこの
 spatial orderを失わないboundedな複数行配置へ折り返せる。
 membershipは明示Node IDと対応するR badge / legendで示し、人間が動かしたNodeを囲うgeometryから推測しない。
-primary spineはこの説明で先に掴む2〜12 Nodeのbackboneというauthorialな優先と強調を表すが、runtime順、Edge方向、
-project全体でのarchitectural importance、completeness、review conclusionは主張しない。人間は同じ空間を俯瞰、局所探索、
-exact source確認、再俯瞰の順に往復し、全Node / Edgeとsourceを自由に検証できる。
-filterで配置を組み替えず、Allへ戻ってもcameraを維持することで、局所で確かめたことを同じ全体像へ戻して
-補強できるようにする。全体を自動で一画面へ詰め込まず、zoomでも情報を暗黙に省略しない。人間は読みやすい
-局所をpan / zoomし、必要な時だけminimapや明示的なfitで広域を確認する。viewer由来のgeometryと人間のmanual
-layout geometryとreviewer sessionはStructureのclaimではない。
+primary backboneはこの説明で先に掴む一つのconnectedなexact-relation coreを表し、path、fan-out、convergence、
+reciprocal relationを一本道へ歪めない。array順、runtime順、Edge方向、project全体でのarchitectural importance、
+completeness、review conclusionは主張しない。長いbackboneはderivedなdistance bandを保ったまま決定的な複数行へ
+折り返してよい。そのrowやlayerはauthorが与える意味論ではなく、全体像を読める面へ収めるrenderer detailである。
+人間は同じ空間をHome、局所focus、Region、exact source、再俯瞰の間で
+往復し、全Node / Edgeとsourceを自由に検証できる。backbone membershipという固定されたauthorial salience、focusからの
+hop数、frame中のregionという一時的なreviewer attentionは別のvisual channelで表す。Region frameはmembershipやfocus距離を
+書き換えず、そのchunkのmemberと内部relationを読む間だけfull relevanceにする。filterで配置を組み替えず、Home / Back / Allへ
+戻ることで局所で確かめたことを同じ全体像へ位置付け直す。全体を自動で一画面へ詰め込まず、読めないscaleでは
+secondary detailを省略しても、その存在、件数、inspect方法を隠さない。viewer由来のgeometry、route、semantic zoom、
+人間のmanual layout geometryとreviewer sessionはStructureのclaimではない。
+derived routeはartifact semanticsではないが、relationのsource / targetへvisible boundary portで接続し、distinctな
+visible relationが実質的な区間で同一またはほぼ同一のcorridorを通る場合は別laneとして追跡可能にする。parallel /
+reciprocal relationは必ずこの対象に含む。normal detailのrelation labelはNodeにも相互にも重ねず、inline配置が
+成立しなければleader付きの退避位置を使う。
 
 ### 実装が変わってもorientationを保つ
 

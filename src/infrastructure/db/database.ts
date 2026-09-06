@@ -42,11 +42,18 @@ import type {
 } from "../../domain/models.js";
 import { formatCommentUri } from "../../domain/comment-uri.js";
 import { formatStructureUri } from "../../domain/structure-uri.js";
+import {
+  canonicalStructureBackboneEdgeIds,
+  canonicalStructureRegionNodeIds,
+  isStructureBackboneWeaklyConnected,
+  structureBackboneNodeIds,
+} from "../../domain/structure-presentation.js";
 import { formatWalkthroughUri } from "../../domain/walkthrough-uri.js";
 import {
   MAX_STRUCTURE_NODES,
   MAX_STRUCTURE_PAYLOAD_BYTES,
-  MAX_STRUCTURE_PRIMARY_SPINE_NODES,
+  MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES,
+  MAX_STRUCTURE_PRIMARY_BACKBONE_NODES,
   MAX_STRUCTURE_PRESENTATION_REGIONS,
   MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
   MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
@@ -224,7 +231,7 @@ function isStructurePresentation(
 ): value is StructurePresentation {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["thesis", "startNodeId", "primarySpine", "regions"]) ||
+    !hasExactKeys(value, ["thesis", "startNodeId", "primaryBackbone", "regions"]) ||
     !isCanonicalPresentationText(value.thesis, MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS) ||
     typeof value.startNodeId !== "string" ||
     !Array.isArray(value.regions) ||
@@ -237,51 +244,41 @@ function isStructurePresentation(
   if (!STRUCTURE_ID_PATTERN.test(value.startNodeId) || !nodeIds.has(value.startNodeId)) {
     return false;
   }
-  let primarySpine: StructurePresentation["primarySpine"] = null;
-  if (value.primarySpine !== null) {
+  if (value.primaryBackbone !== null) {
     if (
-      !isRecord(value.primarySpine) ||
-      !hasExactKeys(value.primarySpine, ["nodeIds", "edgeIds"]) ||
-      !Array.isArray(value.primarySpine.nodeIds) ||
-      value.primarySpine.nodeIds.length < 2 ||
-      value.primarySpine.nodeIds.length > MAX_STRUCTURE_PRIMARY_SPINE_NODES ||
-      !Array.isArray(value.primarySpine.edgeIds) ||
-      value.primarySpine.edgeIds.length !== value.primarySpine.nodeIds.length - 1
+      !isRecord(value.primaryBackbone) ||
+      !hasExactKeys(value.primaryBackbone, ["edgeIds"]) ||
+      !Array.isArray(value.primaryBackbone.edgeIds) ||
+      value.primaryBackbone.edgeIds.length < 1 ||
+      value.primaryBackbone.edgeIds.length > MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES
     ) {
       return false;
     }
-    const primarySpineNodeIds = new Set<string>();
-    const normalizedNodeIds: string[] = [];
-    for (const nodeId of value.primarySpine.nodeIds) {
+    const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
+    const selectedEdgeIds = new Set<string>();
+    const selectedEdges: StructureEdge[] = [];
+    for (const edgeId of value.primaryBackbone.edgeIds) {
       if (
-        typeof nodeId !== "string" ||
-        !STRUCTURE_ID_PATTERN.test(nodeId) ||
-        !nodeIds.has(nodeId) ||
-        primarySpineNodeIds.has(nodeId)
+        typeof edgeId !== "string" ||
+        !STRUCTURE_ID_PATTERN.test(edgeId) ||
+        selectedEdgeIds.has(edgeId)
       ) {
         return false;
       }
-      primarySpineNodeIds.add(nodeId);
-      normalizedNodeIds.push(nodeId);
-    }
-    if (normalizedNodeIds[0] !== value.startNodeId) return false;
-    const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
-    const normalizedEdgeIds: string[] = [];
-    for (const [index, edgeId] of value.primarySpine.edgeIds.entries()) {
-      if (typeof edgeId !== "string" || !STRUCTURE_ID_PATTERN.test(edgeId)) return false;
+      selectedEdgeIds.add(edgeId);
       const edge = edgeById.get(edgeId);
       if (edge === undefined) return false;
-      const previous = normalizedNodeIds[index]!;
-      const current = normalizedNodeIds[index + 1]!;
-      if (!(
-        (edge.from === previous && edge.to === current) ||
-        (edge.from === current && edge.to === previous)
-      )) {
-        return false;
-      }
-      normalizedEdgeIds.push(edgeId);
+      selectedEdges.push(edge);
     }
-    primarySpine = { nodeIds: normalizedNodeIds, edgeIds: normalizedEdgeIds };
+    const primaryBackboneNodeIds = structureBackboneNodeIds(selectedEdges);
+    if (
+      primaryBackboneNodeIds.size < 2 ||
+      primaryBackboneNodeIds.size > MAX_STRUCTURE_PRIMARY_BACKBONE_NODES ||
+      !primaryBackboneNodeIds.has(value.startNodeId) ||
+      !isStructureBackboneWeaklyConnected(selectedEdges, value.startNodeId)
+    ) {
+      return false;
+    }
   }
 
   const regionByNodeId = new Map<string, number>();
@@ -315,28 +312,6 @@ function isStructurePresentation(
     }
   }
 
-  if (primarySpine !== null) {
-    let previousSpineRegionIndex = -1;
-    const firstSpineIndexByRegion = new Map<number, number>();
-    const lastSpineIndexByRegion = new Map<number, number>();
-    for (const [spineIndex, nodeId] of primarySpine.nodeIds.entries()) {
-      const regionIndex = regionByNodeId.get(nodeId);
-      if (regionIndex === undefined) continue;
-      if (regionIndex < previousSpineRegionIndex) return false;
-      previousSpineRegionIndex = regionIndex;
-      if (!firstSpineIndexByRegion.has(regionIndex)) {
-        firstSpineIndexByRegion.set(regionIndex, spineIndex);
-      }
-      lastSpineIndexByRegion.set(regionIndex, spineIndex);
-    }
-    for (const [regionIndex, firstSpineIndex] of firstSpineIndexByRegion) {
-      const lastSpineIndex = lastSpineIndexByRegion.get(regionIndex)!;
-      for (let spineIndex = firstSpineIndex; spineIndex <= lastSpineIndex; spineIndex += 1) {
-        const nodeId = primarySpine.nodeIds[spineIndex]!;
-        if (regionByNodeId.get(nodeId) !== regionIndex) return false;
-      }
-    }
-  }
   return true;
 }
 
@@ -390,11 +365,29 @@ function structureGraphValue(
     if (presentation !== null && !isStructurePresentation(presentation, nodes, edges)) {
       throw new Error("invalid Structure presentation");
     }
+    const normalizedPresentation =
+      presentation === null
+        ? null
+        : {
+            ...presentation,
+            primaryBackbone:
+              presentation.primaryBackbone === null
+                ? null
+                : {
+                    edgeIds: canonicalStructureBackboneEdgeIds(
+                      presentation.primaryBackbone.edgeIds,
+                    ),
+                  },
+            regions: presentation.regions.map((region) => ({
+              ...region,
+              nodeIds: canonicalStructureRegionNodeIds(region.nodeIds),
+            })),
+          };
     return {
       originNodeId,
       nodes: nodes.map((node) => ({ ...node, notation: node.notation ?? "plain" })),
       edges,
-      presentation,
+      presentation: normalizedPresentation,
     };
   } catch (error) {
     throw new RvwError("DATABASE_ERROR", "Structure graph_jsonが不正です。", { cause: error });

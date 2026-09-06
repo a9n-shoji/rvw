@@ -58,10 +58,15 @@ describe("bundled Skill code-reference guidance", () => {
   });
 
   it("keeps Structure authoring code-centered, source-exact, and identity-stable", () => {
-    expect(structureSkill).toContain(
-      "simultaneously visible, freely explorable spatial explanation",
+    expect(structureSkill).toMatch(
+      /freely explorable spatial explanation whose complete factual graph remains\s+available/,
     );
     expect(structureSkill).toContain("ordered prose and transitions the artifact");
+    expect(structureSkill).toContain("connected exact-relation visual backbone");
+    expect(structureSkill).toContain("12 derived Nodes and 16 Edges");
+    expect(structureSkill).toContain("Do not author backbone layers or stages");
+    expect(structureSkill).toContain("primaryBackbone");
+    expect(structureSkill).not.toContain("primarySpine");
     expect(structureSkill).toContain("Require `protocolVersion` 5");
     expect(structureSkill).toContain("`structure.presentation`");
     expect(structureSkill).toContain("structure.publish");
@@ -79,6 +84,12 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureAuthoring).toMatch(/Stop and recommend a\s+Walkthrough/);
     expect(structureAuthoring).toContain("Do not create giant graphs");
     expect(structureAuthoring).toContain("factual code entrypoint");
+    expect(structureAuthoring).toContain("unordered exact-membership set");
+    expect(structureAuthoring).toContain("weakly connected");
+    expect(structureAuthoring).toMatch(/Parallel\s+or reciprocal/);
+    expect(structureAuthoring).toContain("Do not author layers or stages");
+    expect(structureAuthoring).toContain("stable-sorted current unique Node IDs");
+    expect(structureAuthoring).not.toContain("primarySpine");
     expect(structureAuthoring).toContain("terminal or intermediate origin is still valid");
     expect(structureAuthoring).toContain("around 20 full-width characters or fewer");
     expect(structureAuthoring).toContain("overlapping or nested Node anchors");
@@ -168,6 +179,12 @@ describe("rvw review composition contract", () => {
     expect(reviewComposition).toMatch(
       /Verifying that an\s+anchor exists and its range is valid does not by itself verify the semantic claim/,
     );
+    expect(reviewComposeSkill).toMatch(/connected exact-relation visual\s+backbone/);
+    expect(reviewComposeSkill).toMatch(/stable-sorted Node IDs as unordered membership/);
+    expect(reviewComposeSkill).toContain("Do not request authored layers or stages");
+    expect(reviewComposition).toContain("`primaryBackbone`");
+    expect(reviewComposition).toContain("stable-sorted unordered set of 1–16 exact Edge IDs");
+    expect(reviewComposition).not.toContain("primarySpine");
   });
 });
 

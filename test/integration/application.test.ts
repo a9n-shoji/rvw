@@ -9,7 +9,10 @@ import { formatCommentWatchCursor } from "../../src/domain/comment-watch-cursor.
 import type { GitHubPullRequest, Structure } from "../../src/domain/models.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
-import { MAX_STRUCTURE_PRIMARY_SPINE_NODES } from "../../src/shared/constants.js";
+import {
+  MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES,
+  MAX_STRUCTURE_PRIMARY_BACKBONE_NODES,
+} from "../../src/shared/constants.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
 import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
 
@@ -2217,7 +2220,7 @@ describe("RvwService commit workflow", () => {
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 
-  it("publishes thesis and an attention start without inventing a spine or regions", async () => {
+  it("publishes thesis and an attention start without inventing a backbone or regions", async () => {
     const { repository, firstHead, service } = setup("rvw-structure-start-only-");
     const opened = await service.openPullRequest(undefined, repository);
     const structure = await service.publishStructure({
@@ -2241,7 +2244,7 @@ describe("RvwService commit workflow", () => {
       presentation: {
         thesis: "The hub coordinates independent policies without one honest path or grouping.",
         startNodeId: "hub",
-        primarySpine: null,
+        primaryBackbone: null,
         regions: [],
       },
     });
@@ -2249,17 +2252,18 @@ describe("RvwService commit workflow", () => {
     expect(structure.presentation).toEqual({
       thesis: "The hub coordinates independent policies without one honest path or grouping.",
       startNodeId: "hub",
-      primarySpine: null,
+      primaryBackbone: null,
       regions: [],
     });
     expect(service.getStructureByUri(structure.ref).structure).toEqual(structure);
   });
 
-  it("accepts a twelve-Node primary spine and rejects a thirteen-Node tour", async () => {
-    expect(MAX_STRUCTURE_PRIMARY_SPINE_NODES).toBe(12);
-    const { repository, firstHead, service } = setup("rvw-structure-primary-spine-limit-");
+  it("bounds a primary backbone by derived Nodes and exact Edges", async () => {
+    expect(MAX_STRUCTURE_PRIMARY_BACKBONE_NODES).toBe(12);
+    expect(MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES).toBe(16);
+    const { repository, firstHead, service } = setup("rvw-structure-primary-backbone-limit-");
     const opened = await service.openPullRequest(undefined, repository);
-    const inputWithSpine = (nodeCount: number) => {
+    const inputWithBackbone = (nodeCount: number) => {
       const nodes = Array.from({ length: nodeCount }, (_, index) => ({
         id: `node-${index + 1}`,
         label: `Node ${index + 1}`,
@@ -2273,10 +2277,10 @@ describe("RvwService commit workflow", () => {
         directed: true,
       }));
       return {
-        idempotencyKey: `structure-primary-spine-${nodeCount}`,
+        idempotencyKey: `structure-primary-backbone-${nodeCount}`,
         pullRequest: opened.pullRequest.url,
         sourceOid: firstHead,
-        title: "Bounded reading spine",
+        title: "Bounded explanation backbone",
         scope: "The first-grasp backbone through one bounded relationship space.",
         originNodeId: "node-1",
         nodes,
@@ -2284,8 +2288,7 @@ describe("RvwService commit workflow", () => {
         presentation: {
           thesis: "Grasp this compact backbone before exploring the remaining graph.",
           startNodeId: "node-1",
-          primarySpine: {
-            nodeIds: nodes.map(({ id }) => id),
+          primaryBackbone: {
             edgeIds: edges.map(({ id }) => id),
           },
           regions: [],
@@ -2293,11 +2296,41 @@ describe("RvwService commit workflow", () => {
       };
     };
 
-    const accepted = await service.publishStructure(inputWithSpine(12));
-    expect(accepted.presentation?.primarySpine?.nodeIds).toHaveLength(12);
-    const rejected = service.publishStructure(inputWithSpine(13));
+    const accepted = await service.publishStructure(inputWithBackbone(12));
+    expect(accepted.presentation?.primaryBackbone?.edgeIds).toHaveLength(11);
+    const rejected = service.publishStructure(inputWithBackbone(13));
     await expect(rejected).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(rejected).rejects.toThrowError("2〜12");
+
+    const twoNodeInput = inputWithBackbone(2);
+    const parallelEdges = Array.from({ length: 17 }, (_, index) => ({
+      id: `parallel-${String(index + 1).padStart(2, "0")}`,
+      from: "node-1",
+      to: "node-2",
+      label: `relation ${index + 1}`,
+      directed: true,
+    }));
+    const acceptedParallelBackbone = await service.publishStructure({
+      ...twoNodeInput,
+      idempotencyKey: "structure-primary-backbone-16-edges",
+      edges: parallelEdges.slice(0, 16),
+      presentation: {
+        ...twoNodeInput.presentation,
+        primaryBackbone: { edgeIds: parallelEdges.slice(0, 16).map(({ id }) => id) },
+      },
+    });
+    expect(acceptedParallelBackbone.presentation?.primaryBackbone?.edgeIds).toHaveLength(16);
+    await expect(
+      service.publishStructure({
+        ...twoNodeInput,
+        idempotencyKey: "structure-primary-backbone-17-edges",
+        edges: parallelEdges,
+        presentation: {
+          ...twoNodeInput.presentation,
+          primaryBackbone: { edgeIds: parallelEdges.map(({ id }) => id) },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
   it("publishes, replaces, reads, and deletes an exact-source Structure", async () => {
@@ -2356,9 +2389,8 @@ describe("RvwService commit workflow", () => {
       presentation: {
         thesis: "  Start from the exact source and understand the consumer relationship.  ",
         startNodeId: "source",
-        primarySpine: {
-          nodeIds: ["source", "consumer"],
-          edgeIds: ["reads-source"],
+        primaryBackbone: {
+          edgeIds: ["serves-consumer", "documents-obsolete", "reads-source"],
         },
         regions: [
           { label: "  Evidence  ", nodeIds: ["source", "obsolete"] },
@@ -2401,7 +2433,7 @@ describe("RvwService commit workflow", () => {
       service.publishStructure({
         ...publishInput,
         idempotencyKey: "structure-presentation-start-mismatch",
-        presentation: { ...publishInput.presentation, startNodeId: "consumer" },
+        presentation: { ...publishInput.presentation, startNodeId: "missing" },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(
@@ -2410,43 +2442,37 @@ describe("RvwService commit workflow", () => {
         idempotencyKey: "structure-presentation-wrong-edge",
         presentation: {
           ...publishInput.presentation,
-          primarySpine: {
-            ...publishInput.presentation.primarySpine,
-            edgeIds: ["documents-obsolete"],
-          },
-        },
-      }),
-    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
-    await expect(
-      service.publishStructure({
-        ...publishInput,
-        idempotencyKey: "structure-presentation-discontiguous-region",
-        presentation: {
-          thesis: "A region cannot skip over another spine member.",
           startNodeId: "consumer",
-          primarySpine: {
-            nodeIds: ["consumer", "source", "obsolete"],
-            edgeIds: ["reads-source", "documents-obsolete"],
-          },
-          regions: [{ label: "Discontiguous", nodeIds: ["consumer", "obsolete"] }],
+          primaryBackbone: { edgeIds: ["documents-obsolete"] },
         },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await expect(
       service.publishStructure({
         ...publishInput,
-        idempotencyKey: "structure-presentation-region-order",
+        idempotencyKey: "structure-presentation-duplicate-backbone-edge",
         presentation: {
           ...publishInput.presentation,
-          regions: [
-            { label: "Consumer", nodeIds: ["consumer"] },
-            { label: "Evidence", nodeIds: ["source", "obsolete"] },
-          ],
+          primaryBackbone: { edgeIds: ["reads-source", "reads-source"] },
         },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
     const structure = await service.publishStructure(publishInput);
-    await expect(service.publishStructure(publishInput)).resolves.toEqual(structure);
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        presentation: {
+          ...publishInput.presentation,
+          primaryBackbone: {
+            edgeIds: ["reads-source", "serves-consumer", "documents-obsolete"],
+          },
+          regions: [
+            { label: "  Evidence  ", nodeIds: ["obsolete", "source"] },
+            { label: "Consumer", nodeIds: ["consumer"] },
+          ],
+        },
+      }),
+    ).resolves.toEqual(structure);
     await expect(
       service.publishStructure({
         ...publishInput,
@@ -2462,12 +2488,11 @@ describe("RvwService commit workflow", () => {
       presentation: {
         thesis: "Start from the exact source and understand the consumer relationship.",
         startNodeId: "source",
-        primarySpine: {
-          nodeIds: ["source", "consumer"],
-          edgeIds: ["reads-source"],
+        primaryBackbone: {
+          edgeIds: ["documents-obsolete", "reads-source", "serves-consumer"],
         },
         regions: [
-          { label: "Evidence", nodeIds: ["source", "obsolete"] },
+          { label: "Evidence", nodeIds: ["obsolete", "source"] },
           { label: "Consumer", nodeIds: ["consumer"] },
         ],
       },
@@ -2537,10 +2562,10 @@ describe("RvwService commit workflow", () => {
         thesis:
           "Compare validation, the source boundary, and its consumer without inventing a flow.",
         startNodeId: "validator",
-        primarySpine: null,
+        primaryBackbone: null,
         regions: [
           { label: "Validation", nodeIds: ["validator"] },
-          { label: "Source and consumer", nodeIds: ["source", "consumer"] },
+          { label: "Source and consumer", nodeIds: ["consumer", "source"] },
         ],
       },
     });
@@ -2555,10 +2580,10 @@ describe("RvwService commit workflow", () => {
         thesis:
           "Compare validation, the source boundary, and its consumer without inventing a flow.",
         startNodeId: "validator",
-        primarySpine: null,
+        primaryBackbone: null,
         regions: [
           { label: "Validation", nodeIds: ["validator"] },
-          { label: "Source and consumer", nodeIds: ["source", "consumer"] },
+          { label: "Source and consumer", nodeIds: ["consumer", "source"] },
         ],
       },
     });

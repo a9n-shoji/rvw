@@ -6,7 +6,8 @@ import {
 
 // This fixture is also executed directly by plain Node before the TypeScript build emits
 // runtime shims, so keep its protocol-boundary assertion self-contained.
-const MAX_STRUCTURE_PRIMARY_SPINE_NODES = 12;
+const MAX_STRUCTURE_PRIMARY_BACKBONE_NODES = 12;
+const MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES = 16;
 
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
@@ -826,54 +827,53 @@ const fullStackStructurePresentation = {
   thesis:
     "注文詳細はbackendのread modelから共有response契約を越え、frontendのquery stateとして画面へ届く。",
   startNodeId: "order-detail-route",
-  primarySpine: {
-    nodeIds: [
-      "order-detail-route",
-      "get-order-query",
-      "order-response-presenter",
-      "order-detail-contract",
-      "order-api-client",
-      "order-detail-query-hook",
-      "order-detail-page",
-    ],
+  primaryBackbone: {
     edgeIds: [
-      "detail-route-executes-query",
-      "detail-query-presents-result",
-      "detail-presenter-returns-contract",
-      "detail-response-enters-client",
+      "detail-auth-scopes-query",
       "detail-client-provides-hook-result",
       "detail-hook-provides-page-state",
+      "detail-not-found-returns-contract",
+      "detail-params-supply-query",
+      "detail-presenter-returns-contract",
+      "detail-query-loads-read-model",
+      "detail-query-maps-not-found",
+      "detail-query-presents-result",
+      "detail-repository-queries-view",
+      "detail-response-enters-client",
+      "detail-route-authenticates",
+      "detail-route-executes-query",
+      "detail-route-validates-id",
     ],
   },
   regions: [
     {
       label: "HTTP boundary",
-      nodeIds: ["order-detail-route", "detail-actor-auth", "detail-params"],
+      nodeIds: ["detail-actor-auth", "detail-params", "order-detail-route"],
     },
     {
       label: "Read and present",
       nodeIds: [
         "get-order-query",
-        "order-read-repository",
-        "orders-read-model",
-        "order-response-presenter",
         "order-not-found",
+        "order-read-repository",
+        "order-response-presenter",
+        "orders-read-model",
       ],
     },
     {
       label: "Shared response",
-      nodeIds: ["order-detail-contract", "order-api-client"],
+      nodeIds: ["order-api-client", "order-detail-contract"],
     },
     {
       label: "React rendering",
       nodeIds: [
-        "order-detail-query-hook",
-        "order-query-cache",
-        "order-detail-page",
-        "order-summary-card",
-        "order-line-items",
-        "order-status-badge",
         "order-detail-error",
+        "order-detail-page",
+        "order-detail-query-hook",
+        "order-line-items",
+        "order-query-cache",
+        "order-status-badge",
+        "order-summary-card",
       ],
     },
   ],
@@ -946,7 +946,7 @@ export function validateContractStructureFixture() {
       presentation: {
         thesis: "Begin at reconciliation without manufacturing a path or comprehension chunk.",
         startNodeId: "payment-reconciliation",
-        primarySpine: null,
+        primaryBackbone: null,
         regions: [],
       },
       nodes: secondaryStructureNodes,
@@ -966,10 +966,10 @@ export function validateContractStructureFixture() {
       typeof structure.presentation !== "object" ||
       Array.isArray(structure.presentation) ||
       Object.keys(structure.presentation).sort().join(",") !==
-        "primarySpine,regions,startNodeId,thesis" ||
+        "primaryBackbone,regions,startNodeId,thesis" ||
       typeof structure.presentation.thesis !== "string" ||
       typeof structure.presentation.startNodeId !== "string" ||
-      !Object.hasOwn(structure.presentation, "primarySpine") ||
+      !Object.hasOwn(structure.presentation, "primaryBackbone") ||
       !Array.isArray(structure.presentation.regions)
     ) {
       throw new Error(`${structure.title} has malformed presentation content`);
@@ -977,51 +977,66 @@ export function validateContractStructureFixture() {
     if (!nodeIds.has(structure.presentation.startNodeId)) {
       throw new Error(`${structure.title} presentation start is not a current Node`);
     }
-    const primarySpine = structure.presentation.primarySpine;
-    if (primarySpine !== null) {
+    const primaryBackbone = structure.presentation.primaryBackbone;
+    if (primaryBackbone !== null) {
       if (
-        typeof primarySpine !== "object" ||
-        Array.isArray(primarySpine) ||
-        Object.keys(primarySpine).sort().join(",") !== "edgeIds,nodeIds" ||
-        !Array.isArray(primarySpine.nodeIds) ||
-        !Array.isArray(primarySpine.edgeIds) ||
-        primarySpine.nodeIds.length < 2 ||
-        primarySpine.nodeIds.length > MAX_STRUCTURE_PRIMARY_SPINE_NODES
+        typeof primaryBackbone !== "object" ||
+        Array.isArray(primaryBackbone) ||
+        Object.keys(primaryBackbone).join(",") !== "edgeIds" ||
+        !Array.isArray(primaryBackbone.edgeIds) ||
+        primaryBackbone.edgeIds.length < 1 ||
+        primaryBackbone.edgeIds.length > MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES
       ) {
         throw new Error(
-          `${structure.title} primary spine must contain 2–${MAX_STRUCTURE_PRIMARY_SPINE_NODES} Nodes`,
+          `${structure.title} primary backbone must contain 1–${MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES} Edges`,
         );
       }
-      if (new Set(primarySpine.nodeIds).size !== primarySpine.nodeIds.length) {
-        throw new Error(`${structure.title} primary spine repeats a Node`);
+      if (new Set(primaryBackbone.edgeIds).size !== primaryBackbone.edgeIds.length) {
+        throw new Error(`${structure.title} primary backbone repeats an Edge`);
       }
-      if (primarySpine.nodeIds[0] !== structure.presentation.startNodeId) {
-        throw new Error(`${structure.title} primary spine does not start at presentation start`);
+      if (primaryBackbone.edgeIds.join("\0") !== [...primaryBackbone.edgeIds].sort().join("\0")) {
+        throw new Error(`${structure.title} primary backbone Edge IDs are not canonical`);
       }
-      if (primarySpine.edgeIds.length !== primarySpine.nodeIds.length - 1) {
-        throw new Error(`${structure.title} primary spine Edge count does not match its Node path`);
+      const selectedEdges = primaryBackbone.edgeIds.map((edgeId) => {
+        const edge = structure.edges.find(({ id }) => id === edgeId);
+        if (!edge)
+          throw new Error(`${structure.title} primary backbone targets missing Edge ${edgeId}`);
+        return edge;
+      });
+      const backboneNodeIds = new Set(selectedEdges.flatMap((edge) => [edge.from, edge.to]));
+      if (backboneNodeIds.size < 2 || backboneNodeIds.size > MAX_STRUCTURE_PRIMARY_BACKBONE_NODES) {
+        throw new Error(
+          `${structure.title} primary backbone must derive 2–${MAX_STRUCTURE_PRIMARY_BACKBONE_NODES} Nodes`,
+        );
       }
-      for (const nodeId of primarySpine.nodeIds) {
-        if (!nodeIds.has(nodeId)) {
-          throw new Error(`${structure.title} primary spine targets missing Node ${nodeId}`);
+      if (!backboneNodeIds.has(structure.presentation.startNodeId)) {
+        throw new Error(`${structure.title} primary backbone does not contain presentation start`);
+      }
+      const neighbors = new Map([...backboneNodeIds].map((nodeId) => [nodeId, new Set()]));
+      for (const edge of selectedEdges) {
+        if (edge.from === edge.to) continue;
+        neighbors.get(edge.from).add(edge.to);
+        neighbors.get(edge.to).add(edge.from);
+      }
+      const reached = new Set([structure.presentation.startNodeId]);
+      const queue = [structure.presentation.startNodeId];
+      while (queue.length > 0) {
+        const current = queue.shift();
+        for (const neighbor of neighbors.get(current) ?? []) {
+          if (reached.has(neighbor)) continue;
+          reached.add(neighbor);
+          queue.push(neighbor);
         }
       }
-      for (let index = 0; index < primarySpine.edgeIds.length; index += 1) {
-        const left = primarySpine.nodeIds[index];
-        const right = primarySpine.nodeIds[index + 1];
-        const edge = structure.edges.find(({ id }) => id === primarySpine.edgeIds[index]);
-        if (
-          !edge ||
-          !((edge.from === left && edge.to === right) || (edge.from === right && edge.to === left))
-        ) {
-          throw new Error(
-            `${structure.title} primary spine Edge does not join ${left} -> ${right}`,
-          );
-        }
+      if (reached.size !== backboneNodeIds.size) {
+        throw new Error(`${structure.title} primary backbone is disconnected`);
       }
     }
     const regionByNodeId = new Map();
     structure.presentation.regions.forEach((region, regionIndex) => {
+      if (region.nodeIds.join("\0") !== [...region.nodeIds].sort().join("\0")) {
+        throw new Error(`${structure.title} region ${region.label} Node IDs are not canonical`);
+      }
       for (const nodeId of region.nodeIds) {
         if (!nodeIds.has(nodeId)) {
           throw new Error(`${structure.title} region targets missing Node ${nodeId}`);
@@ -1032,26 +1047,6 @@ export function validateContractStructureFixture() {
         regionByNodeId.set(nodeId, regionIndex);
       }
     });
-    if (primarySpine) {
-      const encounteredRegionIndexes = primarySpine.nodeIds.map((nodeId) =>
-        regionByNodeId.get(nodeId),
-      );
-      for (let spineIndex = 0; spineIndex < encounteredRegionIndexes.length; spineIndex += 1) {
-        const regionIndex = encounteredRegionIndexes[spineIndex];
-        if (regionIndex === undefined) continue;
-        const previousOccurrence =
-          spineIndex === 0 ? -1 : encounteredRegionIndexes.lastIndexOf(regionIndex, spineIndex - 1);
-        if (previousOccurrence >= 0 && previousOccurrence !== spineIndex - 1) {
-          throw new Error(`${structure.title} region is not contiguous on the primary spine`);
-        }
-        const previousAssignedRegion = encounteredRegionIndexes
-          .slice(0, spineIndex)
-          .findLast((candidate) => candidate !== undefined);
-        if (previousAssignedRegion !== undefined && regionIndex < previousAssignedRegion) {
-          throw new Error(`${structure.title} primary spine contradicts ordered regions`);
-        }
-      }
-    }
   }
 
   for (const filePath of repositoryPaths) {

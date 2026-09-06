@@ -228,15 +228,14 @@ export interface StructurePresentationRegion {
   nodeIds: string[];
 }
 
-export interface StructurePresentationSpine {
-  nodeIds: string[];
+export interface StructurePresentationBackbone {
   edgeIds: string[];
 }
 
 export interface StructurePresentation {
   thesis: string;
   startNodeId: string;
-  primarySpine: StructurePresentationSpine | null;
+  primaryBackbone: StructurePresentationBackbone | null;
   regions: StructurePresentationRegion[];
 }
 

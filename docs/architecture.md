@@ -88,8 +88,10 @@ PR-relevant behavior and factual code entrypoint as stable-ID nodes and edges fi
 current graph JSON value per stable Structure ID; publication and whole-value replacement validate all
 paths, ranges, endpoints, identities, presentation references/order, and Pull Request ownership before retaining the commit.
 The current value separates factual graph claims from an optional authorial spatial presentation made
-of a thesis, an attention start, at most one exact-Edge primary spine of 2–12 Nodes, and spatially ordered named
-comprehension regions. A start-only presentation with no spine or regions is valid when its thesis and
+of a thesis, an attention start, at most one connected exact-Edge primary backbone of 2–12 derived Nodes
+and 1–16 Edges, and spatially ordered named comprehension regions. Backbone Edge membership is exact
+and unordered; path, fan-out, convergence, reciprocal, and small cyclic cores share the same model.
+A start-only presentation with no backbone or regions is valid when its thesis and
 attention start are meaningful but no honest spatial organizer exists. Region array order defines
 canonical spatial and legend order, not reading sequence, runtime order, or importance; each region's
 `nodeIds` is an unordered membership set. Legacy graph JSON without the field reads
@@ -98,25 +100,40 @@ history, comments, persisted semantic reverse index, inferred edges, or persiste
 derive an ephemeral backlink index from explicit Node anchors in the current values. HTTP lists and reads current values;
 human-confirmed delete is the only write exposed to the browser.
 
-The Structure viewer uses a primary spine or regions to shape canonical placement and uses any non-null
-presentation for its authorial overview and cues while preserving every factual Node, Edge, and direction. Its screen-space overview
-shows the thesis, attention start, exact-relation reading spine, and ordered R-number legend; each region
-member carries the matching R badge, so manual geometry never becomes membership truth. Region-only
+The Structure viewer uses a primary backbone or regions to shape canonical placement and uses any non-null
+presentation for its compact authorial Guide and cues while preserving every factual Node, Edge, and direction. The Guide
+shows the thesis, attention start, exact Core relations, and ordered R-number legend; each region member
+carries the matching R badge, so manual geometry never becomes membership truth. Each Guide section is
+independently disclosable and regions are keyboard-accessible camera landmarks. Region-only
 maps may wrap chunks into a bounded row-major grid while preserving canonical spatial order. With
 `presentation: null` or a start-only presentation, it uses topology, factual direction reachable from
-the entrypoint, and stable IDs—not display content—to produce the same projection. A non-null presentation's
-new session initially focuses `startNodeId`; the null case
+the entrypoint, and stable IDs—not display content—to produce the same projection. A long derived
+backbone may fold deterministically across multiple serpentine rows so the canonical map uses both
+dimensions and keeps region envelopes distinct. Row boundaries and the target aspect are projection
+heuristics, not authored layers, reading order, or protocol state. A non-null presentation's new
+session initially focuses `startNodeId`; the null case
 initially focuses the origin. Both are defaults derived from the artifact, while pane-local
-browser session state preserves focus, neighborhood depth, node positions, and viewport across tab
+browser session state preserves focus, neighborhood depth, Home/Back navigation, Guide disclosure, node positions, and viewport across tab
 navigation and current-value updates, and moves with a Structure tab between panes. Surviving IDs keep
 positions and new nodes take a non-overlapping slot near retained neighbors while the spatial organizer
-is unchanged. A changed spine Node identity/order or region membership/order rebases Node geometry to
+is unchanged. A changed backbone endpoint adjacency or region membership/order rebases Node geometry to
 the new canonical explanation while preserving surviving focus and its screen-space camera anchor.
 Null and start-only presentations share one layout basis, so transitions between them and thesis- or
-start-only edits preserve manual geometry; adding, removing, or changing an organizer rebases it.
-1-hop and 2-hop require a
-focus; All shows every Node and Edge. The bounded MVP does not collapse or cull relations based on ID or
-degree. Source actions always open the declared exact `sourceOid` in the chosen pane without changing
+start-only edits preserve manual geometry; changing only the exact parallel backbone relation preserves
+geometry while updating emphasis. The shared deterministic route model avoids non-endpoint Nodes and
+connects every visible relation to source/target boundary ports without a clearance gap. Distinct visible
+relations retain independently traceable substantive lanes whenever their routes would otherwise share
+or nearly share a corridor; parallel and reciprocal relations are required examples. It places labels independently of
+focus filtering for Viewer and export; at normal detail, labels are Node-disjoint and pairwise
+non-overlapping, with leader-associated displaced slots when inline placement is unavailable. Backbone membership is stable
+authorial salience; focus-hop proximity is session-derived attention and uses a separate visual channel.
+1-hop and 2-hop require a focus; All exposes every Node and Edge. Semantic zoom may suppress unreadable
+secondary detail only while counts, minimap, selection, Home, and All keep it explicitly recoverable.
+Home and Region framing activate All so their declared targets are actually visible; Back restores the
+previous focus, neighborhood depth, framed Region, and camera. Region framing preserves focus and
+membership while temporarily restoring full visual relevance to the framed members and their internal
+relations. Home, local Node focus, and an explicit depth change clear that pane-session chunk lens.
+Source actions always open the declared exact `sourceOid` in the chosen pane without changing
 the global commit range.
 The browser owns an ephemeral two-pane workspace: every document identity may appear once per pane, tabs
 can move between panes, ordinary document-opening clicks target the left pane, and modifier-click targets

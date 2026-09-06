@@ -9,7 +9,7 @@ They are complete protocol-v5 Structure content/preview values, including requir
 schema and verify every anchor against that exact Git object.
 
 After the protocol-v5 presentation contract was tightened to an explicit attention start, an optional
-exact-Edge spine, and ordered named exact-membership regions, all three values were run through the built
+connected exact-Edge backbone, and ordered named exact-membership regions, all three values were run through the built
 production `structure preview --stdin --json` path again. They passed without warnings: Agent transport
 reported 5 columns with at most 2 rows, Markdown source mapping reported 4 columns with at most 2 rows,
 and Skill distribution reported 3 columns with at most 2 rows. These preview metrics deliberately
@@ -24,10 +24,10 @@ or region packing as protocol semantics.
 - Result: six nodes and six edges represented the CLI selection, socket client, validation, schemas,
   dispatch, and diagnostic policy at one consistent boundary level, beginning at the CLI service-call
   entrypoint.
-- Presentation observation: the thesis names the boundary, the exact-Edge primary spine prioritizes the
+- Presentation observation: the thesis names the boundary, the path-shaped exact-Edge primary backbone prioritizes the
   CLI-to-dispatch backbone, and two disjoint regions place transport diagnostics beside the client
-  segment and operation schemas beside validation/dispatch. No Edge direction was changed to obtain the
-  canonical spatial order, and each region occupies one contiguous spine interval in declared order.
+  segment and operation schemas beside validation/dispatch. No Edge direction or predicate was changed
+  to obtain canonical spatial order; its Edge array carries membership rather than reading order.
 - Scope/granularity observation: excluding socket ownership and viewer lifecycle kept the subject a
   relationship space. Adding those lifecycle operations made the graph turn into a startup sequence
   and would be better handled by a Walkthrough.
@@ -52,9 +52,10 @@ or region packing as protocol semantics.
   Structure subject. Inspection first identified the concrete source-position mapping behavior and its
   plugin entrypoint; the resulting map then included only responsibilities participating in that
   behavior. Unrelated uses of the same Markdown utilities remained outside the Structure.
-- Presentation observation: this fan-out/convergence space has no honest single backbone. The authorial
-  start and three ordered named chunks expose composition, rendered coordinates, and independently usable
-  review interactions with `primarySpine: null`, rather than manufacturing a linear route.
+- Presentation observation: this fan-out/convergence space uses one nonlinear exact-relation backbone.
+  The selected branch and convergence Edges jointly expose how plugin composition meets the shared source-position
+  contract without manufacturing one linear route. Three ordered named chunks retain the composition,
+  rendered-coordinate, and independently usable review-interaction boundaries.
 
 ### Bundled Skill distribution boundary
 
@@ -73,23 +74,24 @@ or region packing as protocol semantics.
 ## Presentation dogfood criteria
 
 Start evaluation with a source-consistent thesis and attention start, then add the smallest honest
-combination of one optional exact-Edge primary spine and ordered named regions. A start-only presentation
+combination of one optional connected exact-Edge primary backbone and ordered named regions. A start-only presentation
 is valid when its thesis and start add useful authorial orientation but no honest spatial organizer exists;
 it deliberately keeps topology-derived canonical geometry. Multiple authored routes make priority
-ambiguous and drift toward Walkthrough. A hub, fan-out, convergence, or reciprocal space may use regions
-without a spine when named comprehension chunks are defensible, or remain start-only when they are not.
+ambiguous and drift toward Walkthrough; one connected relation skeleton instead supports path, hub,
+fan-out, convergence, reciprocal, and small cyclic shapes. A graph may still use regions without a
+backbone when no exact relation set deserves privileged emphasis, or remain start-only when no named chunks are honest.
 For each dogfood subject, compare the non-null presentation with the same factual
 graph set to `null` and record:
 
-- whether a reviewer can state the behavior, the backbone to grasp first, and the meaning of each region
-  after an initial scan, without mistaking the spine for runtime order or architectural importance;
-- whether the start is current, the spine selects one exact current Edge for every adjacent Node pair,
-  region membership is disjoint, each region's spine members form one contiguous interval in region order,
-  and inner `nodeIds` order is not treated as semantic;
+- whether a reviewer can state the behavior, the exact-relation backbone to grasp first, and the meaning of each region
+  after an initial scan, without mistaking derived visual ranks for runtime order or architectural importance;
+- whether the start is current and belongs to a non-null backbone, every selected exact Edge is current,
+  the derived 2–12 Node skeleton is weakly connected, region membership is disjoint, and backbone Edge /
+  region-member inner array order is not treated as semantic;
 - whether an organizer-bearing presentation improves canonical placement, while a start-only presentation
   keeps null-equivalent topology geometry and still improves overview, initial focus at `startNodeId`, cues,
   and export;
-- whether every off-spine and ungrouped Node, every Edge and direction, free focus/pan/zoom/drag, and every
+- whether every off-backbone and ungrouped Node, every Edge and direction, free focus/pan/zoom/drag, and every
   source action remain available and understandable;
 - whether the thesis and region labels synthesize source-supported claims instead of becoming review
   conclusions, completeness claims, generic subsystem categories, or decorative group names;
@@ -99,7 +101,7 @@ graph set to `null` and record:
 A trial fails the product boundary if sequential prose is required to explain transitions, reviewers
 expect autoplay, the presentation hides evidence, or the map is useful only as a static architecture
 catalog. Route those subjects to Walkthrough, a deliberate start-only presentation, or
-`presentation: null` according to whether a thesis and attention start add real value; do not add another route.
+`presentation: null` according to whether a thesis and attention start add real value; do not add another route or authored layer.
 
 ## Producer contract adjustments
 
@@ -116,6 +118,6 @@ The production Skill therefore makes the Structure/Walkthrough choice explicit, 
 entrypoint for new authoring, permits unanchored concept nodes only under declared authority, treats all
 anchors as claims at one exact commit, and requires in-place updates to retain IDs only for surviving
 claims of the same subject. Its presentation contract adds one source-consistent thesis, one attention
-start, at most one exact-Edge primary spine, and ordered disjoint named comprehension regions without
+start, at most one connected exact-Edge primary backbone, and ordered disjoint named comprehension regions without
 adding raw layout or reviewer-session state. It permits start-only presentation rather than manufacturing
-a spine, region, or geometry claim where none is honest.
+a backbone, region, or geometry claim where none is honest.

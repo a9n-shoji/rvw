@@ -1577,9 +1577,13 @@ app.post("/api/fixture/structures/:structureId/source-lifecycle", async (context
     edge.anchors[anchorIndex] = input.anchor;
   }
   if (input.removeNodeId) {
+    const backboneEdgeIds = new Set(structure.presentation?.primaryBackbone?.edgeIds ?? []);
+    const backboneNodeIds = new Set(
+      structure.edges.flatMap((edge) => (backboneEdgeIds.has(edge.id) ? [edge.from, edge.to] : [])),
+    );
     if (
       structure.presentation?.startNodeId === input.removeNodeId ||
-      structure.presentation?.primarySpine?.nodeIds.includes(input.removeNodeId)
+      backboneNodeIds.has(input.removeNodeId)
     ) {
       return context.json(
         {
@@ -1587,7 +1591,7 @@ app.post("/api/fixture/structures/:structureId/source-lifecycle", async (context
           error: {
             code: "INVALID_STRUCTURE_PRESENTATION",
             message:
-              "cannot remove the presentation start or a primary-spine Node from this fixture",
+              "cannot remove the presentation start or an explanation-backbone Node from this fixture",
           },
         },
         400,

@@ -81,6 +81,34 @@ async function expectFocusedNodeVisible(viewer: Locator): Promise<void> {
     .toBe(true);
 }
 
+async function expectStructureNodesFullyVisible(
+  viewer: Locator,
+  nodeIds: readonly string[],
+): Promise<void> {
+  await expect
+    .poll(async () =>
+      viewer.evaluate((element, expectedNodeIds) => {
+        const canvas = element.querySelector<HTMLElement>(".structure-canvas");
+        if (!canvas) return false;
+        const canvasBox = canvas.getBoundingClientRect();
+        return expectedNodeIds.every((nodeId) => {
+          const node = element.querySelector<HTMLElement>(
+            `.structure-node[data-node-id="${nodeId}"]`,
+          );
+          if (!node) return false;
+          const box = node.getBoundingClientRect();
+          return (
+            box.left >= canvasBox.left - 1 &&
+            box.right <= canvasBox.right + 1 &&
+            box.top >= canvasBox.top - 1 &&
+            box.bottom <= canvasBox.bottom + 1
+          );
+        });
+      }, nodeIds),
+    )
+    .toBe(true);
+}
+
 async function dragVisibleStructureNode(page: Page, viewer: Locator, node: Locator): Promise<void> {
   const [canvasBox, nodeBox] = await Promise.all([
     viewer.locator(".structure-canvas").boundingBox(),
@@ -304,13 +332,22 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
     /focused/,
   );
-  await expect(viewer.locator(".structure-presentation-overview-node")).toHaveCount(7);
-  await expect(viewer.locator(".structure-presentation-overview-connection")).toHaveCount(6);
+  const thesisToggle = viewer.getByRole("button", { name: /Thesis/u });
+  const coreToggle = viewer.getByRole("button", { name: /Core relations/u });
+  const regionsToggle = viewer.getByRole("button", { name: /Regions/u });
+  await expect(thesisToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(coreToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(regionsToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(viewer.locator(".structure-presentation-overview-connection")).toHaveCount(0);
+  await expect(viewer.locator(".structure-presentation-overview-regions")).toHaveCount(0);
+  await coreToggle.click();
+  await regionsToggle.click();
+  await expect(viewer.locator(".structure-presentation-overview-connection")).toHaveCount(14);
   await expect(
     viewer.locator(
       '.structure-presentation-overview-connection[data-edge-id="detail-route-executes-query"]',
     ),
-  ).toHaveAttribute("data-direction", "forward");
+  ).toHaveAttribute("data-direction", "directed");
   await expect(viewer.locator(".structure-presentation-overview-regions > ol > li")).toHaveText([
     "R1HTTP boundary3 Nodes",
     "R2Read and present5 Nodes",
@@ -324,15 +361,18 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       '.structure-region-member[data-region-index="0"][data-region-node-id="order-detail-route"]',
     ),
   ).toHaveAttribute("title", "Region 1: HTTP boundary");
-  await expect(viewer.locator(".structure-minimap-primary-spine")).toHaveCount(1);
+  await expect(viewer.locator(".structure-minimap-primary-backbone")).toHaveCount(14);
   await expect(viewer.locator(".structure-minimap-presentation-start")).toHaveCount(1);
-  await expect(viewer.locator(".structure-minimap circle.primary-spine")).toHaveCount(7);
-  await expect(viewer.locator('.structure-edge-label[data-primary-spine="true"]')).toHaveCount(6);
+  await expect(viewer.locator(".structure-minimap circle.primary-backbone")).toHaveCount(12);
+  await expect(viewer.locator('.structure-edge-label[data-primary-backbone="true"]')).toHaveCount(
+    14,
+  );
   await expect(
     viewer.locator('.structure-presentation-overview-node[data-node-id="order-detail-route"]'),
   ).toHaveAttribute("aria-pressed", "true");
   await viewer
-    .locator('.structure-presentation-overview-node[data-node-id="order-detail-page"]')
+    .locator('.structure-presentation-overview-relation-node[data-node-id="order-detail-page"]')
+    .first()
     .click();
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
     /focused/,
@@ -343,39 +383,26 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
     /focused/,
   );
-  await expect(viewer.locator('.structure-node[data-primary-spine="true"]')).toHaveCount(7);
-  await expect(viewer.locator('.structure-edge[data-primary-spine="true"]')).toHaveCount(6);
+  await expect(viewer.locator('.structure-node[data-primary-backbone="true"]')).toHaveCount(12);
+  await expect(viewer.locator('.structure-edge[data-primary-backbone="true"]')).toHaveCount(14);
   await expect(
     viewer.locator('.structure-node[data-node-id="order-detail-route"] .structure-node-focus'),
   ).toHaveAccessibleName(
-    "GET /orders/:orderId · factual origin · authorial start · reading spine position 1 of 7 · region R1: HTTP boundary",
+    "GET /orders/:orderId · factual origin · authorial start · explanation backbone member · region R1: HTTP boundary",
   );
   await expect(
     viewer.locator(
       '.structure-edge-label[data-edge-id="detail-route-executes-query"] .structure-edge-select',
     ),
-  ).toHaveAccessibleName(/spatial reading spine relation$/u);
-  const presentationGeometry = await viewer.evaluate((element) => {
-    const spine = [
-      "order-detail-route",
-      "get-order-query",
-      "order-response-presenter",
-      "order-detail-contract",
-      "order-api-client",
-      "order-detail-query-hook",
-      "order-detail-page",
-    ].map((nodeId) => {
-      const node = element.querySelector<HTMLElement>(`.structure-node[data-node-id="${nodeId}"]`)!;
-      return { left: Number.parseFloat(node.style.left), top: Number.parseFloat(node.style.top) };
-    });
-    return { spine };
-  });
-  expect(new Set(presentationGeometry.spine.map(({ top }) => top)).size).toBe(1);
+  ).toHaveAccessibleName(/explanation backbone relation$/u);
+  await thesisToggle.click();
+  await coreToggle.click();
+  await regionsToggle.click();
+  await expect(viewer.locator(".structure-presentation-guide-section")).toHaveCount(0);
   expect(
-    presentationGeometry.spine.every(
-      (point, index, points) => index === 0 || points[index - 1]!.left < point.left,
-    ),
-  ).toBe(true);
+    (await viewer.locator(".structure-presentation-overview").boundingBox())!.height,
+  ).toBeLessThan(44);
+  await thesisToggle.click();
   await expect(viewer.locator(".structure-claim-note")).toHaveCount(0);
   await expect(viewer.locator(".structure-details")).toHaveCount(0);
 
@@ -420,9 +447,10 @@ test("maps a backend response contract into frontend React rendering", async ({ 
     const source = node.querySelector<HTMLElement>(".structure-source.compact")!;
     const nodeBox = node.getBoundingClientRect();
     const sourceBox = source.getBoundingClientRect();
+    const scale = Number(node.closest<HTMLElement>(".structure-viewer")!.dataset.viewportScale);
     return {
-      right: nodeBox.right - sourceBox.right,
-      top: sourceBox.top - nodeBox.top,
+      right: (nodeBox.right - sourceBox.right) / scale,
+      top: (sourceBox.top - nodeBox.top) / scale,
     };
   });
   expect(conceptSourceInsets.right).toBeGreaterThanOrEqual(23);
@@ -475,23 +503,34 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   }
 
   await viewer.getByRole("button", { name: "表示中を収める" }).click();
-  const horizontalFlow = await viewer.evaluate((element) => {
-    const x = (id: string): number =>
-      Number.parseFloat(
-        element.querySelector<HTMLElement>(`.structure-node[data-node-id="${id}"]`)!.style.left,
-      );
+  const compactMap = await viewer.evaluate((element) => {
+    const positions = [...element.querySelectorAll<HTMLElement>(".structure-node")].map((node) => ({
+      id: node.dataset.nodeId!,
+      x: Number.parseFloat(node.style.left),
+      y: Number.parseFloat(node.style.top),
+    }));
+    const byId = new Map(positions.map((point) => [point.id, point]));
+    const coreLandmarks = [
+      "order-detail-route",
+      "get-order-query",
+      "order-detail-contract",
+      "order-api-client",
+      "order-detail-page",
+    ].map((nodeId) => byId.get(nodeId)!);
+    const width =
+      Math.max(...positions.map(({ x }) => x + 228)) - Math.min(...positions.map(({ x }) => x));
+    const height =
+      Math.max(...positions.map(({ y }) => y + 112)) - Math.min(...positions.map(({ y }) => y));
     return {
-      route: x("order-detail-route"),
-      query: x("get-order-query"),
-      contract: x("order-detail-contract"),
-      client: x("order-api-client"),
-      page: x("order-detail-page"),
+      aspectRatio: width / height,
+      distinctCoreLandmarks: new Set(coreLandmarks.map(({ x, y }) => `${x}:${y}`)).size,
+      coreVerticalSpread:
+        Math.max(...coreLandmarks.map(({ y }) => y)) - Math.min(...coreLandmarks.map(({ y }) => y)),
     };
   });
-  expect(horizontalFlow.route).toBeLessThan(horizontalFlow.query);
-  expect(horizontalFlow.query).toBeLessThan(horizontalFlow.contract);
-  expect(horizontalFlow.contract).toBeLessThan(horizontalFlow.client);
-  expect(horizontalFlow.client).toBeLessThan(horizontalFlow.page);
+  expect(compactMap.aspectRatio).toBeLessThanOrEqual(2.6);
+  expect(compactMap.distinctCoreLandmarks).toBe(5);
+  expect(compactMap.coreVerticalSpread).toBeGreaterThan(300);
 
   await viewer.locator('.structure-node[data-node-id="order-detail-contract"]').click();
   const contractEdgeLabel = viewer.locator(
@@ -516,7 +555,7 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   ]);
   expect(labelButtonBox).not.toBeNull();
   expect(sourceActionBox).not.toBeNull();
-  expect(sourceActionBox!.x).toBeGreaterThanOrEqual(labelButtonBox!.x + labelButtonBox!.width);
+  expect(sourceActionBox!.x).toBeGreaterThanOrEqual(labelButtonBox!.x + labelButtonBox!.width - 1);
   const labelRightGap = await contractEdgeLabel
     .locator(".structure-edge-select")
     .evaluate((button) => {
@@ -546,20 +585,273 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       id: node.dataset.nodeId,
       rect: node.getBoundingClientRect(),
     }));
-    return [...element.querySelectorAll<HTMLElement>(".structure-edge-label")].flatMap((label) => {
-      const rect = label.getBoundingClientRect();
-      return nodes
-        .filter(
-          (node) =>
-            rect.right > node.rect.left &&
-            rect.left < node.rect.right &&
-            rect.bottom > node.rect.top &&
-            rect.top < node.rect.bottom,
-        )
-        .map((node) => `${label.dataset.edgeId}:${node.id}`);
-    });
+    const labels = [...element.querySelectorAll<HTMLElement>(".structure-edge-label")].map(
+      (label) => ({ id: label.dataset.edgeId, rect: label.getBoundingClientRect() }),
+    );
+    const intersects = (left: DOMRect, right: DOMRect): boolean =>
+      left.right > right.left &&
+      left.left < right.right &&
+      left.bottom > right.top &&
+      left.top < right.bottom;
+    return {
+      labelNodes: labels.flatMap((label) =>
+        nodes
+          .filter((node) => intersects(label.rect, node.rect))
+          .map((node) => `${label.id}:${node.id}`),
+      ),
+      labelPairs: labels.flatMap((label, index) =>
+        labels
+          .slice(index + 1)
+          .filter((other) => intersects(label.rect, other.rect))
+          .map((other) => `${label.id}:${other.id}`),
+      ),
+    };
   });
-  expect(overlaps).toEqual([]);
+  expect(overlaps.labelNodes).toEqual([]);
+  expect(overlaps.labelPairs).toEqual([]);
+});
+
+test("uses a stable authored map with Guide disclosure, region framing, Home, and pane-local Back", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  let viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const world = viewer.locator(".structure-world");
+  await expect(viewer.locator(".structure-node")).toHaveCount(17);
+  await viewer.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(viewer).toHaveAttribute("data-navigation-history-count", "0");
+  const initialPositions = await viewer.locator(".structure-node").evaluateAll((nodes) =>
+    Object.fromEntries(
+      nodes.map((node) => [
+        (node as HTMLElement).dataset.nodeId!,
+        {
+          left: (node as HTMLElement).style.left,
+          top: (node as HTMLElement).style.top,
+        },
+      ]),
+    ),
+  );
+
+  const thesisToggle = viewer.getByRole("button", { name: /Thesis/u });
+  const regionsToggle = viewer.getByRole("button", { name: /Regions/u });
+  await thesisToggle.click();
+  await regionsToggle.click();
+  await expect(thesisToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(regionsToggle).toHaveAttribute("aria-expanded", "true");
+  const regionOriginTransform = await world.evaluate(
+    (element) => (element as HTMLElement).style.transform,
+  );
+
+  await viewer.getByRole("button", { name: "1-hop", exact: true }).click();
+  await expect(viewer.getByText("4/17 Node · 5/19 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.locator(".structure-region-member")).toHaveCount(4);
+
+  const reactRegionButton = viewer.getByRole("button", {
+    name: "Frame region R4: React rendering, 7 nodes",
+    exact: true,
+  });
+  await reactRegionButton.focus();
+  await reactRegionButton.press("Enter");
+  await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
+  await expect(viewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(viewer).toHaveAttribute("data-framed-region-index", "3");
+  await expect(reactRegionButton).toHaveAttribute("aria-pressed", "true");
+  await expect(viewer.locator(".structure-node")).toHaveCount(17);
+  await expect(viewer.locator(".structure-region-member")).toHaveCount(17);
+  await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
+    /focused/,
+  );
+  const framedSummaryNode = viewer.locator('.structure-node[data-node-id="order-summary-card"]');
+  const framedSummaryRelation = viewer.locator(
+    '.structure-edge[data-edge-id="detail-page-renders-summary"]',
+  );
+  await expect(framedSummaryNode).toHaveAttribute("data-focus-relevance", "distant");
+  await expect(framedSummaryNode).toHaveAttribute("data-framed-region-member", "true");
+  await expect(framedSummaryNode).not.toHaveClass(/context-distant/);
+  await expect(framedSummaryRelation).toHaveAttribute("data-focus-relevance", "distant");
+  await expect(framedSummaryRelation).toHaveAttribute("data-framed-region-relation", "true");
+  await expect(framedSummaryRelation).not.toHaveClass(/context-distant/);
+  await expectStructureNodesFullyVisible(viewer, [
+    "order-detail-error",
+    "order-detail-page",
+    "order-detail-query-hook",
+    "order-line-items",
+    "order-query-cache",
+    "order-status-badge",
+    "order-summary-card",
+  ]);
+  expect(
+    await viewer.locator(".structure-node").evaluateAll((nodes) =>
+      Object.fromEntries(
+        nodes.map((node) => [
+          (node as HTMLElement).dataset.nodeId!,
+          {
+            left: (node as HTMLElement).style.left,
+            top: (node as HTMLElement).style.top,
+          },
+        ]),
+      ),
+    ),
+  ).toEqual(initialPositions);
+
+  await viewer.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(viewer).not.toHaveAttribute("data-framed-region-index");
+  await expect(reactRegionButton).toHaveAttribute("aria-pressed", "false");
+  await expect(viewer).toHaveAttribute("data-navigation-history-count", "2");
+  await viewer.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(viewer).toHaveAttribute("data-framed-region-index", "3");
+  await expect(reactRegionButton).toHaveAttribute("aria-pressed", "true");
+  await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
+
+  await viewer.getByRole("button", { name: "2-hop", exact: true }).click();
+  await expect(viewer).not.toHaveAttribute("data-framed-region-index");
+  await expect(viewer.getByRole("button", { name: "2-hop", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(viewer).toHaveAttribute("data-navigation-history-count", "2");
+  await viewer.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(viewer).toHaveAttribute("data-framed-region-index", "3");
+  await expect(viewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
+
+  await viewer.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(viewer).toHaveAttribute("data-navigation-history-count", "0");
+  await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(viewer.locator(".structure-node")).toHaveCount(4);
+  await expect(viewer.locator(".structure-region-member")).toHaveCount(4);
+  await expect
+    .poll(async () => await world.evaluate((element) => (element as HTMLElement).style.transform))
+    .toBe(regionOriginTransform);
+
+  await page.getByRole("button", { name: `${fullStackTitle}を閉じる`, exact: true }).click();
+  await openStructure(page, fullStackTitle);
+  viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  await expect(viewer.getByRole("button", { name: /Thesis/u })).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await expect(viewer.getByRole("button", { name: /Regions/u })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  await viewer
+    .getByRole("button", { name: "Frame region R4: React rendering, 7 nodes", exact: true })
+    .click();
+  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').click();
+  await expect(viewer).not.toHaveAttribute("data-framed-region-index");
+  await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
+    /focused/,
+  );
+  await expect(viewer).toHaveAttribute("data-navigation-history-count", "2");
+  await expectStructureNodesFullyVisible(viewer, [
+    "order-detail-query-hook",
+    "order-detail-page",
+    "order-summary-card",
+    "order-line-items",
+    "order-status-badge",
+  ]);
+
+  await viewer.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
+    /focused/,
+  );
+  await expect(viewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(viewer).toHaveAttribute("data-framed-region-index", "3");
+  await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
+  await viewer.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(viewer).toHaveAttribute("data-navigation-history-count", "0");
+  await expect(viewer).not.toHaveAttribute("data-framed-region-index");
+  await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  const canvas = viewer.locator(".structure-canvas");
+  const canvasBox = await canvas.boundingBox();
+  expect(canvasBox).not.toBeNull();
+  await page.mouse.move(canvasBox!.x + canvasBox!.width / 2, canvasBox!.y + canvasBox!.height / 2);
+  await page.mouse.wheel(90, 65);
+  const pannedTransform = await viewer.locator(".structure-world").getAttribute("style");
+  await viewer.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
+    /focused/,
+  );
+  await expect
+    .poll(async () => await viewer.locator(".structure-world").getAttribute("style"))
+    .not.toBe(pannedTransform);
+  expect(
+    await viewer.locator(".structure-node").evaluateAll((nodes) =>
+      Object.fromEntries(
+        nodes.map((node) => [
+          (node as HTMLElement).dataset.nodeId!,
+          {
+            left: (node as HTMLElement).style.left,
+            top: (node as HTMLElement).style.top,
+          },
+        ]),
+      ),
+    ),
+  ).toEqual(initialPositions);
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if ((await viewer.getAttribute("data-semantic-zoom")) === "overview") break;
+    await viewer.getByRole("button", { name: "縮小", exact: true }).click();
+  }
+  await expect(viewer).toHaveAttribute("data-semantic-zoom", "overview");
+  await expect(viewer.getByText("17/17 Node · 19/19 Relation", { exact: true })).toBeVisible();
+  await expect(viewer.locator(".structure-minimap")).toBeVisible();
+  const secondaryLabel = viewer.locator(
+    '.structure-edge-label[data-edge-id="detail-page-renders-summary"]',
+  );
+  const coreLabel = viewer.locator(
+    '.structure-edge-label[data-edge-id="detail-route-executes-query"]',
+  );
+  await expect
+    .poll(async () =>
+      secondaryLabel
+        .locator(".structure-edge-label-text")
+        .evaluate((element) => getComputedStyle(element).visibility),
+    )
+    .toBe("hidden");
+  expect(
+    await coreLabel
+      .locator(".structure-edge-label-text")
+      .evaluate((element) => getComputedStyle(element).visibility),
+  ).toBe("visible");
+  await secondaryLabel.locator(".structure-edge-select").focus();
+  await secondaryLabel.locator(".structure-edge-select").press("Enter");
+  await expect(secondaryLabel).toHaveClass(/selected/);
+  expect(
+    await secondaryLabel
+      .locator(".structure-edge-label-text")
+      .evaluate((element) => getComputedStyle(element).visibility),
+  ).toBe("visible");
+  await viewer
+    .getByRole("button", { name: "Frame region R4: React rendering, 7 nodes", exact: true })
+    .click();
+  await expect(secondaryLabel).toHaveClass(/selected/);
+  await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
+    /focused/,
+  );
 });
 
 test("exports the complete Structure as standalone SVG and 2x PNG without changing reading state", async ({
@@ -1092,11 +1384,11 @@ test("re-resolves Structure sources by stable Node and Edge identity", async ({ 
   await page.getByRole("tab", { name: fullStackTitle }).click();
   await viewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
   await viewer
-    .locator('.structure-node[data-node-id="detail-params"] > .structure-source.compact')
+    .locator('.structure-node[data-node-id="order-query-cache"] > .structure-source.compact')
     .click();
   const removeNode = await page.request.post(
     `/api/fixture/structures/${fullStackStructureId}/source-lifecycle`,
-    { data: { removeNodeId: "detail-params" } },
+    { data: { removeNodeId: "order-query-cache" } },
   );
   expect(removeNode.ok()).toBe(true);
   await expect(staleBanner).toContainText("Structureの参照元claimが削除されています");
@@ -1144,8 +1436,10 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await expect(viewer.getByText("origin · Orders HTTP routes", { exact: true })).toBeVisible();
   await expect(viewer.locator(".structure-node")).toHaveCount(16);
   await expect(viewer.locator(".structure-edge")).toHaveCount(19);
-  await expect(viewer.locator(".structure-edge-label")).toHaveCount(2);
-  await expect(viewer).toHaveAttribute("data-viewport-scale", "1.000");
+  await expect(viewer.locator(".structure-edge-label")).toHaveCount(19);
+  const initialViewportScale = Number(await viewer.getAttribute("data-viewport-scale"));
+  expect(initialViewportScale).toBeGreaterThan(0);
+  expect(initialViewportScale).toBeLessThanOrEqual(1.25);
   await expect(viewer.locator(".structure-minimap")).toBeVisible();
   await expect(viewer.locator(".structure-details")).toHaveCount(0);
   await viewer.getByRole("button", { name: "参照をコピー" }).click();
@@ -1154,21 +1448,11 @@ test("resolves Structure anchors to latest and preserves spatial context across 
     .toBe(`rvw://structure/${primaryStructureId}`);
 
   const canvas = viewer.locator(".structure-canvas");
-  await expect
-    .poll(async () => {
-      const [canvasBox, focusBox] = await Promise.all([
-        canvas.boundingBox(),
-        viewer.locator('.structure-node[data-node-id="http-routes"]').boundingBox(),
-      ]);
-      if (!canvasBox || !focusBox) return null;
-      return {
-        xOriented:
-          Math.abs(focusBox.x + focusBox.width / 2 - (canvasBox.x + canvasBox.width * 0.25)) <= 1,
-        yCentered:
-          Math.abs(focusBox.y + focusBox.height / 2 - (canvasBox.y + canvasBox.height / 2)) <= 1,
-      };
-    })
-    .toEqual({ xOriented: true, yCentered: true });
+  await expectStructureNodesFullyVisible(viewer, [
+    "http-routes",
+    "auth-middleware",
+    "http-controller",
+  ]);
   await expect
     .poll(async () => {
       return await viewer.evaluate((element) => {
@@ -1308,24 +1592,32 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await expect(firstEdge).toHaveAttribute("d", / C /);
   await expect(firstEdge).toHaveAttribute("marker-end", /structure-left-.+-arrow/);
   await expect(firstEdge).toHaveAttribute("data-source-change-kind", "modified");
-  const endpointsAreOutsideNodes = await firstEdge.evaluate((element) => {
+  const endpointsMeetNodeBoundaries = await firstEdge.evaluate((element) => {
     const path = element as SVGPathElement;
     const viewerElement = path.closest(".structure-viewer")!;
     const controller = viewerElement.querySelector<HTMLElement>(
       '[data-node-id="http-controller"]',
     )!;
     const hub = viewerElement.querySelector<HTMLElement>('[data-node-id="hub"]')!;
-    const pointOutside = (x: number, y: number, node: HTMLElement): boolean => {
+    const pointOnBoundary = (x: number, y: number, node: HTMLElement): boolean => {
       const left = Number.parseFloat(node.style.left);
       const top = Number.parseFloat(node.style.top);
-      return x < left || x > left + 228 || y < top || y > top + 112;
+      const right = left + 228;
+      const bottom = top + 112;
+      const epsilon = 0.01;
+      const withinX = x >= left - epsilon && x <= right + epsilon;
+      const withinY = y >= top - epsilon && y <= bottom + epsilon;
+      const onVertical = Math.abs(x - left) <= epsilon || Math.abs(x - right) <= epsilon;
+      const onHorizontal = Math.abs(y - top) <= epsilon || Math.abs(y - bottom) <= epsilon;
+      return withinX && withinY && (onVertical || onHorizontal);
     };
     return (
-      pointOutside(Number(path.dataset.startX), Number(path.dataset.startY), controller) &&
-      pointOutside(Number(path.dataset.endX), Number(path.dataset.endY), hub)
+      pointOnBoundary(Number(path.dataset.startX), Number(path.dataset.startY), controller) &&
+      pointOnBoundary(Number(path.dataset.endX), Number(path.dataset.endY), hub)
     );
   });
-  expect(endpointsAreOutsideNodes).toBe(true);
+  expect(endpointsMeetNodeBoundaries).toBe(true);
+  await expect(viewer.locator(".structure-edges marker").first()).toHaveAttribute("refX", "10");
 
   const firstEdgeLabel = viewer.locator(
     '.structure-edge-label[data-edge-id="controller-executes-handler"]',
@@ -1345,6 +1637,15 @@ test("resolves Structure anchors to latest and preserves spatial context across 
       }));
     const labels = boxes(".structure-edge-label");
     const nodes = boxes(".structure-node");
+    const displacedLabelIds = [
+      ...element.querySelectorAll<HTMLElement>(
+        '.structure-edge-label[data-label-displaced="true"]',
+      ),
+    ]
+      .map((label) => label.dataset.edgeId!)
+      .sort();
+    const leaders = [...element.querySelectorAll<SVGPathElement>(".structure-edge-label-leader")];
+    const leaderIds = leaders.map((leader) => leader.dataset.edgeId!).sort();
     const overlaps = (left: { rect: DOMRect }, right: { rect: DOMRect }): boolean =>
       !(
         left.rect.right < right.rect.left ||
@@ -1365,34 +1666,20 @@ test("resolves Structure anchors to latest and preserves spatial context across 
       allEdgesAreCurved: [...element.querySelectorAll<SVGPathElement>(".structure-edge")].every(
         (path) => path.getAttribute("d")?.includes(" C "),
       ),
-      maxLabelDistance: Math.max(
-        ...labels.map((label) => {
-          const path = element.querySelector<SVGPathElement>(
-            `.structure-edge[data-edge-id="${label.id}"]`,
-          )!;
-          const x = Number.parseFloat(
-            element.querySelector<HTMLElement>(`.structure-edge-label[data-edge-id="${label.id}"]`)!
-              .style.left,
-          );
-          const y = Number.parseFloat(
-            element.querySelector<HTMLElement>(`.structure-edge-label[data-edge-id="${label.id}"]`)!
-              .style.top,
-          );
-          const length = path.getTotalLength();
-          return Math.min(
-            ...Array.from({ length: 81 }, (_, index) => {
-              const point = path.getPointAtLength((length * index) / 80);
-              return Math.hypot(point.x - x, point.y - y);
-            }),
-          );
-        }),
-      ),
+      displacedLabelIds,
+      leaderIds,
+      leadersAreVisible: leaders.every((leader) => {
+        const style = getComputedStyle(leader);
+        return leader.getTotalLength() > 0 && style.stroke !== "none" && Number(style.opacity) > 0;
+      }),
     };
   });
   expect(graphCollisions.labelNodes).toEqual([]);
   expect(graphCollisions.labelPairs).toEqual([]);
   expect(graphCollisions.allEdgesAreCurved).toBe(true);
-  expect(graphCollisions.maxLabelDistance).toBeLessThanOrEqual(49);
+  expect(graphCollisions.displacedLabelIds).not.toEqual([]);
+  expect(graphCollisions.leaderIds).toEqual(graphCollisions.displacedLabelIds);
+  expect(graphCollisions.leadersAreVisible).toBe(true);
 
   await firstEdgeLabel.locator(".structure-edge-select").click();
   await expect(firstEdge).toHaveClass(/selected/);
@@ -1441,7 +1728,7 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   expect(localViewport).toBe(viewportBeforeNeighborhood);
   await viewer.getByRole("button", { name: "全体", exact: true }).click();
   await expect(viewer.getByText("16/16 Node · 19/19 Relation", { exact: true })).toBeVisible();
-  await expect(viewer.locator(".structure-edge-label")).toHaveCount(9);
+  await expect(viewer.locator(".structure-edge-label")).toHaveCount(19);
   await expect
     .poll(
       async () =>
@@ -1868,7 +2155,7 @@ test("rebases a cached Structure session when authored presentation changes whil
       presentation: {
         thesis: string;
         startNodeId: string;
-        primarySpine: { nodeIds: string[]; edgeIds: string[] };
+        primaryBackbone: { edgeIds: string[] };
         regions: Array<{ label: string; nodeIds: string[] }>;
       };
     };
@@ -1884,12 +2171,9 @@ test("rebases a cached Structure session when authored presentation changes whil
       data: {
         title: updatedTitle,
         presentation: {
-          thesis: `${previousPresentation.thesis} Reading spine reversed.`,
-          startNodeId: previousPresentation.primarySpine.nodeIds.at(-1),
-          primarySpine: {
-            nodeIds: [...previousPresentation.primarySpine.nodeIds].reverse(),
-            edgeIds: [...previousPresentation.primarySpine.edgeIds].reverse(),
-          },
+          thesis: `${previousPresentation.thesis} Authorial orientation updated.`,
+          startNodeId: "order-detail-page",
+          primaryBackbone: previousPresentation.primaryBackbone,
           regions: [...previousPresentation.regions].reverse(),
         },
       },
@@ -1938,22 +2222,9 @@ test("rebases a cached Structure session when authored presentation changes whil
       top: (element as HTMLElement).style.top,
     })),
   ).not.toEqual({ left: before.left, top: before.top });
-
-  await restoredViewer.getByRole("button", { name: "全体", exact: true }).click();
-  const routeLeft = Number.parseFloat(
-    await restoredViewer
-      .locator('.structure-node[data-node-id="order-detail-route"]')
-      .evaluate((element) => (element as HTMLElement).style.left),
-  );
-  const pageLeft = Number.parseFloat(
-    await restoredViewer
-      .locator('.structure-node[data-node-id="order-detail-page"]')
-      .evaluate((element) => (element as HTMLElement).style.left),
-  );
-  expect(pageLeft).toBeLessThan(routeLeft);
 });
 
-test("shows thesis and an attention start without manufacturing a spine or regions", async ({
+test("shows thesis and an attention start without manufacturing a backbone or regions", async ({
   page,
 }) => {
   const detailResponse = await page.request.get(
@@ -1971,7 +2242,7 @@ test("shows thesis and an attention start without manufacturing a spine or regio
         presentation: {
           thesis,
           startNodeId: "order-detail-contract",
-          primarySpine: null,
+          primaryBackbone: null,
           regions: [],
         },
       },
@@ -1988,17 +2259,15 @@ test("shows thesis and an attention start without manufacturing a spine or regio
 
     await expect(viewer).toHaveAttribute("data-has-presentation", "true");
     await expect(overview.locator(".structure-presentation-overview-thesis")).toContainText(thesis);
-    await expect(overview.locator(".structure-presentation-overview-reading > strong")).toHaveText(
-      "Start",
-    );
-    await expect(overview.locator(".structure-presentation-overview-spine")).toHaveCount(0);
+    await expect(overview.getByRole("button", { name: /Authorial start node/u })).toBeVisible();
+    await expect(overview.getByRole("button", { name: /Core relations/u })).toHaveCount(0);
     await expect(overview.locator(".structure-presentation-overview-regions")).toHaveCount(0);
     await expect(startNode).toHaveClass(/focused/);
     await expect(startNode).toHaveAttribute("data-presentation-start-node", "true");
-    await expect(viewer.locator('.structure-node[data-primary-spine="true"]')).toHaveCount(0);
+    await expect(viewer.locator('.structure-node[data-primary-backbone="true"]')).toHaveCount(0);
     await expect(viewer.locator(".structure-region-member")).toHaveCount(0);
     await expect(viewer.locator(".structure-minimap-presentation-start")).toHaveCount(1);
-    await expect(viewer.locator(".structure-minimap-primary-spine")).toHaveCount(0);
+    await expect(viewer.locator(".structure-minimap-primary-backbone")).toHaveCount(0);
     await expect(viewer.locator(".structure-node")).toHaveCount(detail.structure.nodes.length);
     await expect(viewer.locator(".structure-edges .structure-edge")).toHaveCount(
       detail.structure.edges.length,

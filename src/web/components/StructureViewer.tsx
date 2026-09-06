@@ -30,6 +30,7 @@ import {
   type StructurePoint,
 } from "../structure-graph.js";
 import {
+  appendStructureNavigationHistory,
   createStructureSession,
   deleteStructureSessions,
   getStructureSession,
@@ -39,8 +40,15 @@ import {
   reconcileStructureSession,
   scaledStructureZoom,
   setStructureSession,
-  type StructureViewport,
+  structureBackboneNodeIds,
+  structureHomeNodeIds,
+  structureOneHopNodeIds,
+  structureViewportForBounds,
+  structureViewportForNodeIds,
+  type StructureGuideDisclosure,
+  type StructureNavigationHistoryEntry,
   type StructureNavigationTarget,
+  type StructureViewport,
 } from "../structure-session.js";
 import {
   downloadStructureBlob,
@@ -186,12 +194,14 @@ function StructureMiniMap({
   structure,
   positions,
   focusedNodeId,
+  framedRegionIndex,
   viewport,
   viewportElement,
 }: {
   structure: Structure;
   positions: Readonly<Record<string, StructurePoint>>;
   focusedNodeId: string | null;
+  framedRegionIndex: number | null;
   viewport: StructureViewport;
   viewportElement: HTMLDivElement | null;
 }) {
@@ -215,16 +225,12 @@ function StructureMiniMap({
     : null;
   const mapX = (x: number): number => (x - bounds.minX) * scale;
   const mapY = (y: number): number => (y - bounds.minY) * scale;
-  const primarySpineNodeIds = new Set(structure.presentation?.primarySpine?.nodeIds ?? []);
-  const primarySpinePoints = (structure.presentation?.primarySpine?.nodeIds ?? []).flatMap(
-    (nodeId) => {
-      const point = positions[nodeId];
-      return point
-        ? [
-            `${mapX(point.x + STRUCTURE_NODE_WIDTH / 2)},${mapY(point.y + STRUCTURE_NODE_HEIGHT / 2)}`,
-          ]
-        : [];
-    },
+  const primaryBackboneEdgeIds = new Set(structure.presentation?.primaryBackbone?.edgeIds ?? []);
+  const primaryBackboneNodeIds = structureBackboneNodeIds(structure);
+  const regionByNodeId = new Map(
+    (structure.presentation?.regions ?? []).flatMap((region, index) =>
+      region.nodeIds.map((nodeId) => [nodeId, index] as const),
+    ),
   );
   const presentationStartPoint = structure.presentation
     ? positions[structure.presentation.startNodeId]
@@ -235,18 +241,31 @@ function StructureMiniMap({
       viewBox={`0 0 ${mapWidth} ${mapHeight}`}
       aria-label="Structure minimap"
     >
-      {primarySpinePoints.length >= 2 && (
-        <polyline
-          className="structure-minimap-primary-spine"
-          points={primarySpinePoints.join(" ")}
-        />
-      )}
+      {structure.edges.flatMap((edge) => {
+        if (!primaryBackboneEdgeIds.has(edge.id)) return [];
+        const from = positions[edge.from];
+        const to = positions[edge.to];
+        if (!from || !to) return [];
+        return [
+          <line
+            key={edge.id}
+            className="structure-minimap-primary-backbone"
+            data-edge-id={edge.id}
+            x1={mapX(from.x + STRUCTURE_NODE_WIDTH / 2)}
+            y1={mapY(from.y + STRUCTURE_NODE_HEIGHT / 2)}
+            x2={mapX(to.x + STRUCTURE_NODE_WIDTH / 2)}
+            y2={mapY(to.y + STRUCTURE_NODE_HEIGHT / 2)}
+          />,
+        ];
+      })}
       {structure.nodes.map((node) => {
         const point = positions[node.id];
         if (!point) return null;
         const classes = [
           node.id === focusedNodeId ? "focused" : null,
-          primarySpineNodeIds.has(node.id) ? "primary-spine" : null,
+          primaryBackboneNodeIds.has(node.id) ? "primary-backbone" : null,
+          regionByNodeId.has(node.id) ? "region-member" : null,
+          regionByNodeId.get(node.id) === framedRegionIndex ? "framed-region-member" : null,
         ].filter((value): value is string => value !== null);
         return (
           <circle
@@ -255,6 +274,7 @@ function StructureMiniMap({
             cy={mapY(point.y + STRUCTURE_NODE_HEIGHT / 2)}
             r={node.id === focusedNodeId ? 3.2 : 1.7}
             className={classes.join(" ")}
+            data-region-index={regionByNodeId.get(node.id)}
           />
         );
       })}
@@ -317,8 +337,12 @@ export function StructureViewer({
   const [focusId, setFocusId] = useState(initial.focusId);
   const [selectedEdgeId, setSelectedEdgeId] = useState(initial.selectedEdgeId);
   const [depth, setDepth] = useState<StructureNeighborhoodDepth>(initial.depth);
+  const [framedRegionIndex, setFramedRegionIndex] = useState(initial.framedRegionIndex);
   const [positions, setPositions] = useState(initial.positions);
   const [viewport, setViewport] = useState(initial.viewport);
+  const [guideDisclosure, setGuideDisclosure] = useState(initial.guideDisclosure);
+  const [navigationHistory, setNavigationHistory] = useState(initial.navigationHistory);
+  const [cameraAnimating, setCameraAnimating] = useState(false);
   const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 });
   const [status, setStatus] = useState<string | null>(null);
   const [exporting, setExporting] = useState<StructureExportFormat | null>(null);
@@ -326,7 +350,12 @@ export function StructureViewer({
   const surfaceRef = useRef<HTMLDivElement>(null);
   const surfaceSizeRef = useRef(initial.surfaceSize);
   const focusIdRef = useRef(focusId);
+  const depthRef = useRef(depth);
+  const framedRegionIndexRef = useRef(framedRegionIndex);
   const positionsRef = useRef(positions);
+  const viewportRef = useRef(viewport);
+  const navigationHistoryRef = useRef(navigationHistory);
+  const cameraAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionStateRef = useRef(initial);
   const observedStructureRef = useRef({
     sourceOid: structure.sourceOid,
@@ -345,17 +374,31 @@ export function StructureViewer({
     distance: number;
   } | null>(null);
   focusIdRef.current = focusId;
+  depthRef.current = depth;
+  framedRegionIndexRef.current = framedRegionIndex;
   positionsRef.current = positions;
+  viewportRef.current = viewport;
+  navigationHistoryRef.current = navigationHistory;
   sessionStateRef.current = {
     focusId,
     selectedEdgeId,
     depth,
+    framedRegionIndex,
     positions,
     viewport,
     surfaceSize: surfaceSizeRef.current,
+    guideDisclosure,
+    navigationHistory,
     layoutBasisKey: sessionStateRef.current.layoutBasisKey,
     updatedAt: sessionStateRef.current.updatedAt,
   };
+
+  useEffect(
+    () => () => {
+      if (cameraAnimationTimerRef.current) clearTimeout(cameraAnimationTimerRef.current);
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
@@ -425,6 +468,11 @@ export function StructureViewer({
       }
       event.preventDefault();
       event.stopPropagation();
+      if (cameraAnimationTimerRef.current) {
+        clearTimeout(cameraAnimationTimerRef.current);
+        cameraAnimationTimerRef.current = null;
+        setCameraAnimating(false);
+      }
       const deltaUnit =
         event.deltaMode === WheelEvent.DOM_DELTA_LINE
           ? 16
@@ -484,12 +532,19 @@ export function StructureViewer({
     };
     sessionStateRef.current = next;
     focusIdRef.current = next.focusId;
+    depthRef.current = next.depth;
+    framedRegionIndexRef.current = next.framedRegionIndex;
     positionsRef.current = next.positions;
+    viewportRef.current = next.viewport;
+    navigationHistoryRef.current = next.navigationHistory;
     setFocusId(next.focusId);
     setSelectedEdgeId(next.selectedEdgeId);
     setDepth(next.depth);
+    setFramedRegionIndex(next.framedRegionIndex);
     setPositions(next.positions);
     setViewport(next.viewport);
+    setGuideDisclosure(next.guideDisclosure);
+    setNavigationHistory(next.navigationHistory);
   }, [structure]);
 
   useEffect(() => {
@@ -497,6 +552,9 @@ export function StructureViewer({
   }, [
     depth,
     focusId,
+    framedRegionIndex,
+    guideDisclosure,
+    navigationHistory,
     positions,
     paneId,
     selectedEdgeId,
@@ -527,9 +585,14 @@ export function StructureViewer({
     () => (focusId ? incidentStructureEdges(structure, focusId) : []),
     [focusId, structure],
   );
-  const primarySpineEdgeIds = useMemo(
-    () => new Set(structure.presentation?.primarySpine?.edgeIds ?? []),
+  const primaryBackboneEdgeIds = useMemo(
+    () => new Set(structure.presentation?.primaryBackbone?.edgeIds ?? []),
     [structure.presentation],
+  );
+  const primaryBackboneNodeIds = useMemo(() => structureBackboneNodeIds(structure), [structure]);
+  const oneHopNodeIds = useMemo(
+    () => (focusId ? structureOneHopNodeIds(structure, [focusId]) : visible.nodeIds),
+    [focusId, structure, visible.nodeIds],
   );
   const sourceChangeKinds = useMemo(() => {
     const result = new Map<string, ChangeKind>();
@@ -541,23 +604,7 @@ export function StructureViewer({
     }
     return result;
   }, [changedFiles]);
-  const labelEdgeIds = useMemo(
-    () =>
-      new Set(
-        structure.edges
-          .filter(
-            (edge) =>
-              visible.edgeIds.has(edge.id) &&
-              (!focusId ||
-                edge.from === focusId ||
-                edge.to === focusId ||
-                edge.id === selectedEdgeId ||
-                primarySpineEdgeIds.has(edge.id)),
-          )
-          .map((edge) => edge.id),
-      ),
-    [focusId, primarySpineEdgeIds, selectedEdgeId, structure.edges, visible.edgeIds],
-  );
+  const labelEdgeIds = useMemo(() => new Set(visible.edgeIds), [visible.edgeIds]);
   const renderModel = useMemo(
     () =>
       buildStructureRenderModel({
@@ -577,7 +624,6 @@ export function StructureViewer({
   const renderedEdges = renderModel.edges.map(({ edge }) => edge);
   const renderedNodes = renderModel.nodes.map(({ node }) => node);
   const edgeLabelPlacements = renderModel.labels;
-  const renderedPresentation = renderModel.presentation;
   const presentationRegionByNodeId = useMemo(
     () =>
       new Map(
@@ -586,6 +632,15 @@ export function StructureViewer({
         ),
       ),
     [structure.presentation],
+  );
+  const framedRegionNodeIds = useMemo(
+    () =>
+      new Set(
+        framedRegionIndex === null
+          ? []
+          : (structure.presentation?.regions[framedRegionIndex]?.nodeIds ?? []),
+      ),
+    [framedRegionIndex, structure.presentation],
   );
   const displayBounds = renderModel.bounds;
   const worldWidth = Math.max(1_200, (displayBounds?.right ?? 1_000) + 180);
@@ -641,6 +696,149 @@ export function StructureViewer({
     [positions, surfaceSize.height, surfaceSize.width],
   );
 
+  const animateCameraTo = useCallback((nextViewport: StructureViewport): void => {
+    if (cameraAnimationTimerRef.current) clearTimeout(cameraAnimationTimerRef.current);
+    setCameraAnimating(true);
+    viewportRef.current = nextViewport;
+    setViewport(nextViewport);
+    cameraAnimationTimerRef.current = setTimeout(() => {
+      cameraAnimationTimerRef.current = null;
+      setCameraAnimating(false);
+    }, 220);
+  }, []);
+
+  const recordCurrentNavigation = useCallback((target?: StructureNavigationHistoryEntry): void => {
+    const current = {
+      focusId: focusIdRef.current,
+      depth: depthRef.current,
+      framedRegionIndex: framedRegionIndexRef.current,
+      viewport: viewportRef.current,
+    };
+    if (
+      target &&
+      current.focusId === target.focusId &&
+      current.depth === target.depth &&
+      current.framedRegionIndex === target.framedRegionIndex &&
+      current.viewport.x === target.viewport.x &&
+      current.viewport.y === target.viewport.y &&
+      current.viewport.scale === target.viewport.scale
+    ) {
+      return;
+    }
+    const nextHistory = appendStructureNavigationHistory(navigationHistoryRef.current, {
+      focusId: current.focusId,
+      depth: current.depth,
+      framedRegionIndex: current.framedRegionIndex,
+      viewport: current.viewport,
+    });
+    navigationHistoryRef.current = nextHistory;
+    setNavigationHistory(nextHistory);
+  }, []);
+
+  const activateNode = useCallback(
+    (nodeId: string, recordHistory = true): void => {
+      if (!positions[nodeId]) return;
+      const nextViewport = structureViewportForNodeIds({
+        nodeIds: structureOneHopNodeIds(structure, [nodeId]),
+        positions,
+        surfaceSize,
+      });
+      const initializing = pendingViewportActionRef.current === "initial";
+      pendingViewportActionRef.current = null;
+      if (recordHistory && !initializing) {
+        recordCurrentNavigation({
+          focusId: nodeId,
+          depth: depthRef.current,
+          framedRegionIndex: null,
+          viewport: nextViewport ?? viewportRef.current,
+        });
+      }
+      setSelectedEdgeId(null);
+      framedRegionIndexRef.current = null;
+      setFramedRegionIndex(null);
+      focusIdRef.current = nodeId;
+      setFocusId(nodeId);
+      if (nextViewport) animateCameraTo(nextViewport);
+    },
+    [animateCameraTo, positions, recordCurrentNavigation, structure, surfaceSize],
+  );
+
+  const navigateHome = (): void => {
+    const homeFocusId = structure.presentation?.startNodeId ?? structure.originNodeId;
+    const nextViewport = structureViewportForNodeIds({
+      nodeIds: structureHomeNodeIds(structure),
+      positions,
+      surfaceSize,
+    });
+    const initializing = pendingViewportActionRef.current === "initial";
+    pendingViewportActionRef.current = null;
+    if (!initializing) {
+      recordCurrentNavigation({
+        focusId: homeFocusId,
+        depth: "all",
+        framedRegionIndex: null,
+        viewport: nextViewport ?? viewportRef.current,
+      });
+    }
+    setSelectedEdgeId(null);
+    framedRegionIndexRef.current = null;
+    setFramedRegionIndex(null);
+    focusIdRef.current = homeFocusId;
+    setFocusId(homeFocusId);
+    depthRef.current = "all";
+    setDepth("all");
+    if (nextViewport) animateCameraTo(nextViewport);
+  };
+
+  const navigateBack = (): void => {
+    const history = navigationHistoryRef.current;
+    const previous = history.at(-1);
+    if (!previous) return;
+    const nextHistory = history.slice(0, -1);
+    navigationHistoryRef.current = nextHistory;
+    setNavigationHistory(nextHistory);
+    setSelectedEdgeId(null);
+    focusIdRef.current = previous.focusId;
+    setFocusId(previous.focusId);
+    depthRef.current = previous.focusId === null ? "all" : previous.depth;
+    setDepth(depthRef.current);
+    framedRegionIndexRef.current = previous.framedRegionIndex;
+    setFramedRegionIndex(previous.framedRegionIndex);
+    animateCameraTo(previous.viewport);
+  };
+
+  const frameRegion = (regionIndex: number): void => {
+    const region = structure.presentation?.regions[regionIndex];
+    if (!region) return;
+
+    const renderRegion = renderModel.presentation?.regions.find(
+      (candidate) => candidate.index === regionIndex,
+    );
+    const nextViewport = renderRegion
+      ? structureViewportForBounds({ bounds: renderRegion.bounds, surfaceSize })
+      : structureViewportForNodeIds({
+          nodeIds: region.nodeIds,
+          positions,
+          surfaceSize,
+        });
+    if (!nextViewport) return;
+    const initializing = pendingViewportActionRef.current === "initial";
+    pendingViewportActionRef.current = null;
+    if (!initializing) {
+      recordCurrentNavigation({
+        focusId: focusIdRef.current,
+        depth: "all",
+        framedRegionIndex: regionIndex,
+        viewport: nextViewport,
+      });
+    }
+    depthRef.current = "all";
+    setDepth("all");
+    framedRegionIndexRef.current = regionIndex;
+    setFramedRegionIndex(regionIndex);
+    animateCameraTo(nextViewport);
+  };
+
   useLayoutEffect(() => {
     if (
       !navigationTarget ||
@@ -674,6 +872,9 @@ export function StructureViewer({
     pendingViewportActionRef.current = null;
     setStatus(null);
     setSelectedEdgeId(null);
+    framedRegionIndexRef.current = null;
+    setFramedRegionIndex(null);
+    focusIdRef.current = requestedNode.id;
     setFocusId(requestedNode.id);
     centerNode(requestedNode.id);
     appliedNavigationRequestRef.current = navigationTarget.requestId;
@@ -710,21 +911,38 @@ export function StructureViewer({
     setPositions(nextPositions);
   };
 
-  const focusNode = (nodeId: string, recenter = false): void => {
-    setSelectedEdgeId(null);
-    setFocusId(nodeId);
-    if (recenter) centerNode(nodeId);
-  };
-
   const clearFocus = (): void => {
+    if (framedRegionIndexRef.current !== null) {
+      recordCurrentNavigation({
+        focusId: null,
+        depth: "all",
+        framedRegionIndex: null,
+        viewport: viewportRef.current,
+      });
+    }
     setSelectedEdgeId(null);
+    focusIdRef.current = null;
     setFocusId(null);
+    depthRef.current = "all";
     setDepth("all");
+    framedRegionIndexRef.current = null;
+    setFramedRegionIndex(null);
   };
 
   const selectDepth = (nextDepth: StructureNeighborhoodDepth): void => {
     if (nextDepth === depth) return;
+    if (framedRegionIndexRef.current !== null) {
+      recordCurrentNavigation({
+        focusId: focusIdRef.current,
+        depth: nextDepth,
+        framedRegionIndex: null,
+        viewport: viewportRef.current,
+      });
+    }
+    depthRef.current = nextDepth;
     setDepth(nextDepth);
+    framedRegionIndexRef.current = null;
+    setFramedRegionIndex(null);
   };
 
   const copyStructureRef = async (): Promise<void> => {
@@ -860,7 +1078,7 @@ export function StructureViewer({
       const drag = dragRef.current;
       dragRef.current = null;
       if (drag.distance < 4) {
-        focusNode(drag.nodeId);
+        activateNode(drag.nodeId);
       }
     }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -880,6 +1098,9 @@ export function StructureViewer({
       data-rendered-edge-count={renderedEdges.length}
       data-has-presentation={structure.presentation ? "true" : undefined}
       data-viewport-scale={viewport.scale.toFixed(3)}
+      data-semantic-zoom={viewport.scale < 0.42 ? "overview" : "detail"}
+      data-navigation-history-count={navigationHistory.length}
+      data-framed-region-index={framedRegionIndex ?? undefined}
       data-selected-edge-id={selectedEdgeId ?? undefined}
     >
       <header className="structure-header">
@@ -922,10 +1143,35 @@ export function StructureViewer({
       <StructurePresentationOverview
         structure={structure}
         focusedNodeId={focusId}
-        onFocusNode={(nodeId) => focusNode(nodeId, true)}
+        framedRegionIndex={framedRegionIndex}
+        disclosure={guideDisclosure}
+        onToggleDisclosure={(section: keyof StructureGuideDisclosure) =>
+          setGuideDisclosure((current) => ({ ...current, [section]: !current[section] }))
+        }
+        onFocusNode={activateNode}
+        onFrameRegion={frameRegion}
       />
       <div className="structure-body">
         <div className="structure-toolbar" aria-label="Structure表示操作">
+          <div className="structure-toolbar-group" role="group" aria-label="Structure内navigation">
+            <button
+              type="button"
+              aria-label="Back"
+              title="一つ前のfocusとcameraへ戻る"
+              disabled={navigationHistory.length === 0}
+              onClick={navigateBack}
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              aria-label="Home"
+              title="説明のbackboneと近傍を表示"
+              onClick={navigateHome}
+            >
+              Home
+            </button>
+          </div>
           <div className="structure-toolbar-group" role="group" aria-label="近傍の深さ">
             {([1, 2, "all"] as const).map((candidate) => (
               <button
@@ -1008,6 +1254,11 @@ export function StructureViewer({
               ) {
                 return;
               }
+              if (cameraAnimationTimerRef.current) {
+                clearTimeout(cameraAnimationTimerRef.current);
+                cameraAnimationTimerRef.current = null;
+                setCameraAnimating(false);
+              }
               panRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
               event.currentTarget.setPointerCapture(event.pointerId);
             }}
@@ -1019,31 +1270,35 @@ export function StructureViewer({
             }}
           >
             <div
-              className="structure-world"
+              className={`structure-world${cameraAnimating ? " camera-transition" : ""}`}
               style={{
                 width: worldWidth,
                 height: worldHeight,
                 transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
               }}
             >
-              {renderedPresentation?.regions.flatMap((region) =>
+              {(structure.presentation?.regions ?? []).flatMap((region, regionIndex) =>
                 region.nodeIds.flatMap((nodeId) => {
+                  if (!visible.nodeIds.has(nodeId)) return [];
                   const point = positions[nodeId];
                   if (!point) return [];
                   return [
                     <span
-                      key={`region:${region.index}:${nodeId}`}
+                      key={`region:${regionIndex}:${nodeId}`}
                       className="structure-region-member"
-                      data-region-index={region.index}
+                      data-region-index={regionIndex}
                       data-region-node-id={nodeId}
-                      title={`Region ${region.index + 1}: ${region.label}`}
+                      data-framed-region-member={
+                        framedRegionIndex === regionIndex ? "true" : undefined
+                      }
+                      title={`Region ${regionIndex + 1}: ${region.label}`}
                       aria-hidden="true"
                       style={{
                         left: point.x + STRUCTURE_NODE_WIDTH - 25,
                         top: point.y - 14,
                       }}
                     >
-                      R{region.index + 1}
+                      R{regionIndex + 1}
                     </span>,
                   ];
                 }),
@@ -1058,7 +1313,7 @@ export function StructureViewer({
                   <marker
                     id={`${domId}-arrow`}
                     viewBox="0 0 10 10"
-                    refX="9"
+                    refX="10"
                     refY="5"
                     markerWidth="7"
                     markerHeight="7"
@@ -1071,15 +1326,26 @@ export function StructureViewer({
                   const focused = edge.from === focusId || edge.to === focusId;
                   const selected = edge.id === selectedEdgeId;
                   const muted = selectedEdgeId !== null && !selected;
-                  const primarySpine =
-                    renderedPresentation?.primarySpineEdgeIds.has(edge.id) ?? false;
+                  const primaryBackbone = primaryBackboneEdgeIds.has(edge.id);
+                  const focusDistant =
+                    focusId !== null &&
+                    !focused &&
+                    !oneHopNodeIds.has(edge.from) &&
+                    !oneHopNodeIds.has(edge.to);
+                  const framedRegionRelation =
+                    framedRegionNodeIds.has(edge.from) && framedRegionNodeIds.has(edge.to);
+                  const contextDistant = focusDistant && !framedRegionRelation;
                   const changeKind = source.changeKind;
                   return (
                     <path
                       key={edge.id}
-                      className={`structure-edge${primarySpine ? " primary-spine" : ""}${focused ? " focused" : ""}${selected ? " selected" : ""}${muted ? " muted" : ""}`}
+                      className={`structure-edge${primaryBackbone ? " primary-backbone" : ""}${focused ? " focused" : ""}${framedRegionRelation ? " framed-region-relation" : ""}${selected ? " selected" : ""}${contextDistant ? " context-distant" : ""}${muted ? " muted" : ""}`}
                       data-edge-id={edge.id}
-                      data-primary-spine={primarySpine ? "true" : undefined}
+                      data-primary-backbone={primaryBackbone ? "true" : undefined}
+                      data-focus-relevance={
+                        focused ? "incident" : focusDistant ? "distant" : "near"
+                      }
+                      data-framed-region-relation={framedRegionRelation ? "true" : undefined}
                       data-source-change-kind={changeKind ?? undefined}
                       data-start-x={route.startX}
                       data-start-y={route.startY}
@@ -1090,26 +1356,65 @@ export function StructureViewer({
                     />
                   );
                 })}
+                {edgeLabelPlacements.flatMap(({ edge, leaderPath, source }) => {
+                  if (!leaderPath) return [];
+                  const primaryBackbone = primaryBackboneEdgeIds.has(edge.id);
+                  const focused = edge.from === focusId || edge.to === focusId;
+                  const selected = edge.id === selectedEdgeId;
+                  const muted = selectedEdgeId !== null && !selected;
+                  const focusDistant =
+                    focusId !== null &&
+                    !focused &&
+                    !oneHopNodeIds.has(edge.from) &&
+                    !oneHopNodeIds.has(edge.to);
+                  const framedRegionRelation =
+                    framedRegionNodeIds.has(edge.from) && framedRegionNodeIds.has(edge.to);
+                  const contextDistant = focusDistant && !framedRegionRelation;
+                  return [
+                    <path
+                      key={`label-leader:${edge.id}`}
+                      className={`structure-edge-label-leader${primaryBackbone ? " primary-backbone" : ""}${focused ? " focus-incident" : ""}${framedRegionRelation ? " framed-region-relation" : ""}${selected ? " selected" : ""}${contextDistant ? " context-distant" : ""}${muted ? " muted" : ""}`}
+                      data-edge-id={edge.id}
+                      data-primary-backbone={primaryBackbone ? "true" : undefined}
+                      data-framed-region-relation={framedRegionRelation ? "true" : undefined}
+                      data-source-change-kind={source.changeKind ?? undefined}
+                      d={leaderPath}
+                    />,
+                  ];
+                })}
               </svg>
               {edgeLabelPlacements.map(
-                ({ edge, displayLines, source, x, y, selectWidth, height, crowded }) => {
+                ({ edge, displayLines, source, x, y, selectWidth, height, crowded, displaced }) => {
                   const changeKind = source.changeKind;
                   const fromNode = nodesById.get(edge.from);
                   const toNode = nodesById.get(edge.to);
-                  const primarySpine =
-                    renderedPresentation?.primarySpineEdgeIds.has(edge.id) ?? false;
+                  const primaryBackbone = primaryBackboneEdgeIds.has(edge.id);
+                  const focused = edge.from === focusId || edge.to === focusId;
                   const relationLabel = edge.directed
                     ? `${fromNode?.label ?? edge.from} から ${toNode?.label ?? edge.to} へ: ${edge.label}`
                     : `${fromNode?.label ?? edge.from} と ${toNode?.label ?? edge.to} の関係: ${edge.label}`;
-                  const accessibleRelationLabel = `${relationLabel}${primarySpine ? " · spatial reading spine relation" : ""}`;
+                  const accessibleRelationLabel = `${relationLabel}${primaryBackbone ? " · explanation backbone relation" : ""}`;
                   const selected = edge.id === selectedEdgeId;
                   const muted = selectedEdgeId !== null && !selected;
+                  const focusDistant =
+                    focusId !== null &&
+                    !focused &&
+                    !oneHopNodeIds.has(edge.from) &&
+                    !oneHopNodeIds.has(edge.to);
+                  const framedRegionRelation =
+                    framedRegionNodeIds.has(edge.from) && framedRegionNodeIds.has(edge.to);
+                  const contextDistant = focusDistant && !framedRegionRelation;
                   return (
                     <div
                       key={`label:${edge.id}`}
-                      className={`structure-edge-label${primarySpine ? " primary-spine" : ""}${crowded ? " crowded" : ""}${muted ? " muted" : ""}`}
+                      className={`structure-edge-label${primaryBackbone ? " primary-backbone" : ""}${focused ? " focus-incident" : ""}${framedRegionRelation ? " framed-region-relation" : ""}${selected ? " selected" : ""}${contextDistant ? " context-distant" : ""}${crowded ? " crowded" : ""}${muted ? " muted" : ""}`}
                       data-edge-id={edge.id}
-                      data-primary-spine={primarySpine ? "true" : undefined}
+                      data-label-displaced={displaced ? "true" : "false"}
+                      data-primary-backbone={primaryBackbone ? "true" : undefined}
+                      data-framed-region-relation={framedRegionRelation ? "true" : undefined}
+                      data-focus-relevance={
+                        focused ? "incident" : focusDistant ? "distant" : "near"
+                      }
                       data-source-anchor-count={source.anchorCount}
                       data-source-change-kind={changeKind ?? undefined}
                       style={{ left: x, top: y, minHeight: height }}
@@ -1144,27 +1449,26 @@ export function StructureViewer({
               )}
               {renderModel.nodes.map(({ node, point, changeKind, sourceLabel }) => {
                 const selected = node.id === focusId;
-                const primarySpine =
-                  renderedPresentation?.primarySpineNodeIds.has(node.id) ?? false;
-                const primarySpineIndex =
-                  renderedPresentation?.primarySpineNodeOrder.indexOf(node.id) ?? -1;
+                const primaryBackbone = primaryBackboneNodeIds.has(node.id);
                 const presentationStart = structure.presentation?.startNodeId === node.id;
                 const presentationRegion = presentationRegionByNodeId.get(node.id);
                 const incidentToFocus = incident.some(
                   (edge) => edge.from === node.id || edge.to === node.id,
                 );
+                const focusDistant = focusId !== null && !oneHopNodeIds.has(node.id);
+                const framedRegionMember = framedRegionNodeIds.has(node.id);
+                const contextDistant = focusDistant && !framedRegionMember;
                 return (
                   <div
                     key={node.id}
-                    className={`structure-node notation-${node.notation}${node.id === structure.originNodeId ? " origin" : ""}${presentationStart ? " presentation-start" : ""}${primarySpine ? " primary-spine" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
+                    className={`structure-node notation-${node.notation}${node.id === structure.originNodeId ? " origin" : ""}${presentationStart ? " presentation-start" : ""}${primaryBackbone ? " primary-backbone" : ""}${framedRegionMember ? " framed-region-member" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${contextDistant ? " context-distant" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
                     data-node-id={node.id}
                     data-node-notation={node.notation}
                     data-origin-node={node.id === structure.originNodeId ? "true" : undefined}
                     data-presentation-start-node={presentationStart ? "true" : undefined}
-                    data-primary-spine={primarySpine ? "true" : undefined}
-                    data-primary-spine-order={
-                      primarySpineIndex >= 0 ? primarySpineIndex + 1 : undefined
-                    }
+                    data-primary-backbone={primaryBackbone ? "true" : undefined}
+                    data-focus-relevance={selected ? "active" : focusDistant ? "distant" : "near"}
+                    data-framed-region-member={framedRegionMember ? "true" : undefined}
                     data-region-index={presentationRegion?.index}
                     data-region-label={presentationRegion?.label}
                     data-source-change-kind={changeKind ?? undefined}
@@ -1192,10 +1496,10 @@ export function StructureViewer({
                     <button
                       type="button"
                       className="structure-node-focus"
-                      aria-label={`${node.label}${node.id === structure.originNodeId ? " · factual origin" : ""}${presentationStart ? " · authorial start" : ""}${primarySpineIndex >= 0 ? ` · reading spine position ${primarySpineIndex + 1} of ${renderedPresentation?.primarySpineNodeOrder.length ?? 0}` : ""}${presentationRegion ? ` · region R${presentationRegion.index + 1}: ${presentationRegion.label}` : ""}`}
+                      aria-label={`${node.label}${node.id === structure.originNodeId ? " · factual origin" : ""}${presentationStart ? " · authorial start" : ""}${primaryBackbone ? " · explanation backbone member" : ""}${presentationRegion ? ` · region R${presentationRegion.index + 1}: ${presentationRegion.label}` : ""}`}
                       aria-pressed={selected}
                       onClick={(event) => {
-                        if (event.detail === 0) focusNode(node.id);
+                        if (event.detail === 0) activateNode(node.id);
                       }}
                     >
                       {node.anchor && (
@@ -1239,6 +1543,7 @@ export function StructureViewer({
               structure={structure}
               positions={positions}
               focusedNodeId={focusId}
+              framedRegionIndex={framedRegionIndex}
               viewport={viewport}
               viewportElement={surfaceRef.current}
             />

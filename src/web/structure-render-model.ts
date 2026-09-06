@@ -15,6 +15,7 @@ export interface StructureBox {
 
 export interface StructureEdgeGeometry {
   path: string;
+  points: readonly StructurePoint[];
   startX: number;
   startY: number;
   control1X: number;
@@ -43,6 +44,9 @@ export interface StructureEdgeLabelPlacement {
   boxWidth: number;
   height: number;
   crowded: boolean;
+  displaced: boolean;
+  leaderPath: string | null;
+  leaderBounds: StructureBox | null;
 }
 
 export interface StructureRenderSelection {
@@ -68,14 +72,14 @@ export interface StructureRenderRegion {
   index: number;
   label: string;
   nodeIds: readonly string[];
+  bounds: StructureBox;
 }
 
 export interface StructureRenderPresentation {
   thesis: string;
-  primarySpineNodeOrder: readonly string[];
-  primarySpineEdgeOrder: readonly string[];
-  primarySpineNodeIds: ReadonlySet<string>;
-  primarySpineEdgeIds: ReadonlySet<string>;
+  startNodeId: string;
+  primaryBackboneNodeIds: ReadonlySet<string>;
+  primaryBackboneEdgeIds: ReadonlySet<string>;
   regions: readonly StructureRenderRegion[];
 }
 
@@ -136,85 +140,240 @@ export function edgeSourcePresentation(
   };
 }
 
+const EDGE_NODE_CLEARANCE = 12;
+const EDGE_ROUTE_OUTER_GUTTER = 56;
+const EDGE_ROUTE_BEND_COST = 28;
+
+type RouteDirection = "horizontal" | "vertical" | "start";
+type RouteSide = "left" | "right" | "top" | "bottom";
+
+interface RoutePort {
+  point: StructurePoint;
+  boundaryPoint: StructurePoint;
+  side: RouteSide;
+}
+
+interface WeightedRoutePoint {
+  point: StructurePoint;
+  penalty: number;
+}
+
+function sampledCubic(input: {
+  start: StructurePoint;
+  control1: StructurePoint;
+  control2: StructurePoint;
+  end: StructurePoint;
+}): StructurePoint[] {
+  return Array.from({ length: 49 }, (_, index) => {
+    const fraction = index / 48;
+    const inverse = 1 - fraction;
+    return {
+      x:
+        inverse ** 3 * input.start.x +
+        3 * inverse ** 2 * fraction * input.control1.x +
+        3 * inverse * fraction ** 2 * input.control2.x +
+        fraction ** 3 * input.end.x,
+      y:
+        inverse ** 3 * input.start.y +
+        3 * inverse ** 2 * fraction * input.control1.y +
+        3 * inverse * fraction ** 2 * input.control2.y +
+        fraction ** 3 * input.end.y,
+    };
+  });
+}
+
+function geometryBounds(points: readonly StructurePoint[]): StructureBox {
+  return {
+    left: Math.min(...points.map(({ x }) => x)),
+    top: Math.min(...points.map(({ y }) => y)),
+    right: Math.max(...points.map(({ x }) => x)),
+    bottom: Math.max(...points.map(({ y }) => y)),
+  };
+}
+
+function cubicGeometry(input: {
+  start: StructurePoint;
+  control1: StructurePoint;
+  control2: StructurePoint;
+  end: StructurePoint;
+}): StructureEdgeGeometry {
+  const points = sampledCubic(input);
+  return {
+    path: `M ${input.start.x} ${input.start.y} C ${input.control1.x} ${input.control1.y}, ${input.control2.x} ${input.control2.y}, ${input.end.x} ${input.end.y}`,
+    points,
+    startX: input.start.x,
+    startY: input.start.y,
+    control1X: input.control1.x,
+    control1Y: input.control1.y,
+    control2X: input.control2.x,
+    control2Y: input.control2.y,
+    endX: input.end.x,
+    endY: input.end.y,
+    bounds: geometryBounds([...points, input.control1, input.control2]),
+  };
+}
+
+function stubbedCubicGeometry(input: {
+  boundaryStart: StructurePoint;
+  start: StructurePoint;
+  control1: StructurePoint;
+  control2: StructurePoint;
+  end: StructurePoint;
+  boundaryEnd: StructurePoint;
+}): StructureEdgeGeometry {
+  const core = cubicGeometry(input);
+  const points = simplifyRoutePoints([input.boundaryStart, ...core.points, input.boundaryEnd]);
+  return {
+    ...core,
+    path: `M ${input.boundaryStart.x} ${input.boundaryStart.y} L ${input.start.x} ${input.start.y} C ${input.control1.x} ${input.control1.y}, ${input.control2.x} ${input.control2.y}, ${input.end.x} ${input.end.y} L ${input.boundaryEnd.x} ${input.boundaryEnd.y}`,
+    points,
+    startX: input.boundaryStart.x,
+    startY: input.boundaryStart.y,
+    endX: input.boundaryEnd.x,
+    endY: input.boundaryEnd.y,
+    bounds: geometryBounds([...points, input.control1, input.control2]),
+  };
+}
+
+function simplifyRoutePoints(points: readonly StructurePoint[]): StructurePoint[] {
+  const result: StructurePoint[] = [];
+  for (const point of points) {
+    const previous = result.at(-1);
+    if (previous && previous.x === point.x && previous.y === point.y) continue;
+    const beforePrevious = result.at(-2);
+    if (
+      beforePrevious &&
+      previous &&
+      ((beforePrevious.x === previous.x && previous.x === point.x) ||
+        (beforePrevious.y === previous.y && previous.y === point.y))
+    ) {
+      result[result.length - 1] = point;
+    } else {
+      result.push(point);
+    }
+  }
+  return result;
+}
+
+function polylineGeometry(rawPoints: readonly StructurePoint[]): StructureEdgeGeometry | null {
+  const points = simplifyRoutePoints(rawPoints);
+  const start = points[0];
+  const end = points.at(-1);
+  if (!start || !end || points.length < 2) return null;
+  const segments = points.slice(1).map((point, index) => {
+    const previous = points[index]!;
+    return `C ${previous.x + (point.x - previous.x) / 3} ${previous.y + (point.y - previous.y) / 3}, ${previous.x + ((point.x - previous.x) * 2) / 3} ${previous.y + ((point.y - previous.y) * 2) / 3}, ${point.x} ${point.y}`;
+  });
+  const second = points[1]!;
+  const penultimate = points.at(-2)!;
+  return {
+    path: `M ${start.x} ${start.y} ${segments.join(" ")}`,
+    points,
+    startX: start.x,
+    startY: start.y,
+    control1X: start.x + (second.x - start.x) / 3,
+    control1Y: start.y + (second.y - start.y) / 3,
+    control2X: penultimate.x + ((end.x - penultimate.x) * 2) / 3,
+    control2Y: penultimate.y + ((end.y - penultimate.y) * 2) / 3,
+    endX: end.x,
+    endY: end.y,
+    bounds: geometryBounds(points),
+  };
+}
+
+function directEdgeGeometry(
+  edge: StructureEdge,
+  positions: Readonly<Record<string, StructurePoint>>,
+  laneOffset: number,
+  reciprocal: boolean,
+): StructureEdgeGeometry | null {
+  const from = positions[edge.from];
+  const to = positions[edge.to];
+  if (!from || !to || edge.from === edge.to) return null;
+  const fromCenter = {
+    x: from.x + STRUCTURE_NODE_WIDTH / 2,
+    y: from.y + STRUCTURE_NODE_HEIGHT / 2,
+  };
+  const toCenter = {
+    x: to.x + STRUCTURE_NODE_WIDTH / 2,
+    y: to.y + STRUCTURE_NODE_HEIGHT / 2,
+  };
+  const fromSide = preferredRouteSide(fromCenter, toCenter);
+  const toSide = preferredRouteSide(toCenter, fromCenter);
+  const fromPort = routePorts(nodeRouteBox(from, 0), laneOffset, 8).find(
+    ({ side }) => side === fromSide,
+  )!;
+  const toPort = routePorts(nodeRouteBox(to, 0), laneOffset, 8).find(
+    ({ side }) => side === toSide,
+  )!;
+  const innerDx = toPort.point.x - fromPort.point.x;
+  const innerDy = toPort.point.y - fromPort.point.y;
+  const length = Math.max(1, Math.hypot(innerDx, innerDy));
+  const unitX = innerDx / length;
+  const unitY = innerDy / length;
+  const perpendicularX = -unitY;
+  const perpendicularY = unitX;
+  const start = fromPort.point;
+  const end = toPort.point;
+  const curve = laneOffset * (reciprocal ? 5.5 : 4);
+  const control1 = {
+    x: start.x + (end.x - start.x) / 3 + perpendicularX * curve,
+    y: start.y + (end.y - start.y) / 3 + perpendicularY * curve,
+  };
+  const control2 = {
+    x: start.x + ((end.x - start.x) * 2) / 3 + perpendicularX * curve,
+    y: start.y + ((end.y - start.y) * 2) / 3 + perpendicularY * curve,
+  };
+  return stubbedCubicGeometry({
+    boundaryStart: fromPort.boundaryPoint,
+    start,
+    control1,
+    control2,
+    end,
+    boundaryEnd: toPort.boundaryPoint,
+  });
+}
+
 export function edgePath(
   edge: StructureEdge,
   positions: Readonly<Record<string, StructurePoint>>,
   laneOffset = 0,
   reciprocal = false,
 ): StructureEdgeGeometry | null {
-  const from = positions[edge.from];
-  const to = positions[edge.to];
-  if (!from || !to) return null;
-  const fromX = from.x + STRUCTURE_NODE_WIDTH / 2;
-  const fromY = from.y + STRUCTURE_NODE_HEIGHT / 2;
-  const toX = to.x + STRUCTURE_NODE_WIDTH / 2;
-  const toY = to.y + STRUCTURE_NODE_HEIGHT / 2;
-  if (edge.from === edge.to) {
-    const right = from.x + STRUCTURE_NODE_WIDTH;
-    const top = from.y;
-    const gap = 8;
-    const loopShift = laneOffset * 0.3;
-    const loopReach = 88 + Math.abs(laneOffset) * 0.35;
-    return {
-      path: `M ${right + gap} ${top + 34 + loopShift} C ${right + loopReach} ${top - 84 + loopShift}, ${right + loopReach} ${top + STRUCTURE_NODE_HEIGHT + 84 + loopShift}, ${right + gap} ${top + STRUCTURE_NODE_HEIGHT - 34 + loopShift}`,
-      startX: right + gap,
-      startY: top + 34 + loopShift,
-      control1X: right + loopReach,
-      control1Y: top - 84 + loopShift,
-      control2X: right + loopReach,
-      control2Y: top + STRUCTURE_NODE_HEIGHT + 84 + loopShift,
-      endX: right + gap,
-      endY: top + STRUCTURE_NODE_HEIGHT - 34 + loopShift,
-      bounds: {
-        left: right + gap,
-        top: top - 84 + loopShift,
-        right: right + loopReach,
-        bottom: top + STRUCTURE_NODE_HEIGHT + 84 + loopShift,
-      },
-    };
+  if (edge.from !== edge.to) {
+    return directEdgeGeometry(edge, positions, laneOffset, reciprocal);
   }
-  const dx = toX - fromX;
-  const dy = toY - fromY;
-  const length = Math.max(1, Math.hypot(dx, dy));
-  const unitX = dx / length;
-  const unitY = dy / length;
-  const perpendicularX = -unitY;
-  const perpendicularY = unitX;
-  const boundaryDistance = Math.min(
-    STRUCTURE_NODE_WIDTH / 2 / Math.max(0.0001, Math.abs(unitX)),
-    STRUCTURE_NODE_HEIGHT / 2 / Math.max(0.0001, Math.abs(unitY)),
-  );
-  const endpointDistance = boundaryDistance + 8;
-  const startX = fromX + unitX * endpointDistance + perpendicularX * laneOffset;
-  const startY = fromY + unitY * endpointDistance + perpendicularY * laneOffset;
-  const endX = toX - unitX * endpointDistance + perpendicularX * laneOffset;
-  const endY = toY - unitY * endpointDistance + perpendicularY * laneOffset;
-  const minimumCurve = reciprocal ? 132 : laneOffset === 0 ? 28 : 52;
-  const maximumCurve = reciprocal ? 168 : 96;
-  const curve =
-    Math.min(maximumCurve, Math.max(minimumCurve, length * (reciprocal ? 0.18 : 0.1))) +
-    laneOffset * 0.35;
-  const control1X = startX + (endX - startX) * 0.36 + perpendicularX * curve;
-  const control1Y = startY + (endY - startY) * 0.36 + perpendicularY * curve;
-  const control2X = startX + (endX - startX) * 0.64 + perpendicularX * curve;
-  const control2Y = startY + (endY - startY) * 0.64 + perpendicularY * curve;
-  return {
-    path: `M ${startX} ${startY} C ${control1X} ${control1Y}, ${control2X} ${control2Y}, ${endX} ${endY}`,
-    startX,
-    startY,
-    control1X,
-    control1Y,
-    control2X,
-    control2Y,
-    endX,
-    endY,
-    bounds: {
-      left: Math.min(startX, control1X, control2X, endX),
-      top: Math.min(startY, control1Y, control2Y, endY),
-      right: Math.max(startX, control1X, control2X, endX),
-      bottom: Math.max(startY, control1Y, control2Y, endY),
-    },
+  const point = positions[edge.from];
+  if (!point) return null;
+  const shift = laneOffset * 0.5;
+  const boundaryStart = {
+    x: point.x + STRUCTURE_NODE_WIDTH,
+    y: point.y + Math.max(16, Math.min(48, 32 + shift)),
   };
+  const boundaryEnd = {
+    x: point.x + STRUCTURE_NODE_WIDTH,
+    y: point.y + Math.max(64, Math.min(96, STRUCTURE_NODE_HEIGHT - 32 + shift)),
+  };
+  return stubbedCubicGeometry({
+    boundaryStart,
+    start: {
+      x: boundaryStart.x + 8,
+      y: boundaryStart.y,
+    },
+    control1: {
+      x: point.x + STRUCTURE_NODE_WIDTH + 88 + Math.abs(laneOffset) * 2,
+      y: point.y - 72 + shift,
+    },
+    control2: {
+      x: point.x + STRUCTURE_NODE_WIDTH + 88 + Math.abs(laneOffset) * 2,
+      y: point.y + STRUCTURE_NODE_HEIGHT + 72 + shift,
+    },
+    end: {
+      x: boundaryEnd.x + 8,
+      y: boundaryEnd.y,
+    },
+    boundaryEnd,
+  });
 }
 
 export function reciprocalStructureEdgeIds(edges: readonly StructureEdge[]): Set<string> {
@@ -235,30 +394,653 @@ export function reciprocalStructureEdgeIds(edges: readonly StructureEdge[]): Set
   );
 }
 
+function nodeRouteBox(point: StructurePoint, padding = EDGE_NODE_CLEARANCE): StructureBox {
+  return {
+    left: point.x - padding,
+    top: point.y - padding,
+    right: point.x + STRUCTURE_NODE_WIDTH + padding,
+    bottom: point.y + STRUCTURE_NODE_HEIGHT + padding,
+  };
+}
+
+function pointInsideBox(point: StructurePoint, box: StructureBox): boolean {
+  return point.x > box.left && point.x < box.right && point.y > box.top && point.y < box.bottom;
+}
+
+function orthogonalSegmentBlocked(
+  left: StructurePoint,
+  right: StructurePoint,
+  obstacles: readonly StructureBox[],
+): boolean {
+  if (left.y === right.y) {
+    const segmentLeft = Math.min(left.x, right.x);
+    const segmentRight = Math.max(left.x, right.x);
+    return obstacles.some(
+      (box) =>
+        left.y > box.top &&
+        left.y < box.bottom &&
+        segmentLeft < box.right &&
+        segmentRight > box.left,
+    );
+  }
+  if (left.x === right.x) {
+    const segmentTop = Math.min(left.y, right.y);
+    const segmentBottom = Math.max(left.y, right.y);
+    return obstacles.some(
+      (box) =>
+        left.x > box.left &&
+        left.x < box.right &&
+        segmentTop < box.bottom &&
+        segmentBottom > box.top,
+    );
+  }
+  return true;
+}
+
+function segmentIntersectsBox(
+  start: StructurePoint,
+  end: StructurePoint,
+  box: StructureBox,
+): boolean {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  let minimum = 0;
+  let maximum = 1;
+  for (const [origin, delta, low, high] of [
+    [start.x, dx, box.left, box.right],
+    [start.y, dy, box.top, box.bottom],
+  ] as const) {
+    if (Math.abs(delta) < 0.000_001) {
+      if (origin < low || origin > high) return false;
+      continue;
+    }
+    const first = (low - origin) / delta;
+    const second = (high - origin) / delta;
+    minimum = Math.max(minimum, Math.min(first, second));
+    maximum = Math.min(maximum, Math.max(first, second));
+    if (minimum > maximum) return false;
+  }
+  return maximum >= 0 && minimum <= 1;
+}
+
+function routeIntersectsBoxes(
+  points: readonly StructurePoint[],
+  obstacles: readonly StructureBox[],
+): boolean {
+  return points
+    .slice(1)
+    .some((point, index) =>
+      obstacles.some((box) => segmentIntersectsBox(points[index]!, point, box)),
+    );
+}
+
+function routePointOutside(
+  boundaryPoint: StructurePoint,
+  side: RouteSide,
+  clearance: number,
+): StructurePoint {
+  switch (side) {
+    case "left":
+      return { x: boundaryPoint.x - clearance, y: boundaryPoint.y };
+    case "right":
+      return { x: boundaryPoint.x + clearance, y: boundaryPoint.y };
+    case "top":
+      return { x: boundaryPoint.x, y: boundaryPoint.y - clearance };
+    case "bottom":
+      return { x: boundaryPoint.x, y: boundaryPoint.y + clearance };
+  }
+}
+
+function routePorts(box: StructureBox, laneOffset: number, clearance: number): RoutePort[] {
+  const centerX = (box.left + box.right) / 2;
+  const centerY = (box.top + box.bottom) / 2;
+  const horizontalShift = Math.max(
+    -(box.right - box.left) / 2 + 24,
+    Math.min((box.right - box.left) / 2 - 24, laneOffset),
+  );
+  const verticalShift = Math.max(
+    -(box.bottom - box.top) / 2 + 24,
+    Math.min((box.bottom - box.top) / 2 - 24, laneOffset),
+  );
+  const boundaryPorts: Array<{ boundaryPoint: StructurePoint; side: RouteSide }> = [
+    { boundaryPoint: { x: box.left, y: centerY + verticalShift }, side: "left" },
+    { boundaryPoint: { x: box.right, y: centerY + verticalShift }, side: "right" },
+    { boundaryPoint: { x: centerX + horizontalShift, y: box.top }, side: "top" },
+    { boundaryPoint: { x: centerX + horizontalShift, y: box.bottom }, side: "bottom" },
+  ];
+  return boundaryPorts.map(({ boundaryPoint, side }) => ({
+    point: routePointOutside(boundaryPoint, side, clearance),
+    boundaryPoint,
+    side,
+  }));
+}
+
+function preferredRouteSide(from: StructurePoint, to: StructurePoint): RouteSide {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "right" : "left";
+  return dy >= 0 ? "bottom" : "top";
+}
+
+function routeSidePenalty(side: RouteSide, preferred: RouteSide): number {
+  if (side === preferred) return 0;
+  if (
+    (side === "left" && preferred === "right") ||
+    (side === "right" && preferred === "left") ||
+    (side === "top" && preferred === "bottom") ||
+    (side === "bottom" && preferred === "top")
+  ) {
+    return 72;
+  }
+  return 24;
+}
+
+function pointKey(point: StructurePoint): string {
+  return `${point.x}:${point.y}`;
+}
+
+interface RouteQueueEntry {
+  stateKey: string;
+  vertexKey: string;
+  direction: RouteDirection;
+  cost: number;
+}
+
+function compareQueueEntry(left: RouteQueueEntry, right: RouteQueueEntry): number {
+  return left.cost - right.cost || stableCompare(left.stateKey, right.stateKey);
+}
+
+function pushRouteQueue(queue: RouteQueueEntry[], entry: RouteQueueEntry): void {
+  queue.push(entry);
+  for (let index = queue.length - 1; index > 0;) {
+    const parent = Math.floor((index - 1) / 2);
+    if (compareQueueEntry(queue[parent]!, queue[index]!) <= 0) break;
+    [queue[parent], queue[index]] = [queue[index]!, queue[parent]!];
+    index = parent;
+  }
+}
+
+function popRouteQueue(queue: RouteQueueEntry[]): RouteQueueEntry | undefined {
+  const first = queue[0];
+  const last = queue.pop();
+  if (!first || !last || queue.length === 0) return first;
+  queue[0] = last;
+  for (let index = 0; index < queue.length;) {
+    const left = index * 2 + 1;
+    const right = left + 1;
+    let smallest = index;
+    if (left < queue.length && compareQueueEntry(queue[left]!, queue[smallest]!) < 0) {
+      smallest = left;
+    }
+    if (right < queue.length && compareQueueEntry(queue[right]!, queue[smallest]!) < 0) {
+      smallest = right;
+    }
+    if (smallest === index) break;
+    [queue[index], queue[smallest]] = [queue[smallest]!, queue[index]!];
+    index = smallest;
+  }
+  return first;
+}
+
+function orthogonalGridRoute(input: {
+  sources: readonly WeightedRoutePoint[];
+  targets: readonly WeightedRoutePoint[];
+  obstacles: readonly StructureBox[];
+  channelOffset?: number;
+}): StructurePoint[] | null {
+  if (input.sources.length === 0 || input.targets.length === 0) return null;
+  const terminals = [...input.sources, ...input.targets];
+  const outerBounds = mergedBounds([
+    ...input.obstacles,
+    ...terminals.map(({ point }) => ({
+      left: point.x,
+      top: point.y,
+      right: point.x,
+      bottom: point.y,
+    })),
+  ]);
+  if (!outerBounds) return null;
+  const channelOffset = Math.max(0, input.channelOffset ?? 0);
+  const xValues = [
+    outerBounds.left - EDGE_ROUTE_OUTER_GUTTER - channelOffset,
+    outerBounds.right + EDGE_ROUTE_OUTER_GUTTER + channelOffset,
+    ...input.obstacles.flatMap((box) => [box.left - channelOffset, box.right + channelOffset]),
+    ...terminals.map(({ point }) => point.x),
+  ].sort((left, right) => left - right);
+  const yValues = [
+    outerBounds.top - EDGE_ROUTE_OUTER_GUTTER - channelOffset,
+    outerBounds.bottom + EDGE_ROUTE_OUTER_GUTTER + channelOffset,
+    ...input.obstacles.flatMap((box) => [box.top - channelOffset, box.bottom + channelOffset]),
+    ...terminals.map(({ point }) => point.y),
+  ].sort((left, right) => left - right);
+  const distinctX = [...new Set(xValues)];
+  const distinctY = [...new Set(yValues)];
+  const points = new Map<string, StructurePoint>();
+  for (const y of distinctY) {
+    for (const x of distinctX) {
+      const point = { x, y };
+      if (input.obstacles.some((box) => pointInsideBox(point, box))) continue;
+      points.set(pointKey(point), point);
+    }
+  }
+  const neighbors = new Map<string, Set<string>>(
+    [...points.keys()].map((key) => [key, new Set<string>()]),
+  );
+  const connect = (left: StructurePoint, right: StructurePoint): void => {
+    if (orthogonalSegmentBlocked(left, right, input.obstacles)) return;
+    const leftKey = pointKey(left);
+    const rightKey = pointKey(right);
+    neighbors.get(leftKey)?.add(rightKey);
+    neighbors.get(rightKey)?.add(leftKey);
+  };
+  for (const y of distinctY) {
+    let previous: StructurePoint | null = null;
+    for (const x of distinctX) {
+      const point = points.get(pointKey({ x, y }));
+      if (!point) continue;
+      if (previous) connect(previous, point);
+      previous = point;
+    }
+  }
+  for (const x of distinctX) {
+    let previous: StructurePoint | null = null;
+    for (const y of distinctY) {
+      const point = points.get(pointKey({ x, y }));
+      if (!point) continue;
+      if (previous) connect(previous, point);
+      previous = point;
+    }
+  }
+  const targetPenalty = new Map<string, number>();
+  for (const { point, penalty } of input.targets) {
+    const key = pointKey(point);
+    targetPenalty.set(key, Math.min(penalty, targetPenalty.get(key) ?? Number.POSITIVE_INFINITY));
+  }
+  const queue: RouteQueueEntry[] = [];
+  const distances = new Map<string, number>();
+  const previousStates = new Map<string, string | null>();
+  for (const { point, penalty } of input.sources) {
+    const vertexKey = pointKey(point);
+    if (!points.has(vertexKey)) continue;
+    const stateKey = `${vertexKey}|start`;
+    const cost = penalty;
+    if (cost >= (distances.get(stateKey) ?? Number.POSITIVE_INFINITY)) continue;
+    distances.set(stateKey, cost);
+    previousStates.set(stateKey, null);
+    pushRouteQueue(queue, { stateKey, vertexKey, direction: "start", cost });
+  }
+  let bestGoal: RouteQueueEntry | null = null;
+  let bestGoalCost = Number.POSITIVE_INFINITY;
+  while (queue.length > 0) {
+    const current = popRouteQueue(queue)!;
+    if (current.cost !== distances.get(current.stateKey)) continue;
+    if (current.cost > bestGoalCost) break;
+    const goalPenalty = targetPenalty.get(current.vertexKey);
+    if (goalPenalty !== undefined) {
+      const total = current.cost + goalPenalty;
+      if (
+        total < bestGoalCost ||
+        (total === bestGoalCost &&
+          (!bestGoal || stableCompare(current.stateKey, bestGoal.stateKey) < 0))
+      ) {
+        bestGoal = current;
+        bestGoalCost = total;
+      }
+    }
+    const currentPoint = points.get(current.vertexKey)!;
+    for (const neighborKey of [...(neighbors.get(current.vertexKey) ?? [])].sort(stableCompare)) {
+      const neighbor = points.get(neighborKey)!;
+      const direction: RouteDirection = currentPoint.x === neighbor.x ? "vertical" : "horizontal";
+      const distance =
+        Math.abs(currentPoint.x - neighbor.x) + Math.abs(currentPoint.y - neighbor.y);
+      const bend =
+        current.direction === "start" || current.direction === direction ? 0 : EDGE_ROUTE_BEND_COST;
+      const cost = current.cost + distance + bend;
+      const stateKey = `${neighborKey}|${direction}`;
+      if (cost >= (distances.get(stateKey) ?? Number.POSITIVE_INFINITY)) continue;
+      distances.set(stateKey, cost);
+      previousStates.set(stateKey, current.stateKey);
+      pushRouteQueue(queue, { stateKey, vertexKey: neighborKey, direction, cost });
+    }
+  }
+  if (!bestGoal) return null;
+  const reversed: StructurePoint[] = [];
+  for (let stateKey: string | null = bestGoal.stateKey; stateKey !== null;) {
+    const separator = stateKey.lastIndexOf("|");
+    const vertexKey = stateKey.slice(0, separator);
+    reversed.push(points.get(vertexKey)!);
+    stateKey = previousStates.get(stateKey) ?? null;
+  }
+  return simplifyRoutePoints(reversed.reverse());
+}
+
+function orthogonalObstacleRoute(input: {
+  from: StructurePoint;
+  to: StructurePoint;
+  fromBox: StructureBox;
+  toBox: StructureBox;
+  obstacles: readonly StructureBox[];
+  laneOffset: number;
+  channelOffset?: number;
+}): StructurePoint[] | null {
+  const preferredSource = preferredRouteSide(input.from, input.to);
+  const preferredTarget = preferredRouteSide(input.to, input.from);
+  const portClearance = EDGE_NODE_CLEARANCE + Math.max(0, input.channelOffset ?? 0);
+  const sourcePorts = routePorts(input.fromBox, input.laneOffset, portClearance);
+  const targetPorts = routePorts(input.toBox, input.laneOffset, portClearance);
+  const routed = orthogonalGridRoute({
+    sources: sourcePorts.map(({ point, side }) => ({
+      point,
+      penalty: routeSidePenalty(side, preferredSource),
+    })),
+    targets: targetPorts.map(({ point, side }) => ({
+      point,
+      penalty: routeSidePenalty(side, preferredTarget),
+    })),
+    obstacles: input.obstacles,
+    ...(input.channelOffset === undefined ? {} : { channelOffset: input.channelOffset }),
+  });
+  if (!routed) return null;
+  const first = routed[0]!;
+  const last = routed.at(-1)!;
+  const sourcePort = sourcePorts.find(({ point }) => pointKey(point) === pointKey(first));
+  const targetPort = targetPorts.find(({ point }) => pointKey(point) === pointKey(last));
+  if (!sourcePort || !targetPort) return null;
+  return simplifyRoutePoints([sourcePort.boundaryPoint, ...routed, targetPort.boundaryPoint]);
+}
+
+interface OrthogonalRouteSegment {
+  orientation: "horizontal" | "vertical";
+  fixed: number;
+  minimum: number;
+  maximum: number;
+}
+
+function orthogonalRouteSegments(
+  geometry: StructureEdgeGeometry,
+): readonly OrthogonalRouteSegment[] {
+  return geometry.points.slice(1).flatMap<OrthogonalRouteSegment>((point, index) => {
+    const previous = geometry.points[index]!;
+    if (previous.y === point.y && previous.x !== point.x) {
+      return [
+        {
+          orientation: "horizontal" as const,
+          fixed: point.y,
+          minimum: Math.min(previous.x, point.x),
+          maximum: Math.max(previous.x, point.x),
+        },
+      ];
+    }
+    if (previous.x === point.x && previous.y !== point.y) {
+      return [
+        {
+          orientation: "vertical" as const,
+          fixed: point.x,
+          minimum: Math.min(previous.y, point.y),
+          maximum: Math.max(previous.y, point.y),
+        },
+      ];
+    }
+    return [];
+  });
+}
+
+function routesShareLongLane(left: StructureEdgeGeometry, right: StructureEdgeGeometry): boolean {
+  const minimumSharedLength = 48;
+  const nearLaneDistance = 4;
+  return orthogonalRouteSegments(left).some((leftSegment) =>
+    orthogonalRouteSegments(right).some((rightSegment) => {
+      if (leftSegment.orientation !== rightSegment.orientation) return false;
+      if (Math.abs(leftSegment.fixed - rightSegment.fixed) > nearLaneDistance) return false;
+      return (
+        Math.min(leftSegment.maximum, rightSegment.maximum) -
+          Math.max(leftSegment.minimum, rightSegment.minimum) >=
+        minimumSharedLength
+      );
+    }),
+  );
+}
+
+function routeConflictComponents(
+  edgeIds: readonly string[],
+  geometries: ReadonlyMap<string, StructureEdgeGeometry>,
+): string[][] {
+  const neighbors = new Map(edgeIds.map((edgeId) => [edgeId, new Set<string>()]));
+  for (let leftIndex = 0; leftIndex < edgeIds.length; leftIndex += 1) {
+    const leftId = edgeIds[leftIndex]!;
+    const left = geometries.get(leftId);
+    if (!left) continue;
+    for (let rightIndex = leftIndex + 1; rightIndex < edgeIds.length; rightIndex += 1) {
+      const rightId = edgeIds[rightIndex]!;
+      const right = geometries.get(rightId);
+      if (!right || !routesShareLongLane(left, right)) continue;
+      neighbors.get(leftId)!.add(rightId);
+      neighbors.get(rightId)!.add(leftId);
+    }
+  }
+  const components: string[][] = [];
+  const seen = new Set<string>();
+  for (const first of edgeIds) {
+    if (seen.has(first) || neighbors.get(first)?.size === 0) continue;
+    const component: string[] = [];
+    const queue = [first];
+    seen.add(first);
+    for (let index = 0; index < queue.length; index += 1) {
+      const current = queue[index]!;
+      component.push(current);
+      for (const neighbor of [...(neighbors.get(current) ?? [])].sort(stableCompare)) {
+        if (seen.has(neighbor)) continue;
+        seen.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+    components.push(component.sort(stableCompare));
+  }
+  return components;
+}
+
+function selfLoopGeometry(input: {
+  point: StructurePoint;
+  laneOffset: number;
+  obstacles: readonly StructureBox[];
+}): StructureEdgeGeometry | null {
+  const { point, laneOffset, obstacles } = input;
+  const left = point.x;
+  const right = point.x + STRUCTURE_NODE_WIDTH;
+  const top = point.y;
+  const bottom = point.y + STRUCTURE_NODE_HEIGHT;
+  const shift = laneOffset * 0.55;
+  const clampX = (value: number): number => Math.max(left + 16, Math.min(right - 16, value));
+  const clampY = (value: number): number => Math.max(top + 16, Math.min(bottom - 16, value));
+  for (let reachStep = 0; reachStep < 12; reachStep += 1) {
+    const reach = 88 + Math.abs(laneOffset) * 2 + reachStep * 72;
+    const rightStart = { x: right, y: clampY(top + 32 + shift) };
+    const rightEnd = { x: right, y: clampY(bottom - 32 + shift) };
+    const leftStart = { x: left, y: clampY(bottom - 32 - shift) };
+    const leftEnd = { x: left, y: clampY(top + 32 - shift) };
+    const topStart = { x: clampX(left + 48 + shift), y: top };
+    const topEnd = { x: clampX(right - 48 + shift), y: top };
+    const bottomStart = { x: clampX(right - 48 - shift), y: bottom };
+    const bottomEnd = { x: clampX(left + 48 - shift), y: bottom };
+    const candidates = [
+      stubbedCubicGeometry({
+        boundaryStart: rightStart,
+        start: { x: right + 8, y: rightStart.y },
+        control1: { x: right + reach, y: top - 64 + shift },
+        control2: { x: right + reach, y: bottom + 64 + shift },
+        end: { x: right + 8, y: rightEnd.y },
+        boundaryEnd: rightEnd,
+      }),
+      stubbedCubicGeometry({
+        boundaryStart: leftStart,
+        start: { x: left - 8, y: leftStart.y },
+        control1: { x: left - reach, y: bottom + 64 - shift },
+        control2: { x: left - reach, y: top - 64 - shift },
+        end: { x: left - 8, y: leftEnd.y },
+        boundaryEnd: leftEnd,
+      }),
+      stubbedCubicGeometry({
+        boundaryStart: topStart,
+        start: { x: topStart.x, y: top - 8 },
+        control1: { x: left - 72 + shift, y: top - reach },
+        control2: { x: right + 72 + shift, y: top - reach },
+        end: { x: topEnd.x, y: top - 8 },
+        boundaryEnd: topEnd,
+      }),
+      stubbedCubicGeometry({
+        boundaryStart: bottomStart,
+        start: { x: bottomStart.x, y: bottom + 8 },
+        control1: { x: right + 72 - shift, y: bottom + reach },
+        control2: { x: left - 72 - shift, y: bottom + reach },
+        end: { x: bottomEnd.x, y: bottom + 8 },
+        boundaryEnd: bottomEnd,
+      }),
+    ];
+    const available = candidates.find(
+      (candidate) => !routeIntersectsBoxes(candidate.points, obstacles),
+    );
+    if (available) return available;
+  }
+  return null;
+}
+
+/**
+ * Computes artifact-stable routes against the complete positioned graph. Callers may filter the
+ * returned map for a current lens, but must not route only the visible subset.
+ */
+export function routeStructureEdges(
+  edges: readonly StructureEdge[],
+  nodes: readonly StructureNode[],
+  positions: Readonly<Record<string, StructurePoint>>,
+): ReadonlyMap<string, StructureEdgeGeometry> {
+  const routeOffsets = structureEdgeRouteOffsets(edges);
+  const reciprocalEdgeIds = reciprocalStructureEdgeIds(edges);
+  const actualBoxByNodeId = new Map(
+    nodes.flatMap((node) => {
+      const point = positions[node.id];
+      return point ? [[node.id, nodeRouteBox(point, 0)] as const] : [];
+    }),
+  );
+  const obstacleByNodeId = new Map(
+    nodes.flatMap((node) => {
+      const point = positions[node.id];
+      return point ? [[node.id, nodeRouteBox(point)] as const] : [];
+    }),
+  );
+  const allObstacles = [...obstacleByNodeId.values()];
+  const result = new Map<string, StructureEdgeGeometry>();
+  const obstacleRoutedEdgeIds: string[] = [];
+  const stableEdges = [...edges].sort((left, right) => stableCompare(left.id, right.id));
+  const obstacleRoute = (
+    edge: StructureEdge,
+    laneAdjustment = 0,
+    channelOffset = 0,
+  ): StructureEdgeGeometry | null => {
+    const from = positions[edge.from];
+    const to = positions[edge.to];
+    const fromBox = actualBoxByNodeId.get(edge.from);
+    const toBox = actualBoxByNodeId.get(edge.to);
+    if (!from || !to || !fromBox || !toBox) return null;
+    const points = orthogonalObstacleRoute({
+      from: {
+        x: from.x + STRUCTURE_NODE_WIDTH / 2,
+        y: from.y + STRUCTURE_NODE_HEIGHT / 2,
+      },
+      to: {
+        x: to.x + STRUCTURE_NODE_WIDTH / 2,
+        y: to.y + STRUCTURE_NODE_HEIGHT / 2,
+      },
+      fromBox,
+      toBox,
+      obstacles: allObstacles,
+      laneOffset: (routeOffsets.get(edge.id) ?? 0) + laneAdjustment,
+      channelOffset,
+    });
+    return points ? polylineGeometry(points) : null;
+  };
+  for (const edge of stableEdges) {
+    const from = positions[edge.from];
+    const to = positions[edge.to];
+    if (!from || !to) continue;
+    const otherObstacles = [...obstacleByNodeId]
+      .filter(([nodeId]) => nodeId !== edge.from && nodeId !== edge.to)
+      .map(([, box]) => box);
+    const rawLaneOffset = routeOffsets.get(edge.id) ?? 0;
+    if (edge.from === edge.to) {
+      const geometry = selfLoopGeometry({
+        point: from,
+        laneOffset: rawLaneOffset,
+        obstacles: otherObstacles,
+      });
+      if (geometry) result.set(edge.id, geometry);
+      continue;
+    }
+    const direct = directEdgeGeometry(
+      edge,
+      positions,
+      rawLaneOffset,
+      reciprocalEdgeIds.has(edge.id),
+    );
+    if (
+      direct &&
+      !boxesOverlap(obstacleByNodeId.get(edge.from)!, obstacleByNodeId.get(edge.to)!) &&
+      !routeIntersectsBoxes(direct.points, otherObstacles)
+    ) {
+      result.set(edge.id, direct);
+      continue;
+    }
+    const geometry = obstacleRoute(edge);
+    if (geometry) result.set(edge.id, geometry);
+    obstacleRoutedEdgeIds.push(edge.id);
+  }
+
+  const obstacleRouteIndex = new Map(
+    [...obstacleRoutedEdgeIds].sort(stableCompare).map((edgeId, index) => [edgeId, index]),
+  );
+  const edgeById = new Map(stableEdges.map((edge) => [edge.id, edge]));
+  for (let pass = 0; pass < Math.min(8, obstacleRoutedEdgeIds.length); pass += 1) {
+    const conflicts = routeConflictComponents(obstacleRoutedEdgeIds, result);
+    if (conflicts.length === 0) break;
+    for (const component of conflicts) {
+      const center = (component.length - 1) / 2;
+      component.forEach((edgeId, index) => {
+        const edge = edgeById.get(edgeId)!;
+        const channelIndex = obstacleRouteIndex.get(edgeId)!;
+        const geometry = obstacleRoute(edge, (index - center) * 10, (channelIndex + 1) * 8);
+        if (geometry) result.set(edgeId, geometry);
+      });
+    }
+  }
+  return result;
+}
+
 function curveLabelCandidate(
   geometry: StructureEdgeGeometry,
   fraction: number,
   offset: number,
 ): { x: number; y: number } {
-  const inverse = 1 - fraction;
-  const x =
-    inverse ** 3 * geometry.startX +
-    3 * inverse ** 2 * fraction * geometry.control1X +
-    3 * inverse * fraction ** 2 * geometry.control2X +
-    fraction ** 3 * geometry.endX;
-  const y =
-    inverse ** 3 * geometry.startY +
-    3 * inverse ** 2 * fraction * geometry.control1Y +
-    3 * inverse * fraction ** 2 * geometry.control2Y +
-    fraction ** 3 * geometry.endY;
-  const tangentX =
-    3 * inverse ** 2 * (geometry.control1X - geometry.startX) +
-    6 * inverse * fraction * (geometry.control2X - geometry.control1X) +
-    3 * fraction ** 2 * (geometry.endX - geometry.control2X);
-  const tangentY =
-    3 * inverse ** 2 * (geometry.control1Y - geometry.startY) +
-    6 * inverse * fraction * (geometry.control2Y - geometry.control1Y) +
-    3 * fraction ** 2 * (geometry.endY - geometry.control2Y);
+  const segments = geometry.points.slice(1).map((point, index) => {
+    const previous = geometry.points[index]!;
+    return {
+      previous,
+      point,
+      length: Math.hypot(point.x - previous.x, point.y - previous.y),
+    };
+  });
+  const totalLength = segments.reduce((sum, segment) => sum + segment.length, 0);
+  let remaining = totalLength * fraction;
+  const segment =
+    segments.find((candidate) => {
+      if (remaining <= candidate.length) return true;
+      remaining -= candidate.length;
+      return false;
+    }) ?? segments.at(-1);
+  if (!segment) return { x: geometry.startX, y: geometry.startY };
+  const segmentFraction = segment.length === 0 ? 0 : Math.min(1, remaining / segment.length);
+  const x = segment.previous.x + (segment.point.x - segment.previous.x) * segmentFraction;
+  const y = segment.previous.y + (segment.point.y - segment.previous.y) * segmentFraction;
+  const tangentX = segment.point.x - segment.previous.x;
+  const tangentY = segment.point.y - segment.previous.y;
   const tangentLength = Math.max(1, Math.hypot(tangentX, tangentY));
   return {
     x: x + (-tangentY / tangentLength) * offset,
@@ -436,8 +1218,7 @@ export function placeEdgeLabels(
   nodes: readonly StructureNode[],
   positions: Readonly<Record<string, StructurePoint>>,
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>,
-  routeOffsets: ReadonlyMap<string, number>,
-  reciprocalEdgeIds: ReadonlySet<string>,
+  routes: ReadonlyMap<string, StructureEdgeGeometry>,
   labelAccessory: StructureLabelAccessory,
   labelMode: StructureEdgeLabelMode,
 ): StructureEdgeLabelPlacement[] {
@@ -457,6 +1238,7 @@ export function placeEdgeLabels(
   const collisionCellSize = 128;
   const collisionCellLimit = 48;
   const occupiedLabels = new Map<string, { boxes: StructureBox[]; saturated: boolean }>();
+  const occupiedLabelBoxes: StructureBox[] = [];
   const cellKeys = (box: StructureBox): string[] => {
     const keys: string[] = [];
     const left = Math.floor(box.left / collisionCellSize);
@@ -483,6 +1265,7 @@ export function placeEdgeLabels(
     return false;
   };
   const occupyLabel = (box: StructureBox): void => {
+    occupiedLabelBoxes.push(box);
     for (const key of cellKeys(box)) {
       const cell = occupiedLabels.get(key) ?? { boxes: [], saturated: false };
       if (!cell.saturated) {
@@ -499,19 +1282,16 @@ export function placeEdgeLabels(
   const candidateFractions = Array.from({ length: 22 }, (_, index) => 0.08 + index * 0.04).sort(
     (left, right) => Math.abs(left - 0.5) - Math.abs(right - 0.5),
   );
-  const candidateOffsets = [0, 12, -12, 24, -24, 36, -36, 48, -48] as const;
+  const candidateOffsets = [
+    0, 14, -14, 28, -28, 44, -44, 64, -64, 88, -88, 116, -116, 152, -152, 196, -196, 248, -248,
+  ] as const;
   const candidates = candidateOffsets.flatMap((offset) =>
     candidateFractions.map((fraction) => [fraction, offset] as const),
   );
 
   const stableEdges = [...edges].sort((left, right) => stableCompare(left.id, right.id));
-  for (const [edgeIndex, edge] of stableEdges.entries()) {
-    const geometry = edgePath(
-      edge,
-      positions,
-      routeOffsets.get(edge.id) ?? 0,
-      reciprocalEdgeIds.has(edge.id),
-    );
+  for (const edge of stableEdges) {
+    const geometry = routes.get(edge.id);
     if (!geometry) continue;
     const naturalSize = edgeLabelSize(edge, sourceChangeKinds, labelAccessory, labelMode);
     const sizes: Array<ReturnType<typeof edgeLabelSize>> = [naturalSize];
@@ -525,34 +1305,173 @@ export function placeEdgeLabels(
       );
       if (compactSize.boxWidth < naturalSize.boxWidth) sizes.push(compactSize);
     }
-    let available:
-      { point: { x: number; y: number }; size: ReturnType<typeof edgeLabelSize> } | undefined;
-    let fallback: typeof available;
-    let firstPossible: { x: number; y: number } | undefined;
+    type LabelChoice = {
+      point: StructurePoint;
+      routePoint: StructurePoint;
+      size: ReturnType<typeof edgeLabelSize>;
+      displaced: boolean;
+      leaderPoints: readonly StructurePoint[] | null;
+    };
+    let available: LabelChoice | undefined;
     for (const size of sizes) {
-      const possible = candidates.map(([fraction, offset]) =>
-        curveLabelCandidate(geometry, fraction, offset),
-      );
-      firstPossible ??= possible[edgeIndex % possible.length]!;
+      const possible = candidates.map(([fraction, offset]) => {
+        const point = curveLabelCandidate(geometry, fraction, offset);
+        const routePoint = curveLabelCandidate(geometry, fraction, 0);
+        const displaced = Math.abs(offset) > 64;
+        return {
+          point,
+          routePoint,
+          size,
+          displaced,
+          leaderPoints: displaced ? [routePoint, point] : null,
+        };
+      });
       const nodeSafe = possible.filter((candidate) => {
-        const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 4);
-        return !nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox));
+        const box = labelBox(candidate.point.x, candidate.point.y, size.boxWidth, size.height, 4);
+        if (nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox))) return false;
+        return (
+          !candidate.displaced ||
+          !nodeBoxes.some((nodeBox) =>
+            segmentIntersectsBox(candidate.routePoint, candidate.point, nodeBox),
+          )
+        );
       });
       const point = nodeSafe.find((candidate) => {
-        const box = labelBox(candidate.x, candidate.y, size.boxWidth, size.height, 5);
+        const box = labelBox(candidate.point.x, candidate.point.y, size.boxWidth, size.height, 5);
         return !overlapsOccupiedLabel(box);
       });
       if (point) {
-        available = { point, size };
+        available = point;
         break;
       }
-      const fallbackPoint = nodeSafe[edgeIndex % nodeSafe.length];
-      if (fallbackPoint) fallback = { point: fallbackPoint, size };
     }
-    const chosen = available ?? fallback ?? { point: firstPossible!, size: naturalSize };
+    let chosen = available;
+    if (!chosen) {
+      const size = sizes.at(-1)!;
+      const leaderObstacles = nodeBoxes.map((box) => ({
+        left: box.left - 4,
+        top: box.top - 4,
+        right: box.right + 4,
+        bottom: box.bottom + 4,
+      }));
+      const nodeBounds = mergedBounds(leaderObstacles);
+      const centerIndex = (geometry.points.length - 1) / 2;
+      const leaderStarts = geometry.points
+        .map((point, index) => ({ point, index }))
+        .filter(({ point }) => !leaderObstacles.some((box) => pointInsideBox(point, box)))
+        .sort(
+          (left, right) =>
+            Math.abs(left.index - centerIndex) - Math.abs(right.index - centerIndex) ||
+            left.index - right.index,
+        )
+        .map(({ point }) => point);
+      if (nodeBounds) {
+        const horizontalStep = size.boxWidth + 16;
+        const verticalStep = size.height + 16;
+        const slotOffsets = Array.from({ length: 25 }, (_, index) =>
+          index === 0 ? 0 : Math.ceil(index / 2) * (index % 2 === 0 ? -1 : 1),
+        );
+        for (const routePoint of leaderStarts) {
+          const outsideCandidates = slotOffsets.flatMap((slot) => [
+            {
+              x: routePoint.x + slot * horizontalStep,
+              y: nodeBounds.top - size.height / 2 - 12,
+            },
+            {
+              x: routePoint.x + slot * horizontalStep,
+              y: nodeBounds.bottom + size.height / 2 + 12,
+            },
+            {
+              x: nodeBounds.left - size.boxWidth / 2 - 12,
+              y: routePoint.y + slot * verticalStep,
+            },
+            {
+              x: nodeBounds.right + size.boxWidth / 2 + 12,
+              y: routePoint.y + slot * verticalStep,
+            },
+          ]);
+          for (const point of outsideCandidates) {
+            const box = labelBox(point.x, point.y, size.boxWidth, size.height, 4);
+            if (
+              nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox)) ||
+              overlapsOccupiedLabel(box)
+            ) {
+              continue;
+            }
+            const leaderPoints = orthogonalGridRoute({
+              sources: [{ point: routePoint, penalty: 0 }],
+              targets: [{ point, penalty: 0 }],
+              obstacles: leaderObstacles,
+            });
+            if (!leaderPoints) continue;
+            const choice = {
+              point,
+              routePoint,
+              size,
+              displaced: true,
+              leaderPoints,
+            } satisfies LabelChoice;
+            available = choice;
+            break;
+          }
+          if (available) break;
+        }
+
+        if (!available) {
+          const occupiedBounds = mergedBounds([...nodeBoxes, ...occupiedLabelBoxes]);
+          if (occupiedBounds) {
+            const shelfCandidates = [
+              {
+                x: (occupiedBounds.left + occupiedBounds.right) / 2,
+                y: occupiedBounds.bottom + size.height / 2 + 16,
+              },
+              {
+                x: (occupiedBounds.left + occupiedBounds.right) / 2,
+                y: occupiedBounds.top - size.height / 2 - 16,
+              },
+            ];
+            for (const routePoint of leaderStarts) {
+              for (const point of shelfCandidates) {
+                const box = labelBox(point.x, point.y, size.boxWidth, size.height, 4);
+                if (
+                  nodeBoxes.some((nodeBox) => boxesOverlap(box, nodeBox)) ||
+                  overlapsOccupiedLabel(box)
+                ) {
+                  continue;
+                }
+                const leaderPoints = orthogonalGridRoute({
+                  sources: [{ point: routePoint, penalty: 0 }],
+                  targets: [{ point, penalty: 0 }],
+                  obstacles: leaderObstacles,
+                });
+                if (!leaderPoints) continue;
+                available = {
+                  point,
+                  routePoint,
+                  size,
+                  displaced: true,
+                  leaderPoints,
+                };
+                break;
+              }
+              if (available) break;
+            }
+          }
+        }
+      }
+      chosen = available;
+    }
+    if (!chosen) continue;
     occupyLabel(
       labelBox(chosen.point.x, chosen.point.y, chosen.size.boxWidth, chosen.size.height, 4),
     );
+    const leaderPoints = chosen.leaderPoints ? simplifyRoutePoints(chosen.leaderPoints) : null;
+    const leaderPath = leaderPoints
+      ? `M ${leaderPoints[0]!.x} ${leaderPoints[0]!.y} ${leaderPoints
+          .slice(1)
+          .map((point) => `L ${point.x} ${point.y}`)
+          .join(" ")}`
+      : null;
     placements.push({
       edge,
       displayLines: chosen.size.displayLines,
@@ -562,7 +1481,10 @@ export function placeEdgeLabels(
       selectWidth: chosen.size.selectWidth,
       boxWidth: chosen.size.boxWidth,
       height: chosen.size.height,
-      crowded: !available,
+      crowded: false,
+      displaced: chosen.displaced,
+      leaderPath,
+      leaderBounds: leaderPoints ? geometryBounds(leaderPoints) : null,
     });
   }
   return placements;
@@ -582,8 +1504,7 @@ export function buildStructureRenderModel(input: {
     ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor.path] : [])),
     ...structure.edges.flatMap((edge) => edge.anchors.map((anchor) => anchor.path)),
   ]);
-  const nodes = structure.nodes.flatMap((node) => {
-    if (!selection.nodeIds.has(node.id)) return [];
+  const allNodes = structure.nodes.flatMap((node) => {
     const point = positions[node.id];
     if (!point) return [];
     return [
@@ -595,76 +1516,88 @@ export function buildStructureRenderModel(input: {
       },
     ];
   });
+  const nodes = allNodes.filter(({ node }) => selection.nodeIds.has(node.id));
   const renderNodeIds = new Set(nodes.map(({ node }) => node.id));
-  const selectedEdges = structure.edges.filter(
-    (edge) =>
-      selection.edgeIds.has(edge.id) && renderNodeIds.has(edge.from) && renderNodeIds.has(edge.to),
-  );
-  const routeOffsets = structureEdgeRouteOffsets(structure.edges);
-  const reciprocalEdgeIds = reciprocalStructureEdgeIds(structure.edges);
-  const edges = selectedEdges.flatMap((edge) => {
-    const geometry = edgePath(
-      edge,
-      positions,
-      routeOffsets.get(edge.id) ?? 0,
-      reciprocalEdgeIds.has(edge.id),
-    );
+  const routes = routeStructureEdges(structure.edges, structure.nodes, positions);
+  const allEdges = structure.edges.flatMap((edge) => {
+    const geometry = routes.get(edge.id);
     return geometry
       ? [{ edge, geometry, source: edgeSourcePresentation(edge, sourceChangeKinds) }]
       : [];
   });
-  const edgeIds = new Set(edges.map(({ edge }) => edge.id));
-  const labelEdges = selectedEdges.filter(
-    (edge) => edgeIds.has(edge.id) && selection.labelEdgeIds.has(edge.id),
+  const edges = allEdges.filter(
+    ({ edge }) =>
+      selection.edgeIds.has(edge.id) && renderNodeIds.has(edge.from) && renderNodeIds.has(edge.to),
   );
-  const labels = placeEdgeLabels(
-    labelEdges,
-    nodes.map(({ node }) => node),
+  const edgeIds = new Set(edges.map(({ edge }) => edge.id));
+  const allLabels = placeEdgeLabels(
+    structure.edges,
+    structure.nodes,
     positions,
     sourceChangeKinds,
-    routeOffsets,
-    reciprocalEdgeIds,
+    routes,
     labelAccessory,
     edgeLabelMode,
   );
+  const labels = allLabels.filter(
+    ({ edge }) => edgeIds.has(edge.id) && selection.labelEdgeIds.has(edge.id),
+  );
   const presentation = structure.presentation
     ? (() => {
-        const structureNodeIds = new Set(structure.nodes.map(({ id }) => id));
         const structureEdgeIds = new Set(structure.edges.map(({ id }) => id));
-        const primarySpineNodeOrder =
-          structure.presentation.primarySpine?.nodeIds.filter((nodeId) =>
-            structureNodeIds.has(nodeId),
-          ) ?? [];
-        const primarySpineEdgeOrder =
-          structure.presentation.primarySpine?.edgeIds.filter((edgeId) =>
-            structureEdgeIds.has(edgeId),
-          ) ?? [];
-        const primarySpineNodeIds = new Set(
-          primarySpineNodeOrder.filter((nodeId) => renderNodeIds.has(nodeId)),
+        const primaryBackboneEdgeIds = new Set(
+          (structure.presentation.primaryBackbone?.edgeIds ?? [])
+            .filter((edgeId) => structureEdgeIds.has(edgeId))
+            .sort(stableCompare),
         );
-        const primarySpineEdgeIds = new Set(
-          primarySpineEdgeOrder.filter((edgeId) => edgeIds.has(edgeId)),
+        const primaryBackboneNodeIds = new Set(
+          structure.edges
+            .filter((edge) => primaryBackboneEdgeIds.has(edge.id))
+            .flatMap((edge) => [edge.from, edge.to])
+            .sort(stableCompare),
         );
         const regions = structure.presentation.regions.flatMap((region, index) => {
-          const regionNodeIds = region.nodeIds.filter(
-            (nodeId) => renderNodeIds.has(nodeId) && positions[nodeId],
+          const regionNodeIds = [...new Set(region.nodeIds)]
+            .filter((nodeId) => positions[nodeId])
+            .sort(stableCompare);
+          const regionNodeIdSet = new Set(regionNodeIds);
+          const internalEdgeIds = new Set(
+            structure.edges
+              .filter((edge) => regionNodeIdSet.has(edge.from) && regionNodeIdSet.has(edge.to))
+              .map((edge) => edge.id),
           );
-          return regionNodeIds.length > 0
-            ? [
-                {
-                  index,
-                  label: region.label,
-                  nodeIds: regionNodeIds,
-                },
-              ]
+          const regionBounds = mergedBounds([
+            ...regionNodeIds.map((nodeId) => {
+              const point = positions[nodeId]!;
+              return {
+                left: point.x,
+                top: point.y,
+                right: point.x + STRUCTURE_NODE_WIDTH,
+                bottom: point.y + STRUCTURE_NODE_HEIGHT,
+              };
+            }),
+            ...structure.edges.flatMap((edge) => {
+              if (!internalEdgeIds.has(edge.id)) return [];
+              const route = routes.get(edge.id);
+              return route ? [route.bounds] : [];
+            }),
+            ...allLabels.flatMap((placement) => {
+              if (!internalEdgeIds.has(placement.edge.id)) return [];
+              return [
+                labelBox(placement.x, placement.y, placement.boxWidth, placement.height, 4),
+                ...(placement.leaderBounds ? [placement.leaderBounds] : []),
+              ];
+            }),
+          ]);
+          return regionBounds
+            ? [{ index, label: region.label, nodeIds: regionNodeIds, bounds: regionBounds }]
             : [];
         });
         return {
           thesis: structure.presentation.thesis,
-          primarySpineNodeOrder,
-          primarySpineEdgeOrder,
-          primarySpineNodeIds,
-          primarySpineEdgeIds,
+          startNodeId: structure.presentation.startNodeId,
+          primaryBackboneNodeIds,
+          primaryBackboneEdgeIds,
           regions,
         };
       })()
@@ -681,6 +1614,7 @@ export function buildStructureRenderModel(input: {
       labelBox(placement.x, placement.y, placement.boxWidth, placement.height, 4),
     ),
   );
+  boxes.push(...labels.flatMap(({ leaderBounds }) => (leaderBounds ? [leaderBounds] : [])));
   return { nodes, edges, labels, presentation, bounds: mergedBounds(boxes) };
 }
 

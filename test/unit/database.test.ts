@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import {
   MAX_STRUCTURE_PAYLOAD_BYTES,
-  MAX_STRUCTURE_PRIMARY_SPINE_NODES,
+  MAX_STRUCTURE_PRIMARY_BACKBONE_NODES,
 } from "../../src/shared/constants.js";
 
 function openDatabaseInChildProcess(
@@ -463,28 +463,41 @@ describe("RvwDatabase", () => {
           directed: true,
           anchors: [],
         },
+        {
+          id: "audit-self-loop",
+          from: "audit",
+          to: "audit",
+          label: "rechecks",
+          directed: true,
+          anchors: [],
+        },
       ],
       presentation: {
         thesis: "Follow the entrypoint into its persisted effect.",
         startNodeId: "entry",
-        primarySpine: {
-          nodeIds: ["entry", "effect", "audit"],
+        primaryBackbone: {
           edgeIds: ["effect-entry-reverse", "effect-audit"],
         },
         regions: [
-          { label: "Entry", nodeIds: ["entry"] },
-          { label: "Effect", nodeIds: ["effect"] },
+          { label: "Effect and entry", nodeIds: ["entry", "effect"] },
           { label: "Audit", nodeIds: ["audit"] },
         ],
       },
       idempotencyKey: "structure-presentation",
       idempotencyRequestHash: "structure-presentation-request",
     });
+    expect(structure.presentation).toMatchObject({
+      primaryBackbone: { edgeIds: ["effect-audit", "effect-entry-reverse"] },
+      regions: [
+        { label: "Effect and entry", nodeIds: ["effect", "entry"] },
+        { label: "Audit", nodeIds: ["audit"] },
+      ],
+    });
     expect(database.getStructure(structure.id)?.presentation).toEqual(structure.presentation);
     const startOnlyPresentation = {
       thesis: "Begin at the effect without inventing a path or grouping.",
       startNodeId: "effect",
-      primarySpine: null,
+      primaryBackbone: null,
       regions: [],
     };
     const startOnly = database.createStructure({
@@ -526,60 +539,64 @@ describe("RvwDatabase", () => {
       ["non-canonical thesis", { ...presentation, thesis: ` ${presentation.thesis}` }],
       ["overlong thesis", { ...presentation, thesis: "t".repeat(1_001) }],
       ["dangling start node", { ...presentation, startNodeId: "missing" }],
-      ["start node differs from spine", { ...presentation, startNodeId: "effect" }],
       [
-        "unknown spine key",
-        { ...presentation, primarySpine: { ...presentation.primarySpine, emphasis: "high" } },
-      ],
-      [
-        "short spine",
+        "obsolete primarySpine field",
         {
-          ...presentation,
-          primarySpine: { nodeIds: ["entry"], edgeIds: [] },
+          thesis: presentation.thesis,
+          startNodeId: presentation.startNodeId,
+          primarySpine: { nodeIds: ["entry", "effect"], edgeIds: ["entry-effect"] },
+          regions: presentation.regions,
         },
       ],
       [
-        "duplicate spine node",
+        "unknown backbone key",
         {
           ...presentation,
-          primarySpine: { nodeIds: ["entry", "entry"], edgeIds: ["entry-effect"] },
+          primaryBackbone: { ...presentation.primaryBackbone, emphasis: "high" },
         },
       ],
       [
-        "dangling spine node",
+        "empty backbone",
         {
           ...presentation,
-          primarySpine: { nodeIds: ["entry", "missing"], edgeIds: ["entry-effect"] },
+          primaryBackbone: { edgeIds: [] },
         },
       ],
       [
-        "spine edge count mismatch",
+        "duplicate backbone Edge",
         {
           ...presentation,
-          primarySpine: {
-            nodeIds: ["entry", "effect", "audit"],
-            edgeIds: ["entry-effect"],
-          },
+          primaryBackbone: { edgeIds: ["entry-effect", "entry-effect"] },
         },
       ],
       [
-        "dangling spine edge",
+        "dangling backbone Edge",
         {
           ...presentation,
-          primarySpine: {
-            nodeIds: ["entry", "effect", "audit"],
-            edgeIds: ["missing", "effect-audit"],
-          },
+          primaryBackbone: { edgeIds: ["missing"] },
         },
       ],
       [
-        "spine edge for another pair",
+        "start outside backbone",
         {
           ...presentation,
-          primarySpine: {
-            nodeIds: ["entry", "effect", "audit"],
-            edgeIds: ["effect-audit", "entry-effect"],
-          },
+          startNodeId: "audit",
+          primaryBackbone: { edgeIds: ["entry-effect"] },
+        },
+      ],
+      [
+        "disconnected backbone",
+        {
+          ...presentation,
+          primaryBackbone: { edgeIds: ["entry-effect", "audit-self-loop"] },
+        },
+      ],
+      [
+        "self-loop-only backbone",
+        {
+          ...presentation,
+          startNodeId: "audit",
+          primaryBackbone: { edgeIds: ["audit-self-loop"] },
         },
       ],
       [
@@ -621,23 +638,6 @@ describe("RvwDatabase", () => {
       [
         "dangling region node",
         { ...presentation, regions: [{ label: "Missing", nodeIds: ["missing"] }] },
-      ],
-      [
-        "decreasing region order on the spine",
-        {
-          ...presentation,
-          regions: [
-            { label: "Effect", nodeIds: ["effect"] },
-            { label: "Entry", nodeIds: ["entry"] },
-          ],
-        },
-      ],
-      [
-        "discontiguous region on the spine",
-        {
-          ...presentation,
-          regions: [{ label: "Outer", nodeIds: ["entry", "audit"] }],
-        },
       ],
     ];
     const invalid = new DatabaseSync(filePath);
@@ -689,11 +689,11 @@ describe("RvwDatabase", () => {
         },
       ],
       [
-        "duplicate exact-spine Edge ID",
+        "duplicate exact-backbone Edge ID",
         (graph) => {
           const edges = graph.edges as Array<Record<string, unknown>>;
-          const spineEdge = edges.find((edge) => edge.id === "effect-entry-reverse")!;
-          edges.push({ ...structuredClone(spineEdge), label: "duplicate identity" });
+          const backboneEdge = edges.find((edge) => edge.id === "effect-entry-reverse")!;
+          edges.push({ ...structuredClone(backboneEdge), label: "duplicate identity" });
         },
       ],
       [
@@ -732,15 +732,15 @@ describe("RvwDatabase", () => {
     invalid.close();
   });
 
-  it("accepts persisted twelve-Node spines and rejects thirteen-Node spines", () => {
-    expect(MAX_STRUCTURE_PRIMARY_SPINE_NODES).toBe(12);
+  it("bounds persisted backbones by derived Nodes and exact Edges", () => {
+    expect(MAX_STRUCTURE_PRIMARY_BACKBONE_NODES).toBe(12);
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const pullRequest = database.upsertPullRequest(
       github,
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
       "c".repeat(40),
     );
-    const createWithSpine = (nodeCount: number, idempotencySuffix = String(nodeCount)) => {
+    const createWithBackbone = (nodeCount: number, idempotencySuffix = String(nodeCount)) => {
       const nodes = Array.from({ length: nodeCount }, (_, index) => ({
         id: `node-${index + 1}`,
         label: `Node ${index + 1}`,
@@ -760,7 +760,7 @@ describe("RvwDatabase", () => {
       return database.createStructure({
         pullRequestId: pullRequest.id,
         sourceOid: github.headOid,
-        title: "Bounded reading spine",
+        title: "Bounded explanation backbone",
         scope: "The first-grasp backbone through one bounded relationship space.",
         originNodeId: "node-1",
         nodes,
@@ -768,29 +768,77 @@ describe("RvwDatabase", () => {
         presentation: {
           thesis: "Grasp this compact backbone before exploring the remaining graph.",
           startNodeId: "node-1",
-          primarySpine: {
-            nodeIds: nodes.map(({ id }) => id),
+          primaryBackbone: {
             edgeIds: edges.map(({ id }) => id),
           },
           regions: [],
         },
-        idempotencyKey: `structure-primary-spine-${idempotencySuffix}`,
-        idempotencyRequestHash: `structure-primary-spine-request-${idempotencySuffix}`,
+        idempotencyKey: `structure-primary-backbone-${idempotencySuffix}`,
+        idempotencyRequestHash: `structure-primary-backbone-request-${idempotencySuffix}`,
       });
     };
 
-    expect(createWithSpine(12).presentation?.primarySpine?.nodeIds).toHaveLength(12);
+    expect(createWithBackbone(12).presentation?.primaryBackbone?.edgeIds).toHaveLength(11);
     const revisionBeforeInvalidCreate = database.getDomainRevisions().structures;
-    expect(() => createWithSpine(13)).toThrowError(
+    expect(() => createWithBackbone(13)).toThrowError(
       expect.objectContaining({ code: "DATABASE_ERROR" }),
     );
     expect(database.listStructures(pullRequest.id)).toHaveLength(1);
     expect(database.getDomainRevisions().structures).toBe(revisionBeforeInvalidCreate);
 
-    const recoveredWithSameIdempotencyKey = createWithSpine(2, "13");
-    expect(recoveredWithSameIdempotencyKey.presentation?.primarySpine?.nodeIds).toHaveLength(2);
+    const recoveredWithSameIdempotencyKey = createWithBackbone(2, "13");
+    expect(recoveredWithSameIdempotencyKey.presentation?.primaryBackbone?.edgeIds).toHaveLength(1);
     expect(database.listStructures(pullRequest.id)).toHaveLength(2);
     expect(database.getDomainRevisions().structures).toBe(revisionBeforeInvalidCreate + 1);
+
+    const parallelNodes = [
+      {
+        id: "parallel-a",
+        label: "Parallel A",
+        description: null,
+        kind: null,
+        notation: "plain" as const,
+        anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+      },
+      {
+        id: "parallel-b",
+        label: "Parallel B",
+        description: null,
+        kind: null,
+        notation: "plain" as const,
+        anchor: null,
+      },
+    ];
+    const parallelEdges = Array.from({ length: 17 }, (_, index) => ({
+      id: `parallel-edge-${String(index + 1).padStart(2, "0")}`,
+      from: "parallel-a",
+      to: "parallel-b",
+      label: `relation ${index + 1}`,
+      directed: true,
+      anchors: [],
+    }));
+    const createWithParallelEdges = (edgeCount: number) =>
+      database.createStructure({
+        pullRequestId: pullRequest.id,
+        sourceOid: github.headOid,
+        title: "Parallel exact relations",
+        scope: "Each selected exact relation belongs to one bounded two-Node core.",
+        originNodeId: "parallel-a",
+        nodes: parallelNodes,
+        edges: parallelEdges.slice(0, edgeCount),
+        presentation: {
+          thesis: "The two responsibilities share several exact relations.",
+          startNodeId: "parallel-a",
+          primaryBackbone: { edgeIds: parallelEdges.slice(0, edgeCount).map(({ id }) => id) },
+          regions: [],
+        },
+        idempotencyKey: `structure-primary-backbone-parallel-${edgeCount}`,
+        idempotencyRequestHash: `structure-primary-backbone-parallel-request-${edgeCount}`,
+      });
+    expect(createWithParallelEdges(16).presentation?.primaryBackbone?.edgeIds).toHaveLength(16);
+    expect(() => createWithParallelEdges(17)).toThrowError(
+      expect.objectContaining({ code: "DATABASE_ERROR" }),
+    );
     database.close();
   });
 
@@ -848,8 +896,7 @@ describe("RvwDatabase", () => {
     const presentation = {
       thesis: "Follow the persisted effect into its audit record.",
       startNodeId: "entry",
-      primarySpine: {
-        nodeIds: ["entry", "effect", "audit"],
+      primaryBackbone: {
         edgeIds: ["entry-effect", "effect-audit"],
       },
       regions: [],

@@ -10,9 +10,12 @@
 - 通知permissionの状態表示と、Agentのcomment更新経路を介さずbrowser / OS通知を確認できるテスト通知
 - PR全体または明示されたreview subjectを調査し、Walkthrough、Structure、直接code readingから必要最小限の
   構成を選ぶCodex / Claude Code共通のbundled `rvw-review-compose` Skill
-- Structureへthesis、attention start、optionalなexact-Edge primary spine、spatially orderedなnamed comprehension regionからなる
-  optionalなauthorial `presentation`を追加。raw座標を保存せず、spatial organizerがある時だけcanonical配置を
-  authoringし、start-onlyではtopology配置のままoverview、focus、visual cue、exportへ説明意図を伝えられる
+- Structureへthesis、attention start、optionalなconnected exact-Edge primary backbone、spatially orderedなnamed
+  comprehension regionからなるoptionalなauthorial `presentation`を追加。raw座標を保存せず、spatial organizerが
+  ある時だけcanonical配置をauthoringし、start-onlyではtopology配置のままGuide、focus、visual cue、exportへ
+  説明意図を伝えられる
+- Structure Viewerへ折り畳み可能なGuide、Home / Backによるfocus navigation、clickableなRegion framing、
+  backbone salienceとfocus-hop attentionの分離、complete extentを保つsemantic zoomを追加
 - protocol version 5と`structure.presentation` capability
 
 ### Changed
@@ -26,7 +29,16 @@
   user-facing invocation記法を共有runtime contractにしないfail-closedな委譲へ変更
 - Structure preview / publish / updateはrequired nullableな`presentation`を受け取る。旧保存値は`null`へ
   normalizeし、`null`とstart-onlyでは同じtopology projectionを維持するためSQL migrationは不要。
-  region配列はcanonicalなspatial / legend順、各`nodeIds`は順序を持たないmembership setとして扱う
+- Viewer / exportで共有するdeterministicなobstacle-aware relation routeとstable label placementへ変更し、
+  exact endpointのvisible boundary portへ接続する。non-endpoint NodeへのEdge貫通とfocus変更によるlabel jumpを防ぎ、
+  shared / near-coincident corridorを持つdistinct visible relation（parallel / reciprocalを含む）の実質的lane分離と
+  normal-detail labelの相互非重複を保証
+- Structure presentationのregion配列はcanonicalなspatial / legend順、各`nodeIds`は順序を持たないmembership
+  setとして扱う
+- Region frameをpane-localなchunk lensとして保持し、focusを変えずmember / internal relationをfull relevanceで
+  表示。Home / Node focus / depth変更で解除し、Backでfocus / depth / cameraと一緒に復元
+- 長いprimary backboneのderived bandをdeterministicなserpentine複数行へ折り返し、region envelopeの衝突を
+  避けながらcanonical mapの縦方向を活用。row / layerを新しいprotocol semanticsにはしない
 - bundled Skillsのprotocol preflightをversion 5へ更新
 
 ### Fixed

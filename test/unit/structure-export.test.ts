@@ -88,7 +88,7 @@ function documentFor(structure = exportStructure()) {
 }
 
 describe("Structure SVG export", () => {
-  it("exports authored thesis, ordered regions, and primary spine without session state", () => {
+  it("exports authored thesis, ordered regions, and exact explanation backbone without session state", () => {
     const structure = exportStructure();
     structure.edges.push({
       id: "edge-parallel",
@@ -101,7 +101,7 @@ describe("Structure SVG export", () => {
     structure.presentation = {
       thesis: 'Flow <starts> here & stays factual "throughout".',
       startNodeId: "node-0",
-      primarySpine: { nodeIds: ["node-0", "node-1"], edgeIds: ["edge-0"] },
+      primaryBackbone: { edgeIds: ["edge-0"] },
       regions: [
         { label: "Input & validation", nodeIds: ["node-0", "node-2"] },
         { label: "Execution <core>", nodeIds: ["node-1", "node-3"] },
@@ -121,22 +121,18 @@ describe("Structure SVG export", () => {
     expect(document.source).toContain("Region R1: Input &amp; validation");
     expect(document.source).toContain("REGIONS · R1 Input &amp; validation (2 Nodes)");
     expect(document.source).toContain("START · Very long &lt;entry&gt; &amp; label");
-    expect(document.source).toContain(
-      "SPINE · P1–P2 is authored backbone order, not execution sequence",
-    );
+    expect(document.source).toContain("CORE RELATIONS · calls &lt;unsafe&gt; &amp;");
     expect(document.source).not.toContain('data-layer="presentation-regions"');
-    expect(document.source).toContain('data-edge-id="edge-0" data-primary-spine="true"');
-    expect(document.source).toMatch(/data-edge-id="edge-parallel"(?![^>]*data-primary-spine)/u);
+    expect(document.source).toContain('data-edge-id="edge-0" data-primary-backbone="true"');
+    expect(document.source).toMatch(/data-edge-id="edge-parallel"(?![^>]*data-primary-backbone)/u);
     expect(document.source).toContain('data-node-id="node-0" data-node-notation="plain"');
-    expect(document.source).toContain('data-node-primary-spine-mark="true"');
-    expect(document.source).toContain('data-node-primary-spine-order-mark="1"');
-    expect(document.source).toContain('data-node-primary-spine-order-mark="2"');
+    expect(document.source).toContain('data-node-primary-backbone-mark="true"');
     expect(document.source).toContain('data-presentation-start-node="true"');
     expect(document.source).toContain('data-node-presentation-start-mark="true"');
     expect(document.source).toContain('data-node-origin-mark="true"');
     expect(document.source).not.toContain("selected-edge");
     expect(document.source).not.toContain("focus-id");
-    expect(document.source).toContain("Reading spine position 1");
+    expect(document.source).toContain("Explanation backbone member");
     expect(document.source).toContain("Factual graph origin");
     expect(model.presentation?.regions).toHaveLength(2);
   });
@@ -146,7 +142,7 @@ describe("Structure SVG export", () => {
     structure.presentation = {
       thesis: "Begin at the shared boundary without inventing another spatial organizer.",
       startNodeId: "node-1",
-      primarySpine: null,
+      primaryBackbone: null,
       regions: [],
     };
 
@@ -154,17 +150,18 @@ describe("Structure SVG export", () => {
 
     expect(model.presentation).toMatchObject({
       thesis: structure.presentation.thesis,
-      primarySpineNodeOrder: [],
-      primarySpineEdgeOrder: [],
+      startNodeId: "node-1",
       regions: [],
     });
+    expect(model.presentation?.primaryBackboneNodeIds.size).toBe(0);
+    expect(model.presentation?.primaryBackboneEdgeIds.size).toBe(0);
     expect(document.source).toContain('data-layer="presentation-thesis"');
     expect(document.source).toContain("START · Node 1");
     expect(document.source).toContain('data-node-id="node-1"');
     expect(document.source).toContain('data-node-presentation-start-mark="true"');
-    expect(document.source).not.toContain("SPINE ·");
+    expect(document.source).not.toContain("CORE RELATIONS ·");
     expect(document.source).not.toContain("REGIONS ·");
-    expect(document.source).not.toContain("data-node-primary-spine-order-mark");
+    expect(document.source).not.toContain("data-node-primary-backbone-mark");
     expect(document.source).not.toContain('data-layer="presentation-region-members"');
     expect(document.source).not.toContain("data-presentation-region-member-node-id");
   });
@@ -186,6 +183,7 @@ describe("Structure SVG export", () => {
       structure.edges.filter((edge) => edge.directed).length,
     );
     expect(source.match(/data-edge-marker-kind=/gu)).toHaveLength(7);
+    expect(source.match(/refX="10"/gu)).toHaveLength(7);
     for (const [kind, color] of [
       ["default", palette.muted],
       ["added", palette.success],

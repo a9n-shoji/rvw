@@ -4541,25 +4541,90 @@ diffs-container > [slot="header-metadata"] {
   line-height: 1.35;
 }
 
-.structure-presentation-overview-thesis,
-.structure-presentation-overview-reading,
-.structure-presentation-overview-regions {
+.structure-presentation-guide-header {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px;
+}
+
+.structure-presentation-guide-header > strong {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font: 700 9px/1.4 var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.structure-presentation-guide-controls {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  gap: 3px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+.structure-presentation-guide-toggle {
+  display: inline-flex;
+  min-height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--panel);
+  font: 700 8px/1.2 var(--mono);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.structure-presentation-guide-toggle:hover,
+.structure-presentation-guide-toggle[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.structure-presentation-guide-toggle:focus-visible,
+.structure-presentation-overview-node:focus-visible,
+.structure-presentation-overview-relation-node:focus-visible,
+.structure-presentation-overview-region:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.structure-presentation-guide-count {
+  display: grid;
+  min-width: 15px;
+  height: 15px;
+  place-items: center;
+  padding: 0 3px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+  font-size: 8px;
+}
+
+.structure-presentation-guide-section {
   display: grid;
   min-width: 0;
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: 108px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
   padding: 5px 12px;
-}
-
-.structure-presentation-overview-reading,
-.structure-presentation-overview-regions {
   border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
-.structure-presentation-overview-thesis > strong,
-.structure-presentation-overview-reading > strong,
-.structure-presentation-overview-regions > strong {
+.structure-presentation-guide-section > strong {
   color: var(--accent);
   font: 700 8px/1.5 var(--mono);
   letter-spacing: 0.04em;
@@ -4588,13 +4653,6 @@ diffs-container > [slot="header-metadata"] {
   outline-offset: 1px;
 }
 
-.structure-presentation-overview-spine,
-.structure-presentation-overview-spine-entry {
-  display: flex;
-  width: max-content;
-  align-items: stretch;
-}
-
 .structure-presentation-overview-node {
   display: inline-flex;
   width: max-content;
@@ -4615,14 +4673,18 @@ diffs-container > [slot="header-metadata"] {
   cursor: pointer;
 }
 
+.structure-presentation-overview-node.compact {
+  min-height: 24px;
+  max-width: min(230px, 34%);
+  padding: 2px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .structure-presentation-overview-node:hover {
   border-color: var(--accent);
   background: var(--accent-soft);
-}
-
-.structure-presentation-overview-node:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
 }
 
 .structure-presentation-overview-node[data-focused="true"] {
@@ -4644,34 +4706,77 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-presentation-overview-connection {
-  display: grid;
+  display: flex;
   width: max-content;
-  min-width: 82px;
-  max-width: 184px;
+  min-width: 0;
+  max-width: 480px;
   flex: 0 0 auto;
-  grid-template-rows: minmax(14px, auto) 12px;
-  align-content: center;
   align-items: center;
-  padding: 0 7px;
-  color: var(--muted);
+  gap: 4px;
+  padding: 3px 5px;
+  border: 1px solid color-mix(in srgb, var(--done) 38%, var(--line));
+  border-radius: 7px;
+  color: var(--done);
+  background: color-mix(in srgb, var(--done) 5%, var(--panel));
   text-align: center;
 }
 
-.structure-presentation-overview-edge-label {
-  overflow-wrap: anywhere;
-  font-size: 8px;
-  line-height: 1.25;
+.structure-presentation-overview-scroll > ul {
+  display: flex;
+  width: max-content;
+  align-items: stretch;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.structure-presentation-overview-direction {
-  color: color-mix(in srgb, var(--accent) 72%, var(--muted));
-  font: 700 14px/0.8 var(--mono);
-  letter-spacing: -0.04em;
+.structure-presentation-overview-relation-node {
+  max-width: 132px;
+  min-height: 24px;
+  padding: 2px 5px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--done) 30%, var(--line));
+  border-radius: 5px;
+  color: var(--text);
+  background: var(--panel);
+  font: 700 8px/1.25 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
-.structure-presentation-overview-connection[data-direction="undirected"]
-  .structure-presentation-overview-direction {
+.structure-presentation-overview-relation-node:hover {
+  border-color: var(--done);
+  background: color-mix(in srgb, var(--done) 10%, var(--panel));
+}
+
+.structure-presentation-overview-relation-node[data-focused="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.structure-presentation-overview-relation {
+  display: grid;
+  min-width: 54px;
+  max-width: 150px;
+  justify-items: center;
   color: var(--muted);
+  font-size: 8px;
+  line-height: 1.2;
+}
+
+.structure-presentation-overview-relation > span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structure-presentation-overview-relation > b {
+  color: var(--done);
+  font: 700 13px/0.8 var(--mono);
 }
 
 .structure-presentation-overview-regions > ol {
@@ -4686,23 +4791,35 @@ diffs-container > [slot="header-metadata"] {
   scrollbar-width: thin;
 }
 
-.structure-presentation-overview-regions > ol:focus-visible {
-  border-radius: 5px;
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
+.structure-presentation-overview-regions li {
+  display: block;
+  flex: 0 0 auto;
 }
 
-.structure-presentation-overview-regions li {
+.structure-presentation-overview-region {
   display: inline-flex;
-  min-height: 26px;
-  flex: 0 0 auto;
+  min-height: 28px;
   align-items: center;
   gap: 5px;
   padding: 3px 7px 3px 4px;
-  border: 1px dashed color-mix(in srgb, var(--accent) 30%, var(--line));
+  border: 1px dashed color-mix(in srgb, var(--attention) 52%, var(--line));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 4%, var(--panel));
+  color: var(--text);
+  background: color-mix(in srgb, var(--attention) 6%, var(--panel));
+  font: 700 9px/1.2 var(--mono);
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.structure-presentation-overview-region:hover {
+  border-color: var(--attention);
+  background: color-mix(in srgb, var(--attention) 12%, var(--panel));
+}
+
+.structure-presentation-overview-region[aria-pressed="true"] {
+  border-style: solid;
+  border-color: var(--attention);
+  background: color-mix(in srgb, var(--attention) 18%, var(--panel));
 }
 
 .structure-presentation-overview-region-order {
@@ -4711,8 +4828,8 @@ diffs-container > [slot="header-metadata"] {
   height: 17px;
   place-items: center;
   border-radius: 50%;
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--attention);
+  background: color-mix(in srgb, var(--attention) 13%, var(--panel));
   font: 700 8px/1 var(--mono);
 }
 
@@ -4899,6 +5016,11 @@ diffs-container > [slot="header-metadata"] {
   background: var(--accent-soft);
 }
 
+.structure-toolbar button:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
 .structure-status {
   position: absolute;
   z-index: 11;
@@ -4936,6 +5058,10 @@ diffs-container > [slot="header-metadata"] {
   transform-origin: 0 0;
 }
 
+.structure-world.camera-transition {
+  transition: transform 180ms cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+
 .structure-edges {
   position: absolute;
   z-index: 1;
@@ -4951,12 +5077,18 @@ diffs-container > [slot="header-metadata"] {
   width: 25px;
   height: 15px;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--attention) 48%, var(--line));
   border-radius: 999px;
-  color: color-mix(in srgb, var(--accent) 72%, var(--text));
-  background: var(--panel);
+  color: color-mix(in srgb, var(--attention) 76%, var(--text));
+  background: color-mix(in srgb, var(--attention) 7%, var(--panel));
   font: 700 8px/1 var(--mono);
   pointer-events: none;
+}
+
+.structure-region-member[data-framed-region-member="true"] {
+  border-color: var(--attention);
+  color: var(--text);
+  background: color-mix(in srgb, var(--attention) 22%, var(--panel));
 }
 
 .structure-edges marker path {
@@ -5009,9 +5141,11 @@ diffs-container > [slot="header-metadata"] {
   opacity: 0.7;
 }
 
-.structure-edge.primary-spine {
-  stroke-width: 2;
-  opacity: 0.82;
+.structure-edge.primary-backbone {
+  stroke: color-mix(in srgb, var(--done) 78%, var(--structure-edge-theme));
+  stroke-width: 2.1;
+  stroke-dasharray: 6 3;
+  opacity: 0.88;
 }
 
 .structure-edge.focused {
@@ -5026,8 +5160,44 @@ diffs-container > [slot="header-metadata"] {
   opacity: 1;
 }
 
+.structure-edge.context-distant:not(.primary-backbone) {
+  opacity: 0.2;
+}
+
+.structure-edge.context-distant.primary-backbone {
+  opacity: 0.68;
+}
+
 .structure-edge.muted {
   opacity: 0.14;
+}
+
+.structure-edge-label-leader {
+  fill: none;
+  stroke: color-mix(in srgb, var(--muted) 68%, var(--line));
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.54;
+  vector-effect: non-scaling-stroke;
+}
+
+.structure-edge-label-leader.primary-backbone {
+  stroke: var(--done);
+  opacity: 0.78;
+}
+
+.structure-edge-label-leader.focus-incident,
+.structure-edge-label-leader.selected {
+  stroke: var(--accent);
+  opacity: 0.9;
+}
+
+.structure-edge-label-leader.context-distant:not(.primary-backbone) {
+  opacity: 0.2;
+}
+
+.structure-edge-label-leader.muted {
+  opacity: 0.1;
 }
 
 .structure-node {
@@ -5240,14 +5410,22 @@ diffs-container > [slot="header-metadata"] {
     0 0 0 3px color-mix(in srgb, var(--structure-node-theme) 14%, transparent);
 }
 
-.structure-node.primary-spine .structure-node-focus {
+.structure-node.primary-backbone .structure-node-focus {
   background-image: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--accent) 48%, transparent),
-    color-mix(in srgb, var(--accent) 18%, transparent)
+    color-mix(in srgb, var(--done) 74%, transparent),
+    color-mix(in srgb, var(--done) 22%, transparent)
   );
   background-repeat: no-repeat;
   background-size: 100% 3px;
+}
+
+.structure-node.context-distant:not(.primary-backbone) {
+  opacity: 0.5;
+}
+
+.structure-node.context-distant.primary-backbone {
+  opacity: 0.82;
 }
 
 .structure-node-presentation-start {
@@ -5411,8 +5589,31 @@ diffs-container > [slot="header-metadata"] {
   opacity: 0.28;
 }
 
-.structure-edge-label.primary-spine .structure-edge-select {
+.structure-edge-label.primary-backbone .structure-edge-select {
+  border-color: color-mix(in srgb, var(--done) 74%, var(--line));
   border-width: 1.5px;
+  color: var(--done);
+  background: color-mix(in srgb, var(--done) 7%, var(--panel));
+}
+
+.structure-edge-label.context-distant:not(.primary-backbone) {
+  opacity: 0.48;
+}
+
+.structure-viewer[data-semantic-zoom="overview"]
+  .structure-edge-label:not(.primary-backbone, .focus-incident, .framed-region-relation, .selected)
+  .structure-edge-label-text {
+  visibility: hidden;
+}
+
+.structure-viewer[data-semantic-zoom="overview"]
+  .structure-edge-label-leader:not(
+    .primary-backbone,
+    .focus-incident,
+    .framed-region-relation,
+    .selected
+  ) {
+  opacity: 0.12;
 }
 
 .structure-edge-label .structure-source.compact {
@@ -5595,17 +5796,29 @@ diffs-container > [slot="header-metadata"] {
   fill: color-mix(in srgb, var(--muted) 64%, var(--line));
 }
 
-.structure-minimap-primary-spine {
+.structure-minimap-primary-backbone {
   fill: none;
-  stroke: color-mix(in srgb, var(--accent) 62%, var(--line));
+  stroke: color-mix(in srgb, var(--done) 76%, var(--line));
   stroke-width: 1.6;
+  stroke-dasharray: 4 2;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
-.structure-minimap circle.primary-spine {
-  fill: color-mix(in srgb, var(--accent) 72%, var(--muted));
+.structure-minimap circle.primary-backbone {
+  fill: color-mix(in srgb, var(--done) 78%, var(--muted));
+}
+
+.structure-minimap circle.region-member {
+  stroke: var(--attention);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.structure-minimap circle.framed-region-member {
+  fill: color-mix(in srgb, var(--attention) 70%, var(--muted));
+  stroke-width: 2;
 }
 
 .structure-minimap circle.focused {
@@ -5627,9 +5840,7 @@ diffs-container > [slot="header-metadata"] {
 }
 
 @container (max-width: 760px) {
-  .structure-presentation-overview-thesis,
-  .structure-presentation-overview-reading,
-  .structure-presentation-overview-regions {
+  .structure-presentation-guide-section {
     grid-template-columns: 72px minmax(0, 1fr);
     gap: 6px;
     padding-right: 8px;
@@ -5650,5 +5861,11 @@ diffs-container > [slot="header-metadata"] {
 
   .structure-canvas-status {
     max-width: calc(100% - 20px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .structure-world.camera-transition {
+    transition: none;
   }
 }
