@@ -2200,7 +2200,10 @@ test("rebinds an older Structure history entry to the latest open tab after a re
   await viewer.locator('.structure-node[data-node-id="order-detail-page"]').click();
   await viewer
     .locator('.structure-node[data-node-id="order-detail-page"] > .structure-source.compact')
-    .click();
+    // This source navigation is only the prerequisite for the rename/history assertion below.
+    // Dispatch through the React action directly so a still-settling camera transform under
+    // full-suite resource load cannot turn the synthetic pointer click into a canvas gesture.
+    .dispatchEvent("click");
   await expect(
     page.getByRole("tab", { name: "src/frontend/orders/OrderDetailPage.tsx" }),
   ).toHaveAttribute("aria-selected", "true");
