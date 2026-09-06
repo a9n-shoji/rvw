@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { expect, test, type Locator, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
 import { contractSemanticAnchors } from "../fixtures/contract/contract-structures.mjs";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
@@ -2113,30 +2113,17 @@ test("ignores a pending Structure source response after browser Back restores an
   );
   expect(preparedResponse.ok()).toBe(true);
   const preparedPayload: unknown = await preparedResponse.json();
-  let releaseResponse!: () => void;
-  let markRequestSeen!: () => void;
-  let markResponseCompleted!: () => void;
-  let markResponseFailed!: (reason?: unknown) => void;
-  const responseGate = new Promise<void>((resolve) => {
-    releaseResponse = resolve;
+  let captureRequest!: (route: Route) => void;
+  const interceptedRequest = new Promise<Route>((resolve) => {
+    captureRequest = resolve;
   });
-  const requestSeen = new Promise<void>((resolve) => {
-    markRequestSeen = resolve;
-  });
-  const responseCompleted = new Promise<void>((resolve, reject) => {
-    markResponseCompleted = resolve;
-    markResponseFailed = reject;
-  });
-  await page.route("**/structures/*/anchors/resolve*", async (route) => {
-    markRequestSeen();
-    await responseGate;
-    try {
-      await route.fulfill({ status: preparedResponse.status(), json: preparedPayload });
-      markResponseCompleted();
-    } catch (error) {
-      markResponseFailed(error);
-    }
-  });
+  await page.route(
+    "**/structures/*/anchors/resolve*",
+    (route) => {
+      captureRequest(route);
+    },
+    { times: 1 },
+  );
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await openStructure(page, fullStackTitle);
@@ -2151,15 +2138,29 @@ test("ignores a pending Structure source response after browser Back restores an
   await viewer
     .locator('.structure-node[data-node-id="order-detail-page"] > .structure-source.compact')
     .click();
-  await requestSeen;
+  const pendingRoute = await new Promise<Route>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("Structure source request was not intercepted within 8 seconds.")),
+      8_000,
+    );
+    void interceptedRequest.then(
+      (route) => {
+        clearTimeout(timeout);
+        resolve(route);
+      },
+      (error: unknown) => {
+        clearTimeout(timeout);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 
   await page.goBack();
   await expect(viewer.locator(".structure-node.focused")).toHaveAttribute(
     "data-node-id",
     previousFocus!,
   );
-  releaseResponse();
-  await responseCompleted;
+  await pendingRoute.fulfill({ status: preparedResponse.status(), json: preparedPayload });
   await page.evaluate(
     () =>
       new Promise<void>((resolve) =>
