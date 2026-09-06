@@ -58,7 +58,9 @@ describe("protocol version contract", () => {
 
   it("documents the complete additive watch-ownership capability", () => {
     const protocol = readFileSync("docs/cli-protocol.md", "utf8");
+    const specification = readFileSync("docs/implementation-spec.md", "utf8");
     expect(protocol).toContain("comment.watchOwnership");
+    expect(specification).toContain("comment.watchOwnership");
   });
 
   it("keeps Structure protocol terminology on origin rather than removed focus input", () => {

@@ -1230,6 +1230,7 @@ agent.transport
 comment.create
 comment.list
 comment.watch
+comment.watchOwnership
 comment.read
 comment.reply
 comment.edit
