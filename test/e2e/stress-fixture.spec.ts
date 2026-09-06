@@ -28,8 +28,16 @@ test("renders and interacts with a 100-node Structure in the real Viewer", async
     .click();
   const viewer = page.locator('[data-structure-id="76000000-0000-4000-8000-200000000100"]');
   await expect(viewer.locator(".structure-node")).toHaveCount(100);
-  await viewer.getByRole("button", { name: "表示中を収める" }).click();
-  await viewer.locator('.structure-node[data-node-id="node-42"]').click();
+  const clickVisibleCenter = async (selector: string): Promise<void> => {
+    const bounds = await viewer.locator(selector).boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.click(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+  };
+  await clickVisibleCenter('button[aria-label="表示中を収める"]');
+  // A reviewer clicks the transformed card at its visible screen position. Locator.click() would
+  // first scroll the card's untransformed world box into view and compose an artificial native
+  // scroll offset with the Structure camera.
+  await clickVisibleCenter('.structure-node[data-node-id="node-42"]');
   await expect(viewer.locator('.structure-node[data-node-id="node-42"]')).toHaveClass(/focused/u);
   expect(Date.now() - startedAt).toBeLessThan(10_000);
 });

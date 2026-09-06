@@ -70,7 +70,8 @@ import {
 } from "../structure-export.js";
 import {
   buildFullStructureRenderModel,
-  buildStructureRenderModel,
+  buildStructureRenderFoundation,
+  selectStructureRenderModel,
   STRUCTURE_EDGE_ARROW_LENGTH,
   STRUCTURE_EDGE_ARROW_WIDTH,
 } from "../structure-render-model.js";
@@ -814,21 +815,25 @@ export function StructureViewer({
     return result;
   }, [changedFiles]);
   const labelEdgeIds = useMemo(() => new Set(visible.edgeIds), [visible.edgeIds]);
-  const renderModel = useMemo(
+  const renderFoundation = useMemo(
     () =>
-      buildStructureRenderModel({
+      buildStructureRenderFoundation({
         structure,
         positions,
         sourceChangeKinds,
-        selection: {
-          nodeIds: visible.nodeIds,
-          edgeIds: visible.edgeIds,
-          labelEdgeIds,
-        },
         labelAccessory: "source-actions",
         edgeLabelMode: "viewer-adaptive",
       }),
-    [labelEdgeIds, positions, sourceChangeKinds, structure, visible.edgeIds, visible.nodeIds],
+    [positions, sourceChangeKinds, structure],
+  );
+  const renderModel = useMemo(
+    () =>
+      selectStructureRenderModel(renderFoundation, {
+        nodeIds: visible.nodeIds,
+        edgeIds: visible.edgeIds,
+        labelEdgeIds,
+      }),
+    [labelEdgeIds, renderFoundation, visible.edgeIds, visible.nodeIds],
   );
   const regionFrameBounds = useMemo<ReadonlyMap<string, StructureCameraBounds>>(
     () =>
@@ -1404,6 +1409,70 @@ export function StructureViewer({
     } catch (error) {
       setStatus(error instanceof Error ? error.message : `参照先を開けません · ${anchor.path}`);
     }
+  };
+
+  const openContextInGraph = (requestedNodeIds: readonly string[]): void => {
+    const currentNodeIds = new Set(structure.nodes.map((node) => node.id));
+    const nodeIds = requestedNodeIds.filter((nodeId) => currentNodeIds.has(nodeId));
+    if (nodeIds.length === 0) return;
+    const measuredSurfaceSize = measureSurfaceSize();
+    const frameIntent: StructureCameraFrame = { kind: "nodes", nodeIds };
+    const nextViewport = structureViewportForNodeIds({
+      nodeIds,
+      positions,
+      surfaceSize: measuredSurfaceSize,
+    });
+    if (!nextViewport) return;
+    recordCurrentNavigation({
+      viewMode: "graph",
+      focusId: focusIdRef.current,
+      depth: "all",
+      framedRegionId: null,
+      cameraFrame: frameIntent,
+      viewport: nextViewport,
+    });
+    setSelectedEdgeId(null);
+    depthRef.current = "all";
+    setDepth("all");
+    framedRegionIdRef.current = null;
+    setFramedRegionId(null);
+    viewModeRef.current = "graph";
+    setViewMode("graph");
+    animateCameraTo(nextViewport, frameIntent);
+    setStatus(`Context componentのexact ${nodeIds.length} NodeをGraphで表示しました。`);
+    requestAnimationFrame(() => graphModeButtonRef.current?.focus());
+  };
+
+  const openExactEdgeInGraph = (edgeId: string): void => {
+    const edge = structure.edges.find((candidate) => candidate.id === edgeId);
+    if (!edge) return;
+    const nodeIds = [...new Set([edge.from, edge.to])];
+    const measuredSurfaceSize = measureSurfaceSize();
+    const frameIntent: StructureCameraFrame = { kind: "nodes", nodeIds };
+    const nextViewport = structureViewportForNodeIds({
+      nodeIds,
+      positions,
+      surfaceSize: measuredSurfaceSize,
+    });
+    if (!nextViewport) return;
+    recordCurrentNavigation({
+      viewMode: "graph",
+      focusId: focusIdRef.current,
+      depth: "all",
+      framedRegionId: null,
+      cameraFrame: frameIntent,
+      viewport: nextViewport,
+    });
+    setSelectedEdgeId(edge.id);
+    depthRef.current = "all";
+    setDepth("all");
+    framedRegionIdRef.current = null;
+    setFramedRegionId(null);
+    viewModeRef.current = "graph";
+    setViewMode("graph");
+    animateCameraTo(nextViewport, frameIntent);
+    setStatus(`exact Edge「${edge.label}」をGraphで選択しました。`);
+    requestAnimationFrame(() => graphModeButtonRef.current?.focus());
   };
 
   const deleteStructure = async (): Promise<void> => {
@@ -2180,6 +2249,11 @@ export function StructureViewer({
               surfaceRef={regionsSurfaceRef}
               framedRegionId={framedRegionId}
               onOpenRegion={frameRegion}
+              onOpenContext={openContextInGraph}
+              onOpenEdge={openExactEdgeInGraph}
+              onOpenEdgeSource={(edgeId, anchorIndex, anchor, right) =>
+                void openSource({ kind: "edge", edgeId, anchorIndex }, anchor, right)
+              }
               onPointerDown={(event) => {
                 if (
                   event.button !== 0 ||

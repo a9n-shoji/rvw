@@ -8,15 +8,18 @@ import {
 import {
   boxesOverlap,
   buildFullStructureRenderModel,
+  buildStructureRenderFoundation,
   buildStructureRenderModel,
   EDGE_LABEL_LINE_HEIGHT,
   labelBox,
   routeStructureEdges,
+  selectStructureRenderModel,
   STRUCTURE_EDGE_ARROW_LENGTH,
   STRUCTURE_EDGE_MIN_TERMINAL_APPROACH,
   type StructureEdgeGeometry,
 } from "../../src/web/structure-render-model.js";
 import { createContractStructures } from "../fixtures/contract/contract-structures.mjs";
+import { createStructureStressFixture } from "../fixtures/stress/stress-fixture.js";
 
 function segmentIntersectsBox(
   start: { x: number; y: number },
@@ -950,39 +953,80 @@ describe("Structure shared render model", () => {
     ).toEqual(Object.fromEntries([...routes].map(([edgeId, geometry]) => [edgeId, geometry.path])));
   });
 
-  it("places labels against the complete artifact before filtering the active lens", () => {
+  it("selects an active lens from complete artifact-stable geometry", () => {
     const structure = renderStructure();
     const positions = initialStructureLayout(structure);
-    const complete = buildStructureRenderModel({
+    const foundation = buildStructureRenderFoundation({
       structure,
       positions,
       sourceChangeKinds: new Map(),
-      selection: {
-        nodeIds: new Set(structure.nodes.map(({ id }) => id)),
-        edgeIds: new Set(structure.edges.map(({ id }) => id)),
-        labelEdgeIds: new Set(structure.edges.map(({ id }) => id)),
-      },
       labelAccessory: "source-actions",
       edgeLabelMode: "viewer-adaptive",
     });
+    const complete = selectStructureRenderModel(foundation, {
+      nodeIds: new Set(structure.nodes.map(({ id }) => id)),
+      edgeIds: new Set(structure.edges.map(({ id }) => id)),
+      labelEdgeIds: new Set(structure.edges.map(({ id }) => id)),
+    });
     const focusedEdgeIds = new Set(["forward", "parallel"]);
-    const focused = buildStructureRenderModel({
-      structure,
-      positions,
-      sourceChangeKinds: new Map(),
-      selection: {
-        nodeIds: new Set(["node-0", "node-1"]),
-        edgeIds: focusedEdgeIds,
-        labelEdgeIds: focusedEdgeIds,
-      },
-      labelAccessory: "source-actions",
-      edgeLabelMode: "viewer-adaptive",
+    const focused = selectStructureRenderModel(foundation, {
+      nodeIds: new Set(["node-0", "node-1"]),
+      edgeIds: focusedEdgeIds,
+      labelEdgeIds: focusedEdgeIds,
     });
     const completePositions = Object.fromEntries(
       complete.labels.map(({ edge, x, y }) => [edge.id, { x, y }]),
     );
     expect(Object.fromEntries(focused.labels.map(({ edge, x, y }) => [edge.id, { x, y }]))).toEqual(
       Object.fromEntries([...focusedEdgeIds].map((edgeId) => [edgeId, completePositions[edgeId]])),
+    );
+    for (const focusedEdge of focused.edges) {
+      expect(focusedEdge).toBe(complete.edges.find(({ edge }) => edge.id === focusedEdge.edge.id));
+    }
+    for (const focusedNode of focused.nodes) {
+      expect(focusedNode).toBe(complete.nodes.find(({ node }) => node.id === focusedNode.node.id));
+    }
+    for (const focusedLabel of focused.labels) {
+      expect(focusedLabel).toBe(
+        complete.labels.find(({ edge }) => edge.id === focusedLabel.edge.id),
+      );
+    }
+    expect(focused.presentation).toBe(complete.presentation);
+  });
+
+  it("uses deterministic obstacle-free simple routes for a large fan-out", () => {
+    const structure = createStructureStressFixture({ nodeCount: 100, shape: "fan-out" });
+    const positions = initialStructureLayout(structure);
+    const routes = routeStructureEdges(structure.edges, structure.nodes, positions);
+
+    expect(routes.size).toBe(structure.edges.length);
+    for (const edge of structure.edges) {
+      const route = routes.get(edge.id)!;
+      for (const node of structure.nodes) {
+        if (node.id === edge.from || node.id === edge.to) continue;
+        const point = positions[node.id]!;
+        const nodeBox = {
+          left: point.x,
+          top: point.y,
+          right: point.x + STRUCTURE_NODE_WIDTH,
+          bottom: point.y + STRUCTURE_NODE_HEIGHT,
+        };
+        expect(
+          route.points
+            .slice(1)
+            .some((end, index) => segmentIntersectsBox(route.points[index]!, end, nodeBox)),
+          `${edge.id} crosses ${node.id}`,
+        ).toBe(false);
+      }
+    }
+
+    const reordered = routeStructureEdges(
+      [...structure.edges].reverse(),
+      [...structure.nodes].reverse(),
+      positions,
+    );
+    expect(Object.fromEntries([...reordered].map(([id, route]) => [id, route.path]))).toEqual(
+      Object.fromEntries([...routes].map(([id, route]) => [id, route.path])),
     );
   });
 

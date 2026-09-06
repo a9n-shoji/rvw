@@ -104,6 +104,20 @@ export interface StructureRenderModel {
   bounds: StructureBox | null;
 }
 
+/**
+ * Selection-independent geometry for one factual Structure revision and one set of Node positions.
+ *
+ * Routing and label placement intentionally use the complete graph so that changing the reviewer's
+ * focus does not move surviving relations. Keeping that expensive work in a separate foundation also
+ * lets the Viewer change its lens without routing the same complete graph again.
+ */
+export interface StructureRenderFoundation {
+  nodes: readonly StructureRenderNode[];
+  edges: readonly StructureRenderEdge[];
+  labels: readonly StructureEdgeLabelPlacement[];
+  presentation: StructureRenderPresentation | null;
+}
+
 export type StructureLabelAccessory = "source-actions" | "none";
 export type StructureEdgeLabelMode = "viewer-adaptive" | "export-complete";
 
@@ -874,6 +888,93 @@ function popRouteQueue(queue: RouteQueueEntry[]): RouteQueueEntry | undefined {
   return first;
 }
 
+function simpleOrthogonalGridRoute(input: {
+  sources: readonly WeightedRoutePoint[];
+  targets: readonly WeightedRoutePoint[];
+  obstacles: readonly StructureBox[];
+  channelOffset: number;
+}): StructurePoint[] | null {
+  const outerBounds = mergedBounds([
+    ...input.obstacles,
+    ...input.sources.map(({ point }) => ({
+      left: point.x,
+      top: point.y,
+      right: point.x,
+      bottom: point.y,
+    })),
+    ...input.targets.map(({ point }) => ({
+      left: point.x,
+      top: point.y,
+      right: point.x,
+      bottom: point.y,
+    })),
+  ]);
+  if (!outerBounds) return null;
+  let best: { cost: number; key: string; points: StructurePoint[] } | null = null;
+  for (const source of input.sources) {
+    for (const target of input.targets) {
+      const candidates =
+        input.channelOffset === 0
+          ? [
+              [source.point, { x: target.point.x, y: source.point.y }, target.point],
+              [source.point, { x: source.point.x, y: target.point.y }, target.point],
+            ]
+          : [
+              outerBounds.left - EDGE_ROUTE_OUTER_GUTTER - input.channelOffset,
+              outerBounds.right + EDGE_ROUTE_OUTER_GUTTER + input.channelOffset,
+            ]
+              .map((x) => [
+                source.point,
+                { x, y: source.point.y },
+                { x, y: target.point.y },
+                target.point,
+              ])
+              .concat(
+                [
+                  outerBounds.top - EDGE_ROUTE_OUTER_GUTTER - input.channelOffset,
+                  outerBounds.bottom + EDGE_ROUTE_OUTER_GUTTER + input.channelOffset,
+                ].map((y) => [
+                  source.point,
+                  { x: source.point.x, y },
+                  { x: target.point.x, y },
+                  target.point,
+                ]),
+              );
+      for (const rawPoints of candidates) {
+        const points = simplifyRoutePoints(rawPoints);
+        if (
+          points.length < 2 ||
+          points
+            .slice(1)
+            .some((point, index) =>
+              orthogonalSegmentBlocked(points[index]!, point, input.obstacles),
+            )
+        ) {
+          continue;
+        }
+        const length = points.slice(1).reduce((total, point, index) => {
+          const previous = points[index]!;
+          return total + Math.abs(point.x - previous.x) + Math.abs(point.y - previous.y);
+        }, 0);
+        const cost =
+          source.penalty +
+          target.penalty +
+          length +
+          Math.max(0, points.length - 2) * EDGE_ROUTE_BEND_COST;
+        const key = points.map(pointKey).join("|");
+        if (
+          best === null ||
+          cost < best.cost ||
+          (cost === best.cost && stableCompare(key, best.key) < 0)
+        ) {
+          best = { cost, key, points };
+        }
+      }
+    }
+  }
+  return best?.points ?? null;
+}
+
 function orthogonalGridRoute(input: {
   sources: readonly WeightedRoutePoint[];
   targets: readonly WeightedRoutePoint[];
@@ -881,6 +982,17 @@ function orthogonalGridRoute(input: {
   channelOffset?: number;
 }): StructurePoint[] | null {
   if (input.sources.length === 0 || input.targets.length === 0) return null;
+  // Large layouts otherwise rebuild an O(grid vertices × obstacles) visibility graph for every
+  // factual Edge. Most layered fan-in/fan-out relations have a clear one-bend route; choose the
+  // same shortest-length + bend + port-penalty objective here and retain the complete grid search
+  // for routes that actually need to navigate around multiple cards.
+  if (input.obstacles.length >= 64) {
+    const simple = simpleOrthogonalGridRoute({
+      ...input,
+      channelOffset: Math.max(0, input.channelOffset ?? 0),
+    });
+    if (simple) return simple;
+  }
   const terminals = [...input.sources, ...input.targets];
   const outerBounds = mergedBounds([
     ...input.obstacles,
@@ -1019,8 +1131,10 @@ function orthogonalObstacleRoute(input: {
 }): StructurePoint[] | null {
   const preferredSource = preferredRouteSide(input.from, input.to);
   const preferredTarget = preferredRouteSide(input.to, input.from);
-  const sourcePortClearance = EDGE_NODE_CLEARANCE + Math.max(0, input.channelOffset ?? 0);
-  const targetPortClearance = Math.max(sourcePortClearance, EDGE_ARROW_TERMINAL_STUB);
+  // Channel separation belongs to the shared routing grid. Extending an endpoint stub by the
+  // channel offset can make that stub jump through an unrelated card before it reaches the grid.
+  const sourcePortClearance = EDGE_NODE_CLEARANCE;
+  const targetPortClearance = EDGE_ARROW_TERMINAL_STUB;
   const sourcePorts = routePorts(
     input.fromBox,
     input.portOffsets.from,
@@ -1990,16 +2104,14 @@ export function placeEdgeLabels(
   return placements;
 }
 
-export function buildStructureRenderModel(input: {
+export function buildStructureRenderFoundation(input: {
   structure: Structure;
   positions: Readonly<Record<string, StructurePoint>>;
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>;
-  selection: StructureRenderSelection;
   labelAccessory: StructureLabelAccessory;
   edgeLabelMode: StructureEdgeLabelMode;
-}): StructureRenderModel {
-  const { structure, positions, sourceChangeKinds, selection, labelAccessory, edgeLabelMode } =
-    input;
+}): StructureRenderFoundation {
+  const { structure, positions, sourceChangeKinds, labelAccessory, edgeLabelMode } = input;
   const sourceLabels = shortestUniqueSourceLabels([
     ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor.path] : [])),
     ...structure.edges.flatMap((edge) => edge.anchors.map((anchor) => anchor.path)),
@@ -2016,8 +2128,6 @@ export function buildStructureRenderModel(input: {
       },
     ];
   });
-  const nodes = allNodes.filter(({ node }) => selection.nodeIds.has(node.id));
-  const renderNodeIds = new Set(nodes.map(({ node }) => node.id));
   const routes = routeStructureEdges(structure.edges, structure.nodes, positions);
   const allEdges = structure.edges.flatMap((edge) => {
     const geometry = routes.get(edge.id);
@@ -2025,11 +2135,6 @@ export function buildStructureRenderModel(input: {
       ? [{ edge, geometry, source: edgeSourcePresentation(edge, sourceChangeKinds) }]
       : [];
   });
-  const edges = allEdges.filter(
-    ({ edge }) =>
-      selection.edgeIds.has(edge.id) && renderNodeIds.has(edge.from) && renderNodeIds.has(edge.to),
-  );
-  const edgeIds = new Set(edges.map(({ edge }) => edge.id));
   const allLabels = placeEdgeLabels(
     structure.edges,
     structure.nodes,
@@ -2038,9 +2143,6 @@ export function buildStructureRenderModel(input: {
     routes,
     labelAccessory,
     edgeLabelMode,
-  );
-  const labels = allLabels.filter(
-    ({ edge }) => edgeIds.has(edge.id) && selection.labelEdgeIds.has(edge.id),
   );
   const presentation = structure.presentation
     ? (() => {
@@ -2113,6 +2215,23 @@ export function buildStructureRenderModel(input: {
         };
       })()
     : null;
+  return { nodes: allNodes, edges: allEdges, labels: allLabels, presentation };
+}
+
+export function selectStructureRenderModel(
+  foundation: StructureRenderFoundation,
+  selection: StructureRenderSelection,
+): StructureRenderModel {
+  const nodes = foundation.nodes.filter(({ node }) => selection.nodeIds.has(node.id));
+  const renderNodeIds = new Set(nodes.map(({ node }) => node.id));
+  const edges = foundation.edges.filter(
+    ({ edge }) =>
+      selection.edgeIds.has(edge.id) && renderNodeIds.has(edge.from) && renderNodeIds.has(edge.to),
+  );
+  const edgeIds = new Set(edges.map(({ edge }) => edge.id));
+  const labels = foundation.labels.filter(
+    ({ edge }) => edgeIds.has(edge.id) && selection.labelEdgeIds.has(edge.id),
+  );
   const boxes: StructureBox[] = nodes.map(({ point }) => ({
     left: point.x,
     top: point.y,
@@ -2126,7 +2245,25 @@ export function buildStructureRenderModel(input: {
     ),
   );
   boxes.push(...labels.flatMap(({ leaderBounds }) => (leaderBounds ? [leaderBounds] : [])));
-  return { nodes, edges, labels, presentation, bounds: mergedBounds(boxes) };
+  return {
+    nodes,
+    edges,
+    labels,
+    presentation: foundation.presentation,
+    bounds: mergedBounds(boxes),
+  };
+}
+
+export function buildStructureRenderModel(input: {
+  structure: Structure;
+  positions: Readonly<Record<string, StructurePoint>>;
+  sourceChangeKinds: ReadonlyMap<string, ChangeKind>;
+  selection: StructureRenderSelection;
+  labelAccessory: StructureLabelAccessory;
+  edgeLabelMode: StructureEdgeLabelMode;
+}): StructureRenderModel {
+  const { selection, ...foundationInput } = input;
+  return selectStructureRenderModel(buildStructureRenderFoundation(foundationInput), selection);
 }
 
 export function buildFullStructureRenderModel(input: {
