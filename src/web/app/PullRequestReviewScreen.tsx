@@ -2179,7 +2179,11 @@ export function PullRequestReviewScreen({
     [openDocument],
   );
   const openFileStructureReference = useCallback(
-    (reference: FileStructureReference, sourcePane: DocumentPaneId): void => {
+    (
+      reference: FileStructureReference,
+      sourcePane: DocumentPaneId,
+      openInRightPane: boolean,
+    ): void => {
       const document: ActiveDocument = {
         kind: "structure",
         id: reference.structure.id,
@@ -2188,7 +2192,11 @@ export function PullRequestReviewScreen({
       };
       const workspace = documentWorkspaceRef.current;
       const openPanes = documentPaneIds(workspace, document);
-      const targetPane = openPanes.includes(sourcePane) ? sourcePane : (openPanes[0] ?? sourcePane);
+      const targetPane = openInRightPane
+        ? "right"
+        : openPanes.includes(sourcePane)
+          ? sourcePane
+          : (openPanes[0] ?? sourcePane);
       navigateToDocument(document, targetPane);
       structureNavigationSequence.current += 1;
       const target: StructureNavigationTarget = {
@@ -2865,8 +2873,8 @@ export function PullRequestReviewScreen({
                     paneId,
                   )
                 }
-                onOpenStructureReference={(reference) =>
-                  openFileStructureReference(reference, paneId)
+                onOpenStructureReference={(reference, openInRightPane) =>
+                  openFileStructureReference(reference, paneId, openInRightPane)
                 }
               />
             </Suspense>

@@ -301,8 +301,8 @@ empty fileは従来どおり明示的に扱う。
 - sidebarとdocument workspaceの境界、および二ペイン間の境界はpointer dragで横幅を変更できる。
   sidebarはmain reading surfaceの最低幅を残し、各document paneも最低幅を持つ。dividerのdouble clickは
   既定幅へ戻し、左右arrow keyでも調整できる。幅はbrowser内だけの一時状態で永続化しない。
-- sidebarのfile、search result、Walkthrough、comment targetと、document pane内のWalkthrough reference、
-  diagram node、repository Markdown link、comment内referenceは、通常clickで左pane、`Cmd` / `Ctrl`+clickで右paneへ
+- sidebarのfile、search result、Walkthrough、Structure、comment targetと、document pane内のWalkthrough reference、
+  diagram node、repository Markdown link、Structure backlink、comment内referenceは、通常clickで左pane、`Cmd` / `Ctrl`+clickで右paneへ
   開く。操作元やfocused paneは文書を開く先へ影響させない。tab clickはそのtabが属するpaneをactivateし、
   同一Markdown内の見出しlinkは表示中pane内を移動する。新しい右paneを初めて作る場合も、code
   referenceの選択範囲を描画完了後にviewport中央へfocusする。

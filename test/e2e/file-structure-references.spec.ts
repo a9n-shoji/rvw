@@ -101,6 +101,69 @@ async function routeStructureFingerprint(page: Page): Promise<{ revision: number
   return state;
 }
 
+test("opens a sidebar Structure in a new right pane with Cmd+click", async ({ context, page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const initialUrl = page.url();
+  await page.getByRole("button", { name: "Structure 5", exact: true }).click();
+  const structureEntry = page
+    .getByRole("navigation", { name: "レビュー文書" })
+    .getByRole("button", { name: "Order placement behavior", exact: true });
+
+  await expect(page.locator('.document-pane[data-pane="right"]')).toHaveCount(0);
+  await structureEntry.click({ modifiers: ["Meta"] });
+
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  await expect(rightPane.getByRole("tab", { name: "Order placement behavior" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rightPane.locator(`[data-structure-id="${primaryStructureId}"]`)).toBeVisible();
+  await expect(
+    page.locator('.document-pane[data-pane="left"]').getByRole("tab", {
+      name: "Pull Request.md",
+    }),
+  ).toHaveAttribute("aria-selected", "true");
+  expect(context.pages()).toHaveLength(1);
+  expect(page.url()).toBe(initialUrl);
+});
+
+test("opens a file Structure backlink in the right pane with Cmd+click", async ({
+  context,
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const initialUrl = page.url();
+  const sourcePath = "src/application/orders/create-order.ts";
+  await page.getByRole("button", { name: sourcePath, exact: true }).click();
+  const leftPane = page.locator('.document-pane[data-pane="left"]');
+  await expect(leftPane.getByRole("tab", { name: sourcePath })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await leftPane
+    .getByRole("button", { name: "このファイルを参照するStructure 2件", exact: true })
+    .click();
+
+  const result = page
+    .getByRole("menu", { name: "このファイルを参照するStructure" })
+    .getByRole("menuitem", { name: /Order placement behavior Node: Create order$/u });
+  await result.click({ modifiers: ["Meta"] });
+
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  await expect(rightPane.getByRole("tab", { name: "Order placement behavior" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  const rightViewer = rightPane.locator(`[data-structure-id="${primaryStructureId}"]`);
+  await expect(rightViewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/u);
+  await expect(leftPane.getByRole("tab", { name: sourcePath })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(context.pages()).toHaveLength(1);
+  expect(page.url()).toBe(initialUrl);
+});
+
 test("navigates from a file backlink to the focused Structure Node and restores reading state", async ({
   page,
 }) => {

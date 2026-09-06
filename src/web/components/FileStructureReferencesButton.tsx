@@ -25,7 +25,7 @@ export function FileStructureReferencesButton({
   fileRef: RepositoryFileRef | null;
   structureFingerprint: string;
   structuresLoaded: boolean;
-  onSelect: (reference: FileStructureReference) => void;
+  onSelect: (reference: FileStructureReference, openInRightPane: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
@@ -234,11 +234,23 @@ export function FileStructureReferencesButton({
                   onFocus={() => {
                     focusedStructureIdRef.current = reference.structure.id;
                   }}
-                  onClick={() => {
+                  onMouseDown={(event) => {
+                    if (!event.metaKey && !event.ctrlKey) return;
+                    event.preventDefault();
                     menuHadFocusRef.current = false;
                     focusedStructureIdRef.current = null;
                     setOpen(false);
-                    onSelect(reference);
+                    onSelect(reference, true);
+                  }}
+                  onClick={(event) => {
+                    if (event.metaKey || event.ctrlKey) return;
+                    menuHadFocusRef.current = false;
+                    focusedStructureIdRef.current = null;
+                    setOpen(false);
+                    onSelect(reference, false);
+                  }}
+                  onContextMenu={(event) => {
+                    if (event.ctrlKey || event.metaKey) event.preventDefault();
                   }}
                 >
                   <strong>{reference.structure.title}</strong>

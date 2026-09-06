@@ -165,6 +165,9 @@ export function ReviewTreeItems({
                 if (event.metaKey || event.ctrlKey) return;
                 onOpenStructure(structure, false);
               }}
+              onContextMenu={(event) => {
+                if (event.ctrlKey || event.metaKey) event.preventDefault();
+              }}
               title={`${structure.title}\n${structure.scope}\n${structure.sourceOid.slice(0, 8)}`}
               aria-label={structure.title}
             >
