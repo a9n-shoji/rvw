@@ -634,13 +634,15 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   expect(wrappedLabel.breakCount).toBeGreaterThanOrEqual(2);
   expect(wrappedLabel.lineClamp).toBe("none");
   expect(wrappedLabel.fullyVisible).toBe(true);
-  const [labelButtonBox, sourceActionBox] = await Promise.all([
-    contractEdgeButton.boundingBox(),
-    contractEdgeLabel.locator(".structure-edge-sources > summary").boundingBox(),
-  ]);
-  expect(labelButtonBox).not.toBeNull();
-  expect(sourceActionBox).not.toBeNull();
-  expect(sourceActionBox!.x).toBeGreaterThanOrEqual(labelButtonBox!.x + labelButtonBox!.width - 1);
+  const sourceActionGap = await contractEdgeLabel.evaluate((label) => {
+    const labelButton = label.querySelector<HTMLElement>(".structure-edge-select");
+    const sourceAction = label.querySelector<HTMLElement>(".structure-edge-sources > summary");
+    if (!labelButton || !sourceAction) {
+      throw new Error("Expected the Structure Edge label and source action to be rendered.");
+    }
+    return sourceAction.getBoundingClientRect().left - labelButton.getBoundingClientRect().right;
+  });
+  expect(sourceActionGap).toBeGreaterThanOrEqual(-1);
   const labelTextContained = await contractEdgeLabel
     .locator(".structure-edge-select")
     .evaluate((button) => {
@@ -2113,17 +2115,6 @@ test("ignores a pending Structure source response after browser Back restores an
   );
   expect(preparedResponse.ok()).toBe(true);
   const preparedPayload: unknown = await preparedResponse.json();
-  let captureRequest!: (route: Route) => void;
-  const interceptedRequest = new Promise<Route>((resolve) => {
-    captureRequest = resolve;
-  });
-  await page.route(
-    "**/structures/*/anchors/resolve*",
-    (route) => {
-      captureRequest(route);
-    },
-    { times: 1 },
-  );
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await openStructure(page, fullStackTitle);
@@ -2135,9 +2126,21 @@ test("ignores a pending Structure source response after browser Back restores an
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
     /focused/u,
   );
-  await viewer
-    .locator('.structure-node[data-node-id="order-detail-page"] > .structure-source.compact')
-    .click();
+  let captureRequest!: (route: Route) => void;
+  const interceptedRequest = new Promise<Route>((resolve) => {
+    captureRequest = resolve;
+  });
+  await page.route(
+    "**/structures/*/anchors/resolve*",
+    (route) => {
+      captureRequest(route);
+    },
+    { times: 1 },
+  );
+  const sourceAction = viewer.locator(
+    '.structure-node[data-node-id="order-detail-page"] > .structure-source.compact',
+  );
+  await sourceAction.dispatchEvent("click");
   const pendingRoute = await new Promise<Route>((resolve, reject) => {
     const timeout = setTimeout(
       () => reject(new Error("Structure source request was not intercepted within 8 seconds.")),
