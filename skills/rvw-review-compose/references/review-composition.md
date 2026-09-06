@@ -76,8 +76,10 @@ independently useful ownership maps or every concept in the Pull Request.
 
 Choose a Structure when the reviewer needs to explore a bounded behavior through responsibilities,
 ownership, dependencies, contracts, or side effects from a factual code origin. It may contain factual
-direction and may use an authorial thesis, attention start, optional exact-relation primary spine of at most 12 Nodes, and ordered regions to prioritize
-how the simultaneously visible space is first understood. Do not use it for a sequence whose meaning
+direction and may use an authorial thesis, attention start, optional exact-relation primary spine of at
+most 12 Nodes, and ordered, named comprehension regions to shape its canonical spatial overview and
+legend. Presentation guides attention and a new session's initial focus; it does not alter factual
+direction or turn the Structure into a reading sequence. Do not use it for a sequence whose meaning
 depends on prose between stops, route transitions, or a required ending.
 
 ### Direct code reading
@@ -157,9 +159,20 @@ scope.include: responsibilities and relations needed for the question
 scope.exclude: adjacent behaviors or inventories to omit
 mustEstablish: candidate node, relation, and boundary claims to verify from source evidence
 emphasis: optional user-requested detail or risk emphasis
-presentation: optional requested thesis, attention start, at most one exact-relation visual backbone, and ordered regions; never raw coordinates or reviewer state
+presentation: optional requested thesis, attention start, at most one exact-relation visual backbone, and named comprehension regions ordered for spatial composition and legend; never raw coordinates or reviewer state
 existingArtifact: optional explicitly supplied URI for the same subject
 ```
+
+When requesting a non-null Structure presentation, keep its fields explicit: a meaningful `thesis` and
+`startNodeId`, `primarySpine` as either one honest backbone or `null`, and `regions` as an array that may
+be empty. When a spine is present, the attention start must be its first Node; it need not be a region
+member. Treat each region's `nodeIds` as a membership set and region array order only as canonical spatial/legend composition, never
+as reviewer reading priority, reading sequence, runtime order, or importance. If a meaningful thesis and
+start exist but the verified shape has neither an honest backbone nor useful named comprehension chunks,
+request the exact start-only form with `primarySpine: null` and `regions: []`; topology supplies its
+geometry, while presentation still supplies attention, overview, and new-session focus. Otherwise do not
+invent a fake spine, dummy region, or decorative grouping. Use `presentation: null` when no meaningful
+authorial presentation remains.
 
 Do not use the brief to override a producer's representation rejection boundary or source-exactness
 contract. The producer may reject a Walkthrough that has no useful order, or a Structure that is really

@@ -348,7 +348,7 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   await expect(
     viewer.locator('.structure-node[data-node-id="order-detail-route"] .structure-node-focus'),
   ).toHaveAccessibleName(
-    "GET /orders/:orderId · factual origin · authorial start · spatial reading priority 1 of 7 · region R1: HTTP boundary",
+    "GET /orders/:orderId · factual origin · authorial start · reading spine position 1 of 7 · region R1: HTTP boundary",
   );
   await expect(
     viewer.locator(
@@ -1884,7 +1884,7 @@ test("rebases a cached Structure session when authored presentation changes whil
       data: {
         title: updatedTitle,
         presentation: {
-          thesis: `${previousPresentation.thesis} Reading priority reversed.`,
+          thesis: `${previousPresentation.thesis} Reading spine reversed.`,
           startNodeId: previousPresentation.primarySpine.nodeIds.at(-1),
           primarySpine: {
             nodeIds: [...previousPresentation.primarySpine.nodeIds].reverse(),
@@ -1951,4 +1951,71 @@ test("rebases a cached Structure session when authored presentation changes whil
       .evaluate((element) => (element as HTMLElement).style.left),
   );
   expect(pageLeft).toBeLessThan(routeLeft);
+});
+
+test("shows thesis and an attention start without manufacturing a spine or regions", async ({
+  page,
+}) => {
+  const detailResponse = await page.request.get(
+    `/api/pull-requests/${pullRequestId}/structures/${fullStackStructureId}`,
+  );
+  expect(detailResponse.ok()).toBe(true);
+  const detail = (await detailResponse.json()) as {
+    structure: { title: string; presentation: unknown; nodes: unknown[]; edges: unknown[] };
+  };
+  const thesis = "The shared response contract is the best place to begin free exploration.";
+  const updateResponse = await page.request.post(
+    `/api/fixture/structures/${fullStackStructureId}/update`,
+    {
+      data: {
+        presentation: {
+          thesis,
+          startNodeId: "order-detail-contract",
+          primarySpine: null,
+          regions: [],
+        },
+      },
+    },
+  );
+  expect(updateResponse.ok()).toBe(true);
+
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await openStructure(page, detail.structure.title);
+    const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+    const overview = viewer.locator(".structure-presentation-overview");
+    const startNode = viewer.locator('.structure-node[data-node-id="order-detail-contract"]');
+
+    await expect(viewer).toHaveAttribute("data-has-presentation", "true");
+    await expect(overview.locator(".structure-presentation-overview-thesis")).toContainText(thesis);
+    await expect(overview.locator(".structure-presentation-overview-reading > strong")).toHaveText(
+      "Start",
+    );
+    await expect(overview.locator(".structure-presentation-overview-spine")).toHaveCount(0);
+    await expect(overview.locator(".structure-presentation-overview-regions")).toHaveCount(0);
+    await expect(startNode).toHaveClass(/focused/);
+    await expect(startNode).toHaveAttribute("data-presentation-start-node", "true");
+    await expect(viewer.locator('.structure-node[data-primary-spine="true"]')).toHaveCount(0);
+    await expect(viewer.locator(".structure-region-member")).toHaveCount(0);
+    await expect(viewer.locator(".structure-minimap-presentation-start")).toHaveCount(1);
+    await expect(viewer.locator(".structure-minimap-primary-spine")).toHaveCount(0);
+    await expect(viewer.locator(".structure-node")).toHaveCount(detail.structure.nodes.length);
+    await expect(viewer.locator(".structure-edges .structure-edge")).toHaveCount(
+      detail.structure.edges.length,
+    );
+
+    await viewer
+      .locator('.structure-node[data-node-id="order-detail-page"] .structure-node-focus')
+      .click();
+    await overview
+      .locator('.structure-presentation-overview-node[data-node-id="order-detail-contract"]')
+      .click();
+    await expect(startNode).toHaveClass(/focused/);
+  } finally {
+    const restoreResponse = await page.request.post(
+      `/api/fixture/structures/${fullStackStructureId}/update`,
+      { data: { presentation: detail.structure.presentation } },
+    );
+    expect(restoreResponse.ok()).toBe(true);
+  }
 });

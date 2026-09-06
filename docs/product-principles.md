@@ -77,7 +77,7 @@ Agentが実装やarchitectureを説明する場合、成立を保証するsource
 Walkthroughは、順序とprose自体がartifactである意図的な読解pathである。Structureは、PRに関係する
 boundedなbehaviorをfactualなcode entrypointから依存、contract、side effectへ任意の方向に辿りながら、
 同時に見渡せるspatial explanationである。Agentはsubject、scope、entrypoint、stableなNode / Edge ID、
-exact source anchorに加え、必要ならthesis、authorial start、optionalなexact-Edge primary spine、ordered regionをauthorial semanticsとして
+exact source anchorに加え、必要ならthesis、authorial start、optionalなexact-Edge primary spine、spatially orderedなcomprehension regionをauthorial semanticsとして
 提示できる。これは座標や一本道のstepperではない。座標、pan、zoom、manual positionは人間の一時的な
 reading stateに留める。表示範囲を1-hop / 2-hopへ明示的に絞ることはできるが、
 Allでrelationを暗黙に隠さない。高次数になるsubjectはscopeを分ける。PRで検証するbehaviorに接地しない
@@ -87,9 +87,13 @@ Allでrelationを暗黙に隠さない。高次数になるsubjectはscopeを分
 Structureはneutralなgraph viewerではなく、Walkthroughやcode readingで形成したmental modelを、変更された
 behaviorを成立させる責務とrelationへ位置付け直すreading surfaceである。factual graph、authorial
 presentation、ephemeral reviewer sessionを混ぜない。presentationがあればviewerはauthorial start、optionalな
-2〜12 Nodeのexact-Edge primary spine、ordered regionを
-base map、初期orientation、visual emphasisへ反映し、なければfactsとentrypointからtopology projectionを作る。
-region orderはreading priorityであってraw座標ではなく、region-only mapは順序を失わないboundedな複数行配置へ折り返せる。
+2〜12 Nodeのexact-Edge primary spine、spatially orderedなcomprehension regionをoverviewとvisual cueへ反映する。primary spineまたは
+regionがspatial organizerとして存在する場合だけbase mapへ反映し、start-only presentationと`null`はfactsと
+entrypointから同じtopology projectionを作る。start-onlyでも意味のあるthesis、attention start、新規sessionの
+focus、exportは失わない。
+regionはnamed comprehension chunkで、array順はcanonicalなspatial orderとlegend順である。reading sequence、
+runtime順、architectural importanceではなく、各region内の`nodeIds`にも順序はない。region-only mapはこの
+spatial orderを失わないboundedな複数行配置へ折り返せる。
 membershipは明示Node IDと対応するR badge / legendで示し、人間が動かしたNodeを囲うgeometryから推測しない。
 primary spineはこの説明で先に掴む2〜12 Nodeのbackboneというauthorialな優先と強調を表すが、runtime順、Edge方向、
 project全体でのarchitectural importance、completeness、review conclusionは主張しない。人間は同じ空間を俯瞰、局所探索、

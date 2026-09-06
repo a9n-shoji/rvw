@@ -566,8 +566,9 @@ The current codes and conditions are:
   diagnostic has a non-forward directional-link ratio of at least `0.25`.
 
 All layout fields are calculated from the factual topology, origin, and stable IDs, even when the
-Viewer uses a non-null presentation for display geometry. They diagnose graph shape without treating a
-reverse authorial reading order as a wrong Edge direction.
+Viewer uses an organizer-backed presentation for different display geometry. Start-only presentation
+shares the topology geometry. These fields diagnose graph shape without treating a reverse authorial
+reading order as a wrong Edge direction.
 
 Consumers branch on `code`, never on the display-oriented `message`, and ignore unknown warning
 codes. Future warning codes may be added to protocol v5 without changing the protocol version;
@@ -660,30 +661,36 @@ Node `notation` is optional and normalizes to `plain`; accepted values are `plai
 it is not part of the authorial `presentation` contract.
 
 A non-null `presentation` has a 1–1000-character `thesis`, a current `startNodeId`, an optional
-`primarySpine`, and 0–12 `regions`. It must contain either a spine or at least one region. The start is
-the first authorial attention anchor and is independent of the factual `originNodeId`. A non-null spine
-has 2–12 unique current `nodeIds` and exactly `nodeIds.length - 1` current `edgeIds`; its first Node is
-the start. Each Edge must join the corresponding consecutive Node pair in either factual direction, so
-parallel and reciprocal relations are never emphasized ambiguously and spine order never rewrites Edge
-direction. Each region has a 1–100-character label and one or more unique current Node IDs. A Node may
-be on the spine and in one region, but may not occur in multiple regions. Each region's spine members
-must form one contiguous interval, and those intervals follow region array order. Region order is
-authorial reading priority rather than a raw coordinate claim; a renderer may wrap region-only chunks
-into a bounded multirow layout while keeping that order unambiguous. Exact Node IDs define membership. Presentation
-expresses the reading anchor, an optional backbone to grasp first, and spatial chunks—not runtime order,
-architectural importance, completeness, review findings, or coordinates.
+`primarySpine`, and 0–12 `regions`. The exact start-only shape (`primarySpine: null`, `regions: []`) is
+valid: it declares a thesis and attention start without declaring a spatial organizer. The start is
+independent of the factual `originNodeId`. A non-null spine has 2–12 unique current `nodeIds` and exactly
+`nodeIds.length - 1` current `edgeIds`; its first Node is the start. Each Edge must join the corresponding
+consecutive Node pair in either factual direction, so parallel and reciprocal relations are never
+emphasized ambiguously and spine order never rewrites Edge direction. Each region has a 1–100-character
+label and one or more unique current Node IDs. A Node may be on the spine and in one region, but may not
+occur in multiple regions. A region's `nodeIds` are a membership set; their array order has no semantic
+meaning. `startNodeId` need not belong to region 1 or to any region. Each region's spine members must form
+one contiguous interval, and those intervals follow the outer region array order. This preserves
+spatial coherence; it is not a reading sequence. The outer order is canonical spatial input and legend
+order only; it never asserts reviewer reading priority, temporal sequence, runtime or causal flow, or
+architectural importance. A renderer may wrap region-only chunks into a bounded multirow layout while
+preserving that spatial/legend order. Presentation expresses the attention anchor, an optional backbone
+to grasp first, and spatial chunks—not completeness, review findings, or coordinates.
 
 The primary-spine limit is 12 Nodes and therefore 11 Edge IDs, independently of the 50-Node graph
 limit. The spine is a compact first-grasp backbone, not an exhaustive authored tour through the graph.
 
-The viewer uses a non-null presentation for canonical placement, initial orientation, and visual
-emphasis, and starts a new session at `startNodeId`. That initial focus is derived from the current
-artifact, not persisted or remote-controlled session state; `originNodeId` remains a distinct factual
-entrypoint marker. A screen-space overview exposes the thesis, exact-relation reading spine, and ordered
-region legend; matching member badges avoid treating manual geometry as region membership. With
-`presentation: null`, the prior topology projection and origin-based initial
-focus/orientation remain. Both cases retain every Node, Edge, direction, source action, and free
-exploration; Structure is never an autoplay or stepper.
+The viewer uses a declared spine and/or regions as spatial organizers for canonical placement and visual
+emphasis, and starts every new non-null-presentation session at `startNodeId`. Start-only presentation
+uses the same topology-derived canonical geometry as `presentation: null`, while retaining its thesis,
+start cue, initial focus, and export semantics. Null presentation instead starts at `originNodeId`, which
+remains a distinct factual entrypoint marker. A screen-space overview exposes the thesis, start, any
+exact-relation reading spine, and the spatial-order region legend; matching member badges avoid treating
+manual geometry as region membership. Null and start-only share one layout basis, so updates between
+them—and changes to thesis and/or start while no organizer exists—preserve surviving manual geometry.
+Adding, removing, or changing the spatial organizer rebases canonical geometry; prose, exact Edge
+selection, and region-label-only changes do not. Every form retains every Node, Edge, direction, source
+action, and free exploration; Structure is never an autoplay or stepper.
 
 Limits are 50 nodes, 200 edges, a 200-character title, a 4000-character scope, 200-character labels,
 2000-character descriptions, 100-character kinds, and 2 MiB for the normalized Structure content.
@@ -835,9 +842,10 @@ deliberately avoids a fixed template, an exhaustive review boundary, and AI-revi
 
 `rvw-structure` produces one PR-relevant behavior space with a factual code entrypoint, gives an
 upstream brief's subject, review question, behavior boundary, scope, inclusions, exclusions, and emphasis
-and requested spatial presentation authoring priority, independently verifies every suggested origin,
+and requested spatial-presentation emphasis, independently verifies every suggested origin,
 relation, invariant, and other implementation assertion in committed code, and publishes stable-ID Node
-and Edge claims plus an optional thesis, attention start, exact-relation primary spine, and ordered regions at one exact commit. It
+and Edge claims plus an optional thesis, attention start, exact-relation primary spine, and spatially
+ordered comprehension regions at one exact commit. It
 does not choose PR-wide coverage, the type mix, or companion Artifacts, but it retains the local rejection
 boundaries for ordered prose or transition paths, missing factual origins, and static inventories. It also
 rejects giant or inferred graphs, vague relationships, raw coordinates or reviewer-state instructions, implicit

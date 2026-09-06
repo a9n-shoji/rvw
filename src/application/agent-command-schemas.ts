@@ -439,13 +439,6 @@ function refineStructureContent(
         message: "startNodeIdのNodeが存在しません。",
       });
     }
-    if (value.presentation.primarySpine === null && value.presentation.regions.length === 0) {
-      context.addIssue({
-        code: "custom",
-        path: ["presentation"],
-        message: "presentationにはprimarySpineまたはregionを少なくとも一つ指定してください。",
-      });
-    }
     const primarySpine = value.presentation.primarySpine;
     if (primarySpine !== null) {
       const spineNodeIds = new Set<string>();

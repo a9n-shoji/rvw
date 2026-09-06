@@ -940,6 +940,18 @@ export function validateContractStructureFixture() {
       nodes: fullStackStructureNodes,
       edges: fullStackStructureEdges,
     },
+    {
+      title: "Payment reconciliation start-only presentation contract",
+      originNodeId: "payment-reconciliation",
+      presentation: {
+        thesis: "Begin at reconciliation without manufacturing a path or comprehension chunk.",
+        startNodeId: "payment-reconciliation",
+        primarySpine: null,
+        regions: [],
+      },
+      nodes: secondaryStructureNodes,
+      edges: secondaryStructureEdges,
+    },
   ];
   for (const structure of structureContracts) {
     if (!Object.hasOwn(structure, "presentation")) {
@@ -949,13 +961,30 @@ export function validateContractStructureFixture() {
     if (!nodeIds.has(structure.originNodeId)) {
       throw new Error(`${structure.title} origin is not a current Node`);
     }
-    if (!structure.presentation) continue;
+    if (structure.presentation === null) continue;
+    if (
+      typeof structure.presentation !== "object" ||
+      Array.isArray(structure.presentation) ||
+      Object.keys(structure.presentation).sort().join(",") !==
+        "primarySpine,regions,startNodeId,thesis" ||
+      typeof structure.presentation.thesis !== "string" ||
+      typeof structure.presentation.startNodeId !== "string" ||
+      !Object.hasOwn(structure.presentation, "primarySpine") ||
+      !Array.isArray(structure.presentation.regions)
+    ) {
+      throw new Error(`${structure.title} has malformed presentation content`);
+    }
     if (!nodeIds.has(structure.presentation.startNodeId)) {
       throw new Error(`${structure.title} presentation start is not a current Node`);
     }
     const primarySpine = structure.presentation.primarySpine;
-    if (primarySpine) {
+    if (primarySpine !== null) {
       if (
+        typeof primarySpine !== "object" ||
+        Array.isArray(primarySpine) ||
+        Object.keys(primarySpine).sort().join(",") !== "edgeIds,nodeIds" ||
+        !Array.isArray(primarySpine.nodeIds) ||
+        !Array.isArray(primarySpine.edgeIds) ||
         primarySpine.nodeIds.length < 2 ||
         primarySpine.nodeIds.length > MAX_STRUCTURE_PRIMARY_SPINE_NODES
       ) {
@@ -990,8 +1019,6 @@ export function validateContractStructureFixture() {
           );
         }
       }
-    } else if (structure.presentation.regions.length === 0) {
-      throw new Error(`${structure.title} presentation has no spatial organizer`);
     }
     const regionByNodeId = new Map();
     structure.presentation.regions.forEach((region, regionIndex) => {

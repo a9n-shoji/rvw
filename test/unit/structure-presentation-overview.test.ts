@@ -63,7 +63,7 @@ function overviewStructure(): Structure {
 }
 
 describe("Structure presentation overview", () => {
-  it("keeps exact spine Edge labels and distinguishes factual direction from reading priority", () => {
+  it("keeps exact spine Edge labels and distinguishes factual direction from spine order", () => {
     const model = buildStructurePresentationOverviewModel(overviewStructure())!;
 
     expect(model.startNode).toMatchObject({ id: "a", label: "Node A", isStart: true });
@@ -85,15 +85,15 @@ describe("Structure presentation overview", () => {
     ]);
   });
 
-  it("represents a region-only presentation through its authorial start and ordered regions", () => {
+  it("keeps authorial start independent from canonical region order", () => {
     const structure = overviewStructure();
     structure.presentation = {
       thesis: "The policy areas are the useful chunks.",
       startNodeId: "c",
       primarySpine: null,
       regions: [
-        { label: "Policy", nodeIds: ["c", "d"] },
         { label: "Ingress", nodeIds: ["a", "b"] },
+        { label: "Policy", nodeIds: ["c", "d"] },
       ],
     };
 
@@ -102,7 +102,25 @@ describe("Structure presentation overview", () => {
     expect(model.startNode).toMatchObject({ id: "c", isStart: true });
     expect(model.spineNodes).toEqual([]);
     expect(model.spineConnections).toEqual([]);
-    expect(model.regions.map(({ label }) => label)).toEqual(["Policy", "Ingress"]);
+    expect(model.regions.map(({ label }) => label)).toEqual(["Ingress", "Policy"]);
+  });
+
+  it("represents thesis and attention start without manufacturing a spine or regions", () => {
+    const structure = overviewStructure();
+    structure.presentation = {
+      thesis: "Begin at the shared policy without inventing additional spatial structure.",
+      startNodeId: "c",
+      primarySpine: null,
+      regions: [],
+    };
+
+    const model = buildStructurePresentationOverviewModel(structure)!;
+
+    expect(model.thesis).toBe(structure.presentation.thesis);
+    expect(model.startNode).toMatchObject({ id: "c", isStart: true });
+    expect(model.spineNodes).toEqual([]);
+    expect(model.spineConnections).toEqual([]);
+    expect(model.regions).toEqual([]);
   });
 
   it("stays absent for the explicit topology-only fallback", () => {

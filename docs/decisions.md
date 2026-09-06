@@ -36,12 +36,14 @@ state. Coordinates, focus, viewport, and manual positions never enter the artifa
 legacy `graph_json` normalizes to `null` on read, so this change needs no SQL migration.
 
 For a non-null value, require a 1–1000-character thesis and a current `startNodeId` that declares the
-first authorial attention anchor independently of the factual entrypoint. Require at least one useful
-spatial organizer: either one optional `primarySpine` or one or more regions. When present, the spine
-contains 2–12 unique current Node IDs and exactly one current Edge ID for each adjacent Node pair. Each
-chosen Edge must join its corresponding pair in either factual direction, and the first spine Node must
-equal `startNodeId`. This makes the emphasized relation exact even for parallel or reciprocal Edges,
-without making authorial reading order a factual direction claim.
+first authorial attention anchor independently of the factual entrypoint. The exact start-only shape
+(`primarySpine: null`, `regions: []`) is valid: it carries the thesis and start cue without claiming a
+spatial organizer. An author may additionally declare one optional `primarySpine`, one or more regions,
+or both. When present, the spine contains 2–12 unique current Node IDs and exactly one current Edge ID
+for each adjacent Node pair. Each chosen Edge must join its corresponding pair in either factual
+direction, and the first spine Node must equal `startNodeId`. This makes the emphasized relation exact
+even for parallel or reciprocal Edges, without making authorial reading order a factual direction
+claim.
 
 The 12-Node cap is deliberately smaller than the 50-Node graph cap. A primary spine is the compact
 backbone a reviewer should be able to grasp first, not an authored tour that tries to account for every
@@ -49,31 +51,39 @@ Node. A longer candidate must choose the actually explanatory backbone, use regi
 chunking, narrow the Structure's behavior boundary, or move to a Walkthrough when transitions and
 ordered stops carry the meaning. Consequently a spine contains at most 11 exact Edge IDs.
 
-Allow 0–12 ordered regions with 1–100-character labels and one or more current Node IDs. A Node may
-appear in the spine and one region, but it cannot appear in multiple regions. The spine members of each
-region must occupy one contiguous interval, and those intervals must follow region array order. A
-region therefore remains one comprehension chunk instead of being interleaved across the authored
-backbone. Region array order is reading priority, not a durable coordinate claim: a renderer may wrap a
-region-only layout into a bounded grid. Exact `nodeIds` are the membership truth. A renderer must expose
-that membership independently of session geometry, and a session-derived enclosing rectangle must not
-imply that a dragged non-member joined the region. The current Viewer and export use an ordered
-R-number legend plus member badges and a row-major grid; those visual primitives and packing constants
-remain implementation details rather than protocol semantics.
+Allow 0–12 ordered comprehension/spatial regions with 1–100-character labels and one or more current
+Node IDs. A Node may appear in the spine and one region, but it cannot appear in multiple regions.
+`nodeIds` is an exact membership set; its internal array order has no meaning. `startNodeId` need not
+belong to the first region or to any region. The spine members of each region must occupy one contiguous
+interval, and those intervals must follow region array order. This is a spatial-coherence constraint
+that prevents one chunk from being interleaved across the displayed backbone, not a reading sequence.
+The outer region order is canonical spatial input and legend order only. It never asserts reviewer
+reading priority, temporal sequence, runtime or causal flow, or architectural importance. A renderer
+may wrap a region-only layout into a bounded grid while preserving that spatial/legend order. A
+renderer must expose exact membership independently of session geometry, and a session-derived
+enclosing rectangle must not imply that a dragged non-member joined the region. The current Viewer and
+export use an R-number legend plus member badges and a row-major grid; those visual primitives and
+packing constants remain implementation details rather than protocol semantics.
 
-Use the start, spine, and regions in canonical placement, initial orientation, and visual emphasis. A new
-session with presentation starts at `startNodeId`; that default is derived from the current artifact,
-not persisted or remotely controlled reviewer state. Keep `originNodeId` visible as the distinct factual
-entrypoint. Retain every Node and Edge, preserve factual Edge direction, and keep focus, source
-verification, pan, zoom, drag, and unrestricted exploration available. `presentation: null` keeps the
-original topology-derived projection and origin-based initial focus/orientation.
+Use a declared spine and/or regions as spatial organizers for canonical placement and visual emphasis.
+Start-only presentation deliberately uses the same topology-derived canonical geometry as
+`presentation: null`, because it declares no spatial organizer. It still renders the thesis and start
+cue, includes them in export, and starts a new session at `startNodeId`; that default is derived from the
+current artifact, not persisted or remotely controlled reviewer state. `presentation: null` instead
+starts at the factual `originNodeId`. Keep `originNodeId` visible as the distinct factual entrypoint in
+both cases. Retain every Node and Edge, preserve factual Edge direction, and keep focus, source
+verification, pan, zoom, drag, and unrestricted exploration available.
 
-Treat the layout-bearing portion of presentation—start, spine Node identities and order, and
-region membership/order—as part of the canonical base-map identity. When that identity changes for the
-same Structure URI, rebase the pane-local Node geometry to the new canonical projection instead of
-letting surviving manual coordinates contradict the new explanation. Preserve reviewer focus, depth,
-selected relation, and zoom; translate the rebased viewport so the focused surviving Node stays at the
-same screen point. Thesis-only, primary-Edge-only, or region-label-only edits do not reflow, and factual graph-only updates
-with unchanged presentation continue to preserve surviving manual positions. Explicit layout reset
+Treat the spatial-organizer identity—organizer presence, start while an organizer exists, spine Node
+identities/order, and region membership/outer order—as part of the canonical base-map identity. Adding,
+removing, or changing that identity for the same Structure URI rebases pane-local Node geometry to the
+new canonical projection instead of letting surviving manual coordinates contradict the new spatial
+explanation. Preserve reviewer focus, depth, selected relation, and zoom; translate the rebased viewport
+so the focused surviving Node stays at the same screen point. `presentation: null` and start-only share
+one topology layout basis, so transitions between them and edits to the thesis and/or start while the
+presentation remains start-only preserve surviving manual geometry. Thesis-only,
+exact-primary-Edge-only, or region-label-only edits do not reflow, and factual graph-only updates with
+unchanged spatial organizer continue to reconcile surviving manual positions. Explicit layout reset
 uses the same rebase behavior. This gives artifact semantics priority only when the author changes
 spatial meaning, while retaining reviewer state in all other updates.
 
@@ -90,26 +100,27 @@ Apply the Structure / Walkthrough boundary by what carries the explanation, not 
 exists. A request → service → repository main flow can be a Structure when the simultaneously visible
 relations are sufficient, but belongs in a Walkthrough when prose between transitions or a required
 ending carries the meaning. Hub fan-out and later convergence are strong Structure shapes and may use
-regions with no spine. A non-execution A/B/C reading priority may use one spine. Generic architecture
+regions with no spine. A non-execution A/B/C first-grasp backbone may use one spine. Generic architecture
 inventory remains neither: send the reviewer to bounded Structures or direct code reading instead.
 
 The semantic contract fixed by this decision is the layer separation, the independent authorial start,
-at most one exact-relation backbone, ordered exact region membership, explicit nullable fallback, and
-session rebase rule for layout-bearing authorial changes. It does not fix pixel coordinates, column or
-row counts, packing distances, enclosure shapes, badge styling, overview height, truncation, minimap
-appearance, or other renderer mechanics. Those may evolve while preserving deterministic placement,
-readable order, exact membership, factual direction, unrestricted exploration, and the session
-precedence above.
+valid start-only presentation, at most one exact-relation backbone, spatially ordered exact region
+membership, explicit nullable fallback, and session rebase rule for spatial-organizer changes. It does
+not fix pixel coordinates, column or row counts, packing distances, enclosure shapes, badge styling,
+overview height, truncation, minimap appearance, or other renderer mechanics. Those may evolve while
+preserving deterministic placement, canonical spatial/legend order, exact membership, factual
+direction, unrestricted exploration, and the session precedence above.
 
 ### Alternatives considered
 
 - Keep topology-only projection: rejected because it cannot distinguish the explanation the author
   intends from other valid layouts of the same facts.
-- Add only a thesis: rejected because prose alone gives the renderer no structural basis for canonical
-  placement or orientation. A non-null presentation therefore needs a spine or at least one region.
+- Require a spatial organizer for every non-null presentation: rejected because a thesis plus explicit
+  attention start is useful even when topology is the most honest geometry. Start-only presentation
+  keeps that topology basis without manufacturing a spine or decorative regions.
 - Add multiple authored routes: rejected because competing orders are hard to validate and move
-  Structure toward a stepper. At most one exact primary spine plus ordered regions can expose branches
-  without prescribing a complete traversal.
+  Structure toward a stepper. At most one exact primary spine plus spatially ordered regions can expose
+  branches without prescribing a complete traversal.
 - Require a spine for every presentation: rejected because a hub, fan-out, convergence, or reciprocal
   relationship space may have an honest start and useful chunks without one privileged linear
   backbone. Making the spine optional prevents authors from distorting factual claims merely to satisfy

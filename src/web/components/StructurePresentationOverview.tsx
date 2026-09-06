@@ -120,18 +120,18 @@ export function buildStructurePresentationOverviewModel(
 function FocusNodeButton({
   node,
   focused,
-  priority,
-  priorityCount,
+  spinePosition,
+  spineLength,
   onFocusNode,
 }: {
   node: StructurePresentationOverviewNode;
   focused: boolean;
-  priority: number | null;
-  priorityCount: number;
+  spinePosition: number | null;
+  spineLength: number;
   onFocusNode: (nodeId: string) => void;
 }) {
-  const priorityDescription =
-    priority === null ? "" : ` Spatial reading priority ${priority} of ${priorityCount}.`;
+  const spineDescription =
+    spinePosition === null ? "" : ` Reading spine position ${spinePosition} of ${spineLength}.`;
   const startDescription = node.isStart ? " Authorial start node." : "";
   return (
     <button
@@ -140,7 +140,7 @@ function FocusNodeButton({
       data-node-id={node.id}
       data-authorial-start={node.isStart ? "true" : undefined}
       data-focused={focused ? "true" : undefined}
-      aria-label={`${node.label}.${startDescription}${priorityDescription} Focus this node.`}
+      aria-label={`${node.label}.${startDescription}${spineDescription} Focus this node.`}
       aria-pressed={focused}
       onClick={() => onFocusNode(node.id)}
     >
@@ -164,9 +164,9 @@ function directionGlyph(direction: StructurePresentationEdgeDirection): string {
 function directionDescription(direction: StructurePresentationEdgeDirection): string {
   switch (direction) {
     case "forward":
-      return "The factual direction follows the left-to-right reading priority.";
+      return "The factual direction follows the left-to-right reading spine.";
     case "reverse":
-      return "The factual direction points right-to-left, opposite the reading priority.";
+      return "The factual direction points right-to-left, opposite the reading spine.";
     case "undirected":
       return "This factual relation is undirected.";
   }
@@ -188,7 +188,7 @@ export function StructurePresentationOverview({
   return (
     <section
       className="structure-presentation-overview"
-      aria-label="Authorial spatial reading priority, not execution sequence"
+      aria-label="Authorial spatial presentation, not execution sequence"
     >
       <div
         className="structure-presentation-overview-thesis"
@@ -205,7 +205,7 @@ export function StructurePresentationOverview({
           role="group"
           aria-label={
             hasSpine
-              ? "Spatial reading priority. This is not an execution sequence. Choose any node directly."
+              ? "Reading spine order. This is not an execution sequence. Choose any node directly."
               : "Authorial start for spatial exploration. Choose the node directly."
           }
           tabIndex={0}
@@ -241,8 +241,8 @@ export function StructurePresentationOverview({
                     <FocusNodeButton
                       node={node}
                       focused={focusedNodeId === node.id}
-                      priority={index + 1}
-                      priorityCount={model.spineNodes.length}
+                      spinePosition={index + 1}
+                      spineLength={model.spineNodes.length}
                       onFocusNode={onFocusNode}
                     />
                   </div>
@@ -253,8 +253,8 @@ export function StructurePresentationOverview({
             <FocusNodeButton
               node={model.startNode}
               focused={focusedNodeId === model.startNode.id}
-              priority={null}
-              priorityCount={0}
+              spinePosition={null}
+              spineLength={0}
               onFocusNode={onFocusNode}
             />
           )}
@@ -263,7 +263,7 @@ export function StructurePresentationOverview({
       {model.regions.length > 0 && (
         <div className="structure-presentation-overview-regions">
           <strong>Regions</strong>
-          <ol aria-label="Ordered comprehension regions" tabIndex={0}>
+          <ol aria-label="Comprehension regions in canonical spatial order" tabIndex={0}>
             {model.regions.map((region, index) => (
               <li key={`${index}:${region.label}`}>
                 <span className="structure-presentation-overview-region-order" aria-hidden="true">

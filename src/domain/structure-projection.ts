@@ -1049,6 +1049,7 @@ function projectPresentedStructure(
   const presentation = structure.presentation;
   if (!presentation) return null;
   const nodeIds = new Set(structure.nodes.map((node) => node.id));
+  if (presentation.primarySpine === null && presentation.regions.length === 0) return null;
   const primarySpine =
     presentation.primarySpine?.nodeIds.filter((nodeId) => nodeIds.has(nodeId)) ?? [];
   const startNodeId = nodeIds.has(presentation.startNodeId)

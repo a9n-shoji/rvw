@@ -122,7 +122,7 @@ describe("Structure SVG export", () => {
     expect(document.source).toContain("REGIONS · R1 Input &amp; validation (2 Nodes)");
     expect(document.source).toContain("START · Very long &lt;entry&gt; &amp; label");
     expect(document.source).toContain(
-      "SPINE · P1–P2 is spatial reading priority, not execution sequence",
+      "SPINE · P1–P2 is authored backbone order, not execution sequence",
     );
     expect(document.source).not.toContain('data-layer="presentation-regions"');
     expect(document.source).toContain('data-edge-id="edge-0" data-primary-spine="true"');
@@ -136,9 +136,37 @@ describe("Structure SVG export", () => {
     expect(document.source).toContain('data-node-origin-mark="true"');
     expect(document.source).not.toContain("selected-edge");
     expect(document.source).not.toContain("focus-id");
-    expect(document.source).toContain("Spatial reading priority 1");
+    expect(document.source).toContain("Reading spine position 1");
     expect(document.source).toContain("Factual graph origin");
     expect(model.presentation?.regions).toHaveLength(2);
+  });
+
+  it("exports thesis and attention start without fabricated spine or region metadata", () => {
+    const structure = exportStructure();
+    structure.presentation = {
+      thesis: "Begin at the shared boundary without inventing another spatial organizer.",
+      startNodeId: "node-1",
+      primarySpine: null,
+      regions: [],
+    };
+
+    const { model, document } = documentFor(structure);
+
+    expect(model.presentation).toMatchObject({
+      thesis: structure.presentation.thesis,
+      primarySpineNodeOrder: [],
+      primarySpineEdgeOrder: [],
+      regions: [],
+    });
+    expect(document.source).toContain('data-layer="presentation-thesis"');
+    expect(document.source).toContain("START · Node 1");
+    expect(document.source).toContain('data-node-id="node-1"');
+    expect(document.source).toContain('data-node-presentation-start-mark="true"');
+    expect(document.source).not.toContain("SPINE ·");
+    expect(document.source).not.toContain("REGIONS ·");
+    expect(document.source).not.toContain("data-node-primary-spine-order-mark");
+    expect(document.source).not.toContain('data-layer="presentation-region-members"');
+    expect(document.source).not.toContain("data-presentation-region-member-node-id");
   });
 
   it("serializes a standalone, complete, deterministic SVG", () => {

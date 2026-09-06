@@ -106,7 +106,9 @@ function stableCompare(left: string, right: string): number {
 
 export function structureLayoutBasisKey(structure: Pick<Structure, "presentation">): string {
   const presentation = structure.presentation;
-  if (!presentation) return "structure-layout-basis:v1:null";
+  if (!presentation || (presentation.primarySpine === null && presentation.regions.length === 0)) {
+    return "structure-layout-basis:v1:null";
+  }
   return `structure-layout-basis:v1:${JSON.stringify({
     startNodeId: presentation.startNodeId,
     primarySpine: presentation.primarySpine

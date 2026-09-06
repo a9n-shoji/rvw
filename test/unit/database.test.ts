@@ -481,6 +481,25 @@ describe("RvwDatabase", () => {
       idempotencyRequestHash: "structure-presentation-request",
     });
     expect(database.getStructure(structure.id)?.presentation).toEqual(structure.presentation);
+    const startOnlyPresentation = {
+      thesis: "Begin at the effect without inventing a path or grouping.",
+      startNodeId: "effect",
+      primarySpine: null,
+      regions: [],
+    };
+    const startOnly = database.createStructure({
+      pullRequestId: pullRequest.id,
+      sourceOid: structure.sourceOid,
+      title: "Start-only presentation",
+      scope: "An authorial claim and attention anchor over topology-derived geometry.",
+      originNodeId: structure.originNodeId,
+      nodes: structure.nodes,
+      edges: structure.edges,
+      presentation: startOnlyPresentation,
+      idempotencyKey: "structure-start-only-presentation",
+      idempotencyRequestHash: "structure-start-only-presentation-request",
+    });
+    expect(database.getStructure(startOnly.id)?.presentation).toEqual(startOnlyPresentation);
     database.close();
 
     const raw = new DatabaseSync(filePath);
@@ -563,7 +582,6 @@ describe("RvwDatabase", () => {
           },
         },
       ],
-      ["empty non-null presentation", { ...presentation, primarySpine: null, regions: [] }],
       [
         "too many regions",
         {

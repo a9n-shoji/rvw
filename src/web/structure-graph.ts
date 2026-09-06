@@ -87,11 +87,12 @@ export function visibleStructureGraph(
 
 /**
  * Canonical behavior map derived from factual topology and optional authorial
- * spatial presentation. Presented maps use the declared attention start,
- * optional exact-Edge spine, and ordered regions without accepting coordinates;
- * null presentation uses the factual entrypoint and topology-only ranks. Stable
- * IDs only resolve otherwise symmetric ordering, so Reset returns the same
- * artifact to the same projection.
+ * spatial presentation. Organizer-backed presentations use the optional exact
+ * Edge spine and spatially ordered comprehension regions without accepting coordinates.
+ * A start-only presentation shares the factual topology projection with null,
+ * while its thesis and attention start remain visible presentation semantics.
+ * Stable IDs only resolve otherwise symmetric ordering, so Reset returns the
+ * same artifact to the same projection.
  */
 export function initialStructureLayout(structure: Structure): Record<string, StructurePoint> {
   return Object.fromEntries(projectStructure(structure).positionsByNodeId);

@@ -9,7 +9,7 @@ They are complete protocol-v5 Structure content/preview values, including requir
 schema and verify every anchor against that exact Git object.
 
 After the protocol-v5 presentation contract was tightened to an explicit attention start, an optional
-exact-Edge spine, and ordered exact-membership regions, all three values were run through the built
+exact-Edge spine, and ordered named exact-membership regions, all three values were run through the built
 production `structure preview --stdin --json` path again. They passed without warnings: Agent transport
 reported 5 columns with at most 2 rows, Markdown source mapping reported 4 columns with at most 2 rows,
 and Skill distribution reported 3 columns with at most 2 rows. These preview metrics deliberately
@@ -27,7 +27,7 @@ or region packing as protocol semantics.
 - Presentation observation: the thesis names the boundary, the exact-Edge primary spine prioritizes the
   CLI-to-dispatch backbone, and two disjoint regions place transport diagnostics beside the client
   segment and operation schemas beside validation/dispatch. No Edge direction was changed to obtain the
-  spatial order, and each region occupies one contiguous spine interval in declared order.
+  canonical spatial order, and each region occupies one contiguous spine interval in declared order.
 - Scope/granularity observation: excluding socket ownership and viewer lifecycle kept the subject a
   relationship space. Adding those lifecycle operations made the graph turn into a startup sequence
   and would be better handled by a Walkthrough.
@@ -53,7 +53,7 @@ or region packing as protocol semantics.
   plugin entrypoint; the resulting map then included only responsibilities participating in that
   behavior. Unrelated uses of the same Markdown utilities remained outside the Structure.
 - Presentation observation: this fan-out/convergence space has no honest single backbone. The authorial
-  start and three ordered regions expose composition, rendered coordinates, and independently usable
+  start and three ordered named chunks expose composition, rendered coordinates, and independently usable
   review interactions with `primarySpine: null`, rather than manufacturing a linear route.
 
 ### Bundled Skill distribution boundary
@@ -72,19 +72,23 @@ or region packing as protocol semantics.
 
 ## Presentation dogfood criteria
 
-Start evaluation with thesis + attention start + the smallest honest combination of one optional exact-Edge
-primary spine and ordered regions, not thesis alone or multiple routes. A thesis alone cannot shape the
-map, while multiple authored routes make priority ambiguous and drift toward Walkthrough. A hub, fan-out,
-convergence, or reciprocal space should use regions without a spine when no single backbone is defensible.
+Start evaluation with a source-consistent thesis and attention start, then add the smallest honest
+combination of one optional exact-Edge primary spine and ordered named regions. A start-only presentation
+is valid when its thesis and start add useful authorial orientation but no honest spatial organizer exists;
+it deliberately keeps topology-derived canonical geometry. Multiple authored routes make priority
+ambiguous and drift toward Walkthrough. A hub, fan-out, convergence, or reciprocal space may use regions
+without a spine when named comprehension chunks are defensible, or remain start-only when they are not.
 For each dogfood subject, compare the non-null presentation with the same factual
 graph set to `null` and record:
 
 - whether a reviewer can state the behavior, the backbone to grasp first, and the meaning of each region
   after an initial scan, without mistaking the spine for runtime order or architectural importance;
 - whether the start is current, the spine selects one exact current Edge for every adjacent Node pair,
-  region membership is disjoint, and each region's spine members form one contiguous interval in region order;
-- whether canonical placement, initial focus at `startNodeId`, orientation, and emphasis visibly
-  improve the intended explanation over the null topology projection;
+  region membership is disjoint, each region's spine members form one contiguous interval in region order,
+  and inner `nodeIds` order is not treated as semantic;
+- whether an organizer-bearing presentation improves canonical placement, while a start-only presentation
+  keeps null-equivalent topology geometry and still improves overview, initial focus at `startNodeId`, cues,
+  and export;
 - whether every off-spine and ungrouped Node, every Edge and direction, free focus/pan/zoom/drag, and every
   source action remain available and understandable;
 - whether the thesis and region labels synthesize source-supported claims instead of becoming review
@@ -94,7 +98,8 @@ graph set to `null` and record:
 
 A trial fails the product boundary if sequential prose is required to explain transitions, reviewers
 expect autoplay, the presentation hides evidence, or the map is useful only as a static architecture
-catalog. Route those subjects to Walkthrough or leave `presentation: null`; do not add another route.
+catalog. Route those subjects to Walkthrough, a deliberate start-only presentation, or
+`presentation: null` according to whether a thesis and attention start add real value; do not add another route.
 
 ## Producer contract adjustments
 
@@ -111,5 +116,6 @@ The production Skill therefore makes the Structure/Walkthrough choice explicit, 
 entrypoint for new authoring, permits unanchored concept nodes only under declared authority, treats all
 anchors as claims at one exact commit, and requires in-place updates to retain IDs only for surviving
 claims of the same subject. Its presentation contract adds one source-consistent thesis, one attention
-start, at most one exact-Edge primary spine, and ordered disjoint regions without adding raw layout or
-reviewer-session state.
+start, at most one exact-Edge primary spine, and ordered disjoint named comprehension regions without
+adding raw layout or reviewer-session state. It permits start-only presentation rather than manufacturing
+a spine, region, or geometry claim where none is honest.

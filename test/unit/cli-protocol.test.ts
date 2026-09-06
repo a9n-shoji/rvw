@@ -1110,6 +1110,73 @@ describe("CLI protocol discovery", () => {
     });
   });
 
+  it("previews a start-only Structure presentation without inventing an organizer", async () => {
+    const input = {
+      sourceOid: "b".repeat(40),
+      title: "Policy hub",
+      scope: "A start-only spatial explanation.",
+      originNodeId: "hub",
+      presentation: {
+        thesis: "The hub integrates otherwise independent policies.",
+        startNodeId: "hub",
+        primarySpine: null,
+        regions: [],
+      },
+      nodes: [
+        {
+          id: "hub",
+          label: "Hub",
+          anchor: { path: "src/hub.ts", startLine: 1, endLine: 1 },
+        },
+        {
+          id: "policy-a",
+          label: "Policy A",
+          anchor: { path: "src/policy-a.ts", startLine: 1, endLine: 1 },
+        },
+        {
+          id: "policy-b",
+          label: "Policy B",
+          anchor: { path: "src/policy-b.ts", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [
+        {
+          id: "hub-policy-a",
+          from: "hub",
+          to: "policy-a",
+          label: "applies",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "hub-policy-b",
+          from: "hub",
+          to: "policy-b",
+          label: "applies",
+          directed: true,
+          anchors: [],
+        },
+      ],
+    };
+    const readStdout = captureStdout();
+    provideStdin(input);
+    const program = createProgram(() => {
+      throw new Error("preview must not initialize runtime");
+    });
+
+    await program.parseAsync(["node", "rvw", "structure", "preview", "--stdin", "--json"]);
+
+    expect(readStdout()).toMatchObject({
+      ok: true,
+      layout: {
+        directionalLinkCount: 2,
+        nonForwardDirectionalLinkCount: 0,
+        originOutgoingDirectionalLinkCount: 2,
+      },
+      warnings: [],
+    });
+  });
+
   it("returns a machine-readable error for invalid Structure preview stdin", async () => {
     const readStdout = captureStdout();
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);

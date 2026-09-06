@@ -228,8 +228,7 @@ function isStructurePresentation(
     !isCanonicalPresentationText(value.thesis, MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS) ||
     typeof value.startNodeId !== "string" ||
     !Array.isArray(value.regions) ||
-    value.regions.length > MAX_STRUCTURE_PRESENTATION_REGIONS ||
-    (value.primarySpine === null && value.regions.length === 0)
+    value.regions.length > MAX_STRUCTURE_PRESENTATION_REGIONS
   ) {
     return false;
   }

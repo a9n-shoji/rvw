@@ -88,25 +88,32 @@ PR-relevant behavior and factual code entrypoint as stable-ID nodes and edges fi
 current graph JSON value per stable Structure ID; publication and whole-value replacement validate all
 paths, ranges, endpoints, identities, presentation references/order, and Pull Request ownership before retaining the commit.
 The current value separates factual graph claims from an optional authorial spatial presentation made
-of a thesis, an attention start, at most one exact-Edge primary spine of 2–12 Nodes, and ordered regions. Legacy graph JSON without the field reads
+of a thesis, an attention start, at most one exact-Edge primary spine of 2–12 Nodes, and spatially ordered named
+comprehension regions. A start-only presentation with no spine or regions is valid when its thesis and
+attention start are meaningful but no honest spatial organizer exists. Region array order defines
+canonical spatial and legend order, not reading sequence, runtime order, or importance; each region's
+`nodeIds` is an unordered membership set. Legacy graph JSON without the field reads
 as `presentation: null`; no SQL migration is needed. It is not a semantic code index and has no revision
 history, comments, persisted semantic reverse index, inferred edges, or persisted coordinates. The viewer may
 derive an ephemeral backlink index from explicit Node anchors in the current values. HTTP lists and reads current values;
 human-confirmed delete is the only write exposed to the browser.
 
-The Structure viewer uses a non-null presentation to shape canonical placement, initial orientation,
-and visual emphasis while preserving every factual Node, Edge, and direction. Its screen-space overview
+The Structure viewer uses a primary spine or regions to shape canonical placement and uses any non-null
+presentation for its authorial overview and cues while preserving every factual Node, Edge, and direction. Its screen-space overview
 shows the thesis, attention start, exact-relation reading spine, and ordered R-number legend; each region
 member carries the matching R badge, so manual geometry never becomes membership truth. Region-only
-maps may wrap ordered chunks into a bounded row-major grid. With `presentation: null`,
-it uses topology, factual direction reachable from the entrypoint, and stable IDs—not display content—to
-produce the original projection. A presented session initially focuses `startNodeId`; the null case
+maps may wrap chunks into a bounded row-major grid while preserving canonical spatial order. With
+`presentation: null` or a start-only presentation, it uses topology, factual direction reachable from
+the entrypoint, and stable IDs—not display content—to produce the same projection. A non-null presentation's
+new session initially focuses `startNodeId`; the null case
 initially focuses the origin. Both are defaults derived from the artifact, while pane-local
 browser session state preserves focus, neighborhood depth, node positions, and viewport across tab
 navigation and current-value updates, and moves with a Structure tab between panes. Surviving IDs keep
-positions and new nodes take a non-overlapping slot near retained neighbors while authorial layout identity
-is unchanged. A changed start, spine Node identity/order, or region membership/order rebases Node geometry to
+positions and new nodes take a non-overlapping slot near retained neighbors while the spatial organizer
+is unchanged. A changed spine Node identity/order or region membership/order rebases Node geometry to
 the new canonical explanation while preserving surviving focus and its screen-space camera anchor.
+Null and start-only presentations share one layout basis, so transitions between them and thesis- or
+start-only edits preserve manual geometry; adding, removing, or changing an organizer rebases it.
 1-hop and 2-hop require a
 focus; All shows every Node and Edge. The bounded MVP does not collapse or cull relations based on ID or
 degree. Source actions always open the declared exact `sourceOid` in the chosen pane without changing

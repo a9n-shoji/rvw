@@ -45,8 +45,10 @@ For each candidate unit, choose exactly the surface that lowers its comprehensio
 - Use a Walkthrough when ordered execution, causality, lifecycle, or a comprehension sequence needs
   prose between stops, a required ending, or transitions that carry the meaning.
 - Use a Structure when responsibility, ownership, dependency, contract, or side-effect relationships
-  around one factual code entrypoint are the essential shape. A connected visual backbone and ordered
-  regions may prioritize how the simultaneously visible space is first understood.
+  around one factual code entrypoint are the essential shape. Its optional presentation may set initial
+  attention, emphasize one connected exact-relation backbone, and spatially compose named comprehension
+  regions while leaving the whole graph visible. Region order is canonical canvas and legend composition,
+  not reviewer priority or a reading sequence.
 - Direct the reviewer to code without creating an Artifact when the question is local, conditional,
   implementation-specific, or already clearer in source.
 - Create no new surface when an Artifact would merely restate another Artifact or add a join the
@@ -81,9 +83,13 @@ producer contract from this Skill.
 
 Pass the subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and
 emphasis as authoring authority: they control what the producer investigates, not what the code must
-say. For a Structure, also pass any requested thesis, connected visual backbone, and ordered regions as
-presentation authority over verified claims. Pass `mustEstablish`, a suggested origin, relationship, invariant,
-and every other implementation
+say. For a Structure, also pass any requested thesis, attention start, connected exact-relation visual
+backbone, and named comprehension regions as presentation authority over verified claims. When a spine
+is requested, its first Node must be the start; never require the start to belong to a region, and do not
+interpret region order as reviewer priority.
+When a meaningful thesis and start exist but no honest backbone or useful named chunk does, request the
+exact start-only form rather than a fake spine, dummy region, or decorative grouping.
+Pass `mustEstablish`, a suggested origin, relationship, invariant, and every other implementation
 assertion as claims to verify independently in committed source and tests. Do not reimplement the
 producer's source, format, preview, identity, concurrency, publish, update, or delete contracts here,
 and do not invent a generic sub-Skill invocation framework. If a producer rejects the requested

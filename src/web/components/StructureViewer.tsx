@@ -1192,7 +1192,7 @@ export function StructureViewer({
                     <button
                       type="button"
                       className="structure-node-focus"
-                      aria-label={`${node.label}${node.id === structure.originNodeId ? " · factual origin" : ""}${presentationStart ? " · authorial start" : ""}${primarySpineIndex >= 0 ? ` · spatial reading priority ${primarySpineIndex + 1} of ${renderedPresentation?.primarySpineNodeOrder.length ?? 0}` : ""}${presentationRegion ? ` · region R${presentationRegion.index + 1}: ${presentationRegion.label}` : ""}`}
+                      aria-label={`${node.label}${node.id === structure.originNodeId ? " · factual origin" : ""}${presentationStart ? " · authorial start" : ""}${primarySpineIndex >= 0 ? ` · reading spine position ${primarySpineIndex + 1} of ${renderedPresentation?.primarySpineNodeOrder.length ?? 0}` : ""}${presentationRegion ? ` · region R${presentationRegion.index + 1}: ${presentationRegion.label}` : ""}`}
                       aria-pressed={selected}
                       onClick={(event) => {
                         if (event.detail === 0) focusNode(node.id);

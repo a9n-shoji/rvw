@@ -366,7 +366,7 @@ function serializeNode(
   const presentationDescription = [
     node.id === structure.originNodeId ? "Factual graph origin" : null,
     presentationStart ? "Authorial presentation start" : null,
-    primarySpine ? `Spatial reading priority ${primarySpineIndex + 1}` : null,
+    primarySpine ? `Reading spine position ${primarySpineIndex + 1}` : null,
     presentationRegion
       ? `Region R${presentationRegionIndex + 1}: ${presentationRegion.label}`
       : null,
@@ -465,7 +465,7 @@ export function serializeStructureSvg(input: {
         `START · ${structure.nodes.find(({ id }) => id === structure.presentation!.startNodeId)?.label ?? structure.presentation.startNodeId}`,
         ...(structure.presentation.primarySpine
           ? [
-              `SPINE · P1–P${structure.presentation.primarySpine.nodeIds.length} is spatial reading priority, not execution sequence`,
+              `SPINE · P1–P${structure.presentation.primarySpine.nodeIds.length} is authored backbone order, not execution sequence`,
             ]
           : []),
         ...(structure.presentation.regions.length > 0
@@ -531,9 +531,10 @@ export function serializeStructureSvg(input: {
     ? `${structure.scope}\nThesis: ${model.presentation.thesis}\n${presentationLegend}`
     : structure.scope;
   const presentationHeader = model.presentation ? thesis : "";
-  const presentationMembers = model.presentation
-    ? `<g data-layer="presentation-region-members">${regions}</g>`
-    : "";
+  const presentationMembers =
+    model.presentation && model.presentation.regions.length > 0
+      ? `<g data-layer="presentation-region-members">${regions}</g>`
+      : "";
   const source = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}" role="img" aria-labelledby="rvw-structure-title rvw-structure-description" data-rvw-structure-id="${escapeXml(structure.id)}" data-rvw-source-oid="${escapeXml(structure.sourceOid)}"><title id="rvw-structure-title">${escapeXml(structure.title)}</title><desc id="rvw-structure-description">${escapeXml(description)}</desc><defs>${serializeEdgeMarkerDefs(palette)}</defs><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${escapeXml(palette.background)}"/>${presentationHeader}<g data-layer="edges">${edges}</g><g data-layer="edge-labels">${labels}</g><g data-layer="nodes">${nodes}</g>${presentationMembers}</svg>`;
   return { source, width, height, viewBox: { x, y, width, height } };
 }

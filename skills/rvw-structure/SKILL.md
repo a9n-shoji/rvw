@@ -8,10 +8,14 @@ description: Read, publish, replace in place, or explicitly delete one source-an
 Create one review space that lets a human inspect one bounded PR-relevant behavior from a factual code
 entrypoint through the responsibilities, dependencies, contracts, and side effects needed to verify
 it. A Structure is a simultaneously visible, freely explorable spatial explanation; a Walkthrough makes
-ordered prose and transitions the artifact. A Structure may name an attention start, prioritize at most
-one exact-relation visual backbone of at most 12 Nodes, and use ordered regions, but it remains freely explorable and is never
-a stepper or autoplay. Hub, fan-out, convergence, and reciprocal spaces may use regions without inventing
-a spine. If the clearest
+ordered prose and transitions the artifact. A Structure may name an attention start, emphasize at most
+one exact-relation visual backbone of at most 12 Nodes, and spatially compose ordered, named comprehension
+regions, but it remains freely explorable and is never a stepper or autoplay. Region order controls the
+canonical spatial composition and legend, not reviewer priority or a reading sequence. Hub, fan-out,
+convergence, and reciprocal spaces may use regions without inventing a spine. When a meaningful thesis
+and attention start exist but neither an honest backbone nor a useful comprehension region does, an exact
+start-only presentation is valid: topology still supplies the geometry while presentation supplies the
+overview, initial attention, and new-session focus. If the clearest
 explanation needs a required reading order because prose between sequential stops, a required ending, or
 route transitions carry the meaning, stop without publishing and recommend `rvw-walkthrough` to the
 requester or upstream composer. Do not create that Walkthrough from this Skill. If there is no defensible
@@ -88,8 +92,10 @@ Prepare one complete JSON value. `sourceOid` is the single coordinate for all no
 Each node may have zero or one `anchor`; each edge may have zero or more `anchors`. For any anchor,
 provide both positive inclusive `startLine` and `endLine`, or omit both. Use repository-relative paths.
 `originNodeId` and `presentation` are required; use `presentation: null` when no authorial spatial
-semantics are justified. The origin Node must have a source anchor, and every Node must be reachable from it
-when relation direction is ignored. The complete Structure contains no more than 400 source anchors.
+semantics are justified. A non-null presentation includes `thesis`, `startNodeId`, `primarySpine`, and
+`regions` explicitly; `primarySpine` may be `null` and `regions` may be empty under the authoring contract.
+The origin Node must have a source anchor, and every Node must be reachable from it when relation direction
+is ignored. The complete Structure contains no more than 400 source anchors.
 
 Every `--stdin` command reads until EOF. Supply the entire object and close stdin in the same
 non-interactive invocation; do not start an interactive PTY and send only JSON plus a newline.

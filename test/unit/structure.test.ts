@@ -305,6 +305,39 @@ describe("Structure domain presentation rules", () => {
     );
   });
 
+  it("uses topology-derived canonical geometry when presentation declares only thesis and start", () => {
+    const structure = directedStructure(
+      "entry",
+      ["entry", "hub", "policy-a", "policy-b", "policy-c"],
+      [
+        ["entry", "hub"],
+        ["hub", "policy-a"],
+        ["hub", "policy-b"],
+        ["hub", "policy-c"],
+      ],
+    );
+    const topologyProjection = projectTopologyStructure(structure);
+    structure.presentation = {
+      thesis: "The hub coordinates independent policies without one honest path or grouping.",
+      startNodeId: "hub",
+      primarySpine: null,
+      regions: [],
+    };
+
+    const presentedProjection = projectStructure(structure);
+    expect(presentedProjection).toEqual(topologyProjection);
+    const layout = initialStructureLayout(structure);
+    expect(Object.keys(layout).sort()).toEqual(structure.nodes.map(({ id }) => id).sort());
+    expectNoNodeOverlap(layout);
+    expect(
+      initialStructureLayout({
+        ...structure,
+        nodes: [...structure.nodes].reverse(),
+        edges: [...structure.edges].reverse(),
+      }),
+    ).toEqual(layout);
+  });
+
   it("keeps factual authoring diagnostics independent from a reverse reading spine", () => {
     const structure = directedStructure(
       "consumer",

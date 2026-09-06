@@ -722,13 +722,13 @@ describe("CLI input schemas", () => {
       structureUpdateInputSchema.safeParse({
         ...valid,
         presentation: {
-          thesis: "This has no authored spatial structure.",
-          startNodeId: "entry",
+          thesis: "Begin at the policy hub without inventing a path or grouping.",
+          startNodeId: "policy",
           primarySpine: null,
           regions: [],
         },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("caps a Structure primary spine at twelve Nodes", () => {

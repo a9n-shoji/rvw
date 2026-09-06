@@ -2401,12 +2401,6 @@ export class RvwService {
         });
         return { label, nodeIds: normalizedNodeIds };
       });
-      if (primarySpine === null && regions.length === 0) {
-        throw new RvwError(
-          "INVALID_INPUT",
-          "Structure presentationにはprimarySpineまたはregionを少なくとも一つ指定してください。",
-        );
-      }
       if (primarySpine !== null) {
         let previousSpineRegionIndex = -1;
         const firstSpineIndexByRegion = new Map<number, number>();

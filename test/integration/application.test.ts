@@ -2217,6 +2217,44 @@ describe("RvwService commit workflow", () => {
     ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 
+  it("publishes thesis and an attention start without inventing a spine or regions", async () => {
+    const { repository, firstHead, service } = setup("rvw-structure-start-only-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const structure = await service.publishStructure({
+      idempotencyKey: "structure-start-only",
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Policy hub",
+      scope: "One entrypoint and the independent policies coordinated by its hub.",
+      originNodeId: "entry",
+      nodes: [
+        { id: "entry", label: "Entry", anchor: { path: "src.txt" } },
+        { id: "hub", label: "Policy hub" },
+        { id: "policy-a", label: "Policy A" },
+        { id: "policy-b", label: "Policy B" },
+      ],
+      edges: [
+        { id: "entry-hub", from: "entry", to: "hub", label: "delegates to", directed: true },
+        { id: "hub-policy-a", from: "hub", to: "policy-a", label: "applies", directed: true },
+        { id: "hub-policy-b", from: "hub", to: "policy-b", label: "applies", directed: true },
+      ],
+      presentation: {
+        thesis: "The hub coordinates independent policies without one honest path or grouping.",
+        startNodeId: "hub",
+        primarySpine: null,
+        regions: [],
+      },
+    });
+
+    expect(structure.presentation).toEqual({
+      thesis: "The hub coordinates independent policies without one honest path or grouping.",
+      startNodeId: "hub",
+      primarySpine: null,
+      regions: [],
+    });
+    expect(service.getStructureByUri(structure.ref).structure).toEqual(structure);
+  });
+
   it("accepts a twelve-Node primary spine and rejects a thirteen-Node tour", async () => {
     expect(MAX_STRUCTURE_PRIMARY_SPINE_NODES).toBe(12);
     const { repository, firstHead, service } = setup("rvw-structure-primary-spine-limit-");
@@ -2376,18 +2414,6 @@ describe("RvwService commit workflow", () => {
             ...publishInput.presentation.primarySpine,
             edgeIds: ["documents-obsolete"],
           },
-        },
-      }),
-    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
-    await expect(
-      service.publishStructure({
-        ...publishInput,
-        idempotencyKey: "structure-presentation-empty",
-        presentation: {
-          thesis: "This presentation has no authored spatial structure.",
-          startNodeId: "source",
-          primarySpine: null,
-          regions: [],
         },
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });

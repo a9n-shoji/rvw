@@ -305,6 +305,58 @@ describe("Structure pane sessions", () => {
     expect(structureLayoutBasisKey({ presentation: null })).not.toBe(baseline);
   });
 
+  it("treats a start-only presentation as topology geometry while starting attention at its Node", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000086");
+    const topologyValue: Structure = { ...value, presentation: null };
+    const startOnly: Structure = {
+      ...value,
+      presentation: {
+        thesis: "Begin at B without inventing a backbone or chunk.",
+        startNodeId: "B",
+        primarySpine: null,
+        regions: [],
+      },
+    };
+
+    const session = createStructureSession(startOnly);
+    expect(session.focusId).toBe("B");
+    expect(session.positions).toEqual(initialStructureLayout(topologyValue));
+    expect(structureLayoutBasisKey(startOnly)).toBe(structureLayoutBasisKey(topologyValue));
+
+    const manual = {
+      ...session,
+      positions: {
+        A: { x: 701, y: 702 },
+        B: { x: 703, y: 704 },
+        C: { x: 705, y: 706 },
+      },
+    };
+    const changedStart: Structure = {
+      ...startOnly,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: {
+        ...startOnly.presentation!,
+        thesis: "Begin at C without inventing a backbone or chunk.",
+        startNodeId: "C",
+      },
+    };
+    const reconciled = reconcileStructureSession(changedStart, manual);
+    expect(reconciled.positions).toEqual(manual.positions);
+    expect(reconciled.focusId).toBe("B");
+
+    const organized: Structure = {
+      ...changedStart,
+      updatedAt: "2026-08-30T00:02:00.000Z",
+      presentation: {
+        ...changedStart.presentation!,
+        regions: [{ label: "Policy", nodeIds: ["B", "C"] }],
+      },
+    };
+    const organizedSession = reconcileStructureSession(organized, reconciled);
+    expect(organizedSession.positions).toEqual(initialStructureLayout(organized));
+    expect(organizedSession.focusId).toBe("B");
+  });
+
   it("rebases a changed primary spine while preserving reading state and focused screen position", () => {
     const value = presentedStructure("70000000-0000-4000-8000-000000000093");
     const session = {
