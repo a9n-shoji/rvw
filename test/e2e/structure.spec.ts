@@ -2121,9 +2121,9 @@ test("ignores a pending Structure source response after browser Back restores an
     markResponseCompleted = resolve;
   });
   await page.route("**/structures/*/anchors/resolve*", async (route) => {
-    const response = await route.fetch();
     markRequestSeen();
     await responseGate;
+    const response = await route.fetch();
     await route.fulfill({ response });
     markResponseCompleted();
   });
