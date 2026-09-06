@@ -123,7 +123,48 @@ result invented an Artifact URI.
 Verdict: **Pass for the current planning contract.** This remains a small qualitative sample, not a
 golden surface-count test. Installed-host producer activation is a separate acceptance boundary. The
 2026-09-05 installed-host record below used older Skill blobs and is historical evidence only; it is
-not current proof until a current packaged run is recorded.
+not current native-activation proof. The current packaged attempt and its approval boundary are
+recorded next.
+
+## Current installed-host acceptance attempt (2026-09-07)
+
+An isolated installed-host attempt used exact pushed commit
+`79d4414f222b99125a3e400d122fa0716d433211`. Packaging and setup passed:
+
+- `npm pack` produced a 4,271,581-byte tarball with 495 entries and SHA-1
+  `99fbbec5ae258a1c4935e1244d29c2e78f0bc58d`.
+- The tarball-installed CLI reported rvw `0.5.0`, and the host Codex CLI was exactly `0.147.0`.
+- The packaged CLI installed all five Skills into the detached worktree's `.codex/skills` root. A
+  packaged `skill status` read reported every Skill as `current`, managed, matching the bundled
+  content, not locally modified, and with no update available or required.
+- A caller-managed temporary database was initialized, PR #77 was refreshed and attached to the
+  detached `79d4414` worktree, and its recorded head was `79d4414f222b99125a3e400d122fa0716d433211`.
+- Packaged `rvw protocol --json` reported protocol v5 with the required Structure capabilities, and
+  `rvw agent status --json` selected `direct-database` for the temporary database.
+- `rvw structure list 77 --json` reported zero Structures before the attempted host activation.
+
+The production prompt explicitly requested native activation of `rvw-review-compose`, sequential
+handoff to `rvw-structure`, preview, and exactly one publication for the bounded relationship question
+about factual graph, authorial presentation, derived rendering, reviewer session state, and their
+identity or revision boundaries. The outer execution approval gate rejected `codex exec` before Codex
+launched because the run would send repository content to OpenAI and authorize Artifact publication.
+The rejection was not retried or bypassed.
+
+Consequently, this attempt produced no producer activation, preview, publication, Artifact URI, or
+`structure get` readback. A final `structure list` still contained exactly zero Structures, the Codex
+final-output directory remained empty, and no rvw or Codex process remained. The temporary evidence is
+retained under `/private/tmp/rvw-accept-79d4414.DxgW1X`; its detached worktree has no tracked changes
+and only the expected untracked `.codex/` installation and runtime files. The main worktree also had no
+tracked write from the attempt. This is evidence that packaged installation, protocol negotiation, PR
+attachment, and direct-database setup work; it is **not current native Skill activation, sequential
+producer handoff, preview/publish, URI, or readback proof**.
+
+Follow-up commit `78558dda6df85ae1de559076dac4c767412bee52` changes only
+`docs/implementation-spec.md` and `test/unit/protocol-version.test.ts`. The recorded current composer
+Skill blobs remain identical at that commit: `7308a332ff3371635609f30f36160c9cb5902da1` for `SKILL.md`
+and `a86141086911abcd5e7e01b19fbb8c48d83627bc` for `review-composition.md`. It therefore does not
+invalidate the planning results above or convert this blocked installed-host attempt into activation
+evidence.
 
 ## 2026-09-05 baseline instruction revision
 
