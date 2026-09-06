@@ -145,11 +145,19 @@ invalid current content rather than silently assigned new semantics.
 
 ### Canonical projection contract
 
-The canonical map uses a non-null backbone as one connected skeleton rooted for layout at
+When Regions exist, the canonical map places each complete Region membership as one compound spatial
+unit before placing unassigned context. Direct cross-Region facts shape adjacency between those units;
+backbone relations receive stronger weight, but may bend between chunks rather than pulling their
+members into a global backbone band. Within a small Region, deterministic cell assignment minimizes
+internal crossings and span and puts multi-boundary Nodes toward the adjacent chunks. Every cell of the
+derived grid is a candidate, including an empty corner in a non-full grid. These cells and empty space
+are renderer choices, not authored positions or implied missing members.
+
+When a backbone exists without Regions, it remains one connected skeleton rooted for layout at
 `startNodeId`. Visual ranks or bands are derived deterministically from undirected backbone distance,
-cross-region factual adjacency, crossing reduction, and finally stable IDs. Factual direction remains visible on Edge
-arrows but does not become authorial reading direction or change backbone rank. Those
-bands are renderer output and never an authored `layers` or `stages` field.
+crossing reduction, and finally stable IDs. Factual direction remains visible on Edge arrows but does
+not become authorial reading direction or change backbone rank. Those bands are renderer output and
+never an authored `layers` or `stages` field.
 
 When a long sequence of derived bands would collapse the map into a thin horizontal strip, the
 renderer may fold contiguous bands into a deterministic multi-row, serpentine surface. Row turns keep
@@ -158,11 +166,23 @@ than leaving otherwise usable vertical space empty. The folding threshold, targe
 candidate score, and exact row breaks are replaceable projection heuristics: they do not add order to
 `primaryBackbone.edgeIds`, and they are not Structure protocol semantics.
 
-Non-backbone Nodes attach near an actual adjacent or nearest backbone Node and occupy space above or
-below reserved backbone corridors. Region packing uses measured member envelopes instead of
-theoretical empty radii and weights cross-region adjacency so chunks remain visually connected. A
-region without a backbone member remains compactly placed relative to
-its actual graph attachments. Start-only and null presentation continue to use the same
+Region-external Nodes are partitioned into maximal connected components of the induced factual
+topology. The projector treats each as a temporary Context compound: internal facts derive rank bands,
+long bands fold into a bounded serpentine surface, and the compound moves only by rigid translation
+after authored Region envelopes are placed. All compounds share global packing candidates on every
+side of those envelopes; this lets many independent leaves surround a hub instead of accumulating in
+one lower-right quadrant. Region-to-Region relative geometry remains fixed, while final normalization
+may translate the whole map. Candidate translations balance exact boundary-relation span, straight boundary obstruction through existing Nodes, total extent, and area. Short Context
+sequences may stay linear; the threshold and score remain replaceable renderer heuristics. This keeps
+partial Region membership honest without producing a 12- or 50-Node vertical remainder, and keeps an
+explicit cross-Region bridge visible rather than synthesizing Region adjacency.
+
+The Context component, its entry rank, derived bands, and collision envelope are not artifact
+semantics and are never persisted as a pseudo-Region. They are the Graph-layout counterpart of the
+neutral Context components derived in Regions mode from current exact facts. Region packing uses
+measured member envelopes instead of theoretical empty radii and weights cross-region adjacency so
+chunks remain visually connected. A Region without a backbone member remains compactly placed relative
+to its actual graph attachments. Start-only and null presentation continue to use the same
 topology-derived canonical geometry.
 
 Projection must be deterministic under input Node, Edge, backbone Edge, Region, and region-member array
@@ -239,8 +259,12 @@ The Viewer provides a stable authored map plus a movable active lens.
 Use distinct visual channels: persistent line/marker treatment for backbone membership, opacity and
 detail for focus-hop relevance, and a named lens plus member/background emphasis for regions. Do not reuse one highlight
 color to make these three meanings indistinguishable. A distant backbone remains an orientation
-skeleton or minimap landmark; a focused non-backbone Node and its local relations receive full detail
-without becoming authored core.
+skeleton or minimap landmark through its line/marker treatment, but backbone membership never restores
+opacity removed by focus distance. A focused non-backbone Node and its local relations receive full detail
+without becoming authored core. A relation follows its farther endpoint's hop layer, so the boundary
+from a 1-hop Node to a 2-hop Node is contextual rather than visually merging the two layers. An active
+exact-relation selection or active Region lens may override distance because it is the reviewer's
+explicit current target; artifact-derived core or chunk membership alone may not.
 
 The compact Guide contains only the authorial start and a separately disclosable thesis. A new session
 exposes enough of it to establish the claim and start, and later thesis disclosure remains pane-local
@@ -271,14 +295,18 @@ separate text from crossing routes.
 
 Focus-hop and zoom determine detail, not truth. The active Node and incident relations are fully
 legible; 1-hop is normal detail; 2-hop is contextual; farther non-backbone content may be dimmed or
-summarized. Backbone geometry remains identifiable at every zoom, but distant backbone labels need not
-remain rendered as unreadable text.
+summarized. Backbone geometry remains identifiable at every zoom through its independent treatment and
+the minimap, but its distance opacity is the same as other content in the same hop layer and distant
+backbone labels need not remain rendered as unreadable text.
 
 ### Session reconciliation and export
 
-The layout basis contains organizer presence, `startNodeId` when an organizer exists, normalized
-backbone simple adjacency, and Region identity/membership. A change to start, backbone endpoint
-adjacency, or Region identity/membership rebases canonical geometry. Reordering Regions or members and changing only thesis, Region labels, summaries, or the
+The layout basis contains organizer presence, the canonical projection revision applicable to that
+organizer, `startNodeId` when an organizer exists, normalized backbone simple adjacency, and Region
+identity/membership. The Region-first projection revision applies only to Region-bearing presentations;
+topology/start-only and backbone-only presentations retain their prior basis. A change to start,
+backbone endpoint adjacency, Region identity/membership, or the applicable projection revision rebases
+canonical geometry. Reordering Regions or members and changing only thesis, Region labels, summaries, or the
 exact Edge ID between the same backbone endpoints preserves manual geometry while immediately updating
 semantic emphasis. Adding or removing parallel backbone relations without changing endpoint adjacency
 also preserves geometry.

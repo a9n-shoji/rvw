@@ -506,6 +506,22 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   );
   await scopeToggle.click();
   await page.setViewportSize({ width: 1280, height: 720 });
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect
+    .poll(async () =>
+      viewer.evaluate((element) => {
+        const world = element.querySelector<HTMLElement>(".structure-world")!;
+        const renderedScale = new DOMMatrixReadOnly(getComputedStyle(world).transform).a;
+        const targetScale = Number((element as HTMLElement).dataset.viewportScale);
+        return Math.abs(renderedScale - targetScale);
+      }),
+    )
+    .toBeLessThan(0.001);
 
   const conceptNode = viewer.locator('.structure-node[data-node-id="order-not-found"]');
   const conceptSourceInsets = await conceptNode.evaluate((node) => {
@@ -1983,6 +1999,21 @@ test("re-resolves Structure sources by stable Node and Edge identity", async ({ 
   const edgeSource = viewer.locator(
     '.structure-edge-label[data-edge-id="detail-route-authenticates"] .structure-source.compact',
   );
+  await expect
+    .poll(async () => {
+      const [canvas, source] = await Promise.all([
+        viewer.locator(".structure-canvas").boundingBox(),
+        edgeSource.boundingBox(),
+      ]);
+      if (!canvas || !source) return false;
+      return (
+        source.x >= canvas.x &&
+        source.x + source.width <= canvas.x + canvas.width &&
+        source.y >= canvas.y &&
+        source.y + source.height <= canvas.y + canvas.height
+      );
+    })
+    .toBe(true);
   await edgeSource.click();
   const movedEdgeAnchor = {
     path: "src/http/routes/order-detail.ts",
@@ -2039,7 +2070,9 @@ test("restores a Structure reading snapshot across source navigation and browser
   let viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
   await viewer.getByRole("button", { name: "Regions", exact: true }).click();
   const regionButton = viewer.getByRole("button", {
-    name: /^Open region React rendering in Graph, 7 nodes\./u,
+    // A preceding source-lifecycle scenario removes one member from this same mutable fixture.
+    // History semantics do not depend on the current member count.
+    name: /^Open region React rendering in Graph, \d+ nodes\./u,
   });
   await regionButton.focus();
   const regionsCamera = await structureRegionsCameraState(viewer);

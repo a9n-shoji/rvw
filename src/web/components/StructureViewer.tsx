@@ -71,6 +71,7 @@ import {
   buildFullStructureRenderModel,
   buildStructureRenderFoundation,
   selectStructureRenderModel,
+  structureRenderBoundsForNodeIds,
   STRUCTURE_EDGE_ARROW_LENGTH,
   STRUCTURE_EDGE_ARROW_WIDTH,
 } from "../structure-render-model.js";
@@ -393,6 +394,9 @@ export function StructureViewer({
   const regionsViewRef = useRef(regionsView);
   const cameraFrameIntentRef = useRef<StructureCameraFrame | null>(initial.cameraFrame ?? null);
   const regionFrameBoundsRef = useRef<ReadonlyMap<string, StructureCameraBounds>>(new Map());
+  const nodeFrameRenderBoundsRef = useRef<
+    (nodeIds: readonly string[]) => StructureCameraBounds | null
+  >(() => null);
   const cameraAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionStateRef = useRef(initial);
   const observedStructureRef = useRef({
@@ -502,6 +506,7 @@ export function StructureViewer({
           positions: positionsRef.current,
           regionBounds: regionFrameBoundsRef.current,
           surfaceSize: next,
+          renderBoundsForNodeIds: nodeFrameRenderBoundsRef.current,
         });
         if (reframed) {
           viewportRef.current = reframed;
@@ -815,6 +820,17 @@ export function StructureViewer({
     () => (focusId ? structureOneHopNodeIds(structure, [focusId]) : visible.nodeIds),
     [focusId, structure, visible.nodeIds],
   );
+  const focusDistantEdgeIds = useMemo(
+    () =>
+      focusId === null
+        ? new Set<string>()
+        : new Set(
+            structure.edges
+              .filter((edge) => !oneHopNodeIds.has(edge.from) || !oneHopNodeIds.has(edge.to))
+              .map((edge) => edge.id),
+          ),
+    [focusId, oneHopNodeIds, structure.edges],
+  );
   const sourceChangeKinds = useMemo(() => {
     const result = new Map<string, ChangeKind>();
     for (const change of changedFiles) {
@@ -836,6 +852,28 @@ export function StructureViewer({
         edgeLabelMode: "viewer-adaptive",
       }),
     [positions, sourceChangeKinds, structure],
+  );
+  const renderBoundsForNodeIds = useCallback(
+    (nodeIds: readonly string[]): StructureCameraBounds | null =>
+      structureRenderBoundsForNodeIds(renderFoundation, nodeIds),
+    [renderFoundation],
+  );
+  nodeFrameRenderBoundsRef.current = renderBoundsForNodeIds;
+  const viewportForNodeFrame = useCallback(
+    (
+      nodeIds: readonly string[],
+      nextSurfaceSize: { width: number; height: number },
+    ): StructureViewport | null => {
+      const bounds = renderBoundsForNodeIds(nodeIds);
+      return bounds
+        ? structureViewportForBounds({ bounds, surfaceSize: nextSurfaceSize })
+        : structureViewportForNodeIds({
+            nodeIds,
+            positions,
+            surfaceSize: nextSurfaceSize,
+          });
+    },
+    [positions, renderBoundsForNodeIds],
   );
   const renderModel = useMemo(
     () =>
@@ -894,17 +932,23 @@ export function StructureViewer({
 
   useLayoutEffect(() => {
     const frameIntent = cameraFrameIntentRef.current;
-    if (frameIntent?.kind !== "region" || dragRef.current !== null) return;
+    if (
+      (frameIntent?.kind !== "region" && frameIntent?.kind !== "nodes") ||
+      dragRef.current !== null
+    ) {
+      return;
+    }
     const reframed = structureViewportForCameraFrame({
       frame: frameIntent,
       positions,
       regionBounds: regionFrameBounds,
       surfaceSize,
+      renderBoundsForNodeIds,
     });
     if (!reframed) return;
     viewportRef.current = reframed;
     setViewport(reframed);
-  }, [positions, regionFrameBounds, surfaceSize]);
+  }, [positions, regionFrameBounds, renderBoundsForNodeIds, surfaceSize]);
 
   const fittedViewport = (): StructureViewport | null => {
     const measuredSurfaceSize = measureSurfaceSize();
@@ -931,12 +975,12 @@ export function StructureViewer({
     const homeNodeIds = [...structureHomeNodeIds(structure)];
     const frameIntent: StructureCameraFrame = { kind: "nodes", nodeIds: homeNodeIds };
     const nextViewport =
-      structureViewportForNodeIds({ nodeIds: homeNodeIds, positions, surfaceSize }) ??
+      viewportForNodeFrame(homeNodeIds, surfaceSize) ??
       initialStructureViewport({ structure, positions, surfaceSize });
     cameraFrameIntentRef.current = frameIntent;
     viewportRef.current = nextViewport;
     setViewport(nextViewport);
-  }, [displayBounds, positions, structure, surfaceSize]);
+  }, [displayBounds, positions, structure, surfaceSize, viewportForNodeFrame]);
 
   const centerNode = useCallback(
     (nodeId: string, scale?: number): void => {
@@ -1049,11 +1093,7 @@ export function StructureViewer({
         kind: "nodes",
         nodeIds: framedNodeIds,
       };
-      const nextViewport = structureViewportForNodeIds({
-        nodeIds: framedNodeIds,
-        positions,
-        surfaceSize: measuredSurfaceSize,
-      });
+      const nextViewport = viewportForNodeFrame(framedNodeIds, measuredSurfaceSize);
       const initializing = pendingViewportActionRef.current === "initial";
       pendingViewportActionRef.current = null;
       selectedEdgeIdRef.current = null;
@@ -1076,6 +1116,7 @@ export function StructureViewer({
       positions,
       pushReadingCheckpoint,
       structure,
+      viewportForNodeFrame,
     ],
   );
 
@@ -1084,11 +1125,7 @@ export function StructureViewer({
     const homeFocusId = structure.presentation?.startNodeId ?? structure.originNodeId;
     const homeNodeIds = [...structureHomeNodeIds(structure)];
     const nextCameraFrame: StructureCameraFrame = { kind: "nodes", nodeIds: homeNodeIds };
-    const nextViewport = structureViewportForNodeIds({
-      nodeIds: homeNodeIds,
-      positions,
-      surfaceSize: measureSurfaceSize(),
-    });
+    const nextViewport = viewportForNodeFrame(homeNodeIds, measureSurfaceSize());
     const initializing = pendingViewportActionRef.current === "initial";
     pendingViewportActionRef.current = null;
     selectedEdgeIdRef.current = null;
@@ -1261,6 +1298,7 @@ export function StructureViewer({
           positions: positionsRef.current,
           regionBounds: regionFrameBoundsRef.current,
           surfaceSize: measuredGraphSurface,
+          renderBoundsForNodeIds: nodeFrameRenderBoundsRef.current,
         }) ?? (geometryMatches ? rawViewport : current.viewport))
       : geometryMatches && !droppedDerivedBounds
         ? rawViewport
@@ -1483,11 +1521,7 @@ export function StructureViewer({
     if (nodeIds.length === 0) return;
     const measuredSurfaceSize = measureSurfaceSize();
     const frameIntent: StructureCameraFrame = { kind: "nodes", nodeIds };
-    const nextViewport = structureViewportForNodeIds({
-      nodeIds,
-      positions,
-      surfaceSize: measuredSurfaceSize,
-    });
+    const nextViewport = viewportForNodeFrame(nodeIds, measuredSurfaceSize);
     if (!nextViewport) return;
     const readingSource = captureReadingSnapshot();
     selectedEdgeIdRef.current = null;
@@ -1510,11 +1544,7 @@ export function StructureViewer({
     const nodeIds = [...new Set([edge.from, edge.to])];
     const measuredSurfaceSize = measureSurfaceSize();
     const frameIntent: StructureCameraFrame = { kind: "nodes", nodeIds };
-    const nextViewport = structureViewportForNodeIds({
-      nodeIds,
-      positions,
-      surfaceSize: measuredSurfaceSize,
-    });
+    const nextViewport = viewportForNodeFrame(nodeIds, measuredSurfaceSize);
     if (!nextViewport) return;
     const readingSource = captureReadingSnapshot();
     selectedEdgeIdRef.current = edge.id;
@@ -2011,11 +2041,7 @@ export function StructureViewer({
                   const selected = edge.id === selectedEdgeId;
                   const muted = selectedEdgeId !== null && !selected;
                   const primaryBackbone = primaryBackboneEdgeIds.has(edge.id);
-                  const focusDistant =
-                    focusId !== null &&
-                    !focused &&
-                    !oneHopNodeIds.has(edge.from) &&
-                    !oneHopNodeIds.has(edge.to);
+                  const focusDistant = focusDistantEdgeIds.has(edge.id);
                   const framedRegionRelation =
                     framedRegionNodeIds.has(edge.from) && framedRegionNodeIds.has(edge.to);
                   const regionFrameContext = framedRegion !== null && !framedRegionRelation;
@@ -2061,11 +2087,7 @@ export function StructureViewer({
                   const focused = edge.from === focusId || edge.to === focusId;
                   const selected = edge.id === selectedEdgeId;
                   const muted = selectedEdgeId !== null && !selected;
-                  const focusDistant =
-                    focusId !== null &&
-                    !focused &&
-                    !oneHopNodeIds.has(edge.from) &&
-                    !oneHopNodeIds.has(edge.to);
+                  const focusDistant = focusDistantEdgeIds.has(edge.id);
                   const framedRegionRelation =
                     framedRegionNodeIds.has(edge.from) && framedRegionNodeIds.has(edge.to);
                   const regionFrameContext = framedRegion !== null && !framedRegionRelation;
@@ -2115,11 +2137,7 @@ export function StructureViewer({
                   const accessibleRelationLabel = `${relationLabel}${primaryBackbone ? " · explanation backbone relation" : ""}`;
                   const selected = edge.id === selectedEdgeId;
                   const muted = selectedEdgeId !== null && !selected;
-                  const focusDistant =
-                    focusId !== null &&
-                    !focused &&
-                    !oneHopNodeIds.has(edge.from) &&
-                    !oneHopNodeIds.has(edge.to);
+                  const focusDistant = focusDistantEdgeIds.has(edge.id);
                   const framedRegionRelation =
                     framedRegionNodeIds.has(edge.from) && framedRegionNodeIds.has(edge.to);
                   const regionFrameContext = framedRegion !== null && !framedRegionRelation;

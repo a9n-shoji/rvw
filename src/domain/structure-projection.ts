@@ -760,8 +760,10 @@ const PRESENTATION_NODE_GAP_X = 44;
 const PRESENTATION_NODE_GAP_Y = 52;
 const PRESENTATION_REGION_GAP_X = 64;
 const PRESENTATION_REGION_GAP_Y = 64;
-const PRESENTATION_BACKBONE_ROW_GAP = PRESENTATION_ROW_STRIDE;
+const PRESENTATION_RANK_BAND_ROW_GAP = PRESENTATION_ROW_STRIDE;
 const PRESENTATION_TARGET_ASPECT_RATIO = 5 / 3;
+const PRESENTATION_COMPOUND_TARGET_ASPECT_RATIO = 1.85;
+const PRESENTATION_MAX_BOUNDARY_ALIGNMENT_BASES = 16;
 
 interface PresentationEnvelope {
   left: number;
@@ -806,6 +808,32 @@ function presentationPositionIsOpen(
       presentationPositionIntersectsEnvelope(candidate, envelope),
     )
   );
+}
+
+function presentationSegmentIntersectsNode(
+  start: StructurePoint,
+  end: StructurePoint,
+  node: StructurePoint,
+): boolean {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  let minimum = 0;
+  let maximum = 1;
+  for (const [origin, delta, low, high] of [
+    [start.x, deltaX, node.x, node.x + STRUCTURE_NODE_WIDTH],
+    [start.y, deltaY, node.y, node.y + STRUCTURE_NODE_HEIGHT],
+  ] as const) {
+    if (Math.abs(delta) < 0.000_001) {
+      if (origin < low || origin > high) return false;
+      continue;
+    }
+    const first = (low - origin) / delta;
+    const second = (high - origin) / delta;
+    minimum = Math.max(minimum, Math.min(first, second));
+    maximum = Math.min(maximum, Math.max(first, second));
+    if (minimum > maximum) return false;
+  }
+  return maximum >= 0 && minimum <= 1;
 }
 
 function firstOpenPresentationPoint(
@@ -867,6 +895,16 @@ function presentationEnvelope(points: readonly StructurePoint[]): PresentationEn
   };
 }
 
+function presentationNodeEnvelope(points: readonly StructurePoint[]): PresentationEnvelope | null {
+  if (points.length === 0) return null;
+  return {
+    left: Math.min(...points.map(({ x }) => x)),
+    top: Math.min(...points.map(({ y }) => y)),
+    right: Math.max(...points.map(({ x }) => x + STRUCTURE_NODE_WIDTH)),
+    bottom: Math.max(...points.map(({ y }) => y + STRUCTURE_NODE_HEIGHT)),
+  };
+}
+
 function presentationGridDimensions(nodeCount: number): { columns: number; rows: number } {
   const columns = Math.max(
     1,
@@ -875,8 +913,7 @@ function presentationGridDimensions(nodeCount: number): { columns: number; rows:
   return { columns, rows: Math.max(1, Math.ceil(nodeCount / columns)) };
 }
 
-interface PresentationBackboneBand {
-  rank: number;
+interface PresentationRankBand {
   nodeIds: readonly string[];
   columns: number;
   rows: number;
@@ -884,11 +921,9 @@ interface PresentationBackboneBand {
   height: number;
 }
 
-interface PresentationBackbonePacking {
+interface PresentationRankBandPacking {
   positions: ReadonlyMap<string, StructurePoint>;
-  regionOverlapCount: number;
   normalizedExtent: number;
-  regionSplitCount: number;
   relationSpan: number;
   area: number;
   rowSizes: readonly number[];
@@ -924,33 +959,29 @@ function presentationUniformBandRows<T>(values: readonly T[], rowSize: number): 
   );
 }
 
-function comparePresentationBackbonePackings(
-  left: PresentationBackbonePacking,
-  right: PresentationBackbonePacking,
+function comparePresentationRankBandPackings(
+  left: PresentationRankBandPacking,
+  right: PresentationRankBandPacking,
 ): number {
   return (
-    left.regionOverlapCount - right.regionOverlapCount ||
     left.normalizedExtent - right.normalizedExtent ||
-    left.regionSplitCount - right.regionSplitCount ||
     left.relationSpan - right.relationSpan ||
     left.area - right.area ||
     compareNumberArrays(left.rowSizes, right.rowSizes)
   );
 }
 
-function presentationBackbonePositions(input: {
+function presentationRankBandPositions(input: {
   rankValues: readonly number[];
   rankGroups: ReadonlyMap<number, readonly string[]>;
-  rankByNodeId: ReadonlyMap<string, number>;
-  backboneEdges: readonly StructureGraphContent["edges"][number][];
-  regions: readonly { nodeIds: readonly string[] }[];
+  relationEdges: readonly StructureGraphContent["edges"][number][];
+  preserveShortSequence: boolean;
 }): ReadonlyMap<string, StructurePoint> {
-  const { rankValues, rankGroups, rankByNodeId, backboneEdges, regions } = input;
-  const bands = rankValues.map((rank): PresentationBackboneBand => {
+  const { rankValues, rankGroups, relationEdges, preserveShortSequence } = input;
+  const bands = rankValues.map((rank): PresentationRankBand => {
     const nodeIds = rankGroups.get(rank)!;
     const { columns, rows } = presentationGridDimensions(nodeIds.length);
     return {
-      rank,
       nodeIds,
       columns,
       rows,
@@ -959,17 +990,16 @@ function presentationBackbonePositions(input: {
     };
   });
   const partitions =
-    bands.length < 6
+    preserveShortSequence && bands.length < 6
       ? [[bands]]
       : bands.length <= 12
         ? presentationBandRowPartitions(bands)
         : Array.from({ length: bands.length }, (_, index) =>
             presentationUniformBandRows(bands, index + 1),
           );
-  const packings: PresentationBackbonePacking[] = [];
+  const packings: PresentationRankBandPacking[] = [];
   for (const rows of partitions) {
     const positions = new Map<string, StructurePoint>();
-    const rowByRank = new Map<number, number>();
     let turnX = 0;
     let cursorY = 0;
     for (const [rowIndex, row] of rows.entries()) {
@@ -985,13 +1015,12 @@ function presentationBackbonePositions(input: {
             y: bandTop + (index % band.rows) * PRESENTATION_ROW_STRIDE,
           });
         });
-        rowByRank.set(band.rank, rowIndex);
         cursorX = leftToRight
           ? bandLeft + band.width + PRESENTATION_RANK_GAP
           : bandLeft - PRESENTATION_RANK_GAP;
       }
       turnX = leftToRight ? cursorX - PRESENTATION_RANK_GAP : cursorX + PRESENTATION_RANK_GAP;
-      cursorY += rowHeight + PRESENTATION_BACKBONE_ROW_GAP;
+      cursorY += rowHeight + PRESENTATION_RANK_BAND_ROW_GAP;
     }
     const points = [...positions.values()];
     const left = Math.min(...points.map(({ x }) => x));
@@ -1000,46 +1029,20 @@ function presentationBackbonePositions(input: {
     const bottom = Math.max(...points.map(({ y }) => y + STRUCTURE_NODE_HEIGHT));
     const width = right - left;
     const height = bottom - top;
-    const regionEnvelopes = regions.flatMap((region) => {
-      const regionPoints = region.nodeIds.flatMap((nodeId) => {
-        const point = positions.get(nodeId);
-        return point ? [point] : [];
-      });
-      const envelope = presentationEnvelope(regionPoints);
-      return envelope ? [envelope] : [];
-    });
-    let regionOverlapCount = 0;
-    for (const [index, envelope] of regionEnvelopes.entries()) {
-      regionOverlapCount += regionEnvelopes
-        .slice(index + 1)
-        .filter((other) => presentationEnvelopesOverlap(envelope, other)).length;
-    }
-    const regionSplitCount = regions.reduce((total, region) => {
-      const rowsForRegion = new Set(
-        region.nodeIds.flatMap((nodeId) => {
-          const rank = rankByNodeId.get(nodeId);
-          const row = rank === undefined ? undefined : rowByRank.get(rank);
-          return row === undefined ? [] : [row];
-        }),
-      );
-      return total + Math.max(0, rowsForRegion.size - 1);
-    }, 0);
-    const relationSpan = backboneEdges.reduce((total, edge) => {
+    const relationSpan = relationEdges.reduce((total, edge) => {
       const from = positions.get(edge.from);
       const to = positions.get(edge.to);
       return from && to ? total + Math.abs(from.x - to.x) + Math.abs(from.y - to.y) : total;
     }, 0);
     packings.push({
       positions,
-      regionOverlapCount,
       normalizedExtent: Math.max(width / PRESENTATION_TARGET_ASPECT_RATIO, height),
-      regionSplitCount,
       relationSpan,
       area: width * height,
       rowSizes: rows.map((row) => row.length),
     });
   }
-  packings.sort(comparePresentationBackbonePackings);
+  packings.sort(comparePresentationRankBandPackings);
   return packings[0]!.positions;
 }
 
@@ -1377,22 +1380,34 @@ function presentationRegionMemberOrder(input: {
   regionByNodeId: ReadonlyMap<string, string>;
   regionCellById: ReadonlyMap<string, PresentationRegionGridCell>;
   topology: SimpleStructureTopology;
-}): string[] {
+}): Array<{ index: number; nodeId: string }> {
   const { members, columns, rows, regionId, regionByNodeId, regionCellById, topology } = input;
   const ownCell = regionCellById.get(regionId) ?? { column: 0, row: 0 };
   const affinity = new Map(
     members.map((nodeId) => {
-      const adjacentCells = (topology.neighbors.get(nodeId) ?? []).flatMap((neighbor) => {
+      const adjacentCells: PresentationRegionGridCell[] = [];
+      let externalNeighborCount = 0;
+      for (const neighbor of topology.neighbors.get(nodeId) ?? []) {
         const neighborRegionId = regionByNodeId.get(neighbor);
         const cell = neighborRegionId ? regionCellById.get(neighborRegionId) : undefined;
-        return neighborRegionId && neighborRegionId !== regionId && cell ? [cell] : [];
-      });
+        if (neighborRegionId && neighborRegionId !== regionId && cell) adjacentCells.push(cell);
+        else if (!neighborRegionId) externalNeighborCount += 1;
+      }
       const horizontal = adjacentCells.reduce((sum, cell) => sum + cell.column - ownCell.column, 0);
       const vertical = adjacentCells.reduce((sum, cell) => sum + cell.row - ownCell.row, 0);
-      return [nodeId, { count: adjacentCells.length, horizontal, vertical }] as const;
+      return [
+        nodeId,
+        {
+          count: adjacentCells.length + externalNeighborCount,
+          adjacentRegionCount: adjacentCells.length,
+          externalNeighborCount,
+          horizontal,
+          vertical,
+        },
+      ] as const;
     }),
   );
-  const cells = members.map((_, index) => ({
+  const cells = Array.from({ length: columns * rows }, (_, index) => ({
     index,
     column: index % columns,
     row: Math.floor(index / columns),
@@ -1403,12 +1418,21 @@ function presentationRegionMemberOrder(input: {
     const rightAffinity = affinity.get(right)!;
     return rightAffinity.count - leftAffinity.count || stableCompare(left, right);
   })) {
-    const { count, horizontal, vertical } = affinity.get(nodeId)!;
+    const { adjacentRegionCount, externalNeighborCount, horizontal, vertical } =
+      affinity.get(nodeId)!;
     const desiredColumn =
-      count === 0 || horizontal === 0 ? (columns - 1) / 2 : horizontal > 0 ? columns - 1 : 0;
-    const desiredRow = count === 0 || vertical === 0 ? (rows - 1) / 2 : vertical > 0 ? rows - 1 : 0;
+      adjacentRegionCount === 0 || horizontal === 0
+        ? (columns - 1) / 2
+        : horizontal > 0
+          ? columns - 1
+          : 0;
+    const desiredRow =
+      adjacentRegionCount === 0 || vertical === 0 ? (rows - 1) / 2 : vertical > 0 ? rows - 1 : 0;
+    const distanceToPerimeter = (cell: PresentationRegionGridCell): number =>
+      Math.min(cell.column, columns - 1 - cell.column, cell.row, rows - 1 - cell.row);
     const cell = [...cells].sort(
       (left, right) =>
+        externalNeighborCount * (distanceToPerimeter(left) - distanceToPerimeter(right)) ||
         Math.abs(left.column - desiredColumn) +
           Math.abs(left.row - desiredRow) -
           Math.abs(right.column - desiredColumn) -
@@ -1419,7 +1443,138 @@ function presentationRegionMemberOrder(input: {
     assignment.set(cell.index, nodeId);
     cells.splice(cells.indexOf(cell), 1);
   }
-  return [...assignment].sort(([left], [right]) => left - right).map(([, nodeId]) => nodeId);
+  const initial = Array.from<string | null>({ length: columns * rows }).fill(null);
+  for (const [index, nodeId] of assignment) initial[index] = nodeId;
+  const memberSet = new Set(members);
+  const internalLinks = topology.links.filter(
+    ([from, to]) => memberSet.has(from) && memberSet.has(to),
+  );
+  // Boundary affinity has already produced a deterministic useful assignment. Keep the optional
+  // crossing search bounded independently of the public graph limit for dense or large chunks.
+  if (members.length > 10 || internalLinks.length > 24) {
+    return initial.flatMap((nodeId, index) => (nodeId === null ? [] : [{ index, nodeId }]));
+  }
+  const cellForIndex = (index: number): PresentationRegionGridCell => ({
+    column: index % columns,
+    row: Math.floor(index / columns),
+  });
+  const properCrossing = (
+    leftFrom: PresentationRegionGridCell,
+    leftTo: PresentationRegionGridCell,
+    rightFrom: PresentationRegionGridCell,
+    rightTo: PresentationRegionGridCell,
+  ): boolean => {
+    const orientation = (
+      first: PresentationRegionGridCell,
+      second: PresentationRegionGridCell,
+      third: PresentationRegionGridCell,
+    ): number =>
+      (second.column - first.column) * (third.row - first.row) -
+      (second.row - first.row) * (third.column - first.column);
+    const first = orientation(leftFrom, leftTo, rightFrom);
+    const second = orientation(leftFrom, leftTo, rightTo);
+    const third = orientation(rightFrom, rightTo, leftFrom);
+    const fourth = orientation(rightFrom, rightTo, leftTo);
+    return first * second < 0 && third * fourth < 0;
+  };
+  const score = (ordered: readonly (string | null)[]) => {
+    const indexByNodeId = new Map(
+      ordered.flatMap((nodeId, index) => (nodeId === null ? [] : [[nodeId, index] as const])),
+    );
+    const internalCrossings = internalLinks.reduce((count, [leftFromId, leftToId], index) => {
+      const leftFrom = cellForIndex(indexByNodeId.get(leftFromId)!);
+      const leftTo = cellForIndex(indexByNodeId.get(leftToId)!);
+      return (
+        count +
+        internalLinks.slice(index + 1).filter(([rightFromId, rightToId]) => {
+          if (
+            leftFromId === rightFromId ||
+            leftFromId === rightToId ||
+            leftToId === rightFromId ||
+            leftToId === rightToId
+          ) {
+            return false;
+          }
+          return properCrossing(
+            leftFrom,
+            leftTo,
+            cellForIndex(indexByNodeId.get(rightFromId)!),
+            cellForIndex(indexByNodeId.get(rightToId)!),
+          );
+        }).length
+      );
+    }, 0);
+    const externalBoundaryDistance = ordered.reduce((total, nodeId, index) => {
+      if (nodeId === null) return total;
+      const cell = cellForIndex(index);
+      return (
+        total +
+        (topology.neighbors.get(nodeId) ?? []).reduce((distance, neighbor) => {
+          const neighborRegionId = regionByNodeId.get(neighbor);
+          const neighborCell = neighborRegionId ? regionCellById.get(neighborRegionId) : undefined;
+          if (!neighborRegionId) {
+            return (
+              distance +
+              Math.min(cell.column, columns - 1 - cell.column, cell.row, rows - 1 - cell.row)
+            );
+          }
+          if (neighborRegionId === regionId || !neighborCell) return distance;
+          const horizontal =
+            neighborCell.column < ownCell.column
+              ? cell.column
+              : neighborCell.column > ownCell.column
+                ? columns - 1 - cell.column
+                : Math.abs(cell.column - (columns - 1) / 2);
+          const vertical =
+            neighborCell.row < ownCell.row
+              ? cell.row
+              : neighborCell.row > ownCell.row
+                ? rows - 1 - cell.row
+                : Math.abs(cell.row - (rows - 1) / 2);
+          return distance + horizontal + vertical;
+        }, 0)
+      );
+    }, 0);
+    const internalSpan = internalLinks.reduce((total, [from, to]) => {
+      const fromCell = cellForIndex(indexByNodeId.get(from)!);
+      const toCell = cellForIndex(indexByNodeId.get(to)!);
+      return (
+        total + Math.abs(fromCell.column - toCell.column) + Math.abs(fromCell.row - toCell.row)
+      );
+    }, 0);
+    return {
+      internalCrossings,
+      externalBoundaryDistance,
+      internalSpan,
+    };
+  };
+  const compareScores = (left: ReturnType<typeof score>, right: ReturnType<typeof score>): number =>
+    left.internalCrossings - right.internalCrossings ||
+    left.externalBoundaryDistance - right.externalBoundaryDistance ||
+    left.internalSpan - right.internalSpan;
+
+  let result = initial;
+  let resultScore = score(result);
+  for (let pass = 0; pass < Math.min(initial.length, 8); pass += 1) {
+    let best = result;
+    let bestScore = resultScore;
+    for (let left = 0; left < result.length; left += 1) {
+      for (let right = left + 1; right < result.length; right += 1) {
+        if (result[left] === null && result[right] === null) continue;
+        const candidate = [...result];
+        [candidate[left], candidate[right]] = [candidate[right]!, candidate[left]!];
+        const candidateScore = score(candidate);
+        if (compareScores(candidateScore, bestScore) < 0) {
+          best = candidate;
+          bestScore = candidateScore;
+        }
+      }
+    }
+    if (best === result) break;
+    result = best;
+    resultScore = bestScore;
+  }
+  return result.flatMap((nodeId, index) => (nodeId === null ? [] : [{ index, nodeId }]));
 }
 
 function presentationRegionOnlyPositions(input: {
@@ -1441,7 +1596,7 @@ function presentationRegionOnlyPositions(input: {
       regionCellById: packing.cellByRegionId,
       topology,
     });
-    members.forEach((nodeId, index) => {
+    members.forEach(({ nodeId, index }) => {
       positions.set(nodeId, {
         x:
           topLeft.x +
@@ -1455,6 +1610,384 @@ function presentationRegionOnlyPositions(input: {
     });
   }
   return positions;
+}
+
+interface PresentationRegionExternalComponent {
+  nodeIds: readonly string[];
+  nodeIdSet: ReadonlySet<string>;
+  internalEdges: readonly StructureGraphContent["edges"][number][];
+  boundaryEdges: readonly StructureGraphContent["edges"][number][];
+  backboneBoundaryCount: number;
+  signature: string;
+}
+
+interface PresentationRegionExternalPlacement {
+  positions: ReadonlyMap<string, StructurePoint>;
+  envelope: PresentationEnvelope;
+}
+
+/**
+ * Region membership is intentionally partial. The connected remainder is therefore kept as
+ * renderer-owned compound units while deriving canonical geometry, matching the factual Context
+ * components exposed by the Regions projection without turning them into authored Regions.
+ */
+function presentationRegionExternalComponents(input: {
+  structure: StructureGraphContent;
+  topology: SimpleStructureTopology;
+  regionByNodeId: ReadonlyMap<string, string>;
+  backboneEdgeIds: ReadonlySet<string>;
+}): PresentationRegionExternalComponent[] {
+  const { structure, topology, regionByNodeId, backboneEdgeIds } = input;
+  const unassigned = new Set(
+    structure.nodes
+      .map(({ id }) => id)
+      .filter((nodeId) => !regionByNodeId.has(nodeId))
+      .sort(stableCompare),
+  );
+  const assigned = new Set<string>();
+  const components: PresentationRegionExternalComponent[] = [];
+  for (const firstNodeId of [...unassigned].sort(stableCompare)) {
+    if (assigned.has(firstNodeId)) continue;
+    const queue = [firstNodeId];
+    const componentNodeIds: string[] = [];
+    assigned.add(firstNodeId);
+    for (let index = 0; index < queue.length; index += 1) {
+      const nodeId = queue[index]!;
+      componentNodeIds.push(nodeId);
+      for (const neighbor of topology.neighbors.get(nodeId) ?? []) {
+        if (!unassigned.has(neighbor) || assigned.has(neighbor)) continue;
+        assigned.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+    componentNodeIds.sort(stableCompare);
+    const nodeIdSet = new Set(componentNodeIds);
+    const internalEdges = structure.edges
+      .filter((edge) => nodeIdSet.has(edge.from) && nodeIdSet.has(edge.to))
+      .sort((left, right) => stableCompare(left.id, right.id));
+    const boundaryEdges = structure.edges
+      .filter(
+        (edge) =>
+          nodeIdSet.has(edge.from) !== nodeIdSet.has(edge.to) &&
+          (regionByNodeId.has(edge.from) || regionByNodeId.has(edge.to)),
+      )
+      .sort((left, right) => stableCompare(left.id, right.id));
+    components.push({
+      nodeIds: componentNodeIds,
+      nodeIdSet,
+      internalEdges,
+      boundaryEdges,
+      backboneBoundaryCount: boundaryEdges.filter((edge) => backboneEdgeIds.has(edge.id)).length,
+      signature: componentNodeIds.join("\u0000"),
+    });
+  }
+  return components;
+}
+
+function presentationRegionExternalTemplate(input: {
+  component: PresentationRegionExternalComponent;
+  topology: SimpleStructureTopology;
+  startNodeId: string;
+  backboneEdgeIds: ReadonlySet<string>;
+}): ReadonlyMap<string, StructurePoint> {
+  const { component, topology, startNodeId, backboneEdgeIds } = input;
+  const componentTopology: SimpleStructureTopology = {
+    neighbors: new Map(
+      component.nodeIds.map((nodeId) => [
+        nodeId,
+        (topology.neighbors.get(nodeId) ?? []).filter((neighbor) =>
+          component.nodeIdSet.has(neighbor),
+        ),
+      ]),
+    ),
+    links: topology.links.filter(
+      ([from, to]) => component.nodeIdSet.has(from) && component.nodeIdSet.has(to),
+    ),
+    directionalLinks: topology.directionalLinks.filter(
+      ([from, to]) => component.nodeIdSet.has(from) && component.nodeIdSet.has(to),
+    ),
+  };
+  const boundaryStats = new Map(
+    component.nodeIds.map((nodeId) => [nodeId, { backbone: 0, total: 0 }]),
+  );
+  for (const edge of component.boundaryEdges) {
+    const componentNodeId = component.nodeIdSet.has(edge.from) ? edge.from : edge.to;
+    const stats = boundaryStats.get(componentNodeId)!;
+    stats.total += 1;
+    if (backboneEdgeIds.has(edge.id)) stats.backbone += 1;
+  }
+  const entrypointId = component.nodeIds.includes(startNodeId)
+    ? startNodeId
+    : [...component.nodeIds].sort((left, right) => {
+        const leftStats = boundaryStats.get(left)!;
+        const rightStats = boundaryStats.get(right)!;
+        return (
+          rightStats.backbone - leftStats.backbone ||
+          rightStats.total - leftStats.total ||
+          stableCompare(left, right)
+        );
+      })[0]!;
+  const ranks = componentRanks(component.nodeIds, componentTopology, entrypointId);
+  const rawGroups = new Map<number, string[]>();
+  for (const nodeId of component.nodeIds) {
+    const rank = ranks.get(nodeId) ?? 0;
+    const group = rawGroups.get(rank) ?? [];
+    group.push(nodeId);
+    rawGroups.set(rank, group);
+  }
+  const rankGroups = orderRankGroups(rawGroups, componentTopology);
+  const rawPositions = presentationRankBandPositions({
+    rankValues: [...rankGroups.keys()].sort((left, right) => left - right),
+    rankGroups,
+    relationEdges: component.internalEdges,
+    preserveShortSequence: component.nodeIds.length <= 3,
+  });
+  const minimumX = Math.min(...[...rawPositions.values()].map(({ x }) => x));
+  const minimumY = Math.min(...[...rawPositions.values()].map(({ y }) => y));
+  return new Map(
+    [...rawPositions].map(([nodeId, point]) => [
+      nodeId,
+      { x: point.x - minimumX, y: point.y - minimumY },
+    ]),
+  );
+}
+
+function presentationRegionExternalPlacement(input: {
+  component: PresentationRegionExternalComponent;
+  template: ReadonlyMap<string, StructurePoint>;
+  positions: ReadonlyMap<string, StructurePoint>;
+  occupied: readonly StructurePoint[];
+  forbiddenEnvelopes: readonly PresentationEnvelope[];
+  backboneEdgeIds: ReadonlySet<string>;
+  minimumX: number;
+  minimumY: number;
+}): PresentationRegionExternalPlacement {
+  const {
+    component,
+    template,
+    positions,
+    occupied,
+    forbiddenEnvelopes,
+    backboneEdgeIds,
+    minimumX,
+    minimumY,
+  } = input;
+  const templatePoints = [...template.values()];
+  const templateEnvelope = presentationNodeEnvelope(templatePoints)!;
+  const currentEnvelope = presentationEnvelope(occupied)!;
+  const bases: StructurePoint[] = [
+    {
+      x:
+        currentEnvelope.right +
+        PRESENTATION_NODE_GAP_X -
+        STRUCTURE_REGION_PADDING_X -
+        templateEnvelope.left,
+      y: currentEnvelope.top - templateEnvelope.top,
+    },
+    {
+      x: currentEnvelope.left - templateEnvelope.left,
+      y:
+        currentEnvelope.bottom +
+        PRESENTATION_NODE_GAP_Y -
+        STRUCTURE_REGION_PADDING_BOTTOM -
+        templateEnvelope.top,
+    },
+  ];
+  const boundaryBases = new Map<
+    string,
+    {
+      point: StructurePoint;
+      backboneCount: number;
+      relationCount: number;
+      signature: string;
+    }
+  >();
+  for (const edge of component.boundaryEdges) {
+    const componentNodeId = component.nodeIdSet.has(edge.from) ? edge.from : edge.to;
+    const regionNodeId = component.nodeIdSet.has(edge.from) ? edge.to : edge.from;
+    const local = template.get(componentNodeId);
+    const anchor = positions.get(regionNodeId);
+    if (!local || !anchor) continue;
+    const regionEnvelope = forbiddenEnvelopes.find(
+      (envelope) =>
+        anchor.x >= envelope.left &&
+        anchor.x + STRUCTURE_NODE_WIDTH <= envelope.right &&
+        anchor.y >= envelope.top &&
+        anchor.y + STRUCTURE_NODE_HEIGHT <= envelope.bottom,
+    );
+    if (!regionEnvelope) continue;
+    const candidates = [
+      {
+        x:
+          regionEnvelope.right +
+          PRESENTATION_NODE_GAP_X -
+          STRUCTURE_REGION_PADDING_X -
+          templateEnvelope.left,
+        y: anchor.y - local.y,
+      },
+      {
+        x: anchor.x - local.x,
+        y:
+          regionEnvelope.bottom +
+          PRESENTATION_NODE_GAP_Y -
+          STRUCTURE_REGION_PADDING_BOTTOM -
+          templateEnvelope.top,
+      },
+    ];
+    for (const [index, point] of candidates.entries()) {
+      const key = `${point.x}:${point.y}`;
+      const existing = boundaryBases.get(key);
+      if (existing) {
+        existing.relationCount += 1;
+        if (backboneEdgeIds.has(edge.id)) existing.backboneCount += 1;
+      } else {
+        boundaryBases.set(key, {
+          point,
+          backboneCount: backboneEdgeIds.has(edge.id) ? 1 : 0,
+          relationCount: 1,
+          signature: `${edge.id}:${index}`,
+        });
+      }
+    }
+  }
+  bases.push(
+    ...[...boundaryBases.values()]
+      .sort(
+        (left, right) =>
+          right.backboneCount - left.backboneCount ||
+          right.relationCount - left.relationCount ||
+          stableCompare(left.signature, right.signature),
+      )
+      .slice(0, PRESENTATION_MAX_BOUNDARY_ALIGNMENT_BASES)
+      .map(({ point }) => point),
+  );
+
+  const candidateOffsets = new Map<string, StructurePoint>();
+  const candidateXs = new Set([minimumX]);
+  const candidateYs = new Set([minimumY]);
+  for (const envelope of forbiddenEnvelopes) {
+    candidateXs.add(
+      envelope.left - PRESENTATION_NODE_GAP_X - (templateEnvelope.right - templateEnvelope.left),
+    );
+    candidateXs.add(envelope.left);
+    candidateXs.add(envelope.right + PRESENTATION_NODE_GAP_X);
+    candidateYs.add(
+      envelope.top - PRESENTATION_NODE_GAP_Y - (templateEnvelope.bottom - templateEnvelope.top),
+    );
+    candidateYs.add(envelope.top);
+    candidateYs.add(envelope.bottom + PRESENTATION_NODE_GAP_Y);
+  }
+  for (const x of candidateXs) {
+    for (const y of candidateYs) {
+      const offset = { x: x - templateEnvelope.left, y: y - templateEnvelope.top };
+      candidateOffsets.set(`${offset.x}:${offset.y}`, offset);
+    }
+  }
+  for (const base of bases) {
+    for (const rowShift of [0, -1, 1, -2, 2]) {
+      for (const columnShift of [0, -1, 1, -2, 2]) {
+        const offset = {
+          x: base.x + columnShift * PRESENTATION_COLUMN_STRIDE,
+          y: base.y + rowShift * PRESENTATION_ROW_STRIDE,
+        };
+        candidateOffsets.set(`${offset.x}:${offset.y}`, offset);
+      }
+    }
+  }
+
+  const candidates = [...candidateOffsets.values()].flatMap((offset) => {
+    const translated = new Map(
+      [...template].map(([nodeId, point]) => [
+        nodeId,
+        { x: point.x + offset.x, y: point.y + offset.y },
+      ]),
+    );
+    const points = [...translated.values()];
+    const envelope = presentationNodeEnvelope(points)!;
+    if (
+      forbiddenEnvelopes.some((forbidden) => presentationEnvelopesOverlap(envelope, forbidden)) ||
+      points.some((point) => presentationPositionOverlaps(occupied, point))
+    ) {
+      return [];
+    }
+    const combinedEnvelope = presentationNodeEnvelope([...occupied, ...points])!;
+    const width = combinedEnvelope.right - combinedEnvelope.left;
+    const height = combinedEnvelope.bottom - combinedEnvelope.top;
+    let relationSpan = 0;
+    let relationWeight = 0;
+    let obstructedBoundarySegmentCount = 0;
+    const obstacles = [...occupied, ...points];
+    for (const edge of component.boundaryEdges) {
+      const componentNodeId = component.nodeIdSet.has(edge.from) ? edge.from : edge.to;
+      const regionNodeId = component.nodeIdSet.has(edge.from) ? edge.to : edge.from;
+      const componentPoint = translated.get(componentNodeId);
+      const regionPoint = positions.get(regionNodeId);
+      if (!componentPoint || !regionPoint) continue;
+      const weight = backboneEdgeIds.has(edge.id) ? 3 : 1;
+      relationWeight += weight;
+      relationSpan +=
+        weight *
+        (Math.abs(componentPoint.x - regionPoint.x) + Math.abs(componentPoint.y - regionPoint.y));
+      const componentCenter = {
+        x: componentPoint.x + STRUCTURE_NODE_WIDTH / 2,
+        y: componentPoint.y + STRUCTURE_NODE_HEIGHT / 2,
+      };
+      const regionCenter = {
+        x: regionPoint.x + STRUCTURE_NODE_WIDTH / 2,
+        y: regionPoint.y + STRUCTURE_NODE_HEIGHT / 2,
+      };
+      obstructedBoundarySegmentCount +=
+        weight *
+        obstacles.filter(
+          (point) =>
+            (point.x !== componentPoint.x || point.y !== componentPoint.y) &&
+            (point.x !== regionPoint.x || point.y !== regionPoint.y) &&
+            presentationSegmentIntersectsNode(componentCenter, regionCenter, point),
+        ).length;
+    }
+    const averageRelationSpan = relationWeight === 0 ? 0 : relationSpan / relationWeight;
+    const averageBoundaryObstruction =
+      relationWeight === 0 ? 0 : obstructedBoundarySegmentCount / relationWeight;
+    return [
+      {
+        positions: translated,
+        envelope,
+        score:
+          Math.max(width / PRESENTATION_COMPOUND_TARGET_ASPECT_RATIO, height) +
+          averageRelationSpan * 0.2 +
+          Math.min(2, averageBoundaryObstruction) * 180,
+        area: width * height,
+        relationSpan,
+        obstructedBoundarySegmentCount,
+        offset,
+      },
+    ];
+  });
+  candidates.sort(
+    (left, right) =>
+      left.score - right.score ||
+      left.obstructedBoundarySegmentCount - right.obstructedBoundarySegmentCount ||
+      left.area - right.area ||
+      left.relationSpan - right.relationSpan ||
+      left.offset.y - right.offset.y ||
+      left.offset.x - right.offset.x,
+  );
+  const chosen = candidates[0];
+  if (chosen) return chosen;
+
+  // The right-hand base is guaranteed to escape every previously placed envelope. Retain an
+  // explicit fallback so future candidate changes cannot silently drop a factual component.
+  const fallbackOffset = bases[0]!;
+  const fallbackPositions = new Map(
+    [...template].map(([nodeId, point]) => [
+      nodeId,
+      { x: point.x + fallbackOffset.x, y: point.y + fallbackOffset.y },
+    ]),
+  );
+  return {
+    positions: fallbackPositions,
+    envelope: presentationNodeEnvelope([...fallbackPositions.values()])!,
+  };
 }
 
 function presentationBackboneCorridors(
@@ -1617,60 +2150,6 @@ function projectionFromPresentedPositions(
   };
 }
 
-type PresentationPlacementDirection = "above" | "below" | "left" | "right";
-
-function presentationRegionPlacementDirection(input: {
-  regionId: string;
-  anchorId: string | null;
-  regionByNodeId: ReadonlyMap<string, string>;
-  packing: PresentationRegionPacking;
-  positions: ReadonlyMap<string, StructurePoint>;
-}): PresentationPlacementDirection {
-  const { regionId, anchorId, regionByNodeId, packing, positions } = input;
-  const ownCell = packing.cellByRegionId.get(regionId);
-  const anchorRegionId = anchorId ? regionByNodeId.get(anchorId) : undefined;
-  const anchorCell = anchorRegionId ? packing.cellByRegionId.get(anchorRegionId) : undefined;
-  if (anchorRegionId === regionId && ownCell) {
-    const cells = [...packing.cellByRegionId.values()];
-    const averageRow = cells.reduce((sum, cell) => sum + cell.row, 0) / cells.length;
-    return ownCell.row < averageRow ? "above" : "below";
-  }
-  let horizontal = ownCell && anchorCell ? ownCell.column - anchorCell.column : 0;
-  let vertical = ownCell && anchorCell ? ownCell.row - anchorCell.row : 0;
-
-  if (horizontal === 0 && vertical === 0) {
-    const regionPoints = [...positions].flatMap(([nodeId, point]) =>
-      regionByNodeId.get(nodeId) === regionId ? [point] : [],
-    );
-    const allPoints = [...positions.values()];
-    if (regionPoints.length > 0 && allPoints.length > 0) {
-      const average = (points: readonly StructurePoint[], axis: keyof StructurePoint): number =>
-        points.reduce((sum, point) => sum + point[axis], 0) / points.length;
-      horizontal = average(regionPoints, "x") - average(allPoints, "x");
-      vertical = average(regionPoints, "y") - average(allPoints, "y");
-    }
-  }
-  if (horizontal === 0 && vertical === 0 && ownCell) {
-    const cells = [...packing.cellByRegionId.values()];
-    const averageColumn = cells.reduce((sum, cell) => sum + cell.column, 0) / cells.length;
-    const averageRow = cells.reduce((sum, cell) => sum + cell.row, 0) / cells.length;
-    horizontal = ownCell.column - averageColumn;
-    vertical = ownCell.row - averageRow;
-  }
-  if (Math.abs(horizontal) > Math.abs(vertical)) return horizontal < 0 ? "left" : "right";
-  return vertical < 0 ? "above" : "below";
-}
-
-function presentationDirectionOffset(
-  point: StructurePoint,
-  direction: PresentationPlacementDirection,
-): StructurePoint {
-  if (direction === "left") return { x: point.x - PRESENTATION_COLUMN_STRIDE, y: point.y };
-  if (direction === "right") return { x: point.x + PRESENTATION_COLUMN_STRIDE, y: point.y };
-  if (direction === "above") return { x: point.x, y: point.y - PRESENTATION_ROW_STRIDE };
-  return { x: point.x, y: point.y + PRESENTATION_ROW_STRIDE };
-}
-
 function projectPresentedStructure(
   structure: StructureGraphContent,
   topology: SimpleStructureTopology,
@@ -1705,6 +2184,8 @@ function projectPresentedStructure(
       }
     }
   }
+  const hasPlacedRegions = regionByNodeId.size > 0;
+  if (!hasPlacedRegions && backboneEdges.length === 0) return null;
   const regionPacking = presentationRegionPacking({
     structure,
     regionByNodeId,
@@ -1712,7 +2193,12 @@ function projectPresentedStructure(
     startNodeId,
   });
   const positions = new Map<string, StructurePoint>();
-  if (backboneEdges.length === 0) {
+  if (hasPlacedRegions) {
+    // Regions are the authored spatial chunks. Place their complete membership as compound units
+    // before positioning unassigned context, even when a primary backbone is also present. The
+    // backbone still shapes the Region packing through its stronger cross-Region relation weight
+    // and remains the exact visual core, but it must not pull members of the same comprehension
+    // chunk into distant global bands.
     for (const [nodeId, point] of presentationRegionOnlyPositions({
       structure,
       topology,
@@ -1721,7 +2207,7 @@ function projectPresentedStructure(
     })) {
       positions.set(nodeId, point);
     }
-  } else {
+  } else if (backboneEdges.length > 0) {
     const backboneNeighborSets = new Map(
       [...backboneNodeIds].sort(stableCompare).map((nodeId) => [nodeId, new Set<string>()]),
     );
@@ -1780,12 +2266,11 @@ function projectPresentedStructure(
       });
       group.forEach((nodeId, index) => orderIndex.set(nodeId, index));
     }
-    for (const [nodeId, point] of presentationBackbonePositions({
+    for (const [nodeId, point] of presentationRankBandPositions({
       rankValues,
       rankGroups,
-      rankByNodeId: ranks,
-      backboneEdges,
-      regions: presentation.regions,
+      relationEdges: backboneEdges,
+      preserveShortSequence: true,
     })) {
       positions.set(nodeId, point);
     }
@@ -1793,64 +2278,72 @@ function projectPresentedStructure(
 
   const occupied = [...positions.values()];
   const backboneCorridors = presentationBackboneCorridors(backboneEdges, positions);
-  const regionEnvelopes: PresentationEnvelope[] = [];
-  const regionsInPackingOrder = [...presentation.regions].sort((left, right) => {
-    const leftCell = regionPacking.cellByRegionId.get(left.id);
-    const rightCell = regionPacking.cellByRegionId.get(right.id);
-    if (leftCell && rightCell) {
-      const position = comparePresentationRegionCells(leftCell, rightCell);
-      if (position !== 0) return position;
-    } else if (leftCell) return -1;
-    else if (rightCell) return 1;
-    return stableCompare(left.id, right.id);
-  });
-  regionsInPackingOrder.forEach((region) => {
-    const regionNodeIds = new Set(
-      region.nodeIds.filter((nodeId) => nodeIds.has(nodeId)).sort(stableCompare),
-    );
-    const remaining = new Set([...regionNodeIds].filter((nodeId) => !positions.has(nodeId)));
-    while (remaining.size > 0) {
-      const globalAnchors = new Set(positions.keys());
-      const nodeId = nextPresentationNode(remaining, globalAnchors, topology);
-      const anchorId = nearestPresentationAnchor({
-        nodeId,
-        anchors: globalAnchors,
-        topology,
-        positions,
-      });
-      const fallbackRight = Math.max(
-        0,
-        ...[...positions.values()].map(({ x }) => x + STRUCTURE_NODE_WIDTH),
+  const regionEnvelopes = [...presentation.regions]
+    .sort((left, right) => stableCompare(left.id, right.id))
+    .flatMap((region) => {
+      const envelope = presentationEnvelope(
+        [...new Set(region.nodeIds)]
+          .sort(stableCompare)
+          .flatMap((nodeId) => (nodeIds.has(nodeId) ? [positions.get(nodeId)!] : [])),
       );
-      const anchor = anchorId
-        ? positions.get(anchorId)!
-        : { x: fallbackRight + PRESENTATION_RANK_GAP, y: 0 };
-      const direction = presentationRegionPlacementDirection({
-        regionId: region.id,
-        anchorId,
-        regionByNodeId,
-        packing: regionPacking,
-        positions,
-      });
-      const desired = presentationDirectionOffset(anchor, direction);
-      const point = firstOpenPresentationPoint(
-        occupied,
-        desired,
-        [...backboneCorridors, ...regionEnvelopes],
-        direction,
-      );
-      positions.set(nodeId, point);
-      occupied.push(point);
-      remaining.delete(nodeId);
-    }
-    const envelope = presentationEnvelope(
-      [...regionNodeIds].flatMap((nodeId) => {
-        const point = positions.get(nodeId);
+      return envelope ? [envelope] : [];
+    });
+
+  const regionExternalEnvelopes: PresentationEnvelope[] = [];
+  if (hasPlacedRegions) {
+    const regionPoints = [...positions.values()];
+    const regionMinimumX = Math.min(...regionPoints.map(({ x }) => x));
+    const regionMinimumY = Math.min(...regionPoints.map(({ y }) => y));
+    const boundaryAnchorOrder = (component: PresentationRegionExternalComponent) => {
+      const anchors = component.boundaryEdges.flatMap((edge) => {
+        const regionNodeId = component.nodeIdSet.has(edge.from) ? edge.to : edge.from;
+        const point = positions.get(regionNodeId);
         return point ? [point] : [];
-      }),
+      });
+      return {
+        y: anchors.length > 0 ? Math.min(...anchors.map(({ y }) => y)) : Number.MAX_SAFE_INTEGER,
+        x: anchors.length > 0 ? Math.min(...anchors.map(({ x }) => x)) : Number.MAX_SAFE_INTEGER,
+      };
+    };
+    const regionExternalComponents = presentationRegionExternalComponents({
+      structure,
+      topology,
+      regionByNodeId,
+      backboneEdgeIds,
+    }).sort(
+      (left, right) =>
+        Number(right.nodeIds.includes(startNodeId)) - Number(left.nodeIds.includes(startNodeId)) ||
+        right.backboneBoundaryCount - left.backboneBoundaryCount ||
+        right.boundaryEdges.length - left.boundaryEdges.length ||
+        boundaryAnchorOrder(left).y - boundaryAnchorOrder(right).y ||
+        boundaryAnchorOrder(left).x - boundaryAnchorOrder(right).x ||
+        right.nodeIds.length - left.nodeIds.length ||
+        stableCompare(left.signature, right.signature),
     );
-    if (envelope) regionEnvelopes.push(envelope);
-  });
+    for (const component of regionExternalComponents) {
+      const template = presentationRegionExternalTemplate({
+        component,
+        topology,
+        startNodeId,
+        backboneEdgeIds,
+      });
+      const placement = presentationRegionExternalPlacement({
+        component,
+        template,
+        positions,
+        occupied,
+        forbiddenEnvelopes: [...regionEnvelopes, ...regionExternalEnvelopes],
+        backboneEdgeIds,
+        minimumX: regionMinimumX,
+        minimumY: regionMinimumY,
+      });
+      for (const [nodeId, point] of placement.positions) {
+        positions.set(nodeId, point);
+        occupied.push(point);
+      }
+      regionExternalEnvelopes.push(placement.envelope);
+    }
+  }
 
   const presentedAnchors = new Set(positions.keys());
   const remaining = new Set([...nodeIds].filter((nodeId) => !positions.has(nodeId)));
@@ -1886,7 +2379,7 @@ function projectPresentedStructure(
     const point = firstOpenPresentationPoint(
       occupied,
       desired,
-      [...backboneCorridors, ...regionEnvelopes],
+      [...backboneCorridors, ...regionEnvelopes, ...regionExternalEnvelopes],
       directAnchors.length >= 2 ? "either" : "below",
     );
     positions.set(nodeId, point);

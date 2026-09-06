@@ -152,12 +152,21 @@ export function structureViewportForCameraFrame(input: {
   positions: Readonly<Record<string, StructurePoint>>;
   regionBounds: ReadonlyMap<string, StructureCameraBounds>;
   surfaceSize: { width: number; height: number };
+  renderBoundsForNodeIds?: (nodeIds: readonly string[]) => StructureCameraBounds | null;
 }): StructureViewport | null {
-  const { frame, positions, regionBounds, surfaceSize } = input;
+  const { frame, positions, regionBounds, surfaceSize, renderBoundsForNodeIds } = input;
   if (frame.kind === "bounds") {
     return structureViewportForBounds({ bounds: frame.bounds, surfaceSize });
   }
   if (frame.kind === "nodes") {
+    const renderBounds = renderBoundsForNodeIds?.(frame.nodeIds);
+    if (renderBounds) {
+      return structureViewportForBounds({
+        bounds: renderBounds,
+        surfaceSize,
+        ...(frame.maxScale === undefined ? {} : { maxScale: frame.maxScale }),
+      });
+    }
     return structureViewportForNodeIds({
       nodeIds: frame.nodeIds,
       positions,
@@ -344,7 +353,11 @@ export function structureLayoutBasisKey(
       }),
     ),
   ].sort(stableCompare);
-  return `structure-layout-basis:v1:${JSON.stringify({
+  // v2 makes declared Regions the primary compound placement. Scope the projection revision to
+  // Region-bearing presentations so topology/start-only and backbone-only manual layouts survive
+  // an implementation change that cannot affect their canonical geometry.
+  const projectionVersion = presentation.regions.length > 0 ? "v2" : "v1";
+  return `structure-layout-basis:${projectionVersion}:${JSON.stringify({
     startNodeId: presentation.startNodeId,
     primaryBackbone: presentation.primaryBackbone ? backboneAdjacency : null,
     regions: presentation.regions

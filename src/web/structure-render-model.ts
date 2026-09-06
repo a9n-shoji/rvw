@@ -2254,6 +2254,28 @@ export function selectStructureRenderModel(
   };
 }
 
+/**
+ * Bounds for a semantic Node frame, including every exact relation induced by that Node set and
+ * the complete visible label/association geometry for those relations. The Node IDs remain the
+ * durable camera-frame identity; callers recompute these renderer bounds from current geometry.
+ */
+export function structureRenderBoundsForNodeIds(
+  foundation: StructureRenderFoundation,
+  nodeIds: Iterable<string>,
+): StructureBox | null {
+  const selectedNodeIds = new Set(nodeIds);
+  const inducedEdgeIds = new Set(
+    foundation.edges
+      .filter(({ edge }) => selectedNodeIds.has(edge.from) && selectedNodeIds.has(edge.to))
+      .map(({ edge }) => edge.id),
+  );
+  return selectStructureRenderModel(foundation, {
+    nodeIds: selectedNodeIds,
+    edgeIds: inducedEdgeIds,
+    labelEdgeIds: inducedEdgeIds,
+  }).bounds;
+}
+
 export function buildStructureRenderModel(input: {
   structure: Structure;
   positions: Readonly<Record<string, StructurePoint>>;

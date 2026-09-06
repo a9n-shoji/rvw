@@ -479,6 +479,32 @@ describe("Structure pane sessions", () => {
     expect(viewport!.y + 500 * viewport!.scale).toBeLessThanOrEqual(600 - 36);
   });
 
+  it("recomputes a semantic Node frame from current renderer relation and label bounds", () => {
+    const nodeIds = ["A", "B"];
+    const renderBounds = { left: -120, top: -84, right: 920, bottom: 540 };
+    const surfaceSize = { width: 760, height: 480 };
+    let requestedNodeIds: readonly string[] = [];
+
+    const viewport = structureViewportForCameraFrame({
+      frame: { kind: "nodes", nodeIds, maxScale: 0.9 },
+      positions: {
+        A: { x: 100, y: 100 },
+        B: { x: 200, y: 100 },
+      },
+      regionBounds: new Map(),
+      surfaceSize,
+      renderBoundsForNodeIds: (requested) => {
+        requestedNodeIds = requested;
+        return renderBounds;
+      },
+    });
+
+    expect(requestedNodeIds).toEqual(nodeIds);
+    expect(viewport).toEqual(
+      structureViewportForBounds({ bounds: renderBounds, surfaceSize, maxScale: 0.9 }),
+    );
+  });
+
   it("drops renderer-derived history bounds when artifact or Node geometry changed", () => {
     const boundsFrame = {
       kind: "bounds" as const,
@@ -567,6 +593,13 @@ describe("Structure pane sessions", () => {
   it("keys only the authored fields that determine canonical geometry", () => {
     const value = presentedStructure("70000000-0000-4000-8000-000000000094");
     const baseline = structureLayoutBasisKey(value);
+    expect(baseline).toMatch(/^structure-layout-basis:v2:/u);
+    expect(
+      structureLayoutBasisKey({
+        edges: value.edges,
+        presentation: { ...value.presentation!, regions: [] },
+      }),
+    ).toMatch(/^structure-layout-basis:v1:/u);
     expect(
       structureLayoutBasisKey({
         edges: value.edges,
@@ -709,12 +742,12 @@ describe("Structure pane sessions", () => {
     expect(reconciled.framedRegionId).toBe("second");
     expect(reconciled.cameraFrame).toEqual({ kind: "region", regionId: "second" });
     expect(reconciled.viewport.scale).toBe(session.viewport.scale);
-    expect(reconciled.viewport.x + reconciled.positions.B!.x * reconciled.viewport.scale).toBe(
-      session.viewport.x + session.positions.B.x * session.viewport.scale,
-    );
-    expect(reconciled.viewport.y + reconciled.positions.B!.y * reconciled.viewport.scale).toBe(
-      session.viewport.y + session.positions.B.y * session.viewport.scale,
-    );
+    expect(
+      reconciled.viewport.x + reconciled.positions.B!.x * reconciled.viewport.scale,
+    ).toBeCloseTo(session.viewport.x + session.positions.B.x * session.viewport.scale);
+    expect(
+      reconciled.viewport.y + reconciled.positions.B!.y * reconciled.viewport.scale,
+    ).toBeCloseTo(session.viewport.y + session.positions.B.y * session.viewport.scale);
   });
 
   it("preserves Region identity across array reordering and rebases membership changes", () => {

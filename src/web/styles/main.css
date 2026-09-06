@@ -5501,19 +5501,14 @@ diffs-container > [slot="header-metadata"] {
 
 :is(.structure-edge, .structure-edge-arrow-carrier).selected {
   stroke: var(--structure-edge-active);
-  opacity: 1;
 }
 
 .structure-edge.selected {
   stroke-width: 3.2;
 }
 
-:is(.structure-edge, .structure-edge-arrow-carrier).context-distant:not(.primary-backbone) {
+:is(.structure-edge, .structure-edge-arrow-carrier).context-distant {
   opacity: 0.2;
-}
-
-:is(.structure-edge, .structure-edge-arrow-carrier).context-distant.primary-backbone {
-  opacity: 0.68;
 }
 
 :is(.structure-edge, .structure-edge-arrow-carrier).muted {
@@ -5533,10 +5528,8 @@ diffs-container > [slot="header-metadata"] {
   opacity: 0.1;
 }
 
-:is(.structure-edge, .structure-edge-arrow-carrier).region-frame-context.primary-backbone:not(
-    .selected
-  ) {
-  opacity: 0.34;
+:is(.structure-edge, .structure-edge-arrow-carrier).selected {
+  opacity: 1;
 }
 
 .structure-edge-label-leader {
@@ -5606,7 +5599,7 @@ path.structure-edge-label-leader.selected,
   opacity: 0.9;
 }
 
-.structure-edge-label-leader.context-distant:not(.primary-backbone) {
+.structure-edge-label-leader.context-distant {
   opacity: 0.2;
 }
 
@@ -5621,6 +5614,10 @@ path.structure-edge-label-leader.selected,
 
 .structure-edge-label-leader.region-frame-context:not(.selected) {
   opacity: 0.08;
+}
+
+.structure-edge-label-leader.selected {
+  opacity: 1;
 }
 
 .structure-node {
@@ -5851,24 +5848,20 @@ path.structure-edge-label-leader.selected,
     inset 0 0 0 2px color-mix(in srgb, var(--attention) 12%, transparent);
 }
 
-.structure-node.region-frame-context:not(.focused) {
-  opacity: 0.24;
+.structure-node.context-distant {
+  opacity: 0.5;
 }
 
-.structure-node.region-frame-context.primary-backbone:not(.focused) {
-  opacity: 0.48;
+.structure-node.region-frame-context:not(.focused) {
+  opacity: 0.24;
 }
 
 .structure-node.region-frame-context.focused {
   opacity: 0.76;
 }
 
-.structure-node.context-distant:not(.primary-backbone) {
-  opacity: 0.5;
-}
-
-.structure-node.context-distant.primary-backbone {
-  opacity: 0.82;
+.structure-node.context-distant.edge-endpoint {
+  opacity: 1;
 }
 
 .structure-node-presentation-start {
@@ -6027,19 +6020,11 @@ path.structure-edge-label-leader.selected,
   border-style: dashed;
 }
 
-.structure-edge-label.muted {
-  opacity: 0.28;
-}
-
 .structure-edge-label.framed-region-relation:not(.selected) .structure-edge-select {
   border-color: var(--attention);
   border-width: 2px;
   color: color-mix(in srgb, var(--attention) 86%, var(--text));
   background: color-mix(in srgb, var(--attention) 10%, var(--panel));
-}
-
-.structure-edge-label.region-frame-context:not(.selected) {
-  opacity: 0.16;
 }
 
 .structure-edge-label.primary-backbone .structure-edge-select {
@@ -6049,8 +6034,20 @@ path.structure-edge-label-leader.selected,
   background: color-mix(in srgb, var(--done) 7%, var(--panel));
 }
 
-.structure-edge-label.context-distant:not(.primary-backbone) {
+.structure-edge-label.context-distant {
   opacity: 0.48;
+}
+
+.structure-edge-label.muted {
+  opacity: 0.28;
+}
+
+.structure-edge-label.region-frame-context:not(.selected) {
+  opacity: 0.16;
+}
+
+.structure-edge-label.selected {
+  opacity: 1;
 }
 
 .structure-viewer[data-semantic-zoom="overview"]
@@ -6060,8 +6057,27 @@ path.structure-edge-label-leader.selected,
 }
 
 .structure-viewer[data-semantic-zoom="overview"]
+  .structure-edge-label.primary-backbone.context-distant:not(
+    .focus-incident,
+    .framed-region-relation,
+    .selected
+  )
+  .structure-edge-label-text {
+  visibility: hidden;
+}
+
+.structure-viewer[data-semantic-zoom="overview"]
   .structure-edge-label-leader:not(
     .primary-backbone,
+    .focus-incident,
+    .framed-region-relation,
+    .selected
+  ) {
+  opacity: 0.12;
+}
+
+.structure-viewer[data-semantic-zoom="overview"]
+  .structure-edge-label-leader.primary-backbone.context-distant:not(
     .focus-incident,
     .framed-region-relation,
     .selected

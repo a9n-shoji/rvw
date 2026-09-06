@@ -798,25 +798,35 @@ pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とす�
 2倍とする。overflowするNode上では、修飾キーなしの縦wheelをその方向へNode内scrollできる間だけNodeへ渡す。
 横wheel、Ctrl / Meta付きwheel、Node内scrollの上端／下端から外向きのwheelはcanvasへ渡す。layoutはfactual graph、
 optionalな`presentation`、stable IDを入力とするdeterministicなbehavior projectionとする。non-nullの
-`presentation`では`startNodeId`をauthorial attention anchorとし、spatial organizerがある場合はnon-null
-`primaryBackbone.edgeIds`からstart-rootedなconnected skeletonとvisual rankを導出し、`regions`をfactual adjacencyに
-沿うcomprehension/spatial chunkとして配置する。backboneとRegionを別のvisual channelへ反映し、backbone外／Region外を
+`presentation`では`startNodeId`をauthorial attention anchorとする。Regionが一つ以上ある場合は各Regionの全memberを
+compoundなcomprehension/spatial chunkとして先に配置し、direct cross-Region factual adjacencyでchunk間を近づける。
+`primaryBackbone.edgeIds`はcross-Region relationのweightとexact visual coreを与えるが、同じRegionのmemberをglobal bandへ
+引き離さない。Regionがなくbackboneだけがある場合は、そこからstart-rootedなconnected skeletonとvisual rankを導出する。
+backboneとRegionを別のvisual channelへ反映し、backbone外／Region外を
 含む全Nodeと全Edgeをartifactから削除しない。
 Edge方向やfactual claimを書き換えず、focus、source検証、自由探索を制限しない。Region arrayとRegion内`nodeIds`は
 どちらも順序のないsetであり、reviewerの読解優先順、sequence、runtime / causal flow、architectural importance、
-renderer座標を表さない。backboneのないregion-only layoutはRegion間のdirect factual adjacency、start context、stable
-Region IDからbounded surfaceを導出し、Region上限付近でも一列に引き伸ばさない。backboneがある場合はそのactual topologyと
-cross-Region adjacencyを使い、branch / convergenceを一列へ
-平坦化しない。backboneのderived visual bandが十分に長い場合は、contiguousなband partitionを候補として
-serpentineな複数行へ折り返す。現在のprojectionはpadded region envelopeの非重複、5:3のreference viewportに
-対するnormalized extent、region split数、backbone relation span、area、stableなrow-size tie-breakの順で候補を
-比較し、row turnでは連続bandを同じ側へ寄せる。Node / Edge / backbone Edge / region memberの入力配列順を変えても
+renderer座標を表さない。Region-bearing layoutはRegion間のdirect factual adjacency、start context、stable Region IDから
+bounded surfaceを導出し、Region上限付近でも一列に引き伸ばさない。小さなRegionのmember gridはinternal factual relationの
+crossingとspan、隣接Regionへのboundary affinityを決定的に評価する。3 memberの2×2 gridのような非full gridでは空cellも
+候補に含め、multi-boundary hubを自然なcornerへ置ける。memberが多い場合は探索量を上限化したdeterministic affinity
+placementへfallbackする。Regionがないbackbone-only layoutでは、actual backbone topologyをbranch / convergenceのまま
+visual bandへ展開し、一列へ平坦化しない。derived visual bandが十分に長い場合は、contiguousなband partitionを候補として
+serpentineな複数行へ折り返す。現在のprojectionは5:3のreference viewportに対するnormalized extent、relation span、
+crossing、areaなどをboundedな候補集合で比較する。Node / Edge / backbone Edge / region memberの入力配列順を変えても
 同じ座標を返す。候補探索のthreshold、reference aspect、score、row breakはprotocol fieldでもauthorial layerでもなく、
 readability metricに応じて置換できるprojection implementation detailである。
-非backbone Nodeは実在する隣接またはnearest backbone Nodeの上下へ配置してcore corridorを空ける。
-Region packingはmemberのactual envelopeとcross-Region adjacencyを使い、空のtheoretical radiusを予約しない。Region
-membershipの正本は明示Node IDだけで、derived boundsはplacement内部の衝突回避に限り、artifact semanticsや
-manual drag後のmembership表示には使わない。`startNodeId`がいずれかのRegionに属するとは限らない。
+Region外のNodeは、Region memberを除いたfactual topologyのmaximal connected componentごとにrenderer-ownedなContext
+compoundとして扱う。各Contextはinternal Edgeを使ったderived rank bandをboundedなserpentine surfaceへ畳み、internal
+geometryを崩さないrigid translationとして、declared Region envelopeの上下左右を含むglobal packing候補へ配置する。
+Region同士のrelative arrangementは維持し、全Nodeを正座標へ戻す最終global translationだけを許す。候補はdirect boundary
+Edge、とくにexact backbone Edgeの距離、boundary routeが既存Nodeを横切る数、全体extent、areaを決定的に比較する。これによりpartial Region
+membershipでも長い未割当chain、複数依存hub、cross-Region bridgeを縦一列へ伸ばさず、かつRegion間の暗黙relationへ
+畳み込まない。Context component、entry rank、band、envelopeはRegions viewとGraph projectionがcurrent factsから導出する
+renderer detailであり、artifactへIDやmembership、layout hintとして保存しない。Region packingはmemberのactual envelopeと
+cross-Region adjacencyを使い、空のtheoretical radiusを予約しない。Region membershipの正本は明示Node IDだけで、derived
+boundsはplacement内部の衝突回避に限り、artifact semanticsやmanual drag後のmembership表示には使わない。
+`startNodeId`がいずれかのRegionに属するとは限らない。
 `presentation: null`とstart-only presentationは、topology、factualなEdge direction、`originNodeId` entrypointから
 同じprojectionを導出する。originを含むtopology componentでは、canonical directional linksのstrongly connected componentsを求め、
 directional weak componentごとにcondensation DAGをlongest-path layeringする。各SCCを連続したrank blockとして配置して
@@ -850,9 +860,11 @@ base mapはcurrent Structureだけから決定的に導出するcanonical layout
 reflowしたりしない。新規Nodeは
 retained neighborの重心を起点に全方向の空き候補を調べ、既存のmental mapを壊さず発見できる位置へ置く。
 Node位置、Graph / Regions view mode、focus、depth、Graph viewport、独立したRegions viewport、Guide disclosureはbrowser session内だけでpaneとStructure IDの組へ
-保持し、tab往復とcurrent-value更新後もsurviving IDの状態を保つ。spatial-organizer identityは、organizerの有無、
-organizerがある場合の`startNodeId`、backbone Edge endpointから作るnormalized simple adjacency、Regionのstable ID /
-membershipからなる。organizerを追加、削除、またはadjacencyを変更した場合は、
+保持し、tab往復とcurrent-value更新後もsurviving IDの状態を保つ。spatial-organizer identityは、organizerへ適用される
+canonical projection revision、organizerの有無、organizerがある場合の`startNodeId`、backbone Edge endpointから作る
+normalized simple adjacency、Regionのstable ID / membershipからなる。Region-first revisionはRegionを一つ以上持つ
+presentationだけに適用し、Regionなしのtopology / start-only / backbone-only layout basisは変更しない。organizerを追加、
+削除、adjacencyを変更、または該当projection revisionを変更した場合は、
 新しいauthorial spatial semanticsを優先して全Nodeをcanonical layoutへrebaseする。`presentation: null`とstart-onlyは
 同じtopology layout basisを共有するため、両者間の更新と、start-onlyのthesis / `startNodeId`だけの更新ではmanual
 geometryを維持する。thesisだけ、同じendpoint間のexact primary Edge差し替え／parallel relation追加削除、Region array / member
@@ -945,7 +957,11 @@ Regions surfaceはtransform cameraを持ち、明示的な全体Fit、可読なH
 GraphのRegion lensはfull Region label、責務summary、exact member数、内部relation数をcanvas内へ明示し、member Nodeと
 内部relationを専用のvisual channelで強調する。通常GraphにもNodeのsemantic metadataとしてfull Region identityを残すが、
 stable ID由来の略称を読むことやmanual drag由来のenclosing rectangleからmembershipを推測することは要求しない。primary backboneのexact Node / Edgeを
-focus proximityとは別のstyleで強調し、minimapにもbackboneとauthorial startを示す。
+focus proximityとは別の色、線、markerで強調し、minimapにもbackboneとauthorial startを示す。focusから2-hop以上の
+Nodeはbackbone membershipにかかわらず同じ距離opacityを使い、Edge / labelは両endpointの遠い側のhop層へ従う。
+backboneは距離によるdetail hierarchyを打ち消さず、固有の線／markerとminimapで識別可能に保つ。activeなexact
+Relation selectionまたはRegion lensはreviewerが明示した現在のtargetなのでhop表示より優先できるが、artifact由来の
+backbone / Region membershipだけでfocusから遠い要素のopacityやsemantic-zoom detailを復元しない。
 zoomはcardとRelation labelを一体として拡大縮小するが、読めないscaleではsecondary label / descriptionを
 semantic zoomで省略できる。省略はvisible / total count、selection / focusによるinspect、Home / Allによって明示的に
 回収できなければならない。広域の位置関係はminimapとHome、局所の読解はfocus / pan / zoom、complete graphはAllと

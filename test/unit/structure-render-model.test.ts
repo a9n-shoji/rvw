@@ -14,6 +14,7 @@ import {
   labelBox,
   routeStructureEdges,
   selectStructureRenderModel,
+  structureRenderBoundsForNodeIds,
   STRUCTURE_EDGE_ARROW_LENGTH,
   STRUCTURE_EDGE_MIN_TERMINAL_APPROACH,
   type StructureEdgeGeometry,
@@ -178,6 +179,73 @@ function maximumSharedOrthogonalLength(
   return maximum;
 }
 
+function structureRouteLength(route: StructureEdgeGeometry): number {
+  return route.points.slice(1).reduce((total, point, index) => {
+    const previous = route.points[index]!;
+    return total + Math.hypot(point.x - previous.x, point.y - previous.y);
+  }, 0);
+}
+
+function properSegmentsCross(
+  leftStart: { x: number; y: number },
+  leftEnd: { x: number; y: number },
+  rightStart: { x: number; y: number },
+  rightEnd: { x: number; y: number },
+): boolean {
+  const orientation = (
+    first: { x: number; y: number },
+    second: { x: number; y: number },
+    third: { x: number; y: number },
+  ): number =>
+    (second.x - first.x) * (third.y - first.y) - (second.y - first.y) * (third.x - first.x);
+  const epsilon = 0.000_001;
+  const first = orientation(leftStart, leftEnd, rightStart);
+  const second = orientation(leftStart, leftEnd, rightEnd);
+  const third = orientation(rightStart, rightEnd, leftStart);
+  const fourth = orientation(rightStart, rightEnd, leftEnd);
+  return first * second < -epsilon && third * fourth < -epsilon;
+}
+
+function unrelatedRouteConflicts(
+  routes: readonly {
+    edge: { id: string; from: string; to: string };
+    geometry: StructureEdgeGeometry;
+  }[],
+): { crossingPairs: string[]; sharedLanePairs: string[] } {
+  const crossingPairs: string[] = [];
+  const sharedLanePairs: string[] = [];
+  for (const [index, left] of routes.entries()) {
+    for (const right of routes.slice(index + 1)) {
+      if (
+        [left.edge.from, left.edge.to].some(
+          (nodeId) => nodeId === right.edge.from || nodeId === right.edge.to,
+        )
+      ) {
+        continue;
+      }
+      if (maximumSharedOrthogonalLength(left.geometry.points, right.geometry.points) > 0) {
+        sharedLanePairs.push(`${left.edge.id}|${right.edge.id}`);
+      }
+      const crosses = left.geometry.points
+        .slice(1)
+        .some((leftEnd, leftIndex) =>
+          right.geometry.points
+            .slice(1)
+            .some((rightEnd, rightIndex) =>
+              properSegmentsCross(
+                left.geometry.points[leftIndex]!,
+                leftEnd,
+                right.geometry.points[rightIndex]!,
+                rightEnd,
+              ),
+            ),
+        );
+      if (crosses) crossingPairs.push(`${left.edge.id}|${right.edge.id}`);
+    }
+  }
+  return { crossingPairs, sharedLanePairs };
+}
+
 function renderStructure(): Structure {
   const notations = [
     "plain",
@@ -258,6 +326,56 @@ function renderStructure(): Structure {
 }
 
 describe("Structure shared render model", () => {
+  it("frames a semantic Node set with its induced exact Edge, label, and leader geometry", () => {
+    const structure = createContractStructures({
+      pullRequestId: "pr-1",
+      baseOid: "a".repeat(40),
+      firstHead: "b".repeat(40),
+    })[2] as Structure;
+    const positions = initialStructureLayout(structure);
+    const foundation = buildStructureRenderFoundation({
+      structure,
+      positions,
+      sourceChangeKinds: new Map(),
+      labelAccessory: "source-actions",
+      edgeLabelMode: "viewer-adaptive",
+    });
+    const edgeId = "detail-route-authenticates";
+    const bounds = structureRenderBoundsForNodeIds(foundation, [
+      "order-detail-route",
+      "detail-actor-auth",
+    ])!;
+    const inducedEdge = foundation.edges.find(({ edge }) => edge.id === edgeId)!;
+    const inducedLabel = foundation.labels.find(({ edge }) => edge.id === edgeId)!;
+    const inducedLabelBounds = labelBox(
+      inducedLabel.x,
+      inducedLabel.y,
+      inducedLabel.boxWidth,
+      inducedLabel.height,
+      4,
+    );
+
+    expect(inducedLabel.leaderBounds).not.toBeNull();
+    for (const included of [
+      inducedEdge.geometry.bounds,
+      inducedLabelBounds,
+      inducedLabel.leaderBounds!,
+    ]) {
+      expect(bounds.left).toBeLessThanOrEqual(included.left);
+      expect(bounds.top).toBeLessThanOrEqual(included.top);
+      expect(bounds.right).toBeGreaterThanOrEqual(included.right);
+      expect(bounds.bottom).toBeGreaterThanOrEqual(included.bottom);
+    }
+    expect(bounds.right).toBeLessThan(positions["order-detail-contract"]!.x);
+    expect(bounds).not.toEqual(
+      selectStructureRenderModel(foundation, {
+        nodeIds: new Set(structure.nodes.map(({ id }) => id)),
+        edgeIds: new Set(structure.edges.map(({ id }) => id)),
+        labelEdgeIds: new Set(structure.edges.map(({ id }) => id)),
+      }).bounds,
+    );
+  });
+
   it("derives exact region membership and factual primary-backbone Edges from presentation", () => {
     const structure: Structure = {
       ...renderStructure(),
@@ -488,6 +606,145 @@ describe("Structure shared render model", () => {
     const self = model.edges.find(({ edge }) => edge.id === "self")!;
     expect(model.bounds!.right).toBeGreaterThanOrEqual(self.geometry.bounds.right);
     expect(model.bounds!.top).toBeLessThanOrEqual(self.geometry.bounds.top);
+  });
+
+  it("keeps the full contract Structure routes compact and free of unrelated crossings", () => {
+    const structure = createContractStructures({
+      pullRequestId: "pr-1",
+      baseOid: "a".repeat(40),
+      firstHead: "b".repeat(40),
+    })[0] as Structure;
+    const model = buildFullStructureRenderModel({
+      structure,
+      positions: initialStructureLayout(structure),
+      sourceChangeKinds: new Map(),
+    });
+    const conflicts = unrelatedRouteConflicts(model.edges);
+
+    expect(model.edges).toHaveLength(structure.edges.length);
+    expect(model.labels).toHaveLength(structure.edges.length);
+    expect(
+      model.edges.reduce((total, edge) => total + structureRouteLength(edge.geometry), 0),
+    ).toBeLessThanOrEqual(4_000);
+    expect(conflicts).toEqual({ crossingPairs: [], sharedLanePairs: [] });
+    expect(model.bounds!.right - model.bounds!.left).toBeLessThanOrEqual(2_000);
+    expect(model.bounds!.bottom - model.bounds!.top).toBeLessThanOrEqual(1_100);
+  });
+
+  it("keeps a partial-Region twelve-Node Context route bounded and crossing-free", () => {
+    const nodeIds = Array.from(
+      { length: 12 },
+      (_, index) => `node-${String(index).padStart(2, "0")}`,
+    );
+    const edges = nodeIds.slice(1).map((nodeId, index) => ({
+      id: `context-edge-${String(index).padStart(2, "0")}`,
+      from: nodeIds[index]!,
+      to: nodeId,
+      label: `continues through Context ${index}`,
+      directed: true,
+      anchors: [],
+    }));
+    const structure: Structure = {
+      ...renderStructure(),
+      originNodeId: nodeIds[0]!,
+      nodes: nodeIds.map((id) => ({
+        id,
+        label: id,
+        description: null,
+        kind: null,
+        notation: "plain",
+        anchor: null,
+      })),
+      edges,
+      presentation: {
+        thesis: "A small authored entry chunk exposes a longer factual Context chain.",
+        startNodeId: nodeIds[0]!,
+        primaryBackbone: { edgeIds: edges.map(({ id }) => id) },
+        regions: [
+          {
+            id: "entry",
+            label: "Entry",
+            summary: "The authored entry comprehension chunk.",
+            nodeIds: [nodeIds[0]!],
+          },
+        ],
+      },
+    };
+    const model = buildFullStructureRenderModel({
+      structure,
+      positions: initialStructureLayout(structure),
+      sourceChangeKinds: new Map(),
+    });
+
+    expect(model.edges.map(({ edge }) => edge.id).sort()).toEqual(edges.map(({ id }) => id).sort());
+    expect(model.labels).toHaveLength(edges.length);
+    expect(unrelatedRouteConflicts(model.edges)).toEqual({
+      crossingPairs: [],
+      sharedLanePairs: [],
+    });
+    expect(
+      model.edges.reduce((total, edge) => total + structureRouteLength(edge.geometry), 0),
+    ).toBeLessThanOrEqual(2_600);
+    expect(model.bounds!.right - model.bounds!.left).toBeLessThanOrEqual(1_750);
+    expect(model.bounds!.bottom - model.bounds!.top).toBeLessThanOrEqual(950);
+  });
+
+  it("keeps a fifty-Node Context fan-out bounded with finite route complexity", () => {
+    const leafIds = Array.from(
+      { length: 49 },
+      (_, index) => `leaf-${String(index).padStart(2, "0")}`,
+    );
+    const edges = leafIds.map((nodeId, index) => ({
+      id: `policy-edge-${String(index).padStart(2, "0")}`,
+      from: "hub",
+      to: nodeId,
+      label: `routes to independent policy ${index}`,
+      directed: true,
+      anchors: [],
+    }));
+    const structure: Structure = {
+      ...renderStructure(),
+      originNodeId: "hub",
+      nodes: ["hub", ...leafIds].map((id) => ({
+        id,
+        label: id,
+        description: null,
+        kind: null,
+        notation: "plain",
+        anchor: null,
+      })),
+      edges,
+      presentation: {
+        thesis: "The hub exposes many independent factual policies.",
+        startNodeId: "hub",
+        primaryBackbone: null,
+        regions: [
+          {
+            id: "coordination",
+            label: "Coordination",
+            summary: "The authored coordination responsibility.",
+            nodeIds: ["hub"],
+          },
+        ],
+      },
+    };
+    const model = buildFullStructureRenderModel({
+      structure,
+      positions: initialStructureLayout(structure),
+      sourceChangeKinds: new Map(),
+    });
+    const routeLengths = model.edges.map(({ geometry }) => structureRouteLength(geometry));
+    const routePointCounts = model.edges.map(({ geometry }) => geometry.points.length);
+
+    expect(model.edges).toHaveLength(edges.length);
+    expect(model.labels).toHaveLength(edges.length);
+    expect(routeLengths.reduce((sum, value) => sum + value, 0)).toBeLessThanOrEqual(32_000);
+    expect(
+      routePointCounts.reduce((sum, value) => sum + value, 0) / edges.length,
+    ).toBeLessThanOrEqual(12);
+    expect(Math.max(...routePointCounts)).toBeLessThanOrEqual(52);
+    expect(model.bounds!.right - model.bounds!.left).toBeLessThanOrEqual(3_100);
+    expect(model.bounds!.bottom - model.bounds!.top).toBeLessThanOrEqual(1_650);
   });
 
   it("keeps every label after manual positions block direct association leaders", () => {

@@ -20,6 +20,7 @@ import {
   structureNeighborhood,
   visibleStructureGraph,
 } from "../../src/web/structure-graph.js";
+import { createContractStructures } from "../fixtures/contract/contract-structures.mjs";
 
 function expectNoNodeOverlap(positions: Readonly<Record<string, { x: number; y: number }>>): void {
   const entries = Object.entries(positions);
@@ -34,6 +35,21 @@ function expectNoNodeOverlap(positions: Readonly<Record<string, { x: number; y: 
       expect(overlap, `${leftId} overlaps ${rightId}`).toBe(false);
     }
   }
+}
+
+function structureLayoutExtent(positions: Readonly<Record<string, { x: number; y: number }>>): {
+  width: number;
+  height: number;
+} {
+  const points = Object.values(positions);
+  return {
+    width:
+      Math.max(...points.map(({ x }) => x + STRUCTURE_NODE_WIDTH)) -
+      Math.min(...points.map(({ x }) => x)),
+    height:
+      Math.max(...points.map(({ y }) => y + STRUCTURE_NODE_HEIGHT)) -
+      Math.min(...points.map(({ y }) => y)),
+  };
 }
 
 function presentationBoxesOverlap(
@@ -284,6 +300,35 @@ function directedStructure(
   };
 }
 
+function partiallyGroupedChain(
+  nodeCount: number,
+  regions: readonly { id: string; nodeIndexes: readonly number[] }[],
+): Structure {
+  const nodeIds = Array.from(
+    { length: nodeCount },
+    (_, index) => `node-${String(index).padStart(2, "0")}`,
+  );
+  const structure = directedStructure(
+    nodeIds[0]!,
+    nodeIds,
+    nodeIds.slice(1).map((nodeId, index) => [nodeIds[index]!, nodeId]),
+  );
+  structure.presentation = {
+    thesis: "Authored Regions expose a bounded factual Context chain.",
+    startNodeId: nodeIds[0]!,
+    primaryBackbone: {
+      edgeIds: structure.edges.slice(0, Math.min(11, structure.edges.length)).map(({ id }) => id),
+    },
+    regions: regions.map(({ id, nodeIndexes }) => ({
+      id,
+      label: id,
+      summary: `Authored ${id} comprehension chunk.`,
+      nodeIds: nodeIndexes.map((index) => nodeIds[index]!),
+    })),
+  };
+  return structure;
+}
+
 function fullStackPresentedStructure(): Structure {
   const edgeSpecs = [
     ["detail-route-authenticates", "order-detail-route", "detail-actor-auth"],
@@ -396,19 +441,27 @@ describe("Structure domain presentation rules", () => {
   it("uses a non-null presentation as a deterministic, collision-free spatial composition", () => {
     const structure = structureWithPresentation();
     const layout = initialStructureLayout(structure);
-    const backbone = ["receive", "decide", "respond"].map((nodeId) => layout[nodeId]!);
-    expect(backbone.map(({ y }) => y)).toEqual([backbone[0]!.y, backbone[0]!.y, backbone[0]!.y]);
-    expect(backbone[0]!.x).toBeLessThan(backbone[1]!.x);
-    expect(backbone[1]!.x).toBeLessThan(backbone[2]!.x);
     expect(Object.keys(layout).sort()).toEqual(structure.nodes.map(({ id }) => id).sort());
     expectNoNodeOverlap(layout);
 
     const regionBounds = structure.presentation!.regions.map((region) => ({
       left: Math.min(...region.nodeIds.map((nodeId) => layout[nodeId]!.x)),
+      top: Math.min(...region.nodeIds.map((nodeId) => layout[nodeId]!.y)),
       right: Math.max(...region.nodeIds.map((nodeId) => layout[nodeId]!.x + STRUCTURE_NODE_WIDTH)),
+      bottom: Math.max(
+        ...region.nodeIds.map((nodeId) => layout[nodeId]!.y + STRUCTURE_NODE_HEIGHT),
+      ),
     }));
-    expect(regionBounds[0]!.right).toBeLessThan(regionBounds[1]!.left);
-    expect(regionBounds[1]!.right).toBeLessThan(regionBounds[2]!.left);
+    for (const [index, left] of regionBounds.entries()) {
+      for (const right of regionBounds.slice(index + 1)) {
+        expect(
+          left.right <= right.left ||
+            right.right <= left.left ||
+            left.bottom <= right.top ||
+            right.bottom <= left.top,
+        ).toBe(true);
+      }
+    }
     expect(Math.abs(layout["related-detail"]!.x - layout["output-detail"]!.x)).toBeLessThanOrEqual(
       STRUCTURE_NODE_WIDTH + 72,
     );
@@ -419,6 +472,94 @@ describe("Structure domain presentation rules", () => {
       edges: [...structure.edges].reverse(),
     });
     expect(shuffled).toEqual(layout);
+  });
+
+  it("keeps the full contract Structure in compact, coherent Region chunks", () => {
+    const structure = createContractStructures({
+      pullRequestId: "pr-1",
+      baseOid: "a".repeat(40),
+      firstHead: "b".repeat(40),
+    })[0] as Structure;
+    const layout = initialStructureLayout(structure);
+    const points = Object.values(layout);
+    const totalBounds = {
+      left: Math.min(...points.map(({ x }) => x)),
+      top: Math.min(...points.map(({ y }) => y)),
+      right: Math.max(...points.map(({ x }) => x + STRUCTURE_NODE_WIDTH)),
+      bottom: Math.max(...points.map(({ y }) => y + STRUCTURE_NODE_HEIGHT)),
+    };
+    const regionBounds = structure.presentation!.regions.map((region) => {
+      const members = region.nodeIds.map((nodeId) => layout[nodeId]!);
+      return {
+        id: region.id,
+        left: Math.min(...members.map(({ x }) => x)),
+        top: Math.min(...members.map(({ y }) => y)),
+        right: Math.max(...members.map(({ x }) => x + STRUCTURE_NODE_WIDTH)),
+        bottom: Math.max(...members.map(({ y }) => y + STRUCTURE_NODE_HEIGHT)),
+      };
+    });
+
+    expectNoNodeOverlap(layout);
+    expect(totalBounds.right - totalBounds.left).toBeLessThanOrEqual(1_600);
+    expect(totalBounds.bottom - totalBounds.top).toBeLessThanOrEqual(850);
+    for (const bounds of regionBounds) {
+      expect(bounds.right - bounds.left, `${bounds.id} width`).toBeLessThan(
+        STRUCTURE_NODE_WIDTH * 3,
+      );
+      expect(bounds.bottom - bounds.top, `${bounds.id} height`).toBeLessThanOrEqual(
+        STRUCTURE_NODE_HEIGHT * 3,
+      );
+    }
+    for (const [index, left] of regionBounds.entries()) {
+      for (const right of regionBounds.slice(index + 1)) {
+        expect(
+          left.right + STRUCTURE_REGION_PADDING_X <= right.left - STRUCTURE_REGION_PADDING_X ||
+            right.right + STRUCTURE_REGION_PADDING_X <= left.left - STRUCTURE_REGION_PADDING_X ||
+            left.bottom + STRUCTURE_REGION_PADDING_BOTTOM <=
+              right.top - STRUCTURE_REGION_PADDING_TOP ||
+            right.bottom + STRUCTURE_REGION_PADDING_BOTTOM <=
+              left.top - STRUCTURE_REGION_PADDING_TOP,
+          `${left.id} and ${right.id} overlap`,
+        ).toBe(true);
+      }
+    }
+
+    const reordered = initialStructureLayout({
+      ...structure,
+      nodes: [...structure.nodes].reverse(),
+      edges: [...structure.edges].reverse(),
+      presentation: {
+        ...structure.presentation!,
+        primaryBackbone: structure.presentation!.primaryBackbone
+          ? { edgeIds: [...structure.presentation!.primaryBackbone.edgeIds].reverse() }
+          : null,
+        regions: [...structure.presentation!.regions].reverse().map((region) => ({
+          ...region,
+          nodeIds: [...region.nodeIds].reverse(),
+        })),
+      },
+    });
+    expect(reordered).toEqual(layout);
+  });
+
+  it("uses the empty cell in a three-member Region for its multi-boundary hub", () => {
+    const structure = createContractStructures({
+      pullRequestId: "pr-1",
+      baseOid: "a".repeat(40),
+      firstHead: "b".repeat(40),
+    })[0] as Structure;
+    const layout = initialStructureLayout(structure);
+    const application = structure.presentation!.regions.find(
+      ({ id }) => id === "application-coordination",
+    )!;
+    const memberPoints = application.nodeIds.map((nodeId) => layout[nodeId]!);
+    const hub = layout.hub!;
+
+    expect(new Set(memberPoints.map(({ x }) => x))).toHaveLength(2);
+    expect(new Set(memberPoints.map(({ y }) => y))).toHaveLength(2);
+    expect(new Set(memberPoints.map(({ x, y }) => `${x}:${y}`))).toHaveLength(3);
+    expect(hub.x).toBe(Math.max(...memberPoints.map(({ x }) => x)));
+    expect(hub.y).toBe(Math.max(...memberPoints.map(({ y }) => y)));
   });
 
   it.each([
@@ -568,6 +709,216 @@ describe("Structure domain presentation rules", () => {
     ).toEqual(layout);
   });
 
+  it.each([
+    { nodeCount: 12, maximumWidth: 1_700, maximumHeight: 900, minimumFitScale: 0.8 },
+    { nodeCount: 50, maximumWidth: 3_100, maximumHeight: 1_950, minimumFitScale: 0.4 },
+  ])(
+    "keeps a $nodeCount-Node Region-external Context chain bounded",
+    ({ nodeCount, maximumWidth, maximumHeight, minimumFitScale }) => {
+      const structure = partiallyGroupedChain(nodeCount, [
+        { id: "authored-start", nodeIndexes: [0] },
+      ]);
+      const layout = initialStructureLayout(structure);
+      const { width, height } = structureLayoutExtent(layout);
+      const referenceFitScale = Math.min(1.25, (1_440 - 72) / width, (900 - 88) / height);
+
+      expect(Object.keys(layout).sort()).toEqual(structure.nodes.map(({ id }) => id).sort());
+      expectNoNodeOverlap(layout);
+      expect(width).toBeLessThanOrEqual(maximumWidth);
+      expect(height).toBeLessThanOrEqual(maximumHeight);
+      expect(Math.max(width / height, height / width)).toBeLessThanOrEqual(2);
+      expect(referenceFitScale).toBeGreaterThanOrEqual(minimumFitScale);
+
+      expect(
+        initialStructureLayout({
+          ...structure,
+          nodes: [...structure.nodes].reverse(),
+          edges: [...structure.edges].reverse(),
+          presentation: {
+            ...structure.presentation!,
+            primaryBackbone: {
+              edgeIds: [...structure.presentation!.primaryBackbone!.edgeIds].reverse(),
+            },
+            regions: [...structure.presentation!.regions].reverse().map((region) => ({
+              ...region,
+              nodeIds: [...region.nodeIds].reverse(),
+            })),
+          },
+        }),
+      ).toEqual(layout);
+    },
+  );
+
+  it("packs multiple Region-external Context components without splitting authored chunks", () => {
+    const structure = partiallyGroupedChain(12, [
+      { id: "entry", nodeIndexes: [0, 1] },
+      { id: "decision", nodeIndexes: [6, 7] },
+    ]);
+    const layout = initialStructureLayout(structure);
+    const { width, height } = structureLayoutExtent(layout);
+    const regionEnvelopes = structure.presentation!.regions.map((region) => {
+      const points = region.nodeIds.map((nodeId) => layout[nodeId]!);
+      return {
+        left: Math.min(...points.map(({ x }) => x)) - STRUCTURE_REGION_PADDING_X,
+        top: Math.min(...points.map(({ y }) => y)) - STRUCTURE_REGION_PADDING_TOP,
+        right:
+          Math.max(...points.map(({ x }) => x + STRUCTURE_NODE_WIDTH)) + STRUCTURE_REGION_PADDING_X,
+        bottom:
+          Math.max(...points.map(({ y }) => y + STRUCTURE_NODE_HEIGHT)) +
+          STRUCTURE_REGION_PADDING_BOTTOM,
+      };
+    });
+
+    expectNoNodeOverlap(layout);
+    expect(width).toBeLessThanOrEqual(1_300);
+    expect(height).toBeLessThanOrEqual(900);
+    expect(Math.max(width / height, height / width)).toBeLessThanOrEqual(1.5);
+    expect(presentationBoxesOverlap(regionEnvelopes[0]!, regionEnvelopes[1]!)).toBe(false);
+    const authoredNodeIds = new Set(
+      structure.presentation!.regions.flatMap(({ nodeIds }) => nodeIds),
+    );
+    for (const contextNodeId of structure.nodes
+      .map(({ id }) => id)
+      .filter((nodeId) => !authoredNodeIds.has(nodeId))) {
+      const point = layout[contextNodeId]!;
+      const nodeEnvelope = {
+        left: point.x,
+        top: point.y,
+        right: point.x + STRUCTURE_NODE_WIDTH,
+        bottom: point.y + STRUCTURE_NODE_HEIGHT,
+      };
+      expect(regionEnvelopes.some((region) => presentationBoxesOverlap(nodeEnvelope, region))).toBe(
+        false,
+      );
+    }
+    expect(
+      initialStructureLayout({
+        ...structure,
+        nodes: [...structure.nodes].reverse(),
+        edges: [...structure.edges].reverse(),
+        presentation: {
+          ...structure.presentation!,
+          primaryBackbone: {
+            edgeIds: [...structure.presentation!.primaryBackbone!.edgeIds].reverse(),
+          },
+          regions: [...structure.presentation!.regions].reverse().map((region) => ({
+            ...region,
+            nodeIds: [...region.nodeIds].reverse(),
+          })),
+        },
+      }),
+    ).toEqual(layout);
+  });
+
+  it("packs many Region-external Context leaves around an authored hub", () => {
+    const leafIds = Array.from(
+      { length: 49 },
+      (_, index) => `leaf-${String(index).padStart(2, "0")}`,
+    );
+    const structure = directedStructure(
+      "hub",
+      ["hub", ...leafIds],
+      leafIds.map((nodeId) => ["hub", nodeId]),
+    );
+    structure.presentation = {
+      thesis: "The hub exposes many independent factual policies.",
+      startNodeId: "hub",
+      primaryBackbone: null,
+      regions: [
+        {
+          id: "coordination",
+          label: "Coordination",
+          summary: "The authored coordination responsibility.",
+          nodeIds: ["hub"],
+        },
+      ],
+    };
+    const layout = initialStructureLayout(structure);
+    const { width, height } = structureLayoutExtent(layout);
+    const hub = layout.hub!;
+    const regionEnvelope = {
+      left: hub.x - STRUCTURE_REGION_PADDING_X,
+      top: hub.y - STRUCTURE_REGION_PADDING_TOP,
+      right: hub.x + STRUCTURE_NODE_WIDTH + STRUCTURE_REGION_PADDING_X,
+      bottom: hub.y + STRUCTURE_NODE_HEIGHT + STRUCTURE_REGION_PADDING_BOTTOM,
+    };
+
+    expectNoNodeOverlap(layout);
+    expect(width).toBeLessThanOrEqual(2_500);
+    expect(height).toBeLessThanOrEqual(1_400);
+    expect(Math.max(width / height, height / width)).toBeLessThanOrEqual(2);
+    expect(Math.min((1_440 - 72) / width, (900 - 88) / height)).toBeGreaterThanOrEqual(0.55);
+    for (const nodeId of leafIds) {
+      const point = layout[nodeId]!;
+      expect(
+        presentationBoxesOverlap(regionEnvelope, {
+          left: point.x,
+          top: point.y,
+          right: point.x + STRUCTURE_NODE_WIDTH,
+          bottom: point.y + STRUCTURE_NODE_HEIGHT,
+        }),
+      ).toBe(false);
+    }
+    expect(
+      initialStructureLayout({
+        ...structure,
+        nodes: [...structure.nodes].reverse(),
+        edges: [...structure.edges].reverse(),
+        presentation: {
+          ...structure.presentation,
+          regions: structure.presentation.regions.map((region) => ({
+            ...region,
+            nodeIds: [...region.nodeIds].reverse(),
+          })),
+        },
+      }),
+    ).toEqual(layout);
+  });
+
+  it("packs sixteen short Region-external branches as bounded Context compounds", () => {
+    const branchCount = 16;
+    const branchLength = 3;
+    const branchNodeIds = Array.from({ length: branchCount }, (_, branchIndex) =>
+      Array.from(
+        { length: branchLength },
+        (_, nodeIndex) =>
+          `branch-${String(branchIndex).padStart(2, "0")}-${String(nodeIndex).padStart(2, "0")}`,
+      ),
+    );
+    const links = branchNodeIds.flatMap((nodeIds) => [
+      ["hub", nodeIds[0]!] as const,
+      ...nodeIds.slice(1).map((nodeId, index) => [nodeIds[index]!, nodeId] as const),
+    ]);
+    const structure = directedStructure("hub", ["hub", ...branchNodeIds.flat()], links);
+    structure.presentation = {
+      thesis: "Independent factual branches remain locally coherent around coordination.",
+      startNodeId: "hub",
+      primaryBackbone: null,
+      regions: [
+        {
+          id: "coordination",
+          label: "Coordination",
+          summary: "The authored coordination responsibility.",
+          nodeIds: ["hub"],
+        },
+      ],
+    };
+    const layout = initialStructureLayout(structure);
+    const { width, height } = structureLayoutExtent(layout);
+
+    expectNoNodeOverlap(layout);
+    expect(width).toBeLessThanOrEqual(3_000);
+    expect(height).toBeLessThanOrEqual(1_650);
+    expect(Math.max(width / height, height / width)).toBeLessThanOrEqual(2);
+    expect(
+      initialStructureLayout({
+        ...structure,
+        nodes: [...structure.nodes].reverse(),
+        edges: [...structure.edges].reverse(),
+      }),
+    ).toEqual(layout);
+  });
+
   it("keeps backbone geometry stable when an exact parallel relation changes but adjacency does not", () => {
     const structure = directedStructure(
       "start",
@@ -676,6 +1027,26 @@ describe("Structure domain presentation rules", () => {
         edges: [...structure.edges].reverse(),
       }),
     ).toEqual(layout);
+  });
+
+  it("falls back safely when persisted Region membership no longer resolves to a Node", () => {
+    const structure = directedStructure("entry", ["entry", "next"], [["entry", "next"]]);
+    const topologyProjection = projectTopologyStructure(structure);
+    structure.presentation = {
+      thesis: "A stale stored Region must not make projection throw.",
+      startNodeId: "entry",
+      primaryBackbone: null,
+      regions: [
+        {
+          id: "stale",
+          label: "Stale",
+          summary: "No current member remains.",
+          nodeIds: ["removed-node"],
+        },
+      ],
+    };
+
+    expect(projectStructure(structure)).toEqual(topologyProjection);
   });
 
   it("keeps factual authoring diagnostics independent from a reverse explanation backbone", () => {
@@ -1100,8 +1471,13 @@ describe("Structure domain presentation rules", () => {
     const withBridge = initialStructureLayout(structure);
     const withoutBridge = initialStructureLayout({ ...structure, edges: [] });
 
-    expect(withBridge.a).toEqual(withoutBridge.a);
-    expect(withBridge.c).toEqual(withoutBridge.c);
+    expect({
+      x: withBridge.c!.x - withBridge.a!.x,
+      y: withBridge.c!.y - withBridge.a!.y,
+    }).toEqual({
+      x: withoutBridge.c!.x - withoutBridge.a!.x,
+      y: withoutBridge.c!.y - withoutBridge.a!.y,
+    });
     expectNoNodeOverlap(withBridge);
     expect(
       initialStructureLayout({

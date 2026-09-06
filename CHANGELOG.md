@@ -10,8 +10,8 @@
 - 通知permissionの状態表示と、Agentのcomment更新経路を介さずbrowser / OS通知を確認できるテスト通知
 - PR全体または明示されたreview subjectを調査し、Walkthrough、Structure、直接code readingから必要最小限の
   構成を選ぶCodex / Claude Code共通のbundled `rvw-review-compose` Skill
-- Structureへthesis、attention start、optionalなconnected exact-Edge primary backbone、spatially orderedなnamed
-  comprehension regionからなるoptionalなauthorial `presentation`を追加。raw座標を保存せず、spatial organizerが
+- Structureへthesis、attention start、optionalなconnected exact-Edge primary backbone、stable IDとresponsibility
+  summaryを持つunorderedなnamed comprehension regionからなるoptionalなauthorial `presentation`を追加。raw座標を保存せず、spatial organizerが
   ある時だけcanonical配置をauthoringし、start-onlyではtopology配置のままGuide、focus、visual cue、exportへ
   説明意図を伝えられる
 - Structure Viewerへ折り畳み可能なGuide、Home / Backによるfocus navigation、clickableなRegion framing、
@@ -33,8 +33,15 @@
   exact endpointのvisible boundary portへ接続する。non-endpoint NodeへのEdge貫通とfocus変更によるlabel jumpを防ぎ、
   shared / near-coincident corridorを持つdistinct visible relation（parallel / reciprocalを含む）の実質的lane分離と
   normal-detail labelの相互非重複を保証
-- Structure presentationのregion配列はcanonicalなspatial / legend順、各`nodeIds`は順序を持たないmembership
-  setとして扱う
+- Structure presentationのRegion配列と各`nodeIds`を順序を持たないsetとして扱い、stable IDでcanonical化する
+- Regionを持つGraphのcanonical projectionはRegion全体をcompound chunkとして先に配置し、direct factual
+  adjacency、internal crossing、boundary affinityを使って全体extentとEdge routeを抑える。backbone-onlyの
+  projectionは従来のderived bandを維持する
+- partial Region membershipで残るneutral Contextをfactual connected component単位のrenderer-owned compoundとして
+  boundedに折り畳み、chain / bridge / fan-outをauthored Regionの全周へglobal packingすることで、12〜50 Nodeでも
+  一方向へ伸びず、Regionとexact boundary relationの近くへ配置される
+- Structure内のNode / Region / Context / exact Relation / source移動をbrowser historyへ統合し、Back / Forwardで
+  view mode、focus、hop depth、lens、cameraを復元する
 - Region frameをpane-localなchunk lensとして保持し、focusを変えずmember / internal relationをfull relevanceで
   表示。Home / Node focus / depth変更で解除し、Backでfocus / depth / cameraと一緒に復元
 - 長いprimary backboneのderived bandをdeterministicなserpentine複数行へ折り返し、region envelopeの衝突を
@@ -44,6 +51,8 @@
 ### Fixed
 
 - 最後のviewerを閉じて再起動した際、random portによるorigin変更でAgentコメント通知が事実上リセットされる問題
+- Structureのfile逆引きをCmd / Ctrl+Clickした際に修飾キーが失われ、右ペインではなく左ペインへ開く問題
+- 2-hop表示で遠距離のbackbone Node / Edgeだけが強いopacityを保ち、focusからの距離層を判別できない問題
 
 ## [0.5.0] - 2026-09-03
 
