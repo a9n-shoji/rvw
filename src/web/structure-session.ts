@@ -43,17 +43,10 @@ export interface StructureGuideDisclosure {
 
 export type StructureViewMode = "graph" | "regions";
 
-export interface StructureNavigationHistoryEntry {
-  viewMode: StructureViewMode;
-  focusId: string | null;
-  depth: StructureNeighborhoodDepth;
-  framedRegionId: string | null;
-  cameraFrame?: StructureCameraFrame | null;
-  viewport: StructureViewport;
-  /** Optional for entries written before the Regions camera was introduced. */
-  regionsViewport?: StructureViewport;
-  regionsSurfaceSize?: { width: number; height: number };
-  regionsCameraMode?: StructureRegionsViewState["cameraMode"];
+export interface StructureRegionsHistoryCamera {
+  regionsViewport: StructureViewport;
+  regionsSurfaceSize: { width: number; height: number };
+  regionsCameraMode: StructureRegionsViewState["cameraMode"];
 }
 
 const STRUCTURE_CAMERA_PADDING = 36;
@@ -61,7 +54,6 @@ const STRUCTURE_CAMERA_TOP_INSET = 52;
 const STRUCTURE_REGIONS_CAMERA_PADDING = 28;
 const STRUCTURE_REGIONS_HOME_SCALE_FLOOR = 0.72;
 const MAX_STRUCTURE_CAMERA_SCALE = 1.25;
-const MAX_STRUCTURE_NAVIGATION_HISTORY = 50;
 
 export function initialStructureGuideDisclosure(): StructureGuideDisclosure {
   return {
@@ -186,6 +178,26 @@ export function structureViewportForCameraFrame(input: {
   };
 }
 
+/**
+ * Bounds are a renderer-derived extent, so they are valid only against the exact artifact and
+ * canonical/manual geometry they were captured from. Semantic Node and Region frames remain safe
+ * to project against a newer artifact after their identities have been reconciled.
+ */
+export function structureCameraFrameForHistoryRestore(input: {
+  frame: StructureCameraFrame | null;
+  snapshotArtifactUpdatedAt: string;
+  currentArtifactUpdatedAt: string;
+  geometryMatches: boolean;
+}): StructureCameraFrame | null {
+  if (
+    input.frame?.kind === "bounds" &&
+    (input.snapshotArtifactUpdatedAt !== input.currentArtifactUpdatedAt || !input.geometryMatches)
+  ) {
+    return null;
+  }
+  return input.frame;
+}
+
 export function initialStructureViewport(input: {
   structure: Pick<Structure, "originNodeId" | "nodes" | "edges"> &
     Partial<Pick<Structure, "presentation">>;
@@ -295,7 +307,6 @@ export interface StructureSession {
   surfaceSize: { width: number; height: number };
   regionsView: StructureRegionsViewState;
   guideDisclosure: StructureGuideDisclosure;
-  navigationHistory: StructureNavigationHistoryEntry[];
   /**
    * Client-derived identity of the artifact fields that determine canonical geometry.
    * It deliberately excludes prose and labels, which must not discard reviewer layout.
@@ -390,41 +401,14 @@ export function initialStructureRegionsView(
   };
 }
 
-export function appendStructureNavigationHistory(
-  history: readonly StructureNavigationHistoryEntry[],
-  entry: StructureNavigationHistoryEntry,
-): StructureNavigationHistoryEntry[] {
-  const previous = history.at(-1);
-  if (
-    previous?.viewMode === entry.viewMode &&
-    previous?.focusId === entry.focusId &&
-    previous.depth === entry.depth &&
-    previous.framedRegionId === entry.framedRegionId &&
-    JSON.stringify(previous.cameraFrame ?? null) === JSON.stringify(entry.cameraFrame ?? null) &&
-    previous.viewport.x === entry.viewport.x &&
-    previous.viewport.y === entry.viewport.y &&
-    previous.viewport.scale === entry.viewport.scale &&
-    previous.regionsViewport?.x === entry.regionsViewport?.x &&
-    previous.regionsViewport?.y === entry.regionsViewport?.y &&
-    previous.regionsViewport?.scale === entry.regionsViewport?.scale &&
-    previous.regionsSurfaceSize?.width === entry.regionsSurfaceSize?.width &&
-    previous.regionsSurfaceSize?.height === entry.regionsSurfaceSize?.height &&
-    previous.regionsCameraMode === entry.regionsCameraMode
-  ) {
-    return [...history];
-  }
-  return [...history, entry].slice(-MAX_STRUCTURE_NAVIGATION_HISTORY);
-}
-
 export function restoreStructureRegionsViewFromHistory(
   current: StructureRegionsViewState,
-  entry: StructureNavigationHistoryEntry,
+  entry: StructureRegionsHistoryCamera,
   targetSurfaceSize?: { width: number; height: number },
 ): StructureRegionsViewState {
-  if (entry.viewMode !== "regions") return current;
-  const restoredSurfaceSize = targetSurfaceSize ?? entry.regionsSurfaceSize ?? current.surfaceSize;
-  const restoredViewport = entry.regionsViewport
-    ? entry.regionsCameraMode === "manual" && entry.regionsSurfaceSize
+  const restoredSurfaceSize = targetSurfaceSize ?? entry.regionsSurfaceSize;
+  const restoredViewport =
+    entry.regionsCameraMode === "manual"
       ? {
           ...entry.regionsViewport,
           x:
@@ -434,15 +418,12 @@ export function restoreStructureRegionsViewFromHistory(
             entry.regionsViewport.y +
             (restoredSurfaceSize.height - entry.regionsSurfaceSize.height) / 2,
         }
-      : entry.regionsViewport
-    : current.viewport;
+      : entry.regionsViewport;
   return {
     ...current,
     viewport: restoredViewport,
     surfaceSize: restoredSurfaceSize,
-    cameraMode:
-      entry.regionsCameraMode ??
-      (entry.regionsViewport === undefined ? current.cameraMode : "manual"),
+    cameraMode: entry.regionsCameraMode,
   };
 }
 
@@ -533,7 +514,6 @@ export function createStructureSession(structure: Structure): StructureSession {
     surfaceSize: { width: 0, height: 0 },
     regionsView: initialStructureRegionsView(structure),
     guideDisclosure: initialStructureGuideDisclosure(),
-    navigationHistory: [],
     layoutBasisKey: structureLayoutBasisKey(structure),
     updatedAt: structure.updatedAt,
   };
@@ -571,67 +551,6 @@ export function reconcileStructureSession(
     previousFramedRegionId !== null && regionIds.has(previousFramedRegionId)
       ? previousFramedRegionId
       : null;
-  const navigationHistory = (previous.navigationHistory ?? []).flatMap((entry) => {
-    const {
-      regionsViewport: entryRegionsViewport,
-      regionsSurfaceSize: entryRegionsSurfaceSize,
-      regionsCameraMode: entryRegionsCameraMode,
-      ...entryWithoutRegionsCamera
-    } = entry;
-    const entryViewMode: StructureViewMode =
-      entry.viewMode === "regions" && regionIds.size > 0 ? "regions" : "graph";
-    const entryFocusId = entry.focusId && nodeIds.has(entry.focusId) ? entry.focusId : null;
-    // A Regions history entry targets the overview, not its latent Graph focus. Keep that return
-    // destination when the hidden focus disappears, while Graph entries still require their Node.
-    if (entry.focusId !== null && entryFocusId === null && entryViewMode === "graph") return [];
-    const entryFramedRegionId =
-      entry.framedRegionId !== null &&
-      entry.framedRegionId !== undefined &&
-      regionIds.has(entry.framedRegionId)
-        ? entry.framedRegionId
-        : null;
-    return [
-      {
-        ...entryWithoutRegionsCamera,
-        viewMode: entryViewMode,
-        focusId: entryFocusId,
-        depth: entryFocusId === null ? "all" : (entry.depth ?? previous.depth),
-        framedRegionId: entryFramedRegionId,
-        cameraFrame:
-          layoutBasisChanged && entryFramedRegionId !== null
-            ? ({ kind: "region", regionId: entryFramedRegionId } as const)
-            : reconcileStructureCameraFrame(
-                entry.cameraFrame ?? null,
-                nodeIds,
-                regionIds,
-                artifactUpdated,
-              ),
-        viewport: layoutBasisChanged
-          ? preserveStructureLayoutScreenPosition({
-              viewport: entry.viewport,
-              surfaceSize: previous.surfaceSize,
-              nodeId: entryFocusId,
-              nodeIds,
-              previousPositions: previous.positions,
-              nextPositions: positions,
-            })
-          : entry.viewport,
-        ...(regionsLayoutBasisChanged
-          ? { regionsCameraMode: "home" as const }
-          : {
-              ...(entryRegionsViewport === undefined
-                ? {}
-                : { regionsViewport: entryRegionsViewport }),
-              ...(entryRegionsSurfaceSize === undefined
-                ? {}
-                : { regionsSurfaceSize: entryRegionsSurfaceSize }),
-              ...(entryRegionsCameraMode === undefined
-                ? {}
-                : { regionsCameraMode: entryRegionsCameraMode }),
-            }),
-      },
-    ];
-  });
   return {
     viewMode,
     focusId,
@@ -664,7 +583,6 @@ export function reconcileStructureSession(
     surfaceSize: previous.surfaceSize,
     regionsView,
     guideDisclosure,
-    navigationHistory,
     layoutBasisKey,
     updatedAt: structure.updatedAt,
   };

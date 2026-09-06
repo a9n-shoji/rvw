@@ -85,6 +85,7 @@ import {
   documentPaneTransitions,
   documentPaneTabKey,
   documentTabKey,
+  findDocumentInPane,
   initialDocumentWorkspace,
   moveDocumentToPane,
   normalizeDocumentPanes,
@@ -119,9 +120,18 @@ import {
   parseReadingHistoryEntry,
   readingHistoryState,
   sameReadingDocument,
+  shouldReplaceStructureReadingEntry,
   type ReadingHistoryEntry,
   type ReadingLocator,
+  type StructureReadingSnapshot,
 } from "../reading-history.js";
+
+interface StructureReadingNavigationTarget {
+  structureId: string;
+  pane: DocumentPaneId;
+  snapshot: StructureReadingSnapshot;
+  requestId: number;
+}
 const DocumentViewer = lazy(async () => {
   const module = await import("../components/DocumentViewer.js");
   return { default: module.DocumentViewer };
@@ -592,6 +602,16 @@ export function PullRequestReviewScreen({
   const [structureNavigationTargets, setStructureNavigationTargets] = useState<
     Record<DocumentPaneId, StructureNavigationTarget | null>
   >({ left: null, right: null });
+  const [structureReadingNavigationTargets, setStructureReadingNavigationTargets] = useState<
+    Record<DocumentPaneId, StructureReadingNavigationTarget | null>
+  >({ left: null, right: null });
+  const structureReadingNavigationSequence = useRef(0);
+  const structureReadingSnapshots = useRef<
+    Record<DocumentPaneId, Map<string, StructureReadingSnapshot>>
+  >({ left: new Map(), right: new Map() });
+  const latestStructureDocuments = useRef(
+    new Map<string, Extract<ActiveDocument, { kind: "structure" }>>(),
+  );
   const viewerNavigationTargetsRef = useRef(viewerNavigationTargets);
   const appliedLineNavigation = useRef<Record<DocumentPaneId, AppliedLineNavigation | null>>({
     left: null,
@@ -611,6 +631,10 @@ export function PullRequestReviewScreen({
       return { ...current, ...Object.fromEntries(uniquePaneIds.map((paneId) => [paneId, null])) };
     });
     setStructureNavigationTargets((current) => {
+      if (uniquePaneIds.every((paneId) => current[paneId] === null)) return current;
+      return { ...current, ...Object.fromEntries(uniquePaneIds.map((paneId) => [paneId, null])) };
+    });
+    setStructureReadingNavigationTargets((current) => {
       if (uniquePaneIds.every((paneId) => current[paneId] === null)) return current;
       return { ...current, ...Object.fromEntries(uniquePaneIds.map((paneId) => [paneId, null])) };
     });
@@ -797,8 +821,13 @@ export function PullRequestReviewScreen({
         lineNavigation.pane !== pane ||
         Math.abs(lineNavigation.top - scrollTop) <= 1),
     );
-    const locator: ReadingLocator =
-      navigationTarget?.documentKey === documentKey && lineNavigationStillAnchored
+    const structureSnapshot =
+      document.kind === "structure"
+        ? structureReadingSnapshots.current[pane].get(document.id)
+        : null;
+    const locator: ReadingLocator = structureSnapshot
+      ? { kind: "structure", snapshot: structureSnapshot }
+      : navigationTarget?.documentKey === documentKey && lineNavigationStillAnchored
         ? {
             kind: "line",
             line: navigationTarget.line,
@@ -901,6 +930,70 @@ export function PullRequestReviewScreen({
       window.history.pushState(readingHistoryState(window.history.state, destination), "", url);
     },
     [cancelReadingHistoryScrollSnapshot, pullRequestId, replaceCurrentReadingHistory],
+  );
+
+  const replaceStructureReadingHistory = useCallback(
+    (
+      document: Extract<ActiveDocument, { kind: "structure" }>,
+      pane: DocumentPaneId,
+      snapshot: StructureReadingSnapshot,
+    ): void => {
+      if (!pullRequestId || !readingHistoryReady.current) return;
+      const entry: ReadingHistoryEntry = {
+        version: 1,
+        pullRequestId,
+        pane,
+        document,
+        locator: { kind: "structure", snapshot },
+      };
+      const latestSnapshot = structureReadingSnapshots.current[pane].get(document.id);
+      const workspace = documentWorkspaceRef.current;
+      if (
+        !shouldReplaceStructureReadingEntry({
+          latest: latestSnapshot,
+          candidate: snapshot,
+          focusedPane: workspace.focusedPane,
+          activeDocument: workspace.active[pane],
+          pane,
+          structureId: document.id,
+        })
+      ) {
+        return;
+      }
+      window.history.replaceState(readingHistoryState(window.history.state, entry), "");
+    },
+    [pullRequestId],
+  );
+
+  const pushStructureReadingHistory = useCallback(
+    (
+      document: Extract<ActiveDocument, { kind: "structure" }>,
+      pane: DocumentPaneId,
+      source: StructureReadingSnapshot,
+      destination: StructureReadingSnapshot,
+    ): void => {
+      if (!pullRequestId || !readingHistoryReady.current) return;
+      cancelReadingHistoryScrollSnapshot();
+      const workspace = documentWorkspaceRef.current;
+      if (
+        workspace.focusedPane !== pane ||
+        workspace.active[pane]?.kind !== "structure" ||
+        workspace.active[pane]?.id !== document.id
+      ) {
+        return;
+      }
+      replaceStructureReadingHistory(document, pane, source);
+      structureReadingSnapshots.current[pane].set(document.id, destination);
+      const entry: ReadingHistoryEntry = {
+        version: 1,
+        pullRequestId,
+        pane,
+        document,
+        locator: { kind: "structure", snapshot: destination },
+      };
+      window.history.pushState(readingHistoryState(window.history.state, entry), "");
+    },
+    [cancelReadingHistoryScrollSnapshot, pullRequestId, replaceStructureReadingHistory],
   );
 
   const requestLineNavigation = useCallback(
@@ -1015,6 +1108,13 @@ export function PullRequestReviewScreen({
         );
         if (!targetAlreadyHadDocument) {
           transferStructureSession(sourceDocument.id, sourcePane, targetPane);
+          const snapshot = structureReadingSnapshots.current[sourcePane].get(sourceDocument.id);
+          if (snapshot) {
+            structureReadingSnapshots.current[targetPane].set(sourceDocument.id, snapshot);
+            structureReadingSnapshots.current[sourcePane].delete(sourceDocument.id);
+          }
+        } else {
+          structureReadingSnapshots.current[sourcePane].delete(sourceDocument.id);
         }
       }
       resetViewerNavigation([
@@ -1322,19 +1422,43 @@ export function PullRequestReviewScreen({
   const restoreReadingHistory = useCallback(
     (entry: ReadingHistoryEntry): void => {
       cancelReadingHistoryScrollSnapshot();
+      // A delayed source/reference resolution belongs to the reading destination it started from.
+      // Back/Forward establishes a newer destination even when the active tab identity is unchanged,
+      // so navigationRevision alone cannot reliably invalidate the older request.
+      codeReferenceRequestSequence.current.left += 1;
+      codeReferenceRequestSequence.current.right += 1;
       const workspace = documentWorkspaceRef.current;
-      const documentKey = documentTabKey(entry.document);
       const openPanes = documentPaneIds(workspace, entry.document);
       const pane = openPanes.includes(entry.pane) ? entry.pane : (openPanes[0] ?? entry.pane);
+      const openDocument = findDocumentInPane(workspace, entry.document, pane);
+      const latestStructureDocument =
+        entry.document.kind === "structure"
+          ? latestStructureDocuments.current.get(entry.document.id)
+          : undefined;
+      const restoredDocument = openDocument ?? latestStructureDocument ?? entry.document;
+      const documentKey = documentTabKey(restoredDocument);
       if (entry.locator.kind === "scroll") {
         documentScrollPositions.current.set(
-          documentPaneTabKey(pane, entry.document),
+          documentPaneTabKey(pane, restoredDocument),
           entry.locator.top,
         );
       }
-      openWorkspaceDocument(entry.document, pane);
+      openWorkspaceDocument(restoredDocument, pane);
       if (entry.locator.kind === "line") {
         requestLineNavigation(documentKey, pane, entry.locator, true);
+        return;
+      }
+      if (entry.locator.kind === "structure") {
+        if (restoredDocument.kind !== "structure") return;
+        structureReadingSnapshots.current[pane].set(restoredDocument.id, entry.locator.snapshot);
+        structureReadingNavigationSequence.current += 1;
+        const target: StructureReadingNavigationTarget = {
+          structureId: restoredDocument.id,
+          pane,
+          snapshot: entry.locator.snapshot,
+          requestId: structureReadingNavigationSequence.current,
+        };
+        setStructureReadingNavigationTargets((current) => ({ ...current, [pane]: target }));
         return;
       }
       const scrollTop = entry.locator.top;
@@ -1647,6 +1771,17 @@ export function PullRequestReviewScreen({
     enabled: Boolean(pullRequestId && changeSequence.data?.revisions),
   });
   const structures = structuresQuery.data?.structures ?? [];
+  latestStructureDocuments.current = new Map(
+    structures.map((structure) => [
+      structure.id,
+      {
+        kind: "structure" as const,
+        id: structure.id,
+        title: structure.title,
+        sourceOid: structure.sourceOid,
+      },
+    ]),
+  );
   const structureFingerprint = structures
     .map((structure) => `${structure.id}:${structure.updatedAt}`)
     .sort()
@@ -2764,6 +2899,12 @@ export function PullRequestReviewScreen({
                     ? structureNavigationTargets[paneId]
                     : null
                 }
+                readingNavigationTarget={
+                  structureReadingNavigationTargets[paneId]?.structureId ===
+                  paneViewerState.structure.id
+                    ? structureReadingNavigationTargets[paneId]
+                    : null
+                }
                 onNavigationApplied={(requestId) =>
                   finishStructureNavigation(paneId, requestId, false)
                 }
@@ -2773,7 +2914,25 @@ export function PullRequestReviewScreen({
                 onOpenSource={(locator, openInRightPane) =>
                   openStructureSource(paneViewerState.structure!, locator, openInRightPane)
                 }
+                onReadingNavigationApplied={(requestId) =>
+                  setStructureReadingNavigationTargets((current) =>
+                    current[paneId]?.requestId === requestId
+                      ? { ...current, [paneId]: null }
+                      : current,
+                  )
+                }
+                onPushReadingHistory={(source, destination) =>
+                  pushStructureReadingHistory(paneViewerDocument, paneId, source, destination)
+                }
+                onReadingSnapshotChanged={(snapshot) =>
+                  structureReadingSnapshots.current[paneId].set(paneViewerDocument.id, snapshot)
+                }
+                onReplaceReadingHistory={(snapshot) =>
+                  replaceStructureReadingHistory(paneViewerDocument, paneId, snapshot)
+                }
+                onBrowserBack={() => window.history.back()}
                 onDeleted={() => {
+                  structureReadingSnapshots.current[paneId].delete(paneViewerState.structure!.id);
                   closeDocumentWithDrafts(paneViewerDocument, paneId);
                   void queryClient.invalidateQueries({ queryKey: ["structures", pullRequestId] });
                 }}

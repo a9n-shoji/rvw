@@ -920,7 +920,7 @@ test("keeps native scrolling out of the transformed Graph camera", async ({ page
     .toEqual({ left: 0, top: 0 });
 });
 
-test("switches between the stable Graph lens and the Regions overview with drill-down and pane-local Back", async ({
+test("switches between the stable Graph lens and the Regions overview with browser reading history", async ({
   page,
 }) => {
   await page.goto(`/?pullRequestId=${pullRequestId}`);
@@ -929,7 +929,6 @@ test("switches between the stable Graph lens and the Regions overview with drill
   const world = viewer.locator(".structure-world");
   await expect(viewer.locator(".structure-node")).toHaveCount(17);
   await viewer.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(viewer).toHaveAttribute("data-navigation-history-count", "0");
   const initialPositions = await viewer.locator(".structure-node").evaluateAll((nodes) =>
     Object.fromEntries(
       nodes.map((node) => [
@@ -977,7 +976,6 @@ test("switches between the stable Graph lens and the Regions overview with drill
   await reactRegionButton.press("Enter");
   await expect(viewer).toHaveAttribute("data-view-mode", "graph");
   await expect(graphMode).toBeFocused();
-  await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
   await expect(viewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -1051,10 +1049,8 @@ test("switches between the stable Graph lens and the Regions overview with drill
 
   await viewer.getByRole("button", { name: "Home", exact: true }).click();
   await expect(viewer).not.toHaveAttribute("data-framed-region-id");
-  await expect(viewer).toHaveAttribute("data-navigation-history-count", "2");
   await viewer.getByRole("button", { name: "Back", exact: true }).click();
   await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
-  await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
 
   await viewer.getByRole("button", { name: "2-hop", exact: true }).click();
   await expect(viewer).not.toHaveAttribute("data-framed-region-id");
@@ -1062,17 +1058,7 @@ test("switches between the stable Graph lens and the Regions overview with drill
     "aria-pressed",
     "true",
   );
-  await expect(viewer).toHaveAttribute("data-navigation-history-count", "2");
   await viewer.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
-  await expect(viewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
-
-  await viewer.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(viewer).toHaveAttribute("data-navigation-history-count", "0");
   await expect(viewer).toHaveAttribute("data-view-mode", "regions");
   await expect(viewer.locator(".structure-regions-canvas")).toBeVisible();
   await expect
@@ -1121,7 +1107,6 @@ test("switches between the stable Graph lens and the Regions overview with drill
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
     /focused/,
   );
-  await expect(viewer).toHaveAttribute("data-navigation-history-count", "2");
   await expectStructureNodesFullyVisible(viewer, [
     "order-detail-query-hook",
     "order-detail-page",
@@ -1139,9 +1124,7 @@ test("switches between the stable Graph lens and the Regions overview with drill
     "true",
   );
   await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
-  await expect(viewer).toHaveAttribute("data-navigation-history-count", "1");
   await viewer.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(viewer).toHaveAttribute("data-navigation-history-count", "0");
   await expect(viewer).toHaveAttribute("data-view-mode", "regions");
   await expect(viewer).not.toHaveAttribute("data-framed-region-id");
   await viewer.getByRole("button", { name: "Graph", exact: true }).click();
@@ -2046,6 +2029,204 @@ test("re-resolves Structure sources by stable Node and Edge identity", async ({ 
   await expect(staleBanner).toContainText("Structureの参照元claimが削除されています");
   await expect(staleBanner).toContainText("削除された参照元から最後に解決された状態です");
   await expect(staleBanner.getByRole("button", { name: "最新へ再解決" })).toHaveCount(0);
+});
+
+test("restores a Structure reading snapshot across source navigation and browser Back/Forward", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  let viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  await viewer.getByRole("button", { name: "Regions", exact: true }).click();
+  const regionButton = viewer.getByRole("button", {
+    name: /^Open region React rendering in Graph, 7 nodes\./u,
+  });
+  await regionButton.focus();
+  const regionsCamera = await structureRegionsCameraState(viewer);
+  await regionButton.press("Enter");
+  await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
+
+  await viewer
+    .locator('.structure-node[data-node-id="order-detail-page"] > .structure-source.compact')
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "src/frontend/orders/OrderDetailPage.tsx" }),
+  ).toHaveAttribute("aria-selected", "true");
+
+  await page.goBack();
+  viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  await expect(viewer).toBeVisible();
+  await expect(viewer).toHaveAttribute("data-view-mode", "graph");
+  await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
+
+  await page.goBack();
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await expect.poll(async () => await structureRegionsCameraState(viewer)).toEqual(regionsCamera);
+
+  await page.goForward();
+  await expect(viewer).toHaveAttribute("data-view-mode", "graph");
+  await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
+  await page.goForward();
+  await expect(
+    page.getByRole("tab", { name: "src/frontend/orders/OrderDetailPage.tsx" }),
+  ).toHaveAttribute("aria-selected", "true");
+});
+
+test("ignores a pending Structure source response after browser Back restores an older destination", async ({
+  page,
+}) => {
+  let releaseResponse!: () => void;
+  let markRequestSeen!: () => void;
+  let markResponseCompleted!: () => void;
+  const responseGate = new Promise<void>((resolve) => {
+    releaseResponse = resolve;
+  });
+  const requestSeen = new Promise<void>((resolve) => {
+    markRequestSeen = resolve;
+  });
+  const responseCompleted = new Promise<void>((resolve) => {
+    markResponseCompleted = resolve;
+  });
+  await page.route("**/structures/*/anchors/resolve*", async (route) => {
+    const response = await route.fetch();
+    markRequestSeen();
+    await responseGate;
+    await route.fulfill({ response });
+    markResponseCompleted();
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const previousFocus = await viewer
+    .locator(".structure-node.focused")
+    .getAttribute("data-node-id");
+  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').click();
+  await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
+    /focused/u,
+  );
+  await viewer
+    .locator('.structure-node[data-node-id="order-detail-page"] > .structure-source.compact')
+    .click();
+  await requestSeen;
+
+  await page.goBack();
+  await expect(viewer.locator(".structure-node.focused")).toHaveAttribute(
+    "data-node-id",
+    previousFocus!,
+  );
+  releaseResponse();
+  await responseCompleted;
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+
+  await expect(viewer).toBeVisible();
+  await expect(page.getByRole("tab", { name: fullStackTitle, exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(
+    page.getByRole("tab", { name: "src/frontend/orders/OrderDetailPage.tsx" }),
+  ).toHaveCount(0);
+});
+
+test("rebinds an older Structure history entry to the latest open tab after a rename", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  let viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const detailResponse = await page.request.get(
+    `/api/pull-requests/${pullRequestId}/structures/${fullStackStructureId}`,
+  );
+  expect(detailResponse.ok()).toBe(true);
+  const detail = (await detailResponse.json()) as {
+    structure: { title: string; presentation: unknown };
+  };
+  const originalTitle = detail.structure.title;
+  const renamedTitle = `${originalTitle} renamed while reading source`;
+
+  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').click();
+  await viewer
+    .locator('.structure-node[data-node-id="order-detail-page"] > .structure-source.compact')
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "src/frontend/orders/OrderDetailPage.tsx" }),
+  ).toHaveAttribute("aria-selected", "true");
+
+  try {
+    const updateResponse = await page.request.post(
+      `/api/fixture/structures/${fullStackStructureId}/update`,
+      { data: { title: renamedTitle, presentation: detail.structure.presentation } },
+    );
+    expect(updateResponse.ok()).toBe(true);
+    await expect(page.getByRole("tab", { name: renamedTitle, exact: true })).toBeVisible();
+
+    await page.goBack();
+    viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+    await expect(viewer).toBeVisible();
+    await expect(page.getByRole("tab", { name: renamedTitle, exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(viewer.locator(".structure-header h2")).toHaveText(renamedTitle);
+  } finally {
+    const restoreResponse = await page.request.post(
+      `/api/fixture/structures/${fullStackStructureId}/update`,
+      { data: { title: originalTitle, presentation: detail.structure.presentation } },
+    );
+    expect(restoreResponse.ok()).toBe(true);
+  }
+});
+
+test("does not reapply renderer-derived Fit bounds after the Structure revision changes", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const detailResponse = await page.request.get(
+    `/api/pull-requests/${pullRequestId}/structures/${fullStackStructureId}`,
+  );
+  expect(detailResponse.ok()).toBe(true);
+  const detail = (await detailResponse.json()) as {
+    structure: { title: string; presentation: unknown };
+  };
+  const originalTitle = detail.structure.title;
+  const updatedTitle = `${originalTitle} revised after Fit`;
+
+  await viewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
+  const fittedTransform = await viewer.locator(".structure-world").getAttribute("style");
+  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').click();
+  await expect
+    .poll(async () => viewer.locator(".structure-world").getAttribute("style"))
+    .not.toBe(fittedTransform);
+
+  try {
+    const updateResponse = await page.request.post(
+      `/api/fixture/structures/${fullStackStructureId}/update`,
+      { data: { title: updatedTitle, presentation: detail.structure.presentation } },
+    );
+    expect(updateResponse.ok()).toBe(true);
+    await expect(viewer.locator(".structure-header h2")).toHaveText(updatedTitle);
+    const currentTransform = await viewer.locator(".structure-world").getAttribute("style");
+
+    await viewer.getByRole("button", { name: "Back", exact: true }).click();
+    await expect
+      .poll(async () => viewer.locator(".structure-world").getAttribute("style"))
+      .toBe(currentTransform);
+    expect(currentTransform).not.toBe(fittedTransform);
+  } finally {
+    const restoreResponse = await page.request.post(
+      `/api/fixture/structures/${fullStackStructureId}/update`,
+      { data: { title: originalTitle, presentation: detail.structure.presentation } },
+    );
+    expect(restoreResponse.ok()).toBe(true);
+  }
 });
 
 test("resolves Structure anchors to latest and preserves spatial context across navigation and update", async ({

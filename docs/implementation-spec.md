@@ -286,7 +286,16 @@ empty fileは従来どおり明示的に扱う。
   単なるpane focus、tab close／move、pane幅、sidebar、検索入力、自動syncをentryにしない。commit範囲、
   全文／変更、stacked / split、
   tree modeはhistoryから復元せず、Back / Forward後も現在のglobal review scopeを維持する。
-- history復元では記録したpaneに対象文書が開いていればそのcopyを優先し、一方のpaneだけに開いている場合は
+- Structureのreading destinationはgenericなpane scrollではなく、Graph / Regions mode、focus、hop、
+  framed Region、exact Edge選択、Graph / Regions双方のcamera、artifact revisionとgeometry basisをruntime validation可能な
+  snapshotとして同じbrowser historyへ載せる。Structureを開く／activateする操作、Node focus、状態が変わるHome、
+  Region / Context / exact EdgeからGraphへのdrill-downだけがentryをpushする。mode切替、hop変更、pan / zoom、
+  Fit / center / drag / layout reset、Guide disclosure、transient relation選択、poll updateはentryを増やさずcurrent
+  entryをreplaceする。sourceへ移動する直前もcurrent Structure snapshotを同期し、Back / Forwardでsourceと空間的な
+  読解地点を往復できる。Back / Forwardを適用した時点で、それ以前に開始した未完了のsource/reference解決は
+  invalidationし、遅延responseが復元済みdestinationを上書きしない。左右paneのsnapshotは独立し、非focus paneの
+  更新はglobalなcurrent entryを書き換えない。
+- history復元では記録したpaneに対象文書が開いていればその最新copyを優先し、一方のpaneだけに開いている場合は
   そのpaneを使う。閉じている場合だけ記録したpaneへ再度開く。対象paneを
   focusして文書と位置を復元するが、もう一方のpane、open tab集合、pane配置を巻き戻さず、移動元のtabも
   閉じない。line navigationは適用位置に留まる間だけline anchorを保持し、利用者がそこからscrollした後は
@@ -840,7 +849,7 @@ base mapはcurrent Structureだけから決定的に導出するcanonical layout
 変わらないwhole-value update後もretained Nodeの位置を維持する。削除後の空間を自動で詰めたり、filterやfocus変更で
 reflowしたりしない。新規Nodeは
 retained neighborの重心を起点に全方向の空き候補を調べ、既存のmental mapを壊さず発見できる位置へ置く。
-Node位置、Graph / Regions view mode、focus、depth、Graph viewport、独立したRegions viewport、Guide disclosure、navigation historyはbrowser session内だけでpaneとStructure IDの組へ
+Node位置、Graph / Regions view mode、focus、depth、Graph viewport、独立したRegions viewport、Guide disclosureはbrowser session内だけでpaneとStructure IDの組へ
 保持し、tab往復とcurrent-value更新後もsurviving IDの状態を保つ。spatial-organizer identityは、organizerの有無、
 organizerがある場合の`startNodeId`、backbone Edge endpointから作るnormalized simple adjacency、Regionのstable ID /
 membershipからなる。organizerを追加、削除、またはadjacencyを変更した場合は、
@@ -851,12 +860,16 @@ arrayの並べ替え、Region label / summaryだけ、
 またはspatial organizerを変えないgraph更新でもrebaseしない。semantic emphasisはcurrent exact Edge setへ即時更新する。
 rebaseとlayout resetはreviewerのscaleを維持し、focus Nodeが存続する場合はその
 screen位置が変わらないようviewportを平行移動する。
-view mode、focus、depth、選択中Edge、Guide disclosure、存在するtargetだけからなるnavigation historyも維持する。
+view mode、focus、depth、選択中Edge、Guide disclosureも維持する。明示的なreading destinationの履歴は
+Structure session内の別stackを持たず、document workspaceと同じbrowser reading historyを正本とする。
 Regionが存在しないcurrent valueではcurrent/history上のRegions modeだけをGraphへ正規化する。
 Regions viewportは初回 / ResetではStart Region（未所属ならそのContext）を可読scale floorでframeし、Fitだけが
 derived map全体をframeする。card geometry自体はpaneへ収めるためにcompact化しない。
 その後のbutton / 修飾key + wheel zoomとwheel / drag panはGraph viewportを変更しない。Region drill前のRegions viewportも
 history entryへsnapshotし、Backでその時点のoverview cameraへ戻す。mode切替、pane transfer、tab close/reopenでは両cameraを独立保持する。
+GraphのFit boundsはrenderer-derived geometryなので、snapshotしたartifact revisionとNode geometryがともに一致する
+場合だけ再適用する。artifact更新またはdrag/reset後のgeometry不一致時はstale boundsを破棄する一方、surviving
+Node / Regionを指すsemantic frameはcurrent geometryから再投影し、basisが一致するraw manual viewportは維持する。
 Regions projectionのbasisはRegion ID / label / membership、start、primary backbone Edge set、Node ID、Edge ID / endpoint /
 direction / labelをcanonical sortして作る。unorderedなserialization順とthesis / Region summaryだけの変更ではcameraを維持し、
 map geometry / routingを変え得るbasis変更時だけStartを読めるHome projectionへ戻す。map全体への縮小は
@@ -880,15 +893,16 @@ producerの新しい`originNodeId`へ移動せずfocusなしのAllへ戻す。�
 padding付きでframeする。backboneを持つpresentationでも同じstart-centered 1-hop frameを使い、全backbone endpointをcamera targetへ追加しない。
 scaleにはViewer共通のminimumと局所frame用maximumを適用し、全graphの大きさだけを理由に初期detailを読めないscaleへ
 縮小しない。Edge route / label boundsは明示的なRegion frameとFit以外の初期Home boundsへ含めない。
-Nodeをactivateする時は現在のfocus / depth / viewportをpane-local historyへ積み、Nodeと1-hop contextを読めるboundsへ
+Nodeをactivateする時は現在のfocus / depth / viewportをbrowser reading historyへ積み、Nodeと1-hop contextを読めるboundsへ
 cameraをanimateする。Node座標は組み替えない。1-hop / 2-hop / Allの切り替えもcanonical / manual Node座標を変えず、
 表示detailだけを変更する。局所へ絞る時もcomplete extentへ戻るminimap / All / Fit、visible / total件数、
 start-centeredなHome、Backを常時回収可能にし、
 隠れたNode / Edgeをartifactに存在しないよう見せない。HomeとRegions overviewのRegion選択はGraph / All lensへ切り替え、Regionはexact
 member Nodeと内部Edge / label boundsをframeするpane-local chunk lensを有効にする。focusとfocus-hop distance、artifactの
 membershipは変更せず、memberと内部relationだけをfull relevanceにする。Home、Node focus、depth変更はRegion lensを解除し、
-Backは直前のview mode / focus / depth / framed Region / viewportを復元する。Graph / Regionsの直接toggleはhistoryへ
-積まず、Region rectangleからGraphへdrill-downするsemantic navigationだけはRegions overviewを履歴へ残す。表示中のgraphを一枚へ圧縮するのは
+Back / Forwardは直前のStructureまたは別documentのreading destinationを復元する。Graph / Regionsの直接toggleは
+current entryを置換し、Region rectangleからGraphへdrill-downするsemantic navigationだけはRegions overviewを
+新しいentryの直前へ残す。表示中のgraphを一枚へ圧縮するのは
 「表示中を収める」という明示操作だけとする。
 Fitとtoolbar / wheel zoomは同じminimum scaleを使い、縮小操作がscaleを増加させない。
 poll updateもNode位置とviewportを維持し、自動fitしない。

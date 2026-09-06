@@ -31,7 +31,6 @@ import {
   type StructurePoint,
 } from "../structure-graph.js";
 import {
-  appendStructureNavigationHistory,
   createStructureSession,
   deleteStructureSessions,
   getStructureSession,
@@ -39,6 +38,7 @@ import {
   preserveStructureLayoutScreenPosition,
   reconcileStructureSession,
   restoreStructureRegionsViewFromHistory,
+  structureCameraFrameForHistoryRestore,
   scaledStructureZoom,
   setStructureSession,
   structureBackboneNodeIds,
@@ -52,7 +52,6 @@ import {
   type StructureCameraBounds,
   type StructureGuideDisclosure,
   type StructureCameraFrame,
-  type StructureNavigationHistoryEntry,
   type StructureNavigationTarget,
   type StructureRegionsViewState,
   type StructureViewMode,
@@ -76,6 +75,7 @@ import {
   STRUCTURE_EDGE_ARROW_WIDTH,
 } from "../structure-render-model.js";
 import { structureSourceAnchorLabel } from "../structure-source.js";
+import type { StructureReadingSnapshot } from "../reading-history.js";
 import { ChangeIcon } from "./FileTree.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { StructureExportMenu } from "./StructureExportMenu.js";
@@ -316,9 +316,15 @@ export function StructureViewer({
   structure,
   changedFiles,
   navigationTarget = null,
+  readingNavigationTarget = null,
   onNavigationApplied,
   onNavigationFailed,
   onOpenSource,
+  onReadingNavigationApplied,
+  onPushReadingHistory,
+  onReadingSnapshotChanged,
+  onReplaceReadingHistory,
+  onBrowserBack,
   onDeleted,
 }: {
   paneId: DocumentPaneId;
@@ -326,12 +332,26 @@ export function StructureViewer({
   structure: Structure;
   changedFiles: readonly ChangedFile[];
   navigationTarget?: StructureNavigationTarget | null;
+  readingNavigationTarget?: {
+    structureId: string;
+    pane: DocumentPaneId;
+    snapshot: StructureReadingSnapshot;
+    requestId: number;
+  } | null;
   onNavigationApplied: (requestId: number) => void;
   onNavigationFailed: (requestId: number) => void;
   onOpenSource: (
     locator: StructureSourceLocator,
     openInRightPane: boolean,
   ) => Promise<string | null>;
+  onReadingNavigationApplied: (requestId: number) => void;
+  onPushReadingHistory: (
+    source: StructureReadingSnapshot,
+    destination: StructureReadingSnapshot,
+  ) => void;
+  onReadingSnapshotChanged: (snapshot: StructureReadingSnapshot) => void;
+  onReplaceReadingHistory: (snapshot: StructureReadingSnapshot) => void;
+  onBrowserBack: () => void;
   onDeleted: () => void;
 }) {
   const domId = `structure-${paneId}-${structure.id}`;
@@ -354,7 +374,6 @@ export function StructureViewer({
   const [viewport, setViewport] = useState(initial.viewport);
   const [regionsView, setRegionsView] = useState(initial.regionsView);
   const [guideDisclosure, setGuideDisclosure] = useState(initial.guideDisclosure);
-  const [navigationHistory, setNavigationHistory] = useState(initial.navigationHistory);
   const [cameraAnimating, setCameraAnimating] = useState(false);
   const [surfaceSize, setSurfaceSize] = useState({ width: 0, height: 0 });
   const [status, setStatus] = useState<string | null>(null);
@@ -366,12 +385,12 @@ export function StructureViewer({
   const surfaceSizeRef = useRef(initial.surfaceSize);
   const viewModeRef = useRef(viewMode);
   const focusIdRef = useRef(focusId);
+  const selectedEdgeIdRef = useRef(selectedEdgeId);
   const depthRef = useRef(depth);
   const framedRegionIdRef = useRef(framedRegionId);
   const positionsRef = useRef(positions);
   const viewportRef = useRef(viewport);
   const regionsViewRef = useRef(regionsView);
-  const navigationHistoryRef = useRef(navigationHistory);
   const cameraFrameIntentRef = useRef<StructureCameraFrame | null>(initial.cameraFrame ?? null);
   const regionFrameBoundsRef = useRef<ReadonlyMap<string, StructureCameraBounds>>(new Map());
   const cameraAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -384,6 +403,7 @@ export function StructureViewer({
     initialState.hadCachedSession ? null : "initial",
   );
   const appliedNavigationRequestRef = useRef<number | null>(null);
+  const appliedReadingNavigationRequestRef = useRef<number | null>(null);
   const panRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const regionsPanRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const dragRef = useRef<{
@@ -437,12 +457,12 @@ export function StructureViewer({
   );
   viewModeRef.current = viewMode;
   focusIdRef.current = focusId;
+  selectedEdgeIdRef.current = selectedEdgeId;
   depthRef.current = depth;
   framedRegionIdRef.current = framedRegionId;
   positionsRef.current = positions;
   viewportRef.current = viewport;
   regionsViewRef.current = regionsView;
-  navigationHistoryRef.current = navigationHistory;
   sessionStateRef.current = {
     viewMode,
     focusId,
@@ -455,7 +475,6 @@ export function StructureViewer({
     surfaceSize: surfaceSizeRef.current,
     regionsView,
     guideDisclosure,
-    navigationHistory,
     layoutBasisKey: sessionStateRef.current.layoutBasisKey,
     updatedAt: sessionStateRef.current.updatedAt,
   };
@@ -736,7 +755,6 @@ export function StructureViewer({
     positionsRef.current = next.positions;
     viewportRef.current = next.viewport;
     regionsViewRef.current = next.regionsView;
-    navigationHistoryRef.current = next.navigationHistory;
     setViewMode(next.viewMode);
     setFocusId(next.focusId);
     setSelectedEdgeId(next.selectedEdgeId);
@@ -746,7 +764,6 @@ export function StructureViewer({
     setViewport(next.viewport);
     setRegionsView(next.regionsView);
     setGuideDisclosure(next.guideDisclosure);
-    setNavigationHistory(next.navigationHistory);
   }, [structure]);
 
   useEffect(() => {
@@ -756,7 +773,6 @@ export function StructureViewer({
     focusId,
     framedRegionId,
     guideDisclosure,
-    navigationHistory,
     positions,
     paneId,
     selectedEdgeId,
@@ -955,58 +971,78 @@ export function StructureViewer({
     [],
   );
 
-  const recordCurrentNavigation = useCallback((target?: StructureNavigationHistoryEntry): void => {
-    const current = {
+  const captureReadingSnapshot = useCallback(
+    (overrides: Partial<StructureReadingSnapshot> = {}): StructureReadingSnapshot => ({
+      artifactUpdatedAt: structure.updatedAt,
       viewMode: viewModeRef.current,
       focusId: focusIdRef.current,
+      selectedEdgeId: selectedEdgeIdRef.current,
       depth: depthRef.current,
       framedRegionId: framedRegionIdRef.current,
       cameraFrame: cameraFrameIntentRef.current,
       viewport: viewportRef.current,
+      surfaceSize: surfaceSizeRef.current,
       regionsViewport: regionsViewRef.current.viewport,
       regionsSurfaceSize: regionsViewRef.current.surfaceSize,
       regionsCameraMode: regionsViewRef.current.cameraMode,
-    };
-    if (
-      target &&
-      current.viewMode === target.viewMode &&
-      current.focusId === target.focusId &&
-      current.depth === target.depth &&
-      current.framedRegionId === target.framedRegionId &&
-      JSON.stringify(current.cameraFrame) === JSON.stringify(target.cameraFrame) &&
-      current.viewport.x === target.viewport.x &&
-      current.viewport.y === target.viewport.y &&
-      current.viewport.scale === target.viewport.scale &&
-      (target.regionsViewport === undefined ||
-        (current.regionsViewport.x === target.regionsViewport.x &&
-          current.regionsViewport.y === target.regionsViewport.y &&
-          current.regionsViewport.scale === target.regionsViewport.scale)) &&
-      (target.regionsSurfaceSize === undefined ||
-        (current.regionsSurfaceSize.width === target.regionsSurfaceSize.width &&
-          current.regionsSurfaceSize.height === target.regionsSurfaceSize.height)) &&
-      (target.regionsCameraMode === undefined ||
-        current.regionsCameraMode === target.regionsCameraMode)
-    ) {
-      return;
-    }
-    const nextHistory = appendStructureNavigationHistory(navigationHistoryRef.current, {
-      viewMode: current.viewMode,
-      focusId: current.focusId,
-      depth: current.depth,
-      framedRegionId: current.framedRegionId,
-      cameraFrame: current.cameraFrame,
-      viewport: current.viewport,
-      regionsViewport: current.regionsViewport,
-      regionsSurfaceSize: current.regionsSurfaceSize,
-      regionsCameraMode: current.regionsCameraMode,
-    });
-    navigationHistoryRef.current = nextHistory;
-    setNavigationHistory(nextHistory);
-  }, []);
+      layoutBasisKey: sessionStateRef.current.layoutBasisKey,
+      positionsKey: JSON.stringify(
+        Object.entries(positionsRef.current).sort(([left], [right]) =>
+          left.localeCompare(right, "en"),
+        ),
+      ),
+      regionsLayoutBasisKey: regionsViewRef.current.layoutBasisKey,
+      ...overrides,
+    }),
+    [structure.updatedAt],
+  );
+
+  const pushReadingCheckpoint = useCallback(
+    (source: StructureReadingSnapshot): void => {
+      const destination = captureReadingSnapshot();
+      if (JSON.stringify(source) === JSON.stringify(destination)) return;
+      onPushReadingHistory(source, destination);
+    },
+    [captureReadingSnapshot, onPushReadingHistory],
+  );
+
+  useLayoutEffect(() => {
+    const snapshot = captureReadingSnapshot();
+    onReadingSnapshotChanged(snapshot);
+  }, [
+    captureReadingSnapshot,
+    depth,
+    focusId,
+    framedRegionId,
+    onReadingSnapshotChanged,
+    positions,
+    regionsView,
+    selectedEdgeId,
+    viewMode,
+    viewport,
+  ]);
+
+  useEffect(() => {
+    const snapshot = captureReadingSnapshot();
+    const timeout = window.setTimeout(() => onReplaceReadingHistory(snapshot), 150);
+    return () => window.clearTimeout(timeout);
+  }, [
+    captureReadingSnapshot,
+    depth,
+    focusId,
+    framedRegionId,
+    onReplaceReadingHistory,
+    positions,
+    regionsView,
+    selectedEdgeId,
+    viewMode,
+    viewport,
+  ]);
 
   const activateNode = useCallback(
     (nodeId: string, recordHistory = true): void => {
       if (!positions[nodeId]) return;
+      const readingSource = recordHistory ? captureReadingSnapshot() : null;
       const measuredSurfaceSize = measureSurfaceSize();
       const framedNodeIds = [...structureOneHopNodeIds(structure, [nodeId])];
       const nextCameraFrame: StructureCameraFrame = {
@@ -1020,16 +1056,7 @@ export function StructureViewer({
       });
       const initializing = pendingViewportActionRef.current === "initial";
       pendingViewportActionRef.current = null;
-      if (recordHistory && !initializing) {
-        recordCurrentNavigation({
-          viewMode: "graph",
-          focusId: nodeId,
-          depth: depthRef.current,
-          framedRegionId: null,
-          cameraFrame: nextCameraFrame,
-          viewport: nextViewport ?? viewportRef.current,
-        });
-      }
+      selectedEdgeIdRef.current = null;
       setSelectedEdgeId(null);
       viewModeRef.current = "graph";
       setViewMode("graph");
@@ -1040,11 +1067,20 @@ export function StructureViewer({
       if (nextViewport) {
         animateCameraTo(nextViewport, nextCameraFrame);
       }
+      if (readingSource && !initializing) pushReadingCheckpoint(readingSource);
     },
-    [animateCameraTo, measureSurfaceSize, positions, recordCurrentNavigation, structure],
+    [
+      animateCameraTo,
+      captureReadingSnapshot,
+      measureSurfaceSize,
+      positions,
+      pushReadingCheckpoint,
+      structure,
+    ],
   );
 
   const navigateHome = (): void => {
+    const readingSource = captureReadingSnapshot();
     const homeFocusId = structure.presentation?.startNodeId ?? structure.originNodeId;
     const homeNodeIds = [...structureHomeNodeIds(structure)];
     const nextCameraFrame: StructureCameraFrame = { kind: "nodes", nodeIds: homeNodeIds };
@@ -1055,16 +1091,7 @@ export function StructureViewer({
     });
     const initializing = pendingViewportActionRef.current === "initial";
     pendingViewportActionRef.current = null;
-    if (!initializing) {
-      recordCurrentNavigation({
-        viewMode: "graph",
-        focusId: homeFocusId,
-        depth: "all",
-        framedRegionId: null,
-        cameraFrame: nextCameraFrame,
-        viewport: nextViewport ?? viewportRef.current,
-      });
-    }
+    selectedEdgeIdRef.current = null;
     setSelectedEdgeId(null);
     viewModeRef.current = "graph";
     setViewMode("graph");
@@ -1077,52 +1104,12 @@ export function StructureViewer({
     if (nextViewport) {
       animateCameraTo(nextViewport, nextCameraFrame);
     }
+    if (!initializing) pushReadingCheckpoint(readingSource);
   };
 
   const navigateBack = (): void => {
-    const history = navigationHistoryRef.current;
-    const previous = history.at(-1);
-    if (!previous) return;
-    const nextHistory = history.slice(0, -1);
-    navigationHistoryRef.current = nextHistory;
-    setNavigationHistory(nextHistory);
-    setStatus(null);
-    setSelectedEdgeId(null);
-    const previousViewMode = previous.viewMode ?? "graph";
-    viewModeRef.current = previousViewMode;
-    setViewMode(previousViewMode);
-    focusIdRef.current = previous.focusId;
-    setFocusId(previous.focusId);
-    depthRef.current = previous.focusId === null ? "all" : previous.depth;
-    setDepth(depthRef.current);
-    framedRegionIdRef.current = previous.framedRegionId;
-    setFramedRegionId(previous.framedRegionId);
-    if (previous.viewMode === "regions") {
-      updateRegionsView((current) => {
-        const surface = regionsSurfaceRef.current;
-        const targetSurfaceSize =
-          surface && surface.clientWidth > 0 && surface.clientHeight > 0
-            ? { width: surface.clientWidth, height: surface.clientHeight }
-            : current.surfaceSize;
-        const restored = restoreStructureRegionsViewFromHistory(
-          current,
-          previous,
-          targetSurfaceSize,
-        );
-        if (restored.cameraMode === "manual") return restored;
-        const projected = projectedRegionsViewport(restored.cameraMode, targetSurfaceSize);
-        return projected ? { ...restored, viewport: projected } : restored;
-      });
-    }
-    const nextViewport = previous.cameraFrame
-      ? (structureViewportForCameraFrame({
-          frame: previous.cameraFrame,
-          positions,
-          regionBounds: regionFrameBoundsRef.current,
-          surfaceSize: measureSurfaceSize(),
-        }) ?? previous.viewport)
-      : previous.viewport;
-    animateCameraTo(nextViewport, previous.cameraFrame ?? null);
+    onReplaceReadingHistory(captureReadingSnapshot());
+    onBrowserBack();
   };
 
   const frameRegion = (regionId: string): void => {
@@ -1147,18 +1134,9 @@ export function StructureViewer({
           surfaceSize: measuredSurfaceSize,
         });
     if (!nextViewport) return;
+    const readingSource = captureReadingSnapshot();
     const initializing = pendingViewportActionRef.current === "initial";
     pendingViewportActionRef.current = null;
-    if (!initializing) {
-      recordCurrentNavigation({
-        viewMode: "graph",
-        focusId: focusIdRef.current,
-        depth: "all",
-        framedRegionId: region.id,
-        cameraFrame: frameIntent,
-        viewport: nextViewport,
-      });
-    }
     depthRef.current = "all";
     setDepth("all");
     framedRegionIdRef.current = region.id;
@@ -1166,6 +1144,7 @@ export function StructureViewer({
     viewModeRef.current = "graph";
     setViewMode("graph");
     animateCameraTo(nextViewport, frameIntent);
+    if (!initializing) pushReadingCheckpoint(readingSource);
     setStatus(`${region.label} RegionをGraphで表示しました。`);
     requestAnimationFrame(() => graphModeButtonRef.current?.focus());
   };
@@ -1202,6 +1181,7 @@ export function StructureViewer({
     }
     pendingViewportActionRef.current = null;
     setStatus(null);
+    selectedEdgeIdRef.current = null;
     setSelectedEdgeId(null);
     viewModeRef.current = "graph";
     setViewMode("graph");
@@ -1210,17 +1190,120 @@ export function StructureViewer({
     focusIdRef.current = requestedNode.id;
     setFocusId(requestedNode.id);
     centerNode(requestedNode.id);
+    const readingSnapshot = captureReadingSnapshot();
+    onReadingSnapshotChanged(readingSnapshot);
+    onReplaceReadingHistory(readingSnapshot);
     appliedNavigationRequestRef.current = navigationTarget.requestId;
     onNavigationApplied(navigationTarget.requestId);
   }, [
+    captureReadingSnapshot,
     centerNode,
     navigationTarget,
     onNavigationApplied,
     onNavigationFailed,
+    onReadingSnapshotChanged,
+    onReplaceReadingHistory,
     paneId,
     positions,
     structure.id,
     structure.nodes,
+    surfaceSize.height,
+    surfaceSize.width,
+  ]);
+
+  useLayoutEffect(() => {
+    if (
+      !readingNavigationTarget ||
+      readingNavigationTarget.structureId !== structure.id ||
+      readingNavigationTarget.pane !== paneId ||
+      appliedReadingNavigationRequestRef.current === readingNavigationTarget.requestId ||
+      surfaceSize.width === 0 ||
+      surfaceSize.height === 0
+    ) {
+      return;
+    }
+    const snapshot = readingNavigationTarget.snapshot;
+    const current = sessionStateRef.current;
+    const reconciled = reconcileStructureSession(structure, {
+      ...current,
+      viewMode: snapshot.viewMode,
+      focusId: snapshot.focusId,
+      selectedEdgeId: snapshot.selectedEdgeId,
+      depth: snapshot.depth,
+      framedRegionId: snapshot.framedRegionId,
+      cameraFrame: snapshot.cameraFrame,
+    });
+    const currentPositionsKey = JSON.stringify(
+      Object.entries(positionsRef.current).sort(([left], [right]) =>
+        left.localeCompare(right, "en"),
+      ),
+    );
+    const geometryMatches =
+      snapshot.layoutBasisKey === current.layoutBasisKey &&
+      snapshot.positionsKey === currentPositionsKey;
+    const restoredCameraFrame = structureCameraFrameForHistoryRestore({
+      frame: reconciled.cameraFrame,
+      snapshotArtifactUpdatedAt: snapshot.artifactUpdatedAt,
+      currentArtifactUpdatedAt: structure.updatedAt,
+      geometryMatches,
+    });
+    const droppedDerivedBounds =
+      reconciled.cameraFrame?.kind === "bounds" && restoredCameraFrame === null;
+    const measuredGraphSurface = measureSurfaceSize();
+    const rawViewport = {
+      ...snapshot.viewport,
+      x: snapshot.viewport.x + (measuredGraphSurface.width - snapshot.surfaceSize.width) / 2,
+      y: snapshot.viewport.y + (measuredGraphSurface.height - snapshot.surfaceSize.height) / 2,
+    };
+    const restoredViewport = restoredCameraFrame
+      ? (structureViewportForCameraFrame({
+          frame: restoredCameraFrame,
+          positions: positionsRef.current,
+          regionBounds: regionFrameBoundsRef.current,
+          surfaceSize: measuredGraphSurface,
+        }) ?? (geometryMatches ? rawViewport : current.viewport))
+      : geometryMatches && !droppedDerivedBounds
+        ? rawViewport
+        : current.viewport;
+    const regionsBasisMatches =
+      snapshot.regionsLayoutBasisKey === regionsViewRef.current.layoutBasisKey;
+    const restoredRegionsView = regionsBasisMatches
+      ? restoreStructureRegionsViewFromHistory(
+          regionsViewRef.current,
+          {
+            regionsViewport: snapshot.regionsViewport,
+            regionsSurfaceSize: snapshot.regionsSurfaceSize,
+            regionsCameraMode: snapshot.regionsCameraMode,
+          },
+          regionsViewRef.current.surfaceSize,
+        )
+      : regionsViewRef.current;
+
+    pendingViewportActionRef.current = null;
+    setStatus(null);
+    viewModeRef.current = reconciled.viewMode;
+    setViewMode(reconciled.viewMode);
+    focusIdRef.current = reconciled.focusId;
+    setFocusId(reconciled.focusId);
+    selectedEdgeIdRef.current = reconciled.selectedEdgeId;
+    setSelectedEdgeId(reconciled.selectedEdgeId);
+    depthRef.current = reconciled.depth;
+    setDepth(reconciled.depth);
+    framedRegionIdRef.current = reconciled.framedRegionId;
+    setFramedRegionId(reconciled.framedRegionId);
+    cameraFrameIntentRef.current = restoredCameraFrame;
+    viewportRef.current = restoredViewport;
+    setViewport(restoredViewport);
+    regionsViewRef.current = restoredRegionsView;
+    setRegionsView(restoredRegionsView);
+    appliedReadingNavigationRequestRef.current = readingNavigationTarget.requestId;
+    onReadingNavigationApplied(readingNavigationTarget.requestId);
+  }, [
+    measureSurfaceSize,
+    onReadingNavigationApplied,
+    paneId,
+    readingNavigationTarget,
+    structure,
     surfaceSize.height,
     surfaceSize.width,
   ]);
@@ -1247,16 +1330,7 @@ export function StructureViewer({
 
   const clearFocus = (): void => {
     cameraFrameIntentRef.current = null;
-    if (framedRegionIdRef.current !== null) {
-      recordCurrentNavigation({
-        viewMode: "graph",
-        focusId: null,
-        depth: "all",
-        framedRegionId: null,
-        cameraFrame: null,
-        viewport: viewportRef.current,
-      });
-    }
+    selectedEdgeIdRef.current = null;
     setSelectedEdgeId(null);
     focusIdRef.current = null;
     setFocusId(null);
@@ -1269,20 +1343,13 @@ export function StructureViewer({
   const selectDepth = (nextDepth: StructureNeighborhoodDepth): void => {
     if (nextDepth === depth) return;
     cameraFrameIntentRef.current = null;
-    if (framedRegionIdRef.current !== null) {
-      recordCurrentNavigation({
-        viewMode: "graph",
-        focusId: focusIdRef.current,
-        depth: nextDepth,
-        framedRegionId: null,
-        cameraFrame: null,
-        viewport: viewportRef.current,
-      });
-    }
     depthRef.current = nextDepth;
     setDepth(nextDepth);
     framedRegionIdRef.current = null;
     setFramedRegionId(null);
+    const snapshot = captureReadingSnapshot();
+    onReadingSnapshotChanged(snapshot);
+    onReplaceReadingHistory(snapshot);
   };
 
   const copyStructureRef = async (): Promise<void> => {
@@ -1399,6 +1466,9 @@ export function StructureViewer({
     openInRightPane: boolean,
   ): Promise<void> => {
     setStatus(null);
+    const readingSnapshot = captureReadingSnapshot();
+    onReadingSnapshotChanged(readingSnapshot);
+    onReplaceReadingHistory(readingSnapshot);
     try {
       const nextStatus = await onOpenSource(locator, openInRightPane);
       setStatus(nextStatus);
@@ -1419,14 +1489,8 @@ export function StructureViewer({
       surfaceSize: measuredSurfaceSize,
     });
     if (!nextViewport) return;
-    recordCurrentNavigation({
-      viewMode: "graph",
-      focusId: focusIdRef.current,
-      depth: "all",
-      framedRegionId: null,
-      cameraFrame: frameIntent,
-      viewport: nextViewport,
-    });
+    const readingSource = captureReadingSnapshot();
+    selectedEdgeIdRef.current = null;
     setSelectedEdgeId(null);
     depthRef.current = "all";
     setDepth("all");
@@ -1435,6 +1499,7 @@ export function StructureViewer({
     viewModeRef.current = "graph";
     setViewMode("graph");
     animateCameraTo(nextViewport, frameIntent);
+    pushReadingCheckpoint(readingSource);
     setStatus(`Context componentのexact ${nodeIds.length} NodeをGraphで表示しました。`);
     requestAnimationFrame(() => graphModeButtonRef.current?.focus());
   };
@@ -1451,14 +1516,8 @@ export function StructureViewer({
       surfaceSize: measuredSurfaceSize,
     });
     if (!nextViewport) return;
-    recordCurrentNavigation({
-      viewMode: "graph",
-      focusId: focusIdRef.current,
-      depth: "all",
-      framedRegionId: null,
-      cameraFrame: frameIntent,
-      viewport: nextViewport,
-    });
+    const readingSource = captureReadingSnapshot();
+    selectedEdgeIdRef.current = edge.id;
     setSelectedEdgeId(edge.id);
     depthRef.current = "all";
     setDepth("all");
@@ -1467,6 +1526,7 @@ export function StructureViewer({
     viewModeRef.current = "graph";
     setViewMode("graph");
     animateCameraTo(nextViewport, frameIntent);
+    pushReadingCheckpoint(readingSource);
     setStatus(`exact Edge「${edge.label}」をGraphで選択しました。`);
     requestAnimationFrame(() => graphModeButtonRef.current?.focus());
   };
@@ -1626,7 +1686,6 @@ export function StructureViewer({
       data-semantic-zoom={
         viewMode === "graph" ? (viewport.scale < 0.42 ? "overview" : "detail") : undefined
       }
-      data-navigation-history-count={navigationHistory.length}
       data-framed-region-id={framedRegionId ?? undefined}
       data-selected-edge-id={selectedEdgeId ?? undefined}
     >
@@ -1691,6 +1750,9 @@ export function StructureViewer({
               onClick={() => {
                 viewModeRef.current = "graph";
                 setViewMode("graph");
+                const snapshot = captureReadingSnapshot();
+                onReadingSnapshotChanged(snapshot);
+                onReplaceReadingHistory(snapshot);
               }}
             >
               Graph
@@ -1708,6 +1770,9 @@ export function StructureViewer({
               onClick={() => {
                 viewModeRef.current = "regions";
                 setViewMode("regions");
+                const snapshot = captureReadingSnapshot();
+                onReadingSnapshotChanged(snapshot);
+                onReplaceReadingHistory(snapshot);
               }}
             >
               Regions
@@ -1717,8 +1782,7 @@ export function StructureViewer({
             <button
               type="button"
               aria-label="Back"
-              title="一つ前のfocusとcameraへ戻る"
-              disabled={navigationHistory.length === 0}
+              title="ブラウザの一つ前のreading destinationへ戻る"
               onClick={navigateBack}
             >
               Back

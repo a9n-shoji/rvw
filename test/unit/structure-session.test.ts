@@ -13,9 +13,9 @@ import {
   restoreStructureRegionsViewFromHistory,
   scaledStructureZoom,
   setStructureSession,
-  appendStructureNavigationHistory,
   initialStructureGuideDisclosure,
   structureBackboneNodeIds,
+  structureCameraFrameForHistoryRestore,
   structureHomeNodeIds,
   structureLayoutBasisKey,
   structureOneHopNodeIds,
@@ -207,11 +207,6 @@ describe("Structure pane sessions", () => {
       cameraMode: "manual" as const,
     };
     const restored = restoreStructureRegionsViewFromHistory(current, {
-      viewMode: "regions",
-      focusId: "A",
-      depth: "all",
-      framedRegionId: null,
-      viewport: { x: 10, y: 20, scale: 1 },
       regionsViewport: { x: -180, y: 72, scale: 1.3 },
       regionsSurfaceSize: { width: 760, height: 520 },
       regionsCameraMode: "manual",
@@ -225,11 +220,6 @@ describe("Structure pane sessions", () => {
       restoreStructureRegionsViewFromHistory(
         current,
         {
-          viewMode: "regions",
-          focusId: "A",
-          depth: "all",
-          framedRegionId: null,
-          viewport: { x: 10, y: 20, scale: 1 },
           regionsViewport: { x: -180, y: 72, scale: 1.3 },
           regionsSurfaceSize: { width: 760, height: 520 },
           regionsCameraMode: "manual",
@@ -244,62 +234,11 @@ describe("Structure pane sessions", () => {
 
     expect(
       restoreStructureRegionsViewFromHistory(current, {
-        viewMode: "regions",
-        focusId: null,
-        depth: "all",
-        framedRegionId: null,
-        viewport: { x: 0, y: 0, scale: 1 },
+        regionsViewport: current.viewport,
+        regionsSurfaceSize: current.surfaceSize,
         regionsCameraMode: "fit",
       }),
     ).toMatchObject({ cameraMode: "fit", viewport: current.viewport });
-  });
-
-  it("invalidates historical Regions geometry but preserves a Home reframe intent", () => {
-    const value = presentedStructure("70000000-0000-4000-8000-000000000079");
-    const session = {
-      ...createStructureSession(value),
-      navigationHistory: [
-        {
-          viewMode: "regions" as const,
-          focusId: "A",
-          depth: "all" as const,
-          framedRegionId: null,
-          viewport: { x: 10, y: 20, scale: 1 },
-          regionsViewport: { x: -180, y: 72, scale: 1.3 },
-          regionsSurfaceSize: { width: 760, height: 520 },
-          regionsCameraMode: "manual" as const,
-        },
-      ],
-    };
-    const relabeled: Structure = {
-      ...value,
-      updatedAt: "2026-08-30T00:01:00.000Z",
-      presentation: {
-        ...value.presentation!,
-        regions: value.presentation!.regions.map((region) =>
-          region.id === "first" ? { ...region, label: "First relabeled" } : region,
-        ),
-      },
-    };
-    const reconciled = reconcileStructureSession(relabeled, session);
-    expect(reconciled.navigationHistory[0]).toMatchObject({
-      viewMode: "regions",
-      regionsCameraMode: "home",
-    });
-    expect(reconciled.navigationHistory[0]).not.toHaveProperty("regionsViewport");
-    expect(reconciled.navigationHistory[0]).not.toHaveProperty("regionsSurfaceSize");
-
-    const manuallyMovedAfterUpdate = {
-      ...reconciled.regionsView,
-      viewport: { x: -500, y: -300, scale: 1.6 },
-      cameraMode: "manual" as const,
-    };
-    expect(
-      restoreStructureRegionsViewFromHistory(
-        manuallyMovedAfterUpdate,
-        reconciled.navigationHistory[0]!,
-      ).cameraMode,
-    ).toBe("home");
   });
 
   it("starts a presented Structure from the authorial start, not the factual origin", () => {
@@ -540,6 +479,45 @@ describe("Structure pane sessions", () => {
     expect(viewport!.y + 500 * viewport!.scale).toBeLessThanOrEqual(600 - 36);
   });
 
+  it("drops renderer-derived history bounds when artifact or Node geometry changed", () => {
+    const boundsFrame = {
+      kind: "bounds" as const,
+      bounds: { left: 10, top: 20, right: 300, bottom: 240 },
+    };
+    const stableNodeFrame = { kind: "nodes" as const, nodeIds: ["A", "B"] };
+    const base = {
+      snapshotArtifactUpdatedAt: "2026-09-06T00:00:00.000Z",
+      currentArtifactUpdatedAt: "2026-09-06T00:00:00.000Z",
+      geometryMatches: true,
+    };
+
+    expect(structureCameraFrameForHistoryRestore({ ...base, frame: boundsFrame })).toEqual(
+      boundsFrame,
+    );
+    expect(
+      structureCameraFrameForHistoryRestore({
+        ...base,
+        frame: boundsFrame,
+        currentArtifactUpdatedAt: "2026-09-06T00:00:01.000Z",
+      }),
+    ).toBeNull();
+    expect(
+      structureCameraFrameForHistoryRestore({
+        ...base,
+        frame: boundsFrame,
+        geometryMatches: false,
+      }),
+    ).toBeNull();
+    expect(
+      structureCameraFrameForHistoryRestore({
+        ...base,
+        frame: stableNodeFrame,
+        currentArtifactUpdatedAt: "2026-09-06T00:00:01.000Z",
+        geometryMatches: false,
+      }),
+    ).toEqual(stableNodeFrame);
+  });
+
   it("keeps Home local to the authorial start independently of backbone extent", () => {
     const value = presentedStructure("70000000-0000-4000-8000-000000000087");
     value.nodes.push(
@@ -580,45 +558,10 @@ describe("Structure pane sessions", () => {
     }
   });
 
-  it("starts with a compact Guide disclosure and bounded pane-local navigation history", () => {
+  it("starts with a compact Guide disclosure", () => {
     expect(initialStructureGuideDisclosure()).toEqual({
       thesis: true,
     });
-
-    const first = {
-      viewMode: "graph" as const,
-      focusId: "A",
-      depth: "all" as const,
-      framedRegionId: null,
-      viewport: { x: 1, y: 2, scale: 1 },
-    };
-    expect(appendStructureNavigationHistory([first], first)).toEqual([first]);
-    expect(
-      appendStructureNavigationHistory([first], {
-        ...first,
-        depth: 1,
-      }),
-    ).toEqual([first, { ...first, depth: 1 }]);
-    expect(
-      appendStructureNavigationHistory([first], {
-        ...first,
-        framedRegionId: "first",
-      }),
-    ).toEqual([first, { ...first, framedRegionId: "first" }]);
-    expect(appendStructureNavigationHistory([first], { ...first, viewMode: "regions" })).toEqual([
-      first,
-      { ...first, viewMode: "regions" },
-    ]);
-    const history = Array.from({ length: 55 }, (_, index) => ({
-      viewMode: "graph" as const,
-      focusId: `node-${index}`,
-      depth: "all" as const,
-      framedRegionId: null,
-      viewport: { x: index, y: index * 2, scale: 1 },
-    })).reduce(appendStructureNavigationHistory, []);
-    expect(history).toHaveLength(50);
-    expect(history[0]!.focusId).toBe("node-5");
-    expect(history.at(-1)!.focusId).toBe("node-54");
   });
 
   it("keys only the authored fields that determine canonical geometry", () => {
@@ -957,16 +900,6 @@ describe("Structure pane sessions", () => {
       ...createStructureSession(value),
       cameraFrame: { kind: "bounds" as const, bounds: staleBounds },
       viewport: { x: 42, y: -18, scale: 0.73 },
-      navigationHistory: [
-        {
-          viewMode: "graph" as const,
-          focusId: "B",
-          depth: "all" as const,
-          framedRegionId: null,
-          cameraFrame: { kind: "bounds" as const, bounds: staleBounds },
-          viewport: { x: 12, y: 24, scale: 0.61 },
-        },
-      ],
     };
     const updated: Structure = {
       ...value,
@@ -981,40 +914,16 @@ describe("Structure pane sessions", () => {
 
     expect(reconciled.viewport).toEqual(session.viewport);
     expect(reconciled.cameraFrame).toBeNull();
-    expect(reconciled.navigationHistory[0]!.viewport).toEqual(
-      session.navigationHistory[0]!.viewport,
-    );
-    expect(reconciled.navigationHistory[0]!.cameraFrame).toBeNull();
   });
 
-  it("preserves Guide disclosure and prunes navigation history only for removed targets", () => {
+  it("preserves Guide disclosure while pruning removed current targets", () => {
     const value = presentedStructure("70000000-0000-4000-8000-000000000085");
     const session = {
       ...createStructureSession(value),
       guideDisclosure: { thesis: false },
-      navigationHistory: [
-        {
-          viewMode: "regions" as const,
-          focusId: "B",
-          depth: 1 as const,
-          framedRegionId: "first",
-          viewport: { x: 10, y: 20, scale: 1 },
-        },
-        {
-          viewMode: "graph" as const,
-          focusId: "C",
-          depth: 2 as const,
-          framedRegionId: "second",
-          viewport: { x: 30, y: 40, scale: 1.2 },
-        },
-        {
-          viewMode: "graph" as const,
-          focusId: null,
-          depth: "all" as const,
-          framedRegionId: null,
-          viewport: { x: 50, y: 60, scale: 0.8 },
-        },
-      ],
+      focusId: "C",
+      depth: 2 as const,
+      framedRegionId: "second",
     };
     const updated: Structure = {
       ...value,
@@ -1038,74 +947,9 @@ describe("Structure pane sessions", () => {
     const reconciled = reconcileStructureSession(updated, session);
 
     expect(reconciled.guideDisclosure).toEqual(session.guideDisclosure);
-    expect(reconciled.navigationHistory.map(({ focusId }) => focusId)).toEqual(["B", null]);
-    expect(reconciled.navigationHistory.map(({ depth }) => depth)).toEqual([1, "all"]);
-    expect(reconciled.navigationHistory.map(({ viewMode }) => viewMode)).toEqual([
-      "regions",
-      "graph",
-    ]);
-    expect(reconciled.navigationHistory.map(({ framedRegionId }) => framedRegionId)).toEqual([
-      "first",
-      null,
-    ]);
-    expect(reconciled.navigationHistory.map(({ cameraFrame }) => cameraFrame ?? null)).toEqual([
-      { kind: "region", regionId: "first" },
-      null,
-    ]);
-    expect(reconciled.navigationHistory[0]!.viewport.scale).toBe(1);
-    expect(reconciled.navigationHistory[1]!.viewport.scale).toBe(0.8);
-  });
-
-  it("keeps a Regions return destination when only its latent Graph focus is removed", () => {
-    const value = presentedStructure("70000000-0000-4000-8000-000000000084");
-    const session = {
-      ...createStructureSession(value),
-      surfaceSize: { width: 900, height: 600 },
-      navigationHistory: [
-        {
-          viewMode: "regions" as const,
-          focusId: "B",
-          depth: 2 as const,
-          framedRegionId: null,
-          cameraFrame: { kind: "center-node" as const, nodeId: "B", scale: 1.1 },
-          viewport: { x: 10, y: 20, scale: 1.1 },
-        },
-        {
-          viewMode: "graph" as const,
-          focusId: "B",
-          depth: 2 as const,
-          framedRegionId: null,
-          cameraFrame: { kind: "center-node" as const, nodeId: "B", scale: 1.1 },
-          viewport: { x: 30, y: 40, scale: 1.1 },
-        },
-      ],
-    };
-    const updated: Structure = {
-      ...value,
-      updatedAt: "2026-08-30T00:01:00.000Z",
-      nodes: value.nodes.filter((node) => node.id !== "B"),
-      edges: value.edges.filter((edge) => edge.from !== "B" && edge.to !== "B"),
-      presentation: {
-        ...value.presentation!,
-        primaryBackbone: { edgeIds: ["ac"] },
-        regions: value.presentation!.regions.map((region) => ({
-          ...region,
-          nodeIds: region.nodeIds.filter((nodeId) => nodeId !== "B"),
-        })),
-      },
-    };
-
-    const reconciled = reconcileStructureSession(updated, session);
-
-    expect(reconciled.navigationHistory).toHaveLength(1);
-    expect(reconciled.navigationHistory[0]).toMatchObject({
-      viewMode: "regions",
-      focusId: null,
-      depth: "all",
-      framedRegionId: null,
-      cameraFrame: null,
-    });
-    expect(reconciled.navigationHistory[0]!.viewport.scale).toBe(1.1);
+    expect(reconciled.focusId).toBeNull();
+    expect(reconciled.depth).toBe("all");
+    expect(reconciled.framedRegionId).toBeNull();
   });
 
   it("centers replacement geometry when no Node survives a rebase", () => {

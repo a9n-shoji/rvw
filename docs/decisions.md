@@ -3258,3 +3258,47 @@ operation and recovery can safely finish the empty lease.
 - Supersession prevents new claims, acknowledgements, delegation, and write reservations, but is not
   distributed cancellation for a lease already delegated and write-reserved before activation; that
   in-flight work may reach a safe boundary.
+
+## 2026-09-06: Put Structure destinations on the browser reading trail
+
+### Problem
+
+Structure kept focus, Region drill, mode, and camera in a pane-local session stack while documents and
+source references used browser history. After Regions → Graph → source, browser Back could reopen the
+Structure tab but could not restore the spatial destination that motivated the source check. Keeping
+both stacks would also make Structure Back and browser Back disagree after mode, hop, or camera changes.
+
+### Choice
+
+Use the existing namespaced browser reading entry as the only navigation stack for explicit Structure
+destinations. A runtime-validated Structure locator records Graph / Regions mode, focus and hop lens,
+framed Region, exact Edge selection, both cameras, their surface sizes, artifact revision, and
+graph/Regions geometry basis. Stable semantic Node and Region camera frames are reprojected on current
+geometry. Renderer-derived Fit bounds are reused only when artifact revision and exact Node geometry
+still match. A raw manual viewport is restored only when its layout basis and exact manual positions
+still match; pane-size changes preserve its world center.
+Stale Node, Edge, Region, or camera-frame IDs are reconciled against the current artifact rather than
+reviving removed facts.
+
+Opening or activating a Structure, focusing a Node, a changed Home destination, and Region / Context /
+exact-Edge drill-down push entries. Graph / Regions toggles, hop changes, pan, zoom, Fit, center, drag,
+layout reset, Guide disclosure, transient relation selection, and poll reconciliation replace the
+current snapshot only. Before a Structure source action pushes a file destination, the current snapshot
+is synchronized atomically. Applying Back or Forward invalidates source/reference resolutions started
+from an older destination, so a delayed response cannot overwrite the restored reading state. The
+Structure Back control delegates to browser Back.
+
+Store the latest snapshot per pane and Structure so generic document navigation can snapshot an active
+Structure instead of degrading it to a scroll locator. Moving a Structure transfers this snapshot with
+its pane session. An unfocused pane may update its own stored snapshot but must not replace the global
+current history entry. Restoring an older entry resolves its identity to the latest open Structure tab,
+or to the latest fetched Structure summary when reopening a closed tab, so historical title/source
+metadata cannot overwrite the current document object.
+
+### Trade-offs
+
+- Back can cross from a Structure to the preceding document, which makes it consistent with the rest of
+  the reading workspace rather than a private graph-only undo control.
+- `history.state` is session-only and intentionally not a shareable Structure deep link.
+- Camera snapshots add bounded state to each explicit reading entry, but coordinates, focus, and manual
+  layout remain reviewer state and never enter the Structure protocol or database.
