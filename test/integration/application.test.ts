@@ -1,12 +1,15 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RvwService } from "../../src/application/rvw-service.js";
 import { formatCommentWatchCursor } from "../../src/domain/comment-watch-cursor.js";
 import type { GitHubPullRequest, Structure } from "../../src/domain/models.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
+import { MAX_STRUCTURE_PRIMARY_SPINE_NODES } from "../../src/shared/constants.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
 import { commitFile, createGitRepository, git } from "../fixtures/git-repository.js";
 
@@ -82,6 +85,7 @@ describe("RvwService commit workflow", () => {
       base,
       firstHead,
       fake,
+      dbFile,
       database,
       service: new RvwService(database, new GitClient(), fake),
     };
@@ -2137,6 +2141,127 @@ describe("RvwService commit workflow", () => {
     ).toEqual({ outdated: false, range: { startLine: 4, endLine: 4 }, path: "Pull Request.md" });
   });
 
+  it("reuses a v4 Structure publish when v5 explicitly retries its missing presentation as null", async () => {
+    const { repository, firstHead, dbFile, database, service } = setup(
+      "rvw-structure-v4-idempotency-",
+    );
+    const opened = await service.openPullRequest(undefined, repository);
+    const request = {
+      idempotencyKey: "legacy-null-presentation-retry",
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Legacy Structure",
+      scope: "One source-grounded node with no authored presentation.",
+      originNodeId: "entry",
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          anchor: { path: "src.txt", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [],
+      presentation: null,
+    };
+    const legacyContent = {
+      sourceOid: firstHead,
+      title: request.title,
+      scope: request.scope,
+      originNodeId: request.originNodeId,
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          description: null,
+          kind: null,
+          notation: "plain" as const,
+          anchor: { path: "src.txt", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [],
+    };
+    const legacyRequestHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          operation: "structure.publish",
+          pullRequestId: opened.pullRequest.id,
+          content: legacyContent,
+        }),
+        "utf8",
+      )
+      .digest("hex");
+    const legacyStructure = database.createStructure({
+      pullRequestId: opened.pullRequest.id,
+      ...legacyContent,
+      presentation: null,
+      idempotencyKey: request.idempotencyKey,
+      idempotencyRequestHash: legacyRequestHash,
+    });
+
+    const raw = new DatabaseSync(dbFile);
+    const row = raw
+      .prepare("SELECT graph_json FROM structures WHERE id = ?")
+      .get(legacyStructure.id) as { graph_json: string };
+    const legacyGraph = JSON.parse(row.graph_json) as Record<string, unknown>;
+    delete legacyGraph.presentation;
+    raw
+      .prepare("UPDATE structures SET graph_json = ? WHERE id = ?")
+      .run(JSON.stringify(legacyGraph), legacyStructure.id);
+    raw.close();
+
+    const revisionBeforeRetry = database.getDomainRevisions().structures;
+    await expect(service.publishStructure(request)).resolves.toEqual(legacyStructure);
+    expect(database.getDomainRevisions().structures).toBe(revisionBeforeRetry);
+    await expect(
+      service.publishStructure({ ...request, scope: "A materially changed retry." }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+  });
+
+  it("accepts a twelve-Node primary spine and rejects a thirteen-Node tour", async () => {
+    expect(MAX_STRUCTURE_PRIMARY_SPINE_NODES).toBe(12);
+    const { repository, firstHead, service } = setup("rvw-structure-primary-spine-limit-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const inputWithSpine = (nodeCount: number) => {
+      const nodes = Array.from({ length: nodeCount }, (_, index) => ({
+        id: `node-${index + 1}`,
+        label: `Node ${index + 1}`,
+        ...(index === 0 ? { anchor: { path: "src.txt", startLine: 1, endLine: 1 } } : {}),
+      }));
+      const edges = Array.from({ length: nodeCount - 1 }, (_, index) => ({
+        id: `edge-${index + 1}`,
+        from: `node-${index + 1}`,
+        to: `node-${index + 2}`,
+        label: "leads to",
+        directed: true,
+      }));
+      return {
+        idempotencyKey: `structure-primary-spine-${nodeCount}`,
+        pullRequest: opened.pullRequest.url,
+        sourceOid: firstHead,
+        title: "Bounded reading spine",
+        scope: "The first-grasp backbone through one bounded relationship space.",
+        originNodeId: "node-1",
+        nodes,
+        edges,
+        presentation: {
+          thesis: "Grasp this compact backbone before exploring the remaining graph.",
+          startNodeId: "node-1",
+          primarySpine: {
+            nodeIds: nodes.map(({ id }) => id),
+            edgeIds: edges.map(({ id }) => id),
+          },
+          regions: [],
+        },
+      };
+    };
+
+    const accepted = await service.publishStructure(inputWithSpine(12));
+    expect(accepted.presentation?.primarySpine?.nodeIds).toHaveLength(12);
+    const rejected = service.publishStructure(inputWithSpine(13));
+    await expect(rejected).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(rejected).rejects.toThrowError("2〜12");
+  });
+
   it("publishes, replaces, reads, and deletes an exact-source Structure", async () => {
     const { repository, firstHead, fake, database, service } = setup("rvw-structure-");
     const opened = await service.openPullRequest(undefined, repository);
@@ -2175,10 +2300,28 @@ describe("RvwService commit workflow", () => {
           label: "documents",
           directed: true,
         },
+        {
+          id: "serves-consumer",
+          from: "source",
+          to: "consumer",
+          label: "serves",
+          directed: true,
+        },
+        {
+          id: "also-reads-source",
+          from: "consumer",
+          to: "source",
+          label: "also reads",
+          directed: true,
+        },
       ],
       presentation: {
         thesis: "  Start from the exact source and understand the consumer relationship.  ",
-        primarySpine: ["source", "consumer"],
+        startNodeId: "source",
+        primarySpine: {
+          nodeIds: ["source", "consumer"],
+          edgeIds: ["reads-source"],
+        },
         regions: [
           { label: "  Evidence  ", nodeIds: ["source", "obsolete"] },
           { label: "Consumer", nodeIds: ["consumer"] },
@@ -2219,6 +2362,53 @@ describe("RvwService commit workflow", () => {
     await expect(
       service.publishStructure({
         ...publishInput,
+        idempotencyKey: "structure-presentation-start-mismatch",
+        presentation: { ...publishInput.presentation, startNodeId: "consumer" },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-presentation-wrong-edge",
+        presentation: {
+          ...publishInput.presentation,
+          primarySpine: {
+            ...publishInput.presentation.primarySpine,
+            edgeIds: ["documents-obsolete"],
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-presentation-empty",
+        presentation: {
+          thesis: "This presentation has no authored spatial structure.",
+          startNodeId: "source",
+          primarySpine: null,
+          regions: [],
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
+        idempotencyKey: "structure-presentation-discontiguous-region",
+        presentation: {
+          thesis: "A region cannot skip over another spine member.",
+          startNodeId: "consumer",
+          primarySpine: {
+            nodeIds: ["consumer", "source", "obsolete"],
+            edgeIds: ["reads-source", "documents-obsolete"],
+          },
+          regions: [{ label: "Discontiguous", nodeIds: ["consumer", "obsolete"] }],
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      service.publishStructure({
+        ...publishInput,
         idempotencyKey: "structure-presentation-region-order",
         presentation: {
           ...publishInput.presentation,
@@ -2245,7 +2435,11 @@ describe("RvwService commit workflow", () => {
       originNodeId: "source",
       presentation: {
         thesis: "Start from the exact source and understand the consumer relationship.",
-        primarySpine: ["source", "consumer"],
+        startNodeId: "source",
+        primarySpine: {
+          nodeIds: ["source", "consumer"],
+          edgeIds: ["reads-source"],
+        },
         regions: [
           { label: "Evidence", nodeIds: ["source", "obsolete"] },
           { label: "Consumer", nodeIds: ["consumer"] },
@@ -2263,6 +2457,8 @@ describe("RvwService commit workflow", () => {
       edges: [
         { id: "reads-source", anchors: [{ startLine: null, endLine: null }] },
         { id: "documents-obsolete" },
+        { id: "serves-consumer" },
+        { id: "also-reads-source" },
       ],
     });
     expect(service.listStructures(opened.pullRequest.id)).toEqual([
@@ -2312,12 +2508,13 @@ describe("RvwService commit workflow", () => {
         },
       ],
       presentation: {
-        thesis: "Follow validation through the source boundary to its consumer.",
-        primarySpine: ["validator", "source", "consumer"],
+        thesis:
+          "Compare validation, the source boundary, and its consumer without inventing a flow.",
+        startNodeId: "validator",
+        primarySpine: null,
         regions: [
           { label: "Validation", nodeIds: ["validator"] },
-          { label: "Source", nodeIds: ["source"] },
-          { label: "Consumer", nodeIds: ["consumer"] },
+          { label: "Source and consumer", nodeIds: ["source", "consumer"] },
         ],
       },
     });
@@ -2329,7 +2526,14 @@ describe("RvwService commit workflow", () => {
       nodes: [{ id: "source" }, { id: "consumer" }, { id: "validator" }],
       edges: [{ id: "validates-source" }, { id: "serves-consumer" }],
       presentation: {
-        thesis: "Follow validation through the source boundary to its consumer.",
+        thesis:
+          "Compare validation, the source boundary, and its consumer without inventing a flow.",
+        startNodeId: "validator",
+        primarySpine: null,
+        regions: [
+          { label: "Validation", nodeIds: ["validator"] },
+          { label: "Source and consumer", nodeIds: ["source", "consumer"] },
+        ],
       },
     });
     expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse(structure.updatedAt));

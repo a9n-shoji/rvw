@@ -8,8 +8,10 @@ description: Read, publish, replace in place, or explicitly delete one source-an
 Create one review space that lets a human inspect one bounded PR-relevant behavior from a factual code
 entrypoint through the responsibilities, dependencies, contracts, and side effects needed to verify
 it. A Structure is a simultaneously visible, freely explorable spatial explanation; a Walkthrough makes
-ordered prose and transitions the artifact. A Structure may prioritize one connected visual backbone
-and ordered regions, but it remains freely explorable and is never a stepper or autoplay. If the clearest
+ordered prose and transitions the artifact. A Structure may name an attention start, prioritize at most
+one exact-relation visual backbone of at most 12 Nodes, and use ordered regions, but it remains freely explorable and is never
+a stepper or autoplay. Hub, fan-out, convergence, and reciprocal spaces may use regions without inventing
+a spine. If the clearest
 explanation needs a required reading order because prose between sequential stops, a required ending, or
 route transitions carry the meaning, stop without publishing and recommend `rvw-walkthrough` to the
 requester or upstream composer. Do not create that Walkthrough from this Skill. If there is no defensible
@@ -102,7 +104,7 @@ an update. Keep `sourceOid`, `title`, `scope`, `originNodeId`, `presentation`, `
 rvw structure preview --stdin --json
 ```
 
-Parse the canonical `layout` diagnostics and `warnings`. Treat `maxRows >= 8`,
+Parse the presentation-independent topology `layout` diagnostics and `warnings`. Treat `maxRows >= 8`,
 `nonForwardDirectionalLinkRatio >= 0.25`, or `originOutgoingDirectionalLinkCount === 0` as authoring
 smells. Reconsider whether the origin is the factual behavior entrypoint, nodes are too granular,
 claims or anchors overlap or nest, multiple behaviors are mixed, the subject boundary is too broad,
@@ -113,7 +115,8 @@ does not read `sourceOid` or resolve anchor paths and ranges. Independently conf
 that committed source before treating a successful preview as ready; publish and update perform the
 source-aware validation when a write is requested.
 
-These are not validation failures. If the factual graph does not improve after reconsideration,
+These diagnostics deliberately ignore authorial presentation geometry, so reverse spatial reading does
+not count as a reversed factual relation. They are not validation failures. If the factual graph does not improve after reconsideration,
 publish or update it and explain why the warning remains when useful. Never change factual edge
 direction, the factual origin, predicate wording, or a node responsibility claim merely to improve a
 layout score. Do not implement or invoke a separate Skill-side layout preview.
@@ -131,7 +134,11 @@ rvw structure publish --stdin --json <<'RVW_JSON'
   "originNodeId": "request-policy",
   "presentation": {
     "thesis": "The request decision is grounded in one committed input contract.",
-    "primarySpine": ["policy-input", "request-policy"],
+    "startNodeId": "policy-input",
+    "primarySpine": {
+      "nodeIds": ["policy-input", "request-policy"],
+      "edgeIds": ["request-policy-consumes-policy-input"]
+    },
     "regions": [
       {
         "label": "Decision contract",

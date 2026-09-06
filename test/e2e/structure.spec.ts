@@ -279,14 +279,16 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   await expect(thesisStrip).toBeVisible();
   await expect(viewer.locator(".structure-canvas-status .structure-canvas-thesis")).toHaveCount(0);
   const defaultThesisLayout = await viewer.evaluate((element) => {
-    const strip = element.querySelector<HTMLElement>(".structure-thesis-strip")!;
-    const thesis = strip.querySelector<HTMLElement>("span")!;
+    const overview = element.querySelector<HTMLElement>(".structure-presentation-overview")!;
+    const thesis = element.querySelector<HTMLElement>(
+      ".structure-presentation-overview-thesis > span",
+    )!;
     const canvas = element.querySelector<HTMLElement>(".structure-canvas")!;
     const status = element.querySelector<HTMLElement>(".structure-canvas-status")!;
-    const stripBox = strip.getBoundingClientRect();
+    const overviewBox = overview.getBoundingClientRect();
     const canvasBox = canvas.getBoundingClientRect();
     return {
-      outsideCanvas: stripBox.bottom <= canvasBox.top + 1,
+      outsideCanvas: overviewBox.bottom <= canvasBox.top + 1,
       statusHeight: status.getBoundingClientRect().height,
       whiteSpace: getComputedStyle(thesis).whiteSpace,
       textOverflow: getComputedStyle(thesis).textOverflow,
@@ -302,15 +304,57 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
     /focused/,
   );
-  await expect(viewer.locator(".structure-region")).toHaveCount(4);
-  await expect(viewer.locator('.structure-region[data-region-index="0"]')).toContainText(
-    "HTTP boundary",
+  await expect(viewer.locator(".structure-presentation-overview-node")).toHaveCount(7);
+  await expect(viewer.locator(".structure-presentation-overview-connection")).toHaveCount(6);
+  await expect(
+    viewer.locator(
+      '.structure-presentation-overview-connection[data-edge-id="detail-route-executes-query"]',
+    ),
+  ).toHaveAttribute("data-direction", "forward");
+  await expect(viewer.locator(".structure-presentation-overview-regions > ol > li")).toHaveText([
+    "R1HTTP boundary3 Nodes",
+    "R2Read and present5 Nodes",
+    "R3Shared response2 Nodes",
+    "R4React rendering7 Nodes",
+  ]);
+  await expect(viewer.locator(".structure-region")).toHaveCount(0);
+  await expect(viewer.locator(".structure-region-member")).toHaveCount(17);
+  await expect(
+    viewer.locator(
+      '.structure-region-member[data-region-index="0"][data-region-node-id="order-detail-route"]',
+    ),
+  ).toHaveAttribute("title", "Region 1: HTTP boundary");
+  await expect(viewer.locator(".structure-minimap-primary-spine")).toHaveCount(1);
+  await expect(viewer.locator(".structure-minimap-presentation-start")).toHaveCount(1);
+  await expect(viewer.locator(".structure-minimap circle.primary-spine")).toHaveCount(7);
+  await expect(viewer.locator('.structure-edge-label[data-primary-spine="true"]')).toHaveCount(6);
+  await expect(
+    viewer.locator('.structure-presentation-overview-node[data-node-id="order-detail-route"]'),
+  ).toHaveAttribute("aria-pressed", "true");
+  await viewer
+    .locator('.structure-presentation-overview-node[data-node-id="order-detail-page"]')
+    .click();
+  await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
+    /focused/,
+  );
+  await viewer
+    .locator('.structure-presentation-overview-node[data-node-id="order-detail-route"]')
+    .click();
+  await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
+    /focused/,
   );
   await expect(viewer.locator('.structure-node[data-primary-spine="true"]')).toHaveCount(7);
   await expect(viewer.locator('.structure-edge[data-primary-spine="true"]')).toHaveCount(6);
   await expect(
     viewer.locator('.structure-node[data-node-id="order-detail-route"] .structure-node-focus'),
-  ).toHaveAccessibleName("GET /orders/:orderId · primary spine · region HTTP boundary");
+  ).toHaveAccessibleName(
+    "GET /orders/:orderId · factual origin · authorial start · spatial reading priority 1 of 7 · region R1: HTTP boundary",
+  );
+  await expect(
+    viewer.locator(
+      '.structure-edge-label[data-edge-id="detail-route-executes-query"] .structure-edge-select',
+    ),
+  ).toHaveAccessibleName(/spatial reading spine relation$/u);
   const presentationGeometry = await viewer.evaluate((element) => {
     const spine = [
       "order-detail-route",
@@ -324,23 +368,12 @@ test("maps a backend response contract into frontend React rendering", async ({ 
       const node = element.querySelector<HTMLElement>(`.structure-node[data-node-id="${nodeId}"]`)!;
       return { left: Number.parseFloat(node.style.left), top: Number.parseFloat(node.style.top) };
     });
-    const regions = [...element.querySelectorAll<HTMLElement>(".structure-region")].map(
-      (region) => ({
-        left: Number.parseFloat(region.style.left),
-        right: Number.parseFloat(region.style.left) + Number.parseFloat(region.style.width),
-      }),
-    );
-    return { spine, regions };
+    return { spine };
   });
   expect(new Set(presentationGeometry.spine.map(({ top }) => top)).size).toBe(1);
   expect(
     presentationGeometry.spine.every(
       (point, index, points) => index === 0 || points[index - 1]!.left < point.left,
-    ),
-  ).toBe(true);
-  expect(
-    presentationGeometry.regions.every(
-      (region, index, regions) => index === 0 || regions[index - 1]!.right < region.left,
     ),
   ).toBe(true);
   await expect(viewer.locator(".structure-claim-note")).toHaveCount(0);
@@ -355,9 +388,9 @@ test("maps a backend response contract into frontend React rendering", async ({ 
   ).toEqual({ whiteSpace: "normal", lineClamp: "2" });
   expect(
     await viewer.evaluate((element) => {
-      const strip = element.querySelector<HTMLElement>(".structure-thesis-strip")!;
+      const overview = element.querySelector<HTMLElement>(".structure-presentation-overview")!;
       const canvas = element.querySelector<HTMLElement>(".structure-canvas")!;
-      return strip.getBoundingClientRect().bottom <= canvas.getBoundingClientRect().top + 1;
+      return overview.getBoundingClientRect().bottom <= canvas.getBoundingClientRect().top + 1;
     }),
   ).toBe(true);
   const canvasHeightBeforeScope = (await viewer.locator(".structure-canvas").boundingBox())!.height;
@@ -1057,6 +1090,7 @@ test("re-resolves Structure sources by stable Node and Edge identity", async ({ 
   await expect(staleBanner).toHaveCount(0);
 
   await page.getByRole("tab", { name: fullStackTitle }).click();
+  await viewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
   await viewer
     .locator('.structure-node[data-node-id="detail-params"] > .structure-source.compact')
     .click();
@@ -1492,7 +1526,13 @@ test("resolves Structure anchors to latest and preserves spatial context across 
     top: (element as HTMLElement).style.top,
   }));
   expect(dragged).not.toEqual(beforeDrag);
-  const viewportBeforeReset = await world.evaluate((element) => element.style.transform);
+  const screenCenterBeforeReset = await hub.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    return {
+      x: Math.round(rectangle.left + rectangle.width / 2),
+      y: Math.round(rectangle.top + rectangle.height / 2),
+    };
+  });
   await viewer.getByRole("button", { name: "レイアウトを戻す" }).click();
   await expect
     .poll(
@@ -1504,8 +1544,19 @@ test("resolves Structure anchors to latest and preserves spatial context across 
     )
     .toEqual(beforeDrag);
   await expect
-    .poll(async () => await world.evaluate((element) => element.style.transform))
-    .toBe(viewportBeforeReset);
+    .poll(async () => {
+      const rectangle = await hub.boundingBox();
+      if (!rectangle) return false;
+      const center = {
+        x: Math.round(rectangle.x + rectangle.width / 2),
+        y: Math.round(rectangle.y + rectangle.height / 2),
+      };
+      return (
+        Math.abs(center.x - screenCenterBeforeReset.x) <= 1 &&
+        Math.abs(center.y - screenCenterBeforeReset.y) <= 1
+      );
+    })
+    .toBe(true);
   await dragVisibleStructureNode(page, viewer, hub);
   dragged = await hub.evaluate((element) => ({
     left: (element as HTMLElement).style.left,
@@ -1761,4 +1812,143 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await expect.poll(() => structureReferenceIndexRequests).toBe(requestsBeforeDelete + 1);
   await page.waitForTimeout(250);
   expect(structureReferenceIndexRequests).toBe(requestsBeforeDelete + 1);
+});
+
+test("rebases a cached Structure session when authored presentation changes while its tab is closed", async ({
+  page,
+}) => {
+  test.setTimeout(45_000);
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const focusedNode = viewer.locator('.structure-node[data-node-id="order-response-presenter"]');
+  await viewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
+  await focusedNode.click();
+  await viewer.getByRole("button", { name: "2-hop", exact: true }).click();
+  await viewer.getByRole("button", { name: "focusを中央へ", exact: true }).click();
+  await viewer.getByRole("button", { name: "拡大", exact: true }).click();
+  await dragVisibleStructureNode(page, viewer, focusedNode);
+
+  const before = await focusedNode.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect();
+    return {
+      left: (element as HTMLElement).style.left,
+      top: (element as HTMLElement).style.top,
+      screenCenter: {
+        x: rectangle.left + rectangle.width / 2,
+        y: rectangle.top + rectangle.height / 2,
+      },
+    };
+  });
+  const regionMarkerBefore = viewer.locator(
+    '.structure-region-member[data-region-node-id="order-response-presenter"]',
+  );
+  await expect(regionMarkerBefore).toHaveAttribute("title", "Region 2: Read and present");
+  expect(
+    await viewer.evaluate((element) => {
+      const node = element.querySelector<HTMLElement>(
+        '.structure-node[data-node-id="order-response-presenter"]',
+      )!;
+      const marker = element.querySelector<HTMLElement>(
+        '.structure-region-member[data-region-node-id="order-response-presenter"]',
+      )!;
+      return {
+        deltaX: Number.parseFloat(marker.style.left) - Number.parseFloat(node.style.left),
+        deltaY: Number.parseFloat(marker.style.top) - Number.parseFloat(node.style.top),
+      };
+    }),
+  ).toEqual({ deltaX: 203, deltaY: -14 });
+  const scaleBefore = await viewer.getAttribute("data-viewport-scale");
+  const detailResponse = await page.request.get(
+    `/api/pull-requests/${pullRequestId}/structures/${fullStackStructureId}`,
+  );
+  expect(detailResponse.ok()).toBe(true);
+  const detail = (await detailResponse.json()) as {
+    structure: {
+      presentation: {
+        thesis: string;
+        startNodeId: string;
+        primarySpine: { nodeIds: string[]; edgeIds: string[] };
+        regions: Array<{ label: string; nodeIds: string[] }>;
+      };
+    };
+  };
+  const previousPresentation = detail.structure.presentation;
+  const updatedTitle = "Order detail response rendering reordered";
+
+  await page.getByRole("button", { name: `${fullStackTitle}を閉じる`, exact: true }).click();
+  await expect(viewer).toHaveCount(0);
+  const updateResponse = await page.request.post(
+    `/api/fixture/structures/${fullStackStructureId}/update`,
+    {
+      data: {
+        title: updatedTitle,
+        presentation: {
+          thesis: `${previousPresentation.thesis} Reading priority reversed.`,
+          startNodeId: previousPresentation.primarySpine.nodeIds.at(-1),
+          primarySpine: {
+            nodeIds: [...previousPresentation.primarySpine.nodeIds].reverse(),
+            edgeIds: [...previousPresentation.primarySpine.edgeIds].reverse(),
+          },
+          regions: [...previousPresentation.regions].reverse(),
+        },
+      },
+    },
+  );
+  expect(updateResponse.ok()).toBe(true);
+  await expect(
+    page
+      .getByRole("navigation", { name: "レビュー文書" })
+      .getByRole("button", { name: updatedTitle, exact: true }),
+  ).toBeVisible();
+
+  await openStructure(page, updatedTitle);
+  const restoredViewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  const restoredFocus = restoredViewer.locator(
+    '.structure-node[data-node-id="order-response-presenter"]',
+  );
+  await expect(restoredFocus).toHaveClass(/focused/);
+  await expect(restoredViewer.getByRole("button", { name: "2-hop", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(restoredViewer).toHaveAttribute("data-viewport-scale", scaleBefore!);
+  await expect(
+    restoredViewer.locator(
+      '.structure-region-member[data-region-node-id="order-response-presenter"]',
+    ),
+  ).toHaveAttribute("title", "Region 3: Read and present");
+  await expect
+    .poll(async () => {
+      const rectangle = await restoredFocus.boundingBox();
+      if (!rectangle) return false;
+      const center = {
+        x: Math.round(rectangle.x + rectangle.width / 2),
+        y: Math.round(rectangle.y + rectangle.height / 2),
+      };
+      return (
+        Math.abs(center.x - Math.round(before.screenCenter.x)) <= 1 &&
+        Math.abs(center.y - Math.round(before.screenCenter.y)) <= 1
+      );
+    })
+    .toBe(true);
+  expect(
+    await restoredFocus.evaluate((element) => ({
+      left: (element as HTMLElement).style.left,
+      top: (element as HTMLElement).style.top,
+    })),
+  ).not.toEqual({ left: before.left, top: before.top });
+
+  await restoredViewer.getByRole("button", { name: "全体", exact: true }).click();
+  const routeLeft = Number.parseFloat(
+    await restoredViewer
+      .locator('.structure-node[data-node-id="order-detail-route"]')
+      .evaluate((element) => (element as HTMLElement).style.left),
+  );
+  const pageLeft = Number.parseFloat(
+    await restoredViewer
+      .locator('.structure-node[data-node-id="order-detail-page"]')
+      .evaluate((element) => (element as HTMLElement).style.left),
+  );
+  expect(pageLeft).toBeLessThan(routeLeft);
 });

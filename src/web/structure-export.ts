@@ -309,10 +309,24 @@ function serializeNode(
     node.id === structure.originNodeId
       ? `<line data-node-origin-mark="true" x1="${finiteNumber(originMark.x)}" y1="${finiteNumber(originMark.top)}" x2="${finiteNumber(originMark.x)}" y2="${finiteNumber(originMark.bottom)}" stroke="${escapeXml(palette.accent)}" stroke-width="4" stroke-linecap="round"/>`
       : "";
-  const primarySpine = structure.presentation?.primarySpine.includes(node.id) ?? false;
+  const primarySpineIndex = structure.presentation?.primarySpine?.nodeIds.indexOf(node.id) ?? -1;
+  const primarySpine = primarySpineIndex >= 0;
   const primarySpineMark = primarySpine
     ? `<line data-node-primary-spine-mark="true" x1="${finiteNumber(point.x + 18)}" y1="${finiteNumber(point.y + 3)}" x2="${finiteNumber(point.x + STRUCTURE_NODE_WIDTH - 18)}" y2="${finiteNumber(point.y + 3)}" stroke="${escapeXml(palette.accent)}" stroke-width="3" stroke-linecap="round" opacity="0.58"/>`
     : "";
+  const primarySpineOrderMark = primarySpine
+    ? `<g data-node-primary-spine-order-mark="${primarySpineIndex + 1}"><rect x="${finiteNumber(point.x + 1)}" y="${finiteNumber(point.y - 14)}" width="25" height="15" rx="7.5" fill="${escapeXml(palette.panel)}" stroke="${escapeXml(palette.accent)}" stroke-opacity="0.55"/><text x="${finiteNumber(point.x + 13.5)}" y="${finiteNumber(point.y - 3.5)}" text-anchor="middle" fill="${escapeXml(palette.accent)}" font-family="${MONO_FONT}" font-size="8" font-weight="700">P${primarySpineIndex + 1}</text></g>`
+    : "";
+  const presentationStart = structure.presentation?.startNodeId === node.id;
+  const presentationStartMark = presentationStart
+    ? `<circle data-node-presentation-start-mark="true" cx="${finiteNumber(point.x + STRUCTURE_NODE_WIDTH - 11)}" cy="${finiteNumber(point.y + 11)}" r="5" fill="${escapeXml(palette.accent)}"/>`
+    : "";
+  const presentationRegionIndex =
+    structure.presentation?.regions.findIndex((region) => region.nodeIds.includes(node.id)) ?? -1;
+  const presentationRegion =
+    presentationRegionIndex >= 0
+      ? structure.presentation?.regions[presentationRegionIndex]
+      : undefined;
   const source =
     sourceLines.length > 0
       ? svgTextLines({
@@ -349,7 +363,17 @@ function serializeNode(
           fill: palette.muted,
         })
       : "";
-  return `<g data-node-id="${escapeXml(node.id)}" data-node-notation="${escapeXml(node.notation)}"${node.id === structure.originNodeId ? ' data-origin-node="true"' : ""}${primarySpine ? ' data-primary-spine="true"' : ""}${renderNode.changeKind ? ` data-source-change-kind="${escapeXml(renderNode.changeKind)}"` : ""}>${serializeNodeShape(renderNode, outline, palette)}${origin}${primarySpineMark}<g data-node-content="true">${source}${title}${divider}${description}</g><title>${escapeXml(node.label)}</title><desc>${escapeXml(node.description ?? "")}</desc></g>`;
+  const presentationDescription = [
+    node.id === structure.originNodeId ? "Factual graph origin" : null,
+    presentationStart ? "Authorial presentation start" : null,
+    primarySpine ? `Spatial reading priority ${primarySpineIndex + 1}` : null,
+    presentationRegion
+      ? `Region R${presentationRegionIndex + 1}: ${presentationRegion.label}`
+      : null,
+  ]
+    .filter((value): value is string => value !== null)
+    .join("\n");
+  return `<g data-node-id="${escapeXml(node.id)}" data-node-notation="${escapeXml(node.notation)}"${node.id === structure.originNodeId ? ' data-origin-node="true"' : ""}${presentationStart ? ' data-presentation-start-node="true"' : ""}${primarySpine ? ' data-primary-spine="true"' : ""}${presentationRegion ? ` data-presentation-region-index="${presentationRegionIndex}"` : ""}${renderNode.changeKind ? ` data-source-change-kind="${escapeXml(renderNode.changeKind)}"` : ""}>${serializeNodeShape(renderNode, outline, palette)}${origin}${primarySpineMark}${primarySpineOrderMark}${presentationStartMark}<g data-node-content="true">${source}${title}${divider}${description}</g><title>${escapeXml(node.label)}</title><desc>${escapeXml(`${node.description ?? ""}${presentationDescription ? `\n${presentationDescription}` : ""}`)}</desc></g>`;
 }
 
 export function assertCompleteStructureExport(
@@ -384,18 +408,19 @@ function serializePresentationRegions(
   model: StructureRenderModel,
   palette: StructureExportPalette,
 ): string {
+  const pointByNodeId = new Map(model.nodes.map(({ node, point }) => [node.id, point]));
   return (model.presentation?.regions ?? [])
-    .map((region) => {
-      const width = region.bounds.right - region.bounds.left;
-      const height = region.bounds.bottom - region.bounds.top;
-      const labelLines = wrapStructureText({
-        text: region.label,
-        maxUnits: Math.max(8, (width - 24) / 9),
-        maxLines: 1,
-        ellipsize: true,
-      });
-      return `<g data-presentation-region-index="${region.index}" data-presentation-region-label="${escapeXml(region.label)}"><rect x="${finiteNumber(region.bounds.left)}" y="${finiteNumber(region.bounds.top)}" width="${finiteNumber(width)}" height="${finiteNumber(height)}" rx="16" fill="${escapeXml(palette.accent)}" fill-opacity="0.035" stroke="${escapeXml(palette.accent)}" stroke-opacity="0.28" stroke-width="1" stroke-dasharray="5 4"/>${svgTextLines({ lines: labelLines, x: region.bounds.left + 12, firstY: region.bounds.top + 17, lineHeight: 12, fontSize: 9, fontFamily: MONO_FONT, fill: palette.accent, fontWeight: 700 })}</g>`;
-    })
+    .flatMap((region) =>
+      region.nodeIds.flatMap((nodeId) => {
+        const point = pointByNodeId.get(nodeId);
+        if (!point) return [];
+        const x = point.x + STRUCTURE_NODE_WIDTH - 25;
+        const y = point.y - 14;
+        return [
+          `<g data-presentation-region-index="${region.index}" data-presentation-region-label="${escapeXml(region.label)}" data-presentation-region-member-node-id="${escapeXml(nodeId)}"><rect x="${finiteNumber(x)}" y="${finiteNumber(y)}" width="25" height="15" rx="7.5" fill="${escapeXml(palette.panel)}" stroke="${escapeXml(palette.accent)}" stroke-opacity="0.55"/><text x="${finiteNumber(x + 12.5)}" y="${finiteNumber(y + 10.5)}" text-anchor="middle" fill="${escapeXml(palette.accent)}" font-family="${MONO_FONT}" font-size="8" font-weight="700">R${region.index + 1}</text><title>${escapeXml(`Region R${region.index + 1}: ${region.label}`)}</title></g>`,
+        ];
+      }),
+    )
     .join("");
 }
 
@@ -435,7 +460,38 @@ export function serializeStructureSvg(input: {
         ellipsize: false,
       })
     : [];
-  const thesisHeight = model.presentation ? 34 + thesisLines.length * 15 : 0;
+  const presentationLegend = structure.presentation
+    ? [
+        `START · ${structure.nodes.find(({ id }) => id === structure.presentation!.startNodeId)?.label ?? structure.presentation.startNodeId}`,
+        ...(structure.presentation.primarySpine
+          ? [
+              `SPINE · P1–P${structure.presentation.primarySpine.nodeIds.length} is spatial reading priority, not execution sequence`,
+            ]
+          : []),
+        ...(structure.presentation.regions.length > 0
+          ? [
+              `REGIONS · ${structure.presentation.regions
+                .map(
+                  (region, index) =>
+                    `R${index + 1} ${region.label} (${region.nodeIds.length} ${region.nodeIds.length === 1 ? "Node" : "Nodes"})`,
+                )
+                .join(" · ")}`,
+            ]
+          : []),
+      ].join("\n")
+    : "";
+  const presentationLegendLines = model.presentation
+    ? wrapStructureText({
+        text: presentationLegend,
+        maxUnits: Math.max(12, (thesisWidth - 28) / 9.5),
+        ellipsize: false,
+      })
+    : [];
+  const thesisHeight = model.presentation
+    ? 34 +
+      thesisLines.length * 15 +
+      (presentationLegendLines.length > 0 ? 13 + presentationLegendLines.length * 13 : 0)
+    : 0;
   const thesisX = bounds.left;
   const thesisY = bounds.top - thesisHeight - 24;
   const x = Math.floor(Math.min(bounds.left, thesisX) - EXPORT_PADDING);
@@ -469,15 +525,16 @@ export function serializeStructureSvg(input: {
     .join("");
   const regions = serializePresentationRegions(model, palette);
   const thesis = model.presentation
-    ? `<g data-layer="presentation-thesis" data-presentation-thesis="true"><rect x="${finiteNumber(thesisX)}" y="${finiteNumber(thesisY)}" width="${finiteNumber(thesisWidth)}" height="${finiteNumber(thesisHeight)}" rx="10" fill="${escapeXml(palette.panel)}" stroke="${escapeXml(palette.lineStrong)}" stroke-width="1"/>${svgTextLines({ lines: ["THESIS"], x: thesisX + 14, firstY: thesisY + 17, lineHeight: 11, fontSize: 8, fontFamily: MONO_FONT, fill: palette.accent, fontWeight: 700 })}${svgTextLines({ lines: thesisLines, x: thesisX + 14, firstY: thesisY + 36, lineHeight: 15, fontSize: 11, fontFamily: SANS_FONT, fill: palette.text })}</g>`
+    ? `<g data-layer="presentation-thesis" data-presentation-thesis="true"><rect x="${finiteNumber(thesisX)}" y="${finiteNumber(thesisY)}" width="${finiteNumber(thesisWidth)}" height="${finiteNumber(thesisHeight)}" rx="10" fill="${escapeXml(palette.panel)}" stroke="${escapeXml(palette.lineStrong)}" stroke-width="1"/>${svgTextLines({ lines: ["THESIS"], x: thesisX + 14, firstY: thesisY + 17, lineHeight: 11, fontSize: 8, fontFamily: MONO_FONT, fill: palette.accent, fontWeight: 700 })}${svgTextLines({ lines: thesisLines, x: thesisX + 14, firstY: thesisY + 36, lineHeight: 15, fontSize: 11, fontFamily: SANS_FONT, fill: palette.text })}${svgTextLines({ lines: presentationLegendLines, x: thesisX + 14, firstY: thesisY + 36 + thesisLines.length * 15 + 9, lineHeight: 13, fontSize: 9, fontFamily: MONO_FONT, fill: palette.muted, fontWeight: 600 })}</g>`
     : "";
   const description = model.presentation
-    ? `${structure.scope}\nThesis: ${model.presentation.thesis}`
+    ? `${structure.scope}\nThesis: ${model.presentation.thesis}\n${presentationLegend}`
     : structure.scope;
-  const presentationLayers = model.presentation
-    ? `${thesis}<g data-layer="presentation-regions">${regions}</g>`
+  const presentationHeader = model.presentation ? thesis : "";
+  const presentationMembers = model.presentation
+    ? `<g data-layer="presentation-region-members">${regions}</g>`
     : "";
-  const source = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}" role="img" aria-labelledby="rvw-structure-title rvw-structure-description" data-rvw-structure-id="${escapeXml(structure.id)}" data-rvw-source-oid="${escapeXml(structure.sourceOid)}"><title id="rvw-structure-title">${escapeXml(structure.title)}</title><desc id="rvw-structure-description">${escapeXml(description)}</desc><defs>${serializeEdgeMarkerDefs(palette)}</defs><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${escapeXml(palette.background)}"/>${presentationLayers}<g data-layer="edges">${edges}</g><g data-layer="edge-labels">${labels}</g><g data-layer="nodes">${nodes}</g></svg>`;
+  const source = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}" role="img" aria-labelledby="rvw-structure-title rvw-structure-description" data-rvw-structure-id="${escapeXml(structure.id)}" data-rvw-source-oid="${escapeXml(structure.sourceOid)}"><title id="rvw-structure-title">${escapeXml(structure.title)}</title><desc id="rvw-structure-description">${escapeXml(description)}</desc><defs>${serializeEdgeMarkerDefs(palette)}</defs><rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${escapeXml(palette.background)}"/>${presentationHeader}<g data-layer="edges">${edges}</g><g data-layer="edge-labels">${labels}</g><g data-layer="nodes">${nodes}</g>${presentationMembers}</svg>`;
   return { source, width, height, viewBox: { x, y, width, height } };
 }
 

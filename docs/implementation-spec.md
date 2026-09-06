@@ -58,7 +58,7 @@ rvwが担うもの:
 - 新規comment postのDB-wide event順序、opaque cursor、10秒pollのwatch CLI
 - source commitをanchorに持つAgent Walkthrough、typed code reference、Mermaid図、static HTML visual
 - boundedなPR-relevant behaviorをentrypointから表すAgent Structure、stable Node / Edge ID、source anchor、
-  optionalなthesis / primary spine / ordered region
+  optionalなthesis / authorial start / exact-Edge primary spine / ordered region
 - platform非依存の`rvw` / `rvw-review-compose` / `rvw-walkthrough` / `rvw-structure` /
   `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
 
@@ -586,7 +586,8 @@ interface Walkthrough {
 
 StructureはPRに関係するboundedなbehaviorを、source-establishedなentrypointから依存、contract、side effectへ
 任意の方向に探索できるrelationship spaceとして表す。authorは任意の`presentation`で、同時に見渡せる
-spatial explanationの主張、primary spine、ordered regionを宣言できる。これは一本道のstepperやautoplayではない。
+spatial explanationの主張、attention start、optionalなexact-Edge primary spine、ordered regionを宣言できる。
+これは一本道のstepperやautoplayではない。
 順序とprose自体が理解の本体ならWalkthroughを使う。entrypointを持たない
 静的なarchitecture／責務inventoryはPR reviewの停止条件を失うためStructureの対象にしない。Structureは
 generic Artifact system、semantic code graph、AI推論結果、review finding、completeness保証ではない。
@@ -629,7 +630,11 @@ type StructureEdge = {
 
 type StructurePresentation = {
   thesis: string;
-  primarySpine: string[];
+  startNodeId: string;
+  primarySpine: {
+    nodeIds: string[];
+    edgeIds: string[];
+  } | null;
   regions: Array<{
     label: string;
     nodeIds: string[];
@@ -670,18 +675,25 @@ type Structure = {
   migration execution pointを含む。subjectの中心物やrelationの多いhubを意味せず、terminal / intermediate
   entrypointも許容する。同一subjectの実装上のentrypointが移動した場合だけupdateで変更できる。
 - `presentation`はfactual graphと分離したauthorial semanticsで、v5 producerは`null`を含め必ず送る。
-  non-nullの場合、`thesis`は1〜1000文字、`primarySpine`は2〜50件のuniqueなcurrent Node IDとし、隣接する
-  すべてのpairは向きにかかわらずfactual Edgeで接続されていなければならない。`regions`は左から右へ並ぶ
-  0〜12件で、各`label`は1〜100文字、`nodeIds`は1件以上のuniqueなcurrent Node IDとする。同じNodeを
-  複数regionへ所属させない。spine上でregionに所属するNodeだけを順に見たregion indexは非減少とし、
-  spineの左から右とordered regionの左から右を矛盾させない。spine Nodeはregion未所属でも、一つのregionへ
-  所属してもよい。
+  non-nullの場合、`thesis`は1〜1000文字、`startNodeId`は最初に注意を向けるcurrent Node IDとする。
+  `primarySpine`はnullableで、nullの場合は1件以上のregionを必要とする。non-null spineは2〜12件のuniqueな
+  current Node IDと、各隣接pairに対応するexact current Edge IDをちょうど`nodeIds.length - 1`件持つ。
+  各Edgeは対応するpairをfactualな向きのままいずれかの方向に結び、先頭Nodeは`startNodeId`と一致する。
+  `regions`は読解優先順に並ぶ0〜12件で、各`label`は1〜100文字、`nodeIds`は1件以上のuniqueなcurrent Node IDとする。
+  同じNodeを複数regionへ所属させない。各regionに属するspine Nodeは一つの連続区間をなし、その区間はregionsの
+  宣言順に現れなければならない。region内の二つのspine Nodeの間へ未所属または別regionのNodeを挟まない。
+  spine Nodeはregion未所属でも、一つのregionへ所属してもよい。
 - factual graph（`originNodeId`、Node、Edge、source）、authorial `presentation`、reviewer sessionを別layerとして
-  扱う。`primarySpine`はこの説明で先に掴むbackboneという優先と強調を表すが、その順はruntime data flow、
+  扱う。`startNodeId`はfactual entrypointとは別のauthorial attention anchorである。`primarySpine`は、この説明で
+  先に掴むbackboneがある場合に、そのNode順と強調するexact Edgeを表す。その順はruntime data flow、
   control flow、因果、Edge方向、project全体でのarchitectural importanceを主張せず、Edgeの`from` / `to`を
   書き換えない。regionも新しいfactual relationや静的inventoryを意味しない。`presentation: null`は従来の
   topology projectionを選ぶ。旧`graph_json`にfieldがない保存値はread時に`null`へnormalizeし、SQL migrationは
   追加しない。
+- primary spineの12 Node / 11 Edge上限は、50 Nodeまでの全graphと独立したsemanticな制約とする。
+  spineは最初に掴む説明backboneであり、全Nodeを順に通過するtourではない。12 Nodeを超える
+  candidateはbackboneを選び直すか、regionでchunk化するか、behavior boundaryを狭める。transitionと
+  ordered stopそのものが意味を持つ場合はWalkthroughを選ぶ。
 - Node descriptionとEdge labelはproducer claimであり、source anchorはそのclaimを検証する根拠である。
   Edge labelは`from`をactor/source、`to`をtargetとして自然に読めるverb / verb phraseを使い、
   directionを読解順には使わない。配置を操作するためにinverse relationやactive/passive表現を選ばない。
@@ -753,9 +765,14 @@ pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とす�
 2倍とする。overflowするNode上では、修飾キーなしの縦wheelをその方向へNode内scrollできる間だけNodeへ渡す。
 横wheel、Ctrl / Meta付きwheel、Node内scrollの上端／下端から外向きのwheelはcanvasへ渡す。layoutはfactual graph、
 optionalな`presentation`、stable IDを入力とするdeterministicなbehavior projectionとする。non-nullの
-`presentation`では`primarySpine`を左から右のcanonical backbone、`regions`を宣言順のまとまりとして配置し、
+`presentation`では`startNodeId`をauthorial attention anchor、non-null `primarySpine.nodeIds`を左から右の
+canonical backbone、`regions`を宣言順のcomprehension chunkとして配置し、
 thesis、spine、regionを初期orientationとvisual emphasisへ反映する。spine外／region外を含む全Nodeと全Edgeを
 残し、Edge方向やfactual claimを書き換えず、focus、source検証、自由探索を制限しない。
+region array orderはreading priorityであってraw座標ではない。spineのないregion-only layoutはregion順を
+row-majorに保ったbounded gridへ折り返し、region上限付近でも一列に引き伸ばさない。spineがある場合は
+spine順と各regionの連続区間を優先する。region membershipの正本は明示Node IDだけで、derived boundsは
+placement内部の衝突回避に限り、artifact semanticsやmanual drag後のmembership表示には使わない。
 `presentation: null`では従来どおりtopology、factualなEdge direction、`originNodeId` entrypointからprojectionを
 導出する。originを含むtopology componentでは、canonical directional linksのstrongly connected componentsを求め、
 directional weak componentごとにcondensation DAGをlongest-path layeringする。各SCCを連続したrank blockとして配置して
@@ -781,17 +798,22 @@ placementだけに使う。stable IDは対称な配置を決定する最終tie-b
 manual positionは引き続き受け取らない。
 
 base mapはcurrent Structureだけから決定的に導出するcanonical layoutで、新しいsessionと明示的なlayout resetに
-使う。session layoutはそれを起点にした人間のreading stateであり、Node dragとwhole-value update後もretained
-Nodeの位置を維持する。削除後の空間を自動で詰めたり、filterやfocus変更でreflowしたりしない。新規Nodeは
+使う。session layoutはそれを起点にした人間のreading stateであり、Node dragと、layout-bearing presentationが
+変わらないwhole-value update後もretained Nodeの位置を維持する。削除後の空間を自動で詰めたり、filterやfocus変更で
+reflowしたりしない。新規Nodeは
 retained neighborの重心を起点に全方向の空き候補を調べ、既存のmental mapを壊さず発見できる位置へ置く。
 Node位置、focus、
 depth、viewportはbrowser session内だけでpaneとStructure IDの組へ保持し、tab往復とcurrent-value更新後も
-surviving IDの位置を保つ。layout resetはNode座標だけをcanonical値へ戻し、reviewerのpan / zoomは維持する。
+surviving IDの位置を保つ。ただし`startNodeId`、spineのNode identityまたは順序、regionのmembershipまたは
+順序が変わった場合は、新しいauthorial spatial semanticsを優先して全Nodeをcanonical layoutへrebaseする。
+thesisだけ、exact primary Edgeだけ、region labelだけ、またはpresentationを変えないgraph更新ではrebaseしない。rebaseとlayout resetは
+reviewerのscaleを維持し、focus Nodeが存続する場合はそのscreen位置が変わらないようviewportを平行移動する。
+focus、depth、選択中Edgeも存続する限り維持する。
 左右paneで同じStructureを
 開いてもreading stateとDOM参照を共有しない。reload、別browser、CLI、SQLiteへ座標を持ち越さない。drag後は
 canonical layoutへ戻せる。
 初期depthはAllとする。`presentation`がnon-nullなら新しいsessionの初期focus / highlightを
-`primarySpine[0]`に置き、primary spineとordered regionを左から右へ読めるorientationを使う。この初期値は
+`startNodeId`に置き、存在するprimary spineとordered regionの宣言順を追えるorientationを使う。この初期値は
 current artifactから導出するだけで、durableまたはremote-controlledなreviewer stateではない。
 `originNodeId`は別のfactual entrypoint markerとして残す。`presentation: null`なら従来どおり
 `originNodeId`を初期focus / highlightとcanonical orientationのentrypointに使う。どちらも一本道のstepperや
@@ -818,9 +840,12 @@ Nodeはsource file identityをclaim titleと別の行に置き、source action�
 大きさを変えず、titleとdescriptionを省略しない。内容がcardを超える場合はNode内を縦scrollして全文を確認でき、
 descriptionの本文領域はsource actionの下も含めて右端まで使う。Node内scrollはlayout座標、Edge route、session座標、
 canvas zoomを変更しない。
-canvasはfocus名、可視／全体件数、zoom率とminimapを常時提示する。non-nullの`presentation`ではthesisを
-headerとcanvasの間に置く専用stripへ短く表示し、通常幅では1行、狭いpaneでは最大2行にclampする。canvas上へ
-thesisを重ねない。region labelを各まとまりに表示し、primary spineのNode / Edgeを他のfactsを弱めず強調する。
+canvasはfocus名、可視／全体件数、zoom率とminimapを常時提示する。non-nullの`presentation`ではheaderと
+canvasの間にscreen-space overviewを置き、thesis、authorial start、存在する場合はexact factual Edge labelと
+方向を含むreading spine、R番号・label・Node数を含むordered region legendを示す。thesisは通常幅で1行、
+狭いpaneでは最大2行にclampし、overviewのspine Nodeから任意のNodeへ直接focusできる。canvas上へoverviewを
+重ねない。各region member Nodeには対応するR番号を表示し、manual drag由来のenclosing rectangleでmembershipを
+示さない。primary spineのexact Node / Edgeを他のfactsを弱めず強調し、minimapにもspineとauthorial startを示す。
 zoomは同じcardとRelation labelを一体として拡大縮小し、表示情報を暗黙に
 増減させない。広域の位置関係はminimap、局所の読解はpan / zoom、全体把握は明示的なfitで使い分ける。
 Structure固有のheaderはtitleとexact sourceを一つのcompact rowへ置き、scopeは同じrowから開くnon-modalな
@@ -837,6 +862,9 @@ Node textだけをellipsisにする。対話ViewerのEdge labelは実表示と�
 crowded表示を保つ。SVGは`foreignObject`、外部asset、外部stylesheet、raw markupを使わず、producer由来文字列を
 XML text / attributeとしてescapeする。directed Edgeのarrowheadはchange presentationごとのresolved colorを持つ
 明示markerを参照し、context依存paintを要求しない。origin cueはnotation固有のshape境界内へ収める。
+non-null presentationのexportはthesisに加えてSTART、spatial reading priorityのP番号、ordered regionの
+R番号・label・Node数を独立したlegendに含め、各spine Nodeとregion memberへ対応するP / R badgeを描く。
+region membershipはexportでも囲い枠から推測させず、exact member badgeとNode descriptionで表す。
 PNGは同じSVGからbrowser標準Canvas APIで派生し、最大dimensionとpixel
 budgetに収まるscaleへ縮小する。安全な最低scaleを下回る場合は不完全なPNGを生成せず明示的に失敗する。
 exportはbackend、DB、CLI protocol、Structure data modelを変更せず、実行後もreading stateを一切変更しない。
@@ -1347,15 +1375,15 @@ rvw structure delete <STRUCTURE_URI> --yes --expected-updated-at <PREVIEW_UPDATE
 ```
 
 preview inputはDB、repository runtime、Agent socketを初期化せず、publish/updateと同じ`sourceOid`、`title`、
-`scope`、`originNodeId`、required nullableな`presentation`、全`nodes`、全`edges`をpure validationへ通し、canonical initial projectionの
+`scope`、`originNodeId`、required nullableな`presentation`、全`nodes`、全`edges`をpure validationへ通し、presentationに依存しないneutral topology diagnosticの
 `columnCount`、`rowsPerColumn`、`maxRows`、pair-level directional link数、non-forward数とratio、origin outgoing数、
 canonical authoring warningsを返す。publish inputは`idempotencyKey`、`pullRequest`、`sourceOid`、`title`、`scope`、requiredな`originNodeId`、
 required nullableな`presentation`、全`nodes`、全`edges`を持つ。同じkeyとcanonical payloadの再送は元のStructureを返し、別payloadとのkey conflictと
 削除済みresultを明示errorにする。`list`はPR selectorからstable `ref`を含むsummaryを返す。updateは
 `expectedUpdatedAt`と`pullRequest`を除く同じcurrent値の完全置換である。CLIとAgent socketは同じschemaと
 application validationを使用し、commit availability、PR ownership、UTF-8 document、line pair、ID、endpoint、
-focus、anchor総数、count、byte上限に加え、presentationの文字数、current Node参照、spineのunique性と隣接Edge、
-region間のNode非重複、spine上のregion index非減少を検証する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
+focus、anchor総数、count、byte上限に加え、presentationの文字数、current Node参照、spine Nodeのunique性、
+隣接pairごとのexact Edge、region間のNode非重複、spine上のregion連続区間と順序を検証する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
 `createdAt`と新しい`updatedAt`を返す。publish/update成功responseはexact persisted graphから導出したwarningsを
 additive optional fieldとして返し、warningは保存せず成功扱いを変えない。updateはcurrent `updatedAt`がexpected値と一致する時だけ保存し、不一致は
 409の`STRUCTURE_CONFLICT`を返す。どちらもretained commit refを確保してから一つのSQLite transactionで保存し、
@@ -1913,13 +1941,14 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
     Comments sidebarのthreadをactivateできる。Pane Findはiframe本文を検索・highlight・前後移動できる
 21. 同じPRのStructureを2件以上一覧し、片方を開いてもcodeを自動表示せず、1/2-hop / All、focus、
     全relation表示、Relation選択、pan / zoom / fit / drag / layout resetを操作できる。non-null presentationでは
-    thesis、primary spine、ordered regionがcanonical配置、初期orientation、visual emphasisへ反映され、nullでは
+    thesis、authorial start、optionalなexact-Edge primary spine、ordered regionがcanonical配置、初期orientation、visual emphasisへ反映され、nullでは
     従来のtopology projectionになる。どちらも全Node / Edgeを探索できる
 22. StructureのNode / Edge anchorを通常clickで左、modifier-clickで右へsource-anchor共通context付きで開く。
     latest成功、source fallback、latest file action、historical rangeのlatest exact全文、HEAD更新後のstale表示と
     再解決を確認し、global commit選択を変えない。同じNode IDのanchor変更、旧anchorの別claimでの再利用、Edge ID +
     anchor indexの変更、参照元claim削除、HEADとStructureの同時更新をstable locatorで判定する。Structureへ戻った時と
-    same-subject poll update後にstable-ID位置とviewportを維持する
+    same-subject poll update後にpresentationが同じならstable-ID位置とviewportを維持し、layout-bearing presentationが
+    変わればnew canonical geometryへrebaseしつつfocusのscreen位置とscaleを維持する
 23. focusなしとAllで全Node / Edgeが表示され、同じStructureを左右paneへ開いてもsessionとDOM IDが競合しない
 24. repository file headerのStructure actionで0件、1件popover、複数Nodeの`+N`、Edge-only除外、rename先を確認し、
     選択時は既存Structure tabとpane sessionを再利用してtarget Nodeだけを中央へfocusする。zoom、Node位置、depth、
@@ -2053,7 +2082,7 @@ claimは実際のcommit済みrepositoryで独立に検証する。一つのbound
 PR全体のArtifact数、Walkthroughとの役割分担、隣接behaviorのcompanion Artifactを決めない。code-centeredな同じ
 abstraction levelのNode、verb-based Edge label、stable claim ID、一つのexact `sourceOid`を要求する。
 concept-only Nodeはsource-establishedだが単一anchorを持たない概念またはsource-supported claimの必要な接続に限定し、
-必要ならthesis、connectedなprimary spine、ordered regionからなるauthorial `presentation`を使うが、
+必要ならthesis、authorial start、optionalなexact-Edge primary spine、ordered regionからなるauthorial `presentation`を使うが、
 subject authorityだけでNode / Edgeを事実化しない。巨大graph、file inventory、AI推論edge、raw座標、
 review conclusion、静的なarchitecture／責務inventoryを作らない。ordered prose pathやentrypointのないinventoryを
 拒否するlocal routing判断を残す。同じsubjectだけをsame URIへ完全置換し、明示的に別subjectを作る場合だけ
@@ -2145,7 +2174,7 @@ Manual acceptance:
 2. 変更fileを入口に全文、all files、検索を使い、関連するdiff外fileまで辿って結果の実装を理解する。
 3. Agentが実装説明をWalkthroughとしてpublishし、viewerの表示位置が勝手に変わらないことを確認する。
 4. 人間が説明内の一部referenceとdiagram nodeだけを選び、説明tabを残したままexact codeを読む。
-5. AgentがPR-relevant behaviorをentrypointとpresentation付きStructureとしてpublishし、thesis、primary spine、
+5. AgentがPR-relevant behaviorをentrypointとpresentation付きStructureとしてpublishし、thesis、authorial start、optionalなexact-Edge primary spine、
    ordered regionが空間へ反映されても全Node / Edgeを自由に探索できることを確認する。人間がfocusと近傍を変えながら
    exact sourceを左右ペインへ開き、tab往復とcurrent値更新でorientationが保たれることを確認する。
 6. diff外fileを含む具体的なsourceへline commentを作り、そのURIをAgentへ渡す。

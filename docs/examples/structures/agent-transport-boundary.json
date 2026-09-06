@@ -5,12 +5,20 @@
   "originNodeId": "cli-service-call",
   "presentation": {
     "thesis": "CLI operations cross a transport-selection boundary before a validated socket envelope reaches shared service dispatch, while diagnostics observe the same client path.",
-    "primarySpine": [
-      "cli-service-call",
-      "socket-client",
-      "socket-request-validation",
-      "socket-dispatch"
-    ],
+    "startNodeId": "cli-service-call",
+    "primarySpine": {
+      "nodeIds": [
+        "cli-service-call",
+        "socket-client",
+        "socket-request-validation",
+        "socket-dispatch"
+      ],
+      "edgeIds": [
+        "cli-attempts-socket-client",
+        "socket-client-sends-validation-envelope",
+        "request-validation-gates-dispatch"
+      ]
+    },
     "regions": [
       {
         "label": "Client boundary",

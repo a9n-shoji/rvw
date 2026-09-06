@@ -7,6 +7,9 @@ export interface StructurePoint {
 
 export const STRUCTURE_NODE_WIDTH = 228;
 export const STRUCTURE_NODE_HEIGHT = 112;
+export const STRUCTURE_REGION_PADDING_X = 32;
+export const STRUCTURE_REGION_PADDING_TOP = 38;
+export const STRUCTURE_REGION_PADDING_BOTTOM = 28;
 
 export type StructureGraphContent = Pick<Structure, "originNodeId" | "nodes" | "edges"> &
   Partial<Pick<Structure, "presentation">>;
@@ -42,6 +45,10 @@ export interface StructureProjection {
   columnIndexByNodeId: ReadonlyMap<string, number>;
   columns: readonly (readonly string[])[];
   directionalLinks: readonly DirectionalLink[];
+  /**
+   * Diagnostics for this projection's own positions and columns. Factual authoring feedback must
+   * use `projectTopologyStructure` so an authorial reading direction cannot rewrite graph health.
+   */
   diagnostics: StructureLayoutDiagnostics;
 }
 
@@ -752,6 +759,20 @@ const PRESENTATION_COLUMN_STRIDE = STRUCTURE_NODE_WIDTH + 72;
 const PRESENTATION_NODE_GAP_X = 44;
 const PRESENTATION_NODE_GAP_Y = 52;
 
+interface PresentationEnvelope {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+interface PresentationRegionRange {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
 function presentationPositionOverlaps(
   occupied: readonly StructurePoint[],
   candidate: StructurePoint,
@@ -765,45 +786,166 @@ function presentationPositionOverlaps(
   );
 }
 
+function presentationPositionIntersectsEnvelope(
+  candidate: StructurePoint,
+  envelope: PresentationEnvelope,
+): boolean {
+  return !(
+    candidate.x + STRUCTURE_NODE_WIDTH <= envelope.left ||
+    candidate.x >= envelope.right ||
+    candidate.y + STRUCTURE_NODE_HEIGHT <= envelope.top ||
+    candidate.y >= envelope.bottom
+  );
+}
+
+function presentationPositionIsOpen(
+  occupied: readonly StructurePoint[],
+  candidate: StructurePoint,
+  forbiddenEnvelopes: readonly PresentationEnvelope[],
+): boolean {
+  return (
+    !presentationPositionOverlaps(occupied, candidate) &&
+    !forbiddenEnvelopes.some((envelope) =>
+      presentationPositionIntersectsEnvelope(candidate, envelope),
+    )
+  );
+}
+
 function firstOpenPresentationPoint(
   occupied: readonly StructurePoint[],
-  anchorX: number,
+  anchor: StructurePoint,
+  forbiddenEnvelopes: readonly PresentationEnvelope[] = [],
 ): StructurePoint {
+  if (presentationPositionIsOpen(occupied, anchor, forbiddenEnvelopes)) return anchor;
   for (let radius = 1; radius <= 80; radius += 1) {
     for (const row of [-radius, radius]) {
       for (let column = -radius; column <= radius; column += 1) {
         const candidate = {
-          x: anchorX + column * PRESENTATION_COLUMN_STRIDE,
-          y: row * PRESENTATION_ROW_STRIDE,
+          x: anchor.x + column * PRESENTATION_COLUMN_STRIDE,
+          y: anchor.y + row * PRESENTATION_ROW_STRIDE,
         };
-        if (!presentationPositionOverlaps(occupied, candidate)) return candidate;
+        if (presentationPositionIsOpen(occupied, candidate, forbiddenEnvelopes)) return candidate;
       }
     }
     for (const column of [-radius, radius]) {
       for (let row = -radius + 1; row < radius; row += 1) {
         if (row === 0) continue;
         const candidate = {
-          x: anchorX + column * PRESENTATION_COLUMN_STRIDE,
-          y: row * PRESENTATION_ROW_STRIDE,
+          x: anchor.x + column * PRESENTATION_COLUMN_STRIDE,
+          y: anchor.y + row * PRESENTATION_ROW_STRIDE,
+        };
+        if (presentationPositionIsOpen(occupied, candidate, forbiddenEnvelopes)) return candidate;
+      }
+    }
+  }
+  return {
+    x: anchor.x,
+    y: anchor.y + (occupied.length + 1) * PRESENTATION_ROW_STRIDE,
+  };
+}
+
+function firstOpenPresentationRegionPoint(
+  occupied: readonly StructurePoint[],
+  anchor: StructurePoint,
+  range: PresentationRegionRange,
+): StructurePoint {
+  const boundedAnchor = {
+    x: Math.min(range.maxX, Math.max(range.minX, anchor.x)),
+    y: Math.min(range.maxY, Math.max(range.minY, anchor.y)),
+  };
+  if (!presentationPositionOverlaps(occupied, boundedAnchor)) return boundedAnchor;
+  for (let radius = 1; radius <= 160; radius += 1) {
+    const minimumColumn = Math.max(
+      -radius,
+      Math.ceil((range.minX - boundedAnchor.x) / PRESENTATION_COLUMN_STRIDE),
+    );
+    const maximumColumn = Math.min(
+      radius,
+      Math.floor((range.maxX - boundedAnchor.x) / PRESENTATION_COLUMN_STRIDE),
+    );
+    const minimumRow = Math.max(
+      -radius,
+      Math.ceil((range.minY - boundedAnchor.y) / PRESENTATION_ROW_STRIDE),
+    );
+    const maximumRow = Math.min(
+      radius,
+      Math.floor((range.maxY - boundedAnchor.y) / PRESENTATION_ROW_STRIDE),
+    );
+    for (const row of [-radius, radius]) {
+      if (row < minimumRow || row > maximumRow) continue;
+      for (let column = minimumColumn; column <= maximumColumn; column += 1) {
+        const candidate = {
+          x: boundedAnchor.x + column * PRESENTATION_COLUMN_STRIDE,
+          y: boundedAnchor.y + row * PRESENTATION_ROW_STRIDE,
+        };
+        if (!presentationPositionOverlaps(occupied, candidate)) return candidate;
+      }
+    }
+    for (const column of [-radius, radius]) {
+      if (column < minimumColumn || column > maximumColumn) continue;
+      for (
+        let row = Math.max(-radius + 1, minimumRow);
+        row <= Math.min(radius - 1, maximumRow);
+        row += 1
+      ) {
+        const candidate = {
+          x: boundedAnchor.x + column * PRESENTATION_COLUMN_STRIDE,
+          y: boundedAnchor.y + row * PRESENTATION_ROW_STRIDE,
         };
         if (!presentationPositionOverlaps(occupied, candidate)) return candidate;
       }
     }
   }
-  return { x: anchorX, y: (occupied.length + 1) * PRESENTATION_ROW_STRIDE };
+  return firstOpenPresentationPoint(occupied, boundedAnchor);
 }
 
-function firstOpenPresentationRegionPoint(
-  occupied: readonly StructurePoint[],
-  anchorX: number,
-): StructurePoint {
-  for (let row = 1; row <= 160; row += 1) {
-    for (const direction of [-1, 1]) {
-      const candidate = { x: anchorX, y: direction * row * PRESENTATION_ROW_STRIDE };
-      if (!presentationPositionOverlaps(occupied, candidate)) return candidate;
+function presentationRegionPackingRadiusX(nodeCount: number): number {
+  const balancedColumnCount = Math.max(
+    1,
+    Math.ceil(Math.sqrt((nodeCount * PRESENTATION_ROW_STRIDE) / PRESENTATION_COLUMN_STRIDE)),
+  );
+  return Math.ceil((balancedColumnCount - 1) / 2) * PRESENTATION_COLUMN_STRIDE;
+}
+
+function presentationRegionPackingRadiusY(nodeCount: number, radiusX: number): number {
+  const columnCount = Math.floor((2 * radiusX) / PRESENTATION_COLUMN_STRIDE) + 1;
+  const requiredRowCount = Math.ceil(nodeCount / columnCount);
+  return Math.ceil((requiredRowCount - 1) / 2) * PRESENTATION_ROW_STRIDE;
+}
+
+function presentationDistanceToAnchors(
+  nodeId: string,
+  anchors: ReadonlySet<string>,
+  topology: SimpleStructureTopology,
+): number {
+  if (anchors.has(nodeId)) return 0;
+  const seen = new Set([nodeId]);
+  let frontier = [nodeId];
+  for (let distance = 1; frontier.length > 0; distance += 1) {
+    const next: string[] = [];
+    for (const current of frontier.sort(stableCompare)) {
+      for (const neighbor of topology.neighbors.get(current) ?? []) {
+        if (anchors.has(neighbor)) return distance;
+        if (seen.has(neighbor)) continue;
+        seen.add(neighbor);
+        next.push(neighbor);
+      }
     }
+    frontier = next.sort(stableCompare);
   }
-  return firstOpenPresentationPoint(occupied, anchorX);
+  return Number.POSITIVE_INFINITY;
+}
+
+function nextPresentationNode(
+  candidates: ReadonlySet<string>,
+  anchors: ReadonlySet<string>,
+  topology: SimpleStructureTopology,
+): string {
+  return [...candidates].sort(
+    (left, right) =>
+      presentationDistanceToAnchors(left, anchors, topology) -
+        presentationDistanceToAnchors(right, anchors, topology) || stableCompare(left, right),
+  )[0]!;
 }
 
 function nearestPresentationAnchor(input: {
@@ -907,8 +1049,13 @@ function projectPresentedStructure(
   const presentation = structure.presentation;
   if (!presentation) return null;
   const nodeIds = new Set(structure.nodes.map((node) => node.id));
-  const primarySpine = presentation.primarySpine.filter((nodeId) => nodeIds.has(nodeId));
-  if (primarySpine.length === 0) return null;
+  const primarySpine =
+    presentation.primarySpine?.nodeIds.filter((nodeId) => nodeIds.has(nodeId)) ?? [];
+  const startNodeId = nodeIds.has(presentation.startNodeId)
+    ? presentation.startNodeId
+    : (primarySpine[0] ?? (nodeIds.has(structure.originNodeId) ? structure.originNodeId : null));
+  const axisNodes = primarySpine.length > 0 ? primarySpine : startNodeId ? [startNodeId] : [];
+  if (axisNodes.length === 0) return null;
 
   const regionByNodeId = new Map<string, number>();
   presentation.regions.forEach((region, regionIndex) => {
@@ -916,93 +1063,216 @@ function projectPresentedStructure(
       if (nodeIds.has(nodeId)) regionByNodeId.set(nodeId, regionIndex);
     }
   });
-  const positions = new Map<string, StructurePoint>();
-  const occupied: StructurePoint[] = [];
-  const spineRegionIndexes = primarySpine.map((nodeId) => regionByNodeId.get(nodeId));
-  let extraRegionSlots = 0;
-  let previousRegionSpineIndex: number | null = null;
-  let previousRegionIndex: number | null = null;
-  primarySpine.forEach((nodeId, index) => {
-    const regionIndex = spineRegionIndexes[index];
-    if (
-      regionIndex !== undefined &&
-      previousRegionSpineIndex !== null &&
-      previousRegionIndex !== null
-    ) {
-      const spineGapCount = index - previousRegionSpineIndex;
-      const regionGapCount = regionIndex - previousRegionIndex;
-      extraRegionSlots += Math.max(0, regionGapCount - spineGapCount);
-    }
-    const point = {
-      x: (index + extraRegionSlots) * PRESENTATION_AXIS_STRIDE,
-      y: 0,
-    };
-    positions.set(nodeId, point);
-    occupied.push(point);
-    if (regionIndex !== undefined) {
-      previousRegionSpineIndex = index;
-      previousRegionIndex = regionIndex;
-    }
-  });
-
-  const spineXByRegion = presentation.regions.map((_, regionIndex) =>
-    primarySpine.flatMap((nodeId) =>
-      regionByNodeId.get(nodeId) === regionIndex ? [positions.get(nodeId)!.x] : [],
+  const regionPackingRadiusX = presentation.regions.map((region) =>
+    presentationRegionPackingRadiusX(region.nodeIds.filter((nodeId) => nodeIds.has(nodeId)).length),
+  );
+  const regionPackingRadiusY = presentation.regions.map((region, regionIndex) =>
+    presentationRegionPackingRadiusY(
+      region.nodeIds.filter((nodeId) => nodeIds.has(nodeId)).length,
+      regionPackingRadiusX[regionIndex] ?? 0,
     ),
   );
-  const spineRight = Math.max(...primarySpine.map((nodeId) => positions.get(nodeId)!.x));
-  const regionCenters = presentation.regions.map((_, regionIndex) => {
-    const memberXs = spineXByRegion[regionIndex]!;
-    if (memberXs.length > 0) {
-      return memberXs.reduce((sum, value) => sum + value, 0) / memberXs.length;
-    }
-    const previousIndex = spineXByRegion.findLastIndex(
-      (candidate, index) => index < regionIndex && candidate.length > 0,
+  const positions = new Map<string, StructurePoint>();
+  const occupied: StructurePoint[] = [];
+  const axisRegionIndexes = axisNodes.map((nodeId) => regionByNodeId.get(nodeId));
+  const regionAnchors = presentation.regions.map(() => null as StructurePoint | null);
+  const regionPackingRanges = presentation.regions.map(
+    () => null as PresentationRegionRange | null,
+  );
+  if (primarySpine.length === 0 && presentation.regions.length > 0) {
+    const regionCellWidths = presentation.regions.map(
+      (_, regionIndex) =>
+        2 * (regionPackingRadiusX[regionIndex] ?? 0) +
+        STRUCTURE_NODE_WIDTH +
+        2 * STRUCTURE_REGION_PADDING_X,
     );
-    const nextIndex = spineXByRegion.findIndex(
-      (candidate, index) => index > regionIndex && candidate.length > 0,
+    const regionCellHeights = presentation.regions.map(
+      (_, regionIndex) =>
+        2 * (regionPackingRadiusY[regionIndex] ?? 0) +
+        STRUCTURE_NODE_HEIGHT +
+        STRUCTURE_REGION_PADDING_TOP +
+        STRUCTURE_REGION_PADDING_BOTTOM,
     );
-    const previous = previousIndex >= 0 ? spineXByRegion[previousIndex]! : null;
-    const next = nextIndex >= 0 ? spineXByRegion[nextIndex]! : null;
-    if (previous && next) {
-      const fromPrevious =
-        Math.max(...previous) + (regionIndex - previousIndex) * PRESENTATION_AXIS_STRIDE;
-      const fromNext = Math.min(...next) - (nextIndex - regionIndex) * PRESENTATION_AXIS_STRIDE;
-      return (fromPrevious + fromNext) / 2;
-    }
-    if (previous) {
-      return Math.max(...previous) + (regionIndex - previousIndex) * PRESENTATION_AXIS_STRIDE;
-    }
-    if (next) return Math.min(...next) - (nextIndex - regionIndex) * PRESENTATION_AXIS_STRIDE;
-    return (
-      spineRight / 2 +
-      (regionIndex - (presentation.regions.length - 1) / 2) * PRESENTATION_AXIS_STRIDE
+    const cellWidth = Math.max(...regionCellWidths);
+    const cellHeight = Math.max(...regionCellHeights);
+    const columnCount = Math.max(
+      1,
+      Math.min(
+        presentation.regions.length,
+        Math.ceil(Math.sqrt((presentation.regions.length * cellHeight) / Math.max(1, cellWidth))),
+      ),
     );
-  });
+    const gridGapX = 180;
+    const gridGapY = 160;
+    presentation.regions.forEach((_, regionIndex) => {
+      const columnIndex = regionIndex % columnCount;
+      const rowIndex = Math.floor(regionIndex / columnCount);
+      const ownCellWidth = regionCellWidths[regionIndex]!;
+      const ownCellHeight = regionCellHeights[regionIndex]!;
+      const cellLeft = columnIndex * (cellWidth + gridGapX) + (cellWidth - ownCellWidth) / 2;
+      const cellTop = rowIndex * (cellHeight + gridGapY) + (cellHeight - ownCellHeight) / 2;
+      const radiusX = regionPackingRadiusX[regionIndex] ?? 0;
+      const radiusY = regionPackingRadiusY[regionIndex] ?? 0;
+      const anchor = {
+        x: cellLeft + STRUCTURE_REGION_PADDING_X + radiusX,
+        y: cellTop + STRUCTURE_REGION_PADDING_TOP + radiusY,
+      };
+      regionAnchors[regionIndex] = anchor;
+      regionPackingRanges[regionIndex] = {
+        minX: anchor.x - radiusX,
+        maxX: anchor.x + radiusX,
+        minY: anchor.y - radiusY,
+        maxY: anchor.y + radiusY,
+      };
+    });
+    const startRegionIndex = startNodeId ? regionByNodeId.get(startNodeId) : undefined;
+    const point =
+      startRegionIndex === undefined
+        ? { x: -PRESENTATION_AXIS_STRIDE, y: regionAnchors[0]?.y ?? 0 }
+        : regionAnchors[startRegionIndex]!;
+    positions.set(startNodeId!, point);
+    occupied.push(point);
+  } else {
+    let cursorRightX = -PRESENTATION_AXIS_STRIDE;
+    let nextRegionIndex = 0;
+    const reserveRegionWithoutAxisNodes = (regionIndex: number): void => {
+      const radiusX = regionPackingRadiusX[regionIndex] ?? 0;
+      const radiusY = regionPackingRadiusY[regionIndex] ?? 0;
+      const anchor = { x: cursorRightX + PRESENTATION_AXIS_STRIDE + radiusX, y: 0 };
+      regionAnchors[regionIndex] = anchor;
+      regionPackingRanges[regionIndex] = {
+        minX: anchor.x - radiusX,
+        maxX: anchor.x + radiusX,
+        minY: -radiusY,
+        maxY: radiusY,
+      };
+      cursorRightX = anchor.x + radiusX;
+    };
+    for (let axisIndex = 0; axisIndex < axisNodes.length;) {
+      const regionIndex = axisRegionIndexes[axisIndex];
+      if (regionIndex === undefined || regionIndex < nextRegionIndex) {
+        const point = { x: cursorRightX + PRESENTATION_AXIS_STRIDE, y: 0 };
+        positions.set(axisNodes[axisIndex]!, point);
+        occupied.push(point);
+        cursorRightX = point.x;
+        axisIndex += 1;
+        continue;
+      }
+      while (nextRegionIndex < regionIndex) {
+        reserveRegionWithoutAxisNodes(nextRegionIndex);
+        nextRegionIndex += 1;
+      }
+      let lastRegionAxisIndex = axisIndex;
+      while (axisRegionIndexes[lastRegionAxisIndex + 1] === regionIndex) {
+        lastRegionAxisIndex += 1;
+      }
+      const radiusX = regionPackingRadiusX[regionIndex] ?? 0;
+      const radiusY = regionPackingRadiusY[regionIndex] ?? 0;
+      const firstX = cursorRightX + PRESENTATION_AXIS_STRIDE + radiusX;
+      for (
+        let currentAxisIndex = axisIndex;
+        currentAxisIndex <= lastRegionAxisIndex;
+        currentAxisIndex += 1
+      ) {
+        const point = {
+          x: firstX + (currentAxisIndex - axisIndex) * PRESENTATION_AXIS_STRIDE,
+          y: 0,
+        };
+        positions.set(axisNodes[currentAxisIndex]!, point);
+        occupied.push(point);
+      }
+      const lastX = firstX + (lastRegionAxisIndex - axisIndex) * PRESENTATION_AXIS_STRIDE;
+      regionAnchors[regionIndex] = { x: (firstX + lastX) / 2, y: 0 };
+      regionPackingRanges[regionIndex] = {
+        minX: firstX - radiusX,
+        maxX: lastX + radiusX,
+        minY: -radiusY,
+        maxY: radiusY,
+      };
+      cursorRightX = lastX + radiusX;
+      nextRegionIndex = regionIndex + 1;
+      axisIndex = lastRegionAxisIndex + 1;
+    }
+    while (nextRegionIndex < presentation.regions.length) {
+      reserveRegionWithoutAxisNodes(nextRegionIndex);
+      nextRegionIndex += 1;
+    }
+  }
+
+  const spineRight = Math.max(...axisNodes.map((nodeId) => positions.get(nodeId)!.x));
 
   presentation.regions.forEach((region, regionIndex) => {
-    const anchorX = regionCenters[regionIndex] ?? spineRight / 2;
-    for (const nodeId of [...region.nodeIds].sort(stableCompare)) {
-      if (!nodeIds.has(nodeId) || positions.has(nodeId)) continue;
-      const point = firstOpenPresentationRegionPoint(occupied, anchorX);
+    const presentationAnchor = regionAnchors[regionIndex] ?? { x: spineRight / 2, y: 0 };
+    const packingRange = regionPackingRanges[regionIndex] ?? {
+      minX: presentationAnchor.x,
+      maxX: presentationAnchor.x,
+      minY: presentationAnchor.y,
+      maxY: presentationAnchor.y,
+    };
+    const regionNodeIds = new Set(region.nodeIds.filter((nodeId) => nodeIds.has(nodeId)));
+    const placedRegionNodeIds = new Set(
+      [...regionNodeIds].filter((nodeId) => positions.has(nodeId)),
+    );
+    const remaining = new Set([...regionNodeIds].filter((nodeId) => !positions.has(nodeId)));
+    while (remaining.size > 0) {
+      const globalAnchors = new Set(positions.keys());
+      const nodeId = nextPresentationNode(
+        remaining,
+        placedRegionNodeIds.size > 0 ? placedRegionNodeIds : globalAnchors,
+        topology,
+      );
+      const anchorId = nearestPresentationAnchor({
+        nodeId,
+        anchors: placedRegionNodeIds,
+        topology,
+        positions,
+      });
+      const anchor = anchorId ? positions.get(anchorId)! : presentationAnchor;
+      const point = firstOpenPresentationRegionPoint(occupied, anchor, packingRange);
       positions.set(nodeId, point);
       occupied.push(point);
+      placedRegionNodeIds.add(nodeId);
+      remaining.delete(nodeId);
     }
   });
 
+  const regionEnvelopes = presentation.regions.flatMap((region) => {
+    const memberPoints = region.nodeIds.flatMap((nodeId) => {
+      const point = positions.get(nodeId);
+      return point ? [point] : [];
+    });
+    if (memberPoints.length === 0) return [];
+    return [
+      {
+        left: Math.min(...memberPoints.map(({ x }) => x)) - STRUCTURE_REGION_PADDING_X,
+        top: Math.min(...memberPoints.map(({ y }) => y)) - STRUCTURE_REGION_PADDING_TOP,
+        right:
+          Math.max(...memberPoints.map(({ x }) => x + STRUCTURE_NODE_WIDTH)) +
+          STRUCTURE_REGION_PADDING_X,
+        bottom:
+          Math.max(...memberPoints.map(({ y }) => y + STRUCTURE_NODE_HEIGHT)) +
+          STRUCTURE_REGION_PADDING_BOTTOM,
+      },
+    ];
+  });
   const presentedAnchors = new Set(positions.keys());
-  for (const nodeId of [...nodeIds].sort(stableCompare)) {
-    if (positions.has(nodeId)) continue;
+  const remaining = new Set([...nodeIds].filter((nodeId) => !positions.has(nodeId)));
+  const fallbackX =
+    Math.max(spineRight, ...regionEnvelopes.map(({ right }) => right)) + PRESENTATION_AXIS_STRIDE;
+  while (remaining.size > 0) {
+    const nodeId = nextPresentationNode(remaining, presentedAnchors, topology);
     const anchorId = nearestPresentationAnchor({
       nodeId,
       anchors: presentedAnchors,
       topology,
       positions,
     });
-    const anchorX = anchorId ? positions.get(anchorId)!.x : spineRight + PRESENTATION_AXIS_STRIDE;
-    const point = firstOpenPresentationPoint(occupied, anchorX);
+    const anchor = anchorId ? positions.get(anchorId)! : { x: fallbackX, y: 0 };
+    const point = firstOpenPresentationPoint(occupied, anchor, regionEnvelopes);
     positions.set(nodeId, point);
     occupied.push(point);
+    presentedAnchors.add(nodeId);
+    remaining.delete(nodeId);
   }
   return projectionFromPresentedPositions(structure, topology, positions);
 }
@@ -1043,10 +1313,10 @@ function layoutTopologyComponent(
   };
 }
 
-export function projectStructure(structure: StructureGraphContent): StructureProjection {
-  const topology = simpleStructureTopology(structure);
-  const presented = projectPresentedStructure(structure, topology);
-  if (presented) return presented;
+function projectTopologyStructureWithTopology(
+  structure: StructureGraphContent,
+  topology: SimpleStructureTopology,
+): StructureProjection {
   if (structure.nodes.length === 0) {
     const diagnostics: StructureLayoutDiagnostics = {
       columnCount: 0,
@@ -1148,6 +1418,21 @@ export function projectStructure(structure: StructureGraphContent): StructurePro
   };
 }
 
+/**
+ * Projects only the factual graph topology. In particular, this is the source of authoring
+ * diagnostics even when the displayed projection also has an authorial presentation.
+ */
+export function projectTopologyStructure(structure: StructureGraphContent): StructureProjection {
+  return projectTopologyStructureWithTopology(structure, simpleStructureTopology(structure));
+}
+
+export function projectStructure(structure: StructureGraphContent): StructureProjection {
+  const topology = simpleStructureTopology(structure);
+  const topologyProjection = projectTopologyStructureWithTopology(structure, topology);
+  const presented = projectPresentedStructure(structure, topology);
+  return presented ?? topologyProjection;
+}
+
 export function structureAuthoringWarnings(
   diagnostics: StructureLayoutDiagnostics,
 ): StructureAuthoringWarning[] {
@@ -1163,14 +1448,14 @@ export function structureAuthoringWarnings(
     warnings.push({
       code: "STRUCTURE_LAYOUT_MAX_ROWS_HIGH",
       message:
-        "the initial projection has a tall column; reconsider the factual origin, node granularity, overlapping or nested claims, whether multiple behaviors are mixed, and the subject boundary.",
+        "the neutral topology diagnostic has a tall column; reconsider the factual origin, node granularity, overlapping or nested claims, whether multiple behaviors are mixed, and the subject boundary.",
     });
   }
   if (diagnostics.nonForwardDirectionalLinkRatio >= 0.25) {
     warnings.push({
       code: "STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH",
       message:
-        "many unambiguous directed relations are non-forward in the initial projection; reconsider the factual origin, node granularity, behavior boundary, and subject boundary. A factual graph may remain above this threshold. Do not change edge direction solely to improve the score.",
+        "many unambiguous directed relations are non-forward in the neutral topology diagnostic; reconsider the factual origin, node granularity, behavior boundary, and subject boundary. A factual graph may remain above this threshold. Do not change edge direction solely to improve the score.",
     });
   }
   return warnings;

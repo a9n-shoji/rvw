@@ -10,7 +10,10 @@ import {
   walkthroughPublishInputSchema,
   walkthroughUpdateInputSchema,
 } from "../../src/cli/schemas.js";
-import { MAX_COMMENT_BODY_BYTES } from "../../src/shared/constants.js";
+import {
+  MAX_COMMENT_BODY_BYTES,
+  MAX_STRUCTURE_PRIMARY_SPINE_NODES,
+} from "../../src/shared/constants.js";
 
 describe("CLI input schemas", () => {
   it("accepts an exact repository comment target and normalizes omitted lines", () => {
@@ -342,7 +345,11 @@ describe("CLI input schemas", () => {
         ],
         presentation: {
           thesis: "  Follow the authorization decision.  ",
-          primarySpine: ["controller", "policy"],
+          startNodeId: "controller",
+          primarySpine: {
+            nodeIds: ["controller", "policy"],
+            edgeIds: ["checks-policy"],
+          },
           regions: [
             { label: "  Request boundary  ", nodeIds: ["controller"] },
             { label: "Policy", nodeIds: ["policy"] },
@@ -363,7 +370,11 @@ describe("CLI input schemas", () => {
       edges: [{ directed: true, anchors: [] }],
       presentation: {
         thesis: "Follow the authorization decision.",
-        primarySpine: ["controller", "policy"],
+        startNodeId: "controller",
+        primarySpine: {
+          nodeIds: ["controller", "policy"],
+          edgeIds: ["checks-policy"],
+        },
         regions: [{ label: "Request boundary" }, { label: "Policy" }],
       },
     });
@@ -498,11 +509,29 @@ describe("CLI input schemas", () => {
       ],
       edges: [
         { id: "entry-policy", from: "entry", to: "policy", label: "checks", directed: true },
+        {
+          id: "entry-policy-parallel",
+          from: "entry",
+          to: "policy",
+          label: "authorizes",
+          directed: true,
+        },
+        {
+          id: "policy-entry-reverse",
+          from: "policy",
+          to: "entry",
+          label: "reports",
+          directed: true,
+        },
         { id: "store-policy", from: "store", to: "policy", label: "persists", directed: true },
       ],
       presentation: {
         thesis: "Read from the request boundary into the persisted result.",
-        primarySpine: ["entry", "policy", "store"],
+        startNodeId: "entry",
+        primarySpine: {
+          nodeIds: ["entry", "policy", "store"],
+          edgeIds: ["entry-policy", "store-policy"],
+        },
         regions: [
           { label: "Input", nodeIds: ["entry"] },
           { label: "Decision", nodeIds: ["policy"] },
@@ -510,7 +539,27 @@ describe("CLI input schemas", () => {
         ],
       },
     };
-    expect(structureUpdateInputSchema.safeParse(valid).success).toBe(true);
+    expect(structureUpdateInputSchema.parse(valid).presentation).toMatchObject({
+      startNodeId: "entry",
+      primarySpine: {
+        nodeIds: ["entry", "policy", "store"],
+        edgeIds: ["entry-policy", "store-policy"],
+      },
+    });
+    expect(
+      structureUpdateInputSchema.parse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          primarySpine: {
+            ...valid.presentation.primarySpine,
+            edgeIds: ["policy-entry-reverse", "store-policy"],
+          },
+        },
+      }).presentation,
+    ).toMatchObject({
+      primarySpine: { edgeIds: ["policy-entry-reverse", "store-policy"] },
+    });
     expect(
       structureUpdateInputSchema.safeParse({ ...valid, presentation: undefined }).success,
     ).toBe(false);
@@ -523,7 +572,61 @@ describe("CLI input schemas", () => {
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
+        presentation: { ...valid.presentation, startNodeId: "missing" },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, startNodeId: "policy" },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          primarySpine: { ...valid.presentation.primarySpine, edgeIds: ["entry-policy"] },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          primarySpine: {
+            ...valid.presentation.primarySpine,
+            edgeIds: ["missing-edge", "store-policy"],
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          primarySpine: {
+            ...valid.presentation.primarySpine,
+            edgeIds: ["store-policy", "entry-policy"],
+          },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
         presentation: { ...valid.presentation, unexpected: true },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [{ label: "Discontiguous", nodeIds: ["entry", "store"] }],
+        },
       }).success,
     ).toBe(false);
     expect(
@@ -550,13 +653,25 @@ describe("CLI input schemas", () => {
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
-        presentation: { ...valid.presentation, primarySpine: ["entry", "entry"] },
+        presentation: {
+          ...valid.presentation,
+          primarySpine: {
+            ...valid.presentation.primarySpine,
+            nodeIds: ["entry", "entry"],
+          },
+        },
       }).success,
     ).toBe(false);
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
-        presentation: { ...valid.presentation, primarySpine: ["entry", "store"] },
+        presentation: {
+          ...valid.presentation,
+          primarySpine: {
+            nodeIds: ["entry", "store"],
+            edgeIds: ["entry-policy"],
+          },
+        },
       }).success,
     ).toBe(false);
     expect(
@@ -592,5 +707,66 @@ describe("CLI input schemas", () => {
         },
       }).success,
     ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          thesis: "Start from the hub and compare its peers.",
+          startNodeId: "policy",
+          primarySpine: null,
+          regions: [{ label: "Policies", nodeIds: ["entry", "policy", "store"] }],
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          thesis: "This has no authored spatial structure.",
+          startNodeId: "entry",
+          primarySpine: null,
+          regions: [],
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("caps a Structure primary spine at twelve Nodes", () => {
+    expect(MAX_STRUCTURE_PRIMARY_SPINE_NODES).toBe(12);
+    const inputWithSpine = (nodeCount: number) => {
+      const nodes = Array.from({ length: nodeCount }, (_, index) => ({
+        id: `node-${index + 1}`,
+        label: `Node ${index + 1}`,
+        ...(index === 0 ? { anchor: { path: "src/entry.ts" } } : {}),
+      }));
+      const edges = Array.from({ length: nodeCount - 1 }, (_, index) => ({
+        id: `edge-${index + 1}`,
+        from: `node-${index + 1}`,
+        to: `node-${index + 2}`,
+        label: "leads to",
+        directed: true,
+      }));
+      return {
+        expectedUpdatedAt: "2026-09-05T00:00:00.000Z",
+        sourceOid: "d".repeat(40),
+        title: "Bounded reading spine",
+        scope: "The first-grasp backbone through one bounded relationship space.",
+        originNodeId: "node-1",
+        nodes,
+        edges,
+        presentation: {
+          thesis: "Grasp this compact backbone before exploring the remaining graph.",
+          startNodeId: "node-1",
+          primarySpine: {
+            nodeIds: nodes.map(({ id }) => id),
+            edgeIds: edges.map(({ id }) => id),
+          },
+          regions: [],
+        },
+      };
+    };
+
+    expect(structureUpdateInputSchema.safeParse(inputWithSpine(12)).success).toBe(true);
+    expect(structureUpdateInputSchema.safeParse(inputWithSpine(13)).success).toBe(false);
   });
 });

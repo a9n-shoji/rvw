@@ -46,6 +46,7 @@ import { formatWalkthroughUri } from "../../domain/walkthrough-uri.js";
 import {
   MAX_STRUCTURE_NODES,
   MAX_STRUCTURE_PAYLOAD_BYTES,
+  MAX_STRUCTURE_PRIMARY_SPINE_NODES,
   MAX_STRUCTURE_PRESENTATION_REGIONS,
   MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
   MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
@@ -223,44 +224,65 @@ function isStructurePresentation(
 ): value is StructurePresentation {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["thesis", "primarySpine", "regions"]) ||
+    !hasExactKeys(value, ["thesis", "startNodeId", "primarySpine", "regions"]) ||
     !isCanonicalPresentationText(value.thesis, MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS) ||
-    !Array.isArray(value.primarySpine) ||
-    value.primarySpine.length < 2 ||
-    value.primarySpine.length > MAX_STRUCTURE_NODES ||
+    typeof value.startNodeId !== "string" ||
     !Array.isArray(value.regions) ||
-    value.regions.length > MAX_STRUCTURE_PRESENTATION_REGIONS
+    value.regions.length > MAX_STRUCTURE_PRESENTATION_REGIONS ||
+    (value.primarySpine === null && value.regions.length === 0)
   ) {
     return false;
   }
 
   const nodeIds = new Set(nodes.map((node) => node.id));
-  const primarySpineNodeIds = new Set<string>();
-  const primarySpine: string[] = [];
-  for (const nodeId of value.primarySpine) {
-    if (
-      typeof nodeId !== "string" ||
-      !STRUCTURE_ID_PATTERN.test(nodeId) ||
-      !nodeIds.has(nodeId) ||
-      primarySpineNodeIds.has(nodeId)
-    ) {
-      return false;
-    }
-    primarySpineNodeIds.add(nodeId);
-    primarySpine.push(nodeId);
+  if (!STRUCTURE_ID_PATTERN.test(value.startNodeId) || !nodeIds.has(value.startNodeId)) {
+    return false;
   }
-  for (let index = 1; index < primarySpine.length; index += 1) {
-    const previous = primarySpine[index - 1]!;
-    const current = primarySpine[index]!;
+  let primarySpine: StructurePresentation["primarySpine"] = null;
+  if (value.primarySpine !== null) {
     if (
-      !edges.some(
-        (edge) =>
-          (edge.from === previous && edge.to === current) ||
-          (edge.from === current && edge.to === previous),
-      )
+      !isRecord(value.primarySpine) ||
+      !hasExactKeys(value.primarySpine, ["nodeIds", "edgeIds"]) ||
+      !Array.isArray(value.primarySpine.nodeIds) ||
+      value.primarySpine.nodeIds.length < 2 ||
+      value.primarySpine.nodeIds.length > MAX_STRUCTURE_PRIMARY_SPINE_NODES ||
+      !Array.isArray(value.primarySpine.edgeIds) ||
+      value.primarySpine.edgeIds.length !== value.primarySpine.nodeIds.length - 1
     ) {
       return false;
     }
+    const primarySpineNodeIds = new Set<string>();
+    const normalizedNodeIds: string[] = [];
+    for (const nodeId of value.primarySpine.nodeIds) {
+      if (
+        typeof nodeId !== "string" ||
+        !STRUCTURE_ID_PATTERN.test(nodeId) ||
+        !nodeIds.has(nodeId) ||
+        primarySpineNodeIds.has(nodeId)
+      ) {
+        return false;
+      }
+      primarySpineNodeIds.add(nodeId);
+      normalizedNodeIds.push(nodeId);
+    }
+    if (normalizedNodeIds[0] !== value.startNodeId) return false;
+    const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
+    const normalizedEdgeIds: string[] = [];
+    for (const [index, edgeId] of value.primarySpine.edgeIds.entries()) {
+      if (typeof edgeId !== "string" || !STRUCTURE_ID_PATTERN.test(edgeId)) return false;
+      const edge = edgeById.get(edgeId);
+      if (edge === undefined) return false;
+      const previous = normalizedNodeIds[index]!;
+      const current = normalizedNodeIds[index + 1]!;
+      if (!(
+        (edge.from === previous && edge.to === current) ||
+        (edge.from === current && edge.to === previous)
+      )) {
+        return false;
+      }
+      normalizedEdgeIds.push(edgeId);
+    }
+    primarySpine = { nodeIds: normalizedNodeIds, edgeIds: normalizedEdgeIds };
   }
 
   const regionByNodeId = new Map<string, number>();
@@ -294,12 +316,27 @@ function isStructurePresentation(
     }
   }
 
-  let previousSpineRegionIndex = -1;
-  for (const nodeId of primarySpine) {
-    const regionIndex = regionByNodeId.get(nodeId);
-    if (regionIndex === undefined) continue;
-    if (regionIndex < previousSpineRegionIndex) return false;
-    previousSpineRegionIndex = regionIndex;
+  if (primarySpine !== null) {
+    let previousSpineRegionIndex = -1;
+    const firstSpineIndexByRegion = new Map<number, number>();
+    const lastSpineIndexByRegion = new Map<number, number>();
+    for (const [spineIndex, nodeId] of primarySpine.nodeIds.entries()) {
+      const regionIndex = regionByNodeId.get(nodeId);
+      if (regionIndex === undefined) continue;
+      if (regionIndex < previousSpineRegionIndex) return false;
+      previousSpineRegionIndex = regionIndex;
+      if (!firstSpineIndexByRegion.has(regionIndex)) {
+        firstSpineIndexByRegion.set(regionIndex, spineIndex);
+      }
+      lastSpineIndexByRegion.set(regionIndex, spineIndex);
+    }
+    for (const [regionIndex, firstSpineIndex] of firstSpineIndexByRegion) {
+      const lastSpineIndex = lastSpineIndexByRegion.get(regionIndex)!;
+      for (let spineIndex = firstSpineIndex; spineIndex <= lastSpineIndex; spineIndex += 1) {
+        const nodeId = primarySpine.nodeIds[spineIndex]!;
+        if (regionByNodeId.get(nodeId) !== regionIndex) return false;
+      }
+    }
   }
   return true;
 }
@@ -308,7 +345,11 @@ function structureGraphValue(
   row: DbRow,
 ): Pick<Structure, "originNodeId" | "nodes" | "edges" | "presentation"> {
   try {
-    const value: unknown = JSON.parse(stringValue(row, "graph_json"));
+    const serializedGraph = stringValue(row, "graph_json");
+    if (Buffer.byteLength(serializedGraph, "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
+      throw new Error("invalid Structure graph size");
+    }
+    const value: unknown = JSON.parse(serializedGraph);
     if (!isRecord(value)) throw new Error("invalid Structure graph");
     const originNodeId = typeof value.originNodeId === "string" ? value.originNodeId : null;
     const presentation = value.presentation === undefined ? null : value.presentation;
@@ -323,12 +364,31 @@ function structureGraphValue(
     }
     const nodes = value.nodes;
     const edges = value.edges;
-    if (
-      presentation !== null &&
-      (!isStructurePresentation(presentation, nodes, edges) ||
-        Buffer.byteLength(JSON.stringify({ originNodeId, nodes, edges, presentation }), "utf8") >
-          MAX_STRUCTURE_PAYLOAD_BYTES)
-    ) {
+    if (nodes.length < 1 || nodes.length > MAX_STRUCTURE_NODES) {
+      throw new Error("invalid Structure Node count");
+    }
+    const nodeIds = new Set<string>();
+    for (const node of nodes) {
+      if (!STRUCTURE_ID_PATTERN.test(node.id) || nodeIds.has(node.id)) {
+        throw new Error("invalid Structure Node identity");
+      }
+      nodeIds.add(node.id);
+    }
+    const originNode = nodes.find((node) => node.id === originNodeId);
+    if (originNode === undefined || originNode.anchor === null) {
+      throw new Error("invalid Structure origin");
+    }
+    const edgeIds = new Set<string>();
+    for (const edge of edges) {
+      if (!STRUCTURE_ID_PATTERN.test(edge.id) || edgeIds.has(edge.id)) {
+        throw new Error("invalid Structure Edge identity");
+      }
+      edgeIds.add(edge.id);
+      if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+        throw new Error("invalid Structure Edge endpoint");
+      }
+    }
+    if (presentation !== null && !isStructurePresentation(presentation, nodes, edges)) {
       throw new Error("invalid Structure presentation");
     }
     return {
@@ -577,6 +637,7 @@ export interface NewStructureInput {
   presentation: StructurePresentation | null;
   idempotencyKey: string;
   idempotencyRequestHash: string;
+  legacyNullPresentationIdempotencyRequestHash?: string;
 }
 
 export interface DomainRevisions {
@@ -1585,7 +1646,12 @@ export class RvwDatabase {
         .prepare("SELECT * FROM structure_publish_idempotency WHERE key_hash = ?")
         .get(keyHash) as DbRow | undefined;
       if (existingRow) {
-        if (stringValue(existingRow, "request_hash") !== input.idempotencyRequestHash) {
+        const existingRequestHash = stringValue(existingRow, "request_hash");
+        if (
+          existingRequestHash !== input.idempotencyRequestHash &&
+          (input.presentation !== null ||
+            existingRequestHash !== input.legacyNullPresentationIdempotencyRequestHash)
+        ) {
           throw new RvwError(
             "IDEMPOTENCY_CONFLICT",
             "同じidempotencyKeyが別のStructure publishに使用されています。",
@@ -1620,6 +1686,9 @@ export class RvwDatabase {
           now,
           now,
         );
+      if (!this.getStructure(id)) {
+        throw new RvwError("DATABASE_ERROR", "保存したStructureを読み出せません。");
+      }
       this.database
         .prepare(
           `INSERT INTO structure_publish_idempotency(
@@ -1641,7 +1710,13 @@ export class RvwDatabase {
   updateStructure(
     id: string,
     expectedUpdatedAt: string,
-    input: Omit<NewStructureInput, "pullRequestId" | "idempotencyKey" | "idempotencyRequestHash">,
+    input: Omit<
+      NewStructureInput,
+      | "pullRequestId"
+      | "idempotencyKey"
+      | "idempotencyRequestHash"
+      | "legacyNullPresentationIdempotencyRequestHash"
+    >,
   ): Structure {
     const currentUpdatedAt = Date.parse(expectedUpdatedAt);
     const observedNow = Date.now();
@@ -1721,6 +1796,9 @@ export class RvwDatabase {
             details: { expectedUpdatedAt, currentUpdatedAt: current.updatedAt },
           },
         );
+      }
+      if (!this.getStructure(id)) {
+        throw new RvwError("DATABASE_ERROR", "更新したStructureを読み出せません。");
       }
       const retireNode = this.database.prepare(
         "INSERT OR IGNORE INTO structure_retired_node_ids(structure_id, node_id, retired_at) VALUES (?, ?, ?)",

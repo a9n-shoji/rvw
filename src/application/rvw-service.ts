@@ -88,6 +88,7 @@ import {
   MAX_STRUCTURE_LABEL_CHARACTERS,
   MAX_STRUCTURE_NODES,
   MAX_STRUCTURE_PAYLOAD_BYTES,
+  MAX_STRUCTURE_PRIMARY_SPINE_NODES,
   MAX_STRUCTURE_PRESENTATION_REGIONS,
   MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
   MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
@@ -2228,7 +2229,11 @@ export class RvwService {
         typeof input.presentation !== "object" ||
         Array.isArray(input.presentation) ||
         Object.keys(input.presentation).some(
-          (key) => key !== "thesis" && key !== "primarySpine" && key !== "regions",
+          (key) =>
+            key !== "thesis" &&
+            key !== "startNodeId" &&
+            key !== "primarySpine" &&
+            key !== "regions",
         )
       ) {
         throw new RvwError("INVALID_INPUT", "Structure presentationが不正です。");
@@ -2238,53 +2243,95 @@ export class RvwService {
         MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
         "Structure presentation thesis",
       );
-      if (
-        !Array.isArray(input.presentation.primarySpine) ||
-        input.presentation.primarySpine.length < 2 ||
-        input.presentation.primarySpine.length > MAX_STRUCTURE_NODES
-      ) {
+      const startNodeId = this.assertStructureId(
+        input.presentation.startNodeId,
+        "Structure presentation startNodeId",
+      );
+      if (!nodeIds.has(startNodeId)) {
         throw new RvwError(
           "INVALID_INPUT",
-          `Structure presentation primarySpineは2〜${MAX_STRUCTURE_NODES}件にしてください。`,
+          `Structure presentation startNodeIdのNodeが存在しません: ${startNodeId}`,
         );
       }
-      const primarySpine: string[] = [];
-      const primarySpineNodeIds = new Set<string>();
-      for (const rawNodeId of input.presentation.primarySpine) {
-        const nodeId = this.assertStructureId(
-          rawNodeId,
-          "Structure presentation primarySpine Node ID",
-        );
-        if (primarySpineNodeIds.has(nodeId)) {
-          throw new RvwError(
-            "INVALID_INPUT",
-            `Structure presentation primarySpineのNode IDが重複しています: ${nodeId}`,
-          );
-        }
-        if (!nodeIds.has(nodeId)) {
-          throw new RvwError(
-            "INVALID_INPUT",
-            `Structure presentation primarySpineのNodeが存在しません: ${nodeId}`,
-          );
-        }
-        primarySpineNodeIds.add(nodeId);
-        primarySpine.push(nodeId);
-      }
-      for (let index = 1; index < primarySpine.length; index += 1) {
-        const previous = primarySpine[index - 1]!;
-        const current = primarySpine[index]!;
+      let primarySpine: StructurePresentation["primarySpine"] = null;
+      if (input.presentation.primarySpine !== null) {
+        const rawPrimarySpine = input.presentation.primarySpine;
         if (
-          !edges.some(
-            (edge) =>
-              (edge.from === previous && edge.to === current) ||
-              (edge.from === current && edge.to === previous),
-          )
+          typeof rawPrimarySpine !== "object" ||
+          Array.isArray(rawPrimarySpine) ||
+          Object.keys(rawPrimarySpine).some((key) => key !== "nodeIds" && key !== "edgeIds") ||
+          !Array.isArray(rawPrimarySpine.nodeIds) ||
+          rawPrimarySpine.nodeIds.length < 2 ||
+          rawPrimarySpine.nodeIds.length > MAX_STRUCTURE_PRIMARY_SPINE_NODES
         ) {
           throw new RvwError(
             "INVALID_INPUT",
-            `Structure presentation primarySpineの隣接Node間にEdgeがありません: ${previous} ↔ ${current}`,
+            `Structure presentation primarySpine.nodeIdsは2〜${MAX_STRUCTURE_PRIMARY_SPINE_NODES}件にしてください。`,
           );
         }
+        if (
+          !Array.isArray(rawPrimarySpine.edgeIds) ||
+          rawPrimarySpine.edgeIds.length !== rawPrimarySpine.nodeIds.length - 1
+        ) {
+          throw new RvwError(
+            "INVALID_INPUT",
+            "Structure presentation primarySpine.edgeIdsは隣接Node pairごとに一件指定してください。",
+          );
+        }
+        const primarySpineNodeIds = new Set<string>();
+        const normalizedNodeIds = rawPrimarySpine.nodeIds.map((rawNodeId) => {
+          const nodeId = this.assertStructureId(
+            rawNodeId,
+            "Structure presentation primarySpine Node ID",
+          );
+          if (primarySpineNodeIds.has(nodeId)) {
+            throw new RvwError(
+              "INVALID_INPUT",
+              `Structure presentation primarySpineのNode IDが重複しています: ${nodeId}`,
+            );
+          }
+          if (!nodeIds.has(nodeId)) {
+            throw new RvwError(
+              "INVALID_INPUT",
+              `Structure presentation primarySpineのNodeが存在しません: ${nodeId}`,
+            );
+          }
+          primarySpineNodeIds.add(nodeId);
+          return nodeId;
+        });
+        if (normalizedNodeIds[0] !== startNodeId) {
+          throw new RvwError(
+            "INVALID_INPUT",
+            "Structure presentation primarySpineの先頭NodeはstartNodeIdと一致させてください。",
+          );
+        }
+        const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
+        const normalizedEdgeIds = rawPrimarySpine.edgeIds.map((rawEdgeId, index) => {
+          const edgeId = this.assertStructureId(
+            rawEdgeId,
+            "Structure presentation primarySpine Edge ID",
+          );
+          const edge = edgeById.get(edgeId);
+          if (edge === undefined) {
+            throw new RvwError(
+              "INVALID_INPUT",
+              `Structure presentation primarySpineのEdgeが存在しません: ${edgeId}`,
+            );
+          }
+          const previous = normalizedNodeIds[index]!;
+          const current = normalizedNodeIds[index + 1]!;
+          if (!(
+            (edge.from === previous && edge.to === current) ||
+            (edge.from === current && edge.to === previous)
+          )) {
+            throw new RvwError(
+              "INVALID_INPUT",
+              `Structure presentation primarySpine Edge ${edgeId}が対応する隣接Nodeを結んでいません: ${previous} ↔ ${current}`,
+            );
+          }
+          return edgeId;
+        });
+        primarySpine = { nodeIds: normalizedNodeIds, edgeIds: normalizedEdgeIds };
       }
       if (
         !Array.isArray(input.presentation.regions) ||
@@ -2354,19 +2401,44 @@ export class RvwService {
         });
         return { label, nodeIds: normalizedNodeIds };
       });
-      let previousSpineRegionIndex = -1;
-      for (const nodeId of primarySpine) {
-        const region = assignedRegionByNodeId.get(nodeId);
-        if (region === undefined) continue;
-        if (region.index < previousSpineRegionIndex) {
-          throw new RvwError(
-            "INVALID_INPUT",
-            "Structure presentation primarySpine上のregion所属はregionsの順序に沿って非減少にしてください。",
-          );
-        }
-        previousSpineRegionIndex = region.index;
+      if (primarySpine === null && regions.length === 0) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          "Structure presentationにはprimarySpineまたはregionを少なくとも一つ指定してください。",
+        );
       }
-      presentation = { thesis, primarySpine, regions };
+      if (primarySpine !== null) {
+        let previousSpineRegionIndex = -1;
+        const firstSpineIndexByRegion = new Map<number, number>();
+        const lastSpineIndexByRegion = new Map<number, number>();
+        for (const [spineIndex, nodeId] of primarySpine.nodeIds.entries()) {
+          const region = assignedRegionByNodeId.get(nodeId);
+          if (region === undefined) continue;
+          if (region.index < previousSpineRegionIndex) {
+            throw new RvwError(
+              "INVALID_INPUT",
+              "Structure presentation primarySpine上のregion所属はregionsの順序に沿って非減少にしてください。",
+            );
+          }
+          previousSpineRegionIndex = region.index;
+          if (!firstSpineIndexByRegion.has(region.index)) {
+            firstSpineIndexByRegion.set(region.index, spineIndex);
+          }
+          lastSpineIndexByRegion.set(region.index, spineIndex);
+        }
+        for (const [regionIndex, firstSpineIndex] of firstSpineIndexByRegion) {
+          const lastSpineIndex = lastSpineIndexByRegion.get(regionIndex)!;
+          for (let spineIndex = firstSpineIndex; spineIndex <= lastSpineIndex; spineIndex += 1) {
+            const nodeId = primarySpine.nodeIds[spineIndex]!;
+            if (assignedRegionByNodeId.get(nodeId)?.index === regionIndex) continue;
+            throw new RvwError(
+              "INVALID_INPUT",
+              "Structure presentationで同じregionに属するprimarySpine Nodeは連続した区間にしてください。",
+            );
+          }
+        }
+      }
+      presentation = { thesis, startNodeId, primarySpine, regions };
     }
     const graph = { originNodeId, nodes, edges, presentation };
     if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
@@ -2385,6 +2457,21 @@ export class RvwService {
     assertIdempotencyKey(input.idempotencyKey);
     const pullRequest = this.resolveStoredPullRequest(input.pullRequest);
     const content = await this.validateStructureContent(pullRequest, input);
+    const legacyNullPresentationIdempotencyRequestHash =
+      content.presentation === null
+        ? idempotencyRequestHash({
+            operation: "structure.publish",
+            pullRequestId: pullRequest.id,
+            content: {
+              sourceOid: content.sourceOid,
+              title: content.title,
+              scope: content.scope,
+              originNodeId: content.originNodeId,
+              nodes: content.nodes,
+              edges: content.edges,
+            },
+          })
+        : undefined;
     return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, "Structure", () =>
       this.database.createStructure({
         pullRequestId: pullRequest.id,
@@ -2395,6 +2482,9 @@ export class RvwService {
           pullRequestId: pullRequest.id,
           content,
         }),
+        ...(legacyNullPresentationIdempotencyRequestHash === undefined
+          ? {}
+          : { legacyNullPresentationIdempotencyRequestHash }),
       }),
     );
   }

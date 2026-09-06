@@ -1058,7 +1058,8 @@ describe("CLI protocol discovery", () => {
       originNodeId: "terminal",
       presentation: {
         thesis: "Understand the transition into the terminal boundary.",
-        primarySpine: ["entry", "terminal"],
+        startNodeId: "entry",
+        primarySpine: { nodeIds: ["entry", "terminal"], edgeIds: ["entry-terminal"] },
         regions: [],
       },
       nodes: [
@@ -1133,7 +1134,8 @@ describe("CLI protocol discovery", () => {
       originNodeId: "entry",
       presentation: {
         thesis: "Follow the forward flow.",
-        primarySpine: ["entry", "next"],
+        startNodeId: "entry",
+        primarySpine: { nodeIds: ["entry", "next"], edgeIds: ["entry-next"] },
         regions: [],
       },
       nodes: [
@@ -1182,7 +1184,8 @@ describe("CLI protocol discovery", () => {
         originNodeId: "entry",
         presentation: {
           thesis: "Follow the forward flow.",
-          primarySpine: ["entry", "next"],
+          startNodeId: "entry",
+          primarySpine: { nodeIds: ["entry", "next"], edgeIds: ["entry-next"] },
           regions: [],
         },
       },

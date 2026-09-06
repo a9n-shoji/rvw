@@ -6,6 +6,10 @@ import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
+import {
+  MAX_STRUCTURE_PAYLOAD_BYTES,
+  MAX_STRUCTURE_PRIMARY_SPINE_NODES,
+} from "../../src/shared/constants.js";
 
 function openDatabaseInChildProcess(
   filePath: string,
@@ -443,10 +447,30 @@ describe("RvwDatabase", () => {
           directed: true,
           anchors: [],
         },
+        {
+          id: "entry-effect-parallel",
+          from: "entry",
+          to: "effect",
+          label: "also persists",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "effect-entry-reverse",
+          from: "effect",
+          to: "entry",
+          label: "reports",
+          directed: true,
+          anchors: [],
+        },
       ],
       presentation: {
         thesis: "Follow the entrypoint into its persisted effect.",
-        primarySpine: ["entry", "effect", "audit"],
+        startNodeId: "entry",
+        primarySpine: {
+          nodeIds: ["entry", "effect", "audit"],
+          edgeIds: ["effect-entry-reverse", "effect-audit"],
+        },
         regions: [
           { label: "Entry", nodeIds: ["entry"] },
           { label: "Effect", nodeIds: ["effect"] },
@@ -482,10 +506,64 @@ describe("RvwDatabase", () => {
       ["empty thesis", { ...presentation, thesis: "" }],
       ["non-canonical thesis", { ...presentation, thesis: ` ${presentation.thesis}` }],
       ["overlong thesis", { ...presentation, thesis: "t".repeat(1_001) }],
-      ["short spine", { ...presentation, primarySpine: ["entry"] }],
-      ["duplicate spine node", { ...presentation, primarySpine: ["entry", "entry"] }],
-      ["dangling spine node", { ...presentation, primarySpine: ["entry", "missing"] }],
-      ["non-adjacent spine pair", { ...presentation, primarySpine: ["entry", "audit"] }],
+      ["dangling start node", { ...presentation, startNodeId: "missing" }],
+      ["start node differs from spine", { ...presentation, startNodeId: "effect" }],
+      [
+        "unknown spine key",
+        { ...presentation, primarySpine: { ...presentation.primarySpine, emphasis: "high" } },
+      ],
+      [
+        "short spine",
+        {
+          ...presentation,
+          primarySpine: { nodeIds: ["entry"], edgeIds: [] },
+        },
+      ],
+      [
+        "duplicate spine node",
+        {
+          ...presentation,
+          primarySpine: { nodeIds: ["entry", "entry"], edgeIds: ["entry-effect"] },
+        },
+      ],
+      [
+        "dangling spine node",
+        {
+          ...presentation,
+          primarySpine: { nodeIds: ["entry", "missing"], edgeIds: ["entry-effect"] },
+        },
+      ],
+      [
+        "spine edge count mismatch",
+        {
+          ...presentation,
+          primarySpine: {
+            nodeIds: ["entry", "effect", "audit"],
+            edgeIds: ["entry-effect"],
+          },
+        },
+      ],
+      [
+        "dangling spine edge",
+        {
+          ...presentation,
+          primarySpine: {
+            nodeIds: ["entry", "effect", "audit"],
+            edgeIds: ["missing", "effect-audit"],
+          },
+        },
+      ],
+      [
+        "spine edge for another pair",
+        {
+          ...presentation,
+          primarySpine: {
+            nodeIds: ["entry", "effect", "audit"],
+            edgeIds: ["effect-audit", "entry-effect"],
+          },
+        },
+      ],
+      ["empty non-null presentation", { ...presentation, primarySpine: null, regions: [] }],
       [
         "too many regions",
         {
@@ -536,9 +614,30 @@ describe("RvwDatabase", () => {
           ],
         },
       ],
+      [
+        "discontiguous region on the spine",
+        {
+          ...presentation,
+          regions: [{ label: "Outer", nodeIds: ["entry", "audit"] }],
+        },
+      ],
     ];
     const invalid = new DatabaseSync(filePath);
     const invalidReopened = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    const boundaryLegacyGraph = structuredClone(legacyGraph);
+    const boundaryLegacyNodes = boundaryLegacyGraph.nodes as Array<Record<string, unknown>>;
+    boundaryLegacyNodes[0]!.description = "";
+    const boundaryBaseSize = Buffer.byteLength(JSON.stringify(boundaryLegacyGraph), "utf8");
+    boundaryLegacyNodes[0]!.description = "x".repeat(
+      MAX_STRUCTURE_PAYLOAD_BYTES - boundaryBaseSize,
+    );
+    const boundaryLegacyJson = JSON.stringify(boundaryLegacyGraph);
+    expect(Buffer.byteLength(boundaryLegacyJson, "utf8")).toBe(MAX_STRUCTURE_PAYLOAD_BYTES);
+    invalid
+      .prepare("UPDATE structures SET graph_json = ? WHERE id = ?")
+      .run(boundaryLegacyJson, structure.id);
+    expect(invalidReopened.getStructure(structure.id)?.presentation).toBeNull();
+
     for (const [label, corruptPresentation] of corruptionCases) {
       invalid
         .prepare("UPDATE structures SET graph_json = ? WHERE id = ?")
@@ -550,8 +649,286 @@ describe("RvwDatabase", () => {
         expect.objectContaining({ code: "DATABASE_ERROR" }),
       );
     }
+    const graphCorruptionCases: Array<[string, (graph: Record<string, unknown>) => void]> = [
+      [
+        "duplicate Node ID",
+        (graph) => {
+          const nodes = graph.nodes as Array<Record<string, unknown>>;
+          nodes.push(structuredClone(nodes[0]!));
+        },
+      ],
+      [
+        "missing origin Node",
+        (graph) => {
+          graph.originNodeId = "missing";
+        },
+      ],
+      [
+        "unanchored origin Node",
+        (graph) => {
+          const nodes = graph.nodes as Array<Record<string, unknown>>;
+          nodes[0]!.anchor = null;
+        },
+      ],
+      [
+        "duplicate exact-spine Edge ID",
+        (graph) => {
+          const edges = graph.edges as Array<Record<string, unknown>>;
+          const spineEdge = edges.find((edge) => edge.id === "effect-entry-reverse")!;
+          edges.push({ ...structuredClone(spineEdge), label: "duplicate identity" });
+        },
+      ],
+      [
+        "dangling Edge endpoint",
+        (graph) => {
+          const edges = graph.edges as Array<Record<string, unknown>>;
+          edges[0]!.to = "missing";
+        },
+      ],
+    ];
+    for (const [label, corrupt] of graphCorruptionCases) {
+      const corruptGraph = structuredClone(canonicalGraph);
+      corrupt(corruptGraph);
+      invalid
+        .prepare("UPDATE structures SET graph_json = ? WHERE id = ?")
+        .run(JSON.stringify(corruptGraph), structure.id);
+      expect(() => invalidReopened.getStructure(structure.id), label).toThrowError(
+        expect.objectContaining({ code: "DATABASE_ERROR" }),
+      );
+    }
+    for (const legacyPresentation of ["null", "missing"] as const) {
+      const oversizedGraph = structuredClone(canonicalGraph);
+      const oversizedNodes = oversizedGraph.nodes as Array<Record<string, unknown>>;
+      oversizedNodes[0]!.description = "x".repeat(MAX_STRUCTURE_PAYLOAD_BYTES);
+      if (legacyPresentation === "null") oversizedGraph.presentation = null;
+      else delete oversizedGraph.presentation;
+      invalid
+        .prepare("UPDATE structures SET graph_json = ? WHERE id = ?")
+        .run(JSON.stringify(oversizedGraph), structure.id);
+      expect(
+        () => invalidReopened.getStructure(structure.id),
+        `oversized ${legacyPresentation} presentation graph`,
+      ).toThrowError(expect.objectContaining({ code: "DATABASE_ERROR" }));
+    }
     invalidReopened.close();
     invalid.close();
+  });
+
+  it("accepts persisted twelve-Node spines and rejects thirteen-Node spines", () => {
+    expect(MAX_STRUCTURE_PRIMARY_SPINE_NODES).toBe(12);
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const createWithSpine = (nodeCount: number, idempotencySuffix = String(nodeCount)) => {
+      const nodes = Array.from({ length: nodeCount }, (_, index) => ({
+        id: `node-${index + 1}`,
+        label: `Node ${index + 1}`,
+        description: null,
+        kind: null,
+        notation: "plain" as const,
+        anchor: index === 0 ? { path: "src/entry.ts", startLine: 1, endLine: 1 } : null,
+      }));
+      const edges = Array.from({ length: nodeCount - 1 }, (_, index) => ({
+        id: `edge-${index + 1}`,
+        from: `node-${index + 1}`,
+        to: `node-${index + 2}`,
+        label: "leads to",
+        directed: true,
+        anchors: [],
+      }));
+      return database.createStructure({
+        pullRequestId: pullRequest.id,
+        sourceOid: github.headOid,
+        title: "Bounded reading spine",
+        scope: "The first-grasp backbone through one bounded relationship space.",
+        originNodeId: "node-1",
+        nodes,
+        edges,
+        presentation: {
+          thesis: "Grasp this compact backbone before exploring the remaining graph.",
+          startNodeId: "node-1",
+          primarySpine: {
+            nodeIds: nodes.map(({ id }) => id),
+            edgeIds: edges.map(({ id }) => id),
+          },
+          regions: [],
+        },
+        idempotencyKey: `structure-primary-spine-${idempotencySuffix}`,
+        idempotencyRequestHash: `structure-primary-spine-request-${idempotencySuffix}`,
+      });
+    };
+
+    expect(createWithSpine(12).presentation?.primarySpine?.nodeIds).toHaveLength(12);
+    const revisionBeforeInvalidCreate = database.getDomainRevisions().structures;
+    expect(() => createWithSpine(13)).toThrowError(
+      expect.objectContaining({ code: "DATABASE_ERROR" }),
+    );
+    expect(database.listStructures(pullRequest.id)).toHaveLength(1);
+    expect(database.getDomainRevisions().structures).toBe(revisionBeforeInvalidCreate);
+
+    const recoveredWithSameIdempotencyKey = createWithSpine(2, "13");
+    expect(recoveredWithSameIdempotencyKey.presentation?.primarySpine?.nodeIds).toHaveLength(2);
+    expect(database.listStructures(pullRequest.id)).toHaveLength(2);
+    expect(database.getDomainRevisions().structures).toBe(revisionBeforeInvalidCreate + 1);
+    database.close();
+  });
+
+  it("rolls back an invalid direct Structure update before revisions or retired IDs change", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const nodes = [
+      {
+        id: "entry",
+        label: "Entry",
+        description: null,
+        kind: null,
+        notation: "plain" as const,
+        anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+      },
+      {
+        id: "effect",
+        label: "Effect",
+        description: null,
+        kind: null,
+        notation: "database" as const,
+        anchor: null,
+      },
+      {
+        id: "audit",
+        label: "Audit",
+        description: null,
+        kind: null,
+        notation: "component" as const,
+        anchor: null,
+      },
+    ];
+    const edges = [
+      {
+        id: "entry-effect",
+        from: "entry",
+        to: "effect",
+        label: "persists",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "effect-audit",
+        from: "effect",
+        to: "audit",
+        label: "records",
+        directed: true,
+        anchors: [],
+      },
+    ];
+    const presentation = {
+      thesis: "Follow the persisted effect into its audit record.",
+      startNodeId: "entry",
+      primarySpine: {
+        nodeIds: ["entry", "effect", "audit"],
+        edgeIds: ["entry-effect", "effect-audit"],
+      },
+      regions: [],
+    };
+    const created = database.createStructure({
+      pullRequestId: pullRequest.id,
+      sourceOid: github.headOid,
+      title: "Atomic Structure update",
+      scope: "Invalid direct database input must not become the current value.",
+      originNodeId: "entry",
+      nodes,
+      edges,
+      presentation,
+      idempotencyKey: "atomic-structure-update",
+      idempotencyRequestHash: "atomic-structure-update-request",
+    });
+    const revisionBeforeInvalidUpdate = database.getDomainRevisions().structures;
+
+    expect(() =>
+      database.updateStructure(created.id, created.updatedAt, {
+        sourceOid: created.sourceOid,
+        title: "Invalid partial update",
+        scope: created.scope,
+        originNodeId: created.originNodeId,
+        nodes: nodes.slice(0, 2),
+        edges: edges.slice(0, 1),
+        presentation,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "DATABASE_ERROR" }));
+
+    expect(database.getStructure(created.id)).toEqual(created);
+    expect(database.getDomainRevisions().structures).toBe(revisionBeforeInvalidUpdate);
+
+    const recovered = database.updateStructure(created.id, created.updatedAt, {
+      sourceOid: created.sourceOid,
+      title: "Recovered valid update",
+      scope: created.scope,
+      originNodeId: created.originNodeId,
+      nodes,
+      edges,
+      presentation,
+    });
+    expect(recovered.title).toBe("Recovered valid update");
+    expect(database.getDomainRevisions().structures).toBe(revisionBeforeInvalidUpdate + 1);
+    database.close();
+  });
+
+  it("accepts a legacy null-presentation publish hash as an idempotent retry alias", () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequest = database.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const content = {
+      pullRequestId: pullRequest.id,
+      sourceOid: github.headOid,
+      title: "Legacy-compatible Structure",
+      scope: "The same logical graph before and after explicit null presentation.",
+      originNodeId: "entry",
+      nodes: [
+        {
+          id: "entry",
+          label: "Entry",
+          description: null,
+          kind: null,
+          notation: "plain" as const,
+          anchor: { path: "src/entry.ts", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [],
+      presentation: null,
+      idempotencyKey: "legacy-structure-publish",
+    };
+    const created = database.createStructure({
+      ...content,
+      idempotencyRequestHash: "legacy-request-hash",
+    });
+    const revisionAfterCreate = database.getDomainRevisions().structures;
+
+    expect(
+      database.createStructure({
+        ...content,
+        idempotencyRequestHash: "v5-request-hash",
+        legacyNullPresentationIdempotencyRequestHash: "legacy-request-hash",
+      }),
+    ).toEqual(created);
+    expect(database.getDomainRevisions().structures).toBe(revisionAfterCreate);
+    expect(() =>
+      database.createStructure({
+        ...content,
+        scope: "A changed logical request must still conflict.",
+        idempotencyRequestHash: "changed-v5-request-hash",
+        legacyNullPresentationIdempotencyRequestHash: "changed-legacy-request-hash",
+      }),
+    ).toThrowError(expect.objectContaining({ code: "IDEMPOTENCY_CONFLICT" }));
+    database.close();
   });
 
   it("lists only Open, Draft, and unknown Pull Requests needing a status refresh", () => {

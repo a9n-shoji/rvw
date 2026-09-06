@@ -7,10 +7,14 @@ import {
   initialStructureViewport,
   MAX_STRUCTURE_ZOOM,
   MIN_STRUCTURE_ZOOM,
+  preserveStructureLayoutScreenPosition,
+  reconcileStructureSession,
   scaledStructureZoom,
   setStructureSession,
+  structureLayoutBasisKey,
   transferStructureSession,
 } from "../../src/web/structure-session.js";
+import { initialStructureLayout } from "../../src/web/structure-graph.js";
 
 function structure(id: string): Structure {
   return {
@@ -38,6 +42,32 @@ function structure(id: string): Structure {
   };
 }
 
+function presentedStructure(id: string): Structure {
+  const value = structure(id);
+  value.originNodeId = "A";
+  value.nodes = ["A", "B", "C"].map((nodeId) => ({
+    ...value.nodes[0]!,
+    id: nodeId,
+    label: nodeId,
+    anchor: nodeId === "A" ? value.nodes[0]!.anchor : null,
+  }));
+  value.edges = [
+    { id: "ab", from: "A", to: "B", label: "A to B", directed: true, anchors: [] },
+    { id: "bc", from: "B", to: "C", label: "B to C", directed: true, anchors: [] },
+    { id: "ac", from: "A", to: "C", label: "A to C", directed: true, anchors: [] },
+  ];
+  value.presentation = {
+    thesis: "Understand A, B, and C as one authored spatial explanation.",
+    startNodeId: "A",
+    primarySpine: { nodeIds: ["A", "B", "C"], edgeIds: ["ab", "bc"] },
+    regions: [
+      { label: "First", nodeIds: ["A", "B"] },
+      { label: "Second", nodeIds: ["C"] },
+    ],
+  };
+  return value;
+}
+
 describe("Structure pane sessions", () => {
   it("starts a presented Structure from the first primary-spine Node, not the factual origin", () => {
     const value = structure("70000000-0000-4000-8000-000000000096");
@@ -55,7 +85,11 @@ describe("Structure pane sessions", () => {
     });
     value.presentation = {
       thesis: "Read the authored backbone before exploring supporting details.",
-      primarySpine: ["read-first", "read-next"],
+      startNodeId: "read-first",
+      primarySpine: {
+        nodeIds: ["read-first", "read-next"],
+        edgeIds: ["read-first-next"],
+      },
       regions: [],
     };
 
@@ -227,5 +261,306 @@ describe("Structure pane sessions", () => {
     expect(scaledStructureZoom(MIN_STRUCTURE_ZOOM, 1 / 1.2)).toBe(MIN_STRUCTURE_ZOOM);
     expect(scaledStructureZoom(0.08, 1 / 1.2)).toBeLessThan(0.08);
     expect(scaledStructureZoom(MAX_STRUCTURE_ZOOM, 1.2)).toBe(MAX_STRUCTURE_ZOOM);
+  });
+
+  it("keys only the authored fields that determine canonical geometry", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000094");
+    const baseline = structureLayoutBasisKey(value);
+    expect(
+      structureLayoutBasisKey({
+        presentation: {
+          ...value.presentation!,
+          thesis: "Different prose must not move the graph.",
+          regions: value.presentation!.regions.map((region) => ({
+            label: `Renamed ${region.label}`,
+            nodeIds: [...region.nodeIds].reverse(),
+          })),
+        },
+      }),
+    ).toBe(baseline);
+    expect(
+      structureLayoutBasisKey({
+        presentation: {
+          ...value.presentation!,
+          regions: [...value.presentation!.regions].reverse(),
+        },
+      }),
+    ).not.toBe(baseline);
+    expect(
+      structureLayoutBasisKey({
+        presentation: {
+          ...value.presentation!,
+          primarySpine: {
+            ...value.presentation!.primarySpine!,
+            edgeIds: ["ac", "bc"],
+          },
+        },
+      }),
+    ).toBe(baseline);
+    expect(
+      structureLayoutBasisKey({
+        presentation: { ...value.presentation!, startNodeId: "B" },
+      }),
+    ).not.toBe(baseline);
+    expect(structureLayoutBasisKey({ presentation: null })).not.toBe(baseline);
+  });
+
+  it("rebases a changed primary spine while preserving reading state and focused screen position", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000093");
+    const session = {
+      ...createStructureSession(value),
+      focusId: "B",
+      selectedEdgeId: "ab",
+      depth: 2 as const,
+      positions: {
+        A: { x: 100, y: 80 },
+        B: { x: 760, y: 330 },
+        C: { x: 1_220, y: 110 },
+      },
+      viewport: { x: -215, y: 74, scale: 1.4 },
+    };
+    const updated: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: {
+        ...value.presentation!,
+        primarySpine: { nodeIds: ["A", "C", "B"], edgeIds: ["ac", "bc"] },
+      },
+    };
+
+    const reconciled = reconcileStructureSession(updated, session);
+    expect(reconciled.positions).toEqual(initialStructureLayout(updated));
+    expect(reconciled.focusId).toBe("B");
+    expect(reconciled.selectedEdgeId).toBe("ab");
+    expect(reconciled.depth).toBe(2);
+    expect(reconciled.viewport.scale).toBe(session.viewport.scale);
+    expect(reconciled.viewport.x + reconciled.positions.B!.x * reconciled.viewport.scale).toBe(
+      session.viewport.x + session.positions.B.x * session.viewport.scale,
+    );
+    expect(reconciled.viewport.y + reconciled.positions.B!.y * reconciled.viewport.scale).toBe(
+      session.viewport.y + session.positions.B.y * session.viewport.scale,
+    );
+  });
+
+  it("rebases for ordered regions and null transitions", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000092");
+    const session = {
+      ...createStructureSession(value),
+      positions: {
+        A: { x: 901, y: 902 },
+        B: { x: 903, y: 904 },
+        C: { x: 905, y: 906 },
+      },
+    };
+    const reordered: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: {
+        ...value.presentation!,
+        primarySpine: null,
+        regions: [...value.presentation!.regions].reverse(),
+      },
+    };
+    const regionReconciled = reconcileStructureSession(reordered, session);
+    expect(regionReconciled.positions).toEqual(initialStructureLayout(reordered));
+
+    const withoutPresentation: Structure = {
+      ...reordered,
+      updatedAt: "2026-08-30T00:02:00.000Z",
+      presentation: null,
+    };
+    const nullReconciled = reconcileStructureSession(withoutPresentation, {
+      ...regionReconciled,
+      positions: {
+        A: { x: 801, y: 802 },
+        B: { x: 803, y: 804 },
+        C: { x: 805, y: 806 },
+      },
+    });
+    expect(nullReconciled.positions).toEqual(initialStructureLayout(withoutPresentation));
+  });
+
+  it("preserves the layout center on screen when a rebase has no surviving focus", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000089");
+    const session = {
+      ...createStructureSession(value),
+      focusId: null,
+      positions: {
+        A: { x: 10_000, y: 4_000 },
+        B: { x: 10_600, y: 4_400 },
+        C: { x: 11_200, y: 4_800 },
+      },
+      viewport: { x: -10_100, y: -4_050, scale: 1.25 },
+    };
+    const updated: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: {
+        ...value.presentation!,
+        primarySpine: { nodeIds: ["A", "C", "B"], edgeIds: ["ac", "bc"] },
+      },
+    };
+    const previousCenter = {
+      x: (session.positions.A.x + session.positions.C.x + 228) / 2,
+      y: (session.positions.A.y + session.positions.C.y + 112) / 2,
+    };
+
+    const reconciled = reconcileStructureSession(updated, session);
+    const nextXs = Object.values(reconciled.positions).map(({ x }) => x);
+    const nextYs = Object.values(reconciled.positions).map(({ y }) => y);
+    const nextCenter = {
+      x: (Math.min(...nextXs) + Math.max(...nextXs) + 228) / 2,
+      y: (Math.min(...nextYs) + Math.max(...nextYs) + 112) / 2,
+    };
+    expect(reconciled.focusId).toBeNull();
+    expect(reconciled.viewport.scale).toBe(session.viewport.scale);
+    expect(reconciled.viewport.x + nextCenter.x * reconciled.viewport.scale).toBe(
+      session.viewport.x + previousCenter.x * session.viewport.scale,
+    );
+    expect(reconciled.viewport.y + nextCenter.y * reconciled.viewport.scale).toBe(
+      session.viewport.y + previousCenter.y * session.viewport.scale,
+    );
+  });
+
+  it("retains survivor positions for prose-only and graph-only updates", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000091");
+    const manual = {
+      A: { x: 501, y: 502 },
+      B: { x: 503, y: 504 },
+      C: { x: 505, y: 506 },
+    };
+    const session = { ...createStructureSession(value), positions: manual };
+    const proseOnly: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: {
+        ...value.presentation!,
+        thesis: "A revised thesis that does not carry geometry.",
+        regions: value.presentation!.regions.map((region) => ({
+          ...region,
+          label: `Renamed ${region.label}`,
+        })),
+      },
+    };
+    const proseReconciled = reconcileStructureSession(proseOnly, session);
+    expect(proseReconciled.positions).toEqual(manual);
+    expect(proseReconciled.viewport).toEqual(session.viewport);
+
+    const graphOnly: Structure = {
+      ...proseOnly,
+      updatedAt: "2026-08-30T00:02:00.000Z",
+      nodes: [
+        ...proseOnly.nodes,
+        {
+          id: "D",
+          label: "D",
+          description: null,
+          kind: null,
+          notation: "plain",
+          anchor: null,
+        },
+      ],
+      edges: [
+        ...proseOnly.edges,
+        { id: "cd", from: "C", to: "D", label: "C to D", directed: true, anchors: [] },
+      ],
+    };
+    const graphReconciled = reconcileStructureSession(graphOnly, proseReconciled);
+    expect(graphReconciled.positions.A).toEqual(manual.A);
+    expect(graphReconciled.positions.B).toEqual(manual.B);
+    expect(graphReconciled.positions.C).toEqual(manual.C);
+    expect(graphReconciled.positions.D).toBeDefined();
+  });
+
+  it("centers replacement geometry when no Node survives a rebase", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000088");
+    const session = {
+      ...createStructureSession(value),
+      focusId: "B",
+      positions: {
+        A: { x: 10_000, y: 4_000 },
+        B: { x: 10_600, y: 4_400 },
+        C: { x: 11_200, y: 4_800 },
+      },
+      viewport: { x: -10_100, y: -4_050, scale: 1.25 },
+      surfaceSize: { width: 800, height: 600 },
+    };
+    const updated: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      originNodeId: "X",
+      nodes: ["X", "Y"].map((nodeId) => ({
+        ...value.nodes[0]!,
+        id: nodeId,
+        label: nodeId,
+        anchor: nodeId === "X" ? value.nodes[0]!.anchor : null,
+      })),
+      edges: [{ id: "xy", from: "X", to: "Y", label: "X to Y", directed: true, anchors: [] }],
+      presentation: {
+        thesis: "The replacement has no stable Node identity.",
+        startNodeId: "X",
+        primarySpine: { nodeIds: ["X", "Y"], edgeIds: ["xy"] },
+        regions: [],
+      },
+    };
+
+    const reconciled = reconcileStructureSession(updated, session);
+    const xs = Object.values(reconciled.positions).map(({ x }) => x);
+    const ys = Object.values(reconciled.positions).map(({ y }) => y);
+    const center = {
+      x: (Math.min(...xs) + Math.max(...xs) + 228) / 2,
+      y: (Math.min(...ys) + Math.max(...ys) + 112) / 2,
+    };
+    expect(reconciled.focusId).toBeNull();
+    expect(reconciled.viewport.scale).toBe(session.viewport.scale);
+    expect(reconciled.viewport.x + center.x * reconciled.viewport.scale).toBe(400);
+    expect(reconciled.viewport.y + center.y * reconciled.viewport.scale).toBe(300);
+  });
+
+  it("reconciles a cached closed-tab session before restoring it", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000090");
+    const cached = {
+      ...createStructureSession(value),
+      positions: {
+        A: { x: 701, y: 702 },
+        B: { x: 703, y: 704 },
+        C: { x: 705, y: 706 },
+      },
+    };
+    setStructureSession("left", value.id, cached);
+    const updated: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: {
+        ...value.presentation!,
+        primarySpine: { nodeIds: ["A", "C", "B"], edgeIds: ["ac", "bc"] },
+      },
+    };
+
+    const restored = reconcileStructureSession(updated, getStructureSession("left", value.id)!);
+    expect(restored.positions).toEqual(initialStructureLayout(updated));
+    expect(restored.layoutBasisKey).toBe(structureLayoutBasisKey(updated));
+    deleteStructureSessions(value.id);
+  });
+
+  it("keeps the focused Node at the same screen coordinate when resetting geometry", () => {
+    const viewport = { x: -120, y: 70, scale: 1.75 };
+    const previousPositions = { focus: { x: 720, y: 410 } };
+    const nextPositions = { focus: { x: 64, y: 96 } };
+    const nextViewport = preserveStructureLayoutScreenPosition({
+      viewport,
+      surfaceSize: { width: 800, height: 600 },
+      nodeId: "focus",
+      nodeIds: ["focus"],
+      previousPositions,
+      nextPositions,
+    });
+    expect(nextViewport.scale).toBe(viewport.scale);
+    expect(nextViewport.x + nextPositions.focus.x * nextViewport.scale).toBe(
+      viewport.x + previousPositions.focus.x * viewport.scale,
+    );
+    expect(nextViewport.y + nextPositions.focus.y * nextViewport.scale).toBe(
+      viewport.y + previousPositions.focus.y * viewport.scale,
+    );
   });
 });

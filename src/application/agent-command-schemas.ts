@@ -20,6 +20,7 @@ import {
   MAX_STRUCTURE_LABEL_CHARACTERS,
   MAX_STRUCTURE_NODES,
   MAX_STRUCTURE_PAYLOAD_BYTES,
+  MAX_STRUCTURE_PRIMARY_SPINE_NODES,
   MAX_STRUCTURE_PRESENTATION_REGIONS,
   MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
   MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
@@ -292,10 +293,20 @@ const structurePresentationInputSchema = z
       .string()
       .transform((value) => value.trim())
       .pipe(z.string().min(1).max(MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS)),
+    startNodeId: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
     primarySpine: z
-      .array(z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN))
-      .min(2)
-      .max(MAX_STRUCTURE_NODES),
+      .object({
+        nodeIds: z
+          .array(z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN))
+          .min(2)
+          .max(MAX_STRUCTURE_PRIMARY_SPINE_NODES),
+        edgeIds: z
+          .array(z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN))
+          .min(1)
+          .max(MAX_STRUCTURE_PRIMARY_SPINE_NODES - 1),
+      })
+      .strict()
+      .nullable(),
     regions: z
       .array(
         z
@@ -337,7 +348,8 @@ function refineStructureContent(
     }>;
     presentation: {
       thesis: string;
-      primarySpine: string[];
+      startNodeId: string;
+      primarySpine: { nodeIds: string[]; edgeIds: string[] } | null;
       regions: Array<{ label: string; nodeIds: string[] }>;
     } | null;
   },
@@ -420,41 +432,81 @@ function refineStructureContent(
     }
   }
   if (value.presentation !== null) {
-    const spineNodeIds = new Set<string>();
-    for (const [index, nodeId] of value.presentation.primarySpine.entries()) {
-      if (spineNodeIds.has(nodeId)) {
-        context.addIssue({
-          code: "custom",
-          path: ["presentation", "primarySpine", index],
-          message: "primarySpineのNode IDが重複しています。",
-        });
-      }
-      spineNodeIds.add(nodeId);
-      if (!nodeIds.has(nodeId)) {
-        context.addIssue({
-          code: "custom",
-          path: ["presentation", "primarySpine", index],
-          message: "primarySpineのNodeが存在しません。",
-        });
-      }
+    if (!nodeIds.has(value.presentation.startNodeId)) {
+      context.addIssue({
+        code: "custom",
+        path: ["presentation", "startNodeId"],
+        message: "startNodeIdのNodeが存在しません。",
+      });
     }
-    for (let index = 1; index < value.presentation.primarySpine.length; index += 1) {
-      const previous = value.presentation.primarySpine[index - 1]!;
-      const current = value.presentation.primarySpine[index]!;
-      if (
-        nodeIds.has(previous) &&
-        nodeIds.has(current) &&
-        !value.edges.some(
-          (edge) =>
-            (edge.from === previous && edge.to === current) ||
-            (edge.from === current && edge.to === previous),
-        )
-      ) {
+    if (value.presentation.primarySpine === null && value.presentation.regions.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["presentation"],
+        message: "presentationにはprimarySpineまたはregionを少なくとも一つ指定してください。",
+      });
+    }
+    const primarySpine = value.presentation.primarySpine;
+    if (primarySpine !== null) {
+      const spineNodeIds = new Set<string>();
+      for (const [index, nodeId] of primarySpine.nodeIds.entries()) {
+        if (spineNodeIds.has(nodeId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "primarySpine", "nodeIds", index],
+            message: "primarySpineのNode IDが重複しています。",
+          });
+        }
+        spineNodeIds.add(nodeId);
+        if (!nodeIds.has(nodeId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "primarySpine", "nodeIds", index],
+            message: "primarySpineのNodeが存在しません。",
+          });
+        }
+      }
+      if (primarySpine.nodeIds[0] !== value.presentation.startNodeId) {
         context.addIssue({
           code: "custom",
-          path: ["presentation", "primarySpine", index],
-          message: `primarySpineの隣接Node間にEdgeがありません: ${previous} ↔ ${current}`,
+          path: ["presentation", "primarySpine", "nodeIds", 0],
+          message: "primarySpineの先頭NodeはstartNodeIdと一致させてください。",
         });
+      }
+      if (primarySpine.edgeIds.length !== primarySpine.nodeIds.length - 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["presentation", "primarySpine", "edgeIds"],
+          message: "primarySpineのedgeIdsは隣接Node pairごとに一件指定してください。",
+        });
+      }
+      const edgeById = new Map(value.edges.map((edge) => [edge.id, edge]));
+      for (const [index, edgeId] of primarySpine.edgeIds.entries()) {
+        const edge = edgeById.get(edgeId);
+        if (edge === undefined) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "primarySpine", "edgeIds", index],
+            message: "primarySpineのEdgeが存在しません。",
+          });
+          continue;
+        }
+        const previous = primarySpine.nodeIds[index];
+        const current = primarySpine.nodeIds[index + 1];
+        if (
+          previous !== undefined &&
+          current !== undefined &&
+          !(
+            (edge.from === previous && edge.to === current) ||
+            (edge.from === current && edge.to === previous)
+          )
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "primarySpine", "edgeIds", index],
+            message: `primarySpineのEdgeが対応する隣接Nodeを結んでいません: ${previous} ↔ ${current}`,
+          });
+        }
       }
     }
     const regionByNodeId = new Map<string, number>();
@@ -487,18 +539,39 @@ function refineStructureContent(
         if (assignedRegionIndex === undefined) regionByNodeId.set(nodeId, regionIndex);
       }
     }
-    let previousSpineRegionIndex = -1;
-    for (const [spineIndex, nodeId] of value.presentation.primarySpine.entries()) {
-      const regionIndex = regionByNodeId.get(nodeId);
-      if (regionIndex === undefined) continue;
-      if (regionIndex < previousSpineRegionIndex) {
-        context.addIssue({
-          code: "custom",
-          path: ["presentation", "primarySpine", spineIndex],
-          message: "primarySpine上のregion所属はregionsの順序に沿って非減少にしてください。",
-        });
-      } else {
-        previousSpineRegionIndex = regionIndex;
+    if (primarySpine !== null) {
+      let previousSpineRegionIndex = -1;
+      const firstSpineIndexByRegion = new Map<number, number>();
+      const lastSpineIndexByRegion = new Map<number, number>();
+      for (const [spineIndex, nodeId] of primarySpine.nodeIds.entries()) {
+        const regionIndex = regionByNodeId.get(nodeId);
+        if (regionIndex === undefined) continue;
+        if (regionIndex < previousSpineRegionIndex) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "primarySpine", "nodeIds", spineIndex],
+            message: "primarySpine上のregion所属はregionsの順序に沿って非減少にしてください。",
+          });
+        } else {
+          previousSpineRegionIndex = regionIndex;
+        }
+        if (!firstSpineIndexByRegion.has(regionIndex)) {
+          firstSpineIndexByRegion.set(regionIndex, spineIndex);
+        }
+        lastSpineIndexByRegion.set(regionIndex, spineIndex);
+      }
+      for (const [regionIndex, firstSpineIndex] of firstSpineIndexByRegion) {
+        const lastSpineIndex = lastSpineIndexByRegion.get(regionIndex)!;
+        for (let spineIndex = firstSpineIndex; spineIndex <= lastSpineIndex; spineIndex += 1) {
+          const nodeId = primarySpine.nodeIds[spineIndex]!;
+          if (regionByNodeId.get(nodeId) === regionIndex) continue;
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "primarySpine", "nodeIds", spineIndex],
+            message: "同じregionに属するprimarySpine Nodeは連続した区間にしてください。",
+          });
+          break;
+        }
       }
     }
   }

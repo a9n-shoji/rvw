@@ -4,6 +4,10 @@ import {
   walkthroughRepositoryText,
 } from "../../e2e/walkthrough-fixture.mjs";
 
+// This fixture is also executed directly by plain Node before the TypeScript build emits
+// runtime shims, so keep its protocol-boundary assertion self-contained.
+const MAX_STRUCTURE_PRIMARY_SPINE_NODES = 12;
+
 const primaryStructureId = "80000000-0000-4000-8000-000000000001";
 const secondaryStructureId = "80000000-0000-4000-8000-000000000002";
 const fullStackStructureId = "80000000-0000-4000-8000-000000000003";
@@ -821,15 +825,26 @@ const fullStackStructureEdges = [
 const fullStackStructurePresentation = {
   thesis:
     "注文詳細はbackendのread modelから共有response契約を越え、frontendのquery stateとして画面へ届く。",
-  primarySpine: [
-    "order-detail-route",
-    "get-order-query",
-    "order-response-presenter",
-    "order-detail-contract",
-    "order-api-client",
-    "order-detail-query-hook",
-    "order-detail-page",
-  ],
+  startNodeId: "order-detail-route",
+  primarySpine: {
+    nodeIds: [
+      "order-detail-route",
+      "get-order-query",
+      "order-response-presenter",
+      "order-detail-contract",
+      "order-api-client",
+      "order-detail-query-hook",
+      "order-detail-page",
+    ],
+    edgeIds: [
+      "detail-route-executes-query",
+      "detail-query-presents-result",
+      "detail-presenter-returns-contract",
+      "detail-response-enters-client",
+      "detail-client-provides-hook-result",
+      "detail-hook-provides-page-state",
+    ],
+  },
   regions: [
     {
       label: "HTTP boundary",
@@ -935,26 +950,48 @@ export function validateContractStructureFixture() {
       throw new Error(`${structure.title} origin is not a current Node`);
     }
     if (!structure.presentation) continue;
+    if (!nodeIds.has(structure.presentation.startNodeId)) {
+      throw new Error(`${structure.title} presentation start is not a current Node`);
+    }
     const primarySpine = structure.presentation.primarySpine;
-    if (new Set(primarySpine).size !== primarySpine.length) {
-      throw new Error(`${structure.title} primary spine repeats a Node`);
-    }
-    for (const nodeId of primarySpine) {
-      if (!nodeIds.has(nodeId)) {
-        throw new Error(`${structure.title} primary spine targets missing Node ${nodeId}`);
-      }
-    }
-    for (let index = 1; index < primarySpine.length; index += 1) {
-      const left = primarySpine[index - 1];
-      const right = primarySpine[index];
+    if (primarySpine) {
       if (
-        !structure.edges.some(
-          (edge) =>
-            (edge.from === left && edge.to === right) || (edge.from === right && edge.to === left),
-        )
+        primarySpine.nodeIds.length < 2 ||
+        primarySpine.nodeIds.length > MAX_STRUCTURE_PRIMARY_SPINE_NODES
       ) {
-        throw new Error(`${structure.title} primary spine has no Edge for ${left} -> ${right}`);
+        throw new Error(
+          `${structure.title} primary spine must contain 2–${MAX_STRUCTURE_PRIMARY_SPINE_NODES} Nodes`,
+        );
       }
+      if (new Set(primarySpine.nodeIds).size !== primarySpine.nodeIds.length) {
+        throw new Error(`${structure.title} primary spine repeats a Node`);
+      }
+      if (primarySpine.nodeIds[0] !== structure.presentation.startNodeId) {
+        throw new Error(`${structure.title} primary spine does not start at presentation start`);
+      }
+      if (primarySpine.edgeIds.length !== primarySpine.nodeIds.length - 1) {
+        throw new Error(`${structure.title} primary spine Edge count does not match its Node path`);
+      }
+      for (const nodeId of primarySpine.nodeIds) {
+        if (!nodeIds.has(nodeId)) {
+          throw new Error(`${structure.title} primary spine targets missing Node ${nodeId}`);
+        }
+      }
+      for (let index = 0; index < primarySpine.edgeIds.length; index += 1) {
+        const left = primarySpine.nodeIds[index];
+        const right = primarySpine.nodeIds[index + 1];
+        const edge = structure.edges.find(({ id }) => id === primarySpine.edgeIds[index]);
+        if (
+          !edge ||
+          !((edge.from === left && edge.to === right) || (edge.from === right && edge.to === left))
+        ) {
+          throw new Error(
+            `${structure.title} primary spine Edge does not join ${left} -> ${right}`,
+          );
+        }
+      }
+    } else if (structure.presentation.regions.length === 0) {
+      throw new Error(`${structure.title} presentation has no spatial organizer`);
     }
     const regionByNodeId = new Map();
     structure.presentation.regions.forEach((region, regionIndex) => {
@@ -968,14 +1005,25 @@ export function validateContractStructureFixture() {
         regionByNodeId.set(nodeId, regionIndex);
       }
     });
-    let previousRegionIndex = -1;
-    for (const nodeId of primarySpine) {
-      const regionIndex = regionByNodeId.get(nodeId);
-      if (regionIndex === undefined) continue;
-      if (regionIndex < previousRegionIndex) {
-        throw new Error(`${structure.title} primary spine contradicts ordered regions`);
+    if (primarySpine) {
+      const encounteredRegionIndexes = primarySpine.nodeIds.map((nodeId) =>
+        regionByNodeId.get(nodeId),
+      );
+      for (let spineIndex = 0; spineIndex < encounteredRegionIndexes.length; spineIndex += 1) {
+        const regionIndex = encounteredRegionIndexes[spineIndex];
+        if (regionIndex === undefined) continue;
+        const previousOccurrence =
+          spineIndex === 0 ? -1 : encounteredRegionIndexes.lastIndexOf(regionIndex, spineIndex - 1);
+        if (previousOccurrence >= 0 && previousOccurrence !== spineIndex - 1) {
+          throw new Error(`${structure.title} region is not contiguous on the primary spine`);
+        }
+        const previousAssignedRegion = encounteredRegionIndexes
+          .slice(0, spineIndex)
+          .findLast((candidate) => candidate !== undefined);
+        if (previousAssignedRegion !== undefined && regionIndex < previousAssignedRegion) {
+          throw new Error(`${structure.title} primary spine contradicts ordered regions`);
+        }
       }
-      previousRegionIndex = regionIndex;
     }
   }
 

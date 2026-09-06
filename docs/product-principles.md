@@ -77,7 +77,7 @@ Agentが実装やarchitectureを説明する場合、成立を保証するsource
 Walkthroughは、順序とprose自体がartifactである意図的な読解pathである。Structureは、PRに関係する
 boundedなbehaviorをfactualなcode entrypointから依存、contract、side effectへ任意の方向に辿りながら、
 同時に見渡せるspatial explanationである。Agentはsubject、scope、entrypoint、stableなNode / Edge ID、
-exact source anchorに加え、必要ならthesis、connectedなprimary spine、ordered regionをauthorial semanticsとして
+exact source anchorに加え、必要ならthesis、authorial start、optionalなexact-Edge primary spine、ordered regionをauthorial semanticsとして
 提示できる。これは座標や一本道のstepperではない。座標、pan、zoom、manual positionは人間の一時的な
 reading stateに留める。表示範囲を1-hop / 2-hopへ明示的に絞ることはできるが、
 Allでrelationを暗黙に隠さない。高次数になるsubjectはscopeを分ける。PRで検証するbehaviorに接地しない
@@ -86,9 +86,12 @@ Allでrelationを暗黙に隠さない。高次数になるsubjectはscopeを分
 
 Structureはneutralなgraph viewerではなく、Walkthroughやcode readingで形成したmental modelを、変更された
 behaviorを成立させる責務とrelationへ位置付け直すreading surfaceである。factual graph、authorial
-presentation、ephemeral reviewer sessionを混ぜない。presentationがあればviewerはprimary spineとordered regionを
+presentation、ephemeral reviewer sessionを混ぜない。presentationがあればviewerはauthorial start、optionalな
+2〜12 Nodeのexact-Edge primary spine、ordered regionを
 base map、初期orientation、visual emphasisへ反映し、なければfactsとentrypointからtopology projectionを作る。
-primary spineはこの説明で先に掴むbackboneというauthorialな優先と強調を表すが、runtime順、Edge方向、
+region orderはreading priorityであってraw座標ではなく、region-only mapは順序を失わないboundedな複数行配置へ折り返せる。
+membershipは明示Node IDと対応するR badge / legendで示し、人間が動かしたNodeを囲うgeometryから推測しない。
+primary spineはこの説明で先に掴む2〜12 Nodeのbackboneというauthorialな優先と強調を表すが、runtime順、Edge方向、
 project全体でのarchitectural importance、completeness、review conclusionは主張しない。人間は同じ空間を俯瞰、局所探索、
 exact source確認、再俯瞰の順に往復し、全Node / Edgeとsourceを自由に検証できる。
 filterで配置を組み替えず、Allへ戻ってもcameraを維持することで、局所で確かめたことを同じ全体像へ戻して

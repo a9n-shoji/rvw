@@ -68,11 +68,12 @@ export interface StructureRenderRegion {
   index: number;
   label: string;
   nodeIds: readonly string[];
-  bounds: StructureBox;
 }
 
 export interface StructureRenderPresentation {
   thesis: string;
+  primarySpineNodeOrder: readonly string[];
+  primarySpineEdgeOrder: readonly string[];
   primarySpineNodeIds: ReadonlySet<string>;
   primarySpineEdgeIds: ReadonlySet<string>;
   regions: readonly StructureRenderRegion[];
@@ -628,61 +629,40 @@ export function buildStructureRenderModel(input: {
   );
   const presentation = structure.presentation
     ? (() => {
+        const structureNodeIds = new Set(structure.nodes.map(({ id }) => id));
+        const structureEdgeIds = new Set(structure.edges.map(({ id }) => id));
+        const primarySpineNodeOrder =
+          structure.presentation.primarySpine?.nodeIds.filter((nodeId) =>
+            structureNodeIds.has(nodeId),
+          ) ?? [];
+        const primarySpineEdgeOrder =
+          structure.presentation.primarySpine?.edgeIds.filter((edgeId) =>
+            structureEdgeIds.has(edgeId),
+          ) ?? [];
         const primarySpineNodeIds = new Set(
-          structure.presentation.primarySpine.filter((nodeId) => renderNodeIds.has(nodeId)),
-        );
-        const adjacentSpinePairs = new Set(
-          structure.presentation.primarySpine
-            .slice(1)
-            .map((nodeId, index) =>
-              JSON.stringify(
-                [structure.presentation!.primarySpine[index]!, nodeId].sort(stableCompare),
-              ),
-            ),
+          primarySpineNodeOrder.filter((nodeId) => renderNodeIds.has(nodeId)),
         );
         const primarySpineEdgeIds = new Set(
-          edges
-            .filter(({ edge }) =>
-              adjacentSpinePairs.has(JSON.stringify([edge.from, edge.to].sort(stableCompare))),
-            )
-            .map(({ edge }) => edge.id),
+          primarySpineEdgeOrder.filter((edgeId) => edgeIds.has(edgeId)),
         );
         const regions = structure.presentation.regions.flatMap((region, index) => {
-          const regionNodes = region.nodeIds.flatMap((nodeId) => {
-            const point = positions[nodeId];
-            return renderNodeIds.has(nodeId) && point
-              ? [
-                  {
-                    nodeId,
-                    box: {
-                      left: point.x,
-                      top: point.y,
-                      right: point.x + STRUCTURE_NODE_WIDTH,
-                      bottom: point.y + STRUCTURE_NODE_HEIGHT,
-                    },
-                  },
-                ]
-              : [];
-          });
-          const memberBounds = mergedBounds(regionNodes.map(({ box }) => box));
-          return memberBounds
+          const regionNodeIds = region.nodeIds.filter(
+            (nodeId) => renderNodeIds.has(nodeId) && positions[nodeId],
+          );
+          return regionNodeIds.length > 0
             ? [
                 {
                   index,
                   label: region.label,
-                  nodeIds: regionNodes.map(({ nodeId }) => nodeId),
-                  bounds: {
-                    left: memberBounds.left - 32,
-                    top: memberBounds.top - 38,
-                    right: memberBounds.right + 32,
-                    bottom: memberBounds.bottom + 28,
-                  },
+                  nodeIds: regionNodeIds,
                 },
               ]
             : [];
         });
         return {
           thesis: structure.presentation.thesis,
+          primarySpineNodeOrder,
+          primarySpineEdgeOrder,
           primarySpineNodeIds,
           primarySpineEdgeIds,
           regions,
@@ -701,7 +681,6 @@ export function buildStructureRenderModel(input: {
       labelBox(placement.x, placement.y, placement.boxWidth, placement.height, 4),
     ),
   );
-  boxes.push(...(presentation?.regions.map((region) => region.bounds) ?? []));
   return { nodes, edges, labels, presentation, bounds: mergedBounds(boxes) };
 }
 

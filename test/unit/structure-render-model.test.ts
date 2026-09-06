@@ -89,12 +89,16 @@ function renderStructure(): Structure {
 }
 
 describe("Structure shared render model", () => {
-  it("derives shared region bounds and factual primary-spine Edges from presentation", () => {
+  it("derives exact region membership and factual primary-spine Edges from presentation", () => {
     const structure: Structure = {
       ...renderStructure(),
       presentation: {
         thesis: "The request crosses a stable boundary.",
-        primarySpine: ["node-0", "node-1"],
+        startNodeId: "node-0",
+        primarySpine: {
+          nodeIds: ["node-0", "node-1"],
+          edgeIds: ["parallel"],
+        },
         regions: [
           { label: "Ingress", nodeIds: ["node-0", "node-2"] },
           { label: "Execution", nodeIds: ["node-1", "node-3"] },
@@ -108,17 +112,141 @@ describe("Structure shared render model", () => {
     });
 
     expect(model.presentation?.thesis).toBe(structure.presentation!.thesis);
+    expect(model.presentation?.primarySpineNodeOrder).toEqual(["node-0", "node-1"]);
+    expect(model.presentation?.primarySpineEdgeOrder).toEqual(["parallel"]);
     expect([...model.presentation!.primarySpineNodeIds].sort()).toEqual(["node-0", "node-1"]);
-    expect([...model.presentation!.primarySpineEdgeIds].sort()).toEqual([
-      "forward",
-      "parallel",
-      "reverse",
-    ]);
+    expect([...model.presentation!.primarySpineEdgeIds]).toEqual(["parallel"]);
     expect(model.presentation?.regions.map(({ label }) => label)).toEqual(["Ingress", "Execution"]);
-    expect(model.presentation!.regions[0]!.bounds.right).toBeLessThan(
-      model.presentation!.regions[1]!.bounds.left,
-    );
-    expect(model.bounds!.left).toBeLessThanOrEqual(model.presentation!.regions[0]!.bounds.left);
+    expect(model.presentation?.regions.map(({ nodeIds }) => nodeIds)).toEqual([
+      ["node-0", "node-2"],
+      ["node-1", "node-3"],
+    ]);
+  });
+
+  it("keeps generated presentation metadata deterministic across input order", () => {
+    for (let caseIndex = 0; caseIndex < 40; caseIndex += 1) {
+      const spineCount = 2 + (caseIndex % 4);
+      const regionCount = 1 + (caseIndex % Math.min(3, spineCount));
+      const spineIds = Array.from({ length: spineCount }, (_, index) => `spine-${index}`);
+      const regionIndexBySpineIndex = spineIds.map((_, index) =>
+        Math.min(regionCount - 1, Math.floor((index * regionCount) / spineCount)),
+      );
+      const regionExtraIds = Array.from({ length: regionCount }, (_, index) => [
+        `region-${index}-near`,
+        `region-${index}-far`,
+      ]);
+      const unassignedIds = ["branch-z", "branch-m", "branch-a"];
+      const nodeIds = [...spineIds, ...regionExtraIds.flat(), ...unassignedIds];
+      const spineEdgeIds = spineIds.slice(1).map((_, index) => `spine-edge-${index}`);
+      const structure: Structure = {
+        ...renderStructure(),
+        originNodeId: spineIds[0]!,
+        nodes: nodeIds.map((id) => ({
+          id,
+          label: id,
+          description: null,
+          kind: null,
+          notation: "plain",
+          anchor: null,
+        })),
+        edges: [
+          ...spineEdgeIds.map((id, index) => ({
+            id,
+            from: spineIds[index]!,
+            to: spineIds[index + 1]!,
+            label: "continues",
+            directed: true,
+            anchors: [],
+          })),
+          ...regionExtraIds.flatMap(([nearId, farId], regionIndex) => {
+            const spineIndex = regionIndexBySpineIndex.indexOf(regionIndex);
+            return [
+              {
+                id: `${nearId}-edge`,
+                from: spineIds[spineIndex]!,
+                to: nearId!,
+                label: "relates",
+                directed: true,
+                anchors: [],
+              },
+              {
+                id: `${farId}-edge`,
+                from: nearId!,
+                to: farId!,
+                label: "relates",
+                directed: true,
+                anchors: [],
+              },
+            ];
+          }),
+          {
+            id: "branch-z-edge",
+            from: spineIds[0]!,
+            to: "branch-z",
+            label: "branches",
+            directed: true,
+            anchors: [],
+          },
+          {
+            id: "branch-m-edge",
+            from: "branch-z",
+            to: "branch-m",
+            label: "continues",
+            directed: true,
+            anchors: [],
+          },
+          {
+            id: "branch-a-edge",
+            from: "branch-m",
+            to: "branch-a",
+            label: "continues",
+            directed: true,
+            anchors: [],
+          },
+        ],
+        presentation: {
+          thesis: "Generated presentation.",
+          startNodeId: spineIds[0]!,
+          primarySpine: caseIndex % 3 === 0 ? null : { nodeIds: spineIds, edgeIds: spineEdgeIds },
+          regions: Array.from({ length: regionCount }, (_, regionIndex) => ({
+            label: `Region ${regionIndex}`,
+            nodeIds: [
+              ...spineIds.filter(
+                (_, spineIndex) => regionIndexBySpineIndex[spineIndex] === regionIndex,
+              ),
+              ...regionExtraIds[regionIndex]!,
+            ],
+          })),
+        },
+      };
+      const firstPositions = initialStructureLayout(structure);
+      const model = buildFullStructureRenderModel({
+        structure,
+        positions: firstPositions,
+        sourceChangeKinds: new Map(),
+      });
+
+      expect(
+        initialStructureLayout({
+          ...structure,
+          nodes: [...structure.nodes].reverse(),
+          edges: [...structure.edges].reverse(),
+        }),
+      ).toEqual(firstPositions);
+      expect(
+        model.presentation?.regions.map(({ index, label, nodeIds }) => ({
+          index,
+          label,
+          nodeIds,
+        })),
+      ).toEqual(
+        structure.presentation!.regions.map((region, index) => ({
+          index,
+          label: region.label,
+          nodeIds: region.nodeIds,
+        })),
+      );
+    }
   });
 
   it("builds every Node, Edge, and Edge label with complete bounds", () => {

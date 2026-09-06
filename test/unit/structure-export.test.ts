@@ -90,9 +90,18 @@ function documentFor(structure = exportStructure()) {
 describe("Structure SVG export", () => {
   it("exports authored thesis, ordered regions, and primary spine without session state", () => {
     const structure = exportStructure();
+    structure.edges.push({
+      id: "edge-parallel",
+      from: "node-0",
+      to: "node-1",
+      label: "parallel but not primary",
+      directed: false,
+      anchors: [],
+    });
     structure.presentation = {
       thesis: 'Flow <starts> here & stays factual "throughout".',
-      primarySpine: ["node-0", "node-1"],
+      startNodeId: "node-0",
+      primarySpine: { nodeIds: ["node-0", "node-1"], edgeIds: ["edge-0"] },
       regions: [
         { label: "Input & validation", nodeIds: ["node-0", "node-2"] },
         { label: "Execution <core>", nodeIds: ["node-1", "node-3"] },
@@ -106,12 +115,29 @@ describe("Structure SVG export", () => {
     );
     expect(document.source).toContain('data-presentation-region-index="0"');
     expect(document.source).toContain('data-presentation-region-label="Input &amp; validation"');
+    expect(document.source).toContain('data-layer="presentation-region-members"');
+    expect(document.source.match(/data-presentation-region-member-node-id=/gu)).toHaveLength(4);
+    expect(document.source).toContain('data-presentation-region-member-node-id="node-0"');
+    expect(document.source).toContain("Region R1: Input &amp; validation");
+    expect(document.source).toContain("REGIONS · R1 Input &amp; validation (2 Nodes)");
+    expect(document.source).toContain("START · Very long &lt;entry&gt; &amp; label");
+    expect(document.source).toContain(
+      "SPINE · P1–P2 is spatial reading priority, not execution sequence",
+    );
+    expect(document.source).not.toContain('data-layer="presentation-regions"');
     expect(document.source).toContain('data-edge-id="edge-0" data-primary-spine="true"');
+    expect(document.source).toMatch(/data-edge-id="edge-parallel"(?![^>]*data-primary-spine)/u);
     expect(document.source).toContain('data-node-id="node-0" data-node-notation="plain"');
     expect(document.source).toContain('data-node-primary-spine-mark="true"');
+    expect(document.source).toContain('data-node-primary-spine-order-mark="1"');
+    expect(document.source).toContain('data-node-primary-spine-order-mark="2"');
+    expect(document.source).toContain('data-presentation-start-node="true"');
+    expect(document.source).toContain('data-node-presentation-start-mark="true"');
     expect(document.source).toContain('data-node-origin-mark="true"');
     expect(document.source).not.toContain("selected-edge");
     expect(document.source).not.toContain("focus-id");
+    expect(document.source).toContain("Spatial reading priority 1");
+    expect(document.source).toContain("Factual graph origin");
     expect(model.presentation?.regions).toHaveLength(2);
   });
 

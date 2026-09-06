@@ -3,7 +3,25 @@
   "title": "Markdown source mapping",
   "scope": "The committed mapping between Markdown AST positions, rendered selection, highlights, and comment anchors. Markdown parsing and comment persistence are excluded.",
   "originNodeId": "source-map-plugin",
-  "presentation": null,
+  "presentation": {
+    "thesis": "The source-map plugin turns one rendered Markdown coordinate contract into several independently explorable review interactions.",
+    "startNodeId": "source-map-plugin",
+    "primarySpine": null,
+    "regions": [
+      {
+        "label": "Composition",
+        "nodeIds": ["source-map-plugin"]
+      },
+      {
+        "label": "Rendered coordinates",
+        "nodeIds": ["source-position-decoration", "source-position-model"]
+      },
+      {
+        "label": "Review interactions",
+        "nodeIds": ["range-highlights", "comment-anchor-placement", "selection-source-range"]
+      }
+    ]
+  },
   "nodes": [
     {
       "id": "source-position-model",

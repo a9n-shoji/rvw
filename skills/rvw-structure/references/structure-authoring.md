@@ -131,21 +131,35 @@ For a non-null presentation:
 - Write a nonblank `thesis` of 1–1000 characters that states what the whole map should help the reviewer
   understand. It may synthesize the graph's source-supported claims, but must not announce a review
   finding, approval, risk verdict, or completeness guarantee.
-- Choose one `primarySpine` of 2–50 unique current Node IDs. It is the backbone to grasp first in this
-  explanation and determines authorial reading priority and emphasis. Every consecutive pair must have
-  a factual Edge in either direction. Do not invent an Edge, reverse its endpoints, or change its
-  predicate to make the spine valid. The spine does not claim runtime order or project-wide
-  architectural importance, and it need not start at or contain `originNodeId`.
+- Choose one current `startNodeId` as the first authorial attention anchor. It may differ from
+  `originNodeId`: start says where this explanation first asks the reviewer to look, while origin says
+  where source verification of the behavior factually begins.
+- Use `primarySpine: null` when this explanation has no single defensible backbone, including honest
+  hub, fan-out, convergence, or reciprocal shapes. In that case, provide at least one useful region.
+  Do not manufacture a path or distort the factual graph to satisfy a presentation template.
+- Otherwise choose one `primarySpine` object with 2–12 unique current `nodeIds` and exactly one current
+  Edge ID per adjacent pair in `edgeIds`. The first Node must equal `startNodeId`. The selected Edge is
+  the exact relation to emphasize, including when parallel or reciprocal Edges join the same pair.
+  It may connect the pair in either factual direction. Do not invent an Edge, reverse its endpoints,
+  change its predicate, or select every relation between the pair. The spine is the backbone to grasp
+  first; it does not claim runtime order or project-wide architectural importance. The 12-Node cap is
+  intentional: select the explanatory backbone instead of turning the spine into an exhaustive tour.
+  Use regions, narrow the behavior boundary, or choose a Walkthrough when a longer ordered route is
+  what carries the explanation.
 - Add 0–12 `regions` only when named spatial groupings clarify this subject. Each has a nonblank
   1–100-character `label` and one or more unique current Node IDs. A Node may be both on the spine and in
   one region, but it may not occur in more than one region. Regions are authorial groupings, not new
   factual relations, subsystem ownership, or permission to expand the Structure into a static inventory.
-- Region array order is left to right. After ignoring spine Nodes that belong to no region, their region
-  indexes must be nondecreasing along the spine. Reorder the regions, revise the spine, or leave a spine
-  Node ungrouped rather than declaring contradictory spatial orders.
+- Region array order is the author's reading priority, not a raw coordinate claim. A renderer keeps that
+  order unambiguous and may wrap a region-only map into further rows to keep the overview bounded. When
+  a spine exists, the spine Nodes belonging to each region must form one contiguous
+  interval, and those intervals must follow region array order. Do not put an unassigned or differently
+  grouped spine Node between two members of one region: one comprehension chunk must not be interleaved
+  across the backbone. Reorder or redefine the regions instead. Exact Node IDs, not an enclosing shape,
+  define membership after a reviewer manually moves Nodes.
 
 A non-null presentation influences canonical placement, initial orientation, and visual emphasis. A
-new session initially focuses `primarySpine[0]`; `originNodeId` remains separately marked as the factual
+new session initially focuses `startNodeId`; `originNodeId` remains separately marked as the factual
 entrypoint. The initial focus is derived from the current artifact and does not persist reviewer focus or
 give the producer browser control. All Nodes, Edges, directions, and source actions remain available for
 free exploration. Do not author coordinates, viewport, focus, manual positions, multiple routes,
@@ -209,11 +223,14 @@ Use this checklist internally; do not reproduce it as the Structure description.
       packed condition or explanation.
 - [ ] `presentation` is present; `null` is intentional, or its thesis states a source-consistent spatial
       explanation without a review conclusion or completeness claim.
-- [ ] A non-null primary spine contains 2–50 unique current Node IDs, each consecutive pair has a factual
-      Edge in either direction, and its order was not encoded by changing factual Edge direction.
-- [ ] Every non-null region has a concise label and current unique Node IDs, no Node belongs to multiple
-      regions, and assigned spine Nodes encounter region indexes in nondecreasing order.
-- [ ] Presentation describes one visual backbone and useful spatial groupings without coordinates,
+- [ ] A non-null presentation has a current attention start and at least one useful spatial organizer:
+      an exact-Edge spine or one or more regions; no fake spine was added for a hub, fan-out, convergence,
+      or reciprocal space.
+- [ ] A non-null primary spine contains 2–12 unique current Node IDs, starts at `startNodeId`, and names
+      exactly one current Edge joining each consecutive pair without changing factual Edge direction.
+- [ ] Every region has a concise label and current unique Node IDs, no Node belongs to multiple regions,
+      and each region's spine members form one contiguous interval in declared region order.
+- [ ] Presentation describes at most one visual backbone and useful spatial groupings without coordinates,
       multiple routes, hidden content, static inventory, stepper behavior, or autoplay.
 - [ ] IDs are unique, semantic, and stable across updates; removed IDs are not recycled.
 - [ ] `originNodeId` names the existing source-established factual code entrypoint where review of this

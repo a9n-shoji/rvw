@@ -228,9 +228,15 @@ export interface StructurePresentationRegion {
   nodeIds: string[];
 }
 
+export interface StructurePresentationSpine {
+  nodeIds: string[];
+  edgeIds: string[];
+}
+
 export interface StructurePresentation {
   thesis: string;
-  primarySpine: string[];
+  startNodeId: string;
+  primarySpine: StructurePresentationSpine | null;
   regions: StructurePresentationRegion[];
 }
 

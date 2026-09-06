@@ -169,7 +169,7 @@ Agentは現在内容を読み、同じ`rvw://walkthrough/<uuid>`を更新して�
 
 外部Agentは単一Artifact producerである`rvw-structure` SkillとCLIを使い、PRに関係する一つのboundedな
 behaviorをfactualなcode entrypointからdependency、contract、side effectへ辿る空間として提示できます。
-thesis、一本のconnectedなprimary spine、
+thesis、最初に見るNode、必要な場合だけ2〜12 Nodeの一本のexact-Edge primary spine、
 ordered regionで同時に見渡せる説明の意図を表せます。順序とprose自体がartifactならWalkthroughです。
 entrypointを置けない静的なarchitecture／責務inventoryはStructureへ広げません。
 
@@ -182,20 +182,25 @@ rvw structure delete rvw://structure/<uuid> --json
 ```
 
 Structureは一つのexact `sourceOid`、宣言されたtitle / scope、entrypoint、stableなNode / Edge ID、required nullableな
-`presentation`からなります。presentationはraw座標ではなく、thesis、隣接pairがfactual Edgeでつながるprimary spine、
+`presentation`からなります。presentationはraw座標ではなく、thesis、authorialなattention start、隣接pairを
+exactなfactual Edge IDで結ぶ2〜12 Nodeのoptionalなprimary spine、
 重複しないordered regionからなるauthorial semanticsです。
 Nodeは0または1件、Edgeは0件以上のsource anchorを持ち、rvwはcommit、UTF-8 path、line pair、endpoint、
 重複ID、presentation参照と順序、sizeを保存前に検証します。publish / updateはbrowserやnavigationを操作しません。
-publish / update前には同じgraph contentをpreviewし、canonical layout diagnosticsとauthoring warningから
+publish / update前には同じgraph contentをpreviewし、presentationに依存しないtopology diagnosticsとauthoring warningから
 origin、granularity、behavior / subject boundaryを再確認できます。warningは保存を拒否せず、graphを自動変更しません。
 
 presentationがあればcanonical配置、初期orientation、visual emphasisへ反映し、なければ従来のtopology projectionを
-使います。presentation付きの新規sessionは`primarySpine[0]`から始まり、factual entrypointのoriginは別に示します。
+使います。presentation付きの新規sessionは`startNodeId`から始まり、factual entrypointのoriginは別に示します。
+header直下のoverviewではthesis、exact relationを含むreading spine、ordered region legendを先に読め、
+primary spineの強調、region memberのR badge、minimapでcanvas上の位置へ対応付けられます。region membershipは囲い枠ではなく明示Node IDに
+基づくため、manual drag後も変わりません。region-only mapは宣言順を保つbounded gridへ折り返します。
 viewerではfocusがある時に1-hop / 2-hopへ絞り、Allでは全Node / Edgeを表示します。relationを次数やIDで
 暗黙に隠さず、pan、zoom、fit、node drag、layout resetで探索できます。通常clickでexact sourceを左、
 `Cmd` / `Ctrl`+clickで右ペインへ開きます。globalなcommit選択は
 変えません。node位置とviewportは同じbrowser sessionで保持しますが、SQLiteやAgent protocolへ座標を
-保存しません。同じsubjectの更新は同じURIを完全置換し、存続するIDの位置を保ちます。別subjectは新しい
+保存しません。同じsubjectの更新は同じURIを完全置換します。通常は存続するIDの位置を保ちますが、start、spine Node order、
+region membership/orderが変われば、新しいspatial semanticsへcanonical geometryをrebaseします。別subjectは新しい
 Structureとしてpublishします。
 
 Structure headerの`Export`から、現在のNode配置を保った図全体をstandalone SVGまたは2倍基準のPNGとして
@@ -284,7 +289,7 @@ Walkthrough全体へのコメントから説明を改善する場合は、現在
 「改訂版」を追加しません。
 
 Structureを作る場合は、behavior、entrypoint、scope、含める／除外する関係と、必要なら伝えたいthesis、
-primary spine、regionを伝えて`rvw-structure` Skillを使います。
+最初に見るNode、exact relationのprimary spine、regionを伝えて`rvw-structure` Skillを使います。
 Skillは上位composerを含む明示briefを調査boundaryのauthorityとして一つのbounded behaviorだけを扱い、suggested
 entrypointやrelationを実際のcommit済みcodeから再検証して、labelではなくclaimのidentityとしてstable IDを割り当てます。
 PR全体の構成や別behaviorのArtifactは自律的に増やしません。順序とprose自体が本質ならWalkthroughを提案し、

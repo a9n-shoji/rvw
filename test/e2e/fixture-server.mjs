@@ -1448,6 +1448,13 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
     );
   }
   const input = await context.req.json();
+  if (Object.hasOwn(input, "presentation")) {
+    structure.title = input.title ?? structure.title;
+    structure.presentation = structuredClone(input.presentation);
+    structure.updatedAt = new Date(Date.parse(structure.updatedAt) + 1_000).toISOString();
+    bump("structures");
+    return context.json({ ok: true, structure });
+  }
   if (input.clearFocus) {
     structure.title = input.title ?? "Order placement behavior without focus";
     structure.originNodeId = input.replacementOrigin ?? "http-controller";
@@ -1570,13 +1577,17 @@ app.post("/api/fixture/structures/:structureId/source-lifecycle", async (context
     edge.anchors[anchorIndex] = input.anchor;
   }
   if (input.removeNodeId) {
-    if (structure.presentation?.primarySpine.includes(input.removeNodeId)) {
+    if (
+      structure.presentation?.startNodeId === input.removeNodeId ||
+      structure.presentation?.primarySpine?.nodeIds.includes(input.removeNodeId)
+    ) {
       return context.json(
         {
           ok: false,
           error: {
             code: "INVALID_STRUCTURE_PRESENTATION",
-            message: "cannot remove a primary-spine Node from this lifecycle fixture",
+            message:
+              "cannot remove the presentation start or a primary-spine Node from this fixture",
           },
         },
         400,

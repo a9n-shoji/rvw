@@ -538,7 +538,7 @@ rvw structure preview --stdin --json
 Preview accepts the same normalized content as publish/update: `sourceOid`, `title`, `scope`,
 `originNodeId`, required nullable `presentation`, `nodes`, and `edges`, without persisted identity, Pull
 Request identity, idempotency, or compare-and-swap fields. It performs pure graph and presentation
-validation and canonical initial projection only;
+validation plus neutral topology diagnostics only;
 it does not initialize a database, repository runtime, or Agent socket and does not resolve files.
 Success returns `{ "ok": true, "layout": { ... }, "warnings": [...] }`. Layout contains
 `columnCount`, `rowsPerColumn`, `maxRows`, `directionalLinkCount`,
@@ -561,9 +561,13 @@ The current codes and conditions are:
 
 - `STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION`: the origin has zero outgoing canonical
   directional links.
-- `STRUCTURE_LAYOUT_MAX_ROWS_HIGH`: the canonical projection has `maxRows >= 8`.
-- `STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH`: the canonical projection has a
-  non-forward directional-link ratio of at least `0.25`.
+- `STRUCTURE_LAYOUT_MAX_ROWS_HIGH`: the presentation-independent topology diagnostic has `maxRows >= 8`.
+- `STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH`: the presentation-independent topology
+  diagnostic has a non-forward directional-link ratio of at least `0.25`.
+
+All layout fields are calculated from the factual topology, origin, and stable IDs, even when the
+Viewer uses a non-null presentation for display geometry. They diagnose graph shape without treating a
+reverse authorial reading order as a wrong Edge direction.
 
 Consumers branch on `code`, never on the display-oriented `message`, and ignore unknown warning
 codes. Future warning codes may be added to protocol v5 without changing the protocol version;
@@ -589,7 +593,11 @@ The stdin value is:
   "originNodeId": "request-policy",
   "presentation": {
     "thesis": "The request decision is grounded in one committed input contract.",
-    "primarySpine": ["policy-input", "request-policy"],
+    "startNodeId": "policy-input",
+    "primarySpine": {
+      "nodeIds": ["policy-input", "request-policy"],
+      "edgeIds": ["request-policy-consumes-input"]
+    },
     "regions": [
       {
         "label": "Decision contract",
@@ -651,18 +659,29 @@ Node `notation` is optional and normalizes to `plain`; accepted values are `plai
 `database`, `interface`, `component`, `external`, and `concept`. Notation affects Node rendering only;
 it is not part of the authorial `presentation` contract.
 
-A non-null `presentation` has a 1–1000-character `thesis`, a `primarySpine` of 2–50 unique current Node
-IDs, and 0–12 `regions`. Every consecutive spine pair must have a factual Edge in either direction;
-spine order never rewrites that direction. Each region has a 1–100-character label and one or more
-unique current Node IDs. A Node may be on the spine and in one region, but may not occur in multiple
-regions. After skipping spine Nodes outside every region, the encountered region indexes must be
-nondecreasing. Presentation expresses the backbone to grasp first and its spatial groupings, not
-runtime order, architectural importance, completeness, review findings, or coordinates.
+A non-null `presentation` has a 1–1000-character `thesis`, a current `startNodeId`, an optional
+`primarySpine`, and 0–12 `regions`. It must contain either a spine or at least one region. The start is
+the first authorial attention anchor and is independent of the factual `originNodeId`. A non-null spine
+has 2–12 unique current `nodeIds` and exactly `nodeIds.length - 1` current `edgeIds`; its first Node is
+the start. Each Edge must join the corresponding consecutive Node pair in either factual direction, so
+parallel and reciprocal relations are never emphasized ambiguously and spine order never rewrites Edge
+direction. Each region has a 1–100-character label and one or more unique current Node IDs. A Node may
+be on the spine and in one region, but may not occur in multiple regions. Each region's spine members
+must form one contiguous interval, and those intervals follow region array order. Region order is
+authorial reading priority rather than a raw coordinate claim; a renderer may wrap region-only chunks
+into a bounded multirow layout while keeping that order unambiguous. Exact Node IDs define membership. Presentation
+expresses the reading anchor, an optional backbone to grasp first, and spatial chunks—not runtime order,
+architectural importance, completeness, review findings, or coordinates.
+
+The primary-spine limit is 12 Nodes and therefore 11 Edge IDs, independently of the 50-Node graph
+limit. The spine is a compact first-grasp backbone, not an exhaustive authored tour through the graph.
 
 The viewer uses a non-null presentation for canonical placement, initial orientation, and visual
-emphasis, and starts a new session at `primarySpine[0]`. That initial focus is derived from the current
+emphasis, and starts a new session at `startNodeId`. That initial focus is derived from the current
 artifact, not persisted or remote-controlled session state; `originNodeId` remains a distinct factual
-entrypoint marker. With `presentation: null`, the prior topology projection and origin-based initial
+entrypoint marker. A screen-space overview exposes the thesis, exact-relation reading spine, and ordered
+region legend; matching member badges avoid treating manual geometry as region membership. With
+`presentation: null`, the prior topology projection and origin-based initial
 focus/orientation remain. Both cases retain every Node, Edge, direction, source action, and free
 exploration; Structure is never an autoplay or stepper.
 
@@ -818,7 +837,7 @@ deliberately avoids a fixed template, an exhaustive review boundary, and AI-revi
 upstream brief's subject, review question, behavior boundary, scope, inclusions, exclusions, and emphasis
 and requested spatial presentation authoring priority, independently verifies every suggested origin,
 relation, invariant, and other implementation assertion in committed code, and publishes stable-ID Node
-and Edge claims plus an optional thesis, connected primary spine, and ordered regions at one exact commit. It
+and Edge claims plus an optional thesis, attention start, exact-relation primary spine, and ordered regions at one exact commit. It
 does not choose PR-wide coverage, the type mix, or companion Artifacts, but it retains the local rejection
 boundaries for ordered prose or transition paths, missing factual origins, and static inventories. It also
 rejects giant or inferred graphs, vague relationships, raw coordinates or reviewer-state instructions, implicit

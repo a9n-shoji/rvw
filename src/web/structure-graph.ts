@@ -86,13 +86,12 @@ export function visibleStructureGraph(
 }
 
 /**
- * Canonical behavior map derived from topology plus the authored entrypoint.
- * Unambiguous directed relations form readable left-to-right ranks; branches use
- * vertical whitespace and topology-derived ordering. Undirected or reciprocal
- * pairs and self-relations do not force an axis; same-direction parallel edges
- * contribute one pair-level signal. Authored display content never affects
- * geometry. Stable IDs only resolve otherwise symmetric ordering, so Reset
- * returns the same graph to the same projection.
+ * Canonical behavior map derived from factual topology and optional authorial
+ * spatial presentation. Presented maps use the declared attention start,
+ * optional exact-Edge spine, and ordered regions without accepting coordinates;
+ * null presentation uses the factual entrypoint and topology-only ranks. Stable
+ * IDs only resolve otherwise symmetric ordering, so Reset returns the same
+ * artifact to the same projection.
  */
 export function initialStructureLayout(structure: Structure): Record<string, StructurePoint> {
   return Object.fromEntries(projectStructure(structure).positionsByNodeId);

@@ -22,7 +22,6 @@ import type { DocumentPaneId } from "../document-workspace.js";
 import {
   incidentStructureEdges,
   initialStructureLayout,
-  reconcileStructureLayout,
   STRUCTURE_NODE_HEIGHT,
   STRUCTURE_NODE_WIDTH,
   structureLayoutBounds,
@@ -36,6 +35,8 @@ import {
   getStructureSession,
   initialStructureViewport,
   MIN_STRUCTURE_ZOOM,
+  preserveStructureLayoutScreenPosition,
+  reconcileStructureSession,
   scaledStructureZoom,
   setStructureSession,
   type StructureViewport,
@@ -58,6 +59,7 @@ import {
 import { ChangeIcon } from "./FileTree.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { StructureExportMenu } from "./StructureExportMenu.js";
+import { StructurePresentationOverview } from "./StructurePresentationOverview.js";
 
 const STRUCTURE_WHEEL_PAN_SENSITIVITY = 2;
 const STRUCTURE_TRACKPAD_ZOOM_SENSITIVITY = 0.005;
@@ -213,25 +215,57 @@ function StructureMiniMap({
     : null;
   const mapX = (x: number): number => (x - bounds.minX) * scale;
   const mapY = (y: number): number => (y - bounds.minY) * scale;
+  const primarySpineNodeIds = new Set(structure.presentation?.primarySpine?.nodeIds ?? []);
+  const primarySpinePoints = (structure.presentation?.primarySpine?.nodeIds ?? []).flatMap(
+    (nodeId) => {
+      const point = positions[nodeId];
+      return point
+        ? [
+            `${mapX(point.x + STRUCTURE_NODE_WIDTH / 2)},${mapY(point.y + STRUCTURE_NODE_HEIGHT / 2)}`,
+          ]
+        : [];
+    },
+  );
+  const presentationStartPoint = structure.presentation
+    ? positions[structure.presentation.startNodeId]
+    : undefined;
   return (
     <svg
       className="structure-minimap"
       viewBox={`0 0 ${mapWidth} ${mapHeight}`}
       aria-label="Structure minimap"
     >
+      {primarySpinePoints.length >= 2 && (
+        <polyline
+          className="structure-minimap-primary-spine"
+          points={primarySpinePoints.join(" ")}
+        />
+      )}
       {structure.nodes.map((node) => {
         const point = positions[node.id];
         if (!point) return null;
+        const classes = [
+          node.id === focusedNodeId ? "focused" : null,
+          primarySpineNodeIds.has(node.id) ? "primary-spine" : null,
+        ].filter((value): value is string => value !== null);
         return (
           <circle
             key={node.id}
             cx={mapX(point.x + STRUCTURE_NODE_WIDTH / 2)}
             cy={mapY(point.y + STRUCTURE_NODE_HEIGHT / 2)}
             r={node.id === focusedNodeId ? 3.2 : 1.7}
-            className={node.id === focusedNodeId ? "focused" : ""}
+            className={classes.join(" ")}
           />
         );
       })}
+      {presentationStartPoint && (
+        <circle
+          className="structure-minimap-presentation-start"
+          cx={mapX(presentationStartPoint.x + STRUCTURE_NODE_WIDTH / 2)}
+          cy={mapY(presentationStartPoint.y + STRUCTURE_NODE_HEIGHT / 2)}
+          r="4.6"
+        />
+      )}
       {viewportWorld && (
         <rect
           className="structure-minimap-viewport"
@@ -270,8 +304,16 @@ export function StructureViewer({
   onDeleted: () => void;
 }) {
   const domId = `structure-${paneId}-${structure.id}`;
-  const cachedSession = getStructureSession(paneId, structure.id);
-  const initial = cachedSession ?? createStructureSession(structure);
+  const [initialState] = useState(() => {
+    const cachedSession = getStructureSession(paneId, structure.id);
+    return {
+      hadCachedSession: cachedSession !== undefined,
+      session: cachedSession
+        ? reconcileStructureSession(structure, cachedSession)
+        : createStructureSession(structure),
+    };
+  });
+  const initial = initialState.session;
   const [focusId, setFocusId] = useState(initial.focusId);
   const [selectedEdgeId, setSelectedEdgeId] = useState(initial.selectedEdgeId);
   const [depth, setDepth] = useState<StructureNeighborhoodDepth>(initial.depth);
@@ -285,11 +327,14 @@ export function StructureViewer({
   const surfaceSizeRef = useRef(initial.surfaceSize);
   const focusIdRef = useRef(focusId);
   const positionsRef = useRef(positions);
+  const sessionStateRef = useRef(initial);
   const observedStructureRef = useRef({
     sourceOid: structure.sourceOid,
     updatedAt: structure.updatedAt,
   });
-  const pendingViewportActionRef = useRef<"initial" | null>(cachedSession ? null : "initial");
+  const pendingViewportActionRef = useRef<"initial" | null>(
+    initialState.hadCachedSession ? null : "initial",
+  );
   const appliedNavigationRequestRef = useRef<number | null>(null);
   const panRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const dragRef = useRef<{
@@ -301,6 +346,16 @@ export function StructureViewer({
   } | null>(null);
   focusIdRef.current = focusId;
   positionsRef.current = positions;
+  sessionStateRef.current = {
+    focusId,
+    selectedEdgeId,
+    depth,
+    positions,
+    viewport,
+    surfaceSize: surfaceSizeRef.current,
+    layoutBasisKey: sessionStateRef.current.layoutBasisKey,
+    updatedAt: sessionStateRef.current.updatedAt,
+  };
 
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
@@ -410,8 +465,11 @@ export function StructureViewer({
   }, []);
 
   useEffect(() => {
-    const previous = getStructureSession(paneId, structure.id);
-    if (previous?.updatedAt === structure.updatedAt) return;
+    const previous = sessionStateRef.current;
+    const next = reconcileStructureSession(structure, previous);
+    if (previous.updatedAt === next.updatedAt && previous.layoutBasisKey === next.layoutBasisKey) {
+      return;
+    }
     const observed = observedStructureRef.current;
     if (observed.updatedAt !== structure.updatedAt) {
       setStatus(
@@ -424,32 +482,29 @@ export function StructureViewer({
       sourceOid: structure.sourceOid,
       updatedAt: structure.updatedAt,
     };
-    setPositions((current) => reconcileStructureLayout(structure, current));
-    const retainedFocus =
-      focusIdRef.current && structure.nodes.some((node) => node.id === focusIdRef.current)
-        ? focusIdRef.current
-        : null;
-    const nextFocus = retainedFocus;
-    setFocusId(nextFocus);
-    if (nextFocus === null) {
-      setDepth("all");
-    }
-    setSelectedEdgeId((current) =>
-      current && structure.edges.some((edge) => edge.id === current) ? current : null,
-    );
-  }, [paneId, structure, structure.updatedAt]);
+    sessionStateRef.current = next;
+    focusIdRef.current = next.focusId;
+    positionsRef.current = next.positions;
+    setFocusId(next.focusId);
+    setSelectedEdgeId(next.selectedEdgeId);
+    setDepth(next.depth);
+    setPositions(next.positions);
+    setViewport(next.viewport);
+  }, [structure]);
 
   useEffect(() => {
-    setStructureSession(paneId, structure.id, {
-      focusId,
-      selectedEdgeId,
-      depth,
-      positions,
-      viewport,
-      surfaceSize: surfaceSizeRef.current,
-      updatedAt: structure.updatedAt,
-    });
-  }, [depth, focusId, positions, paneId, selectedEdgeId, structure.updatedAt, viewport]);
+    setStructureSession(paneId, structure.id, sessionStateRef.current);
+  }, [
+    depth,
+    focusId,
+    positions,
+    paneId,
+    selectedEdgeId,
+    structure.id,
+    structure.updatedAt,
+    surfaceSize,
+    viewport,
+  ]);
 
   const visible = useMemo(
     () => visibleStructureGraph(structure, focusId, depth),
@@ -472,6 +527,10 @@ export function StructureViewer({
     () => (focusId ? incidentStructureEdges(structure, focusId) : []),
     [focusId, structure],
   );
+  const primarySpineEdgeIds = useMemo(
+    () => new Set(structure.presentation?.primarySpine?.edgeIds ?? []),
+    [structure.presentation],
+  );
   const sourceChangeKinds = useMemo(() => {
     const result = new Map<string, ChangeKind>();
     for (const change of changedFiles) {
@@ -492,11 +551,12 @@ export function StructureViewer({
               (!focusId ||
                 edge.from === focusId ||
                 edge.to === focusId ||
-                edge.id === selectedEdgeId),
+                edge.id === selectedEdgeId ||
+                primarySpineEdgeIds.has(edge.id)),
           )
           .map((edge) => edge.id),
       ),
-    [focusId, selectedEdgeId, structure.edges, visible.edgeIds],
+    [focusId, primarySpineEdgeIds, selectedEdgeId, structure.edges, visible.edgeIds],
   );
   const renderModel = useMemo(
     () =>
@@ -636,7 +696,18 @@ export function StructureViewer({
   };
 
   const resetLayout = (): void => {
-    setPositions(initialStructureLayout(structure));
+    const nextPositions = initialStructureLayout(structure);
+    setViewport((current) =>
+      preserveStructureLayoutScreenPosition({
+        viewport: current,
+        surfaceSize: surfaceSizeRef.current,
+        nodeId: focusIdRef.current,
+        nodeIds: structure.nodes.map((node) => node.id),
+        previousPositions: positionsRef.current,
+        nextPositions,
+      }),
+    );
+    setPositions(nextPositions);
   };
 
   const focusNode = (nodeId: string, recenter = false): void => {
@@ -848,12 +919,11 @@ export function StructureViewer({
           </button>
         </div>
       </header>
-      {structure.presentation && (
-        <div className="structure-thesis-strip" role="note" aria-label="Structure thesis">
-          <strong>Thesis</strong>
-          <span title={structure.presentation.thesis}>{structure.presentation.thesis}</span>
-        </div>
-      )}
+      <StructurePresentationOverview
+        structure={structure}
+        focusedNodeId={focusId}
+        onFocusNode={(nodeId) => focusNode(nodeId, true)}
+      />
       <div className="structure-body">
         <div className="structure-toolbar" aria-label="Structure表示操作">
           <div className="structure-toolbar-group" role="group" aria-label="近傍の深さ">
@@ -956,22 +1026,28 @@ export function StructureViewer({
                 transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
               }}
             >
-              {renderedPresentation?.regions.map((region) => (
-                <div
-                  key={`region:${region.index}`}
-                  className="structure-region"
-                  data-region-index={region.index}
-                  aria-hidden="true"
-                  style={{
-                    left: region.bounds.left,
-                    top: region.bounds.top,
-                    width: region.bounds.right - region.bounds.left,
-                    height: region.bounds.bottom - region.bounds.top,
-                  }}
-                >
-                  <span title={region.label}>{region.label}</span>
-                </div>
-              ))}
+              {renderedPresentation?.regions.flatMap((region) =>
+                region.nodeIds.flatMap((nodeId) => {
+                  const point = positions[nodeId];
+                  if (!point) return [];
+                  return [
+                    <span
+                      key={`region:${region.index}:${nodeId}`}
+                      className="structure-region-member"
+                      data-region-index={region.index}
+                      data-region-node-id={nodeId}
+                      title={`Region ${region.index + 1}: ${region.label}`}
+                      aria-hidden="true"
+                      style={{
+                        left: point.x + STRUCTURE_NODE_WIDTH - 25,
+                        top: point.y - 14,
+                      }}
+                    >
+                      R{region.index + 1}
+                    </span>,
+                  ];
+                }),
+              )}
               <svg
                 className="structure-edges"
                 width={worldWidth}
@@ -1020,13 +1096,14 @@ export function StructureViewer({
                   const changeKind = source.changeKind;
                   const fromNode = nodesById.get(edge.from);
                   const toNode = nodesById.get(edge.to);
+                  const primarySpine =
+                    renderedPresentation?.primarySpineEdgeIds.has(edge.id) ?? false;
                   const relationLabel = edge.directed
                     ? `${fromNode?.label ?? edge.from} から ${toNode?.label ?? edge.to} へ: ${edge.label}`
                     : `${fromNode?.label ?? edge.from} と ${toNode?.label ?? edge.to} の関係: ${edge.label}`;
+                  const accessibleRelationLabel = `${relationLabel}${primarySpine ? " · spatial reading spine relation" : ""}`;
                   const selected = edge.id === selectedEdgeId;
                   const muted = selectedEdgeId !== null && !selected;
-                  const primarySpine =
-                    renderedPresentation?.primarySpineEdgeIds.has(edge.id) ?? false;
                   return (
                     <div
                       key={`label:${edge.id}`}
@@ -1041,7 +1118,7 @@ export function StructureViewer({
                         type="button"
                         className={`structure-edge-select${selected ? " selected" : ""}`}
                         title={edge.label}
-                        aria-label={relationLabel}
+                        aria-label={accessibleRelationLabel}
                         aria-pressed={selected}
                         style={{ maxWidth: selectWidth }}
                         onClick={() =>
@@ -1069,6 +1146,9 @@ export function StructureViewer({
                 const selected = node.id === focusId;
                 const primarySpine =
                   renderedPresentation?.primarySpineNodeIds.has(node.id) ?? false;
+                const primarySpineIndex =
+                  renderedPresentation?.primarySpineNodeOrder.indexOf(node.id) ?? -1;
+                const presentationStart = structure.presentation?.startNodeId === node.id;
                 const presentationRegion = presentationRegionByNodeId.get(node.id);
                 const incidentToFocus = incident.some(
                   (edge) => edge.from === node.id || edge.to === node.id,
@@ -1076,11 +1156,15 @@ export function StructureViewer({
                 return (
                   <div
                     key={node.id}
-                    className={`structure-node notation-${node.notation}${node.id === structure.originNodeId ? " origin" : ""}${primarySpine ? " primary-spine" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
+                    className={`structure-node notation-${node.notation}${node.id === structure.originNodeId ? " origin" : ""}${presentationStart ? " presentation-start" : ""}${primarySpine ? " primary-spine" : ""}${selected ? " focused" : ""}${incidentToFocus ? " neighboring" : ""}${selectedEdgeNodeIds.has(node.id) ? " edge-endpoint" : ""}`}
                     data-node-id={node.id}
                     data-node-notation={node.notation}
                     data-origin-node={node.id === structure.originNodeId ? "true" : undefined}
+                    data-presentation-start-node={presentationStart ? "true" : undefined}
                     data-primary-spine={primarySpine ? "true" : undefined}
+                    data-primary-spine-order={
+                      primarySpineIndex >= 0 ? primarySpineIndex + 1 : undefined
+                    }
                     data-region-index={presentationRegion?.index}
                     data-region-label={presentationRegion?.label}
                     data-source-change-kind={changeKind ?? undefined}
@@ -1098,10 +1182,17 @@ export function StructureViewer({
                       surfaceRef.current?.setPointerCapture(event.pointerId);
                     }}
                   >
+                    {presentationStart && (
+                      <span
+                        className="structure-node-presentation-start"
+                        aria-hidden="true"
+                        title="Authorial start"
+                      />
+                    )}
                     <button
                       type="button"
                       className="structure-node-focus"
-                      aria-label={`${node.label}${primarySpine ? " · primary spine" : ""}${presentationRegion ? ` · region ${presentationRegion.label}` : ""}`}
+                      aria-label={`${node.label}${node.id === structure.originNodeId ? " · factual origin" : ""}${presentationStart ? " · authorial start" : ""}${primarySpineIndex >= 0 ? ` · spatial reading priority ${primarySpineIndex + 1} of ${renderedPresentation?.primarySpineNodeOrder.length ?? 0}` : ""}${presentationRegion ? ` · region R${presentationRegion.index + 1}: ${presentationRegion.label}` : ""}`}
                       aria-pressed={selected}
                       onClick={(event) => {
                         if (event.detail === 0) focusNode(node.id);

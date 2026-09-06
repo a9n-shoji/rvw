@@ -76,7 +76,7 @@ independently useful ownership maps or every concept in the Pull Request.
 
 Choose a Structure when the reviewer needs to explore a bounded behavior through responsibilities,
 ownership, dependencies, contracts, or side effects from a factual code origin. It may contain factual
-direction and may use an authorial thesis, connected primary spine, and ordered regions to prioritize
+direction and may use an authorial thesis, attention start, optional exact-relation primary spine of at most 12 Nodes, and ordered regions to prioritize
 how the simultaneously visible space is first understood. Do not use it for a sequence whose meaning
 depends on prose between stops, route transitions, or a required ending.
 
@@ -157,7 +157,7 @@ scope.include: responsibilities and relations needed for the question
 scope.exclude: adjacent behaviors or inventories to omit
 mustEstablish: candidate node, relation, and boundary claims to verify from source evidence
 emphasis: optional user-requested detail or risk emphasis
-presentation: optional requested thesis, connected visual backbone, and ordered regions; never raw coordinates or reviewer state
+presentation: optional requested thesis, attention start, at most one exact-relation visual backbone, and ordered regions; never raw coordinates or reviewer state
 existingArtifact: optional explicitly supplied URI for the same subject
 ```
 

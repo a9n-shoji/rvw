@@ -3,9 +3,18 @@
 This record captures the production authoring trial performed while implementing Structure. The
 examples were authored from a fresh inspection of repository commit
 `e1702ec717f2c9eae88ab9debd63a7a8e7e70864`; they were not copied from the Phase 0 spike fixtures.
-They are complete protocol-v5 Structure update values, including required nullable `presentation`, so a
-caller can add a Pull Request reference for a publish request. Automated tests parse the production
+They are complete protocol-v5 Structure content/preview values, including required nullable
+`presentation`. A caller adds `pullRequest` and `idempotencyKey` to publish one, or
+`expectedUpdatedAt` to update an existing Structure in place. Automated tests parse the production
 schema and verify every anchor against that exact Git object.
+
+After the protocol-v5 presentation contract was tightened to an explicit attention start, an optional
+exact-Edge spine, and ordered exact-membership regions, all three values were run through the built
+production `structure preview --stdin --json` path again. They passed without warnings: Agent transport
+reported 5 columns with at most 2 rows, Markdown source mapping reported 4 columns with at most 2 rows,
+and Skill distribution reported 3 columns with at most 2 rows. These preview metrics deliberately
+describe factual topology diagnostics; they do not freeze the Viewer's presentation-aware coordinates
+or region packing as protocol semantics.
 
 ## Generated Structures
 
@@ -15,10 +24,10 @@ schema and verify every anchor against that exact Git object.
 - Result: six nodes and six edges represented the CLI selection, socket client, validation, schemas,
   dispatch, and diagnostic policy at one consistent boundary level, beginning at the CLI service-call
   entrypoint.
-- Presentation observation: the thesis names the boundary, the connected primary spine prioritizes the
+- Presentation observation: the thesis names the boundary, the exact-Edge primary spine prioritizes the
   CLI-to-dispatch backbone, and two disjoint regions place transport diagnostics beside the client
   segment and operation schemas beside validation/dispatch. No Edge direction was changed to obtain the
-  spatial order, and assigned spine Nodes encounter the two regions in nondecreasing order.
+  spatial order, and each region occupies one contiguous spine interval in declared order.
 - Scope/granularity observation: excluding socket ownership and viewer lifecycle kept the subject a
   relationship space. Adding those lifecycle operations made the graph turn into a startup sequence
   and would be better handled by a Walkthrough.
@@ -43,7 +52,9 @@ schema and verify every anchor against that exact Git object.
   Structure subject. Inspection first identified the concrete source-position mapping behavior and its
   plugin entrypoint; the resulting map then included only responsibilities participating in that
   behavior. Unrelated uses of the same Markdown utilities remained outside the Structure.
-- Presentation observation: `null` deliberately keeps this graph as a topology-derived comparison case.
+- Presentation observation: this fan-out/convergence space has no honest single backbone. The authorial
+  start and three ordered regions expose composition, rendered coordinates, and independently usable
+  review interactions with `primarySpine: null`, rather than manufacturing a linear route.
 
 ### Bundled Skill distribution boundary
 
@@ -61,16 +72,18 @@ schema and verify every anchor against that exact Git object.
 
 ## Presentation dogfood criteria
 
-Start evaluation with thesis + one primary spine + ordered regions, not thesis alone or multiple routes.
-A thesis alone cannot shape the map, while multiple authored routes make priority ambiguous and drift
-toward Walkthrough. For each dogfood subject, compare the non-null presentation with the same factual
+Start evaluation with thesis + attention start + the smallest honest combination of one optional exact-Edge
+primary spine and ordered regions, not thesis alone or multiple routes. A thesis alone cannot shape the
+map, while multiple authored routes make priority ambiguous and drift toward Walkthrough. A hub, fan-out,
+convergence, or reciprocal space should use regions without a spine when no single backbone is defensible.
+For each dogfood subject, compare the non-null presentation with the same factual
 graph set to `null` and record:
 
 - whether a reviewer can state the behavior, the backbone to grasp first, and the meaning of each region
   after an initial scan, without mistaking the spine for runtime order or architectural importance;
-- whether the spine uses only current IDs and factual adjacent Edges, region membership is disjoint, and
-  assigned spine Nodes encounter region indexes in nondecreasing order;
-- whether canonical placement, initial focus at `primarySpine[0]`, orientation, and emphasis visibly
+- whether the start is current, the spine selects one exact current Edge for every adjacent Node pair,
+  region membership is disjoint, and each region's spine members form one contiguous interval in region order;
+- whether canonical placement, initial focus at `startNodeId`, orientation, and emphasis visibly
   improve the intended explanation over the null topology projection;
 - whether every off-spine and ungrouped Node, every Edge and direction, free focus/pan/zoom/drag, and every
   source action remain available and understandable;
@@ -97,5 +110,6 @@ had no PR-review stopping condition and does not belong in Structure.
 The production Skill therefore makes the Structure/Walkthrough choice explicit, requires a factual
 entrypoint for new authoring, permits unanchored concept nodes only under declared authority, treats all
 anchors as claims at one exact commit, and requires in-place updates to retain IDs only for surviving
-claims of the same subject. Its presentation contract adds one source-consistent thesis, one connected
-primary spine, and ordered disjoint regions without adding raw layout or reviewer-session state.
+claims of the same subject. Its presentation contract adds one source-consistent thesis, one attention
+start, at most one exact-Edge primary spine, and ordered disjoint regions without adding raw layout or
+reviewer-session state.
