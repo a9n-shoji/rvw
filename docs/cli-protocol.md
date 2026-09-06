@@ -1,4 +1,4 @@
-# CLI protocol v4
+# CLI protocol v5
 
 Version 1 is the first public compatibility contract. Pre-public internal version numbers were not
 released or supported; after the first public release, protocol versions only increase for breaking
@@ -12,7 +12,11 @@ idempotency keys are additive fields and do not change existing callers. Version
 nullable `lastModifiedBy` provenance to comment-post output so consumers can distinguish trusted
 Agent and human write channels. Structure read, list, canonical preview, idempotent publish,
 compare-and-swap update, and compare-and-swap delete are additive version-4 capabilities and do not
-change existing command schemas.
+change existing command schemas. Version 5 makes nullable Structure `presentation` a required input and
+output field and advertises `structure.presentation`; legacy saved graph JSON without the field reads as
+`null`. A non-null presentation gives each comprehension Region a stable ID and a concise responsibility
+summary. Region arrays are canonicalized by stable ID rather than carrying authored reading or spatial
+order.
 
 This protocol carries human review decisions from rvw's repository reading surface to an external
 Agent, lets an explicitly authorized Agent record review findings, and lets that Agent publish a
@@ -510,10 +514,12 @@ resolving. Deletion does not remove the retained Git commit ref because other re
 
 ## Structure lifecycle
 
-Structures expose one current relationship graph under a stable URI. A Structure is a bounded
-PR-relevant behavior space with a factual code entrypoint, while a Walkthrough is an ordered path.
+Structures expose one current relationship graph and optional authorial spatial presentation under a
+stable URI. A Structure is a bounded PR-relevant behavior space visible as one explorable map, while a
+Walkthrough makes ordered prose itself the artifact.
 Generic static architecture and responsibility inventories are outside the producer contract. rvw does
-not infer nodes or edges, store layout coordinates, retain Structure revisions, or provide a version selector.
+not infer nodes or edges, store layout coordinates/focus/viewport/manual positions, retain Structure
+revisions, or provide a version selector.
 
 Read the current value before replacing or deleting it:
 
@@ -522,7 +528,8 @@ rvw structure get <STRUCTURE_URI> --json
 ```
 
 The response contains the complete Structure and its Pull Request identity, including the local
-repository path. It does not contain browser focus, positions, viewport, or expansion state.
+repository path. Version-5 output always contains `presentation`; a legacy saved value without it is
+normalized to `null`. It does not contain browser focus, framed Region, positions, viewport, or expansion state.
 
 ### Preview
 
@@ -530,9 +537,10 @@ repository path. It does not contain browser focus, positions, viewport, or expa
 rvw structure preview --stdin --json
 ```
 
-Preview accepts the same normalized graph content as publish/update: `sourceOid`, `title`, `scope`,
-`originNodeId`, `nodes`, and `edges`, without persisted identity, Pull Request identity, idempotency,
-or compare-and-swap fields. It performs pure graph validation and canonical initial projection only;
+Preview accepts the same normalized content as publish/update: `sourceOid`, `title`, `scope`,
+`originNodeId`, required nullable `presentation`, `nodes`, and `edges`, without persisted identity, Pull
+Request identity, idempotency, or compare-and-swap fields. It performs pure graph and presentation
+validation plus neutral topology diagnostics only;
 it does not initialize a database, repository runtime, or Agent socket and does not resolve files.
 Success returns `{ "ok": true, "layout": { ... }, "warnings": [...] }`. Layout contains
 `columnCount`, `rowsPerColumn`, `maxRows`, `directionalLinkCount`,
@@ -555,12 +563,17 @@ The current codes and conditions are:
 
 - `STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION`: the origin has zero outgoing canonical
   directional links.
-- `STRUCTURE_LAYOUT_MAX_ROWS_HIGH`: the canonical projection has `maxRows >= 8`.
-- `STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH`: the canonical projection has a
-  non-forward directional-link ratio of at least `0.25`.
+- `STRUCTURE_LAYOUT_MAX_ROWS_HIGH`: the presentation-independent topology diagnostic has `maxRows >= 8`.
+- `STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH`: the presentation-independent topology
+  diagnostic has a non-forward directional-link ratio of at least `0.25`.
+
+All layout fields are calculated from the factual topology, origin, and stable IDs, even when the
+Viewer uses an organizer-backed presentation for different display geometry. Start-only presentation
+shares the topology geometry. These fields diagnose graph shape without treating a reverse authorial
+reading order as a wrong Edge direction.
 
 Consumers branch on `code`, never on the display-oriented `message`, and ignore unknown warning
-codes. Future warning codes may be added to protocol v4 without changing the protocol version;
+codes. Future warning codes may be added to protocol v5 without changing the protocol version;
 consumers that require a particular feedback operation still require the `structure.preview`
 capability. Preview always returns a `warnings` array. Publish and update use the same warning object
 and code semantics but may omit the field when no warnings exist.
@@ -581,6 +594,21 @@ The stdin value is:
   "title": "Request policy boundary",
   "scope": "The request policy and the contracts it directly consumes; transport setup is excluded.",
   "originNodeId": "request-policy",
+  "presentation": {
+    "thesis": "The request decision is grounded in one committed input contract.",
+    "startNodeId": "policy-input",
+    "primaryBackbone": {
+      "edgeIds": ["request-policy-consumes-input"]
+    },
+    "regions": [
+      {
+        "id": "decision-contract",
+        "label": "Decision contract",
+        "summary": "Connects the committed policy input to the allow/deny decision.",
+        "nodeIds": ["policy-input", "request-policy"]
+      }
+    ]
+  },
   "nodes": [
     {
       "id": "request-policy",
@@ -620,17 +648,77 @@ The stdin value is:
 }
 ```
 
-`idempotencyKey`, `pullRequest`, `sourceOid`, nonblank `title` and `scope`, `originNodeId`, one or more
-nodes, and `edges` are required. `originNodeId` names an existing source-anchored Node and every Node
+`idempotencyKey`, `pullRequest`, `sourceOid`, nonblank `title` and `scope`, `originNodeId`, nullable
+`presentation`, one or more nodes, and `edges` are required. `presentation` must be present; use `null`
+to retain the topology-derived projection. `originNodeId` names an existing source-anchored Node and every Node
 must be reachable from it when Edge direction, parallel multiplicity, and self-loops are ignored. Node and Edge IDs match
 `^[A-Za-z][A-Za-z0-9_-]{0,63}$`, are unique within their own collections, and are stable claim
 identities rather than labels. Every edge
 endpoint must exist and `directed` is required. Nodes may contain zero or one anchor; edges may contain
 zero to twenty anchors. Every anchor is a repository-relative available UTF-8 document at `sourceOid`
 and either omits both line fields or supplies both as an existing positive inclusive range. Omitted
-nullable fields normalize to `null`; omitted edge anchors normalize to an empty array.
+nullable Node fields normalize to `null`; omitted edge anchors normalize to an empty array. The
+top-level `presentation` field may not be omitted.
 Node `notation` is optional and normalizes to `plain`; accepted values are `plain`, `class`,
-`database`, `interface`, `component`, `external`, and `concept`. It affects presentation only.
+`database`, `interface`, `component`, `external`, and `concept`. Notation affects Node rendering only;
+it is not part of the authorial `presentation` contract.
+
+A non-null `presentation` has a 1–1000-character `thesis`, a current `startNodeId`, a required nullable
+`primaryBackbone`, and 0–12 `regions`. The exact start-only shape (`primaryBackbone: null`, `regions: []`) is
+valid: it declares a thesis and attention start without declaring a spatial organizer. The start is
+independent of the factual `originNodeId`. A non-null backbone contains 1–16 unique current Edge IDs whose
+endpoints derive 2–12 unique current Nodes, including the start. Ignoring factual direction, parallel
+multiplicity, and self-loops, those exact Edges must form one connected graph. Edge ID array order has no
+semantic meaning and canonical input processing sorts it by stable ID. Parallel and reciprocal relations
+remain exact and may each be selected when each belongs to the compact core. A self-loop may supplement,
+but cannot connect, a multi-Node backbone. Each region has a unique stable ID using the same ID syntax as
+Nodes and Edges, a 1–100-character label, a 1–500-character `summary`, and one or more unique current Node
+IDs. The summary states what that comprehension chunk contributes to the Structure thesis; it is not a
+generic subsystem description, an architecture-inventory heading, or a review conclusion. A Node may be
+on the backbone and in one region, but may not occur in multiple regions. A region's `nodeIds` are a
+membership set and the outer `regions` array is a set of chunks; neither array order has semantic meaning.
+Canonical input processing sorts members by stable Node ID and Regions by stable Region ID. Region
+membership may be partial: `startNodeId` and any other Node may remain unassigned, and a Region need not
+form a connected induced subgraph. Presentation expresses the attention anchor, an optional backbone to
+grasp first, and named comprehension chunks—not completeness, review findings, coordinates, authored
+Region-to-Region relations, or a Region reading sequence. The Viewer derives direct cross-Region
+connections only from the factual Edges; it never stores or infers a second authored relation graph.
+
+Node, Edge, and Region IDs are stable only within one Structure URI. Whole-value update preserves the ID
+of every surviving claim or comprehension chunk and assigns a new ID to a genuinely new one. Once an ID
+disappears from the current value, rvw tombstones it and rejects a later update that reintroduces it, including
+across intermediate updates missed by a Viewer session. This mechanical guarantee detects retirement and
+reintroduction; deciding whether a continuously present ID has been semantically repurposed remains the
+producer's responsibility because ordinary label, anchor, endpoint, and Region-membership edits are valid.
+
+The primary-backbone limits are 12 derived Nodes and 16 exact Edges, independently of the 50-Node and
+200-Edge graph limits. It is a compact first-grasp relation skeleton, not an exhaustive authored tour or
+a second copy of the factual graph.
+
+The viewer uses a declared backbone and/or regions as spatial organizers for canonical placement and visual
+emphasis, and starts every new non-null-presentation session at `startNodeId`. Start-only presentation
+uses the same topology-derived canonical geometry as `presentation: null`, while retaining its thesis,
+start cue, initial focus, and export semantics. Null presentation instead starts at `originNodeId`, which
+remains a distinct factual entrypoint marker. Home frames that start/origin and its exact factual 1-hop
+Node bounds regardless of backbone extent; backbone membership remains visual emphasis. A compact Guide
+exposes the thesis and start without duplicating the complete backbone Edge list. A separate full-body
+Regions view exposes full Region labels, responsibilities, coverage, and factual cross-Region connections.
+Drill-down opens a named Graph lens that identifies the Region and emphasizes its exact members and internal
+relations without exposing stable IDs as abbreviations or treating manual geometry as membership. Graph / Regions mode is pane-local reviewer
+state, not protocol data. Regions has a separate pane-local zoom/pan camera; initial view and Reset keep
+the Start landmark readable, while Fit frames the complete map without compacting its canonical card geometry. Region drill history restores
+that exact overview camera without mutating the Graph viewport. Null and start-only share one layout basis, so updates between
+them—and changes to thesis and/or start while no organizer exists—preserve surviving manual geometry.
+Adding, removing, or changing the spatial organizer rebases canonical geometry; prose, exact Edge
+substitution that preserves the same backbone endpoint adjacency, and Region label/summary edits do not.
+A framed Region whose stable ID survives that rebase remains active and is refit from its current
+membership and derived internal-relation bounds; a removed Region ID is pruned from session/history.
+Every form retains every Node, Edge, direction, source
+action, and free exploration; Structure is never an autoplay or stepper.
+Region framing is pane-local reviewer state: selecting a Region in the overview drills into Graph mode,
+preserves focus-hop distance while giving the framed members and their internal relations full visual
+relevance. Home, local Node focus, and explicit depth changes clear that chunk lens, and Back restores
+it together with view mode, focus, depth, and camera.
 
 Limits are 50 nodes, 200 edges, a 200-character title, a 4000-character scope, 200-character labels,
 2000-character descriptions, 100-character kinds, and 2 MiB for the normalized Structure content.
@@ -660,7 +748,7 @@ rvw structure update <STRUCTURE_URI> --stdin --json
 ```
 
 Update accepts `expectedUpdatedAt` from the value that was read plus the complete `sourceOid`, `title`,
-`scope`, `originNodeId`, `nodes`, and `edges` value, but does not accept `pullRequest`. It performs the
+`scope`, `originNodeId`, `presentation`, `nodes`, and `edges` value, but does not accept `pullRequest`. It performs the
 same validation and atomically replaces the graph only while `updatedAt` still matches, while
 keeping the Structure ID, URI, Pull Request, and `createdAt`; `updatedAt` changes. No previous graph is
 retained. A mismatch returns `STRUCTURE_CONFLICT` and the caller must read and reconcile the current
@@ -736,8 +824,9 @@ cross-boundary risk, and over-fragmentation. It does not require a fixed templat
 Structure pair. Its candidate understanding units and Artifact briefs are session-local instructions to
 the single-Artifact producers, and its recommended entry and resulting URIs are returned as ordinary
 Agent output. It adds no Review Set, persistent group, Artifact kind, URI, database or API state, Viewer
-UI, protocol capability, or generic runtime sub-Skill invocation framework. Protocol version 4 and the
-capability list below remain unchanged.
+UI, protocol capability, or generic runtime sub-Skill invocation framework. Review composition itself adds
+no command schema or capability; the integrated protocol is version 5 because Structure presentation adds
+`structure.presentation`, as reflected in the capability list below.
 
 The brief's subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and
 emphasis control what a producer investigates. `mustEstablish`, suggested origins, relationships,
@@ -781,12 +870,14 @@ deliberately avoids a fixed template, an exhaustive review boundary, and AI-revi
 
 `rvw-structure` produces one PR-relevant behavior space with a factual code entrypoint, gives an
 upstream brief's subject, review question, behavior boundary, scope, inclusions, exclusions, and emphasis
-authoring priority, independently verifies every suggested origin, relation, invariant, and other
-implementation assertion in committed code, and publishes stable-ID Node and Edge claims at one exact commit. It
+and requested spatial-presentation emphasis, independently verifies every suggested origin,
+relation, invariant, and other implementation assertion in committed code, and publishes stable-ID Node
+and Edge claims plus an optional thesis, attention start, connected exact-relation primary backbone, and stable
+named comprehension Regions at one exact commit. It
 does not choose PR-wide coverage, the type mix, or companion Artifacts, but it retains the local rejection
-boundaries for ordered paths, missing factual origins, and static inventories. It also rejects giant or
-inferred graphs, vague relationships, layout instructions, implicit same-URI subject changes, browser
-control, and deletion without exact preview authorization.
+boundaries for ordered prose or transition paths, missing factual origins, and static inventories. It also
+rejects giant or inferred graphs, vague relationships, raw coordinates or reviewer-state instructions, implicit
+same-URI subject changes, browser control, and deletion without exact preview authorization.
 
 ## Protocol discovery
 
@@ -795,13 +886,14 @@ current `walkthrough` object. This gives the Agent the explanation body and exac
 discussed without relying on rendered browser positions. If the Walkthrough is updated, the same
 comment URI subsequently returns the updated current object.
 
-`rvw protocol --json` returns `protocolVersion: 4`, the application version, and these capabilities:
+`rvw protocol --json` returns `protocolVersion: 5`, the application version, and these capabilities:
 
 ```text
 agent.transport
 comment.create
 comment.list
 comment.watch
+comment.watchOwnership
 comment.read
 comment.reply
 comment.edit
@@ -811,6 +903,7 @@ comment.reopen
 pullRequest.sync
 structure.list
 structure.read
+structure.presentation
 structure.preview
 structure.publish
 structure.update

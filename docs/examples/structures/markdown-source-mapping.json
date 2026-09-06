@@ -3,6 +3,40 @@
   "title": "Markdown source mapping",
   "scope": "The committed mapping between Markdown AST positions, rendered selection, highlights, and comment anchors. Markdown parsing and comment persistence are excluded.",
   "originNodeId": "source-map-plugin",
+  "presentation": {
+    "thesis": "The source-map plugin turns one rendered Markdown coordinate contract into several independently explorable review interactions.",
+    "startNodeId": "source-map-plugin",
+    "primaryBackbone": {
+      "edgeIds": [
+        "comment-anchors-use-source-model",
+        "decoration-materializes-source-model",
+        "highlights-consume-decoration",
+        "plugin-runs-comment-anchors",
+        "plugin-runs-decoration",
+        "plugin-runs-highlights"
+      ]
+    },
+    "regions": [
+      {
+        "id": "composition",
+        "label": "Composition",
+        "summary": "Coordinates the source-aware transformations and review interactions from one plugin entrypoint.",
+        "nodeIds": ["source-map-plugin"]
+      },
+      {
+        "id": "rendered-coordinates",
+        "label": "Rendered coordinates",
+        "summary": "Carries source positions from the Markdown tree into inspectable rendered leaves.",
+        "nodeIds": ["source-position-decoration", "source-position-model"]
+      },
+      {
+        "id": "review-interactions",
+        "label": "Review interactions",
+        "summary": "Uses the shared rendered-coordinate contract for comments, highlights, and selection recovery.",
+        "nodeIds": ["comment-anchor-placement", "range-highlights", "selection-source-range"]
+      }
+    ]
+  },
   "nodes": [
     {
       "id": "source-position-model",

@@ -1,17 +1,174 @@
 # Review composition decision evaluation
 
-This record captures a planning-only forward evaluation of `rvw-review-compose`. It tests whether the
-composer chooses bounded review surfaces adaptively from real committed repository history. It does
-not treat Artifact count as a score and does not turn the cases into a production template.
+This record captures planning-only forward evaluations of `rvw-review-compose`. They test whether the
+composer chooses bounded review surfaces adaptively from real committed repository history. They do
+not treat Artifact count as a score and do not turn the cases into a production template. Historical
+results remain below as calibration evidence; only a run whose recorded Skill blobs match the current
+content is evidence for the current contract.
 
-The decision evaluation is intentionally separate from host acceptance. These runs stopped before
-producer activation, CLI preflight, preview, or publication. They therefore do not prove that Codex or
-Claude Code can invoke a sibling producer, that a producer-ready payload is valid, or that an Artifact
-URI can be issued. No fake URI or persistent review object was created.
+The decision evaluation is intentionally separate from host acceptance. A planning run may execute
+read-only protocol and transport preflight, but it stops before producer activation, preview, or
+publication. It therefore does not prove that Codex or Claude Code can invoke a sibling producer, that
+a producer-ready payload is valid, or that an Artifact URI can be issued. No fake URI or persistent
+review object was created.
 
-## Evaluated instruction revision
+## Current forward evaluation (2026-09-07)
 
-Every composition case used the same current, unmodified instruction content in a fresh Agent
+Three withheld-outcome cases were rerun after the authored-spatial-Structure and contextual-read
+contract changes. Every case used a separate fresh high-effort Agent context. The evaluators were told
+the user-style subject and exact coordinate, read the complete current composer Skill and reference,
+and were explicitly prohibited from reading this evaluation record. Expected surface type and count
+were withheld. The current instruction content was:
+
+- `skills/rvw-review-compose/SKILL.md` Git blob
+  `7308a332ff3371635609f30f36160c9cb5902da1`
+- `skills/rvw-review-compose/references/review-composition.md` Git blob
+  `a86141086911abcd5e7e01b19fbb8c48d83627bc`
+
+These are source-only composition evaluations. They did not authorize producer invocation or
+Artifact mutation. The complex case successfully preflighted protocol v5 and the direct-database
+transport through the repository-built CLI. The deliberately isolated local and relationship cases
+did not have `rvw` on `PATH`; they reported that limitation and returned unproduced source-only
+recommendations rather than fabricating a URI or treating preflight as successful.
+
+### Current case A: local presentation change
+
+Input:
+
+- Range: `0b2a179813cf48e91db5ed2eeccd33d14d8e1982..4ca571485719fd1cb55c9389820f40ef6cde695b`
+- Subject: the complete change that makes emphasized diff text use the active theme foreground
+
+Observed composition: no Artifact. The evaluator kept one direct-code question: how the host
+foreground variable and injected shadow-DOM selector override syntax-token colors for intraline
+additions and deletions while following the active light or dark theme.
+
+The exact entrypoints covered the theme-resolving variables and injected selectors in
+`src/web/components/DocumentViewer.tsx`, the preference and `themeType` boundary in
+`src/web/app/PullRequestReviewScreen.tsx`, `color-scheme` ownership in `src/web/theme.ts` and
+`src/web/styles/main.css`, and the two-theme computed-color assertions in
+`test/e2e/review-flow.spec.ts`. The evaluator retained the `@pierre/diffs` DOM-selector dependency,
+custom-property inheritance into shadow DOM, and system-theme resolution as direct review risks.
+
+Verdict: **Pass.** A Walkthrough would split adjacent implementation evidence into artificial stops;
+a Structure would manufacture a relationship space for a local CSS and DOM contract.
+
+### Current case B: five-Skill distribution authority
+
+Input:
+
+- Coordinate: `01841f836706b19805a4fbd5e338522ea62ee4e5`
+- Explicit subject: which declarations own the five-Skill distribution contract and which packaging,
+  installation, status, Codex, Claude, custom-root, and test boundaries consume or independently
+  restate that authority
+
+Observed composition: one unproduced Structure; no Walkthrough. Its central question was which
+declarations own the exact five bundled Skill identities and how the surrounding package, platform,
+installation, status, documentation, and test boundaries consume or restate them.
+
+The Structure brief used `skillNames` in `src/infrastructure/skills/skill-installer.ts` only as an
+origin candidate. It asked the producer to verify runtime enumeration, the separately restated
+`SkillName` type, broad `package.json` subtree inclusion, common content with platform-specific
+destination roots, CLI and doctor consumers, custom target roots, and independent test/documentation
+lists. Requested presentation described an authority thesis, runtime-enumeration attention start, one
+compact exact-relation backbone, and comprehension chunks for executable identity, platform routing,
+and independent packaging or contract restatements; it supplied no protocol IDs.
+
+Direct code retained status classification, staged install and rollback, CLI argument parsing,
+literal package contents, and exact test assertions. The evaluator also found a source-supported gap
+at the historical target coordinate: its specification required packaged `skill status --json`
+coverage while its package smoke only inspected install responses. The current tree already contains
+the follow-up status invocation and parity assertion; the historical finding was not rewritten into a
+pass.
+
+Verdict: **Pass for composition; target implementation gap retained.** One explorable authority map
+has lower join cost than an ordered explanation, and the evaluator did not confuse package inclusion,
+runtime identity, destination platform, or test restatement.
+
+### Current case C: stale watcher work and fenced side effects
+
+Input:
+
+- Range: `e28a1d3503d07063249223ae46fc84f3e530b793..65f2e9b259af3c7d9d5241eb19cdae92f5ef1426`
+- Subject: the complete change that prevents stale watch tasks from producing current side effects
+
+Observed composition: one unproduced Walkthrough; no Structure. Its central question was how a newer
+logical watch prevents the old task's cursor, queued events, and leases from creating new
+acknowledgements, delegation, or repository writes while work already delegated or holding the exact
+reservation can reach its documented completion and release boundary.
+
+The bounded path followed explicit activation and durable generation binding, repeated authority
+verification, fresh thread-state actionability, transactionally fenced acknowledgement writes, the
+last pre-dispatch verification, atomic shared writer reservation, and exact-owner release. It kept
+physical uniqueness constraints, schema/CLI/socket forwarding, cursor and process-lock mechanics, and
+adapter fixtures as direct code. Candidate claims remained independently verifiable and explicitly
+included the non-cancellation boundary for already delegated or reserved work.
+
+The evaluator considered and rejected a separate authority Structure. Unlike the 2026-09-05 result
+below, it concluded that the relevant ownership relationships are inseparable from the ordering that
+closes each race; a second surface would duplicate those facts and make the timing invariant harder to
+hold together.
+
+Verdict: **Pass.** The changed answer was retained rather than forced toward the historical
+Structure-plus-Walkthrough composition. One temporal explanation plus exact direct-code boundaries
+minimizes total comprehension cost for this wording of the subject.
+
+### Current cross-case result
+
+The three independent cases selected zero Artifacts, one Structure, and one Walkthrough. They cover
+the required small-local, relationship-centered, and state/lifecycle/async shapes without a fixed
+surface template. Each result named one central question, explicit exclusions, direct-code evidence,
+and important coupling. No result treated a suggested origin or `mustEstablish` claim as proof, and no
+result invented an Artifact URI.
+
+Verdict: **Pass for the current planning contract.** This remains a small qualitative sample, not a
+golden surface-count test. Installed-host producer activation is a separate acceptance boundary. The
+2026-09-05 installed-host record below used older Skill blobs and is historical evidence only; it is
+not current native-activation proof. The current packaged attempt and its approval boundary are
+recorded next.
+
+## Current installed-host acceptance attempt (2026-09-07)
+
+An isolated installed-host attempt used exact pushed commit
+`79d4414f222b99125a3e400d122fa0716d433211`. Packaging and setup passed:
+
+- `npm pack` produced a 4,271,581-byte tarball with 495 entries and SHA-1
+  `99fbbec5ae258a1c4935e1244d29c2e78f0bc58d`.
+- The tarball-installed CLI reported rvw `0.5.0`, and the host Codex CLI was exactly `0.147.0`.
+- The packaged CLI installed all five Skills into the detached worktree's `.codex/skills` root. A
+  packaged `skill status` read reported every Skill as `current`, managed, matching the bundled
+  content, not locally modified, and with no update available or required.
+- A caller-managed temporary database was initialized, PR #77 was refreshed and attached to the
+  detached `79d4414` worktree, and its recorded head was `79d4414f222b99125a3e400d122fa0716d433211`.
+- Packaged `rvw protocol --json` reported protocol v5 with the required Structure capabilities, and
+  `rvw agent status --json` selected `direct-database` for the temporary database.
+- `rvw structure list 77 --json` reported zero Structures before the attempted host activation.
+
+The production prompt explicitly requested native activation of `rvw-review-compose`, sequential
+handoff to `rvw-structure`, preview, and exactly one publication for the bounded relationship question
+about factual graph, authorial presentation, derived rendering, reviewer session state, and their
+identity or revision boundaries. The outer execution approval gate rejected `codex exec` before Codex
+launched because the run would send repository content to OpenAI and authorize Artifact publication.
+The rejection was not retried or bypassed.
+
+Consequently, this attempt produced no producer activation, preview, publication, Artifact URI, or
+`structure get` readback. A final `structure list` still contained exactly zero Structures, the Codex
+final-output directory remained empty, and no rvw or Codex process remained. The temporary evidence is
+retained under `/private/tmp/rvw-accept-79d4414.DxgW1X`; its detached worktree has no tracked changes
+and only the expected untracked `.codex/` installation and runtime files. The main worktree also had no
+tracked write from the attempt. This is evidence that packaged installation, protocol negotiation, PR
+attachment, and direct-database setup work; it is **not current native Skill activation, sequential
+producer handoff, preview/publish, URI, or readback proof**.
+
+Follow-up commit `78558dda6df85ae1de559076dac4c767412bee52` changes only
+`docs/implementation-spec.md` and `test/unit/protocol-version.test.ts`. The recorded current composer
+Skill blobs remain identical at that commit: `7308a332ff3371635609f30f36160c9cb5902da1` for `SKILL.md`
+and `a86141086911abcd5e7e01b19fbb8c48d83627bc` for `review-composition.md`. It therefore does not
+invalidate the planning results above or convert this blocked installed-host attempt into activation
+evidence.
+
+## 2026-09-05 baseline instruction revision
+
+Every composition case used the same then-current, unmodified instruction content in a fresh Agent
 context:
 
 - `skills/rvw-review-compose/SKILL.md` Git blob
@@ -260,7 +417,7 @@ These outcomes support the current composition contract but are not a permanent 
 different composition may pass when it gives stronger source-grounded reasons and satisfies the same
 rubric.
 
-## Installed-host acceptance
+## 2026-09-05 installed-host acceptance (historical)
 
 An isolated acceptance run on 2026-09-05 packed commit
 `01841f836706b19805a4fbd5e338522ea62ee4e5` and installed that tarball into a temporary global prefix.

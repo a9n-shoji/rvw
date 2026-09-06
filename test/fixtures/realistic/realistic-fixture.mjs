@@ -1979,6 +1979,7 @@ export function createRealisticFixture() {
       title,
       scope,
       originNodeId,
+      presentation: null,
       nodes,
       edges,
       createdAt,

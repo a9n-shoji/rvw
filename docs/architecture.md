@@ -86,19 +86,79 @@ complete reference set in a side or bottom index.
 Structures cross the same one-way CLI boundary as a separate domain. An Agent declares a bounded
 PR-relevant behavior and factual code entrypoint as stable-ID nodes and edges fixed to one exact source commit. SQLite keeps one
 current graph JSON value per stable Structure ID; publication and whole-value replacement validate all
-paths, ranges, endpoints, focus, identities, and Pull Request ownership before retaining the commit.
-The graph is a set of producer claims, not a semantic code index. It has no revision history, comments,
-groups, persisted semantic reverse index, inferred edges, or persisted coordinates. The viewer may
+paths, ranges, endpoints, identities, presentation references/membership, and Pull Request ownership before retaining the commit.
+The current value separates factual graph claims from an optional authorial spatial presentation made
+of a thesis, an attention start, at most one connected exact-Edge primary backbone of 2–12 derived Nodes
+and 1–16 Edges, and named comprehension Regions with stable IDs, responsibility summaries, and disjoint
+Node membership. Backbone Edge membership is exact
+and unordered; path, fan-out, convergence, reciprocal, and small cyclic cores share the same model.
+A start-only presentation with no backbone or regions is valid when its thesis and
+attention start are meaningful but no honest spatial organizer exists. Region arrays and each region's
+`nodeIds` are unordered sets canonicalized by stable ID. Membership may be partial and a Region need not
+form a connected induced subgraph. Legacy graph JSON without the field reads
+as `presentation: null`; no `graph_json` data migration is needed. Retired Node, Edge, and Region IDs are
+kept in small tombstone tables so a client that missed intermediate whole-value updates cannot mistake a
+removed-then-reused identity for a surviving claim or framed chunk. Continuously present identity semantics
+remain an authoring responsibility because ordinary claim and membership edits are valid. Structure is not a semantic code index and has no revision
+history, comments, persisted semantic reverse index, inferred edges, or persisted coordinates. The viewer may
 derive an ephemeral backlink index from explicit Node anchors in the current values. HTTP lists and reads current values;
 human-confirmed delete is the only write exposed to the browser.
 
-The Structure viewer uses topology, factual direction reachable from the entrypoint, and stable IDs—not
-display content—to produce an initial layout. Pane-local
-browser session state preserves focus, neighborhood depth, node positions, and viewport across tab
+The Structure viewer uses a primary backbone or regions to shape canonical placement and uses any non-null
+presentation for its compact authorial Guide and cues while preserving every factual Node, Edge, and direction. The Guide
+shows the thesis and attention start; it does not duplicate the complete primary-backbone Edge list or a
+space-starved Region graph. Graph mode shows the exact factual Node / Edge surface. Regions mode uses the
+full Structure body for responsibility rectangles and direct cross-Region connections derived from factual
+Edges. Region cards use the complete authorial label rather than exposing stable IDs as abbreviations.
+Drilling into Graph opens a named Region lens with its full responsibility summary and exact coverage;
+member Nodes and internal relations receive a dedicated visual treatment, so manual geometry never becomes
+membership truth. Regions are keyboard-accessible drill-down landmarks. With
+an independent pane-local Regions camera, first view / Reset keeps the Start landmark at a readable
+scale while Fit frames the complete derived map without changing card geometry. Zoom and wheel/drag pan support local reading. Graph and Regions
+cameras survive mode switches and tab movement independently; Region drill history snapshots both.
+With `presentation: null` or a start-only presentation, it uses topology, factual direction reachable from
+the entrypoint, and stable IDs—not display content—to produce the same projection. A long derived
+backbone may fold deterministically across multiple serpentine rows so the canonical map uses both
+dimensions and keeps region envelopes distinct. Row boundaries and the target aspect are projection
+heuristics, not authored layers, reading order, or protocol state. A non-null presentation's new
+session initially focuses `startNodeId`; the null case
+initially focuses the origin. Both are defaults derived from the artifact, while pane-local
+browser session state preserves Graph / Regions mode, focus, neighborhood depth, Home/Back navigation, Guide disclosure, node positions, and projection-specific viewports across tab
 navigation and current-value updates, and moves with a Structure tab between panes. Surviving IDs keep
-positions and new nodes take a non-overlapping slot near retained neighbors. 1-hop and 2-hop require a
-focus; All shows every Node and Edge. The bounded MVP does not collapse or cull relations based on ID or
-degree. Source actions always open the declared exact `sourceOid` in the chosen pane without changing
+positions and new nodes take a non-overlapping slot near retained neighbors while the spatial organizer
+is unchanged. A changed backbone endpoint adjacency or Region identity/membership rebases Node geometry to
+the new canonical explanation while preserving surviving focus and its screen-space camera anchor. A
+framed Region whose stable ID survives remains the active chunk lens and is refit from its current
+members and derived internal-relation bounds; only a removed Region ID is pruned. Region
+label/summary edits and Region array reordering do not rebase Graph Node geometry.
+The Regions camera has its own canonical derived-map basis: unordered serialization and thesis/summary
+edits retain it, while changes that can alter Region cards, Context components, relation routes, or
+relation-label geometry reset it to the readable Start-oriented Home projection. Only explicit Fit
+frames the complete map. The key and camera are viewer state, not protocol semantics.
+Each aggregate relation is an interactive, current-value index into the exact factual Edges it groups:
+the Viewer discloses stable Edge IDs, endpoint pairs, full predicates, and source locators, and can
+select an individual Edge in Graph. Neutral Context cards similarly frame every Node in their derived component. These
+interactions preserve the prior Regions camera in Back history but add no persisted Region relation or
+Context model.
+Null and start-only presentations share one layout basis, so transitions between them and thesis- or
+start-only edits preserve manual geometry; changing only the exact parallel backbone relation preserves
+geometry while updating emphasis. The shared deterministic route model avoids non-endpoint Nodes and
+connects every visible relation to source/target boundary ports without a clearance gap. Distinct visible
+relations retain independently traceable substantive lanes whenever their routes would otherwise share
+or nearly share a corridor; parallel and reciprocal relations are required examples. It places labels independently of
+focus filtering for Viewer and export; at normal detail, labels are Node-disjoint and pairwise
+non-overlapping, with leader-associated displaced slots when inline placement is unavailable. Backbone membership is stable
+authorial salience; focus-hop proximity is session-derived attention and uses a separate visual channel.
+Home activates All and frames the authorial start—or the null-presentation origin—plus its exact factual
+1-hop Node bounds; the full backbone remains emphasized but does not enlarge that camera target.
+1-hop and 2-hop require a focus; All exposes every Node and Edge. Semantic zoom may suppress unreadable
+secondary detail only while counts, minimap, selection, Home, and All keep it explicitly recoverable.
+Home and Region framing activate All so their declared targets are actually visible; a Regions-mode
+card drill-down switches to Graph and Back can restore the overview together with the previous focus,
+neighborhood depth, framed Region, and camera. Direct mode toggles do not create history entries. Region framing preserves focus and
+membership while temporarily restoring full visual relevance to the framed members and their internal
+relations. Home, local Node focus, and an explicit depth change clear that pane-session chunk lens.
+Source actions always open the declared exact `sourceOid` in the chosen pane without changing
 the global commit range.
 The browser owns an ephemeral two-pane workspace: every document identity may appear once per pane, tabs
 can move between panes, ordinary document-opening clicks target the left pane, and modifier-click targets
@@ -118,7 +178,8 @@ The bundled Skills are named by capability rather than Agent host. `rvw` handles
 synchronization; `rvw-review-compose` chooses the minimum adaptive mix of Walkthrough, Structure, and
 direct code reading for one Pull Request or explicit review subject; `rvw-walkthrough` turns one bounded
 subject into one validated source-anchored ordered path; `rvw-structure` maps one declared PR-relevant
-behavior from its code entrypoint into stable source-anchored relationships; and `rvw-watch-comments`
+behavior from its code entrypoint into stable source-anchored relationships and optional authorial spatial
+presentation; and `rvw-watch-comments`
 keeps an external Agent task subscribed to newly created posts and fails closed on PR ownership. The
 producer Skills honor a session-local upstream brief while retaining their own representation rejection
 and exact-source contracts; they do not independently expand back into PR-wide composition.
@@ -132,7 +193,7 @@ part of the rvw protocol.
 
 Review composition is an authoring strategy outside the domain model. Its candidate understanding units,
 Artifact briefs, recommended entry, and URI summary are not persisted as a Review Set, Artifact kind,
-group, or review plan. The composer uses the existing protocol-v4 Walkthrough and Structure operations;
+group, or review plan. The composer uses the existing protocol-v5 Walkthrough and Structure operations;
 it adds no database, URI, API, Viewer UI, protocol capability, or generic runtime sub-Skill invocation
 framework. Codex and Claude Code receive the same five Skill directories under their respective local
 Skill roots. Platform selection is a packaging concern only and does not fork the Agent protocol or

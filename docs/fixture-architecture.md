@@ -46,10 +46,12 @@ semantic needleから作られるreferenceを更新する。手書き行番号�
 
 - 別temporary directoryで同一commit OID、tree、changed-file manifestになること
 - first-parent chain、base / head、file / diff shape、added / modified / renamed / deletedの存在
-- Walkthrough reference ID、Mermaid binding、Structure origin / endpoint / source anchorの整合性
+- Walkthrough reference ID、Mermaid binding、Structure origin / endpoint / source anchor、required nullable
+  presentationのcurrent start / Node参照、primary backboneのexact Edge／derived Node数／connectedness、region非重複の整合性
 - comment targetと作成commit、PR / Walkthrough quote、rename追従、delete後Outdatedの整合性
 - baseと各commitにおける全relative importのclosureと、生成repository全体が`tsc --noEmit`を通ること
-- Structure origin topology、sourceOid、post reference / related commit、説明を支える主要sourceの存在
+- Structure origin topology、sourceOid、presentationの有無に応じた初期projection、post reference / related commit、
+  説明を支える主要sourceの存在
 - 同じsource fileが複数Structure nodeから逆引きできること
 - missing pathが明示的にmissingになること
 

@@ -7,6 +7,7 @@ const reviewComposeSkill = readFileSync("skills/rvw-review-compose/SKILL.md", "u
 const reviewComposeDescription = reviewComposeSkill.match(/^description: (.+)$/mu)?.[1] ?? "";
 const walkthroughSkill = readFileSync("skills/rvw-walkthrough/SKILL.md", "utf8");
 const structureSkill = readFileSync("skills/rvw-structure/SKILL.md", "utf8");
+const structureOpenAi = readFileSync("skills/rvw-structure/agents/openai.yaml", "utf8");
 const reviewComposition = readFileSync(
   "skills/rvw-review-compose/references/review-composition.md",
   "utf8",
@@ -19,6 +20,12 @@ const walkthroughAuthoring = readFileSync(
   "skills/rvw-walkthrough/references/walkthrough-authoring.md",
   "utf8",
 );
+const structurePresentationContracts = [
+  structureSkill,
+  structureAuthoring,
+  reviewComposeSkill,
+  reviewComposition,
+];
 
 describe("bundled Skill code-reference guidance", () => {
   it("makes exact code evidence the default for concrete review outcomes", () => {
@@ -58,8 +65,20 @@ describe("bundled Skill code-reference guidance", () => {
   });
 
   it("keeps Structure authoring code-centered, source-exact, and identity-stable", () => {
-    expect(structureSkill).toContain("A Structure is a space; a Walkthrough is a path");
-    expect(structureSkill).toContain("Require `protocolVersion` 4");
+    expect(structureSkill).toMatch(
+      /freely explorable spatial explanation whose complete factual graph remains\s+available/,
+    );
+    expect(structureSkill).toContain("ordered prose and transitions the artifact");
+    expect(structureSkill).toContain("connected exact-relation visual backbone");
+    expect(structureSkill).toContain("12 derived Nodes and 16 Edges");
+    expect(structureSkill).toContain("Do not author backbone layers or stages");
+    expect(structureSkill).toContain("primaryBackbone");
+    expect(structureSkill).not.toContain("primarySpine");
+    expect(structureSkill).toContain("Require `protocolVersion` 5");
+    expect(structureSkill).toContain("`structure.presentation`");
+    expect(structureSkill).toMatch(
+      /Require only the operation capabilities the task uses:[\s\S]*`structure.read` for\s+`get`[\s\S]*`structure.list` for listing or uncertain-publication recovery[\s\S]*`structure.preview` before\s+publish or update/,
+    );
     expect(structureSkill).toContain("structure.publish");
     expect(structureSkill).toContain("`structure.preview`");
     expect(structureSkill).toContain("rvw structure preview --stdin --json");
@@ -69,12 +88,31 @@ describe("bundled Skill code-reference guidance", () => {
     );
     expect(structureSkill).toContain("Never access SQLite directly");
     expect(structureSkill).toContain("Preserve IDs");
+    expect(structureSkill).toMatch(
+      /preserve a Region ID while the\s+same comprehension chunk survives/,
+    );
+    expect(structureSkill).toMatch(
+      /source-led request[\s\S]*concrete PR-relevant behavior[\s\S]*factual origin/,
+    );
     expect(structureAuthoring).toContain("Explicit directions from the user");
     expect(structureAuthoring).toContain("one exact `sourceOid`");
     expect(structureAuthoring).toContain("Never recycle an ID");
+    expect(structureAuthoring).toContain("Node, Edge, or Region");
+    expect(structureAuthoring).toContain("all three retired ID kinds");
     expect(structureAuthoring).toMatch(/Stop and recommend a\s+Walkthrough/);
     expect(structureAuthoring).toContain("Do not create giant graphs");
     expect(structureAuthoring).toContain("factual code entrypoint");
+    expect(structureAuthoring).toContain("unordered exact-membership set");
+    expect(structureAuthoring).toContain("weakly connected");
+    expect(structureAuthoring).toMatch(/Parallel\s+or reciprocal/);
+    expect(structureAuthoring).toContain("Do not author layers or stages");
+    expect(structureAuthoring).toContain("stable-sorted current unique Node IDs");
+    expect(structureAuthoring).toMatch(/Region[\s\S]*unique,\s+stable ID/);
+    expect(structureAuthoring).toMatch(/summary[\s\S]*contributes to this Structure's thesis/);
+    expect(structureAuthoring).toContain("Region membership may be partial");
+    expect(structureAuthoring).toMatch(
+      /outer `regions` array as unordered sets[\s\S]*Do not author Region-to-Region relations/,
+    );
     expect(structureAuthoring).toContain("terminal or intermediate origin is still valid");
     expect(structureAuthoring).toContain("around 20 full-width characters or fewer");
     expect(structureAuthoring).toContain("overlapping or nested Node anchors");
@@ -82,16 +120,71 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureAuthoring).toContain("deprecated compatibility field");
     expect(structureAuthoring).toContain("Do not set it in new");
     expect(structureAuthoring).toContain("Do not publish");
+    expect(structureOpenAi).toContain("Manage one bounded source-anchored behavior map");
+    expect(structureOpenAi).toContain("read or manage");
+    expect(structureOpenAi).not.toContain("to publish one bounded");
+  });
+
+  it("keeps Structure truth, presentation, rendering, and reviewer session separate", () => {
+    expect(structureAuthoring).toMatch(
+      /factual graph[\s\S]*Authorial presentation[\s\S]*Derived rendering[\s\S]*reviewer session/,
+    );
+    expect(structureAuthoring).toMatch(
+      /Regions relationship view[\s\S]*Only the first two are Structure content/,
+    );
+    expect(structureAuthoring).toMatch(
+      /fit Graph or Regions into one screen[\s\S]*Reset, Fit, zoom, and pan[\s\S]*not authoring inputs/,
+    );
+  });
+
+  it("keeps null and start-only presentations honest instead of forcing an organizer", () => {
+    expect(structureAuthoring).toMatch(
+      /exact start-only form with `primaryBackbone: null` and `regions: \[\]`[\s\S]*Do not manufacture/,
+    );
+    expect(structureAuthoring).toMatch(
+      /If the thesis or start\s+is not meaningful either, use `presentation: null`/,
+    );
+  });
+
+  it("keeps the Structure publish example on the protocol-v5 presentation shape", () => {
+    const exampleSource = structureSkill.match(
+      /rvw structure publish --stdin --json <<'RVW_JSON'\n([\s\S]*?)\nRVW_JSON/,
+    )?.[1];
+    expect(exampleSource).toBeDefined();
+    const example = JSON.parse(exampleSource!) as {
+      presentation: {
+        primaryBackbone: { edgeIds: string[] } | null;
+        regions: Array<{ id: string; label: string; summary: string; nodeIds: string[] }>;
+      };
+    };
+    const [region] = example.presentation.regions;
+
+    expect(example.presentation).toHaveProperty("primaryBackbone");
+    expect(region).toBeDefined();
+    expect(Object.keys(region!).sort()).toEqual(["id", "label", "nodeIds", "summary"]);
+    expect(region!.nodeIds).toEqual([...region!.nodeIds].sort());
+  });
+
+  it("contains no obsolete linear-spine or ordered-Region authoring contract", () => {
+    for (const contract of structurePresentationContracts) {
+      expect(contract).not.toContain("primarySpine");
+      expect(contract).not.toMatch(/ordered, named comprehension regions/i);
+      expect(contract).not.toMatch(/regions? ordered for spatial/i);
+    }
   });
 });
 
 describe("rvw review composition contract", () => {
-  it("owns adaptive PR-wide composition and prefers the minimum useful surface", () => {
+  it("owns adaptive PR-wide composition and minimizes total comprehension cost", () => {
     expect(reviewComposeDescription).toContain("Pull Request or explicit review subject");
     expect(reviewComposeDescription).toContain("direct code reading");
     expect(reviewComposeDescription).toContain("overall review composition");
     expect(reviewComposeSkill).toContain("This Skill owns PR-wide composition");
-    expect(reviewComposeSkill).toContain("smallest useful set of rvw reading surfaces");
+    expect(reviewComposeSkill).toContain("minimizes the reviewer's total comprehension cost");
+    expect(reviewComposeSkill).toContain('"minimum useful" never means "fewest Artifacts."');
+    expect(reviewComposition).toMatch(
+      /Two independently useful surfaces can\s+beat one overloaded surface; zero can beat both for a local question/,
+    );
     expect(reviewComposeSkill).toContain(
       "Direct the reviewer to code without creating an Artifact",
     );
@@ -100,6 +193,72 @@ describe("rvw review composition contract", () => {
     expect(reviewComposition).toContain("Never default to Walkthrough then Structure then code");
     expect(reviewComposition).toMatch(
       /Never instantiate Overview, State, Flow, Error, Test, and\s+Structure as fixed slots/,
+    );
+  });
+
+  it("keeps recommendation read-only unless Artifact production is explicit", () => {
+    expect(reviewComposeSkill).toMatch(
+      /assess, recommend, plan, audit, or explain a\s+composition is read-only/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /Invoke a producer for\s+Artifact creation or update\s+only when the user explicitly asks to create, publish, produce, or update\s+Artifacts/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /Supplying an\s+existing URI authorizes that contextual read, not an update/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /read-only, meaning that it\s+permits no Artifact mutation[\s\S]*matching producer may still perform its normal read\s+operation for an explicitly supplied existing URI/,
+    );
+    expect(reviewComposition).toContain("When intent is ambiguous, recommend without mutation");
+    expect(reviewComposition).toContain("must not fabricate Artifact URIs");
+  });
+
+  it("lets an unavailable transport diagnostic override contextual URI reads", () => {
+    expect(reviewComposeSkill).toMatch(
+      /`selectedTransport` is `unavailable`[\s\S]*overrides the existing-URI read permission[\s\S]*explicitly supplied URI cannot be read/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /source-only, unproduced briefs[\s\S]*did not evaluate the existing Artifact/,
+    );
+    expect(reviewComposition).toMatch(
+      /contextual-read permission[\s\S]*transport preflight succeeds[\s\S]*diagnostic takes precedence/,
+    );
+  });
+
+  it("calibrates common shapes without turning them into a fixed template", () => {
+    expect(reviewComposition).toContain(
+      "Use these shape checks as counterexamples, not a template or required scenario list",
+    );
+    expect(reviewComposition).toMatch(
+      /linear request → service → repository route[\s\S]*causal transitions[\s\S]*responsibility or dependency/,
+    );
+    expect(reviewComposition).toMatch(
+      /hub\/fan-out or convergence[\s\S]*star or converging backbone, Regions, or only a start/,
+    );
+    expect(reviewComposition).toMatch(
+      /cross-cutting lifecycle[\s\S]*each answers a useful question on\s+its own[\s\S]*one inseparable ordering invariant/,
+    );
+    expect(reviewComposition).toContain(
+      "A local guard, calculation, or code question remains direct reading",
+    );
+    expect(reviewComposition).toMatch(
+      /mixed PR may legitimately produce zero, one, or several Artifacts/,
+    );
+    expect(reviewComposition).toMatch(
+      /user-requested spatial emphasis[\s\S]*does not turn a temporal explanation into a Structure/,
+    );
+  });
+
+  it("preflights protocol v5 before delegating an Artifact operation", () => {
+    expect(reviewComposeSkill).toContain("Require `protocolVersion` 5");
+    expect(reviewComposeSkill).toMatch(
+      /Immediately\s+before every producer invocation, including a contextual read of an explicitly supplied Artifact,\s+require only the capabilities that invocation actually uses/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /A contextual read may happen before the composition is selected;\s+creation and update capabilities are required only after selecting that operation/,
+    );
+    expect(reviewComposition).toMatch(
+      /Before each producer invocation, including this contextual read, require only the capability that\s+invocation uses/,
     );
   });
 
@@ -115,6 +274,13 @@ describe("rvw review composition contract", () => {
     expect(reviewComposition).toContain("Count the joins between surfaces");
     expect(reviewComposition).toContain("state authority, lifecycle, async behavior");
     expect(reviewComposition).toContain("output or state produced on one side");
+    expect(reviewComposeSkill).toContain("Do not dispatch producer handoffs as a batch");
+    expect(reviewComposeSkill).toMatch(
+      /After each producer result,[\s\S]*re-evaluate every unpublished brief/,
+    );
+    expect(reviewComposition).toMatch(
+      /including a successful publication that refines a claim[\s\S]*remaining unpublished briefs/,
+    );
   });
 
   it("keeps understanding units and briefs internal without a persistent Set model", () => {
@@ -163,6 +329,34 @@ describe("rvw review composition contract", () => {
     );
     expect(reviewComposition).toMatch(
       /Verifying that an\s+anchor exists and its range is valid does not by itself verify the semantic claim/,
+    );
+    expect(reviewComposeSkill).toMatch(/connected\s+exact-relation visual backbone/);
+    expect(reviewComposeSkill).toMatch(
+      /new Region by the chunk's meaning, responsibility, and contribution[\s\S]*producer builds the verified graph/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /attention-start concept to one current Node ID[\s\S]*accepted chunk to exact Node membership[\s\S]*new Region a\s+fresh ID/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /suggested factual origin[\s\S]*separate claim to verify[\s\S]*not\s+automatically the attention start/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /Region array order as guidance[\s\S]*Viewer derives\s+cross-Region connections only from verified factual Edges/,
+    );
+    expect(reviewComposeSkill).toContain("Do not request authored layers or stages");
+    expect(reviewComposition).toContain("`primaryBackbone`");
+    expect(reviewComposition).toMatch(
+      /new Structure,[\s\S]*semantically rather than drafting its protocol payload/,
+    );
+    expect(reviewComposition).toMatch(
+      /composer does not choose a new `startNodeId`,\s+`edgeIds`, `nodeIds`, or Region `id`[\s\S]*producer owns graph identity/,
+    );
+    expect(reviewComposition).toMatch(
+      /attention-start concept to one current Node ID[\s\S]*accepted chunk concepts to exact Node membership[\s\S]*new Region\s+a fresh ID/,
+    );
+    expect(reviewComposition).toMatch(/retired\s+Node, Edge, or Region IDs must not be recycled/);
+    expect(reviewComposition).toMatch(
+      /one-screen fit[\s\S]*Region relationship arrows[\s\S]*derived rendering or pane-local\s+reviewer-session concerns/,
     );
   });
 });

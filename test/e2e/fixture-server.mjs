@@ -1448,6 +1448,13 @@ app.post("/api/fixture/structures/:structureId/update", async (context) => {
     );
   }
   const input = await context.req.json();
+  if (Object.hasOwn(input, "presentation")) {
+    structure.title = input.title ?? structure.title;
+    structure.presentation = structuredClone(input.presentation);
+    structure.updatedAt = new Date(Date.parse(structure.updatedAt) + 1_000).toISOString();
+    bump("structures");
+    return context.json({ ok: true, structure });
+  }
   if (input.clearFocus) {
     structure.title = input.title ?? "Order placement behavior without focus";
     structure.originNodeId = input.replacementOrigin ?? "http-controller";
@@ -1570,10 +1577,38 @@ app.post("/api/fixture/structures/:structureId/source-lifecycle", async (context
     edge.anchors[anchorIndex] = input.anchor;
   }
   if (input.removeNodeId) {
+    const backboneEdgeIds = new Set(structure.presentation?.primaryBackbone?.edgeIds ?? []);
+    const backboneNodeIds = new Set(
+      structure.edges.flatMap((edge) => (backboneEdgeIds.has(edge.id) ? [edge.from, edge.to] : [])),
+    );
+    if (
+      structure.presentation?.startNodeId === input.removeNodeId ||
+      backboneNodeIds.has(input.removeNodeId)
+    ) {
+      return context.json(
+        {
+          ok: false,
+          error: {
+            code: "INVALID_STRUCTURE_PRESENTATION",
+            message:
+              "cannot remove the presentation start or an explanation-backbone Node from this fixture",
+          },
+        },
+        400,
+      );
+    }
     structure.nodes = structure.nodes.filter((node) => node.id !== input.removeNodeId);
     structure.edges = structure.edges.filter(
       (edge) => edge.from !== input.removeNodeId && edge.to !== input.removeNodeId,
     );
+    if (structure.presentation) {
+      structure.presentation.regions = structure.presentation.regions
+        .map((region) => ({
+          ...region,
+          nodeIds: region.nodeIds.filter((nodeId) => nodeId !== input.removeNodeId),
+        }))
+        .filter((region) => region.nodeIds.length > 0);
+    }
   }
   structure.updatedAt = new Date(Date.parse(structure.updatedAt) + 1_000).toISOString();
   bump("structures");

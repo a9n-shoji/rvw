@@ -107,6 +107,7 @@ export function createStructureStressFixture(options: {
     title: `${shape} ${nodeCount}-node stress graph`,
     scope: "Synthetic graph-shape and rendering-pressure coverage without a product narrative.",
     originNodeId: shape === "fan-in" ? `node-${nodeCount - 1}` : "node-0",
+    presentation: null,
     nodes,
     edges,
     createdAt: "2026-08-08T00:00:00.000Z",

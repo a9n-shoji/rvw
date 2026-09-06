@@ -1,17 +1,29 @@
 ---
 name: rvw-structure
-description: Read, publish, replace in place, or explicitly delete one source-anchored relationship map through the local rvw CLI. Use when a reviewer needs to inspect the dependencies and side effects around one bounded PR-relevant behavior from a factual code entrypoint. Use rvw-review-compose when the user asks which Walkthroughs or Structures a whole review subject needs. Use rvw-walkthrough when the explanation is primarily an ordered path, and do not create a Structure for a generic static architecture or responsibility inventory.
+description: Read, publish, replace in place, or explicitly delete one source-anchored relationship map with optional authorial spatial presentation through the local rvw CLI. Use when a reviewer needs to inspect the dependencies and side effects around one bounded PR-relevant behavior from a factual code entrypoint. Use rvw-review-compose when the user asks which Walkthroughs or Structures a whole review subject needs. Use rvw-walkthrough when ordered prose and transitions are the explanation, and do not create a Structure for a generic static architecture or responsibility inventory.
 ---
 
 # rvw Structure management
 
 Create one review space that lets a human inspect one bounded PR-relevant behavior from a factual code
 entrypoint through the responsibilities, dependencies, contracts, and side effects needed to verify
-it. A Structure is a space; a Walkthrough is a path. If the clearest explanation has a required reading
-order, beginning, and end, stop without publishing and recommend `rvw-walkthrough` to the requester or
-upstream composer. Do not create that Walkthrough from this Skill. If there is no defensible entrypoint
-and the result would be a generic static architecture, subsystem catalog, or responsibility inventory,
-do not publish a Structure. These representation rejection boundaries still apply to an upstream brief.
+it. A Structure is a freely explorable spatial explanation whose complete factual graph remains
+available; a Walkthrough makes
+ordered prose and transitions the artifact. A Structure may name an attention start, emphasize at most
+one connected exact-relation visual backbone of at most 12 derived Nodes and 16 Edges, and identify stable,
+named comprehension Regions with concise responsibility summaries, but it remains freely explorable and
+is never a stepper or autoplay. Region array order is not authorial semantics. A path, hub,
+fan-out, convergence, reciprocal pair, or small cyclic skeleton can be the backbone. When a meaningful thesis
+and attention start exist but neither an honest backbone nor a useful comprehension region does, an exact
+start-only presentation is valid: topology still supplies the geometry while presentation supplies the
+overview, initial attention, and initial focus for a new Viewer session. If the clearest
+explanation needs a required reading order because prose between sequential stops, a required ending, or
+route transitions carry the meaning, stop without publishing and recommend `rvw-walkthrough` to the
+requester or upstream composer. Do not create that Walkthrough from this Skill. If there is no defensible
+entrypoint and the result would be a generic static architecture, subsystem catalog, or responsibility
+inventory, do not publish a Structure. These representation rejection boundaries still apply to an
+upstream brief.
+Do not author backbone layers or stages; the Viewer derives visual ranks from the connected relation set.
 
 The request may begin with a behavior or with a selected file, symbol, or changed source. For a
 source-led request, first identify the concrete PR-relevant behavior in which that source participates,
@@ -22,8 +34,9 @@ candidate boundaries to the requester or upstream composer so that they can choo
 
 This Skill produces, updates, or deletes at most one Structure for the requested behavior. When an
 Artifact brief from the user, caller, Pull Request body, or an upstream Skill supplies a subject, review
-question, behavior boundary, scope, inclusions, exclusions, or emphasis, treat those choices as
-authoring authority over what this Structure investigates. Treat `mustEstablish`, suggested origins,
+question, behavior boundary, scope, inclusions, exclusions, emphasis, or requested spatial presentation,
+treat those choices as authoring authority over what this Structure investigates and how it presents
+verified claims. Treat `mustEstablish`, suggested origins,
 relationships, invariants, and every other implementation assertion as claims to verify independently
 in committed source and tests, not as facts or conclusions to force. The brief does not override source
 exactness or the representation rejection rules above. Inspect broader Pull Request context only as
@@ -44,9 +57,11 @@ select a node, or claim that publication changed rvw navigation.
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 4, `agent.transport`, `structure.read`, `structure.list`,
-   `structure.preview`, and every one of `structure.publish`, `structure.update`, or
-   `structure.delete` needed for the task.
+2. Require `protocolVersion` 5, `agent.transport`, and `structure.presentation` so version-5 current
+   values can be parsed. Require only the operation capabilities the task uses: `structure.read` for
+   `get`, `structure.list` for listing or uncertain-publication recovery, `structure.preview` before
+   publish or update, and the corresponding `structure.publish`, `structure.update`, or
+   `structure.delete` capability for each requested mutation.
 3. Run `rvw agent status --json`. If `selectedTransport` is `unavailable`, stop and report its
    diagnostic. Otherwise use the reported transport without overriding it.
 4. Require local access to the saved repository and an exact committed source OID containing every
@@ -60,7 +75,7 @@ For an existing Structure, run:
 rvw structure get '<STRUCTURE_URI>' --json
 ```
 
-Read the complete current subject, source OID, nodes, edges, anchors, and Pull Request repository
+Read the complete current subject, source OID, presentation, nodes, edges, anchors, and Pull Request repository
 location. Keep its exact `updatedAt` for any update or authorized delete. A Structure has one current
 value and no local revision history.
 
@@ -74,14 +89,20 @@ rvw structure list '<PULL_REQUEST>' --json
 
 When authoring or materially revising a Structure, read
 [the Structure authoring contract](references/structure-authoring.md). It defines subject and scope
-selection, stable identities, claims, anchors, relation labels, update boundaries, and the internal
+selection, stable identities, claims, anchors, spatial presentation, update boundaries, and the internal
 completion check.
 
 Prepare one complete JSON value. `sourceOid` is the single coordinate for all node and edge anchors.
 Each node may have zero or one `anchor`; each edge may have zero or more `anchors`. For any anchor,
 provide both positive inclusive `startLine` and `endLine`, or omit both. Use repository-relative paths.
-`originNodeId` is required, its Node must have a source anchor, and every Node must be reachable from it
-when relation direction is ignored. The complete Structure contains no more than 400 source anchors.
+`originNodeId` and `presentation` are required; use `presentation: null` when no authorial spatial
+semantics are justified. A non-null presentation includes `thesis`, `startNodeId`, `primaryBackbone`, and
+`regions` explicitly; `primaryBackbone` may be `null` and `regions` may be empty under the authoring contract.
+Stable-sort the backbone's exact Edge IDs, each Region's unordered Node membership, and the Region array
+by stable ID.
+Do not add authored layer, stage, coordinate, rank, or route fields.
+The origin Node must have a source anchor, and every Node must be reachable from it when relation direction
+is ignored. The complete Structure contains no more than 400 source anchors.
 
 Every `--stdin` command reads until EOF. Supply the entire object and close stdin in the same
 non-interactive invocation; do not start an interactive PTY and send only JSON plus a newline.
@@ -90,19 +111,25 @@ non-interactive invocation; do not start an interactive PTY and send only JSON p
 
 Immediately before `publish` or `update`, preview the exact Structure content that will be sent. Omit
 only command metadata: `pullRequest` and `idempotencyKey` for publication, or `expectedUpdatedAt` for
-an update. Keep `sourceOid`, `title`, `scope`, `originNodeId`, `nodes`, and `edges` identical:
+an update. Keep `sourceOid`, `title`, `scope`, `originNodeId`, `presentation`, `nodes`, and `edges` identical:
 
 ```bash
 rvw structure preview --stdin --json
 ```
 
-Parse the canonical `layout` diagnostics and `warnings`. Treat `maxRows >= 8`,
+Parse the presentation-independent topology `layout` diagnostics and `warnings`. Treat `maxRows >= 8`,
 `nonForwardDirectionalLinkRatio >= 0.25`, or `originOutgoingDirectionalLinkCount === 0` as authoring
 smells. Reconsider whether the origin is the factual behavior entrypoint, nodes are too granular,
 claims or anchors overlap or nest, multiple behaviors are mixed, the subject boundary is too broad,
 or nodes merely reproduce adjacent source lines.
 
-These are not validation failures. If the factual graph does not improve after reconsideration,
+Preview validates the machine shape, graph-wide invariants, presentation, and derived layout only. It
+does not read `sourceOid` or resolve anchor paths and ranges. Independently confirm every anchor against
+that committed source before treating a successful preview as ready; publish and update perform the
+source-aware validation when a write is requested.
+
+These diagnostics deliberately ignore authorial presentation geometry, so reverse spatial reading does
+not count as a reversed factual relation. They are not validation failures. If the factual graph does not improve after reconsideration,
 publish or update it and explain why the warning remains when useful. Never change factual edge
 direction, the factual origin, predicate wording, or a node responsibility claim merely to improve a
 layout score. Do not implement or invoke a separate Skill-side layout preview.
@@ -118,6 +145,21 @@ rvw structure publish --stdin --json <<'RVW_JSON'
   "title": "Request policy boundary",
   "scope": "The committed request policy and the code contracts it directly depends on; transport setup and UI callers are excluded.",
   "originNodeId": "request-policy",
+  "presentation": {
+    "thesis": "The request decision is grounded in one committed input contract.",
+    "startNodeId": "policy-input",
+    "primaryBackbone": {
+      "edgeIds": ["request-policy-consumes-policy-input"]
+    },
+    "regions": [
+      {
+        "id": "decision-contract",
+        "label": "Decision contract",
+        "summary": "Connects the committed policy input to the allow/deny decision.",
+        "nodeIds": ["policy-input", "request-policy"]
+      }
+    ]
+  },
   "nodes": [
     {
       "id": "request-policy",
@@ -148,7 +190,7 @@ rvw structure publish --stdin --json <<'RVW_JSON'
 RVW_JSON
 ```
 
-Let the CLI reject invalid commits, paths, ranges, identities, endpoints, origin, connectivity, size, or ownership;
+Let the CLI reject invalid commits, paths, ranges, identities, endpoints, origin, presentation, connectivity, size, or ownership;
 never silently remove rejected graph elements. Parse the success response and report the returned
 `rvw://structure/<uuid>` reference. Generate one key for the logical publication and retain it until
 the result is known. After a timeout or connection loss, retry only the identical payload with that
@@ -161,16 +203,17 @@ failed and are not persisted graph content.
 ## Replace the current value
 
 Use an in-place update only when the requested subject identity remains the same. Preserve IDs for
-surviving nodes and edges even when their labels or anchors change, never recycle removed IDs for new
-claims, and send the complete replacement value. rvw records retired IDs and rejects their
-reintroduction even when the current value no longer contains them:
+surviving Nodes and Edges even when their labels or anchors change, and preserve a Region ID while the
+same comprehension chunk survives. Never recycle removed Node, Edge, or Region IDs for new claims or
+chunks, and send the complete replacement value. rvw records all three retired ID kinds and rejects their reintroduction even
+when the current value no longer contains them:
 
 ```bash
 rvw structure update '<STRUCTURE_URI>' --stdin --json
 ```
 
 The JSON contains the `expectedUpdatedAt` read from the current Structure plus `sourceOid`, `title`,
-`scope`, `originNodeId`, `nodes`, and `edges`; it does not contain `pullRequest`. If a conflict reports
+`scope`, `originNodeId`, `presentation`, `nodes`, and `edges`; it does not contain `pullRequest`. If a conflict reports
 that the current value changed, read it again and reconcile instead of retrying the stale replacement.
 If the subject itself changed, publish a new Structure rather than rewriting the old identity. Updating
 is passive and retains no previous Structure value.

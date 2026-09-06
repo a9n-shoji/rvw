@@ -9,11 +9,39 @@ import type {
   ReferenceDocumentContext,
   SourceReferenceOrigin,
 } from "./document-workspace.js";
+import type {
+  StructureCameraFrame,
+  StructureRegionsViewState,
+  StructureViewMode,
+  StructureViewport,
+} from "./structure-session.js";
+import type { StructureNeighborhoodDepth } from "./structure-graph.js";
 
 export const READING_HISTORY_STATE_KEY = "rvwReading";
 
+export interface StructureReadingSnapshot {
+  /** Artifact revision whose derived geometry the snapshot was captured against. */
+  artifactUpdatedAt: string;
+  viewMode: StructureViewMode;
+  focusId: string | null;
+  selectedEdgeId: string | null;
+  depth: StructureNeighborhoodDepth;
+  framedRegionId: string | null;
+  cameraFrame: StructureCameraFrame | null;
+  viewport: StructureViewport;
+  surfaceSize: { width: number; height: number };
+  regionsViewport: StructureViewport;
+  regionsSurfaceSize: { width: number; height: number };
+  regionsCameraMode: StructureRegionsViewState["cameraMode"];
+  layoutBasisKey: string;
+  positionsKey: string;
+  regionsLayoutBasisKey: string;
+}
+
 export type ReadingLocator =
-  { kind: "line"; line: number | null; endLine?: number } | { kind: "scroll"; top: number };
+  | { kind: "line"; line: number | null; endLine?: number }
+  | { kind: "scroll"; top: number }
+  | { kind: "structure"; snapshot: StructureReadingSnapshot };
 
 export interface ReadingHistoryEntry {
   version: 1;
@@ -222,6 +250,10 @@ function parseLocator(value: unknown): ReadingLocator | null {
       ? { kind: "scroll", top: value.top }
       : null;
   }
+  if (value.kind === "structure") {
+    const snapshot = parseStructureReadingSnapshot(value.snapshot);
+    return snapshot ? { kind: "structure", snapshot } : null;
+  }
   if (value.kind !== "line") return null;
   const lineValid = value.line === null || (Number.isInteger(value.line) && Number(value.line) > 0);
   const endLineValid =
@@ -238,6 +270,144 @@ function parseLocator(value: unknown): ReadingLocator | null {
   };
 }
 
+function parseViewport(value: unknown): StructureViewport | null {
+  if (
+    !isRecord(value) ||
+    typeof value.x !== "number" ||
+    !Number.isFinite(value.x) ||
+    typeof value.y !== "number" ||
+    !Number.isFinite(value.y) ||
+    typeof value.scale !== "number" ||
+    !Number.isFinite(value.scale) ||
+    value.scale <= 0
+  ) {
+    return null;
+  }
+  return { x: value.x, y: value.y, scale: value.scale };
+}
+
+function parseSurfaceSize(value: unknown): { width: number; height: number } | null {
+  if (
+    !isRecord(value) ||
+    typeof value.width !== "number" ||
+    !Number.isFinite(value.width) ||
+    value.width < 0 ||
+    typeof value.height !== "number" ||
+    !Number.isFinite(value.height) ||
+    value.height < 0
+  ) {
+    return null;
+  }
+  return { width: value.width, height: value.height };
+}
+
+function parseCameraFrame(value: unknown): StructureCameraFrame | null | undefined {
+  if (value === null) return null;
+  if (!isRecord(value)) return undefined;
+  if (value.kind === "nodes") {
+    if (!Array.isArray(value.nodeIds) || !value.nodeIds.every((id) => typeof id === "string")) {
+      return undefined;
+    }
+    if (
+      value.maxScale !== undefined &&
+      (typeof value.maxScale !== "number" ||
+        !Number.isFinite(value.maxScale) ||
+        value.maxScale <= 0)
+    ) {
+      return undefined;
+    }
+    return {
+      kind: "nodes",
+      nodeIds: [...value.nodeIds],
+      ...(typeof value.maxScale === "number" &&
+      Number.isFinite(value.maxScale) &&
+      value.maxScale > 0
+        ? { maxScale: value.maxScale }
+        : {}),
+    };
+  }
+  if (value.kind === "region" && typeof value.regionId === "string") {
+    return { kind: "region", regionId: value.regionId };
+  }
+  if (
+    value.kind === "center-node" &&
+    typeof value.nodeId === "string" &&
+    typeof value.scale === "number" &&
+    Number.isFinite(value.scale) &&
+    value.scale > 0
+  ) {
+    return { kind: "center-node", nodeId: value.nodeId, scale: value.scale };
+  }
+  if (value.kind === "bounds" && isRecord(value.bounds)) {
+    const { left, top, right, bottom } = value.bounds;
+    if (
+      [left, top, right, bottom].every(
+        (part) => typeof part === "number" && Number.isFinite(part),
+      ) &&
+      (right as number) >= (left as number) &&
+      (bottom as number) >= (top as number)
+    ) {
+      return {
+        kind: "bounds",
+        bounds: {
+          left: left as number,
+          top: top as number,
+          right: right as number,
+          bottom: bottom as number,
+        },
+      };
+    }
+  }
+  return undefined;
+}
+
+function parseStructureReadingSnapshot(value: unknown): StructureReadingSnapshot | null {
+  if (!isRecord(value)) return null;
+  const viewport = parseViewport(value.viewport);
+  const surfaceSize = parseSurfaceSize(value.surfaceSize);
+  const regionsViewport = parseViewport(value.regionsViewport);
+  const regionsSurfaceSize = parseSurfaceSize(value.regionsSurfaceSize);
+  const cameraFrame = parseCameraFrame(value.cameraFrame);
+  if (
+    typeof value.artifactUpdatedAt !== "string" ||
+    (value.viewMode !== "graph" && value.viewMode !== "regions") ||
+    (value.focusId !== null && typeof value.focusId !== "string") ||
+    (value.selectedEdgeId !== null && typeof value.selectedEdgeId !== "string") ||
+    (value.depth !== 1 && value.depth !== 2 && value.depth !== "all") ||
+    (value.framedRegionId !== null && typeof value.framedRegionId !== "string") ||
+    cameraFrame === undefined ||
+    !viewport ||
+    !surfaceSize ||
+    !regionsViewport ||
+    !regionsSurfaceSize ||
+    (value.regionsCameraMode !== "home" &&
+      value.regionsCameraMode !== "fit" &&
+      value.regionsCameraMode !== "manual") ||
+    typeof value.layoutBasisKey !== "string" ||
+    typeof value.positionsKey !== "string" ||
+    typeof value.regionsLayoutBasisKey !== "string"
+  ) {
+    return null;
+  }
+  return {
+    artifactUpdatedAt: value.artifactUpdatedAt,
+    viewMode: value.viewMode,
+    focusId: value.focusId,
+    selectedEdgeId: value.selectedEdgeId,
+    depth: value.depth,
+    framedRegionId: value.framedRegionId,
+    cameraFrame,
+    viewport,
+    surfaceSize,
+    regionsViewport,
+    regionsSurfaceSize,
+    regionsCameraMode: value.regionsCameraMode,
+    layoutBasisKey: value.layoutBasisKey,
+    positionsKey: value.positionsKey,
+    regionsLayoutBasisKey: value.regionsLayoutBasisKey,
+  };
+}
+
 export function readingHistoryState(
   currentState: unknown,
   entry: ReadingHistoryEntry,
@@ -246,6 +416,33 @@ export function readingHistoryState(
     ...(isRecord(currentState) ? currentState : {}),
     [READING_HISTORY_STATE_KEY]: entry,
   };
+}
+
+export function isCurrentStructureReadingSnapshot(
+  latest: StructureReadingSnapshot | undefined,
+  candidate: StructureReadingSnapshot,
+): boolean {
+  return (
+    latest === undefined ||
+    latest === candidate ||
+    JSON.stringify(latest) === JSON.stringify(candidate)
+  );
+}
+
+export function shouldReplaceStructureReadingEntry(input: {
+  latest: StructureReadingSnapshot | undefined;
+  candidate: StructureReadingSnapshot;
+  focusedPane: DocumentPaneId;
+  activeDocument: ActiveDocument | null;
+  pane: DocumentPaneId;
+  structureId: string;
+}): boolean {
+  return (
+    isCurrentStructureReadingSnapshot(input.latest, input.candidate) &&
+    input.focusedPane === input.pane &&
+    input.activeDocument?.kind === "structure" &&
+    input.activeDocument.id === input.structureId
+  );
 }
 
 export function parseReadingHistoryEntry(
@@ -264,7 +461,9 @@ export function parseReadingHistoryEntry(
   }
   const document = parseDocument(value.document);
   const locator = parseLocator(value.locator);
-  if (!document || !locator) return null;
+  if (!document || !locator || (locator.kind === "structure" && document.kind !== "structure")) {
+    return null;
+  }
   return {
     version: 1,
     pullRequestId,

@@ -1039,7 +1039,7 @@ export function DocumentViewer({
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onOpenLatestReferenceFile: (target: SourceReferenceFileTarget) => void;
   onReresolveSourceReference: (context: ReferenceDocumentContext) => Promise<string | null>;
-  onOpenStructureReference: (reference: FileStructureReference) => void;
+  onOpenStructureReference: (reference: FileStructureReference, openInRightPane: boolean) => void;
 }) {
   if (activeDocument.kind === "walkthrough" || activeDocument.kind === "structure") {
     throw new Error("この文書は専用Viewerで表示してください。");

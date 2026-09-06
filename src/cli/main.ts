@@ -9,7 +9,7 @@ import { z } from "zod";
 import { createRuntime, type Runtime } from "../application/runtime.js";
 import { databasePathConfiguration } from "../infrastructure/db/database.js";
 import {
-  projectStructure,
+  projectTopologyStructure,
   structureAuthoringWarnings,
   type StructureGraphContent,
 } from "../domain/structure-projection.js";
@@ -86,7 +86,7 @@ function writeJson(value: unknown): void {
 }
 
 function structureAuthoringFeedback(structure: StructureGraphContent) {
-  const layout = projectStructure(structure).diagnostics;
+  const layout = projectTopologyStructure(structure).diagnostics;
   return { layout, warnings: structureAuthoringWarnings(layout) };
 }
 
@@ -880,6 +880,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "structure.list",
           "structure.read",
           "structure.preview",
+          "structure.presentation",
           "structure.publish",
           "structure.update",
           "structure.delete",

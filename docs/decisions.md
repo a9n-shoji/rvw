@@ -1,5 +1,567 @@
 # Architecture decisions
 
+## 2026-09-06: Separate the authored explanation backbone from the reviewer's active lens
+
+### Status
+
+Accepted as the normative change contract for the Structure presentation work in protocol v5. This
+decision supersedes the linear-primary-spine, ordered-region, simultaneous-full-map, and always-expanded overview
+parts of “Add authorial spatial presentation to Structure,” and the interactive two-line Edge-label clamp
+from “Export Structure from the browser presentation session.” It retains those decisions' factual graph,
+authorial presentation, reviewer session, exact-source, bounded-subject, and no-authored-coordinate
+separations.
+
+### Problem
+
+The first presentation model improved Structure by adding a thesis, an attention start, one exact-Edge
+linear spine, and comprehension regions. Dogfood exposed three distinct failures that should not be
+solved as unrelated styling defects.
+
+First, a single path cannot represent a coherent core that branches or converges. The author must omit
+an equally important relation, manufacture a route through the graph, or set the spine to `null` and
+lose exact primary-relation emphasis. Adding several paths would instead introduce competing authored
+orders, repeated prefixes and suffixes, and a temporal model that overlaps Walkthrough.
+
+Second, requiring the complete graph to remain legible in one viewport conflates artifact coverage
+with simultaneous visibility. In the full presentation dogfood fixture the canonical presentation map
+is substantially wider than the topology-only map, so Fit makes Nodes and labels unreadable. Regions
+help working-memory chunking but fixed packing radii separate those chunks enough to obscure their
+relationship.
+
+Third, the current fixed Bezier routes and bounded label-offset search can cross unrelated Nodes and
+eventually place labels over Node boxes. Recomputing placement only for the currently displayed label
+subset also lets a label jump when focus changes. Those results are not merely unattractive: they make
+the factual relation ambiguous.
+
+Fourth, an ordinal Region legend names chunks without explaining their responsibility or showing how
+they relate. Meanwhile, listing every exact backbone Edge in the Guide duplicates the graph and spends
+scarce viewport height without answering a concrete navigation question. A one-dimensional Region
+array order is also too weak to express fan-out, convergence, reciprocal boundaries, or unassigned
+bridge Nodes and creates a sequence-looking signal that has no reading semantics.
+
+### Product definition and boundaries
+
+A Structure is a source-grounded, bounded spatial explanation of the exact responsibilities and
+relations needed to understand one PR-relevant behavior or review question. It is not a repository-wide
+knowledge graph, architecture inventory, completeness claim, execution trace, or authored tour.
+
+“Bounded and sufficient” applies to artifact content: within the declared subject, the factual graph
+must contain the responsibilities and relations needed to evaluate the thesis. It does not require the
+Viewer to show every Node, Edge, and label at full detail at the same time. Local projection is valid
+only when the Viewer exposes the visible/total extent and provides an immediate, deterministic route
+back to the authored overview and complete graph.
+
+Walkthrough remains the representation whose prose, transitions, and required order carry the
+explanation. Structure may provide an initial attention anchor and a primary relation subgraph, but
+reviewer traversal remains free and session-derived.
+
+### Normative layer separation
+
+Keep four layers distinct.
+
+1. The factual graph consists of `originNodeId`, Nodes, Edges, and source anchors. Edge identity,
+   direction, predicate, parallel multiplicity, and reciprocal relations remain factual truth.
+2. Authorial presentation consists only of `thesis`, `startNodeId`, one optional
+   `primaryBackbone`, and identified comprehension `regions` with concise responsibility summaries. It
+   says what claim to orient around, where to begin, which exact relations form its compact core, and
+   how to chunk the surrounding responsibilities.
+3. Derived rendering includes canonical coordinates, distance from the backbone, ranks, routes, label
+   slots, collision avoidance, semantic zoom, region bounds, and minimap geometry. None is artifact
+   truth.
+4. Reviewer session includes the Graph / Regions view mode, active focus, focus-hop depth, the
+   currently framed Region, navigation history, selected relation, guide disclosure, pan, zoom,
+   viewport, and manual Node positions. None is producer-controlled or persisted in the Structure.
+
+Do not combine authorial importance and reviewer attention into one stored score. Backbone membership
+is stable authorial salience. Hop distance from the current focus is transient reviewer relevance. A
+non-backbone Node may become the strongest visual object while focused without becoming part of the
+authored core.
+
+Regions are a third, non-ranking concern: exact comprehension chunks and navigation landmarks. Region
+membership does not imply importance, execution phase, architecture tier, or focus.
+
+### Domain and protocol contract
+
+Protocol-v5 Structure content uses:
+
+```ts
+type StructurePresentation = {
+  thesis: string;
+  startNodeId: string;
+  primaryBackbone: {
+    edgeIds: string[];
+  } | null;
+  regions: Array<{
+    id: string;
+    label: string;
+    summary: string;
+    nodeIds: string[];
+  }>;
+};
+```
+
+`primaryBackbone.edgeIds` is an unordered exact-membership set, not a path or priority list. Node
+membership is derived from the selected Edge endpoints and is not duplicated in the payload. A path,
+star, fan-out, convergence diamond, reciprocal pair, and a small cyclic skeleton are all valid shapes.
+
+A non-null backbone must satisfy all of the following:
+
+- contain 1–16 unique current Edge IDs and derive 2–12 unique current Node IDs;
+- contain `startNodeId` among those derived Nodes;
+- form one weakly connected simple graph after ignoring factual direction, parallel multiplicity, and
+  self-loops;
+- preserve every selected Edge's factual direction and identity; and
+- use self-loops only in addition to a connected multi-Node skeleton, never as the sole connection.
+
+Array order has no semantics. Validation and canonical payload processing normalize it by stable Edge
+ID so an order-only retry is the same content. Parallel or reciprocal Edges may each be selected when
+each exact relation is part of the core.
+
+`presentation: null` and start-only presentation remain valid first-class forms. Start-only is
+`primaryBackbone: null` with no regions and carries a thesis and initial attention anchor without
+inventing a spatial organizer. A presentation may also contain regions with no backbone.
+
+Regions are an unordered set of 0–12 authorial comprehension chunks. Each Region has a stable unique
+ID, a short label, a nonblank responsibility summary, and exact unordered Node membership. The summary
+states what the grouped responsibilities collectively contribute to this Structure's thesis; it is not
+generic subsystem ownership, a review conclusion, or a replacement for factual Edge predicates.
+Canonical input processing sorts Regions by ID and members by Node ID, so reordering either array does
+not change content or geometry. Membership remains disjoint but need not cover every Node or induce a
+connected subgraph. A shared boundary can be its own Region or an unassigned bridge rather than
+belonging to overlapping chunks. A backbone Node may be ungrouped or belong to one Region.
+
+Region ID is artifact identity, not a renderer key. It is also referenced by the reviewer's framed lens and
+navigation history, so an ID removed from a Structure may not later identify another chunk. Persist retired
+Region IDs beside the existing Node / Edge tombstones and reject their reintroduction. This protects a client
+that missed intermediate whole-value updates from treating a new chunk as a surviving frame. Tombstones do
+not attempt semantic diffing: label, summary, membership, anchor, and endpoint edits are valid for a genuinely
+surviving identity, so avoiding an in-place semantic repurpose remains part of the producer contract.
+
+Because protocol v5 is introduced only by the unmerged presentation branch, replace
+`primarySpine` with `primaryBackbone` inside v5 rather than supporting both names or advancing to v6.
+Legacy stored data from protocol v4 has no presentation and continues to normalize to
+`presentation: null`. Persisted malformed or obsolete `primarySpine` presentation data is rejected as
+invalid current content rather than silently assigned new semantics.
+
+### Canonical projection contract
+
+When Regions exist, the canonical map places each complete Region membership as one compound spatial
+unit before placing unassigned context. Direct cross-Region facts shape adjacency between those units;
+backbone relations receive stronger weight, but may bend between chunks rather than pulling their
+members into a global backbone band. Within a small Region, deterministic cell assignment minimizes
+internal crossings and span and puts multi-boundary Nodes toward the adjacent chunks. Every cell of the
+derived grid is a candidate, including an empty corner in a non-full grid. These cells and empty space
+are renderer choices, not authored positions or implied missing members.
+
+When a backbone exists without Regions, it remains one connected skeleton rooted for layout at
+`startNodeId`. Visual ranks or bands are derived deterministically from undirected backbone distance,
+crossing reduction, and finally stable IDs. Factual direction remains visible on Edge arrows but does
+not become authorial reading direction or change backbone rank. Those bands are renderer output and
+never an authored `layers` or `stages` field.
+
+When a long sequence of derived bands would collapse the map into a thin horizontal strip, the
+renderer may fold contiguous bands into a deterministic multi-row, serpentine surface. Row turns keep
+neighboring bands close, and packing must account for the padded envelopes of declared regions rather
+than leaving otherwise usable vertical space empty. The folding threshold, target aspect ratio,
+candidate score, and exact row breaks are replaceable projection heuristics: they do not add order to
+`primaryBackbone.edgeIds`, and they are not Structure protocol semantics.
+
+Region-external Nodes are partitioned into maximal connected components of the induced factual
+topology. The projector treats each as a temporary Context compound: internal facts derive rank bands,
+long bands fold into a bounded serpentine surface, and the compound moves only by rigid translation
+after authored Region envelopes are placed. All compounds share global packing candidates on every
+side of those envelopes; this lets many independent leaves surround a hub instead of accumulating in
+one lower-right quadrant. Region-to-Region relative geometry remains fixed, while final normalization
+may translate the whole map. Candidate translations balance exact boundary-relation span, straight boundary obstruction through existing Nodes, total extent, and area. Short Context
+sequences may stay linear; the threshold and score remain replaceable renderer heuristics. This keeps
+partial Region membership honest without producing a 12- or 50-Node vertical remainder, and keeps an
+explicit cross-Region bridge visible rather than synthesizing Region adjacency.
+
+The Context component, its entry rank, derived bands, and collision envelope are not artifact
+semantics and are never persisted as a pseudo-Region. They are the Graph-layout counterpart of the
+neutral Context components derived in Regions mode from current exact facts. Region packing uses
+measured member envelopes instead of theoretical empty radii and weights cross-region adjacency so
+chunks remain visually connected. A Region without a backbone member remains compactly placed relative
+to its actual graph attachments. Start-only and null presentation continue to use the same
+topology-derived canonical geometry.
+
+Projection must be deterministic under input Node, Edge, backbone Edge, Region, and region-member array
+permutations. Nodes may not overlap. Layout must remain bounded for the 50-Node/12-region limits and
+must not make a one-dimensional strip the only representation of a branching backbone.
+
+The renderer also derives a coarse Region relationship graph from direct factual Edges. It groups
+cross-Region Edges by the unordered pair of Region IDs while retaining exact forward, reverse,
+undirected, and backbone-member Edge IDs. This aggregate is a view of the factual graph, not another
+artifact graph. It never invents a transitive Region connection. Every connected component of
+unassigned Nodes remains explicit neutral Context in this view, including an unassigned authorial
+start, backbone segment, bridge, or isolated context. Its exact direct Region boundaries remain
+directional and inspectable; no component is silently assigned to an “Other” Region.
+
+### Viewer navigation and information hierarchy
+
+The Viewer provides a stable authored map plus a movable active lens.
+
+- **Graph mode** is the detailed factual Node / Edge surface. It owns focus-hop filtering, the
+  graph camera, manual Node positions, exact relation selection, and source navigation.
+- **Regions mode** is a full-body, derived comprehension map rather than header content. It gives
+  every declared Region a responsibility rectangle and connects those rectangles with arrows
+  aggregated only from direct factual cross-Region Edges. Direction, reciprocal/undirected shape,
+  multiplicity, and backbone membership remain inspectable. Unassigned Nodes remain explicit
+  context instead of being silently forced into a Region. Switching modes does not alter graph
+  focus, depth, camera, or manual positions. Regions owns a separate pane-local camera: first view and
+  Reset keep the Start landmark at a readable scale, Fit frames the entire derived map, and zoom plus
+  wheel/drag pan support local reading without compacting canonical card geometry.
+- A Region/Context aggregate relation is a keyboard- and pointer-accessible index into its current
+  exact factual Edges, not a tooltip-only summary. Selecting it discloses each stable Edge ID,
+  exact predicate, endpoint pair, and visible source locator; any listed Edge can be selected and framed in Graph.
+  Selecting a neutral Context card frames that derived component's exact member Nodes without
+  inventing a representative focus or persisting Context as artifact semantics. Back returns to the
+  prior Regions camera for both actions. This inspector is ephemeral reviewer disclosure; the
+  aggregate and Context identities remain derived from the current graph.
+
+- **Home** activates the All lens, focuses the authorial start (or the factual origin for
+  `presentation: null`), and frames that Node plus its exact factual 1-hop neighbors. Backbone
+  membership remains stable visual emphasis but never expands the Home camera extent. Home is an
+  artifact-derived camera target, not a persisted producer viewport.
+- Selecting a Node makes it the active reviewer focus, records the previous focus/depth/camera state in
+  pane-local history, and animates the camera to a readable frame around the selected 1-hop context.
+  The reviewer may explicitly choose 1-hop, 2-hop, or All without changing the authored core.
+- A repository-file backlink is a cross-document locator rather than that local exploration gesture. It
+  reuses the existing pane session, clears relation selection, changes only the focus, and centers the
+  exact target at the current zoom without changing depth, fitting the 1-hop context, or remounting the
+  Structure.
+- **Back** restores the prior reviewer focus/depth/framed-Region/camera state. It is navigation history,
+  not an authored reading path and not Structure data.
+- Selecting a Region rectangle in Regions mode records the overview as the prior navigation state,
+  switches to Graph mode, activates the All lens, and frames the Region's exact member geometry. Its
+  full label, responsibility summary, member count, and internal-relation count remain visible in a
+  compact canvas lens while its member Nodes and internal relations receive full visual relevance. Stable
+  IDs remain machine identity and are not exposed as abbreviations the reviewer must decode. Factual focus distance
+  remains unchanged. It does not manufacture a representative Node, change focus or membership, or
+  reclassify the chunk as selected factual content. Back returns to the Regions overview; Home, local
+  Node focus, or an explicit depth change clears the chunk lens. Direct Graph / Regions mode toggles
+  do not add navigation-history noise.
+- Region drill history snapshots the Regions camera as well as the Graph camera. Back therefore
+  returns to the exact overview location from which the Region was opened, even across repeated
+  pan → drill → Back cycles. Direct mode toggles preserve both cameras without adding history.
+- Regions camera reconciliation has its own canonical derived-map basis. Serialization-only reorder
+  and thesis/summary prose edits retain it; changes to Region identity/label/membership, Context
+  composition, factual boundary routing, or relation-label geometry reset it to the readable
+  Start-oriented Home projection. Only explicit Fit frames the complete map. This key and both
+  cameras are reviewer session state, never protocol or artifact fields.
+- **All** exposes the complete graph and visible/total counts. At a scale where labels cannot be read,
+  semantic zoom may reduce secondary detail, but it must retain explicit affordances to inspect every
+  hidden label and must never imply that omitted display detail is absent from the artifact.
+- The minimap always exposes the complete canonical extent, authored backbone, region landmarks,
+  current viewport, and current focus. It is the global orientation channel while the canvas shows
+  local detail.
+
+Use distinct visual channels: persistent line/marker treatment for backbone membership, opacity and
+detail for focus-hop relevance, and a named lens plus member/background emphasis for regions. Do not reuse one highlight
+color to make these three meanings indistinguishable. A distant backbone remains an orientation
+skeleton or minimap landmark through its line/marker treatment, but backbone membership never restores
+opacity removed by focus distance. A focused non-backbone Node and its local relations receive full detail
+without becoming authored core. A relation follows its farther endpoint's hop layer, so the boundary
+from a 1-hop Node to a 2-hop Node is contextual rather than visually merging the two layers. An active
+exact-relation selection or active Region lens may override distance because it is the reviewer's
+explicit current target; artifact-derived core or chunk membership alone may not.
+
+The compact Guide contains only the authorial start and a separately disclosable thesis. A new session
+exposes enough of it to establish the claim and start, and later thesis disclosure remains pane-local
+session state. Do not duplicate every backbone Edge or the Region relationship map in the header.
+Backbone membership remains visible on the exact Graph relations and may use one compact legend key or
+count. Region labels, responsibility summaries, coverage, and derived factual relationships belong to
+the full-height Regions mode, where they have enough space to act as an overview rather than compressing
+both overview and detailed graph.
+
+### Edge routing and semantic-zoom contract
+
+Viewer and export use one shared, deterministic route model computed before label visibility is
+filtered. Every non-self Edge's visible route, including its directional marker, meets an attachment
+port on the exact source and target Node boundaries. Clearance may keep geometry out of a Node interior,
+but must not leave a visible gap that makes either endpoint ambiguous. Routes avoid every non-endpoint
+Node box. Distinct visible relations whose routes would otherwise share or nearly share a substantive
+corridor receive stable separate lanes; parallel and reciprocal exact Edges are required examples.
+Separating only a short endpoint stub before collapsing onto the same path is insufficient. Self-loops
+retain a stable loop. Primary-backbone routes prefer reserved corridors,
+while branch and cross-region routes may use deterministic gutters.
+
+Label placement consumes the final route geometry and remains stable when focus/depth changes. At normal
+detail, every displayed relation label is present, does not intersect a Node, and does not overlap any
+other displayed label. If no collision-free inline slot exists, use a deterministic displaced slot with
+an association leader; overlapping text and silent omission are not normal-detail fallbacks. Below normal
+detail, semantic zoom may omit a label only with an explicit inspect affordance. Label backgrounds
+separate text from crossing routes.
+
+Focus-hop and zoom determine detail, not truth. The active Node and incident relations are fully
+legible; 1-hop is normal detail; 2-hop is contextual; farther non-backbone content may be dimmed or
+summarized. Backbone geometry remains identifiable at every zoom through its independent treatment and
+the minimap, but its distance opacity is the same as other content in the same hop layer and distant
+backbone labels need not remain rendered as unreadable text.
+
+### Session reconciliation and export
+
+The layout basis contains organizer presence, the canonical projection revision applicable to that
+organizer, `startNodeId` when an organizer exists, normalized backbone simple adjacency, and Region
+identity/membership. The Region-first projection revision applies only to Region-bearing presentations;
+topology/start-only and backbone-only presentations retain their prior basis. A change to start,
+backbone endpoint adjacency, Region identity/membership, or the applicable projection revision rebases
+canonical geometry. Reordering Regions or members and changing only thesis, Region labels, summaries, or the
+exact Edge ID between the same backbone endpoints preserves manual geometry while immediately updating
+semantic emphasis. Adding or removing parallel backbone relations without changing endpoint adjacency
+also preserves geometry.
+
+Reconciliation preserves a surviving view mode, focus, depth, selected Edge, Guide disclosure, and
+navigation history entries whose targets still exist. Regions mode reconciles to Graph only when the
+current artifact has no Regions. Region framing and Region history use stable Region IDs,
+not array indexes. A surviving framed Region may therefore remain selected and refit its current exact
+members after a membership rebase; a removed Region ID is pruned. Reconciliation translates the
+rebased viewport to keep the surviving focus at the same screen point when possible. Removed Node and
+Edge targets are pruned rather than replaced by the origin.
+
+Standalone SVG/PNG export remains a deterministic complete-artifact representation using canonical or
+current pane Node positions as explicitly selected by the existing export contract. It includes the
+thesis, start, compact backbone legend, Region responsibilities and derived connections, all factual
+Nodes and Edges, and shared routes. It uses compact non-ordinal landmarks derived from stable Region
+IDs, and does not export view mode, active focus, hop filtering, history, Guide disclosure, camera, or semantic-zoom
+omissions. Exporting a current local lens would require a future explicitly named export mode.
+
+### Authoring contract
+
+The producer first establishes the factual graph without reference to desired geometry. It then asks:
+
+1. Is there a source-consistent thesis and meaningful first attention Node? If not, use
+   `presentation: null`.
+2. What is the smallest connected set of exact factual relations that a reviewer must grasp to orient
+   to that thesis? Select it as `primaryBackbone`, or use `null` when no such privileged set exists.
+3. Do named, disjoint chunks materially reduce working-memory load, and can each chunk's contribution
+   to the thesis be stated without generic filler? Add only those Regions, give each a stable ID and
+   concise responsibility summary, and leave unrelated or bridging Nodes unassigned. Do not use Regions
+   as an architecture inventory or as a substitute for a missing factual relation.
+
+The producer never changes Edge direction, label predicate, identity, or graph membership to improve
+the projection. It does not classify every Node into an importance layer, create multiple routes,
+encode execution stages, or expand the Structure toward repository completeness. If transition prose
+or a required sequence is essential, it rejects Structure in favor of Walkthrough. If the graph cannot
+remain one bounded coherent behavior, it narrows or rejects the subject.
+
+### Acceptance contract
+
+The change is complete only when automated tests and the full dogfood fixture establish all of the
+following:
+
+- path, hub/fan-out, convergence, reciprocal/parallel, region-only, start-only, and null presentation
+  shapes validate and render without manufacturing order;
+- missing, duplicate, disconnected, start-excluding, oversized, and obsolete-spine backbone payloads
+  fail explicitly at schema, service, and persisted-read boundaries;
+- permutations of non-semantic arrays, including the outer Region array, produce identical normalized
+  presentation/layout output;
+- changing backbone adjacency rebases layout, while an exact parallel-Edge substitution with unchanged
+  adjacency preserves manual geometry and viewport orientation;
+- Home frames the authored start (or null-presentation origin) plus exact 1-hop Node bounds independent
+  of backbone extent, while Node focus, Back, Region frame, 1-hop, 2-hop, and All preserve explicit
+  visible/total context and never mutate artifact semantics;
+- the Guide remains a compact start / thesis surface and does not duplicate a full backbone list or
+  Region map; Graph / Regions is keyboard accessible, Regions uses the full Structure body, and a
+  Region drill-down can return to that overview with Back;
+- the derived Region overview preserves direct cross-Region direction, parallel/reciprocal exact
+  relations, backbone membership, and explicit unassigned context without authoring a second graph;
+- every non-self visible Edge attaches to source and target boundary ports without an ambiguous clearance
+  gap, and no rendered Edge crosses a non-endpoint Node;
+- distinct visible relations retain independently traceable substantive lane segments whenever their
+  routes would otherwise share or nearly share a corridor; parallel and reciprocal exact relations are
+  required examples, and merely different endpoint stubs over an otherwise collapsed route are
+  insufficient;
+- at normal detail all displayed relation labels, and in complete export all relation labels, are
+  pairwise non-overlapping and Node-disjoint; forced inline conflicts use leader-associated displaced
+  slots, and common label positions do not jump when focus/depth changes;
+- compact presentation layout materially improves the full fixture's readable fit without introducing
+  Node or region overlap, and narrow panes retain usable canvas height; and
+- Viewer and SVG/PNG export share route geometry and exact core-relation membership.
+
+### Alternatives considered
+
+- Keep one linear path and rely only on focus navigation: rejected because focus helps later exploration
+  but does not state which parallel branches or convergence relations are equally central in the first
+  authorial frame.
+- Add `primarySpines[]`: rejected because shared prefixes/suffixes and competing orders make traversal
+  semantics ambiguous and pull Structure toward Walkthrough.
+- Add authored `layers` or `stages`: rejected because architecture tiers, reading stages, and visual
+  graph ranks are different concepts. Visual ranks are derived; explicit ordered stages belong in
+  Walkthrough.
+- Add free-form authored Region relations: rejected because they create a second graph whose predicate,
+  direction, provenance, and lifecycle can disagree with the exact factual Edges. The Viewer instead
+  aggregates direct cross-Region factual Edges and exposes their stable IDs, predicates, source
+  locators, and Graph selection on demand.
+- Keep the Region relationship map inside the Guide: rejected because a useful coarse map needs the
+  same scarce vertical and horizontal space as the detailed graph. Treating it as a first-class view
+  mode makes the macro/micro distinction explicit while preserving one artifact and one factual graph.
+- Allow overlapping or require exhaustive Regions: rejected because overlap makes framing and
+  Region-relation projection ambiguous, while exhaustive membership encourages a decorative “Other”
+  chunk. Regions are disjoint, intentionally partial explanation chunks.
+- Copy TheBrain's unbounded knowledge-base and force-layout model: rejected because rvw needs a bounded
+  review subject, exact factual predicates, deterministic export, and stable orientation. The useful
+  borrowed principle is recoverable focus-relative exploration, not repository-wide completeness.
+- Keep showing the complete graph at full detail: rejected because simultaneous existence does not
+  imply simultaneous legibility. Explicit local detail plus recoverable global context better supports
+  both working memory and free exploration.
+
+### Trade-offs
+
+- Backbone validation and deterministic layout/routing are more complex than a single path, but they
+  remove pressure to distort factual graphs and let one semantic model cover the shapes Structure is
+  intended to explain.
+- A local lens can hide detail temporarily. Visible/total counts, minimap landmarks, Home, Back, and All
+  are therefore required parts of the interaction rather than optional polish.
+- Binary backbone membership deliberately avoids false precision. If repeated dogfood later proves
+  that authored, named relation facets are needed, they can be considered as unordered, non-exclusive
+  exact Edge sets without retrofitting layers or paths into this contract.
+
+## 2026-09-05: Add authorial spatial presentation to Structure
+
+Status: Historical. Superseded for presentation schema, Region semantics, layout reconciliation, and
+Guide behavior by “Separate the authored explanation backbone from the reviewer's active lens.” Only
+the factual/presentation/session separation, required nullable presentation, exact-source boundary,
+and bounded-subject rationale remain normative; do not implement the obsolete schema below.
+
+### Problem
+
+The original Structure contract made canonical placement a function only of graph topology, factual
+Edge direction, the entrypoint, and stable IDs. That preserved reviewer control, but it also made an
+author encode the intended explanation indirectly through labels, Edge direction, or graph shape. A
+correct relationship graph can have several equally plausible projections, and topology alone cannot
+say which connected backbone or conceptual regions make this particular PR change understandable.
+
+Using raw coordinates would solve a renderer problem by making pixel layout durable artifact data.
+Turning the map into a sequence of cards would instead duplicate Walkthrough and surrender the
+simultaneous, freely explorable view that makes Structure useful.
+
+### Choice
+
+Add this required nullable field to the complete Structure content:
+
+```ts
+presentation: {
+  thesis: string;
+  startNodeId: string;
+  primarySpine: {
+    nodeIds: string[];
+    edgeIds: string[];
+  } | null;
+  regions: Array<{ label: string; nodeIds: string[] }>;
+} | null;
+```
+
+Treat `originNodeId`, Nodes, Edges, and source anchors as the factual graph; `presentation` as authorial
+spatial semantics; and focus, depth, camera, drag positions, and viewport as ephemeral reviewer session
+state. Coordinates, focus, viewport, and manual positions never enter the artifact. A missing field in
+legacy `graph_json` normalizes to `null` on read, so this change needs no SQL migration.
+
+For a non-null value, require a 1–1000-character thesis and a current `startNodeId` that declares the
+first authorial attention anchor independently of the factual entrypoint. The exact start-only shape
+(`primarySpine: null`, `regions: []`) is valid: it carries the thesis and start cue without claiming a
+spatial organizer. An author may additionally declare one optional `primarySpine`, one or more regions,
+or both. When present, the spine contains 2–12 unique current Node IDs and exactly one current Edge ID
+for each adjacent Node pair. Each chosen Edge must join its corresponding pair in either factual
+direction, and the first spine Node must equal `startNodeId`. This makes the emphasized relation exact
+even for parallel or reciprocal Edges, without making authorial reading order a factual direction
+claim.
+
+The 12-Node cap is deliberately smaller than the 50-Node graph cap. A primary spine is the compact
+backbone a reviewer should be able to grasp first, not an authored tour that tries to account for every
+Node. A longer candidate must choose the actually explanatory backbone, use regions for spatial
+chunking, narrow the Structure's behavior boundary, or move to a Walkthrough when transitions and
+ordered stops carry the meaning. Consequently a spine contains at most 11 exact Edge IDs.
+
+Allow 0–12 ordered comprehension/spatial regions with 1–100-character labels and one or more current
+Node IDs. A Node may appear in the spine and one region, but it cannot appear in multiple regions.
+`nodeIds` is an exact membership set; its internal array order has no meaning. `startNodeId` need not
+belong to the first region or to any region. The spine members of each region must occupy one contiguous
+interval, and those intervals must follow region array order. This is a spatial-coherence constraint
+that prevents one chunk from being interleaved across the displayed backbone, not a reading sequence.
+The outer region order is canonical spatial input and legend order only. It never asserts reviewer
+reading priority, temporal sequence, runtime or causal flow, or architectural importance. A renderer
+may wrap a region-only layout into a bounded grid while preserving that spatial/legend order. A
+renderer must expose exact membership independently of session geometry, and a session-derived
+enclosing rectangle must not imply that a dragged non-member joined the region. The current Viewer and
+export use an R-number legend plus member badges and a row-major grid; those visual primitives and
+packing constants remain implementation details rather than protocol semantics.
+
+Use a declared spine and/or regions as spatial organizers for canonical placement and visual emphasis.
+Start-only presentation deliberately uses the same topology-derived canonical geometry as
+`presentation: null`, because it declares no spatial organizer. It still renders the thesis and start
+cue, includes them in export, and starts a new session at `startNodeId`; that default is derived from the
+current artifact, not persisted or remotely controlled reviewer state. `presentation: null` instead
+starts at the factual `originNodeId`. Keep `originNodeId` visible as the distinct factual entrypoint in
+both cases. Retain every Node and Edge, preserve factual Edge direction, and keep focus, source
+verification, pan, zoom, drag, and unrestricted exploration available.
+
+Treat the spatial-organizer identity—organizer presence, start while an organizer exists, spine Node
+identities/order, and region membership/outer order—as part of the canonical base-map identity. Adding,
+removing, or changing that identity for the same Structure URI rebases pane-local Node geometry to the
+new canonical projection instead of letting surviving manual coordinates contradict the new spatial
+explanation. Preserve reviewer focus, depth, selected relation, and zoom; translate the rebased viewport
+so the focused surviving Node stays at the same screen point. `presentation: null` and start-only share
+one topology layout basis, so transitions between them and edits to the thesis and/or start while the
+presentation remains start-only preserve surviving manual geometry. Thesis-only,
+exact-primary-Edge-only, or region-label-only edits do not reflow, and factual graph-only updates with
+unchanged spatial organizer continue to reconcile surviving manual positions. Explicit layout reset
+uses the same rebase behavior. This gives artifact semantics priority only when the author changes
+spatial meaning, while retaining reviewer state in all other updates.
+
+Advance the public and internal machine contract to protocol version 5 and advertise
+`structure.presentation`. Version-5 preview, publish, and update payloads must include the field even
+when it is `null`; unsupported consumers fail through the existing version/capability preflight.
+
+This decision supersedes the topology-only input, origin-only initial-focus/orientation, and blanket
+no-group parts of “Add Structure as a separate exact-source relationship space.” It permits only
+authorial presentation regions, not factual graph groups. The stable factual graph, no raw coordinates,
+human session control, bounded subject, exact-source, and whole-value update choices remain.
+
+Apply the Structure / Walkthrough boundary by what carries the explanation, not by whether any order
+exists. A request → service → repository main flow can be a Structure when the simultaneously visible
+relations are sufficient, but belongs in a Walkthrough when prose between transitions or a required
+ending carries the meaning. Hub fan-out and later convergence are strong Structure shapes and may use
+regions with no spine. A non-execution A/B/C first-grasp backbone may use one spine. Generic architecture
+inventory remains neither: send the reviewer to bounded Structures or direct code reading instead.
+
+The semantic contract fixed by this decision is the layer separation, the independent authorial start,
+valid start-only presentation, at most one exact-relation backbone, spatially ordered exact region
+membership, explicit nullable fallback, and session rebase rule for spatial-organizer changes. It does
+not fix pixel coordinates, column or row counts, packing distances, enclosure shapes, badge styling,
+overview height, truncation, minimap appearance, or other renderer mechanics. Those may evolve while
+preserving deterministic placement, canonical spatial/legend order, exact membership, factual
+direction, unrestricted exploration, and the session precedence above.
+
+### Alternatives considered
+
+- Keep topology-only projection: rejected because it cannot distinguish the explanation the author
+  intends from other valid layouts of the same facts.
+- Require a spatial organizer for every non-null presentation: rejected because a thesis plus explicit
+  attention start is useful even when topology is the most honest geometry. Start-only presentation
+  keeps that topology basis without manufacturing a spine or decorative regions.
+- Add multiple authored routes: rejected because competing orders are hard to validate and move
+  Structure toward a stepper. At most one exact primary spine plus spatially ordered regions can expose
+  branches without prescribing a complete traversal.
+- Require a spine for every presentation: rejected because a hub, fan-out, convergence, or reciprocal
+  relationship space may have an honest start and useful chunks without one privileged linear
+  backbone. Making the spine optional prevents authors from distorting factual claims merely to satisfy
+  presentation shape.
+- Persist coordinates or generic layout hints: rejected because they couple artifacts to one renderer
+  and make producer layout override durable reviewer state.
+
+### Trade-offs
+
+- Producers now make one more substantive judgment, and protocol v5 is intentionally breaking even
+  though the persisted JSON remains backward readable.
+- A single optional spine cannot express every possible tour. It is the visual backbone when the author
+  can defend one, not a claim that every Node belongs to one linear execution path.
+- Region labels and thesis can become vague decoration or review conclusions. Producer guidance and
+  dogfood evaluation therefore require source-consistent explanatory language, exact Edge-selected spine pairs,
+  non-inventory regions, and verification that no content or exploration path disappears.
+- Presentation-aware layout adds renderer complexity, but `null` remains a deterministic baseline and
+  an explicit comparison case for evaluation.
+
 ## 2026-09-05: Keep the default viewer origin stable
 
 ### Problem
@@ -58,7 +620,8 @@ have been demonstrated.
 
 Add `rvw-review-compose` as the fifth capability-named bundled Skill shared unchanged by Codex and Claude
 Code. It investigates one Pull Request or explicit review subject, identifies its main comprehension
-difficulties and coupling, and chooses the minimum useful surface for each bounded question: a
+difficulties and coupling, and chooses the composition with the lowest total comprehension cost rather
+than the fewest Artifacts. It chooses the useful surface for each bounded question: a
 Walkthrough for ordered causality or lifecycle, a Structure for relationships around a factual code
 entrypoint, or direct code reading when another external representation would not lower comprehension
 cost. It never requires a Walkthrough and Structure pair or a fixed overview/template.
@@ -75,16 +638,25 @@ Artifact and do not expand back into PR-wide coverage or publish companion Artif
 retains its representation rejection, source exactness, identity, passive-publication, update, and
 deletion contracts; Structure also retains canonical preview and optimistic concurrency. A
 representation rejection or essential unsupported / contradicted claim returns to composition for a
-revised brief, another surface, or direct code reading.
+revised brief, another surface, or direct code reading. Producer handoffs are sequential: every result,
+including a successful source-supported refinement, triggers re-evaluation of the remaining unpublished
+briefs before another mutation. New Structure briefs describe intended relationship and comprehension
+chunks semantically; exact Node / Edge / Region identity and normalization remain owned by the Structure
+producer. Existing IDs may be referenced only after reading the current Artifact, and retired IDs are
+never reassigned.
 
 Re-evaluate the complete composition for detailed overlap, terminology drift, missing and cross-boundary
 risk, and over-fragmentation before finishing. Return the rationale, a non-mandatory recommended entry,
 created or updated Walkthrough / Structure URIs, and deliberately code-only topics in the normal Agent
 response. That response is orientation, not a persistent review plan or a claim that review is complete.
 
+Recommendation and production are separate authority levels. Assess / recommend / plan / audit requests
+return unproduced briefs without mutation. Only an explicit create / publish / produce / update request
+invokes a producer; an existing URI authorizes reading but not updating by itself.
+
 Do not add a Review Set or Review Plan entity, persistent Slice, group ID, typed Artifact link, Artifact
 kind, URI, database row, migration, CLI capability, HTTP API, Viewer grouping, or generic runtime
-sub-Skill invocation framework. The composer uses the existing protocol-version-4 operations. When an
+sub-Skill invocation framework. The composer uses the existing protocol-version-5 operations. When an
 Artifact URI is explicitly supplied it reads the current value and prefers a same-subject update;
 existing `structure list` remains available, while the absence of a general Walkthrough list is reported
 honestly rather than bypassed through SQLite or a new discovery protocol.
@@ -149,6 +721,10 @@ detail into an unstable identity.
   rendering remains passive rather than receiving a guessed identity.
 
 ## 2026-08-30: Add Structure as a separate exact-source relationship space
+
+Status: The topology-only canonical-input, origin-only initial-session, and blanket no-group choices are
+superseded by “Add authorial spatial presentation to Structure.” Only authorial presentation regions are
+added; the factual-graph, no-coordinate, and reviewer-session choices remain in force.
 
 ### Problem
 
@@ -2477,6 +3053,10 @@ introducing anchor-level identities.
 
 ## 2026-09-01: Export Structure from the browser presentation session
 
+The interactive two-line Edge-label clamp below is historical and superseded by “Separate the authored
+explanation backbone from the reviewer's active lens.” The complete-artifact export boundary and the
+remaining SVG/PNG choices stay normative.
+
 ### Problem
 
 Structure is useful as a spatial review document, but its interactive canvas cannot be shared outside
@@ -2706,3 +3286,47 @@ operation and recovery can safely finish the empty lease.
 - Supersession prevents new claims, acknowledgements, delegation, and write reservations, but is not
   distributed cancellation for a lease already delegated and write-reserved before activation; that
   in-flight work may reach a safe boundary.
+
+## 2026-09-06: Put Structure destinations on the browser reading trail
+
+### Problem
+
+Structure kept focus, Region drill, mode, and camera in a pane-local session stack while documents and
+source references used browser history. After Regions → Graph → source, browser Back could reopen the
+Structure tab but could not restore the spatial destination that motivated the source check. Keeping
+both stacks would also make Structure Back and browser Back disagree after mode, hop, or camera changes.
+
+### Choice
+
+Use the existing namespaced browser reading entry as the only navigation stack for explicit Structure
+destinations. A runtime-validated Structure locator records Graph / Regions mode, focus and hop lens,
+framed Region, exact Edge selection, both cameras, their surface sizes, artifact revision, and
+graph/Regions geometry basis. Stable semantic Node and Region camera frames are reprojected on current
+geometry. Renderer-derived Fit bounds are reused only when artifact revision and exact Node geometry
+still match. A raw manual viewport is restored only when its layout basis and exact manual positions
+still match; pane-size changes preserve its world center.
+Stale Node, Edge, Region, or camera-frame IDs are reconciled against the current artifact rather than
+reviving removed facts.
+
+Opening or activating a Structure, focusing a Node, a changed Home destination, and Region / Context /
+exact-Edge drill-down push entries. Graph / Regions toggles, hop changes, pan, zoom, Fit, center, drag,
+layout reset, Guide disclosure, transient relation selection, and poll reconciliation replace the
+current snapshot only. Before a Structure source action pushes a file destination, the current snapshot
+is synchronized atomically. Applying Back or Forward invalidates source/reference resolutions started
+from an older destination, so a delayed response cannot overwrite the restored reading state. The
+Structure Back control delegates to browser Back.
+
+Store the latest snapshot per pane and Structure so generic document navigation can snapshot an active
+Structure instead of degrading it to a scroll locator. Moving a Structure transfers this snapshot with
+its pane session. An unfocused pane may update its own stored snapshot but must not replace the global
+current history entry. Restoring an older entry resolves its identity to the latest open Structure tab,
+or to the latest fetched Structure summary when reopening a closed tab, so historical title/source
+metadata cannot overwrite the current document object.
+
+### Trade-offs
+
+- Back can cross from a Structure to the preceding document, which makes it consistent with the rest of
+  the reading workspace rather than a private graph-only undo control.
+- `history.state` is session-only and intentionally not a shareable Structure deep link.
+- Camera snapshots add bounded state to each explicit reading entry, but coordinates, focus, and manual
+  layout remain reviewer state and never enter the Structure protocol or database.

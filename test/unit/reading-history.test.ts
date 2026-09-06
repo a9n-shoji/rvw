@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  isCurrentStructureReadingSnapshot,
   parseReadingHistoryEntry,
   readingHistoryState,
   sameReadingDocument,
+  shouldReplaceStructureReadingEntry,
   type ReadingHistoryEntry,
 } from "../../src/web/reading-history.js";
 
@@ -44,6 +46,92 @@ describe("reading history", () => {
     const malformed = structuredClone(state) as Record<string, Record<string, unknown>>;
     malformed.rvwReading!.locator = { kind: "scroll", top: -1 };
     expect(parseReadingHistoryEntry(malformed, pullRequestId)).toBeNull();
+  });
+
+  it("round-trips a runtime-validated Structure reading snapshot", () => {
+    const value = entry({
+      document: {
+        kind: "structure",
+        id: "structure-1",
+        title: "Order flow",
+        sourceOid: "a".repeat(40),
+      },
+      locator: {
+        kind: "structure",
+        snapshot: {
+          artifactUpdatedAt: "2026-09-06T00:00:00.000Z",
+          viewMode: "regions",
+          focusId: "entry",
+          selectedEdgeId: null,
+          depth: 2,
+          framedRegionId: null,
+          cameraFrame: { kind: "nodes", nodeIds: ["entry", "service"] },
+          viewport: { x: -20, y: 15, scale: 0.8 },
+          surfaceSize: { width: 800, height: 500 },
+          regionsViewport: { x: 10, y: 30, scale: 1.2 },
+          regionsSurfaceSize: { width: 900, height: 600 },
+          regionsCameraMode: "manual",
+          layoutBasisKey: "graph-basis",
+          positionsKey: "positions",
+          regionsLayoutBasisKey: "regions-basis",
+        },
+      },
+    });
+    const state = readingHistoryState({ unrelated: true }, value);
+    expect(parseReadingHistoryEntry(state, pullRequestId)).toEqual(value);
+
+    const malformed = structuredClone(state) as Record<string, Record<string, unknown>>;
+    const locator = malformed.rvwReading!.locator as Record<string, unknown>;
+    locator.snapshot = { ...(locator.snapshot as object), depth: 3 };
+    expect(parseReadingHistoryEntry(malformed, pullRequestId)).toBeNull();
+
+    const missingArtifactRevision = structuredClone(state) as Record<
+      string,
+      Record<string, unknown>
+    >;
+    const missingRevisionLocator = missingArtifactRevision.rvwReading!.locator as Record<
+      string,
+      unknown
+    >;
+    const missingRevisionSnapshot = missingRevisionLocator.snapshot as Record<string, unknown>;
+    delete missingRevisionSnapshot.artifactUpdatedAt;
+    expect(parseReadingHistoryEntry(missingArtifactRevision, pullRequestId)).toBeNull();
+
+    const mismatchedDocument = readingHistoryState(null, {
+      ...value,
+      document: { kind: "repository-file", path: "src/not-a-structure.ts" },
+    });
+    expect(parseReadingHistoryEntry(mismatchedDocument, pullRequestId)).toBeNull();
+
+    if (value.locator.kind !== "structure") throw new Error("expected Structure locator");
+    const latest = value.locator.snapshot;
+    expect(isCurrentStructureReadingSnapshot(latest, structuredClone(latest))).toBe(true);
+    expect(
+      isCurrentStructureReadingSnapshot(latest, {
+        ...latest,
+        focusId: "newer-focus",
+      }),
+    ).toBe(false);
+    expect(
+      shouldReplaceStructureReadingEntry({
+        latest,
+        candidate: latest,
+        focusedPane: "right",
+        activeDocument: value.document,
+        pane: "left",
+        structureId: "structure-1",
+      }),
+    ).toBe(false);
+    expect(
+      shouldReplaceStructureReadingEntry({
+        latest,
+        candidate: latest,
+        focusedPane: "left",
+        activeDocument: value.document,
+        pane: "left",
+        structureId: "structure-1",
+      }),
+    ).toBe(true);
   });
 
   it("distinguishes current-range and exact-source readings of the same path", () => {

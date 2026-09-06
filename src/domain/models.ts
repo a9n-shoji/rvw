@@ -223,6 +223,24 @@ export interface StructureEdge {
   anchors: SourceAnchor[];
 }
 
+export interface StructurePresentationRegion {
+  id: string;
+  label: string;
+  summary: string;
+  nodeIds: string[];
+}
+
+export interface StructurePresentationBackbone {
+  edgeIds: string[];
+}
+
+export interface StructurePresentation {
+  thesis: string;
+  startNodeId: string;
+  primaryBackbone: StructurePresentationBackbone | null;
+  regions: StructurePresentationRegion[];
+}
+
 export type StructureSourceLocator =
   { kind: "node"; nodeId: string } | { kind: "edge"; edgeId: string; anchorIndex: number };
 
@@ -236,6 +254,7 @@ export interface Structure {
   originNodeId: string;
   nodes: StructureNode[];
   edges: StructureEdge[];
+  presentation: StructurePresentation | null;
   createdAt: string;
   updatedAt: string;
 }

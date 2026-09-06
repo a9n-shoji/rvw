@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { STRUCTURE_NODE_NOTATIONS } from "../domain/models.js";
 import {
+  canonicalStructureBackboneEdgeIds,
+  canonicalStructurePresentationRegions,
+  canonicalStructureRegionNodeIds,
+  isStructureBackboneWeaklyConnected,
+  structureBackboneNodeIds,
+} from "../domain/structure-presentation.js";
+import {
   DEFAULT_COMMENT_LIST_LIMIT,
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
@@ -20,6 +27,12 @@ import {
   MAX_STRUCTURE_LABEL_CHARACTERS,
   MAX_STRUCTURE_NODES,
   MAX_STRUCTURE_PAYLOAD_BYTES,
+  MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES,
+  MAX_STRUCTURE_PRIMARY_BACKBONE_NODES,
+  MAX_STRUCTURE_PRESENTATION_REGIONS,
+  MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS,
+  MAX_STRUCTURE_PRESENTATION_REGION_SUMMARY_CHARACTERS,
+  MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS,
   MAX_STRUCTURE_SCOPE_CHARACTERS,
   MAX_STRUCTURE_SOURCE_ANCHORS,
   MAX_STRUCTURE_TITLE_CHARACTERS,
@@ -283,6 +296,49 @@ const structureEdgeInputSchema = z
   })
   .strict();
 
+const structurePresentationInputSchema = z
+  .object({
+    thesis: z
+      .string()
+      .transform((value) => value.trim())
+      .pipe(z.string().min(1).max(MAX_STRUCTURE_PRESENTATION_THESIS_CHARACTERS)),
+    startNodeId: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
+    primaryBackbone: z
+      .object({
+        edgeIds: z
+          .array(z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN))
+          .min(1)
+          .max(MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES)
+          .transform(canonicalStructureBackboneEdgeIds),
+      })
+      .strict()
+      .nullable(),
+    regions: z
+      .array(
+        z
+          .object({
+            id: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
+            label: z
+              .string()
+              .transform((value) => value.trim())
+              .pipe(z.string().min(1).max(MAX_STRUCTURE_PRESENTATION_REGION_LABEL_CHARACTERS)),
+            summary: z
+              .string()
+              .transform((value) => value.trim())
+              .pipe(z.string().min(1).max(MAX_STRUCTURE_PRESENTATION_REGION_SUMMARY_CHARACTERS)),
+            nodeIds: z
+              .array(z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN))
+              .min(1)
+              .max(MAX_STRUCTURE_NODES)
+              .transform(canonicalStructureRegionNodeIds),
+          })
+          .strict(),
+      )
+      .max(MAX_STRUCTURE_PRESENTATION_REGIONS)
+      .transform(canonicalStructurePresentationRegions),
+  })
+  .strict();
+
 const structureContentShape = {
   sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
   title: z.string().min(1).max(MAX_STRUCTURE_TITLE_CHARACTERS),
@@ -290,6 +346,7 @@ const structureContentShape = {
   originNodeId: z.string().max(MAX_STRUCTURE_ID_CHARACTERS).regex(STRUCTURE_ID_PATTERN),
   nodes: z.array(structureNodeInputSchema).min(1).max(MAX_STRUCTURE_NODES),
   edges: z.array(structureEdgeInputSchema).max(MAX_STRUCTURE_EDGES),
+  presentation: structurePresentationInputSchema.nullable(),
 };
 
 function refineStructureContent(
@@ -302,6 +359,12 @@ function refineStructureContent(
       to: string;
       anchors: Array<Record<string, unknown>>;
     }>;
+    presentation: {
+      thesis: string;
+      startNodeId: string;
+      primaryBackbone: { edgeIds: string[] } | null;
+      regions: Array<{ id: string; label: string; summary: string; nodeIds: string[] }>;
+    } | null;
   },
   context: z.RefinementCtx,
 ): void {
@@ -381,6 +444,112 @@ function refineStructureContent(
       });
     }
   }
+  if (value.presentation !== null) {
+    if (!nodeIds.has(value.presentation.startNodeId)) {
+      context.addIssue({
+        code: "custom",
+        path: ["presentation", "startNodeId"],
+        message: "startNodeIdのNodeが存在しません。",
+      });
+    }
+    const primaryBackbone = value.presentation.primaryBackbone;
+    if (primaryBackbone !== null) {
+      const selectedEdgeIds = new Set<string>();
+      const edgeById = new Map(value.edges.map((edge) => [edge.id, edge]));
+      const selectedEdges: typeof value.edges = [];
+      let allEdgeIdsValid = true;
+      for (const [index, edgeId] of primaryBackbone.edgeIds.entries()) {
+        if (selectedEdgeIds.has(edgeId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "primaryBackbone", "edgeIds", index],
+            message: "primaryBackboneのEdge IDが重複しています。",
+          });
+          allEdgeIdsValid = false;
+          continue;
+        }
+        selectedEdgeIds.add(edgeId);
+        const edge = edgeById.get(edgeId);
+        if (edge === undefined) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "primaryBackbone", "edgeIds", index],
+            message: "primaryBackboneのEdgeが存在しません。",
+          });
+          allEdgeIdsValid = false;
+          continue;
+        }
+        selectedEdges.push(edge);
+      }
+      if (allEdgeIdsValid) {
+        const backboneNodeIds = structureBackboneNodeIds(selectedEdges);
+        if (
+          backboneNodeIds.size < 2 ||
+          backboneNodeIds.size > MAX_STRUCTURE_PRIMARY_BACKBONE_NODES
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "primaryBackbone", "edgeIds"],
+            message: `primaryBackboneは2〜${MAX_STRUCTURE_PRIMARY_BACKBONE_NODES}件のNodeを結ぶようにしてください。`,
+          });
+        }
+        if (!backboneNodeIds.has(value.presentation.startNodeId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "startNodeId"],
+            message: "startNodeIdはprimaryBackboneのEdge endpointに含めてください。",
+          });
+        } else if (
+          !isStructureBackboneWeaklyConnected(selectedEdges, value.presentation.startNodeId)
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "primaryBackbone", "edgeIds"],
+            message: "primaryBackboneはstartNodeIdから辿れる一つのconnected graphにしてください。",
+          });
+        }
+      }
+    }
+    const regionIds = new Set<string>();
+    const regionByNodeId = new Map<string, string>();
+    for (const [regionIndex, region] of value.presentation.regions.entries()) {
+      if (regionIds.has(region.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["presentation", "regions", regionIndex, "id"],
+          message: "region IDが重複しています。",
+        });
+      }
+      regionIds.add(region.id);
+      const currentRegionNodeIds = new Set<string>();
+      for (const [nodeIndex, nodeId] of region.nodeIds.entries()) {
+        if (currentRegionNodeIds.has(nodeId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "regions", regionIndex, "nodeIds", nodeIndex],
+            message: "同じregion内でNode IDが重複しています。",
+          });
+        }
+        currentRegionNodeIds.add(nodeId);
+        if (!nodeIds.has(nodeId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "regions", regionIndex, "nodeIds", nodeIndex],
+            message: "regionのNodeが存在しません。",
+          });
+        }
+        const assignedRegionId = regionByNodeId.get(nodeId);
+        if (assignedRegionId !== undefined && assignedRegionId !== region.id) {
+          context.addIssue({
+            code: "custom",
+            path: ["presentation", "regions", regionIndex, "nodeIds", nodeIndex],
+            message: "一つのNodeを複数regionへ所属させることはできません。",
+          });
+        }
+        if (assignedRegionId === undefined) regionByNodeId.set(nodeId, region.id);
+      }
+    }
+  }
   const anchorCount =
     value.nodes.filter((node) => node.anchor !== null).length +
     value.edges.reduce((count, edge) => count + edge.anchors.length, 0);
@@ -396,7 +565,12 @@ function refineStructureContent(
       message: `Structureのsource anchorは合計${MAX_STRUCTURE_SOURCE_ANCHORS}件以下にしてください。`,
     });
   }
-  const graph = { originNodeId: value.originNodeId, nodes: value.nodes, edges: value.edges };
+  const graph = {
+    originNodeId: value.originNodeId,
+    nodes: value.nodes,
+    edges: value.edges,
+    presentation: value.presentation,
+  };
   if (Buffer.byteLength(JSON.stringify(graph), "utf8") > MAX_STRUCTURE_PAYLOAD_BYTES) {
     context.addIssue({
       code: "custom",

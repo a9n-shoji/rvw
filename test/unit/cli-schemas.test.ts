@@ -10,7 +10,11 @@ import {
   walkthroughPublishInputSchema,
   walkthroughUpdateInputSchema,
 } from "../../src/cli/schemas.js";
-import { MAX_COMMENT_BODY_BYTES } from "../../src/shared/constants.js";
+import {
+  MAX_COMMENT_BODY_BYTES,
+  MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES,
+  MAX_STRUCTURE_PRIMARY_BACKBONE_NODES,
+} from "../../src/shared/constants.js";
 
 describe("CLI input schemas", () => {
   it("accepts an exact repository comment target and normalizes omitted lines", () => {
@@ -340,6 +344,27 @@ describe("CLI input schemas", () => {
             directed: true,
           },
         ],
+        presentation: {
+          thesis: "  Follow the authorization decision.  ",
+          startNodeId: "controller",
+          primaryBackbone: {
+            edgeIds: ["checks-policy"],
+          },
+          regions: [
+            {
+              id: "request-boundary",
+              label: "  Request boundary  ",
+              summary: "  Validates the request before authorization.  ",
+              nodeIds: ["controller"],
+            },
+            {
+              id: "policy",
+              label: "Policy",
+              summary: "Makes the authorization decision.",
+              nodeIds: ["policy"],
+            },
+          ],
+        },
       }),
     ).toMatchObject({
       originNodeId: "controller",
@@ -353,6 +378,21 @@ describe("CLI input schemas", () => {
         { notation: "plain", anchor: null },
       ],
       edges: [{ directed: true, anchors: [] }],
+      presentation: {
+        thesis: "Follow the authorization decision.",
+        startNodeId: "controller",
+        primaryBackbone: {
+          edgeIds: ["checks-policy"],
+        },
+        regions: [
+          { id: "policy", label: "Policy", summary: "Makes the authorization decision." },
+          {
+            id: "request-boundary",
+            label: "Request boundary",
+            summary: "Validates the request before authorization.",
+          },
+        ],
+      },
     });
   });
 
@@ -377,6 +417,7 @@ describe("CLI input schemas", () => {
         label: string;
         directed?: boolean;
       }>,
+      presentation: null,
     };
     expect(
       structureUpdateInputSchema.safeParse({
@@ -434,6 +475,7 @@ describe("CLI input schemas", () => {
         scope: valid.scope,
         nodes: valid.nodes,
         edges: valid.edges,
+        presentation: null,
       }).success,
     ).toBe(false);
     expect(
@@ -465,6 +507,445 @@ describe("CLI input schemas", () => {
           directed: false,
           anchors: Array.from({ length: 20 }, () => ({ path: "src/entry.ts" })),
         })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("validates and normalizes a connected exact-Edge Structure backbone", () => {
+    const valid = {
+      expectedUpdatedAt: "2026-09-05T00:00:00.000Z",
+      sourceOid: "c".repeat(40),
+      title: "Presented boundary",
+      scope: "One bounded relationship with authorial presentation.",
+      originNodeId: "entry",
+      nodes: [
+        { id: "entry", label: "Entry", anchor: { path: "src/entry.ts" } },
+        { id: "policy", label: "Policy" },
+        { id: "store", label: "Store" },
+      ],
+      edges: [
+        { id: "entry-policy", from: "entry", to: "policy", label: "checks", directed: true },
+        {
+          id: "entry-policy-parallel",
+          from: "entry",
+          to: "policy",
+          label: "authorizes",
+          directed: true,
+        },
+        {
+          id: "policy-entry-reverse",
+          from: "policy",
+          to: "entry",
+          label: "reports",
+          directed: true,
+        },
+        { id: "store-policy", from: "store", to: "policy", label: "persists", directed: true },
+        { id: "store-loop", from: "store", to: "store", label: "retries", directed: true },
+      ],
+      presentation: {
+        thesis: "The policy hub connects the request to persistence.",
+        startNodeId: "entry",
+        primaryBackbone: {
+          edgeIds: ["store-policy", "entry-policy-parallel", "entry-policy"],
+        },
+        regions: [
+          {
+            id: "input-effect",
+            label: "Input and effect",
+            summary: "Connects the request boundary to the persisted effect.",
+            nodeIds: ["store", "entry"],
+          },
+          {
+            id: "decision",
+            label: "Decision",
+            summary: "Makes the policy decision shared by input and persistence.",
+            nodeIds: ["policy"],
+          },
+        ],
+      },
+    };
+    expect(structureUpdateInputSchema.parse(valid).presentation).toMatchObject({
+      startNodeId: "entry",
+      primaryBackbone: {
+        edgeIds: ["entry-policy", "entry-policy-parallel", "store-policy"],
+      },
+      regions: [
+        {
+          id: "decision",
+          label: "Decision",
+          summary: "Makes the policy decision shared by input and persistence.",
+          nodeIds: ["policy"],
+        },
+        {
+          id: "input-effect",
+          label: "Input and effect",
+          summary: "Connects the request boundary to the persisted effect.",
+          nodeIds: ["entry", "store"],
+        },
+      ],
+    });
+    // Direction, parallel multiplicity, and region-member order do not define traversal order.
+    expect(
+      structureUpdateInputSchema.parse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          primaryBackbone: {
+            edgeIds: ["store-policy", "policy-entry-reverse", "entry-policy-parallel"],
+          },
+        },
+      }).presentation,
+    ).toMatchObject({
+      primaryBackbone: {
+        edgeIds: ["entry-policy-parallel", "policy-entry-reverse", "store-policy"],
+      },
+    });
+    expect(
+      structureUpdateInputSchema.safeParse({ ...valid, presentation: undefined }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, thesis: "   " },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          primaryBackbone: { edgeIds: ["entry-policy", "store-loop"] },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, startNodeId: "missing" },
+      }).success,
+    ).toBe(false);
+    // Any selected endpoint may be the authorial start, independent of Edge direction.
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, startNodeId: "policy" },
+      }).success,
+    ).toBe(true);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          primaryBackbone: { edgeIds: ["entry-policy", "entry-policy"] },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          primaryBackbone: { edgeIds: ["entry-policy", "missing-edge"] },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          startNodeId: "store",
+          primaryBackbone: { edgeIds: ["entry-policy"] },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, unexpected: true },
+      }).success,
+    ).toBe(false);
+    // Regions and their Node memberships are unordered sets and need not be intervals of the backbone.
+    expect(
+      structureUpdateInputSchema.parse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [...valid.presentation.regions].reverse(),
+        },
+      }).presentation,
+    ).toEqual(structureUpdateInputSchema.parse(valid).presentation);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [
+            {
+              id: "related-boundaries",
+              label: "Related boundaries",
+              summary: "Keeps the entry and effect together around their decision.",
+              nodeIds: ["store", "entry"],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [
+            {
+              id: "input",
+              label: "Input",
+              summary: "Introduces the request.",
+              nodeIds: ["entry"],
+              unexpected: true,
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [
+            {
+              label: "Obsolete branch-v5 Region",
+              nodeIds: ["entry"],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [
+            {
+              id: "missing-summary",
+              label: "Missing summary",
+              nodeIds: ["entry"],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, thesis: ` ${"t".repeat(1_000)} ` },
+      }).success,
+    ).toBe(true);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: { ...valid.presentation, thesis: "t".repeat(1_001) },
+      }).success,
+    ).toBe(false);
+    // The obsolete v5 branch field is rejected instead of silently receiving new semantics.
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          thesis: valid.presentation.thesis,
+          startNodeId: valid.presentation.startNodeId,
+          primarySpine: { nodeIds: ["entry", "policy"], edgeIds: ["entry-policy"] },
+          regions: valid.presentation.regions,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [
+            {
+              id: "first",
+              label: "First",
+              summary: "Contains the first responsibility.",
+              nodeIds: ["entry", "policy"],
+            },
+            {
+              id: "second",
+              label: "Second",
+              summary: "Contains the second responsibility.",
+              nodeIds: ["policy"],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [
+            {
+              id: "first",
+              label: "First",
+              summary: "Contains the decision responsibility.",
+              nodeIds: ["policy"],
+            },
+            {
+              id: "second",
+              label: "Second",
+              summary: "Contains the entry and persistence responsibilities.",
+              nodeIds: ["entry", "store"],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [
+            {
+              id: "missing",
+              label: "Missing",
+              summary: "References a missing responsibility.",
+              nodeIds: ["missing"],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [
+            valid.presentation.regions[0]!,
+            { ...valid.presentation.regions[1]!, id: valid.presentation.regions[0]!.id },
+          ],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [{ ...valid.presentation.regions[0], summary: "   " }],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          ...valid.presentation,
+          regions: [{ ...valid.presentation.regions[0], summary: "s".repeat(501) }],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          thesis: "Start from the hub and compare its peers.",
+          startNodeId: "policy",
+          primaryBackbone: null,
+          regions: [
+            {
+              id: "policies",
+              label: "Policies",
+              summary: "Shows how the hub relates the entry to persistence.",
+              nodeIds: ["entry", "policy", "store"],
+            },
+          ],
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...valid,
+        presentation: {
+          thesis: "Begin at the policy hub without inventing a path or grouping.",
+          startNodeId: "policy",
+          primaryBackbone: null,
+          regions: [],
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("bounds a Structure primary backbone by derived Nodes and exact Edges", () => {
+    expect(MAX_STRUCTURE_PRIMARY_BACKBONE_NODES).toBe(12);
+    expect(MAX_STRUCTURE_PRIMARY_BACKBONE_EDGES).toBe(16);
+    const inputWithBackbone = (nodeCount: number) => {
+      const nodes = Array.from({ length: nodeCount }, (_, index) => ({
+        id: `node-${index + 1}`,
+        label: `Node ${index + 1}`,
+        ...(index === 0 ? { anchor: { path: "src/entry.ts" } } : {}),
+      }));
+      const edges = Array.from({ length: nodeCount - 1 }, (_, index) => ({
+        id: `edge-${index + 1}`,
+        from: `node-${index + 1}`,
+        to: `node-${index + 2}`,
+        label: "leads to",
+        directed: true,
+      }));
+      return {
+        expectedUpdatedAt: "2026-09-05T00:00:00.000Z",
+        sourceOid: "d".repeat(40),
+        title: "Bounded explanation backbone",
+        scope: "The first-grasp backbone through one bounded relationship space.",
+        originNodeId: "node-1",
+        nodes,
+        edges,
+        presentation: {
+          thesis: "Grasp this compact backbone before exploring the remaining graph.",
+          startNodeId: "node-1",
+          primaryBackbone: {
+            edgeIds: edges.map(({ id }) => id),
+          },
+          regions: [],
+        },
+      };
+    };
+
+    expect(structureUpdateInputSchema.safeParse(inputWithBackbone(12)).success).toBe(true);
+    expect(structureUpdateInputSchema.safeParse(inputWithBackbone(13)).success).toBe(false);
+
+    const twoNodes = inputWithBackbone(2);
+    const parallelEdges = Array.from({ length: 17 }, (_, index) => ({
+      id: `parallel-${String(index + 1).padStart(2, "0")}`,
+      from: "node-1",
+      to: "node-2",
+      label: `relation ${index + 1}`,
+      directed: true,
+    }));
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...twoNodes,
+        edges: parallelEdges.slice(0, 16),
+        presentation: {
+          ...twoNodes.presentation,
+          primaryBackbone: { edgeIds: parallelEdges.slice(0, 16).map(({ id }) => id) },
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      structureUpdateInputSchema.safeParse({
+        ...twoNodes,
+        edges: parallelEdges,
+        presentation: {
+          ...twoNodes.presentation,
+          primaryBackbone: { edgeIds: parallelEdges.map(({ id }) => id) },
+        },
       }).success,
     ).toBe(false);
   });

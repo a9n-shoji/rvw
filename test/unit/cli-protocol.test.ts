@@ -181,7 +181,7 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 4,
+      protocolVersion: 5,
       appVersion: "0.5.0",
       capabilities: [
         "agent.transport",
@@ -199,6 +199,7 @@ describe("CLI protocol discovery", () => {
         "structure.list",
         "structure.read",
         "structure.preview",
+        "structure.presentation",
         "structure.publish",
         "structure.update",
         "structure.delete",
@@ -976,6 +977,7 @@ describe("CLI protocol discovery", () => {
       title: "Authorization boundary",
       scope: "Relationships around authorization.",
       originNodeId: "entry",
+      presentation: null,
       nodes: [
         {
           id: "entry",
@@ -1017,7 +1019,7 @@ describe("CLI protocol discovery", () => {
     );
     expect(readPublish()).toMatchObject({
       ok: true,
-      structure: { ref: uri },
+      structure: { ref: uri, presentation: null },
       warnings: [{ code: "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION" }],
     });
 
@@ -1032,7 +1034,7 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
     expect(getStructureByUri).toHaveBeenCalledWith(uri);
-    expect(readGet()).toMatchObject({ ok: true, structure: { ref: uri } });
+    expect(readGet()).toMatchObject({ ok: true, structure: { ref: uri, presentation: null } });
 
     vi.restoreAllMocks();
     const readList = captureStdout();
@@ -1054,6 +1056,12 @@ describe("CLI protocol discovery", () => {
       title: "Terminal boundary",
       scope: "A pure preview.",
       originNodeId: "terminal",
+      presentation: {
+        thesis: "Understand the transition into the terminal boundary.",
+        startNodeId: "entry",
+        primaryBackbone: { edgeIds: ["entry-terminal"] },
+        regions: [],
+      },
       nodes: [
         {
           id: "entry",
@@ -1102,6 +1110,73 @@ describe("CLI protocol discovery", () => {
     });
   });
 
+  it("previews a start-only Structure presentation without inventing an organizer", async () => {
+    const input = {
+      sourceOid: "b".repeat(40),
+      title: "Policy hub",
+      scope: "A start-only spatial explanation.",
+      originNodeId: "hub",
+      presentation: {
+        thesis: "The hub integrates otherwise independent policies.",
+        startNodeId: "hub",
+        primaryBackbone: null,
+        regions: [],
+      },
+      nodes: [
+        {
+          id: "hub",
+          label: "Hub",
+          anchor: { path: "src/hub.ts", startLine: 1, endLine: 1 },
+        },
+        {
+          id: "policy-a",
+          label: "Policy A",
+          anchor: { path: "src/policy-a.ts", startLine: 1, endLine: 1 },
+        },
+        {
+          id: "policy-b",
+          label: "Policy B",
+          anchor: { path: "src/policy-b.ts", startLine: 1, endLine: 1 },
+        },
+      ],
+      edges: [
+        {
+          id: "hub-policy-a",
+          from: "hub",
+          to: "policy-a",
+          label: "applies",
+          directed: true,
+          anchors: [],
+        },
+        {
+          id: "hub-policy-b",
+          from: "hub",
+          to: "policy-b",
+          label: "applies",
+          directed: true,
+          anchors: [],
+        },
+      ],
+    };
+    const readStdout = captureStdout();
+    provideStdin(input);
+    const program = createProgram(() => {
+      throw new Error("preview must not initialize runtime");
+    });
+
+    await program.parseAsync(["node", "rvw", "structure", "preview", "--stdin", "--json"]);
+
+    expect(readStdout()).toMatchObject({
+      ok: true,
+      layout: {
+        directionalLinkCount: 2,
+        nonForwardDirectionalLinkCount: 0,
+        originOutgoingDirectionalLinkCount: 2,
+      },
+      warnings: [],
+    });
+  });
+
   it("returns a machine-readable error for invalid Structure preview stdin", async () => {
     const readStdout = captureStdout();
     vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -1124,6 +1199,12 @@ describe("CLI protocol discovery", () => {
       title: "Forward flow",
       scope: "A normal entrypoint flow.",
       originNodeId: "entry",
+      presentation: {
+        thesis: "Follow the forward flow.",
+        startNodeId: "entry",
+        primaryBackbone: { edgeIds: ["entry-next"] },
+        regions: [],
+      },
       nodes: [
         {
           id: "entry",
@@ -1164,7 +1245,18 @@ describe("CLI protocol discovery", () => {
       "--json",
     ]);
 
-    expect(readStdout()).toMatchObject({ ok: true, structure: { originNodeId: "entry" } });
+    expect(readStdout()).toMatchObject({
+      ok: true,
+      structure: {
+        originNodeId: "entry",
+        presentation: {
+          thesis: "Follow the forward flow.",
+          startNodeId: "entry",
+          primaryBackbone: { edgeIds: ["entry-next"] },
+          regions: [],
+        },
+      },
+    });
     expect(readStdout()).not.toHaveProperty("warnings");
   });
 
@@ -1176,6 +1268,7 @@ describe("CLI protocol discovery", () => {
       title: "Updated boundary",
       scope: "The same declared subject.",
       originNodeId: "entry",
+      presentation: null,
       nodes: [
         {
           id: "entry",
@@ -1214,7 +1307,7 @@ describe("CLI protocol discovery", () => {
     );
     expect(readUpdate()).toMatchObject({
       ok: true,
-      structure: { ref: uri },
+      structure: { ref: uri, presentation: null },
       warnings: [{ code: "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION" }],
     });
 
