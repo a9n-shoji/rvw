@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-07
+
 ### Added
 
 - 通知permissionの状態表示と、Agentのcomment更新経路を介さずbrowser / OS通知を確認できるテスト通知
@@ -22,13 +24,16 @@
 
 - `rvw open`の新規runtimeを既定で`127.0.0.1:43117`へ固定し、起動をまたいでorigin-scopedな通知permissionと
   設定を維持。空きportの自動選択は明示的な`--port 0`へ変更
+- comment watcherのauthorityをshared rvw database上のgenerationとしてdurable化し、
+  `comment.watchOwnership` capabilityでpreflightする。repository単位のwriter reservationで異なるtask / processの
+  Git writerを直列化し、generationを持たないlegacy task stateは再初期化と明示的なactivateを必須に変更
 - `rvw-walkthrough`と`rvw-structure`を一つのbounded Artifactを作るproducerとして明確化し、上位composerの
   subject、review question、scope、inclusion / exclusionを優先しながら、`mustEstablish`、suggested origin / relation /
   invariantはcommit済みsourceで独立に検証し、各representationの拒否境界を維持
 - review composerからproducerをcanonical名と各hostのnative Skill mechanismでloadし、Codex / Claude Code固有の
   user-facing invocation記法を共有runtime contractにしないfail-closedな委譲へ変更
-- Structure preview / publish / updateはrequired nullableな`presentation`を受け取る。旧保存値は`null`へ
-  normalizeし、`null`とstart-onlyでは同じtopology projectionを維持するためSQL migrationは不要。
+- Structure preview / publish / updateはrequired nullableな`presentation`を受け取る。旧`graph_json`はread時に
+  `null`へnormalizeし、content rewriteは不要。migration 020は削除済みRegion IDのtombstoneだけを追加する
 - Viewer / exportで共有するdeterministicなobstacle-aware relation routeとstable label placementへ変更し、
   exact endpointのvisible boundary portへ接続する。non-endpoint NodeへのEdge貫通とfocus変更によるlabel jumpを防ぎ、
   shared / near-coincident corridorを持つdistinct visible relation（parallel / reciprocalを含む）の実質的lane分離と
@@ -51,6 +56,8 @@
 ### Fixed
 
 - 最後のviewerを閉じて再起動した際、random portによるorigin変更でAgentコメント通知が事実上リセットされる問題
+- superseded watcherがauthorityを再取得できるrace、resolved / missing threadのhistorical eventがactionable workとして
+  再処理される問題、別task / processのrepository writerが重複実行される問題
 - Structureのfile逆引きをCmd / Ctrl+Clickした際に修飾キーが失われ、右ペインではなく左ペインへ開く問題
 - 2-hop表示で遠距離のbackbone Node / Edgeだけが強いopacityを保ち、focusからの距離層を判別できない問題
 

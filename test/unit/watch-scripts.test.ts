@@ -45,6 +45,7 @@ function createFakeRvw(directory: string): { script: string; log: string } {
   writeFileSync(
     script,
     String.raw`import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 const args = process.argv.slice(2);
 let input = "";
 for await (const chunk of process.stdin) input += chunk;
@@ -71,10 +72,22 @@ if (args[0] === "protocol") {
   const generationIndex = args.indexOf("--generation");
   const leaseIndex = args.indexOf("--lease-id");
   const writeKeyIndex = args.indexOf("--write-key");
-  const priorVerifications = priorCalls.filter(
-    (call) => call.args[0] === "comment" && call.args[1] === "watch-task" && call.args[2] === "verify"
-  ).length;
-  if (args[2] === "verify" && Number(process.env.FAKE_RVW_VERIFY_LIMIT ?? "999999") <= priorVerifications) {
+  let supersededAtCursor = false;
+  if (
+    args[2] === "verify" &&
+    process.env.FAKE_RVW_STATE_PATH &&
+    process.env.FAKE_RVW_SUPERSEDE_AFTER_CURSOR
+  ) {
+    const state = new DatabaseSync(process.env.FAKE_RVW_STATE_PATH, { readOnly: true });
+    try {
+      supersededAtCursor =
+        state.prepare("SELECT value FROM meta WHERE key = 'cursor'").get()?.value ===
+        process.env.FAKE_RVW_SUPERSEDE_AFTER_CURSOR;
+    } finally {
+      state.close();
+    }
+  }
+  if (args[2] === "verify" && supersededAtCursor) {
     json({ ok: false, error: { code: "WATCH_TASK_SUPERSEDED", message: "superseded" } }, 2);
   } else if (args[2] === "reserve-write") {
     if (process.env.FAKE_RVW_RESERVE_SUPERSEDED === "1") {
@@ -678,7 +691,11 @@ describe("rvw-watch-comments bundled scripts", () => {
 
     const result = spawnSync(process.execPath, [driverScript, state, "--auto-ack"], {
       encoding: "utf8",
-      env: { ...fakeEnvironment(fake), FAKE_RVW_VERIFY_LIMIT: "4" },
+      env: {
+        ...fakeEnvironment(fake),
+        FAKE_RVW_STATE_PATH: state,
+        FAKE_RVW_SUPERSEDE_AFTER_CURSOR: "cursor-1",
+      },
     });
 
     expect(result.status).toBe(22);
