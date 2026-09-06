@@ -2007,6 +2007,26 @@ export function StructureViewer({
                       data-source-anchor-count={source.anchorCount}
                       data-source-change-kind={changeKind ?? undefined}
                       style={{ left: x, top: y, width: boxWidth, height }}
+                      onPointerDownCapture={(event) => {
+                        if (event.button !== 0) return;
+                        // Edge labels live inside the transformed world. Native pointer
+                        // focus would try to reveal their untransformed layout boxes by
+                        // scrolling the clipping surface, composing a second camera with
+                        // the persisted transform (and potentially moving the control
+                        // between pointerdown and pointerup).
+                        event.preventDefault();
+                        if (surfaceRef.current) {
+                          surfaceRef.current.scrollLeft = 0;
+                          surfaceRef.current.scrollTop = 0;
+                        }
+                      }}
+                      onPointerUpCapture={(event) => {
+                        if (event.button !== 0 || !(event.target instanceof Element)) return;
+                        const control = event.target.closest<HTMLElement>("button, summary");
+                        if (control && event.currentTarget.contains(control)) {
+                          control.focus({ preventScroll: true });
+                        }
+                      }}
                     >
                       <button
                         type="button"

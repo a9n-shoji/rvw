@@ -775,6 +775,24 @@ test("keeps native scrolling out of the transformed Graph camera", async ({ page
 
   await viewer.getByRole("button", { name: "Home", exact: true }).click();
   await expectStructureNodesFullyVisible(viewer, ["get-order-query"]);
+  const edgeSelect = viewer.locator(
+    '.structure-edge-label[data-edge-id="detail-route-executes-query"] .structure-edge-select',
+  );
+  const edgeSelectBounds = await edgeSelect.boundingBox();
+  expect(edgeSelectBounds).not.toBeNull();
+  await page.mouse.click(
+    edgeSelectBounds!.x + edgeSelectBounds!.width / 2,
+    edgeSelectBounds!.y + edgeSelectBounds!.height / 2,
+  );
+  await expect(edgeSelect).toHaveAttribute("aria-pressed", "true");
+  await expect(edgeSelect).toBeFocused();
+  await expect
+    .poll(async () =>
+      canvas.evaluate((element) => ({ left: element.scrollLeft, top: element.scrollTop })),
+    )
+    .toEqual({ left: 0, top: 0 });
+  await canvas.press("Escape");
+  await expect(edgeSelect).toHaveAttribute("aria-pressed", "false");
   const clickVisibleNode = async (nodeId: string): Promise<void> => {
     await expect(viewer.locator(".structure-world")).not.toHaveClass(/camera-transition/u);
     const bounds = await viewer.locator(`.structure-node[data-node-id="${nodeId}"]`).boundingBox();
@@ -2250,14 +2268,26 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   expect(graphCollisions.leaderIds).toEqual(graphCollisions.displacedLabelIds);
   expect(graphCollisions.leadersAreVisible).toBe(true);
 
-  await firstEdgeLabel.locator(".structure-edge-select").click();
+  // Exercise the visible transformed control with a real pointer. Locator.click()
+  // first scrolls an element's untransformed layout box into view, which is not a
+  // browser interaction a reviewer can perform and would introduce a second camera.
+  const firstEdgeSelect = firstEdgeLabel.locator(".structure-edge-select");
+  const firstEdgeSelectBounds = await firstEdgeSelect.boundingBox();
+  expect(firstEdgeSelectBounds).not.toBeNull();
+  await page.mouse.click(
+    firstEdgeSelectBounds!.x + firstEdgeSelectBounds!.width / 2,
+    firstEdgeSelectBounds!.y + firstEdgeSelectBounds!.height / 2,
+  );
   await expect(firstEdge).toHaveClass(/selected/);
   await expect(viewer.locator(".structure-edge.muted")).not.toHaveCount(0);
   await expect(viewer.locator(".structure-edge-label.muted")).not.toHaveCount(0);
-  await expect(firstEdgeLabel.locator(".structure-edge-select")).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(firstEdgeSelect).toHaveAttribute("aria-pressed", "true");
+  await expect(firstEdgeSelect).toBeFocused();
+  await expect
+    .poll(async () =>
+      canvas.evaluate((element) => ({ left: element.scrollLeft, top: element.scrollTop })),
+    )
+    .toEqual({ left: 0, top: 0 });
   await expect(viewer.locator('.structure-node[data-node-id="http-controller"]')).toHaveClass(
     /edge-endpoint/,
   );
@@ -2266,7 +2296,8 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await expect(firstEdgeLabel.locator(".structure-edge-source-menu .structure-source")).toHaveCount(
     2,
   );
-  await firstEdgeLabel.locator(".structure-edge-select").click();
+  await firstEdgeSelect.focus();
+  await firstEdgeSelect.press("Enter");
   await expect(firstEdge).not.toHaveClass(/selected/);
 
   await viewer.locator('.structure-node[data-node-id="http-controller"]').click();

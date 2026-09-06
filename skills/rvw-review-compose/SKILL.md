@@ -32,19 +32,23 @@ For every composition task, read
    the composition and before invoking a producer, require only the capabilities that its chosen
    operation actually uses; the producer Skills perform their complete operation-specific checks.
 2. Run `rvw agent status --json`. If `selectedTransport` is `unavailable`, do not read or mutate an
-   Artifact and report the diagnostic. A recommendation-only composition may still inspect committed
-   repository source and return unproduced briefs; a production request must stop before invoking a
-   producer. Otherwise use the reported transport without overriding it.
+   Artifact and report the diagnostic. This preflight result overrides the existing-URI read permission
+   below: even an explicitly supplied URI cannot be read without transport. A recommendation-only
+   composition may still inspect committed repository source and return source-only, unproduced briefs,
+   but it must say that it did not evaluate the existing Artifact; a production request must stop before
+   invoking a producer. Otherwise use the reported transport without overriding it.
 3. Require local access to the saved repository and investigate committed code. Do not compose or
    publish Artifacts from uncommitted source.
 
 ## Compose before producing
 
-First classify the requested operation. A request to assess, recommend, plan, audit, or explain a
-composition is read-only: return proposed surfaces and internal briefs without creating, publishing,
-or updating. The matching producer may read an explicitly supplied existing URI. Invoke a producer for
-Artifact creation or update only when the user explicitly asks to create, publish, produce, or update
-Artifacts. Supplying an existing URI authorizes reading it for composition context, not updating it.
+First classify the requested composition outcome, then choose only the Artifact operations it permits.
+A request to assess, recommend, plan, audit, or explain a composition is read-only, meaning that it
+permits no Artifact mutation: return proposed surfaces and internal briefs without creating, publishing,
+or updating. When transport is available, the matching producer may still perform its normal read
+operation for an explicitly supplied existing URI. Invoke a producer for Artifact creation or update
+only when the user explicitly asks to create, publish, produce, or update Artifacts. Supplying an
+existing URI authorizes that contextual read, not an update.
 When production intent is ambiguous, finish with a recommendation rather than mutate review state.
 
 Investigate the Pull Request or requested subject, its diff, relevant surrounding code, contracts, and
@@ -98,17 +102,21 @@ producer contract from this Skill.
 
 Pass the subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and
 emphasis as authoring authority: they control what the producer investigates, not what the code must
-say. For a Structure, also pass any requested thesis, suggested attention-start concept, connected
-exact-relation visual backbone, and named comprehension Regions as presentation authority over verified
-claims. Describe a new backbone by the relationship claims it should emphasize and a new Region by its
-stable comprehension-chunk meaning; the Structure producer resolves those requests onto verified stable
-Node / Edge / Region IDs and the final normalized payload. Refer to raw IDs only when they came from an
-existing Structure read. A requested backbone must resolve to a compact connected exact Edge set with
-the start among its derived endpoint Nodes. A requested Region needs a concise statement of how its
-chunk contributes to the thesis and unordered disjoint Node membership; the producer assigns its stable
-ID. Never require the start or every Node to belong to a Region,
-interpret Region array order as guidance, or request authored Region-to-Region relations; the Viewer derives
-cross-Region connections only from verified factual Edges.
+say. For a Structure, also pass any requested thesis, semantic attention-start concept, connected
+exact-relation visual backbone, and named comprehension chunks to consider as Regions as presentation
+authority over verified claims. Describe a new backbone by the relationship claims it should emphasize
+and a new Region by the chunk's meaning, responsibility, and contribution to the thesis. The composer
+does not assign protocol IDs for a new Structure. The Structure producer builds the verified graph,
+resolves the attention-start concept to one current Node ID, resolves the backbone claims to exact
+current Edge IDs, resolves each accepted chunk to exact Node membership, and assigns each new Region a
+fresh ID that becomes stable across same-chunk updates. Refer to raw IDs only when they came from an
+existing Structure read. A suggested factual origin remains a separate claim to verify and is not
+automatically the attention start. A requested backbone must resolve to a compact connected exact Edge
+set with the start among its derived endpoint Nodes. A requested Region needs a concise statement of how
+its chunk contributes to the thesis and which responsibility concepts seem to belong together; the
+producer decides the exact unordered disjoint Node membership. Never require the start or every Node to
+belong to a Region, interpret Region array order as guidance, or request authored Region-to-Region
+relations; the Viewer derives cross-Region connections only from verified factual Edges.
 When a meaningful thesis and start exist but no honest backbone or useful named chunk does, request the
 exact start-only form rather than a fake backbone, dummy region, or decorative grouping.
 Do not request authored layers or stages; spatial ranks remain renderer-derived.
@@ -130,9 +138,11 @@ another brief.
 
 ## Existing Artifacts
 
-When the user or caller supplies an existing Artifact URI, have the matching producer read its current
-value before deciding whether the same subject should be updated. Read-only composition still stops at
-that decision. During an authorized update, preserve surviving identities and never direct the producer
+When the user or caller supplies an existing Artifact URI and transport is available, have the matching
+producer read its current value before deciding whether the same subject should be updated. If transport
+is unavailable, the preflight diagnostic wins: do not infer the Artifact's current subject, contents, or
+identity from the URI alone. Read-only composition still stops at the update decision. During an
+authorized update, preserve surviving identities and never direct the producer
 to recycle a retired Node, Edge, or Region ID for a new claim or chunk. Do not publish a duplicate
 "revision" by default. `structure list` may be used within its existing contract to recover an
 uncertain publication or inspect candidate Structure summaries. There is no general Walkthrough

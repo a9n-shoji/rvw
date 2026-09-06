@@ -30,7 +30,8 @@ Use this complexity budget as judgment, not a numeric hard limit:
 
 ## Separate recommendation from production authority
 
-Classify the operation before Artifact access or producer handoff:
+Classify the requested composition outcome before choosing an Artifact operation. Here, read-only
+describes the absence of side effects; it does not prohibit an authorized contextual read:
 
 - A request to assess, recommend, plan, audit, or explain a composition is read-only. Return proposed
   surfaces, unproduced briefs, and direct-code entrypoints without publishing or updating Artifacts. A
@@ -39,6 +40,10 @@ Classify the operation before Artifact access or producer handoff:
   producer handoffs, subject to each producer's full preview, identity, and mutation contract.
 - An explicitly supplied Artifact URI authorizes reading it as composition context, not updating it.
   An update still needs explicit production intent and must keep the same subject.
+
+The contextual-read permission applies only after the main Skill's transport preflight succeeds. If
+transport is unavailable, its diagnostic takes precedence: do not read the URI or infer its current
+contents, although a clearly labeled source-only recommendation may still be possible.
 
 When intent is ambiguous, recommend without mutation. A read-only result must say that its proposals
 are unproduced and must not fabricate Artifact URIs.
@@ -196,17 +201,22 @@ scope.include: responsibilities and relations needed for the question
 scope.exclude: adjacent behaviors or inventories to omit
 mustEstablish: candidate node, relation, and boundary claims to verify from source evidence
 emphasis: optional user-requested detail or risk emphasis
-presentation: optional requested thesis, attention start, relationship claims to consider for at most one connected exact-relation visual backbone, and named comprehension chunks to consider as Regions; never raw coordinates, authored Region relations, or reviewer state
+presentation: optional requested thesis, semantic attention-start concept, relationship claims to consider for at most one connected exact-relation visual backbone, and semantic comprehension chunks to consider as Regions; never protocol IDs for a new Structure, raw coordinates, authored Region relations, or reviewer state
 existingArtifact: optional explicitly supplied URI for the same subject
 ```
 
 For a new Structure, describe presentation semantically rather than drafting its protocol payload.
-State a meaningful thesis and attention start; describe the verified relationship claims that should be
-considered for one compact backbone, and the comprehension chunks whose contribution to the thesis can
-be stated concisely. The Structure producer owns graph identity, resolves those requests to exact Edge
-and Node IDs, assigns stable Region IDs, enforces size/connectivity/disjointness, and normalizes unordered
-sets. Raw IDs may be cited only when they came from an existing Structure read; surviving IDs must remain
-attached to the same claim or chunk, and retired Node, Edge, or Region IDs must not be recycled.
+State a meaningful thesis and semantic attention-start concept; describe the verified relationship
+claims that should be considered for one compact backbone, and each comprehension chunk's meaning,
+responsibility, and contribution to the thesis. The composer does not choose a new `startNodeId`,
+`edgeIds`, `nodeIds`, or Region `id`. The Structure producer owns graph identity: after building and
+verifying the graph, it resolves the attention-start concept to one current Node ID, backbone claims to
+exact current Edge IDs, and accepted chunk concepts to exact Node membership. It assigns each new Region
+a fresh ID, preserves that ID while the same chunk survives, enforces size/connectivity/disjointness,
+and normalizes unordered sets. A suggested factual origin is a separate candidate claim to verify; it
+does not become the attention start automatically. Raw IDs may be cited only when they came from an
+existing Structure read; surviving IDs must remain attached to the same claim or chunk, and retired
+Node, Edge, or Region IDs must not be recycled.
 
 The resulting `primaryBackbone` may be one honest backbone or `null`, and Regions may be empty, partial,
 and unordered. The start need not be a Region member. Do not request a miscellaneous Region for coverage
@@ -276,8 +286,10 @@ Artifact's central question; otherwise name an exact direct-code check in the fi
 
 ## Existing-Artifact boundary
 
-When an existing URI is explicitly supplied, read its current value through the matching producer and
-prefer an in-place same-subject update over a duplicate publication. Never rewrite an Artifact into a
+When an existing URI is explicitly supplied and transport is available, read its current value through
+the matching producer and prefer an in-place same-subject update over a duplicate publication. The URI
+alone is not evidence of the Artifact's current subject or contents. If transport is unavailable, the
+main Skill's preflight diagnostic wins and the read cannot occur. Never rewrite an Artifact into a
 different subject. Never delete an existing Artifact merely because the new composition omits it;
 normal preview and explicit deletion authorization still apply.
 

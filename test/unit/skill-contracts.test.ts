@@ -194,13 +194,28 @@ describe("rvw review composition contract", () => {
       /assess, recommend, plan, audit, or explain a\s+composition is read-only/,
     );
     expect(reviewComposeSkill).toMatch(
-      /Invoke a producer for\s+Artifact creation or update only when the user explicitly asks to create, publish, produce, or update\s+Artifacts/,
+      /Invoke a producer for\s+Artifact creation or update\s+only when the user explicitly asks to create, publish, produce, or update\s+Artifacts/,
     );
-    expect(reviewComposeSkill).toContain(
-      "Supplying an existing URI authorizes reading it for composition context",
+    expect(reviewComposeSkill).toMatch(
+      /Supplying an\s+existing URI authorizes that contextual read, not an update/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /read-only, meaning that it\s+permits no Artifact mutation[\s\S]*matching producer may still perform its normal read\s+operation for an explicitly supplied existing URI/,
     );
     expect(reviewComposition).toContain("When intent is ambiguous, recommend without mutation");
     expect(reviewComposition).toContain("must not fabricate Artifact URIs");
+  });
+
+  it("lets an unavailable transport diagnostic override contextual URI reads", () => {
+    expect(reviewComposeSkill).toMatch(
+      /`selectedTransport` is `unavailable`[\s\S]*overrides the existing-URI read permission[\s\S]*explicitly supplied URI cannot be read/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /source-only, unproduced briefs[\s\S]*did not evaluate the existing Artifact/,
+    );
+    expect(reviewComposition).toMatch(
+      /contextual-read permission[\s\S]*transport preflight succeeds[\s\S]*diagnostic takes precedence/,
+    );
   });
 
   it("calibrates common shapes without turning them into a fixed template", () => {
@@ -304,7 +319,13 @@ describe("rvw review composition contract", () => {
     );
     expect(reviewComposeSkill).toMatch(/connected\s+exact-relation visual backbone/);
     expect(reviewComposeSkill).toMatch(
-      /new Region by its\s+stable comprehension-chunk meaning[\s\S]*unordered disjoint Node membership[\s\S]*producer assigns its stable\s+ID/,
+      /new Region by the chunk's meaning, responsibility, and contribution[\s\S]*producer builds the verified graph/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /attention-start concept to one current Node ID[\s\S]*accepted chunk to exact Node membership[\s\S]*new Region a\s+fresh ID/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /suggested factual origin[\s\S]*separate claim to verify[\s\S]*not\s+automatically the attention start/,
     );
     expect(reviewComposeSkill).toMatch(
       /Region array order as guidance[\s\S]*Viewer derives\s+cross-Region connections only from verified factual Edges/,
@@ -315,9 +336,12 @@ describe("rvw review composition contract", () => {
       /new Structure,[\s\S]*semantically rather than drafting its protocol payload/,
     );
     expect(reviewComposition).toMatch(
-      /producer owns graph identity,[\s\S]*assigns stable Region IDs/,
+      /composer does not choose a new `startNodeId`,\s+`edgeIds`, `nodeIds`, or Region `id`[\s\S]*producer owns graph identity/,
     );
-    expect(reviewComposition).toMatch(/retired Node, Edge, or Region IDs must not be recycled/);
+    expect(reviewComposition).toMatch(
+      /attention-start concept to one current Node ID[\s\S]*accepted chunk concepts to exact Node membership[\s\S]*new Region\s+a fresh ID/,
+    );
+    expect(reviewComposition).toMatch(/retired\s+Node, Edge, or Region IDs must not be recycled/);
     expect(reviewComposition).toMatch(
       /one-screen fit[\s\S]*Region relationship arrows[\s\S]*derived rendering or pane-local\s+reviewer-session concerns/,
     );
