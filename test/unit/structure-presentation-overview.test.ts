@@ -7,6 +7,7 @@ import {
   buildStructureRegionCanvasModel,
   structureRegionCanvasStartBounds,
   StructureRegionCanvas,
+  StructureRegionExactEdgeList,
 } from "../../src/web/components/StructureRegionCanvas.js";
 import { createContractStructures } from "../fixtures/contract/contract-structures.mjs";
 
@@ -164,6 +165,43 @@ describe("Structure presentation overview", () => {
 });
 
 describe("Structure Region canvas model", () => {
+  it("visibly disambiguates exact parallel Edge identities even without source anchors", () => {
+    const parallelEdges: Structure["edges"] = [
+      {
+        id: "parallel-exact-a",
+        from: "a",
+        to: "b",
+        label: "same factual predicate",
+        directed: true,
+        anchors: [],
+      },
+      {
+        id: "parallel-exact-b",
+        from: "a",
+        to: "b",
+        label: "same factual predicate",
+        directed: true,
+        anchors: [],
+      },
+    ];
+    const markup = renderToStaticMarkup(
+      createElement(StructureRegionExactEdgeList, {
+        edges: parallelEdges,
+        nodeLabelsById: new Map([
+          ["a", "Node A"],
+          ["b", "Node B"],
+        ]),
+        onOpenEdge: () => undefined,
+        onOpenEdgeSource: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain("Edge · parallel-exact-a");
+    expect(markup).toContain("Edge · parallel-exact-b");
+    expect(markup.match(/Node A → Node B: same factual predicate/gu)).toHaveLength(2);
+    expect(markup.match(/sourceなし/gu)).toHaveLength(2);
+  });
+
   it("targets either the assigned start Region or its explicit unassigned Context for Home", () => {
     const assigned = overviewStructure();
     const assignedModel = buildStructureRegionCanvasModel(assigned)!;
@@ -262,6 +300,9 @@ describe("Structure Region canvas model", () => {
         structure: overviewStructure(),
         framedRegionId: null,
         onOpenRegion: () => undefined,
+        onOpenContext: () => undefined,
+        onOpenEdge: () => undefined,
+        onOpenEdgeSource: () => undefined,
       }),
     );
 

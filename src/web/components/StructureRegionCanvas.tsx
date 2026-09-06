@@ -1,11 +1,12 @@
 import {
   useId,
+  useState,
   type FocusEventHandler,
   type MouseEventHandler,
   type PointerEventHandler,
   type Ref,
 } from "react";
-import type { Structure } from "../../domain/models.js";
+import type { SourceAnchor, Structure, StructureEdge } from "../../domain/models.js";
 import {
   aggregateStructureRegionOverview,
   deriveStructureRegionContextSurface,
@@ -28,6 +29,7 @@ import {
   type StructureRegionOverviewRoutedRelation,
 } from "../structure-region-overview.js";
 import { wrapStructureText } from "../structure-render-model.js";
+import { structureSourceAnchorLabel } from "../structure-source.js";
 import type { StructureCameraBounds, StructureViewport } from "../structure-session.js";
 
 const CONTEXT_CARD_WIDTH = 210;
@@ -520,33 +522,100 @@ export function buildContextRegionRelationLabel(
 }
 
 function RelationLabel({ label }: { label: DirectionalRelationLabel }) {
-  const height = relationLabelHeight(label.lines);
   return (
-    <g
+    <span
       className="structure-region-map-relation-label"
       data-edge-count={label.edgeCount}
       data-core-edge-count={label.coreEdgeCount}
     >
-      <title>{label.full}</title>
-      <rect
-        x={-STRUCTURE_REGION_OVERVIEW_RELATION_LABEL_WIDTH / 2}
-        y={-height / 2}
-        width={STRUCTURE_REGION_OVERVIEW_RELATION_LABEL_WIDTH}
-        height={height}
-        rx="11"
-      />
-      <text textAnchor="middle">
-        {label.lines.map((line, index) => (
-          <tspan
-            key={`${index}-${line}`}
-            x="0"
-            y={(index - (label.lines.length - 1) / 2) * 15 + 3.5}
+      {label.lines.map((line, index) => (
+        <span key={`${index}-${line}`}>{line}</span>
+      ))}
+    </span>
+  );
+}
+
+function relationEdgeLabel(
+  edge: StructureEdge,
+  nodeLabelsById: ReadonlyMap<string, string>,
+): string {
+  const from = nodeLabelsById.get(edge.from) ?? edge.from;
+  const to = nodeLabelsById.get(edge.to) ?? edge.to;
+  return edge.directed ? `${from} → ${to}: ${edge.label}` : `${from} — ${to}: ${edge.label}`;
+}
+
+function ExactEdgeSources({
+  edge,
+  onOpenEdgeSource,
+}: {
+  edge: StructureEdge;
+  onOpenEdgeSource: (
+    edgeId: string,
+    anchorIndex: number,
+    anchor: SourceAnchor,
+    openInRightPane: boolean,
+  ) => void;
+}) {
+  if (edge.anchors.length === 0) {
+    return <span className="structure-region-relation-no-source">sourceなし</span>;
+  }
+  return (
+    <span className="structure-region-relation-sources">
+      {edge.anchors.map((anchor, anchorIndex) => {
+        const label = structureSourceAnchorLabel(anchor);
+        return (
+          <button
+            type="button"
+            key={`${edge.id}:${anchorIndex}`}
+            className="structure-region-relation-source"
+            title={`${label}を開く`}
+            aria-label={`${edge.label}のsource ${label}を開く`}
+            onClick={(event) =>
+              onOpenEdgeSource(edge.id, anchorIndex, anchor, event.metaKey || event.ctrlKey)
+            }
           >
-            {line}
-          </tspan>
-        ))}
-      </text>
-    </g>
+            <span aria-hidden="true">&lt;/&gt;</span>
+            <span>{label}</span>
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
+export function StructureRegionExactEdgeList({
+  edges,
+  nodeLabelsById,
+  onOpenEdge,
+  onOpenEdgeSource,
+}: {
+  edges: readonly StructureEdge[];
+  nodeLabelsById: ReadonlyMap<string, string>;
+  onOpenEdge: (edgeId: string) => void;
+  onOpenEdgeSource: (
+    edgeId: string,
+    anchorIndex: number,
+    anchor: SourceAnchor,
+    openInRightPane: boolean,
+  ) => void;
+}) {
+  return (
+    <ul>
+      {edges.map((edge) => (
+        <li key={edge.id} data-edge-id={edge.id}>
+          <code className="structure-region-relation-edge-id">Edge · {edge.id}</code>
+          <button
+            type="button"
+            className="structure-region-relation-edge"
+            title="Graphでこのexact Edgeを選択"
+            onClick={() => onOpenEdge(edge.id)}
+          >
+            {relationEdgeLabel(edge, nodeLabelsById)}
+          </button>
+          <ExactEdgeSources edge={edge} onOpenEdgeSource={onOpenEdgeSource} />
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -563,6 +632,21 @@ function orthogonalRoutePath(points: readonly StructureRegionOverviewPoint[]): s
   return points.map(({ x, y }, index) => `${index === 0 ? "M" : "L"} ${x} ${y}`).join(" ");
 }
 
+function preventTransformedControlScroll(event: React.PointerEvent<HTMLElement>): void {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  const surface = event.currentTarget.closest<HTMLElement>(".structure-regions-canvas-scroll");
+  if (surface) {
+    surface.scrollLeft = 0;
+    surface.scrollTop = 0;
+  }
+}
+
+function restoreTransformedControlFocus(event: React.PointerEvent<HTMLElement>): void {
+  if (event.button !== 0) return;
+  event.currentTarget.focus({ preventScroll: true });
+}
+
 export function StructureRegionCanvas({
   structure,
   model: providedModel,
@@ -570,6 +654,9 @@ export function StructureRegionCanvas({
   surfaceRef,
   framedRegionId,
   onOpenRegion,
+  onOpenContext,
+  onOpenEdge,
+  onOpenEdgeSource,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -583,6 +670,14 @@ export function StructureRegionCanvas({
   surfaceRef?: Ref<HTMLDivElement>;
   framedRegionId: string | null;
   onOpenRegion: (regionId: string) => void;
+  onOpenContext: (nodeIds: readonly string[]) => void;
+  onOpenEdge: (edgeId: string) => void;
+  onOpenEdgeSource: (
+    edgeId: string,
+    anchorIndex: number,
+    anchor: SourceAnchor,
+    openInRightPane: boolean,
+  ) => void;
   onPointerDown?: PointerEventHandler<HTMLDivElement>;
   onPointerMove?: PointerEventHandler<HTMLDivElement>;
   onPointerUp?: PointerEventHandler<HTMLDivElement>;
@@ -591,6 +686,7 @@ export function StructureRegionCanvas({
   onDoubleClick?: MouseEventHandler<HTMLDivElement>;
 }) {
   const markerPrefix = `structure-region-${useId().replaceAll(":", "")}`;
+  const [inspectedRelationId, setInspectedRelationId] = useState<string | null>(null);
   const model = providedModel ?? buildStructureRegionCanvasModel(structure);
   if (!model) return null;
 
@@ -605,41 +701,52 @@ export function StructureRegionCanvas({
   );
   const width = model.width;
   const height = model.height;
-
-  const accessibleRelations = [
+  const relationActions = [
     ...regionOverview.directRelations.map((relation) => {
-      const [firstId, secondId] = relation.regionIds;
-      const first = regionsById.get(firstId)?.label ?? firstId;
-      const second = regionsById.get(secondId)?.label ?? secondId;
+      const first = regionsById.get(relation.regionIds[0])?.label ?? relation.regionIds[0];
+      const second = regionsById.get(relation.regionIds[1])?.label ?? relation.regionIds[1];
       const direction = directRelationDirection(relation);
-      const label = buildDirectRegionRelationLabel(relation, edgeLabelsById, regionLabelsById);
-      const relationName =
-        direction === "first-to-second"
-          ? `${first} to ${second}`
-          : direction === "second-to-first"
-            ? `${second} to ${first}`
-            : direction === "undirected"
-              ? `${first} and ${second}, undirected`
-              : `${first} and ${second}, reciprocal or mixed`;
-      return `${relationName}: ${label.full}. ${relation.edgeIds.length} exact factual ${relation.edgeIds.length === 1 ? "Edge" : "Edges"}; ${label.coreEdgeCount} Core.`;
+      return {
+        id: directRelationRouteId(relation),
+        edgeIds: relation.edgeIds,
+        coreEdgeIds: relation.backboneEdgeIds,
+        label: buildDirectRegionRelationLabel(relation, edgeLabelsById, regionLabelsById),
+        orientation:
+          direction === "first-to-second"
+            ? `${first} → ${second}`
+            : direction === "second-to-first"
+              ? `${second} → ${first}`
+              : direction === "undirected"
+                ? `${first} — ${second}`
+                : `${first} ↔ ${second}`,
+      };
     }),
     ...contextSurface.boundaryRelations.map((relation) => {
       const region = regionsById.get(relation.regionId)?.label ?? relation.regionId;
       const context = contextsById.get(relation.contextId);
       const contextName = context ? contextLabel(context, nodeLabelsById) : "unassigned context";
       const direction = contextRelationDirection(relation);
-      const label = buildContextRegionRelationLabel(relation, edgeLabelsById, regionLabelsById);
-      const relationName =
-        direction === "region-to-context"
-          ? `${region} to Context ${contextName}`
-          : direction === "context-to-region"
-            ? `Context ${contextName} to ${region}`
-            : direction === "undirected"
-              ? `${region} and Context ${contextName}, undirected`
-              : `${region} and Context ${contextName}, reciprocal or mixed`;
-      return `${relationName}: ${label.full}. ${relation.edgeIds.length} exact factual ${relation.edgeIds.length === 1 ? "Edge" : "Edges"}; ${label.coreEdgeCount} Core.`;
+      return {
+        id: contextRelationRouteId(relation),
+        edgeIds: relation.edgeIds,
+        coreEdgeIds: relation.backboneEdgeIds,
+        label: buildContextRegionRelationLabel(relation, edgeLabelsById, regionLabelsById),
+        orientation:
+          direction === "region-to-context"
+            ? `${region} → Context · ${contextName}`
+            : direction === "context-to-region"
+              ? `Context · ${contextName} → ${region}`
+              : direction === "undirected"
+                ? `${region} — Context · ${contextName}`
+                : `${region} ↔ Context · ${contextName}`,
+      };
     }),
   ];
+  const inspectedRelation = relationActions.find(({ id }) => id === inspectedRelationId);
+  const inspectedEdges = (inspectedRelation?.edgeIds ?? []).flatMap((edgeId) => {
+    const edge = structure.edges.find((candidate) => candidate.id === edgeId);
+    return edge ? [edge] : [];
+  });
 
   return (
     <section className="structure-regions-canvas" aria-label={`${structure.title} Regions`}>
@@ -655,16 +762,10 @@ export function StructureRegionCanvas({
           </span>
         </div>
         <p>
-          Connections are exact direct factual Edges. Open a Region to inspect its members in Graph.
+          Connections are exact direct factual Edges. Select a card or relation to inspect its
+          facts.
         </p>
       </div>
-      {accessibleRelations.length > 0 && (
-        <ul className="structure-region-a11y-relations" aria-label="Exact factual relationships">
-          {accessibleRelations.map((relation, index) => (
-            <li key={`${index}:${relation}`}>{relation}</li>
-          ))}
-        </ul>
-      )}
       <div
         ref={surfaceRef}
         className="structure-regions-canvas-scroll"
@@ -780,9 +881,6 @@ export function StructureRegionCanvas({
                       d={orthogonalRoutePath(route.labelLeaderPoints)}
                     />
                   )}
-                  <g transform={`translate(${route.labelCenter.x} ${route.labelCenter.y})`}>
-                    <RelationLabel label={label} />
-                  </g>
                 </g>
               );
             })}
@@ -837,13 +935,53 @@ export function StructureRegionCanvas({
                       d={orthogonalRoutePath(route.labelLeaderPoints)}
                     />
                   )}
-                  <g transform={`translate(${route.labelCenter.x} ${route.labelCenter.y})`}>
-                    <RelationLabel label={label} />
-                  </g>
                 </g>
               );
             })}
           </svg>
+
+          {relationActions.map((relation) => {
+            const route = relationRoutesById.get(relation.id);
+            if (!route) return null;
+            const labelHeight = relationLabelHeight(relation.label.lines);
+            const selected = inspectedRelationId === relation.id;
+            return (
+              <button
+                type="button"
+                key={`action:${relation.id}`}
+                className={`structure-region-map-relation-action${relation.coreEdgeIds.length === relation.edgeIds.length ? " core" : relation.coreEdgeIds.length > 0 ? " has-core" : ""}`}
+                data-edge-ids={relation.edgeIds.join(" ")}
+                aria-label={`Inspect ${relation.orientation}; ${relation.edgeIds.length} exact factual ${relation.edgeIds.length === 1 ? "Edge" : "Edges"}: ${relation.label.full}`}
+                aria-pressed={selected}
+                title={`${relation.label.full}\nExact Edgeを確認`}
+                style={{
+                  left: route.labelCenter.x - STRUCTURE_REGION_OVERVIEW_RELATION_LABEL_WIDTH / 2,
+                  top: route.labelCenter.y - labelHeight / 2,
+                  width: STRUCTURE_REGION_OVERVIEW_RELATION_LABEL_WIDTH,
+                  minHeight: labelHeight,
+                }}
+                onPointerDown={preventTransformedControlScroll}
+                onPointerUp={restoreTransformedControlFocus}
+                onClick={(event) => {
+                  if (inspectedRelationId === relation.id) {
+                    setInspectedRelationId(null);
+                    return;
+                  }
+                  const canvas = event.currentTarget.closest<HTMLElement>(
+                    ".structure-regions-canvas",
+                  );
+                  setInspectedRelationId(relation.id);
+                  requestAnimationFrame(() =>
+                    canvas
+                      ?.querySelector<HTMLElement>(".structure-region-relation-edge")
+                      ?.focus({ preventScroll: true }),
+                  );
+                }}
+              >
+                <RelationLabel label={relation.label} />
+              </button>
+            );
+          })}
 
           {regionLayout.regions.map((layoutRegion) => {
             const region = regionsById.get(layoutRegion.regionId);
@@ -861,6 +999,8 @@ export function StructureRegionCanvas({
                 data-framed-region={isFramed ? "true" : undefined}
                 aria-label={`Open region ${region.label} in Graph, ${region.nodeCount} ${region.nodeCount === 1 ? "node" : "nodes"}. ${region.summary}`}
                 title={`${region.summary}\nOpen exact members in Graph`}
+                onPointerDown={preventTransformedControlScroll}
+                onPointerUp={restoreTransformedControlFocus}
                 onClick={() => onOpenRegion(region.id)}
                 style={{
                   left:
@@ -894,13 +1034,18 @@ export function StructureRegionCanvas({
             const isCore = context.backboneEdgeIds.length > 0;
             const label = contextLabel(context, nodeLabelsById);
             return (
-              <article
+              <button
+                type="button"
                 key={context.id}
                 className="structure-region-context-card"
                 data-context-id={context.id}
                 data-start-context={isStart ? "true" : undefined}
                 data-core-context={isCore ? "true" : undefined}
-                aria-label={`Unassigned Context: ${label}. ${context.nodeIds.length} ${context.nodeIds.length === 1 ? "node" : "nodes"}.`}
+                aria-label={`Open unassigned Context ${label} in Graph, ${context.nodeIds.length} ${context.nodeIds.length === 1 ? "node" : "nodes"}.`}
+                title="Open exact Context members in Graph"
+                onPointerDown={preventTransformedControlScroll}
+                onPointerUp={restoreTransformedControlFocus}
+                onClick={() => onOpenContext(context.nodeIds)}
                 style={{
                   left: layoutContext.center.x + MAP_PADDING - CONTEXT_CARD_WIDTH / 2,
                   top: layoutContext.center.y + MAP_PADDING - CONTEXT_CARD_HEIGHT / 2,
@@ -921,11 +1066,46 @@ export function StructureRegionCanvas({
                   {context.internalEdgeIds.length} internal · {context.boundaryEdgeIds.length}{" "}
                   boundary
                 </span>
-              </article>
+              </button>
             );
           })}
         </div>
       </div>
+      {inspectedEdges.length > 0 && (
+        <aside className="structure-region-relation-inspector" aria-label="Exact factual Edges">
+          <header>
+            <div>
+              <strong>Exact factual Edges</strong>
+              <span>{inspectedEdges.length}件</span>
+            </div>
+            <button
+              type="button"
+              aria-label="Exact Edge一覧を閉じる"
+              onClick={(event) => {
+                const canvas = event.currentTarget.closest<HTMLElement>(
+                  ".structure-regions-canvas",
+                );
+                const trigger = canvas?.querySelector<HTMLElement>(
+                  '.structure-region-map-relation-action[aria-pressed="true"]',
+                );
+                setInspectedRelationId(null);
+                requestAnimationFrame(() => trigger?.focus({ preventScroll: true }));
+              }}
+            >
+              ×
+            </button>
+          </header>
+          <p className="structure-region-relation-inspector-orientation">
+            {inspectedRelation?.orientation}
+          </p>
+          <StructureRegionExactEdgeList
+            edges={inspectedEdges}
+            nodeLabelsById={nodeLabelsById}
+            onOpenEdge={onOpenEdge}
+            onOpenEdgeSource={onOpenEdgeSource}
+          />
+        </aside>
+      )}
     </section>
   );
 }

@@ -75,6 +75,7 @@ import {
   STRUCTURE_EDGE_ARROW_LENGTH,
   STRUCTURE_EDGE_ARROW_WIDTH,
 } from "../structure-render-model.js";
+import { structureSourceAnchorLabel } from "../structure-source.js";
 import { ChangeIcon } from "./FileTree.js";
 import { FileEntryIcon } from "./FileIcon.js";
 import { StructureExportMenu } from "./StructureExportMenu.js";
@@ -89,12 +90,6 @@ const STRUCTURE_WHEEL_PAN_SENSITIVITY = 2;
 const STRUCTURE_TRACKPAD_ZOOM_SENSITIVITY = 0.005;
 const STRUCTURE_META_WHEEL_ZOOM_SENSITIVITY = 0.002;
 
-function anchorLabel(anchor: SourceAnchor): string {
-  return anchor.startLine === null
-    ? anchor.path
-    : `${anchor.path}:${anchor.startLine}${anchor.endLine === anchor.startLine ? "" : `-${anchor.endLine}`}`;
-}
-
 function SourceButton({
   anchor,
   compact = false,
@@ -104,7 +99,7 @@ function SourceButton({
   compact?: boolean;
   onOpen: (openInRightPane: boolean) => void;
 }) {
-  const label = `${anchorLabel(anchor)}を開く`;
+  const label = `${structureSourceAnchorLabel(anchor)}を開く`;
   return (
     <button
       type="button"
@@ -118,7 +113,7 @@ function SourceButton({
       }}
     >
       <span aria-hidden="true">&lt;/&gt;</span>
-      {!compact && <span>{anchorLabel(anchor)}</span>}
+      {!compact && <span>{structureSourceAnchorLabel(anchor)}</span>}
     </button>
   );
 }
@@ -1091,6 +1086,7 @@ export function StructureViewer({
     const nextHistory = history.slice(0, -1);
     navigationHistoryRef.current = nextHistory;
     setNavigationHistory(nextHistory);
+    setStatus(null);
     setSelectedEdgeId(null);
     const previousViewMode = previous.viewMode ?? "graph";
     viewModeRef.current = previousViewMode;
@@ -1578,7 +1574,9 @@ export function StructureViewer({
 
   const revealFocusedRegion = (event: ReactFocusEvent<HTMLDivElement>): void => {
     if (!(event.target instanceof HTMLElement)) return;
-    const card = event.target.closest<HTMLElement>(".structure-region-map-card");
+    const card = event.target.closest<HTMLElement>(
+      ".structure-region-map-card, .structure-region-context-card, .structure-region-map-relation-action",
+    );
     const surface = regionsSurfaceRef.current;
     if (!card || !surface) return;
     const surfaceBox = surface.getBoundingClientRect();

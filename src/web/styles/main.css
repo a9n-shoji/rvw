@@ -4810,6 +4810,7 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-regions-canvas {
+  position: relative;
   display: grid;
   width: 100%;
   height: 100%;
@@ -4935,32 +4936,43 @@ diffs-container > [slot="header-metadata"] {
   fill: color-mix(in srgb, var(--done) 82%, var(--line-strong));
 }
 
-.structure-region-map-relation-label rect {
-  fill: color-mix(in srgb, var(--panel) 96%, transparent);
-  stroke: color-mix(in srgb, var(--line-strong) 88%, transparent);
-  stroke-width: 1;
+.structure-region-map-relation-action {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 88%, transparent);
+  border-radius: 11px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  box-shadow: 0 3px 10px var(--shadow-medium);
+  cursor: pointer;
+}
+
+.structure-region-map-relation-action:hover,
+.structure-region-map-relation-action[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+}
+
+.structure-region-map-relation-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.structure-region-map-relation-action.core {
+  border-color: color-mix(in srgb, var(--done) 68%, var(--line));
 }
 
 .structure-region-map-relation-label {
-  cursor: help;
-  pointer-events: auto;
+  display: grid;
+  gap: 2px;
+  font: 700 10px/1.3 var(--mono);
+  text-align: center;
 }
 
-.structure-region-map-relation-label rect {
-  pointer-events: all;
-}
-
-.structure-region-map-relation.core .structure-region-map-relation-label rect {
-  stroke: color-mix(in srgb, var(--done) 68%, var(--line));
-}
-
-.structure-region-map-relation-label text {
-  fill: var(--text);
-  font: 700 10px/1 var(--mono);
-}
-
-.structure-region-map-relation.core .structure-region-map-relation-label text {
-  fill: color-mix(in srgb, var(--done) 84%, var(--text));
+.structure-region-map-relation-action.core .structure-region-map-relation-label {
+  color: color-mix(in srgb, var(--done) 84%, var(--text));
 }
 
 .structure-region-map-card,
@@ -5069,6 +5081,12 @@ diffs-container > [slot="header-metadata"] {
   border-style: dotted;
   border-color: color-mix(in srgb, var(--muted) 68%, var(--line));
   background: color-mix(in srgb, var(--muted) 5%, var(--panel));
+  cursor: pointer;
+}
+
+.structure-region-context-card:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
 }
 
 .structure-region-context-card[data-core-context="true"] {
@@ -5096,17 +5114,134 @@ diffs-container > [slot="header-metadata"] {
   line-clamp: 2;
 }
 
-.structure-region-a11y-relations {
+.structure-region-relation-inspector {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
+  z-index: 20;
+  top: 112px;
+  right: 12px;
+  display: grid;
+  width: min(430px, calc(100% - 24px));
+  max-height: calc(100% - 124px);
   overflow: hidden;
-  clip: rect(0 0 0 0);
-  clip-path: inset(50%);
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 97%, transparent);
+  box-shadow: 0 12px 34px var(--shadow-strong);
+}
+
+.structure-region-relation-inspector > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.structure-region-relation-inspector > header > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.structure-region-relation-inspector > header strong {
+  font: 700 11px/1.35 var(--mono);
+}
+
+.structure-region-relation-inspector > header span,
+.structure-region-relation-no-source {
+  color: var(--muted);
+  font: 8px/1.35 var(--mono);
+}
+
+.structure-region-relation-inspector > header > button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+
+.structure-region-relation-inspector > ul {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.structure-region-relation-inspector-orientation {
+  margin: 0;
+  padding: 7px 10px;
+  overflow: hidden;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  color: var(--muted);
+  font: 700 9px/1.4 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.structure-region-relation-inspector li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
+}
+
+.structure-region-relation-inspector li:last-child {
+  border-bottom: 0;
+}
+
+.structure-region-relation-edge-id {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font: 700 8px/1.35 var(--mono);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.structure-region-relation-edge {
+  min-width: 0;
+  padding: 5px 7px;
+  overflow: hidden;
   border: 0;
-  white-space: nowrap;
+  color: var(--text);
+  background: transparent;
+  font: 600 10px/1.4 var(--sans);
+  text-align: left;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.structure-region-relation-edge:hover,
+.structure-region-relation-edge:focus-visible {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.structure-region-relation-sources {
+  display: grid;
+  gap: 4px;
+}
+
+.structure-region-relation-source {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  min-height: 27px;
+  padding: 4px 6px;
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  font: 700 8px/1 var(--mono);
+  text-align: left;
+}
+
+.structure-region-relation-source > span:last-child {
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .structure-toolbar {

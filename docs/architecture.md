@@ -135,6 +135,11 @@ The Regions camera has its own canonical derived-map basis: unordered serializat
 edits retain it, while changes that can alter Region cards, Context components, relation routes, or
 relation-label geometry reset it to the readable Start-oriented Home projection. Only explicit Fit
 frames the complete map. The key and camera are viewer state, not protocol semantics.
+Each aggregate relation is an interactive, current-value index into the exact factual Edges it groups:
+the Viewer discloses stable Edge IDs, endpoint pairs, full predicates, and source locators, and can
+select an individual Edge in Graph. Neutral Context cards similarly frame every Node in their derived component. These
+interactions preserve the prior Regions camera in Back history but add no persisted Region relation or
+Context model.
 Null and start-only presentations share one layout basis, so transitions between them and thesis- or
 start-only edits preserve manual geometry; changing only the exact parallel backbone relation preserves
 geometry while updating emphasis. The shared deterministic route model avoids non-endpoint Nodes and

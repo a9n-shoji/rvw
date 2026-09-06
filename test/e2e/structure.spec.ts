@@ -707,7 +707,7 @@ test("keeps unassigned Context explicit without manufacturing a transitive Regio
   await expect(map).toHaveAttribute("data-context-count", "1");
   await expect(viewer.locator(".structure-region-context-card")).toHaveCount(1);
   await expect(viewer.locator(".structure-region-context-card")).toHaveAccessibleName(
-    "Unassigned Context: Application wiring. 1 node.",
+    "Open unassigned Context Application wiring in Graph, 1 node.",
   );
   const boundary = viewer.locator(
     '.structure-region-map-relation.context-boundary[data-edge-ids~="composition-constructs-handler"]',
@@ -719,9 +719,27 @@ test("keeps unassigned Context explicit without manufacturing a transitive Regio
       '.structure-region-map-relation:not(.context-boundary)[data-edge-ids~="composition-constructs-handler"]',
     ),
   ).toHaveCount(0);
-  await expect(viewer.getByRole("list", { name: "Exact factual relationships" })).toContainText(
-    "Context Application wiring to Application coordination",
+  await expect(
+    viewer.locator(
+      '.structure-region-map-relation-action[data-edge-ids~="composition-constructs-handler"]',
+    ),
+  ).toHaveAccessibleName(/Context.*Application wiring.*Application coordination/u);
+  await viewer.getByRole("button", { name: "Regions全体を収める" }).click();
+  const contextCard = viewer.locator(".structure-region-context-card");
+  await contextCard.focus();
+  const contextReturnCamera = await structureRegionsCameraState(viewer);
+  await contextCard.press("Enter");
+  await expect(viewer).toHaveAttribute("data-view-mode", "graph");
+  await expect(viewer.getByRole("status")).toContainText(
+    "Context componentのexact 1 NodeをGraphで表示しました。",
   );
+  await expectStructureNodesFullyVisible(viewer, ["composition-root"]);
+  await viewer.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await expect(viewer.locator(".structure-status")).toHaveCount(0);
+  await expect
+    .poll(async () => await structureRegionsCameraState(viewer))
+    .toEqual(contextReturnCamera);
   const applicationRegionLabel = viewer
     .locator('.structure-region-map-card[data-region-id="application-coordination"]')
     .locator(".structure-region-map-card-heading > strong");
@@ -733,6 +751,68 @@ test("keeps unassigned Context explicit without manufacturing a transitive Regio
       whiteSpace: getComputedStyle(element).whiteSpace,
     })),
   ).toEqual({ overflow: "visible", textOverflow: "clip", whiteSpace: "normal" });
+});
+
+test("uses each Regions aggregate relation as an exact factual index", async ({ page }) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, fullStackTitle);
+  const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
+  await viewer.getByRole("button", { name: "Regions", exact: true }).click();
+  await viewer.getByRole("button", { name: "Regions全体を収める" }).click();
+  await viewer.getByRole("button", { name: "Regionsを拡大" }).click();
+
+  const relation = viewer.locator(
+    '.structure-region-map-relation-action[data-edge-ids~="detail-route-executes-query"]',
+  );
+  await relation.focus();
+  const relationReturnCamera = await structureRegionsCameraState(viewer);
+  await relation.press("Enter");
+  await expect(relation).toHaveAttribute("aria-pressed", "true");
+  const inspector = viewer.getByRole("complementary", { name: "Exact factual Edges" });
+  await expect(inspector).toBeVisible();
+  const exactEdge = inspector.locator('[data-edge-id="detail-route-executes-query"]');
+  await expect(inspector.locator(".structure-region-relation-edge").first()).toBeFocused();
+  await expect(exactEdge.locator(".structure-region-relation-edge-id")).toHaveText(
+    "Edge · detail-route-executes-query",
+  );
+  await expect(exactEdge).toContainText(
+    "GET /orders/:orderId → Get order detail: detail queryを実行する",
+  );
+  const exactSource = exactEdge.getByRole("button", { name: /source/u });
+  await expect(exactSource).toContainText("src/http/controllers/order-detail.ts:10-17");
+  await expect(viewer.locator(".structure-regions-canvas-scroll")).toHaveJSProperty(
+    "scrollLeft",
+    0,
+  );
+  await expect(viewer.locator(".structure-regions-canvas-scroll")).toHaveJSProperty("scrollTop", 0);
+
+  await exactSource.focus();
+  await exactSource.press("Enter");
+  await expect(
+    page.getByRole("tab", { name: "src/http/controllers/order-detail.ts" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("diffs-container")).toHaveAttribute("data-search-target-line", "10");
+  await page.getByRole("tab", { name: fullStackTitle }).click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await expect(inspector).toHaveCount(0);
+  await expect
+    .poll(async () => await structureRegionsCameraState(viewer))
+    .toEqual(relationReturnCamera);
+  await relation.focus();
+  const edgeReturnCamera = await structureRegionsCameraState(viewer);
+  await relation.press("Enter");
+  await expect(inspector).toBeVisible();
+
+  await exactEdge.locator(".structure-region-relation-edge").click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "graph");
+  await expect(viewer).toHaveAttribute("data-selected-edge-id", "detail-route-executes-query");
+  await expectStructureNodesFullyVisible(viewer, ["order-detail-route", "get-order-query"]);
+  await viewer.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(viewer).toHaveAttribute("data-view-mode", "regions");
+  await expect(viewer.locator(".structure-status")).toHaveCount(0);
+  await expect
+    .poll(async () => await structureRegionsCameraState(viewer))
+    .toEqual(edgeReturnCamera);
 });
 
 test("keeps Regions relation arrowheads legible against their lines in dark mode", async ({

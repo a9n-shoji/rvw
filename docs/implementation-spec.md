@@ -921,8 +921,13 @@ full-height bodyを使い、省略しないRegion label / responsibility summary
 directなcross-Region factual Edgeだけから導出したcoarse connectionを矢印で示す。未所属Nodeのconnected componentと
 Region boundaryもneutralなContextとして残し、transitive Region connectionを合成しない。Region rectangleは
 keyboard-accessibleなdrill actionとしてGraphへ切り替え、stable Region IDに対応するexact member boundsへcameraを移動する。
+Region / Context間のaggregate relation labelもkeyboard / pointerから選択でき、current graphに由来するexact Edgeを
+stable Edge ID、endpoint、full predicate、source locator付きで一件ずつ開示する。各exact EdgeはGraphでその両端をframeして既存の
+relation selectionとして確認できる。Context rectangleは省略表示された先頭Nodeだけでなくderived componentの
+全exact member NodeをGraphでframeする。どちらも遷移前のRegions cameraをBackで復元し、Context identity、aggregate
+relation、inspector disclosureをartifact protocolへ永続化しない。
 Regions surfaceはtransform cameraを持ち、明示的な全体Fit、可読なHomeへのReset、zoom、wheel / drag panを提供する。狭いpaneでkeyboard focusが
-画面外のRegion actionへ移った場合は、そのcardをcamera内へrevealする。
+画面外のRegion / Context / aggregate relation actionへ移った場合は、そのcontrolをcamera内へrevealする。
 GraphのRegion lensはfull Region label、責務summary、exact member数、内部relation数をcanvas内へ明示し、member Nodeと
 内部relationを専用のvisual channelで強調する。通常GraphにもNodeのsemantic metadataとしてfull Region identityを残すが、
 stable ID由来の略称を読むことやmanual drag由来のenclosing rectangleからmembershipを推測することは要求しない。primary backboneのexact Node / Edgeを
@@ -2054,7 +2059,8 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
     non-null presentationではthesisとauthorial startがcompact Guide、start-centered exact 1-hopの初期Home、exportへ反映され、optionalな
     connected exact-Edge primary backboneまたはidentified Regionがある場合だけcanonical geometryをorganizeする。
     Guideはstart / thesisだけの一行まで折り畳めるsurfaceで、Region関係図はfull-height Regions modeへ表示する。
-    Region rectangleはkeyboardからGraphのexact member boundsへ移動でき、BackでRegions overviewへ戻れる。frame中のRegion memberと内部relationは
+    Region / Context rectangleはkeyboardからGraphのexact member boundsへ移動でき、aggregate relationはstable Edge ID / predicate / source一覧から
+    個別EdgeをGraphでselectでき、BackでRegions overviewへ戻れる。frame中のRegion memberと内部relationは
     focus距離を変えずfull relevanceになり、Home / Node focus / depth変更で解除、Backで復元できる。nullとstart-onlyは同じtopology
     projectionになり、どちらも全Node / Edgeを探索できる。Edgeはsource / target Nodeのvisible boundary portへ
     接続し、shared／near-coincident corridorを持つdistinct visible relationはparallel / reciprocalを含め実質的な区間を

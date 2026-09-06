@@ -191,6 +191,13 @@ The Viewer provides a stable authored map plus a movable active lens.
   focus, depth, camera, or manual positions. Regions owns a separate pane-local camera: first view and
   Reset keep the Start landmark at a readable scale, Fit frames the entire derived map, and zoom plus
   wheel/drag pan support local reading without compacting canonical card geometry.
+- A Region/Context aggregate relation is a keyboard- and pointer-accessible index into its current
+  exact factual Edges, not a tooltip-only summary. Selecting it discloses each stable Edge ID,
+  exact predicate, endpoint pair, and visible source locator; any listed Edge can be selected and framed in Graph.
+  Selecting a neutral Context card frames that derived component's exact member Nodes without
+  inventing a representative focus or persisting Context as artifact semantics. Back returns to the
+  prior Regions camera for both actions. This inspector is ephemeral reviewer disclosure; the
+  aggregate and Context identities remain derived from the current graph.
 
 - **Home** activates the All lens, focuses the authorial start (or the factual origin for
   `presentation: null`), and frames that Node plus its exact factual 1-hop neighbors. Backbone
@@ -356,7 +363,8 @@ following:
   Walkthrough.
 - Add free-form authored Region relations: rejected because they create a second graph whose predicate,
   direction, provenance, and lifecycle can disagree with the exact factual Edges. The Viewer instead
-  aggregates direct cross-Region factual Edges and exposes their exact identities on demand.
+  aggregates direct cross-Region factual Edges and exposes their stable IDs, predicates, source
+  locators, and Graph selection on demand.
 - Keep the Region relationship map inside the Guide: rejected because a useful coarse map needs the
   same scarce vertical and horizontal space as the detailed graph. Treating it as a first-class view
   mode makes the macro/micro distinction explicit while preserving one artifact and one factual graph.
