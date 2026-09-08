@@ -83,8 +83,12 @@ Walkthrough as another document tab, and only a human action opens the reference
 Inline references and bound Mermaid nodes remain interactive, but the viewer does not duplicate the
 complete reference set in a side or bottom index.
 
-Structures cross the same one-way CLI boundary as a separate domain. An Agent declares a bounded
-PR-relevant behavior and factual code entrypoint as stable-ID nodes and edges fixed to one exact source commit. SQLite keeps one
+Structures cross the same one-way CLI boundary as a separate domain. An Agent declares either a
+bounded PR-relevant behavior/review question or a PR-scoped file responsibility/dependency map as
+stable-ID nodes and edges fixed to one exact source commit. A normal behavior Structure uses a factual
+code entrypoint. A file-map Structure uses one real repository file per Node with a file-level anchor,
+and its origin is the real file from which verification of that bounded file relation set begins rather
+than a claim that all files share one runtime entrypoint. SQLite keeps one
 current graph JSON value per stable Structure ID; publication and whole-value replacement validate all
 paths, ranges, endpoints, identities, presentation references/membership, and Pull Request ownership before retaining the commit.
 The current value separates factual graph claims from an optional authorial spatial presentation made
@@ -100,7 +104,9 @@ as `presentation: null`; no `graph_json` data migration is needed. Retired Node,
 kept in small tombstone tables so a client that missed intermediate whole-value updates cannot mistake a
 removed-then-reused identity for a surviving claim or framed chunk. Continuously present identity semantics
 remain an authoring responsibility because ordinary claim and membership edits are valid. Structure is not a semantic code index and has no revision
-history, comments, persisted semantic reverse index, inferred edges, or persisted coordinates. The viewer may
+history, comments, persisted semantic reverse index, inferred edges, or persisted coordinates. The
+same schema already permits a one-file, zero-Edge map and connected multi-file maps; file-map semantic
+rules remain producer authoring contracts rather than a stored kind. The viewer may
 derive an ephemeral backlink index from explicit Node anchors in the current values. HTTP lists and reads current values;
 human-confirmed delete is the only write exposed to the browser.
 
@@ -180,11 +186,14 @@ render as non-fetching placeholders. Same-origin SVG asset responses carry a res
 Policy and sandbox so direct navigation cannot execute repository-controlled script under the viewer origin.
 
 The bundled Skills are named by capability rather than Agent host. `rvw` handles review comments and
-synchronization; `rvw-review-compose` chooses the minimum adaptive mix of Walkthrough, Structure, and
-direct code reading for one Pull Request or explicit review subject; `rvw-walkthrough` turns one bounded
-subject into one validated source-anchored ordered path; `rvw-structure` maps one declared PR-relevant
-behavior from its code entrypoint into stable source-anchored relationships and optional authorial spatial
-presentation; and `rvw-watch-comments`
+synchronization; `rvw-review-compose` requires a PR-scoped file-map Structure for a whole Pull Request,
+then chooses the adaptive mix of Walkthrough, normal Structure, and direct code reading within that
+constraint; explicitly bounded local subjects may still need no Artifact. `rvw-walkthrough` turns one
+bounded subject into one validated, source-anchored, incrementally verifiable ordered path and uses a
+question-appropriate Mermaid diagram when prose would otherwise make the reviewer reconstruct state,
+interaction, or branching. `rvw-structure` maps either one declared PR-relevant behavior from its code
+entrypoint or one PR-scoped file responsibility/dependency set into stable source-anchored relationships
+and optional authorial spatial presentation; and `rvw-watch-comments`
 keeps an external Agent task subscribed to newly created posts and fails closed on PR ownership. The
 producer Skills honor a session-local upstream brief while retaining their own representation rejection
 and exact-source contracts; they do not independently expand back into PR-wide composition.
@@ -197,7 +206,7 @@ canonical name through each host's native Skill mechanism; host-specific user in
 part of the rvw protocol.
 
 Review composition is an authoring strategy outside the domain model. Its candidate understanding units,
-Artifact briefs, recommended entry, and URI summary are not persisted as a Review Set, Artifact kind,
+file-map/normal-Structure role, Artifact briefs, recommended entry, and URI summary are not persisted as a Review Set, Artifact kind,
 group, or review plan. The composer uses the existing protocol-v5 Walkthrough and Structure operations;
 it adds no database, URI, API, Viewer UI, protocol capability, or generic runtime sub-Skill invocation
 framework. Codex and Claude Code receive the same five Skill directories under their respective local

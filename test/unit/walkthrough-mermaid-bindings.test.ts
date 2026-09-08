@@ -120,4 +120,28 @@ describe("Walkthrough Mermaid binding validation", () => {
     expect([...keys].sort()).toEqual([...expected].sort());
     for (const edgeLikeId of excluded) expect(keys.has(edgeLikeId)).toBe(false);
   });
+
+  it("treats source IDs as Walkthrough-global across Mermaid fences", () => {
+    const body = [
+      "```mermaid",
+      "sequenceDiagram",
+      "  participant Shared as API",
+      "  participant First as First caller",
+      "  First->>Shared: request",
+      "```",
+      "",
+      "```mermaid",
+      "stateDiagram-v2",
+      '  state "Same bound source" as Shared',
+      '  state "Different source" as Second',
+      "  Shared --> Second : update",
+      "```",
+    ].join("\n");
+
+    expect([...analyzeReferenceMarkdown(body).mermaidNodeIds].sort()).toEqual([
+      "First",
+      "Second",
+      "Shared",
+    ]);
+  });
 });

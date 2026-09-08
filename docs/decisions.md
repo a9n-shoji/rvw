@@ -1,5 +1,106 @@
 # Architecture decisions
 
+## 2026-09-08: Require a PR-scoped file map and make Walkthrough visuals question-shaped
+
+### Status
+
+Accepted. This decision narrows two earlier choices without replacing their safety and product
+boundaries. It supersedes the part of “Separate PR-wide review composition from single-Artifact
+production” that allowed a whole-Pull-Request composition to contain no Structure, and the part of
+“Add Structure as a separate exact-source relationship space” that limited all Structure authoring to
+one runtime-oriented behavior entrypoint. It also supersedes the older Walkthrough default of offering
+no diagram-selection guidance. The no-fixed-template, no-generic-inventory, exact-source,
+single-Artifact producer, passive-publication, and reviewer-session separations remain in force.
+
+### Problem
+
+The adaptive composer could legitimately choose zero Artifacts for a local question, but applying the
+same economy rule to a whole Pull Request left reviewers without a stable answer to a basic orientation
+question: which repository files carry the changed software's relevant responsibilities, and which
+concrete file-to-file dependencies connect them? A changed-file list is too shallow, while a repository
+architecture inventory is too broad. Neither helps a reviewer return from a local code check and place
+what they learned back into the physical implementation.
+
+Walkthroughs had a complementary problem. The authoring contract preferred causal or conceptual order
+but treated Mermaid as an optional embellishment without saying when a diagram should carry the
+relationship, state, interaction, or branch model. Producers could therefore turn an async race or
+lifecycle into paragraphs that the reviewer had to reconstruct mentally, or put one large overview
+diagram before any concrete code. Both outcomes work against incremental, source-verifiable
+understanding.
+
+### Choice
+
+For a composition covering a whole Pull Request, require the composition to contain at least one
+PR-scoped file-map Structure. “Contain” is authority-sensitive: a recommendation-only request returns
+an unproduced file-map brief; an authorized production request reuses or updates a valid same-subject
+map when discoverable and otherwise publishes one through `rvw-structure`. Transport, capability,
+source, or authority failure leaves this requirement explicitly unmet rather than authorizing a bypass
+or fabricated URI. An explicitly bounded local review subject may still choose zero Artifacts.
+
+A file map uses the existing Structure type. Each Node represents exactly one repository file, carries
+a file-level anchor at the Structure's single `sourceOid`, has a label that identifies the path, and
+briefly states that file's responsibility for understanding this Pull Request. It may acknowledge
+mixed responsibilities rather than idealizing the file. Each Edge states one concrete,
+source-verifiable file relationship and carries specific evidence for that predicate. Import syntax
+establishes an import, not automatically a runtime call, ownership relation, execution order, or data
+flow. Changed and unchanged callers, consumers, contracts, state owners, wiring, configuration, tests,
+migrations, and documents may be included when they lower comprehension cost; changed-file completeness
+and repository-wide import coverage are not goals.
+
+The existing connectedness rule remains. In a file map, `originNodeId` identifies an actual file from
+which a reviewer can start verifying this bounded set of file relations; it is not claimed to be a
+runtime entrypoint shared by every file. `presentation.startNodeId` remains a separate authorial
+attention choice. A meaningful one-file map has one anchored Node and no Edge. Disconnected change
+areas become separate file maps when no factual relation joins them; neither a “Pull Request” Node nor
+an “in the same PR” Edge may be invented. Existing `presentation`, Regions, and backbone can organize a
+larger honest map, but they cannot change file granularity or factual relations. No new Artifact kind,
+Node kind, notation, field, database entity, grouping, migration, protocol capability, or Viewer mode is
+added.
+
+The mandatory file map is a reusable orientation surface, not required reading or an overview to
+memorize. The reviewer may begin with a concrete Walkthrough situation, a normal behavior Structure, a
+file, or the file map and return to the map whenever a code check needs to be placed in context. A
+Walkthrough remains normally useful for meaningful behavior change, and a normal Structure remains
+useful when responsibility, state ownership, contract, side effect, or dependency relationships answer
+an independent question. Artifact count and reading order stay adaptive; only the PR-wide file-map
+presence is invariant.
+
+Walkthrough defaults now build understanding in small source-verifiable increments: start with a
+concrete situation or question and the first code entry, explain only enough to establish one local
+model, let the reviewer verify or refute it in committed source, state what that check changes in the
+model, and expose the next useful question. This is an authoring discipline, not five required headings
+or a persisted progress model.
+
+Mermaid becomes the standard explanatory medium when several actors, states, conditions, branches,
+ordering constraints, or lifecycle transitions would otherwise have to be reconstructed from prose.
+Select notation by the question: `flowchart` for control/data branching, `stateDiagram-v2` for real or
+explicitly labeled explanatory state and transitions, `sequenceDiagram` for actor interaction and time
+order, and ER/class/other supported diagrams for their corresponding relationships. A small local
+condition or wording change can still be clearer without a diagram. Each diagram should answer one
+central question at the point where it becomes useful; a giant architecture preface and diagram-count
+targets are rejected.
+
+Every diagram element, arrow, state, order, guard, and endpoint is an implementation claim. Producers
+verify them against committed source, distinguish a representative async case from guaranteed order,
+distinguish explanatory aggregate state from a code enum, and do not erase the race or failure that
+makes the change important. `diagramBindings` continues to target only supported node-like elements.
+Messages, transitions, and other edge-like claims remain passive and receive nearby Markdown
+`rvw-ref:` evidence. Because bindings are Walkthrough-global, different sources across multiple fences
+use distinct source IDs; intentional reuse keeps the same reference.
+
+### Trade-offs
+
+- A whole-PR composition always spends one Structure on physical orientation, even for a tiny change.
+  The singleton form keeps that cost bounded and forbids decorative dependencies.
+- File-map semantics are authoring rules rather than a stored mode flag, so the CLI cannot mechanically
+  prove one-file-per-Node or semantic Edge precision. Contract tests and exact-source examples provide
+  regression evidence while producer evaluation remains necessary.
+- More active diagram guidance can encourage unnecessary visuals. The no-diagram counterexample,
+  one-question scope, and source-claim checks constrain that pressure without making existing prose-only
+  Walkthroughs invalid.
+- Existing discovery can enumerate Structures but not all Walkthroughs. The composer reports that
+  uncertainty and does not claim duplicate-free coverage beyond available capabilities.
+
 ## 2026-09-06: Separate the authored explanation backbone from the reviewer's active lens
 
 ### Status

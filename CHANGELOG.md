@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- PR全体の`rvw-review-compose` defaultを、実在fileを1 Nodeずつsource anchorへ結ぶ必須の
+  file-map Structureと、必要に応じたWalkthrough・通常Structure・直接code readingのadaptive compositionへ変更
+- `rvw-walkthrough`を具体的な問いからcode確認とmental-model更新を繰り返す読解pathとして明確化し、
+  interaction、state、branch等を文章から再構築させる場合は問いに合うMermaid図を標準的に選ぶauthoring guidanceを追加
+- `rvw-structure`に、bounded behavior mapとは別のPR-scoped file responsibility / dependency map用途を追加。
+  generic architecture inventory、新しいArtifact kind、schema、Viewer modeは追加しない
+
 ## [0.6.0] - 2026-09-07
 
 ### Added

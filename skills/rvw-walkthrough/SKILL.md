@@ -10,6 +10,11 @@ requested implementation subject and continue into the code. Treat the Walkthrou
 not as the code's source of truth, an exhaustive change log, a completed AI review, a review-scope
 guarantee, or an approval plan.
 
+Build that path as a sequence of small understanding updates: begin with a concrete situation or
+question, give the minimum explanation or diagram needed to inspect it, let the reviewer verify the
+claim in exact committed code, state what that evidence establishes, and use the resulting question to
+lead deeper into the implementation.
+
 This producer retains responsibility for representation suitability. When the requested subject has
 no useful ordered reading path and is clearer as a navigable map of responsibilities and relations,
 stop without publishing and recommend `rvw-structure` to the requester or upstream composer. Do not
@@ -41,7 +46,10 @@ purpose with a different one.
 
 Prefer verified repository and subject facts. Use the smallest necessary inference when facts do not establish intent, label the uncertainty, and never invent business requirements or off-repository constraints.
 
-Leave the document's organization, emphasis, granularity, step count, and use of diagrams to the current request and subject. Do not impose fixed headings or a narrative template.
+Leave the document's organization, emphasis, granularity, and step count to the current request and
+subject. Select diagrams by the verified relationships the reader needs to understand, without
+imposing fixed headings, a narrative template, or a diagram count. A small local condition, constant,
+or wording change may remain clearer as concise prose and exact code with no diagram.
 
 Use only the `rvw` CLI protocol. Never access the SQLite database directly or control a viewer through browser automation.
 
@@ -72,13 +80,38 @@ Read the complete current body, source OID, diagram bindings, references, and Pu
 2. When explicit instructions leave authoring choices unresolved, read [the authoring guide](references/walkthrough-authoring.md). Apply its workflow, adaptation rules, anti-patterns, example, and completion check only as defaults for those choices.
 3. Choose one exact commit containing every referenced path and range. Treat it as the coordinate where the references are guaranteed to exist and the viewer's fallback if latest-head mapping is uncertain, not as a request to keep normal viewing historical. Do not publish an explanation of uncommitted code.
 4. For a change-focused Walkthrough, inspect the diff and enough surrounding code to identify the requested subject's center and connections. Only when no bounded subject was supplied may the change itself establish that center. For a standalone subject, inspect its central responsibility, contract, entry points, and connections without inventing a before/after story. Include unchanged callers, callees, contracts, models, or tests when they materially reduce the reader's exploration cost; do not include them merely because they are related.
-5. Compose the smallest useful reading path for the requested subject in the order that best builds the mental model, rather than file order or diff order. Connect each step to concrete code, explain why it comes next, expose meaningful uncertainty, and leave useful starting points for exploration beyond the Walkthrough.
+5. Start with the concrete problem, situation, or behavior to understand and the first code entry that
+   can confirm it. Do not require a large glossary, repository-wide architecture, complete file tour,
+   or giant overview diagram before that first verification. Compose the smallest useful path in the
+   order that best builds the mental model, rather than file order or diff order. Let each section
+   establish one useful understanding through concise explanation, a small diagram when appropriate,
+   and exact code evidence; state why that evidence matters and let the new understanding motivate the
+   next question. These are authoring checks, not fixed output headings.
 6. Generate the completed Walkthrough in one pass unless the user explicitly requests an interactive process. Do not ask for approval of an intermediate review plan.
 7. Link important code claims with `rvw-ref:<referenceId>`; use Markdown links in prose and `<a href="rvw-ref:<referenceId>">` links inside HTML previews.
 8. Define every reference with a repository-relative path and, when useful, an inclusive line range at the chosen `sourceOid`. Prefer the smallest meaningful multi-line range that lets the reader verify a code block or flow; include the signature and relevant body instead of pointing only at its first line. Use a single-line range only for a genuinely line-local claim such as one constant or declaration. Omit both `startLine` and `endLine` when the claim concerns the file as a whole. Keep IDs unique and stable within the publication.
-9. Add Mermaid only when it helps the explanation. Bind only the source-identified node-like elements listed below that should open code; leave edge-like elements passive.
+9. Use Mermaid as a standard explanatory tool when multiple relationships, actors, states, conditions,
+   branches, ordering constraints, or lifecycle transitions would otherwise have to be reconstructed
+   from prose. Use a flowchart for control decisions or transformations, `stateDiagram-v2` for real or
+   explicitly identified explanatory state and its transitions, and `sequenceDiagram` for actor
+   interaction and time ordering; use class, ER, or another renderer-supported notation when its
+   question fits better. Place each small diagram where its question arises and give it one central
+   question. Do not add a cosmetic diagram or force a local fact into one. Treat every participant,
+   state, arrow, order, guard, branch, and endpoint as a source claim to verify, not as permission to
+   simplify the implementation into a tidier model.
 10. Use `html-preview` only when spatial layout, an ELI5 visual, a UI mock, or a visual comparison materially lowers comprehension cost. Follow the HTML visual rules in the authoring guide; do not generate JavaScript or network resources.
-11. Ensure every supplied reference is used by at least one Markdown or HTML `rvw-ref:` link or a Mermaid binding whose key is an actual supported node-like element in the body: a flowchart node, classDiagram class, sequenceDiagram participant/actor, stateDiagram-v2 state, erDiagram entity, or architecture-beta service. Use the explicit source ID rather than its display label. `diagramBindings` is Walkthrough-global: reusing one source ID in multiple Mermaid fences binds every match to the same reference, so use distinct source IDs when the references should differ. Messages, transitions, relationships, architecture edges/groups, and other edge-like elements are not binding targets. Ensure every link and binding names a supplied reference, and never invent a binding key merely to mark a reference as used. For a line reference, supply both `startLine` and `endLine`; for a file reference, omit both. Let the CLI reject invalid commits, paths, ranges, IDs, unused references, or bindings; never silently omit a failed reference.
+11. Ensure every supplied reference is used by at least one Markdown or HTML `rvw-ref:` link or a
+    Mermaid binding whose key is an actual supported node-like element in the body: a flowchart node,
+    classDiagram class, sequenceDiagram participant/actor, stateDiagram-v2 state, erDiagram entity, or
+    architecture-beta service. Use the explicit source ID rather than its display label.
+    `diagramBindings` is Walkthrough-global: reusing one source ID in multiple Mermaid fences binds every
+    match to the same reference, so use distinct source IDs when the references should differ. Messages,
+    transitions, relationships, architecture edges/groups, and other edge-like elements are not binding
+    targets. Give those claims nearby Markdown `rvw-ref:` evidence instead of inventing a binding. Ensure
+    every link and binding names a supplied reference, and never invent a binding key merely to mark a
+    reference as used. For a line reference, supply both `startLine` and `endLine`; for a file reference,
+    omit both. Let the CLI reject invalid commits, paths, ranges, IDs, unused references, or bindings;
+    never silently omit a failed reference.
 
 ## Send JSON without interactive input
 

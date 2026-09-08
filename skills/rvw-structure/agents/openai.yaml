@@ -1,4 +1,4 @@
 interface:
   display_name: "rvw Structure"
-  short_description: "Manage one bounded source-anchored behavior map"
-  default_prompt: "Use $rvw-structure to read or manage one bounded source-anchored behavior map in rvw as requested."
+  short_description: "Manage behavior maps and PR-scoped file maps"
+  default_prompt: "Use $rvw-structure to read or manage one bounded behavior map or PR-scoped file map in rvw as requested."

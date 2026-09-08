@@ -1,0 +1,59 @@
+{
+  "sourceOid": "f9416d959dbb79f95dd75d96bafeb6156155f5c8",
+  "title": "From composition claim to source-grounded explanation",
+  "body": "# Start with the concrete question\n\nThe composer has found a likely implementation relationship while reading a Pull Request. When it asks for a Walkthrough, what keeps that candidate claim from silently becoming a published fact? Start at the [composer handoff boundary](rvw-ref:composer-handoff): one bounded brief carries both authoring authority over the question and implementation assertions that remain claims to verify.\n\n```mermaid\nsequenceDiagram\n  actor Caller\n  participant Composer as rvw-review-compose\n  participant WalkthroughProducer as rvw-walkthrough\n  participant Source as committed source\n  Caller->>Composer: request PR-wide composition\n  Composer->>WalkthroughProducer: one brief with bounds and candidate claims\n  WalkthroughProducer->>Source: inspect semantic evidence\n  Source-->>WalkthroughProducer: committed text and tests\n  WalkthroughProducer->>WalkthroughProducer: compare evidence with the bounded question\n  alt source supports an answer inside the boundary\n    WalkthroughProducer-->>Composer: grounded or corrected result\n  else essential claim would change the question\n    WalkthroughProducer-->>Composer: conflict, do not publish\n    Composer->>Composer: revise brief or choose another surface\n  end\n```\n\nThe single Composer-to-producer handoff and its two kinds of input are grounded by the [composer contract](rvw-ref:composer-handoff). The producer's own comparison, corrected-answer branch, and no-publication branch come from the [Walkthrough producer's verification boundary](rvw-ref:walkthrough-verification); the repository supplies evidence but does not make the authoring decision. The relationship-map producer applies the same epistemic split but retains a different representation boundary in the [Structure producer contract](rvw-ref:structure-verification). The diagram shows one representative handoff, not every operation-specific preflight or an assurance that production always succeeds. `Source` is an explanatory participant for the committed repository, not a single source element, so it is deliberately not bound. Messages and branches are likewise evidenced by these nearby code references rather than by invented edge bindings.\n\n# Update the mental model\n\nAfter checking those ranges, the local model is small: the composer can decide *what question to ask* and *what is in scope*; it cannot decide that an implementation claim is true. The producer may return a source-supported correction inside the same boundary, or return an essential conflict without publication so the composer can recompose. [Static contract assertions](rvw-ref:contract-guard) lock that distinction into the repository, but their presence alone does not prove that a live producer invocation or publication was executed.\n\n# Continue into the code\n\nNext inspect the distribution boundary, because native activation only works if the expected siblings are actually packaged. The [canonical Skill list](rvw-ref:bundled-skill-set) includes the composer and both producers, and [package-root discovery](rvw-ref:package-root-discovery) requires every listed `SKILL.md` before installation can proceed. Read the remaining installer methods only if the next question is about local divergence, forced replacement, or atomic copying; those mechanics are outside this Walkthrough's authority-and-verification question.",
+  "diagramBindings": {
+    "Composer": "composer-handoff",
+    "WalkthroughProducer": "walkthrough-verification"
+  },
+  "references": [
+    {
+      "id": "composer-handoff",
+      "label": "Composer brief, native handoff, and feedback",
+      "path": "skills/rvw-review-compose/SKILL.md",
+      "startLine": 59,
+      "endLine": 88,
+      "description": "Separates authoring bounds from candidate claims, activates one producer, and recomposes after conflict."
+    },
+    {
+      "id": "walkthrough-verification",
+      "label": "Walkthrough independent verification boundary",
+      "path": "skills/rvw-walkthrough/SKILL.md",
+      "startLine": 20,
+      "endLine": 32,
+      "description": "Treats the brief's scope as authority and implementation assertions as claims that may be corrected or rejected."
+    },
+    {
+      "id": "structure-verification",
+      "label": "Structure independent verification boundary",
+      "path": "skills/rvw-structure/SKILL.md",
+      "startLine": 23,
+      "endLine": 35,
+      "description": "Applies the same evidence boundary while owning one relationship-space representation."
+    },
+    {
+      "id": "contract-guard",
+      "label": "Static authority-split assertions",
+      "path": "test/unit/skill-contracts.test.ts",
+      "startLine": 152,
+      "endLine": 167,
+      "description": "Checks that the bundled composer text distinguishes authoring authority from semantic proof."
+    },
+    {
+      "id": "bundled-skill-set",
+      "label": "Canonical bundled Skill names",
+      "path": "src/infrastructure/skills/skill-installer.ts",
+      "startLine": 20,
+      "endLine": 30,
+      "description": "Enumerates the composer and producer Skill entrypoints distributed to supported hosts."
+    },
+    {
+      "id": "package-root-discovery",
+      "label": "Bundled Skill package-root discovery",
+      "path": "src/infrastructure/skills/skill-installer.ts",
+      "startLine": 146,
+      "endLine": 180,
+      "description": "Accepts a package root only when every listed Skill entrypoint exists and resolves an install source from it."
+    }
+  ]
+}

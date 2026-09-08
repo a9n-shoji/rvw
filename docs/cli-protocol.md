@@ -409,7 +409,6 @@ The stdin value is:
 
 ```json
 {
-  "idempotencyKey": "task-stable-key-for-this-structure-publication",
   "pullRequest": "https://github.com/owner/repository/pull/123",
   "sourceOid": "0123456789abcdef0123456789abcdef01234567",
   "title": "Request flow",
@@ -515,9 +514,11 @@ resolving. Deletion does not remove the retained Git commit ref because other re
 ## Structure lifecycle
 
 Structures expose one current relationship graph and optional authorial spatial presentation under a
-stable URI. A Structure is a bounded PR-relevant behavior space visible as one explorable map, while a
-Walkthrough makes ordered prose itself the artifact.
-Generic static architecture and responsibility inventories are outside the producer contract. rvw does
+stable URI. A Structure is either a bounded PR-relevant behavior/review-question space or a
+PR-scoped file responsibility/dependency map visible as one explorable map, while a Walkthrough makes
+ordered prose itself the artifact. The latter uses one real repository file per Node and the same
+existing source-anchor schema; no stored Structure kind distinguishes it.
+Generic repository-wide static architecture and responsibility inventories remain outside the producer contract. rvw does
 not infer nodes or edges, store layout coordinates/focus/viewport/manual positions, retain Structure
 revisions, or provide a version selector.
 
@@ -562,7 +563,10 @@ type StructureAuthoringWarning = {
 The current codes and conditions are:
 
 - `STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION`: the origin has zero outgoing canonical
-  directional links.
+  directional links. Its message asks authors to verify the factual source-verification start: a
+  behavior Structure should recheck its code entrypoint, while a terminal, intermediate, or
+  single-file origin can be valid for a file map. Authors must not reverse factual relations merely
+  to silence this diagnostic.
 - `STRUCTURE_LAYOUT_MAX_ROWS_HIGH`: the presentation-independent topology diagnostic has `maxRows >= 8`.
 - `STRUCTURE_LAYOUT_NON_FORWARD_DIRECTIONAL_LINK_RATIO_HIGH`: the presentation-independent topology
   diagnostic has a non-forward directional-link ratio of at least `0.25`.
@@ -811,17 +815,21 @@ Skill status.
 ## Bundled Skills
 
 `rvw skill install codex` and `rvw skill install claude` each install the same five capability-named
-Skills: `rvw` for comment creation, handling, and synchronization; `rvw-review-compose` for minimum
-adaptive composition across a Pull Request or explicit review subject; `rvw-walkthrough` for one
-source-anchored ordered path; `rvw-structure` for one bounded behavior map from a factual code
-entrypoint; and `rvw-watch-comments` for continuous new-post intake. The platform argument selects only
+Skills: `rvw` for comment creation, handling, and synchronization; `rvw-review-compose` for a required
+PR-scoped file map plus adaptive composition across a whole Pull Request, or adaptive composition for
+an explicitly bounded review subject; `rvw-walkthrough` for one source-anchored ordered path;
+`rvw-structure` for one bounded behavior map or PR-scoped file map; and `rvw-watch-comments` for
+continuous new-post intake. The platform argument selects only
 the destination Skill root. No Skill hardcodes an Agent identity; the current Agent may supply an
 accurate optional `authorLabel`.
 
-`rvw-review-compose` investigates committed code, chooses only the useful Walkthrough, Structure, or
-direct-code surfaces, and rechecks the whole composition for overlap, terminology drift, missing or
-cross-boundary risk, and over-fragmentation. It does not require a fixed template or a Walkthrough /
-Structure pair. Its candidate understanding units and Artifact briefs are session-local instructions to
+`rvw-review-compose` investigates committed code. For a whole Pull Request it requires at least one
+file-map Structure (or explicitly reports why that requirement is unmet), then chooses only the useful
+Walkthrough, normal Structure, or direct-code surfaces and rechecks the whole composition for overlap,
+terminology drift, missing or cross-boundary risk, and over-fragmentation. An explicitly bounded local
+subject may still need no Artifact. The composer does not require a fixed three-Artifact template,
+mandatory reading order, or a Walkthrough / normal-Structure pair. Its candidate understanding units,
+Structure roles, and Artifact briefs are session-local instructions to
 the single-Artifact producers, and its recommended entry and resulting URIs are returned as ordinary
 Agent output. It adds no Review Set, persistent group, Artifact kind, URI, database or API state, Viewer
 UI, protocol capability, or generic runtime sub-Skill invocation framework. Review composition itself adds
@@ -861,21 +869,28 @@ an explicit forced install.
 
 `rvw-walkthrough` constrains commit identity, code references, diagram bindings, CLI validation,
 passive publication and update, and explicit destructive authorization for one bounded Walkthrough. It
-treats the explanation as one ordered orientation path, follows an upstream brief's subject, review
+treats the explanation as one ordered orientation path made of small question/evidence/understanding
+updates. When multiple actors, states, conditions, ordering constraints, or branches would otherwise
+need to be reconstructed from prose, it selects a question-appropriate Mermaid diagram as a standard
+explanatory tool; local changes may still be clearest with no diagram. It follows an upstream brief's subject, review
 question, purpose, scope, inclusions, exclusions, and emphasis as authoring authority, while independently
 verifying `mustEstablish` and all implementation assertions. It uses a flexible default guide only for
 unspecified choices. It does not own PR-wide coverage, Artifact count, or the type mix, but it
 retains the local rejection boundary when the requested subject has no useful ordered path. It
 deliberately avoids a fixed template, an exhaustive review boundary, and AI-review conclusions.
 
-`rvw-structure` produces one PR-relevant behavior space with a factual code entrypoint, gives an
-upstream brief's subject, review question, behavior boundary, scope, inclusions, exclusions, and emphasis
+`rvw-structure` produces either one PR-relevant behavior/review-question space with a factual code
+entrypoint or one PR-scoped file map whose factual origin is a real file from which its bounded file
+relations can be checked. It gives an upstream brief's subject, review question, role, behavior boundary,
+scope, inclusions, exclusions, and emphasis
 and requested spatial-presentation emphasis, independently verifies every suggested origin,
 relation, invariant, and other implementation assertion in committed code, and publishes stable-ID Node
 and Edge claims plus an optional thesis, attention start, connected exact-relation primary backbone, and stable
 named comprehension Regions at one exact commit. It
-does not choose PR-wide coverage, the type mix, or companion Artifacts, but it retains the local rejection
-boundaries for ordered prose or transition paths, missing factual origins, and static inventories. It also
+does not choose PR-wide coverage, the type mix, or companion Artifacts. It retains the local rejection
+boundaries for ordered prose or transition paths, missing role-appropriate factual origins, and generic
+repository architecture inventories; a source-verifiable PR-scoped file map is the narrow permitted
+file-inventory use. It also
 rejects giant or inferred graphs, vague relationships, raw coordinates or reviewer-state instructions, implicit
 same-URI subject changes, browser control, and deletion without exact preview authorization.
 

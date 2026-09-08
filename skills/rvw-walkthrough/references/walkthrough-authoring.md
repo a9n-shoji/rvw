@@ -30,19 +30,51 @@ as evidence without taking responsibility for PR-wide coverage, choosing an Arti
 or publishing a companion Artifact. If a bounded brief conflicts with the representation or cannot be
 made understandable inside its exclusions, return the conflict to the requester or upstream composer.
 
-Provide an initial route through the implementation that lowers the cost of building a mental model. Let the reviewer choose which references to open and where to explore next. Do not present the route as the full review boundary or as a substitute for the committed source.
+Provide an initial route through the implementation that lowers the cost of building a mental model.
+Begin with a concrete situation or question and an inspectable code entry. Introduce broader
+architecture and terminology only when the reader needs them to understand the code now in view; do
+not make a large glossary, a repository-wide model, every changed file, or a giant overview diagram
+mandatory preparation. Let the reviewer choose which references to open and where to explore next. Do
+not present the route as the full review boundary or as a substitute for the committed source.
 
 When the requested subject is a standalone architecture, flow, or surrounding-code explanation rather than a change, treat its central responsibility, contract, or path as the center. Do not require a diff or invent a change narrative.
 
 ## Build the default reading path
 
-1. **Identify the center.** Use the supplied subject and review question when present; do not recenter on the whole change. Otherwise derive the smallest coherent implementation question from the explicit request and verified facts. A Walkthrough should have one central path, not absorb every independently useful concept in the Pull Request. For a change, connect only the problem, visible behavior, before/after difference, concept, responsibility, or existing mechanism needed for that path. For a standalone subject, identify its central responsibility, contract, or path. When purpose is not established, describe only the verified implementation and state what remains unknown.
-2. **Trace the structure.** Inspect the diff when the task concerns a change, and inspect beyond changed files whenever useful. Consider entry points, callers, callees, data producers and consumers, state transitions, persistence, external I/O, events or jobs, types and contracts, existing implementation, and tests. Stop exploring branches that do not clarify the center.
-3. **Choose a comprehension order.** Prefer a causal or conceptual sequence over file or diff order. Useful sequences include external entry to internal handling, caller to callee, data creation to transformation to storage to use, old mechanism to new difference, abstraction to implementation, contract to implementation, or representative case to repeated applications.
-4. **Select the minimum useful route.** Use as few steps as needed to understand the central structure. A local change may need one to three steps; a multi-layer flow may need more. Do not add steps merely to appear complete.
-5. **Anchor every step.** State what to inspect, the exact file, symbol, or range, its role, what it does or what changed, how it connects to adjacent steps, and why reading it advances understanding. Prefer relationships and consequences over translating code line by line.
-6. **Include unchanged code selectively.** Include a key caller, maintained contract, replaced path, downstream consumer, side-effect subscriber, model defining state meaning, or existing implementation needed to interpret a test when it materially improves orientation.
-7. **Choose an intentional endpoint.** Stop after the reviewer can explain the subject's center, trace the main flow, see how it connects to the existing system, and identify useful starting points for deeper exploration.
+1. **Identify the concrete center.** Use the supplied subject and review question when present; do not
+   recenter on the whole change. Otherwise derive the smallest coherent implementation question from
+   the explicit request and verified facts. A Walkthrough should have one central path, not absorb every
+   independently useful concept in the Pull Request. For a change, connect only the problem, visible
+   behavior, before/after difference, concept, responsibility, or existing mechanism needed for that
+   path. For a standalone subject, identify its central responsibility, contract, or path. When purpose
+   is not established, describe only the verified implementation and state what remains unknown.
+2. **Enter the code quickly.** Name the concrete situation the reader is trying to explain and the first
+   source location that can confirm or refute the initial explanation. Supply only the context needed to
+   make that verification intelligible.
+3. **Trace enough surrounding structure.** Inspect the diff when the task concerns a change, and inspect
+   beyond changed files whenever useful. Consider entry points, callers, callees, data producers and
+   consumers, state transitions, persistence, external I/O, events or jobs, types and contracts,
+   existing implementation, and tests. Stop exploring branches that do not clarify the center.
+4. **Build small understanding updates.** For each natural section, decide internally what the reader
+   wants to know now, the minimum explanation needed, which exact code can confirm or contradict it,
+   what that evidence establishes about responsibility, state, conditions, or results, and which new
+   question follows. Express the result naturally as concise prose, a small diagram when useful, and a
+   few references. Do not print these checks as five fixed headings.
+5. **Choose a comprehension order.** Prefer a causal or conceptual sequence over file or diff order.
+   Useful sequences include external entry to internal handling, caller to callee, data creation to
+   transformation to storage to use, old mechanism to new difference, abstraction to implementation,
+   contract to implementation, or representative case to repeated applications.
+6. **Select and anchor the minimum useful route.** Use as few sections as needed to understand the
+   central behavior. For every code stop, identify the exact file, symbol, or range, its role, what it
+   does or what changed, how it connects to adjacent evidence, and why reading it updates the model.
+   Prefer relationships and consequences over translating code line by line.
+7. **Include unchanged code selectively.** Include a key caller, maintained contract, replaced path,
+   downstream consumer, side-effect subscriber, model defining state meaning, or existing
+   implementation needed to interpret a test when it materially improves orientation.
+8. **Choose an intentional endpoint.** Stop after the reviewer can explain the subject's center, trace
+   its representative behavior, place it among the relevant responsibilities or state, and continue
+   into code with a new question. When naming further exploration points, say why each is worth opening
+   and what uncertainty or boundary it can test; do not finish with a related-file list.
 
 ## Adapt to the subject
 
@@ -55,25 +87,92 @@ When the requested subject is a standalone architecture, flow, or surrounding-co
 - For a data model or migration, explain data meaning, compatibility, write and read paths, migration order, and relevant application connections.
 - For a UI change, consider user action, state, data retrieval, component connections, and rendered outcome rather than a component list.
 - For an API or external integration, consider contract, input, transformation, internal processing, output, and error handling.
-- For a test-centered change, connect the behavior being guaranteed to the implementation rather than walking through test files alone.
+- For a test-centered change, connect the behavior asserted by the test to the implementation rather
+  than walking through test files alone.
+
+## Deepen at real boundaries
+
+After establishing a representative main case, show where that understanding stops being sufficient.
+Choose only boundaries that matter to this subject, such as failure, retry, re-entry, cancellation,
+race, existing data, compatibility, cleanup, permission, lifecycle, or state-update timing. Do not add
+a fixed error or edge-case chapter. Connect a boundary to the source that implements it and explain how
+it changes or qualifies the model established by the representative case.
+
+Place a relevant test beside the behavior or boundary it helps the reader inspect instead of saving all
+tests for a final inventory. Keep these claims separate: a test exists; it was executed; that execution
+passed; and the asserted property is generally guaranteed. Report only the claims supported by the
+available source and execution evidence. Likewise distinguish stated intent, source-established fact,
+necessary inference, and unknown intent or behavior.
 
 ## Choose a visual format
 
-Prefer ordinary Markdown for prose and Mermaid for structure or flow. Use an `html-preview` fence only
-when spatial layout, an ELI5 visual hierarchy or metaphor, a UI mock, or a Before / After comparison
-materially lowers the reader's comprehension cost. The Walkthrough may consist mostly or entirely of
-one HTML preview when that is the clearest requested format; it remains a Markdown document.
+Use Mermaid as a standard explanatory tool when several relationships, actors, states, conditions,
+branches, interactions, or lifecycle transitions would otherwise have to be reconstructed in working
+memory from prose. A diagram is unnecessary when a constant, wording change, or local condition is
+clearer in a short sentence and exact code. Rendering successfully proves only that the syntax is
+accepted; every element and relation remains an authorial claim that must agree with committed source.
 
-For an interactive Mermaid code reference, put the explicit Mermaid source ID in `diagramBindings`.
-The supported targets are flowchart nodes, classDiagram classes, sequenceDiagram participants and actors,
-stateDiagram-v2 states, erDiagram entities, and architecture-beta services. For example, bind `C`, not
-the `Controller` display alias in `participant C as Controller`, and bind `worker`, not `Worker` in
-`service worker(server)[Worker]`. Do not bind sequence messages, state transitions, ER relationships,
-architecture edges/groups, or Mermaid-generated sequence numbers. If Mermaid does not retain a stable
-source ID for an element, leave it passive instead of deriving a key from its label or DOM order.
-Bindings apply across the whole Walkthrough: if multiple Mermaid fences reuse one source ID, every match
-opens the same reference. Use distinct IDs such as `orderDb` and `analyticsDb` when those elements should
-open different references.
+### Choose the notation by its question
+
+- Use a `flowchart` when the question is which condition selects a branch, where control diverges or
+  joins, or how data or processing is transformed. Do not use one merely as a generic box-and-arrow
+  canvas for state, actor interaction, or type relationships. Distinguish control flow, data flow,
+  dependency, and the reviewer's suggested reading direction rather than making one arrow mean all of
+  them.
+- Use `stateDiagram-v2` when the question concerns the states of one identified subject, who owns that
+  state, the event that changes it, the guard that permits a transition, or its relevant side effect.
+  Distinguish a state explicitly represented in code from an explanatory abstraction over conditions;
+  do not imply that an enum or complete state machine exists when it does not. State the scope of a
+  partial diagram, and use start or end markers only when they have a real lifecycle meaning. Function
+  call order alone is not a state transition.
+- Use a `sequenceDiagram` when the question concerns who calls or signals whom, request and response
+  order, waiting, callback propagation, subscription, cancellation, background work, or a race. Verify
+  each participant, message, order, condition, wait, callback, response, and concurrency claim. Separate
+  a representative trace from an order that always holds; source statement order does not establish
+  asynchronous completion order, and multiple participants do not establish parallel execution. Keep
+  callback registration and invocation as distinct events. Use `alt`, `opt`, `loop`, or `par` only when
+  the distinction is necessary and source-established, and do not erase a central race or failure by
+  drawing only a serial success path.
+- Use `erDiagram`, `classDiagram`, or another notation that the current rvw Mermaid renderer safely
+  supports when data or contract relationships are the actual question. Do not infer relation,
+  direction, or cardinality from common design practice; verify it in source or a maintained contract.
+
+Different diagram types may appear in one Walkthrough when they answer different questions, such as a
+sequence diagram for a stale-response race and a state diagram for which result remains current. Do not
+repeat the same explanation in several notations merely to add visual variety.
+
+### Put a small diagram where it becomes useful
+
+Treat one diagram as one central question. Place it at the point where the reader needs that relation,
+state, sequence, or branch; do not front-load one architecture diagram containing every file, actor,
+state, branch, and error. If labels become sentences or important elements become unreadably small,
+narrow the scope, change the abstraction level, or split the explanation along genuinely different
+questions. The surrounding prose should identify what matters, why it matters, what conditions or
+exceptions the diagram omits, and which code verifies it instead of reading every box and arrow aloud.
+
+### Connect diagrams to exact code
+
+Mermaid rendering support is broader than rvw's element-binding support. For an interactive code
+reference, put the explicit Mermaid source ID in `diagramBindings`. The supported binding targets are
+flowchart nodes, classDiagram classes, sequenceDiagram participants and actors, stateDiagram-v2 states,
+erDiagram entities, and architecture-beta services. For example, bind `C`, not the `Controller` display
+alias in `participant C as Controller`, and bind `worker`, not `Worker` in
+`service worker(server)[Worker]`.
+
+Do not bind sequence messages, state transitions, ER relationships, architecture edges/groups, or
+Mermaid-generated sequence numbers. A participant or state binding does not prove the arrows connected
+to it. Put `rvw-ref:` links to the exact message, transition, guard, relationship, or ordering evidence
+in nearby Markdown. If Mermaid does not retain a stable source ID for an element, leave it passive
+instead of deriving a key from its label or DOM order.
+
+Bindings apply across the whole Walkthrough: if multiple Mermaid fences reuse one source ID, every
+match opens the same reference. Reuse an ID only when sharing that reference is intentional. Use
+distinct IDs such as `orderDb` and `analyticsDb` when similar elements should open different references.
+
+Use an `html-preview` fence only when spatial layout, an ELI5 visual hierarchy or metaphor, a UI mock,
+or a Before / After comparison materially lowers the reader's comprehension cost. The Walkthrough may
+consist mostly or entirely of one HTML preview when that is the clearest requested format; it remains a
+Markdown document.
 
 Keep HTML visuals static and self-contained:
 
@@ -143,7 +242,8 @@ Avoid a review-findings list that replaces orientation:
 - Recommendation: rewrite the persistence layer.
 ```
 
-Prefer a connected path whose shape follows the implementation:
+When one short causal chain is already easy to hold in working memory, prefer a connected text path
+with no ceremonial diagram:
 
 ```markdown
 Start at [the request contract](rvw-ref:request-contract) to see the new input and the boundary that
@@ -168,6 +268,11 @@ This route may cross changed and unchanged code, gives each stop a reason, and r
 - Do not invent business intent or external constraints.
 - Do not force every subject into the same headings, number of steps, or prose structure.
 - Do not narrate code line by line when relationships, responsibility, or behavior are the useful information.
+- Do not make a broad glossary, file tour, or giant architecture diagram a prerequisite for the first
+  code verification.
+- Do not default every visual question to a flowchart or add a diagram where prose and code are clearer.
+- Do not tidy away a state, branch, race, failure, or asynchronous uncertainty that the source retains.
+- Do not restate the same explanation in prose and several diagrams; let each surface do distinct work.
 
 ## Check before publishing
 
@@ -180,14 +285,22 @@ Use this checklist internally; do not reproduce it mechanically in the Walkthrou
 - [ ] Adjacent subjects were reported to the caller rather than turned into companion Artifacts.
 - [ ] The subject is genuinely clearer as an ordered path; otherwise no Walkthrough was published.
 - [ ] The requested subject or change center can be stated briefly without unsupported intent.
+- [ ] The reader reaches a concrete source verification before being asked to retain broad background.
 - [ ] The order builds a mental model rather than mirroring file or diff order.
-- [ ] Each step connects to exact code or another concrete subject and explains why it matters.
+- [ ] Each natural section answers a current question, connects to exact code, states what the evidence
+      establishes, and motivates the next useful question.
 - [ ] Adjacent steps have a causal or conceptual connection.
 - [ ] Necessary unchanged code is included and incidental related files are omitted.
 - [ ] The depth matches the size and nature of the requested subject.
 - [ ] Facts, inference, and unknowns are distinguishable.
+- [ ] Relevant boundaries qualify the representative case without becoming a fixed checklist.
+- [ ] Claims about test existence, execution, pass status, and guarantees remain distinct.
+- [ ] Every diagram answers one useful question with an appropriate notation, readable scope, and
+      source-supported elements and relations; a diagram-free local explanation remains diagram-free.
+- [ ] Bindable node-like elements use exact supported source IDs, while passive messages, transitions,
+      and relations have nearby `rvw-ref:` evidence when they carry important claims.
 - [ ] The output is an orientation path, not an AI review, approval plan, or completeness claim.
-- [ ] The endpoint leaves clear starting points for continued exploration.
+- [ ] The endpoint gives a reason and a question for each worthwhile next code exploration point.
 - [ ] Every file, symbol, range, link, and binding is real and valid at the selected commit.
 - [ ] Any HTML preview is static, network-free, readable in both themes, pretty-printed, and used only where it improves comprehension.
 - [ ] A reviewer seeing the subject for the first time gains a useful route into the committed code.

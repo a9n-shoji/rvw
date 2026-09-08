@@ -1,0 +1,16 @@
+{
+  "sourceOid": "eb28386c007eb77b9028e720b5b1532013a8f0bb",
+  "title": "File map: private attachment release smoke contract",
+  "scope": "The file-level location of the committed private-attachment release-smoke contract. It includes the sole changed file, docs/implementation-spec.md, which records the authenticated download and local proxy checks required before release. Runtime attachment implementation, fixtures, and broader release behavior are unchanged and excluded. The individual commands, headers, reload check, and sensitive-trace precaution remain clearer as direct document reading.",
+  "originNodeId": "implementation-spec-file",
+  "presentation": null,
+  "nodes": [
+    {
+      "id": "implementation-spec-file",
+      "label": "docs/implementation-spec.md",
+      "description": "Owns the release-smoke checklist added by this change for authenticated private attachment rendering and proxy isolation.",
+      "anchor": { "path": "docs/implementation-spec.md" }
+    }
+  ],
+  "edges": []
+}

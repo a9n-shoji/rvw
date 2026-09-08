@@ -5,7 +5,9 @@ const rvwSkill = readFileSync("skills/rvw/SKILL.md", "utf8");
 const watchSkill = readFileSync("skills/rvw-watch-comments/SKILL.md", "utf8");
 const reviewComposeSkill = readFileSync("skills/rvw-review-compose/SKILL.md", "utf8");
 const reviewComposeDescription = reviewComposeSkill.match(/^description: (.+)$/mu)?.[1] ?? "";
+const reviewComposeOpenAi = readFileSync("skills/rvw-review-compose/agents/openai.yaml", "utf8");
 const walkthroughSkill = readFileSync("skills/rvw-walkthrough/SKILL.md", "utf8");
+const walkthroughOpenAi = readFileSync("skills/rvw-walkthrough/agents/openai.yaml", "utf8");
 const structureSkill = readFileSync("skills/rvw-structure/SKILL.md", "utf8");
 const structureOpenAi = readFileSync("skills/rvw-structure/agents/openai.yaml", "utf8");
 const reviewComposition = readFileSync(
@@ -36,6 +38,9 @@ describe("bundled Skill code-reference guidance", () => {
     expect(watchSkill).toContain("For every concrete claim about code behavior");
     expect(watchSkill).toMatch(
       /follow the code\s+evidence defaults above even though no commit was pushed/,
+    );
+    expect(rvwSkill).toMatch(
+      /Route a Pull Request-wide\s+request for a reading composition to `rvw-review-compose`[\s\S]*`rvw-walkthrough` or\s+`rvw-structure`/,
     );
   });
 
@@ -113,14 +118,16 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureAuthoring).toMatch(
       /outer `regions` array as unordered sets[\s\S]*Do not author Region-to-Region relations/,
     );
-    expect(structureAuthoring).toContain("terminal or intermediate origin is still valid");
+    expect(structureAuthoring).toMatch(
+      /runtime entrypoint shared by every file,[\s\S]*contract, configuration,[\s\S]*migration, document, or test/,
+    );
     expect(structureAuthoring).toContain("around 20 full-width characters or fewer");
     expect(structureAuthoring).toContain("overlapping or nested Node anchors");
     expect(structureAuthoring).toContain("static inventory");
     expect(structureAuthoring).toContain("deprecated compatibility field");
     expect(structureAuthoring).toContain("Do not set it in new");
     expect(structureAuthoring).toContain("Do not publish");
-    expect(structureOpenAi).toContain("Manage one bounded source-anchored behavior map");
+    expect(structureOpenAi).toContain("Manage behavior maps and PR-scoped file maps");
     expect(structureOpenAi).toContain("read or manage");
     expect(structureOpenAi).not.toContain("to publish one bounded");
   });
@@ -133,7 +140,39 @@ describe("bundled Skill code-reference guidance", () => {
       /Regions relationship view[\s\S]*Only the first two are Structure content/,
     );
     expect(structureAuthoring).toMatch(
-      /fit Graph or Regions into one screen[\s\S]*Reset, Fit, zoom, and pan[\s\S]*not authoring inputs/,
+      /fit Graph or Regions\s+into one screen[\s\S]*Reset, Fit, zoom, and pan[\s\S]*not authoring inputs/,
+    );
+  });
+
+  it("authors a PR file map as a distinct existing-Structure role", () => {
+    expect(structureSkill).toContain("A **PR-scoped file map**");
+    expect(structureSkill).toMatch(
+      /Both roles use the existing Structure shape; do not add a role field, Node kind, notation,[\s\S]*public schema/,
+    );
+    expect(structureAuthoring).toMatch(
+      /One Node means exactly one repository file[\s\S]*Do not split\s+one path across multiple Nodes and do not combine multiple paths in one Node/,
+    );
+    expect(structureAuthoring).toMatch(
+      /Use a file-level anchor by omitting both\s+`startLine` and `endLine`/,
+    );
+    expect(structureAuthoring).toMatch(
+      /changed files plus any unchanged caller, consumer, dependency, type or contract definition,[\s\S]*needed to understand the\s+change/,
+    );
+    expect(structureAuthoring).toMatch(
+      /An import establishes only an import[\s\S]*Do not infer a runtime call, execution\s+order, data flow, state ownership, or dependency injection/,
+    );
+    expect(structureAuthoring).toMatch(
+      /type dependency, runtime dependency, registration, callback invocation,[\s\S]*test verification/,
+    );
+    expect(structureAuthoring).toMatch(
+      /one-file map[\s\S]*one Node and zero Edges[\s\S]*never add a numerical filler dependency/,
+    );
+    expect(structureAuthoring).toMatch(
+      /genuinely independent change areas require separate file maps[\s\S]*synthetic PR Node or a `same PR` Edge/,
+    );
+    expect(structureAuthoring).toMatch(/one exact `sourceOid`[\s\S]*deleted file[\s\S]*rename/);
+    expect(structureAuthoring).toMatch(
+      /file map[\s\S]*origin[\s\S]*need not be a\s+runtime entrypoint shared by every file/,
     );
   });
 
@@ -175,25 +214,40 @@ describe("bundled Skill code-reference guidance", () => {
 });
 
 describe("rvw review composition contract", () => {
-  it("owns adaptive PR-wide composition and minimizes total comprehension cost", () => {
+  it("requires a file map for PR-wide composition while keeping every other surface adaptive", () => {
     expect(reviewComposeDescription).toContain("Pull Request or explicit review subject");
     expect(reviewComposeDescription).toContain("direct code reading");
     expect(reviewComposeDescription).toContain("overall review composition");
+    expect(reviewComposeDescription).toContain("always include a PR-scoped file-responsibility");
     expect(reviewComposeSkill).toContain("This Skill owns PR-wide composition");
     expect(reviewComposeSkill).toContain("minimizes the reviewer's total comprehension cost");
     expect(reviewComposeSkill).toContain('"minimum useful" never means "fewest Artifacts."');
     expect(reviewComposition).toMatch(
-      /Two independently useful surfaces can\s+beat one overloaded surface; zero can beat both for a local question/,
+      /Two independently useful surfaces can\s+beat one overloaded surface; zero can beat both for an explicitly bounded local question/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /A PR-wide\s+composition is the exception: it always includes at least one PR-scoped file-map Structure/,
+    );
+    expect(reviewComposition).toMatch(
+      /Every PR-wide composition includes at least one file-map Structure[\s\S]*presence in the composition, not a fixed Artifact count, invocation order, or reading order/,
     );
     expect(reviewComposeSkill).toContain(
       "Direct the reviewer to code without creating an Artifact",
     );
     expect(reviewComposeSkill).toContain("Never require a Walkthrough and Structure as a pair");
     expect(reviewComposeSkill).toContain("Never require an overview Artifact");
-    expect(reviewComposition).toContain("Never default to Walkthrough then Structure then code");
+    expect(reviewComposition).toContain("The required file map is not a first step");
     expect(reviewComposition).toMatch(
       /Never instantiate Overview, State, Flow, Error, Test, and\s+Structure as fixed slots/,
     );
+    expect(reviewComposeSkill).toMatch(
+      /single-file\s+change still has a one-Node file map and needs no invented Edge/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /explicitly bounded subject may need one Walkthrough, one behavior Structure, or no Artifact/,
+    );
+    expect(reviewComposeSkill).toContain("it is never a fixed three-Artifact template");
+    expect(reviewComposeOpenAi).toContain("Compose a PR file map and adaptive review paths");
   });
 
   it("keeps recommendation read-only unless Artifact production is explicit", () => {
@@ -204,13 +258,16 @@ describe("rvw review composition contract", () => {
       /Invoke a producer for\s+Artifact creation or update\s+only when the user explicitly asks to create, publish, produce, or update\s+Artifacts/,
     );
     expect(reviewComposeSkill).toMatch(
-      /Supplying an\s+existing URI authorizes that contextual read, not an update/,
+      /Supplying an existing URI or discovering a candidate authorizes contextual reading, not an\s+update/,
     );
     expect(reviewComposeSkill).toMatch(
       /read-only, meaning that it\s+permits no Artifact mutation[\s\S]*matching producer may still perform its normal read\s+operation for an explicitly supplied existing URI/,
     );
     expect(reviewComposition).toContain("When intent is ambiguous, recommend without mutation");
     expect(reviewComposition).toContain("must not fabricate Artifact URIs");
+    expect(reviewComposition).toMatch(
+      /required PR-wide file map[\s\S]*read-only[\s\S]*explicitly unproduced brief/,
+    );
   });
 
   it("lets an unavailable transport diagnostic override contextual URI reads", () => {
@@ -225,7 +282,7 @@ describe("rvw review composition contract", () => {
     );
   });
 
-  it("calibrates common shapes without turning them into a fixed template", () => {
+  it("calibrates optional surfaces without turning the required map into a fixed template", () => {
     expect(reviewComposition).toContain(
       "Use these shape checks as counterexamples, not a template or required scenario list",
     );
@@ -242,7 +299,10 @@ describe("rvw review composition contract", () => {
       "A local guard, calculation, or code question remains direct reading",
     );
     expect(reviewComposition).toMatch(
-      /mixed PR may legitimately produce zero, one, or several Artifacts/,
+      /explicitly bounded local subject may legitimately produce zero, one, or several Artifacts/,
+    );
+    expect(reviewComposition).toMatch(
+      /PR-wide composition produces one or more file maps and only the additional Artifacts justified/,
     );
     expect(reviewComposition).toMatch(
       /user-requested spatial emphasis[\s\S]*does not turn a temporal explanation into a Structure/,
@@ -252,10 +312,13 @@ describe("rvw review composition contract", () => {
   it("preflights protocol v5 before delegating an Artifact operation", () => {
     expect(reviewComposeSkill).toContain("Require `protocolVersion` 5");
     expect(reviewComposeSkill).toMatch(
-      /Immediately\s+before every producer invocation, including a contextual read of an explicitly supplied Artifact,\s+require only the capabilities that invocation actually uses/,
+      /Immediately\s+before every producer invocation, including contextual discovery or a current-value read, require\s+only the capabilities that invocation actually uses/,
     );
-    expect(reviewComposeSkill).toMatch(
-      /A contextual read may happen before the composition is selected;\s+creation and update capabilities are required only after selecting that operation/,
+    expect(reviewComposeSkill).toContain(
+      "A contextual read may happen before the composition is selected; creation",
+    );
+    expect(reviewComposeSkill).toContain(
+      "and update capabilities are required only after selecting that operation",
     );
     expect(reviewComposition).toMatch(
       /Before each producer invocation, including this contextual read, require only the capability that\s+invocation uses/,
@@ -263,7 +326,7 @@ describe("rvw review composition contract", () => {
   });
 
   it("rechecks the complete composition instead of maximizing Artifact count", () => {
-    expect(reviewComposeSkill).toMatch(/Artifact count is not a quality\s+measure/);
+    expect(reviewComposeSkill).toMatch(/Artifact count is not\s+a quality measure/);
     expect(reviewComposeSkill).toContain("detailed overlap, terminology drift");
     expect(reviewComposeSkill).toMatch(/missing\s+important boundaries/);
     expect(reviewComposeSkill).toContain("over-fragmentation");
@@ -288,13 +351,11 @@ describe("rvw review composition contract", () => {
       "Candidate bounded understanding units are internal reasoning",
     );
     expect(reviewComposeSkill).toMatch(
-      /The brief is\s+authoring context, not public JSON or rvw schema/,
+      /The role and brief are authoring context, not public JSON,[\s\S]*rvw schema/,
     );
-    expect(reviewComposition).toContain("Use a flexible note, not a fixed form");
-    expect(reviewComposition).toContain("prompts rather than required slots");
-    expect(reviewComposition).toMatch(
-      /mustEstablish[\s\S]*rather than using it as a\s+coverage checklist/,
-    );
+    expect(reviewComposition).toContain("Use a flexible note, not a public form");
+    expect(reviewComposition).toContain("The examples below are prompts rather than a CLI schema");
+    expect(reviewComposition).toContain("as a coverage checklist for the Pull Request");
     expect(reviewComposeSkill).toContain("Do not create a Review Set");
     expect(reviewComposeSkill).toContain("database row, migration, CLI");
     expect(reviewComposeSkill).toContain("Do not publish a duplicate");
@@ -305,7 +366,9 @@ describe("rvw review composition contract", () => {
   it("delegates to canonical producer Skills through the current host", () => {
     expect(reviewComposeSkill).toMatch(/current\s+host's native Skill mechanism/);
     expect(reviewComposeSkill).toContain("`rvw-walkthrough` for one Walkthrough brief");
-    expect(reviewComposeSkill).toContain("`rvw-structure` for one Structure brief");
+    expect(reviewComposeSkill).toContain(
+      "`rvw-structure` for one file-map or behavior Structure brief",
+    );
     expect(reviewComposeSkill).toContain("unavailable or disabled in the current session");
     expect(reviewComposeSkill).toContain("available Skill inventory");
     expect(reviewComposeSkill).toContain("Skill with the Skill tool");
@@ -313,6 +376,39 @@ describe("rvw review composition contract", () => {
     expect(reviewComposeSkill).toMatch(/stop before any\s+Artifact operation/);
     expect(reviewComposeSkill).not.toContain("$rvw-walkthrough");
     expect(reviewComposeSkill).not.toContain("$rvw-structure");
+  });
+
+  it("briefs the three surfaces by distinct questions and recomposes sequentially", () => {
+    expect(reviewComposeSkill).toMatch(
+      /explicit role \(`walkthrough`, `file-map Structure`, or `behavior Structure`\)/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /verified facts and terminology it should share[\s\S]*which question or\s+explanation another surface already owns/,
+    );
+    expect(reviewComposition).toContain("role: structure:file-map");
+    expect(reviewComposition).toContain("role: structure:behavior");
+    expect(reviewComposition).toContain("diagramQuestion:");
+    expect(reviewComposition).toContain("diagramCandidate:");
+    expect(reviewComposition).toContain("doNotDuplicate:");
+    expect(reviewComposeSkill).toContain("Do not dispatch producer handoffs as a batch");
+    expect(reviewComposeSkill).toMatch(
+      /After each producer result,[\s\S]*re-evaluate every unpublished brief/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /required file map does not force investigation order, producer invocation order, or human reading\s+order/,
+    );
+  });
+
+  it("reports reuse, exclusions, direct-code work, and an unmet mandatory map honestly", () => {
+    expect(reviewComposeSkill).toMatch(
+      /Prefer a still-valid\s+same-subject map at the selected source, then an authorized in-place update, over a duplicate\s+publication/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /what each file map includes, what it deliberately excludes, and what remains for direct code reading/,
+    );
+    expect(reviewComposeSkill).toMatch(
+      /any required file map that remains unmet,[\s\S]*Never fabricate a Node, Edge, anchor, or URI/,
+    );
   });
 
   it("separates authoring bounds from implementation claims to verify", () => {
@@ -357,6 +453,86 @@ describe("rvw review composition contract", () => {
     expect(reviewComposition).toMatch(/retired\s+Node, Edge, or Region IDs must not be recycled/);
     expect(reviewComposition).toMatch(
       /one-screen fit[\s\S]*Region relationship arrows[\s\S]*derived rendering or pane-local\s+reviewer-session concerns/,
+    );
+  });
+});
+
+describe("rvw Walkthrough mental-model and diagram contract", () => {
+  it("enters concrete code early and builds small verifiable understanding updates", () => {
+    expect(walkthroughSkill).toMatch(
+      /begin with a concrete situation or\s+question,[\s\S]*verify the\s+claim in exact committed code,[\s\S]*resulting question to\s+lead deeper/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /do\s+not make a large glossary, a repository-wide model, every changed file, or a giant overview diagram\s+mandatory preparation/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /For each natural section,[\s\S]*which exact code can confirm or contradict it,[\s\S]*which new\s+question follows/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /continue\s+into code with a new question[\s\S]*say why each is worth opening\s+and what uncertainty or boundary it can test/,
+    );
+    expect(walkthroughOpenAi).toContain("builds understanding through concrete code");
+  });
+
+  it("uses a diagram as source-grounded explanation when prose creates reconstruction work", () => {
+    expect(walkthroughAuthoring).toMatch(
+      /Use Mermaid as a standard explanatory tool when several relationships, actors, states,[\s\S]*working\s+memory from prose/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /Rendering successfully proves only that the syntax is\s+accepted; every element and relation remains an authorial claim/,
+    );
+    expect(walkthroughAuthoring).toContain("Treat one diagram as one central question");
+    expect(walkthroughAuthoring).toMatch(
+      /do not front-load one architecture diagram containing every file, actor,\s+state, branch, and error/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /constant, wording change, or local condition is\s+clearer in a short sentence and exact code/,
+    );
+    expect(walkthroughAuthoring).toContain(
+      "Do not restate the same explanation in prose and several diagrams",
+    );
+  });
+
+  it("selects flow, state, and sequence notation by the question instead of defaulting to flowchart", () => {
+    expect(walkthroughAuthoring).toMatch(
+      /Use a `flowchart` when the question is which condition selects a branch,[\s\S]*Do not use one merely as a generic box-and-arrow/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /Use `stateDiagram-v2` when the question concerns the states of one identified subject,[\s\S]*Function\s+call order alone is not a state transition/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /Use a `sequenceDiagram` when the question concerns who calls or signals whom,[\s\S]*source statement order does not establish\s+asynchronous completion order/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /Different diagram types may appear in one Walkthrough when they answer different questions[\s\S]*Do not\s+repeat the same explanation/,
+    );
+    expect(walkthroughAuthoring).toContain("Do not default every visual question to a flowchart");
+  });
+
+  it("binds only supported node-like elements and grounds relation claims beside the diagram", () => {
+    expect(walkthroughAuthoring).toMatch(
+      /supported binding targets are\s+flowchart nodes, classDiagram classes, sequenceDiagram participants and actors, stateDiagram-v2 states,[\s\S]*architecture-beta services/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /Do not bind sequence messages, state transitions, ER relationships, architecture edges\/groups/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /participant or state binding does not prove the arrows connected\s+to it[\s\S]*nearby Markdown/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /multiple Mermaid fences reuse one source ID, every\s+match opens the same reference/,
+    );
+  });
+
+  it("distinguishes source facts, tests, and lifecycle boundaries", () => {
+    expect(walkthroughAuthoring).toMatch(
+      /failure, retry, re-entry, cancellation,[\s\S]*state-update timing/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /a test exists; it was executed; that execution\s+passed; and the asserted property is generally guaranteed/,
+    );
+    expect(walkthroughAuthoring).toMatch(
+      /distinguish stated intent, source-established fact,\s+necessary inference, and unknown intent or behavior/,
     );
   });
 });
@@ -412,7 +588,10 @@ describe("single-Artifact producer composition boundary", () => {
       /required reading[\s\S]*stop without publishing[\s\S]*recommend `rvw-walkthrough`/,
     );
     expect(structureSkill).toMatch(
-      /no defensible[\s\S]*generic static architecture[\s\S]*do not publish a Structure/,
+      /no defensible factual entrypoint[\s\S]*generic static architecture,[\s\S]*do not publish a Structure/,
+    );
+    expect(structureSkill).toMatch(
+      /file map[\s\S]*specific Pull Request or declared\s+change scope[\s\S]*may not become a repository-wide architecture diagram/,
     );
     expect(walkthroughAuthoring).toContain(
       "The subject is genuinely clearer as an ordered path; otherwise no Walkthrough was published",

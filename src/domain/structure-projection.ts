@@ -2740,7 +2740,7 @@ export function structureAuthoringWarnings(
     warnings.push({
       code: "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION",
       message:
-        "origin has no outgoing unambiguous directed relation; verify that it is the factual code entrypoint for this behavior. A terminal or intermediate origin may still be valid. Do not change factual relation direction solely to remove this warning.",
+        "origin has no outgoing unambiguous directed relation; verify that it is the factual source-verification start for this Structure. For a behavior Structure, recheck the code entrypoint. For a file map, a terminal, intermediate, or single-file origin may still be valid. Do not change factual relation direction solely to remove this warning.",
     });
   }
   if (diagnostics.maxRows >= 8) {
