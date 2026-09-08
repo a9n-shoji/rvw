@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-08
+
 ### Changed
 
 - PR全体の`rvw-review-compose` defaultを、実在fileを1 Nodeずつsource anchorへ結ぶ必須の
