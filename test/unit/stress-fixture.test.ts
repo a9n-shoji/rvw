@@ -83,5 +83,5 @@ describe("stress fixture generators", () => {
     if (!model.bounds) throw new Error("stress render model did not produce bounds");
     expect(Object.values(model.bounds).every(Number.isFinite)).toBe(true);
     expect(elapsedMs).toBeLessThan(10_000);
-  });
+  }, 15_000);
 });

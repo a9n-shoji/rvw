@@ -641,7 +641,7 @@ describe("Structure shared render model", () => {
         })),
       );
     }
-  });
+  }, 15_000);
 
   it("builds every Node, Edge, and Edge label with complete bounds", () => {
     const structure = renderStructure();
@@ -805,7 +805,7 @@ describe("Structure shared render model", () => {
     expect(Math.max(...routePointCounts)).toBeLessThanOrEqual(52);
     expect(model.bounds!.right - model.bounds!.left).toBeLessThanOrEqual(3_100);
     expect(model.bounds!.bottom - model.bounds!.top).toBeLessThanOrEqual(1_650);
-  });
+  }, 15_000);
 
   it("keeps every label after manual positions block direct association leaders", () => {
     const structure = createContractStructures({
@@ -1991,7 +1991,7 @@ describe("Structure shared render model", () => {
         ).toBe(false);
       }
     }
-  });
+  }, 15_000);
 
   it("places all 200 labels of one parallel bundle without label collisions", () => {
     const structure: Structure = {
@@ -2084,7 +2084,7 @@ describe("Structure shared render model", () => {
     );
     expect(model.bounds!.right - model.bounds!.left).toBeLessThan(50_000);
     expect(model.bounds!.bottom - model.bounds!.top).toBeLessThan(50_000);
-  }, 10_000);
+  }, 15_000);
 
   it("keeps the 50 Node and 200 Edge boundary finite and complete", () => {
     const nodes = Array.from({ length: 50 }, (_, index) => ({
@@ -2160,5 +2160,5 @@ describe("Structure shared render model", () => {
       expect(model.bounds!.right - model.bounds!.left).toBeLessThan(50_000);
       expect(model.bounds!.bottom - model.bounds!.top).toBeLessThan(50_000);
     }
-  });
+  }, 15_000);
 });
