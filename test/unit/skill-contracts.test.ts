@@ -55,6 +55,9 @@ describe("bundled Skill code-reference guidance", () => {
   });
 
   it("gates HTML preview authoring on capability and keeps visuals static", () => {
+    expect(walkthroughSkill).toMatch(
+      /Require only the operation capabilities the\s+task uses:[\s\S]*`walkthrough.read` for `get`[\s\S]*new publication does not/,
+    );
     expect(walkthroughSkill).toContain("Require `walkthrough.htmlPreview`");
     expect(walkthroughSkill).toContain("Markdown or HTML `rvw-ref:` link");
     expect(walkthroughSkill).toContain(
@@ -176,6 +179,17 @@ describe("bundled Skill code-reference guidance", () => {
     );
   });
 
+  it("defaults meaningful behavior changes to a core Walkthrough without making it a fixed slot", () => {
+    expect(reviewComposeSkill).toMatch(
+      /For a meaningful behavior change, treat one core Walkthrough as the default[\s\S]*Omit it only when the behavior is so local[\s\S]*rebuttable default, not a mandatory slot/,
+    );
+    expect(reviewComposition).toContain(
+      "For a meaningful behavior change, begin with a core Walkthrough as the default candidate.",
+    );
+    expect(reviewComposition).toMatch(/Do not drop\s+it merely because a file map exists/);
+    expect(reviewComposition).toMatch(/does not turn\s+Walkthrough into a required schema\s+slot/);
+  });
+
   it("keeps null and start-only presentations honest instead of forcing an organizer", () => {
     expect(structureAuthoring).toMatch(
       /exact start-only form with `primaryBackbone: null` and `regions: \[\]`[\s\S]*Do not manufacture/,
@@ -248,6 +262,10 @@ describe("rvw review composition contract", () => {
     );
     expect(reviewComposeSkill).toContain("it is never a fixed three-Artifact template");
     expect(reviewComposeOpenAi).toContain("Compose a PR file map and adaptive review paths");
+    expect(reviewComposeOpenAi).toContain("recommend its required PR-scoped file responsibility");
+    expect(reviewComposeOpenAi).toContain(
+      "produce Artifacts only when I explicitly request production",
+    );
   });
 
   it("keeps recommendation read-only unless Artifact production is explicit", () => {

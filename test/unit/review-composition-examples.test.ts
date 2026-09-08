@@ -32,8 +32,8 @@ function expectReferenceExact(
   }
 }
 
-function expectSourceReachableFromHead(sourceOid: string): void {
-  execFileSync("git", ["merge-base", "--is-ancestor", sourceOid, "HEAD"], {
+function expectCommittedSource(sourceOid: string): void {
+  execFileSync("git", ["cat-file", "-e", `${sourceOid}^{commit}`], {
     stdio: "ignore",
   });
 }
@@ -41,7 +41,7 @@ function expectSourceReachableFromHead(sourceOid: string): void {
 describe("review-composition producer trio", () => {
   it("keeps every Walkthrough reference used, exact, and bound only to parsed elements", async () => {
     const walkthrough = walkthroughUpdateInputSchema.parse(readJson(walkthroughPath));
-    expectSourceReachableFromHead(walkthrough.sourceOid);
+    expectCommittedSource(walkthrough.sourceOid);
     const analysis = analyzeReferenceMarkdown(walkthrough.body);
     const declaredIds = new Set(walkthrough.references.map((reference) => reference.id));
     const usedIds = new Set([

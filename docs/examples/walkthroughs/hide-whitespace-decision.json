@@ -1,0 +1,72 @@
+{
+  "sourceOid": "2a0ea26179cdb15cc90fcd093f39b2be972e809b",
+  "title": "Hide Whitespace：比較だけを正規化し、表示は原文に戻す",
+  "body": "Hide Whitespace は入力ファイルそのものを書き換える機能ではありません。`DocumentViewer` は、少なくとも片側を取得できた場合だけ [old/new の組を作って `diffForRenderer` を呼び](rvw-ref:viewer-inputs)、そこへ現在の `hideWhitespace` を渡します。両側とも存在しないケースは `renderedDiff` を作らないため、以下は『少なくとも片側がある』入力についての読み方です。\n\n## 1. ON でも、片側しかなければ通常 diff\n\n最初に [関数先頭の guard](rvw-ref:diff-branch) を確認してください。通常の `parseDiffFromFile(oldFile, newFile)` をそのまま使うのは、(1) `hideWhitespace === false`、(2) `oldFile === null`、(3) `newFile === null` のいずれかです。つまり Hide Whitespace が ON でも、追加ファイル（old 側なし）と削除ファイル（new 側なし）は元入力の通常 diff のままです。両側が実在する二側 diff のときだけ、正規化経路へ進みます。\n\n```mermaid\nflowchart TD\n  Diff_input_at_least_one_side --> Compare_mode{ON and two-sided?}\n  Compare_mode -->|No: OFF or one-sided| Original_diff_OFF_added_deleted\n  Compare_mode -->|Yes| Normalize_two_sided_copies\n  Normalize_two_sided_copies --> Compute_hunks_from_normalized_copies\n  Compute_hunks_from_normalized_copies --> Restore_original_line_arrays\n  Original_diff_OFF_added_deleted --> FileDiff_renders_metadata\n  Restore_original_line_arrays --> FileDiff_renders_metadata\n```\n\nこの片側入力の境界は [追加ファイルの unit test](rvw-ref:added-file-test) でも固定されています。フラグが `true` でも hunk は残り、`\"  return value;  \\n\"` の先頭・末尾空白も `additionLines` に残ります。削除側も同じ guard の対称な経路です。\n\n## 2. 正規化するのは、両側の比較用コピーだけ\n\n[正規化 helper](rvw-ref:comparison-copy) は `FileContents` を spread した新しい値を作り、`contents` だけを `/[^\\S\\r\\n]+/gu` で置換します。したがって CR / LF は残り、各 source line の順序と個数を変えずに、行内の空白だけを比較から外せます。`cacheKey` に `:hide-whitespace` を足すのは、通常 diff と正規化 diff を同じ cache entry として扱わせないためです。\n\n[空白だけを変えた test](rvw-ref:pure-whitespace-test) は、同じ二つの入力で OFF なら hunk が 1 件、ON なら 0 件になり、cache key も異なることを検証します。ここで消えるのは hunk であって、元の `FileContents` ではありません。\n\n## 3. hunk の判定後に、なぜ source line を原文へ戻すのか\n\n正規化経路では、まず正規化済みコピーから `diff` を作ります。その後 [同じ return block](rvw-ref:diff-branch) が `...diff` で hunk と line index を維持しつつ、`deletionLines` と `additionLines` だけを元の `oldFile.contents` / `newFile.contents` から再分割した配列へ差し替えます。正規化が CR / LF を残しているため、正規化後の hunk が指す行 index と原文配列の行 index は対応したままです。\n\nこの分離を [空白変更と実変更を混ぜた test](rvw-ref:mixed-content-test) で読むと明確です。1 行目の空白差分は hunk から消え、2 行目の `1 → 2` だけが 1 deletion / 1 addition として残ります。一方、返された line 配列には `const  stable = 1;` の二重空白を含む old 側と、各 new 側の原文がそのまま入ります。\n\n最後に `DocumentViewer` は、その返り値を [そのまま `FileDiff` の `fileDiff` prop に渡します](rvw-ref:filediff-consumer)。ここで line 配列を戻さなければ、差分箇所は正規化ルールで選べても、画面に渡る本文は空白を除いた比較用の擬似 source になります。したがって実装の要点は、**hunks は正規化した比較から得るが、表示内容と line 座標は改行境界を共有する原文から得る**ことです。",
+  "diagramBindings": {
+    "Diff_input_at_least_one_side": "viewer-inputs",
+    "Compare_mode": "diff-branch",
+    "Original_diff_OFF_added_deleted": "diff-branch",
+    "Normalize_two_sided_copies": "comparison-copy",
+    "Compute_hunks_from_normalized_copies": "diff-branch",
+    "Restore_original_line_arrays": "diff-branch",
+    "FileDiff_renders_metadata": "filediff-consumer"
+  },
+  "references": [
+    {
+      "id": "viewer-inputs",
+      "label": "DocumentViewer の diff 入力構築",
+      "path": "src/web/components/DocumentViewer.tsx",
+      "startLine": 1270,
+      "endLine": 1285,
+      "description": "少なくとも片側がある場合だけ old/new の組を作り、Hide Whitespace の状態とともに renderer helper へ渡す。"
+    },
+    {
+      "id": "diff-branch",
+      "label": "diffForRenderer の分岐と原文復元",
+      "path": "src/web/file-rendering.ts",
+      "startLine": 40,
+      "endLine": 57,
+      "description": "通常 diff を使う入力、両側だけを正規化する入力、hunks を保ったまま original line 配列へ戻す処理。"
+    },
+    {
+      "id": "comparison-copy",
+      "label": "空白除去した比較用 FileContents",
+      "path": "src/web/file-rendering.ts",
+      "startLine": 9,
+      "endLine": 25,
+      "description": "CR/LF 以外の空白除去、原文の line 分割、Hide Whitespace 専用 cache key を持つコピーを定義する。"
+    },
+    {
+      "id": "pure-whitespace-test",
+      "label": "空白だけの変更を隠す unit test",
+      "path": "test/unit/file-rendering.test.ts",
+      "startLine": 19,
+      "endLine": 29,
+      "description": "同じ二側入力で通常 diff と正規化 diff の hunk 数および cache key の差を検証する。"
+    },
+    {
+      "id": "mixed-content-test",
+      "label": "実変更の hunk と原文 line を両立する unit test",
+      "path": "test/unit/file-rendering.test.ts",
+      "startLine": 31,
+      "endLine": 49,
+      "description": "空白だけの行と値が変わる行を混ぜ、hunk 数と original addition/deletion line 配列を検証する。"
+    },
+    {
+      "id": "added-file-test",
+      "label": "追加ファイルを通常 diff に保つ unit test",
+      "path": "test/unit/file-rendering.test.ts",
+      "startLine": 51,
+      "endLine": 58,
+      "description": "old 側がない入力では Hide Whitespace が ON でも追加行とその空白を維持する。"
+    },
+    {
+      "id": "filediff-consumer",
+      "label": "FileDiff へ metadata を渡す render path",
+      "path": "src/web/components/DocumentViewer.tsx",
+      "startLine": 2315,
+      "endLine": 2342,
+      "description": "diffForRenderer の返した metadata が実際の code/diff 表示へ渡る境界。"
+    }
+  ]
+}

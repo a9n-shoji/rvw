@@ -1,0 +1,63 @@
+{
+  "sourceOid": "efdff6bcb47d57a3ffab15a8dacf26b8577f8a54",
+  "title": "Markdown code inherits each reading surface's text size",
+  "body": "# Start at the rule that made Markdown code smaller\n\nThe concrete question is why inline code and fenced code can use the surrounding Markdown text size without changing code typography everywhere else. Start with the [global `code` rule](rvw-ref:global-code): it still selects the monospace family and gives generic code a fixed 11px size. The change leaves that broad default in place.\n\n# See where Markdown takes control\n\nEach rendered Markdown surface now overrides only that size at its own boundary. The [repository preview rule](rvw-ref:repository-code) sets descendant `code` to `font-size: inherit`; its `pre code` rule then removes the inline decoration without installing another size. The [Walkthrough rule](rvw-ref:walkthrough-code) does the same and likewise leaves fenced code without a separate size. The [comment rule](rvw-ref:comment-code) replaces its former relative reduction with the same inheritance rule.\n\nThis establishes the scope of the behavior: code remains monospace because the global `font-family` still applies, while inline and fenced code inside these three Markdown containers take their size from the surrounding surface. Other code UI remains on the global default unless another selector overrides it.\n\n# Confirm the rendered outcome\n\nThe browser tests check computed styles rather than merely checking that the declarations exist. The [repository-preview case](rvw-ref:repository-test) reads the article's computed body size and compares both `pre code` and paragraph code with it. The [Walkthrough case](rvw-ref:walkthrough-test) performs the same two comparisons against `.walkthrough-markdown`, and the [comment case](rvw-ref:comment-test) compares inline and fenced code against `.comment-markdown`. These committed assertions cover the three surfaces changed here; their presence is not, by itself, a claim that this evaluation executed the historical test suite.\n\nIf a code label elsewhere still looks unexpectedly small, return to the global rule and inspect that element's nearest surface-specific selector. That is the useful next question because this change is intentionally scoped to rendered Markdown, not every `<code>` element in the viewer.",
+  "references": [
+    {
+      "id": "global-code",
+      "label": "Global code typography default",
+      "path": "src/web/styles/main.css",
+      "startLine": 157,
+      "endLine": 161,
+      "description": "Keeps the shared monospace family and 11px fallback for code outside a more specific surface."
+    },
+    {
+      "id": "repository-code",
+      "label": "Repository Markdown code rules",
+      "path": "src/web/styles/main.css",
+      "startLine": 1716,
+      "endLine": 1733,
+      "description": "Makes repository-preview inline and fenced code inherit size while retaining their distinct box styling."
+    },
+    {
+      "id": "walkthrough-code",
+      "label": "Walkthrough Markdown code rules",
+      "path": "src/web/styles/main.css",
+      "startLine": 2177,
+      "endLine": 2197,
+      "description": "Applies inherited sizing to Walkthrough code and leaves the fenced-code reset free of a competing size."
+    },
+    {
+      "id": "comment-code",
+      "label": "Comment Markdown code rules",
+      "path": "src/web/styles/main.css",
+      "startLine": 2712,
+      "endLine": 2731,
+      "description": "Uses inherited sizing for comment inline and fenced code within the comment surface."
+    },
+    {
+      "id": "repository-test",
+      "label": "Repository Markdown computed-style assertions",
+      "path": "test/e2e/walkthrough.spec.ts",
+      "startLine": 622,
+      "endLine": 636,
+      "description": "Compares repository-preview inline and fenced code with the computed article body size."
+    },
+    {
+      "id": "walkthrough-test",
+      "label": "Walkthrough Markdown computed-style assertions",
+      "path": "test/e2e/walkthrough.spec.ts",
+      "startLine": 994,
+      "endLine": 1017,
+      "description": "Compares Walkthrough inline and fenced code with the computed Walkthrough body size."
+    },
+    {
+      "id": "comment-test",
+      "label": "Comment Markdown computed-style assertions",
+      "path": "test/e2e/walkthrough.spec.ts",
+      "startLine": 1725,
+      "endLine": 1739,
+      "description": "Compares comment inline and fenced code with the computed comment body size."
+    }
+  ]
+}

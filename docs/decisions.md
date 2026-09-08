@@ -95,6 +95,10 @@ use distinct source IDs; intentional reuse keeps the same reference.
 - File-map semantics are authoring rules rather than a stored mode flag, so the CLI cannot mechanically
   prove one-file-per-Node or semantic Edge precision. Contract tests and exact-source examples provide
   regression evidence while producer evaluation remains necessary.
+- The sole runtime adjustment is diagnostic wording: the existing zero-outgoing-origin warning now
+  names a role-neutral source-verification start and explains the behavior/file-map distinction. The
+  warning condition, graph model, schema, persistence, projection, and rendering remain unchanged;
+  Skill text alone could not make the behavior-specific CLI message truthful for singleton file maps.
 - More active diagram guidance can encourage unnecessary visuals. The no-diagram counterexample,
   one-question scope, and source-claim checks constrain that pressure without making existing prose-only
   Walkthroughs invalid.

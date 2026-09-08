@@ -12,6 +12,8 @@ const behaviorExamples = [
 ];
 
 const fileMapExamples = [
+  "docs/examples/structures/pr24-reply-draft-file-map.json",
+  "docs/examples/structures/pr24-watch-batch-file-map.json",
   "docs/examples/structures/review-composition-file-map.json",
   "docs/examples/structures/single-file-map.json",
 ];
@@ -32,14 +34,14 @@ function committedSource(sourceOid: string, filePath: string): string {
   return execFileSync("git", ["show", `${sourceOid}:${filePath}`], { encoding: "utf8" });
 }
 
-function expectSourceReachableFromHead(sourceOid: string): void {
-  execFileSync("git", ["merge-base", "--is-ancestor", sourceOid, "HEAD"], {
+function expectCommittedSource(sourceOid: string): void {
+  execFileSync("git", ["cat-file", "-e", `${sourceOid}^{commit}`], {
     stdio: "ignore",
   });
 }
 
 function expectExactAnchors(structure: ParsedStructure): void {
-  expectSourceReachableFromHead(structure.sourceOid);
+  expectCommittedSource(structure.sourceOid);
   const anchors = [
     ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor] : [])),
     ...structure.edges.flatMap((edge) => edge.anchors),
@@ -122,5 +124,37 @@ describe("Structure producer examples", () => {
 
     expect(structure.nodes.some((node) => !changedPaths.has(node.anchor!.path))).toBe(true);
     expect(structure.nodes.some((node) => node.anchor!.path === "src/cli/main.ts")).toBe(true);
+  });
+
+  it("keeps independent areas as separate maps without a same-PR relation", () => {
+    const maps = [
+      parseStructure("docs/examples/structures/pr24-watch-batch-file-map.json").structure,
+      parseStructure("docs/examples/structures/pr24-reply-draft-file-map.json").structure,
+    ];
+
+    expect(new Set(maps.map((map) => map.sourceOid))).toEqual(
+      new Set(["0f43f131b70d227dbd76bec7d07218e3395ad442"]),
+    );
+    const [watchPaths, draftPaths] = maps.map(
+      (map) => new Set(map.nodes.map((node) => node.anchor!.path)),
+    );
+    expect([...watchPaths!].filter((filePath) => draftPaths!.has(filePath))).toEqual([]);
+
+    const changedPaths = new Set(
+      execFileSync("git", ["diff", "--name-only", `${maps[0]!.sourceOid}^`, maps[0]!.sourceOid], {
+        encoding: "utf8",
+      })
+        .trim()
+        .split("\n"),
+    );
+    for (const map of maps) {
+      const paths = map.nodes.map((node) => node.anchor!.path);
+      expect(paths.some((filePath) => changedPaths.has(filePath))).toBe(true);
+      expect(paths.some((filePath) => !changedPaths.has(filePath))).toBe(true);
+      expect(map.scope).toMatch(/independent/u);
+      expect(map.scope).toMatch(/separate map/u);
+      expect(map.scope).toMatch(/direct code/u);
+      expect(map.edges.every((edge) => !/same[ -]PR|related/u.test(edge.label))).toBe(true);
+    }
   });
 });

@@ -1,0 +1,110 @@
+{
+  "sourceOid": "90ce0b8549fd9607526e5181fa3e7e7ae437a582",
+  "title": "revision snapshotからreview表示までのbootstrap判定",
+  "body": "review画面を開いた直後に確認したいのは、`commits`の中身ではなく、まずその中身を判断できるresponseが到着したかです。[2つのqueryの接続点](rvw-ref:query-gate)では`change-sequence`を先に開始し、`pullRequestId`と`changeSequence.data.revisions`がそろったときだけPull Request queryをenableにします。したがって、初期snapshot待ちの間はPR GETを始めない、snapshot取得後にPR GETへ進む、という直列のbootstrapです。[snapshotを止めるE2E](rvw-ref:snapshot-order-test)も、停止中はloading表示でcomment list requestが0件、解放後に後続requestとreview UIが現れることを固定しています。\n\n次の図は`PullRequestReviewScreen`の初期renderを説明するための部分状態図です（code上のenumではありません）。有効な`pullRequestId`でreview画面を開く経路だけを示し、data取得後のbackground refetchは後段で分けて扱います。各矢印のevent/guardは[queryの`enabled`条件](rvw-ref:query-gate)と[render guardの評価順](rvw-ref:bootstrap-classifier)で検証できます。\n\n```mermaid\nstateDiagram-v2\n  state \"revision snapshot待ち / loading表示\" as RevisionWait\n  state \"PR response待ち / loading表示\" as PullRequestWait\n  state \"初期load error / error表示\" as InitialError\n  state \"成功responseかつcommits空 / commitなし表示\" as NoCommits\n  state \"有効なselectedOid / review UI\" as ReviewReady\n\n  [*] --> RevisionWait: mount / snapshot GET\n  RevisionWait --> PullRequestWait: revisions取得 [pullRequestIdあり]\n  RevisionWait --> InitialError: snapshot失敗 [revisionsなし]\n  PullRequestWait --> InitialError: PR失敗 [dataなし]\n  PullRequestWait --> NoCommits: PR成功 [commits.length == 0]\n  PullRequestWait --> ReviewReady: PR成功 [selectedOidを導出]\n```\n\n[render classifier](rvw-ref:bootstrap-classifier)はこの順序を明示します。`revisions`もPR dataもまだなく初期errorもない場合と、`revisions`はあるがPR data/errorがまだない場合は、どちらも「レビュー状態を読み込んでいます…」です。初期snapshotまたは初期PR requestがdataより先に失敗した場合だけerror表示へ進みます。PR dataが存在することを確認した後で初めて`commits.length === 0`を「PR commitがありません。」に分類します。commitsはあるのに有効な`selectedOid`を導出できない不整合時は、空commitとは断定せず最後のloading guardに残ります。\n\nここが「loading/errorをcommitなしとして扱わない」理由をcodeで確認する中心です。[responseの展開と選択OIDの導出](rvw-ref:selection-derivation)を見ると、`commits`は今も`pullRequestQuery.data?.commits ?? []`なので、未取得も成功した空配列も一時的には同じ`[]`に見えます。そこで配列だけを証拠にせず、`pullRequestQuery.data !== undefined`を先に確認します。また、commits到着時には、保存済み選択が一覧にあればそれを、なければ一覧に存在する最新headをrender中に同期的に`selectedOid`へ採用します。これにより、stateを更新するeffectまでの1 renderを「commitなし」に落としません。[後続effect](rvw-ref:selection-sync-effect)はその後で保存stateとrangeを同期し、head更新時の追従条件を扱います。\n\n失敗も空配列とは別の証拠です。[error messageの変換](rvw-ref:error-message)は`PR_NOT_FOUND`を専用案内にし、通常の`Error.message`を保持し、不明なerrorにも「レビュー状態を読み込めませんでした。」を返します。[snapshot失敗のE2E](rvw-ref:bootstrap-error-test)は実際のerror文を表示し、commitなしを表示せず、guardによりPR GETが0件のままであることを確認します。初期data取得後のheartbeat/PR refetch errorは`initial...Error`にはならず、[既存review UIの`actionError`](rvw-ref:background-errors)として集約され、[ErrorNoticeへ渡されます](rvw-ref:error-notice)。つまり、後発errorも既知のcommit列挙を「空」に書き換えません。\n\n最後に境界をtestで照合します。[MutationObserverのprobe](rvw-ref:empty-state-probe)は一瞬でもcommitなし文言がDOMに入れば記録し、[通常bootstrapのE2E](rvw-ref:no-transient-empty-test)は最新commitが選択され、その記録が最後までfalseであることを確認します。対になる[明示的な空responseのE2E](rvw-ref:successful-empty-test)だけが、成功したPR responseの`commits`を`[]`に置き換えたうえでcommitなしを期待し、loadingが消えることを確認します。ここまで読めば、次に検証すべき境界は「初期dataなし」と「取得済みdataあり」のどちら側でerrorが起きたかであり、初期bootstrap後のdomain revision別invalidate処理はこのWalkthroughの範囲外です。",
+  "diagramBindings": {
+    "RevisionWait": "query-gate",
+    "PullRequestWait": "bootstrap-classifier",
+    "InitialError": "bootstrap-error-test",
+    "NoCommits": "successful-empty-test",
+    "ReviewReady": "selection-derivation"
+  },
+  "references": [
+    {
+      "id": "query-gate",
+      "label": "revision snapshotがPull Request queryをenableにする",
+      "path": "src/web/app/PullRequestReviewScreen.tsx",
+      "startLine": 1189,
+      "endLine": 1204,
+      "description": "change-sequence requestとrevisionsをguardにしたPull Request query"
+    },
+    {
+      "id": "selection-derivation",
+      "label": "response dataとselectedOidの同期的導出",
+      "path": "src/web/app/PullRequestReviewScreen.tsx",
+      "startLine": 1205,
+      "endLine": 1214,
+      "description": "未取得時の配列fallbackと、有効な保存選択または最新headの選択"
+    },
+    {
+      "id": "selection-sync-effect",
+      "label": "選択stateとrangeを同期するeffect",
+      "path": "src/web/app/PullRequestReviewScreen.tsx",
+      "startLine": 1249,
+      "endLine": 1285,
+      "description": "初期選択とhead更新追従を保存stateへ反映する条件"
+    },
+    {
+      "id": "bootstrap-classifier",
+      "label": "bootstrapのrender guard",
+      "path": "src/web/app/PullRequestReviewScreen.tsx",
+      "startLine": 2534,
+      "endLine": 2572,
+      "description": "loading、初期error、成功した空commit、選択不整合を順に分類するrender分岐"
+    },
+    {
+      "id": "error-message",
+      "label": "初期load errorの表示文変換",
+      "path": "src/web/app/PullRequestReviewScreen.tsx",
+      "startLine": 558,
+      "endLine": 563,
+      "description": "PR_NOT_FOUND、通常のError、不明なerrorをcommitなしと区別する"
+    },
+    {
+      "id": "background-errors",
+      "label": "取得済み画面でのaction error集約",
+      "path": "src/web/app/PullRequestReviewScreen.tsx",
+      "startLine": 2611,
+      "endLine": 2617,
+      "description": "heartbeatとPull Request queryを含む後発errorの非fatalな集約"
+    },
+    {
+      "id": "error-notice",
+      "label": "review UI内のErrorNotice",
+      "path": "src/web/app/PullRequestReviewScreen.tsx",
+      "startLine": 3039,
+      "endLine": 3039,
+      "description": "actionErrorを取得済みreview UI上へ表示する呼び出し"
+    },
+    {
+      "id": "snapshot-order-test",
+      "label": "初期snapshot前後のrequest順を固定するE2E",
+      "path": "test/e2e/viewer-performance.spec.ts",
+      "startLine": 608,
+      "endLine": 678,
+      "description": "snapshot待ちのloadingと後続query開始を外部comment込みで検証する"
+    },
+    {
+      "id": "bootstrap-error-test",
+      "label": "revision bootstrap失敗のE2E",
+      "path": "test/e2e/viewer-performance.spec.ts",
+      "startLine": 680,
+      "endLine": 707,
+      "description": "snapshot error、commitなし非表示、PR GET未開始を検証する"
+    },
+    {
+      "id": "empty-state-probe",
+      "label": "一瞬のcommitなし表示も記録するprobe",
+      "path": "test/e2e/viewer-performance.spec.ts",
+      "startLine": 93,
+      "endLine": 119,
+      "description": "MutationObserverでempty-state文言の一時表示を履歴として残す"
+    },
+    {
+      "id": "no-transient-empty-test",
+      "label": "通常bootstrapでempty stateを経由しないE2E",
+      "path": "test/e2e/viewer-performance.spec.ts",
+      "startLine": 709,
+      "endLine": 725,
+      "description": "最新commit選択とcommitなし文言の非表示・非出現を検証する"
+    },
+    {
+      "id": "successful-empty-test",
+      "label": "成功した空commit列挙だけをemptyにするE2E",
+      "path": "test/e2e/viewer-performance.spec.ts",
+      "startLine": 727,
+      "endLine": 755,
+      "description": "成功responseのcommitsを空にした場合だけcommitなしを表示する"
+    }
+  ]
+}

@@ -12,13 +12,143 @@ publication. It therefore does not prove that Codex or Claude Code can invoke a 
 a producer-ready payload is valid, or that an Artifact URI can be issued. No fake URI or persistent
 review object was created.
 
-## Current forward evaluation (2026-09-07)
+## Current file-map composition evaluation (2026-09-08)
+
+The implementation baseline was `2a2d9dcd4da7b227db4ebc71f297a1e45ba86787`. Fresh evaluators
+re-read the final working-tree instruction content after the core-Walkthrough default was added. Its
+Git-compatible content blobs were:
+
+- `skills/rvw-review-compose/SKILL.md` Git blob
+  `ab06c5f6dcef049a76104380c37b9cc32440c3dc`
+- `skills/rvw-review-compose/references/review-composition.md` Git blob
+  `82f8e07078aa58654e83409fa525246321fdfb52`
+
+A fresh planning context received the whole committed change
+`c45bc91f4a0cfd071c3be3622eb6418059e236ff..a2f016c5e90886cce769aa0990c6a05c7ce02ae9`
+(`Fix runtime startup handoff races (#50)`). It read the current composer contract, inspected the diff,
+unchanged runtime/socket/heartbeat dependencies, tests, and normative documents, and was not told an
+expected Artifact count or type mix. It was prohibited from invoking a producer or reading, creating,
+updating, or deleting an Artifact. Protocol v5 and direct-database transport were available, but the
+evaluation deliberately stopped after read-only preflight; persisted duplicate/file-map discovery was
+not performed.
+
+The runtime composition had first been planned against the implementation-baseline blobs. After the
+core-Walkthrough presumption was added, the evaluator re-read the blobs above and reran the surface
+decision. The result was unchanged because this meaningful race/lifecycle change already selected one
+core Walkthrough.
+
+### Observed composition
+
+The composer recommended one required file-map Structure, one Walkthrough, and direct code reading. It
+did not recommend a normal behavior Structure. This was not a fixed two-surface answer: a candidate
+ownership Structure was dropped because its useful lock and reservation relations were inseparable
+from the correctness order already owned by the Walkthrough and would add another working-memory join.
+
+The file-map brief included `src/cli/main.ts`, changed runtime/lifecycle adapters, the unchanged
+`src/server/agent-socket.ts` ownership implementation, the unchanged `src/server/app.ts` heartbeat
+consumer, and the two behavior tests. It supplied one file-level Node candidate per path and precise
+candidate relations for independent producer verification. Documentation, changelog, browser heartbeat
+senders, unrelated CLI/socket branches, and low-level timer or stale-lock detail were explicit
+exclusions or direct-code boundaries. The evaluator found one coherent change area and did not split it
+or connect documentation with a fictional “same PR” Edge.
+
+The Walkthrough brief began with an open arriving after the current owner stops accepting but before it
+releases ownership. It separately asked how a reused runtime keeps a slow PR lookup alive without
+starting the browser deadline too early. `sequenceDiagram` and `stateDiagram-v2` were named only as
+promising candidates for those two questions; every participant, order, state, transition, and guard
+remained a producer claim to verify. The brief explicitly distinguished the `PendingViewer` variants
+from the active-viewer map and left unbindable arrows to nearby source evidence.
+
+Verdict: **Pass for the current recommendation contract.** The mandatory physical locating surface is
+present, the behavior surface remains adaptive, unchanged source is investigated, and direct code
+retains local mechanics. The result states that both Artifact briefs are unproduced, persisted map
+status is unknown, and no URI exists. Committed code remains the source of truth, and producer order is
+not presented as human reading order.
+
+### Independent-area planning case
+
+A second fresh context inspected merged PR #24 over
+`f471b77112fcfc4ba540f8649c7a9717c0bd658a..0f43f131b70d227dbd76bec7d07218e3395ad442`
+without an expected Artifact count. It found two independently implemented product changes: batch-local
+watch acknowledgements and browser reply-draft preservation. Their shared Pull Request and normal
+comment domain do not create a direct implementation dependency, so the composer prepared two separate
+file-map briefs instead of one connected graph.
+
+A read-only Structure-authoring audit then produced one separate content candidate for each brief:
+
+- [watch acknowledgement file map](examples/structures/pr24-watch-batch-file-map.json), with five files
+  covering durable batch operations, the unchanged auto-ack consumer, its Skill contract, and focused
+  unit verification; and
+- [reply-draft file map](examples/structures/pr24-reply-draft-file-map.json), with six files covering the
+  client state owner, its React consumers/reset boundary, and focused unit/browser verification.
+
+This was content-only evaluation in one audit context, not two native producer invocations. It preserves
+one output per brief and checks the split, but it does not establish installed-host sequential handoff.
+
+The two maps share the same post-change `sourceOid` but no file, Node, or Edge. Each includes changed and
+unchanged source, uses only direct evidenced relations inside its own boundary, and explicitly leaves
+the compact CI-history setup and broad documentation to direct code instead of connecting them through
+an invented “same PR” relation. Both passed the current Structure content schema, exact-source checks,
+and CLI preview; each retained the truthful zero-outgoing-origin diagnostic because its state-owner file
+is a valid source-verification start, not a fabricated common runtime entrypoint.
+
+For the remaining surfaces, the composer selected two core Walkthroughs: one for the
+retry-versus-later-batch acknowledgement sequence, and one for the external reply → change-sequence
+refetch → Markdown remount → external snapshot/focus restoration path. It rejected an initially
+plausible normal Structure: the file map already locates the App → DocumentViewer → CommentThread →
+draft-store ownership wiring, while the remaining comprehension cost is the concrete causal redraw
+path. A finer ownership Structure would repeat the map without replacing that path. CI demo-history
+setup, one review-scope readiness assertion, and low-level retry/migration predicates remain direct-code
+checks. No producer or evaluation published an Artifact.
+
+### Scenario coverage
+
+The following matrix distinguishes generated examples from static contract or existing runtime
+evidence. It is not an Artifact-count golden test.
+
+| Requested case                             | Evidence in this revision                                                                                                                                                                                                                                                                      | Level/result                                                                                  |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 1. Single-file small change                | A fresh Structure-producer run and [tracked file-map example](examples/structures/single-file-map.json) independently chose one file-level Node, zero Edges, and `presentation: null` for `eb28386c`; the local typography Walkthrough chose no diagram.                                       | Generated, schema/source/preview checked; pass.                                               |
+| 2. Multi-file behavior change              | The current runtime composition separates physical location, temporal behavior, and direct code. The [same-change trio](examples/review-composition/review-composition-trio.md) separately demonstrates file map, Walkthrough, and normal Structure where each question has independent value. | Planning plus exact-source fixtures; pass.                                                    |
+| 3. Async/race                              | The [runtime handoff Walkthrough](examples/walkthroughs/runtime-handoff-lifecycle.json) keeps owner drain/retry uncertainty rather than drawing an always-successful serial trace.                                                                                                             | Fresh generation and qualitative/source review; pass.                                         |
+| 4. Lifecycle/state                         | The [review-bootstrap example](examples/walkthroughs/review-bootstrap-lifecycle.json) labels aggregate UI state as explanatory and partial; the runtime example distinguishes explicit pending variants from active lease ownership.                                                           | Fresh generation and browser render; pass.                                                    |
+| 5. Conditional branch                      | The [Hide Whitespace example](examples/walkthroughs/hide-whitespace-decision.json) uses a flowchart for the one-sided guard and compare/restore data path.                                                                                                                                     | Fresh generation, Chromium Mermaid render, and focused unit tests; pass.                      |
+| 6. Multiple diagram families               | Runtime handoff uses sequence for cross-process interaction and state for reservation expiry, without redrawing one question twice.                                                                                                                                                            | Fresh generation and browser render; pass.                                                    |
+| 7. Important dependency outside the diff   | The file-map fixture includes unchanged `src/cli/main.ts`; the fresh runtime brief includes unchanged socket ownership and heartbeat-consumer files.                                                                                                                                           | Exact-source fixture plus planning result; pass.                                              |
+| 8. Independent change areas                | PR #24 produced separate [watch](examples/structures/pr24-watch-batch-file-map.json) and [reply-draft](examples/structures/pr24-reply-draft-file-map.json) maps from one exact source coordinate, with changed and unchanged context in each and no cross-area file or relation.               | Fresh composer planning plus separate content authoring, schema/source/preview checked; pass. |
+| 9. Config/document/migration-centered      | The singleton documentation map uses the document as the verification origin and adds no runtime entrypoint. The same rule applies to configuration and migrations when they own the scoped change.                                                                                            | Fresh document generation and preview; pass for document shape.                               |
+| 10. Rename/delete                          | Contract tests require the selected `sourceOid` path, post-rename name, and no deleted-HEAD anchor; existing integration tests exercise exact Git rename/source resolution.                                                                                                                    | Contract and source-runtime coverage; no new rename/delete producer generation.               |
+| 11. Recommendation/update/transport safety | The fresh planning run remained unproduced despite available transport. Static contracts preserve contextual-read-only authority, existing-map reuse/update preference, operation-specific capability checks, and fail-closed unavailable transport.                                           | Planning plus contract tests; no live update or forced transport-failure publication attempt. |
+
+### Reader-model assessment
+
+The runtime result lets a reviewer begin at the real socket handoff test or acquisition loop rather than
+memorizing the file map. The file map remains available to place that code among lock ownership,
+reservation adaptation, lifecycle state, heartbeat consumption, and test responsibility. The
+Walkthrough carries only the interaction and deadline models that are expensive to reconstruct from
+source. Low-level cleanup, port, timeout, and browser-header questions retain exact code destinations
+and a reason to inspect them. A reviewer can therefore explain the central behavior, identify who owns
+each state, vary a stopping/timeout condition, and continue into source without holding all surfaces in
+working memory.
+
+This is a qualitative authoring judgment. Schema validity, exact anchors, Mermaid rendering, and test
+passes do not independently establish it.
+
+### Current limitations
+
+No current installed-host native producer handoff, existing-Artifact discovery/update, publication,
+idempotency recovery, URI readback, or human reading session was authorized. The rename/delete case is
+contract/source-runtime coverage rather than a fresh producer generation. The producer examples and
+validation records in the Structure and Walkthrough evaluation documents cover lower-level authoring
+outputs; they do not convert these planning runs into production acceptance.
+
+## Historical forward evaluation (2026-09-07)
 
 Three withheld-outcome cases were rerun after the authored-spatial-Structure and contextual-read
 contract changes. Every case used a separate fresh high-effort Agent context. The evaluators were told
-the user-style subject and exact coordinate, read the complete current composer Skill and reference,
+the user-style subject and exact coordinate, read the complete then-current composer Skill and reference,
 and were explicitly prohibited from reading this evaluation record. Expected surface type and count
-were withheld. The current instruction content was:
+were withheld. The then-current instruction content was:
 
 - `skills/rvw-review-compose/SKILL.md` Git blob
   `7308a332ff3371635609f30f36160c9cb5902da1`
@@ -31,7 +161,7 @@ transport through the repository-built CLI. The deliberately isolated local and 
 did not have `rvw` on `PATH`; they reported that limitation and returned unproduced source-only
 recommendations rather than fabricating a URI or treating preflight as successful.
 
-### Current case A: local presentation change
+### Historical case A: local presentation change
 
 Input:
 
@@ -52,7 +182,7 @@ custom-property inheritance into shadow DOM, and system-theme resolution as dire
 Verdict: **Pass.** A Walkthrough would split adjacent implementation evidence into artificial stops;
 a Structure would manufacture a relationship space for a local CSS and DOM contract.
 
-### Current case B: five-Skill distribution authority
+### Historical case B: five-Skill distribution authority
 
 Input:
 
@@ -84,7 +214,7 @@ Verdict: **Pass for composition; target implementation gap retained.** One explo
 has lower join cost than an ordered explanation, and the evaluator did not confuse package inclusion,
 runtime identity, destination platform, or test restatement.
 
-### Current case C: stale watcher work and fenced side effects
+### Historical case C: stale watcher work and fenced side effects
 
 Input:
 
@@ -112,7 +242,7 @@ Verdict: **Pass.** The changed answer was retained rather than forced toward the
 Structure-plus-Walkthrough composition. One temporal explanation plus exact direct-code boundaries
 minimizes total comprehension cost for this wording of the subject.
 
-### Current cross-case result
+### Historical cross-case result
 
 The three independent cases selected zero Artifacts, one Structure, and one Walkthrough. They cover
 the required small-local, relationship-centered, and state/lifecycle/async shapes without a fixed
@@ -120,13 +250,13 @@ surface template. Each result named one central question, explicit exclusions, d
 and important coupling. No result treated a suggested origin or `mustEstablish` claim as proof, and no
 result invented an Artifact URI.
 
-Verdict: **Pass for the current planning contract.** This remains a small qualitative sample, not a
+Verdict: **Pass for that planning contract.** This remains a small qualitative sample, not a
 golden surface-count test. Installed-host producer activation is a separate acceptance boundary. The
 2026-09-05 installed-host record below used older Skill blobs and is historical evidence only; it is
 not current native-activation proof. The current packaged attempt and its approval boundary are
 recorded next.
 
-## Current installed-host acceptance attempt (2026-09-07)
+## Historical installed-host acceptance attempt (2026-09-07)
 
 An isolated installed-host attempt used exact pushed commit
 `79d4414f222b99125a3e400d122fa0716d433211`. Packaging and setup passed:
@@ -160,13 +290,13 @@ attachment, and direct-database setup work; it is **not current native Skill act
 producer handoff, preview/publish, URI, or readback proof**.
 
 Follow-up commit `78558dda6df85ae1de559076dac4c767412bee52` changes only
-`docs/implementation-spec.md` and `test/unit/protocol-version.test.ts`. The recorded current composer
+`docs/implementation-spec.md` and `test/unit/protocol-version.test.ts`. The recorded composer
 Skill blobs remain identical at that commit: `7308a332ff3371635609f30f36160c9cb5902da1` for `SKILL.md`
 and `a86141086911abcd5e7e01b19fbb8c48d83627bc` for `review-composition.md`. It therefore does not
 invalidate the planning results above or convert this blocked installed-host attempt into activation
 evidence.
 
-## 2026-09-05 baseline instruction revision
+## Historical baseline instruction revision (2026-09-05)
 
 Every composition case used the same then-current, unmodified instruction content in a fresh Agent
 context:
@@ -308,7 +438,7 @@ separate Artifacts would hide their common authority boundary. One Structure exp
 joins without turning branch details into nodes. It also keeps `current` distinct from `managed` and
 does not treat repeated test lists as canonical runtime authority.
 
-Verdict: **Pass.** The current composer independently selected a Structure-only composition for a
+Verdict: **Pass.** The then-current composer independently selected a Structure-only composition for a
 relationship-shaped question, complementing the ordered single-surface result in Case 2 without
 turning either outcome into a template.
 
@@ -365,7 +495,7 @@ election from delegation or forcing a Structure would hide the timing invariant 
 hold two surfaces together. The result demonstrates that the scenario labels used to choose evaluation
 subjects do not override the composer's representation judgment.
 
-The current evaluator also refused to force two broad lifecycle claims. In the target tree, Agent
+The then-current evaluator also refused to force two broad lifecycle claims. In the target tree, Agent
 socket ownership is released before HTTP and SQLite finish closing, and `viewer.open` returns a URL
 without reserving a Viewer lifecycle lease before the new tab's first heartbeat. Those source-supported
 limits remain direct-code review points rather than being rewritten into the candidate Walkthrough as
@@ -413,7 +543,7 @@ answer, and an exact plausible origin did not create a confirmation loop.
 - The calibration case rejected a cleaner-looking relationship decomposition when ordering was the
   behavior's actual invariant.
 
-These outcomes support the current composition contract but are not a permanent golden answer. A
+These outcomes support that composition contract but are not a permanent golden answer. A
 different composition may pass when it gives stronger source-grounded reasons and satisfies the same
 rubric.
 

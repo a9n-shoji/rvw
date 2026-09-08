@@ -179,6 +179,15 @@ question concerns state ownership, contracts, or side effects within or across t
 
 ### Walkthrough
 
+For a meaningful behavior change, begin with a core Walkthrough as the default candidate. It should
+answer what changed and which concrete source path lets the reviewer verify the mechanism. Do not drop
+it merely because a file map exists or because fewer Artifacts look simpler. Omit it when the behavior
+is sufficiently local that exact direct-code reading is clearer, or when an independently justified
+surface already owns the same inseparable explanation and another Walkthrough would only duplicate the
+claim or add a working-memory join. This presumption does not turn Walkthrough into a required schema
+slot or force one for documentation-only, relationship-only, or other changes without a meaningful
+behavior path.
+
 Choose a Walkthrough when an execution path, lifecycle, causal chain, state transition, or ordered
 comparison needs prose between sequential stops, a required ending, or transitions that carry the
 meaning. It may include relationships needed to understand that path, but it should not absorb

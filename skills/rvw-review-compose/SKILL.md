@@ -77,6 +77,11 @@ as an unproduced brief; production still requires explicit authority below.
 After satisfying that PR-wide invariant, choose the surface that lowers each remaining candidate unit's
 comprehension cost:
 
+- For a meaningful behavior change, treat one core Walkthrough as the default way to establish what
+  changes and how to verify it in code. Omit it only when the behavior is so local that exact direct
+  code is clearer, or when another independently justified surface already owns the same inseparable
+  explanation and a Walkthrough would only duplicate it or add a working-memory join. This is a
+  rebuttable default, not a mandatory slot for every Pull Request.
 - Use a Walkthrough when ordered execution, causality, lifecycle, or a comprehension sequence needs
   prose between stops, a required ending, or transitions that carry the meaning.
 - Use a normal behavior Structure when responsibility, ownership, dependency, contract, or side-effect

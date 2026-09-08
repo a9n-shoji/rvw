@@ -34,7 +34,7 @@ subsystem catalog, or responsibility inventory. In that case, do not publish a S
 A file map does not require one runtime
 entrypoint common to every file, but it must remain grounded in a specific Pull Request or declared
 change scope and may not become a repository-wide architecture diagram, changed-files listing, import
-graph, or responsibility inventory. These representation rejection boundaries still apply to an
+graph, or generic repository-wide responsibility inventory. These representation rejection boundaries still apply to an
 upstream brief.
 Do not author backbone layers or stages; the Viewer derives visual ranks from the connected relation set.
 

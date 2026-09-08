@@ -1,0 +1,168 @@
+{
+  "sourceOid": "0f43f131b70d227dbd76bec7d07218e3395ad442",
+  "title": "Reply drafts survive synchronized thread redraws",
+  "scope": "The pull-request reply-draft store, the inline Markdown Preview thread that subscribes to it, reset invalidation, and focused verification needed to review draft and focus preservation; other comment composer state and non-Markdown thread surfaces are excluded. The independent watch-acknowledgement area is handled by a separate map; PR-wide documentation and the compact CI-history change are left to direct code rather than joined by a same-PR relation.",
+  "originNodeId": "comment-draft-store",
+  "presentation": {
+    "thesis": "Reply body and focus are externalized per pull request, thread, and surface so a synchronized Markdown Preview redraw can restore the active reply while an explicit review reset invalidates it.",
+    "startNodeId": "comment-draft-store",
+    "primaryBackbone": {
+      "edgeIds": [
+        "app-clears-drafts-before-reset",
+        "app-renders-viewer-with-comments",
+        "document-viewer-renders-inline-thread",
+        "thread-persists-reply-draft",
+        "unit-test-verifies-draft-reset"
+      ]
+    },
+    "regions": []
+  },
+  "nodes": [
+    {
+      "id": "comment-draft-store",
+      "label": "comment-draft-store.ts",
+      "description": "Stores revision-guarded reply body and focus snapshots by pull request and thread surface, and notifies remounted subscribers.",
+      "anchor": {
+        "path": "src/web/comment-draft-store.ts"
+      }
+    },
+    {
+      "id": "comment-thread",
+      "label": "CommentThread.tsx",
+      "description": "Subscribes to a thread reply snapshot, restores focused input after remount, and persists textarea changes and deletion cleanup.",
+      "anchor": {
+        "path": "src/web/components/CommentThread.tsx"
+      }
+    },
+    {
+      "id": "document-viewer",
+      "label": "DocumentViewer.tsx",
+      "description": "Renders inline CommentThread instances for Markdown Preview annotations that may redraw after synchronized updates.",
+      "anchor": {
+        "path": "src/web/components/DocumentViewer.tsx"
+      }
+    },
+    {
+      "id": "app",
+      "label": "App.tsx",
+      "description": "Polls the change sequence, passes synchronized comments into the document viewer, and clears drafts before review reset.",
+      "anchor": {
+        "path": "src/web/app/App.tsx"
+      }
+    },
+    {
+      "id": "draft-store-test",
+      "label": "comment-draft-store.test.ts",
+      "description": "Verifies an in-progress reply is retained until review reset and a stale revision cannot restore it.",
+      "anchor": {
+        "path": "test/unit/comment-draft-store.test.ts"
+      }
+    },
+    {
+      "id": "review-flow-test",
+      "label": "review-flow.spec.ts",
+      "description": "Verifies a Markdown Preview reply retains its body and focus when another comment synchronizes into the view.",
+      "anchor": {
+        "path": "test/e2e/review-flow.spec.ts"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "app-clears-drafts-before-reset",
+      "from": "app",
+      "to": "comment-draft-store",
+      "label": "clears drafts before reset",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "src/web/app/App.tsx",
+          "startLine": 1347,
+          "endLine": 1358
+        }
+      ]
+    },
+    {
+      "id": "document-viewer-renders-inline-thread",
+      "from": "document-viewer",
+      "to": "comment-thread",
+      "label": "renders Markdown Preview threads",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "src/web/components/DocumentViewer.tsx",
+          "startLine": 1151,
+          "endLine": 1177
+        }
+      ]
+    },
+    {
+      "id": "app-renders-viewer-with-comments",
+      "from": "app",
+      "to": "document-viewer",
+      "label": "renders with synchronized comments",
+      "directed": true,
+      "anchors": [
+        { "path": "src/web/app/App.tsx", "startLine": 1100, "endLine": 1132 },
+        { "path": "src/web/app/App.tsx", "startLine": 1781, "endLine": 1790 }
+      ]
+    },
+    {
+      "id": "thread-persists-reply-draft",
+      "from": "comment-thread",
+      "to": "comment-draft-store",
+      "label": "subscribes and persists replies",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "src/web/components/CommentThread.tsx",
+          "startLine": 214,
+          "endLine": 247
+        },
+        {
+          "path": "src/web/components/CommentThread.tsx",
+          "startLine": 393,
+          "endLine": 408
+        },
+        {
+          "path": "src/web/components/CommentThread.tsx",
+          "startLine": 441,
+          "endLine": 451
+        },
+        {
+          "path": "src/web/components/CommentThread.tsx",
+          "startLine": 728,
+          "endLine": 763
+        }
+      ]
+    },
+    {
+      "id": "unit-test-verifies-draft-reset",
+      "from": "draft-store-test",
+      "to": "comment-draft-store",
+      "label": "tests reset invalidation",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/unit/comment-draft-store.test.ts",
+          "startLine": 53,
+          "endLine": 83
+        }
+      ]
+    },
+    {
+      "id": "review-flow-test-verifies-preview-reply",
+      "from": "review-flow-test",
+      "to": "comment-thread",
+      "label": "tests preserved preview reply",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/e2e/review-flow.spec.ts",
+          "startLine": 935,
+          "endLine": 964
+        }
+      ]
+    }
+  ]
+}
