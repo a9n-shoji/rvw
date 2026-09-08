@@ -809,10 +809,17 @@ export function StructureViewer({
   const dragRef = useRef<{
     pointerId: number;
     nodeId: string;
+    nodeElement: HTMLDivElement;
     focusTarget: HTMLButtonElement | null;
+    startX: number;
+    startY: number;
     x: number;
     y: number;
     distance: number;
+    startPoint: StructurePoint;
+    committedPoint: StructurePoint;
+    committedViewport: StructureViewport;
+    dragging: boolean;
   } | null>(null);
   const measureSurfaceSize = useCallback((): { width: number; height: number } => {
     const surface = surfaceRef.current;
@@ -882,39 +889,6 @@ export function StructureViewer({
       allSurfaceSizeRef.current = surfaceSizeRef.current;
     }
     return synchronized;
-  }, []);
-  const synchronizeRenderedLayout = useCallback((): void => {
-    if (layoutAnimationTimerRef.current === null) return;
-    const world = surfaceRef.current?.querySelector<HTMLElement>(".structure-world");
-    if (!world) return;
-    const current = positionsRef.current;
-    const synchronized: Record<string, StructurePoint> = { ...current };
-    let changed = false;
-    for (const element of world.querySelectorAll<HTMLElement>(".structure-node[data-node-id]")) {
-      const nodeId = element.dataset.nodeId;
-      if (!nodeId) continue;
-      const previous = current[nodeId];
-      if (!previous) continue;
-      const style = getComputedStyle(element);
-      const x = Number.parseFloat(style.left);
-      const y = Number.parseFloat(style.top);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-      if (x !== previous.x || y !== previous.y) changed = true;
-      synchronized[nodeId] = { x, y };
-    }
-    if (!changed) return;
-    positionsRef.current = synchronized;
-    if (depthRef.current === "all") {
-      fullPositionsRef.current = synchronized;
-      localPositionsRef.current = null;
-      localLayoutBasisKeyRef.current = null;
-      setFullPositions(synchronized);
-      setLocalPositions(null);
-      setLocalLayoutBasisKey(null);
-      return;
-    }
-    localPositionsRef.current = synchronized;
-    setLocalPositions(synchronized);
   }, []);
   const commitManualViewport = useCallback((nextViewport: StructureViewport): void => {
     viewportRef.current = nextViewport;
@@ -1699,24 +1673,21 @@ export function StructureViewer({
     ) {
       return;
     }
-    const framedNodeIds = [...structureOneHopNodeIds(structure, [pending.nodeId])].filter(
-      (nodeId) => visible.nodeIds.has(nodeId),
+    const framedGraph = deriveLocalStructureGraph(structure, pending.nodeId, depth);
+    if (!framedGraph) return;
+    const framedNodeIds = [...framedGraph.nodeIds].sort((left, right) =>
+      left.localeCompare(right, "en"),
     );
-    const nextViewport = viewportForNodeFrame(framedNodeIds, measureSurfaceSize());
+    const nextViewport = structureViewportForNodeIds({
+      nodeIds: framedNodeIds,
+      positions: positionsRef.current,
+      surfaceSize: measureSurfaceSize(),
+    });
     if (!nextViewport) return;
     pendingLocalFrameRef.current = null;
     animateCameraTo(nextViewport, { kind: "nodes", nodeIds: framedNodeIds });
     pushReadingCheckpoint(pending.readingSource);
-  }, [
-    animateCameraTo,
-    depth,
-    localCenterId,
-    measureSurfaceSize,
-    pushReadingCheckpoint,
-    structure,
-    viewportForNodeFrame,
-    visible.nodeIds,
-  ]);
+  }, [animateCameraTo, depth, localCenterId, measureSurfaceSize, pushReadingCheckpoint, structure]);
 
   useLayoutEffect(() => {
     const snapshot = captureReadingSnapshot();
@@ -2440,29 +2411,27 @@ export function StructureViewer({
       return;
     }
     const homeNodeId = structure.presentation?.startNodeId ?? structure.originNodeId;
-    const centerId =
-      (focusIdRef.current && fullPositionsRef.current[focusIdRef.current]
+    const selectedCenterId =
+      focusIdRef.current && fullPositionsRef.current[focusIdRef.current]
         ? focusIdRef.current
-        : null) ??
-      (localCenterIdRef.current && fullPositionsRef.current[localCenterIdRef.current]
+        : null;
+    const retainedCenterId =
+      localCenterIdRef.current && fullPositionsRef.current[localCenterIdRef.current]
         ? localCenterIdRef.current
-        : homeNodeId);
-    const nextLayout =
+        : null;
+    const centerId =
       currentDepth === "all"
-        ? deriveAutomaticLocalStructureLayout({
-            structure,
-            centerNodeId: centerId,
-            depth: nextDepth,
-            fullPositions: fullPositionsRef.current,
-            sourceChangeKinds,
-          })
-        : deriveRetainedLocalStructureLayout({
-            structure,
-            centerNodeId: centerId,
-            depth: nextDepth,
-            fullPositions: fullPositionsRef.current,
-            previousLocalPositions: localPositionsRef.current ?? positionsRef.current,
-          });
+        ? (selectedCenterId ?? retainedCenterId ?? homeNodeId)
+        : (retainedCenterId ?? selectedCenterId ?? homeNodeId);
+    // A depth change changes the automatic local graph. Derive it afresh so removed Nodes do not
+    // leave holes; viewport anchoring below preserves the center's screen position.
+    const nextLayout = deriveAutomaticLocalStructureLayout({
+      structure,
+      centerNodeId: centerId,
+      depth: nextDepth,
+      fullPositions: fullPositionsRef.current,
+      sourceChangeKinds,
+    });
     const nextLayoutBasisKey = structureLocalLayoutBasisKey({
       structure,
       centerId,
@@ -2728,19 +2697,31 @@ export function StructureViewer({
       const deltaY = (event.clientY - drag.y) / viewportRef.current.scale;
       const nextDistance =
         drag.distance + Math.hypot(event.clientX - drag.x, event.clientY - drag.y);
-      if (nextDistance >= 4) cameraFrameIntentRef.current = null;
+      const dragging = drag.dragging || nextDistance >= 4;
       dragRef.current = {
         ...drag,
         x: event.clientX,
         y: event.clientY,
         distance: nextDistance,
+        dragging,
       };
+      if (!dragging) return;
+      cameraFrameIntentRef.current = null;
+      const firstDragPoint = !drag.dragging
+        ? {
+            x: drag.startPoint.x + (event.clientX - drag.startX) / viewportRef.current.scale,
+            y: drag.startPoint.y + (event.clientY - drag.startY) / viewportRef.current.scale,
+          }
+        : null;
       const moveNode = (
         current: Record<string, StructurePoint>,
       ): Record<string, StructurePoint> => {
         const point = current[drag.nodeId];
         return point
-          ? { ...current, [drag.nodeId]: { x: point.x + deltaX, y: point.y + deltaY } }
+          ? {
+              ...current,
+              [drag.nodeId]: firstDragPoint ?? { x: point.x + deltaX, y: point.y + deltaY },
+            }
           : current;
       };
       if (depthRef.current === "all") {
@@ -2782,7 +2763,15 @@ export function StructureViewer({
     if (dragRef.current?.pointerId === event.pointerId) {
       const drag = dragRef.current;
       dragRef.current = null;
-      if (drag.distance < 4) {
+      if (!drag.dragging) {
+        drag.nodeElement.style.left = `${drag.committedPoint.x}px`;
+        drag.nodeElement.style.top = `${drag.committedPoint.y}px`;
+        viewportRef.current = drag.committedViewport;
+        setViewport(drag.committedViewport);
+        if (depthRef.current === "all") {
+          allViewportRef.current = drag.committedViewport;
+          allSurfaceSizeRef.current = surfaceSizeRef.current;
+        }
         drag.focusTarget?.focus({ preventScroll: true });
         selectNode(drag.nodeId);
       }
@@ -3464,22 +3453,53 @@ export function StructureViewer({
                         surfaceRef.current.scrollLeft = 0;
                         surfaceRef.current.scrollTop = 0;
                       }
-                      synchronizeRenderedLayout();
+                      const committedPoint =
+                        (depthRef.current === "all"
+                          ? fullPositionsRef.current[node.id]
+                          : localPositionsRef.current?.[node.id]) ?? point;
+                      const renderedStyle = getComputedStyle(event.currentTarget);
+                      const renderedX = Number.parseFloat(renderedStyle.left);
+                      const renderedY = Number.parseFloat(renderedStyle.top);
+                      const renderedPoint =
+                        layoutAnimationTimerRef.current !== null &&
+                        Number.isFinite(renderedX) &&
+                        Number.isFinite(renderedY)
+                          ? { x: renderedX, y: renderedY }
+                          : committedPoint;
+                      // Freeze only the grabbed card at its rendered interpolation point. This is
+                      // a DOM-local drag handoff, not a committed full/local layout update.
+                      event.currentTarget.style.left = `${renderedPoint.x}px`;
+                      event.currentTarget.style.top = `${renderedPoint.y}px`;
+                      const committedViewport = viewportRef.current;
                       synchronizeRenderedCamera();
                       cancelGraphAnimation();
                       dragRef.current = {
                         pointerId: event.pointerId,
                         nodeId: node.id,
+                        nodeElement: event.currentTarget,
                         focusTarget: event.currentTarget.querySelector<HTMLButtonElement>(
                           ":scope > .structure-node-focus",
                         ),
+                        startX: event.clientX,
+                        startY: event.clientY,
                         x: event.clientX,
                         y: event.clientY,
                         distance: 0,
+                        startPoint: renderedPoint,
+                        committedPoint,
+                        committedViewport,
+                        dragging: false,
                       };
                       surfaceRef.current?.setPointerCapture(event.pointerId);
                     }}
                   >
+                    {localCenter && (
+                      <span
+                        className="structure-node-local-center-marker"
+                        aria-hidden="true"
+                        title="Local center"
+                      />
+                    )}
                     {presentationStart && (
                       <span
                         className="structure-node-presentation-start"

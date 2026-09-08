@@ -712,6 +712,34 @@ describe("Structure domain presentation rules", () => {
     ).toEqual(layout);
   });
 
+  it("prioritizes relation continuity among rank-band packings with acceptable extents", () => {
+    const nodeIds = Array.from({ length: 6 }, (_, index) => `step-${index}`);
+    const structure = directedStructure(
+      nodeIds[0]!,
+      nodeIds,
+      nodeIds.slice(1).map((nodeId, index) => [nodeIds[index]!, nodeId]),
+    );
+    structure.presentation = {
+      thesis: "The short factual sequence should remain easy to trace when it folds.",
+      startNodeId: nodeIds[0]!,
+      primaryBackbone: { edgeIds: structure.edges.map(({ id }) => id) },
+      regions: [],
+    };
+    const layout = initialStructureLayout(structure);
+    const extent = structureLayoutExtent(layout);
+    const relationSpan = structure.edges.reduce(
+      (total, { from, to }) =>
+        total +
+        Math.abs(layout[from]!.x - layout[to]!.x) +
+        Math.abs(layout[from]!.y - layout[to]!.y),
+      0,
+    );
+
+    expectNoNodeOverlap(layout);
+    expect(Math.max(extent.width / extent.height, extent.height / extent.width)).toBeLessThan(1.2);
+    expect(relationSpan).toBeLessThanOrEqual(1_900);
+  });
+
   it.each([
     { nodeCount: 12, maximumWidth: 1_700, maximumHeight: 900, minimumFitScale: 0.8 },
     { nodeCount: 50, maximumWidth: 3_100, maximumHeight: 1_950, minimumFitScale: 0.4 },

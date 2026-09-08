@@ -762,6 +762,7 @@ const PRESENTATION_REGION_GAP_X = 64;
 const PRESENTATION_REGION_GAP_Y = 64;
 const PRESENTATION_RANK_BAND_ROW_GAP = PRESENTATION_ROW_STRIDE;
 const PRESENTATION_TARGET_ASPECT_RATIO = 5 / 3;
+const PRESENTATION_ACCEPTABLE_EXTENT_RATIO = 1.1;
 const PRESENTATION_COMPOUND_TARGET_ASPECT_RATIO = 1.85;
 const PRESENTATION_MAX_BOUNDARY_ALIGNMENT_BASES = 16;
 
@@ -964,8 +965,8 @@ function comparePresentationRankBandPackings(
   right: PresentationRankBandPacking,
 ): number {
   return (
-    left.normalizedExtent - right.normalizedExtent ||
     left.relationSpan - right.relationSpan ||
+    left.normalizedExtent - right.normalizedExtent ||
     left.area - right.area ||
     compareNumberArrays(left.rowSizes, right.rowSizes)
   );
@@ -1042,8 +1043,15 @@ function presentationRankBandPositions(input: {
       rowSizes: rows.map((row) => row.length),
     });
   }
-  packings.sort(comparePresentationRankBandPackings);
-  return packings[0]!.positions;
+  const minimumNormalizedExtent = Math.min(
+    ...packings.map(({ normalizedExtent }) => normalizedExtent),
+  );
+  const acceptablePackings = packings.filter(
+    ({ normalizedExtent }) =>
+      normalizedExtent <= minimumNormalizedExtent * PRESENTATION_ACCEPTABLE_EXTENT_RATIO,
+  );
+  acceptablePackings.sort(comparePresentationRankBandPackings);
+  return acceptablePackings[0]!.positions;
 }
 
 interface PresentationRegionRelation {

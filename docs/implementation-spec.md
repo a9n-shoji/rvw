@@ -812,8 +812,9 @@ crossingとspan、隣接Regionへのboundary affinityを決定的に評価する
 候補に含め、multi-boundary hubを自然なcornerへ置ける。memberが多い場合は探索量を上限化したdeterministic affinity
 placementへfallbackする。Regionがないbackbone-only layoutでは、actual backbone topologyをbranch / convergenceのまま
 visual bandへ展開し、一列へ平坦化しない。derived visual bandが十分に長い場合は、contiguousなband partitionを候補として
-serpentineな複数行へ折り返す。現在のprojectionは5:3のreference viewportに対するnormalized extent、relation span、
-crossing、areaなどをboundedな候補集合で比較する。Node / Edge / backbone Edge / region memberの入力配列順を変えても
+serpentineな複数行へ折り返す。現在のprojectionは5:3のreference viewportに対するnormalized extentが最小候補の110%以内となる
+boundedな候補集合に絞り、その許容範囲ではrelation spanをnormalized extentとareaより優先して比較する。これにより極端な外形を
+避けながら、わずかな詰め込みよりrelationの追いやすさを優先する。Node / Edge / backbone Edge / region memberの入力配列順を変えても
 同じ座標を返す。候補探索のthreshold、reference aspect、score、row breakはprotocol fieldでもauthorial layerでもなく、
 readability metricに応じて置換できるprojection implementation detailである。
 Region外のNodeは、Region memberを除いたfactual topologyのmaximal connected componentごとにrenderer-ownedなContext
@@ -860,6 +861,8 @@ base mapはcurrent Structureだけから決定的に導出するcanonical full l
 reflowしたりしない。新規Nodeは
 retained neighborの重心を起点に全方向の空き候補を調べ、既存のmental mapを壊さず発見できる位置へ置く。
 1-hop / 2-hopはfull layoutのfilterではなく、明示された局所中心とundirected factual distanceから導出したlocal graphを、局所専用のcanonical/manual layoutへ配置する。非表示Node / Edgeはrouting、label衝突、bounds、spacingの入力に含めない。局所のNode集合の両端を持つ実Edgeはすべて含め、合成Edgeを追加しない。local layoutはfull layoutの左右・上下の向きと相対順序、中心周辺のmental mapを可能な限り維持しつつ、非表示要素の抜けた空白を詰める。local中のdrag / Resetはlocal layoutだけを変更し、full positionsとAll cameraは保存してAll復帰時に復元する。
+Allから1-hop / 2-hopへ入る場合は選択中Nodeを局所中心とし、局所表示中の1-hop / 2-hop切り替えは現在の局所中心を維持して深さだけを変える。深さ変更では新しいvisible graphからautomatic local layoutを再導出し、以前の深さで自動配置されたNode座標を固定しない。Nodeの周辺表示またはdouble clickだけが局所中心を明示的に変更する。明示的な周辺表示のcamera frameは、Allではexact 1-hop、局所表示ではcurrent depthのvisible graph全体を対象にする。
+layout遷移中にpointer操作を開始した場合、補間中のNode座標はdrag継続用の一時的なrender stateとしてだけ取得し、full / local session layoutへ書き戻さない。drag閾値を超えた場合だけ操作対象Nodeの位置をreviewer-owned座標として確定する。Nodeとlabelの座標補間中は、新しい確定route、arrow、label guideを隠し、補間完了に合わせて表示する。
 Nodeのfull / local位置、Graph / Regions view mode、selected Node、local center、depth、Graphのactive / All viewport、独立したRegions viewport、Guide disclosureはbrowser session内だけでpaneとStructure IDの組へ
 保持し、tab往復とcurrent-value更新後もsurviving IDの状態を保つ。spatial-organizer identityは、organizerへ適用される
 canonical projection revision、organizerの有無、organizerがある場合の`startNodeId`、backbone Edge endpointから作る

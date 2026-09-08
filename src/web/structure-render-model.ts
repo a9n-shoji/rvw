@@ -200,7 +200,6 @@ const EDGE_LABEL_SOURCE_MENU_PLACEMENTS = [
 const EDGE_LABEL_COLLISION_PADDING = 5;
 const EDGE_LABEL_NEAR_GAP = 20;
 const EDGE_LABEL_SHORT_LEADER_GAP = 72;
-const EDGE_LABEL_PROXIMITY_TIER_TOLERANCE = 0.001;
 const EDGE_LABEL_LEADER_KICKOFF = 12;
 const EDGE_LABEL_LEADER_NEAR_PARALLEL_DISTANCE = 6;
 const EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP = 36;
@@ -2276,6 +2275,11 @@ function edgeLabelAnchorSamples(geometry: StructureEdgeGeometry): StructureEdgeL
     .map((fraction) => curveLabelCandidate(geometry, fraction, 0));
 }
 
+function edgeLabelProximityBand(edgeDistance: number): number {
+  if (edgeDistance <= EDGE_LABEL_SHORT_LEADER_GAP) return 0;
+  return 1 + Math.floor((edgeDistance - EDGE_LABEL_SHORT_LEADER_GAP) / EDGE_LABEL_SHORT_LEADER_GAP);
+}
+
 export function placeEdgeLabels(
   edges: readonly StructureEdge[],
   nodes: readonly StructureNode[],
@@ -2414,17 +2418,37 @@ export function placeEdgeLabels(
       ...nodeBoxes.map((box) => expandedBox(box, 4)),
       ...occupiedLabelBoxes.map((box) => expandedBox(box, 2)),
     ];
+    const compareChoices = (left: LabelChoice, right: LabelChoice): number =>
+      left.associationOverlapCount - right.associationOverlapCount ||
+      Number((left.leader?.maxParallelOverlap ?? 0) >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP) -
+        Number(
+          (right.leader?.maxParallelOverlap ?? 0) >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP,
+        ) ||
+      (left.leader?.crossingCount ?? 0) - (right.leader?.crossingCount ?? 0) ||
+      (left.leader?.maxParallelOverlap ?? 0) - (right.leader?.maxParallelOverlap ?? 0) ||
+      left.candidate.edgeDistance - right.candidate.edgeDistance ||
+      Math.abs(left.candidate.sample.normalOffset) -
+        Math.abs(right.candidate.sample.normalOffset) ||
+      Math.abs(left.candidate.sample.fraction - 0.5) -
+        Math.abs(right.candidate.sample.fraction - 0.5) ||
+      Number(left.candidate.usedCompactWidth) - Number(right.candidate.usedCompactWidth) ||
+      left.candidate.sample.point.y - right.candidate.sample.point.y ||
+      left.candidate.sample.point.x - right.candidate.sample.point.x;
     let chosen: LabelChoice | undefined;
-    let degraded: LabelChoice | undefined;
+    let activeProximityBand: number | null = null;
+    const proximityBandChoices: LabelChoice[] = [];
     for (const candidate of candidates) {
-      if (emergencyShelfLeft !== null) break;
-      if (
-        degraded &&
-        candidate.edgeDistance >
-          degraded.candidate.edgeDistance + EDGE_LABEL_PROXIMITY_TIER_TOLERANCE
-      ) {
-        chosen = degraded;
-        break;
+      const proximityBand = edgeLabelProximityBand(candidate.edgeDistance);
+      if (activeProximityBand !== null && proximityBand !== activeProximityBand) {
+        if (proximityBandChoices.length > 0) {
+          proximityBandChoices.sort(compareChoices);
+          chosen = proximityBandChoices[0];
+        }
+        if (chosen) break;
+      }
+      if (activeProximityBand === null || proximityBand !== activeProximityBand) {
+        activeProximityBand = proximityBand;
+        proximityBandChoices.length = 0;
       }
       const collisionBoxes = [candidate.collisionBox];
       if (
@@ -2462,16 +2486,20 @@ export function placeEdgeLabels(
         degraded: associationOverlapCount > 0 || hasLongLeaderOverlap,
         emergency: false,
       } satisfies LabelChoice;
-      if (!choice.degraded) {
+      proximityBandChoices.push(choice);
+      // Nothing else in this band can beat an unambiguous inline placement.
+      if (!choice.degraded && !choice.displaced) {
         chosen = choice;
         break;
       }
-      if (!degraded) degraded = choice;
     }
-    chosen ??= degraded;
+    if (!chosen && proximityBandChoices.length > 0) {
+      proximityBandChoices.sort(compareChoices);
+      chosen = proximityBandChoices[0];
+    }
     let outsideDegraded: LabelChoice | undefined;
     const nodeBounds = mergedBounds(junctionBoxes);
-    if (!chosen && nodeBounds && emergencyShelfLeft === null) {
+    if (!chosen && nodeBounds) {
       const outsideCandidates = sizes.flatMap(({ size, usedCompactWidth }) => {
         const horizontalCenters = boundedOutsideAxisCenters(
           nodeBounds.left,
@@ -2617,7 +2645,7 @@ export function placeEdgeLabels(
         outsideDegraded ??= choice;
       }
     }
-    chosen ??= degraded ?? outsideDegraded;
+    chosen ??= outsideDegraded;
     if (!chosen) {
       const { size, usedCompactWidth } = sizes.at(-1)!;
       const occupiedBounds = mergedBounds([

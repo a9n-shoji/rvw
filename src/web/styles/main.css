@@ -5421,17 +5421,7 @@ diffs-container > [slot="header-metadata"] {
 }
 
 .structure-world.layout-transition .structure-edges {
-  animation: structure-route-reflow 220ms ease-out;
-}
-
-@keyframes structure-route-reflow {
-  from {
-    opacity: 0.28;
-  }
-
-  to {
-    opacity: 1;
-  }
+  opacity: 0;
 }
 
 .structure-edges {
@@ -5766,9 +5756,14 @@ path.structure-edge-label-leader.selected,
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--structure-node-theme) 14%, transparent);
 }
 
-.structure-node.local-center .structure-node-focus {
-  outline: 2px dashed color-mix(in srgb, var(--done) 78%, var(--accent));
-  outline-offset: 3px;
+.structure-node-local-center-marker {
+  position: absolute;
+  z-index: 4;
+  inset: 3px;
+  box-sizing: border-box;
+  border: 2px dashed color-mix(in srgb, var(--done) 78%, var(--accent));
+  border-radius: 6px;
+  pointer-events: none;
 }
 
 .structure-node-neighborhood {
@@ -6486,5 +6481,6 @@ path.structure-edge-label-leader.selected,
 
   .structure-world.layout-transition .structure-edges {
     animation: none;
+    opacity: 1;
   }
 }
