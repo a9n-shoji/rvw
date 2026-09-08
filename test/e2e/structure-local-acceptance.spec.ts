@@ -254,6 +254,7 @@ test("compacts automatic local positions when its center changes", async ({ page
 
   await viewer.getByRole("button", { name: "1-hop", exact: true }).click();
   await waitForGraphMotion(viewer);
+  await aggregate.hover();
   await aggregate.locator(".structure-node-neighborhood").click();
   await waitForGraphMotion(viewer);
   await expect(viewer).toHaveAttribute("data-local-center-id", "order-aggregate");
@@ -389,6 +390,7 @@ test("recenters a local graph at the same depth, restores it through history, an
   await canvas.dispatchEvent("wheel", { deltaX: 105, deltaY: 70 });
   await expect.poll(async () => await world.getAttribute("style")).not.toBe(pricingFrame);
   const pannedPricingFrame = await world.getAttribute("style");
+  await pricing.hover();
   await pricing.locator(".structure-node-neighborhood").click();
   await waitForGraphMotion(viewer);
   expect(await world.getAttribute("style")).not.toBe(pannedPricingFrame);

@@ -221,6 +221,7 @@ test("keeps All geometry stable while Node neighborhood actions only reframe its
   const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
   const world = viewer.locator(".structure-world");
   const orderAggregate = viewer.locator('.structure-node[data-node-id="order-aggregate"]');
+  const orderAggregateNeighborhood = orderAggregate.locator(".structure-node-neighborhood");
   const allDepth = viewer.getByRole("button", { name: "全体", exact: true });
 
   await viewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
@@ -230,6 +231,11 @@ test("keeps All geometry stable while Node neighborhood actions only reframe its
   );
   const allLayout = await structureNodeLayout(viewer);
   expect(Object.keys(allLayout)).toHaveLength(16);
+
+  await page.mouse.move(0, 0);
+  await expect(orderAggregateNeighborhood).toHaveCSS("opacity", "0");
+  await orderAggregate.hover();
+  await expect(orderAggregateNeighborhood).toHaveCSS("opacity", "1");
 
   await orderAggregate.click();
   await expect(orderAggregate).toHaveClass(/focused/u);

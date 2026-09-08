@@ -5784,6 +5784,20 @@ path.structure-edge-label-leader.selected,
   cursor: pointer;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .structure-node-neighborhood {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+
+  .structure-node:hover .structure-node-neighborhood,
+  .structure-node:focus-within .structure-node-neighborhood {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .structure-node-neighborhood:hover,
 .structure-node-neighborhood:focus-visible {
   border-color: var(--done);

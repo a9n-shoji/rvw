@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-09
+
+### Changed
+
+- Structure Node右下の近傍フォーカスbuttonを、マウス操作ではNode hover中だけ表示するよう変更。
+  Nodeのdouble-click、keyboard、touchによる近傍移動は維持
+
 ## [0.7.0] - 2026-09-08
 
 ### Changed
