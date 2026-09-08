@@ -288,9 +288,9 @@ empty fileは従来どおり明示的に扱う。
   tree modeはhistoryから復元せず、Back / Forward後も現在のglobal review scopeを維持する。
 - Structureのreading destinationはgenericなpane scrollではなく、Graph / Regions mode、focus、hop、
   framed Region、exact Edge選択、Graph / Regions双方のcamera、artifact revisionとgeometry basisをruntime validation可能な
-  snapshotとして同じbrowser historyへ載せる。Structureを開く／activateする操作、Node focus、状態が変わるHome、
+  snapshotとして同じbrowser historyへ載せる。Structureを開く／activateする操作、Nodeのdouble clickによるneighborhood focus、状態が変わるHome、
   Region / Context / exact EdgeからGraphへのdrill-downだけがentryをpushする。mode切替、hop変更、pan / zoom、
-  Fit / center / drag / layout reset、Guide disclosure、transient relation選択、poll updateはentryを増やさずcurrent
+  Fit / center / drag / layout reset、Nodeのsingle click selection、Guide disclosure、transient relation選択、poll updateはentryを増やさずcurrent
   entryをreplaceする。sourceへ移動する直前もcurrent Structure snapshotを同期し、Back / Forwardでsourceと空間的な
   読解地点を往復できる。Back / Forwardを適用した時点で、それ以前に開始した未完了のsource/reference解決は
   invalidationし、遅延responseが復元済みdestinationを上書きしない。左右paneのsnapshotは独立し、非focus paneの
@@ -791,7 +791,7 @@ sessionのNode位置、depth、zoom scaleを保ったone-shot requestとしてta
 探索はHome、Back、focus、1-hop / 2-hop / All、region frame、pan、zoom、fit、focus center、node dragを提供する。
 HomeはAllへ切り替えてartifactから導出したauthorial orientationへ戻す。Region frameはfocusを変えずAllへ切り替えて
 exact memberと内部relationを収め、そのmember Nodeと内部relationをfull relevanceで示す一時的なchunk lensとする。
-focusからのhop距離自体は変えず、Home、Node focus、明示的なdepth変更でchunk lensを解除する。
+focusからのhop距離自体は変えず、Home、Node selection、明示的なdepth変更でchunk lensを解除する。
 Backはpane-localなfocus / depth / framed region / camera historyを戻す。
 どちらもproducerが指定するnavigation pathではない。trackpadの通常wheelは
 pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱い、pan / zoom感度は従来値の
@@ -905,13 +905,16 @@ producerの新しい`originNodeId`へ移動せずfocusなしのAllへ戻す。�
 padding付きでframeする。backboneを持つpresentationでも同じstart-centered 1-hop frameを使い、全backbone endpointをcamera targetへ追加しない。
 scaleにはViewer共通のminimumと局所frame用maximumを適用し、全graphの大きさだけを理由に初期detailを読めないscaleへ
 縮小しない。Edge route / label boundsは明示的なRegion frameとFit以外の初期Home boundsへ含めない。
-Nodeをactivateする時は現在のfocus / depth / viewportをbrowser reading historyへ積み、Nodeと1-hop contextを読めるboundsへ
-cameraをanimateする。Node座標は組み替えない。1-hop / 2-hop / Allの切り替えもcanonical / manual Node座標を変えず、
+Nodeのsingle clickはそのNodeをfocus / selected stateにし、既存のhighlightとdetail lensを更新するが、viewportのpan / zoom / fitを
+行わない。double click判定のためにsingle clickを遅延させず、timerや永続focus modeも導入しない。Nodeのdouble clickは、clickで
+成立したselectionを保ったまま現在のfocus / depth / viewportをbrowser reading historyへ積み、clicked Nodeとexact factual
+1-hop Nodeを読めるboundsへcameraをanimateするone-shot navigationとする。Node座標は組み替えず、その後のpan / zoomを制約しない。
+局所frameにはViewer共通のmaximum scaleを適用し、neighborのないNode単体を過度に拡大しない。1-hop / 2-hop / Allの切り替えもcanonical / manual Node座標を変えず、
 表示detailだけを変更する。局所へ絞る時もcomplete extentへ戻るminimap / All / Fit、visible / total件数、
 start-centeredなHome、Backを常時回収可能にし、
 隠れたNode / Edgeをartifactに存在しないよう見せない。HomeとRegions overviewのRegion選択はGraph / All lensへ切り替え、Regionはexact
 member Nodeと内部Edge / label boundsをframeするpane-local chunk lensを有効にする。focusとfocus-hop distance、artifactの
-membershipは変更せず、memberと内部relationだけをfull relevanceにする。Home、Node focus、depth変更はRegion lensを解除し、
+membershipは変更せず、memberと内部relationだけをfull relevanceにする。Home、Node selection、depth変更はRegion lensを解除し、
 Back / Forwardは直前のStructureまたは別documentのreading destinationを復元する。Graph / Regionsの直接toggleは
 current entryを置換し、Region rectangleからGraphへdrill-downするsemantic navigationだけはRegions overviewを
 新しいentryの直前へ残す。表示中のgraphを一枚へ圧縮するのは
@@ -2092,7 +2095,8 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
     Guideはstart / thesisだけの一行まで折り畳めるsurfaceで、Region関係図はfull-height Regions modeへ表示する。
     Region / Context rectangleはkeyboardからGraphのexact member boundsへ移動でき、aggregate relationはstable Edge ID / predicate / source一覧から
     個別EdgeをGraphでselectでき、BackでRegions overviewへ戻れる。frame中のRegion memberと内部relationは
-    focus距離を変えずfull relevanceになり、Home / Node focus / depth変更で解除、Backで復元できる。nullとstart-onlyは同じtopology
+    focus距離を変えずfull relevanceになり、Home / Node selection / depth変更で解除、Backで復元できる。Nodeのsingle clickはcameraを変更せず、
+    double clickだけがclicked Nodeのexact 1-hopをmaximum scale付きでframeし、Backで復元できる。nullとstart-onlyは同じtopology
     projectionになり、どちらも全Node / Edgeを探索できる。Edgeはsource / target Nodeのvisible boundary portへ
     接続し、shared／near-coincident corridorを持つdistinct visible relationはparallel / reciprocalを含め実質的な区間を
     別laneとして追跡できる。normal detailでは全relation labelが
@@ -2346,7 +2350,7 @@ Manual acceptance:
 4. 人間が説明内の一部referenceとdiagram nodeだけを選び、説明tabを残したままexact codeを読む。
 5. AgentがPR-relevant behaviorをentrypointとpresentation付きStructureとしてpublishし、thesis、authorial start、optionalな
    connected exact-Edge primary backbone、identified Regionとderived cross-Region relationが空間へ反映されても全Node / Edgeを自由に探索できることを
-   確認する。人間がHome / Back、Node focus、近傍、Region frame、Allを往復しながらexact sourceを左右ペインへ開き、
+   確認する。人間がpassiveなNode selection、double clickのone-shot neighborhood focus、Home / Back、近傍、Region frame、Allを往復しながらexact sourceを左右ペインへ開き、
    tab往復とcurrent値更新でorientationが保たれることを確認する。
 6. diff外fileを含む具体的なsourceへline commentを作り、そのURIをAgentへ渡す。
 7. Agentが対象sourceと周辺contextを調査し、authorizedな修正、test、commit、push、必要なPR本文更新を行う。

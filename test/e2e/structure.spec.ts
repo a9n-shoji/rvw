@@ -183,6 +183,39 @@ async function dragVisibleStructureNode(page: Page, viewer: Locator, node: Locat
   await page.mouse.up();
 }
 
+test("keeps Node selection passive and focuses its neighborhood only on double click", async ({
+  page,
+}) => {
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await openStructure(page, primaryTitle);
+  const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
+  const world = viewer.locator(".structure-world");
+  const orderAggregate = viewer.locator('.structure-node[data-node-id="order-aggregate"]');
+
+  await viewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
+  const overviewTransform = await world.evaluate(
+    (element) => (element as HTMLElement).style.transform,
+  );
+
+  await orderAggregate.click();
+  await expect(orderAggregate).toHaveClass(/focused/u);
+  await expect(orderAggregate.locator(".structure-node-focus")).toHaveAttribute(
+    "title",
+    "Order aggregate\nDouble-click to focus neighborhood",
+  );
+  await expect
+    .poll(async () => world.evaluate((element) => (element as HTMLElement).style.transform))
+    .toBe(overviewTransform);
+
+  await orderAggregate.dblclick();
+  await expect(orderAggregate).toHaveClass(/focused/u);
+  await expect
+    .poll(async () => world.evaluate((element) => (element as HTMLElement).style.transform))
+    .not.toBe(overviewTransform);
+  await expectStructureNodesFullyVisible(viewer, ["hub", "order-aggregate", "pricing-policy"]);
+  expect(Number(await viewer.getAttribute("data-viewport-scale"))).toBeLessThanOrEqual(1.25);
+});
+
 async function customizeStructureReading(
   page: Page,
   viewer: Locator,
@@ -891,13 +924,13 @@ test("keeps native scrolling out of the transformed Graph camera", async ({ page
     .toEqual({ left: 0, top: 0 });
   await canvas.press("Escape");
   await expect(edgeSelect).toHaveAttribute("aria-pressed", "false");
-  const clickVisibleNode = async (nodeId: string): Promise<void> => {
+  const doubleClickVisibleNode = async (nodeId: string): Promise<void> => {
     await expect(viewer.locator(".structure-world")).not.toHaveClass(/camera-transition/u);
     const bounds = await viewer.locator(`.structure-node[data-node-id="${nodeId}"]`).boundingBox();
     expect(bounds).not.toBeNull();
-    await page.mouse.click(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+    await page.mouse.dblclick(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
   };
-  await clickVisibleNode("get-order-query");
+  await doubleClickVisibleNode("get-order-query");
   await expect(viewer.locator('.structure-node[data-node-id="get-order-query"]')).toHaveClass(
     /focused/u,
   );
@@ -1120,7 +1153,10 @@ test("switches between the stable Graph lens and the Regions overview with brows
   await viewer
     .getByRole("button", { name: /^Open region React rendering in Graph, 7 nodes\./u })
     .click();
-  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').click();
+  const regionCameraBeforeNodeNavigation = await world.evaluate(
+    (element) => (element as HTMLElement).style.transform,
+  );
+  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').dblclick();
   await expect(viewer).not.toHaveAttribute("data-framed-region-id");
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
     /focused/,
@@ -1134,14 +1170,17 @@ test("switches between the stable Graph lens and the Regions overview with brows
   ]);
 
   await viewer.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(viewer.locator('.structure-node[data-node-id="order-detail-route"]')).toHaveClass(
+  await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
     /focused/,
   );
+  await expect
+    .poll(async () => world.evaluate((element) => (element as HTMLElement).style.transform))
+    .toBe(regionCameraBeforeNodeNavigation);
   await expect(viewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
-  await expect(viewer).toHaveAttribute("data-framed-region-id", "frontend-rendering");
+  await expect(viewer).not.toHaveAttribute("data-framed-region-id");
   await viewer.getByRole("button", { name: "Back", exact: true }).click();
   await expect(viewer).toHaveAttribute("data-view-mode", "regions");
   await expect(viewer).not.toHaveAttribute("data-framed-region-id");
@@ -2119,13 +2158,15 @@ test("ignores a pending Structure source response after browser Back restores an
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await openStructure(page, fullStackTitle);
   const viewer = page.locator(`[data-structure-id="${fullStackStructureId}"]`);
-  const previousFocus = await viewer
-    .locator(".structure-node.focused")
-    .getAttribute("data-node-id");
-  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').click();
+  await viewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
+  const previousCamera = await viewer.locator(".structure-world").getAttribute("style");
+  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').dblclick();
   await expect(viewer.locator('.structure-node[data-node-id="order-detail-page"]')).toHaveClass(
     /focused/u,
   );
+  await expect
+    .poll(async () => viewer.locator(".structure-world").getAttribute("style"))
+    .not.toBe(previousCamera);
   let captureRequest!: (route: Route) => void;
   const interceptedRequest = new Promise<Route>((resolve) => {
     captureRequest = resolve;
@@ -2161,8 +2202,9 @@ test("ignores a pending Structure source response after browser Back restores an
   await page.goBack();
   await expect(viewer.locator(".structure-node.focused")).toHaveAttribute(
     "data-node-id",
-    previousFocus!,
+    "order-detail-page",
   );
+  await expect(viewer.locator(".structure-world")).toHaveAttribute("style", previousCamera!);
   await pendingRoute.fulfill({ status: preparedResponse.status(), json: preparedPayload });
   await page.evaluate(
     () =>
@@ -2251,7 +2293,7 @@ test("does not reapply renderer-derived Fit bounds after the Structure revision 
 
   await viewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
   const fittedTransform = await viewer.locator(".structure-world").getAttribute("style");
-  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').click();
+  await viewer.locator('.structure-node[data-node-id="order-detail-page"]').dblclick();
   await expect
     .poll(async () => viewer.locator(".structure-world").getAttribute("style"))
     .not.toBe(fittedTransform);

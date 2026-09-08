@@ -3330,3 +3330,34 @@ metadata cannot overwrite the current document object.
 - `history.state` is session-only and intentionally not a shareable Structure deep link.
 - Camera snapshots add bounded state to each explicit reading entry, but coordinates, focus, and manual
   layout remain reviewer state and never enter the Structure protocol or database.
+
+## 2026-09-08: Separate Structure Node selection from camera navigation
+
+### Problem
+
+Graph Node activation selected the claim and immediately fit its 1-hop neighborhood. Repeatedly
+selecting Nodes therefore panned or zoomed the camera on every click and destroyed the reviewer's
+spatial memory. Selection state and navigation intent were represented by one handler even though
+initial Home and cross-document navigation still need explicit camera positioning.
+
+### Choice
+
+Treat a Node single click, pointer tap, or keyboard activation as passive selection. It updates the
+focus/highlight lens, clears conflicting transient selection, and replaces the current reading snapshot
+without changing the viewport. Do not delay selection or introduce click-disambiguation timers.
+
+Treat a Node double click as a one-shot navigation command. After normal selection has occurred, frame
+the clicked Node and its exact factual 1-hop neighborhood with the existing renderer-derived bounds,
+padding, animation, and shared local-frame maximum zoom. Push only that camera destination into browser
+reading history. This creates no persistent focus mode and does not constrain later pan or zoom. Keep
+initial Home framing and file-to-Structure backlink centering unchanged because those operations locate
+targets whose graph position is not yet known to the reviewer.
+
+### Trade-offs
+
+- Double click is less discoverable than automatic camera motion, so each Node exposes a concise hover
+  hint without adding toolbar or mode UI.
+- Back after a double click restores the pre-navigation camera while retaining the selection established
+  by the preceding click; a passive selection alone does not add a history step.
+- The existing local-frame scale cap also prevents a one-Node neighborhood from zooming excessively,
+  avoiding a separate isolated-Node policy.

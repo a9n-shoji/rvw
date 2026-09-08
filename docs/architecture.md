@@ -151,13 +151,18 @@ non-overlapping, with leader-associated displaced slots when inline placement is
 authorial salience; focus-hop proximity is session-derived attention and uses a separate visual channel.
 Home activates All and frames the authorial start—or the null-presentation origin—plus its exact factual
 1-hop Node bounds; the full backbone remains emphasized but does not enlarge that camera target.
+Single-clicking a Graph Node only updates the pane-local selection/focus lens and never pans, zooms, or
+fits the camera. Double-clicking the Node issues a one-shot camera command that frames the selected Node
+and its exact factual 1-hop neighborhood at the shared local-frame maximum scale. It creates no durable
+focus mode and leaves subsequent pan and zoom unconstrained. Initial Home and cross-document navigation
+remain explicit camera operations.
 1-hop and 2-hop require a focus; All exposes every Node and Edge. Semantic zoom may suppress unreadable
 secondary detail only while counts, minimap, selection, Home, and All keep it explicitly recoverable.
 Home and Region framing activate All so their declared targets are actually visible; a Regions-mode
 card drill-down switches to Graph and Back can restore the overview together with the previous focus,
 neighborhood depth, framed Region, and camera. Direct mode toggles do not create history entries. Region framing preserves focus and
 membership while temporarily restoring full visual relevance to the framed members and their internal
-relations. Home, local Node focus, and an explicit depth change clear that pane-session chunk lens.
+relations. Home, local Node selection, and an explicit depth change clear that pane-session chunk lens.
 Source actions always open the declared exact `sourceOid` in the chosen pane without changing
 the global commit range.
 The browser owns an ephemeral two-pane workspace: every document identity may appear once per pane, tabs

@@ -584,6 +584,21 @@ describe("Structure pane sessions", () => {
     }
   });
 
+  it("caps an isolated Node neighborhood at the shared local-frame zoom", () => {
+    const value = structure("70000000-0000-4000-8000-000000000086");
+    const positions = initialStructureLayout(value);
+    const nodeIds = [...structureOneHopNodeIds(value, ["entry"])];
+    const viewport = structureViewportForNodeIds({
+      nodeIds,
+      positions,
+      surfaceSize: { width: 2_000, height: 1_400 },
+    });
+
+    expect(nodeIds).toEqual(["entry"]);
+    expect(viewport).not.toBeNull();
+    expect(viewport!.scale).toBe(1.25);
+  });
+
   it("starts with a compact Guide disclosure", () => {
     expect(initialStructureGuideDisclosure()).toEqual({
       thesis: true,

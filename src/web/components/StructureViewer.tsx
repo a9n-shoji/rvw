@@ -1083,18 +1083,9 @@ export function StructureViewer({
     viewport,
   ]);
 
-  const activateNode = useCallback(
-    (nodeId: string, recordHistory = true): void => {
+  const selectNode = useCallback(
+    (nodeId: string): void => {
       if (!positions[nodeId]) return;
-      const readingSource = recordHistory ? captureReadingSnapshot() : null;
-      const measuredSurfaceSize = measureSurfaceSize();
-      const framedNodeIds = [...structureOneHopNodeIds(structure, [nodeId])];
-      const nextCameraFrame: StructureCameraFrame = {
-        kind: "nodes",
-        nodeIds: framedNodeIds,
-      };
-      const nextViewport = viewportForNodeFrame(framedNodeIds, measuredSurfaceSize);
-      const initializing = pendingViewportActionRef.current === "initial";
       pendingViewportActionRef.current = null;
       selectedEdgeIdRef.current = null;
       setSelectedEdgeId(null);
@@ -1104,10 +1095,25 @@ export function StructureViewer({
       setFramedRegionId(null);
       focusIdRef.current = nodeId;
       setFocusId(nodeId);
-      if (nextViewport) {
-        animateCameraTo(nextViewport, nextCameraFrame);
-      }
-      if (readingSource && !initializing) pushReadingCheckpoint(readingSource);
+    },
+    [positions],
+  );
+
+  const focusNodeNeighborhood = useCallback(
+    (nodeId: string): void => {
+      if (!positions[nodeId]) return;
+      const framedNodeIds = [...structureOneHopNodeIds(structure, [nodeId])];
+      const nextCameraFrame: StructureCameraFrame = {
+        kind: "nodes",
+        nodeIds: framedNodeIds,
+      };
+      const nextViewport = viewportForNodeFrame(framedNodeIds, measureSurfaceSize());
+      if (!nextViewport) return;
+      const readingSource = captureReadingSnapshot();
+      const initializing = pendingViewportActionRef.current === "initial";
+      pendingViewportActionRef.current = null;
+      animateCameraTo(nextViewport, nextCameraFrame);
+      if (!initializing) pushReadingCheckpoint(readingSource);
     },
     [
       animateCameraTo,
@@ -1118,6 +1124,14 @@ export function StructureViewer({
       structure,
       viewportForNodeFrame,
     ],
+  );
+
+  const navigateToNodeNeighborhood = useCallback(
+    (nodeId: string): void => {
+      selectNode(nodeId);
+      focusNodeNeighborhood(nodeId);
+    },
+    [focusNodeNeighborhood, selectNode],
   );
 
   const navigateHome = (): void => {
@@ -1630,7 +1644,7 @@ export function StructureViewer({
       dragRef.current = null;
       if (drag.distance < 4) {
         drag.focusTarget?.focus({ preventScroll: true });
-        activateNode(drag.nodeId);
+        selectNode(drag.nodeId);
       }
     }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -1763,7 +1777,7 @@ export function StructureViewer({
         onToggleDisclosure={(section: keyof StructureGuideDisclosure) =>
           setGuideDisclosure((current) => ({ ...current, [section]: !current[section] }))
         }
-        onFocusNode={activateNode}
+        onFocusNode={navigateToNodeNeighborhood}
       />
       <div className="structure-body">
         <div className="structure-toolbar" aria-label="Structure表示操作">
@@ -1978,6 +1992,17 @@ export function StructureViewer({
               event.currentTarget.scrollTop = 0;
             }}
             onDoubleClick={(event) => {
+              const hitTarget = document.elementFromPoint(event.clientX, event.clientY);
+              const hitNode = hitTarget?.closest<HTMLElement>(".structure-node");
+              if (
+                hitNode &&
+                event.currentTarget.contains(hitNode) &&
+                !hitTarget?.closest(".structure-source")
+              ) {
+                const nodeId = hitNode.dataset.nodeId;
+                if (nodeId) navigateToNodeNeighborhood(nodeId);
+                return;
+              }
               if (event.target === event.currentTarget) fitVisible();
             }}
           >
@@ -2269,8 +2294,9 @@ export function StructureViewer({
                       className="structure-node-focus"
                       aria-label={`${node.label}${node.id === structure.originNodeId ? " · factual origin" : ""}${presentationStart ? " · authorial start" : ""}${primaryBackbone ? " · explanation backbone member" : ""}${presentationRegion ? ` · region: ${presentationRegion.label}` : ""}`}
                       aria-pressed={selected}
+                      title={`${node.label}\nDouble-click to focus neighborhood`}
                       onClick={(event) => {
-                        if (event.detail === 0) activateNode(node.id);
+                        if (event.detail === 0) selectNode(node.id);
                       }}
                     >
                       {node.anchor && (
@@ -2281,7 +2307,10 @@ export function StructureViewer({
                         />
                       )}
                       <strong className="structure-node-title">
-                        <span className="structure-node-title-text" title={node.label}>
+                        <span
+                          className="structure-node-title-text"
+                          title={`${node.label}\nDouble-click to focus neighborhood`}
+                        >
                           <BreakableStructureLabel label={node.label} />
                         </span>
                       </strong>

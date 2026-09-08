@@ -717,7 +717,7 @@ Every form retains every Node, Edge, direction, source
 action, and free exploration; Structure is never an autoplay or stepper.
 Region framing is pane-local reviewer state: selecting a Region in the overview drills into Graph mode,
 preserves focus-hop distance while giving the framed members and their internal relations full visual
-relevance. Home, local Node focus, and explicit depth changes clear that chunk lens, and Back restores
+relevance. Home, local Node selection, and explicit depth changes clear that chunk lens, and Back restores
 it together with view mode, focus, depth, and camera.
 
 Limits are 50 nodes, 200 edges, a 200-character title, a 4000-character scope, 200-character labels,
