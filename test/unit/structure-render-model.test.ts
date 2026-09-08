@@ -18,6 +18,7 @@ import {
   placeEdgeLabels,
   routeStructureEdges,
   selectStructureRenderModel,
+  structurePolylineNearParallelOverlap,
   structureRenderBoundsForNodeIds,
   STRUCTURE_AUTOMATIC_LAYOUT_MAX_SPACING_RETRIES,
   STRUCTURE_EDGE_ARROW_LENGTH,
@@ -1086,6 +1087,25 @@ describe("Structure shared render model", () => {
         placement.diagnostics.crossingCount,
       ].every(Number.isFinite),
     ).toBe(true);
+  });
+
+  it("combines one continuous near-parallel run across sampled curve segments", () => {
+    const guide = [
+      { x: 0, y: 0 },
+      { x: 200, y: 0 },
+    ];
+    const sampledCurve = (segmentCount: number) =>
+      Array.from({ length: segmentCount + 1 }, (_, index) => {
+        const x = (200 * index) / segmentCount;
+        return { x, y: 2 + 1.5 * (x / 200) ** 2 };
+      });
+
+    const coarseOverlap = structurePolylineNearParallelOverlap(guide, sampledCurve(4));
+    const fineOverlap = structurePolylineNearParallelOverlap(guide, sampledCurve(48));
+
+    expect(coarseOverlap).toBeGreaterThan(199);
+    expect(fineOverlap).toBeGreaterThan(199);
+    expect(fineOverlap).toBeCloseTo(coarseOverlap, 6);
   });
 
   it("prefers a clear short guide over an ambiguous inline label in the same near band", () => {

@@ -234,6 +234,19 @@ interface AutomaticLocalStructureLayout extends DerivedLocalStructureLayout {
   foundation: StructureRenderFoundation;
 }
 
+function applyLocalManualPositions(
+  automaticPositions: Readonly<Record<string, StructurePoint>>,
+  manualPositions: ReadonlyMap<string, StructurePoint>,
+): Readonly<Record<string, StructurePoint>> {
+  let adjusted: Record<string, StructurePoint> | null = null;
+  for (const [nodeId, manual] of manualPositions) {
+    if (!automaticPositions[nodeId]) continue;
+    adjusted ??= { ...automaticPositions };
+    adjusted[nodeId] = manual;
+  }
+  return adjusted ?? automaticPositions;
+}
+
 function deriveRetainedLocalStructureLayout(input: {
   structure: Structure;
   centerNodeId: string;
@@ -704,6 +717,7 @@ export function StructureViewer({
   const [fullPositions, setFullPositions] = useState(initial.positions);
   const [localPositions, setLocalPositions] = useState(initial.localPositions);
   const [localLayoutBasisKey, setLocalLayoutBasisKey] = useState(initial.localLayoutBasisKey);
+  const [localFrameRequestId, setLocalFrameRequestId] = useState(0);
   const observedStructureRef = useRef({
     id: structure.id,
     sourceOid: structure.sourceOid,
@@ -794,10 +808,13 @@ export function StructureViewer({
   const layoutAnimationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const interactionGenerationRef = useRef(0);
   const pendingLocalFrameRef = useRef<{
+    requestId: number;
     generation: number;
     nodeId: string;
     readingSource: StructureReadingSnapshot;
   } | null>(null);
+  const localFrameRequestSequenceRef = useRef(0);
+  const localManualPositionsRef = useRef<Map<string, StructurePoint>>(new Map());
   const sessionStateRef = useRef(initial);
   const pendingViewportActionRef = useRef<"initial" | null>(
     initialState.hadCachedSession ? null : "initial",
@@ -956,6 +973,7 @@ export function StructureViewer({
       return;
     }
     localPositionsRef.current = derivedLocalLayout.positions;
+    localManualPositionsRef.current.clear();
     localLayoutBasisKeyRef.current = expectedLocalLayoutBasisKey;
     setLocalPositions(derivedLocalLayout.positions);
     setLocalLayoutBasisKey(expectedLocalLayoutBasisKey);
@@ -1249,6 +1267,7 @@ export function StructureViewer({
     framedRegionIdRef.current = next.framedRegionId;
     fullPositionsRef.current = next.positions;
     localPositionsRef.current = next.localPositions;
+    localManualPositionsRef.current.clear();
     localLayoutBasisKeyRef.current = next.localLayoutBasisKey;
     positionsRef.current =
       next.depth === "all" || next.localPositions === null ? next.positions : next.localPositions;
@@ -1665,8 +1684,11 @@ export function StructureViewer({
 
   useLayoutEffect(() => {
     const pending = pendingLocalFrameRef.current;
+    if (!pending || pending.requestId !== localFrameRequestId) return;
+    // Consume the explicit navigation request before deriving its frame. A later unrelated render
+    // must never revive a request whose target disappeared or could not be measured.
+    pendingLocalFrameRef.current = null;
     if (
-      !pending ||
       pending.generation !== interactionGenerationRef.current ||
       depth === "all" ||
       localCenterId !== pending.nodeId
@@ -1678,16 +1700,20 @@ export function StructureViewer({
     const framedNodeIds = [...framedGraph.nodeIds].sort((left, right) =>
       left.localeCompare(right, "en"),
     );
-    const nextViewport = structureViewportForNodeIds({
-      nodeIds: framedNodeIds,
-      positions: positionsRef.current,
-      surfaceSize: measureSurfaceSize(),
-    });
+    const nextViewport = viewportForNodeFrame(framedNodeIds, measureSurfaceSize());
     if (!nextViewport) return;
-    pendingLocalFrameRef.current = null;
     animateCameraTo(nextViewport, { kind: "nodes", nodeIds: framedNodeIds });
     pushReadingCheckpoint(pending.readingSource);
-  }, [animateCameraTo, depth, localCenterId, measureSurfaceSize, pushReadingCheckpoint, structure]);
+  }, [
+    animateCameraTo,
+    depth,
+    localCenterId,
+    localFrameRequestId,
+    measureSurfaceSize,
+    pushReadingCheckpoint,
+    structure,
+    viewportForNodeFrame,
+  ]);
 
   useLayoutEffect(() => {
     const snapshot = captureReadingSnapshot();
@@ -1780,14 +1806,14 @@ export function StructureViewer({
       const currentDepth = depthRef.current;
       if (currentDepth === "all") return;
       cancelGraphAnimation();
-      const nextLayout = deriveRetainedLocalStructureLayout({
+      const automaticLayout = deriveAutomaticLocalStructureLayout({
         structure,
         centerNodeId: nodeId,
         depth: currentDepth,
         fullPositions: fullPositionsRef.current,
-        previousLocalPositions: localPositionsRef.current ?? positionsRef.current,
+        sourceChangeKinds,
       });
-      if (!nextLayout) return;
+      if (!automaticLayout) return;
       const nextLayoutBasisKey = structureLocalLayoutBasisKey({
         structure,
         centerId: nodeId,
@@ -1797,19 +1823,35 @@ export function StructureViewer({
       if (!nextLayoutBasisKey) return;
       const readingSource = captureReadingSnapshot();
       const generation = interactionGenerationRef.current;
+      const requestId = localFrameRequestSequenceRef.current + 1;
+      localFrameRequestSequenceRef.current = requestId;
       pendingViewportActionRef.current = null;
-      pendingLocalFrameRef.current = { generation, nodeId, readingSource };
+      pendingLocalFrameRef.current = { requestId, generation, nodeId, readingSource };
       cameraFrameIntentRef.current = null;
-      localCenterIdRef.current = nodeId;
-      localPositionsRef.current = nextLayout.positions;
-      localLayoutBasisKeyRef.current = nextLayoutBasisKey;
-      positionsRef.current = nextLayout.positions;
-      setLocalCenterId(nodeId);
-      setLocalPositions(nextLayout.positions);
-      setLocalLayoutBasisKey(nextLayoutBasisKey);
-      animateLayoutChange();
+      setLocalFrameRequestId(requestId);
+
+      if (localCenterIdRef.current !== nodeId) {
+        const nextPositions = applyLocalManualPositions(
+          automaticLayout.positions,
+          localManualPositionsRef.current,
+        );
+        localCenterIdRef.current = nodeId;
+        localPositionsRef.current = nextPositions;
+        localLayoutBasisKeyRef.current = nextLayoutBasisKey;
+        positionsRef.current = nextPositions;
+        setLocalCenterId(nodeId);
+        setLocalPositions(nextPositions);
+        setLocalLayoutBasisKey(nextLayoutBasisKey);
+        animateLayoutChange();
+      }
     },
-    [animateLayoutChange, cancelGraphAnimation, captureReadingSnapshot, structure],
+    [
+      animateLayoutChange,
+      cancelGraphAnimation,
+      captureReadingSnapshot,
+      sourceChangeKinds,
+      structure,
+    ],
   );
 
   const navigateToNodeNeighborhood = useCallback(
@@ -2277,6 +2319,7 @@ export function StructureViewer({
     setFramedRegionId(reconciled.framedRegionId);
     fullPositionsRef.current = reconciled.positions;
     localPositionsRef.current = restoredLocalPositions;
+    localManualPositionsRef.current.clear();
     localLayoutBasisKeyRef.current = restoredLocalLayoutBasisKey;
     positionsRef.current = restoredPositions;
     setFullPositions(reconciled.positions);
@@ -2357,6 +2400,7 @@ export function StructureViewer({
       fullPositionsRef.current = nextPositions;
       setFullPositions(nextPositions);
       localPositionsRef.current = null;
+      localManualPositionsRef.current.clear();
       localLayoutBasisKeyRef.current = null;
       setLocalPositions(null);
       setLocalLayoutBasisKey(null);
@@ -2370,6 +2414,7 @@ export function StructureViewer({
         positions: fullPositionsRef.current,
       });
       localPositionsRef.current = nextPositions;
+      localManualPositionsRef.current.clear();
       localLayoutBasisKeyRef.current = nextLayoutBasisKey;
       setLocalPositions(nextPositions);
       setLocalLayoutBasisKey(nextLayoutBasisKey);
@@ -2454,6 +2499,7 @@ export function StructureViewer({
     });
     localCenterIdRef.current = centerId;
     localPositionsRef.current = nextLayout.positions;
+    localManualPositionsRef.current.clear();
     localLayoutBasisKeyRef.current = nextLayoutBasisKey;
     positionsRef.current = nextLayout.positions;
     setLocalCenterId(centerId);
@@ -2732,17 +2778,19 @@ export function StructureViewer({
           return next;
         });
         localPositionsRef.current = null;
+        localManualPositionsRef.current.clear();
         localLayoutBasisKeyRef.current = null;
         setLocalPositions(null);
         setLocalLayoutBasisKey(null);
       } else {
-        setLocalPositions((current) => {
-          if (!current) return current;
-          const next = moveNode(current);
-          localPositionsRef.current = next;
-          positionsRef.current = next;
-          return next;
-        });
+        const current = localPositionsRef.current;
+        if (!current) return;
+        const next = moveNode(current);
+        localPositionsRef.current = next;
+        positionsRef.current = next;
+        setLocalPositions(next);
+        const moved = next[drag.nodeId];
+        if (moved) localManualPositionsRef.current.set(drag.nodeId, moved);
       }
       return;
     }
@@ -3540,7 +3588,7 @@ export function StructureViewer({
                       type="button"
                       className="structure-node-neighborhood"
                       aria-label={`${node.label}の周辺を表示`}
-                      title="このNodeと1-hop周辺へ移動"
+                      title={`このNodeと${depth === "all" ? "1" : depth}-hop周辺へ移動`}
                       onPointerDown={(event) => event.stopPropagation()}
                       onClick={(event) => {
                         event.stopPropagation();

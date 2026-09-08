@@ -68,6 +68,27 @@ async function nodeScreenCenter(node: Locator): Promise<{ x: number; y: number }
   });
 }
 
+async function expectVisibleRelationshipGeometryInsideCanvas(viewer: Locator): Promise<void> {
+  const canvasBounds = await viewer.locator(".structure-canvas").boundingBox();
+  expect(canvasBounds).not.toBeNull();
+  const geometry = viewer.locator(
+    ".structure-edge, .structure-edge-arrow-carrier, .structure-edge-label, .structure-edge-label-leader",
+  );
+  expect(await geometry.count()).toBeGreaterThan(0);
+  for (const element of await geometry.all()) {
+    const bounds = await element.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(canvasBounds!.x - 1);
+    expect(bounds!.y).toBeGreaterThanOrEqual(canvasBounds!.y - 1);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(
+      canvasBounds!.x + canvasBounds!.width + 1,
+    );
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(
+      canvasBounds!.y + canvasBounds!.height + 1,
+    );
+  }
+}
+
 async function dragNode(page: Page, node: Locator, deltaX: number, deltaY: number): Promise<void> {
   const bounds = await node.boundingBox();
   expect(bounds).not.toBeNull();
@@ -226,6 +247,27 @@ test("previews the exact Relation route from its label without moving the camera
   expect(await world.getAttribute("style")).toBe(transform);
 });
 
+test("compacts automatic local positions when its center changes", async ({ page }) => {
+  const viewer = await openStructure(page);
+  const world = viewer.locator(".structure-world");
+  const aggregate = viewer.locator('.structure-node[data-node-id="order-aggregate"]');
+
+  await viewer.getByRole("button", { name: "1-hop", exact: true }).click();
+  await waitForGraphMotion(viewer);
+  await aggregate.locator(".structure-node-neighborhood").click();
+  await waitForGraphMotion(viewer);
+  await expect(viewer).toHaveAttribute("data-local-center-id", "order-aggregate");
+  const recenteredGeometry = await graphGeometry(viewer);
+
+  await viewer.getByRole("button", { name: "全体", exact: true }).click();
+  await waitForGraphMotion(viewer);
+  await viewer.getByRole("button", { name: "1-hop", exact: true }).click();
+  await waitForGraphMotion(viewer);
+  await expect(viewer).toHaveAttribute("data-local-center-id", "order-aggregate");
+  expect(await graphGeometry(viewer)).toEqual(recenteredGeometry);
+  await expect(world).not.toHaveClass(/(?:camera|layout)-transition/u);
+});
+
 test("does not commit interpolated full positions when an All restoration is only clicked", async ({
   page,
 }) => {
@@ -322,6 +364,11 @@ test("recenters a local graph at the same depth, restores it through history, an
       localCanvasBounds!.y + localCanvasBounds!.height + 1,
     );
   }
+  await expectVisibleRelationshipGeometryInsideCanvas(viewer);
+  await expect(pricing.locator(".structure-node-neighborhood")).toHaveAttribute(
+    "title",
+    "このNodeと2-hop周辺へ移動",
+  );
   expect(
     await hub.evaluate((element) => ({
       left: (element as HTMLElement).style.left,
@@ -337,6 +384,16 @@ test("recenters a local graph at the same depth, restores it through history, an
   await page.goForward();
   await expect(viewer).toHaveAttribute("data-local-center-id", "pricing-policy");
   await expect.poll(async () => await graphGeometry(viewer)).toEqual(pricingGeometry);
+
+  const pricingFrame = await world.getAttribute("style");
+  await canvas.dispatchEvent("wheel", { deltaX: 105, deltaY: 70 });
+  await expect.poll(async () => await world.getAttribute("style")).not.toBe(pricingFrame);
+  const pannedPricingFrame = await world.getAttribute("style");
+  await pricing.locator(".structure-node-neighborhood").click();
+  await waitForGraphMotion(viewer);
+  expect(await world.getAttribute("style")).not.toBe(pannedPricingFrame);
+  expect(await world.getAttribute("style")).toBe(pricingFrame);
+  await expectVisibleRelationshipGeometryInsideCanvas(viewer);
 
   await hub.locator(".structure-node-neighborhood").focus();
   await hub.locator(".structure-node-neighborhood").press("Enter");

@@ -1799,37 +1799,71 @@ function createStructureSegmentIndex(): StructureSegmentIndex {
   };
 }
 
-function segmentNearParallelOverlap(
+interface StructureParallelOverlapInterval {
+  start: number;
+  end: number;
+}
+
+function segmentNearParallelOverlapInterval(
   leftStart: StructurePoint,
   leftEnd: StructurePoint,
   rightStart: StructurePoint,
   rightEnd: StructurePoint,
-): number {
+): StructureParallelOverlapInterval | null {
   const leftDelta = { x: leftEnd.x - leftStart.x, y: leftEnd.y - leftStart.y };
   const rightDelta = { x: rightEnd.x - rightStart.x, y: rightEnd.y - rightStart.y };
   const leftLength = Math.hypot(leftDelta.x, leftDelta.y);
   const rightLength = Math.hypot(rightDelta.x, rightDelta.y);
-  if (leftLength === 0 || rightLength === 0) return 0;
+  if (leftLength === 0 || rightLength === 0) return null;
   const sine =
     Math.abs(leftDelta.x * rightDelta.y - leftDelta.y * rightDelta.x) / (leftLength * rightLength);
-  if (sine > 0.17) return 0;
+  if (sine > 0.17) return null;
   const separation = Math.min(
     pointToSegmentDistance(leftStart, rightStart, rightEnd),
     pointToSegmentDistance(leftEnd, rightStart, rightEnd),
     pointToSegmentDistance(rightStart, leftStart, leftEnd),
     pointToSegmentDistance(rightEnd, leftStart, leftEnd),
   );
-  if (separation > EDGE_LABEL_LEADER_NEAR_PARALLEL_DISTANCE) return 0;
+  if (separation > EDGE_LABEL_LEADER_NEAR_PARALLEL_DISTANCE) return null;
   const axis = { x: leftDelta.x / leftLength, y: leftDelta.y / leftLength };
   const project = (point: StructurePoint): number =>
     (point.x - leftStart.x) * axis.x + (point.y - leftStart.y) * axis.y;
   const rightFirst = project(rightStart);
   const rightSecond = project(rightEnd);
-  return Math.max(
-    0,
-    Math.min(leftLength, Math.max(rightFirst, rightSecond)) -
-      Math.max(0, Math.min(rightFirst, rightSecond)),
-  );
+  const start = Math.max(0, Math.min(rightFirst, rightSecond));
+  const end = Math.min(leftLength, Math.max(rightFirst, rightSecond));
+  return end > start ? { start, end } : null;
+}
+
+function maximumContinuousParallelOverlap(
+  overlapGroups: ReadonlyMap<string, readonly StructureParallelOverlapInterval[]>,
+): number {
+  let maximum = 0;
+  for (const intervals of overlapGroups.values()) {
+    const ordered = [...intervals].sort(
+      (left, right) => left.start - right.start || left.end - right.end,
+    );
+    let mergedStart: number | null = null;
+    let mergedEnd: number | null = null;
+    for (const interval of ordered) {
+      if (mergedStart === null || mergedEnd === null) {
+        mergedStart = interval.start;
+        mergedEnd = interval.end;
+        continue;
+      }
+      if (interval.start <= mergedEnd + 0.001) {
+        mergedEnd = Math.max(mergedEnd, interval.end);
+        continue;
+      }
+      maximum = Math.max(maximum, mergedEnd - mergedStart);
+      mergedStart = interval.start;
+      mergedEnd = interval.end;
+    }
+    if (mergedStart !== null && mergedEnd !== null) {
+      maximum = Math.max(maximum, mergedEnd - mergedStart);
+    }
+  }
+  return maximum;
 }
 
 function segmentsProperlyCross(
@@ -1870,23 +1904,44 @@ function leaderGeometryDiagnostics(
   routeSegments: StructureSegmentIndex,
   leaderSegments: StructureSegmentIndex,
 ): StructureLeaderGeometryDiagnostics {
-  let maxParallelOverlap = 0;
+  const overlapGroups = new Map<string, StructureParallelOverlapInterval[]>();
   let crossingCount = 0;
+  let leaderOffset = 0;
   points.slice(1).forEach((end, index) => {
     const start = points[index]!;
-    const nearby = [
-      ...routeSegments.query(segmentBounds(start, end, EDGE_LABEL_LEADER_NEAR_PARALLEL_DISTANCE)),
-      ...leaderSegments.query(segmentBounds(start, end, EDGE_LABEL_LEADER_NEAR_PARALLEL_DISTANCE)),
-    ];
-    for (const segment of new Set(nearby)) {
-      maxParallelOverlap = Math.max(
-        maxParallelOverlap,
-        segmentNearParallelOverlap(start, end, segment.start, segment.end),
-      );
+    const bounds = segmentBounds(start, end, EDGE_LABEL_LEADER_NEAR_PARALLEL_DISTANCE);
+    const addDiagnostics = (
+      segment: IndexedStructureSegment,
+      comparisonKind: "route" | "leader",
+    ): void => {
+      const overlap = segmentNearParallelOverlapInterval(start, end, segment.start, segment.end);
+      if (overlap) {
+        const key = `${comparisonKind}:${segment.ownerId}`;
+        const intervals = overlapGroups.get(key) ?? [];
+        intervals.push({ start: leaderOffset + overlap.start, end: leaderOffset + overlap.end });
+        overlapGroups.set(key, intervals);
+      }
       if (segmentsProperlyCross(start, end, segment.start, segment.end)) crossingCount += 1;
-    }
+    };
+    for (const segment of routeSegments.query(bounds)) addDiagnostics(segment, "route");
+    for (const segment of leaderSegments.query(bounds)) addDiagnostics(segment, "leader");
+    leaderOffset += Math.hypot(end.x - start.x, end.y - start.y);
   });
-  return { length: polylineLength(points), maxParallelOverlap, crossingCount };
+  return {
+    length: leaderOffset,
+    maxParallelOverlap: maximumContinuousParallelOverlap(overlapGroups),
+    crossingCount,
+  };
+}
+
+export function structurePolylineNearParallelOverlap(
+  reference: readonly StructurePoint[],
+  comparison: readonly StructurePoint[],
+): number {
+  const routeSegments = createStructureSegmentIndex();
+  routeSegments.addPolyline("comparison", comparison);
+  return leaderGeometryDiagnostics(reference, routeSegments, createStructureSegmentIndex())
+    .maxParallelOverlap;
 }
 
 function labelBoundaryPointToward(box: StructureBox, toward: StructurePoint): StructurePoint {
