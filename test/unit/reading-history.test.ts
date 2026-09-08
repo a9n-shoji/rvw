@@ -134,6 +134,79 @@ describe("reading history", () => {
     ).toBe(true);
   });
 
+  it("round-trips separate full and local Structure geometry while rejecting malformed points", () => {
+    const value = entry({
+      document: {
+        kind: "structure",
+        id: "structure-2",
+        title: "Local exploration",
+        sourceOid: "b".repeat(40),
+      },
+      locator: {
+        kind: "structure",
+        snapshot: {
+          artifactUpdatedAt: "2026-09-06T00:00:00.000Z",
+          viewMode: "graph",
+          focusId: "selected",
+          localCenterId: "center",
+          selectedEdgeId: "edge",
+          depth: 1,
+          framedRegionId: null,
+          cameraFrame: { kind: "center-node", nodeId: "center", scale: 1.1 },
+          viewport: { x: -220, y: 80, scale: 1.1 },
+          surfaceSize: { width: 800, height: 500 },
+          allCameraFrame: { kind: "nodes", nodeIds: ["entry", "selected"] },
+          allViewport: { x: 35, y: 60, scale: 0.7 },
+          allSurfaceSize: { width: 800, height: 500 },
+          positions: {
+            entry: { x: 60, y: 80 },
+            selected: { x: 480, y: 180 },
+          },
+          localPositions: {
+            center: { x: 40, y: 50 },
+            selected: { x: 410, y: 90 },
+          },
+          localLayoutBasisKey: "local-basis",
+          regionsViewport: { x: 10, y: 30, scale: 1.2 },
+          regionsSurfaceSize: { width: 900, height: 600 },
+          regionsCameraMode: "manual",
+          layoutBasisKey: "graph-basis",
+          positionsKey: "positions",
+          regionsLayoutBasisKey: "regions-basis",
+        },
+      },
+    });
+    const state = readingHistoryState(null, value);
+
+    expect(parseReadingHistoryEntry(state, pullRequestId)).toEqual(value);
+
+    const malformedPoint = structuredClone(state) as Record<string, Record<string, unknown>>;
+    const malformedLocator = malformedPoint.rvwReading!.locator as Record<string, unknown>;
+    const malformedSnapshot = malformedLocator.snapshot as Record<string, unknown>;
+    malformedSnapshot.localPositions = { center: { x: Number.POSITIVE_INFINITY, y: 50 } };
+    expect(parseReadingHistoryEntry(malformedPoint, pullRequestId)).toBeNull();
+
+    const malformedAllCamera = structuredClone(state) as Record<string, Record<string, unknown>>;
+    const cameraLocator = malformedAllCamera.rvwReading!.locator as Record<string, unknown>;
+    const cameraSnapshot = cameraLocator.snapshot as Record<string, unknown>;
+    cameraSnapshot.allCameraFrame = { kind: "center-node", nodeId: "entry", scale: 0 };
+    expect(parseReadingHistoryEntry(malformedAllCamera, pullRequestId)).toBeNull();
+
+    if (value.locator.kind !== "structure") throw new Error("expected Structure locator");
+    const withoutCachedLocalPositions = structuredClone(value);
+    if (withoutCachedLocalPositions.locator.kind !== "structure") {
+      throw new Error("expected Structure locator");
+    }
+    withoutCachedLocalPositions.locator.snapshot.localPositions = null;
+    withoutCachedLocalPositions.locator.snapshot.localLayoutBasisKey = null;
+    expect(
+      parseReadingHistoryEntry(
+        readingHistoryState(null, withoutCachedLocalPositions),
+        pullRequestId,
+      ),
+    ).toEqual(withoutCachedLocalPositions);
+  });
+
   it("distinguishes current-range and exact-source readings of the same path", () => {
     const current = { kind: "repository-file" as const, path: "src/fixture.ts" };
     const exact = {

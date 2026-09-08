@@ -3330,3 +3330,105 @@ metadata cannot overwrite the current document object.
 - `history.state` is session-only and intentionally not a shareable Structure deep link.
 - Camera snapshots add bounded state to each explicit reading entry, but coordinates, focus, and manual
   layout remain reviewer state and never enter the Structure protocol or database.
+
+## 2026-09-08: Separate Structure Node selection from camera navigation
+
+### Problem
+
+Graph Node activation selected the claim and immediately fit its 1-hop neighborhood. Repeatedly
+selecting Nodes therefore panned or zoomed the camera on every click and destroyed the reviewer's
+spatial memory. Selection state and navigation intent were represented by one handler even though
+initial Home and cross-document navigation still need explicit camera positioning.
+
+### Choice
+
+Treat a Node single click, pointer tap, or keyboard activation as passive selection. It updates the
+focus/highlight lens, clears conflicting transient selection, and replaces the current reading snapshot
+without changing the viewport. Do not delay selection or introduce click-disambiguation timers.
+
+Treat a Node double click as a one-shot navigation command. After normal selection has occurred, frame
+the clicked Node and its exact factual 1-hop neighborhood with the existing renderer-derived bounds,
+padding, animation, and shared local-frame maximum zoom. Push only that camera destination into browser
+reading history. This creates no persistent focus mode and does not constrain later pan or zoom. Keep
+initial Home framing and file-to-Structure backlink centering unchanged because those operations locate
+targets whose graph position is not yet known to the reviewer.
+
+### Trade-offs
+
+- Double click is less discoverable than automatic camera motion, so each Node exposes a concise hover
+  hint without adding toolbar or mode UI.
+- Back after a double click restores the pre-navigation camera while retaining the selection established
+  by the preceding click; a passive selection alone does not add a history step.
+- The existing local-frame scale cap also prevents a one-Node neighborhood from zooming excessively,
+  avoiding a separate isolated-Node policy.
+
+## 2026-09-08: Derive compact local Structure maps without mutating the full map
+
+### Problem
+
+The first selection/navigation split stopped single-click camera jumps, but `focusId` still served as
+both the selected claim and the center of hop filtering. In 1-hop or 2-hop view, selecting another
+visible Node therefore changed membership implicitly. Hop filtering also reused full-map coordinates,
+routing obstacles, and label slots, leaving large holes where hidden Nodes had been and allowing
+invisible facts to displace visible relations. The one shared position map meant a local drag could
+silently change later All/export geometry.
+
+Dense relation labels exposed a related ordering defect: the planner exhausted distant candidates at
+the normal width before trying a nearby complete wrap. Displaced association guides avoided cards but
+could run alongside their own or another Edge for a long distance, and the final exhausted path could
+drop a label without an observable diagnostic. Large Region member grids also stopped relation-aware
+ordering early enough that stable Node IDs could place a hub at a corner.
+
+### Choice
+
+Keep selected Node and local center as separate reviewer state. Single click, tap, or keyboard
+activation changes only selection and detail emphasis. An explicit 1-hop/2-hop choice derives the
+local center from the selected Node; selecting the already active depth is a no-op. In All, double
+click (and its explicit keyboard/touch action) selects and frames factual 1-hop without leaving All or
+changing full geometry. In a local view, that action selects, recenters at the same depth, derives one
+new local layout, and frames 1-hop.
+
+Treat the full layout/manual positions and All camera as the persistent orientation map. A local view
+contains only Nodes within undirected factual distance and all real induced Edges. It owns a bounded,
+separate position map derived from full-map directions and ordering while compacting hidden-space
+gaps. Hidden elements do not participate in routes, labels, collision obstacles, or bounds. Local drag
+and Reset update only local positions. Returning to All restores its positions and camera exactly;
+export always rebuilds the complete graph from full positions. History snapshots include selection,
+local center, active/local geometry identity, and both camera states, while the parser continues to
+accept legacy snapshots that only contained `focusId` and one geometry key.
+
+Rank, branch, convergence, backbone, and Region projection use factual adjacency as the semantic
+score; stable IDs resolve only remaining symmetry. Region member optimization remains bounded but no
+longer abandons relation-aware placement solely because a Region crosses the former small-grid limit.
+
+Compare complete normal and compact label boxes in one finite proximity-first candidate set. Rank a
+candidate by the actual rectangle-to-own-route distance before wrap and secondary route costs, and
+prefer moving along the Edge before increasing perpendicular displacement. A displaced guide begins
+with a short lateral departure and strongly penalizes long collinear or near-parallel overlap with any
+Edge or prior guide; an isolated point crossing is allowed when it keeps the association shorter and
+clearer. Exhaustion produces a stable visible fallback plus diagnostics, never a missing label.
+Automatic layout may respond to spacing pressure with at most two bounded retries, moving only the
+x/y bands implicated by unhealthy labels while preserving the chosen anchor exactly; manual positions
+are never moved by that feedback. Keep the diagnostic payload machine-readable (`edgeDistance`,
+`leaderLength`, `maxParallelOverlap`, `crossingCount`, `usedCompactWidth`, `spacingPressure`, and
+`fallbackReason`) so fixtures can distinguish a healthy nearby placement from a visible last-resort
+fallback without inspecting pixels.
+
+Geometry changes are computed once per intent. Nodes and labels transition with the route layer over
+the same 200–300 ms window, reduced-motion applies the final state immediately, and a newer interaction
+invalidates older animation intent.
+
+### Trade-offs
+
+- Local and full geometry consume two bounded position maps in session/history state, but Structure is
+  already capped and no unbounded center/depth cache is retained.
+- A local map is intentionally not a crop of All, so exact screen coordinates differ; preserving
+  direction, order, the center's screen position, the minimap, and exact All restoration provides the
+  stronger mental-map contract.
+- Evaluating guide overlap and both wrap widths adds bounded planner work. Finite candidate tables,
+  diagnostics, and performance fixtures keep that cost visible rather than disabling correctness at a
+  hidden Edge-count threshold.
+- A manually arranged obstacle wall can make every obstacle-safe association guide topologically
+  impossible. The emergency shelf keeps the label visible and emits the least-conflicting direct
+  guide with `fallbackReason: emergency`; automatic maps first receive bounded spacing retries, while
+  reviewer-owned manual positions are never moved to conceal the condition.

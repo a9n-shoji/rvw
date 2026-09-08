@@ -762,6 +762,7 @@ const PRESENTATION_REGION_GAP_X = 64;
 const PRESENTATION_REGION_GAP_Y = 64;
 const PRESENTATION_RANK_BAND_ROW_GAP = PRESENTATION_ROW_STRIDE;
 const PRESENTATION_TARGET_ASPECT_RATIO = 5 / 3;
+const PRESENTATION_ACCEPTABLE_EXTENT_RATIO = 1.1;
 const PRESENTATION_COMPOUND_TARGET_ASPECT_RATIO = 1.85;
 const PRESENTATION_MAX_BOUNDARY_ALIGNMENT_BASES = 16;
 
@@ -964,8 +965,8 @@ function comparePresentationRankBandPackings(
   right: PresentationRankBandPacking,
 ): number {
   return (
-    left.normalizedExtent - right.normalizedExtent ||
     left.relationSpan - right.relationSpan ||
+    left.normalizedExtent - right.normalizedExtent ||
     left.area - right.area ||
     compareNumberArrays(left.rowSizes, right.rowSizes)
   );
@@ -1042,8 +1043,15 @@ function presentationRankBandPositions(input: {
       rowSizes: rows.map((row) => row.length),
     });
   }
-  packings.sort(comparePresentationRankBandPackings);
-  return packings[0]!.positions;
+  const minimumNormalizedExtent = Math.min(
+    ...packings.map(({ normalizedExtent }) => normalizedExtent),
+  );
+  const acceptablePackings = packings.filter(
+    ({ normalizedExtent }) =>
+      normalizedExtent <= minimumNormalizedExtent * PRESENTATION_ACCEPTABLE_EXTENT_RATIO,
+  );
+  acceptablePackings.sort(comparePresentationRankBandPackings);
+  return acceptablePackings[0]!.positions;
 }
 
 interface PresentationRegionRelation {
@@ -1377,12 +1385,64 @@ function presentationRegionMemberOrder(input: {
   columns: number;
   rows: number;
   regionId: string;
+  startNodeId: string;
   regionByNodeId: ReadonlyMap<string, string>;
   regionCellById: ReadonlyMap<string, PresentationRegionGridCell>;
   topology: SimpleStructureTopology;
+  relationEdges: readonly StructureGraphContent["edges"][number][];
+  backboneEdgeIds: ReadonlySet<string>;
 }): Array<{ index: number; nodeId: string }> {
-  const { members, columns, rows, regionId, regionByNodeId, regionCellById, topology } = input;
+  const {
+    members,
+    columns,
+    rows,
+    regionId,
+    startNodeId,
+    regionByNodeId,
+    regionCellById,
+    topology,
+    relationEdges,
+    backboneEdgeIds,
+  } = input;
   const ownCell = regionCellById.get(regionId) ?? { column: 0, row: 0 };
+  const memberSet = new Set(members);
+  const internalLinks = topology.links.filter(
+    ([from, to]) => memberSet.has(from) && memberSet.has(to),
+  );
+  const internalPairKey = (from: string, to: string): string =>
+    JSON.stringify([from, to].sort(stableCompare));
+  const internalLinkWeights = new Map<string, number>();
+  for (const [from, to] of internalLinks) {
+    internalLinkWeights.set(internalPairKey(from, to), 1);
+  }
+  for (const edge of relationEdges) {
+    if (
+      edge.from === edge.to ||
+      !memberSet.has(edge.from) ||
+      !memberSet.has(edge.to) ||
+      !backboneEdgeIds.has(edge.id)
+    ) {
+      continue;
+    }
+    const key = internalPairKey(edge.from, edge.to);
+    if (internalLinkWeights.has(key)) internalLinkWeights.set(key, 3);
+  }
+  const internalBackboneLinks = internalLinks.filter(
+    ([from, to]) => (internalLinkWeights.get(internalPairKey(from, to)) ?? 1) > 1,
+  );
+  const internalNeighbors = new Map(members.map((nodeId) => [nodeId, new Map<string, number>()]));
+  for (const [from, to] of internalLinks) {
+    const weight = internalLinkWeights.get(internalPairKey(from, to)) ?? 1;
+    internalNeighbors.get(from)?.set(to, weight);
+    internalNeighbors.get(to)?.set(from, weight);
+  }
+  const directionalIncoming = new Map(members.map((nodeId) => [nodeId, 0]));
+  const directionalOutgoing = new Map(members.map((nodeId) => [nodeId, 0]));
+  for (const [from, to] of topology.directionalLinks) {
+    if (!memberSet.has(from) || !memberSet.has(to)) continue;
+    directionalOutgoing.set(from, directionalOutgoing.get(from)! + 1);
+    directionalIncoming.set(to, directionalIncoming.get(to)! + 1);
+  }
   const affinity = new Map(
     members.map((nodeId) => {
       const adjacentCells: PresentationRegionGridCell[] = [];
@@ -1413,11 +1473,29 @@ function presentationRegionMemberOrder(input: {
     row: Math.floor(index / columns),
   }));
   const assignment = new Map<number, string>();
-  for (const nodeId of [...members].sort((left, right) => {
-    const leftAffinity = affinity.get(left)!;
-    const rightAffinity = affinity.get(right)!;
-    return rightAffinity.count - leftAffinity.count || stableCompare(left, right);
-  })) {
+  const assignedNodeIds = new Set<string>();
+  const unassignedNodeIds = new Set(members);
+  const internalWeight = (nodeId: string): number =>
+    [...(internalNeighbors.get(nodeId)?.values() ?? [])].reduce((sum, weight) => sum + weight, 0);
+  const placedNeighborWeight = (nodeId: string): number =>
+    [...(internalNeighbors.get(nodeId) ?? [])].reduce(
+      (sum, [neighbor, weight]) => sum + (assignedNodeIds.has(neighbor) ? weight : 0),
+      0,
+    );
+  while (unassignedNodeIds.size > 0) {
+    const nodeId = [...unassignedNodeIds].sort((left, right) => {
+      const leftAffinity = affinity.get(left)!;
+      const rightAffinity = affinity.get(right)!;
+      return (
+        placedNeighborWeight(right) - placedNeighborWeight(left) ||
+        rightAffinity.count - leftAffinity.count ||
+        internalWeight(right) - internalWeight(left) ||
+        Number(right === startNodeId) - Number(left === startNodeId) ||
+        directionalIncoming.get(left)! - directionalIncoming.get(right)! ||
+        directionalOutgoing.get(right)! - directionalOutgoing.get(left)! ||
+        stableCompare(left, right)
+      );
+    })[0]!;
     const { adjacentRegionCount, externalNeighborCount, horizontal, vertical } =
       affinity.get(nodeId)!;
     const desiredColumn =
@@ -1430,9 +1508,26 @@ function presentationRegionMemberOrder(input: {
       adjacentRegionCount === 0 || vertical === 0 ? (rows - 1) / 2 : vertical > 0 ? rows - 1 : 0;
     const distanceToPerimeter = (cell: PresentationRegionGridCell): number =>
       Math.min(cell.column, columns - 1 - cell.column, cell.row, rows - 1 - cell.row);
+    const placedCellByNodeId = new Map(
+      [...assignment].map(([index, assignedNodeId]) => [
+        assignedNodeId,
+        { column: index % columns, row: Math.floor(index / columns) },
+      ]),
+    );
+    const relationDistance = (cell: PresentationRegionGridCell): number =>
+      [...(internalNeighbors.get(nodeId) ?? [])].reduce((sum, [neighbor, weight]) => {
+        const neighborCell = placedCellByNodeId.get(neighbor);
+        return neighborCell
+          ? sum +
+              weight *
+                (Math.abs(cell.column - neighborCell.column) +
+                  Math.abs(cell.row - neighborCell.row))
+          : sum;
+      }, 0);
     const cell = [...cells].sort(
       (left, right) =>
         externalNeighborCount * (distanceToPerimeter(left) - distanceToPerimeter(right)) ||
+        relationDistance(left) - relationDistance(right) ||
         Math.abs(left.column - desiredColumn) +
           Math.abs(left.row - desiredRow) -
           Math.abs(right.column - desiredColumn) -
@@ -1442,18 +1537,11 @@ function presentationRegionMemberOrder(input: {
     )[0]!;
     assignment.set(cell.index, nodeId);
     cells.splice(cells.indexOf(cell), 1);
+    assignedNodeIds.add(nodeId);
+    unassignedNodeIds.delete(nodeId);
   }
   const initial = Array.from<string | null>({ length: columns * rows }).fill(null);
   for (const [index, nodeId] of assignment) initial[index] = nodeId;
-  const memberSet = new Set(members);
-  const internalLinks = topology.links.filter(
-    ([from, to]) => memberSet.has(from) && memberSet.has(to),
-  );
-  // Boundary affinity has already produced a deterministic useful assignment. Keep the optional
-  // crossing search bounded independently of the public graph limit for dense or large chunks.
-  if (members.length > 10 || internalLinks.length > 24) {
-    return initial.flatMap((nodeId, index) => (nodeId === null ? [] : [{ index, nodeId }]));
-  }
   const cellForIndex = (index: number): PresentationRegionGridCell => ({
     column: index % columns,
     row: Math.floor(index / columns),
@@ -1481,27 +1569,31 @@ function presentationRegionMemberOrder(input: {
     const indexByNodeId = new Map(
       ordered.flatMap((nodeId, index) => (nodeId === null ? [] : [[nodeId, index] as const])),
     );
+    const linkWeight = (from: string, to: string): number =>
+      internalLinkWeights.get(internalPairKey(from, to)) ?? 1;
     const internalCrossings = internalLinks.reduce((count, [leftFromId, leftToId], index) => {
       const leftFrom = cellForIndex(indexByNodeId.get(leftFromId)!);
       const leftTo = cellForIndex(indexByNodeId.get(leftToId)!);
       return (
         count +
-        internalLinks.slice(index + 1).filter(([rightFromId, rightToId]) => {
+        internalLinks.slice(index + 1).reduce((crossingWeight, [rightFromId, rightToId]) => {
           if (
             leftFromId === rightFromId ||
             leftFromId === rightToId ||
             leftToId === rightFromId ||
             leftToId === rightToId
           ) {
-            return false;
+            return crossingWeight;
           }
           return properCrossing(
             leftFrom,
             leftTo,
             cellForIndex(indexByNodeId.get(rightFromId)!),
             cellForIndex(indexByNodeId.get(rightToId)!),
-          );
-        }).length
+          )
+            ? crossingWeight + linkWeight(leftFromId, leftToId) * linkWeight(rightFromId, rightToId)
+            : crossingWeight;
+        }, 0)
       );
     }, 0);
     const externalBoundaryDistance = ordered.reduce((total, nodeId, index) => {
@@ -1535,26 +1627,115 @@ function presentationRegionMemberOrder(input: {
         }, 0)
       );
     }, 0);
+    let backboneLongRelationPenalty = 0;
+    let longRelationPenalty = 0;
     const internalSpan = internalLinks.reduce((total, [from, to]) => {
       const fromCell = cellForIndex(indexByNodeId.get(from)!);
       const toCell = cellForIndex(indexByNodeId.get(to)!);
-      return (
-        total + Math.abs(fromCell.column - toCell.column) + Math.abs(fromCell.row - toCell.row)
-      );
+      const span = Math.abs(fromCell.column - toCell.column) + Math.abs(fromCell.row - toCell.row);
+      const weight = linkWeight(from, to);
+      if (weight > 1) backboneLongRelationPenalty += Math.max(0, span - 1) ** 2;
+      longRelationPenalty += weight * Math.max(0, span - 1) ** 2;
+      return total + weight * span;
     }, 0);
     return {
       internalCrossings,
+      backboneLongRelationPenalty,
       externalBoundaryDistance,
       internalSpan,
+      longRelationPenalty,
     };
   };
   const compareScores = (left: ReturnType<typeof score>, right: ReturnType<typeof score>): number =>
+    left.backboneLongRelationPenalty - right.backboneLongRelationPenalty ||
     left.internalCrossings - right.internalCrossings ||
+    left.longRelationPenalty - right.longRelationPenalty ||
     left.externalBoundaryDistance - right.externalBoundaryDistance ||
     left.internalSpan - right.internalSpan;
 
   let result = initial;
   let resultScore = score(result);
+
+  const spanningPathNodeIds = (
+    links: readonly (readonly [string, string])[],
+  ): readonly string[] | null => {
+    if (links.length !== members.length - 1) return null;
+    const neighbors = new Map(members.map((nodeId) => [nodeId, new Set<string>()]));
+    for (const [from, to] of links) {
+      neighbors.get(from)?.add(to);
+      neighbors.get(to)?.add(from);
+    }
+    const pathEndpoints = members.filter((nodeId) => neighbors.get(nodeId)?.size === 1);
+    if (pathEndpoints.length !== 2 || members.some((nodeId) => neighbors.get(nodeId)?.size === 0)) {
+      return null;
+    }
+    const preferredEndpoint = [...pathEndpoints].sort(
+      (left, right) =>
+        Number(right === startNodeId) - Number(left === startNodeId) ||
+        directionalOutgoing.get(right)! -
+          directionalIncoming.get(right)! -
+          (directionalOutgoing.get(left)! - directionalIncoming.get(left)!) ||
+        stableCompare(left, right),
+    )[0]!;
+    const pathNodeIds: string[] = [];
+    let previous: string | null = null;
+    let current: string | undefined = preferredEndpoint;
+    while (current !== undefined) {
+      pathNodeIds.push(current);
+      const nextNodeId: string | undefined = [...(neighbors.get(current) ?? [])]
+        .filter((nodeId) => nodeId !== previous)
+        .sort(stableCompare)[0];
+      previous = current;
+      current = nextNodeId;
+    }
+    return pathNodeIds.length === members.length ? pathNodeIds : null;
+  };
+
+  // A spanning primary-backbone path has an exact bounded embedding even when factual auxiliary
+  // Edges add chords. Fall back to an all-relation path when no authored backbone path exists.
+  const pathNodeIds =
+    spanningPathNodeIds(internalBackboneLinks) ?? spanningPathNodeIds(internalLinks);
+  if (pathNodeIds) {
+    const horizontalSequences = ([false, true] as const).flatMap((reverseRows) =>
+      ([false, true] as const).map((reverseFirstRow) => {
+        const rowIndexes = Array.from({ length: rows }, (_, index) => index);
+        if (reverseRows) rowIndexes.reverse();
+        return rowIndexes.flatMap((row, rowIndex) => {
+          const columnIndexes = Array.from({ length: columns }, (_, index) => index);
+          if (reverseFirstRow !== (rowIndex % 2 === 1)) columnIndexes.reverse();
+          return columnIndexes.map((column) => row * columns + column);
+        });
+      }),
+    );
+    const verticalSequences = ([false, true] as const).flatMap((reverseColumns) =>
+      ([false, true] as const).map((reverseFirstColumn) => {
+        const columnIndexes = Array.from({ length: columns }, (_, index) => index);
+        if (reverseColumns) columnIndexes.reverse();
+        return columnIndexes.flatMap((column, columnIndex) => {
+          const rowIndexes = Array.from({ length: rows }, (_, index) => index);
+          if (reverseFirstColumn !== (columnIndex % 2 === 1)) rowIndexes.reverse();
+          return rowIndexes.map((row) => row * columns + column);
+        });
+      }),
+    );
+    for (const cellIndexes of [...horizontalSequences, ...verticalSequences]) {
+      const candidate = Array.from<string | null>({ length: columns * rows }).fill(null);
+      pathNodeIds.forEach((nodeId, index) => {
+        candidate[cellIndexes[index]!] = nodeId;
+      });
+      const candidateScore = score(candidate);
+      if (compareScores(candidateScore, resultScore) < 0) {
+        result = candidate;
+        resultScore = candidateScore;
+      }
+    }
+  }
+
+  // The topology-aware greedy seed (and exact path seed above) sees every relation. Keep the
+  // all-pairs swap/crossing refinement bounded for dense or large Regions.
+  if (members.length > 10 || internalLinks.length > 24) {
+    return result.flatMap((nodeId, index) => (nodeId === null ? [] : [{ index, nodeId }]));
+  }
   for (let pass = 0; pass < Math.min(initial.length, 8); pass += 1) {
     let best = result;
     let bestScore = resultScore;
@@ -1583,7 +1764,9 @@ function presentationRegionOnlyPositions(input: {
   regionByNodeId: ReadonlyMap<string, string>;
   packing: PresentationRegionPacking;
 }): ReadonlyMap<string, StructurePoint> {
-  const { topology, regionByNodeId, packing } = input;
+  const { structure, topology, regionByNodeId, packing } = input;
+  const backboneEdgeIds = new Set(structure.presentation?.primaryBackbone?.edgeIds ?? []);
+  const startNodeId = structure.presentation?.startNodeId ?? structure.originNodeId;
   const positions = new Map<string, StructurePoint>();
   for (const plan of packing.plans) {
     const topLeft = packing.topLeftByRegionId.get(plan.id)!;
@@ -1592,9 +1775,12 @@ function presentationRegionOnlyPositions(input: {
       columns: plan.columns,
       rows: plan.rows,
       regionId: plan.id,
+      startNodeId,
       regionByNodeId,
       regionCellById: packing.cellByRegionId,
       topology,
+      relationEdges: structure.edges,
+      backboneEdgeIds,
     });
     members.forEach(({ nodeId, index }) => {
       positions.set(nodeId, {

@@ -210,9 +210,10 @@ region membershipは囲い枠ではなく明示Node IDに
 何を寄与するかを伝えます。Region arrayと各`nodeIds`の順序に意味はなく、stable IDでcanonical化されます。
 Region間の関係は別のauthorial graphではなく、member間のdirect factual EdgeからViewerが導出します。
 viewerではHomeでauthorial start（null presentationではorigin）とexact 1-hopを読み、canvas / minimapに残る
-backbone emphasisでcoreの位置を保ちながら、Node focusの1-hop / 2-hop、Region frame、AllをBackで往復します。
+backbone emphasisでcoreの位置を保ちながら、single clickではcameraを動かさずNodeを選択し、double clickでは
+選択Nodeとexact 1-hopへone-shotでfocusします。1-hop / 2-hop、Region frame、AllをBackで往復できます。
 HomeとRegion frameは対象を確実に見せるためAllへ切り替えます。Region frame中はfocusを維持したままmemberと内部relationを
-full relevanceで読め、Home、Node focus、depth変更で解除します。Backは直前のview mode / focus / hop depth / framed region / viewportを復元します。
+full relevanceで読め、Home、Node selection、depth変更で解除します。Backは直前のview mode / focus / hop depth / framed region / viewportを復元します。
 backbone membershipは固定されたauthorial salience、focus hopは一時的なreviewer attentionとして別に表示します。
 低zoomで省略するdetailもvisible / total件数、minimap、selection、Allから回収でき、pan、zoom、fit、node drag、
 layout resetで探索できます。通常clickでexact sourceを左、

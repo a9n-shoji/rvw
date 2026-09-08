@@ -8,7 +8,12 @@ import {
   structureExportFilename,
   type StructureExportPalette,
 } from "../../src/web/structure-export.js";
-import { initialStructureLayout, STRUCTURE_NODE_HEIGHT } from "../../src/web/structure-graph.js";
+import {
+  initialStructureLayout,
+  STRUCTURE_NODE_HEIGHT,
+  STRUCTURE_NODE_WIDTH,
+  type StructurePoint,
+} from "../../src/web/structure-graph.js";
 import {
   buildFullStructureRenderModel,
   EDGE_LABEL_LINE_HEIGHT,
@@ -80,10 +85,13 @@ function exportStructure(): Structure {
   };
 }
 
-function documentFor(structure = exportStructure()) {
+function documentFor(
+  structure = exportStructure(),
+  positions: Readonly<Record<string, StructurePoint>> = initialStructureLayout(structure),
+) {
   const model = buildFullStructureRenderModel({
     structure,
-    positions: initialStructureLayout(structure),
+    positions,
     sourceChangeKinds: new Map([['src/<unsafe>&"entry".ts', "modified" as const]]),
   });
   return { model, document: serializeStructureSvg({ structure, model, palette }) };
@@ -264,7 +272,12 @@ describe("Structure SVG export", () => {
         anchors: [],
       })),
     );
-    const { model, document } = documentFor(structure);
+    const positions = initialStructureLayout(structure);
+    positions["node-1"] = {
+      x: positions["node-0"]!.x + STRUCTURE_NODE_WIDTH + 40,
+      y: positions["node-0"]!.y,
+    };
+    const { model, document } = documentFor(structure, positions);
     const placement = model.labels.find(({ leaderPath }) => leaderPath !== null);
 
     expect(placement).toBeDefined();

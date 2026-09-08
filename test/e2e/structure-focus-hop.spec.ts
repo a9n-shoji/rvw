@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const structureId = "80000000-0000-4000-8000-000000000001";
@@ -13,149 +13,151 @@ async function openOrderPlacementStructure(page: Page): Promise<void> {
     .click();
 }
 
-test("keeps focus-hop distance visually dominant over authored backbone emphasis", async ({
+async function graphDomState(viewer: Locator) {
+  return await viewer.evaluate((element) => {
+    const sortedIds = (selector: string, attribute: string): string[] =>
+      [...element.querySelectorAll<HTMLElement | SVGElement>(selector)]
+        .map((target) => target.getAttribute(attribute))
+        .filter((value): value is string => value !== null)
+        .sort((left, right) => left.localeCompare(right, "en"));
+    const nodePositions = [...element.querySelectorAll<HTMLElement>(".structure-node")]
+      .map((node) => ({
+        id: node.dataset.nodeId ?? "",
+        left: node.style.left,
+        top: node.style.top,
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id, "en"));
+    return {
+      nodeIds: sortedIds(".structure-node", "data-node-id"),
+      edgeIds: sortedIds(".structure-edge", "data-edge-id"),
+      labelEdgeIds: sortedIds(".structure-edge-label", "data-edge-id"),
+      nodePositions,
+      worldTransform:
+        element.querySelector<HTMLElement>(".structure-world")?.style.transform ?? null,
+      depth: element.getAttribute("data-neighborhood-depth"),
+      localCenterId: element.getAttribute("data-local-center-id"),
+    };
+  });
+}
+
+async function minimapBackboneState(viewer: Locator) {
+  return await viewer.locator(".structure-minimap").evaluate((element) => ({
+    backbone: [...element.querySelectorAll<SVGLineElement>(".structure-minimap-primary-backbone")]
+      .map((edge) => ({
+        id: edge.dataset.edgeId ?? "",
+        x1: edge.getAttribute("x1"),
+        y1: edge.getAttribute("y1"),
+        x2: edge.getAttribute("x2"),
+        y2: edge.getAttribute("y2"),
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id, "en")),
+    nodeCount: element.querySelectorAll("circle:not(.structure-minimap-presentation-start)").length,
+  }));
+}
+
+test("renders a stable local 2-hop graph while keeping selection separate from its center", async ({
   page,
 }) => {
   await openOrderPlacementStructure(page);
   const viewer = page.locator(`[data-structure-id="${structureId}"]`);
-  await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/u);
+  const world = viewer.locator(".structure-world");
+  const hub = viewer.locator('.structure-node[data-node-id="hub"]');
+  const orderAggregate = viewer.locator('.structure-node[data-node-id="order-aggregate"]');
+
+  await expect(hub).toHaveClass(/(?:^|\s)focused(?:\s|$)/u);
+  await expect(viewer.locator(".structure-node")).toHaveCount(16);
+  await expect(viewer.locator(".structure-edge")).toHaveCount(19);
+  await expect(viewer.locator(".structure-edge-label")).toHaveCount(19);
+  await viewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
+  const fullState = await graphDomState(viewer);
+  const fullMinimap = await minimapBackboneState(viewer);
+  await expect(viewer.locator(".structure-minimap-viewport")).toHaveAttribute(
+    "data-map-frame",
+    "viewport",
+  );
+  expect(fullMinimap.backbone).toHaveLength(10);
+  expect(fullMinimap.nodeCount).toBe(16);
 
   await viewer.getByRole("button", { name: "2-hop", exact: true }).click();
-
-  const immediateBackboneNode = viewer.locator('.structure-node[data-node-id="order-aggregate"]');
-  const distantBackboneNode = viewer.locator('.structure-node[data-node-id="pricing-policy"]');
-  const distantOrdinaryNode = viewer.locator('.structure-node[data-node-id="request-schema"]');
-  const distantBackboneEdge = viewer.locator(
-    '.structure-edge[data-edge-id="order-calculates-total"]',
-  );
-  const distantOrdinaryEdge = viewer.locator(
-    '.structure-edge[data-edge-id="controller-validates-request"]',
-  );
-  const distantBackboneArrow = viewer.locator(
-    '.structure-edge-arrow-carrier[data-edge-arrow-id="order-calculates-total"]',
-  );
-  const distantBackboneLabel = viewer.locator(
-    '.structure-edge-label[data-edge-id="order-calculates-total"]',
-  );
-  const distantOrdinaryLabel = viewer.locator(
-    '.structure-edge-label[data-edge-id="controller-validates-request"]',
+  await expect(viewer).toHaveAttribute("data-neighborhood-depth", "2");
+  await expect(viewer).toHaveAttribute("data-local-center-id", "hub");
+  await expect(world).not.toHaveClass(/layout-transition/u);
+  await expect(viewer.locator(".structure-minimap-viewport")).toHaveAttribute(
+    "data-map-frame",
+    "local-footprint",
   );
 
-  await expect(immediateBackboneNode).not.toHaveClass(/context-distant/u);
-  await expect(distantBackboneNode).toHaveClass(/primary-backbone/u);
-  await expect(distantBackboneNode).toHaveClass(/context-distant/u);
-  await expect(distantOrdinaryNode).toHaveClass(/context-distant/u);
-  await expect(distantBackboneEdge).toHaveAttribute("data-focus-relevance", "distant");
-  await expect(distantBackboneEdge).toHaveClass(/primary-backbone/u);
-  await expect(distantBackboneEdge).toHaveClass(/context-distant/u);
-  await expect(distantOrdinaryEdge).toHaveAttribute("data-focus-relevance", "distant");
-  await expect(distantOrdinaryEdge).toHaveClass(/context-distant/u);
-  await expect(distantBackboneArrow).toHaveClass(/context-distant/u);
-  await expect(distantBackboneLabel).toHaveClass(/context-distant/u);
-  await expect(distantOrdinaryLabel).toHaveClass(/context-distant/u);
+  await expect(viewer.locator(".structure-node")).toHaveCount(14);
+  await expect(viewer.locator(".structure-edge")).toHaveCount(16);
+  await expect(viewer.locator(".structure-edge-label")).toHaveCount(16);
+  await expect(viewer.locator('.structure-node[data-node-id="auth-middleware"]')).toHaveCount(0);
+  await expect(viewer.locator('.structure-node[data-node-id="database-schema"]')).toHaveCount(0);
+  await expect(viewer.locator('.structure-edge[data-edge-id="orders-use-schema"]')).toHaveCount(0);
+  await expect(
+    viewer.locator('.structure-edge-arrow-carrier[data-edge-arrow-id="orders-use-schema"]'),
+  ).toHaveCount(0);
+  await expect(
+    viewer.locator('.structure-edge-label[data-edge-id="orders-use-schema"]'),
+  ).toHaveCount(0);
+  await expect(
+    viewer.locator('.structure-edge-label-leader[data-edge-id="orders-use-schema"]'),
+  ).toHaveCount(0);
 
-  const visualHierarchy = await viewer.evaluate((element) => {
-    const style = (selector: string): CSSStyleDeclaration => {
-      const target = element.querySelector<HTMLElement | SVGElement>(selector);
-      if (!target) throw new Error(`missing visual target: ${selector}`);
-      return getComputedStyle(target);
-    };
-    return {
-      immediateBackboneNodeOpacity: style('.structure-node[data-node-id="order-aggregate"]')
-        .opacity,
-      distantBackboneNodeOpacity: style('.structure-node[data-node-id="pricing-policy"]').opacity,
-      distantOrdinaryNodeOpacity: style('.structure-node[data-node-id="request-schema"]').opacity,
-      distantBackboneEdgeOpacity: style('.structure-edge[data-edge-id="order-calculates-total"]')
-        .opacity,
-      distantOrdinaryEdgeOpacity: style(
-        '.structure-edge[data-edge-id="controller-validates-request"]',
-      ).opacity,
-      distantBackboneArrowOpacity: style(
-        '.structure-edge-arrow-carrier[data-edge-arrow-id="order-calculates-total"]',
-      ).opacity,
-      distantBackboneLabelOpacity: style(
-        '.structure-edge-label[data-edge-id="order-calculates-total"]',
-      ).opacity,
-      distantOrdinaryLabelOpacity: style(
-        '.structure-edge-label[data-edge-id="controller-validates-request"]',
-      ).opacity,
-      backboneDash: style('.structure-edge[data-edge-id="order-calculates-total"]').strokeDasharray,
-      backboneNodeMark: style(
-        '.structure-node[data-node-id="pricing-policy"] .structure-node-focus',
-      ).backgroundImage,
-      minimapBackboneEdges: element.querySelectorAll(".structure-minimap-primary-backbone").length,
-    };
-  });
+  await expect(hub).toHaveClass(/(?:^|\s)local-center(?:\s|$)/u);
+  await expect(hub).toHaveClass(/(?:^|\s)focused(?:\s|$)/u);
+  await expect(hub).toHaveAttribute("data-local-center", "true");
+  const beforeSelection = await graphDomState(viewer);
+  expect(await minimapBackboneState(viewer)).toEqual(fullMinimap);
 
-  expect(Number(visualHierarchy.distantBackboneNodeOpacity)).toBeLessThan(
-    Number(visualHierarchy.immediateBackboneNodeOpacity),
-  );
-  expect(visualHierarchy.distantBackboneNodeOpacity).toBe(
-    visualHierarchy.distantOrdinaryNodeOpacity,
-  );
-  expect(visualHierarchy.distantBackboneEdgeOpacity).toBe(
-    visualHierarchy.distantOrdinaryEdgeOpacity,
-  );
-  expect(visualHierarchy.distantBackboneArrowOpacity).toBe(
-    visualHierarchy.distantBackboneEdgeOpacity,
-  );
-  expect(visualHierarchy.distantBackboneLabelOpacity).toBe(
-    visualHierarchy.distantOrdinaryLabelOpacity,
-  );
-  expect(visualHierarchy.backboneDash).not.toBe("none");
-  expect(visualHierarchy.backboneNodeMark).not.toBe("none");
-  expect(visualHierarchy.minimapBackboneEdges).toBeGreaterThan(0);
+  await orderAggregate.click();
+  await expect(orderAggregate).toHaveClass(/(?:^|\s)focused(?:\s|$)/u);
+  await expect(orderAggregate).not.toHaveClass(/(?:^|\s)local-center(?:\s|$)/u);
+  await expect(orderAggregate).not.toHaveAttribute("data-local-center", "true");
+  await expect(hub).not.toHaveClass(/(?:^|\s)focused(?:\s|$)/u);
+  await expect(hub).toHaveClass(/(?:^|\s)local-center(?:\s|$)/u);
+  await expect(hub).toHaveAttribute("data-local-center", "true");
+  await expect(viewer.locator(".structure-minimap circle.focused")).toHaveCount(1);
+  await expect(viewer.locator(".structure-minimap circle.local-center")).toHaveCount(1);
 
-  await distantBackboneLabel
-    .locator(".structure-edge-select")
-    .evaluate((element) => (element as HTMLButtonElement).click());
-  await expect(distantBackboneEdge).toHaveClass(/selected/u);
-  await expect(distantBackboneNode).toHaveClass(/edge-endpoint/u);
-  expect(await distantBackboneEdge.evaluate((element) => getComputedStyle(element).opacity)).toBe(
-    "1",
-  );
-  expect(await distantBackboneArrow.evaluate((element) => getComputedStyle(element).opacity)).toBe(
-    "1",
-  );
-  expect(await distantBackboneLabel.evaluate((element) => getComputedStyle(element).opacity)).toBe(
-    "1",
-  );
-  expect(await distantBackboneNode.evaluate((element) => getComputedStyle(element).opacity)).toBe(
-    "1",
-  );
-  await distantBackboneLabel
-    .locator(".structure-edge-select")
-    .evaluate((element) => (element as HTMLButtonElement).click());
+  const afterSelection = await graphDomState(viewer);
+  expect(afterSelection.nodeIds).toEqual(beforeSelection.nodeIds);
+  expect(afterSelection.edgeIds).toEqual(beforeSelection.edgeIds);
+  expect(afterSelection.labelEdgeIds).toEqual(beforeSelection.labelEdgeIds);
+  expect(afterSelection.nodePositions).toEqual(beforeSelection.nodePositions);
+  expect(afterSelection.worldTransform).toBe(beforeSelection.worldTransform);
+  expect(afterSelection.depth).toBe("2");
+  expect(afterSelection.localCenterId).toBe("hub");
+  expect(await minimapBackboneState(viewer)).toEqual(fullMinimap);
 
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    if ((await viewer.getAttribute("data-semantic-zoom")) === "overview") break;
-    await viewer.getByRole("button", { name: "縮小", exact: true }).click();
-  }
-  await expect(viewer).toHaveAttribute("data-semantic-zoom", "overview");
-  expect(
-    await distantBackboneLabel
-      .locator(".structure-edge-label-text")
-      .evaluate((element) => getComputedStyle(element).visibility),
-  ).toBe("hidden");
-  expect(
-    await viewer
-      .locator(
-        '.structure-edge-label[data-edge-id="handler-places-order"] .structure-edge-label-text',
-      )
-      .evaluate((element) => getComputedStyle(element).visibility),
-  ).toBe("visible");
-  await distantBackboneLabel
-    .locator(".structure-edge-select")
-    .evaluate((element) => (element as HTMLButtonElement).click());
-  await expect(distantBackboneLabel).toHaveClass(/selected/u);
-  expect(
-    await distantBackboneLabel
-      .locator(".structure-edge-label-text")
-      .evaluate((element) => getComputedStyle(element).visibility),
-  ).toBe("visible");
-  await distantBackboneLabel
-    .locator(".structure-edge-select")
-    .evaluate((element) => (element as HTMLButtonElement).click());
+  await viewer.getByRole("button", { name: "全体", exact: true }).click();
+  await expect(viewer).toHaveAttribute("data-neighborhood-depth", "all");
+  await expect(world).not.toHaveClass(/layout-transition/u);
+  expect(await viewer.getAttribute("data-local-center-id")).toBeNull();
+  await expect(viewer.locator(".structure-minimap-viewport")).toHaveAttribute(
+    "data-map-frame",
+    "viewport",
+  );
+
+  const restored = await graphDomState(viewer);
+  expect(restored.nodeIds).toEqual(fullState.nodeIds);
+  expect(restored.edgeIds).toEqual(fullState.edgeIds);
+  expect(restored.labelEdgeIds).toEqual(fullState.labelEdgeIds);
+  expect(restored.nodePositions).toEqual(fullState.nodePositions);
+  expect(restored.worldTransform).toBe(fullState.worldTransform);
+  expect(await minimapBackboneState(viewer)).toEqual(fullMinimap);
+  await expect(viewer.locator('.structure-node[data-node-id="auth-middleware"]')).toHaveCount(1);
+  await expect(viewer.locator('.structure-node[data-node-id="database-schema"]')).toHaveCount(1);
+  await expect(viewer.locator('.structure-edge[data-edge-id="orders-use-schema"]')).toHaveCount(1);
+  await expect(
+    viewer.locator('.structure-edge-label[data-edge-id="orders-use-schema"]'),
+  ).toHaveCount(1);
+});
+
+test("keeps Region framing emphasis when returning from the independent Regions view", async ({
+  page,
+}) => {
+  await openOrderPlacementStructure(page);
+  const viewer = page.locator(`[data-structure-id="${structureId}"]`);
 
   await viewer.getByRole("button", { name: "Regions", exact: true }).click();
   await viewer
@@ -163,27 +165,29 @@ test("keeps focus-hop distance visually dominant over authored backbone emphasis
     .click();
   await expect(viewer).toHaveAttribute("data-view-mode", "graph");
   await expect(viewer).toHaveAttribute("data-framed-region-id", "atomic-persistence");
-  const regionLayering = await viewer.evaluate((element) => {
-    const opacity = (selector: string): string => {
+  await expect(viewer.locator('.structure-node[data-node-id="database-schema"]')).toHaveClass(
+    /(?:^|\s)framed-region-member(?:\s|$)/u,
+  );
+  await expect(viewer.locator('.structure-edge[data-edge-id="orders-use-schema"]')).toHaveClass(
+    /(?:^|\s)framed-region-relation(?:\s|$)/u,
+  );
+  await expect(viewer.locator('.structure-node[data-node-id="pricing-policy"]')).toHaveClass(
+    /(?:^|\s)region-frame-context(?:\s|$)/u,
+  );
+
+  const layering = await viewer.evaluate((element) => {
+    const opacity = (selector: string): number => {
       const target = element.querySelector<HTMLElement | SVGElement>(selector);
-      if (!target) throw new Error(`missing region visual target: ${selector}`);
-      return getComputedStyle(target).opacity;
+      if (!target) throw new Error(`missing Region visual target: ${selector}`);
+      return Number(getComputedStyle(target).opacity);
     };
     return {
-      distantBackboneNode: opacity('.structure-node[data-node-id="pricing-policy"]'),
-      distantOrdinaryNode: opacity('.structure-node[data-node-id="request-schema"]'),
-      distantBackboneEdge: opacity('.structure-edge[data-edge-id="order-calculates-total"]'),
-      distantOrdinaryEdge: opacity('.structure-edge[data-edge-id="controller-validates-request"]'),
-      activeRegionMember: opacity('.structure-node[data-node-id="database-schema"]'),
-      activeRegionRelation: opacity('.structure-edge[data-edge-id="orders-use-schema"]'),
+      contextNode: opacity('.structure-node[data-node-id="pricing-policy"]'),
+      contextEdge: opacity('.structure-edge[data-edge-id="controller-validates-request"]'),
+      memberNode: opacity('.structure-node[data-node-id="database-schema"]'),
+      memberEdge: opacity('.structure-edge[data-edge-id="orders-use-schema"]'),
     };
   });
-  expect(regionLayering.distantBackboneNode).toBe(regionLayering.distantOrdinaryNode);
-  expect(regionLayering.distantBackboneEdge).toBe(regionLayering.distantOrdinaryEdge);
-  expect(Number(regionLayering.activeRegionMember)).toBeGreaterThan(
-    Number(regionLayering.distantBackboneNode),
-  );
-  expect(Number(regionLayering.activeRegionRelation)).toBeGreaterThan(
-    Number(regionLayering.distantBackboneEdge),
-  );
+  expect(layering.memberNode).toBeGreaterThan(layering.contextNode);
+  expect(layering.memberEdge).toBeGreaterThan(layering.contextEdge);
 });

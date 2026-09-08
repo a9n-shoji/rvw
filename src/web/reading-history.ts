@@ -15,7 +15,7 @@ import type {
   StructureViewMode,
   StructureViewport,
 } from "./structure-session.js";
-import type { StructureNeighborhoodDepth } from "./structure-graph.js";
+import type { StructureNeighborhoodDepth, StructurePoint } from "./structure-graph.js";
 
 export const READING_HISTORY_STATE_KEY = "rvwReading";
 
@@ -24,12 +24,21 @@ export interface StructureReadingSnapshot {
   artifactUpdatedAt: string;
   viewMode: StructureViewMode;
   focusId: string | null;
+  /** Optional for compatibility with history entries captured before local centers were separate. */
+  localCenterId?: string | null;
   selectedEdgeId: string | null;
   depth: StructureNeighborhoodDepth;
   framedRegionId: string | null;
   cameraFrame: StructureCameraFrame | null;
   viewport: StructureViewport;
   surfaceSize: { width: number; height: number };
+  /** Complete-map state. Optional fields preserve old browser-history entries. */
+  allCameraFrame?: StructureCameraFrame | null;
+  allViewport?: StructureViewport;
+  allSurfaceSize?: { width: number; height: number };
+  positions?: Record<string, StructurePoint>;
+  localPositions?: Record<string, StructurePoint> | null;
+  localLayoutBasisKey?: string | null;
   regionsViewport: StructureViewport;
   regionsSurfaceSize: { width: number; height: number };
   regionsCameraMode: StructureRegionsViewState["cameraMode"];
@@ -301,6 +310,29 @@ function parseSurfaceSize(value: unknown): { width: number; height: number } | n
   return { width: value.width, height: value.height };
 }
 
+function parseStructurePositions(
+  value: unknown,
+): Record<string, StructurePoint> | null | undefined {
+  if (value === null) return null;
+  if (!isRecord(value)) return undefined;
+  const entries = Object.entries(value);
+  if (entries.length > 10_000) return undefined;
+  const positions: Array<[string, StructurePoint]> = [];
+  for (const [nodeId, point] of entries) {
+    if (
+      !isRecord(point) ||
+      typeof point.x !== "number" ||
+      !Number.isFinite(point.x) ||
+      typeof point.y !== "number" ||
+      !Number.isFinite(point.y)
+    ) {
+      return undefined;
+    }
+    positions.push([nodeId, { x: point.x, y: point.y }]);
+  }
+  return Object.fromEntries(positions);
+}
+
 function parseCameraFrame(value: unknown): StructureCameraFrame | null | undefined {
   if (value === null) return null;
   if (!isRecord(value)) return undefined;
@@ -368,16 +400,33 @@ function parseStructureReadingSnapshot(value: unknown): StructureReadingSnapshot
   const regionsViewport = parseViewport(value.regionsViewport);
   const regionsSurfaceSize = parseSurfaceSize(value.regionsSurfaceSize);
   const cameraFrame = parseCameraFrame(value.cameraFrame);
+  const allCameraFrame =
+    value.allCameraFrame === undefined ? undefined : parseCameraFrame(value.allCameraFrame);
+  const allViewport =
+    value.allViewport === undefined ? undefined : parseViewport(value.allViewport);
+  const allSurfaceSize =
+    value.allSurfaceSize === undefined ? undefined : parseSurfaceSize(value.allSurfaceSize);
+  const positions =
+    value.positions === undefined ? undefined : parseStructurePositions(value.positions);
+  const localPositions =
+    value.localPositions === undefined ? undefined : parseStructurePositions(value.localPositions);
   if (
     typeof value.artifactUpdatedAt !== "string" ||
     (value.viewMode !== "graph" && value.viewMode !== "regions") ||
     (value.focusId !== null && typeof value.focusId !== "string") ||
+    !optionalNullableString(value.localCenterId) ||
     (value.selectedEdgeId !== null && typeof value.selectedEdgeId !== "string") ||
     (value.depth !== 1 && value.depth !== 2 && value.depth !== "all") ||
     (value.framedRegionId !== null && typeof value.framedRegionId !== "string") ||
     cameraFrame === undefined ||
+    (value.allCameraFrame !== undefined && allCameraFrame === undefined) ||
     !viewport ||
+    (value.allViewport !== undefined && !allViewport) ||
     !surfaceSize ||
+    (value.allSurfaceSize !== undefined && !allSurfaceSize) ||
+    (value.positions !== undefined && (positions === undefined || positions === null)) ||
+    (value.localPositions !== undefined && localPositions === undefined) ||
+    !optionalNullableString(value.localLayoutBasisKey) ||
     !regionsViewport ||
     !regionsSurfaceSize ||
     (value.regionsCameraMode !== "home" &&
@@ -393,12 +442,21 @@ function parseStructureReadingSnapshot(value: unknown): StructureReadingSnapshot
     artifactUpdatedAt: value.artifactUpdatedAt,
     viewMode: value.viewMode,
     focusId: value.focusId,
+    ...(value.localCenterId === undefined ? {} : { localCenterId: value.localCenterId }),
     selectedEdgeId: value.selectedEdgeId,
     depth: value.depth,
     framedRegionId: value.framedRegionId,
     cameraFrame,
     viewport,
     surfaceSize,
+    ...(allCameraFrame === undefined ? {} : { allCameraFrame }),
+    ...(allViewport === undefined || allViewport === null ? {} : { allViewport }),
+    ...(allSurfaceSize === undefined || allSurfaceSize === null ? {} : { allSurfaceSize }),
+    ...(positions === undefined || positions === null ? {} : { positions }),
+    ...(localPositions === undefined ? {} : { localPositions }),
+    ...(value.localLayoutBasisKey === undefined
+      ? {}
+      : { localLayoutBasisKey: value.localLayoutBasisKey }),
     regionsViewport,
     regionsSurfaceSize,
     regionsCameraMode: value.regionsCameraMode,
