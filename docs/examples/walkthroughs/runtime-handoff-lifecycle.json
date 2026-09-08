@@ -1,0 +1,145 @@
+{
+  "sourceOid": "a2f016c5e90886cce769aa0990c6a05c7ce02ae9",
+  "title": "drain 中の runtime handoff と遅延 viewer deadline",
+  "body": "# まず、どの runtime に届くかを分ける\n\n最後の tab が閉じて旧 runtime が終了へ向かう瞬間に、別の `rvw open` が時間のかかる Pull Request を要求したとする。このとき ownership の handoff と viewer の起動待ちは別の問題として処理される。入口の [`startBackgroundOpen`](rvw-ref:open-entry) は現在の socket owner へ一度 `viewer.open` を試し、応答できる owner ならそのまま同じ origin を使う。一方、lifecycle がすでに停止へ入っていれば [`reserveViewer` / `armViewerReservation` が識別可能な `runtime-stopping` を返す](rvw-ref:stopping-signal)。入口がこの理由を受けた場合、または socket がまだ利用できない場合は background worker を起動する。\n\n```mermaid\nsequenceDiagram\n  participant PARENT as rvw open parent\n  participant OWNER as current runtime socket\n  participant HANDOFF as __open-worker\n  participant LOCK as database owner lock\n  participant SUCCESSOR as successor runtime\n  PARENT->>OWNER: attempt viewer.open(reference)\n  alt socket owner accepts the reservation\n    OWNER-->>PARENT: URL and viewer lease\n  else stopping response or socket unavailable before response\n    PARENT->>HANDOFF: fork worker\n    loop until reused, elected, or acquisition deadline\n      HANDOFF->>LOCK: try runtime ownership\n      alt another process still owns the lock\n        LOCK-->>HANDOFF: owned = false\n        HANDOFF->>OWNER: attempt viewer.open(reference)\n        alt current socket owner accepts\n          OWNER-->>HANDOFF: URL and viewer lease\n          HANDOFF-->>PARENT: ready(URL)\n        else stopping response or socket unavailable before response\n          HANDOFF->>HANDOFF: wait 50 ms\n        end\n      else old lock has been released\n        LOCK-->>HANDOFF: owned = true\n        HANDOFF->>SUCCESSOR: initialize runtime and resolve PR\n        SUCCESSOR-->>HANDOFF: listening server and URL\n        HANDOFF-->>PARENT: ready(URL)\n      end\n    end\n  end\n```\n\nworker の [`acquireRuntimeOrReuseExisting`](rvw-ref:handoff-loop) は各周回でまず ownership を取りに行く。負けた candidate は閉じてから、その時点の owner（旧 runtime のことも、別の contender が作った successor のこともある）へ `viewer.open` を試す。成功すれば `reused`、socket 不在または識別済みの stopping なら 50 ms 待って再選挙し、旧 owner の lock 解放後に勝てば `owned` となる。したがって「常に旧 runtime」でも「最初から必ずこの worker が successor」でもなく、accept できる現 owner と lock の勝者で行き先が決まる。\n\nこの再選挙が二重 runtime を作らない根拠は、[`stopAccepting` と `releaseOwnership` が別段階であること](rvw-ref:socket-drain-lock)と、[`closeOwnedRuntime` が socket 受付停止、HTTP drain、Runtime/SQLite close、ownership 解放の順を固定すること](rvw-ref:shutdown-order)にある。実 socket を使う [handoff test](rvw-ref:handoff-test)も、旧 owner が受付停止後も lock を持つ間は新しい open が ownership を失い、解放後の再試行でだけ successor になる経路を記録している。\n\n# successor が勝った場合、PR 解決は browser clock より前にある\n\nworker が ownership を得た経路では、[`runOpenWorker` の順序](rvw-ref:successor-startup)は `runtimeFactory` → `openPullRequest` の完了待ち → HTTP server 起動 → `ready(URL)` → 初回 viewer 待ちである。親側も [`ready` を受け取った時点で初めて browser 用 timeout に切り替えて launch する](rvw-ref:parent-handshake)。つまり PR 解決が通常の viewer startup window より長くても、その時間は browser 接続待ちとしては消費されない。\n\nただし、これは処理全体が無期限という意味ではない。[worker readiness は 120 秒](rvw-ref:worker-ready-budget)で、既存 owner に送信済みの socket operation には [180 秒の既定 timeout](rvw-ref:socket-operation-budget)がある。ここで保護されるのは「PR 解決中に browser startup deadline を先に走らせない」ことであり、これら別レイヤーの上限を無効にすることではない。\n\n# 旧 runtime が受けた場合は reservation を二相にする\n\n既存 owner が request を受理できる場合、[`openViewer` handler](rvw-ref:reused-handler) は PR 解決より前に viewer を reserve し、`await openPullRequest(...)` が成功した後でだけ reservation を arm して、lease ID を URL に載せる。失敗時は同じ reservation を cancel する。\n\n```mermaid\nstateDiagram-v2\n  Opening --> Startup: PR resolved; arm accepted\n  Opening --> Removed: PR resolution failed; cancel\n  Opening --> Removed: runtime closes before arm\n  Startup --> Active: first heartbeat carries lease\n  Startup --> Removed: startup deadline expires\n```\n\nこれは一つの `viewer.open` claim だけを切り出した部分状態図で、`Opening` は startup deadline のない operation reservation、`Startup` は PR 解決後に arm が受理された状態、`Removed` は PR 解決失敗時の cancel、解決後の arm 前に runtime が close して pending を clear した場合、または startup timeout、`Active` は lease を運ぶ初回 heartbeat への移行を表す。独立した enum 全体を示すものではない。arm 拒否後の handler は catch で cancel を試みるが、close 済み lifecycle では pending はすでに clear され、cancel 自体は no-op になる。実装上は [`PendingViewer` の `opening` と `startup`](rvw-ref:reservation-lifecycle)が明示され、deadline を持つのは `startup` だけである。さらに [scheduler は `startup` だけを期限候補へ入れ](rvw-ref:reservation-scheduler)、`opening` が残る間は pending count により empty shutdown へ進まない。だから 30 秒の startup clock は reserve 時ではなく、PR 解決後の arm 時に始まる。\n\n返された URL の lease は browser が [query から一度取り出して heartbeat header に載せ](rvw-ref:browser-session)、server の [change-sequence endpoint](rvw-ref:heartbeat-endpoint)が lifecycle へ渡す。`heartbeat` は pending lease を消して新しい viewer ID を active lease に登録するので、最終的な tab が以後の runtime lifetime を引き継ぐ。[fake timer test](rvw-ref:slow-resolution-test)は 100 ms の startup timeout に対して arm 前に 10,000 ms 進めても reservation が残り、arm 後の 100 ms で初めて期限切れになることを直接固定している。\n\nこの読み筋から確認できる境界は二つある。drain race では、accept 可能な旧 owner／別 contender の successor を再利用するか、lock 解放後の勝者が successor になる。viewer race では、successor の初回 server は PR 解決後に ready となり、既存 owner は解決中を期限なしの operation reservation で保持してから bounded startup reservation へ切り替える。次に深掘りするなら、送信済み socket operation の 180 秒 timeout や明示 signal がこの代表経路を中断した場合であり、それらは「30 秒を早く開始しない」という今回の中心とは別の failure boundary である。",
+  "diagramBindings": {
+    "PARENT": "open-entry",
+    "OWNER": "stopping-signal",
+    "HANDOFF": "handoff-loop",
+    "LOCK": "socket-drain-lock",
+    "SUCCESSOR": "successor-startup",
+    "Opening": "reservation-lifecycle",
+    "Startup": "reservation-lifecycle",
+    "Active": "reservation-lifecycle"
+  },
+  "references": [
+    {
+      "id": "open-entry",
+      "label": "startBackgroundOpen の reuse / worker 分岐",
+      "path": "src/cli/main.ts",
+      "startLine": 381,
+      "endLine": 410,
+      "description": "現在の runtime を一度試し、runtime-stopping だけを handoff 扱いにして background worker を起動する入口。"
+    },
+    {
+      "id": "stopping-signal",
+      "label": "停止中を識別する viewer reservation error",
+      "path": "src/server/start-server.ts",
+      "startLine": 78,
+      "endLine": 104,
+      "description": "reserve または arm を受け付けられない lifecycle を runtime-stopping reason 付き error に変換する。"
+    },
+    {
+      "id": "handoff-loop",
+      "label": "ownership 再選挙と current owner reuse loop",
+      "path": "src/cli/main.ts",
+      "startLine": 594,
+      "endLine": 633,
+      "description": "各 retry で ownership を先に試し、敗者だけが current owner へ委譲し、stopping / unavailable なら再試行する。"
+    },
+    {
+      "id": "socket-drain-lock",
+      "label": "Agent listener drain と owner lock 解放の分離",
+      "path": "src/server/agent-socket.ts",
+      "startLine": 1000,
+      "endLine": 1039,
+      "description": "listener を閉じる stopAccepting と socket inode / owner lock を解放する releaseOwnership を別の lifecycle 段階にする。"
+    },
+    {
+      "id": "shutdown-order",
+      "label": "owned runtime の shutdown 順序",
+      "path": "src/cli/main.ts",
+      "startLine": 574,
+      "endLine": 592,
+      "description": "Agent request 停止、HTTP close、Runtime/SQLite close の後に ownership を解放する finally chain。"
+    },
+    {
+      "id": "handoff-test",
+      "label": "draining owner 解放後の実 socket handoff test",
+      "path": "test/unit/agent-socket.test.ts",
+      "startLine": 657,
+      "endLine": 693,
+      "description": "受付停止中は新しい open が owner になれず、旧 lock 解放後の再試行で ownership を得ることを検証する。"
+    },
+    {
+      "id": "successor-startup",
+      "label": "successor worker の PR 解決から viewer 待ちまで",
+      "path": "src/cli/main.ts",
+      "startLine": 702,
+      "endLine": 751,
+      "description": "ownership 確定後、PR を解決して server と URL を ready にしてから初回 viewer timeout を待つ。"
+    },
+    {
+      "id": "parent-handshake",
+      "label": "parent の ready / browser timeout 切替",
+      "path": "src/cli/main.ts",
+      "startLine": 243,
+      "endLine": 330,
+      "description": "worker ready までは readiness timer を使い、ready URL の受信後に browser timeout を schedule して launch する。"
+    },
+    {
+      "id": "worker-ready-budget",
+      "label": "worker readiness timeout constant",
+      "path": "src/cli/main.ts",
+      "startLine": 64,
+      "endLine": 65,
+      "description": "120 秒の worker readiness budget と parent 側 browser timeout padding を定義する。"
+    },
+    {
+      "id": "socket-operation-budget",
+      "label": "Agent socket operation timeout constant",
+      "path": "src/server/agent-socket.ts",
+      "startLine": 32,
+      "endLine": 35,
+      "description": "connect、送信済み operation、takeover、idle request の既定 timeout を定義する。"
+    },
+    {
+      "id": "reused-handler",
+      "label": "既存 runtime の two-phase openViewer handler",
+      "path": "src/cli/main.ts",
+      "startLine": 462,
+      "endLine": 500,
+      "description": "PR 解決前に reserve、成功後に arm、URL への lease 付与、失敗時 cancel を一つの handler で順序付ける。"
+    },
+    {
+      "id": "reservation-lifecycle",
+      "label": "operation / startup reservation と heartbeat transfer",
+      "path": "src/server/viewer-lifecycle.ts",
+      "startLine": 1,
+      "endLine": 96,
+      "description": "opening には deadline を置かず、arm 時に startup deadline を作り、heartbeat で pending を active viewer に移す。close は全 pending を clear し、その後の cancel は no-op になる。"
+    },
+    {
+      "id": "reservation-scheduler",
+      "label": "opening を期限切れ対象にしない scheduler",
+      "path": "src/server/viewer-lifecycle.ts",
+      "startLine": 98,
+      "endLine": 124,
+      "description": "pending があれば empty shutdown を避けつつ、activity deadline には startup phase だけを採用する。"
+    },
+    {
+      "id": "browser-session",
+      "label": "URL lease を初回 heartbeat header へ渡す browser session",
+      "path": "src/web/viewer-session.ts",
+      "startLine": 9,
+      "endLine": 27,
+      "description": "viewerLease query を履歴から除去しつつ保存し、viewer ID とともに request header へ付ける。"
+    },
+    {
+      "id": "heartbeat-endpoint",
+      "label": "viewer heartbeat の server endpoint",
+      "path": "src/server/app.ts",
+      "startLine": 159,
+      "endLine": 168,
+      "description": "検証済み viewer ID と optional open lease を ViewerLifecycle.heartbeat へ渡す。"
+    },
+    {
+      "id": "slow-resolution-test",
+      "label": "PR 解決中は reservation を expire しない fake timer test",
+      "path": "test/unit/viewer-lifecycle.test.ts",
+      "startLine": 139,
+      "endLine": 159,
+      "description": "startup timeout の 100 倍待っても arm 前は pending を保持し、arm 後からだけ期限を数える。"
+    }
+  ]
+}

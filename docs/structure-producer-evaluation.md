@@ -1,5 +1,77 @@
 # Structure producer evaluation
 
+## PR-scoped file-map evaluation (2026-09-08)
+
+This section evaluates the new file-map authoring role without changing the Structure schema or
+publishing into a reviewer environment. The implementation baseline was
+`2a2d9dcd4da7b227db4ebc71f297a1e45ba86787`. The first implementation fixtures were authored with:
+
+- `skills/rvw-structure/SKILL.md` Git blob
+  `e1dd9c60f72180da1a8dbe0142f1e47dd70a1390`
+- `skills/rvw-structure/references/structure-authoring.md` Git blob
+  `6c25d6dbe2dab38be8703f32c840d0439df1770a`
+
+After audit, the Skill clarified that a file map rejects a _generic repository-wide_ responsibility
+inventory, not its own PR-scoped responsibility descriptions. A fresh singleton rerun and the PR #24
+independent-area audit re-read the resulting final content:
+
+- `skills/rvw-structure/SKILL.md` Git-compatible content blob
+  `f8cf78e287d6824c869ea3e5be4353cbd0d20bd7`
+- `skills/rvw-structure/references/structure-authoring.md` Git blob
+  `6c25d6dbe2dab38be8703f32c840d0439df1770a`
+
+The earlier fixtures remain exact-source examples and automated regression inputs; they are not
+relabeled as fresh producer generations under the final Skill blob.
+
+The principal examples use main-line commit
+`f9416d959dbb79f95dd75d96bafeb6156155f5c8` (`Add adaptive review composition skill (#76)`) so
+their anchors remain inspectable from the current history:
+
+- [PR file map](examples/structures/review-composition-file-map.json) asks where the bounded
+  composer/producer handoff is implemented. Each Node is one repository file with a file-level anchor;
+  the unchanged `src/cli/main.ts` is included because it constructs the Skill installer that exposes
+  install/status, while unrelated changed metadata, release notes, and evaluation surfaces are named as
+  exclusions rather than silently omitted. Every Edge has a specific use, verification, or distribution
+  anchor. The map does not claim complete impact coverage.
+- [Behavior/authority Structure](examples/structures/review-composition-authority.json) asks who owns
+  scope, independent semantic verification, representation rejection, and recomposition. It deliberately
+  uses several responsibility Nodes in the same files at exact line ranges. This is independently useful
+  from, and cannot substitute for, the physical file map.
+- [Single-file map](examples/structures/single-file-map.json) uses main-line commit
+  `eb28386c007eb77b9028e720b5b1532013a8f0bb` and represents a documentation-only change as one real
+  file, zero Edges, and `presentation: null`. It does not invent a runtime entrypoint, dependency,
+  backbone, or Region. A fresh context using the final blob independently re-derived this shape,
+  validated the one changed path against its first parent, and passed content schema and CLI preview.
+- [Watch acknowledgement map](examples/structures/pr24-watch-batch-file-map.json) and
+  [reply-draft map](examples/structures/pr24-reply-draft-file-map.json) use the same PR #24 head
+  `0f43f131b70d227dbd76bec7d07218e3395ad442` but share no represented file or relation. The first maps
+  batch-operation state, its unchanged auto-ack consumer, the Skill contract, and focused tests. The
+  second maps the client draft owner, unchanged change-sequence/render/reset consumers, and focused tests. Direct
+  source inspection found no material implementation dependency joining the two; broad documentation
+  and compact CI-history mechanics remain explicit direct-code boundaries.
+
+Automated example checks parsed all five values with the production protocol-v5 schema, required each
+`sourceOid` to resolve to a commit in the local Git object store, read every path from the named Git object, checked every line
+range, enforced one unique file-level path per file-map Node, required specific Edge evidence, and
+distinguished the behavior Structure's finer-grained Nodes. The built CLI preview accepted both
+implementation multi-file Structures without warnings. It accepted both PR #24 maps and the singleton
+with the expected diagnostic that a zero-outgoing origin needs a role-aware verification check; that
+warning did not cause a fabricated Edge. The preview outputs were five columns / three rows for the
+composition file map, four / two for the authority Structure, and one / one for the singleton. After the
+reply-draft map gained one verified App-to-viewer wiring Edge during final audit, the two PR #24 results
+were three columns / three rows and four columns / three rows respectively.
+
+These checks establish schema validity, exact source coordinates, the authored example invariants, and
+projection compatibility. They do not mechanically prove that each responsibility sentence or Edge
+predicate is the best semantic account of the source; those claims were reviewed qualitatively against
+the cited code. The PR #24 pair was authored as separate content candidates in one audit context, not as
+two installed-host producer invocations. No installed-host producer activation, existing-Artifact
+discovery/update, publication, URI readback, or human Viewer interaction was performed for these
+examples. Historical behavior-only producer trials remain below and are not evidence for this
+instruction revision.
+
+## Historical behavior-Structure trial
+
 This record captures the production authoring trial performed while implementing Structure. The
 examples were authored from a fresh inspection of repository commit
 `e1702ec717f2c9eae88ab9debd63a7a8e7e70864`; they were not copied from the Phase 0 spike fixtures.

@@ -1,4 +1,4 @@
 interface:
   display_name: "rvw Review Compose"
-  short_description: "Minimize total review comprehension cost"
-  default_prompt: "Use $rvw-review-compose to analyze this Pull Request and produce only the rvw review surfaces that materially lower total comprehension cost."
+  short_description: "Compose a PR file map and adaptive review paths"
+  default_prompt: "Use $rvw-review-compose to analyze this Pull Request and recommend its required PR-scoped file responsibility and dependency map plus only the additional rvw review surfaces that materially lower total comprehension cost; produce Artifacts only when I explicitly request production."

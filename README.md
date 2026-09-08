@@ -152,12 +152,21 @@ lineを誤適用せずlatest全文を表示します。fallbackでは、同じfi
 
 Walkthrough本文のinline referenceとMermaid node linkは維持しますが、同じ参照を横や下へ列挙する
 `Code references` indexとsidebar上の参照件数は表示しません。そのため、本文linkと、本文中に実在する
-flowchart/classDiagram nodeへのMermaid bindingのどちらからも使われないreferenceはpublish/update時に
+対応済みnode-like elementへのMermaid bindingのどちらからも使われないreferenceはpublish/update時に
 拒否します。存在しないnode名だけをbindingへ宣言しても使用済みにはなりません。
 
 Mermaidの描画はflowchartだけに限定せず、class、sequence、state、ERなどbundled Mermaidが対応する
-記法を受け付けます。code referenceとの要素bindingはflowchartとclass diagramをE2Eで保証し、
-SVG上の要素構造が異なる他の記法は描画とinteractionを分けて扱います。
+記法を受け付けます。code referenceとの要素bindingはflowchart node、class、sequence participant / actor、
+state、ER entity、architecture serviceをE2Eで保証します。message、transition、relationship、architecture
+edge / groupなどのedge-like elementはbindingできないため、そのclaimの根拠は図の近くのinline referenceで
+開けるようにします。binding IDはWalkthrough全体で共有され、別sourceを開く複数図では別IDを使います。
+
+authoringの既定は、具体的な状況と最初のcode入口から始め、一つの問いに必要な小さな説明を得てsourceで
+確かめ、何が分かったかを責務・状態・条件・結果へ位置付け、次の探索理由へつなぐ読解pathです。複数の主体、
+状態、順序、分岐を文章だけから組み立て直す必要がある場合、Mermaidを標準的に使います。flowchartは分岐、
+stateDiagram-v2はstate / lifecycle、sequenceDiagramはinteraction / async順序というように中心の問いから
+図法を選び、必要になった地点へ一問一図の小さな図を置きます。小さな定数や局所条件は図なしの方が明快です。
+図の矢印、状態、順序もsourceについてのclaimであり、renderやbinding成功だけで意味の正しさは保証されません。
 
 これはin-app AI chatではありません。説明と図はAgentのclaimで、commit済みcodeが検証対象の正本です。
 Walkthroughにはローカルな版履歴を持たせません。説明全体へのfeedbackはstableなWalkthrough IDへ残るため、
@@ -168,12 +177,15 @@ Agentは現在内容を読み、同じ`rvw://walkthrough/<uuid>`を更新して�
 ## codeの関係を空間として検証する
 
 外部Agentは単一Artifact producerである`rvw-structure` SkillとCLIを使い、PRに関係する一つのboundedな
-behaviorをfactualなcode entrypointからdependency、contract、side effectへ辿る空間として提示できます。
+behavior / review questionをfactualなcode entrypointからdependency、contract、side effectへ辿る空間、
+またはPRを理解するためのfile responsibility / dependency mapを提示できます。ファイル地図では実在する
+repository fileを1 Nodeずつfile-level anchorへ結び、Edgeを具体的なsource evidenceで検証します。
 thesis、最初に見るNode、必要な場合だけ2〜12 Node / 1〜16 Edgeのconnected exact-relation backbone、
-stable IDと責務summaryを持つcomprehension regionで説明の意図を表せます。artifactは一つのbounded behaviorに必要な
-relationを保持し、Viewerはstableな全体像とfocus-relativeな局所lensを往復します。正直なspatial organizerがない場合も、意味のある
+stable IDと責務summaryを持つcomprehension regionで説明の意図を表せます。artifactは一つのbounded behavior、
+review question、またはfile relation setに必要なrelationを保持し、Viewerはstableな全体像とfocus-relativeな
+局所lensを往復します。正直なspatial organizerがない場合も、意味のある
 thesisとattention startだけを提示できます。順序とprose自体がartifactならWalkthroughです。
-entrypointを置けない静的なarchitecture／責務inventoryはStructureへ広げません。
+PRへ接地しない静的なarchitecture／責務inventoryやrepository全体のimport graphへは広げません。
 
 ```bash
 rvw structure preview --stdin --json
@@ -183,7 +195,7 @@ rvw structure update rvw://structure/<uuid> --stdin --json
 rvw structure delete rvw://structure/<uuid> --json
 ```
 
-Structureは一つのexact `sourceOid`、宣言されたtitle / scope、entrypoint、stableなNode / Edge ID、required nullableな
+Structureは一つのexact `sourceOid`、宣言されたtitle / scope、roleに合うorigin、stableなNode / Edge ID、required nullableな
 `presentation`からなります。presentationはraw座標ではなく、thesis、authorialなattention start、exact factual
 Edgeのunordered setからなる一つのoptionalなconnected primary backbone、stable ID / label / 責務summary /
 重複しないNode membershipを持つcomprehension regionからなるauthorial semanticsです。backboneもregionも持たないstart-only presentationは、
@@ -293,11 +305,14 @@ rvw-review-compose Skillを使って、https://github.com/owner/repository/pull/
 Walkthrough / Structureをおすすめの構成で作ってください。
 ```
 
-composerはcommit済みcodeと周辺contextを調査し、一度に内部化する概念を減らす最小構成を選びます。順序や
-lifecycleが本体ならWalkthrough、ownershipやdependencyが本体ならStructure、局所的な分岐や実装詳細なら
-Artifactを作らずcodeを直接読む入口を示します。WalkthroughとStructureを常に一組にせず、固定のoverviewや
-section templateも要求しません。作成後は通常のAgent responseで、構成理由、推奨される最初の入口、作成または
-更新したURI、意図的に直接code readingへ残した論点を返します。このresponseとcomposer内部の理解単位やbriefは
+composerはcommit済みcodeと周辺contextを調査します。PR全体のdefault compositionでは、変更を理解するために
+必要な実在fileの責務と具体的な依存を示すファイル地図Structureを必ず含め、その制約内で総理解コストを
+最小化します。小さなPRなら1 Node / 0 Edgeの地図と直接code readingだけで構いません。意味のあるbehavior
+changeには原則Walkthroughを選び、ownership、state authority、contract等の関係理解に独立した価値があれば、
+ファイル地図とは別の通常Structureも選びます。Walkthroughと通常Structureを常に一組にせず、固定の3 Artifact、
+overview、section template、reading orderも要求しません。recommendation-onlyでは必須地図も未作成briefに留まり、
+権限やtransportが足りなければ未達理由を返します。作成後は通常のAgent responseで、構成理由、推奨される最初の入口、作成または
+更新したURI、ファイル地図に含めた／除外した範囲、意図的に直接code readingへ残した論点を返します。このresponseとcomposer内部の理解単位やbriefは
 永続Artifactではなく、厳密なreview完了planでもありません。ReviewerはWalkthrough、Structure、codeのどこからでも
 入り直せます。
 
@@ -317,14 +332,16 @@ representation rejectionは残ります。
 Walkthrough全体へのコメントから説明を改善する場合は、現在内容を取得して同じURIを更新し、重複した
 「改訂版」を追加しません。
 
-Structureを作る場合は、behavior、entrypoint、scope、含める／除外する関係と、必要なら伝えたいthesis、
+Structureを作る場合は、通常Structureかファイル地図か、behavior / review question、roleに合うorigin候補、scope、含める／除外する関係と、必要なら伝えたいthesis、
 最初に見るNode、connectedなexact factual relation setのprimary backbone、regionを伝えて`rvw-structure` Skillを使います。
-Skillは上位composerを含む明示briefを調査boundaryのauthorityとして一つのbounded behaviorだけを扱い、suggested
-entrypointやrelationを実際のcommit済みcodeから再検証して、labelではなくclaimのidentityとしてstable IDを割り当てます。
+Skillは上位composerを含む明示briefを調査boundaryのauthorityとして一つのbounded mapだけを扱い、suggested
+originやrelationを実際のcommit済みcodeから再検証して、labelではなくclaimのidentityとしてstable IDを割り当てます。
+通常Structureはresponsibility等をcode-level Nodeへ分けられます。ファイル地図は同一pathを分割せず、複数fileを
+まとめず、全Nodeをfile-level anchorへ置きます。独立領域を架空Edgeで結ばず、必要ならcomposerが別地図を判断します。
 PR全体の構成や別behaviorのArtifactは自律的に増やしません。順序とprose自体が本質ならWalkthroughを提案し、
-Structureを一本道のstepperにせず、静的なarchitecture inventoryも作らないrepresentation rejectionは残ります。
+Structureを一本道のstepperにせず、genericな静的architecture inventoryも作らないrepresentation rejectionは残ります。
 producer authoringの実地評価は
-[Structure producer evaluation](docs/structure-producer-evaluation.md)、composition判断のfresh-context評価は
+[Structure producer evaluation](docs/structure-producer-evaluation.md)、[Walkthrough producer evaluation](docs/walkthrough-producer-evaluation.md)、composition判断のfresh-context評価は
 [Review composition decision evaluation](docs/review-composition-evaluation.md)に記録しています。
 
 新規root commentとreplyを継続監視する場合は`rvw-watch-comments` Skillを起動します。全登録PRを

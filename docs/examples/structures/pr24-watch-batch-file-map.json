@@ -1,0 +1,133 @@
+{
+  "sourceOid": "0f43f131b70d227dbd76bec7d07218e3395ad442",
+  "title": "Watch acknowledgements stay with their claimed batch",
+  "scope": "The watch-task contract, acknowledgement bridge, durable batch state, and focused unit verification needed to review per-batch status posts and legacy unfinished-state migration; driver intake and final-outcome processing are excluded. The independent browser reply-draft area is handled by a separate map; PR-wide documentation and the compact CI-history change are left to direct code rather than joined by a same-PR relation.",
+  "originNodeId": "watch-state",
+  "presentation": {
+    "thesis": "Each acknowledgement is recorded on the operation for its claimed batch, while migration carries an unfinished legacy status post only to the applicable batch.",
+    "startNodeId": "watch-state",
+    "primaryBackbone": {
+      "edgeIds": [
+        "auto-ack-claims-and-records-state",
+        "watch-script-tests-auto-ack",
+        "watch-state-test-verifies-batch-migration"
+      ]
+    },
+    "regions": []
+  },
+  "nodes": [
+    {
+      "id": "watch-state",
+      "label": "watch-state.mjs",
+      "description": "Owns batch-scoped acknowledgement operations and migrates unfinished legacy status posts into them.",
+      "anchor": {
+        "path": "skills/rvw-watch-comments/scripts/watch-state.mjs"
+      }
+    },
+    {
+      "id": "auto-ack",
+      "label": "auto-ack.mjs",
+      "description": "Claims a batch, creates or restores each operation acknowledgement, and records its returned post ID.",
+      "anchor": {
+        "path": "skills/rvw-watch-comments/scripts/auto-ack.mjs"
+      }
+    },
+    {
+      "id": "watch-contract",
+      "label": "rvw-watch-comments/SKILL.md",
+      "description": "Defines the operator contract that later batches create a new acknowledgement instead of editing a prior final reply.",
+      "anchor": {
+        "path": "skills/rvw-watch-comments/SKILL.md"
+      }
+    },
+    {
+      "id": "watch-state-test",
+      "label": "watch-state-script.test.ts",
+      "description": "Verifies follow-up batch keys and recovery migration of unfinished thread-scoped legacy state.",
+      "anchor": {
+        "path": "test/unit/watch-state-script.test.ts"
+      }
+    },
+    {
+      "id": "watch-script-test",
+      "label": "watch-scripts.test.ts",
+      "description": "Verifies auto-ack creates a second status post for a follow-up batch on the same thread.",
+      "anchor": {
+        "path": "test/unit/watch-scripts.test.ts"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "auto-ack-claims-and-records-state",
+      "from": "auto-ack",
+      "to": "watch-state",
+      "label": "claims and records operations",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-watch-comments/scripts/auto-ack.mjs",
+          "startLine": 36,
+          "endLine": 61
+        },
+        {
+          "path": "skills/rvw-watch-comments/scripts/auto-ack.mjs",
+          "startLine": 96,
+          "endLine": 145
+        },
+        {
+          "path": "skills/rvw-watch-comments/scripts/auto-ack.mjs",
+          "startLine": 155,
+          "endLine": 171
+        }
+      ]
+    },
+    {
+      "id": "watch-contract-invokes-auto-ack",
+      "from": "watch-contract",
+      "to": "auto-ack",
+      "label": "invokes acknowledgement script",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-watch-comments/SKILL.md",
+          "startLine": 113,
+          "endLine": 132
+        }
+      ]
+    },
+    {
+      "id": "watch-script-tests-auto-ack",
+      "from": "watch-script-test",
+      "to": "auto-ack",
+      "label": "tests follow-up acknowledgement",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/unit/watch-scripts.test.ts",
+          "startLine": 154,
+          "endLine": 232
+        }
+      ]
+    },
+    {
+      "id": "watch-state-test-verifies-batch-migration",
+      "from": "watch-state-test",
+      "to": "watch-state",
+      "label": "tests batch migration",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/unit/watch-state-script.test.ts",
+          "startLine": 110,
+          "endLine": 280
+        },
+        {
+          "path": "test/unit/watch-state-script.test.ts",
+          "startLine": 348,
+          "endLine": 405
+        }
+      ]
+    }
+  ]
+}

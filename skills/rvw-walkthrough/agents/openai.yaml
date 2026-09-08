@@ -1,4 +1,4 @@
 interface:
   display_name: "rvw Walkthrough"
-  short_description: "Publish one verifiable implementation reading path"
-  default_prompt: "Use $rvw-walkthrough to publish one bounded source-anchored implementation walkthrough in rvw."
+  short_description: "Manage one verifiable implementation reading path"
+  default_prompt: "Use $rvw-walkthrough to read or manage one bounded source-anchored implementation walkthrough that builds understanding through concrete code."

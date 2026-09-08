@@ -1,11 +1,15 @@
 ---
 name: rvw
-description: Create, inspect, address, reply to, edit, resolve, reopen, and synchronize rvw review comments through the local rvw CLI. Use when a request asks an Agent to record review findings in rvw, contains rvw://comment references, asks to handle feedback recorded in rvw, or asks to synchronize rvw after pushed changes. Do not use this Skill to publish implementation walkthroughs; use rvw-walkthrough for that task.
+description: Create, inspect, address, reply to, edit, resolve, reopen, and synchronize rvw review comments through the local rvw CLI. Use when a request asks an Agent to record review findings in rvw, contains rvw://comment references, asks to handle feedback recorded in rvw, or asks to synchronize rvw after pushed changes. Use rvw-review-compose for a whole-review reading composition and the rvw-walkthrough or rvw-structure producer for one explicitly bounded explanation Artifact.
 ---
 
 # rvw review comments
 
 Use only the `rvw` CLI protocol to access rvw state. Never read or edit the SQLite database directly. Require a local Agent with access to the saved repository. A running rvw viewer can provide database access through its user-only Unix socket; require direct rvw data-directory access only when that route is unavailable. Do not guess comment contents when required access is unavailable.
+
+This Skill owns review-comment work, not explanatory Artifact composition. Route a Pull Request-wide
+request for a reading composition to `rvw-review-compose`; route one explicitly bounded Walkthrough or
+Structure to `rvw-walkthrough` or `rvw-structure` respectively.
 
 ## Preflight
 

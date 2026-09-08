@@ -1,0 +1,321 @@
+{
+  "sourceOid": "f9416d959dbb79f95dd75d96bafeb6156155f5c8",
+  "title": "Review-composition contract file map",
+  "scope": "The authoring-handoff area of commit f9416d9: the composer and producer Skill entrypoints, their authoring references, the normative implementation specification, the static contract test, the installer that makes the canonical Skills discoverable, and the unchanged CLI consumer that exposes install/status. Agent metadata, README, changelog, architecture, CLI protocol, compatibility, decisions, package-smoke, installer tests, protocol tests, and evaluation documents are explicitly outside this map because they expose, restate, package-test, or evaluate the bounded handoff rather than own it. Their local assertions, installer copy/conflict internals, and operation-specific publication remain direct-code topics; this is not a complete changed-file or impact inventory.",
+  "originNodeId": "composer-skill-file",
+  "presentation": {
+    "thesis": "The composer contract delegates one-Artifact verification to two producer contracts; specification and tests constrain that policy, while the installer and its unchanged CLI consumer make the three Skill entrypoints available to supported hosts.",
+    "startNodeId": "composer-skill-file",
+    "primaryBackbone": {
+      "edgeIds": [
+        "composer-activates-structure",
+        "composer-activates-walkthrough",
+        "composer-loads-reference",
+        "installer-discovers-composer",
+        "spec-defines-composer",
+        "structure-loads-authoring",
+        "tests-assert-composer",
+        "walkthrough-loads-authoring"
+      ]
+    },
+    "regions": [
+      {
+        "id": "assurance-and-distribution",
+        "label": "Assurance and distribution",
+        "summary": "Locks key textual invariants and exposes the canonical Skill entrypoints outside the source checkout.",
+        "nodeIds": ["cli-skill-command-file", "skill-contract-test-file", "skill-installer-file"]
+      },
+      {
+        "id": "composition-contract",
+        "label": "Composition contract",
+        "summary": "Owns PR-wide surface selection, producer handoff, and whole-composition feedback.",
+        "nodeIds": ["composer-skill-file", "composition-reference-file"]
+      },
+      {
+        "id": "normative-source",
+        "label": "Normative source",
+        "summary": "Owns the product-level contract that the bundled Skills must implement.",
+        "nodeIds": ["implementation-spec-file"]
+      },
+      {
+        "id": "producer-contracts",
+        "label": "Producer contracts",
+        "summary": "Own one ordered Walkthrough or one relationship Structure and independently verify candidate claims.",
+        "nodeIds": [
+          "structure-authoring-file",
+          "structure-skill-file",
+          "walkthrough-authoring-file",
+          "walkthrough-skill-file"
+        ]
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "composer-skill-file",
+      "label": "rvw-review-compose/SKILL.md",
+      "description": "Owns PR-wide composition, native producer activation, and feedback into recomposition for this change.",
+      "anchor": { "path": "skills/rvw-review-compose/SKILL.md" }
+    },
+    {
+      "id": "composition-reference-file",
+      "label": "review-composition.md",
+      "description": "Defines the detailed surface-choice, brief-authority, claim-verification, and overlap rules used by the composer.",
+      "anchor": {
+        "path": "skills/rvw-review-compose/references/review-composition.md"
+      }
+    },
+    {
+      "id": "walkthrough-skill-file",
+      "label": "rvw-walkthrough/SKILL.md",
+      "description": "Owns one ordered reading path and the independent verification boundary for Walkthrough claims.",
+      "anchor": { "path": "skills/rvw-walkthrough/SKILL.md" }
+    },
+    {
+      "id": "walkthrough-authoring-file",
+      "label": "walkthrough-authoring.md",
+      "description": "Supplies the source-grounded authoring defaults for the selected Walkthrough producer.",
+      "anchor": {
+        "path": "skills/rvw-walkthrough/references/walkthrough-authoring.md"
+      }
+    },
+    {
+      "id": "structure-skill-file",
+      "label": "rvw-structure/SKILL.md",
+      "description": "Owns one bounded relationship space and the independent verification boundary for Structure claims.",
+      "anchor": { "path": "skills/rvw-structure/SKILL.md" }
+    },
+    {
+      "id": "structure-authoring-file",
+      "label": "structure-authoring.md",
+      "description": "Supplies the source-grounded node, edge, anchor, and representation defaults for the Structure producer.",
+      "anchor": {
+        "path": "skills/rvw-structure/references/structure-authoring.md"
+      }
+    },
+    {
+      "id": "implementation-spec-file",
+      "label": "docs/implementation-spec.md",
+      "description": "States the product-level composer, producer, authority, and native-activation contract implemented by the Skills.",
+      "anchor": { "path": "docs/implementation-spec.md" }
+    },
+    {
+      "id": "skill-contract-test-file",
+      "label": "test/unit/skill-contracts.test.ts",
+      "description": "Statically asserts adaptive composition and the composer-to-producer authority and verification boundaries.",
+      "anchor": { "path": "test/unit/skill-contracts.test.ts" }
+    },
+    {
+      "id": "cli-skill-command-file",
+      "label": "src/cli/main.ts",
+      "description": "Unchanged consumer that exposes Skill install/status and constructs the installer used to distribute the new composer entrypoint.",
+      "anchor": { "path": "src/cli/main.ts" }
+    },
+    {
+      "id": "skill-installer-file",
+      "label": "src/infrastructure/skills/skill-installer.ts",
+      "description": "Adds the composer to the canonical Skill set and discovers every composer/producer entrypoint from the package root.",
+      "anchor": { "path": "src/infrastructure/skills/skill-installer.ts" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "spec-defines-composer",
+      "from": "implementation-spec-file",
+      "to": "composer-skill-file",
+      "label": "defines contract for",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "docs/implementation-spec.md",
+          "startLine": 1965,
+          "endLine": 1991
+        }
+      ]
+    },
+    {
+      "id": "composer-loads-reference",
+      "from": "composer-skill-file",
+      "to": "composition-reference-file",
+      "label": "requires reading",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-review-compose/SKILL.md",
+          "startLine": 22,
+          "endLine": 23
+        }
+      ]
+    },
+    {
+      "id": "composer-activates-walkthrough",
+      "from": "composer-skill-file",
+      "to": "walkthrough-skill-file",
+      "label": "activates for one Walkthrough",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-review-compose/SKILL.md",
+          "startLine": 65,
+          "endLine": 73
+        }
+      ]
+    },
+    {
+      "id": "composer-activates-structure",
+      "from": "composer-skill-file",
+      "to": "structure-skill-file",
+      "label": "activates for one Structure",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-review-compose/SKILL.md",
+          "startLine": 65,
+          "endLine": 73
+        }
+      ]
+    },
+    {
+      "id": "walkthrough-loads-authoring",
+      "from": "walkthrough-skill-file",
+      "to": "walkthrough-authoring-file",
+      "label": "loads authoring defaults from",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-walkthrough/SKILL.md",
+          "startLine": 69,
+          "endLine": 75
+        }
+      ]
+    },
+    {
+      "id": "structure-loads-authoring",
+      "from": "structure-skill-file",
+      "to": "structure-authoring-file",
+      "label": "loads authoring contract from",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-structure/SKILL.md",
+          "startLine": 73,
+          "endLine": 78
+        }
+      ]
+    },
+    {
+      "id": "cli-constructs-installer",
+      "from": "cli-skill-command-file",
+      "to": "skill-installer-file",
+      "label": "constructs for install/status",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "src/cli/main.ts",
+          "startLine": 1569,
+          "endLine": 1604
+        }
+      ]
+    },
+    {
+      "id": "installer-discovers-composer",
+      "from": "skill-installer-file",
+      "to": "composer-skill-file",
+      "label": "requires bundled entrypoint",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "src/infrastructure/skills/skill-installer.ts",
+          "startLine": 20,
+          "endLine": 30
+        },
+        {
+          "path": "src/infrastructure/skills/skill-installer.ts",
+          "startLine": 146,
+          "endLine": 156
+        }
+      ]
+    },
+    {
+      "id": "tests-assert-composer",
+      "from": "skill-contract-test-file",
+      "to": "composer-skill-file",
+      "label": "asserts composition boundary in",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 6,
+          "endLine": 7
+        },
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 88,
+          "endLine": 104
+        },
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 152,
+          "endLine": 159
+        }
+      ]
+    },
+    {
+      "id": "tests-assert-composition-reference",
+      "from": "skill-contract-test-file",
+      "to": "composition-reference-file",
+      "label": "asserts evidence boundary in",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 10,
+          "endLine": 13
+        },
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 160,
+          "endLine": 166
+        }
+      ]
+    },
+    {
+      "id": "tests-assert-walkthrough",
+      "from": "skill-contract-test-file",
+      "to": "walkthrough-skill-file",
+      "label": "asserts producer verification in",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 8,
+          "endLine": 8
+        },
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 191,
+          "endLine": 204
+        }
+      ]
+    },
+    {
+      "id": "tests-assert-structure",
+      "from": "skill-contract-test-file",
+      "to": "structure-skill-file",
+      "label": "asserts producer verification in",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 9,
+          "endLine": 9
+        },
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 191,
+          "endLine": 207
+        }
+      ]
+    }
+  ]
+}

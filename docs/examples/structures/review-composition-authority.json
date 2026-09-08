@@ -1,0 +1,253 @@
+{
+  "sourceOid": "f9416d959dbb79f95dd75d96bafeb6156155f5c8",
+  "title": "Composition authority and verification boundary",
+  "scope": "The responsibility, authoring-authority, independent-verification, and feedback relations for one rvw-review-compose producer handoff at commit f9416d9. Physical file ownership belongs to the companion file map; the reviewer's verification order belongs to the companion Walkthrough. Operation-specific CLI preflight, transport, publication, update, delete, and installer internals are excluded for direct code reading.",
+  "originNodeId": "composer-brief",
+  "presentation": {
+    "thesis": "The composer owns the review question and scope, the selected producer owns source-grounded representation, and unsupported essential claims return to composition instead of becoming facts.",
+    "startNodeId": "composer-brief",
+    "primaryBackbone": {
+      "edgeIds": [
+        "brief-authorizes-walkthrough",
+        "handoff-loads-walkthrough",
+        "walkthrough-returns-recomposition"
+      ]
+    },
+    "regions": [
+      {
+        "id": "composer-responsibilities",
+        "label": "Composer responsibilities",
+        "summary": "Bounds the question, activates one native producer, and reconsiders the composition after feedback.",
+        "nodeIds": ["composer-brief", "native-handoff", "recomposition"]
+      },
+      {
+        "id": "producer-responsibilities",
+        "label": "Producer responsibilities",
+        "summary": "Independently verifies candidate claims and preserves each Artifact's representation boundary.",
+        "nodeIds": ["structure-verifier", "walkthrough-verifier"]
+      },
+      {
+        "id": "static-verification",
+        "label": "Static verification",
+        "summary": "Protects the textual authority and verification boundary without exercising publication.",
+        "nodeIds": ["contract-guard"]
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "composer-brief",
+      "label": "Composer brief boundary",
+      "description": "Selects one question, scope, and exclusions while keeping implementation assertions as claims to verify.",
+      "notation": "concept",
+      "anchor": {
+        "path": "skills/rvw-review-compose/SKILL.md",
+        "startLine": 59,
+        "endLine": 63
+      }
+    },
+    {
+      "id": "native-handoff",
+      "label": "Native producer handoff",
+      "description": "Activates the selected installed sibling and loads that producer's complete contract.",
+      "notation": "interface",
+      "anchor": {
+        "path": "skills/rvw-review-compose/SKILL.md",
+        "startLine": 65,
+        "endLine": 78
+      }
+    },
+    {
+      "id": "walkthrough-verifier",
+      "label": "Walkthrough claim verifier",
+      "description": "Owns one ordered path, verifies candidate claims, and refuses an essential contradiction that changes its boundary.",
+      "notation": "component",
+      "anchor": {
+        "path": "skills/rvw-walkthrough/SKILL.md",
+        "startLine": 20,
+        "endLine": 32
+      }
+    },
+    {
+      "id": "structure-verifier",
+      "label": "Structure claim verifier",
+      "description": "Owns one relationship space, verifies candidate origins and relations, and refuses an essential contradiction that changes its boundary.",
+      "notation": "component",
+      "anchor": {
+        "path": "skills/rvw-structure/SKILL.md",
+        "startLine": 23,
+        "endLine": 35
+      }
+    },
+    {
+      "id": "recomposition",
+      "label": "Composition feedback",
+      "description": "Revises the brief, selects a better surface, or sends the reviewer to code after producer rejection or conflict.",
+      "notation": "plain",
+      "anchor": {
+        "path": "skills/rvw-review-compose/SKILL.md",
+        "startLine": 80,
+        "endLine": 88
+      }
+    },
+    {
+      "id": "contract-guard",
+      "label": "Text contract guard",
+      "description": "Asserts that authoring bounds do not become semantic proof and that producers retain independent verification.",
+      "notation": "plain",
+      "anchor": {
+        "path": "test/unit/skill-contracts.test.ts",
+        "startLine": 152,
+        "endLine": 207
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "brief-authorizes-walkthrough",
+      "from": "composer-brief",
+      "to": "walkthrough-verifier",
+      "label": "authorizes scope; requests verification",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-review-compose/SKILL.md",
+          "startLine": 80,
+          "endLine": 83
+        },
+        {
+          "path": "skills/rvw-walkthrough/SKILL.md",
+          "startLine": 20,
+          "endLine": 30
+        }
+      ]
+    },
+    {
+      "id": "brief-authorizes-structure",
+      "from": "composer-brief",
+      "to": "structure-verifier",
+      "label": "authorizes scope; requests verification",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-review-compose/SKILL.md",
+          "startLine": 80,
+          "endLine": 83
+        },
+        {
+          "path": "skills/rvw-structure/SKILL.md",
+          "startLine": 23,
+          "endLine": 33
+        }
+      ]
+    },
+    {
+      "id": "handoff-loads-walkthrough",
+      "from": "native-handoff",
+      "to": "walkthrough-verifier",
+      "label": "loads complete contract for",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-review-compose/SKILL.md",
+          "startLine": 65,
+          "endLine": 73
+        }
+      ]
+    },
+    {
+      "id": "handoff-loads-structure",
+      "from": "native-handoff",
+      "to": "structure-verifier",
+      "label": "loads complete contract for",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-review-compose/SKILL.md",
+          "startLine": 65,
+          "endLine": 73
+        }
+      ]
+    },
+    {
+      "id": "walkthrough-returns-recomposition",
+      "from": "walkthrough-verifier",
+      "to": "recomposition",
+      "label": "returns essential conflict to",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-walkthrough/SKILL.md",
+          "startLine": 27,
+          "endLine": 30
+        },
+        {
+          "path": "skills/rvw-review-compose/SKILL.md",
+          "startLine": 85,
+          "endLine": 88
+        }
+      ]
+    },
+    {
+      "id": "structure-returns-recomposition",
+      "from": "structure-verifier",
+      "to": "recomposition",
+      "label": "returns essential conflict to",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "skills/rvw-structure/SKILL.md",
+          "startLine": 30,
+          "endLine": 33
+        },
+        {
+          "path": "skills/rvw-review-compose/SKILL.md",
+          "startLine": 85,
+          "endLine": 88
+        }
+      ]
+    },
+    {
+      "id": "guard-asserts-brief-boundary",
+      "from": "contract-guard",
+      "to": "composer-brief",
+      "label": "asserts authority split in",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 152,
+          "endLine": 167
+        }
+      ]
+    },
+    {
+      "id": "guard-asserts-walkthrough",
+      "from": "contract-guard",
+      "to": "walkthrough-verifier",
+      "label": "asserts independent verification in",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 191,
+          "endLine": 204
+        }
+      ]
+    },
+    {
+      "id": "guard-asserts-structure",
+      "from": "contract-guard",
+      "to": "structure-verifier",
+      "label": "asserts independent verification in",
+      "directed": true,
+      "anchors": [
+        {
+          "path": "test/unit/skill-contracts.test.ts",
+          "startLine": 191,
+          "endLine": 207
+        }
+      ]
+    }
+  ]
+}

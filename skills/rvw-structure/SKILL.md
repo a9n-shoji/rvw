@@ -1,15 +1,24 @@
 ---
 name: rvw-structure
-description: Read, publish, replace in place, or explicitly delete one source-anchored relationship map with optional authorial spatial presentation through the local rvw CLI. Use when a reviewer needs to inspect the dependencies and side effects around one bounded PR-relevant behavior from a factual code entrypoint. Use rvw-review-compose when the user asks which Walkthroughs or Structures a whole review subject needs. Use rvw-walkthrough when ordered prose and transitions are the explanation, and do not create a Structure for a generic static architecture or responsibility inventory.
+description: Read, publish, replace in place, or explicitly delete one source-anchored relationship map with optional authorial spatial presentation through the local rvw CLI. Use for either one bounded PR-relevant behavior or review question, or one PR-scoped file map whose Nodes are repository files and whose Edges are verified inter-file relations. Use rvw-review-compose when the user asks which Walkthroughs or Structures a whole review subject needs. Use rvw-walkthrough when ordered prose and transitions are the explanation, and do not create a Structure for a generic repository-wide architecture or responsibility inventory.
 ---
 
 # rvw Structure management
 
-Create one review space that lets a human inspect one bounded PR-relevant behavior from a factual code
-entrypoint through the responsibilities, dependencies, contracts, and side effects needed to verify
-it. A Structure is a freely explorable spatial explanation whose complete factual graph remains
-available; a Walkthrough makes
-ordered prose and transitions the artifact. A Structure may name an attention start, emphasize at most
+Create one freely explorable review space in exactly one of these authoring roles:
+
+- A **behavior / review-question Structure** maps one bounded PR-relevant behavior from a factual code
+  entrypoint through the responsibilities, dependencies, contracts, and side effects needed to verify it.
+- A **PR-scoped file map** maps the physical implementation locations needed to understand a declared
+  change scope: one Node is one real repository file, and each Edge is a concrete, source-verifiable
+  relation between two represented files.
+
+Both roles use the existing Structure shape; do not add a role field, Node kind, notation, or other
+public schema to distinguish them. State the selected role and boundary through the title, scope, brief,
+and authored claims. Do not mix file-granularity Nodes with symbol, responsibility, concept, subsystem,
+or whole-PR Nodes in one file map. A Structure is a freely explorable spatial explanation whose complete factual graph remains
+available; a Walkthrough makes ordered prose and transitions the artifact. A Structure may name an
+attention start, emphasize at most
 one connected exact-relation visual backbone of at most 12 derived Nodes and 16 Edges, and identify stable,
 named comprehension Regions with concise responsibility summaries, but it remains freely explorable and
 is never a stepper or autoplay. Region array order is not authorial semantics. A path, hub,
@@ -19,37 +28,51 @@ start-only presentation is valid: topology still supplies the geometry while pre
 overview, initial attention, and initial focus for a new Viewer session. If the clearest
 explanation needs a required reading order because prose between sequential stops, a required ending, or
 route transitions carry the meaning, stop without publishing and recommend `rvw-walkthrough` to the
-requester or upstream composer. Do not create that Walkthrough from this Skill. If there is no defensible
-entrypoint and the result would be a generic static architecture, subsystem catalog, or responsibility
-inventory, do not publish a Structure. These representation rejection boundaries still apply to an
+requester or upstream composer. Do not create that Walkthrough from this Skill. For a behavior map, do
+not publish when there is no defensible factual entrypoint and the result would be a generic static architecture,
+subsystem catalog, or responsibility inventory. In that case, do not publish a Structure.
+A file map does not require one runtime
+entrypoint common to every file, but it must remain grounded in a specific Pull Request or declared
+change scope and may not become a repository-wide architecture diagram, changed-files listing, import
+graph, or generic repository-wide responsibility inventory. These representation rejection boundaries still apply to an
 upstream brief.
 Do not author backbone layers or stages; the Viewer derives visual ranks from the connected relation set.
 
-The request may begin with a behavior or with a selected file, symbol, or changed source. For a
-source-led request, first identify the concrete PR-relevant behavior in which that source participates,
-then find its factual origin and map only that behavior. If the source participates in multiple
-independently triggered behaviors, do not join them and do not publish separate Structures
-autonomously. Follow an explicitly supplied behavior boundary; when none is established, report the
-candidate boundaries to the requester or upstream composer so that they can choose the subject.
+For a behavior / review-question Structure, the request may begin with a behavior or with a selected file,
+symbol, or changed source. For a source-led request, first identify the concrete PR-relevant behavior in
+which that source participates, then find its factual origin and map only that behavior. If the source
+participates in multiple independently triggered behaviors, do not join them and do not publish separate Structures autonomously.
+Follow an explicitly supplied behavior boundary; when none is established,
+report the candidate boundaries to the requester or upstream composer so that they can choose the subject.
 
-This Skill produces, updates, or deletes at most one Structure for the requested behavior. When an
+For a file map, investigate the changed files and the unchanged callers, consumers, dependencies, type or
+contract definitions, state owners, wiring, configuration, tests, migrations, and documents needed to
+understand the declared change. Include only files whose PR-specific responsibility or relation matters to
+that understanding. Do not mechanically include every changed file or exclude a file because of its
+category, and do not expand to the repository's complete dependency graph. State what the map includes,
+what it intentionally excludes, and what is left to direct code reading. If the relevant files form
+genuinely independent relation sets, do not connect them with a fabricated whole-PR Node or a vague Edge.
+Return the need for separate file-map invocations to the requester or upstream composer. Conversely, do
+not split a map merely to hide a real shared contract or dependency.
+
+This Skill produces, updates, or deletes at most one Structure for the selected role and subject. When an
 Artifact brief from the user, caller, Pull Request body, or an upstream Skill supplies a subject, review
-question, behavior boundary, scope, inclusions, exclusions, emphasis, or requested spatial presentation,
-treat those choices as authoring authority over what this Structure investigates and how it presents
-verified claims. Treat `mustEstablish`, suggested origins,
+question, authoring role, behavior boundary, file-map boundary, scope, inclusions, exclusions, emphasis,
+or requested spatial presentation, treat those choices as authoring authority over what this Structure
+investigates and how it presents verified claims. Treat `mustEstablish`, suggested origins,
 relationships, invariants, and every other implementation assertion as claims to verify independently
 in committed source and tests, not as facts or conclusions to force. The brief does not override source
 exactness or the representation rejection rules above. Inspect broader Pull Request context only as
 evidence, and do not mistake a valid anchor for semantic proof. When source establishes a different
 answer inside the same question and scope, use that answer. When an essential claim or origin is
-unsupported or contradicted and resolving it would materially change the question or boundary, do not
-publish it; report the conflict to the requester or upstream composer. Do not decide the Pull Request's
+unsupported or contradicted and resolving it would materially change the question, role, or boundary, do not publish
+it; report the conflict to the requester or upstream composer. Do not decide the Pull Request's
 Artifact count or Walkthrough / Structure mix, guarantee coverage of other review subjects, or publish
 companion Artifacts.
 
-When invoked directly without an upstream brief, derive one bounded Structure from the user's explicit
-request and verified facts. Standalone Structure creation remains supported. Do not infer product
-intent, invent architectural semantics, or turn related files into an exhaustive map.
+When invoked directly without an upstream brief, derive one bounded Structure in the role established by
+the user's explicit request and verified facts. Standalone Structure creation remains supported. Do not
+infer product intent, invent architectural semantics, or turn related files into an exhaustive map.
 
 Use only the `rvw` CLI protocol. Never access SQLite directly, control the viewer, open a Structure,
 select a node, or claim that publication changed rvw navigation.
@@ -89,8 +112,8 @@ rvw structure list '<PULL_REQUEST>' --json
 
 When authoring or materially revising a Structure, read
 [the Structure authoring contract](references/structure-authoring.md). It defines subject and scope
-selection, stable identities, claims, anchors, spatial presentation, update boundaries, and the internal
-completion check.
+selection for both authoring roles, stable identities, claims, anchors, spatial presentation, update
+boundaries, and the internal completion check.
 
 Prepare one complete JSON value. `sourceOid` is the single coordinate for all node and edge anchors.
 Each node may have zero or one `anchor`; each edge may have zero or more `anchors`. For any anchor,
@@ -117,11 +140,15 @@ an update. Keep `sourceOid`, `title`, `scope`, `originNodeId`, `presentation`, `
 rvw structure preview --stdin --json
 ```
 
-Parse the presentation-independent topology `layout` diagnostics and `warnings`. Treat `maxRows >= 8`,
-`nonForwardDirectionalLinkRatio >= 0.25`, or `originOutgoingDirectionalLinkCount === 0` as authoring
-smells. Reconsider whether the origin is the factual behavior entrypoint, nodes are too granular,
-claims or anchors overlap or nest, multiple behaviors are mixed, the subject boundary is too broad,
-or nodes merely reproduce adjacent source lines.
+Parse the presentation-independent topology `layout` diagnostics and `warnings`. Treat `maxRows >= 8` or
+`nonForwardDirectionalLinkRatio >= 0.25` as authoring smells in either role. For a behavior / review-question
+Structure, also treat `originOutgoingDirectionalLinkCount === 0` as a reason to recheck whether the origin
+is the factual behavior entrypoint. For a file map, the origin identifies where source verification of the
+bounded file relations can begin; it is not promised to be a shared runtime entrypoint or to have an
+outgoing directed relation. A one-file map with no meaningful inter-file relation must contain one Node
+and zero Edges, so that warning is expected and must not cause a dummy dependency, reversed relation, or
+decorative Edge. In all cases reconsider granularity, overlapping claims or anchors, mixed subjects, and
+an over-broad boundary when the other diagnostics expose them.
 
 Preview validates the machine shape, graph-wide invariants, presentation, and derived layout only. It
 does not read `sourceOid` or resolve anchor paths and ranges. Independently confirm every anchor against

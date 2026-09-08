@@ -14,9 +14,11 @@
 変更箇所を入口に選択commit時点のrepository全体へ移動する。コード全文、変更されていないfile、
 検索結果を含む任意の文書へコメントでき、その判断をCodex / Claude Codeへ共通Skill経由で受け渡す。
 Agentが実装やarchitectureを説明する場合は、source commitをanchorに持つWalkthroughとしてcode reference、
-Mermaid図、staticなHTML visualを提示できる。PRに関係するbehaviorをentrypointから周辺relationへ説明する場合は、
-同じくexact sourceを持つStructureとしてstableなnodeとedge、およびoptionalなauthorial spatial presentationを
-提示できる。どの参照をいつ開くかは人間が選び、
+Mermaid図、staticなHTML visualを提示できる。PRに関係するbehaviorをentrypointから周辺relationへ説明する場合、
+またはPRを理解するためのfile responsibility / dependencyを実在file単位で位置付ける場合は、同じくexact sourceを
+持つStructureとしてstableなnodeとedge、およびoptionalなauthorial spatial presentationを提示できる。
+PR全体のdefault review compositionは後者のfile mapを必ず含めるが、それはmandatoryな読解順を意味しない。
+どの参照をいつ開くかは人間が選び、
 rvwの最大二ペインのdocument workspaceで確認する。
 
 diffは変更を見つけるlensであり、レビュー対象の境界ではない。レビュー対象は選択したcommitが作る
@@ -57,7 +59,8 @@ rvwが担うもの:
 - comment postごとのexact commit固定typed code reference
 - 新規comment postのDB-wide event順序、opaque cursor、10秒pollのwatch CLI
 - source commitをanchorに持つAgent Walkthrough、typed code reference、Mermaid図、static HTML visual
-- boundedなPR-relevant behaviorをentrypointから表すAgent Structure、stable Node / Edge ID、source anchor、
+- boundedなPR-relevant behavior / review question、またはPR-scoped file responsibility / dependency mapを表す
+  Agent Structure、stable Node / Edge ID、source anchor、
   optionalなthesis / authorial start / connected exact-Edge primary backbone / identified comprehension region
 - platform非依存の`rvw` / `rvw-review-compose` / `rvw-walkthrough` / `rvw-structure` /
   `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
@@ -99,11 +102,15 @@ Git ref、full source OID、comment target、SQLite IDは必要なprotocol以外
 `Pull Request.md`は実装が満たそうとする意図、CommitとCommit rangeは実装が変化した順序、Codeは
 選択commitが作るsoftware、diffはそのsoftwareで変更された場所を示す。Commentは人間の理解から
 生じた質問、修正要求、確認結果をsoftwareの具体的な位置へ結び、Agentとの次の協業単位になる。
-WalkthroughはAgentが説明として提示する読み物であり、事実の正本ではない。人間はinline referenceや
+WalkthroughはAgentが説明として提示する読み物であり、事実の正本ではない。具体的な問いとcode入口から
+小さな説明、必要なら問いに合う図、source確認、局所的な理解更新、次の問いへ進めるようauthoringする。
+人間はinline referenceや
 diagram nodeから任意のcodeを開き、説明とcommit済みsourceを自分で照合する。同じ参照を横や下へ
 列挙するindexは表示しない。Structureはboundedなsubjectの関係をstableな全体像とfocus-relativeな局所lensの間で
 往復できるspatial explanationであり、optionalなauthorial presentationを手がかりにclaimを選択してsource evidenceと
-照合する。artifactは全relationを保持するが、Viewerは全detailの同時表示を要件にしない。
+照合する。通常Structureはresponsibility / state ownership / contract / side effect等をcode-centeredな粒度で表し、
+file-map Structureは物理的な実装の所在とfile間の責務・依存を一file一Nodeで表す。artifactは全relationを保持するが、
+Viewerは全detailの同時表示を要件にしない。
 
 ### 3.1 Commit選択
 
@@ -489,6 +496,14 @@ question / scope内で異なる答えを示すならその答えを使い、esse
 requested subjectに有用なordered pathがなくStructureの方が適切ならpublishせずcallerへ返すrepresentation rejectionは
 producerに残す。
 
+既定のWalkthroughは「説明を読み切る文書」ではなく、具体的な状況または問いから最初のcode入口へ早く入り、
+一つの理解に必要な小さな説明を得てcommit済みsourceで確認または反証し、責務・state・条件・結果について
+更新したlocal mental modelを次の問いへつなぐ読解pathとする。大きな用語集、repository全体architecture、全変更file、
+巨大な概要図をcode確認前の必須予習にしない。各まとまりでは内部的に、読者の現在の問い、必要十分な説明、
+確認するsource、確認後に分かること、そこから生じる次の問いをauthoringするが、これらを固定見出しや公開schemaにしない。
+codeの逐語訳や未確認の設計意図ではなく、その関係が今回のbehaviorへどう効くかを説明する。終点は全説明の完了ではなく、
+読者が中心behaviorを自分の言葉で説明し、理由付きの次のcode探索へ進める地点とする。
+
 ```typescript
 interface CodeReference {
   id: string;
@@ -533,12 +548,37 @@ interface Walkthrough {
 - Walkthrough tabは本文中のtyped inline referenceとbinding済みMermaid nodeを維持するが、横または下に
   全referenceを重複表示する`Code references` indexは持たない。sidebar itemにもreference件数を表示しない。
 - `language-mermaid` code blockはstrict security設定でSVG化する。bundled Mermaidが扱うflowchart、
-  class、sequence、state、ERなどの記法を描画対象とする。binding済み要素だけを人間が選べる。
+  class、sequence、state、ERなどの記法を描画対象とする。複数の主体、state、条件、順序、interaction、分岐、
+  lifecycleを文章だけから頭の中で再構築する必要がある場合、Mermaidを標準的な説明手段として実際に使い、
+  「図で関係または変化を掴む、sourceで確かめる、文章で条件・例外・意味を補う」という役割分担にする。
+  定数、文言、ごく局所的な条件のように短い文章とcodeの方が明快な場合は図を作らない。diagram fieldを必須化せず、
+  既存の文章だけのWalkthroughをinvalidにしない。
+- 図法は中心となる問いから選ぶ。条件による分岐・合流やcontrol/data transformationは`flowchart`、明示stateまたは
+  説明上のaggregate stateとevent / guard / side effect / retry等のlifecycleは`stateDiagram-v2`、caller / callback、
+  frontend / API、request / response、event、async completion、cancellation、race等の主体間interactionと時間順は
+  `sequenceDiagram`を第一候補にする。data relationは`erDiagram`、型・契約relationは`classDiagram`等、rendererで
+  安全に扱える図法を使い、すべてをflowchartへ押し込まない。一つのWalkthroughで複数図法を使えるが、それぞれが
+  異なる問いへ答え、同じ説明を記法だけ変えて再掲しない。
+- diagramは必要になった読解地点へ置き、原則として一つのdiagramが一つの中心的な問いへ答える。全file、全actor、
+  全branch、全state、全errorを一枚へ詰め込む巨大概要図、長文をbox labelへ移しただけの図、小さすぎる文字を避ける。
+  近くのproseは図を逐語的に読み上げず、重要性、成立条件、例外、図から分からないこと、次にsourceで確かめることを補う。
+- diagramのparticipant、message、state、transition、direction、order、guard、terminalはすべてsourceについてのclaimとする。
+  state diagramは何のstateか、codeに明示されたstateか説明用aggregateか、部分図かを明示し、矢印がないことだけから
+  transition不能を主張しない。sequence diagramはparticipant、message、order、waiting、callback、response、condition、
+  concurrencyをsourceから検証し、代表caseと常時保証を区別する。source記述順からasync completion順やparallel実行を
+  推測せず、中心となるrace / failureを直列成功図へ消さない。flowchartはcontrol flow、data flow、dependency、
+  reviewerの読む順番を混同しない。ER / class relationやcardinalityも一般慣習から推測しない。
+- binding済み要素だけを人間が選べる。
   interactive bindingはflowchart node、class diagram class、sequence participant / actor、stateDiagram-v2 state、
   erDiagram entity、architecture-beta serviceをE2E保証する。Mermaid SVGのdiagram固有DOM解釈はUI interactionから
   分離したresolverへ集約し、source IDがSVGへ保持されない複製要素をlabelやDOM順序で推測しない。
   binding済み要素はdiagram種別にかかわらずaccent枠、
   薄いaccent背景、hover / focus強調を共通のaffordanceとして表示する。
+- sequence message、state transition、Edge-like relation等、resolver非対応elementへbindingを捏造しない。そのclaimは
+  図の近くのMarkdown `rvw-ref:`でsource evidenceを開けるようにする。bind可能なparticipantやstateがあることは、
+  その間の全矢印を証明しない。説明上のactorやaggregate stateを無理にclickableにしない。複数fenceでは
+  `diagramBindings`のWalkthrough-global ID scopeを守り、異なるsourceを開くelementに同じIDを再利用しない。
+  同じsourceを意図的に共有する場合だけID共有を使う。
 - exact `html-preview` fenced blockは、Markdown正本の一部としてstaticなHTML fragmentをvisual explanationへ
   描画する。通常の`html` fenceはcode表示のままとする。Walkthrough本文全体を一つの`html-preview`中心で
   構成することも許容するが、HTML用domain model、DB row、別revisionは追加せず、current Markdown本文と
@@ -574,7 +614,10 @@ interface Walkthrough {
   fallback判断と`最新のファイルを見る`を隠す。同じWalkthrough IDのreference fingerprintが変わった場合も
   `Walkthroughが更新されています`としてstaleにする。stale理由は専用bannerへ集約し、historical range用noticeは表示しない。
   初期実装では閲覧位置を自動で置換せず、人間がactionを選んだ時だけ同じreference IDを再解決する。
-- 説明本文やdiagramはAgentのclaimであり、code referenceとGit objectが検証可能な根拠である。
+- 説明本文やdiagramはAgentのclaimであり、code referenceとGit objectが検証可能な根拠である。対象に応じてfailure、
+  retry、re-entry、race、cancellation、既存data、compatibility、cleanup、permission、lifecycle、state update timing等から
+  中心理解の成立範囲を確認する。testの存在、実行、pass、一般的保証を別のclaimとして扱い、未確認の保証を加えない。
+  intent、source fact、inference、unknownも区別する。
 - 人間はstableなWalkthrough IDへ文書全体コメントを作成できるほか、render済みMarkdownの文字列を選択して
   parser由来のsource line rangeへコメントできる。Mermaidは生成SVG要素ではなく、元のfenced code block
   全体を一つのsource rangeとして扱い、図全体へのcomment actionを表示する。
@@ -594,24 +637,31 @@ interface Walkthrough {
 
 ## 5.5 Structure
 
-StructureはPRに関係する一つのboundedなbehaviorまたはreview questionを、source-establishedなentrypointから
-依存、contract、side effectへ任意の方向に探索できるrelationship spaceとして表す。artifactの必要十分性は
-宣言したsubjectの理解に必要なfactual responsibility / relationが揃うことを意味し、repository全体の網羅や
-全Node / Edge / labelを同じviewportで同時に読めることを意味しない。authorは任意の`presentation`で、
+Structureは一つのboundedなrelationship spaceを次の二つのauthoring roleのいずれかで表す。
+
+- 通常Structureは、PRに関係する一つのbehaviorまたはreview questionをsource-establishedなcode entrypointから
+  responsibility、state ownership、dependency、contract、side effectへ任意の方向に探索できるようにする。
+- file-map Structureは、明示されたPR / change scopeを理解するために、実在するrepository fileごとの責務と
+  source-verifiableなfile間dependencyを探索できるようにする。
+
+artifactの必要十分性は宣言したsubjectの理解に必要なfactual responsibility / relationが揃うことを意味し、
+repository全体の網羅や全Node / Edge / labelを同じviewportで同時に読めることを意味しない。authorは任意の`presentation`で、
 spatial explanationの主張、attention start、一つのconnectedなexact-Edge primary backbone、stable IDと
 責務summaryを持つcomprehension Regionを宣言できる。Region arrayはauthorialな順序を持たず、これは一本道のstepperやautoplayではない。
-順序とprose自体が理解の本体ならWalkthroughを使う。entrypointを持たない
-静的なarchitecture／責務inventoryはPR reviewの停止条件を失うためStructureの対象にしない。Structureは
+順序とprose自体が理解の本体ならWalkthroughを使う。PR / change scopeへ接地しない
+静的なarchitecture／責務inventoryはreviewの停止条件を失うためStructureの対象にしない。file-map roleは
+この拒否境界の限定された例外であり、変更file一覧やrepository全体のimport graphを許可するものではない。Structureは
 generic Artifact system、semantic code graph、AI推論結果、review finding、completeness保証ではない。
 
-`rvw-structure`は一つのbounded behaviorについて一つのStructureを作成、更新、削除するproducerであり、
+`rvw-structure`は一つのbounded behavior / review questionまたは一つのbounded file relation setについて一つの
+Structureを作成、更新、削除するproducerであり、
 PR全体のArtifact構成や隣接behaviorの追加Artifactを決めない。user、caller、PR本文、または上位composerのbriefが
 subject、review question、behavior boundary、scope、inclusion / exclusion、emphasisを明示した場合、それを「何を
 調査するか」のauthorityとして優先する。`mustEstablish`、suggested origin / relationship / invariantその他の実装assertionは
 producerがcommit済みcodeとtestから独立に検証するclaim candidateであり、sourceが裏付けないNode / Edge / originを
 briefどおりに強制しない。briefはsource exactness、factual origin、stable identityを上書きせず、essential claimが
-unsupported / contradictedなら必要に応じてcallerへconflictを返す。ordered path、entrypointのない静的inventory、または
-一つのcoherentなbehavior spaceにならないsubjectを拒否するrepresentation boundaryもproducerに残す。
+unsupported / contradictedなら必要に応じてcallerへconflictを返す。ordered path、roleに合うfactual originを持たない
+generic inventory、または一つのcoherentなrelationship spaceにならないsubjectを拒否するrepresentation boundaryもproducerに残す。
 
 一つのStructureは次を持つ。
 
@@ -685,11 +735,37 @@ type Structure = {
 - Node 1件以上50件以下、Edge 200件以下、payload 2 MiB以下とする。endpointと`originNodeId`は実在Nodeを
   指し、origin Node自身はsource anchorを持つ。Edge direction、parallel multiplicity、self-loopを無視した
   simple graphで全Nodeがoriginから到達可能でなければならない。parallel Edgeはそれぞれstable IDを持ち、
-  `directed`は必須booleanである。
-- `originNodeId`は対象behaviorを検証し始めるsource-establishedなentrypointを指す。
-  HTTP routeに限らずpublic API、command handler、worker trigger、event subscriber、composition call、
-  migration execution pointを含む。subjectの中心物やrelationの多いhubを意味せず、terminal / intermediate
-  entrypointも許容する。同一subjectの実装上のentrypointが移動した場合だけupdateで変更できる。
+  `directed`は必須booleanである。1 Nodeの場合はEdge 0件のconnected graphを正当なStructureとして許容する。
+- file-map Structureでは1 Nodeを1つの実在repository fileだけに対応させ、同一pathを複数Nodeへ分割せず、
+  複数fileを一Nodeへまとめず、function、concept、架空subsystem、PR全体をNodeへ混在させない。全Nodeは
+  file-level anchorを持ち、labelはbasename重複時の必要なpathを含めfileを識別可能にする。descriptionは
+  このPRの理解でそのfileが担う責務を短く述べ、全内容要約やdiff列挙にしない。実際に複数責務が混在するfileは
+  美化せず簡潔に示し、必要なら通常Structureがfile内部の別rangeへ掘り下げる。file-map表現のために`kind`、
+  新notation、新fieldを追加しない。
+- file-map scopeは変更後softwareを理解するためPRへ接地させる。変更fileに限らず、必要な未変更caller、consumer、
+  dependency、型・contract定義、state owner、wiring、設定、test、migration、documentも含められるが、changed-file
+  listやrepository全体import graphへしない。test / config等とproduction codeの関係をpredicateで区別し、生成物、
+  lockfile、反復的補助fileも内容を確認して判断する。主要変更領域を黙って落とさず、scopeと通常responseから
+  inclusion、intentional exclusion、direct code readingへ残す範囲が分かるようにするが、完全な影響範囲を保証しない。
+- file-map Edgeは`calls exported function`、`uses type contract`、`renders component`、`constructs dependency`、
+  `loads configuration`、`registers callback`、`tests defined behavior`等の短く具体的なsource-verifiable predicateを
+  持ち、その関係を確認できる具体的anchorを持つ。`related to`、`same PR`、`connects`は使わない。importだけから
+  runtime call、state ownership、execution order、data flowを断定せず、type dependency、runtime dependency、
+  registration、callback invocation、configuration、test verificationを区別する。間接dependencyを直接Edgeにせず、
+  重要な中間fileを含めるかscope boundaryとして明示する。Nodeがfile-levelでもEdge evidenceをfile全体へ曖昧にしない。
+- `originNodeId`はroleごとに意味を持つ。通常Structureでは対象behaviorを検証し始めるsource-establishedな
+  entrypointを指し、HTTP routeに限らずpublic API、command handler、worker trigger、event subscriber、composition
+  call、migration execution pointを含む。file-map Structureでは、この限定されたfile relationをsourceから確かめ
+  始める実在fileを指し、全file共通のruntime entrypointとは主張しない。どちらもsubjectの中心物やrelationの多い
+  hubを意味せず、`presentation.startNodeId`というauthorial attention startとも別である。同一subjectで
+  roleに合うfactual startが移動した場合だけupdateで変更できる。
+- 独立した変更領域を同じPRという理由の架空Node / Edgeでconnectedにしない。意味のある共有contract / dependencyが
+  あれば一つのmapに含め、不自然に隠さない。factual relationがない場合はcomposerが複数file-map Structureへ分け、
+  producerは一 invocation一Structureを維持する。大きいmapはpresentation / backbone / Regionsを使えるが、画面へ
+  収めるためにrelation、重要fact、file粒度を歪めず、必要なら意味のある範囲で分割する。
+- 全Structure anchorは既存の単一`sourceOid` coordinateを維持し、通常は変更後snapshotを説明する。before / afterの
+  比較元を調査しても異なるsnapshotのanchorを混在させない。削除fileをHEADに存在するようにanchorせず、renameは
+  選択した`sourceOid`に実在するpathを使う。
 - `presentation`はfactual graphと分離したauthorial semanticsで、v5 producerは`null`を含め必ず送る。
   non-nullの場合、`thesis`は1〜1000文字、`startNodeId`は最初に注意を向けるcurrent Node IDとする。
   `primaryBackbone: null`かつ`regions: []`のexact start-only presentationも有効で、thesisとattention startだけを
@@ -2014,6 +2090,10 @@ Unit:
 - line mapping、rename、Outdated
 - comment resolve/reopen、URI、CLI/API schema
 - Walkthrough schema、URI、Markdown reference / HTML preview validation、行comment placement
+- bundled composer / producer Skill contractのrole、authority、file-map invariants、incremental Walkthrough、diagram
+  selection / binding boundary、およびagent metadataとの整合。必要語の存在だけで品質済みとせず、実commitに固定した
+  producer exampleをschema parseし、source anchor、file-mapのpath uniqueness / file-level Node / evidenced Edge、
+  Walkthrough reference reachability / diagram ID scope、同一changeに対する三surfaceの異なる問いを検証する
 - Structure schema、URI、neighborhood completeness、presentationのbackbone参照／connectedness／start membership／
   Region identity / summary / 非重複、non-semantic array normalization、derived cross-Region relation、旧graphのnull normalization、逆引きtarget Nodeのundirected最短hop選択、
   Node非衝突、presentation-aware／topology fallback canonical layout、source / target boundary-port接続、
@@ -2045,6 +2125,8 @@ Integration（実git + fake GitHub）:
 - source anchor付きWalkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
 - source anchorとrequired nullable presentation付きStructureの登録、一覧、取得、同一ID atomic完全置換、
   PR ownership、ref rollback、確認付き削除、reset削除
+- 1 Node / 0 EdgeのStructure、rename / delete後のchosen `sourceOid`に存在するpathだけを使うsource validation、
+  file-map authoring例とruntime schemaが新Artifact kindなしで両立すること
 - effective fileからNode anchorだけを対象にしたexact／rename-aware逆引き、複数Node集約、一覧順、Edge-only除外、line range staleness、ambiguous copyとcross-PR分離
 - worktree間共有
 
@@ -2143,9 +2225,10 @@ CLI contract:
 - `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
 - `structure get/publish/update/delete`のschema、v5 required nullable presentation、shared transport、同一ID whole-value update、
   旧graphのnull normalization、削除preview、passive contract
-- `rvw-review-compose`がPR-wide compositionを担い、fixed templateやWalkthrough / Structureの常時pairを要求せず、
-  最小構成とdirect code readingを選び、overlap、terminology、missing / cross-boundary risk、over-fragmentationを
-  構成全体で再確認し、永続Setや新Artifact kindを要求しないcontract
+- `rvw-review-compose`がPR-wide compositionを担い、必須のPR-scoped file-map Structureの存在を制約として、
+  fixed 3-Artifact templateやWalkthrough / 通常Structureの常時pair、mandatory reading orderを要求せず、
+  adaptiveな構成とdirect code readingを選び、overlap、terminology、missing / cross-boundary risk、
+  over-fragmentationを構成全体で再確認し、永続Setや新Artifact kindを要求しないcontract
 - `rvw-walkthrough` / `rvw-structure`が上位briefのsubject、scope、inclusion / exclusionをauthoring authorityとして
   一つのbounded Artifactだけを作り、`mustEstablish`、suggested origin / relation / invariantはcommit済みsourceから
   独立に検証し、PR-wide compositionを引き受けず、それぞれのrepresentation rejectionを維持するcontract
@@ -2195,29 +2278,42 @@ rvw skill status
 Skill sourceはcwdではなく実行中CLIのpackage rootを基準に解決する。`--force`でも対象Skill
 directory以外を削除しない。一度のinstallでコメント取得・返信・sync用の`rvw`と、PR全体のreview
 composition用の`rvw-review-compose`、一つのWalkthroughの検証・publish・current値更新・確認付き削除用の
-`rvw-walkthrough`、一つのStructureのbehavior／entrypoint選択・検証・publish・current値更新・確認付き削除用の
+`rvw-walkthrough`、一つのStructureのbehavior / file-map role選択・検証・publish・current値更新・確認付き削除用の
 `rvw-structure`、新規post監視用の`rvw-watch-comments`を配置する。5つのSkillの名前と内容はCodex / Claude Codeで共通とし、
 platform adapterが変えるのは既定のSkill rootだけとする。Agent名はSkillへhardcodeせず、CLIの任意
 `authorLabel`として実行中Agentが正確に判断できる場合だけ渡す。
 
 `rvw-review-compose`は一つのPull Requestまたは明示review subjectを調査し、主要な理解上の難所とcouplingを
-見つけ、必要な時だけsession内のboundedな理解単位へ分ける。最少Artifact数ではなく、各surface内部の複雑さ、
-surface間のjoin、分割で隠れるcouplingを含むreviewerのtotal comprehension costを最小化する。各単位についてordered lifecycle / causalityなら
-Walkthrough、responsibility / ownership / dependency / contractならStructure、局所的な条件や実装詳細なら
-直接code readingを選び、WalkthroughとStructureを常にpairにしない。Overview / State / Flow / Error / Test /
-Structureの固定template、単位ごとのArtifact作成、完全な説明setを要求せず、最小の外部表現でmental-model loadを
-下げ、重要なcouplingを隠さないことをqualityとする。
+見つけ、必要な時だけsession内のboundedな理解単位へ分ける。PR全体のdefault compositionでは、少なくとも一つの
+PR-scoped file-map Structureを必ず含める。実際に独立した変更領域は複数file mapへ分けられるが、同じPRという
+架空relationで結ばず、実在する共有contract / dependencyも不自然に隠さない。既に同じsubjectのfile mapがあり、
+current sourceに対して有効ならreuse / updateを優先し、「必須」をduplicate publicationと解釈しない。明示的に
+boundedなlocal subjectのcompositionではArtifact 0件を引き続き許容する。
 
-composerは各producerへ渡す前に、subject、review question、scopeのinclusion / exclusion、`mustEstablish`、emphasisを
-持つ内部Artifact briefを用意する。このうちsubject、question、purpose / behavior boundary、scope、inclusion /
+このfile-map constraintの中でも、最少Artifact数ではなく、各surface内部の複雑さ、
+surface間のjoin、分割で隠れるcouplingを含むreviewerのtotal comprehension costを最小化する。各単位についてordered lifecycle / causalityなら
+Walkthrough、responsibility / ownership / dependency / contractなら通常Structure、局所的な条件や実装詳細なら
+直接code readingを選ぶ。意味のあるbehavior changeには原則Walkthroughを用意する一方、local changeでは直接code
+readingだけを組み合わせられ、通常Structureはfile mapと別の関係質問に独立した価値がある場合だけ含める。
+Walkthroughと通常Structureを常にpairにしない。file mapはoverview予習ではなく、どの入口から読んでも途中で
+physical implementationへ位置付け直せる土台である。Overview / State / Flow / Error / Test / Structureの固定template、
+単位ごとのArtifact作成、完全な説明set、file-map-first invocationまたはreading orderを要求せず、最小の外部表現で
+mental-model loadを下げ、重要なcouplingを隠さないことをqualityとする。
+
+composerは各producerへ渡す前に、subject、review question、scopeのinclusion / exclusion、Structureならfile mapか
+通常Structureかというauthoring role、他Artifactと共有すべきfact / terminology、重複させないquestion / explanation、
+`mustEstablish`、emphasisを持つ内部Artifact briefを用意する。Walkthrough briefは図が理解を助ける中心的な問いも
+示し、必要ならdiagram種別候補を渡せるが、未検証のstate、order、concurrency、transitionを強制しない。
+このうちsubject、question、purpose / behavior boundary、scope、inclusion /
 exclusion、emphasisはauthoring boundaryのauthorityであり、`mustEstablish`、suggested origin / relationship /
 invariantその他の実装assertionはproducerがcommit済みsourceから独立に検証するcandidate claimである。composerの事前
 分析やvalidなanchor自体をsemantic proofとして再利用しない。producerがessential claimのunsupported / contradictedを
 返したらbriefやsurfaceを再検討し、結論を強制しない。このbriefと理解単位はsession-localなauthoring contextであり、
 public schemaではない。production後は詳細なoverlap、terminology drift、重要なboundaryの欠落、over-fragmentation、
 cross-boundary riskを構成全体で再評価し、不要なArtifactを作らないかscopeを切り直す。推奨する最初の入口は示せるが
-mandatoryなreview planや完了保証にはせず、通常のAgent responseで構成理由、作成／更新URI、直接codeで確認する論点を
-返す。そのresponseも永続Artifactにしない。
+mandatoryなreview planや完了保証にはせず、通常のAgent responseで構成理由、作成／更新URI、file mapへ含めた範囲、
+意図的な除外、直接codeで確認する論点、必須file mapを用意できなかった場合の未達理由を返す。そのresponseも
+永続Artifactにしない。
 
 composerへのassess / recommend / plan / audit依頼はread-onlyで、未productionのbriefとdirect-code entrypointだけを返す。
 producerを起動してpublish / updateするのはcreate / publish / produce / updateが明示された場合だけとし、既存URIの提示は
@@ -2242,7 +2338,11 @@ current値を読んでsame-subject updateを優先し、無条件の改訂版を
 同一ID更新、削除の明示authorizationを規定し、一つのbounded subjectについて一つのordered orientation pathだけを
 作る。上位briefを含む明示されたsubject、review question、scope、inclusion / exclusion、emphasisを優先して
 未指定部分だけを既定guideで補い、PR全体のArtifact数やStructureとの役割分担を決めない。説明の見出し、順序、
-粒度、diagram選択はrequestとsubjectへ委ね、固定の文書templateを要求しない。ordered pathが有用でなければ
+粒度はrequestとsubjectへ適応し、固定の文書templateを要求しない。未指定の場合は具体的な問いとcode入口から
+small explanation / diagram、source確認、理解更新、次の問いへ進むpathを作る。複数actor、state、condition、order、
+branch、lifecycleをproseから再構築させる場合は問いに合うMermaid図を標準的に実際に使い、local changeで不要なら
+図を作らない。diagram数やfieldは必須化せず、一図一中心質問、source claimの独立検証、binding非対応Edgeの近接
+`rvw-ref:` evidenceを要求する。ordered pathが有用でなければ
 Structureを提案するlocal routing判断を残す。diffやfileの一覧、網羅的なAI review、完全性の保証にはしない。
 更新時は既存artifactを読んで完全置換し、改訂版を別artifactとして暗黙にpublishしない。削除は対象と件数への
 明示authorizationなしに実行しない。
@@ -2250,29 +2350,38 @@ Structureを提案するlocal routing判断を残す。diffやfileの一覧、�
 `rvw-structure`は「Structureは一つのbounded relation spaceを俯瞰と局所lensで往復するspatial explanation、
 Walkthroughは順序とprose自体がartifact」を
 routing boundaryとする。user / caller / PR本文の
-明示briefに加え、上位composerからのsubject、review question、behavior boundary、scope、inclusion / exclusion、
+明示briefに加え、上位composerからのsubject、review question、Structure role、behavior boundary、scope、inclusion / exclusion、
 emphasis、requested spatial presentationをauthoring boundaryとして最優先し、entrypointやrelationなどのcandidate
-claimは実際のcommit済みrepositoryで独立に検証する。一つのbounded behaviorだけを扱い、
+claimは実際のcommit済みrepositoryで独立に検証する。一つのbounded behavior / review questionまたはfile relation
+setだけを扱い、
 PR全体のArtifact数、Walkthroughとの役割分担、隣接behaviorのcompanion Artifactを決めない。code-centeredな同じ
-abstraction levelのNode、verb-based Edge label、stable claim ID、一つのexact `sourceOid`を要求する。
+abstraction levelのNode、またはfile-map roleなら一実在file一Node、verb-based Edge label、stable claim ID、一つの
+exact `sourceOid`を要求する。
 concept-only Nodeはsource-establishedだが単一anchorを持たない概念またはsource-supported claimの必要な接続に限定し、
 必要ならthesis、authorial start、optionalなconnected exact-Edge primary backbone、stable IDと責務summaryを持つRegionからなるauthorial
 `presentation`を使うが、subject authorityだけでNode / Edgeを事実化しない。backboneはthesisを理解する最小の
 coherent relation setに絞り、複数route、importance layer、execution stage、全Nodeのprimary分類を作らない。
 Regionはworking-memoryを助けるnamed chunkに限り、各summaryでthesisへの役割を説明し、backboneの代用、exhaustive
 partition、architecture inventoryにしない。Region間relationはfactual EdgeからViewerが導出し、producerは別graphをauthorしない。
-巨大graph、file inventory、AI推論edge、raw座標、
-review conclusion、静的なarchitecture／責務inventoryを作らない。ordered prose pathやentrypointのないinventoryを
-拒否するlocal routing判断を残す。同じsubjectだけをsame URIへ完全置換し、明示的に別subjectを作る場合だけ
+巨大graph、changed-file dump、repository-wide import graph、AI推論edge、raw座標、review conclusion、PRに接地しない
+静的なarchitecture／責務inventoryを作らない。ordered prose pathやroleに合うfactual originのないgeneric inventoryを
+拒否するlocal routing判断を残す。file-map roleはfile-level Node、specific Edge evidence、singleton、disconnected-area
+split、rename / delete path exactnessを適用する。同じsubjectだけをsame URIへ完全置換し、明示的に別subjectを作る場合だけ
 新規publishする。viewerを
 開かず、削除preview後の明示authorizationなしにdeleteしない。producer品質はfixture転記ではなくAgentが
 repositoryを調査して作った2〜3件のStructureでscope、granularity、concept-node使用、Edge label、anchorを
 評価し、結果をdocsへ記録する。
 
-review compositionの判断品質は、期待surfaceを伏せたfresh Agent contextでsmall local change、relationship-centered
-subject、state / lifecycle / asyncを含むcomplex changeを同じSkill revisionに対してforward評価する。Artifact economy、
+review compositionの判断品質は、期待surfaceを伏せたfresh Agent contextでsingle-file small change、multi-file behavior、
+async / race、lifecycle / state、branch-centered change、multiple diagram types、diff外dependency、independent change
+areas、config / document / migration、rename / delete、recommendation-only / existing update / transport failureを同じ
+Skill revisionに対してforward評価する。Artifact economy、
 surface shape、central question、scope / exclusion、direct-code choice、overlap、terminology、cross-boundary coupling、
-briefのauthoring authorityとcandidate claimの分離を確認し、planning-only評価をhost invocation / publish成功とは扱わない。
+file-map presence / accuracy、briefのauthoring authorityとcandidate claimの分離を確認し、planning-only評価をhost
+invocation / publish成功とは扱わない。Walkthroughはdiagram数ではなく、問いへの適合、認知負荷の低減、図法選択、
+sourceとの意味整合、diagram size / label readability、文章との非重複、code確認への接続、binding accuracy、図なし判断を
+評価する。読解品質は具体的code入口への速さ、file responsibilityへの再定位、behavior / state owner / interactionの説明、
+条件変更時の探索可能性、unknownと次のcode理由、Artifact間joinのworking-memory costを評価する。
 結果は`docs/review-composition-evaluation.md`へ記録する。
 
 `rvw-watch-comments`は一つの外部Agent taskをreceiverとして使い、cursorless起動で既存未解決を処理せず、
@@ -2325,12 +2434,14 @@ Functional:
 - Agentがsource anchor付きWalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の
   referenceだけを最新HEAD上の対応箇所、または明示されたanchor fallbackとして最大二ペインのtabで検証できる。
   不要なWalkthroughは件数確認後に削除できる。
-- AgentがboundedなPR-relevant behaviorをentrypointとoptionalなauthorial presentation付きStructureとしてCLIで提示し、
+- AgentがboundedなPR-relevant behavior / review questionをcode entrypointから、またはPR-scoped file mapを
+  roleに合うfactual originからoptionalなauthorial presentation付きStructureとしてCLIで提示し、
   人間が1/2-hop / AllとRelation選択を
   自由に探索し、Node / Edge anchorをexact sourceで開ける。同じsubjectの更新ではstable IDに基づく空間を
   session内で維持し、別subjectは別artifactにする。不要なStructureは件数確認後に削除できる。
-- Agentが`rvw-review-compose`でPR全体または明示review subjectを調査し、Walkthrough、Structure、直接code
-  readingから最小のadaptive compositionを選び、通常responseで推奨入口と作成／更新URIを返せる。
+- Agentが`rvw-review-compose`でPR全体または明示review subjectを調査し、PR全体ではfile-map Structureを必ず
+  compositionへ含め、その制約内でWalkthrough、通常Structure、直接code readingのadaptive compositionを選び、
+  通常responseで推奨入口、作成／更新URI、inclusion / exclusion / direct-code boundary、未達理由を返せる。
 - PR全体、PR本文、file、line/range comment、reply、post edit/delete、resolve/reopen、sidebar、Outdatedが機能し、
   postはsafe GFM、repository link／相対画像、表示専用Mermaidとしてrenderされる。
 - 一件／一覧／選択comment参照をcopyし、Codex / Claude Codeへ同じ`rvw` Skillを配置してCLIで解決・返信できる。
@@ -2350,16 +2461,21 @@ Manual acceptance:
 
 1. 実PRを開き、最新`Pull Request.md`から変更の意図を確認する。
 2. 変更fileを入口に全文、all files、検索を使い、関連するdiff外fileまで辿って結果の実装を理解する。
-3. Agentが実装説明をWalkthroughとしてpublishし、viewerの表示位置が勝手に変わらないことを確認する。
-4. 人間が説明内の一部referenceとdiagram nodeだけを選び、説明tabを残したままexact codeを読む。
-5. AgentがPR-relevant behaviorをentrypointとpresentation付きStructureとしてpublishし、thesis、authorial start、optionalな
+3. AgentがPR-scoped file mapをStructureとしてpublishし、実在file一Node、具体的なfile dependency、diff外の
+   必要source、正直なexclusionを確認する。singletonならfake Edgeがないこと、独立領域なら架空relationで
+   連結していないことも確認する。
+4. Agentが実装説明をWalkthroughとしてpublishし、具体的な問いから早くsourceへ入り、複数actor / state / branchが
+   必要な箇所では問いに合う小さなMermaid図へ分担され、viewerの表示位置が勝手に変わらないことを確認する。
+5. 人間が説明内の一部referenceとdiagram nodeだけを選び、説明tabを残したままexact codeを読む。binding非対応の
+   message / transition / relationは近接するinline referenceから根拠を開く。
+6. AgentがPR-relevant behaviorをentrypointとpresentation付き通常Structureとしてpublishし、thesis、authorial start、optionalな
    connected exact-Edge primary backbone、identified Regionとderived cross-Region relationが空間へ反映されても全Node / Edgeを自由に探索できることを
    確認する。人間がpassiveなNode selection、double clickのone-shot neighborhood focus、Home / Back、近傍、Region frame、Allを往復しながらexact sourceを左右ペインへ開き、
    tab往復とcurrent値更新でorientationが保たれることを確認する。
-6. diff外fileを含む具体的なsourceへline commentを作り、そのURIをAgentへ渡す。
-7. Agentが対象sourceと周辺contextを調査し、authorizedな修正、test、commit、push、必要なPR本文更新を行う。
-8. Agentが`rvw pr sync --stdin --json`でreplyを追加する。
-9. Viewerでnew commitのrepository、任意のcommit range、最新PR本文、comment trackingを読み直してresolveする。
+7. diff外fileを含む具体的なsourceへline commentを作り、そのURIをAgentへ渡す。
+8. Agentが対象sourceと周辺contextを調査し、authorizedな修正、test、commit、push、必要なPR本文更新を行う。
+9. Agentが`rvw pr sync --stdin --json`でreplyを追加する。
+10. Viewerでnew commitのrepository、任意のcommit range、最新PR本文、comment trackingを読み直してresolveする。
 
 ここまで手動DB編集、内部ID入力、独自の版取り込み操作なしで完了する。
 

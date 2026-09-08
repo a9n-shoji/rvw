@@ -74,15 +74,27 @@ Agentが実装やarchitectureを説明する場合、成立を保証するsource
 まま改善できるが、独自の版履歴は作らない。不要になった説明とそこだけに属するfeedbackは、明示確認後に
 削除できる。
 
-Walkthroughは、順序とprose自体がartifactである意図的な読解pathである。Structureは、PRに関係する
-boundedなbehaviorをfactualなcode entrypointから依存、contract、side effectへ任意の方向に辿り、stableな
-全体像とfocus-relativeな局所lensを往復できるspatial explanationである。Agentはsubject、scope、entrypoint、
-stableなNode / Edge ID、exact source anchorに加え、必要ならthesis、authorial start、optionalなconnected
-exact-Edge primary backbone、stable IDと責務summaryを持つcomprehension regionをauthorial semanticsとして提示できる。
+Walkthroughは、順序とprose自体がartifactである意図的な読解pathである。具体的な状況や問いと最初の
+code入口から始め、小さな説明または図を得てsourceで確かめ、局所的なmental modelを更新し、次に確認する
+問いへ進む。複数の主体、状態、条件、順序、分岐を文章だけから再構成させる場合は、Mermaidを標準的な
+説明手段としてその必要地点へ置く。flowchartは分岐、state diagramはstateとtransition、sequence diagramは
+主体間interactionと時間順というように、図法は答える問いから選ぶ。図もAgentのclaimであり、矢印、状態、
+順序をsourceより整ったモデルへ美化しない。小さな局所変更では図を作らない判断も同じく正当である。
+
+Structureは、PRに関係するboundedなbehaviorまたはreview questionを、stableな全体像とfocus-relativeな
+局所lensの間で往復できるspatial explanationである。通常Structureはfactualなcode entrypointから依存、
+contract、side effectへ辿る。PR全体のdefault compositionはこれとは別に、実在fileを1 Nodeずつ表し、
+その変更を理解するためのfile responsibilityとsource-verifiableなfile間dependencyを示すStructureを必ず持つ。
+このファイル地図は変更file一覧でもrepository全体のarchitecture inventoryでもなく、codeを読んだ途中で
+「いまの責務はどこに位置するか」へ戻るための土台である。最初に暗記するoverviewでも、mandatoryな
+reading orderでもない。Agentはsubject、scope、roleに応じたorigin、stableなNode / Edge ID、exact source
+anchorに加え、必要ならthesis、authorial start、optionalなconnected exact-Edge primary backbone、stable IDと
+責務summaryを持つcomprehension regionをauthorial semanticsとして提示できる。
 これは座標、importance layer、一本道のstepperではない。座標、focus hop、navigation history、pan、zoom、manual
 positionは人間の一時的なreading stateに留める。表示範囲を1-hop / 2-hopへ明示的に絞ることはでき、Homeは
 authorial start（nullならorigin）のexact 1-hopへ戻る。complete extentはminimap / All / Fitで回収できる。高次数になるsubjectはscopeを分ける。PRで検証するbehaviorに接地しない
-静的なarchitecture／責務inventoryは扱わない。Structureも独自の履歴やsemantic truthを持たず、claimを
+静的なarchitecture／責務inventoryは扱わない。PR-scopedなファイル地図だけが、この一般的なinventory拒否の
+限定されたauthoring用途である。Structureも独自の履歴やsemantic truthを持たず、claimを
 検証する正本はGitである。
 
 Structureはneutralなgraph viewerではなく、Walkthroughやcode readingで形成したmental modelを、変更された

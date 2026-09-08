@@ -2289,9 +2289,13 @@ describe("Structure domain presentation rules", () => {
       origin: 0,
     });
     expect(projection.diagnostics.nonForwardDirectionalLinkCount).toBe(0);
-    expect(structureAuthoringWarnings(projection.diagnostics).map(({ code }) => code)).toEqual([
+    const warnings = structureAuthoringWarnings(projection.diagnostics);
+    expect(warnings.map(({ code }) => code)).toEqual([
       "STRUCTURE_ORIGIN_NO_OUTGOING_DIRECTIONAL_RELATION",
     ]);
+    expect(warnings[0]?.message).toMatch(
+      /behavior Structure.*code entrypoint.*file map.*single-file origin/s,
+    );
   });
 
   it("does not warn for an acyclic entrypoint DAG with a forward layering", () => {
