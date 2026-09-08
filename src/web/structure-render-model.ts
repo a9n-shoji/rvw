@@ -2436,19 +2436,16 @@ export function placeEdgeLabels(
       left.candidate.sample.point.x - right.candidate.sample.point.x;
     let chosen: LabelChoice | undefined;
     let activeProximityBand: number | null = null;
-    const proximityBandChoices: LabelChoice[] = [];
+    let bestProximityChoice: LabelChoice | undefined;
     for (const candidate of candidates) {
       const proximityBand = edgeLabelProximityBand(candidate.edgeDistance);
       if (activeProximityBand !== null && proximityBand !== activeProximityBand) {
-        if (proximityBandChoices.length > 0) {
-          proximityBandChoices.sort(compareChoices);
-          chosen = proximityBandChoices[0];
-        }
+        chosen = bestProximityChoice;
         if (chosen) break;
       }
       if (activeProximityBand === null || proximityBand !== activeProximityBand) {
         activeProximityBand = proximityBand;
-        proximityBandChoices.length = 0;
+        bestProximityChoice = undefined;
       }
       const collisionBoxes = [candidate.collisionBox];
       if (
@@ -2486,17 +2483,21 @@ export function placeEdgeLabels(
         degraded: associationOverlapCount > 0 || hasLongLeaderOverlap,
         emergency: false,
       } satisfies LabelChoice;
-      proximityBandChoices.push(choice);
-      // Nothing else in this band can beat an unambiguous inline placement.
-      if (!choice.degraded && !choice.displaced) {
+      if (!bestProximityChoice || compareChoices(choice, bestProximityChoice) < 0) {
+        bestProximityChoice = choice;
+      }
+      // Candidates are distance-sorted. An association-clear placement whose guide has no route
+      // crossings or parallel run is already optimal inside this proximity band.
+      if (
+        !choice.degraded &&
+        (choice.leader?.crossingCount ?? 0) === 0 &&
+        (choice.leader?.maxParallelOverlap ?? 0) === 0
+      ) {
         chosen = choice;
         break;
       }
     }
-    if (!chosen && proximityBandChoices.length > 0) {
-      proximityBandChoices.sort(compareChoices);
-      chosen = proximityBandChoices[0];
-    }
+    chosen ??= bestProximityChoice;
     let outsideDegraded: LabelChoice | undefined;
     const nodeBounds = mergedBounds(junctionBoxes);
     if (!chosen && nodeBounds) {

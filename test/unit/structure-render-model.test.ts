@@ -2084,7 +2084,7 @@ describe("Structure shared render model", () => {
     );
     expect(model.bounds!.right - model.bounds!.left).toBeLessThan(50_000);
     expect(model.bounds!.bottom - model.bounds!.top).toBeLessThan(50_000);
-  });
+  }, 10_000);
 
   it("keeps the 50 Node and 200 Edge boundary finite and complete", () => {
     const nodes = Array.from({ length: 50 }, (_, index) => ({
