@@ -6,6 +6,7 @@ import {
   STRUCTURE_NODE_HEIGHT,
   STRUCTURE_NODE_WIDTH,
   structureLayoutBounds,
+  structureNeighborhood,
   type StructureNeighborhoodDepth,
   type StructurePoint,
 } from "./structure-graph.js";
@@ -51,6 +52,7 @@ export interface StructureRegionsHistoryCamera {
 
 const STRUCTURE_CAMERA_PADDING = 36;
 const STRUCTURE_CAMERA_TOP_INSET = 52;
+export const STRUCTURE_REGION_LENS_CAMERA_TOP_INSET = 150;
 const STRUCTURE_REGIONS_CAMERA_PADDING = 28;
 const STRUCTURE_REGIONS_HOME_SCALE_FLOOR = 0.72;
 const MAX_STRUCTURE_CAMERA_SCALE = 1.25;
@@ -121,14 +123,13 @@ export function structureViewportForBounds(input: {
   bounds: StructureCameraBounds;
   surfaceSize: { width: number; height: number };
   maxScale?: number;
+  topInset?: number;
 }): StructureViewport | null {
   const { bounds, surfaceSize } = input;
   if (surfaceSize.width <= 0 || surfaceSize.height <= 0) return null;
+  const topInset = input.topInset ?? STRUCTURE_CAMERA_TOP_INSET;
   const availableWidth = Math.max(1, surfaceSize.width - STRUCTURE_CAMERA_PADDING * 2);
-  const availableHeight = Math.max(
-    1,
-    surfaceSize.height - STRUCTURE_CAMERA_TOP_INSET - STRUCTURE_CAMERA_PADDING,
-  );
+  const availableHeight = Math.max(1, surfaceSize.height - topInset - STRUCTURE_CAMERA_PADDING);
   const boundsWidth = Math.max(1, bounds.right - bounds.left);
   const boundsHeight = Math.max(1, bounds.bottom - bounds.top);
   const scale = Math.min(
@@ -143,7 +144,7 @@ export function structureViewportForBounds(input: {
   return {
     scale,
     x: surfaceSize.width / 2 - centerX * scale,
-    y: STRUCTURE_CAMERA_TOP_INSET + availableHeight / 2 - centerY * scale,
+    y: topInset + availableHeight / 2 - centerY * scale,
   };
 }
 
@@ -176,7 +177,13 @@ export function structureViewportForCameraFrame(input: {
   }
   if (frame.kind === "region") {
     const bounds = regionBounds.get(frame.regionId);
-    return bounds ? structureViewportForBounds({ bounds, surfaceSize }) : null;
+    return bounds
+      ? structureViewportForBounds({
+          bounds,
+          surfaceSize,
+          topInset: STRUCTURE_REGION_LENS_CAMERA_TOP_INSET,
+        })
+      : null;
   }
   const point = positions[frame.nodeId];
   if (!point || surfaceSize.width <= 0 || surfaceSize.height <= 0) return null;
@@ -306,14 +313,26 @@ export function structureRegionsViewportForHome(input: {
 
 export interface StructureSession {
   viewMode: StructureViewMode;
+  /** Selected Node. Local exploration keeps its independently chosen center below. */
   focusId: string | null;
+  /** Stable center of a 1-hop or 2-hop local exploration. */
+  localCenterId: string | null;
   selectedEdgeId: string | null;
   depth: StructureNeighborhoodDepth;
   framedRegionId: string | null;
   cameraFrame: StructureCameraFrame | null;
+  /** Reviewer-controlled positions for the complete graph. */
   positions: Record<string, StructurePoint>;
+  /** Reviewer-controlled positions for the active local projection. */
+  localPositions: Record<string, StructurePoint> | null;
+  /** Identity of the local graph and full-map geometry from which localPositions were derived. */
+  localLayoutBasisKey: string | null;
   viewport: StructureViewport;
   surfaceSize: { width: number; height: number };
+  /** Complete-map camera retained while the reviewer explores a local projection. */
+  allViewport: StructureViewport;
+  allSurfaceSize: { width: number; height: number };
+  allCameraFrame: StructureCameraFrame | null;
   regionsView: StructureRegionsViewState;
   guideDisclosure: StructureGuideDisclosure;
   /**
@@ -353,16 +372,70 @@ export function structureLayoutBasisKey(
       }),
     ),
   ].sort(stableCompare);
-  // v2 makes declared Regions the primary compound placement. Scope the projection revision to
-  // Region-bearing presentations so topology/start-only and backbone-only manual layouts survive
-  // an implementation change that cannot affect their canonical geometry.
-  const projectionVersion = presentation.regions.length > 0 ? "v2" : "v1";
+  // v3 adds relation-aware ordering inside declared Region compounds. Scope that projection
+  // revision to Region-bearing presentations so topology/start-only and backbone-only manual
+  // layouts survive an implementation change that cannot affect their canonical geometry.
+  const projectionVersion = presentation.regions.length > 0 ? "v3" : "v1";
   return `structure-layout-basis:${projectionVersion}:${JSON.stringify({
     startNodeId: presentation.startNodeId,
     primaryBackbone: presentation.primaryBackbone ? backboneAdjacency : null,
     regions: presentation.regions
       .map((region) => ({ id: region.id, nodeIds: [...region.nodeIds].sort(stableCompare) }))
       .sort((left, right) => stableCompare(left.id, right.id)),
+  })}`;
+}
+
+export function structurePositionsKey(positions: Readonly<Record<string, StructurePoint>>): string {
+  return JSON.stringify(
+    Object.entries(positions)
+      .sort(([left], [right]) => stableCompare(left, right))
+      .map(([nodeId, point]) => [nodeId, { x: point.x, y: point.y }]),
+  );
+}
+
+/**
+ * Identity of the inputs that make a local projection reusable. Node prose is omitted because Node
+ * geometry is fixed. Edge label text and evidence count remain because automatic local spacing is
+ * evaluated using the resulting label and source-action dimensions. Complete-map positions are
+ * included so a manual full-map move cannot silently leave a stale local projection.
+ */
+export function structureLocalLayoutBasisKey(input: {
+  structure: Structure;
+  centerId: string | null;
+  depth: StructureNeighborhoodDepth;
+  positions: Readonly<Record<string, StructurePoint>>;
+}): string | null {
+  const { structure, centerId, depth, positions } = input;
+  if (
+    depth === "all" ||
+    centerId === null ||
+    !structure.nodes.some((node) => node.id === centerId)
+  ) {
+    return null;
+  }
+  const nodeIds = [...structureNeighborhood(structure, centerId, depth)].sort(stableCompare);
+  const nodeIdSet = new Set(nodeIds);
+  const nodes = structure.nodes
+    .filter((node) => nodeIdSet.has(node.id))
+    .map((node) => ({ id: node.id, notation: node.notation }))
+    .sort((left, right) => stableCompare(left.id, right.id));
+  const edges = structure.edges
+    .filter((edge) => nodeIdSet.has(edge.from) && nodeIdSet.has(edge.to))
+    .map((edge) => ({
+      id: edge.id,
+      from: edge.from,
+      to: edge.to,
+      directed: edge.directed,
+      label: edge.label,
+      anchorCount: edge.anchors.length,
+    }))
+    .sort((left, right) => stableCompare(left.id, right.id));
+  return `structure-local-layout-basis:v3:${JSON.stringify({
+    centerId,
+    depth,
+    nodes,
+    edges,
+    positionsKey: structurePositionsKey(positions),
   })}`;
 }
 
@@ -515,16 +588,24 @@ export function createStructureSession(structure: Structure): StructureSession {
   const focusId = structure.nodes.some((node) => node.id === requestedFocusId)
     ? requestedFocusId
     : null;
+  const viewport = { x: 110, y: 90, scale: 1 };
+  const surfaceSize = { width: 0, height: 0 };
   return {
     viewMode: "graph",
     focusId,
+    localCenterId: focusId,
     selectedEdgeId: null,
     depth: "all",
     framedRegionId: null,
     cameraFrame: null,
     positions: initialStructureLayout(structure),
-    viewport: { x: 110, y: 90, scale: 1 },
-    surfaceSize: { width: 0, height: 0 },
+    localPositions: null,
+    localLayoutBasisKey: null,
+    viewport,
+    surfaceSize,
+    allViewport: viewport,
+    allSurfaceSize: surfaceSize,
+    allCameraFrame: null,
     regionsView: initialStructureRegionsView(structure),
     guideDisclosure: initialStructureGuideDisclosure(),
     layoutBasisKey: structureLayoutBasisKey(structure),
@@ -540,7 +621,21 @@ export function reconcileStructureSession(
   const regionIds = new Set(structure.presentation?.regions.map((region) => region.id) ?? []);
   const viewMode: StructureViewMode =
     previous.viewMode === "regions" && regionIds.size > 0 ? "regions" : "graph";
-  const focusId = previous.focusId && nodeIds.has(previous.focusId) ? previous.focusId : null;
+  const globallyValidFocusId =
+    previous.focusId && nodeIds.has(previous.focusId) ? previous.focusId : null;
+  const homeNodeId = structure.presentation?.startNodeId ?? structure.originNodeId;
+  const fallbackLocalCenterId = nodeIds.has(homeNodeId) ? homeNodeId : null;
+  const requestedLocalCenterId =
+    previous.localCenterId === undefined
+      ? previous.depth === "all"
+        ? fallbackLocalCenterId
+        : previous.focusId
+      : previous.localCenterId;
+  const localCenterWasValid =
+    requestedLocalCenterId !== null && nodeIds.has(requestedLocalCenterId);
+  const localCenterId = localCenterWasValid ? requestedLocalCenterId : fallbackLocalCenterId;
+  const depth: StructureNeighborhoodDepth =
+    previous.depth === "all" || !localCenterWasValid ? "all" : previous.depth;
   const layoutBasisKey = structureLayoutBasisKey(structure);
   const layoutBasisChanged = previous.layoutBasisKey !== layoutBasisKey;
   const artifactUpdated = previous.updatedAt !== structure.updatedAt;
@@ -556,6 +651,50 @@ export function reconcileStructureSession(
   const positions = layoutBasisChanged
     ? initialStructureLayout(structure)
     : reconcileStructureLayout(structure, previous.positions);
+  const localLayoutBasisKey = structureLocalLayoutBasisKey({
+    structure,
+    centerId: localCenterId,
+    depth,
+    positions,
+  });
+  const localNodeIds =
+    depth === "all" || localCenterId === null
+      ? null
+      : structureNeighborhood(structure, localCenterId, depth);
+  // Selection belongs to the graph the reviewer can currently see. A topology update can leave
+  // the selected Node globally valid while disconnecting it from the retained local center.
+  const focusId =
+    globallyValidFocusId !== null &&
+    (localNodeIds === null || localNodeIds.has(globallyValidFocusId))
+      ? globallyValidFocusId
+      : null;
+  const selectedEdgeId =
+    previous.selectedEdgeId &&
+    structure.edges.some(
+      (edge) =>
+        edge.id === previous.selectedEdgeId &&
+        (localNodeIds === null || (localNodeIds.has(edge.from) && localNodeIds.has(edge.to))),
+    )
+      ? previous.selectedEdgeId
+      : null;
+  const previousLocalPositions = previous.localPositions ?? null;
+  const localPositionsAreValid =
+    previousLocalPositions !== null &&
+    localNodeIds !== null &&
+    Object.keys(previousLocalPositions).length === localNodeIds.size &&
+    Object.entries(previousLocalPositions).every(
+      ([nodeId, point]) =>
+        localNodeIds.has(nodeId) &&
+        typeof point.x === "number" &&
+        Number.isFinite(point.x) &&
+        typeof point.y === "number" &&
+        Number.isFinite(point.y),
+    );
+  const preserveLocalPositions =
+    localLayoutBasisKey !== null &&
+    previous.localLayoutBasisKey === localLayoutBasisKey &&
+    localPositionsAreValid;
+  const localPositions = preserveLocalPositions ? previousLocalPositions : null;
   const guideDisclosure: StructureGuideDisclosure = {
     thesis: previous.guideDisclosure?.thesis ?? initialStructureGuideDisclosure().thesis,
   };
@@ -564,36 +703,78 @@ export function reconcileStructureSession(
     previousFramedRegionId !== null && regionIds.has(previousFramedRegionId)
       ? previousFramedRegionId
       : null;
+  const reconcileCameraFrame = (
+    frame: StructureCameraFrame | null,
+    cameraNodeIds: ReadonlySet<string>,
+  ): StructureCameraFrame | null =>
+    layoutBasisChanged && framedRegionId !== null
+      ? { kind: "region", regionId: framedRegionId }
+      : reconcileStructureCameraFrame(frame, cameraNodeIds, regionIds, artifactUpdated);
+  const allSurfaceSize = previous.allSurfaceSize ?? previous.surfaceSize;
+  const previousAllViewport = previous.allViewport ?? previous.viewport;
+  const previousAllCameraFrame =
+    previous.allCameraFrame === undefined
+      ? previous.depth === "all"
+        ? (previous.cameraFrame ?? null)
+        : null
+      : previous.allCameraFrame;
+  const allViewport = layoutBasisChanged
+    ? preserveStructureLayoutScreenPosition({
+        viewport: previousAllViewport,
+        surfaceSize: allSurfaceSize,
+        nodeId: focusId ?? localCenterId,
+        nodeIds,
+        previousPositions: previous.positions,
+        nextPositions: positions,
+      })
+    : previousAllViewport;
+  // The retained complete-map camera is reconciled against every surviving Node, independently
+  // from the active local camera below.
+  const allCameraFrame = reconcileCameraFrame(previousAllCameraFrame, nodeIds);
+  const activeCameraFrame = reconcileCameraFrame(
+    previous.cameraFrame ?? null,
+    localNodeIds ?? nodeIds,
+  );
+  const viewport =
+    depth !== "all"
+      ? layoutBasisChanged && previousLocalPositions === null
+        ? preserveStructureLayoutScreenPosition({
+            viewport: previous.viewport,
+            surfaceSize: previous.surfaceSize,
+            nodeId: focusId ?? localCenterId,
+            nodeIds,
+            previousPositions: previous.positions,
+            nextPositions: positions,
+          })
+        : previous.viewport
+      : previous.depth !== "all"
+        ? allViewport
+        : layoutBasisChanged
+          ? preserveStructureLayoutScreenPosition({
+              viewport: previous.viewport,
+              surfaceSize: previous.surfaceSize,
+              nodeId: focusId ?? localCenterId,
+              nodeIds,
+              previousPositions: previous.positions,
+              nextPositions: positions,
+            })
+          : previous.viewport;
   return {
     viewMode,
     focusId,
-    selectedEdgeId:
-      previous.selectedEdgeId && structure.edges.some((edge) => edge.id === previous.selectedEdgeId)
-        ? previous.selectedEdgeId
-        : null,
-    depth: focusId === null ? "all" : previous.depth,
+    localCenterId,
+    selectedEdgeId,
+    depth,
     framedRegionId,
-    cameraFrame:
-      layoutBasisChanged && framedRegionId !== null
-        ? { kind: "region", regionId: framedRegionId }
-        : reconcileStructureCameraFrame(
-            previous.cameraFrame ?? null,
-            nodeIds,
-            regionIds,
-            artifactUpdated,
-          ),
+    cameraFrame: depth === "all" && previous.depth !== "all" ? allCameraFrame : activeCameraFrame,
     positions,
-    viewport: layoutBasisChanged
-      ? preserveStructureLayoutScreenPosition({
-          viewport: previous.viewport,
-          surfaceSize: previous.surfaceSize,
-          nodeId: focusId,
-          nodeIds,
-          previousPositions: previous.positions,
-          nextPositions: positions,
-        })
-      : previous.viewport,
+    localPositions,
+    localLayoutBasisKey: preserveLocalPositions ? localLayoutBasisKey : null,
+    viewport,
     surfaceSize: previous.surfaceSize,
+    allViewport,
+    allSurfaceSize,
+    allCameraFrame,
     regionsView,
     guideDisclosure,
     layoutBasisKey,

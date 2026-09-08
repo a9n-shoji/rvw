@@ -11,7 +11,10 @@ import {
 } from "../../src/domain/structure-projection.js";
 import { formatStructureUri, parseStructureUri } from "../../src/domain/structure-uri.js";
 import {
+  deriveLocalStructureGraph,
+  deriveLocalStructureLayout,
   initialStructureLayout,
+  reconcileDerivedLocalStructureLayout,
   reconcileStructureLayout,
   STRUCTURE_NODE_HEIGHT,
   STRUCTURE_NODE_WIDTH,
@@ -1500,6 +1503,417 @@ describe("Structure domain presentation rules", () => {
     expect(visible.nodeIds.size).toBe(structure.nodes.length);
     expect(visible.edgeIds.size).toBe(structure.edges.length);
     expect(visibleStructureGraph(structure, "hub", "all")).toEqual(visible);
+  });
+
+  it("places a structurally unique hub inside a large Region independently of its stable ID", () => {
+    const leafIds = Array.from(
+      { length: 16 },
+      (_, index) => `leaf-${String(index).padStart(2, "0")}`,
+    );
+    const buildStructure = (hubId: string): Structure => {
+      const structure = directedStructure(
+        hubId,
+        [hubId, ...leafIds],
+        leafIds.map((leafId) => [hubId, leafId]),
+      );
+      structure.presentation = {
+        thesis: "One coordinator relates every responsibility in this comprehension chunk.",
+        startNodeId: hubId,
+        primaryBackbone: null,
+        regions: [
+          {
+            id: "large-region",
+            label: "Large Region",
+            summary: "The coordinator and its factual responsibilities.",
+            nodeIds: [...structure.nodes].reverse().map(({ id }) => id),
+          },
+        ],
+      };
+      return structure;
+    };
+    const earlyHubStructure = buildStructure("a-hub");
+    const lateHubStructure = buildStructure("z-hub");
+    const earlyLayout = initialStructureLayout(earlyHubStructure);
+    const lateLayout = initialStructureLayout(lateHubStructure);
+    const points = Object.values(earlyLayout);
+
+    expect(earlyLayout["a-hub"]).toEqual(lateLayout["z-hub"]);
+    expect(earlyLayout["a-hub"]!.x).toBeGreaterThan(Math.min(...points.map(({ x }) => x)));
+    expect(earlyLayout["a-hub"]!.x).toBeLessThan(Math.max(...points.map(({ x }) => x)));
+    expect(earlyLayout["a-hub"]!.y).toBeGreaterThan(Math.min(...points.map(({ y }) => y)));
+    expect(earlyLayout["a-hub"]!.y).toBeLessThan(Math.max(...points.map(({ y }) => y)));
+    expectNoNodeOverlap(earlyLayout);
+    expect(
+      initialStructureLayout({
+        ...earlyHubStructure,
+        nodes: [...earlyHubStructure.nodes].reverse(),
+        edges: [...earlyHubStructure.edges].reverse(),
+      }),
+    ).toEqual(earlyLayout);
+  });
+
+  it("embeds a large Region-internal backbone chain without grid-spanning jumps", () => {
+    const chainNodeIds = [
+      "kilo",
+      "alpha",
+      "zulu",
+      "bravo",
+      "yankee",
+      "charlie",
+      "xray",
+      "delta",
+      "whiskey",
+      "echo",
+      "victor",
+      "foxtrot",
+    ];
+    const structure = directedStructure(
+      chainNodeIds[0]!,
+      chainNodeIds,
+      chainNodeIds.slice(1).map((nodeId, index) => [chainNodeIds[index]!, nodeId]),
+    );
+    const backboneEdges = [...structure.edges];
+    structure.edges.push({
+      id: "auxiliary-chord",
+      from: chainNodeIds[0]!,
+      to: chainNodeIds.at(-1)!,
+      label: "also informs",
+      directed: true,
+      anchors: [],
+    });
+    structure.presentation = {
+      thesis: "The exact flow remains locally traceable inside one large Region.",
+      startNodeId: chainNodeIds[0]!,
+      primaryBackbone: { edgeIds: backboneEdges.map(({ id }) => id).reverse() },
+      regions: [
+        {
+          id: "chain",
+          label: "Chain",
+          summary: "One authored end-to-end flow.",
+          nodeIds: [...chainNodeIds].sort().reverse(),
+        },
+      ],
+    };
+    const layout = initialStructureLayout(structure);
+    const relationSpans = backboneEdges.map(
+      ({ from, to }) =>
+        Math.abs(layout[from]!.x - layout[to]!.x) + Math.abs(layout[from]!.y - layout[to]!.y),
+    );
+
+    expect(Math.max(...relationSpans)).toBeLessThanOrEqual(STRUCTURE_NODE_WIDTH + 64);
+    expectNoNodeOverlap(layout);
+    expect(
+      initialStructureLayout({
+        ...structure,
+        nodes: [...structure.nodes].reverse(),
+        edges: [...structure.edges].reverse(),
+        presentation: {
+          ...structure.presentation,
+          primaryBackbone: {
+            edgeIds: [...structure.presentation.primaryBackbone!.edgeIds].reverse(),
+          },
+          regions: structure.presentation.regions.map((region) => ({
+            ...region,
+            nodeIds: [...region.nodeIds].reverse(),
+          })),
+        },
+      }),
+    ).toEqual(layout);
+  });
+
+  it("keeps branch and convergence roles stable in a large Region", () => {
+    const branchIds = Array.from(
+      { length: 9 },
+      (_, index) => `branch-${String(index).padStart(2, "0")}`,
+    );
+    const buildStructure = (sourceId: string, sinkId: string): Structure => {
+      const structure = directedStructure(
+        sourceId,
+        [sourceId, ...branchIds, sinkId],
+        branchIds.flatMap((branchId) => [
+          [sourceId, branchId] as const,
+          [branchId, sinkId] as const,
+        ]),
+      );
+      structure.presentation = {
+        thesis: "A source branches into policies that converge at one result.",
+        startNodeId: sourceId,
+        primaryBackbone: null,
+        regions: [
+          {
+            id: "decision",
+            label: "Decision",
+            summary: "One branching and converging responsibility.",
+            nodeIds: [...structure.nodes].reverse().map(({ id }) => id),
+          },
+        ],
+      };
+      return structure;
+    };
+    const first = buildStructure("a-source", "z-sink");
+    const renamed = buildStructure("z-source", "a-sink");
+    const firstLayout = initialStructureLayout(first);
+    const renamedLayout = initialStructureLayout(renamed);
+
+    expect(firstLayout["a-source"]).toEqual(renamedLayout["z-source"]);
+    expect(firstLayout["z-sink"]).toEqual(renamedLayout["a-sink"]);
+    expectNoNodeOverlap(firstLayout);
+  });
+
+  it("derives an undirected local induced graph without hidden Nodes or fabricated Edges", () => {
+    const structure = directedStructure(
+      "center",
+      ["center", "left", "right", "convergence", "hidden", "hidden-tail"],
+      [
+        ["left", "center"],
+        ["center", "right"],
+        ["left", "right"],
+        ["left", "convergence"],
+        ["right", "convergence"],
+        ["convergence", "hidden"],
+        ["hidden", "hidden-tail"],
+      ],
+    );
+    const local = deriveLocalStructureGraph(structure, "center", 1)!;
+
+    expect(local.nodes.map(({ id }) => id)).toEqual(["center", "left", "right"]);
+    expect(local.edges.map(({ id }) => id)).toEqual(["edge-0", "edge-1", "edge-2"]);
+    expect(local.nodeIds).toEqual(new Set(["center", "left", "right"]));
+    expect(local.edgeIds).toEqual(new Set(["edge-0", "edge-1", "edge-2"]));
+    expect(deriveLocalStructureGraph(structure, "missing", 1)).toBeNull();
+    expect(
+      deriveLocalStructureGraph(
+        {
+          ...structure,
+          nodes: [...structure.nodes].reverse(),
+          edges: [...structure.edges].reverse(),
+        },
+        "center",
+        1,
+      ),
+    ).toEqual(local);
+  });
+
+  it("compresses only local whitespace while preserving direction, order, and the center anchor", () => {
+    const structure = directedStructure(
+      "center",
+      ["center", "left", "right", "convergence", "hidden", "hidden-tail"],
+      [
+        ["left", "center"],
+        ["center", "right"],
+        ["left", "right"],
+        ["left", "convergence"],
+        ["right", "convergence"],
+        ["convergence", "hidden"],
+        ["hidden", "hidden-tail"],
+      ],
+    );
+    const fullPositions = {
+      center: { x: 1_000, y: 1_000 },
+      left: { x: -2_000, y: 1_000 },
+      right: { x: 4_000, y: 1_000 },
+      convergence: { x: 4_000, y: 4_000 },
+      hidden: { x: 1_000, y: 2_000 },
+      "hidden-tail": { x: 1_000, y: 3_000 },
+    };
+    const local = deriveLocalStructureLayout(structure, "center", 2, fullPositions)!;
+    const depthOne = deriveLocalStructureLayout(structure, "center", 1, fullPositions)!;
+
+    expect(Object.keys(local.positions).sort()).toEqual(["center", "convergence", "left", "right"]);
+    expect(local.positions.center).toEqual(fullPositions.center);
+    expect(depthOne.positions.center).toEqual(fullPositions.center);
+    expect(local.positions.left!.x).toBeLessThan(local.positions.center!.x);
+    expect(local.positions.center!.x).toBeLessThan(local.positions.right!.x);
+    expect(local.positions.convergence!.y).toBeGreaterThan(local.positions.right!.y);
+    expect(structureLayoutExtent(local.positions).width).toBeLessThan(1_000);
+    expect(structureLayoutExtent(local.positions).height).toBeLessThan(500);
+    expectNoNodeOverlap(local.positions);
+    expect(
+      deriveLocalStructureLayout(structure, "center", 2, {
+        ...fullPositions,
+        hidden: { x: -90_000, y: 80_000 },
+        "hidden-tail": { x: 70_000, y: -60_000 },
+      }),
+    ).toEqual(local);
+    expect(
+      deriveLocalStructureLayout(
+        {
+          ...structure,
+          nodes: [...structure.nodes].reverse(),
+          edges: [...structure.edges].reverse(),
+        },
+        "center",
+        2,
+        fullPositions,
+      ),
+    ).toEqual(local);
+  });
+
+  it("repairs local collisions without inverting the full layout's horizontal or vertical order", () => {
+    const structure = directedStructure(
+      "center",
+      ["center", "left", "above"],
+      [
+        ["center", "left"],
+        ["center", "above"],
+      ],
+    );
+    const fullPositions = {
+      center: { x: 0, y: 0 },
+      left: { x: -240, y: 100 },
+      above: { x: 100, y: -100 },
+    };
+    const local = deriveLocalStructureLayout(structure, "center", 1, fullPositions)!;
+
+    expect(local.positions.center).toEqual(fullPositions.center);
+    expect(local.positions.left!.x).toBeLessThan(local.positions.center!.x);
+    expect(local.positions.left!.y).toBeGreaterThan(local.positions.center!.y);
+    expect(local.positions.above!.x).toBeGreaterThan(local.positions.center!.x);
+    expect(local.positions.above!.y).toBeLessThan(local.positions.center!.y);
+    expectNoNodeOverlap(local.positions);
+    expect(
+      deriveLocalStructureLayout(
+        {
+          ...structure,
+          nodes: [...structure.nodes].reverse(),
+          edges: [...structure.edges].reverse(),
+        },
+        "center",
+        1,
+        fullPositions,
+      ),
+    ).toEqual(local);
+  });
+
+  it("aligns missing local fallback positions to the retained center coordinate system", () => {
+    const structure = directedStructure(
+      "center",
+      ["left", "center", "right"],
+      [
+        ["left", "center"],
+        ["center", "right"],
+      ],
+    );
+    const local = deriveLocalStructureLayout(structure, "center", 1, {
+      center: { x: 1_000, y: 1_000 },
+      left: { x: 0, y: 1_000 },
+    })!;
+
+    expect(local.positions.center).toEqual({ x: 1_000, y: 1_000 });
+    expect(local.positions.left!.x).toBeLessThan(local.positions.center!.x);
+    expect(local.positions.right!.x).toBeGreaterThan(local.positions.center!.x);
+    expectNoNodeOverlap(local.positions);
+  });
+
+  it("derives a dense 50-Node local layout within a bounded unit-test budget", () => {
+    const nodeIds = Array.from(
+      { length: 50 },
+      (_, index) => `node-${String(index).padStart(2, "0")}`,
+    );
+    const links = [
+      ...nodeIds.slice(1).map((nodeId) => [nodeIds[0]!, nodeId] as const),
+      ...nodeIds.flatMap((nodeId, index) =>
+        Array.from(
+          { length: 3 },
+          (_, offset) => [nodeId, nodeIds[(index + offset + 1) % 50]!] as const,
+        ),
+      ),
+    ];
+    const structure = directedStructure(nodeIds[0]!, nodeIds, links);
+    const fullPositions = Object.fromEntries(
+      nodeIds.map((nodeId, index) => [
+        nodeId,
+        { x: (index % 10) * 600, y: Math.floor(index / 10) * 300 },
+      ]),
+    );
+    const startedAt = performance.now();
+    const local = deriveLocalStructureLayout(structure, nodeIds[0]!, 2, fullPositions)!;
+    const elapsed = performance.now() - startedAt;
+
+    expect(local.graph.nodes).toHaveLength(50);
+    expectNoNodeOverlap(local.positions);
+    expect(elapsed).toBeLessThan(1_000);
+  });
+
+  it("retains surviving reviewer positions and places only new Nodes when a local graph changes", () => {
+    const original = directedStructure("center", ["center", "left"], [["center", "left"]]);
+    const previousLayout = deriveLocalStructureLayout(original, "center", 1, {
+      center: { x: 600, y: 400 },
+      left: { x: 300, y: 400 },
+    })!;
+    const previous = {
+      ...previousLayout.positions,
+      center: { x: 777, y: 333 },
+      left: { x: 300, y: 444 },
+    };
+    const updated = directedStructure(
+      "center",
+      ["center", "left", "new-neighbor"],
+      [
+        ["center", "left"],
+        ["center", "new-neighbor"],
+      ],
+    );
+    const derived = deriveLocalStructureLayout(updated, "center", 1, {
+      center: { x: 600, y: 400 },
+      left: { x: 300, y: 400 },
+      "new-neighbor": { x: 900, y: 400 },
+    })!;
+    const reconciled = reconcileDerivedLocalStructureLayout(derived, previous);
+
+    expect(reconciled.center).toEqual(previous.center);
+    expect(reconciled.left).toEqual(previous.left);
+    expect(reconciled["new-neighbor"]).toBeDefined();
+    expectNoNodeOverlap(reconciled);
+    expect(
+      reconcileDerivedLocalStructureLayout(derived, {
+        ...previous,
+        removed: { x: -1_000, y: -1_000 },
+      }),
+    ).toEqual(reconciled);
+  });
+
+  it("uses current local positions as the continuity basis across depth and center changes", () => {
+    const structure = directedStructure(
+      "a",
+      ["a", "b", "c", "d", "e"],
+      [
+        ["a", "b"],
+        ["b", "c"],
+        ["c", "d"],
+        ["d", "e"],
+      ],
+    );
+    const fullPositions = {
+      a: { x: 0, y: 0 },
+      b: { x: 360, y: 0 },
+      c: { x: 720, y: 0 },
+      d: { x: 1_080, y: 0 },
+      e: { x: 1_440, y: 0 },
+    };
+    const initialLocal = deriveLocalStructureLayout(structure, "b", 1, fullPositions)!;
+    const reviewerPositions = {
+      ...initialLocal.positions,
+      a: { x: 90, y: 330 },
+      b: { x: 510, y: 210 },
+      c: { x: 880, y: 390 },
+    };
+
+    const depthTarget = deriveLocalStructureLayout(structure, "b", 2, fullPositions)!;
+    const depthPositions = reconcileDerivedLocalStructureLayout(depthTarget, reviewerPositions);
+    expect(depthPositions.a).toEqual(reviewerPositions.a);
+    expect(depthPositions.b).toEqual(reviewerPositions.b);
+    expect(depthPositions.c).toEqual(reviewerPositions.c);
+    expect(depthPositions.d).toBeDefined();
+    expectNoNodeOverlap(depthPositions);
+
+    const centerTarget = deriveLocalStructureLayout(structure, "c", 1, fullPositions)!;
+    const centerPositions = reconcileDerivedLocalStructureLayout(centerTarget, reviewerPositions);
+    expect(centerPositions.b).toEqual(reviewerPositions.b);
+    expect(centerPositions.c).toEqual(reviewerPositions.c);
+    expect(centerPositions.d).toBeDefined();
+    expect(centerPositions.a).toBeUndefined();
+    expectNoNodeOverlap(centerPositions);
   });
 
   it("preserves common Node positions across current-value replacement", () => {

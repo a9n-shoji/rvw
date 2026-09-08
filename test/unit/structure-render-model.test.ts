@@ -1,20 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { Structure } from "../../src/domain/models.js";
 import {
+  deriveLocalStructureLayout,
   initialStructureLayout,
   STRUCTURE_NODE_HEIGHT,
   STRUCTURE_NODE_WIDTH,
 } from "../../src/web/structure-graph.js";
+import { retryAutomaticStructureLayoutSpacing } from "../../src/web/structure-layout-spacing.js";
 import {
   boxesOverlap,
+  buildAutomaticStructureRenderFoundation,
   buildFullStructureRenderModel,
   buildStructureRenderFoundation,
   buildStructureRenderModel,
   EDGE_LABEL_LINE_HEIGHT,
   labelBox,
+  placeEdgeLabels,
   routeStructureEdges,
   selectStructureRenderModel,
   structureRenderBoundsForNodeIds,
+  STRUCTURE_AUTOMATIC_LAYOUT_MAX_SPACING_RETRIES,
   STRUCTURE_EDGE_ARROW_LENGTH,
   STRUCTURE_EDGE_MIN_TERMINAL_APPROACH,
   type StructureEdgeGeometry,
@@ -186,6 +191,36 @@ function structureRouteLength(route: StructureEdgeGeometry): number {
   }, 0);
 }
 
+function testRouteGeometry(points: readonly { x: number; y: number }[]): StructureEdgeGeometry {
+  const first = points[0]!;
+  const last = points.at(-1)!;
+  const tangentLength = Math.max(1, Math.hypot(last.x - first.x, last.y - first.y));
+  return {
+    path: "",
+    strokePath: "",
+    arrowPath: "",
+    points,
+    startX: first.x,
+    startY: first.y,
+    control1X: first.x,
+    control1Y: first.y,
+    control2X: last.x,
+    control2Y: last.y,
+    endX: last.x,
+    endY: last.y,
+    arrowBaseX: last.x,
+    arrowBaseY: last.y,
+    arrowTangentX: (last.x - first.x) / tangentLength,
+    arrowTangentY: (last.y - first.y) / tangentLength,
+    bounds: {
+      left: Math.min(...points.map(({ x }) => x)),
+      top: Math.min(...points.map(({ y }) => y)),
+      right: Math.max(...points.map(({ x }) => x)),
+      bottom: Math.max(...points.map(({ y }) => y)),
+    },
+  };
+}
+
 function properSegmentsCross(
   leftStart: { x: number; y: number },
   leftEnd: { x: number; y: number },
@@ -322,6 +357,31 @@ function renderStructure(): Structure {
     ],
     createdAt: "2026-09-01T00:00:00.000Z",
     updatedAt: "2026-09-01T00:00:00.000Z",
+  };
+}
+
+function spacingRetryStructure(): Structure {
+  return {
+    ...renderStructure(),
+    originNodeId: "source",
+    nodes: ["source", "target"].map((id) => ({
+      id,
+      label: id,
+      description: null,
+      kind: null,
+      notation: "plain",
+      anchor: null,
+    })),
+    edges: [
+      {
+        id: "relationship",
+        from: "source",
+        to: "target",
+        label: "a wide relationship that needs spacing",
+        directed: true,
+        anchors: [],
+      },
+    ],
   };
 }
 
@@ -855,6 +915,333 @@ describe("Structure shared render model", () => {
     expect(withSourceAction.labels[0]!.boxWidth).toBeGreaterThan(
       withoutSourceAction.labels[0]!.boxWidth,
     );
+  });
+
+  it("compares compact and complete label boxes in one proximity-first candidate set", () => {
+    const edge = {
+      id: "main",
+      from: "source",
+      to: "target",
+      label: "this is a substantially wide relationship label",
+      directed: true,
+      anchors: [
+        { path: "src/source.ts", startLine: 1, endLine: 1 },
+        { path: "src/target.ts", startLine: 1, endLine: 1 },
+      ],
+    };
+    const nodes = ["left-wall", "right-wall"].map((id) => ({
+      id,
+      label: id,
+      description: null,
+      kind: null,
+      notation: "plain" as const,
+      anchor: null,
+    }));
+    const positions = {
+      "left-wall": { x: -98, y: -56 },
+      "right-wall": { x: 350, y: -56 },
+    };
+    const routes = new Map([
+      [
+        "main",
+        testRouteGeometry([
+          { x: 0, y: 0 },
+          { x: 500, y: 0 },
+        ]),
+      ],
+    ]);
+
+    const viewer = placeEdgeLabels(
+      [edge],
+      nodes,
+      positions,
+      new Map(),
+      routes,
+      "source-actions",
+      "viewer-adaptive",
+    )[0]!;
+    const complete = placeEdgeLabels(
+      [edge],
+      nodes,
+      positions,
+      new Map(),
+      routes,
+      "source-actions",
+      "export-complete",
+    )[0]!;
+
+    expect(viewer.source.anchorCount).toBe(2);
+    expect(viewer.boxWidth).toBeGreaterThan(viewer.selectWidth);
+    expect(viewer.diagnostics.usedCompactWidth).toBe(true);
+    expect(viewer.diagnostics.edgeDistance).toBe(0);
+    expect(viewer.displaced).toBe(false);
+    expect(viewer.leaderPath).toBeNull();
+    expect(complete.boxWidth).toBeGreaterThan(viewer.boxWidth);
+    expect(complete.diagnostics.usedCompactWidth).toBe(false);
+    expect(complete.diagnostics.edgeDistance).toBeGreaterThan(0);
+    expect(complete.displaced).toBe(true);
+  });
+
+  it("moves along the own Edge before retreating along its normal", () => {
+    const edge = {
+      id: "main",
+      from: "source",
+      to: "target",
+      label: "moves",
+      directed: true,
+      anchors: [],
+    };
+    const blocker = {
+      id: "blocker",
+      label: "blocker",
+      description: null,
+      kind: null,
+      notation: "plain" as const,
+      anchor: null,
+    };
+    const route = testRouteGeometry([
+      { x: 0, y: 0 },
+      { x: 800, y: 0 },
+    ]);
+    const placement = placeEdgeLabels(
+      [edge],
+      [blocker],
+      { blocker: { x: 286, y: -56 } },
+      new Map(),
+      new Map([[edge.id, route]]),
+      "none",
+      "viewer-adaptive",
+    )[0]!;
+
+    expect(placement.x).not.toBeCloseTo(400);
+    expect(placement.y).toBe(0);
+    expect(placement.displaced).toBe(false);
+    expect(placement.leaderPath).toBeNull();
+    expect(placement.diagnostics.edgeDistance).toBe(0);
+    expect(
+      boxesOverlap(labelBox(placement.x, placement.y, placement.boxWidth, placement.height, 5), {
+        left: 286 - 20,
+        top: -56 - 20,
+        right: 286 + STRUCTURE_NODE_WIDTH + 20,
+        bottom: -56 + STRUCTURE_NODE_HEIGHT + 20,
+      }),
+    ).toBe(false);
+  });
+
+  it("starts displaced leaders transversely and avoids a long nearby parallel route", () => {
+    const edge = {
+      id: "main",
+      from: "source",
+      to: "target",
+      label: "forced leader",
+      directed: true,
+      anchors: [],
+    };
+    const nodes = ["left-wall", "right-wall"].map((id) => ({
+      id,
+      label: id,
+      description: null,
+      kind: null,
+      notation: "plain" as const,
+      anchor: null,
+    }));
+    const ownRoute = testRouteGeometry([
+      { x: 0, y: 0 },
+      { x: 100, y: 0 },
+    ]);
+    const blockingRoute = testRouteGeometry([
+      { x: 50, y: -200 },
+      { x: 50, y: 0 },
+    ]);
+    const placement = placeEdgeLabels(
+      [edge],
+      nodes,
+      {
+        "left-wall": { x: -238, y: -56 },
+        "right-wall": { x: 110, y: -56 },
+      },
+      new Map(),
+      new Map([
+        [edge.id, ownRoute],
+        ["blocking-route", blockingRoute],
+      ]),
+      "none",
+      "viewer-adaptive",
+    )[0]!;
+    const leaderPoints = linePathPoints(placement.leaderPath!);
+
+    expect(placement.displaced).toBe(true);
+    expect(placement.y).toBeGreaterThan(0);
+    expect(leaderPoints.length).toBeGreaterThanOrEqual(3);
+    expect(pointIsOnPolyline(leaderPoints[0]!, ownRoute.points)).toBe(true);
+    expect(leaderPoints[1]!.x).toBeCloseTo(leaderPoints[0]!.x);
+    expect(Math.abs(leaderPoints[1]!.y - leaderPoints[0]!.y)).toBeCloseTo(12);
+    expect(placement.diagnostics.maxParallelOverlap).toBeLessThan(36);
+    expect(placement.crowded).toBe(false);
+    expect(
+      [
+        placement.diagnostics.edgeDistance,
+        placement.diagnostics.leaderLength,
+        placement.diagnostics.maxParallelOverlap,
+        placement.diagnostics.crossingCount,
+      ].every(Number.isFinite),
+    ).toBe(true);
+  });
+
+  it("retries an automatic layout once when spacing resolves, without changing the manual builder", () => {
+    const structure = spacingRetryStructure();
+    const initialPositions = {
+      source: { x: 0, y: 0 },
+      target: { x: 260, y: 0 },
+    };
+    const manual = buildStructureRenderFoundation({
+      structure,
+      positions: initialPositions,
+      sourceChangeKinds: new Map(),
+      labelAccessory: "source-actions",
+      edgeLabelMode: "viewer-adaptive",
+    });
+    const attempts: number[] = [];
+    const automatic = buildAutomaticStructureRenderFoundation({
+      structure,
+      positions: initialPositions,
+      sourceChangeKinds: new Map(),
+      labelAccessory: "source-actions",
+      edgeLabelMode: "viewer-adaptive",
+      retryPositions: ({ attempt, pressureLabels }) => {
+        attempts.push(attempt);
+        expect(pressureLabels.map(({ edge }) => edge.id)).toEqual(["relationship"]);
+        return {
+          source: { x: 0, y: 0 },
+          target: { x: 600, y: 0 },
+        };
+      },
+    });
+
+    expect(manual.labels[0]!.diagnostics.spacingPressure).toBe(true);
+    expect(manual.nodes.find(({ node }) => node.id === "target")!.point.x).toBe(260);
+    expect(attempts).toEqual([1]);
+    expect(automatic.retryCount).toBe(1);
+    expect(automatic.positions.target!.x).toBe(600);
+    expect(automatic.foundation.labels[0]!.diagnostics.spacingPressure).toBe(false);
+  });
+
+  it("caps automatic spacing retries at two attempts", () => {
+    const structure = spacingRetryStructure();
+    const attempts: number[] = [];
+    const automatic = buildAutomaticStructureRenderFoundation({
+      structure,
+      positions: {
+        source: { x: 0, y: 0 },
+        target: { x: 260, y: 0 },
+      },
+      sourceChangeKinds: new Map(),
+      labelAccessory: "source-actions",
+      edgeLabelMode: "viewer-adaptive",
+      retryPositions: ({ attempt }) => {
+        attempts.push(attempt);
+        return {
+          source: { x: 0, y: 0 },
+          target: { x: attempt === 1 ? 280 : 320, y: 0 },
+        };
+      },
+    });
+
+    expect(STRUCTURE_AUTOMATIC_LAYOUT_MAX_SPACING_RETRIES).toBe(2);
+    expect(attempts).toEqual([1, 2]);
+    expect(automatic.retryCount).toBe(2);
+    expect(automatic.positions.target!.x).toBe(320);
+    expect(automatic.foundation.labels[0]!.diagnostics.spacingPressure).toBe(true);
+  });
+
+  it("stops automatic spacing retries on unchanged or non-finite candidates", () => {
+    const structure = spacingRetryStructure();
+    const positions = {
+      source: { x: 0, y: 0 },
+      target: { x: 260, y: 0 },
+    };
+    const results = [
+      buildAutomaticStructureRenderFoundation({
+        structure,
+        positions,
+        sourceChangeKinds: new Map(),
+        labelAccessory: "source-actions",
+        edgeLabelMode: "viewer-adaptive",
+        retryPositions: () => ({ ...positions }),
+      }),
+      buildAutomaticStructureRenderFoundation({
+        structure,
+        positions,
+        sourceChangeKinds: new Map(),
+        labelAccessory: "source-actions",
+        edgeLabelMode: "viewer-adaptive",
+        retryPositions: () => ({
+          source: { x: 0, y: 0 },
+          target: { x: Number.NaN, y: 0 },
+        }),
+      }),
+    ];
+
+    expect(results.map(({ retryCount }) => retryCount)).toEqual([0, 0]);
+    expect(results.every(({ positions: result }) => result === positions)).toBe(true);
+  });
+
+  it("keeps the two source-backed Order one-hop relations on their own Edges", () => {
+    const structure = createContractStructures({
+      pullRequestId: "pr-1",
+      baseOid: "a".repeat(40),
+      firstHead: "b".repeat(40),
+    }).find(({ title }) => title === "Order placement behavior") as Structure;
+    const local = deriveLocalStructureLayout(
+      structure,
+      "hub",
+      1,
+      initialStructureLayout(structure),
+    )!;
+    const renderGraph = {
+      nodes: local.graph.nodes,
+      edges: local.graph.edges,
+      presentation: structure.presentation,
+    };
+    const automatic = buildAutomaticStructureRenderFoundation({
+      structure: renderGraph,
+      positions: local.positions,
+      sourceChangeKinds: new Map(),
+      labelAccessory: "source-actions",
+      edgeLabelMode: "viewer-adaptive",
+      retryPositions: ({ attempt, positions, pressureLabels }) =>
+        retryAutomaticStructureLayoutSpacing({
+          structure: renderGraph,
+          anchorNodeId: "hub",
+          attempt,
+          positions,
+          pressureLabels,
+        }),
+    });
+    const labels = new Map(automatic.foundation.labels.map((label) => [label.edge.id, label]));
+    const retry = labels.get("handler-idempotency-envelope")!;
+    const snapshot = labels.get("order-returns-snapshot")!;
+
+    expect(automatic.retryCount).toBeLessThanOrEqual(2);
+    expect(retry.edge.label).toBe("再試行を束ねる");
+    expect(snapshot.edge.label).toBe("response snapshotを返す");
+    expect({ placement: retry.sourceMenuPlacement, width: retry.sourceMenuWidth }).toEqual({
+      placement: "above-left",
+      width: 144,
+    });
+    expect({ placement: snapshot.sourceMenuPlacement, width: snapshot.sourceMenuWidth }).toEqual({
+      placement: "below-right",
+      width: 144,
+    });
+    for (const label of [retry, snapshot]) {
+      expect(label.source.anchorCount).toBe(2);
+      expect(label.sourceMenuPlacement).not.toBeNull();
+      expect(label.diagnostics.edgeDistance).toBe(0);
+      expect(label.displaced).toBe(false);
+      expect(label.leaderPath).toBeNull();
+      expect(label.diagnostics.fallbackReason).not.toBe("distant");
+      expect(label.diagnostics.fallbackReason).not.toBe("emergency");
+    }
   });
 
   it("keeps label positions stable when the authored Edge array order changes", () => {
@@ -1439,6 +1826,80 @@ describe("Structure shared render model", () => {
     expect(model.edges.length).toBeLessThan(structure.edges.length);
   });
 
+  it("retains label avoidance while routing leaders beyond sixty-four dense Edges", () => {
+    let seed = 246_813_579;
+    const random = (): number => {
+      seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;
+      return seed / 2 ** 32;
+    };
+    const nodes = Array.from({ length: 10 }, (_, index) => ({
+      id: `node-${index}`,
+      label: `Node ${index}`,
+      description: null,
+      kind: null,
+      notation: "plain" as const,
+      anchor: null,
+    }));
+    const slots = Array.from({ length: 10 }, (_, index) => ({
+      x: (index % 5) * 236,
+      y: Math.floor(index / 5) * 120,
+    }));
+    for (let index = slots.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(random() * (index + 1));
+      [slots[index], slots[swapIndex]] = [slots[swapIndex]!, slots[index]!];
+    }
+    const positions = Object.fromEntries(nodes.map((node, index) => [node.id, slots[index]!]));
+    const structure: Structure = {
+      ...renderStructure(),
+      originNodeId: nodes[0]!.id,
+      nodes,
+      edges: Array.from({ length: 65 }, (_, index) => ({
+        id: `dense-${String(index).padStart(3, "0")}`,
+        from: nodes[Math.floor(random() * nodes.length)]!.id,
+        to: nodes[Math.floor(random() * nodes.length)]!.id,
+        label: `relationship ${index} with enough text`,
+        directed: true,
+        anchors: [],
+      })),
+    };
+    const model = buildFullStructureRenderModel({
+      structure,
+      positions,
+      sourceChangeKinds: new Map(),
+    });
+    const nodeBoxes = model.nodes.map(({ point }) => ({
+      left: point.x,
+      top: point.y,
+      right: point.x + STRUCTURE_NODE_WIDTH,
+      bottom: point.y + STRUCTURE_NODE_HEIGHT,
+    }));
+
+    expect(model.labels).toHaveLength(65);
+    expect(model.labels.slice(64).every(({ leaderPath }) => leaderPath !== null)).toBe(true);
+    for (const label of model.labels) {
+      const leaderPoints = linePathPoints(label.leaderPath ?? "");
+      for (const [leaderIndex, end] of leaderPoints.slice(1).entries()) {
+        const start = leaderPoints[leaderIndex]!;
+        expect(
+          nodeBoxes.some((box) => segmentIntersectsBox(start, end, box)),
+          `${label.edge.id} leader crosses a Node`,
+        ).toBe(false);
+        expect(
+          model.labels
+            .filter(({ edge }) => edge.id !== label.edge.id)
+            .some((other) =>
+              segmentIntersectsBox(
+                start,
+                end,
+                labelBox(other.x, other.y, other.boxWidth, other.height),
+              ),
+            ),
+          `${label.edge.id} leader crosses another label`,
+        ).toBe(false);
+      }
+    }
+  });
+
   it("places all 200 labels of one parallel bundle without label collisions", () => {
     const structure: Structure = {
       ...renderStructure(),
@@ -1468,6 +1929,12 @@ describe("Structure shared render model", () => {
 
     expect(model.edges).toHaveLength(200);
     expect(model.labels).toHaveLength(200);
+    const nodeBoxes = model.nodes.map(({ point }) => ({
+      left: point.x,
+      top: point.y,
+      right: point.x + STRUCTURE_NODE_WIDTH,
+      bottom: point.y + STRUCTURE_NODE_HEIGHT,
+    }));
     for (const [index, label] of model.labels.entries()) {
       const box = labelBox(label.x, label.y, label.boxWidth, label.height, 4);
       for (const other of model.labels.slice(index + 1)) {
@@ -1476,7 +1943,52 @@ describe("Structure shared render model", () => {
           `${label.edge.id} overlaps ${other.edge.id}`,
         ).toBe(false);
       }
+      if (!label.displaced) continue;
+      expect(label.leaderPath, `${label.edge.id} has no association leader`).not.toBeNull();
+      const leaderPoints = linePathPoints(label.leaderPath!);
+      for (const [leaderIndex, end] of leaderPoints.slice(1).entries()) {
+        const start = leaderPoints[leaderIndex]!;
+        for (const nodeBox of nodeBoxes) {
+          expect(
+            segmentIntersectsBox(start, end, nodeBox),
+            `${label.edge.id} leader crosses a Node`,
+          ).toBe(false);
+        }
+        for (const other of model.labels.filter(({ edge }) => edge.id !== label.edge.id)) {
+          expect(
+            segmentIntersectsBox(
+              start,
+              end,
+              labelBox(other.x, other.y, other.boxWidth, other.height),
+            ),
+            `${label.edge.id} leader crosses ${other.edge.id}`,
+          ).toBe(false);
+        }
+      }
     }
+    expect(
+      model.labels.every(({ diagnostics }) =>
+        [
+          diagnostics.edgeDistance,
+          diagnostics.leaderLength,
+          diagnostics.maxParallelOverlap,
+          diagnostics.crossingCount,
+        ].every(Number.isFinite),
+      ),
+    ).toBe(true);
+    expect(
+      model.labels
+        .slice(64)
+        .some(({ crowded, diagnostics }) => crowded && diagnostics.fallbackReason !== null),
+    ).toBe(true);
+    expect(
+      model.labels
+        .filter(({ crowded }) => crowded)
+        .every(({ diagnostics }) => diagnostics.spacingPressure),
+    ).toBe(true);
+    expect(model.labels.some(({ diagnostics }) => diagnostics.fallbackReason === "emergency")).toBe(
+      true,
+    );
     expect(model.bounds!.right - model.bounds!.left).toBeLessThan(50_000);
     expect(model.bounds!.bottom - model.bounds!.top).toBeLessThan(50_000);
   });

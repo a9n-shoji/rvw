@@ -43,6 +43,9 @@ export interface EdgeSourcePresentation {
   changeKind: EdgeSourceChangeKind | null;
 }
 
+export type StructureEdgeSourceMenuPlacement =
+  "below-left" | "above-left" | "below-right" | "above-right";
+
 export interface StructureEdgeLabelPlacement {
   edge: StructureEdge;
   displayLines: readonly string[];
@@ -58,6 +61,26 @@ export interface StructureEdgeLabelPlacement {
   leaderBounds: StructureBox | null;
   leaderEdgeAnchor: StructurePoint | null;
   leaderLabelAnchor: StructurePoint | null;
+  sourceMenuPlacement: StructureEdgeSourceMenuPlacement | null;
+  sourceMenuWidth: number | null;
+  diagnostics: StructureEdgeLabelDiagnostics;
+}
+
+export type StructureEdgeLabelFallbackReason =
+  "distant" | "label-route-overlap" | "leader-overlap" | "emergency";
+
+/**
+ * Renderer-owned placement health. This never changes the factual Edge or authoring payload; it
+ * lets the automatic-layout caller decide whether a bounded spacing retry would be worthwhile.
+ */
+export interface StructureEdgeLabelDiagnostics {
+  edgeDistance: number;
+  leaderLength: number;
+  maxParallelOverlap: number;
+  crossingCount: number;
+  usedCompactWidth: boolean;
+  spacingPressure: boolean;
+  fallbackReason: StructureEdgeLabelFallbackReason | null;
 }
 
 export interface StructureRenderSelection {
@@ -118,6 +141,39 @@ export interface StructureRenderFoundation {
   presentation: StructureRenderPresentation | null;
 }
 
+/**
+ * Renderer input deliberately omits factual entrypoint fields. A derived local graph may exclude
+ * the artifact's origin/start Node and must not masquerade as a protocol-valid Structure value.
+ */
+export type StructureRenderGraph = Pick<Structure, "nodes" | "edges" | "presentation">;
+
+export interface StructureRenderFoundationInput {
+  structure: StructureRenderGraph;
+  positions: Readonly<Record<string, StructurePoint>>;
+  sourceChangeKinds: ReadonlyMap<string, ChangeKind>;
+  labelAccessory: StructureLabelAccessory;
+  edgeLabelMode: StructureEdgeLabelMode;
+}
+
+export interface StructureAutomaticSpacingRetryInput {
+  attempt: 1 | 2;
+  positions: Readonly<Record<string, StructurePoint>>;
+  foundation: StructureRenderFoundation;
+  pressureLabels: readonly StructureEdgeLabelPlacement[];
+}
+
+export interface StructureAutomaticRenderFoundationInput extends StructureRenderFoundationInput {
+  retryPositions: (
+    input: StructureAutomaticSpacingRetryInput,
+  ) => Readonly<Record<string, StructurePoint>> | null | undefined;
+}
+
+export interface StructureAutomaticRenderFoundationResult {
+  foundation: StructureRenderFoundation;
+  positions: Readonly<Record<string, StructurePoint>>;
+  retryCount: number;
+}
+
 export type StructureLabelAccessory = "source-actions" | "none";
 export type StructureEdgeLabelMode = "viewer-adaptive" | "export-complete";
 
@@ -127,6 +183,50 @@ const EDGE_LABEL_MIN_TEXT_WIDTH = 64;
 const EDGE_LABEL_HORIZONTAL_PADDING = 11;
 const EDGE_LABEL_WIDTH_SAFETY = 2;
 export const EDGE_LABEL_LINE_HEIGHT = 14;
+const EDGE_LABEL_SOURCE_MENU_WIDTH = 300;
+const EDGE_LABEL_SOURCE_MENU_MAX_HEIGHT = 180;
+const EDGE_LABEL_SOURCE_MENU_ITEM_HEIGHT = 26;
+const EDGE_LABEL_SOURCE_MENU_ITEM_GAP = 5;
+const EDGE_LABEL_SOURCE_MENU_PADDING = 7;
+const EDGE_LABEL_SOURCE_MENU_BORDER = 1;
+const EDGE_LABEL_SOURCE_MENU_OFFSET = 5;
+const EDGE_LABEL_SOURCE_MENU_WIDTHS = [EDGE_LABEL_SOURCE_MENU_WIDTH, 240, 180, 144] as const;
+const EDGE_LABEL_SOURCE_MENU_PLACEMENTS = [
+  "below-left",
+  "above-left",
+  "below-right",
+  "above-right",
+] as const satisfies readonly StructureEdgeSourceMenuPlacement[];
+const EDGE_LABEL_COLLISION_PADDING = 5;
+const EDGE_LABEL_NEAR_GAP = 20;
+const EDGE_LABEL_SHORT_LEADER_GAP = 72;
+const EDGE_LABEL_PROXIMITY_TIER_TOLERANCE = 0.001;
+const EDGE_LABEL_LEADER_KICKOFF = 12;
+const EDGE_LABEL_LEADER_NEAR_PARALLEL_DISTANCE = 6;
+const EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP = 36;
+const EDGE_LABEL_LEADER_FULL_GRID_VERTEX_LIMIT = 4_096;
+const EDGE_LABEL_EMERGENCY_FULL_GRID_VERTEX_LIMIT = 32_768;
+const EDGE_LABEL_OBSTACLE_BOUNDARY_TOLERANCE = 0.001;
+const EDGE_LABEL_EMERGENCY_ANCHOR_LIMIT = 22;
+const EDGE_LABEL_EMERGENCY_SHELF_GAP = 24;
+const EDGE_LABEL_EMERGENCY_STACK_GAP = 12;
+const EDGE_LABEL_OUTSIDE_GAP = 8;
+const EDGE_LABEL_OUTSIDE_SLOT_GAP = 12;
+const EDGE_LABEL_OUTSIDE_RING_COUNT = 3;
+const EDGE_LABEL_OUTSIDE_SLOTS_PER_SIDE_LIMIT = 32;
+const EDGE_LABEL_OUTSIDE_ANCHORS_PER_SLOT = 3;
+const EDGE_LABEL_OUTSIDE_LEADER_ATTEMPT_LIMIT = 64;
+const EDGE_LABEL_SEGMENT_INDEX_CELL_SIZE = 128;
+const STRUCTURE_AUTOMATIC_LAYOUT_SPACING_RETRY_ATTEMPTS = [1, 2] as const;
+export const STRUCTURE_AUTOMATIC_LAYOUT_MAX_SPACING_RETRIES =
+  STRUCTURE_AUTOMATIC_LAYOUT_SPACING_RETRY_ATTEMPTS.length;
+const EDGE_LABEL_CANDIDATE_FRACTIONS = Array.from(
+  { length: 22 },
+  (_, index) => 0.08 + index * 0.04,
+).sort((left, right) => Math.abs(left - 0.5) - Math.abs(right - 0.5));
+const EDGE_LABEL_CANDIDATE_OFFSETS = [
+  0, 14, -14, 28, -28, 44, -44, 64, -64, 88, -88, 116, -116, 152, -152, 196, -196, 248, -248,
+] as const;
 
 function stableCompare(left: string, right: string): number {
   return left === right ? 0 : left < right ? -1 : 1;
@@ -1500,11 +1600,19 @@ export function routeStructureEdges(
   return result;
 }
 
+interface StructureEdgeLabelRouteSample {
+  point: StructurePoint;
+  routePoint: StructurePoint;
+  tangent: StructurePoint;
+  fraction: number;
+  normalOffset: number;
+}
+
 function curveLabelCandidate(
   geometry: StructureEdgeGeometry,
   fraction: number,
   offset: number,
-): { x: number; y: number } {
+): StructureEdgeLabelRouteSample {
   const segments = geometry.points.slice(1).map((point, index) => {
     const previous = geometry.points[index]!;
     return {
@@ -1521,16 +1629,33 @@ function curveLabelCandidate(
       remaining -= candidate.length;
       return false;
     }) ?? segments.at(-1);
-  if (!segment) return { x: geometry.startX, y: geometry.startY };
+  if (!segment) {
+    const routePoint = { x: geometry.startX, y: geometry.startY };
+    return {
+      point: routePoint,
+      routePoint,
+      tangent: { x: 1, y: 0 },
+      fraction,
+      normalOffset: offset,
+    };
+  }
   const segmentFraction = segment.length === 0 ? 0 : Math.min(1, remaining / segment.length);
   const x = segment.previous.x + (segment.point.x - segment.previous.x) * segmentFraction;
   const y = segment.previous.y + (segment.point.y - segment.previous.y) * segmentFraction;
   const tangentX = segment.point.x - segment.previous.x;
   const tangentY = segment.point.y - segment.previous.y;
   const tangentLength = Math.max(1, Math.hypot(tangentX, tangentY));
+  const tangent = { x: tangentX / tangentLength, y: tangentY / tangentLength };
+  const routePoint = { x, y };
   return {
-    x: x + (-tangentY / tangentLength) * offset,
-    y: y + (tangentX / tangentLength) * offset,
+    point: {
+      x: x + -tangent.y * offset,
+      y: y + tangent.x * offset,
+    },
+    routePoint,
+    tangent,
+    fraction,
+    normalOffset: offset,
   };
 }
 
@@ -1567,6 +1692,204 @@ function expandedBox(box: StructureBox, padding: number): StructureBox {
   };
 }
 
+function pointToBoxDistance(point: StructurePoint, box: StructureBox): number {
+  const deltaX = Math.max(box.left - point.x, 0, point.x - box.right);
+  const deltaY = Math.max(box.top - point.y, 0, point.y - box.bottom);
+  return Math.hypot(deltaX, deltaY);
+}
+
+function pointToSegmentDistance(
+  point: StructurePoint,
+  start: StructurePoint,
+  end: StructurePoint,
+): number {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+  if (lengthSquared === 0) return Math.hypot(point.x - start.x, point.y - start.y);
+  const fraction = Math.max(
+    0,
+    Math.min(1, ((point.x - start.x) * deltaX + (point.y - start.y) * deltaY) / lengthSquared),
+  );
+  return Math.hypot(
+    point.x - (start.x + deltaX * fraction),
+    point.y - (start.y + deltaY * fraction),
+  );
+}
+
+function boxToSegmentDistance(
+  box: StructureBox,
+  start: StructurePoint,
+  end: StructurePoint,
+): number {
+  if (segmentIntersectsBox(start, end, box)) return 0;
+  const corners = [
+    { x: box.left, y: box.top },
+    { x: box.right, y: box.top },
+    { x: box.right, y: box.bottom },
+    { x: box.left, y: box.bottom },
+  ];
+  return Math.min(
+    pointToBoxDistance(start, box),
+    pointToBoxDistance(end, box),
+    ...corners.map((corner) => pointToSegmentDistance(corner, start, end)),
+  );
+}
+
+function boxToPolylineDistance(box: StructureBox, points: readonly StructurePoint[]): number {
+  if (points.length < 2) return Number.POSITIVE_INFINITY;
+  return Math.min(
+    ...points.slice(1).map((end, index) => boxToSegmentDistance(box, points[index]!, end)),
+  );
+}
+
+interface IndexedStructureSegment {
+  ownerId: string;
+  start: StructurePoint;
+  end: StructurePoint;
+}
+
+interface StructureSegmentIndex {
+  addPolyline: (ownerId: string, points: readonly StructurePoint[]) => void;
+  query: (bounds: StructureBox) => readonly IndexedStructureSegment[];
+}
+
+function segmentBounds(start: StructurePoint, end: StructurePoint, padding = 0): StructureBox {
+  return {
+    left: Math.min(start.x, end.x) - padding,
+    top: Math.min(start.y, end.y) - padding,
+    right: Math.max(start.x, end.x) + padding,
+    bottom: Math.max(start.y, end.y) + padding,
+  };
+}
+
+function segmentIndexCellKeys(bounds: StructureBox): string[] {
+  const keys: string[] = [];
+  const left = Math.floor(bounds.left / EDGE_LABEL_SEGMENT_INDEX_CELL_SIZE);
+  const right = Math.floor(bounds.right / EDGE_LABEL_SEGMENT_INDEX_CELL_SIZE);
+  const top = Math.floor(bounds.top / EDGE_LABEL_SEGMENT_INDEX_CELL_SIZE);
+  const bottom = Math.floor(bounds.bottom / EDGE_LABEL_SEGMENT_INDEX_CELL_SIZE);
+  for (let x = left; x <= right; x += 1) {
+    for (let y = top; y <= bottom; y += 1) keys.push(`${x}:${y}`);
+  }
+  return keys;
+}
+
+function createStructureSegmentIndex(): StructureSegmentIndex {
+  const cells = new Map<string, IndexedStructureSegment[]>();
+  return {
+    addPolyline(ownerId, points) {
+      points.slice(1).forEach((end, index) => {
+        const start = points[index]!;
+        if (start.x === end.x && start.y === end.y) return;
+        const segment = { ownerId, start, end };
+        for (const key of segmentIndexCellKeys(segmentBounds(start, end))) {
+          const cell = cells.get(key) ?? [];
+          cell.push(segment);
+          cells.set(key, cell);
+        }
+      });
+    },
+    query(bounds) {
+      const result = new Set<IndexedStructureSegment>();
+      for (const key of segmentIndexCellKeys(bounds)) {
+        for (const segment of cells.get(key) ?? []) result.add(segment);
+      }
+      return [...result];
+    },
+  };
+}
+
+function segmentNearParallelOverlap(
+  leftStart: StructurePoint,
+  leftEnd: StructurePoint,
+  rightStart: StructurePoint,
+  rightEnd: StructurePoint,
+): number {
+  const leftDelta = { x: leftEnd.x - leftStart.x, y: leftEnd.y - leftStart.y };
+  const rightDelta = { x: rightEnd.x - rightStart.x, y: rightEnd.y - rightStart.y };
+  const leftLength = Math.hypot(leftDelta.x, leftDelta.y);
+  const rightLength = Math.hypot(rightDelta.x, rightDelta.y);
+  if (leftLength === 0 || rightLength === 0) return 0;
+  const sine =
+    Math.abs(leftDelta.x * rightDelta.y - leftDelta.y * rightDelta.x) / (leftLength * rightLength);
+  if (sine > 0.17) return 0;
+  const separation = Math.min(
+    pointToSegmentDistance(leftStart, rightStart, rightEnd),
+    pointToSegmentDistance(leftEnd, rightStart, rightEnd),
+    pointToSegmentDistance(rightStart, leftStart, leftEnd),
+    pointToSegmentDistance(rightEnd, leftStart, leftEnd),
+  );
+  if (separation > EDGE_LABEL_LEADER_NEAR_PARALLEL_DISTANCE) return 0;
+  const axis = { x: leftDelta.x / leftLength, y: leftDelta.y / leftLength };
+  const project = (point: StructurePoint): number =>
+    (point.x - leftStart.x) * axis.x + (point.y - leftStart.y) * axis.y;
+  const rightFirst = project(rightStart);
+  const rightSecond = project(rightEnd);
+  return Math.max(
+    0,
+    Math.min(leftLength, Math.max(rightFirst, rightSecond)) -
+      Math.max(0, Math.min(rightFirst, rightSecond)),
+  );
+}
+
+function segmentsProperlyCross(
+  leftStart: StructurePoint,
+  leftEnd: StructurePoint,
+  rightStart: StructurePoint,
+  rightEnd: StructurePoint,
+): boolean {
+  const orientation = (
+    first: StructurePoint,
+    second: StructurePoint,
+    third: StructurePoint,
+  ): number =>
+    (second.x - first.x) * (third.y - first.y) - (second.y - first.y) * (third.x - first.x);
+  const epsilon = 0.000_001;
+  const first = orientation(leftStart, leftEnd, rightStart);
+  const second = orientation(leftStart, leftEnd, rightEnd);
+  const third = orientation(rightStart, rightEnd, leftStart);
+  const fourth = orientation(rightStart, rightEnd, leftEnd);
+  return first * second < -epsilon && third * fourth < -epsilon;
+}
+
+function polylineLength(points: readonly StructurePoint[]): number {
+  return points.slice(1).reduce((total, point, index) => {
+    const previous = points[index]!;
+    return total + Math.hypot(point.x - previous.x, point.y - previous.y);
+  }, 0);
+}
+
+interface StructureLeaderGeometryDiagnostics {
+  length: number;
+  maxParallelOverlap: number;
+  crossingCount: number;
+}
+
+function leaderGeometryDiagnostics(
+  points: readonly StructurePoint[],
+  routeSegments: StructureSegmentIndex,
+  leaderSegments: StructureSegmentIndex,
+): StructureLeaderGeometryDiagnostics {
+  let maxParallelOverlap = 0;
+  let crossingCount = 0;
+  points.slice(1).forEach((end, index) => {
+    const start = points[index]!;
+    const nearby = [
+      ...routeSegments.query(segmentBounds(start, end, EDGE_LABEL_LEADER_NEAR_PARALLEL_DISTANCE)),
+      ...leaderSegments.query(segmentBounds(start, end, EDGE_LABEL_LEADER_NEAR_PARALLEL_DISTANCE)),
+    ];
+    for (const segment of new Set(nearby)) {
+      maxParallelOverlap = Math.max(
+        maxParallelOverlap,
+        segmentNearParallelOverlap(start, end, segment.start, segment.end),
+      );
+      if (segmentsProperlyCross(start, end, segment.start, segment.end)) crossingCount += 1;
+    }
+  });
+  return { length: polylineLength(points), maxParallelOverlap, crossingCount };
+}
+
 function labelBoundaryPointToward(box: StructureBox, toward: StructurePoint): StructurePoint {
   const center = { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 };
   const deltaX = toward.x - center.x;
@@ -1589,21 +1912,145 @@ function labelBoundaryPorts(box: StructureBox): StructurePoint[] {
   ];
 }
 
+interface StructureLabelLeaderChoice extends StructureLeaderGeometryDiagnostics {
+  points: readonly StructurePoint[];
+}
+
+function leaderFullGridVertexEstimate(input: {
+  sources: readonly WeightedRoutePoint[];
+  targets: readonly WeightedRoutePoint[];
+  obstacles: readonly StructureBox[];
+}): number {
+  const xValues = new Set([
+    ...input.obstacles.flatMap((box) => [box.left, box.right]),
+    ...input.sources.map(({ point }) => point.x),
+    ...input.targets.map(({ point }) => point.x),
+  ]);
+  const yValues = new Set([
+    ...input.obstacles.flatMap((box) => [box.top, box.bottom]),
+    ...input.sources.map(({ point }) => point.y),
+    ...input.targets.map(({ point }) => point.y),
+  ]);
+  return xValues.size * yValues.size;
+}
+
 function labelLeaderPoints(input: {
   routePoint: StructurePoint;
+  routeTangent: StructurePoint;
   label: StructureBox;
   obstacles: readonly StructureBox[];
-}): StructurePoint[] | null {
+  routeSegments: StructureSegmentIndex;
+  leaderSegments: StructureSegmentIndex;
+  targetPorts?: readonly StructurePoint[];
+  allowOuterRoute?: boolean;
+  fullGridVertexLimit?: number;
+}): StructureLabelLeaderChoice | null {
   if (input.obstacles.some((box) => pointInsideBox(input.routePoint, box))) return null;
-  const directTarget = labelBoundaryPointToward(input.label, input.routePoint);
-  if (!input.obstacles.some((box) => segmentIntersectsBox(input.routePoint, directTarget, box))) {
-    return simplifyRoutePoints([input.routePoint, directTarget]);
+  const normal = { x: -input.routeTangent.y, y: input.routeTangent.x };
+  const labelCenter = {
+    x: (input.label.left + input.label.right) / 2,
+    y: (input.label.top + input.label.bottom) / 2,
+  };
+  const normalTowardLabel =
+    (labelCenter.x - input.routePoint.x) * normal.x +
+      (labelCenter.y - input.routePoint.y) * normal.y >=
+    0
+      ? 1
+      : -1;
+  const targetPorts = input.targetPorts ?? labelBoundaryPorts(input.label);
+  const directTarget = input.targetPorts
+    ? [...targetPorts].sort(
+        (left, right) =>
+          Math.hypot(left.x - input.routePoint.x, left.y - input.routePoint.y) -
+            Math.hypot(right.x - input.routePoint.x, right.y - input.routePoint.y) ||
+          stableCompare(pointKey(left), pointKey(right)),
+      )[0]!
+    : labelBoundaryPointToward(input.label, input.routePoint);
+  const directDistance = Math.hypot(
+    directTarget.x - input.routePoint.x,
+    directTarget.y - input.routePoint.y,
+  );
+  const kickoffDistance = Math.min(EDGE_LABEL_LEADER_KICKOFF, Math.max(2, directDistance * 0.45));
+  const directCandidates: StructurePoint[][] = [];
+  const routingStarts: StructurePoint[] = [];
+  for (const direction of [normalTowardLabel, -normalTowardLabel]) {
+    const kickoff = {
+      x: input.routePoint.x + normal.x * kickoffDistance * direction,
+      y: input.routePoint.y + normal.y * kickoffDistance * direction,
+    };
+    if (input.obstacles.some((box) => segmentIntersectsBox(input.routePoint, kickoff, box))) {
+      continue;
+    }
+    routingStarts.push(kickoff);
+    const target = labelBoundaryPointToward(input.label, kickoff);
+    if (!input.obstacles.some((box) => segmentIntersectsBox(kickoff, target, box))) {
+      directCandidates.push([input.routePoint, kickoff, target]);
+    }
   }
-  return orthogonalGridRoute({
-    sources: [{ point: input.routePoint, penalty: 0 }],
-    targets: labelBoundaryPorts(input.label).map((point) => ({ point, penalty: 0 })),
-    obstacles: [...input.obstacles, input.label],
+  const evaluate = (rawCandidates: readonly StructurePoint[][]): StructureLabelLeaderChoice[] =>
+    [
+      ...new Map(
+        rawCandidates
+          .map((points) => simplifyRoutePoints(points))
+          .filter(
+            (points) =>
+              points.length >= 2 &&
+              !points
+                .slice(1)
+                .some((point, index) =>
+                  input.obstacles.some((box) =>
+                    segmentIntersectsBox(
+                      points[index]!,
+                      point,
+                      expandedBox(box, -EDGE_LABEL_OBSTACLE_BOUNDARY_TOLERANCE),
+                    ),
+                  ),
+                ),
+          )
+          .map((points) => [points.map(pointKey).join("|"), points] as const),
+      ).values(),
+    ].map((points) => ({
+      points,
+      ...leaderGeometryDiagnostics(points, input.routeSegments, input.leaderSegments),
+    }));
+  const compare = (left: StructureLabelLeaderChoice, right: StructureLabelLeaderChoice): number => {
+    const leftLong = left.maxParallelOverlap >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP;
+    const rightLong = right.maxParallelOverlap >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP;
+    return (
+      Number(leftLong) - Number(rightLong) ||
+      left.length + left.crossingCount * 8 - (right.length + right.crossingCount * 8) ||
+      left.maxParallelOverlap - right.maxParallelOverlap ||
+      left.points.length - right.points.length ||
+      stableCompare(left.points.map(pointKey).join("|"), right.points.map(pointKey).join("|"))
+    );
+  };
+  const directChoices = evaluate(directCandidates).sort(compare);
+  if (
+    directChoices[0] &&
+    directChoices[0].maxParallelOverlap < EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP
+  ) {
+    return directChoices[0];
+  }
+  const routedCandidates = routingStarts.flatMap((kickoff) => {
+    const routeInput = {
+      sources: [{ point: kickoff, penalty: 0 }],
+      targets: targetPorts.map((point) => ({ point, penalty: 0 })),
+      obstacles: [...input.obstacles, input.label],
+      channelOffset: 0,
+    };
+    const routed =
+      simpleOrthogonalGridRoute(routeInput) ??
+      (input.allowOuterRoute
+        ? simpleOrthogonalGridRoute({ ...routeInput, channelOffset: EDGE_LABEL_OUTSIDE_GAP })
+        : null) ??
+      (leaderFullGridVertexEstimate(routeInput) <=
+      (input.fullGridVertexLimit ?? EDGE_LABEL_LEADER_FULL_GRID_VERTEX_LIMIT)
+        ? orthogonalGridRoute(routeInput)
+        : null);
+    return routed ? [[input.routePoint, ...routed]] : [];
   });
+  const choices = [...directChoices, ...evaluate(routedCandidates)].sort(compare);
+  return choices[0] ?? null;
 }
 
 export function mergedBounds(boxes: readonly StructureBox[]): StructureBox | null {
@@ -1748,6 +2195,87 @@ function edgeLabelSize(
   };
 }
 
+interface StructureEdgeSourceMenuReservation {
+  placement: StructureEdgeSourceMenuPlacement;
+  width: number;
+  box: StructureBox;
+}
+
+function edgeLabelSourceMenuCollisionBoxes(input: {
+  enabled: boolean;
+  point: StructurePoint;
+  size: ReturnType<typeof edgeLabelSize>;
+}): readonly StructureEdgeSourceMenuReservation[] {
+  if (
+    !input.enabled ||
+    input.size.source.anchorCount <= 1 ||
+    input.size.boxWidth <= input.size.selectWidth
+  ) {
+    return [];
+  }
+  const label = labelBox(input.point.x, input.point.y, input.size.boxWidth, input.size.height);
+  const menuHeight = Math.min(
+    EDGE_LABEL_SOURCE_MENU_MAX_HEIGHT,
+    input.size.source.anchorCount * EDGE_LABEL_SOURCE_MENU_ITEM_HEIGHT +
+      Math.max(0, input.size.source.anchorCount - 1) * EDGE_LABEL_SOURCE_MENU_ITEM_GAP +
+      EDGE_LABEL_SOURCE_MENU_PADDING * 2 +
+      EDGE_LABEL_SOURCE_MENU_BORDER * 2,
+  );
+  const rightwardLeft = label.right - (input.size.boxWidth - input.size.selectWidth);
+  return EDGE_LABEL_SOURCE_MENU_WIDTHS.flatMap((width) =>
+    EDGE_LABEL_SOURCE_MENU_PLACEMENTS.map((placement) => {
+      const opensRight = placement.endsWith("right");
+      const opensBelow = placement.startsWith("below");
+      const left = opensRight ? rightwardLeft : label.right - width;
+      const belowTop =
+        input.point.y + EDGE_LABEL_SOURCE_MENU_ITEM_HEIGHT / 2 + EDGE_LABEL_SOURCE_MENU_OFFSET;
+      const aboveBottom =
+        input.point.y - EDGE_LABEL_SOURCE_MENU_ITEM_HEIGHT / 2 - EDGE_LABEL_SOURCE_MENU_OFFSET;
+      const top = opensBelow ? belowTop : aboveBottom - menuHeight;
+      return {
+        placement,
+        width,
+        box: expandedBox(
+          {
+            left,
+            top,
+            right: left + width,
+            bottom: top + menuHeight,
+          },
+          EDGE_LABEL_COLLISION_PADDING,
+        ),
+      };
+    }),
+  );
+}
+
+function boundedOutsideAxisCenters(minimum: number, maximum: number, itemSize: number): number[] {
+  const extent = Math.max(0, maximum - minimum);
+  if (extent <= itemSize) return [(minimum + maximum) / 2];
+  const capacity = Math.max(
+    1,
+    Math.floor((extent + EDGE_LABEL_OUTSIDE_SLOT_GAP) / (itemSize + EDGE_LABEL_OUTSIDE_SLOT_GAP)),
+  );
+  const count = Math.min(EDGE_LABEL_OUTSIDE_SLOTS_PER_SIDE_LIMIT, capacity);
+  if (count === 1) return [(minimum + maximum) / 2];
+  const first = minimum + itemSize / 2;
+  const last = maximum - itemSize / 2;
+  return Array.from(
+    { length: count },
+    (_, index) => first + ((last - first) * index) / (count - 1),
+  );
+}
+
+function edgeLabelAnchorSamples(geometry: StructureEdgeGeometry): StructureEdgeLabelRouteSample[] {
+  const length = polylineLength(geometry.points);
+  if (length <= 0) return [curveLabelCandidate(geometry, 0.5, 0)];
+  const endpointDistance = Math.min(EDGE_LABEL_LEADER_KICKOFF, length / 2);
+  const endpointFraction = endpointDistance / length;
+  return [endpointFraction, 1 - endpointFraction, ...EDGE_LABEL_CANDIDATE_FRACTIONS]
+    .filter((fraction, index, values) => values.indexOf(fraction) === index)
+    .map((fraction) => curveLabelCandidate(geometry, fraction, 0));
+}
+
 export function placeEdgeLabels(
   edges: readonly StructureEdge[],
   nodes: readonly StructureNode[],
@@ -1757,6 +2285,7 @@ export function placeEdgeLabels(
   labelAccessory: StructureLabelAccessory,
   labelMode: StructureEdgeLabelMode,
 ): StructureEdgeLabelPlacement[] {
+  const nodeIds = new Set(nodes.map(({ id }) => id));
   const nodeBoxes = nodes.flatMap((node) => {
     const point = positions[node.id];
     return point
@@ -1771,30 +2300,20 @@ export function placeEdgeLabels(
       : [];
   });
   const junctionBoxes = nodeBoxes.map((box) => expandedBox(box, 20));
-  const collisionCellSize = 128;
-  const collisionCellLimit = 48;
-  const occupiedLabels = new Map<string, { boxes: StructureBox[]; saturated: boolean }>();
+  const occupiedLabels = new Map<string, StructureBox[]>();
   const occupiedLabelBoxes: StructureBox[] = [];
-  const occupiedLeaderRoutes: StructurePoint[][] = [];
-  const useDetailedAssociationAvoidance = routes.size <= 64;
-  const cellKeys = (box: StructureBox): string[] => {
-    const keys: string[] = [];
-    const left = Math.floor(box.left / collisionCellSize);
-    const right = Math.floor(box.right / collisionCellSize);
-    const top = Math.floor(box.top / collisionCellSize);
-    const bottom = Math.floor(box.bottom / collisionCellSize);
-    for (let x = left; x <= right; x += 1) {
-      for (let y = top; y <= bottom; y += 1) keys.push(`${x}:${y}`);
-    }
-    return keys;
-  };
+  const routeSegments = createStructureSegmentIndex();
+  const leaderSegments = createStructureSegmentIndex();
+  const occupiedLeaderBoxes: StructureBox[] = [];
+  let emergencyShelfLeft: number | null = null;
+  let emergencyShelfBottom: number | null = null;
+  for (const [edgeId, route] of routes) routeSegments.addPolyline(edgeId, route.points);
   const overlapsOccupiedLabel = (box: StructureBox): boolean => {
     const seen = new Set<StructureBox>();
-    for (const key of cellKeys(box)) {
+    for (const key of segmentIndexCellKeys(box)) {
       const cell = occupiedLabels.get(key);
       if (!cell) continue;
-      if (cell.saturated) return true;
-      for (const occupied of cell.boxes) {
+      for (const occupied of cell) {
         if (seen.has(occupied)) continue;
         seen.add(occupied);
         if (boxesOverlap(box, occupied)) return true;
@@ -1804,35 +2323,37 @@ export function placeEdgeLabels(
   };
   const occupyLabel = (box: StructureBox): void => {
     occupiedLabelBoxes.push(box);
-    for (const key of cellKeys(box)) {
-      const cell = occupiedLabels.get(key) ?? { boxes: [], saturated: false };
-      if (!cell.saturated) {
-        cell.boxes.push(box);
-        if (cell.boxes.length >= collisionCellLimit) {
-          cell.boxes = [];
-          cell.saturated = true;
-        }
-      }
+    for (const key of segmentIndexCellKeys(box)) {
+      const cell = occupiedLabels.get(key) ?? [];
+      cell.push(box);
       occupiedLabels.set(key, cell);
     }
   };
+  const routeIdsIntersectingBox = (box: StructureBox, ownEdgeId: string): Set<string> =>
+    new Set(
+      routeSegments
+        .query(box)
+        .filter(
+          (segment) =>
+            segment.ownerId !== ownEdgeId && segmentIntersectsBox(segment.start, segment.end, box),
+        )
+        .map(({ ownerId }) => ownerId),
+    );
+  const leaderIntersectsBox = (box: StructureBox): boolean =>
+    leaderSegments
+      .query(box)
+      .some((segment) => segmentIntersectsBox(segment.start, segment.end, box));
   const placements: StructureEdgeLabelPlacement[] = [];
-  const candidateFractions = Array.from({ length: 22 }, (_, index) => 0.08 + index * 0.04).sort(
-    (left, right) => Math.abs(left - 0.5) - Math.abs(right - 0.5),
-  );
-  const candidateOffsets = [
-    0, 14, -14, 28, -28, 44, -44, 64, -64, 88, -88, 116, -116, 152, -152, 196, -196, 248, -248,
-  ] as const;
-  const candidates = candidateOffsets.flatMap((offset) =>
-    candidateFractions.map((fraction) => [fraction, offset] as const),
-  );
 
   const stableEdges = [...edges].sort((left, right) => stableCompare(left.id, right.id));
   for (const edge of stableEdges) {
     const geometry = routes.get(edge.id);
     if (!geometry) continue;
     const naturalSize = edgeLabelSize(edge, sourceChangeKinds, labelAccessory, labelMode);
-    const sizes: Array<ReturnType<typeof edgeLabelSize>> = [naturalSize];
+    const sizes: Array<{
+      size: ReturnType<typeof edgeLabelSize>;
+      usedCompactWidth: boolean;
+    }> = [{ size: naturalSize, usedCompactWidth: false }];
     if (labelMode === "viewer-adaptive") {
       const compactSize = edgeLabelSize(
         edge,
@@ -1841,276 +2362,578 @@ export function placeEdgeLabels(
         labelMode,
         EDGE_LABEL_COMPACT_MAX_TEXT_WIDTH,
       );
-      if (compactSize.boxWidth < naturalSize.boxWidth) sizes.push(compactSize);
+      if (compactSize.boxWidth < naturalSize.boxWidth) {
+        sizes.push({ size: compactSize, usedCompactWidth: true });
+      }
     }
-    type LabelChoice = {
-      point: StructurePoint;
-      routePoint: StructurePoint;
+    type LabelCandidate = {
+      sample: StructureEdgeLabelRouteSample;
       size: ReturnType<typeof edgeLabelSize>;
-      displaced: boolean;
-      leaderPoints: readonly StructurePoint[] | null;
-      otherRouteIntersections: number;
+      box: StructureBox;
+      collisionBox: StructureBox;
+      edgeDistance: number;
+      usedCompactWidth: boolean;
     };
-    let available: LabelChoice | undefined;
-    for (const size of sizes) {
-      let routeCrossingFallback:
-        Omit<LabelChoice, "leaderPoints" | "otherRouteIntersections"> | undefined;
-      for (const [fraction, offset] of candidates) {
-        const point = curveLabelCandidate(geometry, fraction, offset);
-        const routePoint = curveLabelCandidate(geometry, fraction, 0);
-        const box = labelBox(point.x, point.y, size.boxWidth, size.height);
-        const collisionBox = expandedBox(box, 5);
+    type LabelChoice = {
+      candidate: LabelCandidate;
+      displaced: boolean;
+      leader: StructureLabelLeaderChoice | null;
+      otherRouteIntersections: number;
+      associationOverlapCount: number;
+      degraded: boolean;
+      emergency: boolean;
+    };
+    const candidates: LabelCandidate[] = sizes.flatMap(({ size, usedCompactWidth }) =>
+      EDGE_LABEL_CANDIDATE_OFFSETS.flatMap((offset) =>
+        EDGE_LABEL_CANDIDATE_FRACTIONS.map((fraction) => {
+          const sample = curveLabelCandidate(geometry, fraction, offset);
+          const box = labelBox(sample.point.x, sample.point.y, size.boxWidth, size.height);
+          const edgeDistance = boxToPolylineDistance(box, geometry.points);
+          return {
+            sample,
+            size,
+            box,
+            collisionBox: expandedBox(box, EDGE_LABEL_COLLISION_PADDING),
+            edgeDistance,
+            usedCompactWidth,
+          };
+        }),
+      ),
+    );
+    candidates.sort(
+      (left, right) =>
+        left.edgeDistance - right.edgeDistance ||
+        Math.abs(left.sample.normalOffset) - Math.abs(right.sample.normalOffset) ||
+        Math.abs(left.sample.fraction - 0.5) - Math.abs(right.sample.fraction - 0.5) ||
+        Number(left.usedCompactWidth) - Number(right.usedCompactWidth) ||
+        left.size.height - right.size.height ||
+        left.sample.point.y - right.sample.point.y ||
+        left.sample.point.x - right.sample.point.x,
+    );
+    const leaderObstacles = [
+      ...nodeBoxes.map((box) => expandedBox(box, 4)),
+      ...occupiedLabelBoxes.map((box) => expandedBox(box, 2)),
+    ];
+    let chosen: LabelChoice | undefined;
+    let degraded: LabelChoice | undefined;
+    for (const candidate of candidates) {
+      if (emergencyShelfLeft !== null) break;
+      if (
+        degraded &&
+        candidate.edgeDistance >
+          degraded.candidate.edgeDistance + EDGE_LABEL_PROXIMITY_TIER_TOLERANCE
+      ) {
+        chosen = degraded;
+        break;
+      }
+      const collisionBoxes = [candidate.collisionBox];
+      if (
+        collisionBoxes.some(
+          (collisionBox) =>
+            junctionBoxes.some((junctionBox) => boxesOverlap(collisionBox, junctionBox)) ||
+            overlapsOccupiedLabel(collisionBox) ||
+            leaderIntersectsBox(collisionBox),
+        )
+      ) {
+        continue;
+      }
+      const otherRouteIntersections = routeIdsIntersectingBox(candidate.collisionBox, edge.id).size;
+      const associationOverlapCount = otherRouteIntersections;
+      const displaced = candidate.edgeDistance > 0.000_001;
+      const leader = displaced
+        ? labelLeaderPoints({
+            routePoint: candidate.sample.routePoint,
+            routeTangent: candidate.sample.tangent,
+            label: candidate.box,
+            obstacles: leaderObstacles,
+            routeSegments,
+            leaderSegments,
+          })
+        : null;
+      if (displaced && !leader) continue;
+      const hasLongLeaderOverlap =
+        (leader?.maxParallelOverlap ?? 0) >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP;
+      const choice = {
+        candidate,
+        displaced,
+        leader,
+        otherRouteIntersections,
+        associationOverlapCount,
+        degraded: associationOverlapCount > 0 || hasLongLeaderOverlap,
+        emergency: false,
+      } satisfies LabelChoice;
+      if (!choice.degraded) {
+        chosen = choice;
+        break;
+      }
+      if (!degraded) degraded = choice;
+    }
+    chosen ??= degraded;
+    let outsideDegraded: LabelChoice | undefined;
+    const nodeBounds = mergedBounds(junctionBoxes);
+    if (!chosen && nodeBounds && emergencyShelfLeft === null) {
+      const outsideCandidates = sizes.flatMap(({ size, usedCompactWidth }) => {
+        const horizontalCenters = boundedOutsideAxisCenters(
+          nodeBounds.left,
+          nodeBounds.right,
+          size.boxWidth,
+        );
+        const verticalCenters = boundedOutsideAxisCenters(
+          nodeBounds.top,
+          nodeBounds.bottom,
+          size.height,
+        );
+        const verticalRingStep = size.height + EDGE_LABEL_OUTSIDE_SLOT_GAP;
+        const slots = [
+          ...Array.from({ length: EDGE_LABEL_OUTSIDE_RING_COUNT }, (_, ring) =>
+            horizontalCenters.map((x) => ({
+              point: {
+                x,
+                y:
+                  nodeBounds.top -
+                  size.height / 2 -
+                  EDGE_LABEL_OUTSIDE_GAP -
+                  ring * verticalRingStep,
+              },
+              sideIndex: ring * 4,
+            })),
+          ).flat(),
+          ...Array.from({ length: EDGE_LABEL_OUTSIDE_RING_COUNT }, (_, ring) =>
+            horizontalCenters.map((x) => ({
+              point: {
+                x,
+                y:
+                  nodeBounds.bottom +
+                  size.height / 2 +
+                  EDGE_LABEL_OUTSIDE_GAP +
+                  ring * verticalRingStep,
+              },
+              sideIndex: ring * 4 + 1,
+            })),
+          ).flat(),
+          ...verticalCenters.map((y) => ({
+            point: {
+              x: nodeBounds.left - size.boxWidth / 2 - EDGE_LABEL_OUTSIDE_GAP,
+              y,
+            },
+            sideIndex: 2,
+          })),
+          ...verticalCenters.map((y) => ({
+            point: {
+              x: nodeBounds.right + size.boxWidth / 2 + EDGE_LABEL_OUTSIDE_GAP,
+              y,
+            },
+            sideIndex: 3,
+          })),
+        ];
+        const routeSamples = EDGE_LABEL_CANDIDATE_FRACTIONS.map((fraction) =>
+          curveLabelCandidate(geometry, fraction, 0),
+        );
+        return slots.flatMap(({ point, sideIndex }) =>
+          [...routeSamples]
+            .sort(
+              (left, right) =>
+                Math.hypot(left.routePoint.x - point.x, left.routePoint.y - point.y) -
+                  Math.hypot(right.routePoint.x - point.x, right.routePoint.y - point.y) ||
+                Math.abs(left.fraction - 0.5) - Math.abs(right.fraction - 0.5),
+            )
+            .slice(0, EDGE_LABEL_OUTSIDE_ANCHORS_PER_SLOT)
+            .map((routeSample) => {
+              const sample = { ...routeSample, point };
+              const box = labelBox(point.x, point.y, size.boxWidth, size.height);
+              const edgeDistance = boxToPolylineDistance(box, geometry.points);
+              return {
+                candidate: {
+                  sample,
+                  size,
+                  box,
+                  collisionBox: expandedBox(box, EDGE_LABEL_COLLISION_PADDING),
+                  edgeDistance,
+                  usedCompactWidth,
+                } satisfies LabelCandidate,
+                sideIndex,
+              };
+            }),
+        );
+      });
+      outsideCandidates.sort(
+        (left, right) =>
+          left.candidate.edgeDistance - right.candidate.edgeDistance ||
+          Math.abs(left.candidate.sample.fraction - 0.5) -
+            Math.abs(right.candidate.sample.fraction - 0.5) ||
+          left.sideIndex - right.sideIndex ||
+          Number(left.candidate.usedCompactWidth) - Number(right.candidate.usedCompactWidth) ||
+          left.candidate.sample.point.y - right.candidate.sample.point.y ||
+          left.candidate.sample.point.x - right.candidate.sample.point.x,
+      );
+      let leaderAttempts = 0;
+      for (const { candidate } of outsideCandidates) {
+        const collisionBoxes = [candidate.collisionBox];
         if (
-          junctionBoxes.some((junctionBox) => boxesOverlap(collisionBox, junctionBox)) ||
-          overlapsOccupiedLabel(collisionBox) ||
-          (useDetailedAssociationAvoidance &&
-            occupiedLeaderRoutes.some((leader) => routeIntersectsBoxes(leader, [collisionBox])))
+          collisionBoxes.some(
+            (collisionBox) =>
+              junctionBoxes.some((junctionBox) => boxesOverlap(collisionBox, junctionBox)) ||
+              overlapsOccupiedLabel(collisionBox) ||
+              leaderIntersectsBox(collisionBox),
+          )
         ) {
           continue;
         }
-        const inline = routeIntersectsBoxes(geometry.points, [box]);
-        const candidate = {
-          point,
-          routePoint,
-          size,
-          displaced: !inline,
-        };
-        const crossesOtherRoute =
-          useDetailedAssociationAvoidance &&
-          [...routes].some(
-            ([edgeId, route]) =>
-              edgeId !== edge.id && routeIntersectsBoxes(route.points, [collisionBox]),
-          );
-        if (crossesOtherRoute) {
-          routeCrossingFallback ??= candidate;
-          continue;
-        }
-        const leaderPoints = inline
-          ? null
-          : labelLeaderPoints({
-              routePoint,
-              label: box,
-              obstacles: [
-                ...nodeBoxes.map((nodeBox) => expandedBox(nodeBox, 4)),
-                ...(useDetailedAssociationAvoidance
-                  ? occupiedLabelBoxes.map((label) => expandedBox(label, 2))
-                  : []),
-              ],
-            });
-        if (!inline && !leaderPoints) continue;
-        available = {
-          ...candidate,
-          leaderPoints,
-          otherRouteIntersections: 0,
-        };
-        break;
-      }
-      if (!available && routeCrossingFallback) {
-        const box = labelBox(
-          routeCrossingFallback.point.x,
-          routeCrossingFallback.point.y,
-          size.boxWidth,
-          size.height,
-        );
-        const leaderPoints = routeCrossingFallback.displaced
+        const displaced = candidate.edgeDistance > 0.000_001;
+        if (displaced && leaderAttempts >= EDGE_LABEL_OUTSIDE_LEADER_ATTEMPT_LIMIT) break;
+        const leader = displaced
           ? labelLeaderPoints({
-              routePoint: routeCrossingFallback.routePoint,
-              label: box,
-              obstacles: [
-                ...nodeBoxes.map((nodeBox) => expandedBox(nodeBox, 4)),
-                ...(useDetailedAssociationAvoidance
-                  ? occupiedLabelBoxes.map((label) => expandedBox(label, 2))
-                  : []),
-              ],
+              routePoint: candidate.sample.routePoint,
+              routeTangent: candidate.sample.tangent,
+              label: candidate.box,
+              obstacles: leaderObstacles,
+              routeSegments,
+              leaderSegments,
             })
           : null;
-        if (!routeCrossingFallback.displaced || leaderPoints) {
-          available = {
-            ...routeCrossingFallback,
-            leaderPoints,
-            otherRouteIntersections: 1,
-          };
+        if (displaced) leaderAttempts += 1;
+        if (displaced && !leader) continue;
+        const otherRouteIntersections = routeIdsIntersectingBox(
+          candidate.collisionBox,
+          edge.id,
+        ).size;
+        const associationOverlapCount =
+          otherRouteIntersections + Number(leaderIntersectsBox(candidate.collisionBox));
+        const hasLongLeaderOverlap =
+          (leader?.maxParallelOverlap ?? 0) >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP;
+        const choice = {
+          candidate,
+          displaced,
+          leader,
+          otherRouteIntersections,
+          associationOverlapCount,
+          degraded: true,
+          emergency: true,
+        } satisfies LabelChoice;
+        if (associationOverlapCount === 0 && !hasLongLeaderOverlap) {
+          chosen = choice;
+          break;
         }
+        outsideDegraded ??= choice;
       }
-      if (available) break;
     }
-    let chosen = available;
+    chosen ??= degraded ?? outsideDegraded;
     if (!chosen) {
-      const size = naturalSize;
-      const leaderObstacles = [
-        ...nodeBoxes.map((box) => expandedBox(box, 4)),
-        ...(useDetailedAssociationAvoidance
-          ? occupiedLabelBoxes.map((box) => expandedBox(box, 2))
-          : []),
+      const { size, usedCompactWidth } = sizes.at(-1)!;
+      const occupiedBounds = mergedBounds([
+        ...nodeBoxes,
+        ...[...routes.values()].map((route) => route.bounds),
+        ...occupiedLabelBoxes,
+        ...occupiedLeaderBoxes,
+      ])!;
+      emergencyShelfLeft ??= occupiedBounds.right + EDGE_LABEL_EMERGENCY_SHELF_GAP;
+      const shelfTop = Math.max(
+        emergencyShelfBottom ?? occupiedBounds.bottom + EDGE_LABEL_EMERGENCY_SHELF_GAP,
+        occupiedBounds.bottom + EDGE_LABEL_EMERGENCY_SHELF_GAP,
+      );
+      const point = {
+        x: emergencyShelfLeft + size.boxWidth / 2,
+        y: shelfTop + size.height / 2,
+      };
+      const box = labelBox(point.x, point.y, size.boxWidth, size.height);
+      const collisionBox = expandedBox(box, EDGE_LABEL_COLLISION_PADDING);
+      const edgeDistance = boxToPolylineDistance(box, geometry.points);
+      const emergencyNodeLeaderObstacles = nodeBoxes.map((nodeBox) => expandedBox(nodeBox, 4));
+      const emergencyLabelLeaderObstacles = occupiedLabelBoxes.map((occupied) =>
+        expandedBox(occupied, 2),
+      );
+      const emergencyLeaderObstacles = [
+        ...emergencyNodeLeaderObstacles,
+        ...emergencyLabelLeaderObstacles,
       ];
-      const nodeBounds = mergedBounds(junctionBoxes);
-      const centerIndex = (geometry.points.length - 1) / 2;
-      const leaderStarts = geometry.points
-        .map((point, index) => ({ point, index }))
-        .filter(({ point }) => !leaderObstacles.some((box) => pointInsideBox(point, box)))
-        .sort(
-          (left, right) =>
-            Math.abs(left.index - centerIndex) - Math.abs(right.index - centerIndex) ||
-            left.index - right.index,
-        )
-        .map(({ point }) => point);
-      if (nodeBounds) {
-        const horizontalStep = size.boxWidth + 16;
-        const verticalStep = size.height + 16;
-        const slotOffsets = Array.from({ length: 25 }, (_, index) =>
-          index === 0 ? 0 : Math.ceil(index / 2) * (index % 2 === 0 ? -1 : 1),
-        );
-        for (const routePoint of leaderStarts) {
-          const outsideCandidates = slotOffsets.flatMap((slot) => [
+      const targetPorts = [{ x: box.left, y: point.y }];
+      const emergencyChoices = edgeLabelAnchorSamples(geometry)
+        .slice(0, EDGE_LABEL_EMERGENCY_ANCHOR_LIMIT)
+        .flatMap<LabelChoice>((routeSample) => {
+          const leader = labelLeaderPoints({
+            routePoint: routeSample.routePoint,
+            routeTangent: routeSample.tangent,
+            label: box,
+            obstacles: emergencyLeaderObstacles,
+            routeSegments,
+            leaderSegments,
+            targetPorts,
+            allowOuterRoute: true,
+          });
+          if (!leader) return [];
+          const otherRouteIntersections = routeIdsIntersectingBox(collisionBox, edge.id).size;
+          return [
             {
-              x: routePoint.x + slot * horizontalStep,
-              y: nodeBounds.top - size.height / 2 - 12,
-            },
-            {
-              x: routePoint.x + slot * horizontalStep,
-              y: nodeBounds.bottom + size.height / 2 + 12,
-            },
-            {
-              x: nodeBounds.left - size.boxWidth / 2 - 12,
-              y: routePoint.y + slot * verticalStep,
-            },
-            {
-              x: nodeBounds.right + size.boxWidth / 2 + 12,
-              y: routePoint.y + slot * verticalStep,
-            },
-          ]);
-          for (const point of outsideCandidates) {
-            const box = labelBox(point.x, point.y, size.boxWidth, size.height);
-            const collisionBox = expandedBox(box, 5);
-            if (
-              junctionBoxes.some((junctionBox) => boxesOverlap(collisionBox, junctionBox)) ||
-              overlapsOccupiedLabel(collisionBox) ||
-              (useDetailedAssociationAvoidance &&
-                occupiedLeaderRoutes.some((leader) => routeIntersectsBoxes(leader, [collisionBox])))
-            ) {
-              continue;
-            }
-            const leaderPoints = labelLeaderPoints({
-              routePoint,
-              label: box,
-              obstacles: leaderObstacles,
-            });
-            if (!leaderPoints) continue;
-            const choice = {
-              point,
-              routePoint,
-              size,
+              candidate: {
+                sample: { ...routeSample, point },
+                size,
+                box,
+                collisionBox,
+                edgeDistance,
+                usedCompactWidth,
+              },
               displaced: true,
-              leaderPoints,
-              otherRouteIntersections: [...routes].reduce(
-                (count, [edgeId, route]) =>
-                  edgeId !== edge.id && routeIntersectsBoxes(route.points, [collisionBox])
-                    ? count + 1
-                    : count,
-                0,
-              ),
-            } satisfies LabelChoice;
-            available = choice;
-            break;
-          }
-          if (available) break;
+              leader,
+              otherRouteIntersections,
+              associationOverlapCount: otherRouteIntersections,
+              degraded: true,
+              emergency: true,
+            },
+          ];
+        });
+      emergencyChoices.sort(
+        (left, right) =>
+          Number(
+            (left.leader?.maxParallelOverlap ?? 0) >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP,
+          ) -
+            Number(
+              (right.leader?.maxParallelOverlap ?? 0) >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP,
+            ) ||
+          (left.leader?.length ?? 0) +
+            (left.leader?.crossingCount ?? 0) * 8 -
+            ((right.leader?.length ?? 0) + (right.leader?.crossingCount ?? 0) * 8) ||
+          Math.abs(left.candidate.sample.fraction - 0.5) -
+            Math.abs(right.candidate.sample.fraction - 0.5) ||
+          left.candidate.sample.point.x - right.candidate.sample.point.x,
+      );
+      chosen = emergencyChoices[0];
+      if (!chosen) {
+        let routeSample = edgeLabelAnchorSamples(geometry)[0]!;
+        // Try every bounded anchor before declaring the obstacle-safe association unavailable.
+        // Invalid manual geometry can make the full obstacle set topologically impossible; in
+        // that case keep the factual label and surface the least-conflicting direct guide as an
+        // emergency diagnostic instead of silently dropping the association.
+        let obstacleSafeLeader: StructureLabelLeaderChoice | null = null;
+        for (const sample of edgeLabelAnchorSamples(geometry).slice(
+          0,
+          EDGE_LABEL_EMERGENCY_ANCHOR_LIMIT,
+        )) {
+          const leader = labelLeaderPoints({
+            routePoint: sample.routePoint,
+            routeTangent: sample.tangent,
+            label: box,
+            obstacles: emergencyLeaderObstacles,
+            routeSegments,
+            leaderSegments,
+            targetPorts,
+            allowOuterRoute: true,
+            fullGridVertexLimit: EDGE_LABEL_EMERGENCY_FULL_GRID_VERTEX_LIMIT,
+          });
+          if (!leader) continue;
+          routeSample = sample;
+          obstacleSafeLeader = leader;
+          break;
         }
-
-        if (!available) {
-          const occupiedBounds = mergedBounds([...nodeBoxes, ...occupiedLabelBoxes]);
-          if (occupiedBounds) {
-            const shelfCandidates = [
-              {
-                x: (occupiedBounds.left + occupiedBounds.right) / 2,
-                y: occupiedBounds.bottom + size.height / 2 + 16,
-              },
-              {
-                x: (occupiedBounds.left + occupiedBounds.right) / 2,
-                y: occupiedBounds.top - size.height / 2 - 16,
-              },
-            ];
-            for (const routePoint of leaderStarts) {
-              for (const point of shelfCandidates) {
-                const box = labelBox(point.x, point.y, size.boxWidth, size.height);
-                const collisionBox = expandedBox(box, 5);
-                if (
-                  junctionBoxes.some((junctionBox) => boxesOverlap(collisionBox, junctionBox)) ||
-                  overlapsOccupiedLabel(collisionBox) ||
-                  (useDetailedAssociationAvoidance &&
-                    occupiedLeaderRoutes.some((leader) =>
-                      routeIntersectsBoxes(leader, [collisionBox]),
-                    ))
-                ) {
-                  continue;
-                }
-                const leaderPoints = labelLeaderPoints({
-                  routePoint,
-                  label: box,
-                  obstacles: leaderObstacles,
-                });
-                if (!leaderPoints) continue;
-                available = {
-                  point,
-                  routePoint,
-                  size,
-                  displaced: true,
-                  leaderPoints,
-                  otherRouteIntersections: [...routes].reduce(
-                    (count, [edgeId, route]) =>
-                      edgeId !== edge.id && routeIntersectsBoxes(route.points, [collisionBox])
-                        ? count + 1
-                        : count,
-                    0,
-                  ),
+        if (!obstacleSafeLeader) {
+          const diagnosedDirectChoices = edgeLabelAnchorSamples(geometry)
+            .slice(0, EDGE_LABEL_EMERGENCY_ANCHOR_LIMIT)
+            .flatMap((sample) => {
+              const normal = { x: -sample.tangent.y, y: sample.tangent.x };
+              const towardLabel =
+                (point.x - sample.routePoint.x) * normal.x +
+                  (point.y - sample.routePoint.y) * normal.y >=
+                0
+                  ? 1
+                  : -1;
+              return [towardLabel, -towardLabel].map((direction) => {
+                const kickoff = {
+                  x: sample.routePoint.x + normal.x * EDGE_LABEL_LEADER_KICKOFF * direction,
+                  y: sample.routePoint.y + normal.y * EDGE_LABEL_LEADER_KICKOFF * direction,
                 };
-                break;
-              }
-              if (available) break;
-            }
+                const points = simplifyRoutePoints([sample.routePoint, kickoff, targetPorts[0]!]);
+                const obstacleCrossings = (obstacles: readonly StructureBox[]): number =>
+                  obstacles.filter((obstacle) =>
+                    points
+                      .slice(1)
+                      .some((end, index) =>
+                        segmentIntersectsBox(
+                          points[index]!,
+                          end,
+                          expandedBox(obstacle, -EDGE_LABEL_OBSTACLE_BOUNDARY_TOLERANCE),
+                        ),
+                      ),
+                  ).length;
+                return {
+                  sample,
+                  leader: {
+                    points,
+                    ...leaderGeometryDiagnostics(points, routeSegments, leaderSegments),
+                  } satisfies StructureLabelLeaderChoice,
+                  nodeCrossings: obstacleCrossings(emergencyNodeLeaderObstacles),
+                  labelCrossings: obstacleCrossings(emergencyLabelLeaderObstacles),
+                };
+              });
+            })
+            .sort(
+              (left, right) =>
+                left.nodeCrossings - right.nodeCrossings ||
+                left.labelCrossings - right.labelCrossings ||
+                Number(left.leader.maxParallelOverlap >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP) -
+                  Number(
+                    right.leader.maxParallelOverlap >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP,
+                  ) ||
+                left.leader.length +
+                  left.leader.crossingCount * 8 -
+                  (right.leader.length + right.leader.crossingCount * 8) ||
+                stableCompare(
+                  left.leader.points.map(pointKey).join("|"),
+                  right.leader.points.map(pointKey).join("|"),
+                ),
+            );
+          const diagnosedDirect = diagnosedDirectChoices[0];
+          if (diagnosedDirect) {
+            routeSample = diagnosedDirect.sample;
+            obstacleSafeLeader = diagnosedDirect.leader;
           }
         }
+        const otherRouteIntersections = routeIdsIntersectingBox(collisionBox, edge.id).size;
+        chosen = {
+          candidate: {
+            sample: { ...routeSample, point },
+            size,
+            box,
+            collisionBox,
+            edgeDistance: boxToPolylineDistance(box, geometry.points),
+            usedCompactWidth,
+          },
+          displaced: true,
+          leader: obstacleSafeLeader,
+          otherRouteIntersections,
+          associationOverlapCount:
+            otherRouteIntersections + Number(leaderIntersectsBox(collisionBox)),
+          degraded: true,
+          emergency: true,
+        };
       }
-      chosen = available;
+      emergencyShelfBottom = chosen.candidate.box.bottom + EDGE_LABEL_EMERGENCY_STACK_GAP;
     }
-    if (!chosen) continue;
-    occupyLabel(
-      labelBox(chosen.point.x, chosen.point.y, chosen.size.boxWidth, chosen.size.height, 4),
-    );
-    const leaderPoints = chosen.leaderPoints ? simplifyRoutePoints(chosen.leaderPoints) : null;
-    if (leaderPoints) occupiedLeaderRoutes.push(leaderPoints);
+    occupyLabel(expandedBox(chosen.candidate.box, 4));
+    const leaderPoints = chosen.leader ? simplifyRoutePoints(chosen.leader.points) : null;
+    if (leaderPoints) {
+      leaderSegments.addPolyline(edge.id, leaderPoints);
+      occupiedLeaderBoxes.push(expandedBox(geometryBounds(leaderPoints), 3));
+    }
     const leaderPath = leaderPoints
       ? `M ${leaderPoints[0]!.x} ${leaderPoints[0]!.y} ${leaderPoints
           .slice(1)
           .map((point) => `L ${point.x} ${point.y}`)
           .join(" ")}`
       : null;
+    const fallbackReason: StructureEdgeLabelFallbackReason | null = chosen.emergency
+      ? "emergency"
+      : chosen.associationOverlapCount > 0
+        ? "label-route-overlap"
+        : (chosen.leader?.maxParallelOverlap ?? 0) >= EDGE_LABEL_LEADER_LONG_PARALLEL_OVERLAP
+          ? "leader-overlap"
+          : chosen.candidate.edgeDistance > EDGE_LABEL_SHORT_LEADER_GAP
+            ? "distant"
+            : null;
     placements.push({
       edge,
-      displayLines: chosen.size.displayLines,
-      source: chosen.size.source,
-      x: chosen.point.x,
-      y: chosen.point.y,
-      selectWidth: chosen.size.selectWidth,
-      boxWidth: chosen.size.boxWidth,
-      height: chosen.size.height,
-      crowded: false,
+      displayLines: chosen.candidate.size.displayLines,
+      source: chosen.candidate.size.source,
+      x: chosen.candidate.sample.point.x,
+      y: chosen.candidate.sample.point.y,
+      selectWidth: chosen.candidate.size.selectWidth,
+      boxWidth: chosen.candidate.size.boxWidth,
+      height: chosen.candidate.size.height,
+      crowded: chosen.degraded,
       displaced: chosen.displaced,
       leaderPath,
       leaderBounds: leaderPoints ? expandedBox(geometryBounds(leaderPoints), 3) : null,
       leaderEdgeAnchor: leaderPoints?.[0] ?? null,
       leaderLabelAnchor: leaderPoints?.at(-1) ?? null,
+      sourceMenuPlacement: null,
+      sourceMenuWidth: null,
+      diagnostics: {
+        edgeDistance: chosen.candidate.edgeDistance,
+        leaderLength: chosen.leader?.length ?? 0,
+        maxParallelOverlap: chosen.leader?.maxParallelOverlap ?? 0,
+        crossingCount: chosen.leader?.crossingCount ?? 0,
+        usedCompactWidth: chosen.candidate.usedCompactWidth,
+        spacingPressure:
+          fallbackReason !== null || chosen.candidate.edgeDistance > EDGE_LABEL_NEAR_GAP,
+        fallbackReason,
+      },
     });
   }
-  return placements;
+  const selectedMenuBoxes: StructureBox[] = [];
+  const finalLabelBoxes = new Map(
+    placements.map((placement) => [
+      placement.edge.id,
+      labelBox(placement.x, placement.y, placement.boxWidth, placement.height),
+    ]),
+  );
+  const overlapArea = (left: StructureBox, right: StructureBox): number =>
+    Math.max(0, Math.min(left.right, right.right) - Math.max(left.left, right.left)) *
+    Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top));
+  return placements.map((placement) => {
+    const reservations = edgeLabelSourceMenuCollisionBoxes({
+      enabled: nodeIds.has(placement.edge.from) && nodeIds.has(placement.edge.to),
+      point: { x: placement.x, y: placement.y },
+      size: placement,
+    });
+    if (reservations.length === 0) return placement;
+    const ranked = reservations
+      .map((reservation, preference) => {
+        const nodeCollisions = nodeBoxes.filter((box) => boxesOverlap(reservation.box, box));
+        const labelCollisions = [...finalLabelBoxes]
+          .filter(([edgeId]) => edgeId !== placement.edge.id)
+          .map(([, box]) => box)
+          .filter((box) => boxesOverlap(reservation.box, box));
+        const menuCollisions = selectedMenuBoxes.filter((box) =>
+          boxesOverlap(reservation.box, box),
+        );
+        const leaderCollisionOwners = new Set(
+          leaderSegments
+            .query(reservation.box)
+            .filter((segment) => segmentIntersectsBox(segment.start, segment.end, reservation.box))
+            .map(({ ownerId }) => ownerId),
+        );
+        const routeCollisionOwners = new Set(
+          routeSegments
+            .query(reservation.box)
+            .filter((segment) => segmentIntersectsBox(segment.start, segment.end, reservation.box))
+            .map(({ ownerId }) => ownerId),
+        );
+        const bodyCollisionArea = [...nodeCollisions, ...labelCollisions].reduce(
+          (total, box) => total + overlapArea(reservation.box, box),
+          0,
+        );
+        return {
+          reservation,
+          nodeCollisionCount: nodeCollisions.length,
+          labelCollisionCount: labelCollisions.length,
+          bodyCollisionArea,
+          leaderCollisionCount: leaderCollisionOwners.size,
+          menuCollisionCount: menuCollisions.length,
+          routeCollisionCount: routeCollisionOwners.size,
+          preference,
+        };
+      })
+      .sort(
+        (left, right) =>
+          left.nodeCollisionCount - right.nodeCollisionCount ||
+          left.labelCollisionCount - right.labelCollisionCount ||
+          left.bodyCollisionArea - right.bodyCollisionArea ||
+          left.leaderCollisionCount - right.leaderCollisionCount ||
+          left.menuCollisionCount - right.menuCollisionCount ||
+          left.routeCollisionCount - right.routeCollisionCount ||
+          left.preference - right.preference,
+      );
+    const selected = ranked[0]!.reservation;
+    selectedMenuBoxes.push(selected.box);
+    return {
+      ...placement,
+      sourceMenuPlacement: selected.placement,
+      sourceMenuWidth: selected.width,
+    };
+  });
 }
 
-export function buildStructureRenderFoundation(input: {
-  structure: Structure;
-  positions: Readonly<Record<string, StructurePoint>>;
-  sourceChangeKinds: ReadonlyMap<string, ChangeKind>;
-  labelAccessory: StructureLabelAccessory;
-  edgeLabelMode: StructureEdgeLabelMode;
-}): StructureRenderFoundation {
+export function buildStructureRenderFoundation(
+  input: StructureRenderFoundationInput,
+): StructureRenderFoundation {
   const { structure, positions, sourceChangeKinds, labelAccessory, edgeLabelMode } = input;
   const sourceLabels = shortestUniqueSourceLabels([
     ...structure.nodes.flatMap((node) => (node.anchor ? [node.anchor.path] : [])),
@@ -2218,6 +3041,52 @@ export function buildStructureRenderFoundation(input: {
   return { nodes: allNodes, edges: allEdges, labels: allLabels, presentation };
 }
 
+function isUsableAutomaticRetryPositions(
+  structure: StructureRenderGraph,
+  current: Readonly<Record<string, StructurePoint>>,
+  candidate: Readonly<Record<string, StructurePoint>> | null | undefined,
+): candidate is Readonly<Record<string, StructurePoint>> {
+  if (!candidate) return false;
+  if (
+    Object.values(candidate).some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))
+  ) {
+    return false;
+  }
+  const nodeIds = structure.nodes.map(({ id }) => id);
+  if (nodeIds.some((nodeId) => !candidate[nodeId])) return false;
+  return nodeIds.some((nodeId) => {
+    const previous = current[nodeId];
+    const next = candidate[nodeId]!;
+    return !previous || previous.x !== next.x || previous.y !== next.y;
+  });
+}
+
+/**
+ * Builds renderer geometry for an automatic layout and permits at most two spacing-only retries.
+ * Manual layouts continue to call buildStructureRenderFoundation directly, so local dragging never
+ * triggers this callback implicitly.
+ */
+export function buildAutomaticStructureRenderFoundation(
+  input: StructureAutomaticRenderFoundationInput,
+): StructureAutomaticRenderFoundationResult {
+  const { retryPositions, ...foundationInput } = input;
+  let positions = foundationInput.positions;
+  let foundation = buildStructureRenderFoundation(foundationInput);
+  let retryCount = 0;
+  for (const attempt of STRUCTURE_AUTOMATIC_LAYOUT_SPACING_RETRY_ATTEMPTS) {
+    const pressureLabels = foundation.labels.filter(
+      ({ diagnostics }) => diagnostics.spacingPressure,
+    );
+    if (pressureLabels.length === 0) break;
+    const candidate = retryPositions({ attempt, positions, foundation, pressureLabels });
+    if (!isUsableAutomaticRetryPositions(input.structure, positions, candidate)) break;
+    positions = candidate;
+    foundation = buildStructureRenderFoundation({ ...foundationInput, positions });
+    retryCount += 1;
+  }
+  return { foundation, positions, retryCount };
+}
+
 export function selectStructureRenderModel(
   foundation: StructureRenderFoundation,
   selection: StructureRenderSelection,
@@ -2277,7 +3146,7 @@ export function structureRenderBoundsForNodeIds(
 }
 
 export function buildStructureRenderModel(input: {
-  structure: Structure;
+  structure: StructureRenderGraph;
   positions: Readonly<Record<string, StructurePoint>>;
   sourceChangeKinds: ReadonlyMap<string, ChangeKind>;
   selection: StructureRenderSelection;

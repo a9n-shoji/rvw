@@ -78,6 +78,34 @@ async function structureGraphLensState(viewer: Locator) {
   };
 }
 
+type StructureNodeLayout = Record<string, [left: string, top: string]>;
+
+async function structureNodeLayout(viewer: Locator): Promise<StructureNodeLayout> {
+  const entries = await viewer
+    .locator(".structure-node")
+    .evaluateAll((nodes): Array<[string, [string, string]]> =>
+      nodes.map((node) => [
+        (node as HTMLElement).dataset.nodeId ?? "",
+        [(node as HTMLElement).style.left, (node as HTMLElement).style.top],
+      ]),
+    );
+  return Object.fromEntries(entries);
+}
+
+function structureNodeLayoutExtent(layout: StructureNodeLayout): {
+  width: number;
+  height: number;
+} {
+  const points = Object.values(layout).map(([left, top]) => ({
+    x: Number.parseFloat(left),
+    y: Number.parseFloat(top),
+  }));
+  return {
+    width: Math.max(...points.map(({ x }) => x)) - Math.min(...points.map(({ x }) => x)),
+    height: Math.max(...points.map(({ y }) => y)) - Math.min(...points.map(({ y }) => y)),
+  };
+}
+
 async function structureRegionsCameraState(viewer: Locator) {
   return {
     transform: await viewer.locator(".structure-region-map").getAttribute("style"),
@@ -183,19 +211,25 @@ async function dragVisibleStructureNode(page: Page, viewer: Locator, node: Locat
   await page.mouse.up();
 }
 
-test("keeps Node selection passive and focuses its neighborhood only on double click", async ({
+test("keeps All geometry stable while Node neighborhood actions only reframe its camera", async ({
+  browser,
   page,
 }) => {
+  test.setTimeout(45_000);
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   await openStructure(page, primaryTitle);
   const viewer = page.locator(`[data-structure-id="${primaryStructureId}"]`);
   const world = viewer.locator(".structure-world");
   const orderAggregate = viewer.locator('.structure-node[data-node-id="order-aggregate"]');
+  const allDepth = viewer.getByRole("button", { name: "全体", exact: true });
 
   await viewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
+  await expect(world).not.toHaveClass(/camera-transition/u);
   const overviewTransform = await world.evaluate(
     (element) => (element as HTMLElement).style.transform,
   );
+  const allLayout = await structureNodeLayout(viewer);
+  expect(Object.keys(allLayout)).toHaveLength(16);
 
   await orderAggregate.click();
   await expect(orderAggregate).toHaveClass(/focused/u);
@@ -206,14 +240,70 @@ test("keeps Node selection passive and focuses its neighborhood only on double c
   await expect
     .poll(async () => world.evaluate((element) => (element as HTMLElement).style.transform))
     .toBe(overviewTransform);
+  await expect(allDepth).toHaveAttribute("aria-pressed", "true");
+  await expect(viewer.locator(".structure-node")).toHaveCount(16);
+  expect(await structureNodeLayout(viewer)).toEqual(allLayout);
 
   await orderAggregate.dblclick();
   await expect(orderAggregate).toHaveClass(/focused/u);
   await expect
     .poll(async () => world.evaluate((element) => (element as HTMLElement).style.transform))
     .not.toBe(overviewTransform);
+  await expect(world).not.toHaveClass(/camera-transition/u);
+  const doubleClickTransform = await world.evaluate(
+    (element) => (element as HTMLElement).style.transform,
+  );
+  await expect(allDepth).toHaveAttribute("aria-pressed", "true");
+  await expect(viewer).toHaveAttribute("data-neighborhood-depth", "all");
+  await expect(viewer).not.toHaveAttribute("data-local-center-id");
+  await expect(viewer.locator(".structure-node")).toHaveCount(16);
+  expect(await structureNodeLayout(viewer)).toEqual(allLayout);
   await expectStructureNodesFullyVisible(viewer, ["hub", "order-aggregate", "pricing-policy"]);
   expect(Number(await viewer.getAttribute("data-viewport-scale"))).toBeLessThanOrEqual(1.25);
+
+  const httpRoutes = viewer.locator('.structure-node[data-node-id="http-routes"]');
+  const keyboardNeighborhood = httpRoutes.locator(".structure-node-neighborhood");
+  await keyboardNeighborhood.focus();
+  await keyboardNeighborhood.press("Enter");
+  await expect(httpRoutes).toHaveClass(/focused/u);
+  await expect
+    .poll(async () => world.evaluate((element) => (element as HTMLElement).style.transform))
+    .not.toBe(doubleClickTransform);
+  await expect(allDepth).toHaveAttribute("aria-pressed", "true");
+  await expect(viewer.locator(".structure-node")).toHaveCount(16);
+  expect(await structureNodeLayout(viewer)).toEqual(allLayout);
+
+  const touchContext = await browser.newContext({ hasTouch: true });
+  try {
+    const touchPage = await touchContext.newPage();
+    await touchPage.goto(new URL(`/?pullRequestId=${pullRequestId}`, page.url()).toString());
+    await openStructure(touchPage, primaryTitle);
+    const touchViewer = touchPage.locator(`[data-structure-id="${primaryStructureId}"]`);
+    const touchWorld = touchViewer.locator(".structure-world");
+    await touchViewer.getByRole("button", { name: "表示中を収める", exact: true }).click();
+    await expect(touchWorld).not.toHaveClass(/camera-transition/u);
+    const touchAllLayout = await structureNodeLayout(touchViewer);
+    const touchOverviewTransform = await touchWorld.evaluate(
+      (element) => (element as HTMLElement).style.transform,
+    );
+    const touchOrderAggregate = touchViewer.locator(
+      '.structure-node[data-node-id="order-aggregate"]',
+    );
+
+    await touchOrderAggregate.locator(".structure-node-neighborhood").tap();
+    await expect(touchOrderAggregate).toHaveClass(/focused/u);
+    await expect
+      .poll(async () => touchWorld.evaluate((element) => (element as HTMLElement).style.transform))
+      .not.toBe(touchOverviewTransform);
+    await expect(touchViewer.getByRole("button", { name: "全体", exact: true })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await expect(touchViewer.locator(".structure-node")).toHaveCount(16);
+    expect(await structureNodeLayout(touchViewer)).toEqual(touchAllLayout);
+  } finally {
+    await touchContext.close();
+  }
 });
 
 async function customizeStructureReading(
@@ -2376,24 +2466,6 @@ test("resolves Structure anchors to latest and preserves spatial context across 
     "hub",
     "authorization-policy",
   ]);
-  await expect
-    .poll(async () => {
-      return await viewer.evaluate((element) => {
-        const canvasBox = element
-          .querySelector<HTMLElement>(".structure-canvas")!
-          .getBoundingClientRect();
-        return [...element.querySelectorAll<HTMLElement>(".structure-node")].some((item) => {
-          const box = item.getBoundingClientRect();
-          return (
-            box.left < canvasBox.left ||
-            box.right > canvasBox.right ||
-            box.top < canvasBox.top ||
-            box.bottom > canvasBox.bottom
-          );
-        });
-      });
-    })
-    .toBe(true);
   const initialHub = viewer.locator('.structure-node[data-node-id="hub"]');
   await expect(initialHub.locator(".structure-source-identity")).toBeVisible();
   await expect(initialHub.locator(".structure-node-description")).toBeVisible();
@@ -2660,25 +2732,71 @@ test("resolves Structure anchors to latest and preserves spatial context across 
   await viewer.locator('.structure-node[data-node-id="hub"]').click();
   await expect(viewer.locator('.structure-node[data-node-id="hub"]')).toHaveClass(/focused/);
 
-  const allLayoutEntries = await viewer
-    .locator(".structure-node")
-    .evaluateAll((nodes): Array<[string, [string, string]]> =>
-      nodes.map((node) => [
-        (node as HTMLElement).dataset.nodeId ?? "",
-        [(node as HTMLElement).style.left, (node as HTMLElement).style.top],
-      ]),
-    );
-  const allLayout = Object.fromEntries(allLayoutEntries);
+  await expect(viewer.locator(".structure-world")).not.toHaveClass(/camera-transition/u);
+  const allLayout = await structureNodeLayout(viewer);
   const viewportBeforeNeighborhood = await viewer
     .locator(".structure-world")
     .evaluate((element) => (element as HTMLElement).style.transform);
-  await viewer.getByRole("button", { name: "2-hop", exact: true }).click();
+  const twoHop = viewer.getByRole("button", { name: "2-hop", exact: true });
+  await twoHop.click();
   await expect(viewer.getByText("14/16 Node · 16/19 Relation", { exact: true })).toBeVisible();
   await expect(viewer.locator('.structure-node[data-node-id="pricing-policy"]')).toBeVisible();
+  await expect(viewer).toHaveAttribute("data-local-center-id", "hub");
+  await expect(viewer.locator(".structure-world")).not.toHaveClass(/layout-transition/u);
+  const localLayout = await structureNodeLayout(viewer);
+  const localNodeIds = Object.keys(localLayout);
+  const visibleAllLayout = Object.fromEntries(
+    localNodeIds.map((nodeId) => [nodeId, allLayout[nodeId]!]),
+  );
+  const fullVisibleExtent = structureNodeLayoutExtent(visibleAllLayout);
+  const localExtent = structureNodeLayoutExtent(localLayout);
+  expect(localNodeIds.length).toBeLessThan(Object.keys(allLayout).length);
+  expect(localLayout).not.toEqual(visibleAllLayout);
+  expect(localExtent.width).toBeLessThanOrEqual(fullVisibleExtent.width);
+  expect(localExtent.height).toBeLessThanOrEqual(fullVisibleExtent.height);
+  expect(
+    localExtent.width < fullVisibleExtent.width || localExtent.height < fullVisibleExtent.height,
+  ).toBe(true);
   const localViewport = await viewer
     .locator(".structure-world")
     .evaluate((element) => (element as HTMLElement).style.transform);
-  expect(localViewport).toBe(viewportBeforeNeighborhood);
+
+  await twoHop.click();
+  await expect(twoHop).toHaveAttribute("aria-pressed", "true");
+  await expect(viewer).toHaveAttribute("data-local-center-id", "hub");
+  expect(await structureNodeLayout(viewer)).toEqual(localLayout);
+  expect(
+    await viewer
+      .locator(".structure-world")
+      .evaluate((element) => (element as HTMLElement).style.transform),
+  ).toBe(localViewport);
+
+  const localPricingPolicy = viewer.locator('.structure-node[data-node-id="pricing-policy"]');
+  await localPricingPolicy.click();
+  await expect(localPricingPolicy).toHaveClass(/focused/u);
+  await expect(viewer).toHaveAttribute("data-selected-node-id", "pricing-policy");
+  await expect(viewer).toHaveAttribute("data-local-center-id", "hub");
+  expect(await structureNodeLayout(viewer)).toEqual(localLayout);
+  expect(
+    await viewer
+      .locator(".structure-world")
+      .evaluate((element) => (element as HTMLElement).style.transform),
+  ).toBe(localViewport);
+
+  const localPositionBeforeDrag = await localPricingPolicy.evaluate((element) => ({
+    left: (element as HTMLElement).style.left,
+    top: (element as HTMLElement).style.top,
+  }));
+  await dragVisibleStructureNode(page, viewer, localPricingPolicy);
+  await expect
+    .poll(async () =>
+      localPricingPolicy.evaluate((element) => ({
+        left: (element as HTMLElement).style.left,
+        top: (element as HTMLElement).style.top,
+      })),
+    )
+    .not.toEqual(localPositionBeforeDrag);
+
   await viewer.getByRole("button", { name: "全体", exact: true }).click();
   await expect(viewer.getByText("16/16 Node · 19/19 Relation", { exact: true })).toBeVisible();
   await expect(viewer.locator(".structure-edge-label")).toHaveCount(19);
@@ -2689,23 +2807,12 @@ test("resolves Structure anchors to latest and preserves spatial context across 
           .locator(".structure-world")
           .evaluate((element) => (element as HTMLElement).style.transform),
     )
-    .toBe(localViewport);
-  await expect
-    .poll(async () => {
-      const entries = await viewer
-        .locator(".structure-node")
-        .evaluateAll((nodes): Array<[string, [string, string]]> =>
-          nodes.map((node) => [
-            (node as HTMLElement).dataset.nodeId ?? "",
-            [(node as HTMLElement).style.left, (node as HTMLElement).style.top],
-          ]),
-        );
-      return Object.fromEntries(entries);
-    })
-    .toEqual(allLayout);
+    .toBe(viewportBeforeNeighborhood);
+  await expect(viewer.locator(".structure-world")).not.toHaveClass(/layout-transition/u);
+  await expect.poll(async () => structureNodeLayout(viewer)).toEqual(allLayout);
   await viewer.getByRole("button", { name: "focusを解除" }).click();
   await expect(viewer.locator(".structure-node.focused")).toHaveCount(0);
-  await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toBeDisabled();
+  await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toBeEnabled();
   await expect(viewer.locator(".structure-edge-label")).toHaveCount(19);
   await viewer.locator('.structure-node[data-node-id="hub"]').click();
   await canvas.focus();
@@ -2974,8 +3081,8 @@ test("resolves Structure anchors to latest and preserves spatial context across 
     "aria-pressed",
     "true",
   );
-  await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toBeDisabled();
-  await expect(viewer.getByRole("button", { name: "2-hop", exact: true })).toBeDisabled();
+  await expect(viewer.getByRole("button", { name: "1-hop", exact: true })).toBeEnabled();
+  await expect(viewer.getByRole("button", { name: "2-hop", exact: true })).toBeEnabled();
   await expect(viewer.getByText("4/4 Node · 3/3 Relation", { exact: true })).toBeVisible();
 
   await openStructure(page, secondaryTitle);

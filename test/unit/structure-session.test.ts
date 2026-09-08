@@ -10,6 +10,7 @@ import {
   MIN_STRUCTURE_ZOOM,
   preserveStructureLayoutScreenPosition,
   reconcileStructureSession,
+  STRUCTURE_REGION_LENS_CAMERA_TOP_INSET,
   restoreStructureRegionsViewFromHistory,
   scaledStructureZoom,
   setStructureSession,
@@ -18,7 +19,9 @@ import {
   structureCameraFrameForHistoryRestore,
   structureHomeNodeIds,
   structureLayoutBasisKey,
+  structureLocalLayoutBasisKey,
   structureOneHopNodeIds,
+  structurePositionsKey,
   structureRegionsLayoutBasisKey,
   structureRegionsViewportForHome,
   structureRegionsViewportForFit,
@@ -265,7 +268,13 @@ describe("Structure pane sessions", () => {
     const session = createStructureSession(value);
     expect(session.viewMode).toBe("graph");
     expect(session.focusId).toBe("read-first");
+    expect(session.localCenterId).toBe("read-first");
     expect(session.depth).toBe("all");
+    expect(session.localPositions).toBeNull();
+    expect(session.localLayoutBasisKey).toBeNull();
+    expect(session.allViewport).toEqual(session.viewport);
+    expect(session.allSurfaceSize).toEqual(session.surfaceSize);
+    expect(session.allCameraFrame).toBeNull();
     expect(session.positions["read-first"]!.x).toBeLessThan(session.positions["read-next"]!.x);
     expect(session.positions["read-first"]!.y).toBe(session.positions["read-next"]!.y);
 
@@ -444,6 +453,7 @@ describe("Structure pane sessions", () => {
     const viewport = structureViewportForBounds({
       bounds,
       surfaceSize,
+      topInset: STRUCTURE_REGION_LENS_CAMERA_TOP_INSET,
     });
 
     expect(
@@ -608,7 +618,7 @@ describe("Structure pane sessions", () => {
   it("keys only the authored fields that determine canonical geometry", () => {
     const value = presentedStructure("70000000-0000-4000-8000-000000000094");
     const baseline = structureLayoutBasisKey(value);
-    expect(baseline).toMatch(/^structure-layout-basis:v2:/u);
+    expect(baseline).toMatch(/^structure-layout-basis:v3:/u);
     expect(
       structureLayoutBasisKey({
         edges: value.edges,
@@ -664,6 +674,80 @@ describe("Structure pane sessions", () => {
       }),
     ).not.toBe(baseline);
     expect(structureLayoutBasisKey({ presentation: null, edges: value.edges })).not.toBe(baseline);
+  });
+
+  it("keys a local projection by its center, neighborhood topology, and full positions", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000084");
+    const positions = initialStructureLayout(value);
+    const baseline = structureLocalLayoutBasisKey({
+      structure: value,
+      centerId: "B",
+      depth: 1,
+      positions,
+    });
+
+    expect(baseline).toMatch(/^structure-local-layout-basis:v3:/u);
+    expect(structurePositionsKey({ B: positions.B!, A: positions.A! })).toBe(
+      structurePositionsKey({ A: positions.A!, B: positions.B! }),
+    );
+    expect(
+      structureLocalLayoutBasisKey({ structure: value, centerId: "B", depth: 2, positions }),
+    ).not.toBe(baseline);
+    expect(
+      structureLocalLayoutBasisKey({
+        structure: {
+          ...value,
+          edges: value.edges.map((edge) =>
+            edge.id === "ab" ? { ...edge, label: "A delegates work to B" } : edge,
+          ),
+        },
+        centerId: "B",
+        depth: 1,
+        positions,
+      }),
+    ).not.toBe(baseline);
+    expect(
+      structureLocalLayoutBasisKey({
+        structure: {
+          ...value,
+          nodes: value.nodes.map((node) =>
+            node.id === "A" ? { ...node, notation: "class" } : node,
+          ),
+        },
+        centerId: "B",
+        depth: 1,
+        positions,
+      }),
+    ).not.toBe(baseline);
+    expect(
+      structureLocalLayoutBasisKey({
+        structure: {
+          ...value,
+          edges: value.edges.map((edge) =>
+            edge.id === "ab"
+              ? {
+                  ...edge,
+                  anchors: [{ path: "src/a.ts", startLine: 1, endLine: 1 }],
+                }
+              : edge,
+          ),
+        },
+        centerId: "B",
+        depth: 1,
+        positions,
+      }),
+    ).not.toBe(baseline);
+    expect(
+      structureLocalLayoutBasisKey({
+        structure: value,
+        centerId: "B",
+        depth: 1,
+        positions: { ...positions, A: { x: positions.A!.x + 1, y: positions.A!.y } },
+      }),
+    ).not.toBe(baseline);
+    expect(
+      structureLocalLayoutBasisKey({ structure: value, centerId: "B", depth: "all", positions }),
+    ).toBeNull();
   });
 
   it("treats a start-only presentation as topology geometry while starting attention at its Node", () => {
@@ -730,6 +814,7 @@ describe("Structure pane sessions", () => {
     const session = {
       ...createStructureSession(value),
       focusId: "B",
+      localCenterId: "B",
       selectedEdgeId: "ab",
       depth: 2 as const,
       framedRegionId: "second",
@@ -844,7 +929,7 @@ describe("Structure pane sessions", () => {
     expect(reconcileStructureSession(proseUpdate, graphSession).viewMode).toBe("graph");
   });
 
-  it("preserves the layout center on screen when a rebase has no surviving focus", () => {
+  it("preserves the local center on screen when a rebase has no selected focus", () => {
     const value = presentedStructure("70000000-0000-4000-8000-000000000089");
     const session = {
       ...createStructureSession(value),
@@ -864,25 +949,15 @@ describe("Structure pane sessions", () => {
         primaryBackbone: { edgeIds: ["ac", "bc"] },
       },
     };
-    const previousCenter = {
-      x: (session.positions.A.x + session.positions.C.x + 228) / 2,
-      y: (session.positions.A.y + session.positions.C.y + 112) / 2,
-    };
-
     const reconciled = reconcileStructureSession(updated, session);
-    const nextXs = Object.values(reconciled.positions).map(({ x }) => x);
-    const nextYs = Object.values(reconciled.positions).map(({ y }) => y);
-    const nextCenter = {
-      x: (Math.min(...nextXs) + Math.max(...nextXs) + 228) / 2,
-      y: (Math.min(...nextYs) + Math.max(...nextYs) + 112) / 2,
-    };
     expect(reconciled.focusId).toBeNull();
+    expect(reconciled.localCenterId).toBe("A");
     expect(reconciled.viewport.scale).toBe(session.viewport.scale);
-    expect(reconciled.viewport.x + nextCenter.x * reconciled.viewport.scale).toBe(
-      session.viewport.x + previousCenter.x * session.viewport.scale,
+    expect(reconciled.viewport.x + reconciled.positions.A!.x * reconciled.viewport.scale).toBe(
+      session.viewport.x + session.positions.A.x * session.viewport.scale,
     );
-    expect(reconciled.viewport.y + nextCenter.y * reconciled.viewport.scale).toBe(
-      session.viewport.y + previousCenter.y * session.viewport.scale,
+    expect(reconciled.viewport.y + reconciled.positions.A!.y * reconciled.viewport.scale).toBe(
+      session.viewport.y + session.positions.A.y * session.viewport.scale,
     );
   });
 
@@ -970,6 +1045,7 @@ describe("Structure pane sessions", () => {
       ...createStructureSession(value),
       guideDisclosure: { thesis: false },
       focusId: "C",
+      localCenterId: "C",
       depth: 2 as const,
       framedRegionId: "second",
     };
@@ -996,8 +1072,176 @@ describe("Structure pane sessions", () => {
 
     expect(reconciled.guideDisclosure).toEqual(session.guideDisclosure);
     expect(reconciled.focusId).toBeNull();
+    expect(reconciled.localCenterId).toBe("A");
     expect(reconciled.depth).toBe("all");
+    expect(reconciled.localPositions).toBeNull();
+    expect(reconciled.localLayoutBasisKey).toBeNull();
     expect(reconciled.framedRegionId).toBeNull();
+  });
+
+  it("keeps local geometry separate from full positions across prose-only reconciliation", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000083");
+    const created = createStructureSession(value);
+    const localPositions = {
+      A: { x: 30, y: 40 },
+      B: { x: 400, y: 80 },
+      C: { x: 780, y: 140 },
+    };
+    const localLayoutBasisKey = structureLocalLayoutBasisKey({
+      structure: value,
+      centerId: "B",
+      depth: 1,
+      positions: created.positions,
+    });
+    const session = {
+      ...created,
+      focusId: "C",
+      localCenterId: "B",
+      depth: 1 as const,
+      localPositions,
+      localLayoutBasisKey,
+      viewport: { x: -300, y: 90, scale: 1.4 },
+      allViewport: { x: 55, y: 75, scale: 0.65 },
+      allSurfaceSize: { width: 960, height: 640 },
+      allCameraFrame: { kind: "nodes" as const, nodeIds: ["A", "B", "C"] },
+    };
+    const proseOnly: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      presentation: {
+        ...value.presentation!,
+        thesis: "Reworded without changing local geometry inputs.",
+      },
+    };
+
+    const reconciled = reconcileStructureSession(proseOnly, session);
+
+    expect(reconciled.focusId).toBe("C");
+    expect(reconciled.localCenterId).toBe("B");
+    expect(reconciled.depth).toBe(1);
+    expect(reconciled.positions).toEqual(created.positions);
+    expect(reconciled.localPositions).toEqual(localPositions);
+    expect(reconciled.localLayoutBasisKey).toBe(localLayoutBasisKey);
+    expect(reconciled.viewport).toEqual(session.viewport);
+    expect(reconciled.allViewport).toEqual(session.allViewport);
+    expect(reconciled.allSurfaceSize).toEqual(session.allSurfaceSize);
+    expect(reconciled.allCameraFrame).toEqual(session.allCameraFrame);
+  });
+
+  it("clears an Edge selection that is outside the reconciled local graph", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000081");
+    value.edges = value.edges.filter((edge) => edge.id !== "ac");
+    const session = {
+      ...createStructureSession(value),
+      localCenterId: "A",
+      depth: 1 as const,
+      selectedEdgeId: "bc",
+    };
+
+    const reconciled = reconcileStructureSession(value, session);
+
+    expect(reconciled.depth).toBe(1);
+    expect(reconciled.selectedEdgeId).toBeNull();
+  });
+
+  it("clears a globally surviving focus outside the updated local graph without narrowing the All camera", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000082");
+    const created = createStructureSession(value);
+    const session = {
+      ...created,
+      focusId: "C",
+      localCenterId: "A",
+      depth: 1 as const,
+      cameraFrame: { kind: "nodes" as const, nodeIds: ["A", "C"] },
+      allCameraFrame: { kind: "nodes" as const, nodeIds: ["A", "C"] },
+    };
+    const updated: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      // C still exists in the complete graph through B, but is no longer one hop from A.
+      edges: value.edges.filter((edge) => edge.id !== "ac"),
+    };
+
+    const reconciled = reconcileStructureSession(updated, session);
+
+    expect(reconciled.depth).toBe(1);
+    expect(reconciled.localCenterId).toBe("A");
+    expect(reconciled.focusId).toBeNull();
+    expect(reconciled.cameraFrame).toEqual({ kind: "nodes", nodeIds: ["A"] });
+    expect(reconciled.allCameraFrame).toEqual({ kind: "nodes", nodeIds: ["A", "C"] });
+  });
+
+  it("invalidates local geometry when graph membership changes but retains the full-map camera", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000080");
+    const created = createStructureSession(value);
+    const session = {
+      ...created,
+      localCenterId: "B",
+      depth: 1 as const,
+      localPositions: {
+        A: { x: 30, y: 40 },
+        B: { x: 400, y: 80 },
+        C: { x: 780, y: 140 },
+      },
+      localLayoutBasisKey: structureLocalLayoutBasisKey({
+        structure: value,
+        centerId: "B",
+        depth: 1,
+        positions: created.positions,
+      }),
+      allViewport: { x: 55, y: 75, scale: 0.65 },
+      allSurfaceSize: { width: 960, height: 640 },
+      allCameraFrame: { kind: "center-node" as const, nodeId: "A", scale: 0.65 },
+    };
+    const updated: Structure = {
+      ...value,
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      nodes: [...value.nodes, { ...value.nodes[0]!, id: "D", label: "D", anchor: null }],
+      edges: [
+        ...value.edges,
+        { id: "bd", from: "B", to: "D", label: "B to D", directed: true, anchors: [] },
+      ],
+    };
+
+    const reconciled = reconcileStructureSession(updated, session);
+
+    expect(reconciled.positions.A).toEqual(created.positions.A);
+    expect(reconciled.positions.D).toBeDefined();
+    expect(reconciled.localCenterId).toBe("B");
+    expect(reconciled.depth).toBe(1);
+    expect(reconciled.localPositions).toBeNull();
+    expect(reconciled.localLayoutBasisKey).toBeNull();
+    expect(reconciled.allViewport).toEqual(session.allViewport);
+    expect(reconciled.allSurfaceSize).toEqual(session.allSurfaceSize);
+    expect(reconciled.allCameraFrame).toEqual(session.allCameraFrame);
+  });
+
+  it("upgrades a legacy local session by using its selected Node as the local center", () => {
+    const value = presentedStructure("70000000-0000-4000-8000-000000000079");
+    const legacy = {
+      ...createStructureSession(value),
+      focusId: "B",
+      depth: 1 as const,
+      localCenterId: undefined,
+      localPositions: undefined,
+      localLayoutBasisKey: undefined,
+      allViewport: undefined,
+      allSurfaceSize: undefined,
+      allCameraFrame: undefined,
+      viewport: { x: -80, y: 45, scale: 1.1 },
+      surfaceSize: { width: 900, height: 600 },
+    } as unknown as ReturnType<typeof createStructureSession>;
+
+    const reconciled = reconcileStructureSession(value, legacy);
+
+    expect(reconciled.focusId).toBe("B");
+    expect(reconciled.localCenterId).toBe("B");
+    expect(reconciled.depth).toBe(1);
+    expect(reconciled.localPositions).toBeNull();
+    expect(reconciled.localLayoutBasisKey).toBeNull();
+    expect(reconciled.allViewport).toEqual(legacy.viewport);
+    expect(reconciled.allSurfaceSize).toEqual(legacy.surfaceSize);
+    expect(reconciled.allCameraFrame).toBeNull();
   });
 
   it("centers replacement geometry when no Node survives a rebase", () => {

@@ -854,12 +854,13 @@ crossing reduction、stable IDの順で決定的に導出する。factual direct
 reading directionへ変換しない。
 producer指定のlayer / stage / 座標、focus、viewport、manual positionは受け取らない。
 
-base mapはcurrent Structureだけから決定的に導出するcanonical layoutで、新しいsessionと明示的なlayout resetに
-使う。session layoutはそれを起点にした人間のreading stateであり、Node dragと、spatial organizerが
-変わらないwhole-value update後もretained Nodeの位置を維持する。削除後の空間を自動で詰めたり、filterやfocus変更で
+base mapはcurrent Structureだけから決定的に導出するcanonical full layoutで、新しいsessionと明示的なfull layout resetに
+使う。full session layoutはそれを起点にした人間のreading stateであり、All中のNode dragと、spatial organizerが
+変わらないwhole-value update後もretained Nodeの位置を維持する。削除後の空間を自動で詰めたり、selection変更で
 reflowしたりしない。新規Nodeは
 retained neighborの重心を起点に全方向の空き候補を調べ、既存のmental mapを壊さず発見できる位置へ置く。
-Node位置、Graph / Regions view mode、focus、depth、Graph viewport、独立したRegions viewport、Guide disclosureはbrowser session内だけでpaneとStructure IDの組へ
+1-hop / 2-hopはfull layoutのfilterではなく、明示された局所中心とundirected factual distanceから導出したlocal graphを、局所専用のcanonical/manual layoutへ配置する。非表示Node / Edgeはrouting、label衝突、bounds、spacingの入力に含めない。局所のNode集合の両端を持つ実Edgeはすべて含め、合成Edgeを追加しない。local layoutはfull layoutの左右・上下の向きと相対順序、中心周辺のmental mapを可能な限り維持しつつ、非表示要素の抜けた空白を詰める。local中のdrag / Resetはlocal layoutだけを変更し、full positionsとAll cameraは保存してAll復帰時に復元する。
+Nodeのfull / local位置、Graph / Regions view mode、selected Node、local center、depth、Graphのactive / All viewport、独立したRegions viewport、Guide disclosureはbrowser session内だけでpaneとStructure IDの組へ
 保持し、tab往復とcurrent-value更新後もsurviving IDの状態を保つ。spatial-organizer identityは、organizerへ適用される
 canonical projection revision、organizerの有無、organizerがある場合の`startNodeId`、backbone Edge endpointから作る
 normalized simple adjacency、Regionのstable ID / membershipからなる。Region-first revisionはRegionを一つ以上持つ
@@ -905,12 +906,11 @@ producerの新しい`originNodeId`へ移動せずfocusなしのAllへ戻す。�
 padding付きでframeする。backboneを持つpresentationでも同じstart-centered 1-hop frameを使い、全backbone endpointをcamera targetへ追加しない。
 scaleにはViewer共通のminimumと局所frame用maximumを適用し、全graphの大きさだけを理由に初期detailを読めないscaleへ
 縮小しない。Edge route / label boundsは明示的なRegion frameとFit以外の初期Home boundsへ含めない。
-Nodeのsingle clickはそのNodeをfocus / selected stateにし、既存のhighlightとdetail lensを更新するが、viewportのpan / zoom / fitを
-行わない。double click判定のためにsingle clickを遅延させず、timerや永続focus modeも導入しない。Nodeのdouble clickは、clickで
-成立したselectionを保ったまま現在のfocus / depth / viewportをbrowser reading historyへ積み、clicked Nodeとexact factual
-1-hop Nodeを読めるboundsへcameraをanimateするone-shot navigationとする。Node座標は組み替えず、その後のpan / zoomを制約しない。
-局所frameにはViewer共通のmaximum scaleを適用し、neighborのないNode単体を過度に拡大しない。1-hop / 2-hop / Allの切り替えもcanonical / manual Node座標を変えず、
-表示detailだけを変更する。局所へ絞る時もcomplete extentへ戻るminimap / All / Fit、visible / total件数、
+Nodeのsingle click / pointer tap / keyboard activationはそのNodeをselected stateにし、highlightとdetailを更新するが、local center、depth、Node座標、route / label foundation、viewportのpan / zoom / fitを
+一切変更しない。double click判定のためにsingle clickを遅延させず、timerや永続focus modeも導入しない。selected Nodeとlocal centerは独立したstate / visual cueである。
+All中のNode double clickはselectionを保ったまま、clicked Nodeとexact factual 1-hop Nodeを読めるboundsへcameraをanimateするone-shot navigationとし、depthはAll、full layoutも不変とする。local中のdouble clickはselectionとlocal centerをclicked Nodeへ更新し、同じdepthのlocal graph / layoutを再導出して1-hopをframeする。Nodeにはこのdouble clickと同値のkeyboard / touch可能な明示actionを用意する。source actionはこのnavigationをbubbleさせない。
+明示的に1-hop / 2-hopを選んだ時だけ、selected Node（なければsurviving local center / Home）を中心にlocal graphとlocal layoutを導出する。現在と同じdepthの再選択はno-opである。depth切替時は中心Nodeのscreen位置とzoomを保ち、double click / 明示local actionだけが1-hopをframeする。座標、route、label、leaderは一回のgeometry更新で一緒に切り替え、camera / layoutは200–300msの取り消し可能なtransitionを使うが、フレームごとにgeometryを再計算しない。reduced motionでは直ちに最終状態へ移り、連続操作は最新のintentを勝たせる。
+局所へ絞る時もcomplete extentへ戻るminimap / All / Fit、visible / total件数、
 start-centeredなHome、Backを常時回収可能にし、
 隠れたNode / Edgeをartifactに存在しないよう見せない。HomeとRegions overviewのRegion選択はGraph / All lensへ切り替え、Regionはexact
 member Nodeと内部Edge / label boundsをframeするpane-local chunk lensを有効にする。focusとfocus-hop distance、artifactの
@@ -924,15 +924,15 @@ poll updateもNode位置とviewportを維持し、自動fitしない。
 
 non-self Edgeのvisible routeはexactなsource / target Nodeのvisible boundary portへ接続する。clearanceはNode内部への
 侵入を避けるためだけに使い、endpointとの対応が曖昧になるvisible gapを残さない。directed Edgeはarrowheadを
-Nodeの下へ隠さず、markerを含むvisible routeの先端をtarget portへ接続する。全Node boxを入力にしたdeterministic
+Nodeの下へ隠さず、markerを含むvisible routeの先端をtarget portへ接続する。Allでは全Node box、localではvisible Node boxだけを入力にしたdeterministic
 route modelで非endpoint Nodeを避ける。distinctなvisible relationのrouteが実質的な区間で同一またはほぼ同一の
 corridorを共有する場合はstable IDでlaneを分け、その区間を個別に追跡できるようにする。parallel / reciprocal Edgeは
 必ずこの対象に含む。endpoint直近だけ分岐して残りのpathを重ねることはlane分離とみなさない。self-loopは
 stable loopを使う。backbone Edgeはreserved corridorを優先し、branch / cross-region Edgeは必要に応じてgutterを使う。
-Viewerとexportは同じroute geometryを共有する。全表示候補Edgeのrouteとlabel slotをfocus/depth filterより先に解き、
-共通labelはfocus変更で移動させない。normal detailでは全表示対象labelを一つの配置問題として解き、各labelを
+Viewerとexportは同じroute geometry / label plannerを共有する。All / exportではfull graph、localではderived visible graphのEdgeのrouteとlabel slotをselection / hoverより先に解き、
+共通labelはselection変更で移動させない。normal detailでは全表示対象labelを一つの配置問題として解き、各labelを
 Node boxだけでなく他の全表示labelとも非重複にする。collision-freeなinline slotがなければassociation leader付きの
-deterministicな退避位置を使い、重なりや省略へfallbackしない。normal detailより低いsemantic zoomでだけlabelを
+deterministicな退避位置を使い、重なりや省略へfallbackしない。配置候補は通常幅と全文折り返し幅を同じ有限集合で比較し、labelの実矩形から対応Edgeへの最短距離を優先する。中央に置けない場合はEdgeの長手方向へ移動する候補を先に評価し、法線方向の大きな退避は後にする。source actionの個数を表示矩形へ含める。複数source chooserはlabel本体の近接順位を逆転させず、最終Node / label / leaderに対して上下左右4方向を評価して衝突の最も少ない側へ開く。leaderは対応Edgeから短く横へ離れ、対応/他Edgeや他leaderとの長い共線・近接並走を回避する一方、一点交差だけは遠方退避より軽いcostとする。Node / labelを通過せず、他の表示中labelが開くsource chooserも可能な限り塞がない。有限候補が尽きてもlabelを落とさず安定fallbackを返し、`edgeDistance`、`leaderLength`、`maxParallelOverlap`、`crossingCount`、`usedCompactWidth`、`spacingPressure`、`fallbackReason`を診断として残す。reviewer-owned manual配置が障害物で閉路を作りsafeなguideを位相的に不可能にした場合だけ、labelを省略せず`emergency`として最小交差のdirect guideを表示する。automatic layoutだけは近接余白不足の診断から関係するx/y bandのNode spacingだけを調整し、最大2回までreroute / replaceできる。`emergency` pressureでは通常の遠距離診断より大きいが有限のband gapを使う。manual layoutは自動で動かさない。normal detailより低いsemantic zoomでだけlabelを
 省略でき、その場合も明示inspect actionを残す。Edge labelを選ぶと対応する線と両端Nodeを強調する。
 relation labelの右にNodeと同型のexact source actionを置く。anchorが1件なら直接開き、複数ならlabel付近の
 compact chooserから全source evidenceを選べる。Relation上へsource file名は常時表示しない。
@@ -973,7 +973,7 @@ Structure固有のheaderはtitleとexact sourceを一つのcompact rowへ置き�
 popoverで確認できるようにする。表示操作はcanvas上のsingle-row overlayとし、狭いpaneでも複数行へwrapして
 canvasの縦幅を奪わず、水平方向にscrollして全操作へ到達できるようにする。
 
-Structure headerはdocument単位のExport actionを持ち、現在のpane sessionのNode座標と選択commit範囲に対応する
+Structure headerはdocument単位のExport actionを持ち、現在のpane sessionのfull Node座標（local座標ではない）と選択commit範囲に対応する
 change presentationを使ってstandalone SVGまたは2倍基準のPNGを生成する。exportはfocus、depth、selected Edge、
 view mode、viewport、navigation history、Guide disclosure、semantic-zoom omission、Node内scroll位置を無視し、全Node、全Edge、
 全Edge labelを含む。boundsはNode、routed Edge、self-loop、
@@ -991,7 +991,8 @@ PNGは同じSVGからbrowser標準Canvas APIで派生し、最大dimensionとpix
 budgetに収まるscaleへ縮小する。安全な最低scaleを下回る場合は不完全なPNGを生成せず明示的に失敗する。
 exportはbackend、DB、CLI protocol、Structure data modelを変更せず、実行後もreading stateを一切変更しない。
 
-1-hop / 2-hopはfocusがある時だけ選べる。focusなしはAllへ戻し、Allは全Nodeと全Edgeを表示する。relationを
+1-hop / 2-hopは明示操作で選べる。selected Nodeが有効ならそれを中心にし、未選択ならsurviving local center、
+presentation start、originの順で有効な中心へfallbackする。有効な中心がない場合だけAllへ戻す。Allは全Nodeと全Edgeを表示する。relationを
 stable IDや件数で自動的に隠さない。bounded graphを超えるsubjectはproducerが明示brief内でscopeを狭めるか、
 requesterまたは上位composerへboundaryの再検討を返し、このproducer requestから別Artifactを自律的に増やさない。
 別のoriginから独立してtriggerされるbehaviorへ到達した時点も現在Structureの停止境界とし、必要なら隣接behaviorを
