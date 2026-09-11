@@ -24,6 +24,8 @@
   --attention: #9a6700;
   --done: #8250df;
   --info: #0969da;
+  --reference-context: #386b73;
+  --reference-context-soft: #e9f1f2;
   --file-tree-active-text: #0550ae;
   --header-bg: #24292f;
   --header-border: #1b1f23;
@@ -84,6 +86,8 @@
   --attention: #d29922;
   --done: #d2a8ff;
   --info: #58a6ff;
+  --reference-context: #78b6bd;
+  --reference-context-soft: #1c3034;
   --file-tree-active-text: #cae8ff;
   --header-bg: #010409;
   --header-border: #21262d;
@@ -1489,6 +1493,9 @@ code {
   border-bottom: 1px solid var(--line-strong);
   background: var(--panel-2);
 }
+.document-tabs-shell.reference-display-active {
+  border-bottom-color: color-mix(in srgb, var(--reference-context) 52%, var(--line-strong));
+}
 .pane-find-layer {
   position: sticky;
   top: 44px;
@@ -1609,6 +1616,158 @@ code {
   flex: 1;
   overflow-x: auto;
   scrollbar-width: thin;
+}
+.reference-display-control {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 0 6px;
+  border-left: 1px solid var(--line);
+}
+.reference-display-chip {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--reference-context) 42%, var(--line));
+  border-radius: 999px;
+  background: var(--reference-context-soft);
+  color: var(--reference-context);
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.reference-display-chip:hover,
+.reference-display-chip:focus-visible,
+.reference-display-chip[aria-expanded="true"] {
+  border-color: color-mix(in srgb, var(--reference-context) 68%, var(--line));
+  background: color-mix(in srgb, var(--reference-context) 15%, var(--panel));
+  outline: none;
+}
+.reference-display-chip:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 38%, transparent);
+}
+.reference-display-tooltip {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 2px;
+  z-index: 9;
+  display: none;
+  width: max-content;
+  max-width: min(270px, calc(100vw - 24px));
+  padding: 5px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--text);
+  box-shadow: 0 5px 16px var(--shadow-medium);
+  color: var(--panel);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.reference-display-control:hover .reference-display-tooltip,
+.reference-display-control:focus-within .reference-display-tooltip {
+  display: block;
+}
+.reference-display-popover {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: -42px;
+  z-index: 10;
+  display: grid;
+  width: min(370px, calc(100vw - 24px));
+  max-height: min(460px, calc(100vh - 128px));
+  gap: 10px;
+  padding: 11px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--reference-context) 38%, var(--line-strong));
+  border-radius: 8px;
+  outline: none;
+  background: var(--panel);
+  box-shadow: 0 10px 30px var(--shadow-medium);
+  color: var(--text);
+}
+.reference-display-popover:focus-visible {
+  border-color: color-mix(in srgb, var(--focus) 62%, var(--line));
+}
+.reference-display-popover-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.reference-display-popover-heading > strong {
+  font-size: 12px;
+}
+.reference-display-popover-heading > button {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+}
+.reference-display-popover-heading > button:hover,
+.reference-display-popover-heading > button:focus-visible {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.reference-display-popover dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.reference-display-popover dl > div {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--reference-context) 4%, var(--panel));
+}
+.reference-display-popover dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+.reference-display-popover dd {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.reference-display-popover code {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 9px;
+}
+.reference-display-target-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.reference-display-return-action {
+  justify-self: start;
+  min-height: 30px;
+  border-color: color-mix(in srgb, var(--reference-context) 55%, var(--line));
+  background: var(--reference-context-soft);
+  color: var(--reference-context);
+  font-size: 11px;
+  font-weight: 750;
+}
+.reference-display-return-action:hover:not(:disabled),
+.reference-display-return-action:focus-visible:not(:disabled) {
+  border-color: var(--reference-context);
+  background: color-mix(in srgb, var(--reference-context) 16%, var(--panel));
+}
+.reference-display-return-action:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.66;
 }
 .document-tab {
   position: relative;
@@ -2268,6 +2427,26 @@ diffs-container > [slot="header-metadata"] {
   flex: 0 0 auto;
   align-items: center;
   gap: 6px;
+}
+.reference-display-header-action {
+  min-height: 25px;
+  padding: 3px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--reference-context);
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.reference-display-header-action:hover:not(:disabled),
+.reference-display-header-action:focus-visible:not(:disabled) {
+  background: var(--reference-context-soft);
+  color: var(--reference-context);
+}
+.reference-display-header-action:disabled {
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.65;
 }
 .file-structure-references {
   position: relative;

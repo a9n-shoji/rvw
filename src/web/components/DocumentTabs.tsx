@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -8,6 +9,7 @@ import {
 } from "react";
 import type { ChangeKind } from "../../domain/models.js";
 import { documentTabPresentation } from "../document-tab-presentation.js";
+import type { ReferenceDisplayState } from "../document-viewer-state.js";
 import {
   documentTabKey,
   documentTabPath,
@@ -39,6 +41,118 @@ function MoreIcon() {
   );
 }
 
+function ReferenceDisplayControl({
+  state,
+  onOpenSelectedRangeFile,
+}: {
+  state: ReferenceDisplayState;
+  onOpenSelectedRangeFile: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const tooltipId = useId();
+
+  useLayoutEffect(() => {
+    if (open) dialogRef.current?.focus();
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (!hostRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className="reference-display-control" ref={hostRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="reference-display-chip"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-describedby={open ? undefined : tooltipId}
+        onClick={() => setOpen((current) => !current)}
+      >
+        参照表示
+      </button>
+      {!open && (
+        <span className="reference-display-tooltip" id={tooltipId} role="tooltip">
+          グローバル選択とは異なる参照を表示中
+        </span>
+      )}
+      {open && (
+        <div
+          ref={dialogRef}
+          className="reference-display-popover"
+          role="dialog"
+          aria-labelledby={titleId}
+          tabIndex={-1}
+        >
+          <div className="reference-display-popover-heading">
+            <strong id={titleId}>参照表示の詳細</strong>
+            <button
+              type="button"
+              aria-label="参照表示の詳細を閉じる"
+              onClick={() => {
+                setOpen(false);
+                triggerRef.current?.focus();
+              }}
+            >
+              ×
+            </button>
+          </div>
+          <dl>
+            <div>
+              <dt>現在の表示</dt>
+              <dd>
+                <span>{state.referenceComparisonLabel}</span>
+                <code>{state.referenceOid}</code>
+              </dd>
+            </div>
+            <div>
+              <dt>グローバル選択</dt>
+              <dd>
+                <strong>{state.globalSelectionLabel}</strong>
+                <code>{state.globalSelectionOidLabel}</code>
+                <span>{state.globalComparisonLabel}</span>
+              </dd>
+            </div>
+          </dl>
+          {state.targetReason && (
+            <p className={`reference-display-target-status ${state.targetStatus}`} role="status">
+              {state.targetReason}
+            </p>
+          )}
+          <button
+            type="button"
+            className="reference-display-return-action"
+            disabled={state.targetStatus !== "ready"}
+            aria-label={state.actionAccessibleLabel}
+            onClick={onOpenSelectedRangeFile}
+          >
+            {state.actionLabel}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DocumentTabs({
   paneId,
   documents,
@@ -52,6 +166,8 @@ export function DocumentTabs({
   onDropDocument,
   onDragStartDocument,
   onDragEndDocument,
+  referenceDisplay,
+  onOpenSelectedRangeFile,
 }: {
   paneId: DocumentPaneId;
   documents: ActiveDocument[];
@@ -69,6 +185,8 @@ export function DocumentTabs({
   ) => void;
   onDragStartDocument: (documentKey: string) => void;
   onDragEndDocument: () => void;
+  referenceDisplay: ReferenceDisplayState | null;
+  onOpenSelectedRangeFile: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuHostRef = useRef<HTMLDivElement>(null);
@@ -151,7 +269,7 @@ export function DocumentTabs({
 
   return (
     <div
-      className="document-tabs-shell"
+      className={`document-tabs-shell${referenceDisplay ? " reference-display-active" : ""}`}
       data-pane={paneId}
       onDragOver={(event) => {
         event.preventDefault();
@@ -217,6 +335,12 @@ export function DocumentTabs({
           );
         })}
       </nav>
+      {referenceDisplay && (
+        <ReferenceDisplayControl
+          state={referenceDisplay}
+          onOpenSelectedRangeFile={onOpenSelectedRangeFile}
+        />
+      )}
       <div className="document-tabs-menu" ref={menuHostRef}>
         <button
           ref={menuToggleRef}
