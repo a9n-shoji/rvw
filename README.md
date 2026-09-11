@@ -361,10 +361,10 @@ line rangeへ`rvw-ref:` linkを付け、reviewerが根拠へ直接移動でき�
 
 5つのSkillはrvwのapplication SQLiteを直接読まず、rvwへの操作には`rvw protocol --json`、`rvw agent status --json`、
 `rvw comment ... --json`、
-`rvw walkthrough get/update/publish/delete ... --json`、
+`rvw walkthrough list/get/update/publish/delete ... --json`、
 `rvw structure list/preview/get/update/publish/delete ... --json`、`rvw pr sync --stdin --json`という既存contractだけを
-利用します。composerの追加による新しいCLI commandやprotocol capabilityはありません。既存Walkthrough URIが
-明示されない場合に全Walkthroughを列挙するcontractもないため、composerはSQLiteを読んで重複を推測しません。
+利用します。既存Walkthrough URIが明示されない場合は`walkthrough list`で候補を発見し、titleだけで同一subjectと
+判断せず`walkthrough get`で現在内容を確認します。composerのための永続的なreview planや新しいArtifactはありません。
 ローカルDBやrepositoryへアクセスできないCloud Agentは対象外です。
 
 ## 復旧
@@ -407,6 +407,7 @@ rvw comment reply <COMMENT_URI> --stdin --json
 rvw comment edit <COMMENT_URI> --post <POST_ID> --stdin --json
 rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
+rvw walkthrough list <PR_REF> --json [--limit 50] [--offset 0]
 rvw walkthrough get <WALKTHROUGH_URI> --json
 rvw walkthrough publish --stdin --json
 rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
@@ -439,6 +440,12 @@ root post preview、post件数、最新head時点のOutdated判定を返しま�
 扱うAgentは同じPR本文を一度だけ取得し、そのPRの全threadで共有します。
 `comment get`は最新PRのtitle、base/head、serviceが導出したplacement、対象commitのbounded source
 excerptを返すため、AgentはOID比較でOutdatedを推測しません。
+
+`walkthrough list`は登録済みPRの保存済みWalkthroughを`createdAt DESC, id DESC`でページングし、
+canonical `rvw://walkthrough/<uuid>`、title、source OID、author、作成日時だけを返します。古いsource OIDの
+項目も含み、本文、reference、diagram bindingは`walkthrough get`で取得します。最短のdiscovery / retrievalは
+`rvw walkthrough list <PR_REF> --json`の結果からrefを選び、
+`rvw walkthrough get <LIST_RESULT_REF> --json`へそのまま渡す流れです。
 
 `comment get --live`はGitHubの現在値とcacheの差をread-onlyで確認し、DBを更新しません。`pr sync`はGitHub上の最新PR状態を取得し、任意の`commentUpdates`を同じSQLite transactionで反映します。保存先がdirtyでも同じrepositoryのcleanなworktreeを`--repository`で選べ、確認済みの未追跡fileだけは`--allow-untracked`で許可できます。local branchがGitHub headより単にbehindな場合や最終同期後にforce-pushされた場合はcheckoutを変更せず同期します。`comment create`は非冪等です。`pr sync`と`comment reply`は任意の冪等keyを受け、`comment edit`は同じpostの完全置換なので安全に再試行できます。
 

@@ -294,6 +294,63 @@ describe("Agent socket", () => {
     );
   });
 
+  it("lists paged Walkthrough references through the shared Agent transport", async () => {
+    const listWalkthroughsByReference = vi.fn().mockReturnValue({
+      pullRequest: { id: "pr-7" },
+      walkthroughs: [
+        {
+          id: "70000000-0000-4000-8000-000000000001",
+          ref: "rvw://walkthrough/70000000-0000-4000-8000-000000000001",
+          title: "Authorization flow",
+          sourceOid: "a".repeat(40),
+          authorLabel: "Codex",
+          createdAt: "2026-09-11T00:00:00.000Z",
+        },
+      ],
+      page: {
+        offset: 2,
+        limit: 1,
+        returned: 1,
+        total: 4,
+        hasMore: true,
+        nextOffset: 3,
+      },
+    });
+
+    await expect(
+      dispatchAgentSocketRequest({ listWalkthroughsByReference } as unknown as RvwService, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "walkthrough.list",
+        input: {
+          reference: "https://github.com/acme/review-repo/pull/7",
+          limit: 1,
+          offset: 2,
+        },
+      }),
+    ).resolves.toMatchObject({
+      pullRequest: { id: "pr-7" },
+      walkthroughs: [{ ref: "rvw://walkthrough/70000000-0000-4000-8000-000000000001" }],
+      page: { offset: 2, limit: 1, nextOffset: 3 },
+    });
+    expect(listWalkthroughsByReference).toHaveBeenCalledWith(
+      "https://github.com/acme/review-repo/pull/7",
+      { limit: 1, offset: 2 },
+    );
+
+    await expect(
+      dispatchAgentSocketRequest({ listWalkthroughsByReference } as unknown as RvwService, {
+        protocolVersion: AGENT_SOCKET_PROTOCOL_VERSION,
+        operation: "walkthrough.list",
+        input: {
+          reference: "https://github.com/acme/review-repo/pull/7",
+          limit: 0,
+          offset: 0,
+        },
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(listWalkthroughsByReference).toHaveBeenCalledOnce();
+  });
+
   it("rejects mixed socket protocol versions and tells the caller to restart the viewer", async () => {
     const setCommentResolved = vi.fn();
     await expect(

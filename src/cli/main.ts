@@ -19,6 +19,7 @@ import {
   DEFAULT_COMMENT_LIST_LIMIT,
   DEFAULT_COMMENT_WATCH_INTERVAL_SECONDS,
   DEFAULT_COMMENT_WATCH_LIMIT,
+  DEFAULT_WALKTHROUGH_LIST_LIMIT,
   DEFAULT_VIEWER_PORT,
   PROTOCOL_VERSION,
   VIEWER_ID_HEADER,
@@ -66,8 +67,10 @@ import {
   structurePublishInputSchema,
   structureUpdateInputSchema,
   walkthroughPublishInputSchema,
+  walkthroughListOptionsSchema,
   walkthroughUpdateInputSchema,
 } from "./schemas.js";
+import { formatWalkthroughListOutput } from "./walkthrough-protocol.js";
 
 const MAX_STDIN_BYTES = MAX_CLI_STDIN_BYTES;
 const OPEN_WORKER_READY_TIMEOUT_MS = 120_000;
@@ -884,6 +887,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "structure.publish",
           "structure.update",
           "structure.delete",
+          "walkthrough.list",
           "walkthrough.read",
           "walkthrough.publish",
           "walkthrough.update",
@@ -1202,6 +1206,31 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         async () => await getRuntime().service.publishWalkthrough(request),
       );
       writeJson({ ok: true, walkthrough: published });
+    });
+
+  walkthrough
+    .command("list")
+    .argument("<pull-request>", "登録済みPR URLまたは番号")
+    .option(
+      "--limit <limit>",
+      `1ページの最大件数（既定: ${DEFAULT_WALKTHROUGH_LIST_LIMIT}）`,
+      String(DEFAULT_WALKTHROUGH_LIST_LIMIT),
+    )
+    .option("--offset <offset>", "取得開始位置（既定: 0）", "0")
+    .requiredOption("--json", "JSONで出力")
+    .description("Pull RequestのWalkthrough一覧とstable URIを取得")
+    .action(async (reference: string, rawOptions: unknown) => {
+      const options = walkthroughListOptionsSchema.parse(rawOptions);
+      const result = await callService(
+        "walkthrough.list",
+        { reference, limit: options.limit, offset: options.offset },
+        () =>
+          getRuntime().service.listWalkthroughsByReference(reference, {
+            limit: options.limit,
+            offset: options.offset,
+          }),
+      );
+      writeJson(formatWalkthroughListOutput(result));
     });
 
   walkthrough

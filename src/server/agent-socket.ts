@@ -337,6 +337,13 @@ export async function dispatchAgentSocketRequest(
         offset: input.offset,
       });
     }
+    case "walkthrough.list": {
+      const input = parseOperationInput("walkthrough.list", request.input);
+      return service.listWalkthroughsByReference(input.reference, {
+        limit: input.limit,
+        offset: input.offset,
+      });
+    }
     case "comment.watch": {
       const input = parseOperationInput("comment.watch", request.input);
       return service.listCommentPostEvents(input.cursor, input.limit);

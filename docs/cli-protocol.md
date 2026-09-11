@@ -390,6 +390,32 @@ provide a version selector. Whole-document comments target the stable Walkthroug
 attached when its current content is replaced. Source-line comments keep their original exact quote and
 rvw reports them at the unique matching range in the current body, or as Outdated when no unique range exists.
 
+Discover saved Walkthroughs for a registered Pull Request before selecting one to read:
+
+```bash
+rvw walkthrough list <PULL_REQUEST> --json
+rvw walkthrough list <PULL_REQUEST> --limit 50 --offset 0 --json
+rvw walkthrough get <LIST_RESULT_REF> --json
+```
+
+The Pull Request selector is a saved PR's full URL or a number unique across all saved PRs. The list is
+local-only: it does not register or synchronize a PR, contact GitHub, resolve code references, render
+Mermaid, open a Viewer, or mutate review state. Invalid, unknown, and ambiguous selectors fail rather
+than returning an empty list. A valid PR with no Walkthroughs returns an empty array and a consistent
+page.
+
+The successful response is `{ "ok": true, "pullRequest": ..., "walkthroughs": [...], "page": ... }`.
+Each item contains exactly `id`, canonical `ref`, `title`, `sourceOid`, nullable `authorLabel`, and
+`createdAt`. It omits the body, references, diagram bindings, and code excerpts; pass a selected `ref`
+unchanged to the existing get/update/delete commands, reading it with `walkthrough get` before any
+authorized mutation. Old `sourceOid` values remain discoverable and two
+items with the same title remain distinct by ID/ref. Results use `createdAt` descending and `id`
+descending as a deterministic tie-break. `limit` defaults to 50 and accepts 1 through 100; `offset`
+defaults to 0. `page` contains `offset`, `limit`, `returned`, `total`, `hasMore`, and nullable
+`nextOffset`. Continue at `nextOffset` while `hasMore` is true when exhaustive discovery is required.
+An offset at or beyond `total` returns an empty page. List/get are not a snapshot transaction or
+mutation authorization; a later get can report that the selected item was updated or deleted.
+
 Read an existing Walkthrough before updating or deleting it:
 
 ```bash
@@ -847,9 +873,9 @@ unavailable or disabled. User-facing `$name` and `/name` spellings are not a sha
 
 When an existing Artifact URI is supplied, the composer uses the matching producer's current-value read
 and same-subject update contract instead of publishing an unconditional revised copy. Existing
-`structure.list` may inspect Structure summaries or recover an uncertain publication, but there is no
-general Walkthrough discovery command. The composer does not access SQLite or claim exhaustive duplicate
-detection when no Walkthrough URI was supplied.
+`structure.list` and `walkthrough list` may inspect bounded summaries or recover an uncertain
+publication. The composer reads plausible Walkthrough candidates with `walkthrough get` before making a
+same-subject decision and does not access SQLite or treat a title as proof of identity.
 
 `rvw-watch-comments` documents the complete state-script stdin/stdout contract. Its driver derives
 `--after` from task state, its auto-ack reuses each batch operation's idempotency key and status post
@@ -923,6 +949,7 @@ structure.preview
 structure.publish
 structure.update
 structure.delete
+walkthrough.list
 walkthrough.read
 walkthrough.publish
 walkthrough.update

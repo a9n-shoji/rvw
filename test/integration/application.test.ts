@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RvwService } from "../../src/application/rvw-service.js";
 import { formatCommentWatchCursor } from "../../src/domain/comment-watch-cursor.js";
-import type { GitHubPullRequest, Structure } from "../../src/domain/models.js";
+import type { GitHubPullRequest, Structure, WalkthroughListItem } from "../../src/domain/models.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import {
@@ -1325,6 +1325,192 @@ describe("RvwService commit workflow", () => {
     await service.resetPullRequest(opened.pullRequest.id);
     expect(service.listWalkthroughs(opened.pullRequest.id)).toEqual([]);
     expect(service.listComments(opened.pullRequest.id)).toEqual([]);
+  });
+
+  it("discovers only one PR's Walkthroughs with stable paging and reusable canonical references", async () => {
+    const { repository, base, firstHead, fake, dbFile, database, service } =
+      setup("rvw-walkthrough-list-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const githubRead = vi.spyOn(fake, "getPullRequest");
+    const content = (title: string) => ({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title,
+      body: "Inspect [the source](rvw-ref:source).",
+      references: [
+        {
+          id: "source",
+          label: "source",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 2,
+          description: null,
+        },
+      ],
+    });
+    const first = await service.publishWalkthrough({
+      ...content("Shared title"),
+      authorLabel: null,
+    });
+    const second = await service.publishWalkthrough({
+      ...content("Shared title"),
+      authorLabel: "Codex",
+    });
+    const oldSource = database.createWalkthrough({
+      pullRequestId: opened.pullRequest.id,
+      sourceOid: base,
+      title: "Older source",
+      body: "This complete body must not be loaded by list.",
+      authorLabel: "Earlier Agent",
+      diagramBindings: { Hidden: "old" },
+      references: [
+        {
+          id: "old",
+          label: "old source",
+          path: "README.md",
+          startLine: null,
+          endLine: null,
+          description: "This complete reference must not be returned by list.",
+        },
+      ],
+    });
+    const ambiguousPullRequest = database.upsertPullRequest(
+      {
+        ...fake.pullRequest,
+        owner: "other-owner",
+        repository: "other-repository",
+        url: "https://github.com/other-owner/other-repository/pull/7",
+      },
+      {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      base,
+    );
+    database.createWalkthrough({
+      pullRequestId: ambiguousPullRequest.id,
+      sourceOid: firstHead,
+      title: "Another PR",
+      body: "Do not include this item.",
+      diagramBindings: {},
+      references: [],
+    });
+    const emptyPullRequest = database.upsertPullRequest(
+      {
+        ...fake.pullRequest,
+        number: 8,
+        url: "https://github.com/acme/review-repo/pull/8",
+      },
+      {
+        localRepositoryPath: opened.pullRequest.localRepositoryPath,
+        gitCommonDir: opened.pullRequest.gitCommonDir,
+      },
+      base,
+    );
+    const timestamp = "2026-09-11T00:00:00.000Z";
+    const rawDatabase = new DatabaseSync(dbFile);
+    rawDatabase
+      .prepare("UPDATE walkthroughs SET created_at = ? WHERE pull_request_id = ?")
+      .run(timestamp, opened.pullRequest.id);
+    rawDatabase.close();
+
+    const changeSequenceBeforeList = database.getChangeSequence();
+    const expected = [first, second, oldSource].sort((left, right) =>
+      left.id < right.id ? 1 : left.id > right.id ? -1 : 0,
+    );
+    const discovered: WalkthroughListItem[] = [];
+    let offset = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const page = service.listWalkthroughsByReference(opened.pullRequest.url, {
+        limit: 2,
+        offset,
+      });
+      discovered.push(...page.walkthroughs);
+      expect(page.page).toMatchObject({
+        offset,
+        limit: 2,
+        returned: Math.min(2, expected.length - offset),
+        total: 3,
+      });
+      hasMore = page.page.hasMore;
+      if (!hasMore) {
+        expect(page.page.nextOffset).toBeNull();
+      } else {
+        expect(page.page.nextOffset).toBe(offset + page.page.returned);
+        offset = page.page.nextOffset!;
+      }
+    }
+
+    expect(discovered).toEqual(
+      expected.map((walkthrough) => ({
+        id: walkthrough.id,
+        ref: walkthrough.ref,
+        sourceOid: walkthrough.sourceOid,
+        title: walkthrough.title,
+        authorLabel: walkthrough.authorLabel,
+        createdAt: timestamp,
+      })),
+    );
+    expect(new Set(discovered.map(({ id }) => id)).size).toBe(3);
+    expect(discovered.filter(({ title }) => title === "Shared title")).toHaveLength(2);
+    expect(discovered.some(({ sourceOid }) => sourceOid === base)).toBe(true);
+    for (const item of discovered) {
+      expect(Object.keys(item).sort()).toEqual(
+        ["authorLabel", "createdAt", "id", "ref", "sourceOid", "title"].sort(),
+      );
+    }
+    expect(service.getWalkthroughByUri(discovered[0]!.ref).walkthrough.id).toBe(discovered[0]!.id);
+
+    expect(
+      service.listWalkthroughsByReference(opened.pullRequest.url, { limit: 2, offset: 10 }),
+    ).toMatchObject({
+      walkthroughs: [],
+      page: {
+        offset: 10,
+        limit: 2,
+        returned: 0,
+        total: 3,
+        hasMore: false,
+        nextOffset: null,
+      },
+    });
+    expect(service.listWalkthroughsByReference(emptyPullRequest.url)).toMatchObject({
+      walkthroughs: [],
+      page: { offset: 0, limit: 50, returned: 0, total: 0, hasMore: false, nextOffset: null },
+    });
+    expect(() => service.listWalkthroughsByReference("7")).toThrowError(
+      expect.objectContaining({ code: "PR_NOT_FOUND" }),
+    );
+    expect(() => service.listWalkthroughsByReference("not-a-pr")).toThrowError(
+      expect.objectContaining({ code: "PR_NOT_FOUND" }),
+    );
+    expect(() =>
+      service.listWalkthroughsByReference(opened.pullRequest.url, { limit: 0 }),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_INPUT" }));
+    expect(() =>
+      service.listWalkthroughsByReference(opened.pullRequest.url, { limit: 101 }),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_INPUT" }));
+    expect(() =>
+      service.listWalkthroughsByReference(opened.pullRequest.url, { offset: -1 }),
+    ).toThrowError(expect.objectContaining({ code: "INVALID_INPUT" }));
+    expect(database.getChangeSequence()).toBe(changeSequenceBeforeList);
+
+    const updated = await service.updateWalkthrough(first.ref, {
+      ...content("Updated title"),
+    });
+    expect(updated).toMatchObject({ id: first.id, ref: first.ref, createdAt: timestamp });
+    expect(
+      service
+        .listWalkthroughsByReference(opened.pullRequest.url)
+        .walkthroughs.find(({ id }) => id === first.id),
+    ).toMatchObject({ id: first.id, ref: first.ref, title: "Updated title" });
+
+    service.deleteWalkthroughByUri(first.ref);
+    const afterDelete = service.listWalkthroughsByReference(opened.pullRequest.url);
+    expect(afterDelete.walkthroughs.some(({ id }) => id === first.id)).toBe(false);
+    expect(afterDelete.page.total).toBe(2);
+    expect(githubRead).not.toHaveBeenCalled();
   });
 
   it("maps a Walkthrough reference directly from its anchor to the latest head", async () => {

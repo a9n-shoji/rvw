@@ -377,8 +377,25 @@ describe("rvw review composition contract", () => {
     expect(reviewComposeSkill).toContain("Do not create a Review Set");
     expect(reviewComposeSkill).toContain("database row, migration, CLI");
     expect(reviewComposeSkill).toContain("Do not publish a duplicate");
-    expect(reviewComposeSkill).toMatch(/There is no general Walkthrough\s+discovery contract/);
+    expect(reviewComposeSkill).toContain("page through `walkthrough list`");
     expect(reviewComposition).toContain('"Slice" may be used as private shorthand');
+  });
+
+  it("discovers Walkthroughs through list and verifies candidates through get", () => {
+    expect(walkthroughSkill).toContain("`walkthrough.list` for discovery");
+    expect(walkthroughSkill).toContain("rvw walkthrough list <PULL_REQUEST> --json");
+    expect(walkthroughSkill).toMatch(/`page\.hasMore` is true[\s\S]*first page/);
+    expect(walkthroughSkill).toMatch(/title alone[\s\S]*`walkthrough get`/);
+    expect(walkthroughSkill).toMatch(/Skip list when[\s\S]*exact URI/);
+    expect(walkthroughSkill).toMatch(/same explanation subject[\s\S]*different bounded subject/);
+    expect(walkthroughSkill).toMatch(
+      /List and get are separate reads[\s\S]*Neither successful read\s+authorizes update or deletion/,
+    );
+    expect(reviewComposeSkill).toContain("`walkthrough.list` for Walkthrough discovery");
+    expect(reviewComposeSkill).toMatch(/`hasMore` \/ `nextOffset`[\s\S]*`walkthrough get`/);
+    expect(reviewComposeSkill).toMatch(/title alone[\s\S]*same subject/);
+    expect(reviewComposition).toMatch(/`walkthrough list`[\s\S]*`walkthrough get`/);
+    expect(reviewComposition).toContain("never SQLite, internal file paths, remembered URIs");
   });
 
   it("delegates to canonical producer Skills through the current host", () => {
@@ -419,7 +436,7 @@ describe("rvw review composition contract", () => {
 
   it("reports reuse, exclusions, direct-code work, and an unmet mandatory map honestly", () => {
     expect(reviewComposeSkill).toMatch(
-      /Prefer a still-valid\s+same-subject map at the selected source, then an authorized in-place update, over a duplicate\s+publication/,
+      /Prefer a still-valid same-subject map at\s+the selected source, then an authorized\s+in-place update, over a duplicate publication/,
     );
     expect(reviewComposeSkill).toMatch(
       /what each file map includes, what it deliberately excludes, and what remains for direct code reading/,

@@ -57,7 +57,8 @@ Use only the `rvw` CLI protocol. Never access the SQLite database directly or co
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
 2. Require `protocolVersion` 5 and `agent.transport`. Require only the operation capabilities the
-   task uses: `walkthrough.read` for `get` or another current-value read, and the corresponding
+   task uses: `walkthrough.list` for discovery, `walkthrough.read` for `get` or another current-value
+   read, and the corresponding
    `walkthrough.publish`, `walkthrough.update`, or `walkthrough.delete` capability for each requested
    mutation. An update or delete also needs `walkthrough.read` because the current Artifact must be
    read first; a new publication does not.
@@ -68,7 +69,28 @@ Use only the `rvw` CLI protocol. Never access the SQLite database directly or co
    access is required. `RVW_DATABASE_PATH` selects an explicitly managed database; the CLI uses a
    running viewer only when it reports that same database.
 
-## Read the current artifact
+## Discover and read the current artifact
+
+When the user asks to inspect or improve an existing Walkthrough but does not supply its URI, discover
+the candidates for the registered Pull Request:
+
+```bash
+rvw walkthrough list <PULL_REQUEST> --json
+```
+
+The list is discovery metadata, not the Artifact body. If the decision requires knowing whether any
+existing Walkthrough fits, continue with `--offset <nextOffset>` while `page.hasMore` is true; never
+conclude that none exists from only the first page. Do not identify a subject or choose an update from
+the title alone. Run `walkthrough get` for every plausible candidate and compare its complete body,
+scope in practice, references, and `sourceOid` with the user's request and committed source. Improve the
+existing URI when it is the same explanation subject and an update is authorized; publish a new
+Walkthrough only for a genuinely different bounded subject or when no verified candidate fits.
+
+Skip list when the user already supplied the exact URI and no broader discovery is needed. Never use
+SQLite queries, internal paths, guessed storage, or remembered URIs as the normal discovery route.
+List and get are separate reads: an item can change or disappear between them, so follow the get result
+or its current error rather than treating the list as a fixed snapshot. Neither successful read
+authorizes update or deletion; preserve the user's requested operation and the deletion preview flow.
 
 For an existing `rvw://walkthrough/<uuid>` reference, run:
 

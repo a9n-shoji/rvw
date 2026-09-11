@@ -33,7 +33,8 @@ For every composition task, read
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON. Require `protocolVersion` 5 and
-   `agent.transport`, and record the available Walkthrough and Structure capabilities. Immediately
+   `agent.transport`, and record the available Walkthrough and Structure capabilities, including
+   `walkthrough.list` for Walkthrough discovery. Immediately
    before every producer invocation, including contextual discovery or a current-value read, require
    only the capabilities that invocation actually uses. The producer Skills perform their complete
    operation-specific checks. A contextual read may happen before the composition is selected; creation
@@ -53,8 +54,9 @@ First classify the requested composition outcome, then choose only the Artifact 
 A request to assess, recommend, plan, audit, or explain a composition is read-only, meaning that it
 permits no Artifact mutation: return proposed surfaces and internal briefs without creating, publishing,
 or updating. When transport is available, the matching producer may still perform its normal read
-operation for an explicitly supplied existing URI; for a required PR-wide file map, `rvw-structure` may
-also use the existing `structure list` contract and read a plausible candidate. Invoke a producer for
+operation for an explicitly supplied existing URI. When existing Walkthroughs affect composition,
+`rvw-walkthrough` may use `walkthrough list` and read plausible candidates; for a required PR-wide file
+map, `rvw-structure` may use `structure list` and read a plausible candidate. Invoke a producer for
 Artifact creation or update only when the user explicitly asks to create, publish, produce, or update
 Artifacts. Supplying an existing URI or discovering a candidate authorizes contextual reading, not an
 update.
@@ -187,18 +189,24 @@ order. Invoke it first only when its verified answer genuinely constrains the re
 ## Existing Artifacts
 
 When the user or caller supplies an existing Artifact URI and transport is available, have the matching
-producer read its current value before deciding whether the same subject should be updated. For a
-PR-wide file map, have `rvw-structure` use `structure list` within its existing contract to inspect
-candidate summaries and read a plausible current map before publishing another one. Prefer a still-valid
-same-subject map at the selected source, then an authorized in-place update, over a duplicate
-publication. If transport is unavailable, the preflight diagnostic wins: do not infer an Artifact's
-current subject, contents, or identity from its URI or summary. Read-only composition may read through
-the permitted producer path but still stops at the update decision. During an authorized update,
-preserve surviving identities and never direct the producer to recycle a retired Node, Edge, or Region
-ID for a new claim or chunk. Do not publish a duplicate "revision" by default. `structure list` may also
-recover an uncertain publication. There is no general Walkthrough discovery contract: when an existing
-Walkthrough URI was not supplied, do not claim exhaustive duplicate detection, read SQLite, or add a
-discovery protocol. State uncertainty that exceeds the available discovery operations.
+producer read its current value and skip an unnecessary list. When no Walkthrough URI is supplied and
+existing work affects composition, have `rvw-walkthrough` page through `walkthrough list`; follow
+`hasMore` / `nextOffset` whenever an exhaustive no-match decision is needed, then read every plausible
+candidate with `walkthrough get`. A title alone is not evidence of the Artifact's subject, boundary, or
+current contents. Prefer an authorized in-place update for the verified same subject over a duplicate
+publication; use a new Walkthrough for a different bounded subject. Do not publish a duplicate
+"revision" by default.
+
+For a PR-wide file map, have `rvw-structure` use `structure list` to inspect candidate summaries and
+read a plausible current map before publishing another one. Prefer a still-valid same-subject map at
+the selected source, then an authorized in-place update, over a duplicate publication. In an authorized
+production run, publish a new one only when no verified candidate fits or the subject is genuinely
+different. List and get are separate reads rather than a
+fixed snapshot, and neither read grants update or delete authority. If transport is unavailable, the
+preflight diagnostic wins and the read cannot occur. Never rewrite an Artifact into a different subject
+or delete one merely because the new composition omits it; normal preview and explicit deletion
+authorization still apply. Use only these CLI discovery operations—never SQLite, internal file paths,
+remembered URIs, or invented identity.
 
 ## Finish as a composition
 
