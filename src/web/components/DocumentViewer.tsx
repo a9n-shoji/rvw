@@ -59,7 +59,7 @@ import type {
   DocumentPaneId,
   ReferenceDocumentContext,
 } from "../document-workspace.js";
-import type { ReferenceStaleness } from "../document-viewer-state.js";
+import type { ReferenceDisplayState, ReferenceStaleness } from "../document-viewer-state.js";
 import { diffForRenderer, fileContentsForRenderer } from "../file-rendering.js";
 import {
   api,
@@ -997,6 +997,7 @@ export function DocumentViewer({
   activeCommentId,
   fullViewNotice = null,
   fullViewUnavailableMessage = null,
+  referenceDisplay,
   referenceStaleness,
   themePreference,
   onCommentActiveChange,
@@ -1006,6 +1007,7 @@ export function DocumentViewer({
   onOpenCodeReference,
   onOpenRepositoryLink,
   onOpenLatestReferenceFile,
+  onOpenSelectedRangeFile,
   onReresolveSourceReference,
   onOpenStructureReference,
 }: {
@@ -1025,6 +1027,7 @@ export function DocumentViewer({
   activeCommentId: string | null;
   fullViewNotice?: string | null;
   fullViewUnavailableMessage?: string | null;
+  referenceDisplay: ReferenceDisplayState | null;
   referenceStaleness: ReferenceStaleness | null;
   themePreference: ThemePreference;
   onCommentActiveChange: (commentId: string, active: boolean) => void;
@@ -1038,6 +1041,7 @@ export function DocumentViewer({
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onOpenLatestReferenceFile: (target: SourceReferenceFileTarget) => void;
+  onOpenSelectedRangeFile: () => void;
   onReresolveSourceReference: (context: ReferenceDocumentContext) => Promise<string | null>;
   onOpenStructureReference: (reference: FileStructureReference, openInRightPane: boolean) => void;
 }) {
@@ -2060,8 +2064,21 @@ export function DocumentViewer({
         onSelect={onOpenStructureReference}
       />
     ) : null;
+  const selectedRangeFileButton = referenceDisplay ? (
+    <button
+      type="button"
+      className="reference-display-header-action"
+      disabled={referenceDisplay.targetStatus !== "ready"}
+      aria-label={referenceDisplay.actionAccessibleLabel}
+      title={referenceDisplay.targetReason ?? referenceDisplay.actionAccessibleLabel}
+      onClick={onOpenSelectedRangeFile}
+    >
+      {referenceDisplay.actionLabel}
+    </button>
+  ) : null;
   const fileHeaderActions = (
     <span className="diff-header-file-actions">
+      {selectedRangeFileButton}
       {fileStructureReferencesButton}
       {fileCommentButton}
     </span>

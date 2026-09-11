@@ -3,11 +3,12 @@ import type {
   SourceReferenceFileTarget,
   StructureSourceLocator,
 } from "../domain/models.js";
-import type {
-  ActiveDocument,
-  DocumentPaneId,
-  ReferenceDocumentContext,
-  SourceReferenceOrigin,
+import {
+  currentCommitDocument,
+  type ActiveDocument,
+  type DocumentPaneId,
+  type ReferenceDocumentContext,
+  type SourceReferenceOrigin,
 } from "./document-workspace.js";
 import type {
   StructureCameraFrame,
@@ -79,6 +80,27 @@ export function sameReadingDocument(left: ActiveDocument, right: ActiveDocument)
     left.comparisonPolicy === right.comparisonPolicy &&
     JSON.stringify(left.referenceContext ?? null) === JSON.stringify(right.referenceContext ?? null)
   );
+}
+
+function preservesReferenceContextInHistory(document: ActiveDocument): boolean {
+  return (
+    document.kind === "repository-file" &&
+    (document.comparisonPolicy === "exact-source" ||
+      document.comparisonPolicy === "reference-target")
+  );
+}
+
+export function documentForReadingHistoryRestore(
+  historyDocument: ActiveDocument,
+  openDocument: ActiveDocument | undefined,
+): ActiveDocument {
+  // selected-range source OIDs describe the selection at capture time, not a durable reference pin.
+  const targetDocument = preservesReferenceContextInHistory(historyDocument)
+    ? historyDocument
+    : currentCommitDocument(historyDocument);
+  return openDocument && sameReadingDocument(openDocument, targetDocument)
+    ? openDocument
+    : targetDocument;
 }
 
 type UnknownRecord = Record<string, unknown>;

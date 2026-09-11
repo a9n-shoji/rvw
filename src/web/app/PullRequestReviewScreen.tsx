@@ -100,7 +100,7 @@ import {
   clearCommentDraftsForPullRequest,
   moveCommentDraftsForWorkspaceTransition,
 } from "../comment-draft-store.js";
-import { deriveDocumentViewerState } from "../document-viewer-state.js";
+import { deriveDocumentViewerState, type ReferenceDisplayState } from "../document-viewer-state.js";
 import { gitBackedQueryBelongsToPullRequest } from "../git-backed-query.js";
 import {
   cancelAndInvalidateQueries,
@@ -117,6 +117,7 @@ import {
   storeAgentNotificationsEnabled,
 } from "../agent-notifications.js";
 import {
+  documentForReadingHistoryRestore,
   parseReadingHistoryEntry,
   readingHistoryState,
   sameReadingDocument,
@@ -1435,7 +1436,10 @@ export function PullRequestReviewScreen({
         entry.document.kind === "structure"
           ? latestStructureDocuments.current.get(entry.document.id)
           : undefined;
-      const restoredDocument = openDocument ?? latestStructureDocument ?? entry.document;
+      const historyDocument = documentForReadingHistoryRestore(entry.document, openDocument);
+      const restoredDocument = openDocument
+        ? historyDocument
+        : (latestStructureDocument ?? historyDocument);
       const documentKey = documentTabKey(restoredDocument);
       if (entry.locator.kind === "scroll") {
         documentScrollPositions.current.set(
@@ -2679,6 +2683,23 @@ export function PullRequestReviewScreen({
     },
     [navigateToDocument, selectedOid],
   );
+  const openSelectedRangeFile = useCallback(
+    (state: ReferenceDisplayState, targetPane: DocumentPaneId): void => {
+      if (state.targetStatus !== "ready" || !state.targetDocument) return;
+      const targetDocument = state.targetDocument;
+      documentScrollPositions.current.set(documentPaneTabKey(targetPane, targetDocument), 0);
+      navigateToDocument(targetDocument, targetPane, { kind: "scroll", top: 0 });
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const active = documentWorkspaceRef.current.active[targetPane];
+          if (!active || !sameReadingDocument(active, targetDocument)) return;
+          const pane = paneElements.current[targetPane];
+          if (pane) pane.scrollTop = 0;
+        });
+      });
+    },
+    [documentWorkspaceRef, navigateToDocument],
+  );
   const reresolveSourceReference = useCallback(
     (
       context: ReferenceDocumentContext,
@@ -2746,9 +2767,16 @@ export function PullRequestReviewScreen({
     documentDisplayMode,
     displayMode,
     selectedOid,
+    selectedStartOid: rangeStartOid ?? selectedOid,
+    selectedOldOid: effectiveOldOid,
     latestHeadOid: pullRequest.latestHeadOid,
+    commits,
     changedFiles: changedQuery.data?.files,
     changedFilesLoaded: changedQuery.isSuccess,
+    changedFilesFailed: changedQuery.isError,
+    selectedTreeEntries: treeQuery.data?.entries,
+    selectedTreeLoaded: treeQuery.isSuccess,
+    selectedTreeFailed: treeQuery.isError,
     walkthroughDetails,
     loadingWalkthroughIds,
     structureDetails,
@@ -2868,6 +2896,12 @@ export function PullRequestReviewScreen({
           onDropDocument={dropDocument}
           onDragStartDocument={setDraggedDocumentKey}
           onDragEndDocument={() => setDraggedDocumentKey(null)}
+          referenceDisplay={paneViewerState.referenceDisplay}
+          onOpenSelectedRangeFile={() => {
+            if (paneViewerState.referenceDisplay) {
+              openSelectedRangeFile(paneViewerState.referenceDisplay, paneId);
+            }
+          }}
         />
         <PaneFindWidget
           paneId={paneId}
@@ -3008,6 +3042,7 @@ export function PullRequestReviewScreen({
                 fullViewNotice={paneViewerState.fullViewNotice}
                 fullViewUnavailableMessage={paneViewerState.fullViewUnavailableMessage}
                 referenceStaleness={paneViewerState.referenceStaleness}
+                referenceDisplay={paneViewerState.referenceDisplay}
                 themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}
                 navigationTarget={
@@ -3023,6 +3058,11 @@ export function PullRequestReviewScreen({
                 onOpenCodeReference={openCommentCodeReferenceFromInteraction}
                 onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
                 onOpenLatestReferenceFile={(target) => openLatestReferenceFile(target, paneId)}
+                onOpenSelectedRangeFile={() => {
+                  if (paneViewerState.referenceDisplay) {
+                    openSelectedRangeFile(paneViewerState.referenceDisplay, paneId);
+                  }
+                }}
                 onReresolveSourceReference={(context) =>
                   reresolveSourceReference(
                     context,

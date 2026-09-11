@@ -491,6 +491,29 @@ test("shows the resolved latest full text when the selected comparison is histor
   );
   await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+
+  const pane = page.locator('.document-pane[data-pane="left"]');
+  const chip = pane.getByRole("button", { name: "参照表示", exact: true });
+  await expect(chip).toBeVisible();
+  await chip.click();
+  const popover = pane.getByRole("dialog", { name: "参照表示の詳細" });
+  await expect(popover).toContainText("参照解決時の最新HEADの全文");
+  await expect(popover).toContainText("選択中のコミット");
+  const selectedCommitRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return (
+      (url.pathname === `/api/pull-requests/${pullRequestId}/document` &&
+        url.searchParams.get("sourceOid") === "b".repeat(40)) ||
+      (url.pathname === `/api/pull-requests/${pullRequestId}/diff` &&
+        url.searchParams.get("newOid") === "b".repeat(40))
+    );
+  });
+  await popover.getByRole("button", { name: /選択中のコミットで開く/ }).click();
+  await selectedCommitRequest;
+  await expect(chip).toHaveCount(0);
+  await expect(page.getByText(latestMarker, { exact: true })).toHaveCount(0);
+  await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
 });
 
 test("opens the exact latest file from an anchor fallback while a historical range is selected", async ({
@@ -607,6 +630,296 @@ test("opens the exact latest file from an anchor fallback while a historical ran
   ).not.toHaveAttribute("data-search-target-line");
   await expect(commitPicker).toHaveAccessibleName(/Add fixture function/);
   await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+});
+
+test("normalizes selected-range history after the global commit changes", async ({ page }) => {
+  const anchorOid = "b".repeat(40);
+  const latestOid = "c".repeat(40);
+  const latestFilePath = "src/fixture.ts";
+  await page.route("**/references/handler/resolve", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        outcome: string;
+        anchorSourceOid: string;
+        latestHeadOid: string;
+        target: Record<string, unknown>;
+        latestFile: Record<string, unknown> | null;
+        document: { ref: Record<string, unknown> };
+      };
+    };
+    body.resolution = {
+      ...body.resolution,
+      outcome: "source-fallback",
+      anchorSourceOid: anchorOid,
+      latestHeadOid: latestOid,
+      target: {
+        ...body.resolution.target,
+        sourceOid: anchorOid,
+        path: "src/application/orders/create-order.ts",
+        diffBaseOid: "a".repeat(40),
+        oldPath: "src/application/orders/create-order.ts",
+        newPath: "src/application/orders/create-order.ts",
+        hasDiff: true,
+        startLine: 9,
+        endLine: 39,
+      },
+      latestFile: {
+        sourceOid: latestOid,
+        path: latestFilePath,
+        diffBaseOid: anchorOid,
+        oldPath: latestFilePath,
+        newPath: latestFilePath,
+        hasDiff: true,
+      },
+      document: {
+        ...body.resolution.document,
+        ref: {
+          ...body.resolution.document.ref,
+          sourceOid: anchorOid,
+          path: "src/application/orders/create-order.ts",
+        },
+      },
+    };
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
+  await page
+    .locator(".walkthrough-markdown .walkthrough-inline-reference")
+    .filter({ hasText: "CreateOrderHandler.execute" })
+    .click();
+
+  const banner = page.locator(".reference-fallback-banner");
+  await banner.getByRole("button", { name: "最新のファイルを見る" }).click();
+  await expect(page.getByRole("tab", { name: latestFilePath })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByText("return value.trim();", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "src/viewport-anchor.ts", exact: true }).click();
+  await commitPicker.click();
+  await page
+    .getByRole("dialog", { name: "対象commitを選択" })
+    .getByRole("option", { name: /Add fixture function/ })
+    .click();
+  await reviewScope.getByRole("button", { name: "全文", exact: true }).click();
+
+  const selectedCommitDocument = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return (
+      url.pathname === `/api/pull-requests/${pullRequestId}/document` &&
+      url.searchParams.get("sourceOid") === anchorOid &&
+      url.searchParams.get("path") === latestFilePath
+    );
+  });
+  await page.goBack();
+  await selectedCommitDocument;
+  await expect(page.getByText("return value.toString();", { exact: true })).toBeVisible();
+  await expect(page.getByText("return value.trim();", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "参照表示", exact: true })).toHaveCount(0);
+});
+
+test("keeps the reference display control visible and returns through the selected PR range", async ({
+  page,
+}) => {
+  const anchorOid = "b".repeat(40);
+  const selectedOid = "c".repeat(40);
+  const oldOid = "a".repeat(40);
+  const filePath = "src/application/orders/create-order.ts";
+  await page.setViewportSize({ width: 980, height: 300 });
+  await page.route("**/api/pull-requests/*/changed-files?*", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { files: Array<Record<string, unknown>> };
+    if (!body.files.some((file) => file.newPath === filePath)) {
+      body.files.push({
+        kind: "modified",
+        status: "M",
+        similarity: null,
+        oldPath: filePath,
+        newPath: filePath,
+      });
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.route("**/references/handler/resolve", async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as {
+      resolution: {
+        outcome: "latest" | "source-fallback";
+        anchorSourceOid: string;
+        target: {
+          sourceOid: string;
+          path: string;
+          diffBaseOid: string | null;
+          oldPath: string | null;
+          newPath: string | null;
+          hasDiff: boolean;
+          startLine: number | null;
+          endLine: number | null;
+        };
+        document: { ref: { sourceOid: string; path: string } };
+      };
+    };
+    body.resolution.outcome = "source-fallback";
+    body.resolution.anchorSourceOid = anchorOid;
+    body.resolution.target = {
+      ...body.resolution.target,
+      sourceOid: anchorOid,
+      path: filePath,
+      diffBaseOid: oldOid,
+      oldPath: filePath,
+      newPath: filePath,
+      hasDiff: true,
+      startLine: 11,
+      endLine: 64,
+    };
+    body.resolution.document.ref = {
+      ...body.resolution.document.ref,
+      sourceOid: anchorOid,
+      path: filePath,
+    };
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+  const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
+  await expect(commitPicker).toHaveAccessibleName(/2 commits.*PR全体/);
+  const initialCommitSelection = await commitPicker.getAttribute("aria-label");
+  expect(initialCommitSelection).not.toBeNull();
+  const displayDiffButton = reviewScope.getByRole("button", { name: "変更", exact: true });
+  const splitButton = reviewScope.getByRole("button", { name: "split", exact: true });
+  await page.getByRole("button", { name: "src/fixture.ts", exact: true }).click();
+  await page.getByRole("button", { name: "src/new.ts", exact: true }).click();
+  await expect(splitButton).toBeEnabled();
+  await splitButton.click();
+  await openWalkthroughFromSidebar(page, primaryWalkthrough);
+  await page
+    .locator(".walkthrough-markdown .walkthrough-inline-reference")
+    .filter({ hasText: "CreateOrderHandler.execute" })
+    .click();
+
+  const pane = page.locator('.document-pane[data-pane="left"]');
+  const chip = pane.getByRole("button", { name: "参照表示", exact: true });
+  const headerAction = pane.getByRole("button", { name: `PR全体で開く · ${filePath}` });
+  await expect(chip).toBeVisible();
+  await expect(headerAction).toBeVisible();
+  await expect(pane.locator(".document-tabs-shell")).toHaveClass(/reference-display-active/);
+  await expect(pane.locator("diffs-container")).toHaveAttribute("data-search-target-line", "11");
+
+  await pane.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  const referenceScrollTop = await pane.evaluate((element) => element.scrollTop);
+  const tabScroller = pane.locator(".document-tabs");
+  await expect
+    .poll(() => tabScroller.evaluate((element) => element.scrollWidth - element.clientWidth))
+    .toBeGreaterThan(0);
+  await tabScroller.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+  await expect.poll(() => tabScroller.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  await expect(chip).toBeInViewport();
+
+  await chip.focus();
+  await expect(pane.getByRole("tooltip")).toContainText("グローバル選択とは異なる参照を表示中");
+  await chip.press("Enter");
+  const popover = pane.getByRole("dialog", { name: "参照表示の詳細" });
+  await expect(popover).toBeVisible();
+  await expect(popover).toContainText("source fallbackの比較");
+  await expect(popover).toContainText(anchorOid);
+  await expect(popover).toContainText("PR全体");
+  await expect(popover).toContainText(`${"b".repeat(40)} → ${selectedOid}`);
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBe(referenceScrollTop);
+  await popover.press("Escape");
+  await expect(popover).toHaveCount(0);
+  await expect(chip).toBeFocused();
+
+  await chip.press("Enter");
+  const selectedRangeDiff = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return (
+      url.pathname === `/api/pull-requests/${pullRequestId}/diff` &&
+      url.searchParams.get("oldOid") === oldOid &&
+      url.searchParams.get("newOid") === selectedOid &&
+      url.searchParams.get("newPath") === filePath
+    );
+  });
+  await popover.getByRole("button", { name: `PR全体で開く · ${filePath}` }).click();
+  await selectedRangeDiff;
+
+  await expect(chip).toHaveCount(0);
+  await expect(headerAction).toHaveCount(0);
+  await expect(pane.locator(".reference-fallback-banner")).toHaveCount(0);
+  await expect(pane.locator("diffs-container")).not.toHaveAttribute("data-search-target-line");
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBe(0);
+  await expect(commitPicker).toHaveAttribute("aria-label", initialCommitSelection!);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+  await expect(splitButton).toHaveAttribute("aria-pressed", "true");
+
+  await page.goBack();
+  await expect(chip).toBeVisible();
+  await expect(pane.locator("diffs-container")).toHaveAttribute("data-search-target-line", "11");
+  await page.goForward();
+  await expect(chip).toHaveCount(0);
+  await expect(displayDiffButton).toHaveAttribute("aria-pressed", "true");
+  await expect(splitButton).toHaveAttribute("aria-pressed", "true");
+
+  await pane.getByRole("tab", { name: primaryWalkthrough }).click();
+  const handlerReference = pane
+    .locator(".walkthrough-markdown .walkthrough-inline-reference")
+    .filter({ hasText: "CreateOrderHandler.execute" });
+  await handlerReference.click({ modifiers: ["Meta"] });
+  const rightPane = page.locator('.document-pane[data-pane="right"]');
+  const rightChip = rightPane.getByRole("button", { name: "参照表示", exact: true });
+  await expect(rightChip).toBeVisible();
+  await handlerReference.click();
+  await expect(chip).toBeVisible();
+  await expect(pane.getByRole("tab", { name: filePath, exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rightPane.getByRole("tab", { name: filePath, exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+
+  await rightChip.click();
+  await page.setViewportSize({ width: 980, height: 700 });
+  const rightPopover = rightPane.getByRole("dialog", { name: "参照表示の詳細" });
+  const rightReturnAction = rightPopover.getByRole("button", {
+    name: `PR全体で開く · ${filePath}`,
+  });
+  const [rightPaneBox, rightPopoverBox, rightReturnActionBox] = await Promise.all([
+    rightPane.boundingBox(),
+    rightPopover.boundingBox(),
+    rightReturnAction.boundingBox(),
+  ]);
+  expect(rightPaneBox).not.toBeNull();
+  expect(rightPopoverBox).not.toBeNull();
+  expect(rightReturnActionBox).not.toBeNull();
+  expect(rightPaneBox!.width).toBeLessThan(370);
+  for (const box of [rightPopoverBox!, rightReturnActionBox!]) {
+    expect(box.x).toBeGreaterThanOrEqual(rightPaneBox!.x);
+    expect(box.x + box.width).toBeLessThanOrEqual(rightPaneBox!.x + rightPaneBox!.width);
+  }
+  await rightReturnAction.click();
+  await expect(rightChip).toHaveCount(0);
+  await expect(chip).toBeVisible();
+  await expect(pane.getByRole("tab", { name: filePath, exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rightPane.getByRole("tab", { name: filePath, exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
 
 test("marks an open reference stale after a head update and re-resolves it on demand", async ({
