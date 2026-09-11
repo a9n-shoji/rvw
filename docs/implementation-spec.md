@@ -1281,6 +1281,7 @@ rvw protocol --json
 rvw pr refresh <PR_REF> --json
 rvw pr sync --stdin --json [--repository <PATH>] [--allow-untracked]
 rvw pr attach <PR_REF> --repository <PATH> --json
+rvw walkthrough list <PR_REF> --json [--limit 50] [--offset 0]
 rvw walkthrough get <WALKTHROUGH_URI> --json
 rvw walkthrough publish --stdin --json
 rvw walkthrough update <WALKTHROUGH_URI> --stdin --json
@@ -1328,6 +1329,7 @@ structure.preview
 structure.publish
 structure.update
 structure.delete
+walkthrough.list
 walkthrough.read
 walkthrough.publish
 walkthrough.update
@@ -1492,6 +1494,26 @@ retryやacknowledgementから宣言を引き継がない。
 
 ### 7.4 Walkthrough lifecycle
 
+登録済みPRのURLまたは全登録PRで一意な番号から、保存済みWalkthroughを発見できる。
+
+```bash
+rvw walkthrough list <PR_REF> --json
+rvw walkthrough list <PR_REF> --json --limit 50 --offset 0
+rvw walkthrough get <LIST_RESULT_REF> --json
+```
+
+`list`はPRを自動登録・同期せず、GitHub、browser、Viewer navigation、code reference解決、Mermaid描画へ
+アクセスしないlocal readである。不正、未登録、曖昧な指定は既存PR解決のerrorとし、0件成功へ変換しない。
+有効なPRの0件と範囲外offsetは空配列を返す。対象PRの全Walkthroughをsource OIDの新旧にかかわらず
+`created_at DESC, id DESC`で決定的に並べる。同名titleもIDで区別する。
+
+成功responseは`{ ok: true, pullRequest, walkthroughs, page }`である。各summaryは`id`、既存の
+get/update/deleteへそのまま渡せるcanonical `ref`、`title`、`sourceOid`、nullable `authorLabel`、
+`createdAt`だけを持ち、本文、reference、diagram binding、code excerptを含めない。`limit`は既定50、
+最大100、`offset`は既定0で、`page`は`offset`、`limit`、`returned`、`total`、`hasMore`、nullable
+`nextOffset`を持つ。全件判断では`hasMore`の間`nextOffset`を辿る。listは固定snapshotでもmutation許可でもなく、
+候補のsubject、範囲、current sourceは`get`で確認する。
+
 既存Walkthroughはstable URIから現在内容と対象PRを取得できる。
 
 ```bash
@@ -1612,6 +1634,8 @@ passiveでviewerを操作しない。
   収める固定上限を持つ。
 - comment本文とreplyはUTF-8 GFM Markdown sourceで64 KiB以下とする。comment postとWalkthroughの
   referenceはそれぞれ最大200件とする。
+- `walkthrough list`は登録済みPRをURLまたは一意な番号で解決し、既定50、最大100のoffset paginationで
+  lightweight summaryとcanonical URIを返す。body、reference、diagram bindingは読み込まず返さない。
 - `walkthrough get`はcurrent WalkthroughとPR identity、local repository pathを返す。
 - `structure get`はcurrent StructureとPR identity、local repository pathを返す。
 - `comment list`は登録済みPRをURLまたは番号で受け、`unresolved`を既定に`resolved` / `all`も選べる。
@@ -2222,7 +2246,8 @@ CLI contract:
   mapping移行、status post削除後の再生成
 - `comment edit`のbody完全置換、related commit維持／解除／更新、Agent socket経由write
 - comment create/reply/edit/syncのpost単位reference検証、保存、完全置換、commit保持、idempotency
-- `walkthrough get/publish/update/delete`のvalidation、同一ID更新、削除件数、passive navigation contract
+- `walkthrough list/get/publish/update/delete`のPR解決、pagination、bounded output、stable order、
+  list→get接続、validation、同一ID更新、削除反映、shared transport、offline read、passive navigation contract
 - `structure get/publish/update/delete`のschema、v5 required nullable presentation、shared transport、同一ID whole-value update、
   旧graphのnull normalization、削除preview、passive contract
 - `rvw-review-compose`がPR-wide compositionを担い、必須のPR-scoped file-map Structureの存在を制約として、
@@ -2330,9 +2355,10 @@ native Skill mechanismへ渡してproducerの完全なcontractをloadし、`$nam
 hardcodeしない。producerがcurrent sessionでunavailable / disabledならArtifact操作前にfail closedする。composer自体は
 protocol capabilityを追加せず、protocol version 5の既存Walkthrough / Structure capabilityだけを使う。既存URIがuserまたは
 callerから明示された場合はmatching producerで
-current値を読んでsame-subject updateを優先し、無条件の改訂版をpublishしない。既存`structure list`はそのcontract内で
-利用できるが、一般的なWalkthrough listはないため、URI未指定時にSQLiteを直接読んだり網羅的なduplicate検出を
-主張したりしない。
+current値を読んでsame-subject updateを優先し、無条件の改訂版をpublishしない。URI未指定時は
+`walkthrough list`を必要な全pageまで辿り、titleだけで判断せず候補を`walkthrough get`で読む。既存
+`structure list`もそのcontract内で利用する。list/get間の更新・削除を許容し、成功をmutation権限とみなさず、
+SQLite、内部path、会話で記憶したURIを通常のdiscoveryに使わない。
 
 `rvw-walkthrough`は一つのcurrent `sourceOid`、exact code reference、Mermaid binding、passiveなpublishと
 同一ID更新、削除の明示authorizationを規定し、一つのbounded subjectについて一つのordered orientation pathだけを

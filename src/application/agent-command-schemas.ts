@@ -9,6 +9,7 @@ import {
 } from "../domain/structure-presentation.js";
 import {
   DEFAULT_COMMENT_LIST_LIMIT,
+  DEFAULT_WALKTHROUGH_LIST_LIMIT,
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
   MAX_CODE_REFERENCE_DESCRIPTION_CHARACTERS,
@@ -17,6 +18,7 @@ import {
   MAX_CODE_REFERENCES,
   MAX_COMMENT_BODY_BYTES,
   MAX_COMMENT_LIST_LIMIT,
+  MAX_WALKTHROUGH_LIST_LIMIT,
   MAX_COMMENT_WATCH_LIMIT,
   MAX_IDEMPOTENCY_KEY_CHARACTERS,
   MAX_STRUCTURE_DESCRIPTION_CHARACTERS,
@@ -618,6 +620,18 @@ export const agentCommandInputSchemas = {
         .min(1)
         .max(MAX_COMMENT_LIST_LIMIT)
         .default(DEFAULT_COMMENT_LIST_LIMIT),
+      offset: z.number().int().min(0).default(0),
+    })
+    .strict(),
+  "walkthrough.list": z
+    .object({
+      reference: nonEmptyString,
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_WALKTHROUGH_LIST_LIMIT)
+        .default(DEFAULT_WALKTHROUGH_LIST_LIMIT),
       offset: z.number().int().min(0).default(0),
     })
     .strict(),

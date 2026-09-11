@@ -3,9 +3,11 @@ import {
   DEFAULT_COMMENT_LIST_LIMIT,
   DEFAULT_COMMENT_WATCH_INTERVAL_SECONDS,
   DEFAULT_COMMENT_WATCH_LIMIT,
+  DEFAULT_WALKTHROUGH_LIST_LIMIT,
   MAX_COMMENT_LIST_LIMIT,
   MAX_COMMENT_WATCH_INTERVAL_SECONDS,
   MAX_COMMENT_WATCH_LIMIT,
+  MAX_WALKTHROUGH_LIST_LIMIT,
 } from "../shared/constants.js";
 export {
   commentCreateInputSchema,
@@ -28,6 +30,16 @@ export const commentListOptionsSchema = z.object({
     .min(1)
     .max(MAX_COMMENT_LIST_LIMIT)
     .default(DEFAULT_COMMENT_LIST_LIMIT),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const walkthroughListOptionsSchema = z.object({
+  limit: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_WALKTHROUGH_LIST_LIMIT)
+    .default(DEFAULT_WALKTHROUGH_LIST_LIMIT),
   offset: z.coerce.number().int().min(0).default(0),
 });
 
@@ -318,6 +330,40 @@ export const commentListOutputSchema = z
   })
   .strict();
 
+export const walkthroughListOutputSchema = z
+  .object({
+    ok: z.literal(true),
+    pullRequest: commentPullRequestOutputSchema,
+    walkthroughs: z.array(
+      z
+        .object({
+          id: z.uuid(),
+          ref: z
+            .string()
+            .regex(
+              /^rvw:\/\/walkthrough\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+            ),
+          title: z.string(),
+          sourceOid: z.string().regex(/^[0-9a-f]{40,64}$/i),
+          authorLabel: z.string().nullable(),
+          createdAt: z.string(),
+        })
+        .strict(),
+    ),
+    page: z
+      .object({
+        offset: z.number().int().min(0),
+        limit: z.number().int().min(1).max(MAX_WALKTHROUGH_LIST_LIMIT),
+        returned: z.number().int().min(0),
+        total: z.number().int().min(0),
+        hasMore: z.boolean(),
+        nextOffset: z.number().int().min(0).nullable(),
+      })
+      .strict(),
+  })
+  .strict();
+
 export type CommentListOptions = z.infer<typeof commentListOptionsSchema>;
 export type CommentGetOutput = z.infer<typeof commentGetOutputSchema>;
 export type CommentListOutput = z.infer<typeof commentListOutputSchema>;
+export type WalkthroughListOutput = z.infer<typeof walkthroughListOutputSchema>;

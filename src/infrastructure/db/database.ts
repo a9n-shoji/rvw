@@ -37,6 +37,7 @@ import type {
   StructureSummary,
   Walkthrough,
   WalkthroughDeleteCounts,
+  WalkthroughListItem,
   WalkthroughReference,
   WalkthroughSummary,
 } from "../../domain/models.js";
@@ -73,6 +74,11 @@ export interface CommentPageItem {
 
 export interface CommentPage {
   comments: CommentPageItem[];
+  total: number;
+}
+
+export interface WalkthroughPage {
+  walkthroughs: WalkthroughListItem[];
   total: number;
 }
 
@@ -1979,6 +1985,34 @@ export class RvwDatabase {
       referenceCount: numberValue(row, "reference_count"),
       createdAt: stringValue(row, "created_at"),
     }));
+  }
+
+  listWalkthroughPage(pullRequestId: string, limit: number, offset: number): WalkthroughPage {
+    const totalRow = this.database
+      .prepare("SELECT COUNT(*) AS total FROM walkthroughs WHERE pull_request_id = ?")
+      .get(pullRequestId) as DbRow;
+    const walkthroughs = (
+      this.database
+        .prepare(
+          `SELECT id, source_oid, title, author_label, created_at
+           FROM walkthroughs
+           WHERE pull_request_id = ?
+           ORDER BY created_at DESC, id DESC
+           LIMIT ? OFFSET ?`,
+        )
+        .all(pullRequestId, limit, offset) as DbRow[]
+    ).map((row) => {
+      const id = stringValue(row, "id");
+      return {
+        id,
+        ref: formatWalkthroughUri(id),
+        sourceOid: stringValue(row, "source_oid"),
+        title: stringValue(row, "title"),
+        authorLabel: nullableString(row, "author_label"),
+        createdAt: stringValue(row, "created_at"),
+      };
+    });
+    return { walkthroughs, total: numberValue(totalRow, "total") };
   }
 
   createWalkthrough(input: NewWalkthroughInput): Walkthrough {
