@@ -215,6 +215,116 @@ describe("document viewer state", () => {
     });
   });
 
+  it("uses a resolved latest file when it belongs to the selected commit", () => {
+    const sourceOid = "a".repeat(40);
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/intermediate-name.ts",
+        sourceOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "source-fallback",
+          origin: {
+            kind: "walkthrough",
+            walkthroughId: "walkthrough",
+            referenceId: "reference",
+          },
+          anchorSourceOid: sourceOid,
+          latestHeadOid: selectedOid,
+          referenceFingerprint: "fingerprint",
+          diffBaseOid: null,
+          hasDiff: false,
+          latestFile: {
+            sourceOid: selectedOid,
+            path: "src/final-name.ts",
+            diffBaseOid: sourceOid,
+            oldPath: "src/intermediate-name.ts",
+            newPath: "src/final-name.ts",
+            hasDiff: false,
+          },
+        },
+      },
+      context({
+        changedFiles: [
+          {
+            kind: "added",
+            status: "A",
+            similarity: null,
+            oldPath: null,
+            newPath: "src/final-name.ts",
+          },
+        ],
+        selectedTreeEntries: [
+          {
+            mode: "100644",
+            type: "blob",
+            oid: "f".repeat(40),
+            size: 12,
+            path: "src/final-name.ts",
+            kind: "file",
+          },
+        ],
+      }),
+    );
+
+    expect(state.referenceDisplay).toMatchObject({
+      targetStatus: "ready",
+      targetDocument: { kind: "repository-file", path: "src/final-name.ts" },
+    });
+  });
+
+  it("does not reuse a resolved latest file from a different commit", () => {
+    const sourceOid = "a".repeat(40);
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/intermediate-name.ts",
+        sourceOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "source-fallback",
+          origin: {
+            kind: "walkthrough",
+            walkthroughId: "walkthrough",
+            referenceId: "reference",
+          },
+          anchorSourceOid: sourceOid,
+          latestHeadOid: "c".repeat(40),
+          referenceFingerprint: "fingerprint",
+          diffBaseOid: null,
+          hasDiff: false,
+          latestFile: {
+            sourceOid: "c".repeat(40),
+            path: "src/final-name.ts",
+            diffBaseOid: sourceOid,
+            oldPath: "src/intermediate-name.ts",
+            newPath: "src/final-name.ts",
+            hasDiff: false,
+          },
+        },
+      },
+      context({
+        changedFiles: [],
+        selectedTreeEntries: [
+          {
+            mode: "100644",
+            type: "blob",
+            oid: "f".repeat(40),
+            size: 12,
+            path: "src/final-name.ts",
+            kind: "file",
+          },
+        ],
+      }),
+    );
+
+    expect(state.referenceDisplay).toMatchObject({
+      targetStatus: "unavailable",
+      targetDocument: null,
+    });
+  });
+
   it("labels a non-PR multi-commit selection as the selected range", () => {
     const thirdOid = "c".repeat(40);
     const commits = [

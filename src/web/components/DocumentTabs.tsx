@@ -61,7 +61,9 @@ function ReferenceDisplayControl({
   useEffect(() => {
     if (!open) return;
     const closeOnOutsidePointer = (event: PointerEvent): void => {
-      if (!hostRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!hostRef.current?.contains(target) && !dialogRef.current?.contains(target))
+        setOpen(false);
     };
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key !== "Escape") return;
@@ -78,23 +80,25 @@ function ReferenceDisplayControl({
   }, [open]);
 
   return (
-    <div className="reference-display-control" ref={hostRef}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className="reference-display-chip"
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        aria-describedby={open ? undefined : tooltipId}
-        onClick={() => setOpen((current) => !current)}
-      >
-        参照表示
-      </button>
-      {!open && (
-        <span className="reference-display-tooltip" id={tooltipId} role="tooltip">
-          グローバル選択とは異なる参照を表示中
-        </span>
-      )}
+    <>
+      <div className="reference-display-control" ref={hostRef}>
+        <button
+          ref={triggerRef}
+          type="button"
+          className="reference-display-chip"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          aria-describedby={open ? undefined : tooltipId}
+          onClick={() => setOpen((current) => !current)}
+        >
+          参照表示
+        </button>
+        {!open && (
+          <span className="reference-display-tooltip" id={tooltipId} role="tooltip">
+            グローバル選択とは異なる参照を表示中
+          </span>
+        )}
+      </div>
       {open && (
         <div
           ref={dialogRef}
@@ -149,7 +153,7 @@ function ReferenceDisplayControl({
           </button>
         </div>
       )}
-    </div>
+    </>
   );
 }
 

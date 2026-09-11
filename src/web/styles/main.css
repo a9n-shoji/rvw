@@ -1670,11 +1670,14 @@ code {
 .reference-display-popover {
   position: absolute;
   top: calc(100% + 5px);
-  right: -42px;
+  left: 6px;
+  right: 6px;
   z-index: 10;
   display: grid;
-  width: min(370px, calc(100vw - 24px));
+  width: auto;
+  max-width: 370px;
   max-height: min(460px, calc(100vh - 128px));
+  margin-left: auto;
   gap: 10px;
   padding: 11px;
   overflow: auto;

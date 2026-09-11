@@ -117,6 +117,7 @@ import {
   storeAgentNotificationsEnabled,
 } from "../agent-notifications.js";
 import {
+  documentForReadingHistoryRestore,
   parseReadingHistoryEntry,
   readingHistoryState,
   sameReadingDocument,
@@ -1435,10 +1436,10 @@ export function PullRequestReviewScreen({
         entry.document.kind === "structure"
           ? latestStructureDocuments.current.get(entry.document.id)
           : undefined;
-      const restoredDocument =
-        openDocument && sameReadingDocument(openDocument, entry.document)
-          ? openDocument
-          : (latestStructureDocument ?? entry.document);
+      const historyDocument = documentForReadingHistoryRestore(entry.document, openDocument);
+      const restoredDocument = openDocument
+        ? historyDocument
+        : (latestStructureDocument ?? historyDocument);
       const documentKey = documentTabKey(restoredDocument);
       if (entry.locator.kind === "scroll") {
         documentScrollPositions.current.set(

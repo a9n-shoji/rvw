@@ -103,6 +103,26 @@ function selectedRangeTarget(
     };
   }
 
+  const latestFile = document.referenceContext?.latestFile;
+  if (latestFile?.sourceOid === context.selectedOid) {
+    const latestChange = matchingChange(latestFile.path, context.changedFiles);
+    const latestChangePath = latestChange?.newPath ?? latestChange?.oldPath;
+    if (latestChangePath) {
+      return {
+        targetDocument: { kind: "repository-file", path: latestChangePath },
+        targetStatus: "ready",
+        targetReason: null,
+      };
+    }
+    if (selectedPaths.has(latestFile.path)) {
+      return {
+        targetDocument: { kind: "repository-file", path: latestFile.path },
+        targetStatus: "ready",
+        targetReason: null,
+      };
+    }
+  }
+
   const documentedRenamePaths = [document.oldPath, document.newPath].filter(
     (path): path is string => Boolean(path && path !== document.path),
   );
