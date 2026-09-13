@@ -3537,3 +3537,40 @@ invalidates older animation intent.
   impossible. The emergency shelf keeps the label visible and emits the least-conflicting direct
   guide with `fallbackReason: emergency`; automatic maps first receive bounded spacing retries, while
   reviewer-owned manual positions are never moved to conceal the condition.
+
+## 2026-09-11: Discover Walkthroughs through a bounded local CLI list
+
+### Problem
+
+Walkthrough get/update/delete required a stable URI, but an Agent that knew only a registered Pull
+Request could not discover those URIs through the public CLI. Remembered conversation state or direct
+SQLite inspection was therefore the only way to find existing explanations, making duplicate
+publication likely. The earlier review-composition decision explicitly documented that limitation.
+
+### Choice
+
+Add the additive `walkthrough.list` capability and
+`rvw walkthrough list <PULL_REQUEST> --json [--limit <N>] [--offset <N>]` without changing protocol
+version 5. Resolve only already registered PR URLs or globally unique numbers through the same
+application policy as comment list. Query a lightweight page directly from saved metadata, ordered by
+`created_at DESC, id DESC`; include historical source OIDs and return canonical existing refs. The
+response contains cached PR identity, `id`, `ref`, `title`, `sourceOid`, nullable `authorLabel`,
+`createdAt`, and comment-list-shaped page metadata. Body, references, diagram bindings, source
+resolution, GitHub sync, Viewer state, and mutations remain outside discovery.
+
+Route the operation through both direct database fallback and the running-runtime Agent socket using
+one service and input schema. Skills page through list when an exhaustive existence decision matters,
+then get plausible candidates before choosing reuse or an authorized in-place update. A known exact URI
+does not require list, a title is not identity evidence, list/get do not form a fixed snapshot, and reads
+do not grant mutation authority. This supersedes only the earlier statement that general Walkthrough
+discovery was unavailable; the composer and single-Artifact producer boundaries remain unchanged.
+
+### Trade-offs
+
+- Offset pagination is consistent with comment list and simple for local, static discovery, but callers
+  must collect required pages before concurrent mutations if they need a complete set.
+- A count query plus bounded metadata query avoids loading full bodies and references; no migration or
+  new stored summary fields are needed. The existing PR/created-time index supports the primary order,
+  while stable ID is the deterministic tie-break.
+- Historical source OIDs can describe stale or still-useful explanations. The list reports them without
+  deciding validity; only get plus source inspection can establish whether the subject should be reused.

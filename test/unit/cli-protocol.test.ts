@@ -3,11 +3,17 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Runtime } from "../../src/application/runtime.js";
+import { createRuntime, type Runtime } from "../../src/application/runtime.js";
 import type { RvwService } from "../../src/application/rvw-service.js";
 import { createProgram, runCli } from "../../src/cli/main.js";
-import { structurePublishInputSchema } from "../../src/cli/schemas.js";
-import type { CommentPost, PullRequest, ReviewComment } from "../../src/domain/models.js";
+import { structurePublishInputSchema, walkthroughListOutputSchema } from "../../src/cli/schemas.js";
+import type {
+  CommentPost,
+  GitHubPullRequest,
+  PullRequest,
+  ReviewComment,
+} from "../../src/domain/models.js";
+import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { startRuntimeAgentSocket } from "../../src/server/agent-socket.js";
 
 const pullRequest: PullRequest = {
@@ -203,6 +209,7 @@ describe("CLI protocol discovery", () => {
         "structure.publish",
         "structure.update",
         "structure.delete",
+        "walkthrough.list",
         "walkthrough.read",
         "walkthrough.publish",
         "walkthrough.update",
@@ -235,7 +242,7 @@ describe("CLI protocol discovery", () => {
       program.commands
         .find((command) => command.name() === "walkthrough")
         ?.commands.map((command) => command.name()),
-    ).toEqual(["publish", "get", "update", "delete"]);
+    ).toEqual(["publish", "list", "get", "update", "delete"]);
     expect(
       program.commands
         .find((command) => command.name() === "structure")
@@ -855,6 +862,97 @@ describe("CLI protocol discovery", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it("lists bounded Walkthrough metadata for one registered Pull Request", async () => {
+    const id = "70000000-0000-4000-8000-000000000001";
+    const ref = `rvw://walkthrough/${id}`;
+    const listWalkthroughsByReference = vi.fn().mockReturnValue({
+      pullRequest,
+      walkthroughs: [
+        {
+          id,
+          ref,
+          title: "Request flow",
+          sourceOid: "d".repeat(40),
+          authorLabel: "Codex",
+          createdAt: "2026-08-10T00:02:00.000Z",
+        },
+      ],
+      page: {
+        offset: 1,
+        limit: 1,
+        returned: 1,
+        total: 3,
+        hasMore: true,
+        nextOffset: 2,
+      },
+    });
+    const { runtime, close } = mockRuntime({ listWalkthroughsByReference });
+    const readStdout = captureStdout();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "walkthrough",
+      "list",
+      pullRequest.url,
+      "--limit",
+      "1",
+      "--offset",
+      "1",
+      "--json",
+    ]);
+
+    expect(listWalkthroughsByReference).toHaveBeenCalledWith(pullRequest.url, {
+      limit: 1,
+      offset: 1,
+    });
+    expect(readStdout()).toEqual({
+      ok: true,
+      pullRequest: formattedPullRequest,
+      walkthroughs: [
+        {
+          id,
+          ref,
+          title: "Request flow",
+          sourceOid: "d".repeat(40),
+          authorLabel: "Codex",
+          createdAt: "2026-08-10T00:02:00.000Z",
+        },
+      ],
+      page: {
+        offset: 1,
+        limit: 1,
+        returned: 1,
+        total: 3,
+        hasMore: true,
+        nextOffset: 2,
+      },
+    });
+    expect(readStdout()).not.toHaveProperty("walkthroughs.0.body");
+    expect(readStdout()).not.toHaveProperty("walkthroughs.0.references");
+    expect(readStdout()).not.toHaveProperty("walkthroughs.0.diagramBindings");
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["--limit", "0"],
+    ["--limit", "101"],
+    ["--limit", "1.5"],
+    ["--offset", "-1"],
+    ["--offset", "1.5"],
+  ])("rejects an invalid Walkthrough list option %s %s", async (name, value) => {
+    const readStdout = captureStdout();
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await runCli(["node", "rvw", "walkthrough", "list", pullRequest.url, name, value, "--json"]);
+
+    expect(process.exitCode).toBe(2);
+    expect(readStdout()).toMatchObject({
+      ok: false,
+      error: { code: "INVALID_INPUT", message: "入力がCLI schemaに適合しません。" },
+    });
+  });
+
   it("passes a complete Walkthrough replacement from stdin to the service", async () => {
     const uri = "rvw://walkthrough/70000000-0000-4000-8000-000000000001";
     const input = {
@@ -1353,6 +1451,127 @@ describe("CLI protocol discovery", () => {
     ]);
     expect(deleteStructureByUri).toHaveBeenCalledWith(uri, input.expectedUpdatedAt);
     expect(readConfirmedDelete()).toMatchObject({ ok: true, deleted: { ref: uri } });
+  });
+});
+
+describe("CLI Walkthrough list transport parity", () => {
+  const originalDatabasePath = process.env.RVW_DATABASE_PATH;
+  const originalSocketPath = process.env.RVW_AGENT_SOCKET_PATH;
+
+  afterEach(() => {
+    if (originalDatabasePath === undefined) delete process.env.RVW_DATABASE_PATH;
+    else process.env.RVW_DATABASE_PATH = originalDatabasePath;
+    if (originalSocketPath === undefined) delete process.env.RVW_AGENT_SOCKET_PATH;
+    else process.env.RVW_AGENT_SOCKET_PATH = originalSocketPath;
+    process.exitCode = undefined;
+    vi.restoreAllMocks();
+  });
+
+  it("returns the same contract through direct fallback and an active runtime socket", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-walkthrough-list-transport-"));
+    const databasePath = path.join(directory, "review.db");
+    const database = new RvwDatabase({
+      filePath: databasePath,
+      migrationsDirectory: "./migrations",
+    });
+    const githubPullRequest: GitHubPullRequest = {
+      host: pullRequest.host,
+      owner: pullRequest.owner,
+      repository: pullRequest.repository,
+      number: pullRequest.number,
+      url: pullRequest.url,
+      authorLogin: pullRequest.latestAuthorLogin,
+      headRepositoryOwner: pullRequest.latestHeadRepositoryOwner,
+      headRepositoryName: pullRequest.latestHeadRepositoryName,
+      title: pullRequest.latestTitle,
+      body: pullRequest.latestBody,
+      baseRefName: pullRequest.latestBaseRefName,
+      baseOid: pullRequest.latestBaseOid,
+      headRefName: pullRequest.latestHeadRefName,
+      headOid: pullRequest.latestHeadOid,
+      createdAt: pullRequest.githubCreatedAt!,
+      updatedAt: pullRequest.githubUpdatedAt,
+      state: "OPEN",
+      isDraft: false,
+    };
+    const stored = database.upsertPullRequest(
+      githubPullRequest,
+      {
+        localRepositoryPath: pullRequest.localRepositoryPath,
+        gitCommonDir: pullRequest.gitCommonDir,
+      },
+      pullRequest.latestComparisonBaseOid,
+    );
+    database.createWalkthrough({
+      pullRequestId: stored.id,
+      sourceOid: pullRequest.latestHeadOid,
+      title: "Transport-neutral discovery",
+      body: "The list must not return this body.",
+      authorLabel: "Codex",
+      diagramBindings: {},
+      references: [],
+    });
+    database.close();
+    process.env.RVW_DATABASE_PATH = databasePath;
+    delete process.env.RVW_AGENT_SOCKET_PATH;
+
+    let directStdout = "";
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      directStdout += String(chunk);
+      return true;
+    });
+    await createProgram().parseAsync([
+      "node",
+      "rvw",
+      "walkthrough",
+      "list",
+      pullRequest.url,
+      "--json",
+    ]);
+    const directOutput = walkthroughListOutputSchema.parse(JSON.parse(directStdout) as unknown);
+    vi.restoreAllMocks();
+
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
+    let running: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
+    try {
+      running = await startRuntimeAgentSocket(databasePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      throw error;
+    }
+    const runtime = createRuntime({
+      database: { filePath: databasePath, migrationsDirectory: "./migrations" },
+    });
+    running.setHandler({
+      service: runtime.service,
+      openViewer: vi.fn(),
+    });
+    let socketStdout = "";
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      socketStdout += String(chunk);
+      return true;
+    });
+    try {
+      await createProgram().parseAsync([
+        "node",
+        "rvw",
+        "walkthrough",
+        "list",
+        pullRequest.url,
+        "--json",
+      ]);
+      const socketOutput = walkthroughListOutputSchema.parse(JSON.parse(socketStdout) as unknown);
+      expect(socketOutput).toEqual(directOutput);
+      expect(socketOutput).toMatchObject({
+        ok: true,
+        walkthroughs: [{ title: "Transport-neutral discovery" }],
+        page: { offset: 0, limit: 50, returned: 1, total: 1, hasMore: false },
+      });
+      expect(socketOutput.walkthroughs[0]?.ref).toMatch(/^rvw:\/\/walkthrough\//);
+    } finally {
+      await running.close();
+      runtime.close();
+    }
   });
 });
 

@@ -187,6 +187,15 @@ export interface WalkthroughSummary {
   createdAt: string;
 }
 
+export interface WalkthroughListItem {
+  id: string;
+  ref: string;
+  sourceOid: string;
+  title: string;
+  authorLabel: string | null;
+  createdAt: string;
+}
+
 export interface SourceAnchor {
   path: string;
   startLine: number | null;

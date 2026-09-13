@@ -41,6 +41,7 @@ import type {
   DeletedWalkthrough,
   Walkthrough,
   WalkthroughDeleteCounts,
+  WalkthroughListItem,
   WalkthroughReference,
   SourceReferenceFileTarget,
   SourceReferenceResolution,
@@ -74,12 +75,14 @@ import {
 import { createSourceExcerpt, type SourceExcerpt } from "../domain/source-excerpt.js";
 import {
   DEFAULT_COMMENT_LIST_LIMIT,
+  DEFAULT_WALKTHROUGH_LIST_LIMIT,
   DEFAULT_PULL_REQUEST_LIST_LIMIT,
   DEFAULT_COMMENT_WATCH_LIMIT,
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
   MAX_COMMENT_BODY_BYTES,
   MAX_COMMENT_LIST_LIMIT,
+  MAX_WALKTHROUGH_LIST_LIMIT,
   MAX_PULL_REQUEST_LIST_LIMIT,
   MAX_COMMENT_WATCH_LIMIT,
   MAX_IDEMPOTENCY_KEY_CHARACTERS,
@@ -229,6 +232,19 @@ export interface CommentListItemContext {
 export interface CommentListContext {
   pullRequest: PullRequest;
   comments: CommentListItemContext[];
+  page: {
+    offset: number;
+    limit: number;
+    returned: number;
+    total: number;
+    hasMore: boolean;
+    nextOffset: number | null;
+  };
+}
+
+export interface WalkthroughListContext {
+  pullRequest: PullRequest;
+  walkthroughs: WalkthroughListItem[];
   page: {
     offset: number;
     limit: number;
@@ -1787,6 +1803,39 @@ export class RvwService {
         offset,
         limit,
         returned: contexts.length,
+        total: result.total,
+        hasMore,
+        nextOffset: hasMore ? nextOffset : null,
+      },
+    };
+  }
+
+  listWalkthroughsByReference(
+    reference: string,
+    page: { limit?: number; offset?: number } = {},
+  ): WalkthroughListContext {
+    const limit = page.limit ?? DEFAULT_WALKTHROUGH_LIST_LIMIT;
+    const offset = page.offset ?? 0;
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_WALKTHROUGH_LIST_LIMIT) {
+      throw new RvwError(
+        "INVALID_INPUT",
+        `walkthrough listのlimitは1〜${MAX_WALKTHROUGH_LIST_LIMIT}の整数にしてください。`,
+      );
+    }
+    if (!Number.isInteger(offset) || offset < 0) {
+      throw new RvwError("INVALID_INPUT", "walkthrough listのoffsetは0以上の整数にしてください。");
+    }
+    const pullRequest = this.resolveStoredPullRequest(reference);
+    const result = this.database.listWalkthroughPage(pullRequest.id, limit, offset);
+    const nextOffset = offset + result.walkthroughs.length;
+    const hasMore = nextOffset < result.total;
+    return {
+      pullRequest,
+      walkthroughs: result.walkthroughs,
+      page: {
+        offset,
+        limit,
+        returned: result.walkthroughs.length,
         total: result.total,
         hasMore,
         nextOffset: hasMore ? nextOffset : null,
