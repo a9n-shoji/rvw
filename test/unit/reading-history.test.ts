@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  documentForReadingHistoryRestore,
   isCurrentStructureReadingSnapshot,
   parseReadingHistoryEntry,
   readingHistoryState,
@@ -218,6 +219,29 @@ describe("reading history", () => {
 
     expect(sameReadingDocument(current, { ...current })).toBe(true);
     expect(sameReadingDocument(current, exact)).toBe(false);
+  });
+
+  it("normalizes selected-range history to the current selection while preserving references", () => {
+    const selectedRange = {
+      kind: "repository-file" as const,
+      path: "src/fixture.ts",
+      sourceOid: "c".repeat(40),
+      comparisonPolicy: "selected-range" as const,
+    };
+    const current = { kind: "repository-file" as const, path: "src/fixture.ts" };
+    const exact = {
+      ...selectedRange,
+      comparisonPolicy: "exact-source" as const,
+    };
+    const reference = {
+      ...selectedRange,
+      comparisonPolicy: "reference-target" as const,
+    };
+
+    expect(documentForReadingHistoryRestore(selectedRange, selectedRange)).toEqual(current);
+    expect(documentForReadingHistoryRestore(selectedRange, current)).toBe(current);
+    expect(documentForReadingHistoryRestore(exact, current)).toBe(exact);
+    expect(documentForReadingHistoryRestore(reference, current)).toBe(reference);
   });
 
   it("round-trips a session-only source reference resolution context", () => {

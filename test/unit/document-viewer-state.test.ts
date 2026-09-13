@@ -17,9 +17,31 @@ function context(overrides: Record<string, unknown> = {}) {
     documentDisplayMode: "diff" as const,
     displayMode: "range" as const,
     selectedOid,
+    selectedStartOid: selectedOid,
+    selectedOldOid: "a".repeat(40),
     latestHeadOid: selectedOid,
+    commits: [
+      {
+        oid: "a".repeat(40),
+        parentOids: [],
+        subject: "First",
+        authorName: "Reviewer",
+        authoredAt: "2026-09-01T00:00:00.000Z",
+      },
+      {
+        oid: selectedOid,
+        parentOids: ["a".repeat(40)],
+        subject: "Second",
+        authorName: "Reviewer",
+        authoredAt: "2026-09-02T00:00:00.000Z",
+      },
+    ],
     changedFiles: [changedFile],
     changedFilesLoaded: true,
+    changedFilesFailed: false,
+    selectedTreeEntries: [],
+    selectedTreeLoaded: true,
+    selectedTreeFailed: false,
     walkthroughDetails: new Map(),
     loadingWalkthroughIds: new Set<string>(),
     ...overrides,
@@ -53,6 +75,281 @@ describe("document viewer state", () => {
     expect(state.viewerDocument).toMatchObject({
       path: "src/unchanged.ts",
       sourceOid: selectedOid,
+    });
+  });
+
+  it("derives a ready PR-range return from an older exact source without retaining reference state", () => {
+    const sourceOid = "a".repeat(40);
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/new.ts",
+        sourceOid,
+        comparisonPolicy: "exact-source",
+      },
+      context({ selectedStartOid: sourceOid }),
+    );
+
+    expect(state.referenceDisplay).toMatchObject({
+      referenceOid: sourceOid,
+      referenceSelectionLabel: "exact source",
+      globalSelectionLabel: "PR全体",
+      actionLabel: "PR全体で開く",
+      targetStatus: "ready",
+      targetDocument: { kind: "repository-file", path: "src/new.ts" },
+    });
+    expect(state.referenceDisplay?.targetDocument).not.toHaveProperty("sourceOid");
+    expect(state.referenceDisplay?.targetDocument).not.toHaveProperty("comparisonPolicy");
+    expect(state.referenceDisplay?.targetDocument).not.toHaveProperty("referenceContext");
+  });
+
+  it("distinguishes exact full text from a selected-range diff even at the same SHA", () => {
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/new.ts",
+        sourceOid: selectedOid,
+        comparisonPolicy: "exact-source",
+      },
+      context(),
+    );
+
+    expect(state.referenceDisplay).toMatchObject({
+      referenceOid: selectedOid,
+      referenceComparisonLabel: "exact sourceの全文",
+      globalSelectionLabel: "選択中のコミット",
+      actionLabel: "選択中のコミットで開く",
+      targetStatus: "ready",
+    });
+    expect(state.referenceDisplay?.globalComparisonLabel).toContain("変更");
+  });
+
+  it("does not mark an exact source that already matches the selected full view", () => {
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/unchanged.ts",
+        sourceOid: selectedOid,
+        comparisonPolicy: "exact-source",
+      },
+      context({
+        documentDisplayMode: "full",
+        displayMode: "full",
+        selectedTreeEntries: [
+          {
+            mode: "100644",
+            type: "blob",
+            oid: "f".repeat(40),
+            size: 12,
+            path: "src/unchanged.ts",
+            kind: "file",
+          },
+        ],
+      }),
+    );
+
+    expect(state.referenceDisplay).toBeNull();
+  });
+
+  it("does not mark the ordinary unchanged-file full fallback as a reference display", () => {
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/unchanged.ts",
+        sourceOid: selectedOid,
+        comparisonPolicy: "exact-source",
+      },
+      context({
+        changedFiles: [],
+        selectedTreeEntries: [
+          {
+            mode: "100644",
+            type: "blob",
+            oid: "f".repeat(40),
+            size: 12,
+            path: "src/unchanged.ts",
+            kind: "file",
+          },
+        ],
+      }),
+    );
+
+    expect(state.effectiveDisplayMode).toBe("full");
+    expect(state.referenceDisplay).toBeNull();
+  });
+
+  it("keeps the marker when no selected-range file or reliable rename target exists", () => {
+    const sourceOid = "c".repeat(40);
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/removed-after-reference.ts",
+        sourceOid,
+        comparisonPolicy: "exact-source",
+      },
+      context({ changedFiles: [], selectedTreeEntries: [] }),
+    );
+
+    expect(state.referenceDisplay).toMatchObject({
+      referenceOid: sourceOid,
+      targetDocument: null,
+      targetStatus: "unavailable",
+    });
+    expect(state.referenceDisplay?.targetReason).toContain("確実なrename先");
+  });
+
+  it("uses selected-range rename information for the return target", () => {
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/old.ts",
+        sourceOid: "a".repeat(40),
+        comparisonPolicy: "exact-source",
+      },
+      context(),
+    );
+
+    expect(state.referenceDisplay).toMatchObject({
+      targetStatus: "ready",
+      targetDocument: { kind: "repository-file", path: "src/new.ts" },
+    });
+  });
+
+  it("uses a resolved latest file when it belongs to the selected commit", () => {
+    const sourceOid = "a".repeat(40);
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/intermediate-name.ts",
+        sourceOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "source-fallback",
+          origin: {
+            kind: "walkthrough",
+            walkthroughId: "walkthrough",
+            referenceId: "reference",
+          },
+          anchorSourceOid: sourceOid,
+          latestHeadOid: selectedOid,
+          referenceFingerprint: "fingerprint",
+          diffBaseOid: null,
+          hasDiff: false,
+          latestFile: {
+            sourceOid: selectedOid,
+            path: "src/final-name.ts",
+            diffBaseOid: sourceOid,
+            oldPath: "src/intermediate-name.ts",
+            newPath: "src/final-name.ts",
+            hasDiff: false,
+          },
+        },
+      },
+      context({
+        changedFiles: [
+          {
+            kind: "added",
+            status: "A",
+            similarity: null,
+            oldPath: null,
+            newPath: "src/final-name.ts",
+          },
+        ],
+        selectedTreeEntries: [
+          {
+            mode: "100644",
+            type: "blob",
+            oid: "f".repeat(40),
+            size: 12,
+            path: "src/final-name.ts",
+            kind: "file",
+          },
+        ],
+      }),
+    );
+
+    expect(state.referenceDisplay).toMatchObject({
+      targetStatus: "ready",
+      targetDocument: { kind: "repository-file", path: "src/final-name.ts" },
+    });
+  });
+
+  it("does not reuse a resolved latest file from a different commit", () => {
+    const sourceOid = "a".repeat(40);
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/intermediate-name.ts",
+        sourceOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "source-fallback",
+          origin: {
+            kind: "walkthrough",
+            walkthroughId: "walkthrough",
+            referenceId: "reference",
+          },
+          anchorSourceOid: sourceOid,
+          latestHeadOid: "c".repeat(40),
+          referenceFingerprint: "fingerprint",
+          diffBaseOid: null,
+          hasDiff: false,
+          latestFile: {
+            sourceOid: "c".repeat(40),
+            path: "src/final-name.ts",
+            diffBaseOid: sourceOid,
+            oldPath: "src/intermediate-name.ts",
+            newPath: "src/final-name.ts",
+            hasDiff: false,
+          },
+        },
+      },
+      context({
+        changedFiles: [],
+        selectedTreeEntries: [
+          {
+            mode: "100644",
+            type: "blob",
+            oid: "f".repeat(40),
+            size: 12,
+            path: "src/final-name.ts",
+            kind: "file",
+          },
+        ],
+      }),
+    );
+
+    expect(state.referenceDisplay).toMatchObject({
+      targetStatus: "unavailable",
+      targetDocument: null,
+    });
+  });
+
+  it("labels a non-PR multi-commit selection as the selected range", () => {
+    const thirdOid = "c".repeat(40);
+    const commits = [
+      ...context().commits,
+      {
+        oid: thirdOid,
+        parentOids: [selectedOid],
+        subject: "Third",
+        authorName: "Reviewer",
+        authoredAt: "2026-09-03T00:00:00.000Z",
+      },
+    ];
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/new.ts",
+        sourceOid: thirdOid,
+        comparisonPolicy: "exact-source",
+      },
+      context({ commits, selectedStartOid: "a".repeat(40) }),
+    );
+
+    expect(state.referenceDisplay).toMatchObject({
+      globalSelectionLabel: "選択中の範囲",
+      actionLabel: "選択中の範囲で開く",
     });
   });
 
@@ -103,12 +400,44 @@ describe("document viewer state", () => {
     expect(state.activeChange).toBe(changedFile);
     expect(state.effectiveDisplayMode).toBe("range");
     expect(state.fullViewNotice).toBeNull();
+    expect(state.referenceDisplay).toBeNull();
     expect(state.viewerDocument).toMatchObject({
       sourceOid,
       comparisonPolicy: "reference-target",
       oldPath: "src/old.ts",
       newPath: "src/new.ts",
     });
+  });
+
+  it("does not mark a source fallback whose comparison already matches the selected commit", () => {
+    const state = deriveDocumentViewerState(
+      {
+        kind: "repository-file",
+        path: "src/new.ts",
+        oldPath: "src/old.ts",
+        newPath: "src/new.ts",
+        sourceOid: selectedOid,
+        comparisonPolicy: "reference-target",
+        referenceContext: {
+          outcome: "source-fallback",
+          origin: {
+            kind: "walkthrough",
+            walkthroughId: "walkthrough",
+            referenceId: "reference",
+          },
+          anchorSourceOid: selectedOid,
+          latestHeadOid: selectedOid,
+          referenceFingerprint: "fingerprint",
+          diffBaseOid: "a".repeat(40),
+          hasDiff: true,
+          latestFile: null,
+        },
+      },
+      context(),
+    );
+
+    expect(state.effectiveDisplayMode).toBe("range");
+    expect(state.referenceDisplay).toBeNull();
   });
 
   it("keeps latest full text when the global comparison ends at a historical commit", () => {
